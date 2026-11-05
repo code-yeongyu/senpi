@@ -255,7 +255,10 @@ export function createHostCore(
 		handle,
 		handover: gate.handover,
 		handoverAnswered: () => gate.answered(),
-		/** A session's live registry entry by its routing id, for an embedder that holds the core in process. */
+		/**
+		 * A session's live registry entry by its routing id. Only in-process test fixtures read it today, in place of
+		 * spying on the registry prototype (senpi#5802); the host itself never calls it.
+		 */
 		peekSession: (sessionId: string) => registry.peek(sessionId),
 	};
 }
