@@ -50,4 +50,21 @@ describe("kill-guard sleeper lifetime (senpi#5410)", () => {
 			rmSync(root, { recursive: true, force: true });
 		}
 	});
+
+	it("a process that receives SIGTERM without stop() leaves no sleeper behind and dies by SIGTERM", async () => {
+		const root = mkdtempSync(join(tmpdir(), "senpi-5410-"));
+		try {
+			const pidFile = join(root, "sleeper.pid");
+			const probe = join(import.meta.dirname, "../../kill-guard/sleeper-sigterm-probe.ts");
+			const result = spawnSync("bun", [probe, pidFile], { encoding: "utf8", timeout: 30_000 });
+			expect(result.status).toBeNull();
+			expect(result.signal).toBe("SIGTERM");
+			expect(existsSync(pidFile)).toBe(true);
+			const pid = Number(readFileSync(pidFile, "utf8"));
+			expect(Number.isInteger(pid) && pid > 0).toBe(true);
+			expect(await waitForPidDeath(pid)).toBe(true);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
 });
