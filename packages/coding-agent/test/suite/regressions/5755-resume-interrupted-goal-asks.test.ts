@@ -22,9 +22,15 @@ afterEach(async () => {
 
 const OBJECTIVE = "Finish the original request";
 
-async function resumeKilledGoalSession(choice: "Resume goal" | "Leave stopped") {
+async function resumeKilledGoalSession(choice: "Resume goal" | "Leave stopped", open: "resume" | "startup" = "resume") {
 	const prompts: Array<{ title: string; options: string[] }> = [];
 	let providerCalls = 0;
+	const uiContext = createTestUiContext({
+		select: async (title, options) => {
+			prompts.push({ title, options });
+			return choice;
+		},
+	});
 	const h = await createHarness({ extensionFactories: [goalExtension] });
 	cleanups.push(h.cleanup);
 	const servicesFor = (harness: Harness): AgentSessionServices => ({
@@ -60,15 +66,7 @@ async function resumeKilledGoalSession(choice: "Resume goal" | "Leave stopped") 
 	const runtime = new AgentSessionRuntime(h.session, servicesFor(h), factory);
 	cleanups.push(() => runtime.dispose());
 	runtime.setRebindSession(async (session) => {
-		await session.bindExtensions({
-			mode: "tui",
-			uiContext: createTestUiContext({
-				select: async (title, options) => {
-					prompts.push({ title, options });
-					return choice;
-				},
-			}),
-		});
+		await session.bindExtensions({ mode: "tui", uiContext });
 	});
 
 	// The saved session of a process killed mid-turn: its last run is still `running` and its goal is still active.
@@ -97,9 +95,28 @@ async function resumeKilledGoalSession(choice: "Resume goal" | "Leave stopped") 
 	if (!file) throw new Error("Missing saved session");
 	h.setResponses(Array.from({ length: 12 }, (_, index) => fauxAssistantMessage(`Reply ${index + 1}`)));
 
-	// The /resume picker's session switch and extension rebind.
-	expect(await runtime.switchSession(file)).toEqual({ cancelled: false });
-	const session = runtime.session;
+	let session = runtime.session;
+	if (open === "resume") {
+		// The /resume picker's session switch and extension rebind.
+		expect(await runtime.switchSession(file)).toEqual({ cancelled: false });
+		session = runtime.session;
+	} else {
+		// A launch that opens the saved session (`--continue`, `--session`): a startup, not a switch.
+		const launched = await createHarness({
+			siblingOf: h,
+			extensionFactories: [goalExtension],
+			sessionManager: SessionManager.open(file),
+			sessionStartEvent: { type: "session_start", reason: "startup" },
+		});
+		cleanups.push(launched.cleanup);
+		const stream = launched.session.agent.streamFunction;
+		launched.session.agent.streamFunction = (...args) => {
+			providerCalls++;
+			return stream(...args);
+		};
+		await launched.session.bindExtensions({ mode: "tui", uiContext });
+		session = launched.session;
+	}
 	const goal = () => readGoal(goalStoreRef(session.sessionManager, h.tempDir));
 	const continuations = () =>
 		session.messages.filter((message) => message.role === "custom" && message.customType === "goal-continuation")
@@ -137,4 +154,21 @@ it("continues the goal when the person chooses Resume goal", async () => {
 
 	expect(fixture.continuations()).toBeGreaterThan(0);
 	expect(fixture.providerCalls()).toBeGreaterThan(0);
+});
+
+it("asks the same way when the killed session is opened at launch instead of through /resume", async () => {
+	const fixture = await resumeKilledGoalSession("Leave stopped", "startup");
+	expect(fixture.providerCalls()).toBe(0);
+
+	await fixture.session.prompt("What is the status?");
+	await fixture.session.waitForIdle();
+
+	expect({ providerCalls: fixture.providerCalls(), continuations: fixture.continuations() }).toEqual({
+		providerCalls: 1,
+		continuations: 0,
+	});
+	expect(fixture.prompts).toEqual([
+		{ title: `Resume blocked goal?\nGoal: ${OBJECTIVE}`, options: ["Resume goal", "Leave stopped"] },
+	]);
+	expect(await fixture.goal()).toMatchObject({ status: "blocked" });
 });
