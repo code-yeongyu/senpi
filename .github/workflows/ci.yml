@@ -218,7 +218,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   # `npm run build` (scripts/build-all.mjs) is a pure function of the checked-out tree and writes only
-  # `packages/**/dist`, yet each of the four shards below used to run it: 4 x ~35 s of identical work on a
+  # `packages/**/dist`, yet each of the (then four) shards below used to run it: 4 x ~35 s of identical work on a
   # congested runner pool (senpi#4610). It runs once here and the shards unpack its output.
   #
   # The outputs travel as ONE tarball, not as a bare artifact path: `packages/*/dist` is thousands of small
@@ -266,20 +266,25 @@ jobs:
           if-no-files-found: error
 
   # The coding-agent vitest suite dominates CI wall time (2467+ files; three
-  # shards reached 27-minute jobs). Sharding it across four
-  # runners divides that wall while each shard keeps the CI fork-pool settings
+  # shards reached 27-minute jobs). Four shards later ran 15-25 min against the 25-minute step timeout
+  # (senpi#5855), so the suite runs on ten runners and every shard fails its "Shard time budget" step
+  # past 15 min, naming its time, long before the timeout. Sharding divides that wall while each shard keeps the CI fork-pool settings
   # from vitest.config.ts (forks pool, capped workers) that prevent the historical
   # subprocess-suite pool hang.
   test-coding-agent:
-    name: Test (coding-agent ${{ matrix.shard }}/4)
+    name: Test (coding-agent ${{ matrix.shard }}/10)
     needs: build-coding-agent
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      - name: Start the shard budget clock
+        shell: bash
+        run: echo "SHARD_BUDGET_STARTED=$(date +%s)" >> "$GITHUB_ENV"
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -321,15 +326,20 @@ jobs:
 
       - name: Test shard
         timeout-minutes: 25
-        run: node ../../scripts/run-tests.mjs vitest run --shard=${{ matrix.shard }}/4
+        run: node ../../scripts/run-tests.mjs vitest run --shard=${{ matrix.shard }}/10
         working-directory: packages/coding-agent
+
+      - name: Shard time budget
+        env:
+          SHARD_LABEL: Test (coding-agent ${{ matrix.shard }}/10)
+        run: node scripts/ci-shard-budget.mjs
 
       - name: Workflow summary
         if: always()
         shell: bash
         run: |
           {
-            echo "## Test (coding-agent ${{ matrix.shard }}/4)"
+            echo "## Test (coding-agent ${{ matrix.shard }}/10)"
             echo "- Status: ${{ job.status }}"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Check OS temp after tests
