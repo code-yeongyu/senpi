@@ -10,8 +10,15 @@ import {
 	type ConnectedBrowser,
 	createBrowserSkillRenderer,
 	type PageRenderer,
+	type RenderedPage,
 	type WebfetchBrowserSkip,
 } from "./browser-skill.ts";
+import {
+	isSignedInHost,
+	readSignedInBrowserSettings,
+	SIGNED_IN_HOSTS_SETTING,
+	type SignedInBrowserSettings,
+} from "./signed-in-hosts.ts";
 
 const BROWSER_ENV = "PI_WEBFETCH_BROWSER";
 // A rendered read gets at least this long; with less of the call's timeout left it is skipped.
@@ -53,6 +60,10 @@ export interface WebfetchDetails {
 	renderSkipped?: WebfetchBrowserSkip;
 	/** The connected browser that read the page, when one did. */
 	browser?: ConnectedBrowser;
+	/** `signed-in-browser` when a host the user listed was read through their connected browser. */
+	route: "http" | "signed-in-browser";
+	/** Why a listed host fell back to the anonymous read, when it did. */
+	signedInSkipped?: WebfetchBrowserSkip;
 }
 
 export interface WebfetchProgressDetails {
@@ -76,12 +87,15 @@ export type { WebfetchBrowserSkip } from "./browser-skill.ts";
 export interface WebfetchToolOptions {
 	/** Reads app-shell pages rendered; defaults to the user's BrowserSkill-connected browser. */
 	readonly renderer?: PageRenderer;
+	/** The user's signed-in hosts; defaults to `webfetch.signedInBrowser` in the global settings file. */
+	readonly signedInSettings?: () => SignedInBrowserSettings;
 }
 
 export const webfetch = createWebfetchTool();
 
 export function createWebfetchTool(options: WebfetchToolOptions = {}) {
 	const renderer = options.renderer ?? createBrowserSkillRenderer();
+	const signedInSettings = options.signedInSettings ?? (() => readSignedInBrowserSettings());
 	return defineTool<typeof Params, WebfetchRenderDetails>({
 		name: "webfetch",
 		workspaceEffect: "read",
@@ -125,24 +139,41 @@ export function createWebfetchTool(options: WebfetchToolOptions = {}) {
 				progress,
 			});
 
-			const fetched = await fetchUrl({
-				url: params.url,
-				format,
-				timeoutSeconds,
-				...(signal === undefined ? {} : { signal }),
-				onProgress: (bytesRead, totalBytes) => {
-					downloadedTotalBytes = totalBytes;
-					emitProgress({
-						phase: "downloading",
+			const settings = signedInSettings();
+			let signedInSkipped: WebfetchBrowserSkip | undefined;
+			let signedInPage: RenderedPage | undefined;
+			let signedInBrowser: ConnectedBrowser | undefined;
+			if (isSignedInHost(params.url, settings.hosts)) {
+				if (isBrowserEnabled()) {
+					emitProgress({ phase: "rendering", url: params.url, format, timeoutSeconds, progress });
+					const outcome = await readSignedIn(renderer, params.url, settings, timeoutSeconds * 1000, signal);
+					signedInPage = outcome.page;
+					signedInBrowser = outcome.browser;
+					signedInSkipped = outcome.skipped;
+				} else {
+					signedInSkipped = { reason: "disabled", message: `${BROWSER_ENV}=0 turns browser reads off` };
+				}
+			}
+			const fetched = signedInPage
+				? pageAsFetchResult(signedInPage, await stripScripts(signedInPage.html, signedInPage.url))
+				: await fetchUrl({
 						url: params.url,
 						format,
 						timeoutSeconds,
-						bytesRead,
-						...(totalBytes === undefined ? {} : { totalBytes }),
-						progress,
+						...(signal === undefined ? {} : { signal }),
+						onProgress: (bytesRead, totalBytes) => {
+							downloadedTotalBytes = totalBytes;
+							emitProgress({
+								phase: "downloading",
+								url: params.url,
+								format,
+								timeoutSeconds,
+								bytesRead,
+								...(totalBytes === undefined ? {} : { totalBytes }),
+								progress,
+							});
+						},
 					});
-				},
-			});
 			const raw = new TextDecoder().decode(fetched.body);
 			const contentType = fetched.contentType.toLowerCase();
 			emitProgress({
@@ -157,9 +188,9 @@ export function createWebfetchTool(options: WebfetchToolOptions = {}) {
 			const isHtml = contentType.includes("text/html") || contentType.includes("application/xhtml+xml");
 			let text = raw;
 			let converted = false;
-			let rendered = false;
+			let rendered = signedInPage !== undefined;
 			let renderSkipped: WebfetchBrowserSkip | undefined;
-			let browser: ConnectedBrowser | undefined;
+			let browser: ConnectedBrowser | undefined = signedInBrowser;
 			let renderTruncated = false;
 			let renderedUrl: string | undefined;
 
@@ -167,7 +198,7 @@ export function createWebfetchTool(options: WebfetchToolOptions = {}) {
 				const convert = format === "markdown" ? htmlToMarkdown : htmlToText;
 				text = await convert(raw, fetched.url);
 				converted = true;
-				if (await looksLikeAppShell(raw, fetched.url)) {
+				if (!signedInPage && (await looksLikeAppShell(raw, fetched.url))) {
 					const budgetMs = startedAt + timeoutSeconds * 1000 - Date.now();
 					let outcome: RenderOutcome = {
 						skipped: { reason: "disabled", message: `${BROWSER_ENV}=0 turns browser reads off` },
@@ -208,11 +239,15 @@ export function createWebfetchTool(options: WebfetchToolOptions = {}) {
 				rendered,
 				...(renderSkipped === undefined ? {} : { renderSkipped }),
 				...(browser === undefined ? {} : { browser }),
+				route: signedInPage ? "signed-in-browser" : "http",
+				...(signedInSkipped === undefined ? {} : { signedInSkipped }),
 			};
 
-			const notices = [capped.notice, renderNotice(rendered, renderer.name, renderSkipped)].filter(
-				(notice): notice is string => notice !== undefined,
-			);
+			const notices = [
+				capped.notice,
+				signedInPage ? undefined : renderNotice(rendered, renderer.name, renderSkipped),
+				signedInNotice(signedInPage !== undefined, renderer.name, signedInSkipped),
+			].filter((notice): notice is string => notice !== undefined);
 			const content: TextContent[] = [
 				{ type: "text", text: notices.length === 0 ? capped.text : `${capped.text}\n` },
 			];
@@ -285,6 +320,73 @@ function renderNotice(
 	if (skipped === undefined) return undefined;
 	const detail = skipped.detail === undefined ? "" : ` (${skipped.detail})`;
 	return `[The static HTML looks like an empty app shell that needs JavaScript; ${skipped.reason}: ${skipped.message}${detail}.]`;
+}
+
+interface SignedInOutcome {
+	readonly page?: RenderedPage;
+	readonly browser?: ConnectedBrowser;
+	readonly skipped?: WebfetchBrowserSkip;
+}
+
+/** Reads a listed host in a normal session of the user's browser; any failure falls back to the anonymous read. */
+async function readSignedIn(
+	renderer: PageRenderer,
+	url: string,
+	settings: SignedInBrowserSettings,
+	timeoutMs: number,
+	signal: AbortSignal | undefined,
+): Promise<SignedInOutcome> {
+	try {
+		const { page, browser } = await renderer.render(url, {
+			mode: "signed-in",
+			timeoutMs,
+			...(settings.browser === undefined ? {} : { browser: settings.browser }),
+			...(signal === undefined ? {} : { signal }),
+		});
+		if (isSignedInHost(page.url, settings.hosts)) return { page, browser };
+		const host = URL.canParse(page.url) ? new URL(page.url).host : page.url;
+		return {
+			skipped: {
+				reason: "host_not_allowed",
+				message: "the signed-in read ended on a host outside the list, so it was discarded",
+				detail: `${host} is not in ${SIGNED_IN_HOSTS_SETTING}`,
+			},
+		};
+	} catch (error) {
+		if (signal?.aborted) throw error;
+		if (error instanceof BrowserSkillError) return { skipped: error.skip };
+		return {
+			skipped: {
+				reason: "render_failed",
+				message: "the browser read failed",
+				detail: error instanceof Error ? error.message : String(error),
+			},
+		};
+	}
+}
+
+function pageAsFetchResult(page: RenderedPage, html: string) {
+	const body = new TextEncoder().encode(html);
+	return {
+		url: page.url,
+		status: 200,
+		statusText: "OK",
+		contentType: "text/html",
+		bytes: body.length,
+		body,
+		truncated: page.truncated,
+	};
+}
+
+function signedInNotice(
+	read: boolean,
+	rendererName: string,
+	skipped: WebfetchBrowserSkip | undefined,
+): string | undefined {
+	if (read) return `[Read through ${rendererName} with your signed-in session, because you listed this host.]`;
+	if (skipped === undefined) return undefined;
+	const detail = skipped.detail === undefined ? "" : ` (${skipped.detail})`;
+	return `[This host is listed for signed-in reads, but it was read anonymously; ${skipped.reason}: ${skipped.message}${detail}.]`;
 }
 
 export function parseWebfetchFormat(value: unknown): WebfetchFormat {
