@@ -301,3 +301,16 @@ it("the host key signs only a binding that names this host instance and this key
 	] as const;
 	expect(() => tokens.signRequest(otherKey)).toThrow("secret_request_foreign");
 });
+it("disposing the presenter control ends a pending sealed-only request at once", async () => {
+	const { host, secret, requests } = await sealedHost();
+	await holder(host, secret, "phone");
+	const state: { value: string | undefined | null } = { value: null };
+	host.writer.withConnection("human", () => {
+		void requests.input("API key", undefined).then((value) => {
+			state.value = value;
+		});
+	});
+	host.control.dispose();
+	await Promise.resolve();
+	expect(state.value).toBeUndefined();
+});

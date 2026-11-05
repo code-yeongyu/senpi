@@ -59,6 +59,8 @@ export class SecretInputPresentations {
 		this.unsubscribeSealed?.();
 		this.sealedSource = source;
 		this.unsubscribeSealed = source?.onChange(() => this.recheck());
+		// A request that only the old source's holders could answer ends now, not at its deadline (gate L3).
+		this.recheck();
 	}
 	/** `sealed`: this route may add sealed holders (an in-process session, or a worker isolate's host half; D11 5.5). */
 	route(session: string, sealed = false): SecretInputRoute {
