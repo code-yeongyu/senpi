@@ -722,7 +722,20 @@ export async function runOpenAiRemoteCompaction(
 	}
 
 	// SIWC permits only streaming /responses; unavailable v2 falls back to the local summary.
-	if (siwc) return undefined;
+	if (siwc) {
+		// A v2 attempt that ran already reported its own outcome; only the skipped attempt is reported here.
+		if (!supportsOpenAiResponsesRemoteCompactionV2(requestModel)) {
+			emit?.({
+				version: 1,
+				action: "remote_fallback",
+				route: "builtin.compaction.openai_remote",
+				requestId: event.requestId,
+				modelId: requestModel.id,
+				reason: "siwc-remote-compaction-v2-unsupported",
+			});
+		}
+		return undefined;
+	}
 
 	if (supportsOpenAiResponsesWebSocket(requestModel) && !remoteBudgetExhausted("websocket")) {
 		const websocketHeaders = Object.fromEntries(requestHeaders.entries());

@@ -161,6 +161,7 @@ describe("OpenAI remote compaction v2 routing", () => {
 			const fetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
 				return new Response("unsupported endpoint", { status: 400 });
 			});
+			const emitted: unknown[] = [];
 			const result = await runOpenAiRemoteCompaction(
 				{
 					model,
@@ -172,11 +173,16 @@ describe("OpenAI remote compaction v2 routing", () => {
 					getSystemPrompt: () => "You are senpi.",
 				},
 				compactionEvent(),
-				undefined,
+				(event) => emitted.push(event),
 				{ streamRunner: stream, fetch },
 			);
 
 			expect(fetch.mock.calls, outcome).toEqual([]);
+			// A skipped v2 attempt is reported; one that ran reports its own outcome instead.
+			expect(
+				emitted.filter((e) => (e as { reason?: string }).reason === "siwc-remote-compaction-v2-unsupported"),
+				outcome,
+			).toHaveLength(outcome === "disabled" ? 1 : 0);
 			expect(stream, outcome).toHaveBeenCalledTimes(outcome === "disabled" ? 0 : 1);
 			if (outcome === "completed") {
 				expect(result?.details.transport).toBe("responses-v2");
