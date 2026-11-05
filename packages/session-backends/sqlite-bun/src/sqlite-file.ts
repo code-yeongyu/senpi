@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { existsSync, linkSync, rmSync } from "node:fs";
 import { Database, type Statement } from "bun:sqlite";
 import type { StoreValue } from "@earendil-works/pi-agent-core/conformance";
 
@@ -30,13 +32,42 @@ export interface StoreStatements {
 }
 
 /**
+ * Creates a store file atomically. SQLite switches a file to WAL with one exclusive-lock attempt that never waits on the
+ * busy handler, so a file must not be visible at its path before it is in WAL mode: another process opening it then
+ * races the switch and fails with "database is locked". The file is made in WAL under a private name, then hard-linked
+ * into place; a link fails when the path exists, so exactly one creator wins and every other opener finds a WAL file.
+ */
+function createStoreFile(path: string): void {
+	const staging = `${path}.creating-${process.pid}-${randomUUID()}`;
+	try {
+		const db = new Database(staging, { create: true });
+		try {
+			db.exec("PRAGMA journal_mode = WAL");
+		} finally {
+			db.close();
+		}
+		try {
+			linkSync(staging, path);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+		}
+	} finally {
+		for (const file of [staging, `${staging}-wal`, `${staging}-shm`]) rmSync(file, { force: true });
+	}
+}
+
+/**
  * Opens (creating when absent) a store file. WAL with `synchronous=FULL`: a transaction is on disk when COMMIT returns,
  * and a process killed at any point recovers to the last committed transaction on the next open.
  */
 export function openStoreFile(path: string): { readonly db: Database; readonly statements: StoreStatements } {
-	const db = new Database(path, { create: true });
+	if (!existsSync(path)) createStoreFile(path);
+	const db = new Database(path);
 	db.exec("PRAGMA busy_timeout = 5000");
-	db.exec("PRAGMA journal_mode = WAL");
+	// Files are created in WAL (createStoreFile); one made before that rule is switched here.
+	if (db.query<{ readonly journal_mode: string }, []>("PRAGMA journal_mode").get()?.journal_mode !== "wal") {
+		db.exec("PRAGMA journal_mode = WAL");
+	}
 	db.exec("PRAGMA synchronous = FULL");
 	db.transaction(() => {
 		const version = db.query<{ readonly user_version: number }>("PRAGMA user_version").get()?.user_version ?? 0;
