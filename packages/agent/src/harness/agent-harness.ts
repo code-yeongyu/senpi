@@ -534,7 +534,10 @@ export interface AgentHarnessOptions<TContext extends object | undefined = objec
 	toolExecution?: "sequential" | "parallel";
 	toProviderMessages?: (messages: AgentMessage[], context: Context) => Message[] | Promise<Message[]>;
 	entryProjectors?: Record<string, EntryProjector>;
-	/** Receives `{ pipeline: "prepared", toolCallId }` for every tool call whose body runs, as `Agent.onExecutionPipeline` does. */
+	/**
+	 * Receives `{ pipeline: "prepared", toolCallId }` for every tool call whose body runs, as `Agent.onExecutionPipeline`
+	 * does. A callback that throws fails that tool call, as on `Agent`.
+	 */
 	onExecutionPipeline?: (witness: ExecutionPipelineWitness) => void | Promise<void>;
 }
 

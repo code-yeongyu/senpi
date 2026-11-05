@@ -144,6 +144,8 @@ export function executeToolCall<TContext extends object | undefined>(
 			name: call.toolCall.name,
 			arguments: call.args,
 		};
+		// The body receives the host's frozen copy of the arguments (a JSON-value round trip): identical for the JSON
+		// arguments a tool takes; a non-JSON value (NaN, Infinity, -0, a Date) would not survive it.
 		return runOnPreparedToolHost(toolCall, invocation.invocationId, recordWitness, async (args) => {
 			let executed: ExecutedToolCall;
 			try {
