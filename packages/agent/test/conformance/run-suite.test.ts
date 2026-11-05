@@ -140,6 +140,8 @@ describe("the ./conformance export", () => {
 			"CANCEL_CASES",
 			"CONFORMANCE_REGISTRY",
 			"CONSENT_CASES",
+			"DIALOG_CASES",
+			"DIALOG_DECLARATIONS",
 			"DurableStoreError",
 			"EPOCH_CASES",
 			"FAULT_HAND_CASES",
