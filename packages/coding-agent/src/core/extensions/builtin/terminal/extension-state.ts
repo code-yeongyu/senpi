@@ -1,5 +1,6 @@
 /** The terminal extension's per-generation state, the bundle event sinks it binds, and the tool context over it. */
 
+import type { ExecutionScope } from "@earendil-works/pi-agent-core";
 import { getShellEnv } from "../../../../utils/shell.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import {
@@ -14,7 +15,7 @@ import { removeMonitorStateDir, terminalStateDir } from "./monitor-state-dir.ts"
 import type { MonitorStatusTicker } from "./monitor-status-ticker.ts";
 import type { TerminalNotifier } from "./notify.ts";
 import type { PersistenceState } from "./restore-session.ts";
-import { type TerminalEventSinks, TerminalSessionBundle } from "./session-bundle.ts";
+import { ScopedTerminalBundles, type TerminalEventSinks, TerminalSessionBundle } from "./session-bundle.ts";
 import type { ResolvedTerminalSettings } from "./settings.ts";
 import type { TerminalExitView, TerminalToolContext } from "./tools/context.ts";
 
@@ -135,6 +136,20 @@ export function bundleSinks(pi: ExtensionAPI, state: TerminalExtensionState): Te
 	};
 }
 
+/** What a tool context reads from the extension state besides its bundle. */
+type ToolContextState = Pick<
+	TerminalExtensionState,
+	"settings" | "ctx" | "shellPath" | "monitorNotifier" | "ensurePersistence"
+>;
+
+/** Which bundle a tool context drives, where its sessions start, and the session key its job widgets use. */
+interface BundleRoute {
+	readonly require: () => TerminalSessionBundle;
+	readonly current: () => TerminalSessionBundle | null | undefined;
+	readonly cwd: () => string;
+	readonly sessionKey: () => string | undefined;
+}
+
 export function buildToolContext(pi: ExtensionAPI, state: TerminalExtensionState): TerminalToolContext {
 	const requireBundle = (): TerminalSessionBundle => {
 		// Lazily create a bundle so the tools work even when invoked directly (e.g. via the
@@ -147,12 +162,57 @@ export function buildToolContext(pi: ExtensionAPI, state: TerminalExtensionState
 		}
 		return state.bundle;
 	};
+	return toolContextOver(state, {
+		require: requireBundle,
+		current: () => state.bundle,
+		cwd: () => state.ctx?.cwd ?? process.cwd(),
+		sessionKey: () =>
+			withTerminalContext(
+				() => sessionKeyOf(state.ctx),
+				() => {},
+			),
+	});
+}
+
+/**
+ * Terminal bundles per execution scope (senpi brain/hand S16a), sized by this extension's settings: `maxSessions`
+ * applies per scope. `sinks` routes each scope's events. Inert until the multi-scope runtime wires it.
+ */
+export function createScopedBundles(
+	state: Pick<TerminalExtensionState, "settings" | "parked">,
+	sinks: (scopeId: string) => TerminalEventSinks,
+): ScopedTerminalBundles {
+	return new ScopedTerminalBundles(
+		{ maxSessions: state.settings.maxSessions, scrollback: state.settings.scrollback },
+		(scopeId, bundle) => {
+			bundle.monitors.setParked(state.parked);
+			bundle.monitors.setRunawayGuard(state.settings.monitorRunaway);
+			return sinks(scopeId);
+		},
+	);
+}
+
+/** One execution scope's tool context: its tools reach only that scope's bundle, and its sessions start in the scope root. */
+export function buildScopeToolContext(
+	state: ToolContextState,
+	scopes: ScopedTerminalBundles,
+	scope: ExecutionScope,
+): TerminalToolContext {
+	return toolContextOver(state, {
+		require: () => scopes.forScope(scope.id),
+		current: () => scopes.peek(scope.id),
+		cwd: () => (scope.root === "" ? (state.ctx?.cwd ?? process.cwd()) : scope.root),
+		sessionKey: () => scope.id,
+	});
+}
+
+function toolContextOver(state: ToolContextState, route: BundleRoute): TerminalToolContext {
 	return {
 		get manager() {
-			return requireBundle().manager;
+			return route.require().manager;
 		},
 		get cwd() {
-			return state.ctx?.cwd ?? process.cwd();
+			return route.cwd();
 		},
 		get shellPath() {
 			return state.shellPath;
@@ -173,29 +233,26 @@ export function buildToolContext(pi: ExtensionAPI, state: TerminalExtensionState
 			return state.settings.maxDurableMonitors;
 		},
 		get monitorRegistry() {
-			return requireBundle().monitors;
+			return route.require().monitors;
 		},
 		getEnv: () => getShellEnv(),
 		getSessionContext: () => state.ctx,
 		// Exit listeners registered before a reload reach the post-reload owner through the
 		// shared bundle, so this must dispatch via the bundle, never the instance notifier.
 		onBackgroundStart: (id: string, description: string, startedAtMs: number, command?: string) => {
-			state.bundle?.notifyBackgroundStart(id, description, startedAtMs);
-			const runtime = state.bundle?.manager.get(id);
+			const bundle = route.current();
+			bundle?.notifyBackgroundStart(id, description, startedAtMs);
+			const runtime = bundle?.manager.get(id);
 			if (runtime) {
-				const key = withTerminalContext(
-					() => sessionKeyOf(state.ctx),
-					() => {},
-				);
-				tapBackgroundSession(key, id, runtime, {
+				tapBackgroundSession(route.sessionKey(), id, runtime, {
 					command: command ?? description,
 					description,
 				});
 			}
 		},
-		onSessionInput: (id: string) => untapBackgroundSession(state.bundle?.manager.get(id)),
+		onSessionInput: (id: string) => untapBackgroundSession(route.current()?.manager.get(id)),
 		onBackgroundExit: (id: string, runtime: TerminalExitView) => {
-			state.bundle?.notifyBackgroundExit(id, runtime);
+			route.current()?.notifyBackgroundExit(id, runtime);
 		},
 		onMonitorRearmed: (id: string) => state.monitorNotifier?.rearm(id),
 		onMonitorsResumed: (ids: readonly string[]) => state.monitorNotifier?.resume(ids),
