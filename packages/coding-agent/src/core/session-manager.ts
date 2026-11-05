@@ -1200,6 +1200,8 @@ export class SessionManager {
 	private readonly writeFence = new SessionWriteFence();
 	// S20b: set by bindDurableStore; every write then commits to the store before its JSONL projection.
 	private durable: DurableSessionBinding | undefined;
+	private bindPending = false;
+	private bindRaced = false;
 	private readonly projectionWarningListeners = new Set<(warning: ProjectionWarning) => void>();
 	private flushed: boolean = false;
 	private headerWrite: Promise<void> | undefined;
@@ -1655,6 +1657,7 @@ export class SessionManager {
 		this.writeFence.assertOwned(this.sessionFile);
 		reserveSessionWrite(this.sessionFile);
 		const durable = this.durable;
+		if (this.bindPending) this.bindRaced = true;
 		if (durable) {
 			durable.commitRewrite(this._headerLine(), this._storedEntries(this.fileEntries));
 			if (durable.projectionStale()) {
@@ -1808,6 +1811,7 @@ export class SessionManager {
 		if (!this.persist || !this.sessionFile || this.flushed) return this.headerWrite ?? this.transcriptFile.ready;
 		const sessionFile = this.sessionFile;
 		const durable = this.durable;
+		if (this.bindPending) this.bindRaced = true;
 		if (durable && this.headerWrite === undefined) {
 			try {
 				durable.commitRewrite(this._headerLine(), this._storedEntries(this.fileEntries));
@@ -1947,6 +1951,7 @@ export class SessionManager {
 		// S20b: while bound, the store takes each entry first (a refusal throws here, nothing taken); today's file write
 		// below is then its projection, and a failure there is a projection warning, never the caller's error.
 		const durable = this.durable;
+		if (this.bindPending) this.bindRaced = true;
 
 		if (this.flushed) {
 			// Bound: the store takes the entry before any file work; a refusal throws here and nothing was taken.
@@ -2052,16 +2057,43 @@ export class SessionManager {
 		if (!this.persist || sessionFile === undefined) {
 			throw new Error("only a persisted session with a file path can be bound to the durable store");
 		}
-		const { session, reprojected } = await DurableSessionBinding.open(
-			binding,
-			sessionFile,
-			this.sessionId,
-			this._headerLine(),
-			(warning) => {
-				for (const listener of this.projectionWarningListeners) listener(warning);
-			},
-		);
-		if (reprojected) this.reloadFromDisk();
+		this.bindPending = true;
+		this.bindRaced = false;
+		let opened: Awaited<ReturnType<typeof DurableSessionBinding.open>>;
+		try {
+			opened = await DurableSessionBinding.open(
+				binding,
+				sessionFile,
+				this.sessionId,
+				this._headerLine(),
+				(warning) => {
+					for (const listener of this.projectionWarningListeners) listener(warning);
+				},
+				{
+					beforeWrite: (path) => {
+						this.writeFence.assertOwned(path);
+						reserveSessionWrite(path);
+					},
+					afterReplace: (_path, identity) => {
+						if (this.capturesTranscriptBase) this._captureTranscriptBase(Promise.resolve(identity), this.fileEntries);
+					},
+				},
+			);
+		} finally {
+			this.bindPending = false;
+		}
+		if (this.sessionFile !== sessionFile) {
+			throw new Error(`the session moved to another file while it was being bound: ${sessionFile} was not bound`);
+		}
+		const { session, reprojected } = opened;
+		// Writes that landed while the bind was pending went to the file unbound: the store takes the session as this
+		// manager holds it, and a file the bind reprojected from the older store image is reprojected again from it.
+		if (this.bindRaced) {
+			session.commitRewrite(this._headerLine(), this._storedEntries(this.fileEntries));
+			if (reprojected) session.markProjectionStale(sessionFile);
+		} else if (reprojected) {
+			this.reloadFromDisk();
+		}
 		this.durable = session;
 	}
 
