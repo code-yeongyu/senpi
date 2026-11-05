@@ -15,7 +15,9 @@
 			"@earendil-works/pi-tui": ["../tui/dist/index.d.ts"],
 			"@earendil-works/pi-tui/*": ["../tui/dist/*.d.ts", "../tui/dist/components/*.d.ts"],
 			"@earendil-works/pi-pty": ["../pty/dist/index.d.ts"],
-			"@earendil-works/pi-pty/*": ["../pty/dist/*.d.ts"]
+			"@earendil-works/pi-pty/*": ["../pty/dist/*.d.ts"],
+			"@code-yeongyu/senpi-machine-ops": ["../machine-ops/dist/src/index.d.ts"],
+			"@code-yeongyu/senpi-machine-ops/in-process-holder": ["../machine-ops/dist/src/process/in-process-holder.d.ts"]
 		},
 		"rootDir": "./src"
 	},

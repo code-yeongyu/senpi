@@ -1,0 +1,22 @@
+{
+	"contractIds": [
+		"T7",
+		"RULING-73"
+	],
+	"flag": true,
+	"id": "partial-pair",
+	"request": {
+		"id": "h",
+		"type": "set_client_info",
+		"capabilities": [
+			"compact_message_updates_v1"
+		]
+	},
+	"expectedAck": {
+		"id": "h",
+		"type": "response",
+		"command": "set_client_info",
+		"success": false,
+		"error": "compact_pair_required"
+	}
+}

@@ -1,16 +1,51 @@
-// Shared JSON-lines RPC client over a spawned `--mode rpc` child.
+// Shared JSON-lines RPC client over a spawned `--mode rpc` child, or over a running host's socket.
 //
 // Lives in lib/ so scenario scripts can drive RPC without importing rpc-drive.mjs,
 // whose module body dispatches on argv the moment it is imported.
-import { spawnCli } from "./common.mjs";
+import { spawn } from "node:child_process";
+import { join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { repoRoot, resolveBun, spawnCli, track } from "./common.mjs";
+
+const BRIDGE_FLAG = "--attach-bridge";
 
 /**
- * Minimal JSON-lines RPC client over a spawned `--mode rpc` child.
+ * Start a Bun child that connects to the host socket through the shipped transport
+ * (rpc-client-socket.ts, including its authentication) and pipes JSON lines between its
+ * stdio and the socket, so RpcClient speaks to an attached host exactly as to a spawned one.
+ */
+function spawnAttachBridge(socketPath, { env, cwd }) {
+	const child = spawn(resolveBun().command, [fileURLToPath(import.meta.url), BRIDGE_FLAG, socketPath], {
+		cwd: cwd || repoRoot(),
+		env: env || process.env,
+		stdio: ["pipe", "pipe", "pipe"],
+	});
+	track(child);
+	return child;
+}
+
+async function runAttachBridge(socketPath) {
+	// Bridge mode runs only under Bun, which loads the TypeScript transport directly; Node never reaches this import.
+	const transport = pathToFileURL(join(repoRoot(), "packages", "coding-agent", "src", "modes", "rpc", "rpc-client-socket.ts"));
+	const { connectRpcClientSocket } = await import(transport.href);
+	const socket = await connectRpcClientSocket(socketPath, {});
+	process.stdin.pipe(socket);
+	socket.pipe(process.stdout);
+	process.stdin.on("end", () => socket.end());
+	socket.on("close", () => process.exit(0));
+}
+
+/**
+ * Minimal JSON-lines RPC client. By default it spawns a `--mode rpc` CLI child whose session
+ * is persisted under the env's session dir; with `attach` it drives the host listening on that socket.
  * Resolves send() promises by matching the response `id`; buffers events.
  */
 export class RpcClient {
-	constructor({ env, cwd, extraArgs = [] } = {}) {
-		this.child = spawnCli(["--mode", "rpc", "--no-session", "--no-context-files", ...extraArgs], { env, cwd });
+	constructor({ env, cwd, extraArgs = [], attach } = {}) {
+		this.child =
+			attach === undefined
+				? spawnCli(["--mode", "rpc", "--no-context-files", ...extraArgs], { env, cwd })
+				: spawnAttachBridge(attach, { env, cwd });
 		this.pending = new Map();
 		this.events = [];
 		this.eventWaiters = [];
@@ -21,6 +56,13 @@ export class RpcClient {
 		this.stderr = "";
 		this.child.stderr.on("data", (d) => {
 			this.stderr += d.toString();
+		});
+		// A child that exits (or a bridge that cannot connect) fails every pending request at once.
+		this.child.on("close", (code, signal) => {
+			for (const [id, waiter] of this.pending) {
+				this.pending.delete(id);
+				waiter.reject(new Error(`RPC child exited (${code ?? signal}) (stderr: ${this.stderr.slice(-400)})`));
+			}
 		});
 	}
 
@@ -70,6 +112,10 @@ export class RpcClient {
 					clearTimeout(timer);
 					resolve(m);
 				},
+				reject: (error) => {
+					clearTimeout(timer);
+					reject(error);
+				},
 			});
 			this.child.stdin.write(`${JSON.stringify(payload)}\n`);
 		});
@@ -98,4 +144,11 @@ export class RpcClient {
 			this.child.stdin.end();
 		} catch {}
 	}
+}
+
+if (process.argv[2] === BRIDGE_FLAG && process.argv[1] === fileURLToPath(import.meta.url)) {
+	runAttachBridge(process.argv[3]).catch((error) => {
+		process.stderr.write(`attach bridge: ${error instanceof Error ? error.message : String(error)}\n`);
+		process.exit(1);
+	});
 }

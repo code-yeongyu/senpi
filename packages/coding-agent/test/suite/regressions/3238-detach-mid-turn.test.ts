@@ -76,7 +76,9 @@ async function hostWithRunningTurn() {
 	const as = (connection: string, command: Parameters<SessionCommandRouter["handle"]>[0]) =>
 		writer.withConnection(connection, () => router.handle(command)) as Promise<RpcResponse | undefined>;
 	const settle = () => {
+		// The engine's order: the run settles, its settle-time handlers finish, then the session goes idle (omo#11419).
 		for (const listener of [...listeners]) listener({ type: "agent_settled" });
+		for (const listener of [...listeners]) listener({ type: "agent_idle" });
 	};
 	const nextDispose = () => new Promise<void>((resolve) => disposeWaiters.push(resolve));
 	return { registry, path, dir, as, settle, nextDispose };

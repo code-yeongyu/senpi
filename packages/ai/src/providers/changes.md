@@ -1,3 +1,57 @@
+## 2026-10-31 - Fall back to env when stored google-vertex location is empty (senpi#5135)
+
+### What changed
+
+- `packages/ai/src/providers/google-vertex.ts`: use `||` instead of `??` when reading `credential?.env?.GOOGLE_CLOUD_LOCATION`, `GOOGLE_CLOUD_PROJECT`, and `GOOGLE_APPLICATION_CREDENTIALS` so an empty stored string falls back to ambient environment variables.
+
+### Why
+
+- senpi#2961: an empty stored location or project in user settings blocked env fallback, causing Vertex authentication to fail.
+
+### Why an extension could not handle it
+
+- Vertex provider authentication resolution is built into the core AI provider factory.
+
+### Expected merge conflict zones
+
+- LOW: `vertexAuth.resolve` in `packages/ai/src/providers/google-vertex.ts`.
+
+## 2026-10-30 - ChatGPT Subscription reports the signed-in account (senpi#5009)
+
+### What changed
+
+- `packages/ai/src/providers/chatgpt-subscription.ts`: the provider's lazy OAuth declares `accountIdentity` from the access token.
+
+### Why
+
+- oh-my-openagent#9633: login dedupe needs the identity without loading the Node-only flow module.
+
+### Why an extension could not handle it
+
+- The builtin provider definition owns its OAuth surface.
+
+### Expected merge conflict zones
+
+- LOW: the `lazyOAuth({...})` call in `chatgptSubscriptionProvider`.
+
+## 2026-10-27 - The Anthropic provider comment names the CLI sign-in (senpi#4436, S7)
+
+### What changed
+
+- `packages/ai/src/providers/anthropic.ts`: the comment on the absent subscription OAuth says the `anthropic-subscription` lane signs in through the bundled Claude Code CLI, not a shared OAuth flow.
+
+### Why
+
+- senpi#4436 (R7): the PKCE flow the comment pointed at is removed.
+
+### Why an extension could not handle it
+
+- Comment-only change in the builtin provider factory.
+
+### Expected merge conflict zones
+
+- LOW: the `auth` comment in `anthropicProvider`.
+
 ## 2026-10-26 - The faux provider captures block seeds at emission (senpi#4285, part of #4272)
 
 ### What changed

@@ -11,7 +11,10 @@
  */
 import { dirname } from "node:path";
 import { trackTempDir } from "../../../scripts/vitest-temp.ts";
+import { installHostScratchRemovalGuard } from "./support/host-scratch-removal-guard.ts";
 import { resolveQuarantineAgentDir, scrubAmbientAgentDirEnv, scrubHostLifecycleEnv } from "./support/quarantine.ts";
+
+installHostScratchRemovalGuard();
 
 // Run from inside a host generation (the normal agent case), the suite would otherwise inherit that
 // host's lifecycle and hand it to every host it spawns.

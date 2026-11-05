@@ -77,7 +77,7 @@ describe.skipIf(!bunWebViewAvailable)("Bun.WebView from an eval cell", { timeout
 		});
 	});
 
-	it("serves the default backend: native WebKit in the worker on macOS, the main-thread Chrome elsewhere", async () => {
+	it("serves the default backend from the main-thread service on every platform", async () => {
 		const value = await cell(
 			[
 				`await using view = new Bun.WebView({ width: 320, height: 240 });`,
@@ -88,7 +88,7 @@ describe.skipIf(!bunWebViewAvailable)("Bun.WebView from an eval cell", { timeout
 		);
 		expect(value).toEqual({
 			greeting: "hello from the fixture",
-			proxied: process.platform !== "darwin",
+			proxied: true,
 			isWebView: true,
 		});
 	});
@@ -107,5 +107,70 @@ describe.skipIf(!bunWebViewAvailable)("Bun.WebView from an eval cell", { timeout
 			].join("\n"),
 		);
 		expect(value).toEqual({ logged: [["log", "from the page", 7]], answer: 42 });
+	});
+
+	it.each(["default", "chrome"])(
+		"walks the %s-backend view's history with goBack() and goForward()",
+		async (backend) => {
+			// WebKit acknowledges history commands before navigation finishes, while Chrome emits
+			// onNavigated at frame commit, before its command promise clears the navigation slot.
+			// Wait for both signals so neither backend starts the next command too early.
+			// Data URLs force document loads: Chrome's HTTP back-forward cache can restore without
+			// the load event Bun uses to settle its native history promise.
+			const firstUrl = `data:text/html,${encodeURIComponent("<title>first</title>")}`;
+			const secondUrl = `data:text/html,${encodeURIComponent("<title>second</title>")}`;
+			const value = await cell(
+				[
+					`await using view = new Bun.WebView({ width: 320, height: 240, ${backend === "chrome" ? 'backend: "chrome"' : ""} });`,
+					`await view.navigate(${JSON.stringify(firstUrl)});`,
+					`await view.navigate(${JSON.stringify(secondUrl)});`,
+					`const settled = async (move) => {`,
+					`  const navigated = new Promise((resolve, reject) => { view.onNavigated = resolve; view.onNavigationFailed = reject; });`,
+					`  const [url] = await Promise.all([navigated, move()]);`,
+					`  return url;`,
+					`};`,
+					`const back = await settled(() => view.goBack());`,
+					`const forward = await settled(() => view.goForward());`,
+					`return { back, forward };`,
+				].join("\n"),
+			);
+			expect(value).toEqual({ back: firstUrl, forward: secondUrl });
+		},
+	);
+
+	// senpi#4794: Bun's WebKit host client is bound to the first thread that spawns it, so a WebKit view
+	// built in a kernel worker broke every view after that worker exited and corrupted the heap once a
+	// second worker used one.
+	describe.skipIf(process.platform !== "darwin")("the macOS default (WebKit) backend", () => {
+		const openDefaultView = () =>
+			[
+				`const view = new Bun.WebView({ width: 320, height: 240 });`,
+				`await view.navigate(${JSON.stringify(fixtureUrl())});`,
+				`const greeting = await view.evaluate("document.getElementById('greeting').textContent");`,
+				`view.close();`,
+				`return greeting;`,
+			].join("\n");
+
+		it("serves a fresh view after the kernel that opened the first one resets", async () => {
+			const kernel = openKernel();
+			const run = async () =>
+				parseJavaScriptResult((await runJavaScriptCell(kernel, openDefaultView(), CELL_TIMEOUT_MS)).result);
+			expect(await run()).toBe("hello from the fixture");
+			await kernel.reset();
+			expect(await run()).toBe("hello from the fixture");
+		});
+
+		it("drives views from two kernels at once", async () => {
+			const first = openKernel();
+			const second = openKernel();
+			const run = async (kernel: JavaScriptKernel) =>
+				parseJavaScriptResult((await runJavaScriptCell(kernel, openDefaultView(), CELL_TIMEOUT_MS)).result);
+			for (let round = 0; round < 3; round++) {
+				expect(await Promise.all([run(first), run(second)])).toEqual([
+					"hello from the fixture",
+					"hello from the fixture",
+				]);
+			}
+		});
 	});
 });

@@ -1,14 +1,18 @@
-import type {
-	Agent,
-	AgentEvent,
-	AgentTool,
-	AgentToolCall,
-	AgentToolResult,
-	BeforeToolCallResult,
+import {
+	type Agent,
+	type AgentEvent,
+	type AgentTool,
+	type AgentToolCall,
+	type AgentToolResult,
+	BatchStoreMissingError,
+	type BeforeToolCallResult,
 } from "@earendil-works/pi-agent-core";
 import { createCursorExecBridge } from "./cursor-exec-bridge.ts";
 
-type CursorBridgeAgent = Pick<Agent, "emitExternalEvent" | "signal">;
+type CursorBridgeAgent = Pick<
+	Agent,
+	"emitExternalEvent" | "signal" | "batchStoreFactory" | "executionScope" | "getExecutionScope" | "onExecutionPipeline"
+>;
 
 export interface CursorExecBridgeSession {
 	getRegisteredTool(name: string): AgentTool | undefined;
@@ -61,5 +65,15 @@ export function createSessionCursorExecBridge(
 			if (runSignal === undefined || runSignal.aborted) return undefined;
 			return runSignal === getAgent().signal ? runSignal : undefined;
 		},
+		openBatchStore: () => {
+			const open = getAgent().batchStoreFactory;
+			if (open === undefined) throw new BatchStoreMissingError();
+			return open();
+		},
+		getExecutionScope: () => {
+			const agent = getAgent();
+			return agent.getExecutionScope?.() ?? agent.executionScope;
+		},
+		recordWitness: (witness) => getAgent().onExecutionPipeline?.(witness),
 	});
 }

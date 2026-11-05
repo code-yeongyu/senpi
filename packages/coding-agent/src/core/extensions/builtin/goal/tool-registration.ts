@@ -105,6 +105,9 @@ export function registerGoalTools(pi: ExtensionAPI, deps: GoalToolRegistrationDe
 		name: "get_goal",
 		label: "Get Goal",
 		description: "Get the current goal for this thread, including status, token and elapsed-time usage.",
+		exposure: "search",
+		allowLazyActivation: true,
+		searchKeywords: ["goal status", "goal usage", "elapsed time", "token usage"],
 		parameters: Type.Object({}, { additionalProperties: false }),
 		async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
 			const goal = await deps.accountCurrentAgentTurn(ctx, "active");

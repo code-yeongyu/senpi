@@ -12,7 +12,7 @@ import { chmod } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS, serializeJsonLine } from "../rpc/jsonl.ts";
 import { rpcCommandShapeError } from "../rpc/rpc-input-validation.ts";
-import type { SessionEventWriterConnection } from "../rpc/session-event-fanout.ts";
+import type { SessionEventWriterConnection } from "../rpc/session-event-connection.ts";
 import { socketSink } from "../rpc/socket-sink.ts";
 import { authenticateSocket, resolveSocketTransportAddress } from "../rpc/socket-transport.ts";
 

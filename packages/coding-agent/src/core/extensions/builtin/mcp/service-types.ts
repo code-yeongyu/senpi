@@ -80,6 +80,8 @@ export type McpWireStatusSnapshot = {
 
 export type McpSessionContext = Pick<ExtensionContext, "cwd" | "isProjectTrusted"> & {
 	ui?: ExtensionUIContext;
+	/** False on a context whose host offers no UI: its `ui` never collects a form (print mode, headless hosts). */
+	hasUI?: boolean;
 	mode?: ExtensionContext["mode"];
 	/**
 	 * Session history access, present on the real ExtensionContext. Only
@@ -99,6 +101,8 @@ export type McpSessionContext = Pick<ExtensionContext, "cwd" | "isProjectTrusted
 		extensionPath: string;
 		registrationCwd: string;
 	}[];
+	/** Whether a loaded extension handles `mcp_servers_change` and connects the registered servers instead. */
+	extensionConnectsMcpServers?: () => boolean;
 };
 
 export interface McpSessionOptions {

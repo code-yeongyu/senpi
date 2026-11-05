@@ -1,0 +1,24 @@
+{
+  "code": 200,
+  "status": 20000,
+  "data": [
+    {
+      "title": "Documentation - TypeScript 4.9",
+      "url": "https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-9.html",
+      "description": "The satisfies operator validates that an expression matches a type without changing the resulting type of that expression.",
+      "content": null
+    },
+    {
+      "title": "TypeScript satisfies operator, explained",
+      "url": "https://example.org/typescript/satisfies-operator",
+      "description": "How satisfies differs from a type annotation and when to prefer it.",
+      "content": null
+    },
+    {
+      "title": "satisfies - TypeScript handbook notes",
+      "url": "https://notes.example.net/satisfies",
+      "description": null,
+      "content": "Fallback text carried when the answer is not requested with X-Respond-With: no-content."
+    }
+  ]
+}

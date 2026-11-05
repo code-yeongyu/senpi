@@ -1,3 +1,41 @@
+## 2026-11-03 - Scan only gateways whose API serves OpenAI Images (senpi#5674)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/imagegen/auth.ts`: the gateway scan skips a built-in provider unless its generated image catalog lists an `openai-images` model; providers declared in models.json are still scanned and an explicit `PI_IMAGE_GEN_PROVIDER` pin is honoured. `unsupportedImageGateways` lists the logged-in providers passed over and `setupReason` names them in the setup guidance.
+- `packages/coding-agent/src/core/extensions/builtin/imagegen/tool.ts`: a `missing_config` result names those providers in its message and in `details.unsupportedProviders`.
+- `packages/coding-agent/src/core/extensions/builtin/imagegen/params.ts`: `GenerateImageDetails.unsupportedProviders`.
+
+### Why
+
+- senpi#5674: a machine logged in to xAI sent every image request to xAI's chat API, which has no OpenAI Images endpoint and answered 400/415, a final status for a scanned gateway, so no request could succeed and the user saw a raw provider error.
+
+### Why an extension could not handle it
+
+- Gateway selection is this builtin's own credential resolution.
+
+### Expected merge conflict zones
+
+- LOW: the scanned-provider filter in `imageGenCandidates` and the `missing_config` branch in `tool.ts`.
+
+## 2026-11-01 - System prompt diet, shared modules (senpi#5335)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/imagegen/index.ts`: `IMAGE_GEN_SECTION` and its `before_agent_start` handler are removed; the gpt-image-gen skill catalog line already carries the trigger.
+
+### Why
+
+- senpi#5335: the section's first sentence restated the skill trigger and its second named no tool.
+
+### Why an extension could not handle it
+
+- The section was this extension's own prompt contribution.
+
+### Expected merge conflict zones
+
+- LOW: the removed handler.
+
 ## 2026-10-16 - Resolve the openai provider like model calls; never strand on a gateway without images (omo#10285)
 
 ### What changed

@@ -31,7 +31,9 @@ export function createBashInputTool(ctx: TerminalToolContext) {
 		label: "bash_input",
 		description:
 			"Write stdin or named keys (ctrl+c, enter, up, ...) to a live background bash session: e.g. drive a REPL or send SIGINT. This executes arbitrary shell input and is permission-gated like bash.",
-		promptSnippet: "Send stdin/keys to a live background bash session (REPL steering, ctrl+c, etc.)",
+		exposure: "search" as const,
+		allowLazyActivation: true,
+		searchKeywords: ["stdin", "keys", "ctrl+c", "interrupt", "repl", "send input"],
 		parameters: bashInputSchema,
 		async execute(_toolCallId: string, input: BashInputInput, _signal?: AbortSignal): Promise<TerminalToolResult> {
 			const sessionId = resolveTerminalId(ctx.manager, input.bash_id);
@@ -58,6 +60,7 @@ export function createBashInputTool(ctx: TerminalToolContext) {
 			}
 
 			if (notes.length === 0) return errorResult("Nothing to send: provide `input` and/or `keys`.");
+			ctx.onSessionInput?.(sessionId);
 			return textResult(`Sent to ${input.bash_id}: ${notes.join("; ")}.`);
 		},
 	};

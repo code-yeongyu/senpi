@@ -36,7 +36,9 @@ export async function measureSurfaces(target: string): Promise<Pick<GateReport, 
 						});
 						const content = [parts.description, parts.promptSnippet, ...parts.promptGuidelines].join("\n");
 						prompts[`${style}/${spawns}/${monitor}/${set}/${runtime}${hostLine === undefined ? "" : "/host"}`] = {
-							...parts,
+							// The default (diet) surface; `fullPromptGuidelines` renders only for full shared-section presets (senpi#5665).
+							description: parts.description,
+							promptSnippet: parts.promptSnippet,
 							promptGuidelines: [...parts.promptGuidelines],
 							bytes: Buffer.byteLength(content),
 							tokens: content.length / 4,

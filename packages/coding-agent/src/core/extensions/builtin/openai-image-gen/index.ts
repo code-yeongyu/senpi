@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
-import { resolveImageGenAuth } from "../imagegen/auth.ts";
+import { imageGenAvailability } from "../imagegen/auth.ts";
 import { imageGenRegistryOverride, setNativeBypass } from "../imagegen/state.ts";
 import { externalizeNativeImages } from "./externalize.ts";
 import {
@@ -39,11 +39,15 @@ async function resolveState(model: NativeImageGenTarget, ctx: ExtensionContext):
 		return { kind: "native", modelKey, source: model.baseUrl };
 	}
 
-	const auth = await resolveImageGenAuth({ modelRegistry: imageGenRegistryOverride() ?? ctx.modelRegistry });
-	if (auth.kind !== "none") {
-		return { kind: "client", modelKey, source: `${auth.provenance}:${auth.providerId ?? auth.kind}` };
+	const availability = await imageGenAvailability({ modelRegistry: imageGenRegistryOverride() ?? ctx.modelRegistry });
+	if (availability.kind !== "none") {
+		return {
+			kind: "client",
+			modelKey,
+			source: `${availability.provenance}:${availability.providerId ?? availability.kind}`,
+		};
 	}
-	return { kind: "unavailable", modelKey, reason: auth.reason };
+	return { kind: "unavailable", modelKey, reason: availability.reason };
 }
 
 export default function openaiImageGenExtension(pi: ExtensionAPI): void {

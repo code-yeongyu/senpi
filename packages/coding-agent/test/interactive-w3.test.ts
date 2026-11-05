@@ -9,6 +9,7 @@ import { RpcClient } from "../src/modes/rpc/rpc-client.ts";
 import { teardownChildProcessesAndRoots } from "./helpers/process-teardown.ts";
 import { startFakeModelServer } from "./helpers/rpc-fake-model.ts";
 import { hermeticProviderEnv, MOCK_MODEL, MOCK_PROVIDER, writeRpcModelsJson } from "./helpers/rpc-hermetic.ts";
+import { hostSpawnEnv } from "./helpers/rpc-host-spawn-env.ts";
 
 const roots: string[] = [];
 const children: ChildProcessWithoutNullStreams[] = [];
@@ -46,7 +47,7 @@ async function fixture(label: string) {
 		{
 			cwd,
 			env: {
-				...process.env,
+				...hostSpawnEnv(),
 				...hermeticProviderEnv(),
 				PI_OFFLINE: "1",
 				PI_TELEMETRY: "0",

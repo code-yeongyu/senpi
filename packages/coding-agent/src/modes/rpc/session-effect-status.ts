@@ -15,6 +15,7 @@
  */
 import type { AgentSession } from "../../core/agent-session.ts";
 import type { EffectStatus } from "./effect-record.ts";
+import type { SubscriptionOptions } from "./session-status-subscriptions.ts";
 
 /** One `effect_status` record as it travels on the wire (docs/rpc.md, "Session status stream"). */
 export interface SessionEffectStatusRecord {
@@ -32,7 +33,7 @@ export interface SessionEffectStatusRecord {
 }
 
 export function effectStatusRecord(
-	subscription: { readonly id: string; readonly seq: number },
+	subscription: { readonly id: string; readonly seq: number; readonly options?: SubscriptionOptions },
 	sessionId: string,
 	status: EffectStatus,
 	at: string,
@@ -49,6 +50,9 @@ export function effectStatusRecord(
 		...(status.outcome === undefined ? {} : { outcome: status.outcome }),
 		...(status.by === undefined ? {} : { by: status.by }),
 		at,
+		...(subscription.options?.admissionId !== undefined
+			? { admissionId: subscription.options.admissionId, generation: 0 }
+			: {}),
 	};
 }
 

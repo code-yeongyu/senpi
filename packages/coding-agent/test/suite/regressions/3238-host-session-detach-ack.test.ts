@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -122,7 +123,7 @@ const hosts: FakeHost[] = [];
 afterEach(async () => {
 	vi.useRealTimers();
 	for (const host of hosts.splice(0)) await host.stop();
-	for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+	for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true });
 });
 
 async function fakeHost(options: FakeHostOptions): Promise<{ host: FakeHost; agentDir: string }> {

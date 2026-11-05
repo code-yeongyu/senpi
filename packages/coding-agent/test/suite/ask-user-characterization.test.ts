@@ -274,6 +274,7 @@ describe("ask-user characterization", () => {
 				toolCallId: "characterization",
 				waitForAnswer: false,
 				questions: request().questions,
+				raisedBy: "agent",
 				timeout: QUESTION_TIMEOUT_MS,
 				askedAtMs: NOW,
 				deadlineAtMs: NOW + QUESTION_TIMEOUT_MS,

@@ -73,6 +73,7 @@ function createContext(
 	});
 
 	return {
+		cwd: process.cwd(),
 		model,
 		modelRegistry,
 		sessionManager,

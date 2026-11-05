@@ -1,3 +1,40 @@
+## 2026-10-31 - Weight CJK text in compaction cut-point budgets (senpi#5203, fixes #4617)
+
+### What changed
+
+- `packages/coding-agent/src/core/compaction/compaction.ts`: the cut-point keep-budget estimate weights CJK runs instead of counting chars/4, so `keepRecentTokens` keeps about the configured tokens for CJK-heavy sessions.
+
+### Why
+
+- `packages/coding-agent/src/core/compaction/compaction.ts`: with chars/4, CJK sessions kept ~3x the configured tokens (#4617).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/compaction/compaction.ts`: the cut point is chosen inside the compaction core; no extension hook sees the budget accumulation.
+
+### Expected merge conflict zones
+
+- LOW: the token-estimate helpers and the cut-point loop in `compaction.ts`.
+
+## 2026-10-30 - Check compaction values without redundant assertions (senpi#4973)
+
+### What changed
+
+- `packages/coding-agent/src/core/compaction/utils.ts`: use the existing tool-argument record type for file-operation tracking and conversation serialization.
+- `packages/coding-agent/src/core/compaction/compaction-execution.ts`: check summary details with `satisfies CompactionDetails`.
+
+### Why
+
+- These values already have the required shape. The compiler now checks them without redundant assertions, and the emitted JavaScript is unchanged.
+
+### Why an extension could not handle it
+
+- Extensions cannot change the compile-time checks inside compaction's built-in implementation.
+
+### Expected merge conflict zones
+
+- LOW: the file-operation argument, tool-call serialization alias, and returned summary details.
+
 ## 2026-10-22 - Preserve message cut classification across bookkeeping (senpi#3864)
 
 ### What changed

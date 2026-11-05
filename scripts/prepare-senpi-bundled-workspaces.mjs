@@ -6,21 +6,36 @@ import { stagePublishManifest } from "./prepare-senpi-publish-manifest.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 
-// The client/protocol workspaces are never published, so their built output is vendored
-// under `vendor/` inside the senpi tarball, outside package-manager `node_modules`, and
-// every emitted import of them is rewritten to a relative path.
+// The client/protocol/machine-ops workspaces are never published, so their built output is
+// vendored under `vendor/` inside the senpi tarball, outside package-manager `node_modules`, and
+// every emitted import of them is rewritten to a relative path. `entries` maps each import
+// specifier suffix senpi's emitted code uses to the vendored file it resolves to.
 const vendoredTypeWorkspaces = [
 	{
+		manifest: "packages/client/package.json",
 		source: "packages/client/dist",
 		packageName: "@earendil-works/pi-client",
 		target: "pi-client",
+		entries: { "": "index.js" },
 		requiredFiles: ["index.js", "index.d.ts"],
 	},
 	{
+		manifest: "packages/protocol/package.json",
 		source: "packages/protocol/dist",
 		packageName: "@earendil-works/pi-protocol",
 		target: "pi-protocol",
+		entries: { "": "index.js" },
 		requiredFiles: ["index.js", "index.d.ts"],
+	},
+	// senpi's tools import the root and `/in-process-holder` at runtime (senpi#5784); the
+	// `/conformance` export is test support for other executors and is not vendored.
+	{
+		manifest: "packages/machine-ops/package.json",
+		source: "packages/machine-ops/dist/src",
+		packageName: "@code-yeongyu/senpi-machine-ops",
+		target: "senpi-machine-ops",
+		entries: { "": "index.js", "/in-process-holder": "process/in-process-holder.js" },
+		requiredFiles: ["index.js", "index.d.ts", "process/in-process-holder.js", "process/in-process-holder.d.ts"],
 	},
 ];
 
@@ -68,7 +83,9 @@ function assertNoVendoredPackageSpecifiers(rootDirs) {
 			if (!path.endsWith(".js") && !path.endsWith(".d.ts")) continue;
 			const source = readFileSync(path, "utf8");
 			for (const workspace of vendoredTypeWorkspaces) {
-				if (source.includes(workspace.packageName)) {
+				// A quoted specifier (whole or subpath) is resolver-visible; a comment naming the package is not.
+				const name = workspace.packageName;
+				if ([`"${name}"`, `"${name}/`, `'${name}'`, `'${name}/`].some((quoted) => source.includes(quoted))) {
 					throw new Error(
 						`Vendored output ${path} still references resolver-visible package ${workspace.packageName}`,
 					);
@@ -89,7 +106,7 @@ function assertVendoredRuntimeDependencies(repoRoot) {
 	};
 	const vendoredPackageNames = new Set(vendoredTypeWorkspaces.map((workspace) => workspace.packageName));
 	for (const workspace of vendoredTypeWorkspaces) {
-		const manifest = JSON.parse(readFileSync(join(repoRoot, dirname(workspace.source), "package.json"), "utf8"));
+		const manifest = JSON.parse(readFileSync(join(repoRoot, workspace.manifest), "utf8"));
 		for (const dependencyName of Object.keys(manifest.dependencies ?? {})) {
 			if (vendoredPackageNames.has(dependencyName)) continue;
 			if (codingAgentRuntimeDependencies[dependencyName] === undefined) {
@@ -122,19 +139,17 @@ function copyVendoredTypeWorkspaces(repoRoot) {
 		cpSync(sourceRoot, targetRoot, { recursive: true, filter: (path) => !path.endsWith(".map") });
 	}
 
-	const clientRoot = join(vendorRoot, "pi-client");
-	const protocolRoot = join(vendorRoot, "pi-protocol");
-	rewritePackageSpecifier(clientRoot, "@earendil-works/pi-protocol", join(protocolRoot, "index.js"));
-	rewritePackageSpecifier(
+	const rewriteRoots = [
 		join(codingAgentDir, "dist"),
-		"@earendil-works/pi-client",
-		join(clientRoot, "index.js"),
-	);
-	rewritePackageSpecifier(
-		join(codingAgentDir, "dist"),
-		"@earendil-works/pi-protocol",
-		join(protocolRoot, "index.js"),
-	);
+		...vendoredTypeWorkspaces.map((workspace) => join(vendorRoot, workspace.target)),
+	];
+	for (const workspace of vendoredTypeWorkspaces) {
+		for (const [subpath, file] of Object.entries(workspace.entries)) {
+			for (const rewriteRoot of rewriteRoots) {
+				rewritePackageSpecifier(rewriteRoot, `${workspace.packageName}${subpath}`, join(vendorRoot, workspace.target, file));
+			}
+		}
+	}
 	assertNoVendoredPackageSpecifiers([join(codingAgentDir, "dist"), vendorRoot]);
 }
 

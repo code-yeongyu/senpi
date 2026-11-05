@@ -191,15 +191,20 @@ describe("ci.yml wiring", () => {
 describe("run-full-ci label workflow", () => {
 	const label = workflow("ci-full-label.yml");
 
-	it("reruns the CI and platform workflows in full when the label is added", () => {
-		assert.deepEqual(label.on.pull_request.types, ["labeled"]);
+	it("runs the CI and platform workflows in full when the label is added and on every later push of the labelled PR (senpi#4968)", () => {
+		assert.deepEqual(label.on.pull_request.types, ["labeled", "opened", "synchronize", "reopened"]);
 		const callers = Object.values(label.jobs);
 		assert.deepEqual(callers.map((job) => job.uses).sort(), [
 			"./.github/workflows/ci.yml",
 			"./.github/workflows/read-summary-binary-parity.yml",
 			"./.github/workflows/session-worker-compile.yml",
 		]);
-		for (const job of callers) assert.equal(job.if, `github.event.label.name == '${FULL_CI_LABEL}'`);
+		for (const job of callers) {
+			assert.equal(
+				job.if,
+				`contains(github.event.pull_request.labels.*.name, '${FULL_CI_LABEL}') && (github.event.action != 'labeled' || github.event.label.name == '${FULL_CI_LABEL}')`,
+			);
+		}
 	});
 });
 

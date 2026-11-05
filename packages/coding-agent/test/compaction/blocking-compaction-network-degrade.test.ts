@@ -1,5 +1,6 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { formatCompactionFailure } from "../../src/core/compaction-failure-text.ts";
 import { MAX_SUMMARIZATION_ATTEMPT_RETRIES } from "../../src/core/extensions/builtin/compaction/summarization-retry.ts";
 import {
 	connectionErrorResponse,
@@ -47,7 +48,7 @@ describe("blocking compaction network-failure degradation", () => {
 
 			// …and the single clean surface is compaction_end's errorMessage.
 			expect(harness.endCompaction).toHaveBeenCalledWith(
-				expect.objectContaining({ errorMessage: "Compaction failed: Connection error." }),
+				expect.objectContaining({ errorMessage: formatCompactionFailure("compaction", "Connection error.") }),
 			);
 		});
 	});

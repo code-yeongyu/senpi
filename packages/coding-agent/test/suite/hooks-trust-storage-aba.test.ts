@@ -9,6 +9,17 @@ const injectedRace = vi.hoisted(() => ({
 	lockPath: undefined as string | undefined,
 	phase: undefined as Int32Array<ArrayBufferLike> | undefined,
 	statePath: undefined as string | undefined,
+	// Blocks until the shared phase moves away from `from`, with no deadline. Each wait is
+	// conditioned on the value just read, so a notify that lands before the wait is never lost;
+	// the writer publishes phase -1 on any failure, so the reader never blocks forever.
+	waitForPhaseChange(phase: Int32Array<ArrayBufferLike>, from: number): number {
+		let current = Atomics.load(phase, 0);
+		while (current === from) {
+			Atomics.wait(phase, 0, from);
+			current = Atomics.load(phase, 0);
+		}
+		return current;
+	},
 }));
 
 vi.mock("node:fs", async (importOriginal) => {
@@ -31,8 +42,7 @@ vi.mock("node:fs", async (importOriginal) => {
 				expect(original.existsSync(lockPath)).toBe(false);
 				Atomics.store(phase, 0, 1);
 				Atomics.notify(phase, 0);
-				expect(Atomics.wait(phase, 0, 1, 5_000)).not.toBe("timed-out");
-				expect(Atomics.load(phase, 0)).toBe(2);
+				expect(injectedRace.waitForPhaseChange(phase, 1)).toBe(2);
 			}
 			return exists;
 		},
@@ -42,8 +52,7 @@ vi.mock("node:fs", async (importOriginal) => {
 			if (phase !== undefined && args[0] === injectedRace.statePath && Atomics.load(phase, 0) === 2) {
 				Atomics.store(phase, 0, 3);
 				Atomics.notify(phase, 0);
-				expect(Atomics.wait(phase, 0, 3, 5_000)).not.toBe("timed-out");
-				expect(Atomics.load(phase, 0)).toBe(4);
+				expect(injectedRace.waitForPhaseChange(phase, 3)).toBe(4);
 			}
 			return captured;
 		},
@@ -55,19 +64,16 @@ import { FileHookStateStorage } from "../../src/core/extensions/builtin/hooks/tr
 const createdDirs: string[] = [];
 const workers: Worker[] = [];
 
-function terminateWorker(worker: Worker): Promise<void> {
+function waitForWriterReady(worker: Worker): Promise<void> {
 	return new Promise((resolve, reject) => {
-		const timeout = setTimeout(() => reject(new Error("Timed out terminating the legacy hooks-state writer")), 5_000);
-		worker.terminate().then(
-			() => {
-				clearTimeout(timeout);
-				resolve();
-			},
-			(error: unknown) => {
-				clearTimeout(timeout);
-				reject(error);
-			},
-		);
+		worker.once("message", (message: unknown) => {
+			if (message === "ready") resolve();
+			else reject(new Error(`Unexpected message from the legacy hooks-state writer: ${String(message)}`));
+		});
+		worker.once("error", reject);
+		worker.once("exit", (code: number) => {
+			reject(new Error(`The legacy hooks-state writer exited with code ${code} before it was ready`));
+		});
 	});
 }
 
@@ -75,7 +81,7 @@ afterEach(async () => {
 	injectedRace.lockPath = undefined;
 	injectedRace.phase = undefined;
 	injectedRace.statePath = undefined;
-	await Promise.all(workers.splice(0).map(terminateWorker));
+	await Promise.all(workers.splice(0).map((worker) => worker.terminate()));
 	for (const dir of createdDirs.splice(0)) {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -118,6 +124,7 @@ describe("builtin hooks trust storage ABA recovery", () => {
 			},
 		});
 		workers.push(worker);
+		await waitForWriterReady(worker);
 		const storage = new FileHookStateStorage({ agentDir, cwd });
 
 		// When

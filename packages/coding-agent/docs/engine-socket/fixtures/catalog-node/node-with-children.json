@@ -1,0 +1,33 @@
+{
+	"caseId": "node-with-children",
+	"kind": "node",
+	"contractIds": [
+		"R4.B2",
+		"RULING-57",
+		"RULING-68a"
+	],
+	"description": "S09a's golden node: one component and one child of kind 'node' (its entry's length and digest name that child node's stored bytes).",
+	"input": {
+		"entries": [
+			{
+				"kind": "lifecycle",
+				"id": "lifecycle",
+				"length": 42,
+				"digest": "0000000000000000000000000000000000000000000000000000000000000000"
+			},
+			{
+				"kind": "node",
+				"id": "node-0000000000000001",
+				"length": 70000,
+				"digest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+			}
+		]
+	},
+	"expected": {
+		"text": "{\"format\":\"senpi-recovery-catalog\",\"version\":1,\"entries\":[{\"kind\":\"lifecycle\",\"id\":\"lifecycle\",\"length\":42,\"digest\":\"0000000000000000000000000000000000000000000000000000000000000000\"},{\"kind\":\"node\",\"id\":\"node-0000000000000001\",\"length\":70000,\"digest\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\"}]}",
+		"storedBytes": "ewAiAGYAbwByAG0AYQB0ACIAOgAiAHMAZQBuAHAAaQAtAHIAZQBjAG8AdgBlAHIAeQAtAGMAYQB0AGEAbABvAGcAIgAsACIAdgBlAHIAcwBpAG8AbgAiADoAMQAsACIAZQBuAHQAcgBpAGUAcwAiADoAWwB7ACIAawBpAG4AZAAiADoAIgBsAGkAZgBlAGMAeQBjAGwAZQAiACwAIgBpAGQAIgA6ACIAbABpAGYAZQBjAHkAYwBsAGUAIgAsACIAbABlAG4AZwB0AGgAIgA6ADQAMgAsACIAZABpAGcAZQBzAHQAIgA6ACIAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAiAH0ALAB7ACIAawBpAG4AZAAiADoAIgBuAG8AZABlACIALAAiAGkAZAAiADoAIgBuAG8AZABlAC0AMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMQAiACwAIgBsAGUAbgBnAHQAaAAiADoANwAwADAAMAAwACwAIgBkAGkAZwBlAHMAdAAiADoAIgBmAGYAZgBmAGYAZgBmAGYAZgBmAGYAZgBmAGYAZgBmAGYAZgBmAGYAZgBmAGYAZgBmAGYAZgBmAGYAZgBmAGYAZgBmAGYAZgBmAGYAZgBmAGYAZgBmAGYAZgBmAGYAZgBmAGYAZgBmAGYAZgBmAGYAZgBmAGYAZgBmAGYAZgBmACIAfQBdAH0A",
+		"length": 642,
+		"digest": "fa1de8cdae098d7eb81dfdda48b25efc90103c0411f11f69f8a2946fb050e794",
+		"rootDigest": "0bbeed18bd2b944f83b34f1f9ad9ba22aa628f874c81b9b8d5c33246655ceae7"
+	}
+}

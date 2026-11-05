@@ -41,6 +41,14 @@ export function legacyProviderIdsFor(canonicalId: string): string[] {
 }
 
 /**
+ * The id upstream pi still uses for `providerId`: the legacy spelling of a renamed provider (the
+ * remote model catalog serves `openai-codex`, not `chatgpt-subscription`), the id itself otherwise.
+ */
+export function upstreamProviderIdFor(providerId: string): string {
+	return legacyProviderIdsFor(providerId)[0] ?? providerId;
+}
+
+/**
  * Read `record` by provider id, trying the canonical key first and then every
  * legacy spelling that normalizes to it. Never throws and never rewrites.
  */

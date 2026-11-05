@@ -14,10 +14,20 @@ class Clock implements MrtrClock {
 	time = 1_000_000;
 	sequence = 0;
 	timers = new Map<number, { at: number; callback: () => void }>();
+	schedules = new Map<number, Array<() => void>>();
+	nextScheduled(ms: number): Promise<void> {
+		return new Promise((resolve) => {
+			const listeners = this.schedules.get(ms) ?? [];
+			listeners.push(resolve);
+			this.schedules.set(ms, listeners);
+		});
+	}
 	now = () => this.time;
 	schedule = (callback: () => void, ms: number) => {
 		const id = ++this.sequence;
 		this.timers.set(id, { at: this.time + ms, callback });
+		for (const listener of this.schedules.get(ms) ?? []) listener();
+		this.schedules.delete(ms);
 		return id as unknown as ReturnType<typeof setTimeout>;
 	};
 	cancel = (id: ReturnType<typeof setTimeout>) => {
@@ -44,8 +54,10 @@ class ScriptTransport implements Transport {
 	readonly cancellations: JSONRPCMessage[] = [];
 	received = Promise.withResolvers<void>();
 	readonly results: Array<Record<string, unknown> | undefined>;
-	constructor(results: Array<Record<string, unknown> | undefined>) {
+	readonly tasks: boolean;
+	constructor(results: Array<Record<string, unknown> | undefined>, tasks = false) {
 		this.results = results;
+		this.tasks = tasks;
 	}
 	async start() {}
 	async close() {
@@ -60,12 +72,15 @@ class ScriptTransport implements Transport {
 				result: {
 					protocolVersion: LATEST_PROTOCOL_VERSION,
 					serverInfo: { name: "test", version: "1" },
-					capabilities: { tools: {} },
+					capabilities: {
+						tools: {},
+						...(this.tasks ? { extensions: { "io.modelcontextprotocol/tasks": {} } } : {}),
+					},
 				},
 			});
 		}
 		if (message.method === "notifications/cancelled") this.cancellations.push(message);
-		if (message.method !== "tools/call") return;
+		if (message.method !== "tools/call" && !message.method.startsWith("tasks/")) return;
 		this.calls.push(message);
 		this.received.resolve();
 		const result = this.results[this.calls.length - 1];
@@ -91,9 +106,9 @@ export async function cleanupMrtrLifecycle() {
 	vi.restoreAllMocks();
 	vi.useRealTimers();
 }
-export async function fixture(results: Array<Record<string, unknown> | undefined>) {
+export async function fixture(results: Array<Record<string, unknown> | undefined>, tasks = false) {
 	vi.useFakeTimers();
-	const transport = new ScriptTransport(results);
+	const transport = new ScriptTransport(results, tasks);
 	const client = new Client({ name: "fixture", version: "1" });
 	await client.connect(transport);
 	clients.push(client);

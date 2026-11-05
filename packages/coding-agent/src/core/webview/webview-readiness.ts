@@ -56,7 +56,7 @@ export class WebViewNotReadyError extends Error {
 
 	constructor(launches: number, policy: WebViewReadinessPolicy) {
 		super(
-			`Chrome-backed WebView never became ready: phase cdp-target-attach (Chrome did not attach a CDP session to the new view within ${policy.attachBoundMs} ms) on ${launches} launch(es); each stalled Chrome was retired`,
+			`WebView never became ready: phase cdp-target-attach (the new view did not finish its first navigation within ${policy.attachBoundMs} ms) on ${launches} launch(es); each stalled launch was retired`,
 		);
 		this.name = "WebViewNotReadyError";
 	}

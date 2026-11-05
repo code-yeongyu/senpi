@@ -1,0 +1,486 @@
+{
+	"frames": [
+		{
+			"type": "extension_ui_request",
+			"sessionId": "rpc-1",
+			"eventLease": {
+				"kind": "event",
+				"id": "event:socket-1:1",
+				"admissionId": "golden-a",
+				"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+				"sequence": 1,
+				"componentRef": "record",
+				"length": 286,
+				"digest": "1bbcad29320f20847a515cc854063cda0ddaea20cdcff45eb6b5e0e9ee15fbd4"
+			},
+			"materializer": {
+				"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+				"sequence": 1,
+				"generation": 1,
+				"payload": {
+					"kind": "event",
+					"id": "event:socket-1:1",
+					"admissionId": "golden-a",
+					"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+					"sequence": 1,
+					"componentRef": "record",
+					"length": 286,
+					"digest": "1bbcad29320f20847a515cc854063cda0ddaea20cdcff45eb6b5e0e9ee15fbd4"
+				},
+				"controls": [
+					{
+						"kind": "seed",
+						"token": "socket-1:1",
+						"sequence": 0
+					}
+				]
+			},
+			"admissionId": "golden-a",
+			"generation": 1
+		},
+		{
+			"type": "extension_ui_request",
+			"sessionId": "rpc-1",
+			"eventLease": {
+				"kind": "event",
+				"id": "event:socket-1:2",
+				"admissionId": "golden-a",
+				"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+				"sequence": 2,
+				"componentRef": "record",
+				"length": 302,
+				"digest": "042896dc1966b8a6214e5383aba5b8b931cfa049d17aafa37eb8a77c859b95da"
+			},
+			"materializer": {
+				"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+				"sequence": 2,
+				"generation": 1,
+				"payload": {
+					"kind": "event",
+					"id": "event:socket-1:2",
+					"admissionId": "golden-a",
+					"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+					"sequence": 2,
+					"componentRef": "record",
+					"length": 302,
+					"digest": "042896dc1966b8a6214e5383aba5b8b931cfa049d17aafa37eb8a77c859b95da"
+				},
+				"controls": []
+			},
+			"admissionId": "golden-a",
+			"generation": 1
+		},
+		{
+			"type": "extension_ui_request",
+			"sessionId": "rpc-1",
+			"eventLease": {
+				"kind": "event",
+				"id": "event:socket-1:3",
+				"admissionId": "golden-a",
+				"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+				"sequence": 3,
+				"componentRef": "record",
+				"length": 302,
+				"digest": "dba0082ec68e72d47fa926dcc91fb9b00961ceb4342554a0c2aa567144a5a6d3"
+			},
+			"materializer": {
+				"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+				"sequence": 3,
+				"generation": 1,
+				"payload": {
+					"kind": "event",
+					"id": "event:socket-1:3",
+					"admissionId": "golden-a",
+					"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+					"sequence": 3,
+					"componentRef": "record",
+					"length": 302,
+					"digest": "dba0082ec68e72d47fa926dcc91fb9b00961ceb4342554a0c2aa567144a5a6d3"
+				},
+				"controls": []
+			},
+			"admissionId": "golden-a",
+			"generation": 1
+		},
+		{
+			"type": "extension_ui_request",
+			"sessionId": "rpc-1",
+			"eventLease": {
+				"kind": "event",
+				"id": "event:socket-1:4",
+				"admissionId": "golden-a",
+				"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+				"sequence": 4,
+				"componentRef": "record",
+				"length": 296,
+				"digest": "dfd5922f5aa9441e95d21ed58bb9f2209a004912a1232e89f75f725bd37f3d4a"
+			},
+			"materializer": {
+				"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+				"sequence": 4,
+				"generation": 1,
+				"payload": {
+					"kind": "event",
+					"id": "event:socket-1:4",
+					"admissionId": "golden-a",
+					"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+					"sequence": 4,
+					"componentRef": "record",
+					"length": 296,
+					"digest": "dfd5922f5aa9441e95d21ed58bb9f2209a004912a1232e89f75f725bd37f3d4a"
+				},
+				"controls": []
+			},
+			"admissionId": "golden-a",
+			"generation": 1
+		},
+		{
+			"type": "extension_ui_request",
+			"sessionId": "rpc-1",
+			"eventLease": {
+				"kind": "event",
+				"id": "event:socket-1:5",
+				"admissionId": "golden-a",
+				"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+				"sequence": 5,
+				"componentRef": "record",
+				"length": 296,
+				"digest": "8c09b37123eb0d9dcec63788149e576b1614ed481ad002512d0a47a09cbf59fc"
+			},
+			"materializer": {
+				"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+				"sequence": 5,
+				"generation": 1,
+				"payload": {
+					"kind": "event",
+					"id": "event:socket-1:5",
+					"admissionId": "golden-a",
+					"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+					"sequence": 5,
+					"componentRef": "record",
+					"length": 296,
+					"digest": "8c09b37123eb0d9dcec63788149e576b1614ed481ad002512d0a47a09cbf59fc"
+				},
+				"controls": []
+			},
+			"admissionId": "golden-a",
+			"generation": 1
+		},
+		{
+			"type": "extension_ui_request",
+			"sessionId": "rpc-1",
+			"eventLease": {
+				"kind": "event",
+				"id": "event:socket-1:6",
+				"admissionId": "golden-a",
+				"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+				"sequence": 6,
+				"componentRef": "record",
+				"length": 278,
+				"digest": "c1db13ab836db24060490c83b83c089adb1ce9e6e1899d81e02d398cec22e6b1"
+			},
+			"materializer": {
+				"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+				"sequence": 6,
+				"generation": 1,
+				"payload": {
+					"kind": "event",
+					"id": "event:socket-1:6",
+					"admissionId": "golden-a",
+					"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+					"sequence": 6,
+					"componentRef": "record",
+					"length": 278,
+					"digest": "c1db13ab836db24060490c83b83c089adb1ce9e6e1899d81e02d398cec22e6b1"
+				},
+				"controls": []
+			},
+			"admissionId": "golden-a",
+			"generation": 1
+		},
+		{
+			"type": "extension_ui_request",
+			"sessionId": "rpc-1",
+			"eventLease": {
+				"kind": "event",
+				"id": "event:socket-1:7",
+				"admissionId": "golden-a",
+				"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+				"sequence": 7,
+				"componentRef": "record",
+				"length": 286,
+				"digest": "01dc6054f16adcd6557fd9261016d679b2b3ad2b4b1da6d19449e8ebe02697bf"
+			},
+			"materializer": {
+				"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+				"sequence": 7,
+				"generation": 1,
+				"payload": {
+					"kind": "event",
+					"id": "event:socket-1:7",
+					"admissionId": "golden-a",
+					"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+					"sequence": 7,
+					"componentRef": "record",
+					"length": 286,
+					"digest": "01dc6054f16adcd6557fd9261016d679b2b3ad2b4b1da6d19449e8ebe02697bf"
+				},
+				"controls": []
+			},
+			"admissionId": "golden-a",
+			"generation": 1
+		},
+		{
+			"type": "extension_ui_request",
+			"sessionId": "rpc-1",
+			"eventLease": {
+				"kind": "event",
+				"id": "event:socket-1:8",
+				"admissionId": "golden-a",
+				"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+				"sequence": 8,
+				"componentRef": "record",
+				"length": 286,
+				"digest": "bf7be128c7d4dc05da04c62f93c864bf00620d58d53613b228ba8085440cf858"
+			},
+			"materializer": {
+				"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+				"sequence": 8,
+				"generation": 1,
+				"payload": {
+					"kind": "event",
+					"id": "event:socket-1:8",
+					"admissionId": "golden-a",
+					"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+					"sequence": 8,
+					"componentRef": "record",
+					"length": 286,
+					"digest": "bf7be128c7d4dc05da04c62f93c864bf00620d58d53613b228ba8085440cf858"
+				},
+				"controls": []
+			},
+			"admissionId": "golden-a",
+			"generation": 1
+		},
+		{
+			"type": "extension_ui_request",
+			"sessionId": "rpc-1",
+			"eventLease": {
+				"kind": "event",
+				"id": "event:socket-1:9",
+				"admissionId": "golden-a",
+				"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+				"sequence": 9,
+				"componentRef": "record",
+				"length": 284,
+				"digest": "f3bc822097333cae6697b15854e917ef62e98a4a6a6be0ca0cc616912f3dea9a"
+			},
+			"materializer": {
+				"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+				"sequence": 9,
+				"generation": 1,
+				"payload": {
+					"kind": "event",
+					"id": "event:socket-1:9",
+					"admissionId": "golden-a",
+					"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+					"sequence": 9,
+					"componentRef": "record",
+					"length": 284,
+					"digest": "f3bc822097333cae6697b15854e917ef62e98a4a6a6be0ca0cc616912f3dea9a"
+				},
+				"controls": []
+			},
+			"admissionId": "golden-a",
+			"generation": 1
+		},
+		{
+			"type": "extension_ui_request",
+			"sessionId": "rpc-1",
+			"eventLease": {
+				"kind": "event",
+				"id": "event:socket-1:10",
+				"admissionId": "golden-a",
+				"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+				"sequence": 10,
+				"componentRef": "record",
+				"length": 284,
+				"digest": "4dc776a81b9ac9c85a9364a5050815faf826211393fae0b7fbce9b93f45a4cdf"
+			},
+			"materializer": {
+				"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+				"sequence": 10,
+				"generation": 1,
+				"payload": {
+					"kind": "event",
+					"id": "event:socket-1:10",
+					"admissionId": "golden-a",
+					"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+					"sequence": 10,
+					"componentRef": "record",
+					"length": 284,
+					"digest": "4dc776a81b9ac9c85a9364a5050815faf826211393fae0b7fbce9b93f45a4cdf"
+				},
+				"controls": []
+			},
+			"admissionId": "golden-a",
+			"generation": 1
+		},
+		{
+			"type": "entry_appended",
+			"sessionId": "rpc-1",
+			"eventLease": {
+				"kind": "event",
+				"id": "event:socket-1:11",
+				"admissionId": "golden-a",
+				"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+				"sequence": 12,
+				"componentRef": "record",
+				"length": 500,
+				"digest": "02c48cc30e2d838b9883c815697fbee3ce555c609c97f2ef47d2de1389c45190"
+			},
+			"materializer": {
+				"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+				"sequence": 12,
+				"generation": 1,
+				"payload": {
+					"kind": "event",
+					"id": "event:socket-1:11",
+					"admissionId": "golden-a",
+					"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+					"sequence": 12,
+					"componentRef": "record",
+					"length": 500,
+					"digest": "02c48cc30e2d838b9883c815697fbee3ce555c609c97f2ef47d2de1389c45190"
+				},
+				"controls": []
+			},
+			"admissionId": "golden-a",
+			"generation": 1
+		},
+		{
+			"type": "extension_ui_request",
+			"sessionId": "rpc-1",
+			"eventLease": {
+				"kind": "event",
+				"id": "event:socket-1:12",
+				"admissionId": "golden-a",
+				"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+				"sequence": 13,
+				"componentRef": "record",
+				"length": 286,
+				"digest": "8d26d2f8b050c0dab9a4626ab6353de65d4993860566f846fde81edf0e7250a0"
+			},
+			"materializer": {
+				"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+				"sequence": 13,
+				"generation": 1,
+				"payload": {
+					"kind": "event",
+					"id": "event:socket-1:12",
+					"admissionId": "golden-a",
+					"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+					"sequence": 13,
+					"componentRef": "record",
+					"length": 286,
+					"digest": "8d26d2f8b050c0dab9a4626ab6353de65d4993860566f846fde81edf0e7250a0"
+				},
+				"controls": []
+			},
+			"admissionId": "golden-a",
+			"generation": 1
+		},
+		{
+			"type": "extension_ui_request",
+			"sessionId": "rpc-1",
+			"eventLease": {
+				"kind": "event",
+				"id": "event:socket-1:13",
+				"admissionId": "golden-a",
+				"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+				"sequence": 14,
+				"componentRef": "record",
+				"length": 270,
+				"digest": "b6b3be77081f89dc5aee6cb88a482a41ccd0afc3f73c4c3e69ee67dc996753b7"
+			},
+			"materializer": {
+				"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+				"sequence": 14,
+				"generation": 1,
+				"payload": {
+					"kind": "event",
+					"id": "event:socket-1:13",
+					"admissionId": "golden-a",
+					"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+					"sequence": 14,
+					"componentRef": "record",
+					"length": 270,
+					"digest": "b6b3be77081f89dc5aee6cb88a482a41ccd0afc3f73c4c3e69ee67dc996753b7"
+				},
+				"controls": []
+			},
+			"admissionId": "golden-a",
+			"generation": 1
+		},
+		{
+			"type": "session_opened",
+			"sessionId": "rpc-1",
+			"durableSessionId": "00000000-0000-4000-8000-000000000002",
+			"sessionPath": "<root>/cwd/golden.jsonl",
+			"kind": "interactive",
+			"cwd": "<root>/cwd",
+			"admissionId": "golden-a",
+			"generation": 1
+		}
+	],
+	"answer": {
+		"type": "response",
+		"command": "open_session",
+		"success": true,
+		"sessionId": "rpc-1",
+		"admissionId": "golden-a",
+		"generation": 1,
+		"data": {
+			"sessionId": "rpc-1",
+			"recovery": {
+				"token": "socket-1:1",
+				"componentRef": "manifest"
+			}
+		},
+		"id": "peer-1"
+	},
+	"entryPage": {
+		"id": "peer-3",
+		"type": "response",
+		"command": "get_recovery_page",
+		"success": true,
+		"sessionId": "rpc-1",
+		"admissionId": "golden-a",
+		"generation": 1,
+		"data": {
+			"requestId": "golden-entry",
+			"lease": {
+				"kind": "event",
+				"id": "event:socket-1:11"
+			},
+			"componentRef": "record",
+			"ordinal": 1,
+			"offset": 0,
+			"cursor": null,
+			"complete": true,
+			"repair": {
+				"state": "ok",
+				"healthRevision": "0",
+				"source": {
+					"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+					"sequence": 14
+				},
+				"hint": "restart_from_catalog",
+				"retryAfterMs": 0
+			},
+			"length": 500,
+			"digest": "37789d95595aa7db3c151617b2429f917be9d81e59c4298c87159745b2db87b6",
+			"bytes": "ewAiAHQAeQBwAGUAIgA6ACIAZQBuAHQAcgB5AF8AYQBwAHAAZQBuAGQAZQBkACIALAAiAGUAbgB0AHIAeQAiADoAewAiAHQAeQBwAGUAIgA6ACIAYwB1AHMAdABvAG0AIgAsACIAYwB1AHMAdABvAG0AVAB5AHAAZQAiADoAIgBwAGkALQByAHUAbABlAHMALgBzAGMAYQBuACIALAAiAGQAYQB0AGEAIgA6AHsAIgBjAHcAZAAiADoAIgA8AHIAbwBvAHQAPgAvAGMAdwBkACIALAAiAHIAZQBhAHMAbwBuACIAOgAiAHMAdABhAHIAdAB1AHAAIgB9ACwAIgBzAHQAYQByAHQAdQBwAEIAbwBvAGsAawBlAGUAcABpAG4AZwAiADoAdAByAHUAZQAsACIAaQBkACIAOgAiADAAMAAwADAAMAAwADAAMQAiACwAIgBwAGEAcgBlAG4AdABJAGQAIgA6ACIAMAAwADAAMAAwADAAMAAyACIALAAiAHQAaQBtAGUAcwB0AGEAbQBwACIAOgAiADIAMAAyADYALQAxADAALQAyADkAVAAwADAAOgAwADAAOgAwADAALgAwADAAMABaACIAfQAsACIAcwBlAHMAcwBpAG8AbgBJAGQAIgA6ACIAcgBwAGMALQAxACIAfQA="
+		}
+	}
+}
