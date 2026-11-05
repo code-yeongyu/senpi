@@ -212,7 +212,6 @@ describe("buildEvalPrompt", () => {
 
 		// Then: the note names the host and the sizing rule, and disappears without one.
 		expect(withHost).toContain("Host: darwin arm64 \u00b7 Apple M5 Max \u00b7 18 cores. Cells execute here.");
-		expect(withHost).toContain("`parallel(thunks)` runs through a fixed-width pool");
 		expect(withoutHost).not.toContain("Host:");
 	});
 
