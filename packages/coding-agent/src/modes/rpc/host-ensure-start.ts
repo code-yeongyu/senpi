@@ -26,12 +26,7 @@ import {
 import type { EnsuredHost, EnsureHostOptions } from "./host-ensure-types.ts";
 import { defaultHostLaunch, PINNED_HOST_CLIENT_CAPABILITIES } from "./host-launch.ts";
 import { DEFAULT_HOST_IDLE_EXIT_MS } from "./host-lifecycle.ts";
-import {
-	DEFAULT_READINESS_TIMEOUT_MS,
-	keepOwnerPipe,
-	OWNER_WATCH_FD,
-	parseSupervisorArgs,
-} from "./host-lifecycle-launch.ts";
+import { keepOwnerPipe, OWNER_WATCH_FD, parseSupervisorArgs } from "./host-lifecycle-launch.ts";
 import type { ChildExit } from "./host-readiness.ts";
 import { newStartupAttempt } from "./host-startup-events.ts";
 import { clearStartupIntent, settleStartupIntent, writeStartupIntent } from "./host-startup-intent.ts";
