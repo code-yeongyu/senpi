@@ -49,7 +49,7 @@ import { printPromptSizes } from "./cli/print-prompt-sizes.ts";
 import { pipedStdinOptions } from "./cli/piped-stdin-options.ts";
 import { exitAfterOutput, printThenExit } from "./cli/print-then-exit.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
-import { prepareSessionOpening } from "./cli/session-opening.ts";
+import { admitStartupSession, prepareSessionOpening } from "./cli/session-opening.ts";
 import {
 	createStartupLoadingIndicator,
 	pauseIndicatorDuringPrompts,
@@ -522,6 +522,25 @@ async function sessionCwdOrUndefined(sessionFile: string): Promise<string | unde
 }
 
 export async function createSessionManager(
+	parsed: Args,
+	cwd: string,
+	sessionDir: string | undefined,
+	settingsManager: SettingsManager,
+	appMode: AppMode,
+): Promise<SessionManager> {
+	const manager = await selectStartupSession(parsed, cwd, sessionDir, settingsManager, appMode);
+	// Before anything writes to the session or a runtime starts on it: a session another live process runs must not
+	// get a second writer (senpi#5756).
+	const admission = await admitStartupSession(manager.getSessionFile(), {
+		canAsk: appMode === "interactive" && process.stdin.isTTY === true,
+		confirm: promptConfirm,
+		err: (line) => console.error(line),
+	});
+	if (admission !== "open") process.exit(admission === "cancelled" ? 0 : 1);
+	return manager;
+}
+
+async function selectStartupSession(
 	parsed: Args,
 	cwd: string,
 	sessionDir: string | undefined,
