@@ -3,7 +3,11 @@ import { getKeybindings } from "@earendil-works/pi-tui";
 import { enginePauseSinceLastTurn } from "../../../engine-paused.ts";
 import { createSessionLogger } from "../../../session-log.ts";
 import type { AgentEndEvent, ExtensionAPI, ExtensionContext, MessageUpdateEvent } from "../../types.ts";
-import { appendRuleActivation, registerRuleActivationRenderer } from "../rule-activation/index.ts";
+import {
+	appendRuleActivation,
+	registerRuleActivationRenderer,
+	type TtsrActivationDetails,
+} from "../rule-activation/index.ts";
 import { parseRuleActivationDetails, RULE_ACTIVATION_ENTRY_TYPE } from "../rule-activation/types.ts";
 import { BUILTIN_TTSR_RULES } from "./builtin-rules.ts";
 import { registerTtsrCommands, type TtsrPublicState } from "./commands.ts";
@@ -103,12 +107,18 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 		watcher?.reset();
 	}
 
-	function recordInjection(owner: string, observed: readonly string[], retryMode: "nudge" | "provider-error"): void {
+	function recordInjection(
+		owner: string,
+		observed: readonly string[],
+		retryMode: "nudge" | "provider-error",
+		hit?: Pick<TtsrActivationDetails, "stream" | "reason" | "detail">,
+	): void {
 		appendRuleActivation(pi, {
 			kind: "ttsr",
 			owner,
 			rules: observed,
 			remediation: retryMode,
+			...hit,
 		});
 	}
 
@@ -254,7 +264,11 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 			pendingRemediation = null;
 			try {
 				const outcome = buildStreamRemediation(pending, event.message);
-				recordInjection(outcome.owner, outcome.observedRules, outcome.retryMode);
+				recordInjection(outcome.owner, outcome.observedRules, outcome.retryMode, {
+					stream: pending.streamKind,
+					reason: pending.resolution.match.reason,
+					detail: pending.resolution.match.detail,
+				});
 				if (outcome.nudge !== null) {
 					pendingNudge = outcome.nudge;
 				}
