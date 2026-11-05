@@ -245,10 +245,13 @@ export async function serviceEntryValidity(
 export async function recordVerification(path: string, record: LocalKeyVerification): Promise<void> {
 	const dir = dirname(path);
 	await mkdir(dir, { recursive: true, mode: 0o700 });
+	const stop = new AbortController();
 	const lock = await lockWithLossHandling(dir, {
 		realpath: false,
 		lockfilePath: `${path}.lock`,
 		retries: { retries: 50, minTimeout: 20, maxTimeout: 200 },
+		// A lost lock aborts the temp-file write, so nothing more is written after the loss.
+		onLost: (error) => stop.abort(error),
 	});
 	try {
 		const current = await readVerifiedKeys(path);
@@ -265,10 +268,13 @@ export async function recordVerification(path: string, record: LocalKeyVerificat
 		const merged = revoked === undefined ? record : { ...record, supersedes: revoked };
 		const next = { v: 2, records: [...kept.filter((existing) => !replaced(existing)), merged] };
 		const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
-		await writeFile(tmp, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
+		await writeFile(tmp, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600, signal: stop.signal });
 		await chmod(tmp, 0o600);
 		lock.assertHeld();
 		await rename(tmp, path);
+	} catch (error) {
+		lock.assertHeld();
+		throw error;
 	} finally {
 		await lock.release();
 	}
