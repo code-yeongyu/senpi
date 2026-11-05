@@ -1,13 +1,13 @@
-import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import type { MovedBreadcrumb } from "./breadcrumb.ts";
 import type { MovedPath } from "./breadcrumb-trust.ts";
 import { currentPathPlatform, matchMovedPrefix, type PathPlatform } from "./path-match.ts";
+import { userHomeDir } from "../../../../utils/user-home.ts";
 
 const LEGACY_ROOT_NAMES = [".t3", ".omo-app"] as const;
 
 /** The OmO desktop's legacy data roots (omo-desktop-app#1829), checked before any other path a call names. */
-export const legacyRoots = (): string[] => LEGACY_ROOT_NAMES.map((name) => join(homedir(), name));
+export const legacyRoots = (): string[] => LEGACY_ROOT_NAMES.map((name) => join(userHomeDir(), name));
 
 /** Whether `path` is, by text, a legacy data root directly under one of the user's home spellings. */
 export const isLegacyRoot = (path: string, homes: readonly string[], platform: PathPlatform): boolean =>
@@ -54,7 +54,7 @@ export function rememberedReused(key: string): boolean | undefined {
 /**
  * Remembers a trusted breadcrumb under its old root as the walk found it (`root`, realpath'd), as the walk's caller
  * spelled it (`called`), and each of those re-spelled under every spelling of the user's home (`homes`: as
- * `os.homedir()` spells it and its realpath). Commands name `~/.t3/...`, so when `$HOME` or `~/.t3` itself is a
+ * `userHomeDir()` spells it and its realpath). Commands name `~/.t3/...`, so when `$HOME` or `~/.t3` itself is a
  * symlink the text fallback and the probe ranking would otherwise never match it (fifth review M-2, sixth review
  * MEDIUM-1). Every spelling keys its decisions by `root`, so a re-used answer the walk recorded applies to all of them.
  * The spellings come from the walk's own steps, so the text checks stay free of filesystem work.

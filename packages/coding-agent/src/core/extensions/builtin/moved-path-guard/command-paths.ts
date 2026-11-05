@@ -1,5 +1,5 @@
-import { homedir } from "node:os";
 import { isAbsolute, resolve, sep } from "node:path";
+import { userHomeDir } from "../../../../utils/user-home.ts";
 
 // oxlint-disable-next-line eslint/no-template-curly-in-string -- literal shell spellings of the home directory, not a template.
 const HOME_ANCHORS = ["~", "$HOME", "${HOME}", "%USERPROFILE%", "$env:USERPROFILE"] as const;
@@ -25,9 +25,9 @@ function withPlatformSeparators(path: string): string {
 
 function expandHome(word: string): string | undefined {
 	for (const anchor of HOME_ANCHORS) {
-		if (word === anchor) return homedir();
+		if (word === anchor) return userHomeDir();
 		if (word.startsWith(`${anchor}/`) || word.startsWith(`${anchor}\\`))
-			return withPlatformSeparators(`${homedir()}/${word.slice(anchor.length + 1)}`);
+			return withPlatformSeparators(`${userHomeDir()}/${word.slice(anchor.length + 1)}`);
 	}
 	return undefined;
 }

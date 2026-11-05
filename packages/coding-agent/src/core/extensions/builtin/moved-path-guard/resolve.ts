@@ -1,9 +1,9 @@
 import { accessSync, existsSync, lstatSync, realpathSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { type MovedPath, readJsonFileSync } from "./breadcrumb-trust.ts";
 import { currentPathPlatform, type PathPlatform } from "./path-match.ts";
 import { failedReply, movedPathWalk, type ResolverStep } from "./walk.ts";
+import { userHomeDir } from "../../../../utils/user-home.ts";
 
 export { type MovedPath, movedPathReason } from "./breadcrumb-trust.ts";
 
@@ -38,7 +38,7 @@ function answer(step: ResolverStep): unknown {
 	try {
 		if (step.op === "canonical") return canonicalPath(step.path);
 		if (step.op === "json") return readJsonFileSync(step.file);
-		if (step.op === "home") return realpathSync(homedir());
+		if (step.op === "home") return realpathSync(userHomeDir());
 		if (step.op === "folder") return (step.follow ? statSync : lstatSync)(step.path);
 		return pathExistsSync(step.path);
 	} catch {

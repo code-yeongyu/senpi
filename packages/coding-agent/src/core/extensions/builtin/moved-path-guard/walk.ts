@@ -1,5 +1,4 @@
 import type { Stats } from "node:fs";
-import { homedir } from "node:os";
 import { basename, dirname, resolve } from "node:path";
 import type { MovedBreadcrumb } from "./breadcrumb.ts";
 import {
@@ -16,6 +15,7 @@ import {
 } from "./breadcrumb-trust.ts";
 import { isLegacyRoot, prefixKey, rememberedReused, rememberReused, rememberTrustedBreadcrumb } from "./known-moves.ts";
 import { type PathPlatform, sameSegment } from "./path-match.ts";
+import { userHomeDir } from "../../../../utils/user-home.ts";
 
 /** One filesystem question the walk asks; the sync and async resolvers answer it with their own I/O. */
 export type ResolverStep =
@@ -33,9 +33,9 @@ export function failedReply(_step: ResolverStep): unknown {
 	return undefined;
 }
 
-/** The user's home as `os.homedir()` spells it, plus its realpath when a resolver could answer the `home` step. */
+/** The user's home as `userHomeDir()` spells it, plus its realpath when a resolver could answer the `home` step. */
 function* homeSpellings(): Walk<string[]> {
-	const home = homedir();
+	const home = userHomeDir();
 	const real = (yield { op: "home" }) as string | undefined;
 	return real !== undefined && real !== home ? [home, real] : [home];
 }
@@ -70,7 +70,7 @@ type OnReused = (oldRoot: string, breadcrumb: MovedBreadcrumb, prefix: readonly 
 
 function* movedOnce(path: string, platform: PathPlatform, onReused?: OnReused): Walk<MovedPath | undefined> {
 	const canonical = ((yield { op: "canonical", path }) as string | undefined) ?? resolve(path);
-	const stop = dirname(homedir());
+	const stop = dirname(userHomeDir());
 	for (let dir = dirname(canonical); ; dir = dirname(dir)) {
 		const breadcrumb = parsedBreadcrumb(dir, yield { op: "json", file: breadcrumbFile(dir) });
 		// The listed-prefix match comes first: a breadcrumb that lists nothing this path is under never makes the

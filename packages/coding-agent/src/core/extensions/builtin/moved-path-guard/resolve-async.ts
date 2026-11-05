@@ -1,5 +1,4 @@
 import { access, lstat, realpath, stat } from "node:fs/promises";
-import { homedir } from "node:os";
 import { RESOLUTION_TIMED_OUT, withResolutionDeadline } from "../../../tools/bounded-realpath.ts";
 import { canonicalizeFilesystemPath } from "../../../tools/filesystem-policy.ts";
 import type { MovedBreadcrumb } from "./breadcrumb.ts";
@@ -7,6 +6,7 @@ import { type MovedPath, readJsonFileAsync } from "./breadcrumb-trust.ts";
 import { knownPrefixKeys, prefixKey } from "./known-moves.ts";
 import { currentPathPlatform, type PathPlatform } from "./path-match.ts";
 import { failedReply, movedPathWalk, type ResolverStep } from "./walk.ts";
+import { userHomeDir } from "../../../../utils/user-home.ts";
 
 /** Each filesystem step of a probe; strictly below the guard's whole-call deadline, so one slow step cannot use it all. */
 export const STEP_DEADLINE_MS = 500;
@@ -38,9 +38,9 @@ export async function pathExists(path: string): Promise<boolean | undefined> {
 
 const realHomes = new Map<string, Promise<string | undefined>>();
 
-/** The realpath of the user's home, once per spelling per process (`os.homedir()` follows `$HOME`). */
+/** The realpath of the user's home, once per spelling per process (`userHomeDir()` follows `$HOME`). */
 function realHome(): Promise<string | undefined> {
-	const home = homedir();
+	const home = userHomeDir();
 	let real = realHomes.get(home);
 	if (!real) {
 		real = realpath(home).catch(() => undefined);
