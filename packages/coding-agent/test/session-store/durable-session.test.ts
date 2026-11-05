@@ -148,6 +148,37 @@ describe("a SessionManager bound to the durable store (S20b)", () => {
 		expect(readFileSync(file, "utf8")).toBe(before);
 	});
 
+	it("leaves the original stored session untouched when the bound manager branches into a new session (#5897 review)", async () => {
+		const { session } = await durableSession();
+		session.appendMessage(userMsg("one"));
+		const keep = session.appendMessage(assistantMsg("two"));
+		session.appendMessage(userMsg("three"));
+		session.appendMessage(assistantMsg("four"));
+		await session.settleDurableProjection();
+		const originalId = session.getSessionId();
+		const before = await storeImage(originalId);
+
+		session.createBranchedSession(keep);
+		session.appendMessage(userMsg("on the branch"));
+		await session.settleDurableProjection();
+
+		expect(session.getSessionId()).not.toBe(originalId);
+		expect(await storeImage(originalId)).toBe(before);
+	});
+
+	it("stays bound across a reload of the same session file (#5897 review)", async () => {
+		const { session, warnings } = await durableSession();
+		session.appendMessage(userMsg("question"));
+		session.reloadFromDisk();
+
+		session.appendMessage(assistantMsg("after the reload"));
+		await session.settleDurableProjection();
+
+		expect(warnings).toEqual([]);
+		expect(await storeImage(session.getSessionId())).toContain("after the reload");
+		expect(readFileSync(fileOf(session), "utf8")).toBe(await storeImage(session.getSessionId()));
+	});
+
 	it("throws a store refusal on the same call and takes nothing", async () => {
 		const { session } = await durableSession();
 		session.appendMessage(userMsg("question"));
