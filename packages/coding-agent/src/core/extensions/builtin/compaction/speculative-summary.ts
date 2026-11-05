@@ -11,7 +11,7 @@ import {
 	type TextContent,
 } from "@earendil-works/pi-ai";
 import { stream } from "@earendil-works/pi-ai/compat";
-import { estimateTokens } from "../../../compaction/compaction.ts";
+import { estimateContextTokens } from "../../../compaction/compaction.ts";
 import {
 	consumeStreamWithIdleTimeout,
 	DEFAULT_SUMMARIZATION_IDLE_TIMEOUT_MS,
@@ -69,6 +69,28 @@ function summarizationReasoningOptions(model: Model<any>): Record<string, unknow
  */
 export function hasSummarizationReasoningOverride(model: Model<any>): boolean {
 	return Object.keys(summarizationReasoningOptions(model)).length > 0;
+}
+
+/**
+ * Estimated input of the request {@link generateSummaryMessage} sends for `messages`, which sizes its
+ * wall-clock budget. The request carries the agent's system prompt, its tool schemas and the transcript as
+ * native messages with their replayed reasoning, so the transcript's own chars/4 estimate sees only part of
+ * it: on large OpenAI sessions it measured a third of the provider-reported context, which kept the
+ * size-adaptive budget on its 120s floor. The last provider-reported usage inside the transcript already
+ * counts that whole prefix (system prompt, tools and opaque reasoning included); what follows it is
+ * estimated. Without any usage the request is estimated whole, system prompt and tools included.
+ */
+export function estimateSummaryRequestTokens(
+	snapshot: Pick<SpeculativeCompactionSnapshot, "systemPrompt" | "tools">,
+	messages: AgentMessage[],
+	prompt: ReturnType<typeof buildPrompt>,
+): number {
+	const instruction: AgentMessage = { role: "user", content: [{ type: "text", text: prompt.user }], timestamp: 0 };
+	const estimate = estimateContextTokens([...messages, instruction]);
+	if (estimate.lastUsageIndex !== null) return estimate.tokens;
+	const systemPrompt = snapshot.systemPrompt ?? prompt.system;
+	const tools = snapshot.tools && snapshot.tools.length > 0 ? JSON.stringify(snapshot.tools) : "";
+	return estimate.tokens + Math.ceil((systemPrompt.length + tools.length) / 4);
 }
 
 export function getSummaryText(message: Message): string {
@@ -146,7 +168,7 @@ export async function generateSummaryMessage(options: {
 		];
 		const maxDurationMs =
 			options.maxDurationMs ??
-			summarizationMaxDurationMs(requestMessages.reduce((total, message) => total + estimateTokens(message), 0));
+			summarizationMaxDurationMs(estimateSummaryRequestTokens(options.snapshot, options.messages, options.prompt));
 		const providerRequest = await options.context.prepareProviderRequest?.(requestMessages);
 		const requestContext = {
 			systemPrompt: options.snapshot.systemPrompt ?? options.prompt.system,

@@ -1,3 +1,21 @@
+## 2026-11-05 - The `./presenter-authority` package entry (D11 M-1, senpi#4249)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `exports["./presenter-authority"]` -> `dist/presenter-authority-slot.js`, a side-effect-free entry, so a distribution registers its authority without evaluating the engine before cli.js's pre-main phase.
+
+### Why
+
+- Importing the package index would evaluate the engine graph before the CLI's own startup ordering (cli.ts keeps cli-main a dynamic import for this reason).
+
+### Why an extension could not handle it
+
+- Package exports are not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: one new key in `exports`.
+
 ## 2026-10-30 - Experimental subscription egress SDK entry (senpi#5039)
 
 ### What changed
