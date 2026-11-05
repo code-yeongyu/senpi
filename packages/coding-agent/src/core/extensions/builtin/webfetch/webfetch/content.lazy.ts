@@ -26,3 +26,7 @@ export async function htmlToText(html: string, url: string): Promise<string> {
 export async function looksLikeAppShell(html: string, url: string): Promise<boolean> {
 	return (await loadContentModule()).looksLikeAppShell(html, url);
 }
+
+export async function stripScripts(html: string, url: string): Promise<string> {
+	return (await loadContentModule()).stripScripts(html, url);
+}

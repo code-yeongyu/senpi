@@ -3,13 +3,19 @@ import { Type } from "typebox";
 import { modelOnlyText } from "../../../../tools/model-only-text.ts";
 import { defineTool } from "../../../types.ts";
 
-import { htmlToMarkdown, htmlToText, looksLikeAppShell } from "./content.lazy.ts";
+import { htmlToMarkdown, htmlToText, looksLikeAppShell, stripScripts } from "./content.lazy.ts";
 import { clampTimeout, fetchUrl, type WebfetchFormat } from "./fetcher.ts";
-import { BrowserSkillError, createBrowserSkillRenderer, type PageRenderer } from "./browser-skill.ts";
+import {
+	BrowserSkillError,
+	type ConnectedBrowser,
+	createBrowserSkillRenderer,
+	type PageRenderer,
+	type WebfetchBrowserSkip,
+} from "./browser-skill.ts";
 
-const RENDER_ENV = "PI_WEBFETCH_RENDER";
+const BROWSER_ENV = "PI_WEBFETCH_BROWSER";
 // A rendered read gets at least this long; with less of the call's timeout left it is skipped.
-const MIN_RENDER_BUDGET_MS = 1_000;
+const MIN_RENDER_BUDGET_MS = 3_000;
 
 const WEBFETCH_FORMATS = ["markdown", "text", "html"] as const;
 
@@ -44,7 +50,9 @@ export interface WebfetchDetails {
 	/** Whether the text came from a rendered read because the static HTML was an empty app shell. */
 	rendered: boolean;
 	/** Why an app shell was not replaced by its rendered read, when it was not. */
-	renderSkipped?: WebfetchRenderSkip;
+	renderSkipped?: WebfetchBrowserSkip;
+	/** The connected browser that read the page, when one did. */
+	browser?: ConnectedBrowser;
 }
 
 export interface WebfetchProgressDetails {
@@ -63,21 +71,7 @@ export interface WebfetchProgressDetails {
 
 export type WebfetchRenderDetails = WebfetchDetails | WebfetchProgressDetails;
 
-/** Why an app shell kept its static result instead of a rendered read through the user's browser. */
-export type WebfetchRenderSkipReason =
-	| "disabled"
-	| "no_time_left"
-	| "integration_not_running"
-	| "no_browser_connected"
-	| "browser_unresponsive"
-	| "timeout"
-	| "render_failed"
-	| "no_more_text";
-
-export interface WebfetchRenderSkip {
-	readonly reason: WebfetchRenderSkipReason;
-	readonly message: string;
-}
+export type { WebfetchBrowserSkip } from "./browser-skill.ts";
 
 export interface WebfetchToolOptions {
 	/** Reads app-shell pages rendered; defaults to the user's BrowserSkill-connected browser. */
@@ -164,7 +158,9 @@ export function createWebfetchTool(options: WebfetchToolOptions = {}) {
 			let text = raw;
 			let converted = false;
 			let rendered = false;
-			let renderSkipped: WebfetchRenderSkip | undefined;
+			let renderSkipped: WebfetchBrowserSkip | undefined;
+			let browser: ConnectedBrowser | undefined;
+			let renderTruncated = false;
 
 			if (isHtml && format !== "html") {
 				const convert = format === "markdown" ? htmlToMarkdown : htmlToText;
@@ -173,15 +169,17 @@ export function createWebfetchTool(options: WebfetchToolOptions = {}) {
 				if (await looksLikeAppShell(raw, fetched.url)) {
 					const budgetMs = startedAt + timeoutSeconds * 1000 - Date.now();
 					let outcome: RenderOutcome = {
-						skipped: { reason: "disabled", message: `${RENDER_ENV}=0 turns the rendered read off` },
+						skipped: { reason: "disabled", message: `${BROWSER_ENV}=0 turns browser reads off` },
 					};
-					if (isRenderEnabled()) {
+					if (isBrowserEnabled()) {
 						emitProgress({ phase: "rendering", url: params.url, format, timeoutSeconds, progress });
 						outcome = await readRendered(renderer, fetched.url, budgetMs, convert, text, signal);
 					}
 					if (outcome.text !== undefined) {
 						text = outcome.text;
 						rendered = true;
+						browser = outcome.browser;
+						renderTruncated = outcome.truncated === true;
 					} else {
 						renderSkipped = outcome.skipped;
 					}
@@ -200,12 +198,13 @@ export function createWebfetchTool(options: WebfetchToolOptions = {}) {
 				bytes: fetched.bytes,
 				timeoutSeconds,
 				converted,
-				truncated: fetched.truncated,
+				truncated: fetched.truncated || renderTruncated,
 				outputTruncated: capped.truncated,
 				outputBytes: capped.outputBytes,
 				outputTotalBytes: capped.totalBytes,
 				rendered,
 				...(renderSkipped === undefined ? {} : { renderSkipped }),
+				...(browser === undefined ? {} : { browser }),
 			};
 
 			const notices = [capped.notice, renderNotice(rendered, renderer.name, renderSkipped)].filter(
@@ -223,30 +222,19 @@ export function createWebfetchTool(options: WebfetchToolOptions = {}) {
 	});
 }
 
-function isRenderEnabled(): boolean {
-	const value = process.env[RENDER_ENV]?.trim().toLowerCase();
+function isBrowserEnabled(): boolean {
+	const value = process.env[BROWSER_ENV]?.trim().toLowerCase();
 	return !(value === "0" || value === "false" || value === "no" || value === "off");
 }
 
 interface RenderOutcome {
 	readonly text?: string;
-	readonly skipped?: WebfetchRenderSkip;
+	readonly browser?: ConnectedBrowser;
+	readonly truncated?: boolean;
+	readonly skipped?: WebfetchBrowserSkip;
 }
 
-const BROWSER_SKILL_REASONS: ReadonlySet<string> = new Set([
-	"integration_not_running",
-	"no_browser_connected",
-	"browser_unresponsive",
-	"timeout",
-	"render_failed",
-]);
-
-function skipReason(error: unknown): WebfetchRenderSkipReason {
-	if (error instanceof BrowserSkillError && BROWSER_SKILL_REASONS.has(error.code)) return error.code;
-	return "render_failed";
-}
-
-/** Reads an app shell rendered; any failure keeps the static text and says why, with a typed reason. */
+/** Renders an unlisted app shell in an incognito window; any failure keeps the static text and says why. */
 async function readRendered(
 	renderer: PageRenderer,
 	url: string,
@@ -259,16 +247,25 @@ async function readRendered(
 		return { skipped: { reason: "no_time_left", message: "no time was left in the request timeout to render it" } };
 	}
 	try {
-		const page = await renderer.render(url, { timeoutMs: budgetMs, ...(signal === undefined ? {} : { signal }) });
-		const text = await convert(page.html, page.url);
+		const { page, browser } = await renderer.render(url, {
+			mode: "incognito",
+			timeoutMs: budgetMs,
+			...(signal === undefined ? {} : { signal }),
+		});
+		const text = await convert(await stripScripts(page.html, page.url), page.url);
 		if (text.trim().length <= staticText.trim().length) {
 			return { skipped: { reason: "no_more_text", message: "the rendered page had no more text" } };
 		}
-		return { text };
+		return { text, browser, truncated: page.truncated };
 	} catch (error) {
 		if (signal?.aborted) throw error;
+		if (error instanceof BrowserSkillError) return { skipped: error.skip };
 		return {
-			skipped: { reason: skipReason(error), message: error instanceof Error ? error.message : String(error) },
+			skipped: {
+				reason: "render_failed",
+				message: "the browser read failed",
+				detail: error instanceof Error ? error.message : String(error),
+			},
 		};
 	}
 }
@@ -276,11 +273,14 @@ async function readRendered(
 function renderNotice(
 	rendered: boolean,
 	rendererName: string,
-	skipped: WebfetchRenderSkip | undefined,
+	skipped: WebfetchBrowserSkip | undefined,
 ): string | undefined {
-	if (rendered) return `[The static HTML was an empty app shell, so this page was read in ${rendererName}.]`;
+	if (rendered) {
+		return `[The static HTML was an empty app shell, so this page was read in ${rendererName}, in an incognito window without your cookies.]`;
+	}
 	if (skipped === undefined) return undefined;
-	return `[The static HTML looks like an empty app shell that needs JavaScript; it was not rendered (${skipped.reason}: ${skipped.message}).]`;
+	const detail = skipped.detail === undefined ? "" : ` (${skipped.detail})`;
+	return `[The static HTML looks like an empty app shell that needs JavaScript; ${skipped.reason}: ${skipped.message}${detail}.]`;
 }
 
 export function parseWebfetchFormat(value: unknown): WebfetchFormat {
