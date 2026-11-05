@@ -296,3 +296,14 @@ it("the host key signs only a binding that names this host instance and this key
 	] as const;
 	expect(() => tokens.signRequest(otherKey)).toThrow("secret_request_foreign");
 });
+
+it("a refused raiser that declared raiser notices gets no notice for its own sealed-only request", async () => {
+	const { host, secret, requests } = await sealedHost();
+	await holder(host, secret, "phone");
+	host.writer.setConnectionCapabilities("human", ["interactive_user", "mcp_form_presenter_v1", "raiser_notice_v1"]);
+	host.writer.withConnection("human", () => {
+		void requests.input("API key", undefined);
+	});
+	await Promise.resolve();
+	expect(records(host.lines, "secret_input_notice")).toEqual([]);
+});

@@ -192,7 +192,8 @@ export class SecretInputPresentations {
 	private notify(id: string, owner: SecretOwner, record: object): void {
 		const type = Reflect.get(record, "type");
 		if (type === "extension_ui_request" && this.available(owner))
-			this.notices.raised(owner.session, id, [owner.connection, ...this.holderConnections(owner)], {
+			// The raising connection is never told about its own request, even when it was refused (5.2).
+			this.notices.raised(owner.session, id, [owner.connection, owner.raisedBy, ...this.holderConnections(owner)], {
 				type: "secret_input_notice",
 				title: Reflect.get(record, "title"),
 				deadlineAtMs: Reflect.get(record, "deadlineAtMs"),
