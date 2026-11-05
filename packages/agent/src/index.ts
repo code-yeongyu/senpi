@@ -119,6 +119,8 @@ export {
 	encodeBase64,
 	FILE_CHANNEL,
 	FILE_CHANNEL_MAX_BYTES,
+	isLocalDeviceFiles,
+	LOCAL_DEVICE_FILES,
 	RUN_CHANNEL,
 	fileOutcomeOf,
 } from "./execution/device-files.ts";
