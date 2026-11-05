@@ -5,7 +5,7 @@ import {
 	serviceEntryValidity,
 	verificationFor,
 } from "../../src/core/egress/verified-keys.ts";
-import { registryFields, signedEntry } from "./signed-entry.ts";
+import { p256Signer, registryFields, signedEntry } from "./signed-entry.ts";
 
 const ACCOUNT = "omo-account";
 const known = (...serviceEntries: ServiceKeyEntry[]): RosterView => ({ state: "known", serviceEntries });
@@ -13,7 +13,7 @@ const known = (...serviceEntries: ServiceKeyEntry[]): RosterView => ({ state: "k
 async function checked(...entries: ServiceKeyEntry[]): Promise<LocalKeyVerification[]> {
 	const records: LocalKeyVerification[] = [];
 	for (const entry of entries) {
-		const record = await verificationFor(entry, ACCOUNT, 5);
+		const record = await verificationFor(entry, ACCOUNT, 5, { verifierKeyId: "verifier-1", vouchedAt: 4 });
 		if (!record) throw new Error("fixture entry cannot be recorded");
 		records.push(record);
 	}
@@ -51,7 +51,9 @@ describe("serviceEntryValidity", () => {
 	it("is invalid for an entry of another account, whatever this device recorded", async () => {
 		const entry = await signedEntry(registryFields(1));
 		expect(await serviceEntryValidity(entry, "other-account", await checked(entry), known(entry))).toBe("invalid");
-		expect(await verificationFor(entry, "other-account", 5)).toBeUndefined();
+		expect(
+			await verificationFor(entry, "other-account", 5, { verifierKeyId: "verifier-1", vouchedAt: 4 }),
+		).toBeUndefined();
 	});
 
 	it("does not accept an attacker key that copies a checked key's ids", async () => {
@@ -67,6 +69,17 @@ describe("serviceEntryValidity", () => {
 		expect(await serviceEntryValidity(real, ACCOUNT, await checked(real), known(real, twin))).toBe("unknown");
 		const forgedTwin = { ...twin, serviceSig: real.serviceSig };
 		expect(await serviceEntryValidity(real, ACCOUNT, await checked(real), known(real, forgedTwin))).toBe("valid");
+	});
+
+	it("is unknown while two entries with one key disagree on what they supersede", async () => {
+		const old = await signedEntry(registryFields(1));
+		const signer = await p256Signer();
+		const revoker = await signedEntry(registryFields(2, old.sigKeyId), signer);
+		const reissued = await signedEntry(registryFields(2), signer);
+		const records = await checked(revoker, reissued);
+		expect(await serviceEntryValidity(reissued, ACCOUNT, records, known(revoker, reissued))).toBe("unknown");
+		expect(await serviceEntryValidity(revoker, ACCOUNT, records, known(revoker, reissued))).toBe("unknown");
+		expect(await serviceEntryValidity(reissued, ACCOUNT, records, known(reissued))).toBe("valid");
 	});
 
 	it("is superseded once this device checked a higher generation that revokes it, and stays so after a roster rollback", async () => {

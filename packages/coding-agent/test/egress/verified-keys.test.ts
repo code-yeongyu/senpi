@@ -36,8 +36,11 @@ const record: LocalKeyVerification = {
 	kemPkSha256: "a2VtLWhhc2g=",
 	kmsKeyArns: ["arn:kem", "arn:sig"],
 	templateVersion: 1,
+	verifierKeyId: "verifier-1",
+	vouchedAt: 9,
 	checkedAt: 10,
 };
+const vouch = { verifierKeyId: "verifier-1", vouchedAt: 6 };
 
 describe("verified-keys store", () => {
 	it("lives under <agentDir>/state/custody/verified-keys.json", () => {
@@ -54,10 +57,21 @@ describe("verified-keys store", () => {
 		["a record with an unknown field", JSON.stringify({ v: 2, records: [{ ...record, trusted: true }] })],
 		["a record without key hashes", JSON.stringify({ v: 2, records: [{ ...record, sigPkSha256: undefined }] })],
 		["a record with a non-integer generation", JSON.stringify({ v: 2, records: [{ ...record, generation: "1" }] })],
+		[
+			"a record with a verifier key id but no vouch time",
+			JSON.stringify({ v: 2, records: [{ ...record, vouchedAt: undefined }] }),
+		],
 	])("reads %s as unknown, so it grants nothing", async (_name, text) => {
 		await mkdir(dirname(path), { recursive: true });
 		writeFileSync(path, text);
 		expect(await readVerifiedKeys(path)).toEqual({ state: "unknown" });
+	});
+
+	it("reads a record without a verifier key id as absent, so the device checks the key again", async () => {
+		const { verifierKeyId: _verifier, vouchedAt: _vouched, ...unvouched } = record;
+		await mkdir(dirname(path), { recursive: true });
+		writeFileSync(path, JSON.stringify({ v: 2, records: [unvouched, record] }));
+		expect(await readVerifiedKeys(path)).toEqual({ state: "ok", records: [record] });
 	});
 
 	it("writes a 0600 file and reads the record back", async () => {
@@ -80,7 +94,7 @@ describe("verified-keys store", () => {
 		const revoker = await signedEntry(registryFields(2, old.sigKeyId), signer);
 		const reissued = await signedEntry(registryFields(2), signer);
 		for (const entry of [old, revoker, reissued]) {
-			const checked = await verificationFor(entry, "omo-account", 7);
+			const checked = await verificationFor(entry, "omo-account", 7, vouch);
 			if (!checked) throw new Error("fixture did not record");
 			await recordVerification(path, checked);
 		}
@@ -88,6 +102,7 @@ describe("verified-keys store", () => {
 		if (read.state !== "ok") throw new Error("store unreadable");
 		const roster = { state: "known" as const, serviceEntries: [old, reissued] };
 		expect(await serviceEntryValidity(old, "omo-account", read.records, roster)).toBe("superseded");
+		expect(await serviceEntryValidity(reissued, "omo-account", read.records, roster)).toBe("valid");
 	});
 
 	it("replaces an unreadable file instead of failing the check that just passed", async () => {
@@ -101,11 +116,13 @@ describe("verified-keys store", () => {
 describe("verificationFor / findVerification", () => {
 	it("binds the account, the key hashes, the ARNs and the template version", async () => {
 		const entry = await signedEntry(registryFields(1));
-		const bound = await verificationFor(entry, "omo-account", 7);
+		const bound = await verificationFor(entry, "omo-account", 7, vouch);
 		expect(bound).toMatchObject({
 			accountId: "omo-account",
 			kmsKeyArns: entry.kmsKeyArns,
 			templateVersion: 1,
+			verifierKeyId: "verifier-1",
+			vouchedAt: 6,
 			checkedAt: 7,
 		});
 		expect(bound?.sigPkSha256).toMatch(/^[A-Za-z0-9+/]{43}=$/);
@@ -113,7 +130,7 @@ describe("verificationFor / findVerification", () => {
 
 	it("matches the checked entry, and nothing that differs in key, ARNs, template or generation", async () => {
 		const entry = await signedEntry(registryFields(1));
-		const stored = await verificationFor(entry, "omo-account", 7);
+		const stored = await verificationFor(entry, "omo-account", 7, vouch);
 		if (!stored) throw new Error("fixture did not record");
 		expect(await findVerification([stored], entry)).toEqual(stored);
 		const sameIdsOtherKey = await signedEntry(registryFields(1));

@@ -5,7 +5,8 @@
  * One JSON file under `<agentDir>/state/custody/verified-keys.json`, shared by relayd and the CLI/hand
  * process. A record binds the checked KEYS (SPKI hashes, ARNs, template version, account), not only their
  * ids, so an attacker entry that copies the ids of a checked key never matches. A record only ever grants
- * validity, so the read side fails closed: a file that exists but cannot be parsed reads as `unknown`.
+ * validity, so the read side fails closed: a file that exists but cannot be parsed reads as `unknown`, and a
+ * record without the `verifierKeyId` that vouched for its facts counts as absent (the device checks again).
  */
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -24,9 +25,18 @@ export interface LocalKeyVerification {
 	readonly kemPkSha256?: string;
 	readonly kmsKeyArns: readonly string[];
 	readonly templateVersion: number;
+	/** The key-facts verifier key that vouched for the checked facts, and the signed `readAt` of those facts (15.10). */
+	readonly verifierKeyId: string;
+	readonly vouchedAt: number;
 	/** The `sigKeyId` this checked entry revokes; persisted so a roster rollback cannot un-revoke it. */
 	readonly supersedes?: string;
 	readonly checkedAt: number;
+}
+
+/** Who vouched for the facts a key check used. */
+export interface KeyFactsVouch {
+	readonly verifierKeyId: string;
+	readonly vouchedAt: number;
 }
 
 export type VerifiedKeysRead =
@@ -42,6 +52,8 @@ const RECORD_KEYS: readonly string[] = [
 	"generation",
 	"kmsKeyArns",
 	"templateVersion",
+	"verifierKeyId",
+	"vouchedAt",
 	"checkedAt",
 	...REQUIRED_STRINGS,
 	...OPTIONAL_STRINGS,
@@ -57,7 +69,8 @@ const isText = (value: unknown): value is string => typeof value === "string" &&
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
 	typeof value === "object" && value !== null && !Array.isArray(value);
 
-function parseRecord(value: unknown): LocalKeyVerification | undefined {
+/** `"absent"` for a record without `verifierKeyId`; `undefined` for a malformed one. */
+function parseRecord(value: unknown): LocalKeyVerification | "absent" | undefined {
 	if (!isRecord(value)) return undefined;
 	const raw = value;
 	if (!Object.keys(raw).every((key) => RECORD_KEYS.includes(key))) return undefined;
@@ -71,10 +84,14 @@ function parseRecord(value: unknown): LocalKeyVerification | undefined {
 		kemPkSha256,
 		kmsKeyArns,
 		templateVersion,
+		verifierKeyId,
+		vouchedAt,
 		supersedes,
 		checkedAt,
 	} = raw;
 	if (kind !== "custody" && kind !== "placement-registry") return undefined;
+	if (verifierKeyId === undefined) return "absent";
+	if (!isText(verifierKeyId) || !isCount(vouchedAt)) return undefined;
 	if (!isText(accountId) || !isText(sigKeyId) || !isText(sigPkSha256)) return undefined;
 	if (!isCount(generation) || !isCount(templateVersion) || !isCount(checkedAt)) return undefined;
 	if (!Array.isArray(kmsKeyArns) || !kmsKeyArns.every(isText)) return undefined;
@@ -90,6 +107,8 @@ function parseRecord(value: unknown): LocalKeyVerification | undefined {
 		...(isText(kemPkSha256) ? { kemPkSha256 } : {}),
 		kmsKeyArns: [...kmsKeyArns],
 		templateVersion,
+		verifierKeyId,
+		vouchedAt,
 		...(isText(supersedes) ? { supersedes } : {}),
 		checkedAt,
 	};
@@ -109,7 +128,7 @@ function parseFile(text: string): readonly LocalKeyVerification[] | undefined {
 	for (const raw of file.records) {
 		const record = parseRecord(raw);
 		if (!record) return undefined;
-		records.push(record);
+		if (record !== "absent") records.push(record);
 	}
 	return records;
 }
@@ -140,6 +159,7 @@ export async function verificationFor(
 	entry: ServiceKeyEntry,
 	accountId: string,
 	checkedAt: number,
+	vouch: KeyFactsVouch,
 ): Promise<LocalKeyVerification | undefined> {
 	if (entry.accountId !== accountId || !(await verifyServiceSig(entry))) return undefined;
 	const sigPkSha256 = await spkiSha256(entry.sigPk);
@@ -155,11 +175,17 @@ export async function verificationFor(
 		...(kemPkSha256 === undefined ? {} : { kemPkSha256 }),
 		kmsKeyArns: [...entry.kmsKeyArns],
 		templateVersion: entry.templateVersion,
+		verifierKeyId: vouch.verifierKeyId,
+		vouchedAt: vouch.vouchedAt,
 		...(entry.supersedes === undefined ? {} : { supersedes: entry.supersedes }),
 		checkedAt,
 	};
 }
 
+/**
+ * The checked keys match. `supersedes` is not part of the binding: a revocation stays sticky on the record
+ * (`recordVerification`) and a disagreement between published entries is the twin rule's to judge (15.11, gate r8 M-4).
+ */
 function sameBinding(a: LocalKeyVerification, b: LocalKeyVerification): boolean {
 	return (
 		a.kind === b.kind &&
@@ -170,7 +196,6 @@ function sameBinding(a: LocalKeyVerification, b: LocalKeyVerification): boolean 
 		a.kemKeyId === b.kemKeyId &&
 		a.kemPkSha256 === b.kemPkSha256 &&
 		a.templateVersion === b.templateVersion &&
-		a.supersedes === b.supersedes &&
 		a.kmsKeyArns.length === b.kmsKeyArns.length &&
 		a.kmsKeyArns.every((arn, index) => arn === b.kmsKeyArns[index])
 	);
@@ -180,14 +205,14 @@ export async function findVerification(
 	records: readonly LocalKeyVerification[],
 	entry: ServiceKeyEntry,
 ): Promise<LocalKeyVerification | undefined> {
-	const expected = await verificationFor(entry, entry.accountId, 0);
+	const expected = await verificationFor(entry, entry.accountId, 0, { verifierKeyId: "", vouchedAt: 0 });
 	return expected && records.find((record) => sameBinding(record, expected));
 }
 
 /**
  * Validity of a service entry FOR THIS DEVICE in `accountId`. Only this device's own records count; other
- * devices' attestations and revocations never do. Two differently keyed, validly signed entries for one
- * (kind, account, generation) make the entry `unknown`. Supersession comes from this device's records only
+ * devices' attestations and revocations never do. Two validly signed entries for one (kind, account,
+ * generation) that differ in key, or share the key but disagree on `supersedes`, make the entry `unknown`. Supersession comes from this device's records only
  * (a checked entry of the same kind and account, strictly higher generation, naming this `sigKeyId`), so it
  * cannot be undone by an entry disappearing from a later roster.
  */
@@ -203,7 +228,8 @@ export async function serviceEntryValidity(
 		if (other.kind !== entry.kind || other.accountId !== entry.accountId || other.generation !== entry.generation)
 			continue;
 		const sameKey = other.sigKeyId === entry.sigKeyId && other.sigPk === entry.sigPk && other.kemPk === entry.kemPk;
-		if (!sameKey && (await verifyServiceSig(other))) return "unknown";
+		const twin = !sameKey || other.supersedes !== entry.supersedes;
+		if (twin && (await verifyServiceSig(other))) return "unknown";
 	}
 	const revoked = records.some(
 		(record) =>
