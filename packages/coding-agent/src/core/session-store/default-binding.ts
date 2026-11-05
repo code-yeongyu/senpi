@@ -1,20 +1,27 @@
 import { isBunRuntime } from "../../config.ts";
 import type { SessionManager } from "../session-manager.ts";
 import { loadDefaultSessionStore } from "./default-store.lazy.ts";
+import { NODE_REQUIRES_BUN_MESSAGE, nodeJsonlHatchEnabled } from "./node-guard.ts";
 
 /** "jsonl" keeps the legacy JSONL store on Bun: a test-only, in-process choice (no environment variable reaches it). */
 export type SessionStoreChoice = "jsonl";
 
 /**
  * S21b: on Bun, a persisted session is bound to its durable store (one medium per session under the agent dir) before
- * anything else writes to it. Node is untouched here; S21b's Node guard decides what a Node process may open.
+ * anything else writes to it. On Node a persisted session opens only under the JSONL developer hatch.
  */
 export async function bindDefaultSessionStore(
 	sessionManager: SessionManager,
 	options: { readonly agentDir: string; readonly sessionStore?: SessionStoreChoice },
 ): Promise<void> {
-	if (!isBunRuntime || options.sessionStore === "jsonl") return;
+	if (options.sessionStore === "jsonl") return;
 	if (!sessionManager.isPersisted() || sessionManager.getSessionFile() === undefined) return;
+	if (!isBunRuntime) {
+		// K9.a: the durable store does not exist on Node. The developer hatch keeps the legacy JSONL store; otherwise
+		// the open fails with the same steering message the CLI prints.
+		if (nodeJsonlHatchEnabled()) return;
+		throw new Error(NODE_REQUIRES_BUN_MESSAGE);
+	}
 	const { openDefaultSessionStore } = await loadDefaultSessionStore();
 	const bound = await openDefaultSessionStore({
 		agentDir: options.agentDir,
