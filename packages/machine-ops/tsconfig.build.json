@@ -1,0 +1,13 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"outDir": "./dist",
+		"rootDir": ".",
+		"paths": {
+			"@earendil-works/pi-pty": ["../pty/dist/index.d.ts"],
+			"@earendil-works/pi-pty/*": ["../pty/dist/*.d.ts"]
+		}
+	},
+	"include": ["src/**/*.ts", "test/conformance/**/*.ts"],
+	"exclude": ["node_modules", "dist", "**/*.d.ts", "**/*.test.ts"]
+}

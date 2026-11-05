@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { goldenCellVerdict } from "./equivalence-deferred.mjs";
 
 const SURFACES = ["rpc", "tui", "desktop"];
-const OBSERVATIONS = ["O1", "O2", "O3", "O4", "O5", "O6/O7", "O8 TUI", "O8 desktop"];
+const OBSERVATIONS = ["O1", "O2", "O3", "O4", "O5", "O6/O7", "O8 TUI", "O8 desktop", "witness"];
 
 /**
  * Row verdicts. KILLED is the only proof; DEFERRED and NO_B0 say why a row has no proof on this platform and never
@@ -54,7 +54,7 @@ export function validateManifest(mutations, { caseIds, patchDir, tuiCaseIds }) {
 			if (!caseIds.includes(id)) problems.push(`${where}: unknown case ${id}`);
 			if (m.surface === "tui" && !tuiCaseIds.includes(id)) problems.push(`${where}: ${id} has no TUI drive`);
 			const expect = m.expect?.[id];
-			if (!(expect instanceof RegExp)) problems.push(`${where}: expect.${id} must be a RegExp over the diff rows`);
+			if (!(expect instanceof RegExp)) problems.push(`${where}: expect.${id} must be a RegExp over the diff rows (or the witness row)`);
 		}
 		for (const id of Object.keys(m.expect ?? {}))
 			if (!(m.cases ?? []).includes(id)) problems.push(`${where}: expect.${id} names a case the row does not run`);
@@ -130,6 +130,8 @@ export function classifyMutation(mutation, { runnable, baseline, run, revert }) 
 		}
 		const rows = [...(result.diffs ?? []), ...(result.repeatDiffs ?? [])].map(diffRowText);
 		if (result.error) rows.push(`error: ${result.error}`);
+		// The pipeline witness is not part of the equality (plan §6.3), so its failure is its own row.
+		if (result.witnessOk === false) rows.push(`witness.pipeline: actual=${JSON.stringify(result.witness?.pipeline)}`);
 		const match = rows.find((row) => mutation.expect[id].test(row)) ?? null;
 		cases.push({ case: id, outcome: "FAIL", match, firstRow: rows[0] ?? null, rows: rows.length });
 	}

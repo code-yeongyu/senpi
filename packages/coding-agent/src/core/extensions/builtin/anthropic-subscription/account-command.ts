@@ -6,7 +6,6 @@ import { accountLimitsFor, describeAccountLimits } from "../../../subscription-l
 import type { ExtensionAPI, ExtensionCommandContext } from "../../types.ts";
 import { accountDisplayNameCommand, promptAccountDisplayName } from "../account-display-name.ts";
 import { createExtensionLoginInteraction, LOGIN_CANCELLED_MESSAGE } from "../oauth-login-interaction.ts";
-import { emitProviderAccountsChanged } from "./account-events.ts";
 import {
 	ANTHROPIC_SUBSCRIPTION_PROVIDER_ID,
 	pinProviderAccount,
@@ -45,7 +44,12 @@ function accountStatus(slot: AccountSlot, now: number): string | undefined {
 
 function slotStatus(slot: AccountSlot): string {
 	const now = Date.now();
-	const states = [accountStatus(slot, now), ...describeModelBlocks(slot.modelBlocks, now)];
+	// The cadence block of an expired login is the self-heal re-probe, not something the user waits out (senpi#5350).
+	const account =
+		slot.store === "claude-cli" && slot.signInRequired === "login_expired"
+			? "sign-in expired - run /login anthropic-subscription"
+			: accountStatus(slot, now);
+	const states = [account, ...describeModelBlocks(slot.modelBlocks, now)];
 	const blocked = states.filter((state): state is string => state !== undefined);
 	return blocked.length === 0 ? "available" : blocked.join(", ");
 }
@@ -161,6 +165,7 @@ function showAccounts(
 				pinnedAccount: pinned,
 				...(pinned === undefined ? {} : { pinSource: pinSource === "CLI" ? ("cli" as const) : pinSource }),
 				accountFallback: settings.accountFallback,
+				accountStrategy: settings.accountStrategy,
 				...(credential?.order === undefined ? {} : { accountOrder: credential.order }),
 			}).name;
 		} catch (error) {
@@ -201,7 +206,9 @@ async function addAccount(ctx: ExtensionCommandContext, deps: ClaudeAccountComma
 				receipt = committed;
 			},
 		});
-		emitProviderAccountsChanged(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID);
+		// senpi#5116: ModelRuntime.login already emits accounts_changed (with
+		// the "login" remedy); a second emit here sent RPC clients a duplicate
+		// auth_accounts_changed event.
 		ctx.ui.notify("Anthropic Subscription account added.", "info");
 		await promptAccountDisplayName(ctx, receipt);
 	} catch (error) {

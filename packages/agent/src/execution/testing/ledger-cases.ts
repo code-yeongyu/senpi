@@ -53,6 +53,24 @@ const preparation: LedgerCase = async ({ store }) => {
 		{ state: "prepared", call: FROZEN },
 		"frozen bytes survive reopen",
 	);
+	expectEqual(
+		await ledger.apply(command({ kind: "block", value: "late" })),
+		{ status: "refused", reason: "invalid_transition" },
+		"a frozen call cannot be blocked",
+	);
+
+	const blocked = await fixture(store);
+	await runEvents(blocked.ledger, [...PREPARE.slice(0, 2), { kind: "block", value: { reply: "blocked" } }]);
+	expectEqual(
+		(await row(await blocked.reopen())).progress,
+		{
+			state: "settled",
+			outcome: { reason: "blocked", value: { reply: "blocked" }, hooksRan: true, uncertain: false },
+		},
+		"a blocked preparation is a durable terminal outcome",
+	);
+	await (await blocked.reopen()).recover(102);
+	expectEqual((await row(await blocked.reopen())).progress.state, "settled", "restart recovery keeps a blocked call");
 };
 
 const consent: LedgerCase = async ({ store }) => {

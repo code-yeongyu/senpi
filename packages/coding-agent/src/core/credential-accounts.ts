@@ -22,7 +22,11 @@ import {
 	type CredentialSlotState,
 } from "./credential-pool/state-store.ts";
 import { emitProviderAccountsChanged } from "./extensions/builtin/anthropic-subscription/account-events.ts";
-import { isListedStoredSlot, SENTINEL_OAUTH_FIELDS } from "./extensions/builtin/anthropic-subscription/accounts.ts";
+import {
+	isForeignAuthBlock,
+	isListedStoredSlot,
+	SENTINEL_OAUTH_FIELDS,
+} from "./extensions/builtin/anthropic-subscription/accounts.ts";
 import { isAccountBlocked } from "./extensions/builtin/anthropic-subscription/affinity.ts";
 import {
 	accountDirFor,
@@ -57,6 +61,10 @@ export type CredentialAccountSummary = {
 	readonly blockedModels?: readonly { readonly model: string; readonly until: number }[];
 	/** A slot of the other kind than the stored credential: kept, never used, cannot be pinned (senpi#3486). */
 	readonly unused?: true;
+	/** ChatGPT registration route; never inferred from token contents. */
+	readonly route?: "siwc" | "legacy";
+	readonly planUsageEnabled?: boolean;
+	readonly signedOut?: boolean;
 	/** Set for an account signed in through the bundled `claude` CLI, whose own store holds the login (senpi#4436). */
 	readonly store?: "claude-cli";
 	readonly signedInAt?: number;
@@ -193,6 +201,8 @@ function storedSlotBlock(provider: string, slot: object, now: number): SlotBlock
 	const blockedUntil = numberField(slot, "blockedUntil");
 	const blockedReason = accountBlockedReason(blockReason);
 	if (blockedReason === "disabled") return { blocked: true, blockedReason };
+	// The Claude lane does not skip a slot for an auth block no Claude CLI verdict backs (senpi#5623).
+	if (normalizeProviderId(provider) === "anthropic-subscription" && isForeignAuthBlock(slot)) return UNBLOCKED;
 	const skipped =
 		normalizeProviderId(provider) === "anthropic-subscription"
 			? isAccountBlocked({ blockedUntil }, now)
@@ -313,6 +323,15 @@ async function summarizeInStoredOrder(
 			const applicable = applicableStoredState(persisted, revisions);
 			summaries.push({
 				name: slot.name,
+				...(normalizeProviderId(provider) === "chatgpt-subscription" && credential.type === "oauth"
+					? {
+							route: slot.route === "siwc" ? ("siwc" as const) : ("legacy" as const),
+							...(slot.route === "siwc" && typeof slot.planUsageEnabled === "boolean"
+								? { planUsageEnabled: slot.planUsageEnabled }
+								: {}),
+							...(slot.signedOut === true ? { signedOut: true } : {}),
+						}
+					: {}),
 				...(displayName === undefined ? {} : { displayName }),
 				source: slot.source ?? "login",
 				...slotBlocked(provider, slot, applicable, now),

@@ -95,6 +95,7 @@ export function foldCallRecord(
 	record: object,
 	scope: CallScope,
 	sequence: number,
+	callKey?: string,
 ): CallFold {
 	const step = { sequence, scope };
 	const before = calls.table.counters.replacements;
@@ -109,6 +110,7 @@ export function foldCallRecord(
 				toolName: text(record, "toolName"),
 				args: field(record, "args") ?? null,
 				...(typeof parentToolCallId === "string" ? { parentToolCallId } : {}),
+				...(callKey === undefined ? {} : { key: callKey }),
 			});
 			break;
 		}

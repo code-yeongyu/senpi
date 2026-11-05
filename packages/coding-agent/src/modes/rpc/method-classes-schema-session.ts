@@ -32,6 +32,7 @@ const steerOrFollowUp = <const T extends "steer" | "follow_up">(type: T) =>
 		whenIdle: Opt(literals("queue", "start")),
 		clientMessageId: OptId,
 		clientTurnId: OptId,
+		expectedTurnId: OptId,
 	});
 
 const editMessage = <const T extends "edit_assistant_message" | "edit_user_message">(type: T) =>
@@ -57,6 +58,7 @@ const PROMPTING_SCHEMAS = {
 		unknownCommandAsText: OptBool,
 		clientMessageId: OptId,
 		clientTurnId: OptId,
+		expectedTurnId: OptId,
 		toolBarrier: Opt(Type.Object({ id: Id, deadlineMs: Num })),
 	}),
 	release_tool_barrier: session("release_tool_barrier", { barrierId: Id }),
@@ -224,11 +226,13 @@ const SURFACE_AND_ACCOUNT_SCHEMAS = {
 	get_provider_accounts: session("get_provider_accounts", { provider: Id }),
 	account_pin: session("account_pin", { provider: Id, name: Type.Union([Id, Type.Null()]) }),
 	account_remove: session("account_remove", { provider: Id, name: Id }),
+	account_reset: session("account_reset", { provider: Id, name: Id }),
 	account_order: session("account_order", { provider: Id, names: Type.Union([Strings, Type.Null()]) }),
 	test_provider_account: session("test_provider_account", { provider: Id, name: Id }),
 	set_client_info: session("set_client_info", {
 		width: Type.Integer({ minimum: 1, maximum: 100_000 }),
 		capabilities: Opt(Strings),
+		remoteOrigin: Opt(Type.Object({ deviceId: Id, deviceName: OptId }, { additionalProperties: false })),
 	}),
 };
 

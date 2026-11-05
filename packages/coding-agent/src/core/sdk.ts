@@ -34,6 +34,7 @@ import {
 } from "./model-resolver.ts";
 import { ModelRuntime } from "./model-runtime.ts";
 import { mergeProviderAttributionHeaders } from "./provider-attribution.ts";
+import { sessionAffinityStreamOptions } from "./session-affinity-key.ts";
 import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
 import { getDefaultSessionDir, SessionManager } from "./session-manager.ts";
@@ -70,8 +71,14 @@ import { getBranchSelection, isVirtualModel } from "./virtual-models.ts";
 setDefaultStreamFn(streamSimple);
 
 import type { ToolRuntimeKind } from "../cli/tool-runtime.ts";
+import { type ExecutionPipelineWitnessSink, resolveWitnessSink } from "./execution/pipeline-witness-sink.ts";
 
 export interface CreateAgentSessionOptions {
+	/**
+	 * Where this session's execution-pipeline receipts go (S18b part 3): a sink outside the session, never a session entry.
+	 * Unset: the file `SENPI_EXECUTION_PIPELINE_WITNESS` names (one JSON line per call), else no receipts.
+	 */
+	executionPipelineWitness?: ExecutionPipelineWitnessSink;
 	/** Working directory for project-local discovery. Default: process.cwd() */
 	cwd?: string;
 	/** Global config directory. Default: ~/.pi/agent */
@@ -496,6 +503,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const internalChannel = createInternalAgentChannel();
 	agent = new Agent({
 		internalChannel,
+		onExecutionPipeline: resolveWitnessSink(options.executionPipelineWitness),
 		initialState: {
 			systemPrompt: "",
 			model,
@@ -532,6 +540,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			);
 			return modelRuntime.streamSimple(model, context, {
 				...options,
+				...sessionAffinityStreamOptions(model, options, settingsManager.getPromptCacheSessionAffinity(), agentDir),
 				cwd,
 				serviceTier,
 				timeoutMs,
