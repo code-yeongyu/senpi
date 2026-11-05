@@ -40,6 +40,8 @@ export {
 } from "@earendil-works/pi-telemetry";
 export * from "./agent.ts";
 export * from "./agent-loop.ts";
+export * from "./egress/types.ts";
+export { isStepCommitError, StepCommitError, type StepCommitFailure } from "./step-commit.ts";
 export { Agent, agentLoop, agentLoopContinue, runAgentLoop, runAgentLoopContinue } from "./public-entry.ts";
 export { createInternalAgentChannel, type InternalAgentChannel, type OrderedAgentRecord } from "./internal-events.ts";
 export { EMPTY_TOOL_USE_DEMOTION_DIAGNOSTIC, ProviderRetryWatchdogAbortError } from "./assistant-terminal-state.ts";
