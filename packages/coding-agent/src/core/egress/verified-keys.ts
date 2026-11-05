@@ -233,7 +233,11 @@ export async function recordVerification(path: string, record: LocalKeyVerificat
 			existing.accountId === record.accountId &&
 			existing.generation === record.generation &&
 			existing.sigKeyId === record.sigKeyId;
-		const next = { v: 2, records: [...kept.filter((existing) => !replaced(existing)), record] };
+		// A revocation is sticky: re-checking the same key never clears the `supersedes` an earlier record carried, even when
+		// its signer later publishes the entry without it (15.11, gate round 6 M-5).
+		const revoked = kept.find((existing) => replaced(existing) && existing.supersedes !== undefined)?.supersedes;
+		const merged = revoked === undefined ? record : { ...record, supersedes: revoked };
+		const next = { v: 2, records: [...kept.filter((existing) => !replaced(existing)), merged] };
 		const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
 		await writeFile(tmp, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
 		await chmod(tmp, 0o600);

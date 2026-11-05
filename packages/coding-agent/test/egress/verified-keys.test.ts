@@ -8,10 +8,11 @@ import {
 	type LocalKeyVerification,
 	readVerifiedKeys,
 	recordVerification,
+	serviceEntryValidity,
 	verificationFor,
 	verifiedKeysPath,
 } from "../../src/core/egress/verified-keys.ts";
-import { registryFields, signedEntry } from "./signed-entry.ts";
+import { p256Signer, registryFields, signedEntry } from "./signed-entry.ts";
 
 let root: string;
 let path: string;
@@ -71,6 +72,22 @@ describe("verified-keys store", () => {
 		await recordVerification(path, other);
 		await recordVerification(path, { ...record, checkedAt: 99 });
 		expect(await readVerifiedKeys(path)).toEqual({ state: "ok", records: [other, { ...record, checkedAt: 99 }] });
+	});
+
+	it("keeps a revocation when the revoking key is re-checked from an entry without supersedes", async () => {
+		const old = await signedEntry(registryFields(1));
+		const signer = await p256Signer();
+		const revoker = await signedEntry(registryFields(2, old.sigKeyId), signer);
+		const reissued = await signedEntry(registryFields(2), signer);
+		for (const entry of [old, revoker, reissued]) {
+			const checked = await verificationFor(entry, "omo-account", 7);
+			if (!checked) throw new Error("fixture did not record");
+			await recordVerification(path, checked);
+		}
+		const read = await readVerifiedKeys(path);
+		if (read.state !== "ok") throw new Error("store unreadable");
+		const roster = { state: "known" as const, serviceEntries: [old, reissued] };
+		expect(await serviceEntryValidity(old, "omo-account", read.records, roster)).toBe("superseded");
 	});
 
 	it("replaces an unreadable file instead of failing the check that just passed", async () => {
