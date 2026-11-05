@@ -50,6 +50,8 @@ describe("epoch catch-up to the owner's recorded epoch (senpi#5860)", () => {
 		expect(await fence.raise("s", 2, "b")).toEqual({ kind: "acked", floor: 2 });
 		expect(reads).toBe(1);
 		expect(fence.admits("s", 1, "a")).toBe(false);
+		expect(await fence.raise("s", 5, "x")).toEqual({ kind: "refused", reason: "peer_unauthorized" });
+		expect(reads).toBe(2);
 	});
 
 	it("coalesces concurrent reads of one scope's record", async () => {
@@ -121,6 +123,33 @@ describe("epoch catch-up to the owner's recorded epoch (senpi#5860)", () => {
 		expect(reads).toBe(1);
 		expect(await fence.raise("s", 2, "b")).toEqual({ kind: "acked", floor: 2 });
 		expect(reads).toBe(1);
+	});
+
+	it("a raise that joined a read started before its claim landed reads once more, so the new owner is not stranded", async () => {
+		const replies = [Promise.withResolvers<ScopeOwner>(), Promise.withResolvers<ScopeOwner>()];
+		let reads = 0;
+		const fence = createHandEpochFence({
+			ownerOf: () => ({ principal: "a", epoch: 1 }),
+			refreshOwner: async () => {
+				const reply = replies[reads];
+				reads += 1;
+				if (reply === undefined) throw new Error("an unexpected record read");
+				return reply.promise;
+			},
+		});
+		const byC = fence.raise("s", 2, "c");
+		for (let turn = 0; turn < 64 && reads === 0; turn++) await Promise.resolve();
+		const byB = fence.raise("s", 3, "b");
+		replies[0]?.resolve({ principal: "c", epoch: 2 });
+		for (let turn = 0; turn < 64 && reads < 2; turn++) await Promise.resolve();
+		replies[1]?.resolve({ principal: "b", epoch: 3 });
+
+		expect(await Promise.all([byC, byB])).toEqual([
+			{ kind: "acked", floor: 2 },
+			{ kind: "acked", floor: 3 },
+		]);
+		expect(reads).toBe(2);
+		expect(fence.admits("s", 2, "c")).toBe(false);
 	});
 
 	it("answers the record's owner below its recorded epoch with the floor in force, which its gate reads as superseded", async () => {

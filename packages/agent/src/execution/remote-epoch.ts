@@ -108,9 +108,15 @@ export function createHandEpochFence(options: HandEpochFenceOptions): HandEpochF
 		return copy !== undefined && copy.epoch >= read.epoch ? copy : read;
 	};
 	const ownerFor = async (scope: string, epoch: number): Promise<ScopeOwner | undefined> => {
+		const ahead = (owner: ScopeOwner | undefined): boolean =>
+			typeof owner !== "string" && epoch > (owner?.epoch ?? 0);
 		const copy = copyOf(scope);
-		const ahead = typeof copy !== "string" && epoch > (copy?.epoch ?? 0);
-		return ahead && refreshOwner !== undefined ? refreshed(scope, refreshOwner) : copy;
+		if (!ahead(copy) || refreshOwner === undefined) return copy;
+		// A read already in flight may have started before this raiser's claim landed; if it still leaves the raise ahead,
+		// read once more (that read starts after this raise arrived, so after its claim).
+		const joined = reading.has(scope);
+		const owner = await refreshed(scope, refreshOwner);
+		return joined && ahead(owner) ? refreshed(scope, refreshOwner) : owner;
 	};
 
 	const raiseNow = async (
