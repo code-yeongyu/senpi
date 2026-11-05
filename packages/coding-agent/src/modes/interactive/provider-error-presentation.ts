@@ -1,9 +1,12 @@
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { isRetryableErrorMessage } from "@earendil-works/pi-ai";
 import { type Component, type Container, Text } from "@earendil-works/pi-tui";
 import { z } from "zod";
 import { keyText } from "./components/keybinding-hints.ts";
 import { sanitizeTuiErrorMessage } from "./extension-error-format.ts";
+import { describedProviderError } from "./provider-error-description.ts";
+import { providerErrorReason } from "./provider-error-reason.ts";
 import { theme } from "./theme/theme.ts";
 
 const envelope = z.object({
@@ -41,11 +44,27 @@ export function isRetryableProviderError(raw: string | undefined): boolean {
 	return isRetryableErrorMessage(raw);
 }
 
-export function isNetworkProviderMessage(message: AssistantMessage): boolean {
-	return (
-		(message.stopReason === "error" || message.stopReason === "aborted") &&
-		isNetworkProviderError(message.errorMessage)
-	);
+/**
+ * True when a failed attempt's row belongs to the quiet retry episode instead of painting its raw error:
+ * the same classifier `auto_retry_start` uses, so a gateway 429 JSON body or 5xx HTML page the episode
+ * records is not also a transcript row per attempt (senpi#6012). A failure a classifier already describes in
+ * plain language (an account usage limit, a stall) keeps its row; an abort counts only on network wording.
+ */
+export function isRetryableProviderMessage(message: AssistantMessage): boolean {
+	if (isNetworkProviderError(message.errorMessage))
+		return message.stopReason === "error" || message.stopReason === "aborted";
+	if (message.stopReason === "error")
+		return isRetryableProviderError(message.errorMessage) && describedProviderError(message) === undefined;
+	return false;
+}
+
+/** True when the turn's last failed attempt belongs to an active quiet episode, which owes its one final notice. */
+export function episodeOwnsFailure(
+	messages: readonly AgentMessage[],
+	presentation: ProviderErrorPresentation | undefined,
+): boolean {
+	const last = messages.findLast((message) => message.role === "assistant");
+	return last?.role === "assistant" && isRetryableProviderMessage(last) && presentation?.hasActiveRetry === true;
 }
 
 class ProviderFailureNotice implements Component {
@@ -92,6 +111,7 @@ export class ProviderErrorPresentation {
 	private readonly chat: Container;
 	private notice: ProviderFailureNotice | undefined;
 	private pending = false;
+	private lastReason: string | undefined;
 
 	constructor(chat: Container) {
 		this.chat = chat;
@@ -106,6 +126,7 @@ export class ProviderErrorPresentation {
 			this.chat.addChild(this.notice);
 		}
 		this.notice.add(raw);
+		this.lastReason = providerErrorReason(raw) ?? this.lastReason;
 	}
 
 	retrying(raw: string, expanded: boolean): void {
@@ -154,13 +175,15 @@ export class ProviderErrorPresentation {
 		this.pending = false;
 		this.retryAwaitingFinish = false;
 		const count = attempts === undefined ? "" : ` after ${attempts} retries`;
+		const reason = this.lastReason === undefined ? "" : ` (${this.lastReason})`;
 		this.notice?.setSummary(
-			`The model provider could not complete the request${count}. Try again or choose another model with /model.`,
+			`The model provider could not complete the request${count}${reason}. Try again or choose another model with /model.`,
 		);
 	}
 
 	newTurn(): void {
 		this.finish();
 		this.notice = undefined;
+		this.lastReason = undefined;
 	}
 }

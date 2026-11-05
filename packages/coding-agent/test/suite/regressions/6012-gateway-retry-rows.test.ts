@@ -117,9 +117,11 @@ describe("senpi#6012 gateway retry rows", () => {
 		const rows = chatRows(h).slice(userRows);
 		expect(h.status.children).toHaveLength(0);
 		expect(rows.join("\n")).not.toMatch(raw);
-		expect(rows).toHaveLength(1);
-		expect(rows[0]).toContain("could not complete the request after 2 retries");
-		expect(rows[0]).toContain("502 bad gateway");
+		const text = rows.join(" ").replace(/\s+/g, " ");
+		expect(text.match(/could not complete the request/g)).toHaveLength(1);
+		expect(text).toContain("could not complete the request after 2 retries (502 bad gateway)");
+		expect(text).not.toContain("Error:");
+		expect(text).not.toContain(failure.reason);
 		h.expand();
 		expect(h.render(200)).toContain("litellm.RateLimitError");
 		expect(h.render(200)).toContain("<center><h1>502 Bad Gateway</h1></center>");
