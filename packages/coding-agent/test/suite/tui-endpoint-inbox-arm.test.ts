@@ -123,8 +123,7 @@ describe.skipIf(process.platform === "win32")("tui endpoint: inbox watch arms af
 			() => undefined,
 			(error) => errors.push(error),
 		);
-		watch.stop();
-		await within(watch.armed, 1_000, "arming to settle after stop");
+		await within(watch.stop(), 1_000, "the stop to join the arming loop");
 		expect(errors).toEqual([]);
 		expect(await readdir(inboxDir)).toEqual([]);
 	});

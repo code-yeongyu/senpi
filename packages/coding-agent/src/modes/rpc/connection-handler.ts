@@ -1017,7 +1017,8 @@ export function createRpcConnectionHandler(
 		sessionQuestionBridges.set(session, questions);
 		sessionDialogRequests.set(session, pendingExtensionRequests);
 		// Installed before the bind below: extensions register their control endpoint on session_start.
-		sessionControl?.dispose();
+		// Every edge source of the old one stops synchronously; its inbox watch finishes stopping on its own.
+		void sessionControl?.dispose();
 		sessionControl = new HostSessionControl(
 			session,
 			runtimeHost.launchProfile?.sessionContext?.host_socket,
@@ -2436,7 +2437,7 @@ export function createRpcConnectionHandler(
 		detachGrantPresentation?.();
 		unsubscribeSecurityNotices?.();
 		stopLimitEvents();
-		sessionControl?.dispose();
+		const sessionControlReleased = sessionControl?.dispose();
 		sessionControl = undefined;
 		relocation?.dispose();
 		relocation = undefined;
@@ -2454,6 +2455,7 @@ export function createRpcConnectionHandler(
 		unsubscribeBackpressure = undefined;
 		unsubscribeLoadedSurfaces = undefined;
 		unsubscribeExtensionEvents = undefined;
+		await sessionControlReleased;
 		if (options.disposeRuntime !== false) {
 			await runtimeHost.dispose(disposeOptions);
 		}

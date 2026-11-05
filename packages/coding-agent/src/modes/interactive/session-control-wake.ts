@@ -104,7 +104,12 @@ const INBOX_ARM_ATTEMPT_MS = 200;
 /** A live inbox watch. `armed` settles once arming did: the watch confirmed, the bounded retry ran out, or it was stopped. */
 export interface InboxWatch {
 	readonly armed: Promise<void>;
-	stop(): void;
+	/**
+	 * Stops the watch at once (no further `onChange`/`onError`). Settles once the watch no longer touches
+	 * the inbox: the arming loop's last sentinel write and its removal, and the watch teardown, have
+	 * settled - so a caller may remove the directory then (senpi#5609). Idempotent; never rejects.
+	 */
+	stop(): Promise<void>;
 }
 
 /**
@@ -146,12 +151,17 @@ export async function watchInbox(
 	// Settles on the sentinel's own event, before any later event of the same watch is delivered, so a
 	// pass requested on it runs ahead of the passes those events cause; otherwise when arming ended.
 	const armed = Promise.race([confirmation.promise.then((confirmed) => (confirmed ? undefined : arming)), arming]);
+	let stopping: Promise<void> | undefined;
 	return {
 		armed,
 		stop: () => {
-			stopped = true;
-			confirmation.resolve(false);
-			void Promise.resolve(unsubscribe()).catch(onError);
+			if (stopping === undefined) {
+				stopped = true;
+				confirmation.resolve(false);
+				// `arming` never rejects: a stopped loop ends after the write in flight, then removes the sentinel.
+				stopping = Promise.all([arming, Promise.resolve(unsubscribe()).catch(onError)]).then(() => undefined);
+			}
+			return stopping;
 		},
 	};
 }

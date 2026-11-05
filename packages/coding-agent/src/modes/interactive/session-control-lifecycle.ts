@@ -47,7 +47,7 @@ export interface ActivationParts {
 	readonly server: ControlServer;
 	readonly scheduler: WakeScheduler;
 	readonly feed: ControlFeed;
-	readonly stopInbox: () => void;
+	readonly stopInbox: () => Promise<void>;
 	readonly wake: (reason: SessionControlWakeReason) => Promise<SessionControlDrainResult>;
 }
 
@@ -91,11 +91,12 @@ export function activateControlEndpoint(parts: ActivationParts): ActiveControlEn
 			unsubscribeEmitted();
 			unsubscribeInputs();
 			stopContinue();
-			parts.stopInbox();
+			const inboxStopped = parts.stopInbox();
 			parts.scheduler.dispose();
 			feed.clear();
 			session.externalAdmission.setEditorSource(undefined);
 			await parts.server.close();
+			await inboxStopped;
 			if (!(await sessionReferenced(parts.options, surface))) await session.sessionManager.discardHeaderOnlyFile();
 			await unregisterTuiEndpoint(parts.entry);
 		})();
