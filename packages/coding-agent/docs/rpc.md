@@ -4110,6 +4110,12 @@ On an idle session a plain `steer` only queues; it waits for the next turn. Pass
 
 `steer` and `follow_up` accept `expectedTurnId` with the same check as a `prompt` steer (see [Steering a specific turn](#prompt)): an input that names a turn which is not running when it enters the queue is refused `turn_conflict` and queued nowhere.
 
+**Thread chains**: `prompt`, `steer` and `follow_up` accept `chainCount`, a positive integer, when the input is a thread call from another session: the hop count of its chain (1 for the first call, one more per hop; a chain may come back to a session it already visited). It is checked against the user's `threads.chainCountLimit` setting before anything of the input is recorded. With no limit set every count is admitted; past the limit the input is refused with `errorCode: "chain_count_limit"` and `errorData: { count, limit }`. An admitted count is reported on the session's `input` event as `chainCount`, so a thread call that session sends next carries one more.
+
+```json
+{"type": "prompt", "message": "Review the plan", "chainCount": 2}
+```
+
 ```json
 {"type": "steer", "message": "Use the other file", "expectedTurnId": "3"}
 ```

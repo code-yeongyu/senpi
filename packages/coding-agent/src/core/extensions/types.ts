@@ -2069,6 +2069,11 @@ export interface InputEvent {
 	attribution: InputAttribution;
 	/** How the input will be delivered during streaming, or undefined when idle */
 	streamingBehavior?: "steer" | "followUp";
+	/**
+	 * Set when the input is a thread call from another session: its chain hop count (decision K8). A thread call this
+	 * session sends next carries one more.
+	 */
+	chainCount?: number;
 }
 
 /** Fired after interception and admission determine ownership of an input. */

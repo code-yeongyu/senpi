@@ -1,3 +1,4 @@
+import { admitChainCall, CHAIN_COUNT_LIMIT, ChainCountLimitError } from "@earendil-works/pi-agent-core";
 import { AgentBusyError } from "../../core/agent-busy-error.ts";
 import type { AgentSession, PromptDisposition, PromptOptions } from "../../core/agent-session.ts";
 import { clientMessageIdentity } from "../../core/client-message-identity.ts";
@@ -54,6 +55,15 @@ export async function handleClientInput(
 	client: InputClient = { interactiveUser: false },
 ): Promise<void> {
 	try {
+		// A thread call from another session is admitted against the user's count limit before anything of it is recorded.
+		const chain =
+			command.chainCount === undefined
+				? {}
+				: {
+						chainCount: admitChainCall(command.chainCount, () =>
+							session.settingsManager.getThreadChainCountLimit(),
+						),
+					};
 		const admissions = ClientAdmissions.forSession(session);
 		let disposition: PromptDisposition | undefined;
 		let responded = false;
@@ -90,6 +100,7 @@ export async function handleClientInput(
 							...options,
 							source: "rpc",
 							interactiveUser: client.interactiveUser,
+							...chain,
 							onQueuedInput: hooks.queued,
 							promptDisposition: (next) => {
 								disposition = next;
@@ -147,6 +158,7 @@ export async function handleClientInput(
 							expectedTurnId: command.expectedTurnId,
 							source: "rpc" as const,
 							interactiveUser: client.interactiveUser,
+							...chain,
 							onQueuedInput: hooks.queued,
 						};
 						disposition =
@@ -186,6 +198,9 @@ export async function handleClientInput(
 						errorCode: RPC_ERROR_TURN_CONFLICT,
 						...(error.currentTurnId === undefined ? {} : { errorData: { currentTurnId: error.currentTurnId } }),
 					}
+				: {}),
+			...(error instanceof ChainCountLimitError
+				? { errorCode: CHAIN_COUNT_LIMIT, errorData: { count: error.count, limit: error.limit } }
 				: {}),
 			...(unknownCommand
 				? {

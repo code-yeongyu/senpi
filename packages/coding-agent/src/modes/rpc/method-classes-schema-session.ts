@@ -24,6 +24,9 @@ import {
 	ThinkingLevel,
 } from "./method-classes-schema-fields.ts";
 
+/** A thread call's hop count: 1 for the first call of a chain, one more per hop. */
+const ChainCount = Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER });
+
 const steerOrFollowUp = <const T extends "steer" | "follow_up">(type: T) =>
 	session(type, {
 		message: Str,
@@ -33,6 +36,7 @@ const steerOrFollowUp = <const T extends "steer" | "follow_up">(type: T) =>
 		clientMessageId: OptId,
 		clientTurnId: OptId,
 		expectedTurnId: OptId,
+		chainCount: Opt(ChainCount),
 	});
 
 const editMessage = <const T extends "edit_assistant_message" | "edit_user_message">(type: T) =>
@@ -60,6 +64,7 @@ const PROMPTING_SCHEMAS = {
 		clientTurnId: OptId,
 		expectedTurnId: OptId,
 		toolBarrier: Opt(Type.Object({ id: Id, deadlineMs: Num })),
+		chainCount: Opt(ChainCount),
 	}),
 	release_tool_barrier: session("release_tool_barrier", { barrierId: Id }),
 	send_custom_message: session("send_custom_message", {
