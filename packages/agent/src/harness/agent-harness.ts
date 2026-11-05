@@ -13,6 +13,7 @@ import type {
 	ToolResultMessage,
 	Usage,
 } from "@earendil-works/pi-ai";
+import type { ExecutionPipelineWitness } from "../execution/tool-host.ts";
 import type { AgentMessage, AgentToolResult, QueueMode, ThinkingLevel } from "../types.ts";
 import type { BranchPreparation, BranchSummaryResult } from "./compaction/branch-summarization.ts";
 import type { CompactionPreparation, CompactionSettings, CompactResult } from "./compaction/compaction.ts";
@@ -533,6 +534,8 @@ export interface AgentHarnessOptions<TContext extends object | undefined = objec
 	toolExecution?: "sequential" | "parallel";
 	toProviderMessages?: (messages: AgentMessage[], context: Context) => Message[] | Promise<Message[]>;
 	entryProjectors?: Record<string, EntryProjector>;
+	/** Receives `{ pipeline: "prepared", toolCallId }` for every tool call whose body runs, as `Agent.onExecutionPipeline` does. */
+	onExecutionPipeline?: (witness: ExecutionPipelineWitness) => void | Promise<void>;
 }
 
 export interface AgentLane {

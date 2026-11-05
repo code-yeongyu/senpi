@@ -4,6 +4,7 @@ import { type Context, withAbortSignal } from "../context.ts";
 import type { JsonValue } from "../session/types.ts";
 import type { AgentHarnessTool, AgentHarnessToolInvocation, AgentHarnessToolUpdateCallback } from "../types.ts";
 import type { Gate } from "./effect-gate.ts";
+import { runOnPreparedToolHost, type WitnessSink } from "./tool-host-call.ts";
 
 /** A tool call whose tool exists and whose prepared arguments passed validation. */
 export interface PreparedToolCall<TContext extends object | undefined> {
@@ -129,31 +130,37 @@ export function executeToolCall<TContext extends object | undefined>(
 	toolContext: TContext,
 	invocation: AgentHarnessToolInvocation,
 	context: Context,
+	recordWitness?: WitnessSink,
 ): Promise<ExecutedToolCall> {
 	let acceptingUpdates = true;
 	return gate.admit(async () => {
 		const admittedContext = withAbortSignal(gate.signal, context);
 		admittedContext.abortSignal?.throwIfAborted();
-		try {
-			const result = await call.tool.execute(
-				call.toolCall.id,
-				call.args,
-				(partial, options) => {
-					if (acceptingUpdates) onUpdate(partial, options);
-				},
-				toolContext,
-				invocation,
-				admittedContext,
-			);
-			return { result, isError: false };
-		} catch (error) {
-			return {
-				result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
-				isError: true,
-			};
-		} finally {
-			acceptingUpdates = false;
-		}
+		const toolCall: AgentToolCall = { ...call.toolCall, arguments: call.args };
+		return runOnPreparedToolHost(toolCall, invocation.invocationId, recordWitness, async (args) => {
+			let executed: ExecutedToolCall;
+			try {
+				const result = await call.tool.execute(
+					call.toolCall.id,
+					args as Record<string, JsonValue>,
+					(partial, options) => {
+						if (acceptingUpdates) onUpdate(partial, options);
+					},
+					toolContext,
+					invocation,
+					admittedContext,
+				);
+				executed = { result, isError: false };
+			} catch (error) {
+				executed = {
+					result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
+					isError: true,
+				};
+			} finally {
+				acceptingUpdates = false;
+			}
+			return { outcome: executed, result: executed.result };
+		});
 	});
 }
 
