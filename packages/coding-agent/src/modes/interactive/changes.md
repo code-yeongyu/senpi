@@ -1,3 +1,405 @@
+## 2026-11-02 - IME composition on the question list shows on the own-answer row, not the footer (senpi#4400)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/ask-user-question-render.ts`: `renderQuestionList(state, focused)` ends the `Type your own answer...` row with `CURSOR_MARKER` while the focused overlay has the option list focused, so the TUI parks the hardware cursor at the end of that row.
+- `packages/coding-agent/src/modes/interactive/components/ask-user-question.ts`: passes its focus state to `renderQuestionList()` and rebuilds its rows when focus changes, so the marker appears and disappears with focus. The open own-answer editor and the comment editor keep their own cursor as before.
+
+### Why
+
+- On the option list no component emitted a cursor marker, so the hardware cursor stayed at the end of the last rendered line, the footer. macOS IMEs draw composing (preedit) text at the hardware cursor, so the first Korean syllable typed on the list showed next to the model display in the footer until the next syllable committed it and opened the answer input (senpi#4400, reported by cmj1203). A printable key on the list opens the own answer, so its row is where the typed text belongs.
+- The hardware cursor stays hidden unless `showHardwareCursor` is on; only its position changes.
+
+### Why an extension could not handle it
+
+- The question overlay is the built-in `ctx.ui.question` component; its rows and cursor placement are rendered inside it.
+
+### Expected merge conflict zones
+
+- LOW: `renderQuestionList()` in `ask-user-question-render.ts`; the `focused` setter and the `renderQuestionList` call in `updateAll()` in `ask-user-question.ts`.
+
+## 2026-10-30 - Keep SIWC ID-token hints out of terminal hyperlinks (senpi#5046)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/login-dialog.ts` renders hint-free URL text and terminal hyperlink targets while opening the original URL directly in the browser.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/components/login-dialog.ts` must not leave retained ID tokens in terminal output or captures.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/components/login-dialog.ts` owns the shared login dialog's terminal output.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/components/login-dialog.ts`: showAuth.
+
+## 2026-11-01 - The TUI writes OSC 7501 program status (senpi#5323)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the extension UI context implements `setProgramStatus` by writing `encodeProgramStatus(status, APP_COMMAND)` through `this.ui.terminal.write`, only when stdout is a TTY. An identical consecutive report, or a clear with no active status, writes nothing. `stop()` writes `state=clear` when a status is active and ignores later reports, so a quit never leaves a `working` or `blocked` record behind in the terminal.
+- `withBlockedHostDialog` adds `kind: "permission"` to its `herdr:blocked` event when the dialog carries `toolCallId`, the marker of a permission request.
+
+### Why
+
+- herdr-core and other OSC 7501 terminals learn the agent's state only from this sequence. The app name is the branded command, so OmO reports `omo` and standalone Senpi `senpi`.
+
+### Why an extension could not handle it
+
+- The extension UI context and the TUI terminal are owned by interactive mode; extensions cannot write around the stdout takeover.
+
+### Expected merge conflict zones
+
+- LOW: the `setTitle` neighbourhood of the extension UI context, `withBlockedHostDialog`, the field list beside `extensionTerminalTitle`, the `@earendil-works/pi-tui` import list, and the progress clear at the top of `stop()`.
+
+## 2026-10-26 - A request retried at 200k shows a transcript notice (senpi#4065)
+
+### What changed
+
+- `components/continuity-notice.ts`: `ContinuityNoticeTracker.noticeFor` uses the shared fallback diagnostic and label, and renders both notices when a turn also fell back from session resume.
+
+### Why
+
+- A window fallback changes what the model can see; the user must be told rather than find out from compaction.
+
+### Why an extension could not handle it
+
+- The continuity notices are rendered by interactive mode from the assistant message's diagnostics.
+
+### Expected merge conflict zones
+
+- LOW: the diagnostic type constants and the first checks in `noticeFor`.
+
+## 2026-10-30 - The exhaustion notice leads with the primary failure (senpi#4084)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: when earlier rungs failed, the `retry_fallback_exhausted` notice leads with the primary failure even if the last rung's error was retryable.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: senpi#4084: the notice showed only the last rung's error, so a primary 400 (usage, billing) hid behind a later rung's `Connection error.`.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the TUI's built-in exhaustion notice is rendered by the interactive mode itself; an extension cannot replace it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: LOW, the `retry_fallback_exhausted` case.
+
+## 2026-10-30 - Announce automatic account switches in the TUI (senpi#2304, senpi#5017)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `registerSignalHandlers` subscribes to provider account events (cleaned up with the other process handlers) and shows a status line for each `failover` event.
+- `packages/coding-agent/src/modes/interactive/account-failover-notice.ts` (new): `formatAccountFailoverNotice` words it as `Switched <provider> account <from> -> <to>: <reason>.`
+
+### Why
+
+- No lane's account switch reached the TUI, so users with several logins could not tell a request moved to another account.
+
+### Why an extension could not handle it
+
+- The event bus is host-internal and the notice belongs to the host's status line; no extension hook receives provider account events.
+
+### Expected merge conflict zones
+
+- LOW: the end of `registerSignalHandlers` and the import block in `interactive-mode.ts`.
+
+## 2026-10-26 - Slash-command recovery for a failed compaction in the TUI (senpi#4161)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/required-compaction-wording.ts`: maps the surface-neutral failed-compaction message to the TUI wording "Run /compact to retry, or /new to start a fresh session."
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `showError` (rejected prompts) shows that wording.
+- `packages/coding-agent/src/modes/interactive/components/assistant-render-descriptors.ts`: a turn that stopped on a failed compaction renders that wording.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: only the TUI has `/compact` and `/new`, so only the TUI names them.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: error rendering for rejected prompts and error stops is owned by interactive mode, not by an extension hook.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/interactive/interactive-mode.ts` `showError`; `packages/coding-agent/src/modes/interactive/components/assistant-render-descriptors.ts` `case "error"` fallback text.
+
+## 2026-10-31 - The extra-usage warning no longer sniffs sk-ant-oat API keys (senpi#5131)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `maybeWarnAboutAnthropicSubscriptionAuth` drops `isAnthropicSubscriptionAuthKey` and the `getAuth` read; it warns only on a stored `oauth` credential of `anthropic`. An `sk-ant-oat` key is refused by the provider before any request instead.
+
+### Why
+
+- senpi#5131: the warning described a request that is no longer sent.
+
+### Why an extension could not handle it
+
+- The startup warning is interactive-mode's own.
+
+### Expected merge conflict zones
+
+- LOW: the warning helper block near `ANTHROPIC_SUBSCRIPTION_AUTH_WARNING`.
+
+## 2026-10-30 - First-class private secret input (senpi#5108)
+
+### What changed
+
+- Covered files: `packages/coding-agent/src/modes/interactive/attach-client.ts`, `packages/coding-agent/src/modes/interactive/attach-dialogs.ts`, `packages/coding-agent/src/modes/interactive/attach.ts`, `packages/coding-agent/src/modes/interactive/components/extension-input.ts`, `packages/coding-agent/src/modes/interactive/interactive-mode.ts`, `packages/coding-agent/src/modes/interactive/session-control-commands.ts`.
+- Mask secret input, exclude raw extension listeners while focused, use fixed deadlines across attach re-offers, and dispose private editing state on every terminal outcome.
+
+### Why
+
+- Extension input previously exposed credentials through ordinary dialogs and RPC answer paths.
+
+### Why an extension could not handle it
+
+- Connection authorization, transport publication, host lifecycle and terminal focus are owned by the engine.
+
+### Expected merge conflict zones
+
+- MEDIUM: extension UI contracts, RPC binding/worker dispatch and interactive dialog lifecycle.
+
+## 2026-10-30 - Unrun tool cards of a failed turn say not run instead of the raw error (senpi#5064)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: at `message_end` of an aborted or error-stopped turn, each pending tool card gets `unrunToolCallText(renderedMessage)` instead of the raw `errorMessage`: "Not run: the request failed." for an error stop, the abort label for an abort.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: every unrun tool card repeated the raw provider error body next to the one classified turn notice, so one upstream failure printed one unclassified line per card.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: pending tool cards are built-in `InteractiveMode` transcript rows; extensions cannot set their result text.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the aborted/error branch of the `message_end` handler and the `aborted-error-label.ts` import line.
+
+## 2026-10-30 - Startup lists skills hidden by ignore files (senpi#5060)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `skill-ignored` diagnostics get their own startup notice, "Skills hidden by ignore files", and are kept out of "Skill conflicts".
+
+### Why
+
+- A hidden skill is not a name collision; grouping it under "Skill conflicts" would mislead the reader (see also senpi#4940).
+
+### Why an extension could not handle it
+
+- The startup resource notices are rendered by interactive mode itself.
+
+### Expected merge conflict zones
+
+- LOW: the diagnostic filters in `showLoadedResources`.
+
+## 2026-10-30 - A turn-ending notice shows once, live and on replay (senpi#4958)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the live head row is marked as showing its turn-ending notice elsewhere when a trailing text run exists (`headNoticeShownElsewhere`). Session replay (`replayAssistantTools`) renders a turn as several parts that all keep its `stopReason`; exactly one part now owns the turn-ending notice (`setOwnsTurnNotice`): the text run that closes the message after a tool call, as in live mode, else the head row; an aborted turn that ends in a tool call shows it on the tool card. Every other part is marked as shown elsewhere.
+
+- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts`: new `setOwnsTurnNotice(owned)` passes `ownsTurnNotice` to the render descriptors, so a replayed turn can show its error or abort notice although it holds tool calls.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: a length-stopped turn printed its max-token notice on the head and on every text run, and on replay every part of a turn with text after a tool call showed the notice, while a turn ending in a tool call showed none.
+
+- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts`: the component had no way to show a turn-ending notice on a row that holds tool calls, which a replayed turn needs.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: transcript row ownership is built-in `InteractiveMode` rendering that extensions do not own.
+
+- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts`: the component renders transcript rows inside built-in `InteractiveMode`; extensions cannot change its notice gating.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the head line of `syncTrailingAssistantText`, the `addMessageToChat` signature and `assistant` case, the `replayAssistantTools` call in `renderSessionItems`, and the import block.
+
+- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts`: the private field block, the setter next to `setProviderErrorOwned`, and the descriptor options passed in `updateContent`.
+
+## 2026-10-27 - /logout reports Claude CLI accounts it could not sign out (senpi#4436, S4)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `/logout` calls `modelRuntime.logoutProvider` and appends its notices to the status line.
+
+### Why
+
+- A logout of Anthropic Subscription signs each Claude CLI account out first; when one could not be signed out the user must be told.
+
+### Why an extension could not handle it
+
+- `/logout` is owned by interactive mode.
+
+### Expected merge conflict zones
+
+- LOW: the logout selector callback in `interactive-mode.ts`.
+
+## 2026-10-27 - TUI deferred shutdown waits for agent_idle (senpi#4420, oh-my-openagent#11419)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: a deferred extension shutdown runs at `agent_idle` instead of `agent_settled`.
+
+### Why
+
+- `agent_settled` can now arrive while extension `agent_settled` handlers still run; shutting down then disposed the runtime under them.
+
+### Why an extension could not handle it
+
+- The TUI's shutdown sequencing is core interactive mode.
+
+### Expected merge conflict zones
+
+- LOW: the `agent_settled` / `agent_idle` cases of `handleEvent`.
+
+## 2026-10-29 - Preserve each status row across deferred renders (senpi#4841)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: capture each status message in its own themed row and replace only the latest consecutive status row in place.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: every row previously read the latest shared message when first rendered or invalidated, so a later cache notice could overwrite the earlier Settings row.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the interactive host owns status component construction and consecutive-row replacement.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/interactive/interactive-mode.ts`, the private `showStatus` method.
+
+## 2026-10-30 - One error line per provider failure (senpi#4950, senpi#4954)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: on `agent_end`, the `formatProviderFailure` line is skipped when the failed assistant row already shows classified text (`failureAlreadyDescribed`), so one failure renders one line. `syncTrailingAssistantText` lets only the text run that ends the message show the turn's error; earlier runs are marked as showing it elsewhere (senpi#4954).
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: a quota failure printed the classified usage-limit row and then an extra turn-end line for the same failure, which called it unclassified when the adapter had no `error.code`; a failed turn with text between tool calls also showed the error on every text run.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the turn-end failure line is built-in `InteractiveMode` rendering that extensions do not own.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the `agent_end` case of `handleEvent`, the run loop of `syncTrailingAssistantText`, and the import block.
+
+## 2026-10-29 - Restored history renders before normal input is enabled (senpi#4826)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `init()` installs `setupKeyHandlers()`, `setupEditorSubmitHandler()` and the session-control `attachEditor()` wrapper after `rebindCurrentSession()` and `renderInitialMessages()` instead of before them; until then the startup submit path keeps the text as a draft. A custom editor installed by an extension forwards `onChange` to the default editor live, and the module-level `adoptDefaultEditorActions(defaultEditor, editor)` copies the default editor's action handlers onto it, both when it is installed and once startup enables them (a free function, not an instance method, so `init()` adds no new `this` dependency and the classic chrome characterization stays byte-identical).
+
+### Why
+
+- A submit accepted while startup extension binding was still running painted its optimistic echo into the empty transcript; the restored history was appended after it, so the new message stayed above the old conversation (9 of 11 retained Linux E25 TUI captures).
+- Custom editors installed from `session_start` snapshotted `onChange` and the action handlers at install time; with the handlers now installed after binding they would have missed them.
+
+### Why an extension could not handle it
+
+- The order of startup input admission and transcript hydration is owned by the interactive host's `init()`; extensions run inside that bind and cannot delay the host's submit handler.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the handler-enable block after `renderInitialMessages()` in `init()`, the module-level `adoptDefaultEditorActions()` helper beside `isWorkingStatusEditor()`, and the custom-editor `onChange` / action-handler wiring inside `setCustomEditorComponent()`.
+
+## 2026-10-29 - The two gpt-5.6-sol ethos tips are removed from the TUI rotation (senpi#4721)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/tips/catalog/ethos-tips.ts`: deletes the tips with id `ethos.only-harness` ("The only harness that actually knows how to drive gpt-5.6-sol. Same job, feels up to 30% faster. *we counted*") and `ethos.tuning-discipline` ("gpt-5.6-sol used to turn a sprint into a marathon. We tuned the system prompt and killed that habit: 5-minute jobs take 5 minutes, 12-hour jobs take 12."). `ETHOS_TIPS` goes from 14 to 12 entries.
+- `packages/coding-agent/test/suite/ethos-tips.test.ts`: drops the two ids from the unbound/ungated manifesto list (12 → 10 ids).
+
+### Why
+
+- A beta guest asked for the gpt-5.6-sol performance claims to stop appearing in the tip rotation; the product no longer wants to advertise gpt-5.6-sol behavior in startup/working tips.
+
+### Why an extension could not handle it
+
+- `ETHOS_TIPS` is a compile-time catalog in the interactive mode source; extensions cannot remove entries from the built-in tip registry.
+
+### Expected merge conflict zones
+
+- LOW: neighboring tip entries in `ethos-tips.ts` and the manifesto id list in `test/suite/ethos-tips.test.ts` when another PR edits the catalog.
+
+## 2026-10-26 - /logout credential-read failure names a next step (senpi#4329)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: when `/logout` cannot read the credential store, the error says the saved sign-ins could not be read and names the steps: restart senpi, then run `/login` if it happens again. The underlying error text is kept.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` and `login-outcome.ts`: append a sentence separator only when the underlying error has no terminal punctuation.
+- `packages/coding-agent/src/modes/interactive/components/assistant-render-descriptors.ts`: add `/login` and `/model` hints at the TUI boundary; shared provider descriptions remain neutral for RPC. Cover the auth producer's sentinel output through component renders so the boundary cannot drift. Direct Anthropic account-limit guidance retains the `/login` route to Anthropic Subscription in both live and restored messages; the subscription lane retains only `/model`.
+- `packages/coding-agent/src/modes/interactive/components/assistant-render-descriptors.ts`: preserve adapter-owned account-limit advice carrying `ACCOUNT_LIMIT_NEXT_STEP_LEAD` without adding another `/model` step. ChatGPT's existing provider-switch advice stays intact in live and restored messages; generic limits still offer `/model`. Core, compaction, and print regression tests require the actionable `retry.fallbackChains` configuration key.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: "Could not read stored credentials: <raw>" named no step.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the text is shown by the built-in `/logout` selector in interactive mode.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/interactive/interactive-mode.ts` `showOAuthSelector` logout branch.
+
+## 2026-10-25 - A record-driven RPC attachment presentation (senpi#4269)
+
+### What changed
+
+- `attach.ts`, `attach-client.ts`, `attach-dialogs.ts`, and `run-attached-tui.ts`: authenticate, attach, subscribe, read state and backward history, render dialogs, forward identified inputs, and release only the caller's attachment. They refuse a session that is not retained on disconnect, track each dialog answer to its reply and show the dialog again when it is refused, end the connection on a record they cannot read, restore the terminal on an uncaught throw or rejection, and leave at once on a signal during connect. The terminal is restored before the attachment is released, and a second signal while that release waits exits at once, non-zero.
+- `session-control-commands.ts`: a terminal's control-endpoint row reports `retain_on_disconnect: true`, since a release there never ends the terminal's session.
+- `record-renderer.ts`: projects persisted entries and incremental or cumulative stream records into existing message components.
+
+### Why
+
+- An explicit attachment should present an existing session without owning a runtime, changing its profile, or falling back to a new local session.
+
+### Why an extension could not handle it
+
+- A presentation without a local session must be composed before session extensions exist.
+
+### Expected merge conflict zones
+
+- LOW: new presentation modules; the existing interactive runtime is unchanged.
+- LOW: `session-control-commands.ts`: one field in `sessionRow`.
+
+## 2026-10-12 - Optional markdown emphasis theme colors
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/theme/theme.ts`: optional `mdBold`, `mdItalic`, and `mdStrikethrough` theme colors (`MarkdownEmphasisColor`). `createTheme()` passes them to `Theme` separately from `ThemeColor`, `Theme.markdownEmphasis()` colors text only when the theme sets the token, and `getMarkdownTheme()` wires them into the new `MarkdownTheme` `strong`/`emphasis`/`deleted` hooks. The tokens have no fallback, so themes that omit them, including the generated system theme, render exactly as before.
+- `packages/coding-agent/src/modes/interactive/theme/theme-json.ts` and `packages/coding-agent/src/modes/interactive/theme/theme-schema.json`: accept the three optional keys.
+
+### Why
+
+- Themes could color every markdown element except inline bold, italic, and strikethrough text.
+
+### Why an extension could not handle it
+
+- Theme loading, validation, and the markdown theme wiring are host-owned.
+
+### Expected merge conflict zones
+
+- LOW: `Theme` constructor options, `createTheme()`, and `getMarkdownTheme()`; the markdown block of the schema.
+
 ## 2026-10-27 - Omitted render-signature tails are hashed iteratively (senpi#4415)
 
 ### What changed

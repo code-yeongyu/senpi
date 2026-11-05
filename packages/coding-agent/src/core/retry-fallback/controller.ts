@@ -1,5 +1,6 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { type Api, clampThinkingLevel, type Model } from "@earendil-works/pi-ai";
+import { fastSiblingOption } from "../fast-model-pair.ts";
 import { firstUsableCandidate, type UsableCandidate } from "./candidates.ts";
 import {
 	baseSelector,
@@ -11,19 +12,22 @@ import {
 	resolveChainKey,
 	rungSelector,
 } from "./chains.ts";
+import { subscribeProviderAccountEvents } from "../extensions/builtin/anthropic-subscription/account-events.ts";
 import { CircuitProbes } from "./circuit-probes.ts";
 import type {
 	ActiveFallbackState,
 	CircuitFailure,
 	FallbackReason,
+	FallbackRungRefusal,
 	RetryFallbackControllerDeps,
 } from "./controller-types.ts";
+import { releaseOnCredentialChange } from "./credential-recovery.ts";
 import { pinAfterSwitch } from "./pin.ts";
 import { isPureNetworkTransient } from "./transient-network.ts";
 import { UnusableEntries } from "./unusable.ts";
 import { type UsageLimitScope, usageLimitScope } from "./usage-limit.ts";
 
-export type { ActiveFallbackState, RetryFallbackControllerDeps } from "./controller-types.ts";
+export type { ActiveFallbackState, FallbackRungRefusal, RetryFallbackControllerDeps } from "./controller-types.ts";
 
 export class RetryFallbackController {
 	private readonly deps: RetryFallbackControllerDeps;
@@ -40,6 +44,8 @@ export class RetryFallbackController {
 	// Conservatively skip the refused provider for this turn: this synchronous scan cannot resolve
 	// asynchronously prepared request credentials, including per-model endpoints or keys (senpi#2491).
 	private readonly refusedProviders = new Set<string>();
+	// Rungs the switch refused during this turn's walks, so exhaustion can say why (senpi#3447).
+	private readonly refusals: FallbackRungRefusal[] = [];
 	private readonly unusable: UnusableEntries;
 	readonly probes: CircuitProbes;
 	// Content-keyed memo of canonicalizeFallbackChains. Provider-error handling calls
@@ -65,6 +71,10 @@ export class RetryFallbackController {
 		return this.lastExhaustedChainKey;
 	}
 
+	get turnRefusals(): readonly FallbackRungRefusal[] {
+		return [...this.refusals];
+	}
+
 	isProviderSpent(provider: string): boolean {
 		return this.unusable.isProviderSpent(provider);
 	}
@@ -73,9 +83,18 @@ export class RetryFallbackController {
 		return this.unusable.accountError(provider);
 	}
 
+	accountResetAt(provider: string): number | undefined {
+		return this.unusable.accountResetAt(provider);
+	}
+
+	releaseGuessedAccountHold(provider: string): boolean {
+		return this.unusable.releaseGuessedAccountHold(provider);
+	}
+
 	resetTurn(): void {
 		this.triedSelectors.clear();
 		this.refusedProviders.clear();
+		this.refusals.length = 0;
 		this.lastExhaustedChainKey = undefined;
 	}
 
@@ -95,7 +114,10 @@ export class RetryFallbackController {
 		return canonical;
 	}
 
-	/** `refusedProvider`: the provider whose request-level refusal is being decided, before the walk records it. */
+	/**
+	 * `refusedProvider`: a provider the failure being decided rules out (a request-level refusal or
+	 * a spent account) before the walk records it.
+	 */
 	canTryFallback(refusedProvider?: string): boolean {
 		return this.nextCandidate(false, false, refusedProvider) !== undefined;
 	}
@@ -110,7 +132,14 @@ export class RetryFallbackController {
 		const current = this.deps.getCurrentSelector();
 		if (!current) return false;
 		const chains = this.canonicalChains();
-		return resolveChainKey(current.model, current.thinkingLevel, chains) !== undefined;
+		return (
+			resolveChainKey(
+				current.model,
+				current.thinkingLevel,
+				chains,
+				fastSiblingOption(this.deps.registry, current.model),
+			) !== undefined
+		);
 	}
 
 	/**
@@ -119,7 +148,11 @@ export class RetryFallbackController {
 	 * suppressed and is still usable; pinned state and the "never" policy hold the
 	 * fallback model. One exception outranks both the cooldown and the policy: a
 	 * fallback that is itself known unusable (billing or an account limit) while the
-	 * original is not is never where the session rests (senpi#2376).
+	 * original is not is never where the session rests (senpi#2376). An original that is
+	 * itself still held (an account usage limit with the reset it named, which can outlast
+	 * the circuit's 30-minute ceiling) is not restored before that hold ends (senpi#3347).
+	 * At a turn boundary, a changed credential on the original's provider first releases
+	 * its billing pin and parks (senpi#4099).
 	 */
 	async maybeRestorePrimary(
 		revertPolicy: "cooldown-expiry" | "never",
@@ -129,13 +162,18 @@ export class RetryFallbackController {
 		if (boundary === "turn") this.heldForNetworkBlip = false;
 		const state = this.state;
 		const current = this.deps.getCurrentSelector();
-		if (!state || state.pinned || !current) return false;
+		if (!state || !current) return false;
 		const selector = parseFallbackSelector(state.originalSelector, this.deps.registry);
-		if (!selector || !this.deps.isAuthAvailable(selector.provider)) return false;
-		const model = this.deps.registry.find(selector.provider, selector.id);
+		const model = selector && this.deps.registry.find(selector.provider, selector.id);
 		if (!model) return false;
+		if (boundary === "turn") await releaseOnCredentialChange(state, model, this.deps, this.unusable);
+		if (state.pinned || !this.deps.isAuthAvailable(model.provider)) return false;
 		const stranded = this.unusable.isUnusable(current.model) && !this.unusable.isUnusable(model);
-		if (!stranded && (heldForNetworkBlip || !this.originalRecovered(state, revertPolicy))) return false;
+		if (
+			!stranded &&
+			(heldForNetworkBlip || this.unusable.isUnusable(model) || !this.originalRecovered(state, revertPolicy))
+		)
+			return false;
 		// User override wins: only restore the original thinking level when the
 		// current level still equals the level the fallback switch applied. A manual
 		// setThinkingLevel clears lastAppliedThinkingLevel (see noteManualThinkingLevel).
@@ -216,6 +254,14 @@ export class RetryFallbackController {
 		this.unusable.clear(model);
 		this.probes.release();
 		this.deps.circuits?.close(formatSelector(model));
+	}
+
+	/**
+	 * A login or an explicit block reset on `provider` makes the account and
+	 * model holds it earned stale, so the restore guard stops waiting out a reset that may no longer apply.
+	 */
+	noteProviderAccountsChanged(provider: string): void {
+		this.unusable.clearProvider(provider, this.deps.registry.getAll());
 	}
 
 	/** A response this session got from `selector` succeeded: the entry serves it again (senpi#3467). */
@@ -334,6 +380,10 @@ export class RetryFallbackController {
 			} catch (error) {
 				if (!this.deps.isCandidateRefusal?.(error)) throw error;
 				this.triedSelectors.add(rungSelector(candidate.selector));
+				this.refusals.push({
+					model: formatSelector(candidate.model),
+					detail: error instanceof Error ? error.message : String(error),
+				});
 				this.skip(formatSelector(candidate.model), "refused");
 			}
 			candidate = this.nextCandidate(false, true);
@@ -354,7 +404,11 @@ export class RetryFallbackController {
 		const from = formatSelector(current.model);
 		const to = formatSelector(candidate.model);
 		const prior = this.state;
+		const recoveryRevision = prior
+			? prior.recoveryRevision
+			: await this.deps.recoveryRevision?.(current.model.provider);
 		this.state = {
+			...(recoveryRevision === undefined ? {} : { recoveryRevision }),
 			chainKey: candidate.chainKey,
 			originalThinkingLevel: prior?.originalThinkingLevel ?? current.thinkingLevel,
 			lastAppliedThinkingLevel: thinking,
@@ -369,7 +423,13 @@ export class RetryFallbackController {
 	private managedChainKey(current: { model: Model<Api>; thinkingLevel?: ThinkingLevel }): string | undefined {
 		if (!this.deps.getSettings().modelFallback) return undefined;
 		const chains = this.canonicalChains();
-		const chainKey = resolveChainKey(current.model, current.thinkingLevel, chains) ?? this.state?.chainKey;
+		const chainKey =
+			resolveChainKey(
+				current.model,
+				current.thinkingLevel,
+				chains,
+				fastSiblingOption(this.deps.registry, current.model),
+			) ?? this.state?.chainKey;
 		return chainKey && chains[chainKey] ? chainKey : undefined;
 	}
 
@@ -435,4 +495,14 @@ export class RetryFallbackController {
 	private skip(candidate: string, skipReason: string): void {
 		this.deps.logger.debug("candidate_skipped", { candidate, skipReason });
 	}
+}
+
+/** Only explicit account remedies invalidate holds; health and listing notices do not. */
+export function followProviderAccountChanges(
+	controller: Pick<RetryFallbackController, "noteProviderAccountsChanged">,
+): () => void {
+	return subscribeProviderAccountEvents((event) => {
+		if (event.type === "accounts_changed" && event.remedy !== undefined)
+			controller.noteProviderAccountsChanged(event.provider);
+	});
 }

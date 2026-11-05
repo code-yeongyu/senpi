@@ -198,7 +198,7 @@ export async function compact(
 		firstKeptEntryId,
 		tokensBefore,
 		usage: summaryUsage,
-		details: { readFiles, modifiedFiles } as CompactionDetails,
+		details: { readFiles, modifiedFiles } satisfies CompactionDetails,
 	};
 }
 

@@ -1,6 +1,8 @@
 import { AgentBusyError } from "../../core/agent-busy-error.ts";
 import type { AgentSession, PromptDisposition, PromptOptions } from "../../core/agent-session.ts";
 import { clientMessageIdentity } from "../../core/client-message-identity.ts";
+import { type ModelNotReadyCode, ModelNotReadyError } from "../../core/model-not-ready-error.ts";
+import { TurnConflictError } from "../../core/turn-conflict.ts";
 import { UNKNOWN_COMMAND_CONFIRM_HINT, UnknownCommandError } from "../../core/unknown-command.ts";
 import {
 	type ClientMessageAdmission,
@@ -9,11 +11,25 @@ import {
 } from "./client-admission-record.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
 import { clientInputContext } from "./client-message-events.ts";
-import { RPC_ERROR_UNKNOWN_COMMAND } from "./rpc-types.ts";
+import {
+	RPC_ERROR_NO_MODEL_SELECTED,
+	RPC_ERROR_TURN_CONFLICT,
+	RPC_ERROR_PROVIDER_CREDENTIALS_EXPIRED,
+	RPC_ERROR_PROVIDER_CREDENTIALS_MISSING,
+	RPC_ERROR_UNKNOWN_COMMAND,
+} from "./rpc-types.ts";
+
+/** The `prompt` refusal's `errorCode` for each reason a turn cannot start. */
+const MODEL_NOT_READY_ERROR_CODES = {
+	provider_credentials_missing: RPC_ERROR_PROVIDER_CREDENTIALS_MISSING,
+	provider_credentials_expired: RPC_ERROR_PROVIDER_CREDENTIALS_EXPIRED,
+	no_model_selected: RPC_ERROR_NO_MODEL_SELECTED,
+} as const satisfies Record<ModelNotReadyCode, string>;
 
 type PromptPathOptions = Pick<
 	PromptOptions,
 	| "streamingBehavior"
+	| "expectedTurnId"
 	| "thinkingLevel"
 	| "sessionTitlePrompt"
 	| "expandPromptTemplates"
@@ -27,11 +43,15 @@ type InputOutput = {
 	readonly promptCalls: Set<Promise<unknown>>;
 };
 
+/** The sending connection's declared role; a connection that never declared `interactive_user` is an agent's. */
+type InputClient = { readonly interactiveUser: boolean };
+
 /** The same admission path serves classic stdio, shared sessions, and worker sessions. */
 export async function handleClientInput(
 	session: AgentSession,
 	command: RpcClientInput,
 	io: InputOutput,
+	client: InputClient = { interactiveUser: false },
 ): Promise<void> {
 	try {
 		const admissions = ClientAdmissions.forSession(session);
@@ -69,6 +89,7 @@ export async function handleClientInput(
 							images: command.images,
 							...options,
 							source: "rpc",
+							interactiveUser: client.interactiveUser,
 							onQueuedInput: hooks.queued,
 							promptDisposition: (next) => {
 								disposition = next;
@@ -102,6 +123,8 @@ export async function handleClientInput(
 						}
 						return promptPath({
 							streamingBehavior: command.streamingBehavior,
+							// The session checks it where the steer enters the queue, in the same step (senpi#5776).
+							expectedTurnId: command.expectedTurnId,
 							thinkingLevel: command.thinkingLevel,
 							sessionTitlePrompt: command.sessionTitlePrompt,
 							expandPromptTemplates: command.expandPromptTemplates,
@@ -115,11 +138,15 @@ export async function handleClientInput(
 							return promptPath({
 								streamingBehavior: command.type === "steer" ? "steer" : "followUp",
 								enqueueOrder: command.enqueueOrder,
+								expectedTurnId: command.expectedTurnId,
 							});
 						const options = {
 							...clientMessageIdentity(hooks.identity),
 							enqueueOrder: command.enqueueOrder,
+							// Checked where the input enters the queue, in the same step (senpi#5776).
+							expectedTurnId: command.expectedTurnId,
 							source: "rpc" as const,
+							interactiveUser: client.interactiveUser,
 							onQueuedInput: hooks.queued,
 						};
 						disposition =
@@ -147,6 +174,18 @@ export async function handleClientInput(
 					: String(error),
 			...(error instanceof ClientMessageIdConflict || error instanceof AgentBusyError
 				? { errorCode: error.code }
+				: {}),
+			...(error instanceof ModelNotReadyError
+				? {
+						errorCode: MODEL_NOT_READY_ERROR_CODES[error.code],
+						...(error.provider === undefined ? {} : { errorData: { provider: error.provider } }),
+					}
+				: {}),
+			...(error instanceof TurnConflictError
+				? {
+						errorCode: RPC_ERROR_TURN_CONFLICT,
+						...(error.currentTurnId === undefined ? {} : { errorData: { currentTurnId: error.currentTurnId } }),
+					}
 				: {}),
 			...(unknownCommand
 				? {

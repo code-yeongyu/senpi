@@ -204,6 +204,12 @@ export function registerSessionRegistry(
 		await writeStoredBinding(sessionFile, stored);
 	});
 	pi.on("session_shutdown", (event, ctx) => {
+		// A config hot-reload keeps the session and this module's registry (session_start skips
+		// "reload" above), and the resident query captures no per-load state: its hooks and tool
+		// handlers are module constants. The next turn's fingerprint check restarts the process
+		// only when the reload changed the prompt, tools or options. Closing here re-spawned Claude
+		// Code on every reload, and on a real account re-attached the claude.ai connectors.
+		if (event.reason === "reload") return;
 		closeSession(ctx.sessionManager.getSessionId(), event.reason);
 	});
 	pi.on("session_extensions_removed", async (_event, ctx) => {

@@ -59,7 +59,7 @@ export async function readClaudeCliAuthStatus(run: ClaudeCliRun, timeoutMs?: num
 }
 
 /** `claude auth logout` for one account dir: deletes that dir's credential store entry. */
-export async function logoutClaudeCli(run: ClaudeCliRun, timeoutMs?: number): Promise<boolean> {
-	const exit = await runClaudeCliToExit(run, ["auth", "logout"], timeoutMs);
+export async function logoutClaudeCli(run: ClaudeCliRun, timeoutMs?: number, signal?: AbortSignal): Promise<boolean> {
+	const exit = await runClaudeCliToExit(run, ["auth", "logout"], timeoutMs, signal);
 	return exit?.exitCode === 0;
 }

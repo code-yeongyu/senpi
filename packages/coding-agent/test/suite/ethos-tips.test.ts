@@ -13,9 +13,7 @@ describe("ethos tips", () => {
 		const byId = new Map(TIP_DEFINITIONS.map((tip) => [tip.id, tip]));
 
 		for (const id of [
-			"ethos.tuning-discipline",
 			"ethos.tools-transparent",
-			"ethos.only-harness",
 			"ethos.spend-tokens",
 			"ethos.deep-work",
 			"ethos.monitor-subscribe",

@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import type { AccountSlot } from "../../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
 import { rendezvousOrder as claudeRendezvousOrder } from "../../src/core/extensions/builtin/anthropic-subscription/affinity.ts";
 import {
 	AllCursorAccountsBlockedError,
@@ -8,6 +7,7 @@ import {
 	rendezvousOrder,
 	selectAccount,
 } from "../../src/core/extensions/builtin/cursor-cli-oauth/affinity.ts";
+import { cliSlot } from "../support/claude-cli-test-slots.ts";
 
 type TestAccount = CursorAffinityAccountSlot & {
 	access: string;
@@ -34,7 +34,10 @@ describe("Cursor CLI OAuth account affinity", () => {
 	it("pins ordering semantics to the Claude OAuth implementation", () => {
 		for (const sessionId of sessionIds) {
 			const cursorOrder = rendezvousOrder(sessionId, accounts).map((account) => account.name);
-			const claudeOrder = claudeRendezvousOrder(sessionId, accounts as AccountSlot[]).map((account) => account.name);
+			const claudeOrder = claudeRendezvousOrder(
+				sessionId,
+				accounts.map((account) => cliSlot(account.name)),
+			).map((account) => account.name);
 			expect(cursorOrder).toEqual(claudeOrder);
 		}
 	});

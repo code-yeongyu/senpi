@@ -12,12 +12,12 @@
  * machine (it is its own regression test).
  */
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -120,7 +120,8 @@ export function makeSandbox(label = "senpi-qa") {
 	const agentDir = join(dir, "agent");
 	const sessionDir = join(dir, "sessions");
 	const cwd = join(dir, "work");
-	for (const d of [agentDir, sessionDir, cwd]) mkdirSync(d, { recursive: true });
+	// Owner-only, whatever the umask: an RPC host refuses to publish its key into a group-writable agent dir.
+	for (const d of [agentDir, sessionDir, cwd]) mkdirSync(d, { recursive: true, mode: 0o700 });
 
 	const env = { ...process.env };
 	scrubSandboxEnv(env);
@@ -158,17 +159,99 @@ export function makeSandbox(label = "senpi-qa") {
 }
 
 // ---------------------------------------------------------------------------
-// CLI spawning (from source via tsx — tests the live working tree)
+// Child runtime (the runtime the tested CLI runs on)
+// ---------------------------------------------------------------------------
+
+const MIN_CHILD_BUN = [1, 4, 0];
+
+/** First executable named `name` on PATH (plus `extraDirs`), or undefined. */
+function findOnPath(name, extraDirs = []) {
+	const names = process.platform === "win32" ? [`${name}.exe`, name] : [name];
+	const dirs = [...(process.env.PATH ?? "").split(delimiter).filter(Boolean), ...extraDirs];
+	for (const dir of dirs) {
+		for (const file of names) {
+			if (existsSync(join(dir, file))) return join(dir, file);
+		}
+	}
+	return undefined;
+}
+
+function versionOf(command) {
+	const out = spawnSync(command, ["--version"], { encoding: "utf8", timeout: 10_000 });
+	if (out.status !== 0) throw new Error(`${command} --version failed: ${out.stderr || out.error?.message || out.status}`);
+	return out.stdout.trim().replace(/^v/, "");
+}
+
+/**
+ * The Bun the harness runs Bun-only work on: this process's own Bun, else `bun` on PATH or in
+ * ~/.bun/bin. Throws unless it is at least 1.4.0. Returns { command, version }.
+ */
+export function resolveBun() {
+	const command = process.versions.bun ? process.execPath : findOnPath("bun", [join(homedir(), ".bun", "bin")]);
+	if (!command) throw new Error("senpi-qa needs Bun >= 1.4.0 on PATH (or ~/.bun/bin) to start the tested CLI");
+	const version = process.versions.bun ?? versionOf(command);
+	const parts = version.split(".").map((part) => Number.parseInt(part, 10));
+	const tooOld = MIN_CHILD_BUN.some((min, index) => {
+		const earlier = MIN_CHILD_BUN.slice(0, index).every((value, j) => parts[j] === value);
+		return earlier && (parts[index] ?? 0) < min;
+	});
+	if (tooOld) throw new Error(`senpi-qa needs Bun >= ${MIN_CHILD_BUN.join(".")}; ${command} is ${version}`);
+	return { command, version };
+}
+
+/**
+ * Which runtime the tested CLI starts on, from the driver's `--child` flag:
+ * - absent: the resolved Bun (>= 1.4.0), running the CLI source;
+ * - `--child binary:<path>`: the compiled binary at <path>;
+ * - `--child node`: Node + tsx (only for the Node smoke runs).
+ * Returns { kind, command, label }; `label` is the receipt's `child_runtime`.
+ */
+export function resolveChildRuntime(argv = process.argv) {
+	const index = argv.indexOf("--child");
+	const spec = index >= 0 ? argv[index + 1] : undefined;
+	if (index < 0) {
+		const bun = resolveBun();
+		return { kind: "bun", command: bun.command, label: `bun@${bun.version}` };
+	}
+	if (spec === "node") {
+		const command = process.versions.bun ? findOnPath("node") : process.execPath;
+		if (!command) throw new Error("--child node needs node on PATH");
+		const version = process.versions.bun ? versionOf(command) : process.versions.node;
+		return { kind: "node", command, label: `node@${version}` };
+	}
+	if (spec?.startsWith("binary:") && spec.length > "binary:".length) {
+		const command = spec.slice("binary:".length);
+		if (!existsSync(command)) throw new Error(`--child binary: no file at ${command}`);
+		return { kind: "binary", command, label: `binary:${command}` };
+	}
+	throw new Error(`--child must be "node" or "binary:<path>", got ${JSON.stringify(spec)}`);
+}
+
+let resolvedChildRuntime;
+/** This driver's child runtime, resolved once from process.argv on first use. */
+export function childRuntime() {
+	resolvedChildRuntime ??= resolveChildRuntime();
+	return resolvedChildRuntime;
+}
+
+// ---------------------------------------------------------------------------
+// CLI spawning (tests the live working tree, or the compiled binary)
 // ---------------------------------------------------------------------------
 
 /**
- * Spawn the coding-agent CLI from source. Returns the ChildProcess.
- * Use for streaming protocols (RPC). For one-shot capture use runCli().
+ * Spawn the coding-agent CLI on this driver's child runtime (see resolveChildRuntime).
+ * Returns the ChildProcess. Use for streaming protocols (RPC). For one-shot capture use runCli().
  */
 export function spawnCli(args, { env, cwd, stdio } = {}) {
 	const root = repoRoot();
-	const argv = [tsxEntry(root), "--tsconfig", join(root, "tsconfig.json"), cliEntry(root), ...args];
-	const child = spawn(process.execPath, argv, {
+	const runtime = childRuntime();
+	const argv =
+		runtime.kind === "binary"
+			? args
+			: runtime.kind === "bun"
+				? [cliEntry(root), ...args]
+				: [tsxEntry(root), "--tsconfig", join(root, "tsconfig.json"), cliEntry(root), ...args];
+	const child = spawn(runtime.command, argv, {
 		cwd: cwd || root,
 		env: env || process.env,
 		stdio: stdio || ["pipe", "pipe", "pipe"],

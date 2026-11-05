@@ -60,6 +60,7 @@ export function createBashInputTool(ctx: TerminalToolContext) {
 			}
 
 			if (notes.length === 0) return errorResult("Nothing to send: provide `input` and/or `keys`.");
+			ctx.onSessionInput?.(sessionId);
 			return textResult(`Sent to ${input.bash_id}: ${notes.join("; ")}.`);
 		},
 	};

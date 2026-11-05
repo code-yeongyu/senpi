@@ -12,7 +12,3 @@ export function refreshFailure(error: unknown): Error {
 	}
 	return new Error(`authentication_failed: ${detail}`);
 }
-
-export function isGrantRejected(error: unknown): boolean {
-	return refreshFailure(error).message.startsWith("authentication_failed:");
-}

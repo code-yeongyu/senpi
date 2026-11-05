@@ -162,12 +162,22 @@ async function loadSkillsFromDirInternal(
 		const kind = await resolveKind(env, entry, diagnostics, context);
 		if (!kind) continue;
 
+		// A linked entry belongs to another tree: the ignore files above it neither hide it nor reach into it,
+		// while a linked directory's own ignore files still apply inside it (senpi#5060, senpi#5069).
+		const isLink = entry.kind === "symlink";
 		const relPath = relativeEnvPath(rootDir, fullPath);
 		const ignorePath = kind === "directory" ? `${relPath}/` : relPath;
-		if (ignoreMatcher.ignores(ignorePath)) continue;
+		if (!isLink && ignoreMatcher.ignores(ignorePath)) continue;
 
 		if (kind === "directory") {
-			const result = await loadSkillsFromDirInternal(env, fullPath, false, ignoreMatcher, rootDir, context);
+			const result = await loadSkillsFromDirInternal(
+				env,
+				fullPath,
+				false,
+				isLink ? ignore() : ignoreMatcher,
+				rootDir,
+				context,
+			);
 			skills.push(...result.skills);
 			diagnostics.push(...result.diagnostics);
 			continue;
