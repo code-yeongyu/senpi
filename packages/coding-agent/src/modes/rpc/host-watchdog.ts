@@ -21,6 +21,7 @@ import { recordHostCrash } from "./host-crash-record.ts";
 import { HOST_DAEMON_DIR_ENV } from "./host-daemon-paths.ts";
 import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
 import { armLifetimeBinding, HOST_WATCH_LIFETIME_FIFO_ENV } from "./host-lifetime-binding.ts";
+import { watchHostLifetime } from "./host-lifetime-reader.ts";
 import {
 	HOST_WATCH_BACKSTOP_INTERVAL_MS,
 	HOST_WATCH_PPID_BACKUP_INTERVAL_MS,
@@ -251,6 +252,10 @@ export function armHostWatchdog(
  * that decides to exit on its own (an idle exit, or the park-everything drain of a generation
  * handoff) would hang in exit until something killed it. With a socket the same EOF arrives from
  * kqueue/epoll and nothing holds the exit.
+ *
+ * Bun's net.Socket never reads a descriptor it is handed: no data, no end, no error, and it does not
+ * hold the event loop, so the binding would be inert. Under Bun the pipe is read the way the lifetime
+ * reader reads its own (`watchHostLifetime`: Bun's file stream, which also leaves `process.exit()` free).
  */
 function watchFdForEof(
 	fd: number,
@@ -258,6 +263,15 @@ function watchFdForEof(
 	disarmers: Array<() => void>,
 	onUnavailable: () => void,
 ): boolean {
+	if (process.versions.bun) {
+		try {
+			// Bun's file stream rejects a descriptor that was never inherited synchronously (EBADF).
+			disarmers.push(watchHostLifetime(fd, () => fire(`supervisor pipe fd ${fd} closed`), onUnavailable));
+		} catch {
+			return false;
+		}
+		return true;
+	}
 	let stream: Socket;
 	let streamFailed = false;
 	let fired = false;
