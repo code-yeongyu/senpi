@@ -66,6 +66,20 @@ describe("a SessionManager bound to the durable store (S20b)", () => {
 		expect(SessionManager.open(file, dir).getEntries()).toEqual(session.getEntries());
 	});
 
+	it.each([0, 1, 2, 5, 20])(
+		"raises no warning when a write lands %i microtasks after a successful projection",
+		async (yields) => {
+			const { session, warnings } = await durableSession();
+			session.appendMessage(userMsg("question"));
+			for (let index = 0; index < yields; index++) await Promise.resolve();
+			session.appendMessage(assistantMsg("answer"));
+			await session.settleDurableProjection();
+
+			expect(warnings).toEqual([]);
+			expect(readFileSync(fileOf(session), "utf8")).toBe(await storeImage(session.getSessionId()));
+		},
+	);
+
 	it("throws a store refusal on the same call and takes nothing", async () => {
 		const { session } = await durableSession();
 		session.appendMessage(userMsg("question"));
