@@ -107,6 +107,29 @@ describe("thread chain count limit at RPC input admission", () => {
 		);
 	});
 
+	describe.each(ENTRIES)("through %s", (_name, send) => {
+		it.each([null, 0, -3, 1.5, "abc", Number.MAX_SAFE_INTEGER + 1])(
+			"refuses a malformed chainCount %j before anything of it runs or is held",
+			async (chainCount) => {
+				const ready = await setup({});
+
+				const response = await send(ready, { type: "prompt", message: "from B", chainCount });
+
+				expect(response.success).toBe(false);
+				expect(response.heldAsNotice).toBeUndefined();
+				expect(ready.inputs).toEqual([]);
+			},
+		);
+	});
+
+	it("names the typed reason on a malformed chainCount refusal", async () => {
+		const { rpc } = await setup({});
+
+		const response = await rpc.send({ type: "steer", message: "from B", chainCount: -3 });
+
+		expect(response).toMatchObject({ errorCode: "invalid_chain_count", errorData: { chainCount: -3 } });
+	});
+
 	it("names the typed reason and the count on an RPC refusal", async () => {
 		const { rpc } = await setup({ threads: { chainCountLimit: 2 } });
 
