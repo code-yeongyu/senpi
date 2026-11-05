@@ -1025,7 +1025,7 @@ export function createRpcConnectionHandler(
 		);
 		session.setControlEndpointHost?.(sessionControl);
 		// Only a host session can be released for a move, so only it offers relocation (docs/rpc.md).
-		relocation?.dispose();
+		void relocation?.dispose();
 		relocation =
 			routingSessionId === undefined
 				? undefined
@@ -2438,7 +2438,7 @@ export function createRpcConnectionHandler(
 		stopLimitEvents();
 		sessionControl?.dispose();
 		sessionControl = undefined;
-		relocation?.dispose();
+		const relocationSettled = relocation?.dispose();
 		relocation = undefined;
 		questions.cancelAll();
 		secretInputs.close();
@@ -2454,6 +2454,8 @@ export function createRpcConnectionHandler(
 		unsubscribeBackpressure = undefined;
 		unsubscribeLoadedSurfaces = undefined;
 		unsubscribeExtensionEvents = undefined;
+		// The session teardown aborts the run after this dispose: a relocation answer already given reaches its tool first.
+		await relocationSettled;
 		if (options.disposeRuntime !== false) {
 			await runtimeHost.dispose(disposeOptions);
 		}
