@@ -21,6 +21,8 @@ import {
 } from "./signed-in-hosts.ts";
 
 const BROWSER_ENV = "PI_WEBFETCH_BROWSER";
+// Share of the call's timeout the signed-in read may spend, so a skip still leaves time for the anonymous fetch.
+const SIGNED_IN_BUDGET_SHARE = 0.6;
 // A rendered read gets at least this long; with less of the call's timeout left it is skipped.
 const MIN_RENDER_BUDGET_MS = 3_000;
 
@@ -146,7 +148,10 @@ export function createWebfetchTool(options: WebfetchToolOptions = {}) {
 			if (isSignedInHost(params.url, settings.hosts)) {
 				if (isBrowserEnabled()) {
 					emitProgress({ phase: "rendering", url: params.url, format, timeoutSeconds, progress });
-					const outcome = await readSignedIn(renderer, params.url, settings, timeoutSeconds * 1000, signal);
+					// The call's timeout covers BOTH routes: a signed-in read that skips leaves the rest of the
+					// budget for the anonymous fetch, so one call never spends twice the time the caller asked for.
+					const browserBudgetMs = Math.max(1, Math.floor(timeoutSeconds * 1000 * SIGNED_IN_BUDGET_SHARE));
+					const outcome = await readSignedIn(renderer, params.url, settings, browserBudgetMs, signal);
 					signedInPage = outcome.page;
 					signedInBrowser = outcome.browser;
 					signedInSkipped = outcome.skipped;
@@ -154,12 +159,13 @@ export function createWebfetchTool(options: WebfetchToolOptions = {}) {
 					signedInSkipped = { reason: "disabled", message: `${BROWSER_ENV}=0 turns browser reads off` };
 				}
 			}
+			const leftSeconds = Math.max(1, Math.ceil((startedAt + timeoutSeconds * 1000 - Date.now()) / 1000));
 			const fetched = signedInPage
 				? pageAsFetchResult(signedInPage, await stripScripts(signedInPage.html, signedInPage.url))
 				: await fetchUrl({
 						url: params.url,
 						format,
-						timeoutSeconds,
+						timeoutSeconds: leftSeconds,
 						...(signal === undefined ? {} : { signal }),
 						onProgress: (bytesRead, totalBytes) => {
 							downloadedTotalBytes = totalBytes;

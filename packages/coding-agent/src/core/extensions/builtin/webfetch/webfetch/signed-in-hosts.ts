@@ -17,8 +17,50 @@ export interface SignedInBrowserSettings {
 	readonly browser?: string;
 }
 
-// ASCII host labels only; a wildcard needs at least two labels after "*.", so "*.com" never enables a whole TLD.
-const HOST_PATTERN = /^(?:\*\.[a-z0-9-]+(?:\.[a-z0-9-]+)+|[a-z0-9-]+(?:\.[a-z0-9-]+)*)$/u;
+// ASCII host labels only. A wildcard needs a registrable name under a known suffix, so neither "*.com" nor
+// "*.co.uk" nor "*.github.io" can hand a whole public suffix to the browser.
+const HOST_PATTERN = /^(?:\*\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)*$/u;
+// Multi-label public suffixes a wildcard must sit below, not on.
+const PUBLIC_SUFFIXES = new Set([
+	"co.uk",
+	"org.uk",
+	"ac.uk",
+	"gov.uk",
+	"com.au",
+	"net.au",
+	"org.au",
+	"co.jp",
+	"or.jp",
+	"ne.jp",
+	"co.kr",
+	"or.kr",
+	"com.br",
+	"com.cn",
+	"com.mx",
+	"co.in",
+	"co.nz",
+	"co.za",
+	"github.io",
+	"gitlab.io",
+	"pages.dev",
+	"workers.dev",
+	"vercel.app",
+	"netlify.app",
+	"herokuapp.com",
+	"azurewebsites.net",
+	"cloudfront.net",
+	"s3.amazonaws.com",
+	"appspot.com",
+	"web.app",
+	"firebaseapp.com",
+]);
+const IPV4 = /^\d+(?:\.\d+){0,3}$|^0x[0-9a-f]+$/u;
+
+function isWildcardTooBroad(pattern: string): boolean {
+	if (!pattern.startsWith("*.")) return false;
+	const base = pattern.slice(2);
+	return base.split(".").length < 2 || PUBLIC_SUFFIXES.has(base);
+}
 
 function record(value: unknown): Readonly<Record<string, unknown>> | undefined {
 	return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -32,7 +74,7 @@ export function parseSignedInBrowserSettings(globalSettings: unknown): SignedInB
 		? signedIn.hosts
 				.filter((host): host is string => typeof host === "string")
 				.map((host) => host.trim().toLowerCase())
-				.filter((host) => HOST_PATTERN.test(host))
+				.filter((host) => HOST_PATTERN.test(host) && !isWildcardTooBroad(host) && !IPV4.test(host))
 		: [];
 	const browser =
 		typeof signedIn?.browser === "string" && signedIn.browser.trim() ? signedIn.browser.trim() : undefined;
@@ -60,7 +102,8 @@ export function isSignedInHost(url: string, hosts: readonly string[]): boolean {
 	}
 	if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return false;
 	const host = parsed.hostname.toLowerCase();
-	if (host.endsWith(".") || host.startsWith("[")) return false;
+	// An IP literal is never a listed host: 127.0.0.1, and the forms URL normalizes to it (2130706433, 0x7f.0.0.1).
+	if (host.endsWith(".") || host.startsWith("[") || IPV4.test(host)) return false;
 	return hosts.some((pattern) =>
 		pattern.startsWith("*.") ? host.endsWith(pattern.slice(1)) && host.length > pattern.length - 1 : host === pattern,
 	);

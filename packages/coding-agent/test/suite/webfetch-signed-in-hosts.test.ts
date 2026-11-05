@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync }
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	BrowserSkillError,
 	NOT_CONNECTED_MESSAGE,
@@ -41,7 +41,7 @@ async function serve(html: string): Promise<{ readonly url: string; readonly req
 	cleanups.push(() => new Promise<void>((resolve) => server.close(() => resolve())));
 	const address = server.address();
 	if (typeof address !== "object" || address === null) throw new Error("Expected TCP server address");
-	return { url: `http://127.0.0.1:${address.port}/wiki/roadmap`, requests };
+	return { url: `http://localhost:${address.port}/wiki/roadmap`, requests };
 }
 
 function browser(page: (url: string) => { url: string; html: string } | Error) {
@@ -66,9 +66,11 @@ async function fetchAs(
 	renderer: PageRenderer,
 	url: string,
 	format: "markdown" | "html" = "markdown",
+	timeout?: number,
 ) {
 	const tool = createWebfetchTool({ renderer, signedInSettings: () => settings });
-	const result = await tool.execute("tool", { url, format }, undefined, undefined, {} as ExtensionToolContext);
+	const params = timeout === undefined ? { url, format } : { url, format, timeout };
+	const result = await tool.execute("tool", params, undefined, undefined, {} as ExtensionToolContext);
 	const text = result.content
 		.flatMap((part) => (part.type === "text" && !("audience" in part) ? [part.text] : []))
 		.join("");
@@ -117,9 +119,11 @@ describe("signed-in browser settings", () => {
 		["https://a.b.corp.test/a", true],
 		["https://corp.test/a", false],
 		["https://[::1]/", false],
+		["http://127.0.0.1/", false],
+		["http://2130706433/", false],
 		["file:///etc/hosts", false],
 	])("host match %s -> %s", (url, expected) => {
-		expect(isSignedInHost(url, ["wiki.example.test", "*.corp.test"])).toBe(expected);
+		expect(isSignedInHost(url, ["wiki.example.test", "*.corp.test", "127.0.0.1"])).toBe(expected);
 	});
 
 	it("reads only the global file and never writes it, even when it carries a retired key", () => {
@@ -150,11 +154,29 @@ describe("signed-in browser settings", () => {
 			JSON.stringify({ webfetch: { signedInBrowser: { hosts: ["wiki.example.test"] } } }),
 		);
 
+		// The project's own directory is the working directory here, so an implementation that ever read
+		// project settings (cwd/.senpi/settings.json) would pick the host up and fail this test.
+		const cwd = vi.spyOn(process, "cwd").mockReturnValue(join(agentDir, "repo"));
+		cleanups.push(() => cwd.mockRestore());
+
 		expect(readSignedInBrowserSettings(agentDir)).toEqual({ hosts: [] });
 	});
 });
 
 describe("webfetch through the signed-in browser (senpi#5940)", () => {
+	it("gives the signed-in read only part of the call's timeout, so a skip leaves time for the anonymous fetch", async () => {
+		const site = await serve(LOGIN_PAGE);
+		const { renderer, calls } = browser(
+			() => new BrowserSkillError({ reason: "integration_not_connected", message: "no browser" }),
+		);
+
+		await fetchAs({ hosts: ["localhost"] }, renderer, site.url, "markdown", 10);
+
+		expect(calls).toHaveLength(1);
+		expect(calls[0]?.options.timeoutMs).toBeLessThan(10_000);
+		expect(calls[0]?.options.timeoutMs).toBeGreaterThan(0);
+	});
+
 	it("never contacts the browser for a host the user did not list", async () => {
 		const site = await serve(LOGIN_PAGE);
 		const { renderer, calls } = browser((url) => ({ url, html: SIGNED_IN_PAGE }));
@@ -170,7 +192,7 @@ describe("webfetch through the signed-in browser (senpi#5940)", () => {
 		const site = await serve(LOGIN_PAGE);
 		const { renderer, calls } = browser((url) => ({ url, html: SIGNED_IN_PAGE }));
 
-		const { details, text } = await fetchAs({ hosts: ["127.0.0.1"], browser: "Work Chrome" }, renderer, site.url);
+		const { details, text } = await fetchAs({ hosts: ["localhost"], browser: "Work Chrome" }, renderer, site.url);
 
 		expect(calls.map((call) => [call.url, call.options.mode, call.options.browser])).toEqual([
 			[site.url, "signed-in", "Work Chrome"],
@@ -190,8 +212,8 @@ describe("webfetch through the signed-in browser (senpi#5940)", () => {
 		const site = await serve(LOGIN_PAGE);
 		const { renderer } = browser((url) => ({ url, html: SIGNED_IN_PAGE }));
 
-		const markdown = await fetchAs({ hosts: ["127.0.0.1"] }, renderer, site.url);
-		const html = await fetchAs({ hosts: ["127.0.0.1"] }, renderer, site.url, "html");
+		const markdown = await fetchAs({ hosts: ["localhost"] }, renderer, site.url);
+		const html = await fetchAs({ hosts: ["localhost"] }, renderer, site.url, "html");
 
 		expect(markdown.text).not.toContain("csrf-secret-9");
 		expect(html.text).not.toContain("csrf-secret-9");
@@ -210,7 +232,7 @@ describe("webfetch through the signed-in browser (senpi#5940)", () => {
 				}),
 		);
 
-		const { details, text } = await fetchAs({ hosts: ["127.0.0.1"] }, renderer, site.url);
+		const { details, text } = await fetchAs({ hosts: ["localhost"] }, renderer, site.url);
 
 		expect(site.requests).toEqual(["/wiki/roadmap"]);
 		expect(text).toContain("Use your account.");
@@ -227,7 +249,7 @@ describe("webfetch through the signed-in browser (senpi#5940)", () => {
 		const site = await serve(LOGIN_PAGE);
 		const { renderer } = browser(() => ({ url: "https://mail.other.test/inbox", html: SIGNED_IN_PAGE }));
 
-		const { details, text } = await fetchAs({ hosts: ["127.0.0.1"] }, renderer, site.url);
+		const { details, text } = await fetchAs({ hosts: ["localhost"] }, renderer, site.url);
 
 		expect(text).not.toContain("roadmap page");
 		expect(site.requests).toEqual(["/wiki/roadmap"]);
