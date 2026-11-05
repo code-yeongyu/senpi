@@ -345,6 +345,29 @@ export function createJsonlImporter(options: JsonlImporterOptions) {
 		 * Record only the snapshot S20 wrote, never bytes an interleaving writer added afterward. S20 must pass a
 		 * captured stamp and the exact written image, under its projection admission (do not nest admissions).
 		 */
+		/**
+		 * Record an append the store projected: only the bytes it wrote, so a file that grew by more keeps the extra bytes
+		 * unrecorded for the next import. O(1): the appended line is the new high-water mark, nothing is re-parsed.
+		 */
+		async recordProjectedTail(
+			path: string,
+			sessionId: string,
+			tail: { readonly key: string; readonly line: string; readonly offset: number },
+			written: JsonlFileStamp,
+		): Promise<void> {
+			path = resolve(path);
+			const end = tail.offset + Buffer.byteLength(tail.line);
+			const record: JsonlImportLedger = {
+				...written,
+				path,
+				sourceSessionId: sessionId,
+				sessionId,
+				highWaterMark: { id: tail.key, hash: hash(tail.line), offset: tail.offset, end },
+				writerKind: "store",
+				checkedAt: now(),
+			};
+			await commit([{ op: "put", key: ledgerKey(path), data: record }]);
+		},
 		async recordProjection(path: string, contents: string, written: JsonlFileStamp): Promise<void> {
 			path = resolve(path);
 			const bytes = Buffer.from(contents);
