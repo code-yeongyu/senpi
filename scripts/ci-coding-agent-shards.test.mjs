@@ -36,23 +36,25 @@ test("the CI matrix schedules every partition with the existing timeout", () => 
 });
 
 // senpi#5855: four shards ran 15-25 min on hosted main, reaching the 25-minute step timeout with no failing test.
-// Main run 41947601029 spent 4905 s in its four `Test shard` steps, the slowest 1.22x the mean, and each job
-// spends about 60 s before its tests. The shard count must keep the slowest job inside the budget with margin.
+// Main run 41947601029 spent 4905 s in its four `Test shard` steps, the slowest 1.22x the mean. That ratio was
+// measured at four shards and is an estimate for any other count; the per-shard budget step below is the
+// measurement that holds the line on every run.
 const MEASURED_SHARD_STEP_SECONDS = 4905;
 const MEASURED_SLOWEST_TO_MEAN = 1.22;
-const MEASURED_SETUP_SECONDS = 60;
 
 test("the shard count keeps the measured suite inside the per-shard budget", () => {
-	const slowest = (MEASURED_SHARD_STEP_SECONDS / count) * MEASURED_SLOWEST_TO_MEAN + MEASURED_SETUP_SECONDS;
+	const slowest = (MEASURED_SHARD_STEP_SECONDS / count) * MEASURED_SLOWEST_TO_MEAN;
 	assert.ok(slowest <= SHARD_BUDGET_SECONDS * 0.85, `${count} shards: slowest projected ${Math.round(slowest)} s`);
 });
 
 test("every shard measures its own run against the budget after its tests", () => {
 	assert.equal(SHARD_BUDGET_SECONDS, 900);
 	const names = job.steps.map((step) => step.name);
-	assert.equal(names[0], "Start the shard budget clock");
-	assert.match(job.steps[0].run, /SHARD_BUDGET_STARTED=\$\(date \+%s\)" >> "\$GITHUB_ENV"/);
-	const budget = job.steps[names.indexOf("Test shard") + 1];
+	const tests = names.indexOf("Test shard");
+	// The clock starts right before the tests, so a slow apt mirror or download cannot spend the budget.
+	assert.equal(names[tests - 1], "Start the shard budget clock");
+	assert.match(job.steps[tests - 1].run, /SHARD_BUDGET_STARTED=\$\(date \+%s\)" >> "\$GITHUB_ENV"/);
+	const budget = job.steps[tests + 1];
 	assert.equal(budget.name, "Shard time budget");
 	assert.equal(budget.if, undefined);
 	assert.equal(budget.run, "node scripts/ci-shard-budget.mjs");

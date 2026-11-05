@@ -5,7 +5,7 @@
 // larger budget or timeout.
 import { pathToFileURL } from "node:url";
 
-/** Seconds a shard job may run, from its first step through its tests. */
+/** Seconds a shard's tests may run, from the step right before `Test shard` through its end. */
 export const SHARD_BUDGET_SECONDS = 900;
 
 export function measureShard({ startedAt, now, budgetSeconds = SHARD_BUDGET_SECONDS }) {
