@@ -134,6 +134,24 @@ export {
 	serveModelPlane,
 } from "./execution/plane-model.ts";
 export {
+	createLoopToolHost,
+	createSessionPlaneClient,
+	createSplitToolHost,
+	decodeSessionPlaneRequest,
+	loopSideToolNames,
+	SESSION_PLANE,
+	type SessionPlaneRequest,
+	serveSessionPlane,
+} from "./execution/plane-session.ts";
+export {
+	admitChainCall,
+	CHAIN_COUNT_LIMIT,
+	CHAIN_ORIGIN,
+	ChainCountLimitError,
+	decodeChainCount,
+	nextChainCount,
+} from "./execution/chain-count.ts";
+export {
 	decodePlaneMessage,
 	encodePlaneMessage,
 	type NestedRequest,
