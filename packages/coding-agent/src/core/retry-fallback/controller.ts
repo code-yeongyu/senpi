@@ -362,8 +362,17 @@ export class RetryFallbackController {
 		// noteHealthFailure) so the final chain entry opens too.
 		if (failureObserved && current && reason === "transient")
 			this.noteHealthFailure(current.model, current.thinkingLevel, failure);
-		const limit = usageLimitScope(failure.errorMessage);
 		if (failureObserved && current) this.emitScopeProbe(this.unusable.note(current.model, failure));
+		// A weekly limit that named no family held only the failing family (senpi#5596): report it as that model's
+		// limit, so the switch never claims the account's other models were skipped.
+		const scopeOfText = usageLimitScope(failure.errorMessage);
+		const limit =
+			scopeOfText === "account" &&
+			current &&
+			!this.unusable.isProviderSpent(current.model.provider) &&
+			this.unusable.heldFamily(current.model)
+				? "model"
+				: scopeOfText;
 		// A model-wide park (transient, billing) can rule out the current model's other rungs, so the
 		// walk re-scans after noting it; the first scan logs only when no re-scan follows.
 		const modelWidePark = !networkBlip && failureObserved && (reason === "transient" || reason === "billing");

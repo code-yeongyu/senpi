@@ -49,6 +49,8 @@ describe("#5596 a limit that names no model family probes another family once", 
 		expect(harness.eventsOfType("usage_limit_scope_probe")).toMatchObject([
 			{ provider: "faux", heldFamily: "fable", probeFamily: "opus", outcome: "served" },
 		]);
+		// The switch is reported as the failing model's limit, never as the whole account's.
+		expect(harness.eventsOfType("retry_fallback_applied")).toMatchObject([{ limit: "model" }]);
 	});
 
 	it("never lets an automated loop hammer the held family when no other family can probe", async () => {
