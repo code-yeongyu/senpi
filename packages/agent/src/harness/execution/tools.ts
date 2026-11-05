@@ -149,7 +149,15 @@ export function executeToolCall<TContext extends object | undefined>(
 		admittedContext.abortSignal?.throwIfAborted();
 		const unrecordable = unrecordableArguments(call.args);
 		if (unrecordable !== undefined) return { result: createErrorToolResult(unrecordable), isError: true };
-		const toolCall: AgentToolCall = { ...call.toolCall, arguments: call.args };
+		// The harness already prepared, validated and hooked this call, so the host gets only its identity and cleared
+		// arguments: a stream flag such as `incomplete` would make the host refuse it before the body runs.
+		const toolCall: AgentToolCall = {
+			type: "toolCall",
+			id: call.toolCall.id,
+			name: call.toolCall.name,
+			arguments: call.args,
+		};
+		// The host records a JSON copy of the arguments; the body and after_tool share the cleared arguments object itself.
 		return runOnPreparedToolHost(toolCall, invocation.invocationId, recordWitness, async () => {
 			let executed: ExecutedToolCall;
 			try {
