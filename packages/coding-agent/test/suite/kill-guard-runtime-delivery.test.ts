@@ -123,6 +123,28 @@ describe.runIf(posix)("kill guard runtime layer delivery", () => {
 		expect(agent?.SENPI_KILL_GUARD_EXEC).toBe(process.execPath);
 	});
 
+	it("drives the user's own command through the default bash operations without the runtime layer (senpi#5371)", async () => {
+		const { agentDir, harness } = await start();
+		// The agent shell environment itself carries the layer, so a regression that
+		// dropped `env` on the default branch would fall back to it and fail here,
+		// while the direct getUserShellEnv() assertions above would still pass.
+		expect(firstPathEntry(getShellEnv()).startsWith(shimRoot(agentDir))).toBe(true);
+		const result = await harness.session.executeBash(
+			`printf 'PATH0=%s\\nBASH_ENV=%s\\nEXEC=%s\\nAGENT_PID=%s\\nPROTECTED=%s\\nPROMPT=%s\\n' "\${PATH%%:*}" "\${BASH_ENV:-}" "\${SENPI_KILL_GUARD_EXEC:-}" "\${SENPI_KILL_GUARD_AGENT_PID:-}" "\${SENPI_KILL_GUARD_PROTECTED:-}" "\${PROMPT_COMMAND:-}"`,
+		);
+		expect(result.exitCode).toBe(0);
+		const lines = result.output.split("\n");
+		const value = (name: string) => lines.find((line) => line.startsWith(`${name}=`))?.slice(name.length + 1);
+		expect(value("PATH0")?.startsWith(shimRoot(agentDir))).toBe(false);
+		expect(value("BASH_ENV")).toBe(process.env.BASH_ENV ?? "");
+		expect(value("EXEC")).toBe(process.env.SENPI_KILL_GUARD_EXEC ?? "");
+		expect(value("AGENT_PID")).toBe(process.env.SENPI_KILL_GUARD_AGENT_PID ?? "");
+		expect(value("PROTECTED")).toBe(process.env.SENPI_KILL_GUARD_PROTECTED ?? "");
+		expect(value("PROMPT")).toBe(process.env.PROMPT_COMMAND ?? "");
+		expect(result.output).not.toContain("bash_env.sh");
+		expect(result.output).not.toContain("bash_kill.sh");
+	});
+
 	it("switching the guard off in one session leaves another session's layer in place", async () => {
 		const { agentDir } = await start();
 		await start({ userSettings: { terminal: { killGuard: "off" } } });
