@@ -8,6 +8,7 @@
 import type { Server, Socket } from "node:net";
 import type { TransportSide } from "@earendil-works/pi-agent-core";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "../rpc/jsonl.ts";
+import { authenticateSocket } from "../rpc/socket-transport.ts";
 
 /** What a carrier drives on the transport endpoint it serves. */
 export type CarrierSide = Pick<TransportSide, "attached" | "message" | "writable" | "detached">;
@@ -74,20 +75,28 @@ export function attachSocketCarrier(socket: Socket, side: CarrierSide): () => vo
 	socket.once("close", detach);
 	socket.on("error", () => socket.destroy());
 	side.attached({
+		// `false` means "not taken": the side resends after `writable()`. So refuse while the socket is over its
+		// high-water mark instead of queueing a line the side will send again.
 		send: (message) => {
+			if (!live || socket.destroyed || socket.writableNeedDrain) return false;
 			const line = encodeCarrierLine(message);
-			if (!live || socket.destroyed) return false;
-			return line === undefined ? true : socket.write(line);
+			if (line !== undefined) socket.write(line);
+			return true;
 		},
 		close: () => socket.destroy(),
 	});
 	return detach;
 }
 
-/** Serves `side` on `server`: the newest connection is the carrier, and an older one is dropped when a new one arrives. */
-export function serveSocketCarrier(server: Server, side: CarrierSide): void {
+/**
+ * Serves `side` on `server`: the newest connection is the carrier, and an older one is dropped when a new one arrives.
+ * With a `secret` (the Windows named pipe; the same handshake the shared RPC host uses), a connection becomes the
+ * carrier only after it sent the secret's bytes first (`authenticateSocket`), so a connection without it never
+ * displaces the current carrier.
+ */
+export function serveSocketCarrier(server: Server, side: CarrierSide, secret?: Uint8Array): void {
 	let current: { readonly socket: Socket; readonly detach: () => void } | undefined;
-	server.on("connection", (socket) => {
+	const take = (socket: Socket): void => {
 		const previous = current;
 		previous?.detach();
 		previous?.socket.destroy();
@@ -96,5 +105,9 @@ export function serveSocketCarrier(server: Server, side: CarrierSide): void {
 		socket.once("close", () => {
 			if (current?.socket === socket) current = undefined;
 		});
+	};
+	server.on("connection", (socket) => {
+		if (secret === undefined) take(socket);
+		else authenticateSocket(socket, secret, () => take(socket));
 	});
 }
