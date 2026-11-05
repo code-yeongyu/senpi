@@ -80,9 +80,7 @@ function terminalResult(placement: HandPlacement, terminal: RemoteTerminal): Rem
  * source order. A call whose send is refused (the transport closed) becomes an error result, never a retry. The one
  * re-send is on a durable hand's `hello` (see `createHandLink`). `deviceFiles(scope)` reaches the hand's files (S40).
  */
-export function createRemoteToolHost(
-	options: RemoteToolHostOptions,
-): ToolHost & {
+export function createRemoteToolHost(options: RemoteToolHostOptions): ToolHost & {
 	deviceFiles(scope: ExecutionScope): DeviceFiles;
 	/** Opens `scopeId`'s epoch floor before any tool call, e.g. before the session's first loop hook (senpi#5932). */
 	openScope(scopeId: string, signal?: AbortSignal): Promise<OpenScopeResult>;

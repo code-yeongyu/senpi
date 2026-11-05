@@ -166,7 +166,9 @@ export function createHandLink(
 			const opened = gate.open(lane);
 			if (signal === undefined) return opened;
 			if (signal.aborted) return Promise.resolve("aborted");
-			const aborted = new Promise<string>((resolve) => signal.addEventListener("abort", () => resolve("aborted"), { once: true }));
+			const aborted = new Promise<string>((resolve) =>
+				signal.addEventListener("abort", () => resolve("aborted"), { once: true }),
+			);
 			return Promise.race([opened, aborted]);
 		},
 		hello(ms, signal) {
