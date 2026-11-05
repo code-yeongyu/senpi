@@ -31,8 +31,8 @@ export class SessionStoreError extends Error {
 // and entry list, replacing everything before it). The manifest document holds only what is not ordered: the header a
 // new session starts with, and its divergence.
 const SESSION = "session-import/session/";
-export const sessionManifestKey = (id: string): string => SESSION + encodeURIComponent(id);
-export const sessionRecordKind = (id: string): string => `session/${encodeURIComponent(id)}`;
+const sessionManifestKey = (id: string): string => SESSION + encodeURIComponent(id);
+const sessionRecordKind = (id: string): string => `session/${encodeURIComponent(id)}`;
 
 export interface SessionState extends StoredSession {
 	readonly divergence: StoreValue;
