@@ -8,7 +8,9 @@ import {
 	type StoreRecord,
 	type StoreSnapshot,
 	type StoreValue,
+	type StoreWrite,
 	type StoreWritePoint,
+	type SyncCommitStore,
 } from "./store.ts";
 
 interface MediumState {
@@ -85,8 +87,46 @@ const documentsOf = (state: MediumState, prefix: string): StoreDocument[] =>
 		.map(([key, data]) => ({ key, data: copy(data) }));
 
 /** A DurableStore over `medium`. Each operation stages its writes and publishes them in one assignment: atomic. */
-export function openMemoryStore(medium: MemoryStoreMedium, options: DurableStoreOptions = {}): DurableStore {
+export function openMemoryStore(medium: MemoryStoreMedium, options: DurableStoreOptions = {}): SyncCommitStore {
 	const point = (at: StoreWritePoint): void => options.onWritePoint?.(at);
+
+	const commitSync = (
+		epoch: number,
+		writes: readonly StoreWrite[],
+		adopt: (result: CommitResult) => void,
+	): CommitResult => {
+		point({ op: "commit", at: "before" });
+		const state = medium.current;
+		requireOwner(state, epoch);
+		const records = [...state.records];
+		const ids = new Set(records.map((record) => record.id));
+		const documents = new Map(state.documents);
+		const seqs: number[] = [];
+		writes.forEach((write, index) => {
+			point({ op: "commit", at: "write", index });
+			switch (write.op) {
+				case "append": {
+					if (ids.has(write.id)) throw new DurableStoreError("duplicate-record-id", `record ${write.id} exists`);
+					ids.add(write.id);
+					const seq = records.length + 1;
+					records.push({ seq, id: write.id, kind: write.kind, data: copy(write.data) });
+					seqs.push(seq);
+					break;
+				}
+				case "put":
+					documents.set(write.key, copy(write.data));
+					break;
+				case "delete":
+					documents.delete(write.key);
+					break;
+			}
+		});
+		medium.current = { epoch: state.epoch, records, documents };
+		point({ op: "commit", at: "durable" });
+		const result: CommitResult = { seqs, head: records.length };
+		adopt(result);
+		return result;
+	};
 
 	return {
 		readEpoch: async () => medium.current.epoch,
@@ -111,40 +151,8 @@ export function openMemoryStore(medium: MemoryStoreMedium, options: DurableStore
 			point({ op: "claim", at: "durable" });
 		},
 
-		async commit(epoch, writes, adopt) {
-			point({ op: "commit", at: "before" });
-			const state = medium.current;
-			requireOwner(state, epoch);
-			const records = [...state.records];
-			const ids = new Set(records.map((record) => record.id));
-			const documents = new Map(state.documents);
-			const seqs: number[] = [];
-			writes.forEach((write, index) => {
-				point({ op: "commit", at: "write", index });
-				switch (write.op) {
-					case "append": {
-						if (ids.has(write.id))
-							throw new DurableStoreError("duplicate-record-id", `record ${write.id} exists`);
-						ids.add(write.id);
-						const seq = records.length + 1;
-						records.push({ seq, id: write.id, kind: write.kind, data: copy(write.data) });
-						seqs.push(seq);
-						break;
-					}
-					case "put":
-						documents.set(write.key, copy(write.data));
-						break;
-					case "delete":
-						documents.delete(write.key);
-						break;
-				}
-			});
-			medium.current = { epoch: state.epoch, records, documents };
-			point({ op: "commit", at: "durable" });
-			const result: CommitResult = { seqs, head: records.length };
-			adopt(result);
-			return result;
-		},
+		commit: async (epoch, writes, adopt) => commitSync(epoch, writes, adopt),
+		commitSync,
 
 		mintId: () => crypto.randomUUID(),
 		scanRecords: async (query = {}) => scan(medium.current.records, query),

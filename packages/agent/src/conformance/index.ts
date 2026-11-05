@@ -19,6 +19,8 @@ export type {
 	StoreValue,
 	StoreWrite,
 	StoreWritePoint,
+	SyncCommit,
+	SyncCommitStore,
 } from "../durable/store.ts";
 export { DurableStoreError } from "../durable/store.ts";
 export type { AdmissionLine } from "../durable/store-admission.ts";
@@ -26,6 +28,8 @@ export type { KillDeclaration } from "../durable/testing/kill-store.ts";
 export { KILL_STORE_CASES, KILL_STORE_DECLARATIONS } from "../durable/testing/kill-store.ts";
 export { STORE_CASES } from "../durable/testing/store-cases.ts";
 export type { StoreCaseAdapters, StoreConformanceAdapter } from "../durable/testing/store-harness.ts";
+export type { SyncCommitCaseAdapters, SyncCommitConformanceAdapter } from "../durable/testing/sync-commit-cases.ts";
+export { SYNC_COMMIT_CASES, SYNC_COMMIT_REGISTRY } from "../durable/testing/sync-commit-cases.ts";
 export type { KillWakeDeclaration } from "../durable/testing/kill-wake.ts";
 export { KILL_WAKE_CASES, KILL_WAKE_DECLARATIONS } from "../durable/testing/kill-wake.ts";
 export type { ManualTimers } from "../durable/testing/manual-timers.ts";
