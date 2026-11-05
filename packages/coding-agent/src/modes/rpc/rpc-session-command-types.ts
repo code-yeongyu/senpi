@@ -10,6 +10,7 @@ import type { SessionEntry } from "../../core/session-manager.ts";
 import type { ToolBarrierSpec } from "../../core/tool-barrier.ts";
 
 import type { RpcRecoveryCommand } from "./rpc-recovery-command-types.ts";
+import type { RpcRemoteOrigin } from "./remote-origin.ts";
 import type { RpcSessionModelEntry } from "./rpc-session-state-types.ts";
 
 // ============================================================================
@@ -30,6 +31,11 @@ export type RpcSessionCommand =
 			unknownCommandAsText?: boolean;
 			clientMessageId?: string;
 			clientTurnId?: string;
+			/**
+			 * With `streamingBehavior` set: the turn the caller means to reach, as `get_state.currentTurnId` reports it. An input
+			 * that names a turn which is not running is refused `turn_conflict` (senpi#5776).
+			 */
+			expectedTurnId?: string;
 			/** Arm the tool barrier for the turn this prompt starts (capability `tool_barrier`, senpi#3717). */
 			toolBarrier?: ToolBarrierSpec;
 	  }
@@ -65,6 +71,8 @@ export type RpcSessionCommand =
 			enqueueOrder?: number;
 			/** `"start"` starts a turn with this message when the session is idle (capability `steer_when_idle`). */
 			whenIdle?: RpcWhenIdle;
+			/** The turn (`get_state.currentTurnId`) this input is for; any other turn refuses it `turn_conflict` (senpi#5776). */
+			expectedTurnId?: string;
 	  } & ClientMessageIdentity)
 	| ({
 			id?: string;
@@ -74,6 +82,8 @@ export type RpcSessionCommand =
 			enqueueOrder?: number;
 			/** `"start"` starts a turn with this message when the session is idle (capability `steer_when_idle`). */
 			whenIdle?: RpcWhenIdle;
+			/** The turn (`get_state.currentTurnId`) this input is for; any other turn refuses it `turn_conflict` (senpi#5776). */
+			expectedTurnId?: string;
 	  } & ClientMessageIdentity)
 	/**
 	 * `effectId` (1-256 chars, capability `effect_ledger`) records the abort as a durable effect BEFORE it is
@@ -329,9 +339,17 @@ export type RpcSessionCommand =
 	| { id?: string; type: "get_provider_accounts"; provider: string }
 	| { id?: string; type: "account_pin"; provider: string; name: string | null }
 	| { id?: string; type: "account_remove"; provider: string; name: string }
+	| { id?: string; type: "account_reset"; provider: string; name: string }
 	| { id?: string; type: "account_order"; provider: string; names: string[] | null }
 	| { id?: string; type: "test_provider_account"; provider: string; name: string }
-	| { id?: string; type: "set_client_info"; width: number; capabilities?: string[] };
+	| {
+			id?: string;
+			type: "set_client_info";
+			width: number;
+			capabilities?: string[];
+			/** Declared by a relay forwarder for the remote device this connection speaks for (senpi#5475). */
+			remoteOrigin?: RpcRemoteOrigin;
+	  };
 
 /** What `steer`/`follow_up` do on an idle session: queue (default) or start a turn. */
 export type RpcWhenIdle = "queue" | "start";

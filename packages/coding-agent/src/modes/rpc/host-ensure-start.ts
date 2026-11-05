@@ -8,7 +8,6 @@ import { type DaemonPidFile, readProcessStartTime, waitForStartTime } from "../.
 import { generationPaths, type HostDaemonPaths } from "./host-daemon-paths.ts";
 import { clearHostRegistration, writeHostRegistration } from "./host-daemon-registration.ts";
 import { callerHostOwner, writeHostOwner, writeHostSettings } from "./host-daemon-state.ts";
-import { HOST_PROTOCOL_VERSION, REQUIRED_HOST_CAPABILITIES } from "./host-decision.ts";
 import { hostChildArgv, isCompatible } from "./host-ensure-client.ts";
 import {
 	announceStop,
@@ -26,7 +25,11 @@ import type { EnsuredHost, EnsureHostOptions } from "./host-ensure-types.ts";
 import { defaultHostLaunch, PINNED_HOST_CLIENT_CAPABILITIES } from "./host-launch.ts";
 import { DEFAULT_HOST_IDLE_EXIT_MS } from "./host-lifecycle.ts";
 import { keepOwnerPipe, OWNER_WATCH_FD } from "./host-lifecycle-launch.ts";
-import { type ChildExit, pollProtocolInfo } from "./host-readiness.ts";
+import type { ChildExit } from "./host-readiness.ts";
+import { newStartupAttempt } from "./host-startup-events.ts";
+import { clearStartupIntent, settleStartupIntent, writeStartupIntent } from "./host-startup-intent.ts";
+import { finalizeFailedStart } from "./host-startup-finalizer.ts";
+import { beginStartupAttempt, driveStartupToReady, exitMessage, type StartupAttempt } from "./host-startup-run.ts";
 import { initialHostEnvironment } from "./host-spawn-environment.ts";
 import { hostLaunchProfile } from "./protocol-identity.ts";
 import { ensureSocketSecret, socketSecretPath } from "./socket-transport.ts";
@@ -39,7 +42,6 @@ import {
 	reservationStorePath,
 } from "./host-launch-reservation.ts";
 
-export const DEFAULT_READINESS_TIMEOUT_MS = 10_000;
 export { DEFAULT_STOP_TIMEOUT_MS };
 
 /**
@@ -53,6 +55,8 @@ export async function startHost(
 	generation = 0,
 ): Promise<EnsuredHost> {
 	const testOptions = options._test;
+	// A start that died holding this lock may have left a candidate running: settle it first (senpi#4602).
+	await settleStartupIntent(paths, socket, testOptions?.readProcessStartTime);
 	const lifetimeOwner = options.owner ? await callerHostOwner() : null;
 	// The generation this ensure is about to spawn, chosen HERE so its directory exists before the
 	// host boots and the pointer can name it the moment the host is registered.
@@ -84,8 +88,9 @@ export async function startHost(
 	let child: ReturnType<typeof spawn> | undefined;
 	let exitedEarly: ChildExit | undefined;
 	let childExit: Promise<ChildExit> | undefined;
-	let presenterEnrollment: Promise<void> | undefined;
+	let presenterEnrollment: Promise<unknown> | undefined;
 	let reservation: Awaited<ReturnType<typeof reserveSupervisorLaunch>> | undefined;
+	let attempt: StartupAttempt | undefined;
 	try {
 		// A Windows public endpoint launches its supervisor through a reservation (#4199 design 4.2a): the supervisor
 		// claims its role and starts only once this process, the issuer, has verified and granted it. Reserved inside
@@ -100,22 +105,48 @@ export async function startHost(
 			...(options.hostArgs ?? []),
 			...(reservation?.args ?? []),
 		];
-		const launch = testOptions?.spawn ?? testOptions?.launch?.(supervisorArgs) ?? defaultHostLaunch(supervisorArgs);
+		const launch = testOptions?.spawn ??
+			testOptions?.launch?.(supervisorArgs) ?? {
+				...defaultHostLaunch(supervisorArgs),
+				reportsStartup: true,
+			};
+		const nonce = newStartupAttempt();
+		await writeStartupIntent(paths.dir, {
+			attempt: nonce,
+			instanceId,
+			generation,
+			launcher: { pid: process.pid, processStartTime: null },
+			writtenAt: Date.now(),
+		});
+		attempt = beginStartupAttempt({
+			socket,
+			instanceId,
+			generation,
+			attempt: nonce,
+			coordinated: "reportsStartup" in launch && launch.reportsStartup === true,
+			...(testOptions?.readinessTimeoutMs ? { decisionBudgetMs: testOptions.readinessTimeoutMs } : {}),
+		});
+		// The fillers are decided by the stdio, and the hand-off in the environment names them: stdio first.
+		const base: ("ignore" | "pipe" | number)[] = options.presenterBootstrap
+			? ["ignore", "ignore", stderr.fd, options.owner ? "pipe" : "ignore", "pipe"]
+			: options.owner
+				? ["ignore", "ignore", stderr.fd, "pipe"]
+				: ["ignore", "ignore", stderr.fd];
+		const stdio = attempt.stdio(base);
 		child = spawnWithPrivateFds(spawn, launch.command, [...launch.args], {
 			detached: true,
 			windowsHide: true,
-			env: initialHostEnvironment({
-				agentDir: options.agentDir,
-				env: options.env,
-				paths,
-				instanceId,
-				generation,
-			}),
-			stdio: options.presenterBootstrap
-				? ["ignore", "ignore", stderr.fd, options.owner ? "pipe" : "ignore", "pipe"]
-				: options.owner
-					? ["ignore", "ignore", stderr.fd, "pipe"]
-					: ["ignore", "ignore", stderr.fd],
+			env: {
+				...initialHostEnvironment({
+					agentDir: options.agentDir,
+					env: options.env,
+					paths,
+					instanceId,
+					generation,
+				}),
+				...attempt.env,
+			},
+			stdio,
 		});
 		if (options.presenterBootstrap)
 			presenterEnrollment = relayPresenterBootstrap(options.presenterBootstrap, child, {
@@ -128,6 +159,7 @@ export async function startHost(
 				resolveExit(exitedEarly);
 			});
 		});
+		attempt.attach(child, childExit);
 		if (options.owner) keepOwnerPipe(child);
 		if (child.pid === undefined) throw new Error("failed to spawn RPC socket host");
 		const probe = testOptions?.readProcessStartTime ?? readProcessStartTime;
@@ -165,6 +197,14 @@ export async function startHost(
 			);
 		}
 		pidFile = { pid: child.pid, processStartTime: processStartTime ?? null };
+		await writeStartupIntent(paths.dir, {
+			attempt: attempt.binding.attempt,
+			instanceId,
+			generation,
+			launcher: { pid: process.pid, processStartTime: null },
+			child: pidFile,
+			writtenAt: Date.now(),
+		});
 		await testOptions?.beforePidFileWrite?.();
 		await writeHostRegistration(paths, {
 			record: pidFile,
@@ -181,31 +221,36 @@ export async function startHost(
 		// self-exit. Latch it before killing, or the catch reports the SIGTERM it is
 		// about to send and discards the actual startup failure.
 		const exitedBeforeCleanup = exitedEarly;
+		const cause = error instanceof Error ? error : new Error(String(error));
+		attempt?.controller.fail(cause);
 		// Keep the ChildProcess handle owned until registration succeeds. If startup
 		// fails before the pidfile is written, terminate this exact child through
 		// its still-attached handle rather than leaving an unmanaged daemon behind.
-		if (!exitedBeforeCleanup && child?.pid !== undefined && childExit) {
-			await stopUnregisteredStart(child, childExit, stopTarget("start_failed"));
-		}
+		const spawned = child;
+		const exit = childExit;
+		const report = await finalizeFailedStart(
+			{ kind: "failed", phase: "supervisor_bootstrap", cause, elapsedMs: 0 },
+			() =>
+				exitedBeforeCleanup || spawned?.pid === undefined || !exit
+					? Promise.resolve()
+					: stopUnregisteredStart(spawned, exit, stopTarget("start_failed")),
+		);
 		// The durable fence of a failed start (design 4.2a "Crash, cancellation and commit"): stopping the spawned
 		// wrapper proves nothing about a descendant that claimed, so the generation is cancelled, which revokes its
 		// offers and refuses every later grant and pre-listen intent. The fence's own failure never replaces the error.
 		const fence = reservation ? await fenceFailedStart(reservation) : undefined;
-		if (!exitedBeforeCleanup) {
-			await clearHostRegistration(paths);
-			throw withFenceFailure(error, fence);
-		}
-		const diagnostic = await appendStderr(
-			paths,
-			`RPC socket host exited with code ${exitedBeforeCleanup.code ?? "null"}${exitedBeforeCleanup.signal ? ` (${exitedBeforeCleanup.signal})` : ""} before answering get_protocol_info`,
-		);
+		if (report.cleanup === "completed") await clearStartupIntent(paths.dir);
 		await clearHostRegistration(paths);
+		if (!exitedBeforeCleanup) {
+			if (report.cleanup === "completed") throw withFenceFailure(error, fence);
+			throw new Error(fence === undefined ? report.detail : `${report.detail} (${fence})`, { cause: error });
+		}
+		const diagnostic = await appendStderr(paths, exitMessage(exitedBeforeCleanup));
 		throw new Error(fence === undefined ? diagnostic : `${diagnostic} (${fence})`);
 	} finally {
 		await stderr.close();
 	}
-	const readinessTimeoutMs = testOptions?.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS;
-	const result = await pollProtocolInfo(socket, readinessTimeoutMs, isCompatible, childExit);
+	const result = await driveStartupToReady({ attempt, socket, childExit, presenterEnrollment, isCompatible });
 	if (result.ready) {
 		if (reservation) {
 			try {
@@ -214,39 +259,33 @@ export async function startHost(
 				reservation.store.close();
 			}
 		}
-		await presenterEnrollment;
+		await clearStartupIntent(paths.dir);
 		return { pid: pidFile.pid, socket, reused: false, release: result.hold.release };
 	}
 	await testOptions?.beforeReadinessTeardown?.();
 	// Readiness failed with the supervisor granted: its generation is fenced the same way, before the child is stopped,
 	// so a granted descendant of the wrapper cannot bind after this start has reported failure.
 	const fence = reservation ? await fenceFailedStart(reservation) : undefined;
-	// Teardown runs for the diagnostic's sake, so it must never replace it: a stop failure here
-	// (unreadable identity, a host that outlives SIGKILL) would otherwise propagate instead of the
-	// readiness message and skip the registration cleanup below. This child is ours and its handle is
-	// still attached: stop it through the handle, never through a re-probed pidfile identity.
-	const stopFailure = await stopSpawnedChild(
-		child,
-		childExit,
-		testOptions?.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS,
-		stopTarget("readiness_timeout"),
-	).then(
-		() => undefined,
-		(error: unknown) => (error instanceof Error ? error.message : String(error)),
+	// Teardown runs for the diagnostic's sake, so it must never replace it: the finalizer keeps the original
+	// cause first and appends a cleanup failure after it. This child is ours and its handle is still attached:
+	// stop it through the handle, never through a re-probed pidfile identity.
+	const spawned = child;
+	const report = await finalizeFailedStart(result.outcome, () =>
+		stopSpawnedChild(
+			spawned,
+			childExit,
+			testOptions?.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS,
+			stopTarget("readiness_timeout"),
+		),
 	);
-	const message = result.protocol
-		? `RPC socket host answered get_protocol_info with protocolVersion ${result.protocol.protocolVersion}, serverVersion ${result.protocol.serverVersion} and capabilities ${JSON.stringify(result.protocol.capabilities)}, but is incompatible with protocol version ${HOST_PROTOCOL_VERSION} and required capabilities ${JSON.stringify(REQUIRED_HOST_CAPABILITIES)}`
-		: result.exited
-			? `RPC socket host exited with code ${result.exited.code ?? "null"}${result.exited.signal ? ` (${result.exited.signal})` : ""} before answering get_protocol_info`
-			: `spawned RPC socket host did not answer get_protocol_info within ${readinessTimeoutMs}ms`;
-	const notes = [
-		...(stopFailure === undefined ? [] : [`teardown also reported: ${stopFailure}`]),
-		...(fence === undefined ? [] : [fence]),
-	];
-	const diagnostic = await appendStderr(paths, notes.length === 0 ? message : `${message} (${notes.join("; ")})`);
-	// The record of that teardown is already written: clearing the registration removes the
-	// generation directory, and with it the intent the record cites.
-	await clearHostRegistration(paths);
+	const diagnostic = await appendStderr(paths, fence === undefined ? report.detail : `${report.detail} (${fence})`);
+	// The record of that teardown is already written: clearing the registration removes the generation
+	// directory, and with it the intent the record cites. A child whose exit cleanup could not prove keeps its
+	// registration and startup intent, so no later writer reads it as gone (A-amended section 6).
+	if (report.cleanup === "completed") {
+		await clearHostRegistration(paths);
+		await clearStartupIntent(paths.dir);
+	}
 	// The supervisor may have failed before binding, or another owner may have
 	// appeared while readiness was being checked. Never unlink an endpoint we
 	// cannot prove this start owned.
@@ -272,7 +311,8 @@ async function stopUnregisteredStart(
 		signalPid(pid, "SIGKILL");
 	} catch {}
 	const gone = await Promise.race([childExit.then(() => true), delay(SIGKILL_GRACE_MS).then(() => false)]);
-	if (gone) await recordEscalation(target, announced);
+	if (!gone) throw new Error(`RPC socket host pid ${pid} remained alive after SIGKILL`);
+	await recordEscalation(target, announced);
 }
 
 export async function appendStderr(paths: HostDaemonPaths, message: string): Promise<string> {

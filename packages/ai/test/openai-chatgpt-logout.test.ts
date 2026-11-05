@@ -20,6 +20,7 @@ async function connected(oauth: OAuthAuth = openaiChatGPTOAuth) {
 		clientId: "oaiapp_synthetic",
 		idToken: "synthetic-id",
 		hostId: "urn:uuid:e61bbe28-07ef-466d-8e5d-a344f94ab305",
+		scopes: ["chatgpt.tokens.use.direct"],
 	};
 	await credentials.modify(PROVIDER, async () => credential);
 	const models = createModels({ credentials });

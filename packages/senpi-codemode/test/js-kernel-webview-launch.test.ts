@@ -2,8 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, rmSync, watch } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { retireBunChrome } from "../../coding-agent/src/core/webview/bun-chrome.ts";
-import { bunChromeProfileDir } from "../../coding-agent/src/core/webview/chrome-graceful-close.ts";
+import { listBunChromeBrowsers, retireBunChrome } from "../../coding-agent/src/core/webview/bun-chrome.ts";
 import {
 	mainThreadWebViewClass,
 	type NativeWebView,
@@ -70,10 +69,6 @@ function entries(dir: string | undefined): string[] {
 	return dir !== undefined && existsSync(dir) ? readdirSync(dir) : [];
 }
 
-function chromeCommand(pid: number): string {
-	return execFileSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8" }).trim();
-}
-
 interface AttributedLaunch {
 	readonly view: NativeWebView;
 	readonly profile: string | undefined;
@@ -98,7 +93,7 @@ async function launchAttributed(
 		const pids = await bunChromeChildren();
 		expect(pids).toHaveLength(1);
 		const [pid = 0] = pids;
-		const profile = bunChromeProfileDir(chromeCommand(pid));
+		const profile = (await listBunChromeBrowsers()).find((browser) => browser.pid === pid)?.profileDir;
 		if (cloneParent === undefined) return { view, profile, clone: undefined };
 		const [own] = created;
 		if (created.length === 1 && own !== undefined) return { view, profile, clone: join(cloneParent, own) };

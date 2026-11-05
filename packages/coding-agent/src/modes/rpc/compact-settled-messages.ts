@@ -11,7 +11,15 @@ import {
 } from "./compact-content-store.ts";
 import { assertProtocolDepth } from "./compact-protocol-depth.ts";
 import { CompactReadError } from "./compact-read-lease.ts";
-import type { CompactValues, ValueRef } from "./compact-values.ts";
+import {
+	isProjection,
+	type OwnerRow,
+	type SettledMember,
+	type SettledReader,
+	type SettledRow,
+	type StoredOwner,
+	type TerminalRow,
+} from "./compact-settled-rows.ts";
 
 export type SettledDiagnostic =
 	| "unknown_message"
@@ -20,56 +28,12 @@ export type SettledDiagnostic =
 	| "conflicting_owner"
 	| "unsupported_role";
 
-export interface TerminalRow {
-	readonly kind: "terminal";
-	readonly messageId: string;
-	readonly turnId: string | null;
-	readonly terminalSequence: number;
-	readonly role: string;
-	/** A toolResult row carries the key of the call it retired (RULING-13 Q7); every other row has none. */
-	readonly runtimeItemKey: string | null;
-	readonly entryId: null;
-	readonly status: "pending" | "failed";
-	readonly error: { readonly errorMessage: string } | null;
-	readonly payload: readonly LeafId[];
-	/**
-	 * The retired call's projection as paged value pages (RULING-60 Q3): every nested `calls` array is pages of at most
-	 * 128 child descriptors and 64 KiB, recursively, so no child count is ever truncated and a reader walks it with one
-	 * page resident.
-	 */
-	readonly call: ValueRef | null;
-}
-
-export interface OwnerRow {
-	readonly kind: "owner";
-	readonly messageId: string;
-	readonly entryId: string;
-}
-
-/** A join as stored: its row and the epoch-local ordinal it was joined at, the identity member's stable id. */
-interface StoredOwner extends OwnerRow {
-	readonly ordinal: number;
-}
-
-type Row = TerminalRow | StoredOwner;
 export type SettledRoot = FrozenIndex;
-/** One row of a cut as the catalog enumerates it: a terminal with its paged call, or one message's entry join. */
-type SettledMember = { readonly kind: "terminal"; readonly row: TerminalRow } | StoredOwner;
-/** The bounded reads of one cut of this store (S10b): its rows a page at a time, its leaves, its values, its joins. */
-export interface SettledReader {
-	readonly store: CompactContentStore;
-	readonly values: CompactValues;
-	members(valid: () => void): AsyncGenerator<SettledMember>;
-	messageOf(entryId: string): Promise<string | null>;
-}
-
-const isProjection = (value: unknown): value is CallProjection =>
-	typeof value === "object" && value !== null && typeof Reflect.get(value, "runtimeItemKey") === "string";
 
 /** One spillable collection owns payloads, end markers and both directions of the durable join. */
 export class CompactSettledMessages {
 	private readonly store: CompactContentStore;
-	private readonly rows: CompactContentIndex<Row>;
+	private readonly rows: CompactContentIndex<SettledRow>;
 	/**
 	 * Resident membership: one state key per message (`end:` ended but unjoined, `owner:` -> entry id joined before its
 	 * end, `settled:` -> entry id both), `terminal:` per pending terminal row and `entry:` per joined entry. Settling a
@@ -165,6 +129,7 @@ export class CompactSettledMessages {
 			terminalSequence: identity.terminalSequence,
 			role,
 			runtimeItemKey: call?.runtimeItemKey ?? null,
+			...(call?.callUnknown ? { callUnknown: true } : {}),
 			entryId: null,
 			status: "pending",
 			error: null,
@@ -218,7 +183,7 @@ export class CompactSettledMessages {
 		this.keys.delete(`end:${messageId}`);
 	}
 
-	private put(key: string, row: Row): void {
+	private put(key: string, row: SettledRow): void {
 		this.rows.set(key, row);
 		this.keys.set(key, "");
 	}
@@ -277,7 +242,7 @@ export class CompactSettledMessages {
 				valid();
 				const key = await this.rows.values.read(row.key);
 				if (typeof key !== "string" || key.startsWith("entry:")) continue;
-				const stored: Row = JSON.parse(JSON.stringify(await this.rows.values.read(row.value)));
+				const stored: SettledRow = JSON.parse(JSON.stringify(await this.rows.values.read(row.value)));
 				if (stored.kind === "owner") {
 					yield stored;
 					continue;

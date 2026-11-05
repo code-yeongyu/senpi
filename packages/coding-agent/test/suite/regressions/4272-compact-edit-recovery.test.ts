@@ -4,9 +4,9 @@ import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, expect, it, vi } from "vitest";
 import { readTranscriptRoot } from "../../../src/modes/rpc/accepted-transcript.ts";
 import type { SessionAcceptanceLane } from "../../../src/modes/rpc/session-acceptance-lane.ts";
-import { RpcSessionRegistry, type RpcSessionEntry } from "../../../src/modes/rpc/session-registry.ts";
 import { dataOf, type RawClient, statusHost } from "../rpc-session-status-support.ts";
 import { EVENT_SAFETY_MS } from "./4272-worker-acceptance-support.ts";
+import { observeInProcessOpens } from "../rpc-in-process-entry-support.ts";
 
 afterEach(() => {
 	vi.unstubAllEnvs();
@@ -36,15 +36,13 @@ function conversation(view: readonly string[]): string[] {
 }
 
 async function open(host: Host, name: string, sessionPath?: string) {
-	const admissions = vi.spyOn(RpcSessionRegistry.prototype, "getForCommand");
+	const admissions = observeInProcessOpens(host);
 	const client = host.client(name);
 	const opened = dataOf(
 		await client.request({ type: "open_session", cwd: host.cwd, ...(sessionPath && { sessionPath }) }),
 	);
-	const entry = admissions.mock.results.findLast((result) => result.type === "return")?.value as
-		| RpcSessionEntry
-		| undefined;
-	admissions.mockRestore();
+	const entry = admissions.entryFor(String(opened.sessionId));
+	admissions.restore();
 	if (!entry?.acceptance) throw new Error("no real lane");
 	return { client, sessionId: String(opened.sessionId), lane: entry.acceptance };
 }

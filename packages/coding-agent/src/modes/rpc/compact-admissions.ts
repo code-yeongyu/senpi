@@ -36,7 +36,7 @@ export class CompactAdmissions {
 		return { ...this.losses, retiredOverflow: this.retiredOverflow };
 	}
 
-	/** RULING-113 residual: a forgotten ID is indistinguishable from a fresh open, so the first loss is logged. */
+	/** RULING-113 residual: an unmarked forgotten ID runs as a fresh open (RULING-125 marks retries), so the first loss is logged. */
 	private overflowRetired(): void {
 		if (this.retiredOverflow++ === 0)
 			process.stderr.write(
@@ -124,6 +124,8 @@ export class CompactAdmissions {
 					}
 				}
 			}
+			// RULING-125: a marked retry with no row (evicted, forgotten or never seen) has an unconfirmed outcome; never rerun it.
+			if (identity.retry) throw new CompactAdmissionError("admission_unknown");
 			if (epoch.retired.has(key)) throw new CompactAdmissionError("admission_retired");
 			if (epoch.hot.size >= ADMISSION_LIMITS.hot) throw new CompactAdmissionError("admission_busy");
 			const capacity = Math.min(this.limits.entries, Math.floor(this.limits.bytes / ADMISSION_LIMITS.row));

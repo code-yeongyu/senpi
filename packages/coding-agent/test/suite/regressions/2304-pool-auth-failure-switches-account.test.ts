@@ -4,7 +4,12 @@ import { join } from "node:path";
 import type { AssistantMessage, AssistantMessageEvent, ProviderDiagnostic } from "@earendil-works/pi-ai";
 import type { PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
 import { ModelsError } from "@earendil-works/pi-ai/utils/models-error";
-import { OAuthRefreshUnavailableError, OAuthTokenEndpointError } from "@earendil-works/pi-ai/utils/oauth-refresh-error";
+import {
+	OAuthClientConfigurationError,
+	OAuthReauthorizationRequiredError,
+	OAuthRefreshUnavailableError,
+	OAuthTokenEndpointError,
+} from "@earendil-works/pi-ai/utils/oauth-refresh-error";
 import { attachProviderDiagnostic } from "@earendil-works/pi-ai/utils/provider-diagnostic-carrier";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { classifyCredentialFailure } from "../../../src/core/credential-pool/classify.ts";
@@ -151,6 +156,18 @@ describe("a failed OAuth refresh blocks the account only when the grant itself w
 				),
 			FAIL_REQUEST,
 		],
+		// #5003: the SIWC typed refresh errors carry their OAuth facts, so the pool reads the code, not prose.
+		["SIWC typed invalid_client at 401", () => refreshFailed(new OAuthClientConfigurationError(401)), FAIL_REQUEST],
+		...([400, 403, 404] as const).flatMap((status) =>
+			(["invalid_grant", "refresh_token_reused", "refresh_token_expired"] as const).map(
+				(code) =>
+					[
+						`SIWC typed ${code} at ${status}`,
+						() => refreshFailed(new OAuthReauthorizationRequiredError(code, status)),
+						FAILOVER,
+					] as const,
+			),
+		),
 		[
 			"a token that expires too soon after refresh",
 			() => new ModelsError("oauth", `OAuth refresh returned a token that expires too soon for ${PROVIDER}`),

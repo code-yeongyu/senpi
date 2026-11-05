@@ -13,7 +13,7 @@
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { ExtensionUIContext } from "../../types.ts";
 import { privateMcpForms } from "../../../mcp-form-types.ts";
-import { legacyMcpOperation } from "./request-origin.ts";
+import { legacyMcpCallerUi, legacyMcpOperation } from "./request-origin.ts";
 import { isRecord, validateMrtrForm } from "./modern/form-schema.ts";
 import { createMcpLogger } from "./log.ts";
 import { loadMcpSdkTypes } from "./sdk.lazy.ts";
@@ -148,7 +148,10 @@ export async function configureMcpElicitation(
 		const params = request.params;
 		// URL mode is deliberately unsupported in v1 (form mode only).
 		if (!("requestedSchema" in params)) return rejectElicitation();
-		const ui = typeof owner === "function" ? owner() : owner?.getMcpElicitationUi();
+		const caller = legacyMcpCallerUi(client);
+		if (caller === "refuse") return rejectElicitation();
+		const ui =
+			caller !== undefined ? caller.ui : typeof owner === "function" ? owner() : owner?.getMcpElicitationUi();
 		const enforced =
 			(typeof owner === "function" && owner.enforced?.()) || (ui !== undefined && privateMcpForms(ui) !== undefined);
 		if (enforced) {

@@ -8,10 +8,30 @@ import {
 	isCurrentGeneration,
 	sessionRegistry,
 } from "./session-registry.ts";
-import { submitSessionTurn } from "./session-registry-pump.ts";
+import { submitSessionTurn, waitForTurnAdmission } from "./session-registry-pump.ts";
 import { recordSyncedStream, sentHashPrefixDigest } from "./session-sync.ts";
 
 type StagedContinuityDecision = { emit(): void };
+
+/** Pending while the attempt that submitted the entry's latest turn has not yet recorded what that turn sent. */
+const attemptBookkeeping = new WeakMap<AnthropicSubscriptionSessionEntry, Promise<void>>();
+
+/**
+ * Holds a new attempt until the attempt running the entry's previous turn finished and recorded the sent stream
+ * (`recordSyncedStream`), bounded and abortable like the pump's own admission wait. The caller decides
+ * continuity and the delta only after this, so the delta starts after the earlier turn's message instead of
+ * sending it again (senpi#5015 review).
+ */
+export async function waitForActiveTurn(
+	entry: AnthropicSubscriptionSessionEntry,
+	signal: AbortSignal | undefined,
+): Promise<void> {
+	const pending = attemptBookkeeping.get(entry);
+	if (!pending) return;
+	if ((await waitForTurnAdmission(entry.senpiSessionId, pending, signal)) === "aborted") {
+		throw new Error("Anthropic Subscription turn aborted while waiting for the previous turn");
+	}
+}
 
 function successfulTurn(messages: readonly SDKMessage[]): boolean {
 	return messages.some(
@@ -119,6 +139,15 @@ export function createSessionTurnAttempt(
 	return {
 		messages: (async function* (): AsyncGenerator<SDKMessage> {
 			const queue = new BoundedAsyncQueue<SDKMessage>(SESSION_STREAM_QUEUE_CAPACITY);
+			let markBookkept!: () => void;
+			const bookkeeping = new Promise<void>((resolve) => {
+				markBookkept = resolve;
+			});
+			attemptBookkeeping.set(entry, bookkeeping);
+			const bookkept = (): void => {
+				if (attemptBookkeeping.get(entry) === bookkeeping) attemptBookkeeping.delete(entry);
+				markBookkept();
+			};
 			const completion = submitSessionTurn(sessionRegistry, entry, {
 				message,
 				signal,
@@ -171,6 +200,7 @@ export function createSessionTurnAttempt(
 			} finally {
 				// A consumer that stops reading early must not leave the pump waiting for room.
 				queue.close();
+				bookkept();
 			}
 		})(),
 		discard: (): void => {

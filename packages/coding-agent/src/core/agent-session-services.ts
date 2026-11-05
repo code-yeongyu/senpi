@@ -62,6 +62,8 @@ export interface CreateAgentSessionServicesOptions {
  */
 export interface CreateAgentSessionFromServicesOptions {
 	services: AgentSessionServices;
+	/** The session's execution-pipeline receipt sink (see `CreateAgentSessionOptions.executionPipelineWitness`). */
+	executionPipelineWitness?: CreateAgentSessionOptions["executionPipelineWitness"];
 	sessionManager: SessionManager;
 	sessionStartEvent?: SessionStartEvent;
 	model?: Model<any>;
@@ -296,6 +298,7 @@ export async function createAgentSessionFromServices(
 		promptSurface: options.promptSurface,
 		browserEngine: options.browserEngine,
 		sessionEnv: options.sessionEnv,
+		executionPipelineWitness: options.executionPipelineWitness,
 		...(options.toolRuntime !== undefined ? { toolRuntime: options.toolRuntime } : {}),
 	});
 }

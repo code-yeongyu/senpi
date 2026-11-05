@@ -1,13 +1,14 @@
-diff --git a/packages/agent/src/agent-loop.ts b/packages/agent/src/agent-loop.ts
-index b046ab34f5..8dde7649cf 100644
---- a/packages/agent/src/agent-loop.ts
-+++ b/packages/agent/src/agent-loop.ts
-@@ -1296,7 +1296,7 @@ async function executeToolCallsParallel(
- 	let previousSequential: Promise<FinalizedToolCallOutcome> | undefined;
- 	let previousWave: Promise<FinalizedToolCallOutcome>[] = [];
- 	for (const { preparation, isSequential } of preparedCalls) {
--		const dependencies = isSequential
-+		const dependencies = false
- 			? [...(previousSequential ? [previousSequential] : []), ...previousWave]
- 			: previousSequential
- 				? [previousSequential]
+diff --git a/packages/agent/src/execution/coordinator-plan.ts b/packages/agent/src/execution/coordinator-plan.ts
+index da0eb33a59..608f63a33d 100644
+--- a/packages/agent/src/execution/coordinator-plan.ts
++++ b/packages/agent/src/execution/coordinator-plan.ts
+@@ -21,7 +21,8 @@ export function batchDependencies(
+ 	let parallelSince: number[] = [];
+ 	for (const [index, call] of calls.entries()) {
+ 		const anchor = previousSequential === undefined ? [] : [previousSequential];
+-		const dependsOn = call.sequential ? [...anchor, ...parallelSince] : anchor;
++		// MUTATION (P0-05d O5): a sequential call no longer waits for the parallel wave before it.
++		const dependsOn = false ? [...anchor, ...parallelSince] : anchor;
+ 		const wave = Math.max(-1, ...dependsOn.map((dependency) => result[dependency]?.wave ?? -1)) + 1;
+ 		result.push({ dependsOn, wave });
+ 		if (call.sequential) {

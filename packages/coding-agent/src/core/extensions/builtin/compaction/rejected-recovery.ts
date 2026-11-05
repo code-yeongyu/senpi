@@ -21,8 +21,19 @@ export function wouldCompactionOverflow(
 	model: Model<string>,
 	settings: CompactionPreparation["settings"],
 ): boolean {
+	const tokens = projectCompactedContextTokens(pathEntries, compactionResult, fromExtension, model);
+	return tokens > model.contextWindow - resolveEffectiveReserveTokens(model.contextWindow, settings);
+}
+
+/** Estimated context the next request would carry if `compactionResult` were applied to `pathEntries` now. */
+export function projectCompactedContextTokens(
+	pathEntries: SessionEntry[],
+	compactionResult: CompactionResult,
+	fromExtension: boolean,
+	model: Model<string>,
+): number {
 	const currentLeaf = pathEntries.at(-1);
-	if (!currentLeaf) return false;
+	if (!currentLeaf) return 0;
 	const simulatedCompactionEntry: CompactionEntry = {
 		type: "compaction",
 		id: `simulated-${randomUUID()}`,
@@ -42,11 +53,7 @@ export function wouldCompactionOverflow(
 				budgetBytes: cursorAdmissionBudgetBytes(model.contextWindow),
 			}).messages ?? messages;
 	}
-	const tokens = filterContextExcludedMessages(messages).reduce(
-		(total, message) => total + estimateTokens(message),
-		0,
-	);
-	return tokens > model.contextWindow - resolveEffectiveReserveTokens(model.contextWindow, settings);
+	return filterContextExcludedMessages(messages).reduce((total, message) => total + estimateTokens(message), 0);
 }
 
 /** State, not elapsed time or a synthetic message revision, releases the latch. */

@@ -3,19 +3,24 @@
  * adoption of the public name, and the readiness probes of the private hop. Split out of
  * `host-lifecycle.ts`, which keeps the supervisor's orchestration (senpi#2566).
  */
-import { chmod, lstat, mkdir, unlink } from "node:fs/promises";
+import { lstat, mkdir, unlink } from "node:fs/promises";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 import type { HostAdmission } from "./host-admission.ts";
 import { proxyWithAdmission } from "./host-admission-proxy.ts";
 import type { ClientOccupancy } from "./host-client-occupancy.ts";
+import { listen as bindOwnedSocket } from "./host-socket-bind.ts";
 import { connectInternalConnection } from "./internal-channel.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
 import { PublicRpcConnection } from "./rpc-public-auth.ts";
 import type { RpcPublicEndpoint } from "./rpc-public-key.ts";
-import { type ListenerState, MAX_SOCKET_PATH_BYTES, socketEntryListenerState } from "./socket-ownership.ts";
+import {
+	type ListenerState,
+	MAX_SOCKET_PATH_BYTES,
+	type SocketFileIdentity,
+	socketEntryListenerState,
+} from "./socket-ownership.ts";
 
-export { adoptPublicSocket } from "./socket-ownership.ts";
 import {
 	authenticateSocket,
 	ensureSocketSecret,
@@ -74,7 +79,7 @@ export function createPublicProxy(options: PublicProxyOptions): Server {
 					hop?.destroy();
 					return;
 				}
-				proxyWithAdmission(client, hop, options.admission, auth);
+				proxyWithAdmission(client, hop, options.admission, auth, publicSecret !== undefined);
 				// An authenticated endpoint resumes the client itself once its key record is published.
 				if (!auth) client.resume();
 			} catch {
@@ -115,18 +120,20 @@ export async function waitForListener(
 	timeoutMs: number,
 	secret?: Uint8Array,
 	internalKey?: Buffer,
+	/** A coordinated start retries a silent probe on a fresh connection; its launcher decides expiry (senpi#4602). */
+	options: { readonly retrySilent?: boolean } = {},
 ): Promise<void> {
 	const deadline = performance.now() + timeoutMs;
 	while (performance.now() <= deadline) {
 		const probeMs = Math.max(1, Math.min(INTERNAL_READINESS_PROBE_MS, deadline - performance.now()));
 		const probe = await canConnect(socketPath, secret, internalKey, probeMs);
 		if (probe === "ready") return;
-		if (probe === "silent")
+		if (probe === "silent" && !options.retrySilent)
 			throw new Error(
 				`${socketPath}: host accepted the internal hop but did not answer within ${Math.round(probeMs)}ms`,
 			);
 		// A host that answered but could not prove the key will not start proving it: fail now, and say why.
-		if (probe !== "refused") throw new Error(`${socketPath}: ${probe.unproven}`);
+		if (probe !== "refused" && probe !== "silent") throw new Error(`${socketPath}: ${probe.unproven}`);
 		await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 50));
 	}
 	throw new Error(`${socketPath}: host did not start listening within ${timeoutMs}ms`);
@@ -254,7 +261,11 @@ export async function prepareSocketPath(socketPath: string, hooks: PrepareSocket
 	const inUse = (evidence: string) =>
 		new Error(`${socketPath}: address already in use by a live server (${evidence}).`);
 	// Linux refuses a connect to a regular file too; never remove what is not a socket.
-	if (!probed.socket) throw inUse("the entry is not a socket");
+	if (!probed.socket) {
+		throw new Error(
+			`${socketPath}: address already in use, occupied by a non-socket entry (a symlink or other file; nothing listens there).`,
+		);
+	}
 	const probe = hooks.listenerState ?? socketEntryListenerState;
 	const state = await probe(socketPath);
 	if (state.verdict === "gone") return;
@@ -280,26 +291,13 @@ export async function prepareSocketPath(socketPath: string, hooks: PrepareSocket
 	}
 }
 
-export function listen(server: Server, socketPath: string, secret?: Uint8Array): Promise<void> {
-	return new Promise((resolve, reject) => {
-		server.once("error", reject);
-		server.listen(
-			{
-				path: resolveSocketTransportAddress(socketPath, process.platform, secret),
-				readableAll: false,
-				writableAll: false,
-			},
-			async () => {
-				server.off("error", reject);
-				try {
-					if (process.platform !== "win32" && !socketPath.startsWith("\0")) await chmod(socketPath, 0o600);
-					resolve();
-				} catch (cause) {
-					reject(cause);
-				}
-			},
-		);
-	});
+/** The supervisor's public bind: the same never-through-a-link publish as the socket host's (#5319). */
+export function listen(
+	server: Server,
+	socketPath: string,
+	secret?: Uint8Array,
+): Promise<SocketFileIdentity | undefined> {
+	return bindOwnedSocket(server, socketPath, secret);
 }
 
 export function closeServer(server: Server): Promise<void> {

@@ -3,11 +3,12 @@ import { Type } from "typebox";
 import { afterEach, expect, it, vi } from "vitest";
 import { COMPACT_PROTOCOL_MAX_DEPTH } from "../../../src/modes/rpc/compact-protocol-depth.ts";
 import { dataOf, statusHost, type WireRecord } from "../rpc-session-status-support.ts";
-import { builtFauxPath, within, workerAcceptanceHost } from "./4272-worker-acceptance-support.ts";
+import { builtFauxPath, workerAcceptanceHost } from "./4272-worker-acceptance-support.ts";
 
 // Part of #4272 (S11a, RULING-68): the legacy JSONL writer keeps today's behaviour (no protocol depth limit for a legacy
-// client), and its failure ABOVE the runtime's JSON engine limit is a typed refusal instead of a throw that ends the
-// worker or breaks the session: the refusal is counted and reported, the session keeps running, later records arrive.
+// client). senpi#5702 (LEAD ruling, superseding RULING-68's refusal past the engine limit): the writer no longer has an
+// engine limit either - a record past the runtime's recursive JSON path is serialized by an explicit-stack writer and
+// delivered whole, nothing is refused or counted, the session keeps running and later records arrive.
 
 type Deep = string | Date | Deep[];
 const nest = (depth: number, leaf: string | Date = "leaf"): Deep => {
@@ -140,27 +141,11 @@ async function writerDelivers(depth: number, expectedDelivered?: boolean): Promi
 	return delivered;
 }
 
-it("RULING-105 writer-bisected depth floor, three far-depth deliveries and a typed over-engine refusal", async () => {
-	// Single-host Node 26 examples: 5888/5889 split; 4990-vs-5246 disagreed across call sites; Lw-256 refused.
-	// Another host measured P around 5407; these are examples, not portable expected values.
-	// Near-boundary replays are deliberately absent: the Node 26 delivery-path stack budget shifts by >=257
-	// levels with call context. Bisection measures Lw once; P is the independent native-only probe LIMIT.
-	let low = 0;
-	let high = OVER_ENGINE;
-	expect(await writerDelivers(high), "calibration did not find a native depth limit at the 65,536 cap").toBe(false);
-	while (high - low > 1) {
-		const middle = (low + high) >> 1;
-		if (await writerDelivers(middle)) low = middle;
-		else high = middle;
-	}
-	expect(low, `writer depth Lw=${low}, native probe P=${LIMIT}: early refusal below P - 512`).toBeGreaterThanOrEqual(
-		LIMIT - 512,
-	);
-	const depth = Math.floor(Math.min(LIMIT, low) / 2);
-	process.stdout.write(`RULING-105 engine Lw=${low} P=${LIMIT} far=${depth}\n`);
-	for (let repeat = 0; repeat < 3; repeat++)
-		expect(await writerDelivers(depth, true), "far depth delivered").toBe(true);
-	expect(await writerDelivers(OVER_ENGINE, false), "over-engine refused").toBe(false);
+it("senpi#5702 (supersedes RULING-105's floor): the native limit, half of it, and 65,536 levels are all delivered whole", async () => {
+	// RULING-105 bisected the writer's refusal depth against the native probe LIMIT. The writer has no refusal depth
+	// any more, so every depth on both sides of the native limit is delivered, uncounted and unreported.
+	for (const depth of [Math.floor(LIMIT / 2), LIMIT, LIMIT + 1, OVER_ENGINE])
+		expect(await writerDelivers(depth, true), `${depth} levels delivered (native limit ${LIMIT})`).toBe(true);
 }, 300_000);
 
 const isolatePrelude = `
@@ -212,37 +197,49 @@ async function inWorker(depths: string) {
 	}
 }
 
-it("RULING-68 worker: plain JSON is delivered unchanged; past the recursive engine limit is refused typed, the worker lives", async () => {
-	const { records, failures, refusals, stderr, isolateRefusal } = await inWorker(
+/** The levels of a delivered `nest(depth, new Date(0))`, walked (native JSON of it overflows on Node 24). */
+const levelsOf = (update: WireRecord | undefined): number => {
+	let details = (update?.partialResult as { details?: unknown } | undefined)?.details;
+	let levels = 0;
+	while (Array.isArray(details)) {
+		expect(details).toHaveLength(1);
+		details = details[0];
+		levels++;
+	}
+	expect(details).toBe(new Date(0).toISOString());
+	return levels;
+};
+
+it("senpi#5702 worker (supersedes RULING-68's isolate refusal): plain JSON and a record past the recursive engine limit are both delivered, the worker lives", async () => {
+	const { records, failures, refusals, stderr } = await inWorker(
 		`[[${OVER_PROTOCOL}, "leaf"], [${OVER_ENGINE}, new Date(0)]]`,
 	);
 	expect(failures, "the worker was not ended").toEqual([]);
 	const updates = records.filter(isUpdate);
-	expect(updates, "only the record under the engine limit is delivered").toHaveLength(1);
+	expect(updates, "both records are delivered").toHaveLength(2);
 	expect(JSON.stringify((updates[0]?.partialResult as { details?: unknown } | undefined)?.details)).toBe(
 		JSON.stringify(nest(OVER_PROTOCOL)),
 	);
+	expect(levelsOf(updates[1])).toBe(OVER_ENGINE);
 	expect(endOf(records)).toMatchObject({ isError: false });
 	expect(
 		records.filter((record) => record.type === "agent_idle"),
 		"later records, both turns",
 	).toHaveLength(2);
-	// Exactly one writer refuses the record; an isolate refusal reaches the host only through stderr.
-	if (refusals === 0) expect(REFUSED.test(await within("the isolate's refusal line", isolateRefusal))).toBe(true);
-	else {
-		expect(refusals, "refused by the host writer, counted once").toBe(1);
-		expect(stderr.filter((line) => REFUSED.test(line))).toHaveLength(1);
-	}
+	expect(refusals, "nothing refused by the host writer").toBe(0);
+	expect(stderr.filter((line) => REFUSED.test(line))).toEqual([]);
 }, 600_000);
 
-it("RULING-68 worker: a record past the isolate's recursive engine limit is refused typed in the isolate and reported", async () => {
-	const { records, failures, isolateRefusal } = await inWorker(`[[${OVER_ENGINE}, new Date(0)]]`);
+it("senpi#5702 worker (supersedes RULING-68's isolate refusal): a record past the isolate's recursive engine limit is delivered whole", async () => {
+	const { records, failures, refusals } = await inWorker(`[[${OVER_ENGINE}, new Date(0)]]`);
 	expect(failures, "the worker was not ended").toEqual([]);
-	expect(records.filter(isUpdate)).toEqual([]);
+	const updates = records.filter(isUpdate);
+	expect(updates).toHaveLength(1);
+	expect(levelsOf(updates[0])).toBe(OVER_ENGINE);
 	expect(endOf(records), "the tool was not broken by the legacy writer").toMatchObject({ isError: false });
 	expect(
 		records.filter((record) => record.type === "agent_idle"),
 		"later records, both turns",
 	).toHaveLength(2);
-	expect(REFUSED.test(await within("the isolate's refusal line", isolateRefusal))).toBe(true);
+	expect(refusals).toBe(0);
 }, 600_000);

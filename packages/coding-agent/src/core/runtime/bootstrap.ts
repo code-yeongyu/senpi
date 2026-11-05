@@ -8,7 +8,7 @@ import {
 } from "../extensions/index.ts";
 import type { ExtensionContext, FilesystemPolicyChecker } from "../extensions/types.ts";
 import type { ModelRegistry } from "../model-registry.ts";
-import { SessionManager } from "../session-manager.ts";
+import type { SessionManager } from "../session-manager.ts";
 import type { SettingsManager } from "../settings-manager.ts";
 import { BUILTIN_PATH_PREFIX, createSyntheticSourceInfo, type SourceInfo } from "../source-info.ts";
 import type { ToolDispatcher } from "../tool-dispatch/tool-dispatcher.ts";
@@ -32,7 +32,7 @@ export interface RuntimeBootstrapOptions {
 	/** The loaded extensions; their runtime is shared with the runner this bootstrap creates. */
 	extensionsResult: LoadExtensionsResult;
 	modelRegistry: ModelRegistry;
-	/** Defaults to an in-memory session manager, for a runtime that owns no session. */
+	/** Absent for a runtime that owns no session: its runner then serves only the runtime context (senpi#5223). */
 	sessionManager?: SessionManager;
 	/** Routes the core bash tool's process work; absent means the tool's own local operations. */
 	toolDispatcher?: ToolDispatcher;
@@ -58,6 +58,8 @@ export function bootstrapRuntime(options: RuntimeBootstrapOptions): RuntimeBoots
 		extensionsResult.extensions.flatMap((extension) => extension.filesystemPolicies ?? []),
 	);
 	const shellPath = settingsManager.getShellPath();
+	// A runtime without a session has no model and no session state for the built-in tools to read (senpi#5413).
+	const sessionless = options.sessionManager === undefined;
 	const baseToolDefinitions = options.baseToolsOverride
 		? Object.fromEntries(
 				Object.entries(options.baseToolsOverride).map(([name, tool]) => [
@@ -66,7 +68,11 @@ export function bootstrapRuntime(options: RuntimeBootstrapOptions): RuntimeBoots
 				]),
 			)
 		: createAllToolDefinitions(cwd, {
-				read: { autoResizeImages: settingsManager.getImageAutoResize(), filesystemPolicy },
+				read: {
+					autoResizeImages: settingsManager.getImageAutoResize(),
+					filesystemPolicy,
+					...(sessionless ? { contextModel: false } : {}),
+				},
 				// The core bash tool's process work goes through the dispatcher's operations: the same
 				// local operations under in-process, and the tool child's user.bash job under child
 				// (senpi#3566 todo 9), while truncation and rendering stay on the server.
@@ -74,6 +80,7 @@ export function bootstrapRuntime(options: RuntimeBootstrapOptions): RuntimeBoots
 					commandPrefix: settingsManager.getShellCommandPrefix(),
 					redactSecretsInOutput: settingsManager.getBashRedactSecretsInOutput(),
 					shellPath,
+					...(sessionless ? { exposeSessionEnvironment: false } : {}),
 					...(options.toolDispatcher ? { operations: options.toolDispatcher.bashOperations({ shellPath }) } : {}),
 				},
 				write: { filesystemPolicy },
@@ -92,7 +99,7 @@ export function bootstrapRuntime(options: RuntimeBootstrapOptions): RuntimeBoots
 		extensionsResult.extensions,
 		extensionsResult.runtime,
 		cwd,
-		options.sessionManager ?? SessionManager.inMemory(cwd),
+		options.sessionManager,
 		options.modelRegistry,
 		extensionsResult.eventBus,
 	);

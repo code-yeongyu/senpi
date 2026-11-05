@@ -26,6 +26,15 @@ describe("a Kimi Code API key saved with its region over RPC (omo-desktop-app#43
 		rmSync(tempDir, { recursive: true, force: true });
 	});
 
+	// A stored login carries a fresh loginId per sign-in (senpi#4099), so two sign-ins with the same
+	// key never store identical bytes; the region contract is the rest of the credential.
+	const withoutLoginId = <T extends { readonly loginId?: string }>(credential: T | undefined) => {
+		if (credential === undefined) return undefined;
+		const { loginId, ...rest } = credential;
+		expect(loginId).toEqual(expect.any(String));
+		return rest;
+	};
+
 	const send = async (command: Record<string, unknown>) => {
 		const collected = makeSink();
 		const harness = makeHarness(tempDir);
@@ -33,7 +42,7 @@ describe("a Kimi Code API key saved with its region over RPC (omo-desktop-app#43
 		const handler = createRpcConnectionHandler(harness.runtimeHost, collected.sink);
 		await handler.handleInputLine(JSON.stringify({ id: "key", ...command }));
 		const response = await collected.waitFor((message) => message.id === "key");
-		const stored = await harness.authStorage.read(String(command.provider));
+		const stored = withoutLoginId(await harness.authStorage.read(String(command.provider)));
 		await handler.dispose();
 		return { response, stored, harness };
 	};
@@ -45,7 +54,7 @@ describe("a Kimi Code API key saved with its region over RPC (omo-desktop-app#43
 			prompt: async (prompt) => (prompt.type === "select" ? "global" : "sk-kimi-synthetic"),
 			notify: () => {},
 		});
-		const fromCli = await cliHarness.authStorage.read("kimi-coding");
+		const fromCli = withoutLoginId(await cliHarness.authStorage.read("kimi-coding"));
 		cliHarness.cleanup();
 
 		const { response, stored } = await send({

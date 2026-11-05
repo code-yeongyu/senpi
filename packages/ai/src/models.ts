@@ -1,6 +1,7 @@
 import { lazyStream } from "./api/lazy.ts";
 import { defaultProviderAuthContext as defaultAuthContext } from "./auth/context.ts";
 import { InMemoryCredentialStore, revokeStoredOAuth } from "./auth/credential-store.ts";
+import { stampLogin } from "./auth/pool/login-id.ts";
 import { appendLoginSlot, assertLoginKeyPresent, removeSlot, withoutBlankKey } from "./auth/pool/slots.ts";
 import { resolveRefreshCredential } from "./auth/refresh-credential.ts";
 import {
@@ -809,14 +810,16 @@ class ModelsImpl implements MutableModels {
 			async (current) => {
 				mutationStarted = true;
 				markMutationStarted?.();
-				return appendLoginSlot(
-					current,
-					credential,
-					(name, origin) => {
-						committedName = name;
-						committedOrigin = origin;
-					},
-					{ accountIdentity: provider.auth.oauth?.accountIdentity },
+				return stampLogin(
+					appendLoginSlot(
+						current,
+						credential,
+						(name, origin) => {
+							committedName = name;
+							committedOrigin = origin;
+						},
+						{ accountIdentity: provider.auth.oauth?.accountIdentity },
+					),
 				);
 			},
 			{ signal },
@@ -939,7 +942,15 @@ class ModelsImpl implements MutableModels {
 		let headers = mergeHeaders(auth.headers, options?.headers);
 		if (options?.transformHeaders) headers = await options.transformHeaders(headers ?? {});
 		const env = resolution.env || options?.env ? { ...(resolution.env ?? {}), ...(options?.env ?? {}) } : undefined;
-		const requestModel: TModel = auth.baseUrl ? { ...model, baseUrl: auth.baseUrl } : model;
+		const requestModel: TModel =
+			auth.baseUrl || ((auth.api || auth.compat) && isModelType(model, "chat"))
+				? {
+						...model,
+						...(auth.baseUrl ? { baseUrl: auth.baseUrl } : {}),
+						...(auth.api && isModelType(model, "chat") ? { api: auth.api } : {}),
+						...(auth.compat && isModelType(model, "chat") ? { compat: { ...model.compat, ...auth.compat } } : {}),
+					}
+				: model;
 		const { transformHeaders: _transformHeaders, ...providerOptions } = options ?? {};
 		const requestOptions = { ...providerOptions, apiKey, headers, env } as Omit<TOptions, "transformHeaders"> &
 			ProviderRequestOptions<TModel>;

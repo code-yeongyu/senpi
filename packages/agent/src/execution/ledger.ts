@@ -23,6 +23,8 @@ export interface ExecutionLedger {
 	read(key: ExecutionKey): Promise<ExecutionEntry | undefined>;
 	/** Called once on endpoint restart; also expires overdue leases and reconciliation deadlines. */
 	recover(now: number): Promise<void>;
+	/** Every execution row this ledger holds, in key order. */
+	scan(): Promise<ExecutionEntry[]>;
 }
 
 /** All ledgers sharing a writable store epoch must share its single admission line. */
@@ -114,6 +116,7 @@ export function createExecutionLedger(options: {
 				await persist(entry, "admit");
 				return applied(entry);
 			}),
+		scan: async () => (await store.scanDocuments(PREFIX)).map((document) => decodeExecution(document.data)),
 		recover: async (now) => {
 			for (const document of await store.scanDocuments(PREFIX)) {
 				const entry = decodeExecution(document.data);

@@ -1,3 +1,21 @@
+## 2026-10-31 - Fall back to env when stored google-vertex location is empty (senpi#5135)
+
+### What changed
+
+- `packages/ai/src/providers/google-vertex.ts`: use `||` instead of `??` when reading `credential?.env?.GOOGLE_CLOUD_LOCATION`, `GOOGLE_CLOUD_PROJECT`, and `GOOGLE_APPLICATION_CREDENTIALS` so an empty stored string falls back to ambient environment variables.
+
+### Why
+
+- senpi#2961: an empty stored location or project in user settings blocked env fallback, causing Vertex authentication to fail.
+
+### Why an extension could not handle it
+
+- Vertex provider authentication resolution is built into the core AI provider factory.
+
+### Expected merge conflict zones
+
+- LOW: `vertexAuth.resolve` in `packages/ai/src/providers/google-vertex.ts`.
+
 ## 2026-10-30 - ChatGPT Subscription reports the signed-in account (senpi#5009)
 
 ### What changed

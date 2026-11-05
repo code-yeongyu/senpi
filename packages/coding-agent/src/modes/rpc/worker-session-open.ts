@@ -2,6 +2,7 @@ import { isAbsolute } from "node:path";
 import { ProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import { assertValidSessionId } from "../../core/session-manager.ts";
 import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
+import { startOpenTimer } from "../../core/open-timing.ts";
 
 import { SESSION_PATH_RETRY_AFTER_MS } from "./host-reservations.ts";
 
@@ -135,8 +136,10 @@ export async function openWorkerSession(
 	});
 	entry.worker = worker;
 	host.entries.set(handle, entry);
+	const timer = startOpenTimer(`worker-open:${handle}`);
 	try {
 		const path = await worker.prepare(host.options.configuration, profile).catch(typedWorkerRefusal);
+		timer.mark("prepare");
 		const owner = host.reservations.owner(path);
 		if (owner) {
 			const attached = await host.attach(owner, path, options, profile);
@@ -145,17 +148,20 @@ export async function openWorkerSession(
 			return attached;
 		}
 		const predecessor = await claims.claim(path);
+		timer.mark("claim");
 		if (predecessor)
 			throw new RpcSessionRegistryError("session_path_in_use", undefined, {
 				owner: predecessor,
 				retry_after_ms: SESSION_PATH_RETRY_AFTER_MS,
 			});
 		const grant = await host.reserve(handle, path);
+		timer.mark("reserve");
 		if (grant !== "granted") throw new RpcSessionRegistryError(RESERVATION_DENIAL_CODES[grant]);
 		entry.reservationKey = path;
 		entry.requestedPathKey = profile.sessionPath ? path : undefined;
 		entry.sessionPath = path;
 		const snapshot = await worker.commit();
+		timer.mark("commit");
 		if (compactUpdatesEnabled()) await worker.acceptance?.generations.bind(snapshot.state.sessionId);
 		if (entry.state !== "opening")
 			throw workerFailure === undefined

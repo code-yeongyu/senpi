@@ -8,7 +8,7 @@ import {
 } from "./mcp-presenter-enrollment.ts";
 import { privateFrames, send } from "./mcp-presenter-wire.ts";
 
-interface LaunchOwner {
+export interface LaunchOwner {
 	readonly stream: Duplex;
 	readonly principal: PresenterPrincipal;
 	readonly backendGeneration: string;

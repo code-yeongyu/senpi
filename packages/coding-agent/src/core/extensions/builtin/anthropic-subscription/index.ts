@@ -96,6 +96,8 @@ export function registerAnthropicSubscriptionExtension(
 		// The lane selects among its accounts itself (pin, resident account, order, per-account and
 		// per-model limits), so the generic credential pool must not choose a second time (senpi#2081).
 		ownsAccountSelection: true,
+		// Requests run Claude Code through @anthropic-ai/claude-agent-sdk as a subprocess, under Claude logins on this machine.
+		localOnly: true,
 		oauth: createOAuthConfig({
 			readCurrent: async () => readStoredCredential(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID),
 			readAmbientAuthStatus: deps.readAmbientAuthStatus,

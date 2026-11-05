@@ -91,6 +91,7 @@ export const admissionCommands = [
 	"get_provider_accounts",
 	"account_pin",
 	"account_remove",
+	"account_reset",
 	"account_order",
 	"test_provider_account",
 	"set_client_info",

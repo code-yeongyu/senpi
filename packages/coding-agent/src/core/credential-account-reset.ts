@@ -7,6 +7,15 @@ import { emitProviderAccountsChanged } from "./extensions/builtin/anthropic-subs
 /** Block fields a provider lane may keep on a stored account in auth.json. */
 type StoredBlockFields = { blockReason?: unknown; blockedUntil?: unknown; modelBlocks?: unknown };
 
+export class CredentialAccountNotFoundError extends Error {
+	readonly name = "CredentialAccountNotFoundError";
+	readonly code = "account_not_found";
+
+	constructor(accountName: string) {
+		super(`Provider account not found: ${accountName}`);
+	}
+}
+
 function withoutBlock({
 	blockReason: _reason,
 	blockedUntil: _until,
@@ -45,7 +54,7 @@ export async function resetCredentialAccount(
 	const repo = repository ?? credentialPoolRepository(storage);
 	const accounts = await getCredentialAccounts(storage, provider, env, repo);
 	const account = accounts.find((candidate) => candidate.name === name);
-	if (!account) throw new Error(`Provider account not found: ${name}`);
+	if (!account) throw new CredentialAccountNotFoundError(name);
 	await repo.mutateSlotState(provider, account.source === "env" ? "env" : "stored", name, () => undefined);
 	if (storage.get(provider) !== undefined) {
 		await storage.modify(provider, async (current) =>

@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { buildBashTimeoutPrompt } from "../../src/core/extensions/builtin/bash-timeout/timeout.ts";
 import { buildContinuationPrompt } from "../../src/core/extensions/builtin/goal/prompt.ts";
 import { registerGoalTools } from "../../src/core/extensions/builtin/goal/tool-registration.ts";
 import { buildTerminalPromptSection } from "../../src/core/extensions/builtin/terminal/prompt.ts";
@@ -65,18 +64,13 @@ describe("prompt surfaces render each stance in exactly one home", () => {
 		expect(surfacesContaining(surfaces, /three goal turns/)).toEqual(["continuation", "updateGoal"]);
 	});
 
-	it("the waiting doctrine lives in the terminal section; the timeout policy covers timeouts only", () => {
+	it("the terminal section is the one home of the waiting doctrine and the timeout facts (senpi#5335)", () => {
 		// given
-		const timeoutPolicy = buildBashTimeoutPrompt(
-			{ defaultSeconds: 1800, maxSeconds: 1800 },
-			{ foregroundWindowSeconds: 60 },
-		);
-		const surfaces = { timeoutPolicy, terminalSection: buildTerminalPromptSection({ evalOnly: false }) };
+		const terminalSection = buildTerminalPromptSection({ evalOnly: false });
 
 		// then
-		expect(surfacesContaining(surfaces, /monitor\(/)).toEqual(["terminalSection"]);
-		expect(timeoutPolicy).not.toMatch(/\bpoll|\bsleep\b/i);
-		expect(surfacesContaining(surfaces, /run_in_background/)).toEqual(["terminalSection"]);
-		expect(timeoutPolicy).toContain("kill deadline");
+		expect(terminalSection).toMatch(/monitor\(/);
+		expect(terminalSection).toContain("run_in_background");
+		expect(terminalSection).toContain("kill deadline");
 	});
 });

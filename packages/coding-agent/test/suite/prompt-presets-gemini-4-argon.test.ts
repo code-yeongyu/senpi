@@ -116,7 +116,7 @@ describe("Argon prompt preset (#3385)", () => {
 
 		const changed = [...baseSections.keys()].filter((key) => argonSections.get(key) !== baseSections.get(key));
 		const added = [...argonSections.keys()].filter((key) => !baseSections.has(key));
-		const expectedChanged = ["(preamble)", "## Working the Task", "## Policies", "<workstation>"];
+		const expectedChanged = ["(preamble)", "## Working the Task", "## Hard Limits", "<workstation>"];
 		if (surface === "terminal") expectedChanged.push("## Intent Gate");
 		expect(changed.sort()).toEqual(expectedChanged.sort());
 		expect(added).toEqual(["## Search Grounding"]);
@@ -125,8 +125,8 @@ describe("Argon prompt preset (#3385)", () => {
 		expect(argon.split("\n")[0]).toContain("running on Gemini 4 Argon");
 		expect(argonSections.get("## Working the Task")).toContain("Writing code is your superpower");
 		expect(argonSections.get("## Working the Task")).toContain("parallel(thunks)");
-		expect(argonSections.get("## Policies")).toContain("transient failure");
-		expect(argonSections.get("## Policies")).not.toContain("blind retries");
+		expect(argonSections.get("## Hard Limits")).toContain("transient failure");
+		expect(argonSections.get("## Hard Limits")).not.toContain("blind retries");
 		expect(argon).not.toContain("**EXECUTION HAPPENS HERE.**");
 		expect(argon).not.toContain("## File operations");
 		if (surface === "terminal") {

@@ -11,7 +11,8 @@ import { builtFauxPath, workerAcceptanceHost } from "./4272-worker-acceptance-su
 
 // Part of #4272 (S11a, RULING-68, review LOW 3): a client that advertises media placeholders gets today's legacy
 // behaviour too. A record under the JSON engine limit reaches it unchanged (the media walk once overflowed the stack
-// from about 3,000 levels on Node and ended the worker); past the engine limit it is the typed, counted refusal.
+// from about 3,000 levels on Node and ended the worker). senpi#5702 (LEAD ruling, superseding RULING-68's refusal past
+// the engine limit): past the engine limit the record is delivered whole too, nothing refused or counted.
 
 type Deep = string | Date | Deep[];
 const nest = (depth: number, leaf: string | Date = "leaf"): Deep => {
@@ -181,27 +182,11 @@ async function writerDelivers(depth: number, expectedDelivered?: boolean): Promi
 	return delivered;
 }
 
-it("RULING-105 writer-bisected depth floor, three far-depth deliveries and a typed over-engine refusal", async () => {
-	// Single-host Node 26 examples: 5888/5889 split; 4990-vs-5246 disagreed across call sites; Lw-256 refused.
-	// Another host measured P around 5407; these are examples, not portable expected values.
-	// Near-boundary replays are deliberately absent: the Node 26 delivery-path stack budget shifts by >=257
-	// levels with call context. Bisection measures Lw once; P is the independent native-only probe LIMIT.
-	let low = 0;
-	let high = OVER_ENGINE;
-	expect(await writerDelivers(high), "calibration did not find a native depth limit at the 65,536 cap").toBe(false);
-	while (high - low > 1) {
-		const middle = (low + high) >> 1;
-		if (await writerDelivers(middle)) low = middle;
-		else high = middle;
-	}
-	expect(low, `writer depth Lw=${low}, native probe P=${LIMIT}: early refusal below P - 512`).toBeGreaterThanOrEqual(
-		LIMIT - 512,
-	);
-	const depth = Math.floor(Math.min(LIMIT, low) / 2);
-	process.stdout.write(`RULING-105 media Lw=${low} P=${LIMIT} far=${depth}\n`);
-	for (let repeat = 0; repeat < 3; repeat++)
-		expect(await writerDelivers(depth, true), "far depth delivered").toBe(true);
-	expect(await writerDelivers(OVER_ENGINE, false), "over-engine refused").toBe(false);
+it("senpi#5702 (supersedes RULING-105's floor): the native limit, half of it, and 65,536 levels are all delivered whole", async () => {
+	// RULING-105 bisected the placeholder writer's refusal depth against the native probe LIMIT. The writer has no
+	// refusal depth any more, so every depth on both sides of the native limit is delivered, uncounted and unreported.
+	for (const depth of [Math.floor(LIMIT / 2), LIMIT, LIMIT + 1, OVER_ENGINE])
+		expect(await writerDelivers(depth, true), `${depth} levels delivered (native limit ${LIMIT})`).toBe(true);
 }, 300_000);
 
 const isolatePrelude = `

@@ -32,6 +32,8 @@ export function usageLimitReset(
 	if (json !== undefined) return { ms: json, kind: "absolute" };
 	const relative = fromRelativeProse(text);
 	if (relative !== undefined) return { ms: relative, kind: "relative" };
+	const iso = fromIsoResetProse(text, nowMs);
+	if (iso !== undefined) return { ms: iso, kind: "absolute" };
 	// "resets 12am (Asia/Seoul)": the same clock reader the retry-hint extractor uses (senpi#1771).
 	const clock = clockResetMs(text, nowMs);
 	return clock === undefined ? undefined : { ms: clock, kind: "absolute" };
@@ -84,6 +86,17 @@ function absoluteFieldMs(value: unknown, nowMs: number): number | undefined {
 
 function secondsFieldMs(value: unknown): number | undefined {
 	return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.ceil(value * 1000) : undefined;
+}
+
+// "Weekly usage limit reached. Resets at 2026-11-03T02:40:02Z": an ISO instant introduced as the reset (senpi#5596).
+const ISO_RESET_RE =
+	/\bresets?\s+(?:at\s+)?(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2}))/i;
+
+function fromIsoResetProse(text: string, nowMs: number): number | undefined {
+	const instant = ISO_RESET_RE.exec(text)?.[1];
+	if (instant === undefined) return undefined;
+	const epochMs = Date.parse(instant);
+	return Number.isNaN(epochMs) ? undefined : Math.max(0, epochMs - nowMs);
 }
 
 function fromRelativeProse(text: string): number | undefined {

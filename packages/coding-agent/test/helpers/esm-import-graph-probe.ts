@@ -9,24 +9,37 @@ export interface ImportGraphProbeResult {
 	stdout: string;
 }
 
+// senpi#5818: synchronous in-thread hooks with one write at exit. `register()` ran the hooks on a separate thread and
+// appended every event to the log, so each of the ~5,250 events cost a cross-thread round trip plus an
+// open/write/close; on a starved host that, not the import, took the test past its timeout. The recorded set stays the
+// one `register()` produced: `require()` resolves (and the CommonJS loads only they reach) are skipped, and each URL's
+// load is recorded once (in-thread hooks see a builtin's load on every import of it).
 const hookSource = `
-import { appendFileSync } from "node:fs";
-const record = (entry) => appendFileSync(process.env.PI_IMPORT_GRAPH_LOG, JSON.stringify(entry) + "\\n");
-export async function resolve(specifier, context, nextResolve) {
-  const result = await nextResolve(specifier, context);
-  record({ phase: "resolve", specifier, url: result.url });
-  return result;
-}
-export async function load(url, context, nextLoad) {
-  const result = await nextLoad(url, context);
-  record({ phase: "load", url });
-  return result;
-}
-`;
-
-const registerSource = `
-import { register } from "node:module";
-register(new URL("./hook.mjs", import.meta.url));
+import { registerHooks } from "node:module";
+import { writeFileSync } from "node:fs";
+const lines = [];
+const imported = new Set();
+const loaded = new Set();
+process.on("exit", () => writeFileSync(process.env.PI_IMPORT_GRAPH_LOG, lines.join("")));
+const fromRequire = (context) => Array.isArray(context.conditions) && context.conditions.includes("require");
+registerHooks({
+  resolve(specifier, context, nextResolve) {
+    const result = nextResolve(specifier, context);
+    if (!fromRequire(context)) {
+      imported.add(result.url);
+      lines.push(JSON.stringify({ phase: "resolve", specifier, url: result.url }) + "\\n");
+    }
+    return result;
+  },
+  load(url, context, nextLoad) {
+    const result = nextLoad(url, context);
+    if (imported.has(url) && !loaded.has(url)) {
+      loaded.add(url);
+      lines.push(JSON.stringify({ phase: "load", url }) + "\\n");
+    }
+    return result;
+  },
+});
 `;
 
 const driverSource = `
@@ -57,8 +70,7 @@ export function probeModelRuntimeImport(repoRoot: string, target: "source" | "bu
 function runImportProbe(repoRoot: string, targetPath: string, scratchPrefix: string): ImportGraphProbeResult {
 	const scratch = mkdtempSync(join(tmpdir(), scratchPrefix));
 	const logPath = join(scratch, "graph.jsonl");
-	writeFileSync(join(scratch, "hook.mjs"), hookSource);
-	writeFileSync(join(scratch, "register.mjs"), registerSource);
+	writeFileSync(join(scratch, "register.mjs"), hookSource);
 	writeFileSync(join(scratch, "driver.mjs"), driverSource);
 	// senpi#5177: this probe used to symlink packages/coding-agent/node_modules/@earendil-works/pi-ai -> packages/ai
 	// for the run and remove it afterwards (added with the built model-runtime probe, ce1bfc287a), to pin pi-ai to the

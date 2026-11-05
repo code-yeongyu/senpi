@@ -33,7 +33,7 @@ import {
 	sentMessageHashes,
 	sentMessages,
 } from "./session-sync.ts";
-import { createSessionTurnAttempt } from "./session-turn-attempt.ts";
+import { createSessionTurnAttempt, waitForActiveTurn } from "./session-turn-attempt.ts";
 import type { AnthropicSubscriptionProviderSettings } from "./settings.ts";
 
 export type ResidentSessionStreamInput = {
@@ -46,6 +46,9 @@ export type ResidentSessionStreamInput = {
 	customToolNameToSdk: ReadonlyMap<string, string>;
 	toolWatchNote?: string;
 	onResumeFallback: (error: unknown) => void;
+	onLongContextFallback?: () => void;
+	contextTokens?: () => number;
+	outputReserveTokens?: number;
 	onAttemptStart?: () => void;
 	onContinuityDecision?: (observation: ContinuityObservation) => void;
 	/** Called once per attempt, before dispatch, with whether it re-sends the whole history and that re-send's bytes/4 estimate. */
@@ -92,6 +95,9 @@ async function createResidentAttempt(
 	const sessionId = input.streamOptions.sessionId!;
 	const messages = sentMessages(input.context);
 	const hashes = sentMessageHashes(messages);
+	// Continuity and the delta are read from the settled previous turn, never from one still in flight.
+	const pending = getSession(sessionId);
+	if (pending) await waitForActiveTurn(pending, input.streamOptions.signal);
 	const existing = getSession(sessionId);
 	const fingerprint = configFingerprint(auth.options, input.context, auth.authLane, auth.accountName);
 	const residentHashes = existing ? (sentHashesForEntry(existing) ?? hashes) : hashes;
@@ -282,6 +288,9 @@ function residentAuthLaneMessages(input: ResidentSessionStreamInput): AsyncItera
 		pinnedAccount: input.pinnedAccount,
 		...(preferredAccount === undefined ? {} : { preferredAccount }),
 		buildOptions: input.buildOptions,
+		contextTokens: input.contextTokens,
+		outputReserveTokens: input.outputReserveTokens,
+		...(input.onLongContextFallback === undefined ? {} : { onLongContextFallback: input.onLongContextFallback }),
 		onAttemptStart: input.onAttemptStart,
 		createAttempt: (auth) => createResidentAttempt(input, auth),
 	});

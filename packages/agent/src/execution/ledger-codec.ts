@@ -15,6 +15,7 @@ function outcome(value: StoreValue | undefined): value is ExecutionOutcome {
 	if (!object(value) || typeof value.hooksRan !== "boolean" || typeof value.uncertain !== "boolean") return false;
 	switch (value.reason) {
 		case "result":
+		case "blocked":
 			return value.value !== undefined && value.uncertain === false;
 		case "cancelled":
 		case "lease_expired":

@@ -4,6 +4,7 @@
  * component owns focus, key decoding and the inline Inputs.
  */
 
+import { CURSOR_MARKER } from "@earendil-works/pi-tui";
 import type { QuestionRequest } from "../../../core/extensions/types.ts";
 import { theme } from "../theme/theme.ts";
 import { type AskUserQuestionState, COMMENT_LABEL, OWN_ANSWER_LABEL } from "./ask-user-question-state.ts";
@@ -37,7 +38,11 @@ export function renderQuestionLine(question: QuestionRequest["questions"][number
 	return theme.fg("text", question.question);
 }
 
-export function renderQuestionList(state: AskUserQuestionState): string[] {
+/**
+ * `focused` places the hardware cursor at the end of the own-answer row while the option list has focus: a printable
+ * key there opens the own answer, so an IME draws its composing text where the answer goes instead of the footer.
+ */
+export function renderQuestionList(state: AskUserQuestionState, focused: boolean): string[] {
 	const lines: string[] = [];
 	const active = state.activeQuestion;
 	active.options.forEach((option, index) => {
@@ -53,7 +58,8 @@ export function renderQuestionList(state: AskUserQuestionState): string[] {
 	const ownSuffix = ownText !== undefined ? theme.fg("text", `: ${ownText}`) : "";
 	const ownHighlighted = state.highlightIndex === state.ownAnswerRowIndex && state.focus === "options";
 	const ownPrefix = ownHighlighted ? theme.fg("accent", "→ ") : "  ";
-	lines.push(`${ownPrefix}${theme.fg("muted", OWN_ANSWER_LABEL)}${ownSuffix}`);
+	const cursor = focused && state.focus === "options" ? CURSOR_MARKER : "";
+	lines.push(`${ownPrefix}${theme.fg("muted", OWN_ANSWER_LABEL)}${ownSuffix}${cursor}`);
 	return lines;
 }
 

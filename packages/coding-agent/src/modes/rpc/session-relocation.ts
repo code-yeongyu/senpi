@@ -201,7 +201,7 @@ export class RpcSessionRelocation implements SessionRelocationHost {
 	private ask(fields: HostAsk, connection: string, signal?: AbortSignal): Promise<Answer> {
 		if (signal?.aborted) return Promise.resolve(refused("cancelled", "the request was cancelled"));
 		const id = `hr_${crypto.randomUUID()}`;
-		return new Promise<Answer>((resolve) => {
+		const answer = new Promise<Answer>((resolve) => {
 			const finish = (answer: Answer): void => {
 				clearTimeout(timer);
 				signal?.removeEventListener("abort", onAbort);
@@ -215,11 +215,29 @@ export class RpcSessionRelocation implements SessionRelocationHost {
 			);
 			this.pending.set(id, { connection, finish });
 			signal?.addEventListener("abort", onAbort, { once: true });
-			this.deps.channel.send(
-				connection,
-				{ type: "host_request", id, ...fields } satisfies RpcHostRequest,
-				"request",
-			);
 		});
+		// Delivery waits until the synchronous call that asked has returned, so every waiter on this answer exists before
+		// the record can reach anyone: the caller's await and, above it, the tool body's race against the run's abort.
+		// Writing the record can reach an in-process client at once (an idle sink delivers it synchronously), and a client
+		// that leaves right there refuses this request and starts the teardown in that same stack; a waiter attached after
+		// that would be queued behind the teardown (senpi#5801). Holding a waiter here instead is not enough: the body's
+		// race attaches only when execute() returns. Run-to-completion makes this independent of how many hops the sink takes.
+		// A send that throws ends the request at once with a typed refusal: thrown from this microtask it would be an
+		// uncaught exception, which ends an RPC host process, and the request would wait out the answer timeout.
+		queueMicrotask(() => {
+			const pending = this.pending.get(id);
+			if (pending === undefined) return;
+			try {
+				this.deps.channel.send(
+					connection,
+					{ type: "host_request", id, ...fields } satisfies RpcHostRequest,
+					"request",
+				);
+			} catch (error) {
+				const detail = error instanceof Error ? error.message : String(error);
+				pending.finish(refused("send_failed", `the request could not be sent to the app: ${detail}`));
+			}
+		});
+		return answer;
 	}
 }

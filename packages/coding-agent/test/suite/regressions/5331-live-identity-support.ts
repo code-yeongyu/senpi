@@ -1,10 +1,10 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { expect, vi } from "vitest";
 import type { RecoveryOutcome } from "../../../src/modes/rpc/compact-recovery-types.ts";
-import { type RpcSessionEntry, RpcSessionRegistry } from "../../../src/modes/rpc/session-registry.ts";
 import { dataOf, type RawClient, statusHost, type WireRecord } from "../rpc-session-status-support.ts";
 import { component, componentText } from "./4272-frozen-bytes-support.ts";
 import { EVENT_SAFETY_MS } from "./4272-worker-acceptance-support.ts";
+import { observeInProcessOpens } from "../rpc-in-process-entry-support.ts";
 
 // senpi#5331 (RULING-120): one real flag-on host, a legacy opener and a `compact_events` peer on the same session, and
 // three prompts whose middle assistant write is refused, so the live records cover a joined message, an entry join and
@@ -20,13 +20,11 @@ export async function liveRun(flag: "1" | "0") {
 	vi.stubEnv(FLAG, flag);
 	vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-11-01T00:00:00.000Z") });
 	const host = await statusHost();
-	const admissions = vi.spyOn(RpcSessionRegistry.prototype, "getForCommand");
+	const admissions = observeInProcessOpens(host);
 	const legacy = host.client("legacy");
 	const routing = String(dataOf(await legacy.request({ type: "open_session", cwd: host.cwd })).sessionId);
-	const entry = admissions.mock.results.findLast((result) => result.type === "return")?.value as
-		| RpcSessionEntry
-		| undefined;
-	admissions.mockRestore();
+	const entry = admissions.entryFor(routing);
+	admissions.restore();
 	const session = entry?.runtime?.session ?? expect.unreachable("no in-process session");
 	const compact = host.client("compact");
 	host.writer.setConnectionCapabilities("compact", ["compact_events"]);

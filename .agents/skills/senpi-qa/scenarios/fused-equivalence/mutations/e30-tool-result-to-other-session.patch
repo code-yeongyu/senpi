@@ -1,8 +1,8 @@
 diff --git a/packages/coding-agent/src/modes/rpc/session-event-fanout.ts b/packages/coding-agent/src/modes/rpc/session-event-fanout.ts
-index e5b3eca6d4..0050d8d7a9 100644
+index fcf3c79c09..a72af80f36 100644
 --- a/packages/coding-agent/src/modes/rpc/session-event-fanout.ts
 +++ b/packages/coding-agent/src/modes/rpc/session-event-fanout.ts
-@@ -29,6 +29,8 @@ const BROADCAST_LIFECYCLE_RECORDS = new Set([
+@@ -28,6 +28,8 @@ const BROADCAST_LIFECYCLE_RECORDS = new Set([
  	"session_opened",
  	"session_closed",
  	"session_lifecycle",
@@ -10,4 +10,4 @@ index e5b3eca6d4..0050d8d7a9 100644
 +	"tool_execution_end",
  ]);
  
- type RegisteredConnection = {
+ export class SessionEventFanout {

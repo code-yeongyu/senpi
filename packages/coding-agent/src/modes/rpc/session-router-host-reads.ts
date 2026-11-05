@@ -62,7 +62,12 @@ export function answerListSessions(
 	// Worker sessions are machine-driven work: a client sees them only by asking, and
 	// the opaque context blob travels only on that listing, never to every connection.
 	const rows = host.registry.list();
-	const withMemory = rows.map((row) => ({ ...row, memory: sessionMemory(host, row.sessionId) }));
+	const presence = host.defaults.sessionPresence;
+	const withMemory = rows.map((row) => ({
+		...row,
+		memory: sessionMemory(host, row.sessionId),
+		...(presence && row.durableSessionId !== undefined ? { presence: presence.view(row.durableSessionId) } : {}),
+	}));
 	const sessions =
 		command.include_workers === true
 			? withMemory

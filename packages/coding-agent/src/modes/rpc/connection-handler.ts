@@ -4,6 +4,7 @@ import {
 	toolRuntimeCapabilities,
 } from "../../cli/tool-runtime.ts";
 import { messagePathProjectRoot, resolveMessagePath } from "../../core/message-path-resolution.ts";
+import { startOpenTimer } from "../../core/open-timing.ts";
 import { apiKeyLoginCredential } from "./api-key-login-credential.ts";
 import { clientFacingIdentity } from "./client-admission-record.ts";
 import type { ExtensionRpcRequestContext } from "../../core/extensions/rpc-context.ts";
@@ -37,6 +38,7 @@ import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import { authMethodStatus, buildLoginProviderInfos } from "../../core/auth-providers.ts";
 import { ContinueFromLeafError } from "../../core/continue-from-leaf.ts";
 import { listCredentialAccounts, orderCredentialAccounts } from "../../core/credential-account-order.ts";
+import { CredentialAccountNotFoundError, resetCredentialAccount } from "../../core/credential-account-reset.ts";
 import { pinCredentialAccount, removeCredentialAccount } from "../../core/credential-accounts.ts";
 import { AssistantEditError, SessionStreamingError } from "../../core/edited-assistant-message.ts";
 import { UserEditError } from "../../core/edited-user-message.ts";
@@ -79,9 +81,11 @@ import { DURABLE_CLIENT_MESSAGE_ID_CAPABILITY } from "./client-admission-record.
 import { ClientAdmissions } from "./client-admissions.ts";
 import { handleClientInput } from "./client-input-handler.ts";
 import { ConnectionQuestionBridge, degradeQuestion, sessionQuestionBridges } from "./connection-question-bridge.ts";
+import { remoteOriginDeclaration, remoteOriginField } from "./remote-origin.ts";
 import { advertisedCompactCapabilities, sessionDeclaration } from "./compact-negotiation.ts";
 import { ConnectionRoles, roleConnection } from "./connection-roles.ts";
 import {
+	ACCOUNT_RESET_CAPABILITY,
 	AUTH_KEY_VERIFY_CAPABILITY,
 	AUTO_TITLE_SESSIONS_CAPABILITY,
 	buildCustomUnsupportedRequest,
@@ -112,7 +116,12 @@ import {
 import { EffectLedger } from "./effect-ledger.ts";
 import { EFFECT_LEDGER_CAPABILITY } from "./effect-record.ts";
 import { createRpcEventOutputBuffer } from "./event-output-buffer.ts";
-import { answeredUiRequestId, refusedExtensionUiResponse, settleExtensionUiResponse } from "./extension-ui-response.ts";
+import {
+	answeredUiRequestId,
+	extensionUiProgressReply,
+	refusedExtensionUiResponse,
+	settleExtensionUiResponse,
+} from "./extension-ui-response.ts";
 import { SecretInputRequests, type SecretInputRoute } from "./secret-input-requests.ts";
 import { answerGetEntries } from "./get-entries-command.ts";
 import { runHoldInput } from "./held-input-commands.ts";
@@ -560,7 +569,13 @@ export function createRpcConnectionHandler(
 	const pendingExtensionRequests = new SessionExtensionUiRequests(uiRequestChanged);
 	const grantRequests = new Map<string, string | undefined>();
 	sessionDialogRequests.set(session, pendingExtensionRequests);
-	const questions = new ConnectionQuestionBridge(output, uiRequestChanged, () => options.clientInfo?.connectionId());
+	const raiserOrigin = () => connectionRoles.originOf(options.clientInfo?.connectionId());
+	const questions = new ConnectionQuestionBridge(
+		output,
+		uiRequestChanged,
+		() => options.clientInfo?.connectionId(),
+		raiserOrigin,
+	);
 	let secretHandshake = false;
 	const secretOwners = new Map<string, { connection: string | undefined; cancel?: () => void }>();
 	const secretCapable = (connection: string | undefined): boolean =>
@@ -610,6 +625,7 @@ export function createRpcConnectionHandler(
 		if (opts?.signal?.aborted) return Promise.resolve(defaultValue);
 
 		const id = crypto.randomUUID();
+		const raised = { ...request, ...remoteOriginField(raiserOrigin()) };
 		return new Promise((resolve, reject) => {
 			let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
@@ -634,7 +650,7 @@ export function createRpcConnectionHandler(
 			}
 
 			pendingExtensionRequests.set(id, {
-				frame: { type: "extension_ui_request", id, ...request } as RpcExtensionUIRequest,
+				frame: { type: "extension_ui_request", id, ...raised } as RpcExtensionUIRequest,
 				resolve: (response: RpcExtensionUIResponse) => {
 					cleanup();
 					resolve(parseResponse(response));
@@ -642,7 +658,7 @@ export function createRpcConnectionHandler(
 				reject,
 			});
 			if (request.grantSelect === true) grantRequests.set(id, options.clientInfo?.connectionId());
-			output({ type: "extension_ui_request", id, ...request } as RpcExtensionUIRequest);
+			output({ type: "extension_ui_request", id, ...raised } as RpcExtensionUIRequest);
 		});
 	}
 	const selectGrantDialog: ExtensionUIContext["select"] = (title, choices, opts) =>
@@ -784,6 +800,10 @@ export function createRpcConnectionHandler(
 			} as RpcExtensionUIRequest);
 		},
 
+		setProgramStatus(): void {
+			// OSC 7501 is a terminal report; an RPC session owns no terminal, so it sends no frame.
+		},
+
 		async custom() {
 			// Custom UI cannot be rendered in RPC mode. By default this returns
 			// undefined synchronously with NO wire message — byte-identical to the
@@ -822,9 +842,17 @@ export function createRpcConnectionHandler(
 
 		async editor(title: string, prefill?: string): Promise<string | undefined> {
 			const id = crypto.randomUUID();
+			const frame: RpcExtensionUIRequest = {
+				type: "extension_ui_request",
+				id,
+				method: "editor",
+				title,
+				prefill,
+				...remoteOriginField(raiserOrigin()),
+			};
 			return new Promise((resolve, reject) => {
 				pendingExtensionRequests.set(id, {
-					frame: { type: "extension_ui_request", id, method: "editor", title, prefill },
+					frame,
 					resolve: (response: RpcExtensionUIResponse) => {
 						if ("cancelled" in response && response.cancelled) {
 							resolve(undefined);
@@ -836,7 +864,7 @@ export function createRpcConnectionHandler(
 					},
 					reject,
 				});
-				output({ type: "extension_ui_request", id, method: "editor", title, prefill } as RpcExtensionUIRequest);
+				output(frame);
 			});
 		},
 
@@ -1142,8 +1170,11 @@ export function createRpcConnectionHandler(
 			);
 			return;
 		}
+		const timer = startOpenTimer("rebind");
 		await refresh;
+		timer.mark("bind_extensions");
 		await ClientAdmissions.forSession(session).ready;
+		timer.mark("client_admissions");
 		// The open-time readers above (receipt seals, extension starts) read the full history; an idle
 		// session lets it go now instead of holding it until its first turn settles (senpi#3519).
 		session.releaseSettledSessionMemory();
@@ -1263,6 +1294,7 @@ export function createRpcConnectionHandler(
 								EVAL_CELLS_CAPABILITY,
 								AUTH_KEY_VERIFY_CAPABILITY,
 								PROVIDER_ACCOUNT_TEST_CAPABILITY,
+								ACCOUNT_RESET_CAPABILITY,
 								QUEUED_MESSAGE_REVISION_CAPABILITY,
 								TOOL_BARRIER_CAPABILITY,
 								USER_ACTIVITY_CAPABILITY,
@@ -1519,6 +1551,10 @@ export function createRpcConnectionHandler(
 			// =================================================================
 
 			case "set_client_info": {
+				const origin = remoteOriginDeclaration(command.remoteOrigin, (declared) =>
+					connectionRoles.acceptsOrigin(currentConnectionId(), declared),
+				);
+				if ("refusal" in origin) return error(id, "set_client_info", origin.refusal);
 				const next = sessionDeclaration(
 					options,
 					command,
@@ -1527,6 +1563,7 @@ export function createRpcConnectionHandler(
 					replaceClientCapabilities,
 				);
 				if (next.refusal) return error(id, "set_client_info", next.refusal);
+				if (origin.origin !== undefined) connectionRoles.declareOrigin(currentConnectionId(), origin.origin);
 				clientCapabilities = next.capabilities;
 				if (command.capabilities !== undefined) {
 					secretHandshake = true;
@@ -2150,7 +2187,9 @@ export function createRpcConnectionHandler(
 						...(origin === undefined ? {} : { origin }),
 					};
 				});
-				return success(id, "get_auth_providers", { providers });
+				// Read after the rows: building them re-reads a store that failed to load (#4413).
+				const storeError = modelRegistry.authStorage.getLoadError();
+				return success(id, "get_auth_providers", { providers, ...(storeError ? { storeError } : {}) });
 			}
 
 			case "login_start": {
@@ -2238,6 +2277,26 @@ export function createRpcConnectionHandler(
 				}
 			}
 
+			case "account_reset": {
+				if (typeof command.provider !== "string" || typeof command.name !== "string") {
+					return error(id, "account_reset", "provider and name must be strings", "invalid_argument");
+				}
+				try {
+					await resetCredentialAccount(session.modelRegistry.authStorage, command.provider, command.name);
+				} catch (resetError: unknown) {
+					if (resetError instanceof CredentialAccountNotFoundError) {
+						return error(
+							id,
+							"account_reset",
+							"Provider account not found. Refresh the account list.",
+							resetError.code,
+						);
+					}
+					return error(id, "account_reset", "Could not reset this account. Try again.", "account_reset_failed");
+				}
+				return success(id, "account_reset");
+			}
+
 			case "account_order": {
 				const names: unknown = command.names;
 				if (names !== null && !(Array.isArray(names) && names.every((name) => typeof name === "string"))) {
@@ -2282,7 +2341,9 @@ export function createRpcConnectionHandler(
 				output(refusedExtensionUiResponse(progress.id, "invalid_secret_response"));
 				return;
 			}
-			questions.progress(parsed as RpcExtensionUIProgress);
+			// One correlated reply, after the question_updated the draft causes: a forwarder waits for a reply to every
+			// record it passes on, and must not need a list of records that have none (senpi#5761).
+			output(extensionUiProgressReply(progress.id, questions.progress(progress)));
 			return;
 		}
 

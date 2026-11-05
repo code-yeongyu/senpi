@@ -28,12 +28,10 @@ const SESSIONS = {
 /** Run session `name` alone: one prompt, its body released once it arrives, then its idle. */
 function runAlone(run, name) {
 	const s = SESSIONS[name];
-	const pipeline = run.env.SENPI_EXECUTION_PIPELINE;
 	const spec = {
 		extensions: [HELD_TOOLS],
 		files: { "out/.keep": "" },
 		turns: [{ toolCalls: [write(s.call, s.path, s.barrier)] }, { text: s.done }],
-		env: pipeline === undefined ? {} : { SENPI_EXECUTION_PIPELINE: pipeline },
 	};
 	return runSolo(spec, `e30-solo-${name.toLowerCase()}`, async (solo, connection) => {
 		await connection.client.send(

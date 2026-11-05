@@ -32,9 +32,9 @@ export async function compactOpen(
 	const admissions = host.admissions;
 	if (peer === undefined || socketEpoch === undefined || admissions === undefined)
 		return error(command.id, command.type, "unsupported_transport");
-	const { id: _request, admissionId, ...request } = command;
+	const { id: _request, admissionId, retry, ...request } = command;
 	if (admissionId === undefined) throw new CompactAdmissionError("malformed_request");
-	// Every request field participates; wire id and admission id do not change immutable open identity.
+	// Every request field participates; wire id, admission id and the retry marker do not change immutable open identity.
 	const fingerprint = createHash("sha256")
 		.update(JSON.stringify(Object.entries(request).sort(([a], [b]) => a.localeCompare(b))))
 		.digest("hex");
@@ -66,7 +66,8 @@ export async function compactOpen(
 		};
 	};
 	try {
-		const answer = await admissions.run({ socketEpoch, peer, admissionId, fingerprint }, async (signal) => {
+		const identity = { socketEpoch, peer, admissionId, fingerprint, retry: retry === true };
+		const answer = await admissions.run(identity, async (signal) => {
 			let result:
 				| { readonly answer: Readonly<Record<string, unknown>>; readonly release: () => Promise<void> }
 				| undefined;

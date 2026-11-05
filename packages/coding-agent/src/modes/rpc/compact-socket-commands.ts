@@ -1,5 +1,6 @@
 import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
 import { CONNECTION_ROLE_FIXED, roleConnection } from "./connection-roles.ts";
+import { remoteOriginDeclaration } from "./remote-origin.ts";
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
 import type { RouterContext } from "./session-router-context.ts";
 import { error } from "./session-router-errors.ts";
@@ -12,6 +13,10 @@ export function declareSocketClient(
 	const peer = host.writer.currentConnection();
 	const selection = peer === undefined ? undefined : host.writer.compactSelection(peer);
 	const role = (caps: readonly string[]) => host.connectionRoles.declare(roleConnection(peer), caps);
+	const origin = remoteOriginDeclaration(command.remoteOrigin, (declared) =>
+		host.connectionRoles.acceptsOrigin(roleConnection(peer), declared),
+	);
+	if ("refusal" in origin) return error(command.id, command.type, origin.refusal);
 	const reason = selection
 		? selection.declare(command.capabilities, host.registry.supportsCompact?.() === true, role)
 		: command.capabilities !== undefined && !role(command.capabilities)
@@ -27,6 +32,7 @@ export function declareSocketClient(
 		host.pendingCapabilities.set(peer, [...caps]);
 		host.writer.setConnectionCapabilities(peer, caps);
 	} else if (command.capabilities !== undefined) host.writer.setSoleSecretCapabilities(command.capabilities);
+	if (origin.origin !== undefined) host.connectionRoles.declareOrigin(roleConnection(peer), origin.origin);
 	return {
 		id: command.id,
 		type: "response",

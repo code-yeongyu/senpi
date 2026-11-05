@@ -46,6 +46,7 @@ import {
 	ScriptedResidentQuery,
 	sdkMessage,
 } from "../../helpers/anthropic-subscription-scripted-sdk.ts";
+import { cliAuthBlock } from "../../support/claude-cli-test-slots.ts";
 
 const SESSION_ID = "issue-4436-cli-slot-lane";
 const DIR_A = "a".repeat(32);
@@ -303,7 +304,7 @@ describe("senpi#4436 claude-cli account lane", () => {
 	});
 
 	it("(d) an auth_error-blocked CLI slot clears only when auth status reports loggedIn", async () => {
-		const blocked = { blockReason: "auth_error", blockedUntil: Date.now() - 1, blockedAt: Date.now() - 10 };
+		const blocked = cliAuthBlock(DIR_A, Date.now() - 1, Date.now() - 10);
 		const out = await installCliLane([cliSlot("alice", DIR_A, blocked)], { pinned: "alice" });
 		const signedOut = installCliSdk(out);
 		const refused = await runTurn({ messages: [user1] });

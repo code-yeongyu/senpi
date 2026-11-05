@@ -10,6 +10,7 @@ import { canonicalSessionPath } from "./session-path-key.ts";
 import { SessionAcceptanceLane } from "./session-acceptance-lane.ts";
 import { structuredLaneEnabled } from "./structured-session-records.ts";
 import { setSessionRecoveryEpoch } from "../../core/session-recovery-identity.ts";
+import { startOpenTimer } from "../../core/open-timing.ts";
 import { attachToOpenSession } from "./session-registry-attach.ts";
 import {
 	type PendingClaims,
@@ -140,6 +141,7 @@ export async function openRegistrySession(
 	host.entries.set(handle, entry);
 	claimSettled?.();
 	host.options.onSizeChange?.(host.entries.size);
+	const timer = startOpenTimer(`registry-open:${handle}`);
 	try {
 		const newSessionOptions = {
 			...(requestedDurableId !== undefined ? { id: requestedDurableId } : {}),
@@ -156,6 +158,7 @@ export async function openRegistrySession(
 						host.options.createSlicer?.(),
 					)
 			: SessionManager.create(storedProfile.cwd, undefined, newSessionOptions);
+		timer.mark("session_manager");
 		entry.runtime = await runWithProviderScope(entry.scope, () =>
 			createAgentSessionRuntime(host.options.createRuntime, {
 				cwd: manager.getCwd(),
@@ -165,6 +168,7 @@ export async function openRegistrySession(
 				launchProfile: runtimeProfile,
 			}),
 		);
+		timer.mark("runtime");
 		assertRequestedModelResolved(runtimeProfile, entry.runtime.diagnostics);
 		ClientAdmissions.sealQueuedOnReplace(entry.runtime);
 		EffectLedger.sealOnReplace(entry.runtime);

@@ -36,6 +36,7 @@ import {
 	type Component,
 	Container,
 	decodeKittyPrintable,
+	encodeProgramStatus,
 	fuzzyFilter,
 	getCapabilities,
 	hyperlink,
@@ -43,6 +44,7 @@ import {
 	Markdown,
 	matchesKey,
 	outerKittyGraphicsMode,
+	type ProgramStatus,
 	SelectList,
 	Spacer,
 	sanitizeTerminalLabel,
@@ -97,6 +99,8 @@ import { resolveChangelogSource } from "../../core/changelog-source.ts";
 import { collectEntriesForBranchSummary } from "../../core/compaction/branch-summarization.ts";
 import { findExtensionStackMatches } from "../../core/crash-log.ts";
 import { AssistantEditError, assistantTextEquals } from "../../core/edited-assistant-message.ts";
+import { subscribeProviderAccountEvents } from "../../core/extensions/builtin/anthropic-subscription/account-events.ts";
+import { formatAccountFailoverNotice } from "./account-failover-notice.ts";
 import {
 	askUserAnswerDisplayText,
 	formatUserMessage,
@@ -121,7 +125,14 @@ import { buildNoticeBox, type NoticeLine, type NoticeSpec } from "../../core/ext
 import type { QuestionRequest, QuestionResponse, SystemPromptChangeEvent } from "../../core/extensions/types.ts";
 import { emitUserActivity } from "../../core/extensions/user-activity.ts";
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.ts";
-import { sessionHolderWarning } from "../../core/foreign-session-holders.ts";
+import {
+	checkSessionHolders,
+	describeSessionHolders,
+	SESSION_HOLDER_LOOKUP_FAILED,
+	sessionHolderWarning,
+	stopSessionHolders,
+	takeOverRefusal,
+} from "../../core/foreign-session-holders.ts";
 import { appendUncaughtCrashLog, appendUnhandledRejectionLog } from "../../core/hidden-stdout-log.ts";
 import { buildHighReasoningWarning } from "../../core/high-reasoning-warning.ts";
 import { configureHttpDispatcher, formatHttpIdleTimeoutMs } from "../../core/http-dispatcher.ts";
@@ -146,6 +157,7 @@ import { CredentialSynchronizationError } from "../../core/model-runtime.ts";
 import { formatProviderFailure } from "../../core/provider-failure.ts";
 import { failureAlreadyDescribed, headNoticeShownElsewhere } from "./provider-error-description.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
+import { describeFallbackExhaustion } from "../../core/retry-fallback/exhaustion.ts";
 import { usageLimitCause } from "../../core/retry-fallback/usage-limit.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
 import { createSessionLogger, type SessionLogger } from "../../core/session-log.ts";
@@ -373,6 +385,21 @@ interface WorkingStatusEditor extends EditorComponent {
 function adoptDefaultEditorActions(defaultEditor: CustomEditor, editor: EditorComponent): void {
 	if (editor === defaultEditor || !("actionHandlers" in editor) || !(editor.actionHandlers instanceof Map)) return;
 	for (const [action, handler] of defaultEditor.actionHandlers) editor.actionHandlers.set(action, handler);
+}
+
+/**
+ * Run a submission parked during startup once the real submit path is installed (senpi#5731). The person
+ * already pressed Enter, so the parked text is submitted unless they edited it since. A free function, like
+ * `adoptDefaultEditorActions`, so `init()` gains no new `this` dependency.
+ */
+export function replayStartupSubmission(
+	parked: { readonly text: string; readonly details?: EditorSubmitDetails } | undefined,
+	editor: Pick<EditorComponent, "getText" | "setText">,
+	defaultEditor: { onSubmit?: (text: string, details?: EditorSubmitDetails) => void | Promise<void> } | undefined,
+): void {
+	if (parked === undefined || editor.getText() !== parked.text) return;
+	editor.setText("");
+	void defaultEditor?.onSubmit?.(parked.text, parked.details);
 }
 
 function isWorkingStatusEditor(editor: EditorComponent): editor is WorkingStatusEditor {
@@ -1021,6 +1048,7 @@ export class InteractiveMode {
 	 * ordinary submission that never references it.
 	 */
 	private preResolvedSubmissionImages?: ImageContent[];
+	private startupParkedSubmission: { readonly text: string; readonly details?: EditorSubmitDetails } | undefined;
 	private activeStatusIndicator: StatusIndicator | undefined = undefined;
 	private activeWorkingIndicatorEmbedded = false;
 	private readonly idleStatus = new IdleStatus();
@@ -1038,6 +1066,9 @@ export class InteractiveMode {
 	private hookStatusIntervalId: NodeJS.Timeout | undefined = undefined;
 	private activeToolTerminalTitle: string | undefined = undefined;
 	private extensionTerminalTitle: string | undefined = undefined;
+	/** The OSC 7501 report last written while a status is active; undefined once cleared. */
+	private programStatusSequence: string | undefined = undefined;
+	private programStatusClosed = false;
 
 	private lastSigintTime = 0;
 	private lastEscapeTime = 0;
@@ -1683,7 +1714,7 @@ export class InteractiveMode {
 		if (this.defaultEditor) {
 			this.defaultEditor.onAction("app.clear", () => this.handleCtrlC());
 			this.defaultEditor.onCtrlD = () => this.handleCtrlD();
-			this.defaultEditor.onSubmit = (text) => this.handleStartupSubmit(text);
+			this.defaultEditor.onSubmit = (text, details) => this.handleStartupSubmit(text, details);
 		}
 		this.ui.setFocus(this.editor);
 
@@ -1813,6 +1844,9 @@ export class InteractiveMode {
 		this.setupEditorSubmitHandler();
 		this.sessionControlHost?.attachEditor(this.defaultEditor, () => this.composerHold() !== undefined);
 		adoptDefaultEditorActions(this.defaultEditor, this.editor);
+		const parkedSubmission = this.startupParkedSubmission;
+		this.startupParkedSubmission = undefined;
+		replayStartupSubmission(parkedSubmission, this.editor, this.defaultEditor);
 		this.ui.requestRender();
 		time("keyHandlers", "tui");
 
@@ -1857,6 +1891,15 @@ export class InteractiveMode {
 
 	private updateTerminalTitle(): void {
 		this.applyTerminalTitle();
+	}
+
+	private setProgramStatus(status: ProgramStatus | undefined): void {
+		if (this.programStatusClosed) return;
+		const sequence = encodeProgramStatus(status, APP_COMMAND);
+		if (status === undefined ? this.programStatusSequence === undefined : sequence === this.programStatusSequence)
+			return;
+		this.programStatusSequence = status === undefined ? undefined : sequence;
+		if (process.stdout.isTTY) this.ui.terminal.write(sequence);
 	}
 
 	/**
@@ -3111,7 +3154,9 @@ export class InteractiveMode {
 			if (opts.signal?.aborted) return undefined as T;
 			return await show();
 		}
-		this.session.emitExtensionEvent("herdr:blocked", { active: true, label, id });
+		// A dialog about a tool call is a permission request (ExtensionUIDialogOptions.toolCallId).
+		const kind = opts?.toolCallId === undefined ? {} : { kind: "permission" as const };
+		this.session.emitExtensionEvent("herdr:blocked", { active: true, label, id, ...kind });
 		try {
 			return await show();
 		} finally {
@@ -3804,6 +3849,7 @@ export class InteractiveMode {
 				this.extensionTerminalTitle = title;
 				this.applyTerminalTitle();
 			},
+			setProgramStatus: (status) => this.setProgramStatus(status),
 			custom: (factory, options) => this.showExtensionCustom(factory, options),
 			pasteToEditor: (text) => insertProgrammaticComposerInput(this.editor, `\x1b[200~${text}\x1b[201~`),
 			setEditorText: (text) => this.editor.setText(text),
@@ -4945,7 +4991,7 @@ export class InteractiveMode {
 		return this.sessionLogger;
 	}
 
-	private handleStartupSubmit(text: string): void {
+	private handleStartupSubmit(text: string, details?: EditorSubmitDetails): void {
 		// Quit is a control action, not a prompt: honor it even while managed-tool setup
 		// is still running. Parking it in the editor would also disable the Ctrl+D quit
 		// escape, which CustomEditor only forwards while the editor is empty.
@@ -4954,6 +5000,7 @@ export class InteractiveMode {
 			void this.shutdown();
 			return;
 		}
+		this.startupParkedSubmission = { text, ...(details === undefined ? {} : { details }) };
 		this.editor.setText(text);
 		this.showStatus("Startup is still in progress");
 	}
@@ -5963,19 +6010,34 @@ export class InteractiveMode {
 				this.setExtensionStatus(FALLBACK_STATUS_KEY, undefined);
 				break;
 
-			case "retry_fallback_exhausted":
-				if (isRetryableProviderError(event.lastError)) {
+			case "retry_fallback_exhausted": {
+				if (event.refusals !== undefined && event.refusals.length > 0) {
+					this.showNoticeBox({
+						title: `✕ Fallback refused for context budget · ${event.chainKey}`,
+						tone: "error",
+						why: [describeFallbackExhaustion(event), ...event.refusals.map((refusal) => refusal.detail)].join(
+							"\n",
+						),
+					});
+					this.setExtensionStatus(FALLBACK_STATUS_KEY, undefined);
+					break;
+				}
+				// A walk that started on another failure must lead with it, not the last rung's (senpi#4084).
+				const startedElsewhere = (event.failures?.length ?? 0) > 1;
+				if (isRetryableProviderError(event.lastError) && !startedElsewhere) {
 					this.getProviderErrors().finish(event.lastError);
 					this.setExtensionStatus(FALLBACK_STATUS_KEY, undefined);
 					break;
 				}
+				if (isRetryableProviderError(event.lastError)) this.getProviderErrors().clear();
 				this.showNoticeBox({
 					title: `✕ Fallback chain exhausted · ${event.chainKey}`,
 					tone: "error",
-					why: event.lastError,
+					why: describeFallbackExhaustion(event),
 				});
 				this.setExtensionStatus(FALLBACK_STATUS_KEY, undefined);
 				break;
+			}
 
 			case "server_fallback_aborted":
 				this.showNoticeBox({
@@ -7064,6 +7126,12 @@ export class InteractiveMode {
 		markModeCrashHandler(unhandledRejectionHandler);
 		process.prependListener("unhandledRejection", unhandledRejectionHandler);
 		this.signalCleanupHandlers.push(() => process.off("unhandledRejection", unhandledRejectionHandler));
+
+		this.signalCleanupHandlers.push(
+			subscribeProviderAccountEvents((event) => {
+				if (event.type === "failover") this.showStatus(formatAccountFailoverNotice(event));
+			}),
+		);
 
 		// Surface Inspector rejections that the early bootstrap seam recovered before this
 		// handler (and the TUI warning surface) existed.
@@ -9003,6 +9071,36 @@ export class InteractiveMode {
 		options?: Parameters<ExtensionCommandContext["switchSession"]>[1],
 	): Promise<{ cancelled: boolean }> {
 		this.clearStatusIndicator();
+		// A session another live process holds must not get a second writer here (senpi#5744): the restored
+		// lifecycle would read that process's live run as interrupted and the next input would run it again.
+		const holderCheck = await checkSessionHolders(sessionPath);
+		if ("holders" in holderCheck && holderCheck.holders.length > 0) {
+			const takeOver = "Take over (stop it there)";
+			const refusal = takeOverRefusal(holderCheck.holders);
+			const choice = await this.showExtensionSelector(
+				`This session is open in another process (${describeSessionHolders(holderCheck.holders)}).\nResuming it here while it runs would start a second run of the same session.${refusal === undefined ? "" : `\n${refusal}`}`,
+				refusal === undefined ? ["Cancel", takeOver] : ["Cancel"],
+			);
+			if (choice !== takeOver) {
+				this.showStatus("Not resumed: the session is open in another process");
+				return { cancelled: true };
+			}
+			let stopped: boolean;
+			try {
+				stopped = await stopSessionHolders(sessionPath, holderCheck.holders);
+			} catch (error: unknown) {
+				this.showWarning(
+					`Not resumed: could not stop the other process (${error instanceof Error ? error.message : String(error)}).`,
+				);
+				return { cancelled: true };
+			}
+			if (!stopped) {
+				this.showWarning(
+					"Not resumed: the session is still open in another process; quit it there, then /resume again.",
+				);
+				return { cancelled: true };
+			}
+		}
 		try {
 			const result = await this.runtimeHost.switchSession(sessionPath, {
 				withSession: options?.withSession,
@@ -9011,10 +9109,10 @@ export class InteractiveMode {
 			if (result.cancelled) {
 				return result;
 			}
-			const warning = await sessionHolderWarning(
-				this.sessionManager.getSessionFile(),
-				this.sessionManager.getSessionId(),
-			);
+			const warning =
+				"lookupFailed" in holderCheck
+					? SESSION_HOLDER_LOOKUP_FAILED
+					: await sessionHolderWarning(this.sessionManager.getSessionFile(), this.sessionManager.getSessionId());
 			if (warning !== undefined) this.showWarning(warning);
 			const switchTimings = formatTimings("switch");
 			this.showStatus(
@@ -9036,10 +9134,13 @@ export class InteractiveMode {
 				if (result.cancelled) {
 					return result;
 				}
-				const warning = await sessionHolderWarning(
-					this.sessionManager.getSessionFile(),
-					this.sessionManager.getSessionId(),
-				);
+				const warning =
+					"lookupFailed" in holderCheck
+						? SESSION_HOLDER_LOOKUP_FAILED
+						: await sessionHolderWarning(
+								this.sessionManager.getSessionFile(),
+								this.sessionManager.getSessionId(),
+							);
 				if (warning !== undefined) this.showWarning(warning);
 				this.showStatus("Resumed session in current cwd");
 				return result;
@@ -10407,6 +10508,9 @@ export class InteractiveMode {
 		if (this.settingsManager.getShowTerminalProgress()) {
 			this.ui.terminal.setProgress(false);
 		}
+		// The terminal drops working/blocked records only when the process exits; clear before handing it back.
+		this.setProgramStatus(undefined);
+		this.programStatusClosed = true;
 		this.clearStatusIndicator();
 		this.clearPendingTools();
 		this.stopChatToolAnimations();

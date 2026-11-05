@@ -16,7 +16,7 @@ export async function compactSubscribe(
 	const peer = host.writer.currentConnection();
 	const socketEpoch = peer === undefined ? undefined : host.writer.socketEpochOf(peer);
 	const events = host.writer.recoveryEvents;
-	const { admissionId, id, ...request } = command;
+	const { admissionId, id, retry, ...request } = command;
 	if (peer === undefined || socketEpoch === undefined || !events || !host.admissions || admissionId === undefined)
 		return error(id, command.type, "unsupported_transport");
 	const fingerprint = createHash("sha256")
@@ -41,7 +41,8 @@ export async function compactSubscribe(
 			: undefined;
 	};
 	try {
-		const answer = await host.admissions.run({ peer, socketEpoch, admissionId, fingerprint }, async () => {
+		const identity = { peer, socketEpoch, admissionId, fingerprint, retry: retry === true };
+		const answer = await host.admissions.run(identity, async () => {
 			let lease: EventLease | undefined;
 			const subscribed = answerSubscribeSessions(command, peer, host.writer.status, (rows, subscriptionId) => {
 				host.writer.registerSubscription(peer, admissionId, subscriptionId);

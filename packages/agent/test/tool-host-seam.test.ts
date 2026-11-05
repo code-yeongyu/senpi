@@ -7,7 +7,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
-import { Agent } from "../src/agent.ts";
+import { Agent } from "../src/index.ts";
 import type { AgentEvent, AgentTool, ToolHost, ToolHostCall } from "../src/types.ts";
 
 const model: Model<"openai-completions"> = {
@@ -116,7 +116,7 @@ describe("unprepared ToolHost seam", () => {
 	});
 
 	for (const mode of ["parallel", "sequential"] as const) {
-		it(`keeps legacy ${mode} hook ordering and records the pipeline separately from public events`, async () => {
+		it(`keeps ${mode} hook ordering on the default pipeline and records it separately from public events`, async () => {
 			const { agent, trace } = fixture();
 			agent.toolExecution = mode;
 			const witnesses: unknown[] = [];
@@ -129,7 +129,7 @@ describe("unprepared ToolHost seam", () => {
 			});
 			await agent.prompt("run");
 			expect(trace).toEqual(["prepare", "before", "body", "after"]);
-			expect(witnesses).toEqual([{ pipeline: "legacy", toolCallId: call.id }]);
+			expect(witnesses).toEqual([{ pipeline: "prepared", toolCallId: call.id }]);
 			expect(events.filter((event) => event.type === "tool_execution_end")).toHaveLength(1);
 			expect(events.some((event) => "pipeline" in event)).toBe(false);
 		});

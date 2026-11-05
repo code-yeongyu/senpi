@@ -10,7 +10,7 @@ import {
 import { textComponent } from "./compact-catalog-transcript.ts";
 import { emptyComponent, stepsComponent } from "./compact-catalog-writer.ts";
 import type { CatalogComponent } from "./compact-recovery-catalog.ts";
-import type { SettledReader, TerminalRow } from "./compact-settled-messages.ts";
+import type { SettledReader, TerminalRow } from "./compact-settled-rows.ts";
 import type { FrozenAcceptedRoot } from "./session-acceptance-lane.ts";
 
 const SETTLED = familyId("settled");

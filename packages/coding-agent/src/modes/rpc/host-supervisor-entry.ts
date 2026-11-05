@@ -18,6 +18,8 @@
  * for it: it respawns its host child through the snapshot's `cli.js`, so a prune by a later upgrade
  * must not remove the snapshot while the host child is down between two generations.
  */
+// First: report a coordinated supervisor start before its graph loads (senpi#4602).
+import "./host-startup-beacon.ts";
 import "../../valid-cwd.ts";
 // Second: capture the private descriptor table before anything can spawn (senpi#4749).
 import "../../private-fds.ts";

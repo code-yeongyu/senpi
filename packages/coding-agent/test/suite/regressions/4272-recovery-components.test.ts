@@ -95,6 +95,7 @@ it("X03 T1 every family of the versioned schema has a registry row and an explic
 		version: 1,
 		assembly: "complete",
 		families: CATALOG_FAMILIES.map((family) => ({ family, producer: "complete" })),
+		requiredKinds: [...CATALOG_FAMILIES].sort(),
 	});
 	expect(FAMILY_PRODUCERS).toEqual(Object.fromEntries(CATALOG_FAMILIES.map((family) => [family, "complete"])));
 	expect(JSON.parse((await text("transcript", "transcript")).text)).toEqual({

@@ -14,6 +14,8 @@ export type ExecutionAdmission = ExecutionKey & {
 export type FrozenCall = { readonly name: string; readonly args: StoreValue; readonly digest: string };
 export type ExecutionOutcome =
 	| { readonly reason: "result"; readonly value: StoreValue; readonly hooksRan: boolean; readonly uncertain: false }
+	/** Preparation ended without a frozen call (a blocking handler, a failed validation, a preflight abort); no body ran. */
+	| { readonly reason: "blocked"; readonly value: StoreValue; readonly hooksRan: boolean; readonly uncertain: false }
 	| {
 			readonly reason: "cancelled" | "lease_expired" | "hand_restarted" | "uncertain";
 			readonly hooksRan: boolean;
@@ -48,6 +50,7 @@ export type ExecutionEvent =
 	  }
 	| { readonly kind: "freeze"; readonly call: FrozenCall; readonly awaitingConsent: boolean }
 	| { readonly kind: "result"; readonly value: StoreValue }
+	| { readonly kind: "block"; readonly value: StoreValue }
 	| { readonly kind: "renew"; readonly seq: number; readonly leaseUntil: number };
 export type ExecutionCommand = {
 	readonly key: ExecutionKey;

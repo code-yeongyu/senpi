@@ -1,5 +1,26 @@
 # Herdr builtin reporter changes
 
+## 2026-11-01 - Program status binds in every TUI session (senpi#5323)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/herdr/index.ts` binds state tracking to the first top-level TUI session whatever the `HERDR_*` environment and user-reporter deferral, and reports each `selectHerdrReport` result through `ctx.ui.setProgramStatus` (deduplicated). The herdr socket client keeps its preconditions (`HERDR_ENV=1`, socket path, pane id, no user reporter) and its exact request transcript. A blocked report carries the `kind` of the oldest open block (`selectHerdrBlockedKind`), which `herdr:blocked` now carries: `question` from ask-user, `permission` from a host dialog about a tool call; other dialogs carry none. Quit clears the status; reload and session navigation leave it for the successor runtime.
+- The reporter calls `ctx.ui.setProgramStatus` optionally, so an outside SDK host whose UI context predates the method keeps its herdr socket reporting (senpi#5344).
+- `herdr-state.ts` keeps `{ label, kind }` per open block instead of the label alone; `isHerdrBlockedEvent` accepts the optional `kind`.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts` emits `kind: "question"` on its active `herdr:blocked` event.
+
+### Why
+
+- herdr-core panes set only `HC_TERMINAL_ID`/`HC_TERMINAL_SOCKET`, so the reporter never bound there and omo panes showed as a plain shell. They read OSC 7501 instead.
+
+### Why an extension could not handle it
+
+- This is the builtin reporter; it uses the public `ctx.ui.setProgramStatus` API.
+
+### Expected merge conflict zones
+
+- LOW: `session_start` binding order and `publish` in `index.ts`; the `blocked` case of `reduceHerdrState`.
+
 ## 2026-10-21 - Restore the branded launcher after Herdr restart (senpi#3849)
 
 ### What changed

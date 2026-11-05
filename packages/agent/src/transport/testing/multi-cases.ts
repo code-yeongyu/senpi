@@ -115,25 +115,25 @@ const lossOnOneLaneIsNotHeldByAnother: MultiCase = async (adapters) => {
 	const link = openLink(adapters, () => loseOnce(decode, "B", 1, stats));
 	link.pace("A", LONG_LANE_PACE_MS);
 	const aSends = range(1, LONG_LANE_FRAMES).map((n) => link.send("A", n));
-	await link.runUntil(() => link.delivered("A").length >= 10, "MULTI-FAIR-02 A's long lane under way");
+	await link.runUntil(() => link.delivered("A").length >= 10, "MULTI-FAIR-03 A's long lane under way");
 	const before = link.delivered("A").length;
 	const bSend = link.send("B", 1);
-	await link.runUntil(allDelivered(link, { B: 1 }), "MULTI-FAIR-02 B delivered after its loss", 600_000);
-	if (stats.lost !== 1) throw new Error(`MULTI-FAIR-02: B#1 was not lost on the carrier (${JSON.stringify(stats)})`);
+	await link.runUntil(allDelivered(link, { B: 1 }), "MULTI-FAIR-03 B delivered after its loss", 600_000);
+	if (stats.lost !== 1) throw new Error(`MULTI-FAIR-03: B#1 was not lost on the carrier (${JSON.stringify(stats)})`);
 	const aheadOfB = link.delivered("A").length - before;
 	if (aheadOfB >= LONG_LANE_FRAMES / 2) {
 		throw new Error(
-			`MULTI-FAIR-02: B's lost frame was resent only after ${aheadOfB} of A's frames (fewer than ${LONG_LANE_FRAMES / 2})`,
+			`MULTI-FAIR-03: B's lost frame was resent only after ${aheadOfB} of A's frames (fewer than ${LONG_LANE_FRAMES / 2})`,
 		);
 	}
-	await link.runUntil(allDelivered(link, { A: LONG_LANE_FRAMES }), "MULTI-FAIR-02 A delivered", 600_000);
-	await link.awaitAll([...aSends, bSend], "MULTI-FAIR-02");
+	await link.runUntil(allDelivered(link, { A: LONG_LANE_FRAMES }), "MULTI-FAIR-03 A delivered", 600_000);
+	await link.awaitAll([...aSends, bSend], "MULTI-FAIR-03");
 	await link.advance(2000);
-	expectExactDelivery(link, { A: LONG_LANE_FRAMES, B: 1 }, "MULTI-FAIR-02");
+	expectExactDelivery(link, { A: LONG_LANE_FRAMES, B: 1 }, "MULTI-FAIR-03");
 };
 
 export const MULTI_CASES: ReadonlyMap<string, MultiCase> = new Map([
 	["MULTI-LANE-01", manyLanes],
 	["MULTI-FAIR-01", fairness],
-	["MULTI-FAIR-02", lossOnOneLaneIsNotHeldByAnother],
+	["MULTI-FAIR-03", lossOnOneLaneIsNotHeldByAnother],
 ]);

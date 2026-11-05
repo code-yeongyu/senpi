@@ -125,6 +125,8 @@ export function createRpcUiPresenter(output: (frame: RpcExtensionUIRequest) => v
 		notify: (message, type) => fireAndForget({ method: "notify", message, notifyType: type }),
 		setStatus: (key, text) => fireAndForget({ method: "setStatus", statusKey: key, statusText: text }),
 		setTitle: (title) => fireAndForget({ method: "setTitle", title }),
+		// OSC 7501 is a terminal report and this connection owns no terminal.
+		setProgramStatus: () => {},
 	};
 
 	return {

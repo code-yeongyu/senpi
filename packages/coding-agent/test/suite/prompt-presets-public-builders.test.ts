@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { APP_NAME } from "../../src/config.ts";
 import { buildClaudeFable51Prompt } from "../../src/core/extensions/builtin/prompt-preset/claude-fable-5-1.ts";
 import { buildClaudeOpus55Prompt } from "../../src/core/extensions/builtin/prompt-preset/claude-opus-5-5.ts";
+import { presetSharedSections } from "../../src/core/extensions/builtin/prompt-preset/contract.ts";
 import { buildGpt54Prompt } from "../../src/core/extensions/builtin/prompt-preset/gpt-5.4.ts";
 import promptPresetExtension from "../../src/core/extensions/builtin/prompt-preset/index.ts";
 import { resolvePreset as runtimeResolvePreset } from "../../src/core/extensions/builtin/prompt-preset/presets.ts";
@@ -31,7 +32,7 @@ const modelBuilders = [
 	{ id: "claude-opus-5-5", build: buildClaudeOpus55Prompt },
 	{ id: "claude-fable-5-1", build: buildClaudeFable51Prompt },
 	{ id: "gpt-5.4", build: buildGpt54Prompt },
-];
+] as const;
 
 describe("public Native prompt generation", () => {
 	it("exports the runtime resolver itself, not a second implementation", () => {
@@ -58,7 +59,7 @@ describe("public Native prompt generation", () => {
 
 	it.each(modelBuilders)("renders $id's actual body rather than another variant's label", ({ id, build }) => {
 		const actual = resolvePreset({ provider: "synthetic", id }, { promptPreset: "auto" }, options);
-		expect(actual?.prompt).toBe(build(options));
+		expect(actual?.prompt).toBe(build({ ...options, sharedSections: presetSharedSections(id) }));
 	});
 
 	it("keeps explicit settings and model preset metadata ahead of automatic selection", () => {

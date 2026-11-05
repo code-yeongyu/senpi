@@ -197,6 +197,7 @@ export type {
 	ModelSelectSource,
 	NormalizedBuildSystemPromptOptions,
 	PowerShellToolCallEvent,
+	ProgramStatus,
 	ProjectTrustContext,
 	ProjectTrustEvent,
 	ProjectTrustEventDecision,

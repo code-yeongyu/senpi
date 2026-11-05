@@ -17,6 +17,7 @@ import { HOST_DAEMON_DIR_ENV } from "../../src/modes/rpc/host-daemon-paths.ts";
 import {
 	HOST_GENERATION_ENV,
 	HOST_INSTANCE_ID_ENV,
+	HOST_STARTUP_EVENTS_ENV,
 	INTERNAL_KEY_STDIN_ENV,
 } from "../../src/modes/rpc/host-identity-env.ts";
 import {
@@ -37,6 +38,7 @@ export const INTERNAL_HANDOFF_ENV_NAMES: readonly string[] = [
 	HOST_DAEMON_DIR_ENV,
 	HOST_GENERATION_ENV,
 	HOST_INSTANCE_ID_ENV,
+	HOST_STARTUP_EVENTS_ENV,
 	HOST_CLEANUP_PATHS_ENV,
 	HOST_PUBLIC_SOCKET_ENV,
 	HOST_SCRATCH_DIR_ENV,

@@ -1,3 +1,135 @@
+## 2026-11-02 - IME composition on the question list shows on the own-answer row, not the footer (senpi#4400)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/ask-user-question-render.ts`: `renderQuestionList(state, focused)` ends the `Type your own answer...` row with `CURSOR_MARKER` while the focused overlay has the option list focused, so the TUI parks the hardware cursor at the end of that row.
+- `packages/coding-agent/src/modes/interactive/components/ask-user-question.ts`: passes its focus state to `renderQuestionList()` and rebuilds its rows when focus changes, so the marker appears and disappears with focus. The open own-answer editor and the comment editor keep their own cursor as before.
+
+### Why
+
+- On the option list no component emitted a cursor marker, so the hardware cursor stayed at the end of the last rendered line, the footer. macOS IMEs draw composing (preedit) text at the hardware cursor, so the first Korean syllable typed on the list showed next to the model display in the footer until the next syllable committed it and opened the answer input (senpi#4400, reported by cmj1203). A printable key on the list opens the own answer, so its row is where the typed text belongs.
+- The hardware cursor stays hidden unless `showHardwareCursor` is on; only its position changes.
+
+### Why an extension could not handle it
+
+- The question overlay is the built-in `ctx.ui.question` component; its rows and cursor placement are rendered inside it.
+
+### Expected merge conflict zones
+
+- LOW: `renderQuestionList()` in `ask-user-question-render.ts`; the `focused` setter and the `renderQuestionList` call in `updateAll()` in `ask-user-question.ts`.
+
+## 2026-10-30 - Keep SIWC ID-token hints out of terminal hyperlinks (senpi#5046)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/login-dialog.ts` renders hint-free URL text and terminal hyperlink targets while opening the original URL directly in the browser.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/components/login-dialog.ts` must not leave retained ID tokens in terminal output or captures.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/components/login-dialog.ts` owns the shared login dialog's terminal output.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/components/login-dialog.ts`: showAuth.
+
+## 2026-11-01 - The TUI writes OSC 7501 program status (senpi#5323)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the extension UI context implements `setProgramStatus` by writing `encodeProgramStatus(status, APP_COMMAND)` through `this.ui.terminal.write`, only when stdout is a TTY. An identical consecutive report, or a clear with no active status, writes nothing. `stop()` writes `state=clear` when a status is active and ignores later reports, so a quit never leaves a `working` or `blocked` record behind in the terminal.
+- `withBlockedHostDialog` adds `kind: "permission"` to its `herdr:blocked` event when the dialog carries `toolCallId`, the marker of a permission request.
+
+### Why
+
+- herdr-core and other OSC 7501 terminals learn the agent's state only from this sequence. The app name is the branded command, so OmO reports `omo` and standalone Senpi `senpi`.
+
+### Why an extension could not handle it
+
+- The extension UI context and the TUI terminal are owned by interactive mode; extensions cannot write around the stdout takeover.
+
+### Expected merge conflict zones
+
+- LOW: the `setTitle` neighbourhood of the extension UI context, `withBlockedHostDialog`, the field list beside `extensionTerminalTitle`, the `@earendil-works/pi-tui` import list, and the progress clear at the top of `stop()`.
+
+## 2026-10-26 - A request retried at 200k shows a transcript notice (senpi#4065)
+
+### What changed
+
+- `components/continuity-notice.ts`: `ContinuityNoticeTracker.noticeFor` uses the shared fallback diagnostic and label, and renders both notices when a turn also fell back from session resume.
+
+### Why
+
+- A window fallback changes what the model can see; the user must be told rather than find out from compaction.
+
+### Why an extension could not handle it
+
+- The continuity notices are rendered by interactive mode from the assistant message's diagnostics.
+
+### Expected merge conflict zones
+
+- LOW: the diagnostic type constants and the first checks in `noticeFor`.
+
+## 2026-10-30 - The exhaustion notice leads with the primary failure (senpi#4084)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: when earlier rungs failed, the `retry_fallback_exhausted` notice leads with the primary failure even if the last rung's error was retryable.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: senpi#4084: the notice showed only the last rung's error, so a primary 400 (usage, billing) hid behind a later rung's `Connection error.`.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the TUI's built-in exhaustion notice is rendered by the interactive mode itself; an extension cannot replace it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: LOW, the `retry_fallback_exhausted` case.
+
+## 2026-10-30 - Announce automatic account switches in the TUI (senpi#2304, senpi#5017)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `registerSignalHandlers` subscribes to provider account events (cleaned up with the other process handlers) and shows a status line for each `failover` event.
+- `packages/coding-agent/src/modes/interactive/account-failover-notice.ts` (new): `formatAccountFailoverNotice` words it as `Switched <provider> account <from> -> <to>: <reason>.`
+
+### Why
+
+- No lane's account switch reached the TUI, so users with several logins could not tell a request moved to another account.
+
+### Why an extension could not handle it
+
+- The event bus is host-internal and the notice belongs to the host's status line; no extension hook receives provider account events.
+
+### Expected merge conflict zones
+
+- LOW: the end of `registerSignalHandlers` and the import block in `interactive-mode.ts`.
+
+## 2026-10-26 - Slash-command recovery for a failed compaction in the TUI (senpi#4161)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/required-compaction-wording.ts`: maps the surface-neutral failed-compaction message to the TUI wording "Run /compact to retry, or /new to start a fresh session."
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `showError` (rejected prompts) shows that wording.
+- `packages/coding-agent/src/modes/interactive/components/assistant-render-descriptors.ts`: a turn that stopped on a failed compaction renders that wording.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: only the TUI has `/compact` and `/new`, so only the TUI names them.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: error rendering for rejected prompts and error stops is owned by interactive mode, not by an extension hook.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/interactive/interactive-mode.ts` `showError`; `packages/coding-agent/src/modes/interactive/components/assistant-render-descriptors.ts` `case "error"` fallback text.
+
 ## 2026-10-31 - The extra-usage warning no longer sniffs sk-ant-oat API keys (senpi#5131)
 
 ### What changed

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { vi } from "vitest";
 import { createHerdrExtension, type HerdrDependencies } from "../../src/core/extensions/builtin/herdr/index.ts";
+import { noOpUIContext } from "../../src/core/extensions/runner.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../src/core/extensions/types.ts";
 
 export interface HerdrRequest {
@@ -96,9 +97,12 @@ export async function herdrReporterFixture(overrides: Partial<HerdrDependencies>
 	});
 	let idle = true;
 	let title: string | undefined = "Reporter QA";
+	const setProgramStatus = vi.fn<ExtensionContext["ui"]["setProgramStatus"]>();
+	const ui: ExtensionContext["ui"] = { ...noOpUIContext, setProgramStatus };
 	const ctx = {
 		mode: "tui",
 		cwd: dir,
+		ui,
 		isIdle: () => idle,
 		sessionManager: {
 			getSessionId: () => "root-session",
@@ -125,6 +129,7 @@ export async function herdrReporterFixture(overrides: Partial<HerdrDependencies>
 		received,
 		connect,
 		debug,
+		setProgramStatus,
 		ctx,
 		emit,
 		bus,

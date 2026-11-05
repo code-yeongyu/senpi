@@ -2,7 +2,7 @@ import { type AssistantMessage, lazyStream, type Model } from "@earendil-works/p
 import { describe, expect, it, vi } from "vitest";
 import { getAssistantCapture, pushAssistantProgress } from "../../ai/src/utils/assistant-capture.ts";
 import { AssistantMessageEventStream } from "../../ai/src/utils/event-stream.ts";
-import { Agent } from "../src/agent.ts";
+import { Agent } from "../src/index.ts";
 import { createInternalAgentChannel, type OrderedAgentRecord } from "../src/internal-events.ts";
 import type { AgentEvent } from "../src/types.ts";
 
