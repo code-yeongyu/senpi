@@ -178,15 +178,18 @@ export {
 	type LoopHookHostOptions,
 	LoopHookClosedError,
 	LoopHookFailedError,
+	LoopHookRefusedError,
 	LoopHookRestartedError,
 } from "./execution/loop-hook-host.ts";
 export {
 	type LoopHookHand,
 	type LoopHookHandOptions,
 	type LoopHookPoint,
+	type LoopHookRecord,
 	type LoopHookRunner,
 	serveLoopHooks,
 } from "./execution/loop-hook-host-hand.ts";
+export type { LoopHookRefusal } from "./execution/loop-hook-host-protocol.ts";
 export {
 	createRemoteToolHost,
 	type HandPlacement,

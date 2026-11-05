@@ -1,7 +1,13 @@
 import type { JsonValue } from "@earendil-works/pi-ai";
 import { canonicalJson } from "./canonical-digest.ts";
 import type { Transport, TransportFrame } from "../transport/transport.ts";
-import { decodeLoopHookMessage, encodeLoopHookMessage, type LoopHookCall } from "./loop-hook-host-protocol.ts";
+import {
+	decodeLoopHookMessage,
+	encodeLoopHookMessage,
+	type LoopHookCall,
+	type LoopHookRefusal,
+	type LoopHookRefused,
+} from "./loop-hook-host-protocol.ts";
 
 /**
  * The loop host's side of the loop-hook link (brain/hand split S33; decisions C8, K5, K7). When the loop runs on a
@@ -34,8 +40,11 @@ export interface LoopHookHostOptions {
 	/** The lane the link uses; one per session. */
 	readonly lane: string;
 	readonly mintId?: () => string;
-	/** The session's owner epoch, stamped on every hook call it sends (senpi#5916); absent: calls carry none. */
-	readonly epoch?: number;
+	/**
+	 * The session's current owner epoch, read at each transmission and stamped on the call (senpi#5916), so a call created
+	 * at E and sent again after a reclaim carries E+1. Absent: calls carry none.
+	 */
+	readonly epoch?: () => number;
 }
 
 /** The hooks ran on the user's machine and failed there; the message is the hook's own. */
@@ -55,6 +64,16 @@ export class LoopHookRestartedError extends Error {
 	}
 }
 
+/** The hand refused the call at the loop host's current epoch; it never ran (senpi#5916). */
+export class LoopHookRefusedError extends Error {
+	readonly reason: LoopHookRefusal;
+	constructor(reason: LoopHookRefusal) {
+		super(`The user's machine refused the hook call: ${reason}`);
+		this.name = "LoopHookRefusedError";
+		this.reason = reason;
+	}
+}
+
 /** The loop host closed its link on purpose: a deliberate close, never a dead link (senpi#5867). */
 export class LoopHookClosedError extends Error {
 	constructor(message: string) {
@@ -66,6 +85,8 @@ export class LoopHookClosedError extends Error {
 interface Pending {
 	readonly call: LoopHookCall;
 	startedBy?: string;
+	/** The epoch this call was last re-issued at after a stale refusal: at most one re-issue per epoch. */
+	reissuedAt?: number;
 	readonly resolve: (result: JsonValue) => void;
 	readonly reject: (error: Error) => void;
 }
@@ -82,7 +103,8 @@ export function createLoopHookHost(options: LoopHookHostOptions): LoopHookHost {
 	let closed = false;
 
 	const send = (call: LoopHookCall): void => {
-		transport.send(lane, encodeLoopHookMessage(call)).catch((error: unknown) => {
+		const stamped = options.epoch === undefined ? call : { ...call, epoch: options.epoch() };
+		transport.send(lane, encodeLoopHookMessage(stamped)).catch((error: unknown) => {
 			const reason = error instanceof Error ? error.message : String(error);
 			settle(call.callId, (waiter) => waiter.reject(new Error(`The link to the user's machine closed: ${reason}`)));
 		});
@@ -92,6 +114,18 @@ export function createLoopHookHost(options: LoopHookHostOptions): LoopHookHost {
 		if (waiter === undefined) return;
 		pending.delete(callId);
 		finish(waiter);
+	};
+	// A refusal echoing an epoch below ours is a stale re-delivery (the transport re-sends stored bytes after a reclaim):
+	// send the same call again at our epoch, once per epoch. Any other refusal ends the call; it never ran.
+	const onRefused = (refused: LoopHookRefused): void => {
+		const waiter = pending.get(refused.callId);
+		if (waiter === undefined) return;
+		const current = options.epoch?.();
+		if (current === undefined || refused.epoch >= current)
+			return settle(refused.callId, (done) => done.reject(new LoopHookRefusedError(refused.reason)));
+		if (waiter.reissuedAt === current) return;
+		waiter.reissuedAt = current;
+		send(waiter.call);
 	};
 
 	transport.onFrame((frame: TransportFrame) => {
@@ -107,6 +141,13 @@ export function createLoopHookHost(options: LoopHookHostOptions): LoopHookHost {
 				return settle(message.callId, (waiter) => waiter.resolve(message.result));
 			case "hook.failed":
 				return settle(message.callId, (waiter) => waiter.reject(new LoopHookFailedError(message.error)));
+			case "hook.refused":
+				return onRefused(message);
+			case "hook.restarted": {
+				const waiter = pending.get(message.callId);
+				if (waiter === undefined || waiter.startedBy === message.instance) return;
+				return settle(message.callId, (stale) => stale.reject(new LoopHookRestartedError(stale.call.event)));
+			}
 			case "hook.hello":
 				for (const waiter of [...pending.values()]) {
 					if (waiter.startedBy === undefined) send(waiter.call);
@@ -128,7 +169,6 @@ export function createLoopHookHost(options: LoopHookHostOptions): LoopHookHost {
 				callId: callKey ?? mintId(),
 				event,
 				payload,
-				...(options.epoch === undefined ? {} : { epoch: options.epoch }),
 			};
 			const result = new Promise<JsonValue>((resolve, reject) => {
 				pending.set(call.callId, { call, resolve, reject });
