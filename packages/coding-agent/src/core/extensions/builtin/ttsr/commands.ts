@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "../../types.ts";
 import { COLLAPSE_RULE_NAME, CONTROL_LEAK_RULE_NAME } from "./prompts.ts";
+import type { TtsrDisabledBy } from "./settings.ts";
 import {
 	COLLAPSE_REMEDIATION,
 	CONTROL_LEAK_REMEDIATION,
@@ -12,6 +13,14 @@ export interface TtsrPublicState {
 	readonly rules: readonly TtsrRule[];
 	readonly injectedRuleNames: readonly string[];
 	readonly disabled: boolean;
+	readonly disabledBy: TtsrDisabledBy | null;
+}
+
+function formatStatus(state: TtsrPublicState): string {
+	if (!state.disabled) return "enabled";
+	return state.disabledBy === "settings"
+		? "disabled (ttsr.enabled is false in settings)"
+		: "disabled (ttsr-disabled flag set)";
 }
 
 interface BuiltinRuleStatus {
@@ -52,7 +61,7 @@ function formatTtsrStatus(state: TtsrPublicState): string {
 		"TTSR stream rules",
 		"",
 		"STATUS",
-		state.disabled ? "disabled (ttsr-disabled flag set)" : "enabled",
+		formatStatus(state),
 		"",
 		"BUILTIN RULES",
 		"DETECTORS",

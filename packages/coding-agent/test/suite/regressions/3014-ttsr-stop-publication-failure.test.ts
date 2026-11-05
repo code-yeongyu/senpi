@@ -62,7 +62,7 @@ it("announces the TTSR stop when its engine-paused publication throws", async ()
 			.getEntries()
 			.filter((entry) => entry.type === "custom" && entry.customType === "ttsr-loop-stopped"),
 	).toHaveLength(1);
-	expect(stopped).toEqual([{ rules: [expect.any(String)] }]);
+	expect(stopped).toEqual([{ rules: [expect.any(String)], reason: "repeated-after-correction" }]);
 	expect(notices).toEqual([{ message: expect.any(String), type: "warning" }]);
 	const records: unknown[] = (await readFile(join(harness.tempDir, "agent", "logs", "session.log"), "utf8"))
 		.trim()

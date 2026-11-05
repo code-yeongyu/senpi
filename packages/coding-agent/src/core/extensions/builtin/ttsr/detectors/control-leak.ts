@@ -56,7 +56,16 @@ export interface ControlLeakState {
 	markupRunTokenId: string | null;
 }
 
-function thresholdFor(context: LeakContextKind): number {
+/**
+ * A DSML tag is DeepSeek tool-call syntax: outside quoted or fenced examples one tag is already a leak, so it
+ * resamples before the model can imitate it into a collapse (senpi#4621).
+ */
+const DSML_LEAK_THRESHOLD = 1;
+
+function thresholdFor(context: LeakContextKind, family: TokenFamily): number {
+	if (family === "dsml" && context !== "quotation") {
+		return DSML_LEAK_THRESHOLD;
+	}
 	if (context === "start") {
 		return RUN_THRESHOLD_START;
 	}
@@ -163,7 +172,7 @@ function processToken(state: ControlLeakState, token: ControlToken): void {
 	state.whitespaceOnlySinceToken = true;
 	state.tracker.observeText(token.text);
 	const active = state.run;
-	if (active !== null && active.count >= thresholdFor(active.context)) {
+	if (active !== null && active.count >= thresholdFor(active.context, active.family)) {
 		state.latched = {
 			rule: "control-token-leak",
 			reason: `${active.count}x ${active.tokenId} run in ${active.context} context`,
