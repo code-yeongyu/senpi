@@ -3,8 +3,19 @@ import { Type } from "typebox";
 import { modelOnlyText } from "../../../../tools/model-only-text.ts";
 import { defineTool } from "../../../types.ts";
 
-import { htmlToMarkdown, htmlToText } from "./content.lazy.ts";
+import { htmlToMarkdown, htmlToText, looksLikeAppShell, stripScripts } from "./content.lazy.ts";
 import { clampTimeout, fetchUrl, type WebfetchFormat } from "./fetcher.ts";
+import {
+	BrowserSkillError,
+	type ConnectedBrowser,
+	createBrowserSkillRenderer,
+	type PageRenderer,
+	type WebfetchBrowserSkip,
+} from "./browser-skill.ts";
+
+const BROWSER_ENV = "PI_WEBFETCH_BROWSER";
+// A rendered read gets at least this long; with less of the call's timeout left it is skipped.
+const MIN_RENDER_BUDGET_MS = 3_000;
 
 const WEBFETCH_FORMATS = ["markdown", "text", "html"] as const;
 
@@ -15,7 +26,12 @@ const Params = Type.Object({
 			description: "The format to return the content in. Defaults to markdown.",
 		}),
 	),
-	timeout: Type.Optional(Type.Number({ description: "Optional timeout in seconds. Maximum 120." })),
+	timeout: Type.Optional(
+		Type.Number({
+			description:
+				"Optional timeout in seconds. Defaults to 30; a missing, zero or negative value means 30. Maximum 120.",
+		}),
+	),
 });
 
 export interface WebfetchDetails {
@@ -36,10 +52,16 @@ export interface WebfetchDetails {
 	outputBytes: number;
 	/** Byte length of the full converted text before the output cap. */
 	outputTotalBytes: number;
+	/** Whether the text came from a rendered read because the static HTML was an empty app shell. */
+	rendered: boolean;
+	/** Why an app shell was not replaced by its rendered read, when it was not. */
+	renderSkipped?: WebfetchBrowserSkip;
+	/** The connected browser that read the page, when one did. */
+	browser?: ConnectedBrowser;
 }
 
 export interface WebfetchProgressDetails {
-	phase: "fetching" | "downloading" | "converting";
+	phase: "fetching" | "downloading" | "converting" | "rendering";
 	url: string;
 	format: WebfetchFormat;
 	timeoutSeconds: number;
@@ -54,119 +76,222 @@ export interface WebfetchProgressDetails {
 
 export type WebfetchRenderDetails = WebfetchDetails | WebfetchProgressDetails;
 
-export const webfetch = defineTool<typeof Params, WebfetchRenderDetails>({
-	name: "webfetch",
-	runs: "brain",
-	workspaceEffect: "read",
-	label: "Web Fetch",
-	description:
-		"Fetches content from a URL and returns it as markdown, plain text, or HTML. " +
-		"Network use is bounded by timeout and response size limits.",
-	promptSnippet: "webfetch: retrieve URL content as markdown, text, or html",
-	fullPromptGuidelines: [
-		"Use webfetch when a specific URL must be retrieved.",
-		"Prefer markdown format unless raw HTML or plain text is explicitly needed.",
-		"The tool is read-only and does not modify files.",
-	],
-	parameters: Params,
-	async execute(_toolCallId, params, signal, onUpdate, _ctx) {
-		const format = parseWebfetchFormat(params.format);
-		const timeoutSeconds = clampTimeout(params.timeout);
-		const startedAt = Date.now();
-		const progress = {
-			activity: `fetching ${params.url}`,
-			startedAt,
-			maxWaitMs: timeoutSeconds * 1000,
-		};
-		let downloadedTotalBytes: number | undefined;
-		const emitProgress = (details: WebfetchProgressDetails): void => {
-			onUpdate?.({
-				content: [
-					{
-						type: "text",
-						text: `Fetching ${params.url} as ${format} (timeout ${timeoutSeconds}s)`,
-					},
-				],
-				details,
-			});
-		};
-		emitProgress({
-			phase: "fetching",
-			url: params.url,
-			format,
-			timeoutSeconds,
-			progress,
-		});
+export type { WebfetchBrowserSkip } from "./browser-skill.ts";
 
-		const fetched = await fetchUrl({
-			url: params.url,
-			format,
-			timeoutSeconds,
-			...(signal === undefined ? {} : { signal }),
-			onProgress: (bytesRead, totalBytes) => {
-				downloadedTotalBytes = totalBytes;
-				emitProgress({
-					phase: "downloading",
-					url: params.url,
-					format,
-					timeoutSeconds,
-					bytesRead,
-					...(totalBytes === undefined ? {} : { totalBytes }),
-					progress,
+export interface WebfetchToolOptions {
+	/** Reads app-shell pages rendered; defaults to the user's BrowserSkill-connected browser. */
+	readonly renderer?: PageRenderer;
+}
+
+export const webfetch = createWebfetchTool();
+
+export function createWebfetchTool(options: WebfetchToolOptions = {}) {
+	const renderer = options.renderer ?? createBrowserSkillRenderer();
+	return defineTool<typeof Params, WebfetchRenderDetails>({
+		name: "webfetch",
+		runs: "brain",
+		workspaceEffect: "read",
+		label: "Web Fetch",
+		description:
+			"Fetches content from a URL and returns it as markdown, plain text, or HTML. " +
+			"A response over 5MB fails with an error instead of returning partial content, and the text handed back is capped at 50KB with a truncation notice.",
+		promptSnippet: "webfetch: retrieve URL content as markdown, text, or html",
+		fullPromptGuidelines: [
+			"Use webfetch when a specific URL must be retrieved.",
+			"Prefer markdown format unless raw HTML or plain text is explicitly needed.",
+			"The tool is read-only and does not modify files.",
+		],
+		parameters: Params,
+		async execute(_toolCallId, params, signal, onUpdate, _ctx) {
+			const format = parseWebfetchFormat(params.format);
+			const timeoutSeconds = clampTimeout(params.timeout);
+			const startedAt = Date.now();
+			const progress = {
+				activity: `fetching ${params.url}`,
+				startedAt,
+				maxWaitMs: timeoutSeconds * 1000,
+			};
+			let downloadedTotalBytes: number | undefined;
+			const emitProgress = (details: WebfetchProgressDetails): void => {
+				onUpdate?.({
+					content: [
+						{
+							type: "text",
+							text: `Fetching ${params.url} as ${format} (timeout ${timeoutSeconds}s)`,
+						},
+					],
+					details,
 				});
-			},
-		});
-		const raw = new TextDecoder().decode(fetched.body);
-		const contentType = fetched.contentType.toLowerCase();
-		emitProgress({
-			phase: "converting",
-			url: params.url,
-			format,
-			timeoutSeconds,
-			bytesRead: fetched.bytes,
-			...(downloadedTotalBytes === undefined ? {} : { totalBytes: downloadedTotalBytes }),
-			progress,
-		});
-		const isHtml = contentType.includes("text/html") || contentType.includes("application/xhtml+xml");
-		let text = raw;
-		let converted = false;
+			};
+			emitProgress({
+				phase: "fetching",
+				url: params.url,
+				format,
+				timeoutSeconds,
+				progress,
+			});
 
-		if (isHtml && format === "markdown") {
-			text = await htmlToMarkdown(raw, fetched.url);
-			converted = true;
-		} else if (isHtml && format === "text") {
-			text = await htmlToText(raw, fetched.url);
-			converted = true;
+			const fetched = await fetchUrl({
+				url: params.url,
+				format,
+				timeoutSeconds,
+				...(signal === undefined ? {} : { signal }),
+				onProgress: (bytesRead, totalBytes) => {
+					downloadedTotalBytes = totalBytes;
+					emitProgress({
+						phase: "downloading",
+						url: params.url,
+						format,
+						timeoutSeconds,
+						bytesRead,
+						...(totalBytes === undefined ? {} : { totalBytes }),
+						progress,
+					});
+				},
+			});
+			const raw = new TextDecoder().decode(fetched.body);
+			const contentType = fetched.contentType.toLowerCase();
+			emitProgress({
+				phase: "converting",
+				url: params.url,
+				format,
+				timeoutSeconds,
+				bytesRead: fetched.bytes,
+				...(downloadedTotalBytes === undefined ? {} : { totalBytes: downloadedTotalBytes }),
+				progress,
+			});
+			const isHtml = contentType.includes("text/html") || contentType.includes("application/xhtml+xml");
+			let text = raw;
+			let converted = false;
+			let rendered = false;
+			let renderSkipped: WebfetchBrowserSkip | undefined;
+			let browser: ConnectedBrowser | undefined;
+			let renderTruncated = false;
+			let renderedUrl: string | undefined;
+
+			if (isHtml && format !== "html") {
+				const convert = format === "markdown" ? htmlToMarkdown : htmlToText;
+				text = await convert(raw, fetched.url);
+				converted = true;
+				if (await looksLikeAppShell(raw, fetched.url)) {
+					const budgetMs = startedAt + timeoutSeconds * 1000 - Date.now();
+					let outcome: RenderOutcome = {
+						skipped: { reason: "disabled", message: `${BROWSER_ENV}=0 turns browser reads off` },
+					};
+					if (isBrowserEnabled()) {
+						emitProgress({ phase: "rendering", url: params.url, format, timeoutSeconds, progress });
+						outcome = await readRendered(renderer, fetched.url, budgetMs, convert, text, signal);
+					}
+					if (outcome.text !== undefined) {
+						text = outcome.text;
+						rendered = true;
+						browser = outcome.browser;
+						renderTruncated = outcome.truncated === true;
+						renderedUrl = outcome.url;
+					} else {
+						renderSkipped = outcome.skipped;
+					}
+				}
+			}
+
+			const capped = capWebfetchOutput(text);
+
+			const details: WebfetchDetails = {
+				url: params.url,
+				// A rendered read reports the URL its text came from, which can differ from the static response's.
+				finalUrl: renderedUrl ?? fetched.url,
+				format,
+				status: fetched.status,
+				statusText: fetched.statusText,
+				contentType: fetched.contentType,
+				bytes: fetched.bytes,
+				timeoutSeconds,
+				converted,
+				truncated: fetched.truncated || renderTruncated,
+				outputTruncated: capped.truncated,
+				outputBytes: capped.outputBytes,
+				outputTotalBytes: capped.totalBytes,
+				rendered,
+				...(renderSkipped === undefined ? {} : { renderSkipped }),
+				...(browser === undefined ? {} : { browser }),
+			};
+
+			const notices = [capped.notice, renderNotice(rendered, renderer.name, renderSkipped)].filter(
+				(notice): notice is string => notice !== undefined,
+			);
+			const content: TextContent[] = [
+				{ type: "text", text: notices.length === 0 ? capped.text : `${capped.text}\n` },
+			];
+			for (const notice of notices) content.push(modelOnlyText(notice));
+			return {
+				content,
+				details,
+			};
+		},
+	});
+}
+
+function isBrowserEnabled(): boolean {
+	const value = process.env[BROWSER_ENV]?.trim().toLowerCase();
+	return !(value === "0" || value === "false" || value === "no" || value === "off");
+}
+
+interface RenderOutcome {
+	readonly text?: string;
+	readonly url?: string;
+	readonly browser?: ConnectedBrowser;
+	readonly truncated?: boolean;
+	readonly skipped?: WebfetchBrowserSkip;
+}
+
+/** Renders an unlisted app shell in an incognito window; any failure keeps the static text and says why. */
+async function readRendered(
+	renderer: PageRenderer,
+	url: string,
+	budgetMs: number,
+	convert: (html: string, url: string) => Promise<string>,
+	staticText: string,
+	signal: AbortSignal | undefined,
+): Promise<RenderOutcome> {
+	if (budgetMs < MIN_RENDER_BUDGET_MS) {
+		return { skipped: { reason: "no_time_left", message: "no time was left in the request timeout to render it" } };
+	}
+	try {
+		const { page, browser } = await renderer.render(url, {
+			mode: "incognito",
+			timeoutMs: budgetMs,
+			...(signal === undefined ? {} : { signal }),
+		});
+		const text = await convert(await stripScripts(page.html, page.url), page.url);
+		if (text.trim().length <= staticText.trim().length) {
+			return { skipped: { reason: "no_more_text", message: "the rendered page had no more text" } };
 		}
-
-		const capped = capWebfetchOutput(text);
-
-		const details: WebfetchDetails = {
-			url: params.url,
-			finalUrl: fetched.url,
-			format,
-			status: fetched.status,
-			statusText: fetched.statusText,
-			contentType: fetched.contentType,
-			bytes: fetched.bytes,
-			timeoutSeconds,
-			converted,
-			truncated: fetched.truncated,
-			outputTruncated: capped.truncated,
-			outputBytes: capped.outputBytes,
-			outputTotalBytes: capped.totalBytes,
-		};
-
-		const content: TextContent[] = [
-			{ type: "text", text: capped.notice === undefined ? capped.text : `${capped.text}\n` },
-		];
-		if (capped.notice !== undefined) content.push(modelOnlyText(capped.notice));
+		return { text, url: page.url, browser, truncated: page.truncated };
+	} catch (error) {
+		if (signal?.aborted) throw error;
+		if (error instanceof BrowserSkillError) return { skipped: error.skip };
 		return {
-			content,
-			details,
+			skipped: {
+				reason: "render_failed",
+				message: "the browser read failed",
+				detail: error instanceof Error ? error.message : String(error),
+			},
 		};
-	},
-});
+	}
+}
+
+function renderNotice(
+	rendered: boolean,
+	rendererName: string,
+	skipped: WebfetchBrowserSkip | undefined,
+): string | undefined {
+	if (rendered) {
+		return `[The static HTML was an empty app shell, so this page was read in ${rendererName}, in an incognito window without your cookies.]`;
+	}
+	if (skipped === undefined) return undefined;
+	const detail = skipped.detail === undefined ? "" : ` (${skipped.detail})`;
+	return `[The static HTML looks like an empty app shell that needs JavaScript; ${skipped.reason}: ${skipped.message}${detail}.]`;
+}
 
 export function parseWebfetchFormat(value: unknown): WebfetchFormat {
 	if (value === undefined) return "markdown";
