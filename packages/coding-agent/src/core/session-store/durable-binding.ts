@@ -1,6 +1,4 @@
-import { randomUUID } from "node:crypto";
-import { open, rename, rm, stat } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { resolve } from "node:path";
 import {
 	createAdmissionLine,
 	openSessionStore,
@@ -11,14 +9,11 @@ import {
 	type SyncSessionHandle,
 } from "@earendil-works/pi-agent-core";
 import type { StoreValue } from "@earendil-works/pi-agent-core/conformance";
-import { captureFileIdentity } from "../session-file-identity.ts";
-import { createJsonlImporter, jsonlFiles, type JsonlFileStamp } from "../session-import/jsonl-import.ts";
+import { createJsonlImporter, jsonlFiles } from "../session-import/jsonl-import.ts";
 import type { FileIdentity } from "../session-transcript-journal.ts";
+import { codeOf, type ProjectionFiles, projectionImage, replaceWith, stampOf } from "./projection-file.ts";
 
-/** The binding's asynchronous whole-file projection writes; the default is the atomic replace below. A test seam for win32. */
-export interface ProjectionFiles {
-	replace(path: string, contents: string): Promise<void>;
-}
+export type { ProjectionFiles } from "./projection-file.ts";
 
 export interface DurableStoreBinding {
 	readonly store: SyncCommitStore;
@@ -48,71 +43,13 @@ export const storeKeyOf = (entryId: string): string => (entryId.startsWith("~") 
 const STALE = "session-store/projection-stale/";
 const staleKey = (path: string): string => STALE + encodeURIComponent(path);
 
-const codeOf = (error: unknown): string =>
-	error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : "unknown";
 const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));
-
-function projectionImage(header: SessionHeader, entries: readonly StoredEntry[]): string {
-	return [JSON.stringify(header), ...entries.map((entry) => entry.line)].map((line) => `${line}\n`).join("");
-}
-
-async function stampOf(path: string): Promise<JsonlFileStamp | undefined> {
-	try {
-		const value = await stat(path);
-		return { size: value.size, mtimeMs: value.mtimeMs, ctimeMs: value.ctimeMs };
-	} catch (error) {
-		if (codeOf(error) === "ENOENT") return undefined;
-		throw error;
-	}
-}
-
-/** Today's atomic replace, asynchronous: a temp file written and synced beside the target, then renamed over it. */
-async function replaceAtomically(path: string, contents: string): Promise<FileIdentity | undefined> {
-	const mode = (await modeOf(path)) ?? 0o600;
-	const temp = join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`);
-	const handle = await open(temp, "wx", mode);
-	let identity: FileIdentity | undefined;
-	try {
-		await handle.writeFile(contents);
-		await handle.sync();
-		identity = await captureFileIdentity(handle.fd, path);
-	} finally {
-		await handle.close();
-	}
-	try {
-		await rename(temp, path);
-	} catch (error) {
-		await rm(temp, { force: true });
-		throw error;
-	}
-	return identity;
-}
-
-async function modeOf(path: string): Promise<number | undefined> {
-	try {
-		return (await stat(path)).mode & 0o777;
-	} catch (error) {
-		if (codeOf(error) === "ENOENT") return undefined;
-		throw error;
-	}
-}
 
 const isRecord = (value: StoreValue | undefined): value is { readonly [key: string]: StoreValue } =>
 	typeof value === "object" && value !== null && !Array.isArray(value);
 
 const staleSessionIdOf = (mark: StoreValue | undefined): string | undefined =>
 	isRecord(mark) && typeof mark.sessionId === "string" ? mark.sessionId : undefined;
-
-/** A provided ProjectionFiles is called as a method, so a class implementing it keeps its `this`; its identity is unknown. */
-async function replaceWith(
-	files: ProjectionFiles | undefined,
-	path: string,
-	contents: string,
-): Promise<FileIdentity | undefined> {
-	if (files === undefined) return replaceAtomically(path, contents);
-	await files.replace(path, contents);
-	return undefined;
-}
 
 /** Whether a Node developer-hatch write is the file's last change: its K9-F2 marker matches the file's stamp. */
 async function hatchWroteLast(path: string): Promise<boolean> {
