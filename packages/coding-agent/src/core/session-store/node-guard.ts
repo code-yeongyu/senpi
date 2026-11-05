@@ -1,3 +1,4 @@
+import chalk from "chalk";
 import { isBunRuntime } from "../../config.ts";
 
 /** The one steering message a Node process gets when it would open session state (K9.a, senpi#5822). */
@@ -14,6 +15,16 @@ export function nodeJsonlHatchEnabled(env: NodeJS.ProcessEnv = process.env): boo
 }
 
 /** Whether this process may open session state: always on Bun, and on Node only under the hatch. */
-export function sessionStateAvailable(env: NodeJS.ProcessEnv = process.env): boolean {
+function sessionStateAvailable(env: NodeJS.ProcessEnv = process.env): boolean {
 	return isBunRuntime || nodeJsonlHatchEnabled(env);
+}
+
+/**
+ * The CLI's one exit where it would open session state on Node: the steering message on stderr and exit code 1, before
+ * any session file or store exists. Called after the Bun re-exec attempt, by every CLI path that opens sessions.
+ */
+export function exitUnlessSessionStateAvailable(): void {
+	if (sessionStateAvailable()) return;
+	console.error(chalk.red(NODE_REQUIRES_BUN_MESSAGE));
+	process.exit(1);
 }

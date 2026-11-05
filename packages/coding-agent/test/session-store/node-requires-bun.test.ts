@@ -22,7 +22,7 @@ import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { StayReason } from "../../src/bun-runtime.ts";
+import { readBunVersion, resolveBunReexec, type StayReason } from "../../src/bun-runtime.ts";
 import { createAgentSession } from "../../src/core/sdk.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import { NODE_REQUIRES_BUN_MESSAGE } from "../../src/core/session-store/node-guard.ts";
@@ -69,9 +69,22 @@ interface Run {
 	readonly env: Record<string, string>;
 }
 
+/**
+ * A PATH that holds this Node and nothing else, so no Bun is reachable through it even on a host where node and bun
+ * share a bin directory. Windows keeps Node's own directory: creating a symlink there needs extra privileges.
+ */
+function nodeOnlyPath(dirs: Dirs): string {
+	if (process.platform === "win32") return dirname(process.execPath);
+	const bin = join(dirs.root, "node-only", "bin");
+	if (!existsSync(bin)) {
+		mkdirSync(bin, { recursive: true });
+		symlinkSync(process.execPath, join(bin, "node"));
+	}
+	return bin;
+}
+
 /** The inputs that make the re-exec decision stay on Node for one reason. */
 function stayOnNode(dirs: Dirs, reason: Exclude<StayReason, "already-bun">): Run {
-	const nodeOnlyPath = dirname(process.execPath);
 	switch (reason) {
 		case "runtime-pinned-node":
 			return { entry: dirs.installed, env: { SENPI_RUNTIME: "node" } };
@@ -80,15 +93,35 @@ function stayOnNode(dirs: Dirs, reason: Exclude<StayReason, "already-bun">): Run
 		case "not-bun-install":
 			return { entry: cli, env: {} };
 		case "bun-not-found":
-			return { entry: dirs.installed, env: { BUN_INSTALL: join(dirs.root, "no-bun"), PATH: nodeOnlyPath } };
+			return { entry: dirs.installed, env: { BUN_INSTALL: join(dirs.root, "no-bun"), PATH: nodeOnlyPath(dirs) } };
 		case "bun-too-old": {
 			const bin = join(dirs.root, "old-bun", "bin");
 			mkdirSync(bin, { recursive: true });
 			writeFileSync(join(bin, "bun"), "#!/bin/sh\necho 1.3.0\n");
 			chmodSync(join(bin, "bun"), 0o755);
-			return { entry: dirs.installed, env: { BUN_INSTALL: join(dirs.root, "old-bun"), PATH: nodeOnlyPath } };
+			return {
+				entry: dirs.installed,
+				env: { BUN_INSTALL: join(dirs.root, "old-bun"), PATH: `${bin}${delimiter}${nodeOnlyPath(dirs)}` },
+			};
 		}
 	}
+}
+
+/** The decision the child CLI makes for a run, replayed in this process from the same inputs the child sees. */
+function decisionFor(dirs: Dirs, run: Run) {
+	return resolveBunReexec({
+		scriptRealPath: realpathSync(run.entry),
+		versions: {},
+		hasInheritedInspectorOption: run.env.NODE_OPTIONS?.includes("--inspect") === true,
+		options: {
+			env: { PATH: process.env.PATH ?? "", ...run.env },
+			homedir: dirs.root,
+			platform: process.platform,
+			exists: existsSync,
+			realpath: realpathSync,
+			bunVersion: readBunVersion,
+		},
+	});
 }
 
 async function runCli(dirs: Dirs, run: Run, args: readonly string[], requestState: boolean) {
@@ -158,6 +191,14 @@ const REASONS = ["runtime-pinned-node", "inspector", "not-bun-install", "bun-not
 describe.skipIf(process.versions.bun !== undefined)("a CLI process on Node (K9.a)", { timeout: 60_000 }, () => {
 	describe.each(REASONS)("stays on Node: %s", (reason) => {
 		it.skipIf(reason === "bun-too-old" && process.platform === "win32")(
+			"the fixture stays for exactly this reason",
+			() => {
+				const dirs = setup();
+				expect(decisionFor(dirs, stayOnNode(dirs, reason))).toEqual({ action: "stay", reason });
+			},
+		);
+
+		it.skipIf(reason === "bun-too-old" && process.platform === "win32")(
 			"prints the steering message, exits non-zero and creates no session state",
 			async () => {
 				const dirs = setup();
@@ -181,9 +222,29 @@ describe.skipIf(process.versions.bun !== undefined)("a CLI process on Node (K9.a
 				);
 				expect(result.state?.success).toBe(true);
 				expect(result.stderr).not.toContain(NODE_REQUIRES_BUN_MESSAGE);
+				// The session is bound to a JSONL file under the session directory, and no durable store exists.
+				expect(result.state?.data).toEqual(
+					expect.objectContaining({ sessionFile: expect.stringContaining(dirs.sessions) }),
+				);
+				expect(result.state?.data).toEqual(
+					expect.objectContaining({ sessionFile: expect.stringMatching(/\.jsonl$/) }),
+				);
 				expect(created(dirs).store).toBe(false);
 			},
 		);
+	});
+
+	it("refuses to start a multi-session RPC host, before any session opens", async () => {
+		const dirs = setup();
+		const result = await runCli(
+			dirs,
+			stayOnNode(dirs, "not-bun-install"),
+			[...SESSION_ARGS, "--multi-session"],
+			false,
+		);
+		expect(result.stderr).toContain(NODE_REQUIRES_BUN_MESSAGE);
+		expect(result.code).toBe(1);
+		expect(created(dirs)).toEqual({ sessionFiles: 0, store: false });
 	});
 
 	it.each([["--version"], ["--help"]])("%s still works on Node", async (flag) => {
