@@ -1,11 +1,7 @@
 // S32 (brain/hand split, senpi#5641): on a split session the tools declared `runs: "brain"` run where the loop runs
 // and never reach the hand, a hand-run tool reaches them over the session plane, and a thread chain (A→B→A…) is limited
 // only by a count the user sets (K8): unset means unlimited, and there is no cost limit.
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
-	type AgentToolCall,
 	admitChainCall,
 	CHAIN_COUNT_LIMIT,
 	ChainCountLimitError,
@@ -20,86 +16,14 @@ import {
 	serveSessionPlane,
 	type ToolHost,
 } from "@earendil-works/pi-agent-core";
-import type { ToolResultMessage } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
-import { parseArgs } from "../../src/cli/args.ts";
+import { describe, expect, it } from "vitest";
 import type { TodoToolDetails } from "../../src/core/extensions/builtin/todotools/state.ts";
-import type { ToolDefinition } from "../../src/core/extensions/types.ts";
-import { SessionManager } from "../../src/core/session-manager.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
-import { builtInExtensions } from "../../src/extensions/index.ts";
-import { createCliRuntimeFactory } from "../../src/main.ts";
-import { cleanupHands, openLink, startHandOn } from "../hand/remote-hand-fixture.ts";
-
-const cleanups: Array<() => Promise<void>> = [];
-afterEach(async () => {
-	for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
-	await cleanupHands();
-});
-
-async function scratch(
-	settings?: Record<string, unknown>,
-): Promise<{ readonly cwd: string; readonly agentDir: string }> {
-	const root = await mkdtemp(join(tmpdir(), "senpi-s32-"));
-	cleanups.push(() => rm(root, { recursive: true, force: true }));
-	const cwd = join(root, "project");
-	const agentDir = join(root, "agent");
-	await mkdir(cwd, { recursive: true });
-	await mkdir(agentDir, { recursive: true });
-	if (settings) await writeFile(join(agentDir, "settings.json"), JSON.stringify(settings));
-	return { cwd, agentDir };
-}
-
-async function shippedSession() {
-	const { cwd, agentDir } = await scratch();
-	const parsed = parseArgs(["--mode", "rpc", "--no-skills", "--no-context-files", "--no-prompt-templates"]);
-	const runtime = await createCliRuntimeFactory(
-		{ parsed, cwd, agentDir, appMode: "rpc" },
-		{ extensionFactories: [...builtInExtensions] },
-	)({ cwd, agentDir, sessionManager: SessionManager.inMemory(cwd) });
-	cleanups.push(async () => {
-		runtime.session.dispose();
-		await runtime.session.whenToolChildClosed();
-	});
-	const session = runtime.session;
-	const definitions = session.getAllTools().flatMap((tool): ToolDefinition[] => {
-		const definition = session.getToolDefinition(tool.name);
-		return definition ? [definition] : [];
-	});
-	return { session, definitions };
-}
-
-function resultOf(call: AgentToolCall, text: string): ToolResultMessage {
-	return {
-		role: "toolResult",
-		toolCallId: call.id,
-		toolName: call.name,
-		content: [{ type: "text", text }],
-		details: {},
-		isError: false,
-		timestamp: 0,
-	};
-}
-
-function recordingHost(side: string, ran: string[]): ToolHost {
-	return {
-		async execute(call) {
-			const messages: ToolResultMessage[] = [];
-			for (const raw of call.calls) {
-				ran.push(`${side}:${raw.name}`);
-				messages.push(resultOf(raw, `${side}:${raw.name}`));
-			}
-			return { messages, terminate: false };
-		},
-	};
-}
-
-const call = (id: string, name: string): AgentToolCall => ({ type: "toolCall", id, name, arguments: {} });
-const texts = (messages: readonly ToolResultMessage[]): string[] =>
-	messages.map((message) => message.content.map((part) => (part.type === "text" ? part.text : "")).join(""));
+import { openLink, startHandOn } from "../hand/remote-hand-fixture.ts";
+import { call, cleanups, recordingHost, scratch, shippedSession, texts } from "./session-plane-fixture.ts";
 
 // Q's split (2026-11-03): todo is loop-side; file access and shell are the hand's.
-const LOOP_BY_RULING = ["todo"];
+const LOOP_BY_RULING = ["todo", "web_search", "webfetch"];
 const HAND_BY_RULING = ["read", "write", "edit", "bash", "grep", "find", "ls"];
 
 describe("session plane (S32): session tools run where the loop runs", () => {
