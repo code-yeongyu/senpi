@@ -11,7 +11,7 @@
  * unlink only while the path still stat-matches that identity.
  */
 import { execFile } from "node:child_process";
-import { lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { dirname } from "node:path";
 import { socketHoldersByIdentity } from "./socket-holders-by-identity.ts";
@@ -166,7 +166,10 @@ export async function socketEntryListenerState(
  */
 export async function statSocketIdentity(socketPath: string): Promise<SocketFileIdentity | undefined> {
 	try {
-		const { dev, ino } = await lstat(socketPath);
+		// A Windows named pipe has no filesystem entry, so no link can be planted there (#5319 is a POSIX path
+		// attack) and lstat has nothing to add; it is read with stat as before #5404, which broke the Windows
+		// supervisor's post-publish identity read.
+		const { dev, ino } = process.platform === "win32" ? await stat(socketPath) : await lstat(socketPath);
 		return { dev, ino };
 	} catch (cause) {
 		if (isNodeErrorCode(cause, "ENOENT")) return undefined;
