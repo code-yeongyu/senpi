@@ -42,6 +42,22 @@ export interface McpFormResolved {
 	readonly grantId: string;
 	readonly dialogId: string;
 	readonly reason: "answered" | "declined" | "cancelled" | "processing_failed" | "operation_aborted";
+	/** Only on grants whose signed acquire negotiated `elsewhere_v1`: another holder's human action settled it. */
+	readonly elsewhere?: true;
+}
+
+/** The verified presenter identity of a grant. `dev`/`dname` come from the attestation, never `remoteOrigin`. */
+export type McpPresenterIdentity =
+	| { readonly principalKind: "inherited" }
+	| { readonly principalKind: "account"; readonly dev: string; readonly dname: string };
+
+/** Value-free settle record of one form group, delivered privately to its `elsewhere_v1` holders only. */
+export interface McpFormSettled {
+	readonly type: "mcp_form_settled";
+	readonly sessionId: string;
+	readonly groupId: string;
+	readonly outcome: McpFormResolved["reason"];
+	readonly answeredBy?: McpPresenterIdentity & { readonly presenterKind: McpFormScope["presenterKind"] };
 }
 
 export type McpFormOutcome = (

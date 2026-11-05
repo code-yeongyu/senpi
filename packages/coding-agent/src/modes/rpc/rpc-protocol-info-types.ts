@@ -1,3 +1,5 @@
+import type { RpcMethodClassesDescription } from "./method-classes.ts";
+import type { PathIdentityResolverStatus } from "./path-identity-status.ts";
 import type { SessionRuntimeKind } from "../../cli/args.ts";
 
 import type { EngineOrdinal } from "../../core/engine-build-identity.ts";
@@ -40,6 +42,12 @@ export interface RpcProtocolIdentity {
 	readonly launch_profile: RpcLaunchProfile;
 	/** Absolute agent directory this host reads and writes; a handoff from another agent dir is refused. */
 	readonly agentDir: string;
+	/**
+	 * The inbound method-class table this engine runs (`method-classes.ts`): its `version`, `digest`, and the whole
+	 * table as data (`classes`: each type's class or `dynamic`; `dynamic_versions`: each rule's version), never the
+	 * rule functions (senpi#5632).
+	 */
+	readonly method_classes: RpcMethodClassesDescription;
 }
 
 export interface RpcProtocolInfo extends RpcProtocolIdentity {
@@ -61,4 +69,6 @@ export interface RpcProtocolInfo extends RpcProtocolIdentity {
 	 * `SENPI_RPC_HOST_RSS_WARN_MB` (the state `host_memory_pressure` records announce). Observability only.
 	 */
 	readonly memory_pressure?: boolean;
+	/** Multi-session hosts only: whether the permission system's path identity worker started, and why not. */
+	readonly path_identity_resolver?: PathIdentityResolverStatus;
 }

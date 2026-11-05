@@ -102,7 +102,8 @@ describe("JavaScriptKernel worker crash lifecycle", () => {
 		const queued = kernel.run({ cellId: "crash-queued", code: "return 40 + 2", timeoutMs: 2_000 });
 
 		await expect(first).resolves.toMatchObject({ ok: false });
-		await expect(withDeadline(queued, 750)).resolves.toMatchObject({ ok: true, valueRepr: "42" });
+		// The replacement worker's start is the event this waits for, however long a loaded host takes to give it.
+		await expect(queued).resolves.toMatchObject({ ok: true, valueRepr: "42" });
 		expect(await spawnCount(entry)).toBe(2);
 	});
 
@@ -113,7 +114,7 @@ describe("JavaScriptKernel worker crash lifecycle", () => {
 			ok: true,
 		});
 
-		await expect(withDeadline(kernel.queryMemory(), 5_000)).rejects.toThrow("intentional memory-query crash");
+		await expect(kernel.queryMemory()).rejects.toThrow("intentional memory-query crash");
 	});
 });
 
@@ -136,19 +137,4 @@ parentPort.on("message", (message) => {
 	const entry = { root, url: pathToFileURL(entryPath), spawnLog };
 	entries.add(entry);
 	return entry;
-}
-
-async function withDeadline<T>(promise: Promise<T>, delayMs: number): Promise<T> {
-	let timeout: NodeJS.Timeout | undefined;
-	const deadline = new Promise<never>((_, reject) => {
-		timeout = setTimeout(
-			() => reject(new Error(`queued JavaScript run did not settle within ${delayMs}ms`)),
-			delayMs,
-		);
-	});
-	try {
-		return await Promise.race([promise, deadline]);
-	} finally {
-		if (timeout) clearTimeout(timeout);
-	}
 }

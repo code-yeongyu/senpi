@@ -91,13 +91,16 @@ describe("default eval-only workflow policy", () => {
 			harness.session.setActiveToolsByName(allRequestedTools);
 
 			expect(harness.session.getActiveToolNames()).toEqual(["read", "edit", "write"]);
-			expect(harness.session.systemPrompt).toContain(
-				'Shell commands run ONLY inside eval cells via tool.bash({ command: "..." }) or tool.powershell({ command: "..." })',
-			);
-			expect(harness.session.systemPrompt).toContain(
-				'The workflow tool runs ONLY inside eval cells via tool.workflow({ action: "..." })',
-			);
-			expect(harness.session.systemPrompt).toContain(`These tools run ONLY inside eval cells via ${MONITOR_HINT}`);
+			// The shell, workflow and other eval-only groups share one closing paragraph (senpi#5335); pin their call shapes.
+			const evalOnlyParagraph = harness.session.systemPrompt.split("\n\n").at(-1) ?? "";
+			for (const shape of [
+				'tool.bash({ command: "..." })',
+				'tool.powershell({ command: "..." })',
+				'tool.workflow({ action: "..." })',
+				MONITOR_HINT,
+			]) {
+				expect(evalOnlyParagraph).toContain(shape);
+			}
 		} finally {
 			harness.cleanup();
 		}
@@ -173,9 +176,7 @@ describe("default eval-only workflow policy", () => {
 
 			expect(harness.session.getActiveToolNames()).not.toContain("custom");
 			expect(harness.agent.removedToolHints.custom).toContain("tool.custom({ ... })");
-			expect(harness.session.systemPrompt).toContain(
-				"These tools run ONLY inside eval cells via tool.custom({ ... }); hooks and permissions still apply.",
-			);
+			expect(harness.session.systemPrompt.split("\n\n").at(-1)).toContain("tool.custom({ ... })");
 		} finally {
 			harness.cleanup();
 		}

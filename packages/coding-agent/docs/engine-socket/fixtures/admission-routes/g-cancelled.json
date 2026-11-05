@@ -1,0 +1,39 @@
+{
+	"request": {
+		"type": "open_session",
+		"cwd": "<root>/cwd",
+		"admissionId": "golden-g",
+		"id": "peer-1"
+	},
+	"cancelled": {
+		"id": "peer-2",
+		"type": "response",
+		"command": "cancel_attempt",
+		"success": true,
+		"data": {
+			"outcome": "cancelled"
+		}
+	},
+	"answer": {
+		"id": "peer-1",
+		"type": "response",
+		"command": "open_session",
+		"success": false,
+		"error": "attempt_cancelled",
+		"errorCode": "attempt_cancelled",
+		"code": "attempt_cancelled",
+		"admissionId": "golden-g",
+		"generation": 1
+	},
+	"replay": {
+		"id": "peer-3",
+		"type": "response",
+		"command": "open_session",
+		"success": false,
+		"error": "attempt_cancelled",
+		"errorCode": "attempt_cancelled",
+		"code": "attempt_cancelled",
+		"admissionId": "golden-g",
+		"generation": 1
+	}
+}

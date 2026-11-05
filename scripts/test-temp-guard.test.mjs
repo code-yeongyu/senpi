@@ -68,6 +68,8 @@ test("job teardown retires only recorded run roots, including a late recreated r
 		isolateSystemChecks(receipt, directory);
 		assert.equal(readFileSync(environmentFile, "utf8"), `TMPDIR=${scope}\nTEMP=${scope}\nTMP=${scope}\nSENPI_TEST_TEMP_REGISTRY=${registry}\n`);
 		writeFileSync(join(scope, "node-compile-cache", "npm-cache"), "job-owned cache");
+		mkdirSync(join(scope, "jiti"), { recursive: true }); // jiti creates its default cache dir on first load
+		writeFileSync(join(scope, "jiti", "extension.cjs"), "job-owned cache");
 		const ran = spawnSync(process.execPath, [runner, process.execPath, "-e", ""], {
 			...options, env: { ...options.env, TMPDIR: scope, TEMP: scope, TMP: scope, SENPI_TEST_TEMP_REGISTRY: registry },
 		});
@@ -81,6 +83,7 @@ test("job teardown retires only recorded run roots, including a late recreated r
 		assert.equal(checked.status, 1);
 		assert.match(checked.stdout, /recorded owned roots retired at job teardown: 1/);
 		assert.match(checked.stderr, /late-worker-write/);
+		assert.doesNotMatch(checked.stderr, /leftover: "jiti"/);
 		assert.equal(existsSync(scope), false, "the exclusive job parent is removed even on leak failure");
 		assert.equal(readFileSync(environmentFile, "utf8"),
 			`TMPDIR=${scope}\nTEMP=${scope}\nTMP=${scope}\nSENPI_TEST_TEMP_REGISTRY=${registry}\n` +

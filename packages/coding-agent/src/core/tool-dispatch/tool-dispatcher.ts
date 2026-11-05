@@ -14,6 +14,7 @@ import { dirname, isAbsolute, resolve } from "node:path";
 import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import type { ToolRuntimeKind } from "../../cli/tool-runtime.ts";
 import type { HostCallHandler } from "../../modes/rpc/tool-child/host-calls-server.ts";
+import { kernelToolInvokerStorage } from "../extensions/kernel-tools-context.ts";
 import type { ExtensionToolContext, ToolChildJob, ToolDefinition, ToolPlacement } from "../extensions/types.ts";
 import { type BashOperations, createLocalBashOperations } from "../tools/bash.ts";
 import { childBashOperations } from "./child-bash-operations.ts";
@@ -175,7 +176,13 @@ abstract class BaseToolDispatcher implements ToolDispatcher {
 
 	protected runOnServer<TDetails>(call: ToolDispatchCall<TDetails>): Promise<AgentToolResult<TDetails>> {
 		this.emitDispatched({ toolCallId: call.toolCallId, placement: "server", pid: process.pid, generation: 0 });
-		return call.definition.execute(call.toolCallId, call.params, call.signal, call.onUpdate, call.ctx);
+		const execute = () => call.definition.execute(call.toolCallId, call.params, call.signal, call.onUpdate, call.ctx);
+		// Context-free wrappers and child/observer contexts have no host identity.
+		// Do not read an absent capability or inherit another dispatch's invoker.
+		const manager = call.ctx && "sessionManager" in call.ctx ? call.ctx.sessionManager : undefined;
+		return manager
+			? kernelToolInvokerStorage.run({ sessionId: manager.getSessionId() }, execute)
+			: kernelToolInvokerStorage.exit(execute);
 	}
 
 	protected emitDispatched(info: ToolDispatchedInfo): void {

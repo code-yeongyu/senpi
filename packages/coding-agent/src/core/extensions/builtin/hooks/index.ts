@@ -239,6 +239,8 @@ export default function hooksExtension(pi: ExtensionAPI): void {
 		}
 		if (systemPrompt !== event.systemPrompt) {
 			result.systemPrompt = systemPrompt;
+			// Per-prompt hook output differs between turns and sessions; keep it behind the cached prefix (senpi#4447).
+			result.systemPromptCache = "volatile";
 		}
 		return result;
 	};
@@ -247,6 +249,16 @@ export default function hooksExtension(pi: ExtensionAPI): void {
 	pi.on("tool_call", async (event, ctx) => {
 		pendingPreToolContexts.delete(event.toolCallId);
 		const state = refreshState(ctx);
+		// A runtime without a session (a hand, S27a) cannot give tool hooks their session input; with any configured it
+		// refuses the call rather than run the tool past them (fail-closed). Forwarding them to the session is S29's.
+		if (ctx.sessionManager === undefined) {
+			const toolHooks = state.parsed.executableHandlers.filter(
+				(handler) => handler.event === "PreToolUse" || handler.event === "PostToolUse",
+			);
+			return toolHooks.length === 0
+				? undefined
+				: { block: true, reason: "Tool hooks are configured, and this runtime has no session to run them with." };
+		}
 		const result = await dispatchHookEvent({
 			cwd: ctx.cwd,
 			handlers: state.parsed.executableHandlers,
@@ -274,6 +286,7 @@ export default function hooksExtension(pi: ExtensionAPI): void {
 	pi.on("tool_result", async (event, ctx) => {
 		const preToolContexts = pendingPreToolContexts.get(event.toolCallId) ?? [];
 		pendingPreToolContexts.delete(event.toolCallId);
+		if (ctx.sessionManager === undefined) return undefined;
 		const state = refreshState(ctx);
 		const result = await dispatchHookEvent({
 			cwd: ctx.cwd,

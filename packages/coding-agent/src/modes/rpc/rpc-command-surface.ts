@@ -26,10 +26,15 @@ interface RpcCommandInput {
 	sourceInfo: SourceInfo;
 }
 
+interface RpcSkillCommandInput extends RpcCommandInput {
+	/** Internal skill-read allowlist; never sent on the wire (senpi#5636). */
+	allowedSet?: unknown;
+}
+
 interface RpcCommandSurfaceInput {
 	extensionCommands: readonly RpcCommandInput[];
 	promptTemplates: readonly RpcCommandInput[];
-	skills: readonly RpcCommandInput[];
+	skills: readonly RpcSkillCommandInput[];
 }
 
 interface RpcCommandSurfaceSession {
@@ -60,7 +65,7 @@ export function buildRpcCommands(input: RpcCommandSurfaceInput): RpcSlashCommand
 			source: "prompt" as const,
 			syntax: "slash" as const,
 		})),
-		...input.skills.map((skill) => ({
+		...input.skills.map(({ allowedSet, ...skill }) => ({
 			...skill,
 			name: `skill:${skill.name}`,
 			source: "skill" as const,

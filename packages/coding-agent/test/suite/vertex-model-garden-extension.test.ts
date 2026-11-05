@@ -1,10 +1,14 @@
 import "@earendil-works/pi-ai/compat";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { Api, AuthContext, Model } from "@earendil-works/pi-ai";
 import { normalizeContext } from "@earendil-works/pi-ai/utils/transcript";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
+import {
+	resolveVertexModelGardenAmbient,
+	VERTEX_MODEL_GARDEN_ADC_SOURCE,
+} from "../../src/core/extensions/builtin/vertex-model-garden/auth.ts";
 import {
 	registerVertexModelGarden,
 	VERTEX_MODEL_GARDEN_PROVIDER_ID,
@@ -242,6 +246,91 @@ describe("vertex-garden registration and availability", () => {
 		expect(
 			runtime.getAvailableSnapshot().some((available) => available.provider === VERTEX_MODEL_GARDEN_PROVIDER_ID),
 		).toBe(false);
+	});
+});
+
+describe("vertex-garden ambient project resolution", () => {
+	let fixture: Awaited<ReturnType<typeof createGoogleAdcFixture>>;
+
+	beforeAll(async () => {
+		// No quotaProjectId: a plain `gcloud auth application-default login` file,
+		// the shape whose first request failed with "Vertex AI requires a project ID".
+		fixture = await createGoogleAdcFixture({});
+	});
+
+	afterAll(async () => {
+		await fixture.close();
+	});
+
+	afterEach(() => {
+		vi.unstubAllEnvs();
+	});
+
+	const ctx: Pick<AuthContext, "env" | "fileExists"> = {
+		env: async (name) => process.env[name],
+		fileExists: async () => true,
+	};
+
+	it("#given ADC without a quota project and a stored google-vertex profile project #when ambient auth resolves #then the project reaches the lane's request env and the stored key never does", async () => {
+		vi.stubEnv("GOOGLE_APPLICATION_CREDENTIALS", fixture.path);
+		vi.stubEnv("GOOGLE_CLOUD_PROJECT", undefined);
+		vi.stubEnv("GCLOUD_PROJECT", undefined);
+
+		const storage = AuthStorage.inMemory();
+		storage.set("google-vertex", {
+			type: "api_key",
+			key: "stored-gvertex-secret",
+			env: { GOOGLE_CLOUD_PROJECT: "profile-project", GOOGLE_CLOUD_LOCATION: "us-central1" },
+		});
+		const runtime = getModelRuntime(await createInMemoryModelRegistry(storage));
+		const { providerId, config } = gardenRegistration();
+		await runtime.registerProvider(providerId, config);
+		await runtime.refresh({ allowNetwork: false });
+
+		const model = runtime.getAvailableSnapshot().find((entry) => entry.provider === providerId);
+		if (!model) throw new Error("vertex-garden model not available after refresh");
+		const resolved = await runtime.getAuth(model);
+
+		expect(resolved?.env?.GOOGLE_CLOUD_PROJECT).toBe("profile-project");
+		// The shared profile env carries routing metadata only: a stored sibling key
+		// must never ride along into the request env or auth slot.
+		expect(resolved?.auth.apiKey).toBeUndefined();
+		expect(JSON.stringify(resolved?.env ?? {})).not.toContain("stored-gvertex-secret");
+	});
+
+	it("#given process env and the stored google-vertex profile both name a project #when the ambient resolver runs #then process env wins", async () => {
+		vi.stubEnv("GOOGLE_APPLICATION_CREDENTIALS", fixture.path);
+		vi.stubEnv("GOOGLE_CLOUD_PROJECT", "process-project");
+		vi.stubEnv("GCLOUD_PROJECT", undefined);
+
+		const resolved = await resolveVertexModelGardenAmbient({
+			ctx,
+			signal: new AbortController().signal,
+			storedProviderEnv: async () => ({ GOOGLE_CLOUD_PROJECT: "profile-project" }),
+		});
+
+		expect(resolved).toEqual({
+			auth: {},
+			env: { GOOGLE_CLOUD_PROJECT: "process-project" },
+			source: VERTEX_MODEL_GARDEN_ADC_SOURCE,
+			ambient: true,
+		});
+	});
+
+	it("#given ADC with no project source at all #when the ambient resolver runs #then the lane stays available with no env and defers to the request-time ADC fallbacks", async () => {
+		vi.stubEnv("GOOGLE_APPLICATION_CREDENTIALS", fixture.path);
+		vi.stubEnv("GOOGLE_CLOUD_PROJECT", undefined);
+		vi.stubEnv("GCLOUD_PROJECT", undefined);
+
+		const resolved = await resolveVertexModelGardenAmbient({
+			ctx,
+			signal: new AbortController().signal,
+			storedProviderEnv: async () => undefined,
+		});
+
+		// senpi#2327: availability tracks the ADC chain only; a missing project is a
+		// first-request failure (quota project / getProjectId), not a hidden lane.
+		expect(resolved).toEqual({ auth: {}, source: VERTEX_MODEL_GARDEN_ADC_SOURCE, ambient: true });
 	});
 });
 

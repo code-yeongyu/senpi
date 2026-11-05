@@ -208,3 +208,91 @@ describe("validateToolArguments", () => {
 		}
 	});
 });
+
+describe("validateToolArguments discriminated unions (#5141)", () => {
+	const runProperties = {
+		action: Type.Optional(
+			Type.Union([Type.Literal("run"), Type.Literal("list"), Type.Literal("peek"), Type.Literal("stop")]),
+		),
+		language: Type.Optional(Type.Union([Type.Literal("js"), Type.Literal("py")])),
+		code: Type.Optional(Type.String()),
+		summary: Type.Optional(Type.String()),
+		timeout: Type.Optional(Type.Number({ minimum: 1 })),
+		cell_id: Type.Optional(Type.String({ minLength: 1 })),
+	};
+	const unionTool: Tool = {
+		name: "runner",
+		description: "Discriminated union tool",
+		parameters: Type.Unsafe(
+			Type.Object(runProperties, {
+				anyOf: [
+					Type.Object(
+						{ ...runProperties, action: Type.Optional(Type.Literal("run")) },
+						{ required: ["language", "code", "summary"] },
+					),
+					Type.Object({ action: Type.Literal("list") }),
+					Type.Object(
+						{ action: Type.Union([Type.Literal("peek"), Type.Literal("stop")]), cell_id: runProperties.cell_id },
+						{ required: ["action", "cell_id"] },
+					),
+				],
+			}),
+		),
+	};
+
+	function errorLines(tool: Tool, args: Record<string, JsonValue>): string[] {
+		const toolCall: ToolCall = { type: "toolCall", id: "tool-1", name: tool.name, arguments: args };
+		try {
+			validateToolArguments(tool, toolCall);
+		} catch (error) {
+			const message = (error as Error).message;
+			return (
+				message
+					.split("\n\nReceived arguments:")[0]
+					?.split("\n")
+					.filter((line) => line.startsWith("  - ")) ?? []
+			);
+		}
+		throw new Error("expected validation to fail");
+	}
+
+	it("reports only the default branch when the discriminator is omitted", () => {
+		const lines = errorLines(unionTool, { code: "1", summary: "s" });
+		expect(lines).toEqual([
+			'  - for action "run" (default when action is omitted): language: must have required properties language',
+		]);
+	});
+
+	it("reports only the selected branch when the discriminator is given", () => {
+		expect(errorLines(unionTool, { action: "peek" })).toEqual([
+			'  - for action "peek": cell_id: must have required properties cell_id',
+		]);
+		expect(errorLines(unionTool, { action: "list", timeout: "soon" })).toEqual([
+			'  - for action "list": timeout: must be number',
+		]);
+	});
+
+	it("names the allowed values for an unknown discriminator value", () => {
+		expect(errorLines(unionTool, { action: "peak", cell_id: "x" })).toEqual([
+			'  - action: must be one of "run", "list", "peek", "stop" (received "peak")',
+		]);
+	});
+
+	it("keeps the full error list for a union without a const discriminator", () => {
+		const tool: Tool = {
+			name: "plain",
+			description: "Plain union tool",
+			parameters: Type.Unsafe(
+				Type.Object(
+					{ a: Type.Optional(Type.String()), b: Type.Optional(Type.String()) },
+					{ anyOf: [Type.Object({ a: Type.String() }), Type.Object({ b: Type.String() })] },
+				),
+			),
+		};
+		expect(errorLines(tool, {})).toEqual([
+			"  - a: must have required properties a",
+			"  - b: must have required properties b",
+			"  - root: must match a schema in anyOf",
+		]);
+	});
+});

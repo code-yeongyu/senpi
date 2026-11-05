@@ -16,6 +16,7 @@
  */
 
 import type { AuthEvent, AuthInteraction, AuthPrompt } from "@earendil-works/pi-ai";
+import { redactOAuthUrl } from "@earendil-works/pi-ai/utils/oauth-url";
 import { openBrowser as openPlatformBrowser } from "../../../utils/open-browser.ts";
 import type { ExtensionCommandContext } from "../types.ts";
 
@@ -98,9 +99,14 @@ async function answerPrompt(
 			return prompt.options.find((option) => option.label === label)?.id;
 		}
 		case "text":
-		case "secret":
 		case "manual_code":
 			return ctx.ui.input(prompt.message, prompt.placeholder, dialogOptions);
+		case "secret":
+			return ctx.ui.input(
+				prompt.message,
+				prompt.placeholder,
+				ctx.ui.capabilities?.secretInput === true ? { ...dialogOptions, secret: true } : dialogOptions,
+			);
 	}
 }
 
@@ -113,7 +119,7 @@ function relayEvent(
 	switch (event.type) {
 		case "auth_url": {
 			if (ctx.mode === "tui") openBrowser(event.url);
-			const lines = [`Open this URL to authorize ${providerLabel}:`, event.url];
+			const lines = [`Open this URL to authorize ${providerLabel}:`, redactOAuthUrl(event.url)];
 			if (event.instructions) lines.push(event.instructions);
 			ctx.ui.notify(lines.join("\n"), "info");
 			return;

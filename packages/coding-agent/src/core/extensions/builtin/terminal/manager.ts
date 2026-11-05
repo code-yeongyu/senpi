@@ -1,9 +1,4 @@
-import type {
-	SessionRegistry,
-	SessionRegistryCapacityError,
-	TerminalSession,
-	TerminalSessionOptions,
-} from "@earendil-works/pi-pty";
+import type { SessionRegistry, SessionRegistryCapacityError, TerminalSession } from "@earendil-works/pi-pty";
 import { loadedPty, loadPty } from "./pty.lazy.ts";
 import type { TerminalRuntimeOptions, TerminalRuntimeSession } from "./runtime-session.ts";
 import { DEFAULT_MAX_SESSIONS } from "./shared.ts";
@@ -67,7 +62,7 @@ export class TerminalManager {
 	}
 
 	/** Spawn a new terminal session and register it under an allocated `bash_N` id. */
-	async create(command: string, options: TerminalSessionOptions): Promise<CreatedTerminalSession> {
+	async create(command: string, options: TerminalRuntimeOptions): Promise<CreatedTerminalSession> {
 		const pty = await loadPty();
 		const release = this.reserve();
 		if (!release) throw new pty.SessionRegistryCapacityError(this.maxSessions);

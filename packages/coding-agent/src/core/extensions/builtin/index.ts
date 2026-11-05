@@ -23,7 +23,9 @@ import historySearchExtension from "./history-search/index.ts";
 import hooksExtension from "./hooks/index.ts";
 import htmlRenderExtension from "./html-render/index.ts";
 import imageGenExtension from "./imagegen/index.ts";
+import killGuardExtension from "./kill-guard/index.ts";
 import importReproExtension from "./import-repro.ts";
+import jobWidgetsExtension from "./job-widgets/extension.ts";
 import lookAtExtension from "./look-at/index.ts";
 import loopExtension from "./loop/index.ts";
 import loopGuardExtension from "./loop-guard/index.ts";
@@ -74,6 +76,8 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "loop-guard", factory: loopGuardExtension },
 	// Ahead of hooks and permission-system: a path the desktop moved is refused before any hook runs or prompt asks.
 	{ id: "moved-path-guard", factory: movedPathGuardExtension },
+	// Beside moved-path-guard for the same reason: a signal it refuses never reaches a hook or a permission prompt.
+	{ id: "kill-guard", factory: killGuardExtension },
 	{ id: "hooks", factory: hooksExtension },
 	{ id: "permission-system", factory: permissionSystemExtension },
 	{ id: "gpt-apply-patch", factory: gptApplyPatchExtension },
@@ -100,6 +104,8 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	// Terminal follows bash-timeout so its injected default reaches the PTY bash, and follows
 	// anthropic-bash so mutual-exclusion (companion step-aside) is evaluated after it registers.
 	{ id: "terminal", factory: terminalExtension },
+	// Beside terminal, the main host of its jobs; terminal reaches it only through the session registry, so order is not load-bearing.
+	{ id: "job-widgets", factory: jobWidgetsExtension },
 	{ id: "tool-pair-guard", factory: toolPairGuardExtension },
 	{ id: "compaction", factory: compactionExtension },
 	{ id: "history-search", factory: historySearchExtension },

@@ -242,7 +242,7 @@ describe("websearch hosted routes listed in websearch.json", () => {
 		// then
 		const googleRequest = h.requests.find((request) => request.url.includes("generativelanguage"));
 		expect(googleRequest?.url).toBe(
-			"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+			"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent",
 		);
 		expect(googleRequest?.headers.get("x-goog-api-key")).toBe("listed-google-key");
 		expect(h.authProviders).toEqual(["anthropic"]);

@@ -1,11 +1,12 @@
 import { createModels, createProvider, type OAuthAuth, type ProviderStreams } from "@earendil-works/pi-ai";
 import { listSlots } from "@earendil-works/pi-ai/auth/pool/slots";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../../../src/core/auth-storage.ts";
 import accountExtension from "../../../src/core/extensions/builtin/account/index.ts";
 import { registerClaudeAccountCommand } from "../../../src/core/extensions/builtin/anthropic-subscription/account-command.ts";
 import type { AnthropicSubscriptionCredential } from "../../../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
 import { createOAuthConfig } from "../../../src/core/extensions/builtin/anthropic-subscription/oauth-login.ts";
+import { cleanupFakeClaudeCliLogins, fakeClaudeCliLogin } from "../../support/fake-claude-cli-login.ts";
 import gptAccountExtension from "../../../src/core/extensions/builtin/gpt-account.ts";
 import type { ExtensionAPI } from "../../../src/core/extensions/types.ts";
 import { accountFooterSuffix } from "../../../src/modes/interactive/components/footer.ts";
@@ -97,6 +98,8 @@ describe.each([
 // The offer is gated on the receipt's `origin`: only a machine-generated id
 // (the OpenAI lane) gets the display-name dialog. The Claude lane names
 // accounts through its own prompt and must never produce a second name dialog.
+afterEach(() => cleanupFakeClaudeCliLogins());
+
 describe("chatgpt-subscription optional post-login naming", () => {
 	it.each(["Work account", "", undefined])(
 		"names a machine-generated slot after persistence; cancellation keeps login usable (%s)",
@@ -148,20 +151,24 @@ describe("claude-sdk-oauth post-login naming", () => {
 				oauth: createOAuthConfig({
 					readCurrent: async () =>
 						storage.get("anthropic-subscription") as AnthropicSubscriptionCredential | undefined,
-					loginFlow: flow,
+					claudeCli: fakeClaudeCliLogin(),
 				}),
 			}),
 		);
 		const { ctx, dialogs } = createAccountCommandContext(storage, "/tmp", {
-			dialogs: { input: async () => "Work" },
+			dialogs: { input: async () => "Work", select: () => "Browser login (default)" },
 		});
+		const namePrompts = () =>
+			dialogs.filter((dialog) => dialog.kind === "input" && dialog.title.startsWith("Name for this account"));
 		Object.assign(ctx.modelRegistry, { modelRuntime: models });
 		const handler = command("claude-account").handler;
-		await handler("add", ctx); // empty pool: the adapter picks "default", zero prompts
-		expect(dialogs).toHaveLength(0);
+		await handler("add", ctx); // empty pool: the adapter picks "default", zero name prompts
+		// Each sign-in also offers the Claude login method (browser or copy code, senpi#4436).
+		expect(dialogs.filter((dialog) => dialog.kind === "select")).toHaveLength(1);
+		expect(namePrompts()).toHaveLength(0);
 		expect(listSlots(storage.get("anthropic-subscription")).map((slot) => slot.name)).toEqual(["default"]);
 		await handler("add", ctx); // existing account: the lane prompts for the id, once
-		expect(dialogs).toHaveLength(1);
+		expect(namePrompts()).toHaveLength(1);
 		expect(listSlots(storage.get("anthropic-subscription")).map((slot) => slot.name)).toEqual(["default", "Work"]);
 		for (const slot of listSlots(storage.get("anthropic-subscription"))) {
 			expect(slot).not.toHaveProperty("displayName");

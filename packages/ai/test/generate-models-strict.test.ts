@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { copyJsonModelGenerationFixture } from "./json-model-generation-fixture.ts";
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const temporaryRoots: string[] = [];
@@ -17,10 +18,7 @@ describe("strict model generation", () => {
 		const fixtureRoot = mkdtempSync(join(tmpdir(), "pi-generate-models-glm-5-3-"));
 		temporaryRoots.push(fixtureRoot);
 		const isolatedPackageRoot = join(fixtureRoot, "package");
-		mkdirSync(isolatedPackageRoot);
-		for (const entry of ["package.json", "scripts", "src"]) {
-			cpSync(join(packageRoot, entry), join(isolatedPackageRoot, entry), { recursive: true });
-		}
+		copyJsonModelGenerationFixture(isolatedPackageRoot);
 		const outputDir = join(fixtureRoot, "output");
 		const preloadPath = join(fixtureRoot, "mock-models.mjs");
 		const unsupportedVariants = ["glm-5.3-turbo", "glm-5.3-xl", "glm-5.3-anything-else"];
@@ -97,10 +95,7 @@ describe("strict model generation", () => {
 		const fixtureRoot = mkdtempSync(join(tmpdir(), "pi-generate-models-haiku-5-5-"));
 		temporaryRoots.push(fixtureRoot);
 		const isolatedPackageRoot = join(fixtureRoot, "package");
-		mkdirSync(isolatedPackageRoot);
-		for (const entry of ["package.json", "scripts", "src"]) {
-			cpSync(join(packageRoot, entry), join(isolatedPackageRoot, entry), { recursive: true });
-		}
+		copyJsonModelGenerationFixture(isolatedPackageRoot);
 		const outputDir = join(fixtureRoot, "output");
 		const preloadPath = join(fixtureRoot, "mock-models.mjs");
 		const catalog = {

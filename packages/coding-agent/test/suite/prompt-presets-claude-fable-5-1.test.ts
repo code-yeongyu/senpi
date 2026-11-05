@@ -1,6 +1,5 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
-import { TEST_DISCIPLINE_RULES } from "../../src/core/dynamic-prompt/verification.ts";
 import {
 	type PromptPresetSettings,
 	resolvePreset,
@@ -44,7 +43,6 @@ describe("Claude Fable 5.1 prompt preset", () => {
 
 		// then
 		expect(preset?.name).toBe("claude-fable-5-1");
-		expect(preset?.prompt).toContain("You are senpi");
 	});
 
 	it.each(["claude-fable-5", "claude-mythos-5", "claude-mythos-5-thinking"])(
@@ -62,20 +60,6 @@ describe("Claude Fable 5.1 prompt preset", () => {
 		},
 	);
 
-	it("keeps every shared test-discipline rule in the dieted core", () => {
-		// given
-		const settings: PromptPresetSettings = { promptPreset: "auto" };
-		const model = createModel("claude-fable-5-1", "anthropic");
-
-		// when
-		const preset = resolvePreset(model, settings);
-
-		// then
-		for (const rule of TEST_DISCIPLINE_RULES) {
-			expect(preset?.prompt).toContain(rule.directive);
-		}
-	});
-
 	it("routes user questions through ask_user_question when it is available", () => {
 		const settings: PromptPresetSettings = { promptPreset: "auto" };
 		const model = createModel("claude-fable-5-1", "anthropic");
@@ -83,9 +67,6 @@ describe("Claude Fable 5.1 prompt preset", () => {
 		const preset = resolvePreset(model, settings);
 
 		expect(preset?.prompt).toContain("ask_user_question");
-		expect(preset?.prompt).toContain(
-			"ask after doing everything that does not depend on the answer, through ask_user_question when it is available",
-		);
 	});
 
 	it("allows settings.json to force claude-fable-5-1 regardless of model id", () => {

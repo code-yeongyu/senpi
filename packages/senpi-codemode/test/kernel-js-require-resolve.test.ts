@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { JavaScriptKernel, type JavaScriptKernelOptions } from "../src/kernels/js/context-manager.ts";
-import { parseJavaScriptResult, runJavaScriptCell } from "./eval/js-kernel-harness.ts";
+import { NO_CELL_DEADLINE, parseJavaScriptResult, runJavaScriptCell } from "./eval/js-kernel-harness.ts";
 
 // The cell-global `require` matches Node's `require`: `resolve`, `resolve.paths` and `cache` exist, and the call and
 // `resolve` share one lookup (builtins natively, then the project, then the managed package environment).
@@ -67,6 +67,7 @@ describe.each(modes)("the cell-global require in %s mode (senpi#2832)", (_mode, 
 			const run = await runJavaScriptCell(
 				kernel,
 				'return [require.resolve("cjs-dep"), require.resolve("./local.cjs"), require.resolve("node:path")]',
+				NO_CELL_DEADLINE,
 			);
 			expect(parseJavaScriptResult(run.result)).toEqual([
 				join(cwd, "node_modules", "cjs-dep", "index.js"),
@@ -84,6 +85,7 @@ describe.each(modes)("the cell-global require in %s mode (senpi#2832)", (_mode, 
 			const run = await runJavaScriptCell(
 				kernel,
 				'try { require.resolve("no-such-pkg"); return "resolved" } catch (error) { return [error.code, String(error.message).includes("no-such-pkg")] }',
+				NO_CELL_DEADLINE,
 			);
 			expect(parseJavaScriptResult(run.result)).toEqual(["MODULE_NOT_FOUND", true]);
 		},
@@ -97,6 +99,7 @@ describe.each(modes)("the cell-global require in %s mode (senpi#2832)", (_mode, 
 			const run = await runJavaScriptCell(
 				kernel,
 				'require("cjs-dep"); const paths = require.resolve.paths("cjs-dep"); return [Array.isArray(paths) && paths.includes(require("node:path").join(process.cwd(), "node_modules")), typeof require.cache, Object.keys(require.cache).some((key) => key.endsWith("cjs-dep/index.js"))]',
+				NO_CELL_DEADLINE,
 			);
 			expect(parseJavaScriptResult(run.result)).toEqual([true, "object", true]);
 		},
@@ -117,6 +120,7 @@ describe.skipIf(bun === undefined)("the cell-global require under Bun, the produ
 		const run = await runJavaScriptCell(
 			kernel,
 			'return [require.resolve("bun:sqlite"), typeof require(require.resolve("bun:sqlite")).Database]',
+			NO_CELL_DEADLINE,
 		);
 		expect(parseJavaScriptResult(run.result)).toEqual(["bun:sqlite", "function"]);
 	});

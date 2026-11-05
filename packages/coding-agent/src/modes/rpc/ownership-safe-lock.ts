@@ -99,7 +99,7 @@ async function rejectLegacyDirectory(lockPath: string): Promise<void> {
 	}
 }
 
-function isBusy(error: unknown): boolean {
+export function isBusy(error: unknown): boolean {
 	const message = error instanceof Error ? error.message : String(error);
 	return /busy|locked/i.test(message) || (error as { code?: string })?.code === "SQLITE_BUSY";
 }

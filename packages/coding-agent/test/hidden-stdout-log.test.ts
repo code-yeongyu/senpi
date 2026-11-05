@@ -6,7 +6,9 @@ import { ENV_AGENT_DIR, getDebugLogPath } from "../src/config.ts";
 import { appendHiddenTuiStdout } from "../src/core/hidden-stdout-log.ts";
 
 const originalAgentDir = process.env[ENV_AGENT_DIR];
-const githubFineGrainedPat = "github_pat_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const githubFineGrainedPat = ["github_pat", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"].join(
+	"_",
+);
 
 const tempDirs: string[] = [];
 

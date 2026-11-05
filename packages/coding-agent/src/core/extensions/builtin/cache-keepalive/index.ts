@@ -186,7 +186,9 @@ export function createCacheKeepAliveExtension(
 								.getAllTools()
 								.filter((tool) => activeToolNames.has(tool.name))
 								.map(({ name, description, parameters }) => ({ name, description, parameters }));
-				const auth = await current.modelRegistry.getApiKeyAndHeaders(current.model);
+				const auth = await current.modelRegistry.getApiKeyAndHeaders(current.model, {
+					sessionId: current.sessionManager.getSessionId(),
+				});
 				if (pingGeneration !== generation) {
 					inFlight = false;
 					arm();
@@ -195,10 +197,16 @@ export function createCacheKeepAliveExtension(
 				if (!auth.ok) throw new Error(auth.error);
 				const authHeaders = auth.headers ?? {};
 				const headers = preparation ? await preparation.transformHeaders(authHeaders) : authHeaders;
+				const systemPrompt = current.getSystemPrompt();
+				// The ping splits the system prompt where the real request does (senpi#4447, senpi#2389).
+				const stablePrefix = current.getSystemPromptStablePrefix?.();
 				const result = await warm(
 					current.model,
 					{
-						systemPrompt: current.getSystemPrompt(),
+						systemPrompt,
+						...(stablePrefix !== undefined && systemPrompt.startsWith(stablePrefix)
+							? { systemPromptStablePrefix: stablePrefix }
+							: {}),
 						messages: convertToLlm(filterContextExcludedMessages(preparedMessages)),
 						...(tools.length > 0 ? { tools } : {}),
 					},
