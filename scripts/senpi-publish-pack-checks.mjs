@@ -48,6 +48,10 @@ const publishedWorkspaceRequiredFiles = new Map([
 		"@code-yeongyu/senpi-codemode",
 		["package.json", "src/index.ts", "src/kernels/py/prelude.py", "README.md", "CHANGELOG.md", "LICENSE"],
 	],
+	[
+		"@earendil-works/pi-storage-sqlite-bun",
+		["package.json", "src/index.ts", "src/store.ts", "README.md", "CHANGELOG.md", "LICENSE"],
+	],
 ]);
 
 function publishedWorkspacePackageChecks() {

@@ -166,6 +166,7 @@ function writeLocalReleaseFixture(repoRoot) {
 		["packages/machine-ops", "@code-yeongyu/senpi-machine-ops"],
 		["packages/tui", "@earendil-works/pi-tui"],
 		["packages/agent", "@earendil-works/pi-agent-core"],
+		["packages/session-backends/sqlite-bun", "@earendil-works/pi-storage-sqlite-bun"],
 		["packages/protocol", "@earendil-works/pi-protocol"],
 		["packages/client", "@earendil-works/pi-client"],
 		["packages/session-backends/sqlite-node", "@earendil-works/pi-storage-sqlite-node"],
