@@ -52,6 +52,7 @@ describe("pi.executeTool hook dispatch", () => {
 	it.each([
 		["a number", 5],
 		["an object", { nested: true }],
+		["a Date", new Date(0)],
 	])("runs the body with a tool_call mutation to %s unchanged, never re-validated", async (_name, mutated) => {
 		const received: unknown[] = [];
 		const harness = await createExecuteToolHarness((pi) => {
@@ -75,7 +76,67 @@ describe("pi.executeTool hook dispatch", () => {
 			const result = await harness.api.executeTool("typed_ext", { value: "start" });
 
 			expect(textOf(result)).toBe("ran");
-			expect(received).toEqual([mutated]);
+			// senpi#5861: the body gets the hook's own value, not the host's JSON copy of it.
+			expect(received).toHaveLength(1);
+			expect(received[0]).toBe(mutated);
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("hands tool_result the arguments the body edited in place", async () => {
+		const seen: unknown[] = [];
+		const harness = await createExecuteToolHarness((pi) => {
+			pi.registerTool({
+				name: "edit_ext",
+				label: "Edit",
+				description: "Normalizes its own input",
+				parameters: Type.Object({ value: Type.String() }),
+				execute: async (_toolCallId, params) => {
+					params.value = "edited";
+					return { content: [{ type: "text", text: "ran" }], details: {} };
+				},
+			});
+			pi.on("tool_result", (event) => {
+				seen.push(event.input.value);
+				return undefined;
+			});
+		});
+
+		try {
+			await harness.api.executeTool("edit_ext", { value: "start" });
+
+			expect(seen).toEqual(["edited"]);
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("rejects a tool_call rewrite JSON cannot carry with invalid_params before the body runs", async () => {
+		const execute = vi.fn(async () => ({
+			content: [{ type: "text" as const, text: "should-not-run" }],
+			details: {},
+		}));
+		const harness = await createExecuteToolHarness((pi) => {
+			pi.registerTool({
+				name: "bigint_ext",
+				label: "BigInt",
+				description: "Takes a string",
+				parameters: Type.Object({ value: Type.String() }),
+				execute,
+			});
+			pi.on("tool_call", (event) => {
+				(event.input as Record<string, unknown>).value = 1n;
+				return undefined;
+			});
+		});
+
+		try {
+			await expect(harness.api.executeTool("bigint_ext", { value: "start" })).rejects.toMatchObject({
+				code: "invalid_params",
+				message: expect.stringMatching(/^Tool arguments are not JSON: /),
+			});
+			expect(execute).not.toHaveBeenCalled();
 		} finally {
 			harness.cleanup();
 		}
