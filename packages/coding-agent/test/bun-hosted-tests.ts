@@ -11,6 +11,7 @@ export const BUN_HOSTED_TEST_FILES: readonly string[] = [
 	"test/startup-session-name.test.ts",
 	"test/stdout-cleanliness.test.ts",
 	"test/suite/cli-spawned-by.test.ts",
+	"test/suite/moved-path-worker-open.test.ts",
 	"test/suite/regressions/1370-rpc-internal-socket-mkdir.test.ts",
 	"test/suite/regressions/1850-pathless-session-reservation.test.ts",
 	"test/suite/regressions/2412-cli-tier-decorator-handoff.test.ts",
