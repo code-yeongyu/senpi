@@ -17,9 +17,18 @@ const MAX_CONCURRENT_SESSION_INFO_LOADS = 10;
 export const CURRENT_SESSION_LIST_PUBLISH_INTERVAL = 10;
 export const ALL_SESSION_LIST_PUBLISH_INTERVAL = 100;
 
-/** Newest activity first. */
+/**
+ * Newest activity first; rows with the same activity time by path. Without the path order such rows would keep the
+ * directory's listing order, which Node returns sorted by name and Bun in the filesystem's own order (senpi#5822).
+ */
+export function newestActivityFirst(a: SessionInfo, b: SessionInfo): number {
+	const byActivity = b.modified.getTime() - a.modified.getTime();
+	if (byActivity !== 0) return byActivity;
+	return a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
+}
+
 export function sortSessionInfos(sessions: SessionInfo[]): SessionInfo[] {
-	return sessions.sort((a, b) => b.modified.getTime() - a.modified.getTime());
+	return sessions.sort(newestActivityFirst);
 }
 
 function resolveModified(activityTime: number | undefined, header: SessionHeader, mtime: Date): Date {
