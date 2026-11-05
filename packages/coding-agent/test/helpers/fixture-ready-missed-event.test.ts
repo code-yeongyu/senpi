@@ -8,9 +8,16 @@ import { waitForFixtureFile } from "./fixture-ready.ts";
 // watcher never reported it. With `watch` delivering nothing, the wait must still settle, so this
 // file - and only this file - replaces it; the real watcher is covered in fixture-ready.test.ts.
 // vitest hoists `vi.mock` above the imports, so the static import below already sees the mock.
+const mockedWatch = vi.hoisted(() => ({ calls: 0 }));
 vi.mock("node:fs", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("node:fs")>();
-	return { ...actual, watch: () => ({ close: () => {} }) };
+	return {
+		...actual,
+		watch: () => {
+			mockedWatch.calls += 1;
+			return { close: () => {} };
+		},
+	};
 });
 
 const roots: string[] = [];
@@ -28,6 +35,8 @@ describe("waitForFixtureFile with no watch event delivered", () => {
 		const waited = waitForFixtureFile(ready, { timeoutMs: 30_000, output: () => "" });
 		writeFileSync(ready, "1");
 		await expect(waited).resolves.toBeUndefined();
+		// Proves the case ran on the mocked watcher, not the real one that would also settle it.
+		expect(mockedWatch.calls).toBeGreaterThan(0);
 		expect(Date.now() - startedAt).toBeLessThan(5_000);
 	}, 20_000);
 
