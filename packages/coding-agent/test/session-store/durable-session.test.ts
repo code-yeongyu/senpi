@@ -1,0 +1,114 @@
+import { chmodSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { openSessionStore } from "../../../agent/src/durable/session-store.ts";
+import { createMemoryStoreMedium, type MemoryStoreMedium, openMemoryStore } from "../../../agent/src/durable/store-memory.ts";
+import { makeTempDir } from "../../../../scripts/vitest-temp.ts";
+import { SessionManager } from "../../src/core/session-manager.ts";
+import type { ProjectionWarning } from "../../src/core/session-store/durable-binding.ts";
+import { assistantMsg, userMsg } from "../utilities.ts";
+
+let dir: string;
+let medium: MemoryStoreMedium;
+
+beforeEach(async () => {
+	dir = makeTempDir(join(tmpdir(), "s20b-durable-"));
+	medium = createMemoryStoreMedium();
+	await openMemoryStore(medium).claim(0, 1);
+});
+
+afterEach(() => {
+	chmodSync(dir, 0o755);
+});
+
+async function durableSession(path?: string): Promise<{ session: SessionManager; warnings: ProjectionWarning[] }> {
+	const session = path === undefined ? SessionManager.create(dir, dir) : SessionManager.open(path, dir);
+	const warnings: ProjectionWarning[] = [];
+	session.onProjectionWarning((warning) => warnings.push(warning));
+	await session.bindDurableStore({ store: openMemoryStore(medium), epoch: 1 });
+	return { session, warnings };
+}
+
+async function storeImage(sessionId: string): Promise<string> {
+	const stored = await openSessionStore(openMemoryStore(medium), 1).load(sessionId);
+	if (stored === undefined) throw new Error(`the store holds no session ${sessionId}`);
+	return [JSON.stringify(stored.header), ...stored.entries.map((entry) => entry.line)].map((line) => `${line}\n`).join("");
+}
+
+function fileOf(session: SessionManager): string {
+	const file = session.getSessionFile();
+	if (file === undefined) throw new Error("the session has no file");
+	return file;
+}
+
+describe("a SessionManager bound to the durable store (S20b)", () => {
+	it("commits every write to the store and projects the JSONL byte for byte", async () => {
+		const { session } = await durableSession();
+
+		session.appendMessage(userMsg("question"));
+		session.appendCustomEntry("note", { n: 1 });
+		session.appendMessage(assistantMsg("answer"));
+
+		const file = fileOf(session);
+		expect(readFileSync(file, "utf8")).toBe(await storeImage(session.getSessionId()));
+		expect(SessionManager.open(file, dir).getEntries()).toEqual(session.getEntries());
+	});
+
+	it("throws a store refusal on the same call and takes nothing", async () => {
+		const { session } = await durableSession();
+		session.appendMessage(userMsg("question"));
+		const file = fileOf(session);
+		const before = readFileSync(file, "utf8");
+		const entries = session.getEntries();
+		await openMemoryStore(medium).claim(1, 2);
+
+		expect(() => session.appendMessage(assistantMsg("answer"))).toThrow();
+
+		expect(session.getEntries()).toEqual(entries);
+		expect(readFileSync(file, "utf8")).toBe(before);
+	});
+
+	it("keeps an entry whose projection failed, warns with the path and errno, and the next write rewrites the JSONL", async () => {
+		const { session, warnings } = await durableSession();
+		session.appendMessage(userMsg("question"));
+		const file = fileOf(session);
+		chmodSync(file, 0o444);
+
+		const id = session.appendMessage(assistantMsg("answer"));
+
+		expect(session.getEntries().map((entry) => entry.id)).toContain(id);
+		expect(warnings).toEqual([expect.objectContaining({ path: file, code: "EACCES" })]);
+		session.appendCustomEntry("note", { after: true });
+		expect(readFileSync(file, "utf8")).toBe(await storeImage(session.getSessionId()));
+	});
+
+	it("warns on every write while the projection keeps failing", async () => {
+		const { session, warnings } = await durableSession();
+		session.appendMessage(userMsg("question"));
+		chmodSync(fileOf(session), 0o444);
+		chmodSync(dir, 0o555);
+
+		session.appendMessage(assistantMsg("one"));
+		session.appendMessage(assistantMsg("two"));
+
+		expect(warnings.map((warning) => warning.code)).toEqual(["EACCES", "EACCES"]);
+	});
+
+	it("reprojects the JSONL from the store on the next open after a crash between the commit and the projection", async () => {
+		const first = await durableSession();
+		first.session.appendMessage(userMsg("question"));
+		const file = fileOf(first.session);
+		chmodSync(file, 0o444);
+		chmodSync(dir, 0o555);
+		const lost = first.session.appendMessage(assistantMsg("answer"));
+		const sessionId = first.session.getSessionId();
+		chmodSync(dir, 0o755);
+		chmodSync(file, 0o644);
+
+		const reopened = await durableSession(file);
+
+		expect(reopened.session.getEntries().map((entry) => entry.id)).toContain(lost);
+		expect(readFileSync(file, "utf8")).toBe(await storeImage(sessionId));
+	});
+});
