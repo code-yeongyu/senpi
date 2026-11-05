@@ -315,12 +315,12 @@ export async function runExtensionCompaction(
 		customInstructions: requestSnapshot.customInstructions,
 	});
 	const promptTokens = approxTokens(prompt.user);
+	const sourceMessages = [
+		...requestSnapshot.preparation.messagesToSummarize,
+		...requestSnapshot.preparation.turnPrefixMessages,
+	];
 	let messages = boundSummarizationInput(
-		pruneToolResults(
-			[...requestSnapshot.preparation.messagesToSummarize, ...requestSnapshot.preparation.turnPrefixMessages],
-			requestSnapshot.contextWindow,
-			SUMMARIZATION_INPUT_BUDGET_RATIO,
-		),
+		pruneToolResults(sourceMessages, requestSnapshot.contextWindow, SUMMARIZATION_INPUT_BUDGET_RATIO),
 		requestSnapshot.contextWindow,
 		promptTokens,
 	);
@@ -353,7 +353,7 @@ export async function runExtensionCompaction(
 		// retry transient failures without the 120s-era retry budget disqualifying
 		// every slow attempt (#1068).
 		const attemptBudgetMs = summarizationMaxDurationMs(
-			estimateSummaryRequestTokens(requestSnapshot, messages, prompt),
+			estimateSummaryRequestTokens(requestSnapshot, messages, prompt, sourceMessages),
 			snapshot.preparation.settings.summarizationMaxDurationMs,
 		);
 		try {
