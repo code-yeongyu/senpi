@@ -2,18 +2,14 @@ import { createHash, createPublicKey, verify } from "node:crypto";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { SecretInputRequests } from "../../src/modes/rpc/secret-input-requests.ts";
 import {
-	accountHost,
 	claimsOf,
 	closeAccountHosts,
 	enrollAssignAcquire,
 	installation,
-	issuer,
 	signedCommand,
-	type AccountHost,
 } from "./fixtures/presenter-account-host.ts";
 import { jwkThumbprint } from "./fixtures/presenter-account-issuer.ts";
 import { holder, type Line, nowS, records, SECRET, sealedHost, sealedTypes } from "./fixtures/secret-sealed-host.ts";
-import { secretHostIssuer } from "./fixtures/secret-host-issuer.ts";
 
 // D11 secret phase S5-2 (senpi#4249): design 5.1, 5.2 and 4.2-4.3; the binding follows omo-relay-spec decision 0022.
 // Only the host's timers are faked; sockets, the issuer's ES256 and every Ed25519/X25519 key stay real.
