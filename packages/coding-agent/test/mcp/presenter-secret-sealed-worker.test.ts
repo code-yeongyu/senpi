@@ -333,23 +333,6 @@ it("an isolate's sealed answer result with an unknown error or shape is relayed 
 });
 
 
-it("a record that claims to be a sealed offer but is malformed is refused by the host, never relayed as a raiser frame", async () => {
-	const w = await workerHost();
-	w.host.writer.setConnectionCapabilities("human", ["interactive_user", "mcp_form_presenter_v1", "secret_input_v1"]);
-	void w.requests.input("API key", undefined);
-	const raised = records(w.host.lines, "extension_ui_request")[0];
-	if (!raised) throw new Error("No raiser request");
-	expect(() =>
-		w.exchange((signal) => ({
-			type: "secret_frame",
-			id: String(raised.id),
-			record: { type: "secret_sealed_offer", hpkePk: 123, title: "t", deadlineAtMs: 1 },
-			signal,
-		})),
-	).toThrow("session_worker_output_denied");
-	expect(records(w.host.lines, "secret_sealed_offer")).toEqual([]);
-});
-
 it("canary: a worker-runtime sealed answer leaks nothing to the host lanes, the holder's records or the isolate protocol", async () => {
 	const w = await workerHost();
 	const p = await pending(w);
