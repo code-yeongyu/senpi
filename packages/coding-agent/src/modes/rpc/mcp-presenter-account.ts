@@ -6,6 +6,7 @@ import {
 	parseAccountEnrollment,
 	type AccountEnrollment,
 } from "./mcp-presenter-enrollment.ts";
+import { accountLapse, AttestationExpiry } from "./mcp-presenter-account-lifetime.ts";
 import { boundedClaim, PresenterJtiCache } from "./mcp-presenter-attestation.ts";
 import { send, signed } from "./mcp-presenter-wire.ts";
 
@@ -103,6 +104,8 @@ export class McpPresenterAccounts {
 	private readonly started = new WeakSet<Duplex>();
 	private readonly verifying = new WeakSet<Duplex>();
 	private readonly closing = new WeakSet<Duplex>();
+	private readonly expiry = new AttestationExpiry();
+	private readonly unsubscribe: (() => void) | undefined;
 
 	constructor(
 		hostInstance: string,
@@ -114,6 +117,12 @@ export class McpPresenterAccounts {
 		this.principals = principals;
 		this.authority = authority;
 		this.revokeStream = revokeStream;
+		// A sign-out or account switch ends every account principal now (D11 S3-4).
+		this.unsubscribe = authority?.onAccountChange(() => {
+			for (const principal of [...this.principals.values()])
+				if (principal.kind === "account")
+					this.revoke(principal, accountLapse(principal, this.authority) ?? "presenter_account_mismatch");
+		});
 	}
 
 	/** Takes account frames; `fresh` is a control stream that has sent nothing else. False leaves the frame alone. */
@@ -141,7 +150,17 @@ export class McpPresenterAccounts {
 		return true;
 	}
 
+	/** Revokes an account principal whose host account or attestation is no longer current; true when it did. */
+	lapsed(principal: AccountPrincipal | { readonly kind: "inherited" }): boolean {
+		if (principal.kind !== "account") return false;
+		const reason = accountLapse(principal, this.authority);
+		if (reason !== undefined) this.revoke(principal, reason);
+		return reason !== undefined;
+	}
+
 	dispose(): void {
+		this.unsubscribe?.();
+		this.expiry.dispose();
 		this.jtis.clear();
 	}
 
@@ -191,7 +210,9 @@ export class McpPresenterAccounts {
 			sessions: new WeakSet(),
 		};
 		this.principals.set(principal.id, principal);
+		this.expireAt(principal);
 		stream.once("close", () => {
+			this.expiry.clear(principal);
 			if (this.principals.get(principal.id) === principal) this.principals.delete(principal.id);
 		});
 		authenticated();
@@ -210,6 +231,7 @@ export class McpPresenterAccounts {
 		if (typeof attested !== "string" && attested.acc !== principal.acc) attested = "presenter_account_mismatch";
 		if (typeof attested !== "string") {
 			principal.attestedUntil = attested.exp;
+			this.expireAt(principal);
 			return send(stream, { type: "account_reattested", version: 1, attestedUntil: attested.exp });
 		}
 		if (
@@ -253,6 +275,12 @@ export class McpPresenterAccounts {
 		return admitted === "ok" ? attestation : admitted;
 	}
 
+	private expireAt(principal: AccountPrincipal): void {
+		this.expiry.arm(principal, () => {
+			if (this.principals.get(principal.id) === principal) this.revoke(principal, "attestation_expired");
+		});
+	}
+
 	private principalOn(stream: Duplex): AccountPrincipal | undefined {
 		for (const principal of this.principals.values())
 			if (principal.kind === "account" && principal.stream === stream) return principal;
@@ -261,6 +289,7 @@ export class McpPresenterAccounts {
 
 	/** Revokes the principal's registrations now, then closes its stream: with the refusal flushed, if one is given. */
 	private revoke(principal: AccountPrincipal, reason?: PresenterAccountRefusal): void {
+		this.expiry.clear(principal);
 		this.principals.delete(principal.id);
 		this.revokeStream(principal.stream);
 		if (reason) this.refuse(principal.stream, reason);

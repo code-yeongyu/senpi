@@ -138,6 +138,20 @@ export {
 	type PlaneMessage,
 	PlaneRefusedError,
 } from "./execution/plane.ts";
+export {
+	createLoopHookHost,
+	type LoopHookHost,
+	type LoopHookHostOptions,
+	LoopHookFailedError,
+	LoopHookRestartedError,
+} from "./execution/loop-hook-host.ts";
+export {
+	type LoopHookHand,
+	type LoopHookHandOptions,
+	type LoopHookPoint,
+	type LoopHookRunner,
+	serveLoopHooks,
+} from "./execution/loop-hook-host-hand.ts";
 export { createRemoteToolHost, type HandPlacement, type RemoteToolHostOptions } from "./execution/remote-tool-host.ts";
 export { type CarrierLink, createInProcessNetwork, type InProcessNetwork } from "./transport/in-process-carrier.ts";
 export { type LocalEndpoint, localEndpoint } from "./transport/local-endpoint.ts";

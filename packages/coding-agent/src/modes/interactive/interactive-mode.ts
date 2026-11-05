@@ -5998,6 +5998,17 @@ export class InteractiveMode {
 				break;
 
 			case "retry_fallback_exhausted": {
+				if (event.refusals !== undefined && event.refusals.length > 0) {
+					this.showNoticeBox({
+						title: `✕ Fallback refused for context budget · ${event.chainKey}`,
+						tone: "error",
+						why: [describeFallbackExhaustion(event), ...event.refusals.map((refusal) => refusal.detail)].join(
+							"\n",
+						),
+					});
+					this.setExtensionStatus(FALLBACK_STATUS_KEY, undefined);
+					break;
+				}
 				// A walk that started on another failure must lead with it, not the last rung's (senpi#4084).
 				const startedElsewhere = (event.failures?.length ?? 0) > 1;
 				if (isRetryableProviderError(event.lastError) && !startedElsewhere) {
