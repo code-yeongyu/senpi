@@ -15,6 +15,7 @@ import { createRemoteExecutor, type HandCall, type HandScope } from "../remote-e
 import { createHandLedger } from "../remote-hand-ledger.ts";
 import { createRemoteToolHost, type HandPlacement } from "../remote-tool-host.ts";
 import type { ToolHostResult } from "../tool-host.ts";
+import { type PlaneWire, tapPlaneWire } from "./plane-wire.ts";
 
 /** What the KILL-HAND, MULTI-HAND and FAULT-HAND cases need from a host: a durable store and a transport. */
 export type HandCaseAdapters = StoreCaseAdapters & TransportCaseAdapters;
@@ -30,6 +31,7 @@ export interface HandRig {
 	readonly bodies: readonly string[];
 	/** Faults the hand processes reported (a killed hand reports the kill). */
 	readonly faults: readonly unknown[];
+	readonly planeWire: PlaneWire;
 	readonly killed: Promise<void>;
 	execute(scope: string, calls: readonly AgentToolCall[], mode?: ToolExecutionMode): Promise<ToolHostResult>;
 	/** Kills the hand process now, wherever its calls are (a body waiting on the session included): it writes nothing more. */
@@ -73,6 +75,8 @@ export async function openHandRig(
 		readonly fault?: (timers: ManualTimers) => CarrierFault;
 		/** The planes the session serves to its calls' nested requests (S26b dialogs). */
 		readonly planes?: Readonly<Record<string, PlaneHandler>>;
+		/** Sends each of the hand's plane requests a second time, as its own transport frame. */
+		readonly duplicatePlaneRequests?: boolean;
 		/** Replaces the default body (`ran:<toolCallId>`), for cases whose calls ask the session something. */
 		readonly body?: (handCall: HandCall) => Promise<AgentToolResult<unknown>>;
 	},
@@ -82,6 +86,8 @@ export async function openHandRig(
 	const sessionSide = adapters.transport.createSide(timers);
 	const handSide = adapters.transport.createSide(timers);
 	const installed = options.fault?.(timers);
+	const wire = tapPlaneWire({ duplicateHandRequests: options.duplicatePlaneRequests === true });
+	const handTransport = wire.hand(handSide);
 	const outer = (side: TransportSide): CarrierSide => (installed === undefined ? side : installed.wrap(side));
 	const endpoint = localEndpoint(adapters.platform, "hand-conformance", "/run/senpi-conformance");
 	network.listen(endpoint, outer(handSide));
@@ -113,7 +119,7 @@ export async function openHandRig(
 		const ledger = createExecutionLedger({ store, epoch: 1, admission: createAdmissionLine() });
 		return createRemoteExecutor({
 			authority: { kind: "self" },
-			transport: handSide,
+			transport: handTransport,
 			openScope: async (scope) => scopeRunner(scope.id),
 			ledger: createHandLedger({
 				ledger,
@@ -142,7 +148,7 @@ export async function openHandRig(
 	let current = await adapters.store.open(medium, { onWritePoint: killing });
 	await startHand(current).ready;
 	const host = createRemoteToolHost({
-		transport: sessionSide,
+		transport: wire.session(sessionSide),
 		placement: options.placement,
 		...(options.planes === undefined ? {} : { planes: options.planes }),
 	});
@@ -173,6 +179,7 @@ export async function openHandRig(
 		advance: (ms) => pump(() => false, ms),
 		bodies,
 		faults,
+		planeWire: wire.wire,
 		killed: killed.promise,
 		execute: (scope, calls, mode = "parallel") =>
 			host.execute({ scope: { id: scope, root: `/work/${scope}` }, calls, mode }, { emit: () => {} }),

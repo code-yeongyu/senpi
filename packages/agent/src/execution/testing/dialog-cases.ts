@@ -4,29 +4,29 @@ import { expectEqual } from "../../durable/testing/store-harness.ts";
 import { createCarrierFault, type FaultProfileName, type FaultStats } from "../../transport/testing/fault-transport.ts";
 import type { HandPlacement } from "../remote-tool-host.ts";
 import { askRemoteDialog, serveDialogPlane, UI_DIALOG_PLANE } from "../remote-ui.ts";
-import { call, type HandCaseAdapters, openHandRig } from "./hand-harness.ts";
+import { call, type HandCaseAdapters, type HandRig, openHandRig } from "./hand-harness.ts";
 
 type DialogCase = CaseImplementation<HandCaseAdapters>;
 
 /**
  * The session's side of a remote dialog in the KILL-DIALOG and FAULT-DIALOG cases: it records each dialog the hand
- * raises, settles one when the case answers it or when the plane aborts it, and refuses an answer to a settled dialog.
+ * raises and how it first settled (answered, or aborted by the plane). It refuses nothing itself: a late answer goes to
+ * the dialog's resolver like any other, so whether it reaches the hand is decided by the plane, and the cases check that
+ * on the wire.
  */
 function sessionDialogs() {
 	const raised: string[] = [];
 	const settled: string[] = [];
-	const open: Array<((value: boolean | undefined) => void) | undefined> = [];
+	const resolvers: Array<(value: boolean | undefined) => void> = [];
 	const handler = serveDialogPlane(
 		(request, signal) =>
 			new Promise((resolve) => {
 				const index = raised.push(`${request.method}:${String(request.args[0])}`) - 1;
 				const finish = (how: string, value: boolean | undefined): void => {
-					if (open[index] === undefined) return;
-					open[index] = undefined;
-					settled[index] = how;
+					settled[index] ??= how;
 					resolve(value);
 				};
-				open[index] = (value) => finish("answered", value);
+				resolvers[index] = (value) => finish("answered", value);
 				signal.addEventListener("abort", () => finish("aborted", undefined), { once: true });
 			}),
 	);
@@ -34,25 +34,33 @@ function sessionDialogs() {
 		planes: { [UI_DIALOG_PLANE]: handler },
 		raised,
 		settled,
-		/** Answers the `index`-th dialog; false when it already settled (a late answer). */
-		answer(index: number, value: boolean): boolean {
-			const settle = open[index];
-			if (settle === undefined) return false;
-			settle(value);
-			return true;
+		answer(index: number, value: boolean): void {
+			resolvers[index]?.(value);
 		},
 	};
 }
+
+/** The dialog replies the session put on the wire, as the hand would read them. */
+const repliesSent = (rig: HandRig): string[] =>
+	rig.planeWire.sessionSent.flatMap((message) =>
+		message.kind === "plane.reply"
+			? [`reply:${JSON.stringify(message.body)}`]
+			: message.kind === "plane.refused"
+				? [`refused:${message.reason}`]
+				: [],
+	);
 
 const asking = async (
 	adapters: HandCaseAdapters,
 	placement: HandPlacement,
 	fault?: { readonly profile: FaultProfileName; readonly stats: FaultStats },
+	duplicatePlaneRequests = false,
 ) => {
 	const dialogs = sessionDialogs();
 	const opened = await openHandRig(adapters, {
 		placement,
 		planes: dialogs.planes,
+		duplicatePlaneRequests,
 		...(fault === undefined ? {} : { fault: createCarrierFault(fault.profile, fault.stats) }),
 		body: async (handCall) => {
 			if (handCall.toolCallId.startsWith("noise")) return { content: [{ type: "text", text: "ran" }], details: {} };
@@ -98,7 +106,13 @@ const killWhilePending =
 			);
 		expectEqual(dialogs.raised, ["confirm:Proceed?"], `${what}: the dialog surfaced exactly once`);
 		expectEqual(dialogs.settled, ["aborted"], `${what}: the call's end settled the pending dialog`);
-		expectEqual(dialogs.answer(0, true), false, `${what}: a late answer is refused`);
+		dialogs.answer(0, true);
+		await rig.advance(500);
+		expectEqual(
+			repliesSent(rig),
+			[],
+			`${what}: no answer reached the wire after the call ended, the late one included`,
+		);
 		expectEqual(rig.bodies, ["scope:c1"], `${what}: the tool body ran once`);
 	};
 
@@ -118,12 +132,15 @@ const faultWhilePending: DialogCase = async (adapters) => {
 		}
 		await rig.runUntil(() => stats.drops >= 2, `${what}: the link dropped and re-attached`);
 		await rig.settle(Promise.all(noise), `${what}: the other scope's calls settled`);
-		expectEqual(dialogs.answer(0, true), true, `${what}: the dialog was still pending after reconnect`);
+		expectEqual(dialogs.settled, [], `${what}: the dialog was still pending after reconnect`);
+		dialogs.answer(0, true);
 		const { messages } = await rig.settle(outcome, `${what}: the call settled`);
 		await rig.advance(2_000);
 		expectEqual(text(messages[0]), "answered:true", `${what}: the answer reached the hand`);
 		expectEqual(dialogs.raised, ["confirm:Proceed?"], `${what}: the dialog surfaced exactly once`);
-		expectEqual(dialogs.answer(0, false), false, `${what}: a late answer is refused`);
+		dialogs.answer(0, false);
+		await rig.advance(500);
+		expectEqual(repliesSent(rig), ['reply:{"value":true}'], `${what}: one answer on the wire, the late one refused`);
 		expectEqual(
 			rig.bodies.filter((body) => body.startsWith("scope:")),
 			["scope:c1"],
@@ -131,6 +148,25 @@ const faultWhilePending: DialogCase = async (adapters) => {
 		);
 		expectEqual(rig.faults, [], `${what}: the hand reported no fault`);
 	}
+};
+
+/**
+ * The hand's dialog request reaches the session twice, as two transport frames (a hand that re-sends it): the session
+ * raises the dialog once and answers once, because the plane serves each (parent, request) once.
+ */
+const duplicateRequest: DialogCase = async (adapters) => {
+	const what = "FAULT-DIALOG-02";
+	const { rig, dialogs } = await asking(adapters, "cross-machine", undefined, true);
+	const outcome = rig.execute("scope", [call("c1")]);
+	await rig.runUntil(() => dialogs.raised.length >= 1, `${what}: the dialog reached the session`);
+	await rig.advance(500);
+	dialogs.answer(0, true);
+	const { messages } = await rig.settle(outcome, `${what}: the call settled`);
+	await rig.advance(500);
+	expectEqual(text(messages[0]), "answered:true", `${what}: the answer reached the hand`);
+	expectEqual(dialogs.raised, ["confirm:Proceed?"], `${what}: the duplicated request raised the dialog once`);
+	expectEqual(repliesSent(rig), ['reply:{"value":true}'], `${what}: the dialog was answered once on the wire`);
+	expectEqual(rig.bodies, ["scope:c1"], `${what}: the tool body ran once`);
 };
 
 const PLACEMENTS: readonly HandPlacement[] = ["split-local", "cross-machine"];
@@ -150,6 +186,11 @@ export const DIALOG_DECLARATIONS: readonly DialogDeclaration[] = [
 		expected:
 			"flap and drop-reattach profiles: a pending remote dialog surfaces once after reconnect, its answer reaches the hand, a late answer is refused",
 	},
+	{
+		id: "FAULT-DIALOG-02",
+		expected:
+			"a dialog request that reaches the session twice as separate frames raises the dialog once and is answered once",
+	},
 ];
 
 export const DIALOG_CASES: ReadonlyMap<string, DialogCase> = new Map<string, DialogCase>([
@@ -158,4 +199,5 @@ export const DIALOG_CASES: ReadonlyMap<string, DialogCase> = new Map<string, Dia
 		killWhilePending(placement),
 	]),
 	["FAULT-DIALOG-01", faultWhilePending],
+	["FAULT-DIALOG-02", duplicateRequest],
 ]);

@@ -15,7 +15,12 @@ describe("dialog conformance (KILL-DIALOG, FAULT-DIALOG)", () => {
 
 	it("has a runnable implementation for every registered dialog case", () => {
 		const registry = CONFORMANCE_REGISTRY.filter(({ id }) => /^(KILL|FAULT)-DIALOG-/.test(id));
-		expect(registry.map(({ id }) => id)).toEqual(["KILL-DIALOG-01-SL", "KILL-DIALOG-01-XM", "FAULT-DIALOG-01"]);
+		expect(registry.map(({ id }) => id)).toEqual([
+			"KILL-DIALOG-01-SL",
+			"KILL-DIALOG-01-XM",
+			"FAULT-DIALOG-01",
+			"FAULT-DIALOG-02",
+		]);
 		expect(findImplementationGaps(registry, DIALOG_CASES)).toEqual({ unimplemented: [], unregistered: [] });
 	});
 });
