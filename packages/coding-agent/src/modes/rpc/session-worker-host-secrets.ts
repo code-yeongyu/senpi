@@ -16,6 +16,26 @@ type Reply = Extract<SessionWorkerToHost, { request: number }>;
 /** The most answers for one request in flight or queued toward the isolate (D11 secret phase 5.5). */
 const SEALED_ANSWERS_PER_ID = 5;
 const OUTCOMES: ReadonlySet<SecretInputOutcome> = new Set(["answered", "cancelled", "timed_out", "unavailable"]);
+type ReplyError = Extract<SealedAnswerReply, { error: string }>["error"];
+const REPLY_ERRORS: ReadonlySet<string> = new Set<ReplyError>([
+	"already_answered",
+	"unknown_extension_ui_request",
+	"secret_stepup_refused",
+	"invalid_secret_response",
+	"secret_answer_refused",
+]);
+
+const isReplyError = (error: string): error is ReplyError => REPLY_ERRORS.has(error);
+
+/** The isolate's reply is untrusted (#5192): only the shapes its latch can produce pass, rebuilt field by field. */
+function isolateReply(value: unknown): SealedAnswerReply {
+	if (typeof value !== "object" || value === null) return { error: "secret_answer_refused" };
+	const disposition = "disposition" in value ? value.disposition : undefined;
+	if (disposition === "applied" || disposition === "replay") return { disposition };
+	const error = "error" in value ? value.error : undefined;
+	if (typeof error === "string" && isReplyError(error)) return { error };
+	return { error: "secret_answer_refused" };
+}
 
 interface HostSecretsDeps {
 	readonly post: (message: HostToSessionWorker) => void;
@@ -164,7 +184,7 @@ export class WorkerHostSecrets {
 			forwarded.add(answer.grantId);
 			this.forwarded.set(id, forwarded);
 			const reply = await this.deps.request({ type: "secret_sealed_answer", answer });
-			return reply.type === "secret_sealed_result" ? reply.reply : { error: "secret_answer_refused" };
+			return reply.type === "secret_sealed_result" ? isolateReply(reply.reply) : { error: "secret_answer_refused" };
 		};
 		const result = (queued?.tail ?? Promise.resolve())
 			.then(run)

@@ -69,7 +69,7 @@ export abstract class SessionEventWriterPresenters
 					.then((reply) => {
 						try {
 							connection.writeRaw(
-								serializeJsonLine({ type: "mcp_presenter_secret_reply", ...lineId, ...reply }),
+								serializeJsonLine({ ...reply, type: "mcp_presenter_secret_reply", ...lineId }),
 							);
 						} catch {
 							// A closed connection simply misses its reply; the request's own state is unaffected.

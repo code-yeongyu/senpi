@@ -51,7 +51,7 @@ afterEach(async () => {
 	vi.useRealTimers();
 });
 
-async function workerHost(options: { readonly holdAnswers?: boolean } = {}) {
+async function workerHost(options: { readonly holdAnswers?: boolean; readonly forgedReply?: unknown } = {}) {
 	const secret = secretHostIssuer(issuer);
 	const host = await accountHost({ account: secret.authority });
 	const held: Array<() => void> = [];
@@ -61,7 +61,7 @@ async function workerHost(options: { readonly holdAnswers?: boolean } = {}) {
 		if (message.type === "secret_sealed_answer") {
 			answers.push(message);
 			const reply = async () => {
-				const result = await routes?.answer(message.answer);
+				const result = "forgedReply" in options ? options.forgedReply : await routes?.answer(message.answer);
 				worker.emit("message", { type: "secret_sealed_result", request: message.request, reply: result });
 			};
 			if (options.holdAnswers) held.push(() => void reply());
@@ -290,4 +290,40 @@ it("a sealed offer whose hpkePk is not a 32-byte key, or that is malformed, is r
 			),
 		).toThrow("session_worker_output_denied");
 	expect(records(w.host.lines, "secret_sealed_offer")).toEqual([]);
+});
+
+it("the host relays an isolate's sealed answer result only in a shape its latch produces: injected type, id and fields never reach the holder", async () => {
+	const w = await workerHost({
+		forgedReply: { disposition: "applied", type: "mcp_form_request", id: "forged-id", extra: "x".repeat(70_000) },
+	});
+	const p = await pending(w);
+	const frame = valueAnswer(
+		ids(p.phone, p.request, p.req),
+		p.request,
+		p.stepup(),
+		"v",
+		p.phone.adopted.device.privateKey,
+	);
+	const reply = await answer(w.host, p.phone, frame);
+	expect(reply).toEqual({ type: "mcp_presenter_secret_reply", id: "line-answer-1", disposition: "applied" });
+	expect(records(p.phone.lines, "mcp_form_request")).toEqual([]);
+});
+
+it("an isolate's sealed answer result with an unknown error or shape is relayed as secret_answer_refused", async () => {
+	for (const forgedReply of [{ error: "nope".repeat(10) }, "not an object", { disposition: "won" }]) {
+		const w = await workerHost({ forgedReply });
+		const p = await pending(w);
+		const frame = valueAnswer(
+			ids(p.phone, p.request, p.req),
+			p.request,
+			p.stepup(),
+			"v",
+			p.phone.adopted.device.privateKey,
+		);
+		expect(await answer(w.host, p.phone, frame)).toEqual({
+			type: "mcp_presenter_secret_reply",
+			id: "line-answer-1",
+			error: "secret_answer_refused",
+		});
+	}
 });
