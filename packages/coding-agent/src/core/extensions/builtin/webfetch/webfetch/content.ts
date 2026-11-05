@@ -14,6 +14,9 @@ const CELL_BREAK_SELECTOR = "td, th";
 const WHITESPACE = /[\t\f\v \u00a0]+/g;
 const NEWLINE_RUN = /\n{3,}/g;
 const MIN_EXPLICIT_ARTICLE_TEXT_LENGTH = 30;
+// Below this much visible body text, a page that runs scripts is treated as an unrendered app shell.
+const APP_SHELL_MAX_TEXT_LENGTH = 200;
+const EXECUTABLE_SCRIPT_TYPES = new Set(["", "module", "text/javascript", "application/javascript"]);
 const EXPLICIT_ARTICLE_SELECTORS = [
 	".article_view",
 	".tt_article_useless_p_margin",
@@ -81,6 +84,21 @@ export function htmlToText(html: string, url: string): string {
 	}
 
 	return htmlFragmentToPlainText(untouchedDocument.body);
+}
+
+/**
+ * Whether static HTML is a client-rendered app shell: it runs scripts and shows almost no text
+ * before they run (an empty mount point, a noscript notice). Such a page needs a rendered read.
+ */
+export function looksLikeAppShell(html: string, url: string): boolean {
+	const document = parseWebDocument(html, url);
+	const runsScripts = Array.from(document.querySelectorAll("script")).some((script) =>
+		EXECUTABLE_SCRIPT_TYPES.has((script.getAttribute("type") ?? "").trim().toLowerCase()),
+	);
+	if (!runsScripts) return false;
+	const body = document.importNode(document.body, true);
+	for (const element of body.querySelectorAll("script, style, noscript, template, svg")) element.remove();
+	return normalizePlainText(body.textContent ?? "").length < APP_SHELL_MAX_TEXT_LENGTH;
 }
 
 function htmlFragmentToPlainText(root: HTMLElement): string {
