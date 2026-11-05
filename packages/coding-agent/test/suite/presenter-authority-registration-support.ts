@@ -38,6 +38,8 @@ export interface Scratch {
 	readonly cwd: string;
 	readonly agentDir: string;
 	readonly socket: string;
+	/** The host's TMPDIR, where it puts the presenter control socket; see `scratch()`. */
+	readonly hostTmp: string;
 }
 
 const scratches: string[] = [];
@@ -51,7 +53,11 @@ export async function scratch(): Promise<Scratch> {
 	await mkdir(cwd);
 	// The host refuses a key root writable by group or others, so the fixture owns its mode.
 	await mkdir(agentDir, { mode: 0o700 });
-	return { root, cwd, agentDir, socket: join(root, "rpc.sock") };
+	// The control socket lands under the host's TMPDIR. Below a deep runner TMPDIR its path passes the 104/108-byte
+	// sun_path limit, listen fails and the host correctly starts without a control, so the host gets a short TMPDIR.
+	const hostTmp = await mkdtemp(join(process.platform === "win32" ? tmpdir() : "/tmp", "sps-"));
+	scratches.push(hostTmp);
+	return { root, cwd, agentDir, socket: join(root, "rpc.sock"), hostTmp };
 }
 
 export async function cleanup(): Promise<void> {
@@ -82,7 +88,7 @@ function environment(at: Scratch): NodeJS.ProcessEnv {
 	return {
 		PATH: process.env.PATH,
 		HOME: at.root,
-		TMPDIR: at.root,
+		TMPDIR: at.hostTmp,
 		SENPI_CODING_AGENT_DIR: at.agentDir,
 		SENPI_RUNTIME: "node",
 		SENPI_OFFLINE: "1",
