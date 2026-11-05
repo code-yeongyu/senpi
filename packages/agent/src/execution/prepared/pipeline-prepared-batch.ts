@@ -1,42 +1,40 @@
-import {
-	type Agent,
-	type AgentContext,
-	type AgentEvent,
-	type AgentTool,
-	type AgentToolCall,
-	type AgentToolCallOutcome,
-	type BatchExecutor,
-	type BatchPlan,
-	createAdmissionLine,
-	createBatchCoordinator,
-	createExecutionLedger,
-	createMemoryStoreMedium,
-	openMemoryStore,
-	createErrorToolResult,
-	emitToolExecutionEnd,
-	emitToolExecutionUpdate,
-	resolveToolNameAlias,
-	withToolNameCorrection,
-} from "@earendil-works/pi-agent-core";
+import { createAdmissionLine } from "../../durable/store-admission.ts";
+import { resolveToolNameAlias, withToolNameCorrection } from "../../tool-name-alias.ts";
+import type {
+	AgentContext,
+	AgentEvent,
+	AgentTool,
+	AgentToolCall,
+	AgentToolCallOutcome,
+	BatchStoreFactory,
+} from "../../types.ts";
+import type { BatchExecutor, BatchPlan } from "../coordinator-types.ts";
+import { createBatchCoordinator } from "../coordinator.ts";
+import { createExecutionLedger } from "../ledger.ts";
+import { createErrorToolResult, emitToolExecutionEnd, emitToolExecutionUpdate } from "../tool-outcome-events.ts";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { createPreparedExecutor } from "./executor.ts";
 import { toStoreValue } from "./executor-freeze.ts";
-import { agentPreparationPipeline } from "./executor-pipeline.ts";
+import { agentPreparationPipeline, type PreparationSource } from "./executor-pipeline.ts";
 
 const ISSUER = "loop";
 const EXECUTOR = "local";
 const LEASE_MS = 24 * 60 * 60 * 1000;
+// The ledger admits no call without a workspace, and a loop built with no execution scope has an empty root. The
+// batch's ledger lives only for this batch, so the name only has to be non-empty.
+const NO_WORKSPACE = "in-process";
 
 type Emit = (event: AgentEvent) => Promise<void> | void;
 
 export interface PreparedBatchRequest {
-	readonly agent: Agent;
+	readonly source: PreparationSource;
 	readonly calls: readonly AgentToolCall[];
 	readonly scope: { readonly id: string; readonly root: string };
 	readonly context: AgentContext;
 	readonly assistantMessage: AssistantMessage;
 	readonly emit: Emit;
 	readonly signal?: AbortSignal;
+	readonly openStore: BatchStoreFactory;
 }
 
 /** The scheduler's sequential test, decided before preparation: exact name, then the alias rule; an unresolved name runs in parallel. */
@@ -59,12 +57,11 @@ function isSequential(context: AgentContext, name: string): boolean {
  * today's scheduler runs each such block as its own call. Each batch runs on its own in-memory ledger.
  */
 export async function runPreparedBatch(request: PreparedBatchRequest): Promise<AgentToolCallOutcome[]> {
-	const { agent, calls, context, assistantMessage, emit, signal } = request;
-	const medium = createMemoryStoreMedium();
-	const store = openMemoryStore(medium);
+	const { source, calls, context, assistantMessage, emit, signal } = request;
+	const store = request.openStore();
 	await store.claim(0, 1);
 	const admission = createAdmissionLine();
-	const base = agentPreparationPipeline(agent);
+	const base = agentPreparationPipeline(source);
 	// Keyed by the call itself: two blocks of one message may share a call ID but never a call.
 	const resolved = new Map<AgentToolCall, AgentTool | undefined>();
 	const prepared = createPreparedExecutor({
@@ -190,7 +187,7 @@ export async function runPreparedBatch(request: PreparedBatchRequest): Promise<A
 	const plan: BatchPlan = {
 		batchId: crypto.randomUUID(),
 		scope: request.scope.id,
-		workspace: request.scope.root,
+		workspace: request.scope.root === "" ? NO_WORKSPACE : request.scope.root,
 		generation: 1,
 		admittedAt: now,
 		leaseUntil: now + LEASE_MS,

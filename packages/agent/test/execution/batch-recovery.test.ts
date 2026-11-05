@@ -58,8 +58,7 @@ describe("batch coordinator conformance on the memory store", () => {
 });
 
 describe("batchDependencies", () => {
-	// Today's scheduler (agent-loop.ts executeToolCallsParallel): a sequential call waits for the previous sequential call
-	// and every parallel call since; a parallel call waits for the previous sequential call only.
+	// The agent loop's batch order: a sequential call waits for the previous sequential call and every parallel call since; a parallel call waits for the previous sequential call only.
 	const rows: ReadonlyArray<{ name: string; sequential: boolean[]; dependsOn: number[][]; waves: number[] }> = [
 		{ name: "all parallel", sequential: [false, false, false], dependsOn: [[], [], []], waves: [0, 0, 0] },
 		{ name: "all sequential", sequential: [true, true, true], dependsOn: [[], [0], [1]], waves: [0, 1, 2] },

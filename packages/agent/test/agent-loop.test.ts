@@ -8,7 +8,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it, vi } from "vitest";
-import { agentLoop, agentLoopContinue, runAgentLoop, runToolCall } from "../src/agent-loop.ts";
+import { agentLoop, agentLoopContinue, runAgentLoop, runToolCall } from "../src/index.ts";
 import type { CustomMessage } from "../src/harness/messages.ts";
 import { setDefaultStreamFn } from "../src/index.ts";
 import type {
@@ -1972,9 +1972,11 @@ describe("agentLoop with AgentMessage", () => {
 					parallelFastObserved = true;
 				}
 				executionOrder.push(`fast:${params.value}`);
-				if (params.value === "b") {
-					await fastDone;
-				}
+				if (params.value === "c") releaseFast?.();
+				// b runs until c has started, so the overlap is observed without a timer; a scheduler that ran the two
+				// one after the other reaches the bound with c not yet started and fails the parallel assertion.
+				if (params.value === "b")
+					await Promise.race([fastDone, new Promise<void>((resolve) => setTimeout(resolve, 5_000))]);
 				activeFastTools--;
 				return {
 					content: [{ type: "text", text: `fast: ${params.value}` }],
@@ -2010,7 +2012,6 @@ describe("agentLoop with AgentMessage", () => {
 					);
 					mockStream.push({ type: "done", reason: "toolUse", message });
 					setTimeout(() => releaseSlow?.(), 20);
-					setTimeout(() => releaseFast?.(), 40);
 				} else {
 					const message = createAssistantMessage([{ type: "text", text: "done" }]);
 					mockStream.push({ type: "done", reason: "stop", message });
@@ -2043,10 +2044,13 @@ describe("agentLoop with AgentMessage", () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		let firstResolved = false;
 		let parallelObserved = false;
-		let releaseFirst: (() => void) | undefined;
-		const firstDone = new Promise<void>((resolve) => {
-			releaseFirst = resolve;
+		let secondStarted: (() => void) | undefined;
+		const second = new Promise<void>((resolve) => {
+			secondStarted = resolve;
 		});
+		// The first call runs until the second has started, so the test sees overlap without depending on a timer; a
+		// scheduler that ran them one after the other would reach the bound with the second call not yet started.
+		const overlapBound = new Promise<void>((resolve) => setTimeout(resolve, 5_000));
 
 		const tool: AgentTool<typeof toolSchema, { value: string }> = {
 			name: "echo",
@@ -2056,11 +2060,12 @@ describe("agentLoop with AgentMessage", () => {
 			executionMode: "parallel",
 			async execute(_toolCallId, params) {
 				if (params.value === "first") {
-					await firstDone;
+					await Promise.race([second, overlapBound]);
 					firstResolved = true;
 				}
-				if (params.value === "second" && !firstResolved) {
-					parallelObserved = true;
+				if (params.value === "second") {
+					if (!firstResolved) parallelObserved = true;
+					secondStarted?.();
 				}
 				return {
 					content: [{ type: "text", text: `echoed: ${params.value}` }],
@@ -2093,7 +2098,6 @@ describe("agentLoop with AgentMessage", () => {
 						"toolUse",
 					);
 					mockStream.push({ type: "done", reason: "toolUse", message });
-					setTimeout(() => releaseFirst?.(), 20);
 				} else {
 					const message = createAssistantMessage([{ type: "text", text: "done" }]);
 					mockStream.push({ type: "done", reason: "stop", message });
