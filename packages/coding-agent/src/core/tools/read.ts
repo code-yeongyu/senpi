@@ -104,7 +104,7 @@ export function createReadToolDefinition(
 		name: "read",
 		workspaceEffect: "read",
 		label: "read",
-		description: `Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.`,
+		description: `Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete. A .js or .json file of 100+ lines read without offset/limit may come back folded: bodies are replaced by markers and a footer lists the offset/limit ranges to reread; markers are not source, so reread those ranges before quoting or editing them.`,
 		promptSnippet: readToolSystemPromptContribution.snippet,
 		promptGuidelines: [...readToolSystemPromptContribution.guidelines],
 		fullPromptGuidelines: [...readToolSystemPromptContribution.fullGuidelines],

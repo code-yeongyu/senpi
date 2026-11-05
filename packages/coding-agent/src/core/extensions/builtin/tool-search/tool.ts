@@ -44,7 +44,7 @@ export function createToolSearchTool(service: ToolSearchService): ToolSearchTool
 		workspaceEffect: "read",
 		label: "Tool search",
 		description:
-			"Search the catalog of deferred tools by capability. Returns matching tool names with their parameter schemas and never changes your active tool set; call a returned tool by name and it activates on that first call.",
+			"Search the catalog of deferred tools by capability. Returns at most 5 matching tool names with their parameter schemas and never changes your active tool set; call a returned tool by name and it activates on that first call.",
 		promptSnippet: "Search deferred tool catalogs by capability; call a returned tool by name to use it.",
 		parameters: ParamsSchema,
 		prepareArguments: prepareToolSearchArguments,

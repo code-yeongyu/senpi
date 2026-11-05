@@ -99,7 +99,7 @@ export function createGrepToolDefinition(
 		label: "grep",
 		exposure: "eval",
 		description:
-			"Search file contents with tool.grep({ pattern, path }) inside eval. Supports regex/literal patterns, file pages with skip, context, count/files modes, and structured results. Respects .gitignore.",
+			"Search file contents with tool.grep({ pattern, path }) inside eval. Supports regex/literal patterns, file pages with skip, context, count/files modes, and structured results. Respects .gitignore. Defaults: limit 100 (matches per page in total, dealt round-robin across that page's files, so 20 files get 5 each), timeoutMs 30000. A page holds at most min(20, limit) files, and content mode stops at 20 matches per file (200 when path is one file); skip pages through files and is ignored when path is one file.",
 		promptSnippet: grepToolSystemPromptContribution.snippet,
 		promptGuidelines: grepToolSystemPromptContribution.guidelines,
 		fullPromptGuidelines: grepToolSystemPromptContribution.fullGuidelines,

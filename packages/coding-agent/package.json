@@ -59,6 +59,10 @@
 		"./subscription-egress": {
 			"types": "./dist/subscription-egress/index.d.ts",
 			"import": "./dist/subscription-egress/index.js"
+		},
+		"./presenter-authority": {
+			"types": "./dist/presenter-authority-slot.d.ts",
+			"import": "./dist/presenter-authority-slot.js"
 		}
 	},
 	"files": [

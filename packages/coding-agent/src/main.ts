@@ -118,6 +118,7 @@ import { builtInExtensions } from "./extensions/index.ts";
 import { getFromSourceRealConfigWarning } from "./from-source-config-guard.ts";
 import { legacyPiEditStartupNotice } from "./legacy-pi-edits.ts";
 import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
+import { takePresenterAccountAuthority } from "./presenter-authority-slot.ts";
 import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
 import { runPrintMode } from "./modes/print-mode.ts";
 import { startHostChildReaper } from "./modes/rpc/child-reaper.ts";
@@ -1127,6 +1128,8 @@ export function createCliRuntimeFactory(
 }
 
 export async function main(args: string[], options?: MainOptions) {
+	// First statement: seals the slot before any extension or resource path can load code (D11, senpi#4249).
+	const presenterAccountAuthority = takePresenterAccountAuthority();
 	resetTimings();
 	// The pre-main phase - runtime boot, cli.js, and this module's static import graph - is already
 	// over when the first statement runs, so it is read from the process clock rather than measured.
@@ -1402,6 +1405,7 @@ export async function main(args: string[], options?: MainOptions) {
 		await runMultiSessionHost({
 			presenterBootstrapFd,
 			mcpPresenterEnforcement,
+			...(presenterAccountAuthority === undefined ? {} : { presenterAccountAuthority }),
 			agentDir,
 			createRuntime: createCliRuntimeFactory(runtimeConfiguration, {
 				...(hostModelRuntime === undefined ? {} : { modelRuntime: hostModelRuntime }),

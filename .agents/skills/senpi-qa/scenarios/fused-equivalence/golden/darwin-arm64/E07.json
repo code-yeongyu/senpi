@@ -42,7 +42,7 @@
        "type": "function",
        "function": {
         "name": "read",
-        "description": "Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.",
+        "description": "Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete. A .js or .json file of 100+ lines read without offset/limit may come back folded: bodies are replaced by markers and a footer lists the offset/limit ranges to reread; markers are not source, so reread those ranges before quoting or editing them.",
         "parameters": {
          "type": "object",
          "required": [
@@ -214,7 +214,7 @@
           },
           "filter": {
            "type": "string",
-           "description": "Only return output lines matching this regex."
+           "description": "Only return output lines matching this regex. An invalid regex is ignored and the whole unfiltered output comes back."
           },
           "view": {
            "description": "'log' returns new raw output (default); 'screen' returns the rendered xterm grid.",
@@ -269,14 +269,14 @@
            "items": {
             "type": "string"
            },
-           "description": "Only include search results from these domains"
+           "description": "Only include search results from these domains. Cannot be combined with a non-empty blocked_domains."
           },
           "blocked_domains": {
            "type": "array",
            "items": {
             "type": "string"
            },
-           "description": "Never include search results from these domains"
+           "description": "Never include search results from these domains. Cannot be combined with a non-empty allowed_domains."
           },
           "max_results": {
            "type": "integer",
@@ -291,7 +291,7 @@
        "type": "function",
        "function": {
         "name": "webfetch",
-        "description": "Fetches content from a URL and returns it as markdown, plain text, or HTML. Network use is bounded by timeout and response size limits.",
+        "description": "Fetches content from a URL and returns it as markdown, plain text, or HTML. A response over 5MB fails with an error instead of returning partial content, and the text handed back is capped at 50KB with a truncation notice.",
         "parameters": {
          "type": "object",
          "required": [
@@ -313,7 +313,7 @@
           },
           "timeout": {
            "type": "number",
-           "description": "Optional timeout in seconds. Maximum 120."
+           "description": "Optional timeout in seconds. Defaults to 30; a missing, zero or negative value means 30. Maximum 120."
           }
          }
         }
@@ -323,7 +323,7 @@
        "type": "function",
        "function": {
         "name": "create_goal",
-        "description": "Register a goal for work that outlives this turn: it waits on external state, or the user's requested outcome needs more than one verify-and-fix round before it is true. A single answer, lookup, or one-shot edit needs no goal.\nObjectives are limited to 4,000 characters. For longer instructions, put the full objective in a file and refer to that file.\nReplaces the current goal when it is complete and archives it; fails if an unfinished goal exists.",
+        "description": "Register a goal for work that outlives this turn: it waits on external state, or the user's requested outcome needs more than one verify-and-fix round before it is true. A single answer, lookup, or one-shot edit needs no goal.\nObjectives over 4,000 characters are cut to at most 4,000 including a truncation marker (the full text is saved to a side file). For longer instructions, put the full objective in a file and refer to that file.\nReplaces the current goal when it is complete and archives it; fails if an unfinished goal exists.",
         "parameters": {
          "type": "object",
          "required": [
@@ -332,7 +332,7 @@
          "properties": {
           "objective": {
            "type": "string",
-           "description": "Required. The concrete objective to start pursuing. Limit: 4,000 characters. For longer instructions, put the full objective in a file and refer to that file."
+           "description": "Required. The concrete objective to start pursuing. Text past 4,000 characters is truncated, not rejected. For longer instructions, put the full objective in a file and refer to that file."
           }
          },
          "additionalProperties": false
@@ -343,7 +343,7 @@
        "type": "function",
        "function": {
         "name": "update_goal",
-        "description": "Set the existing goal's status to `complete` or `blocked`; the completion audit and blocked audit in the goal continuation prompt decide which, and only a passing audit permits the call.\n`complete` is rejected while todo tasks are open, and stopping work is never by itself a reason to complete; after it succeeds, report the final elapsed time and token usage from the result to the user.\n`blocked` requires a non-empty `reason` (omit `reason` for `complete`), and is rejected while any resumption channel can still deliver, and again until the same blocker has survived three goal turns since the goal became active or the user last spoke; a user resume starts a fresh blocked audit.\nA missing user decision is a question for the question tool, not a blocked status, until the user fails to answer it. Retries themselves are unbounded.\nPausing and resuming are user or system actions, not this tool.",
+        "description": "Set the existing goal's status to `complete` or `blocked`; the completion audit and blocked audit in the goal continuation prompt decide which, and only a passing audit permits the call.\n`complete` is rejected while todo tasks are open, and stopping work is never by itself a reason to complete; after it succeeds, report the final elapsed time and token usage from the result to the user.\n`blocked` requires a non-empty `reason` (omit `reason` for `complete`); the tool checks only that, so the blocked audit is yours to pass first: never call it while any resumption channel can still deliver, or before the same blocker has survived three goal turns since the goal became active or the user last spoke; a user resume starts a fresh blocked audit.\nA missing user decision is a question for the question tool, not a blocked status, until the user fails to answer it. Retries themselves are unbounded.\nPausing and resuming are user or system actions, not this tool.",
         "parameters": {
          "type": "object",
          "required": [
@@ -371,7 +371,7 @@
        "type": "function",
        "function": {
         "name": "eval",
-        "description": "Run one step of code in a persistent kernel.\n\n<instruction>\n**One eval call = one cell = one logical step.** Top-level names persist per language across eval calls and tool calls: define helpers and clients once and reuse them instead of re-importing or re-reading. For large text, use bounded chunks or write it to a file and read it with offsets; treat truncation notices as incomplete data and follow the full-output path. Rebuild state only after `reset`, a kernel restart, or a `NameError`/`ReferenceError`, and check a sentinel variable first so a re-run cannot duplicate side effects.\n\nBatch a step's independent calls in one cell with `parallel(thunks)`.\n- Write real code around the calls - loops, branches, joins, a try/except per risky item - and keep every failed or missing item in the result verbatim; re-read truncated output before deciding.\n- Long-running build, test run, deploy, or watch work starts with `tool.monitor({ command, filter })`, with the decisive-line filter inside the same cell; keep working until its event wakes the turn.\n\nHost: darwin arm64 · <host:cpu-model> · <host:cores> cores · <child-runtime>. Cells execute here. Size `parallel(thunks)` pools to its cores; `tool.<name>()` shell commands must fit this platform, even when the code you are writing targets another machine.\n\n`language`: `\"py\"` IPython kernel, `\"js\"` persistent JavaScript VM.\n\nA cell that outlives the foreground window detaches and keeps running; further cells on the same language queue behind it in submission order on the same kernel (state is shared, execution is serial) while other languages run at once, up to 15 background cells per session; each detached cell completes as one notification. Do not re-run a detached or queued cell; read, cancel or enumerate them with `eval({ action: \"peek\" | \"stop\", cell_id })` / `eval({ action: \"list\" })`; list shows live and recently settled cells across languages without consuming notifications. Its own execution time is capped at 300s (queue time and time inside host tool calls are not charged; the hard limit stays wall-clock from submission; raise `timeout` only for a declared long run), and a killed js cell that cannot settle restarts its kernel with every global lost.\n\nPython runs on a live event loop: use top-level `await`; `asyncio.run(…)` raises.\nJS runs in-process on Bun 1.4.4: top-level `await`/`return` work; `Bun.*` builtins available, including `new Bun.WebView()`, a headless browser (navigate/click/evaluate/screenshot) to reach for before `curl` or a browser CLI when a page needs JS, a login, or a screenshot. Shell out through `Bun.$` or `Bun.spawn`, never `Bun.spawnSync`: a synchronous child blocks the worker and cannot be interrupted. Before a cell that installs a package, spawns a process, server or PTY, runs tests, or starts a long run, read the bun skill at <repo>/packages/senpi-codemode/src/skill/bun/SKILL.md: its builtins replace the npm packages you would otherwise install, and it lists the Bun.$ / Bun.spawn / bun test traps that cost past sessions hours.\n\nOn error, fix and re-run only the failing step; a normal error keeps state, while a timeout or stop message says whether the kernel restarted.\n</instruction>\n\n<prelude>\nSame helpers + arg order, both runtimes. Python: sync, options = trailing kwargs. JS: async/`await`able, options = ONE trailing object literal, never positional (extras throw).\n```\ndisplay(value) → None\n    Cell output. Images reach you only through display: pass a figure, image bytes, a tool result, or its `images[i]`.\nprint(value, ...) → None\n    Text output.\nread(path, offset?=1, limit?=None) → str\n    File as text; offset/limit are 1-indexed lines. Accepts `local://…`.\nwrite(path, content) → str\n    Write file (creates parents) → resolved path. `local://…` persists across turns/subagents.\nenv(key?=None, value?=None) → str | None | dict\n    No args → full env dict; one → value; two → set `key=value`.\ntool.<name>(args) → { text, images?, details?, hasError? }\n    Invoke any session tool; image results (e.g. `tool.read` on a png) arrive in `images[i]` as { mimeType, dataBase64 }.\ntool_schema(name?) → dict\n    Parameter schema of a tool (omit `name` to list tool names); a failed `tool.<name>()` call also returns the expected parameters.\ncompletion(prompt, model?=\"default\", system?=None, schema?=None) → str | dict\n    Oneshot, stateless. `model`: `\"smol\"` fast | `\"default\"` session | `\"slow\"` most capable. `schema` (JSON-Schema) → parsed structured output.\nworkpool(agent, name, mode?) → { pool_id, push(items), close(), inspect(), cancel() }\n    Thin host-tool adapter; agent is a plain-data spec. The host owns scheduling and keyed yields; explicitly close for automatic aggregate delivery. Requires the host workpool tool; omitted mode uses its default.\nparallel(thunks) → list\n    Thunks through a bounded pool (as wide as a `task` batch), input order kept; a throwing thunk propagates.\npipeline(items, ...stages) → list\n    Map items through one-arg stages with a barrier between stages; each stage receives the previous stage's result.\nlog(message) → None\n    Progress line above the status tree.\nphase(title) → None\n    Phase grouping subsequent status lines.\n```\n</prelude>",
+        "description": "Run one step of code in a persistent kernel.\n\n<instruction>\n**One eval call = one cell = one logical step.** Top-level names persist per language across eval calls and tool calls: define helpers and clients once and reuse them instead of re-importing or re-reading. For large text, use bounded chunks or write it to a file and read it with offsets; treat truncation notices as incomplete data and follow the full-output path. Rebuild state only after `reset`, a kernel restart, or a `NameError`/`ReferenceError`, and check a sentinel variable first so a re-run cannot duplicate side effects.\n\nBatch a step's independent calls in one cell with `parallel(thunks)`.\n- Write real code around the calls - loops, branches, joins, a try/except per risky item - and keep every failed or missing item in the result verbatim; re-read truncated output before deciding.\n- Long-running build, test run, deploy, or watch work starts with `tool.monitor({ command, filter })`, with the decisive-line filter inside the same cell; keep working until its event wakes the turn.\n\nHost: darwin arm64 · <host:cpu-model> · <host:cores> cores · <child-runtime>. Cells execute here. `parallel(thunks)` runs through a fixed-width pool (the codemode `parallelPoolWidth` setting, default 4) whatever the core count; `tool.<name>()` shell commands must fit this platform, even when the code you are writing targets another machine.\n\n`language`: `\"py\"` IPython kernel, `\"js\"` persistent JavaScript VM.\n\nA cell still running when the call stops waiting for it (the detach point in the parameter schema) detaches and keeps running; further cells on the same language queue behind it in submission order on the same kernel (state is shared, execution is serial) while other languages run at once, up to 15 background cells per session (at that cap, a further cell that cannot detach is cancelled when its foreground window ends, so stop or await a live cell first); each detached cell completes as one notification. Do not re-run a detached or queued cell; read, cancel or enumerate them with `eval({ action: \"peek\" | \"stop\", cell_id })` / `eval({ action: \"list\" })`; list shows live and recently settled cells across languages without consuming notifications. Its own execution time is capped at 300s (queue time and time inside host tool calls are not charged; the hard limit stays wall-clock from submission; raise `timeout` only for a declared long run), and a killed js cell that cannot settle restarts its kernel with every global lost.\n\nPython runs on a live event loop: use top-level `await`; `asyncio.run(…)` raises.\nJS runs in-process on Bun 1.4.4: top-level `await`/`return` work; `Bun.*` builtins available, including `new Bun.WebView()`, a headless browser (navigate/click/evaluate/screenshot) to reach for before `curl` or a browser CLI when a page needs JS, a login, or a screenshot. Shell out through `Bun.$` or `Bun.spawn`, never `Bun.spawnSync`: a synchronous child blocks the worker and cannot be interrupted. Before a cell that installs a package, spawns a process, server or PTY, runs tests, or starts a long run, read the bun skill at <repo>/packages/senpi-codemode/src/skill/bun/SKILL.md: its builtins replace the npm packages you would otherwise install, and it lists the Bun.$ / Bun.spawn / bun test traps that cost past sessions hours.\n\nOn error, fix and re-run only the failing step; a normal error keeps state, while a timeout or stop message says whether the kernel restarted.\n</instruction>\n\n<prelude>\nSame helpers + arg order, both runtimes. Python: sync, options = trailing kwargs. JS: async/`await`able, options = ONE trailing object literal, never positional (extras throw).\n```\ndisplay(value) → None\n    Cell output. Images reach you only through display: pass a figure, image bytes, a tool result, or its `images[i]`.\nprint(value, ...) → None\n    Text output.\nread(path, offset?=1, limit?=None) → str\n    File as text; offset/limit are 1-indexed lines. Accepts `local://…`.\nwrite(path, content) → str\n    Write file (creates parents) → resolved path. `local://…` persists across turns/subagents.\nenv(key?=None, value?=None) → str | None | dict\n    No args → full env dict; one → value; two → set `key=value`.\ntool.<name>(args) → { text, images?, details?, hasError? }\n    Invoke any session tool; image results (e.g. `tool.read` on a png) arrive in `images[i]` as { mimeType, dataBase64 }.\ntool_schema(name?) → dict\n    Parameter schema of a tool (omit `name` to list tool names); a failed `tool.<name>()` call also returns the expected parameters.\ncompletion(prompt, model?=\"default\", system?=None, schema?=None) → str | dict\n    Oneshot, stateless. `model`: `\"smol\"` fast | `\"default\"` session | `\"slow\"` most capable. `schema` (JSON-Schema) → parsed structured output.\nworkpool(agent, name, mode?) → { pool_id, push(items), close(), inspect(), cancel() }\n    Thin host-tool adapter; agent is a plain-data spec. The host owns scheduling and keyed yields; explicitly close for automatic aggregate delivery. Requires the host workpool tool; omitted mode uses its default.\nparallel(thunks) → list\n    Thunks through a bounded pool (as wide as a `task` batch), input order kept; a throwing thunk propagates.\npipeline(items, ...stages) → list\n    Map items through one-arg stages with a barrier between stages; each stage receives the previous stage's result.\nlog(message) → None\n    Progress line above the status tree.\nphase(title) → None\n    Phase grouping subsequent status lines.\n```\n</prelude>",
         "parameters": {
          "type": "object",
          "properties": {
@@ -477,7 +477,7 @@
        "type": "function",
        "function": {
         "name": "ask_user_question",
-        "description": "Ask the user one to four concise questions. Set waitForAnswer true to pause here until the user answers (the answer returns as this tool's result, or a timeout result after 30 idle minutes); set waitForAnswer false to keep working while the question stays open (the answer arrives later as a user message). Use it only when the answer materially changes the work; if it returns no answers, continue with best judgment instead of asking again, unless you set required true because the answer decides whether you take an action: then no answer means do not take it. Never use it for permission requests; ask those directly in your message. When the user's instructions (in the conversation or their instruction files) say not to ask, or not to ask with choices, do not call it: take the safe default, keep working, and say what you chose. Unavailable to subagents. Users will always be able to type a free-text answer or one comment covering everything; do not add an Other option. Call this tool directly, never from inside an eval cell (a cell that waits on the user would hold the kernel).",
+        "description": "Ask the user one to four concise questions. Set waitForAnswer true to pause here until the user answers (the answer returns as this tool's result, or a timeout result after 30 idle minutes by default, where any user activity on the question restarts the idle clock, up to a 2-hour cap); set waitForAnswer false to keep working while the question stays open (the answer arrives later as a user message). Use it only when the answer materially changes the work; if it returns no answers, continue with best judgment instead of asking again, unless you set required true because the answer decides whether you take an action: then no answer means do not take it. Never use it for permission requests; ask those directly in your message. When the user's instructions (in the conversation or their instruction files) say not to ask, or not to ask with choices, do not call it: take the safe default, keep working, and say what you chose. Unavailable to subagents. Users will always be able to type a free-text answer or one comment covering everything; do not add an Other option. Call this tool directly, never from inside an eval cell (a cell that waits on the user would hold the kernel).",
         "parameters": {
          "type": "object",
          "required": [
@@ -554,7 +554,7 @@
        "type": "function",
        "function": {
         "name": "tool_search",
-        "description": "Search the catalog of deferred tools by capability. Returns matching tool names with their parameter schemas and never changes your active tool set; call a returned tool by name and it activates on that first call.",
+        "description": "Search the catalog of deferred tools by capability. Returns at most 5 matching tool names with their parameter schemas and never changes your active tool set; call a returned tool by name and it activates on that first call.",
         "parameters": {
          "type": "object",
          "required": [
@@ -648,7 +648,7 @@
        "type": "function",
        "function": {
         "name": "read",
-        "description": "Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.",
+        "description": "Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete. A .js or .json file of 100+ lines read without offset/limit may come back folded: bodies are replaced by markers and a footer lists the offset/limit ranges to reread; markers are not source, so reread those ranges before quoting or editing them.",
         "parameters": {
          "type": "object",
          "required": [
@@ -820,7 +820,7 @@
           },
           "filter": {
            "type": "string",
-           "description": "Only return output lines matching this regex."
+           "description": "Only return output lines matching this regex. An invalid regex is ignored and the whole unfiltered output comes back."
           },
           "view": {
            "description": "'log' returns new raw output (default); 'screen' returns the rendered xterm grid.",
@@ -875,14 +875,14 @@
            "items": {
             "type": "string"
            },
-           "description": "Only include search results from these domains"
+           "description": "Only include search results from these domains. Cannot be combined with a non-empty blocked_domains."
           },
           "blocked_domains": {
            "type": "array",
            "items": {
             "type": "string"
            },
-           "description": "Never include search results from these domains"
+           "description": "Never include search results from these domains. Cannot be combined with a non-empty allowed_domains."
           },
           "max_results": {
            "type": "integer",
@@ -897,7 +897,7 @@
        "type": "function",
        "function": {
         "name": "webfetch",
-        "description": "Fetches content from a URL and returns it as markdown, plain text, or HTML. Network use is bounded by timeout and response size limits.",
+        "description": "Fetches content from a URL and returns it as markdown, plain text, or HTML. A response over 5MB fails with an error instead of returning partial content, and the text handed back is capped at 50KB with a truncation notice.",
         "parameters": {
          "type": "object",
          "required": [
@@ -919,7 +919,7 @@
           },
           "timeout": {
            "type": "number",
-           "description": "Optional timeout in seconds. Maximum 120."
+           "description": "Optional timeout in seconds. Defaults to 30; a missing, zero or negative value means 30. Maximum 120."
           }
          }
         }
@@ -929,7 +929,7 @@
        "type": "function",
        "function": {
         "name": "create_goal",
-        "description": "Register a goal for work that outlives this turn: it waits on external state, or the user's requested outcome needs more than one verify-and-fix round before it is true. A single answer, lookup, or one-shot edit needs no goal.\nObjectives are limited to 4,000 characters. For longer instructions, put the full objective in a file and refer to that file.\nReplaces the current goal when it is complete and archives it; fails if an unfinished goal exists.",
+        "description": "Register a goal for work that outlives this turn: it waits on external state, or the user's requested outcome needs more than one verify-and-fix round before it is true. A single answer, lookup, or one-shot edit needs no goal.\nObjectives over 4,000 characters are cut to at most 4,000 including a truncation marker (the full text is saved to a side file). For longer instructions, put the full objective in a file and refer to that file.\nReplaces the current goal when it is complete and archives it; fails if an unfinished goal exists.",
         "parameters": {
          "type": "object",
          "required": [
@@ -938,7 +938,7 @@
          "properties": {
           "objective": {
            "type": "string",
-           "description": "Required. The concrete objective to start pursuing. Limit: 4,000 characters. For longer instructions, put the full objective in a file and refer to that file."
+           "description": "Required. The concrete objective to start pursuing. Text past 4,000 characters is truncated, not rejected. For longer instructions, put the full objective in a file and refer to that file."
           }
          },
          "additionalProperties": false
@@ -949,7 +949,7 @@
        "type": "function",
        "function": {
         "name": "update_goal",
-        "description": "Set the existing goal's status to `complete` or `blocked`; the completion audit and blocked audit in the goal continuation prompt decide which, and only a passing audit permits the call.\n`complete` is rejected while todo tasks are open, and stopping work is never by itself a reason to complete; after it succeeds, report the final elapsed time and token usage from the result to the user.\n`blocked` requires a non-empty `reason` (omit `reason` for `complete`), and is rejected while any resumption channel can still deliver, and again until the same blocker has survived three goal turns since the goal became active or the user last spoke; a user resume starts a fresh blocked audit.\nA missing user decision is a question for the question tool, not a blocked status, until the user fails to answer it. Retries themselves are unbounded.\nPausing and resuming are user or system actions, not this tool.",
+        "description": "Set the existing goal's status to `complete` or `blocked`; the completion audit and blocked audit in the goal continuation prompt decide which, and only a passing audit permits the call.\n`complete` is rejected while todo tasks are open, and stopping work is never by itself a reason to complete; after it succeeds, report the final elapsed time and token usage from the result to the user.\n`blocked` requires a non-empty `reason` (omit `reason` for `complete`); the tool checks only that, so the blocked audit is yours to pass first: never call it while any resumption channel can still deliver, or before the same blocker has survived three goal turns since the goal became active or the user last spoke; a user resume starts a fresh blocked audit.\nA missing user decision is a question for the question tool, not a blocked status, until the user fails to answer it. Retries themselves are unbounded.\nPausing and resuming are user or system actions, not this tool.",
         "parameters": {
          "type": "object",
          "required": [
@@ -977,7 +977,7 @@
        "type": "function",
        "function": {
         "name": "eval",
-        "description": "Run one step of code in a persistent kernel.\n\n<instruction>\n**One eval call = one cell = one logical step.** Top-level names persist per language across eval calls and tool calls: define helpers and clients once and reuse them instead of re-importing or re-reading. For large text, use bounded chunks or write it to a file and read it with offsets; treat truncation notices as incomplete data and follow the full-output path. Rebuild state only after `reset`, a kernel restart, or a `NameError`/`ReferenceError`, and check a sentinel variable first so a re-run cannot duplicate side effects.\n\nBatch a step's independent calls in one cell with `parallel(thunks)`.\n- Write real code around the calls - loops, branches, joins, a try/except per risky item - and keep every failed or missing item in the result verbatim; re-read truncated output before deciding.\n- Long-running build, test run, deploy, or watch work starts with `tool.monitor({ command, filter })`, with the decisive-line filter inside the same cell; keep working until its event wakes the turn.\n\nHost: darwin arm64 · <host:cpu-model> · <host:cores> cores · <child-runtime>. Cells execute here. Size `parallel(thunks)` pools to its cores; `tool.<name>()` shell commands must fit this platform, even when the code you are writing targets another machine.\n\n`language`: `\"py\"` IPython kernel, `\"js\"` persistent JavaScript VM.\n\nA cell that outlives the foreground window detaches and keeps running; further cells on the same language queue behind it in submission order on the same kernel (state is shared, execution is serial) while other languages run at once, up to 15 background cells per session; each detached cell completes as one notification. Do not re-run a detached or queued cell; read, cancel or enumerate them with `eval({ action: \"peek\" | \"stop\", cell_id })` / `eval({ action: \"list\" })`; list shows live and recently settled cells across languages without consuming notifications. Its own execution time is capped at 300s (queue time and time inside host tool calls are not charged; the hard limit stays wall-clock from submission; raise `timeout` only for a declared long run), and a killed js cell that cannot settle restarts its kernel with every global lost.\n\nPython runs on a live event loop: use top-level `await`; `asyncio.run(…)` raises.\nJS runs in-process on Bun 1.4.4: top-level `await`/`return` work; `Bun.*` builtins available, including `new Bun.WebView()`, a headless browser (navigate/click/evaluate/screenshot) to reach for before `curl` or a browser CLI when a page needs JS, a login, or a screenshot. Shell out through `Bun.$` or `Bun.spawn`, never `Bun.spawnSync`: a synchronous child blocks the worker and cannot be interrupted. Before a cell that installs a package, spawns a process, server or PTY, runs tests, or starts a long run, read the bun skill at <repo>/packages/senpi-codemode/src/skill/bun/SKILL.md: its builtins replace the npm packages you would otherwise install, and it lists the Bun.$ / Bun.spawn / bun test traps that cost past sessions hours.\n\nOn error, fix and re-run only the failing step; a normal error keeps state, while a timeout or stop message says whether the kernel restarted.\n</instruction>\n\n<prelude>\nSame helpers + arg order, both runtimes. Python: sync, options = trailing kwargs. JS: async/`await`able, options = ONE trailing object literal, never positional (extras throw).\n```\ndisplay(value) → None\n    Cell output. Images reach you only through display: pass a figure, image bytes, a tool result, or its `images[i]`.\nprint(value, ...) → None\n    Text output.\nread(path, offset?=1, limit?=None) → str\n    File as text; offset/limit are 1-indexed lines. Accepts `local://…`.\nwrite(path, content) → str\n    Write file (creates parents) → resolved path. `local://…` persists across turns/subagents.\nenv(key?=None, value?=None) → str | None | dict\n    No args → full env dict; one → value; two → set `key=value`.\ntool.<name>(args) → { text, images?, details?, hasError? }\n    Invoke any session tool; image results (e.g. `tool.read` on a png) arrive in `images[i]` as { mimeType, dataBase64 }.\ntool_schema(name?) → dict\n    Parameter schema of a tool (omit `name` to list tool names); a failed `tool.<name>()` call also returns the expected parameters.\ncompletion(prompt, model?=\"default\", system?=None, schema?=None) → str | dict\n    Oneshot, stateless. `model`: `\"smol\"` fast | `\"default\"` session | `\"slow\"` most capable. `schema` (JSON-Schema) → parsed structured output.\nworkpool(agent, name, mode?) → { pool_id, push(items), close(), inspect(), cancel() }\n    Thin host-tool adapter; agent is a plain-data spec. The host owns scheduling and keyed yields; explicitly close for automatic aggregate delivery. Requires the host workpool tool; omitted mode uses its default.\nparallel(thunks) → list\n    Thunks through a bounded pool (as wide as a `task` batch), input order kept; a throwing thunk propagates.\npipeline(items, ...stages) → list\n    Map items through one-arg stages with a barrier between stages; each stage receives the previous stage's result.\nlog(message) → None\n    Progress line above the status tree.\nphase(title) → None\n    Phase grouping subsequent status lines.\n```\n</prelude>",
+        "description": "Run one step of code in a persistent kernel.\n\n<instruction>\n**One eval call = one cell = one logical step.** Top-level names persist per language across eval calls and tool calls: define helpers and clients once and reuse them instead of re-importing or re-reading. For large text, use bounded chunks or write it to a file and read it with offsets; treat truncation notices as incomplete data and follow the full-output path. Rebuild state only after `reset`, a kernel restart, or a `NameError`/`ReferenceError`, and check a sentinel variable first so a re-run cannot duplicate side effects.\n\nBatch a step's independent calls in one cell with `parallel(thunks)`.\n- Write real code around the calls - loops, branches, joins, a try/except per risky item - and keep every failed or missing item in the result verbatim; re-read truncated output before deciding.\n- Long-running build, test run, deploy, or watch work starts with `tool.monitor({ command, filter })`, with the decisive-line filter inside the same cell; keep working until its event wakes the turn.\n\nHost: darwin arm64 · <host:cpu-model> · <host:cores> cores · <child-runtime>. Cells execute here. `parallel(thunks)` runs through a fixed-width pool (the codemode `parallelPoolWidth` setting, default 4) whatever the core count; `tool.<name>()` shell commands must fit this platform, even when the code you are writing targets another machine.\n\n`language`: `\"py\"` IPython kernel, `\"js\"` persistent JavaScript VM.\n\nA cell still running when the call stops waiting for it (the detach point in the parameter schema) detaches and keeps running; further cells on the same language queue behind it in submission order on the same kernel (state is shared, execution is serial) while other languages run at once, up to 15 background cells per session (at that cap, a further cell that cannot detach is cancelled when its foreground window ends, so stop or await a live cell first); each detached cell completes as one notification. Do not re-run a detached or queued cell; read, cancel or enumerate them with `eval({ action: \"peek\" | \"stop\", cell_id })` / `eval({ action: \"list\" })`; list shows live and recently settled cells across languages without consuming notifications. Its own execution time is capped at 300s (queue time and time inside host tool calls are not charged; the hard limit stays wall-clock from submission; raise `timeout` only for a declared long run), and a killed js cell that cannot settle restarts its kernel with every global lost.\n\nPython runs on a live event loop: use top-level `await`; `asyncio.run(…)` raises.\nJS runs in-process on Bun 1.4.4: top-level `await`/`return` work; `Bun.*` builtins available, including `new Bun.WebView()`, a headless browser (navigate/click/evaluate/screenshot) to reach for before `curl` or a browser CLI when a page needs JS, a login, or a screenshot. Shell out through `Bun.$` or `Bun.spawn`, never `Bun.spawnSync`: a synchronous child blocks the worker and cannot be interrupted. Before a cell that installs a package, spawns a process, server or PTY, runs tests, or starts a long run, read the bun skill at <repo>/packages/senpi-codemode/src/skill/bun/SKILL.md: its builtins replace the npm packages you would otherwise install, and it lists the Bun.$ / Bun.spawn / bun test traps that cost past sessions hours.\n\nOn error, fix and re-run only the failing step; a normal error keeps state, while a timeout or stop message says whether the kernel restarted.\n</instruction>\n\n<prelude>\nSame helpers + arg order, both runtimes. Python: sync, options = trailing kwargs. JS: async/`await`able, options = ONE trailing object literal, never positional (extras throw).\n```\ndisplay(value) → None\n    Cell output. Images reach you only through display: pass a figure, image bytes, a tool result, or its `images[i]`.\nprint(value, ...) → None\n    Text output.\nread(path, offset?=1, limit?=None) → str\n    File as text; offset/limit are 1-indexed lines. Accepts `local://…`.\nwrite(path, content) → str\n    Write file (creates parents) → resolved path. `local://…` persists across turns/subagents.\nenv(key?=None, value?=None) → str | None | dict\n    No args → full env dict; one → value; two → set `key=value`.\ntool.<name>(args) → { text, images?, details?, hasError? }\n    Invoke any session tool; image results (e.g. `tool.read` on a png) arrive in `images[i]` as { mimeType, dataBase64 }.\ntool_schema(name?) → dict\n    Parameter schema of a tool (omit `name` to list tool names); a failed `tool.<name>()` call also returns the expected parameters.\ncompletion(prompt, model?=\"default\", system?=None, schema?=None) → str | dict\n    Oneshot, stateless. `model`: `\"smol\"` fast | `\"default\"` session | `\"slow\"` most capable. `schema` (JSON-Schema) → parsed structured output.\nworkpool(agent, name, mode?) → { pool_id, push(items), close(), inspect(), cancel() }\n    Thin host-tool adapter; agent is a plain-data spec. The host owns scheduling and keyed yields; explicitly close for automatic aggregate delivery. Requires the host workpool tool; omitted mode uses its default.\nparallel(thunks) → list\n    Thunks through a bounded pool (as wide as a `task` batch), input order kept; a throwing thunk propagates.\npipeline(items, ...stages) → list\n    Map items through one-arg stages with a barrier between stages; each stage receives the previous stage's result.\nlog(message) → None\n    Progress line above the status tree.\nphase(title) → None\n    Phase grouping subsequent status lines.\n```\n</prelude>",
         "parameters": {
          "type": "object",
          "properties": {
@@ -1083,7 +1083,7 @@
        "type": "function",
        "function": {
         "name": "ask_user_question",
-        "description": "Ask the user one to four concise questions. Set waitForAnswer true to pause here until the user answers (the answer returns as this tool's result, or a timeout result after 30 idle minutes); set waitForAnswer false to keep working while the question stays open (the answer arrives later as a user message). Use it only when the answer materially changes the work; if it returns no answers, continue with best judgment instead of asking again, unless you set required true because the answer decides whether you take an action: then no answer means do not take it. Never use it for permission requests; ask those directly in your message. When the user's instructions (in the conversation or their instruction files) say not to ask, or not to ask with choices, do not call it: take the safe default, keep working, and say what you chose. Unavailable to subagents. Users will always be able to type a free-text answer or one comment covering everything; do not add an Other option. Call this tool directly, never from inside an eval cell (a cell that waits on the user would hold the kernel).",
+        "description": "Ask the user one to four concise questions. Set waitForAnswer true to pause here until the user answers (the answer returns as this tool's result, or a timeout result after 30 idle minutes by default, where any user activity on the question restarts the idle clock, up to a 2-hour cap); set waitForAnswer false to keep working while the question stays open (the answer arrives later as a user message). Use it only when the answer materially changes the work; if it returns no answers, continue with best judgment instead of asking again, unless you set required true because the answer decides whether you take an action: then no answer means do not take it. Never use it for permission requests; ask those directly in your message. When the user's instructions (in the conversation or their instruction files) say not to ask, or not to ask with choices, do not call it: take the safe default, keep working, and say what you chose. Unavailable to subagents. Users will always be able to type a free-text answer or one comment covering everything; do not add an Other option. Call this tool directly, never from inside an eval cell (a cell that waits on the user would hold the kernel).",
         "parameters": {
          "type": "object",
          "required": [
@@ -1160,7 +1160,7 @@
        "type": "function",
        "function": {
         "name": "tool_search",
-        "description": "Search the catalog of deferred tools by capability. Returns matching tool names with their parameter schemas and never changes your active tool set; call a returned tool by name and it activates on that first call.",
+        "description": "Search the catalog of deferred tools by capability. Returns at most 5 matching tool names with their parameter schemas and never changes your active tool set; call a returned tool by name and it activates on that first call.",
         "parameters": {
          "type": "object",
          "required": [
@@ -1267,7 +1267,7 @@
        "type": "function",
        "function": {
         "name": "read",
-        "description": "Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.",
+        "description": "Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete. A .js or .json file of 100+ lines read without offset/limit may come back folded: bodies are replaced by markers and a footer lists the offset/limit ranges to reread; markers are not source, so reread those ranges before quoting or editing them.",
         "parameters": {
          "type": "object",
          "required": [
@@ -1439,7 +1439,7 @@
           },
           "filter": {
            "type": "string",
-           "description": "Only return output lines matching this regex."
+           "description": "Only return output lines matching this regex. An invalid regex is ignored and the whole unfiltered output comes back."
           },
           "view": {
            "description": "'log' returns new raw output (default); 'screen' returns the rendered xterm grid.",
@@ -1494,14 +1494,14 @@
            "items": {
             "type": "string"
            },
-           "description": "Only include search results from these domains"
+           "description": "Only include search results from these domains. Cannot be combined with a non-empty blocked_domains."
           },
           "blocked_domains": {
            "type": "array",
            "items": {
             "type": "string"
            },
-           "description": "Never include search results from these domains"
+           "description": "Never include search results from these domains. Cannot be combined with a non-empty allowed_domains."
           },
           "max_results": {
            "type": "integer",
@@ -1516,7 +1516,7 @@
        "type": "function",
        "function": {
         "name": "webfetch",
-        "description": "Fetches content from a URL and returns it as markdown, plain text, or HTML. Network use is bounded by timeout and response size limits.",
+        "description": "Fetches content from a URL and returns it as markdown, plain text, or HTML. A response over 5MB fails with an error instead of returning partial content, and the text handed back is capped at 50KB with a truncation notice.",
         "parameters": {
          "type": "object",
          "required": [
@@ -1538,7 +1538,7 @@
           },
           "timeout": {
            "type": "number",
-           "description": "Optional timeout in seconds. Maximum 120."
+           "description": "Optional timeout in seconds. Defaults to 30; a missing, zero or negative value means 30. Maximum 120."
           }
          }
         }
@@ -1548,7 +1548,7 @@
        "type": "function",
        "function": {
         "name": "create_goal",
-        "description": "Register a goal for work that outlives this turn: it waits on external state, or the user's requested outcome needs more than one verify-and-fix round before it is true. A single answer, lookup, or one-shot edit needs no goal.\nObjectives are limited to 4,000 characters. For longer instructions, put the full objective in a file and refer to that file.\nReplaces the current goal when it is complete and archives it; fails if an unfinished goal exists.",
+        "description": "Register a goal for work that outlives this turn: it waits on external state, or the user's requested outcome needs more than one verify-and-fix round before it is true. A single answer, lookup, or one-shot edit needs no goal.\nObjectives over 4,000 characters are cut to at most 4,000 including a truncation marker (the full text is saved to a side file). For longer instructions, put the full objective in a file and refer to that file.\nReplaces the current goal when it is complete and archives it; fails if an unfinished goal exists.",
         "parameters": {
          "type": "object",
          "required": [
@@ -1557,7 +1557,7 @@
          "properties": {
           "objective": {
            "type": "string",
-           "description": "Required. The concrete objective to start pursuing. Limit: 4,000 characters. For longer instructions, put the full objective in a file and refer to that file."
+           "description": "Required. The concrete objective to start pursuing. Text past 4,000 characters is truncated, not rejected. For longer instructions, put the full objective in a file and refer to that file."
           }
          },
          "additionalProperties": false
@@ -1568,7 +1568,7 @@
        "type": "function",
        "function": {
         "name": "update_goal",
-        "description": "Set the existing goal's status to `complete` or `blocked`; the completion audit and blocked audit in the goal continuation prompt decide which, and only a passing audit permits the call.\n`complete` is rejected while todo tasks are open, and stopping work is never by itself a reason to complete; after it succeeds, report the final elapsed time and token usage from the result to the user.\n`blocked` requires a non-empty `reason` (omit `reason` for `complete`), and is rejected while any resumption channel can still deliver, and again until the same blocker has survived three goal turns since the goal became active or the user last spoke; a user resume starts a fresh blocked audit.\nA missing user decision is a question for the question tool, not a blocked status, until the user fails to answer it. Retries themselves are unbounded.\nPausing and resuming are user or system actions, not this tool.",
+        "description": "Set the existing goal's status to `complete` or `blocked`; the completion audit and blocked audit in the goal continuation prompt decide which, and only a passing audit permits the call.\n`complete` is rejected while todo tasks are open, and stopping work is never by itself a reason to complete; after it succeeds, report the final elapsed time and token usage from the result to the user.\n`blocked` requires a non-empty `reason` (omit `reason` for `complete`); the tool checks only that, so the blocked audit is yours to pass first: never call it while any resumption channel can still deliver, or before the same blocker has survived three goal turns since the goal became active or the user last spoke; a user resume starts a fresh blocked audit.\nA missing user decision is a question for the question tool, not a blocked status, until the user fails to answer it. Retries themselves are unbounded.\nPausing and resuming are user or system actions, not this tool.",
         "parameters": {
          "type": "object",
          "required": [
@@ -1596,7 +1596,7 @@
        "type": "function",
        "function": {
         "name": "eval",
-        "description": "Run one step of code in a persistent kernel.\n\n<instruction>\n**One eval call = one cell = one logical step.** Top-level names persist per language across eval calls and tool calls: define helpers and clients once and reuse them instead of re-importing or re-reading. For large text, use bounded chunks or write it to a file and read it with offsets; treat truncation notices as incomplete data and follow the full-output path. Rebuild state only after `reset`, a kernel restart, or a `NameError`/`ReferenceError`, and check a sentinel variable first so a re-run cannot duplicate side effects.\n\nBatch a step's independent calls in one cell with `parallel(thunks)`.\n- Write real code around the calls - loops, branches, joins, a try/except per risky item - and keep every failed or missing item in the result verbatim; re-read truncated output before deciding.\n- Long-running build, test run, deploy, or watch work starts with `tool.monitor({ command, filter })`, with the decisive-line filter inside the same cell; keep working until its event wakes the turn.\n\nHost: darwin arm64 · <host:cpu-model> · <host:cores> cores · <child-runtime>. Cells execute here. Size `parallel(thunks)` pools to its cores; `tool.<name>()` shell commands must fit this platform, even when the code you are writing targets another machine.\n\n`language`: `\"py\"` IPython kernel, `\"js\"` persistent JavaScript VM.\n\nA cell that outlives the foreground window detaches and keeps running; further cells on the same language queue behind it in submission order on the same kernel (state is shared, execution is serial) while other languages run at once, up to 15 background cells per session; each detached cell completes as one notification. Do not re-run a detached or queued cell; read, cancel or enumerate them with `eval({ action: \"peek\" | \"stop\", cell_id })` / `eval({ action: \"list\" })`; list shows live and recently settled cells across languages without consuming notifications. Its own execution time is capped at 300s (queue time and time inside host tool calls are not charged; the hard limit stays wall-clock from submission; raise `timeout` only for a declared long run), and a killed js cell that cannot settle restarts its kernel with every global lost.\n\nPython runs on a live event loop: use top-level `await`; `asyncio.run(…)` raises.\nJS runs in-process on Bun 1.4.4: top-level `await`/`return` work; `Bun.*` builtins available, including `new Bun.WebView()`, a headless browser (navigate/click/evaluate/screenshot) to reach for before `curl` or a browser CLI when a page needs JS, a login, or a screenshot. Shell out through `Bun.$` or `Bun.spawn`, never `Bun.spawnSync`: a synchronous child blocks the worker and cannot be interrupted. Before a cell that installs a package, spawns a process, server or PTY, runs tests, or starts a long run, read the bun skill at <repo>/packages/senpi-codemode/src/skill/bun/SKILL.md: its builtins replace the npm packages you would otherwise install, and it lists the Bun.$ / Bun.spawn / bun test traps that cost past sessions hours.\n\nOn error, fix and re-run only the failing step; a normal error keeps state, while a timeout or stop message says whether the kernel restarted.\n</instruction>\n\n<prelude>\nSame helpers + arg order, both runtimes. Python: sync, options = trailing kwargs. JS: async/`await`able, options = ONE trailing object literal, never positional (extras throw).\n```\ndisplay(value) → None\n    Cell output. Images reach you only through display: pass a figure, image bytes, a tool result, or its `images[i]`.\nprint(value, ...) → None\n    Text output.\nread(path, offset?=1, limit?=None) → str\n    File as text; offset/limit are 1-indexed lines. Accepts `local://…`.\nwrite(path, content) → str\n    Write file (creates parents) → resolved path. `local://…` persists across turns/subagents.\nenv(key?=None, value?=None) → str | None | dict\n    No args → full env dict; one → value; two → set `key=value`.\ntool.<name>(args) → { text, images?, details?, hasError? }\n    Invoke any session tool; image results (e.g. `tool.read` on a png) arrive in `images[i]` as { mimeType, dataBase64 }.\ntool_schema(name?) → dict\n    Parameter schema of a tool (omit `name` to list tool names); a failed `tool.<name>()` call also returns the expected parameters.\ncompletion(prompt, model?=\"default\", system?=None, schema?=None) → str | dict\n    Oneshot, stateless. `model`: `\"smol\"` fast | `\"default\"` session | `\"slow\"` most capable. `schema` (JSON-Schema) → parsed structured output.\nworkpool(agent, name, mode?) → { pool_id, push(items), close(), inspect(), cancel() }\n    Thin host-tool adapter; agent is a plain-data spec. The host owns scheduling and keyed yields; explicitly close for automatic aggregate delivery. Requires the host workpool tool; omitted mode uses its default.\nparallel(thunks) → list\n    Thunks through a bounded pool (as wide as a `task` batch), input order kept; a throwing thunk propagates.\npipeline(items, ...stages) → list\n    Map items through one-arg stages with a barrier between stages; each stage receives the previous stage's result.\nlog(message) → None\n    Progress line above the status tree.\nphase(title) → None\n    Phase grouping subsequent status lines.\n```\n</prelude>",
+        "description": "Run one step of code in a persistent kernel.\n\n<instruction>\n**One eval call = one cell = one logical step.** Top-level names persist per language across eval calls and tool calls: define helpers and clients once and reuse them instead of re-importing or re-reading. For large text, use bounded chunks or write it to a file and read it with offsets; treat truncation notices as incomplete data and follow the full-output path. Rebuild state only after `reset`, a kernel restart, or a `NameError`/`ReferenceError`, and check a sentinel variable first so a re-run cannot duplicate side effects.\n\nBatch a step's independent calls in one cell with `parallel(thunks)`.\n- Write real code around the calls - loops, branches, joins, a try/except per risky item - and keep every failed or missing item in the result verbatim; re-read truncated output before deciding.\n- Long-running build, test run, deploy, or watch work starts with `tool.monitor({ command, filter })`, with the decisive-line filter inside the same cell; keep working until its event wakes the turn.\n\nHost: darwin arm64 · <host:cpu-model> · <host:cores> cores · <child-runtime>. Cells execute here. `parallel(thunks)` runs through a fixed-width pool (the codemode `parallelPoolWidth` setting, default 4) whatever the core count; `tool.<name>()` shell commands must fit this platform, even when the code you are writing targets another machine.\n\n`language`: `\"py\"` IPython kernel, `\"js\"` persistent JavaScript VM.\n\nA cell still running when the call stops waiting for it (the detach point in the parameter schema) detaches and keeps running; further cells on the same language queue behind it in submission order on the same kernel (state is shared, execution is serial) while other languages run at once, up to 15 background cells per session (at that cap, a further cell that cannot detach is cancelled when its foreground window ends, so stop or await a live cell first); each detached cell completes as one notification. Do not re-run a detached or queued cell; read, cancel or enumerate them with `eval({ action: \"peek\" | \"stop\", cell_id })` / `eval({ action: \"list\" })`; list shows live and recently settled cells across languages without consuming notifications. Its own execution time is capped at 300s (queue time and time inside host tool calls are not charged; the hard limit stays wall-clock from submission; raise `timeout` only for a declared long run), and a killed js cell that cannot settle restarts its kernel with every global lost.\n\nPython runs on a live event loop: use top-level `await`; `asyncio.run(…)` raises.\nJS runs in-process on Bun 1.4.4: top-level `await`/`return` work; `Bun.*` builtins available, including `new Bun.WebView()`, a headless browser (navigate/click/evaluate/screenshot) to reach for before `curl` or a browser CLI when a page needs JS, a login, or a screenshot. Shell out through `Bun.$` or `Bun.spawn`, never `Bun.spawnSync`: a synchronous child blocks the worker and cannot be interrupted. Before a cell that installs a package, spawns a process, server or PTY, runs tests, or starts a long run, read the bun skill at <repo>/packages/senpi-codemode/src/skill/bun/SKILL.md: its builtins replace the npm packages you would otherwise install, and it lists the Bun.$ / Bun.spawn / bun test traps that cost past sessions hours.\n\nOn error, fix and re-run only the failing step; a normal error keeps state, while a timeout or stop message says whether the kernel restarted.\n</instruction>\n\n<prelude>\nSame helpers + arg order, both runtimes. Python: sync, options = trailing kwargs. JS: async/`await`able, options = ONE trailing object literal, never positional (extras throw).\n```\ndisplay(value) → None\n    Cell output. Images reach you only through display: pass a figure, image bytes, a tool result, or its `images[i]`.\nprint(value, ...) → None\n    Text output.\nread(path, offset?=1, limit?=None) → str\n    File as text; offset/limit are 1-indexed lines. Accepts `local://…`.\nwrite(path, content) → str\n    Write file (creates parents) → resolved path. `local://…` persists across turns/subagents.\nenv(key?=None, value?=None) → str | None | dict\n    No args → full env dict; one → value; two → set `key=value`.\ntool.<name>(args) → { text, images?, details?, hasError? }\n    Invoke any session tool; image results (e.g. `tool.read` on a png) arrive in `images[i]` as { mimeType, dataBase64 }.\ntool_schema(name?) → dict\n    Parameter schema of a tool (omit `name` to list tool names); a failed `tool.<name>()` call also returns the expected parameters.\ncompletion(prompt, model?=\"default\", system?=None, schema?=None) → str | dict\n    Oneshot, stateless. `model`: `\"smol\"` fast | `\"default\"` session | `\"slow\"` most capable. `schema` (JSON-Schema) → parsed structured output.\nworkpool(agent, name, mode?) → { pool_id, push(items), close(), inspect(), cancel() }\n    Thin host-tool adapter; agent is a plain-data spec. The host owns scheduling and keyed yields; explicitly close for automatic aggregate delivery. Requires the host workpool tool; omitted mode uses its default.\nparallel(thunks) → list\n    Thunks through a bounded pool (as wide as a `task` batch), input order kept; a throwing thunk propagates.\npipeline(items, ...stages) → list\n    Map items through one-arg stages with a barrier between stages; each stage receives the previous stage's result.\nlog(message) → None\n    Progress line above the status tree.\nphase(title) → None\n    Phase grouping subsequent status lines.\n```\n</prelude>",
         "parameters": {
          "type": "object",
          "properties": {
@@ -1702,7 +1702,7 @@
        "type": "function",
        "function": {
         "name": "ask_user_question",
-        "description": "Ask the user one to four concise questions. Set waitForAnswer true to pause here until the user answers (the answer returns as this tool's result, or a timeout result after 30 idle minutes); set waitForAnswer false to keep working while the question stays open (the answer arrives later as a user message). Use it only when the answer materially changes the work; if it returns no answers, continue with best judgment instead of asking again, unless you set required true because the answer decides whether you take an action: then no answer means do not take it. Never use it for permission requests; ask those directly in your message. When the user's instructions (in the conversation or their instruction files) say not to ask, or not to ask with choices, do not call it: take the safe default, keep working, and say what you chose. Unavailable to subagents. Users will always be able to type a free-text answer or one comment covering everything; do not add an Other option. Call this tool directly, never from inside an eval cell (a cell that waits on the user would hold the kernel).",
+        "description": "Ask the user one to four concise questions. Set waitForAnswer true to pause here until the user answers (the answer returns as this tool's result, or a timeout result after 30 idle minutes by default, where any user activity on the question restarts the idle clock, up to a 2-hour cap); set waitForAnswer false to keep working while the question stays open (the answer arrives later as a user message). Use it only when the answer materially changes the work; if it returns no answers, continue with best judgment instead of asking again, unless you set required true because the answer decides whether you take an action: then no answer means do not take it. Never use it for permission requests; ask those directly in your message. When the user's instructions (in the conversation or their instruction files) say not to ask, or not to ask with choices, do not call it: take the safe default, keep working, and say what you chose. Unavailable to subagents. Users will always be able to type a free-text answer or one comment covering everything; do not add an Other option. Call this tool directly, never from inside an eval cell (a cell that waits on the user would hold the kernel).",
         "parameters": {
          "type": "object",
          "required": [
@@ -1779,7 +1779,7 @@
        "type": "function",
        "function": {
         "name": "tool_search",
-        "description": "Search the catalog of deferred tools by capability. Returns matching tool names with their parameter schemas and never changes your active tool set; call a returned tool by name and it activates on that first call.",
+        "description": "Search the catalog of deferred tools by capability. Returns at most 5 matching tool names with their parameter schemas and never changes your active tool set; call a returned tool by name and it activates on that first call.",
         "parameters": {
          "type": "object",
          "required": [
@@ -1905,7 +1905,7 @@
        "type": "function",
        "function": {
         "name": "read",
-        "description": "Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.",
+        "description": "Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete. A .js or .json file of 100+ lines read without offset/limit may come back folded: bodies are replaced by markers and a footer lists the offset/limit ranges to reread; markers are not source, so reread those ranges before quoting or editing them.",
         "parameters": {
          "type": "object",
          "required": [
@@ -2077,7 +2077,7 @@
           },
           "filter": {
            "type": "string",
-           "description": "Only return output lines matching this regex."
+           "description": "Only return output lines matching this regex. An invalid regex is ignored and the whole unfiltered output comes back."
           },
           "view": {
            "description": "'log' returns new raw output (default); 'screen' returns the rendered xterm grid.",
@@ -2132,14 +2132,14 @@
            "items": {
             "type": "string"
            },
-           "description": "Only include search results from these domains"
+           "description": "Only include search results from these domains. Cannot be combined with a non-empty blocked_domains."
           },
           "blocked_domains": {
            "type": "array",
            "items": {
             "type": "string"
            },
-           "description": "Never include search results from these domains"
+           "description": "Never include search results from these domains. Cannot be combined with a non-empty allowed_domains."
           },
           "max_results": {
            "type": "integer",
@@ -2154,7 +2154,7 @@
        "type": "function",
        "function": {
         "name": "webfetch",
-        "description": "Fetches content from a URL and returns it as markdown, plain text, or HTML. Network use is bounded by timeout and response size limits.",
+        "description": "Fetches content from a URL and returns it as markdown, plain text, or HTML. A response over 5MB fails with an error instead of returning partial content, and the text handed back is capped at 50KB with a truncation notice.",
         "parameters": {
          "type": "object",
          "required": [
@@ -2176,7 +2176,7 @@
           },
           "timeout": {
            "type": "number",
-           "description": "Optional timeout in seconds. Maximum 120."
+           "description": "Optional timeout in seconds. Defaults to 30; a missing, zero or negative value means 30. Maximum 120."
           }
          }
         }
@@ -2186,7 +2186,7 @@
        "type": "function",
        "function": {
         "name": "create_goal",
-        "description": "Register a goal for work that outlives this turn: it waits on external state, or the user's requested outcome needs more than one verify-and-fix round before it is true. A single answer, lookup, or one-shot edit needs no goal.\nObjectives are limited to 4,000 characters. For longer instructions, put the full objective in a file and refer to that file.\nReplaces the current goal when it is complete and archives it; fails if an unfinished goal exists.",
+        "description": "Register a goal for work that outlives this turn: it waits on external state, or the user's requested outcome needs more than one verify-and-fix round before it is true. A single answer, lookup, or one-shot edit needs no goal.\nObjectives over 4,000 characters are cut to at most 4,000 including a truncation marker (the full text is saved to a side file). For longer instructions, put the full objective in a file and refer to that file.\nReplaces the current goal when it is complete and archives it; fails if an unfinished goal exists.",
         "parameters": {
          "type": "object",
          "required": [
@@ -2195,7 +2195,7 @@
          "properties": {
           "objective": {
            "type": "string",
-           "description": "Required. The concrete objective to start pursuing. Limit: 4,000 characters. For longer instructions, put the full objective in a file and refer to that file."
+           "description": "Required. The concrete objective to start pursuing. Text past 4,000 characters is truncated, not rejected. For longer instructions, put the full objective in a file and refer to that file."
           }
          },
          "additionalProperties": false
@@ -2206,7 +2206,7 @@
        "type": "function",
        "function": {
         "name": "update_goal",
-        "description": "Set the existing goal's status to `complete` or `blocked`; the completion audit and blocked audit in the goal continuation prompt decide which, and only a passing audit permits the call.\n`complete` is rejected while todo tasks are open, and stopping work is never by itself a reason to complete; after it succeeds, report the final elapsed time and token usage from the result to the user.\n`blocked` requires a non-empty `reason` (omit `reason` for `complete`), and is rejected while any resumption channel can still deliver, and again until the same blocker has survived three goal turns since the goal became active or the user last spoke; a user resume starts a fresh blocked audit.\nA missing user decision is a question for the question tool, not a blocked status, until the user fails to answer it. Retries themselves are unbounded.\nPausing and resuming are user or system actions, not this tool.",
+        "description": "Set the existing goal's status to `complete` or `blocked`; the completion audit and blocked audit in the goal continuation prompt decide which, and only a passing audit permits the call.\n`complete` is rejected while todo tasks are open, and stopping work is never by itself a reason to complete; after it succeeds, report the final elapsed time and token usage from the result to the user.\n`blocked` requires a non-empty `reason` (omit `reason` for `complete`); the tool checks only that, so the blocked audit is yours to pass first: never call it while any resumption channel can still deliver, or before the same blocker has survived three goal turns since the goal became active or the user last spoke; a user resume starts a fresh blocked audit.\nA missing user decision is a question for the question tool, not a blocked status, until the user fails to answer it. Retries themselves are unbounded.\nPausing and resuming are user or system actions, not this tool.",
         "parameters": {
          "type": "object",
          "required": [
@@ -2234,7 +2234,7 @@
        "type": "function",
        "function": {
         "name": "eval",
-        "description": "Run one step of code in a persistent kernel.\n\n<instruction>\n**One eval call = one cell = one logical step.** Top-level names persist per language across eval calls and tool calls: define helpers and clients once and reuse them instead of re-importing or re-reading. For large text, use bounded chunks or write it to a file and read it with offsets; treat truncation notices as incomplete data and follow the full-output path. Rebuild state only after `reset`, a kernel restart, or a `NameError`/`ReferenceError`, and check a sentinel variable first so a re-run cannot duplicate side effects.\n\nBatch a step's independent calls in one cell with `parallel(thunks)`.\n- Write real code around the calls - loops, branches, joins, a try/except per risky item - and keep every failed or missing item in the result verbatim; re-read truncated output before deciding.\n- Long-running build, test run, deploy, or watch work starts with `tool.monitor({ command, filter })`, with the decisive-line filter inside the same cell; keep working until its event wakes the turn.\n\nHost: darwin arm64 · <host:cpu-model> · <host:cores> cores · <child-runtime>. Cells execute here. Size `parallel(thunks)` pools to its cores; `tool.<name>()` shell commands must fit this platform, even when the code you are writing targets another machine.\n\n`language`: `\"py\"` IPython kernel, `\"js\"` persistent JavaScript VM.\n\nA cell that outlives the foreground window detaches and keeps running; further cells on the same language queue behind it in submission order on the same kernel (state is shared, execution is serial) while other languages run at once, up to 15 background cells per session; each detached cell completes as one notification. Do not re-run a detached or queued cell; read, cancel or enumerate them with `eval({ action: \"peek\" | \"stop\", cell_id })` / `eval({ action: \"list\" })`; list shows live and recently settled cells across languages without consuming notifications. Its own execution time is capped at 300s (queue time and time inside host tool calls are not charged; the hard limit stays wall-clock from submission; raise `timeout` only for a declared long run), and a killed js cell that cannot settle restarts its kernel with every global lost.\n\nPython runs on a live event loop: use top-level `await`; `asyncio.run(…)` raises.\nJS runs in-process on Bun 1.4.4: top-level `await`/`return` work; `Bun.*` builtins available, including `new Bun.WebView()`, a headless browser (navigate/click/evaluate/screenshot) to reach for before `curl` or a browser CLI when a page needs JS, a login, or a screenshot. Shell out through `Bun.$` or `Bun.spawn`, never `Bun.spawnSync`: a synchronous child blocks the worker and cannot be interrupted. Before a cell that installs a package, spawns a process, server or PTY, runs tests, or starts a long run, read the bun skill at <repo>/packages/senpi-codemode/src/skill/bun/SKILL.md: its builtins replace the npm packages you would otherwise install, and it lists the Bun.$ / Bun.spawn / bun test traps that cost past sessions hours.\n\nOn error, fix and re-run only the failing step; a normal error keeps state, while a timeout or stop message says whether the kernel restarted.\n</instruction>\n\n<prelude>\nSame helpers + arg order, both runtimes. Python: sync, options = trailing kwargs. JS: async/`await`able, options = ONE trailing object literal, never positional (extras throw).\n```\ndisplay(value) → None\n    Cell output. Images reach you only through display: pass a figure, image bytes, a tool result, or its `images[i]`.\nprint(value, ...) → None\n    Text output.\nread(path, offset?=1, limit?=None) → str\n    File as text; offset/limit are 1-indexed lines. Accepts `local://…`.\nwrite(path, content) → str\n    Write file (creates parents) → resolved path. `local://…` persists across turns/subagents.\nenv(key?=None, value?=None) → str | None | dict\n    No args → full env dict; one → value; two → set `key=value`.\ntool.<name>(args) → { text, images?, details?, hasError? }\n    Invoke any session tool; image results (e.g. `tool.read` on a png) arrive in `images[i]` as { mimeType, dataBase64 }.\ntool_schema(name?) → dict\n    Parameter schema of a tool (omit `name` to list tool names); a failed `tool.<name>()` call also returns the expected parameters.\ncompletion(prompt, model?=\"default\", system?=None, schema?=None) → str | dict\n    Oneshot, stateless. `model`: `\"smol\"` fast | `\"default\"` session | `\"slow\"` most capable. `schema` (JSON-Schema) → parsed structured output.\nworkpool(agent, name, mode?) → { pool_id, push(items), close(), inspect(), cancel() }\n    Thin host-tool adapter; agent is a plain-data spec. The host owns scheduling and keyed yields; explicitly close for automatic aggregate delivery. Requires the host workpool tool; omitted mode uses its default.\nparallel(thunks) → list\n    Thunks through a bounded pool (as wide as a `task` batch), input order kept; a throwing thunk propagates.\npipeline(items, ...stages) → list\n    Map items through one-arg stages with a barrier between stages; each stage receives the previous stage's result.\nlog(message) → None\n    Progress line above the status tree.\nphase(title) → None\n    Phase grouping subsequent status lines.\n```\n</prelude>",
+        "description": "Run one step of code in a persistent kernel.\n\n<instruction>\n**One eval call = one cell = one logical step.** Top-level names persist per language across eval calls and tool calls: define helpers and clients once and reuse them instead of re-importing or re-reading. For large text, use bounded chunks or write it to a file and read it with offsets; treat truncation notices as incomplete data and follow the full-output path. Rebuild state only after `reset`, a kernel restart, or a `NameError`/`ReferenceError`, and check a sentinel variable first so a re-run cannot duplicate side effects.\n\nBatch a step's independent calls in one cell with `parallel(thunks)`.\n- Write real code around the calls - loops, branches, joins, a try/except per risky item - and keep every failed or missing item in the result verbatim; re-read truncated output before deciding.\n- Long-running build, test run, deploy, or watch work starts with `tool.monitor({ command, filter })`, with the decisive-line filter inside the same cell; keep working until its event wakes the turn.\n\nHost: darwin arm64 · <host:cpu-model> · <host:cores> cores · <child-runtime>. Cells execute here. `parallel(thunks)` runs through a fixed-width pool (the codemode `parallelPoolWidth` setting, default 4) whatever the core count; `tool.<name>()` shell commands must fit this platform, even when the code you are writing targets another machine.\n\n`language`: `\"py\"` IPython kernel, `\"js\"` persistent JavaScript VM.\n\nA cell still running when the call stops waiting for it (the detach point in the parameter schema) detaches and keeps running; further cells on the same language queue behind it in submission order on the same kernel (state is shared, execution is serial) while other languages run at once, up to 15 background cells per session (at that cap, a further cell that cannot detach is cancelled when its foreground window ends, so stop or await a live cell first); each detached cell completes as one notification. Do not re-run a detached or queued cell; read, cancel or enumerate them with `eval({ action: \"peek\" | \"stop\", cell_id })` / `eval({ action: \"list\" })`; list shows live and recently settled cells across languages without consuming notifications. Its own execution time is capped at 300s (queue time and time inside host tool calls are not charged; the hard limit stays wall-clock from submission; raise `timeout` only for a declared long run), and a killed js cell that cannot settle restarts its kernel with every global lost.\n\nPython runs on a live event loop: use top-level `await`; `asyncio.run(…)` raises.\nJS runs in-process on Bun 1.4.4: top-level `await`/`return` work; `Bun.*` builtins available, including `new Bun.WebView()`, a headless browser (navigate/click/evaluate/screenshot) to reach for before `curl` or a browser CLI when a page needs JS, a login, or a screenshot. Shell out through `Bun.$` or `Bun.spawn`, never `Bun.spawnSync`: a synchronous child blocks the worker and cannot be interrupted. Before a cell that installs a package, spawns a process, server or PTY, runs tests, or starts a long run, read the bun skill at <repo>/packages/senpi-codemode/src/skill/bun/SKILL.md: its builtins replace the npm packages you would otherwise install, and it lists the Bun.$ / Bun.spawn / bun test traps that cost past sessions hours.\n\nOn error, fix and re-run only the failing step; a normal error keeps state, while a timeout or stop message says whether the kernel restarted.\n</instruction>\n\n<prelude>\nSame helpers + arg order, both runtimes. Python: sync, options = trailing kwargs. JS: async/`await`able, options = ONE trailing object literal, never positional (extras throw).\n```\ndisplay(value) → None\n    Cell output. Images reach you only through display: pass a figure, image bytes, a tool result, or its `images[i]`.\nprint(value, ...) → None\n    Text output.\nread(path, offset?=1, limit?=None) → str\n    File as text; offset/limit are 1-indexed lines. Accepts `local://…`.\nwrite(path, content) → str\n    Write file (creates parents) → resolved path. `local://…` persists across turns/subagents.\nenv(key?=None, value?=None) → str | None | dict\n    No args → full env dict; one → value; two → set `key=value`.\ntool.<name>(args) → { text, images?, details?, hasError? }\n    Invoke any session tool; image results (e.g. `tool.read` on a png) arrive in `images[i]` as { mimeType, dataBase64 }.\ntool_schema(name?) → dict\n    Parameter schema of a tool (omit `name` to list tool names); a failed `tool.<name>()` call also returns the expected parameters.\ncompletion(prompt, model?=\"default\", system?=None, schema?=None) → str | dict\n    Oneshot, stateless. `model`: `\"smol\"` fast | `\"default\"` session | `\"slow\"` most capable. `schema` (JSON-Schema) → parsed structured output.\nworkpool(agent, name, mode?) → { pool_id, push(items), close(), inspect(), cancel() }\n    Thin host-tool adapter; agent is a plain-data spec. The host owns scheduling and keyed yields; explicitly close for automatic aggregate delivery. Requires the host workpool tool; omitted mode uses its default.\nparallel(thunks) → list\n    Thunks through a bounded pool (as wide as a `task` batch), input order kept; a throwing thunk propagates.\npipeline(items, ...stages) → list\n    Map items through one-arg stages with a barrier between stages; each stage receives the previous stage's result.\nlog(message) → None\n    Progress line above the status tree.\nphase(title) → None\n    Phase grouping subsequent status lines.\n```\n</prelude>",
         "parameters": {
          "type": "object",
          "properties": {
@@ -2340,7 +2340,7 @@
        "type": "function",
        "function": {
         "name": "ask_user_question",
-        "description": "Ask the user one to four concise questions. Set waitForAnswer true to pause here until the user answers (the answer returns as this tool's result, or a timeout result after 30 idle minutes); set waitForAnswer false to keep working while the question stays open (the answer arrives later as a user message). Use it only when the answer materially changes the work; if it returns no answers, continue with best judgment instead of asking again, unless you set required true because the answer decides whether you take an action: then no answer means do not take it. Never use it for permission requests; ask those directly in your message. When the user's instructions (in the conversation or their instruction files) say not to ask, or not to ask with choices, do not call it: take the safe default, keep working, and say what you chose. Unavailable to subagents. Users will always be able to type a free-text answer or one comment covering everything; do not add an Other option. Call this tool directly, never from inside an eval cell (a cell that waits on the user would hold the kernel).",
+        "description": "Ask the user one to four concise questions. Set waitForAnswer true to pause here until the user answers (the answer returns as this tool's result, or a timeout result after 30 idle minutes by default, where any user activity on the question restarts the idle clock, up to a 2-hour cap); set waitForAnswer false to keep working while the question stays open (the answer arrives later as a user message). Use it only when the answer materially changes the work; if it returns no answers, continue with best judgment instead of asking again, unless you set required true because the answer decides whether you take an action: then no answer means do not take it. Never use it for permission requests; ask those directly in your message. When the user's instructions (in the conversation or their instruction files) say not to ask, or not to ask with choices, do not call it: take the safe default, keep working, and say what you chose. Unavailable to subagents. Users will always be able to type a free-text answer or one comment covering everything; do not add an Other option. Call this tool directly, never from inside an eval cell (a cell that waits on the user would hold the kernel).",
         "parameters": {
          "type": "object",
          "required": [
@@ -2417,7 +2417,7 @@
        "type": "function",
        "function": {
         "name": "tool_search",
-        "description": "Search the catalog of deferred tools by capability. Returns matching tool names with their parameter schemas and never changes your active tool set; call a returned tool by name and it activates on that first call.",
+        "description": "Search the catalog of deferred tools by capability. Returns at most 5 matching tool names with their parameter schemas and never changes your active tool set; call a returned tool by name and it activates on that first call.",
         "parameters": {
          "type": "object",
          "required": [
@@ -2476,7 +2476,7 @@
      "type": "function",
      "function": {
       "name": "read",
-      "description": "Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.",
+      "description": "Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete. A .js or .json file of 100+ lines read without offset/limit may come back folded: bodies are replaced by markers and a footer lists the offset/limit ranges to reread; markers are not source, so reread those ranges before quoting or editing them.",
       "parameters": {
        "type": "object",
        "required": [
@@ -2648,7 +2648,7 @@
         },
         "filter": {
          "type": "string",
-         "description": "Only return output lines matching this regex."
+         "description": "Only return output lines matching this regex. An invalid regex is ignored and the whole unfiltered output comes back."
         },
         "view": {
          "description": "'log' returns new raw output (default); 'screen' returns the rendered xterm grid.",
@@ -2703,14 +2703,14 @@
          "items": {
           "type": "string"
          },
-         "description": "Only include search results from these domains"
+         "description": "Only include search results from these domains. Cannot be combined with a non-empty blocked_domains."
         },
         "blocked_domains": {
          "type": "array",
          "items": {
           "type": "string"
          },
-         "description": "Never include search results from these domains"
+         "description": "Never include search results from these domains. Cannot be combined with a non-empty allowed_domains."
         },
         "max_results": {
          "type": "integer",
@@ -2725,7 +2725,7 @@
      "type": "function",
      "function": {
       "name": "webfetch",
-      "description": "Fetches content from a URL and returns it as markdown, plain text, or HTML. Network use is bounded by timeout and response size limits.",
+      "description": "Fetches content from a URL and returns it as markdown, plain text, or HTML. A response over 5MB fails with an error instead of returning partial content, and the text handed back is capped at 50KB with a truncation notice.",
       "parameters": {
        "type": "object",
        "required": [
@@ -2747,7 +2747,7 @@
         },
         "timeout": {
          "type": "number",
-         "description": "Optional timeout in seconds. Maximum 120."
+         "description": "Optional timeout in seconds. Defaults to 30; a missing, zero or negative value means 30. Maximum 120."
         }
        }
       }
@@ -2757,7 +2757,7 @@
      "type": "function",
      "function": {
       "name": "create_goal",
-      "description": "Register a goal for work that outlives this turn: it waits on external state, or the user's requested outcome needs more than one verify-and-fix round before it is true. A single answer, lookup, or one-shot edit needs no goal.\nObjectives are limited to 4,000 characters. For longer instructions, put the full objective in a file and refer to that file.\nReplaces the current goal when it is complete and archives it; fails if an unfinished goal exists.",
+      "description": "Register a goal for work that outlives this turn: it waits on external state, or the user's requested outcome needs more than one verify-and-fix round before it is true. A single answer, lookup, or one-shot edit needs no goal.\nObjectives over 4,000 characters are cut to at most 4,000 including a truncation marker (the full text is saved to a side file). For longer instructions, put the full objective in a file and refer to that file.\nReplaces the current goal when it is complete and archives it; fails if an unfinished goal exists.",
       "parameters": {
        "type": "object",
        "required": [
@@ -2766,7 +2766,7 @@
        "properties": {
         "objective": {
          "type": "string",
-         "description": "Required. The concrete objective to start pursuing. Limit: 4,000 characters. For longer instructions, put the full objective in a file and refer to that file."
+         "description": "Required. The concrete objective to start pursuing. Text past 4,000 characters is truncated, not rejected. For longer instructions, put the full objective in a file and refer to that file."
         }
        },
        "additionalProperties": false
@@ -2777,7 +2777,7 @@
      "type": "function",
      "function": {
       "name": "update_goal",
-      "description": "Set the existing goal's status to `complete` or `blocked`; the completion audit and blocked audit in the goal continuation prompt decide which, and only a passing audit permits the call.\n`complete` is rejected while todo tasks are open, and stopping work is never by itself a reason to complete; after it succeeds, report the final elapsed time and token usage from the result to the user.\n`blocked` requires a non-empty `reason` (omit `reason` for `complete`), and is rejected while any resumption channel can still deliver, and again until the same blocker has survived three goal turns since the goal became active or the user last spoke; a user resume starts a fresh blocked audit.\nA missing user decision is a question for the question tool, not a blocked status, until the user fails to answer it. Retries themselves are unbounded.\nPausing and resuming are user or system actions, not this tool.",
+      "description": "Set the existing goal's status to `complete` or `blocked`; the completion audit and blocked audit in the goal continuation prompt decide which, and only a passing audit permits the call.\n`complete` is rejected while todo tasks are open, and stopping work is never by itself a reason to complete; after it succeeds, report the final elapsed time and token usage from the result to the user.\n`blocked` requires a non-empty `reason` (omit `reason` for `complete`); the tool checks only that, so the blocked audit is yours to pass first: never call it while any resumption channel can still deliver, or before the same blocker has survived three goal turns since the goal became active or the user last spoke; a user resume starts a fresh blocked audit.\nA missing user decision is a question for the question tool, not a blocked status, until the user fails to answer it. Retries themselves are unbounded.\nPausing and resuming are user or system actions, not this tool.",
       "parameters": {
        "type": "object",
        "required": [
@@ -2805,7 +2805,7 @@
      "type": "function",
      "function": {
       "name": "eval",
-      "description": "Run one step of code in a persistent kernel.\n\n<instruction>\n**One eval call = one cell = one logical step.** Top-level names persist per language across eval calls and tool calls: define helpers and clients once and reuse them instead of re-importing or re-reading. For large text, use bounded chunks or write it to a file and read it with offsets; treat truncation notices as incomplete data and follow the full-output path. Rebuild state only after `reset`, a kernel restart, or a `NameError`/`ReferenceError`, and check a sentinel variable first so a re-run cannot duplicate side effects.\n\nBatch a step's independent calls in one cell with `parallel(thunks)`.\n- Write real code around the calls - loops, branches, joins, a try/except per risky item - and keep every failed or missing item in the result verbatim; re-read truncated output before deciding.\n- Long-running build, test run, deploy, or watch work starts with `tool.monitor({ command, filter })`, with the decisive-line filter inside the same cell; keep working until its event wakes the turn.\n\nHost: darwin arm64 · <host:cpu-model> · <host:cores> cores · <child-runtime>. Cells execute here. Size `parallel(thunks)` pools to its cores; `tool.<name>()` shell commands must fit this platform, even when the code you are writing targets another machine.\n\n`language`: `\"py\"` IPython kernel, `\"js\"` persistent JavaScript VM.\n\nA cell that outlives the foreground window detaches and keeps running; further cells on the same language queue behind it in submission order on the same kernel (state is shared, execution is serial) while other languages run at once, up to 15 background cells per session; each detached cell completes as one notification. Do not re-run a detached or queued cell; read, cancel or enumerate them with `eval({ action: \"peek\" | \"stop\", cell_id })` / `eval({ action: \"list\" })`; list shows live and recently settled cells across languages without consuming notifications. Its own execution time is capped at 300s (queue time and time inside host tool calls are not charged; the hard limit stays wall-clock from submission; raise `timeout` only for a declared long run), and a killed js cell that cannot settle restarts its kernel with every global lost.\n\nPython runs on a live event loop: use top-level `await`; `asyncio.run(…)` raises.\nJS runs in-process on Bun 1.4.4: top-level `await`/`return` work; `Bun.*` builtins available, including `new Bun.WebView()`, a headless browser (navigate/click/evaluate/screenshot) to reach for before `curl` or a browser CLI when a page needs JS, a login, or a screenshot. Shell out through `Bun.$` or `Bun.spawn`, never `Bun.spawnSync`: a synchronous child blocks the worker and cannot be interrupted. Before a cell that installs a package, spawns a process, server or PTY, runs tests, or starts a long run, read the bun skill at <repo>/packages/senpi-codemode/src/skill/bun/SKILL.md: its builtins replace the npm packages you would otherwise install, and it lists the Bun.$ / Bun.spawn / bun test traps that cost past sessions hours.\n\nOn error, fix and re-run only the failing step; a normal error keeps state, while a timeout or stop message says whether the kernel restarted.\n</instruction>\n\n<prelude>\nSame helpers + arg order, both runtimes. Python: sync, options = trailing kwargs. JS: async/`await`able, options = ONE trailing object literal, never positional (extras throw).\n```\ndisplay(value) → None\n    Cell output. Images reach you only through display: pass a figure, image bytes, a tool result, or its `images[i]`.\nprint(value, ...) → None\n    Text output.\nread(path, offset?=1, limit?=None) → str\n    File as text; offset/limit are 1-indexed lines. Accepts `local://…`.\nwrite(path, content) → str\n    Write file (creates parents) → resolved path. `local://…` persists across turns/subagents.\nenv(key?=None, value?=None) → str | None | dict\n    No args → full env dict; one → value; two → set `key=value`.\ntool.<name>(args) → { text, images?, details?, hasError? }\n    Invoke any session tool; image results (e.g. `tool.read` on a png) arrive in `images[i]` as { mimeType, dataBase64 }.\ntool_schema(name?) → dict\n    Parameter schema of a tool (omit `name` to list tool names); a failed `tool.<name>()` call also returns the expected parameters.\ncompletion(prompt, model?=\"default\", system?=None, schema?=None) → str | dict\n    Oneshot, stateless. `model`: `\"smol\"` fast | `\"default\"` session | `\"slow\"` most capable. `schema` (JSON-Schema) → parsed structured output.\nworkpool(agent, name, mode?) → { pool_id, push(items), close(), inspect(), cancel() }\n    Thin host-tool adapter; agent is a plain-data spec. The host owns scheduling and keyed yields; explicitly close for automatic aggregate delivery. Requires the host workpool tool; omitted mode uses its default.\nparallel(thunks) → list\n    Thunks through a bounded pool (as wide as a `task` batch), input order kept; a throwing thunk propagates.\npipeline(items, ...stages) → list\n    Map items through one-arg stages with a barrier between stages; each stage receives the previous stage's result.\nlog(message) → None\n    Progress line above the status tree.\nphase(title) → None\n    Phase grouping subsequent status lines.\n```\n</prelude>",
+      "description": "Run one step of code in a persistent kernel.\n\n<instruction>\n**One eval call = one cell = one logical step.** Top-level names persist per language across eval calls and tool calls: define helpers and clients once and reuse them instead of re-importing or re-reading. For large text, use bounded chunks or write it to a file and read it with offsets; treat truncation notices as incomplete data and follow the full-output path. Rebuild state only after `reset`, a kernel restart, or a `NameError`/`ReferenceError`, and check a sentinel variable first so a re-run cannot duplicate side effects.\n\nBatch a step's independent calls in one cell with `parallel(thunks)`.\n- Write real code around the calls - loops, branches, joins, a try/except per risky item - and keep every failed or missing item in the result verbatim; re-read truncated output before deciding.\n- Long-running build, test run, deploy, or watch work starts with `tool.monitor({ command, filter })`, with the decisive-line filter inside the same cell; keep working until its event wakes the turn.\n\nHost: darwin arm64 · <host:cpu-model> · <host:cores> cores · <child-runtime>. Cells execute here. `parallel(thunks)` runs through a fixed-width pool (the codemode `parallelPoolWidth` setting, default 4) whatever the core count; `tool.<name>()` shell commands must fit this platform, even when the code you are writing targets another machine.\n\n`language`: `\"py\"` IPython kernel, `\"js\"` persistent JavaScript VM.\n\nA cell still running when the call stops waiting for it (the detach point in the parameter schema) detaches and keeps running; further cells on the same language queue behind it in submission order on the same kernel (state is shared, execution is serial) while other languages run at once, up to 15 background cells per session (at that cap, a further cell that cannot detach is cancelled when its foreground window ends, so stop or await a live cell first); each detached cell completes as one notification. Do not re-run a detached or queued cell; read, cancel or enumerate them with `eval({ action: \"peek\" | \"stop\", cell_id })` / `eval({ action: \"list\" })`; list shows live and recently settled cells across languages without consuming notifications. Its own execution time is capped at 300s (queue time and time inside host tool calls are not charged; the hard limit stays wall-clock from submission; raise `timeout` only for a declared long run), and a killed js cell that cannot settle restarts its kernel with every global lost.\n\nPython runs on a live event loop: use top-level `await`; `asyncio.run(…)` raises.\nJS runs in-process on Bun 1.4.4: top-level `await`/`return` work; `Bun.*` builtins available, including `new Bun.WebView()`, a headless browser (navigate/click/evaluate/screenshot) to reach for before `curl` or a browser CLI when a page needs JS, a login, or a screenshot. Shell out through `Bun.$` or `Bun.spawn`, never `Bun.spawnSync`: a synchronous child blocks the worker and cannot be interrupted. Before a cell that installs a package, spawns a process, server or PTY, runs tests, or starts a long run, read the bun skill at <repo>/packages/senpi-codemode/src/skill/bun/SKILL.md: its builtins replace the npm packages you would otherwise install, and it lists the Bun.$ / Bun.spawn / bun test traps that cost past sessions hours.\n\nOn error, fix and re-run only the failing step; a normal error keeps state, while a timeout or stop message says whether the kernel restarted.\n</instruction>\n\n<prelude>\nSame helpers + arg order, both runtimes. Python: sync, options = trailing kwargs. JS: async/`await`able, options = ONE trailing object literal, never positional (extras throw).\n```\ndisplay(value) → None\n    Cell output. Images reach you only through display: pass a figure, image bytes, a tool result, or its `images[i]`.\nprint(value, ...) → None\n    Text output.\nread(path, offset?=1, limit?=None) → str\n    File as text; offset/limit are 1-indexed lines. Accepts `local://…`.\nwrite(path, content) → str\n    Write file (creates parents) → resolved path. `local://…` persists across turns/subagents.\nenv(key?=None, value?=None) → str | None | dict\n    No args → full env dict; one → value; two → set `key=value`.\ntool.<name>(args) → { text, images?, details?, hasError? }\n    Invoke any session tool; image results (e.g. `tool.read` on a png) arrive in `images[i]` as { mimeType, dataBase64 }.\ntool_schema(name?) → dict\n    Parameter schema of a tool (omit `name` to list tool names); a failed `tool.<name>()` call also returns the expected parameters.\ncompletion(prompt, model?=\"default\", system?=None, schema?=None) → str | dict\n    Oneshot, stateless. `model`: `\"smol\"` fast | `\"default\"` session | `\"slow\"` most capable. `schema` (JSON-Schema) → parsed structured output.\nworkpool(agent, name, mode?) → { pool_id, push(items), close(), inspect(), cancel() }\n    Thin host-tool adapter; agent is a plain-data spec. The host owns scheduling and keyed yields; explicitly close for automatic aggregate delivery. Requires the host workpool tool; omitted mode uses its default.\nparallel(thunks) → list\n    Thunks through a bounded pool (as wide as a `task` batch), input order kept; a throwing thunk propagates.\npipeline(items, ...stages) → list\n    Map items through one-arg stages with a barrier between stages; each stage receives the previous stage's result.\nlog(message) → None\n    Progress line above the status tree.\nphase(title) → None\n    Phase grouping subsequent status lines.\n```\n</prelude>",
       "parameters": {
        "type": "object",
        "properties": {
@@ -2911,7 +2911,7 @@
      "type": "function",
      "function": {
       "name": "ask_user_question",
-      "description": "Ask the user one to four concise questions. Set waitForAnswer true to pause here until the user answers (the answer returns as this tool's result, or a timeout result after 30 idle minutes); set waitForAnswer false to keep working while the question stays open (the answer arrives later as a user message). Use it only when the answer materially changes the work; if it returns no answers, continue with best judgment instead of asking again, unless you set required true because the answer decides whether you take an action: then no answer means do not take it. Never use it for permission requests; ask those directly in your message. When the user's instructions (in the conversation or their instruction files) say not to ask, or not to ask with choices, do not call it: take the safe default, keep working, and say what you chose. Unavailable to subagents. Users will always be able to type a free-text answer or one comment covering everything; do not add an Other option. Call this tool directly, never from inside an eval cell (a cell that waits on the user would hold the kernel).",
+      "description": "Ask the user one to four concise questions. Set waitForAnswer true to pause here until the user answers (the answer returns as this tool's result, or a timeout result after 30 idle minutes by default, where any user activity on the question restarts the idle clock, up to a 2-hour cap); set waitForAnswer false to keep working while the question stays open (the answer arrives later as a user message). Use it only when the answer materially changes the work; if it returns no answers, continue with best judgment instead of asking again, unless you set required true because the answer decides whether you take an action: then no answer means do not take it. Never use it for permission requests; ask those directly in your message. When the user's instructions (in the conversation or their instruction files) say not to ask, or not to ask with choices, do not call it: take the safe default, keep working, and say what you chose. Unavailable to subagents. Users will always be able to type a free-text answer or one comment covering everything; do not add an Other option. Call this tool directly, never from inside an eval cell (a cell that waits on the user would hold the kernel).",
       "parameters": {
        "type": "object",
        "required": [
@@ -2988,7 +2988,7 @@
      "type": "function",
      "function": {
       "name": "tool_search",
-      "description": "Search the catalog of deferred tools by capability. Returns matching tool names with their parameter schemas and never changes your active tool set; call a returned tool by name and it activates on that first call.",
+      "description": "Search the catalog of deferred tools by capability. Returns at most 5 matching tool names with their parameter schemas and never changes your active tool set; call a returned tool by name and it activates on that first call.",
       "parameters": {
        "type": "object",
        "required": [
@@ -3021,7 +3021,7 @@
      "type": "function",
      "function": {
       "name": "read",
-      "description": "Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.",
+      "description": "Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete. A .js or .json file of 100+ lines read without offset/limit may come back folded: bodies are replaced by markers and a footer lists the offset/limit ranges to reread; markers are not source, so reread those ranges before quoting or editing them.",
       "parameters": {
        "type": "object",
        "required": [
@@ -3193,7 +3193,7 @@
         },
         "filter": {
          "type": "string",
-         "description": "Only return output lines matching this regex."
+         "description": "Only return output lines matching this regex. An invalid regex is ignored and the whole unfiltered output comes back."
         },
         "view": {
          "description": "'log' returns new raw output (default); 'screen' returns the rendered xterm grid.",
@@ -3248,14 +3248,14 @@
          "items": {
           "type": "string"
          },
-         "description": "Only include search results from these domains"
+         "description": "Only include search results from these domains. Cannot be combined with a non-empty blocked_domains."
         },
         "blocked_domains": {
          "type": "array",
          "items": {
           "type": "string"
          },
-         "description": "Never include search results from these domains"
+         "description": "Never include search results from these domains. Cannot be combined with a non-empty allowed_domains."
         },
         "max_results": {
          "type": "integer",
@@ -3270,7 +3270,7 @@
      "type": "function",
      "function": {
       "name": "webfetch",
-      "description": "Fetches content from a URL and returns it as markdown, plain text, or HTML. Network use is bounded by timeout and response size limits.",
+      "description": "Fetches content from a URL and returns it as markdown, plain text, or HTML. A response over 5MB fails with an error instead of returning partial content, and the text handed back is capped at 50KB with a truncation notice.",
       "parameters": {
        "type": "object",
        "required": [
@@ -3292,7 +3292,7 @@
         },
         "timeout": {
          "type": "number",
-         "description": "Optional timeout in seconds. Maximum 120."
+         "description": "Optional timeout in seconds. Defaults to 30; a missing, zero or negative value means 30. Maximum 120."
         }
        }
       }
@@ -3302,7 +3302,7 @@
      "type": "function",
      "function": {
       "name": "create_goal",
-      "description": "Register a goal for work that outlives this turn: it waits on external state, or the user's requested outcome needs more than one verify-and-fix round before it is true. A single answer, lookup, or one-shot edit needs no goal.\nObjectives are limited to 4,000 characters. For longer instructions, put the full objective in a file and refer to that file.\nReplaces the current goal when it is complete and archives it; fails if an unfinished goal exists.",
+      "description": "Register a goal for work that outlives this turn: it waits on external state, or the user's requested outcome needs more than one verify-and-fix round before it is true. A single answer, lookup, or one-shot edit needs no goal.\nObjectives over 4,000 characters are cut to at most 4,000 including a truncation marker (the full text is saved to a side file). For longer instructions, put the full objective in a file and refer to that file.\nReplaces the current goal when it is complete and archives it; fails if an unfinished goal exists.",
       "parameters": {
        "type": "object",
        "required": [
@@ -3311,7 +3311,7 @@
        "properties": {
         "objective": {
          "type": "string",
-         "description": "Required. The concrete objective to start pursuing. Limit: 4,000 characters. For longer instructions, put the full objective in a file and refer to that file."
+         "description": "Required. The concrete objective to start pursuing. Text past 4,000 characters is truncated, not rejected. For longer instructions, put the full objective in a file and refer to that file."
         }
        },
        "additionalProperties": false
@@ -3322,7 +3322,7 @@
      "type": "function",
      "function": {
       "name": "update_goal",
-      "description": "Set the existing goal's status to `complete` or `blocked`; the completion audit and blocked audit in the goal continuation prompt decide which, and only a passing audit permits the call.\n`complete` is rejected while todo tasks are open, and stopping work is never by itself a reason to complete; after it succeeds, report the final elapsed time and token usage from the result to the user.\n`blocked` requires a non-empty `reason` (omit `reason` for `complete`), and is rejected while any resumption channel can still deliver, and again until the same blocker has survived three goal turns since the goal became active or the user last spoke; a user resume starts a fresh blocked audit.\nA missing user decision is a question for the question tool, not a blocked status, until the user fails to answer it. Retries themselves are unbounded.\nPausing and resuming are user or system actions, not this tool.",
+      "description": "Set the existing goal's status to `complete` or `blocked`; the completion audit and blocked audit in the goal continuation prompt decide which, and only a passing audit permits the call.\n`complete` is rejected while todo tasks are open, and stopping work is never by itself a reason to complete; after it succeeds, report the final elapsed time and token usage from the result to the user.\n`blocked` requires a non-empty `reason` (omit `reason` for `complete`); the tool checks only that, so the blocked audit is yours to pass first: never call it while any resumption channel can still deliver, or before the same blocker has survived three goal turns since the goal became active or the user last spoke; a user resume starts a fresh blocked audit.\nA missing user decision is a question for the question tool, not a blocked status, until the user fails to answer it. Retries themselves are unbounded.\nPausing and resuming are user or system actions, not this tool.",
       "parameters": {
        "type": "object",
        "required": [
@@ -3350,7 +3350,7 @@
      "type": "function",
      "function": {
       "name": "eval",
-      "description": "Run one step of code in a persistent kernel.\n\n<instruction>\n**One eval call = one cell = one logical step.** Top-level names persist per language across eval calls and tool calls: define helpers and clients once and reuse them instead of re-importing or re-reading. For large text, use bounded chunks or write it to a file and read it with offsets; treat truncation notices as incomplete data and follow the full-output path. Rebuild state only after `reset`, a kernel restart, or a `NameError`/`ReferenceError`, and check a sentinel variable first so a re-run cannot duplicate side effects.\n\nBatch a step's independent calls in one cell with `parallel(thunks)`.\n- Write real code around the calls - loops, branches, joins, a try/except per risky item - and keep every failed or missing item in the result verbatim; re-read truncated output before deciding.\n- Long-running build, test run, deploy, or watch work starts with `tool.monitor({ command, filter })`, with the decisive-line filter inside the same cell; keep working until its event wakes the turn.\n\nHost: darwin arm64 · <host:cpu-model> · <host:cores> cores · <child-runtime>. Cells execute here. Size `parallel(thunks)` pools to its cores; `tool.<name>()` shell commands must fit this platform, even when the code you are writing targets another machine.\n\n`language`: `\"py\"` IPython kernel, `\"js\"` persistent JavaScript VM.\n\nA cell that outlives the foreground window detaches and keeps running; further cells on the same language queue behind it in submission order on the same kernel (state is shared, execution is serial) while other languages run at once, up to 15 background cells per session; each detached cell completes as one notification. Do not re-run a detached or queued cell; read, cancel or enumerate them with `eval({ action: \"peek\" | \"stop\", cell_id })` / `eval({ action: \"list\" })`; list shows live and recently settled cells across languages without consuming notifications. Its own execution time is capped at 300s (queue time and time inside host tool calls are not charged; the hard limit stays wall-clock from submission; raise `timeout` only for a declared long run), and a killed js cell that cannot settle restarts its kernel with every global lost.\n\nPython runs on a live event loop: use top-level `await`; `asyncio.run(…)` raises.\nJS runs in-process on Bun 1.4.4: top-level `await`/`return` work; `Bun.*` builtins available, including `new Bun.WebView()`, a headless browser (navigate/click/evaluate/screenshot) to reach for before `curl` or a browser CLI when a page needs JS, a login, or a screenshot. Shell out through `Bun.$` or `Bun.spawn`, never `Bun.spawnSync`: a synchronous child blocks the worker and cannot be interrupted. Before a cell that installs a package, spawns a process, server or PTY, runs tests, or starts a long run, read the bun skill at <repo>/packages/senpi-codemode/src/skill/bun/SKILL.md: its builtins replace the npm packages you would otherwise install, and it lists the Bun.$ / Bun.spawn / bun test traps that cost past sessions hours.\n\nOn error, fix and re-run only the failing step; a normal error keeps state, while a timeout or stop message says whether the kernel restarted.\n</instruction>\n\n<prelude>\nSame helpers + arg order, both runtimes. Python: sync, options = trailing kwargs. JS: async/`await`able, options = ONE trailing object literal, never positional (extras throw).\n```\ndisplay(value) → None\n    Cell output. Images reach you only through display: pass a figure, image bytes, a tool result, or its `images[i]`.\nprint(value, ...) → None\n    Text output.\nread(path, offset?=1, limit?=None) → str\n    File as text; offset/limit are 1-indexed lines. Accepts `local://…`.\nwrite(path, content) → str\n    Write file (creates parents) → resolved path. `local://…` persists across turns/subagents.\nenv(key?=None, value?=None) → str | None | dict\n    No args → full env dict; one → value; two → set `key=value`.\ntool.<name>(args) → { text, images?, details?, hasError? }\n    Invoke any session tool; image results (e.g. `tool.read` on a png) arrive in `images[i]` as { mimeType, dataBase64 }.\ntool_schema(name?) → dict\n    Parameter schema of a tool (omit `name` to list tool names); a failed `tool.<name>()` call also returns the expected parameters.\ncompletion(prompt, model?=\"default\", system?=None, schema?=None) → str | dict\n    Oneshot, stateless. `model`: `\"smol\"` fast | `\"default\"` session | `\"slow\"` most capable. `schema` (JSON-Schema) → parsed structured output.\nworkpool(agent, name, mode?) → { pool_id, push(items), close(), inspect(), cancel() }\n    Thin host-tool adapter; agent is a plain-data spec. The host owns scheduling and keyed yields; explicitly close for automatic aggregate delivery. Requires the host workpool tool; omitted mode uses its default.\nparallel(thunks) → list\n    Thunks through a bounded pool (as wide as a `task` batch), input order kept; a throwing thunk propagates.\npipeline(items, ...stages) → list\n    Map items through one-arg stages with a barrier between stages; each stage receives the previous stage's result.\nlog(message) → None\n    Progress line above the status tree.\nphase(title) → None\n    Phase grouping subsequent status lines.\n```\n</prelude>",
+      "description": "Run one step of code in a persistent kernel.\n\n<instruction>\n**One eval call = one cell = one logical step.** Top-level names persist per language across eval calls and tool calls: define helpers and clients once and reuse them instead of re-importing or re-reading. For large text, use bounded chunks or write it to a file and read it with offsets; treat truncation notices as incomplete data and follow the full-output path. Rebuild state only after `reset`, a kernel restart, or a `NameError`/`ReferenceError`, and check a sentinel variable first so a re-run cannot duplicate side effects.\n\nBatch a step's independent calls in one cell with `parallel(thunks)`.\n- Write real code around the calls - loops, branches, joins, a try/except per risky item - and keep every failed or missing item in the result verbatim; re-read truncated output before deciding.\n- Long-running build, test run, deploy, or watch work starts with `tool.monitor({ command, filter })`, with the decisive-line filter inside the same cell; keep working until its event wakes the turn.\n\nHost: darwin arm64 · <host:cpu-model> · <host:cores> cores · <child-runtime>. Cells execute here. `parallel(thunks)` runs through a fixed-width pool (the codemode `parallelPoolWidth` setting, default 4) whatever the core count; `tool.<name>()` shell commands must fit this platform, even when the code you are writing targets another machine.\n\n`language`: `\"py\"` IPython kernel, `\"js\"` persistent JavaScript VM.\n\nA cell still running when the call stops waiting for it (the detach point in the parameter schema) detaches and keeps running; further cells on the same language queue behind it in submission order on the same kernel (state is shared, execution is serial) while other languages run at once, up to 15 background cells per session (at that cap, a further cell that cannot detach is cancelled when its foreground window ends, so stop or await a live cell first); each detached cell completes as one notification. Do not re-run a detached or queued cell; read, cancel or enumerate them with `eval({ action: \"peek\" | \"stop\", cell_id })` / `eval({ action: \"list\" })`; list shows live and recently settled cells across languages without consuming notifications. Its own execution time is capped at 300s (queue time and time inside host tool calls are not charged; the hard limit stays wall-clock from submission; raise `timeout` only for a declared long run), and a killed js cell that cannot settle restarts its kernel with every global lost.\n\nPython runs on a live event loop: use top-level `await`; `asyncio.run(…)` raises.\nJS runs in-process on Bun 1.4.4: top-level `await`/`return` work; `Bun.*` builtins available, including `new Bun.WebView()`, a headless browser (navigate/click/evaluate/screenshot) to reach for before `curl` or a browser CLI when a page needs JS, a login, or a screenshot. Shell out through `Bun.$` or `Bun.spawn`, never `Bun.spawnSync`: a synchronous child blocks the worker and cannot be interrupted. Before a cell that installs a package, spawns a process, server or PTY, runs tests, or starts a long run, read the bun skill at <repo>/packages/senpi-codemode/src/skill/bun/SKILL.md: its builtins replace the npm packages you would otherwise install, and it lists the Bun.$ / Bun.spawn / bun test traps that cost past sessions hours.\n\nOn error, fix and re-run only the failing step; a normal error keeps state, while a timeout or stop message says whether the kernel restarted.\n</instruction>\n\n<prelude>\nSame helpers + arg order, both runtimes. Python: sync, options = trailing kwargs. JS: async/`await`able, options = ONE trailing object literal, never positional (extras throw).\n```\ndisplay(value) → None\n    Cell output. Images reach you only through display: pass a figure, image bytes, a tool result, or its `images[i]`.\nprint(value, ...) → None\n    Text output.\nread(path, offset?=1, limit?=None) → str\n    File as text; offset/limit are 1-indexed lines. Accepts `local://…`.\nwrite(path, content) → str\n    Write file (creates parents) → resolved path. `local://…` persists across turns/subagents.\nenv(key?=None, value?=None) → str | None | dict\n    No args → full env dict; one → value; two → set `key=value`.\ntool.<name>(args) → { text, images?, details?, hasError? }\n    Invoke any session tool; image results (e.g. `tool.read` on a png) arrive in `images[i]` as { mimeType, dataBase64 }.\ntool_schema(name?) → dict\n    Parameter schema of a tool (omit `name` to list tool names); a failed `tool.<name>()` call also returns the expected parameters.\ncompletion(prompt, model?=\"default\", system?=None, schema?=None) → str | dict\n    Oneshot, stateless. `model`: `\"smol\"` fast | `\"default\"` session | `\"slow\"` most capable. `schema` (JSON-Schema) → parsed structured output.\nworkpool(agent, name, mode?) → { pool_id, push(items), close(), inspect(), cancel() }\n    Thin host-tool adapter; agent is a plain-data spec. The host owns scheduling and keyed yields; explicitly close for automatic aggregate delivery. Requires the host workpool tool; omitted mode uses its default.\nparallel(thunks) → list\n    Thunks through a bounded pool (as wide as a `task` batch), input order kept; a throwing thunk propagates.\npipeline(items, ...stages) → list\n    Map items through one-arg stages with a barrier between stages; each stage receives the previous stage's result.\nlog(message) → None\n    Progress line above the status tree.\nphase(title) → None\n    Phase grouping subsequent status lines.\n```\n</prelude>",
       "parameters": {
        "type": "object",
        "properties": {
@@ -3456,7 +3456,7 @@
      "type": "function",
      "function": {
       "name": "ask_user_question",
-      "description": "Ask the user one to four concise questions. Set waitForAnswer true to pause here until the user answers (the answer returns as this tool's result, or a timeout result after 30 idle minutes); set waitForAnswer false to keep working while the question stays open (the answer arrives later as a user message). Use it only when the answer materially changes the work; if it returns no answers, continue with best judgment instead of asking again, unless you set required true because the answer decides whether you take an action: then no answer means do not take it. Never use it for permission requests; ask those directly in your message. When the user's instructions (in the conversation or their instruction files) say not to ask, or not to ask with choices, do not call it: take the safe default, keep working, and say what you chose. Unavailable to subagents. Users will always be able to type a free-text answer or one comment covering everything; do not add an Other option. Call this tool directly, never from inside an eval cell (a cell that waits on the user would hold the kernel).",
+      "description": "Ask the user one to four concise questions. Set waitForAnswer true to pause here until the user answers (the answer returns as this tool's result, or a timeout result after 30 idle minutes by default, where any user activity on the question restarts the idle clock, up to a 2-hour cap); set waitForAnswer false to keep working while the question stays open (the answer arrives later as a user message). Use it only when the answer materially changes the work; if it returns no answers, continue with best judgment instead of asking again, unless you set required true because the answer decides whether you take an action: then no answer means do not take it. Never use it for permission requests; ask those directly in your message. When the user's instructions (in the conversation or their instruction files) say not to ask, or not to ask with choices, do not call it: take the safe default, keep working, and say what you chose. Unavailable to subagents. Users will always be able to type a free-text answer or one comment covering everything; do not add an Other option. Call this tool directly, never from inside an eval cell (a cell that waits on the user would hold the kernel).",
       "parameters": {
        "type": "object",
        "required": [
@@ -3533,7 +3533,7 @@
      "type": "function",
      "function": {
       "name": "tool_search",
-      "description": "Search the catalog of deferred tools by capability. Returns matching tool names with their parameter schemas and never changes your active tool set; call a returned tool by name and it activates on that first call.",
+      "description": "Search the catalog of deferred tools by capability. Returns at most 5 matching tool names with their parameter schemas and never changes your active tool set; call a returned tool by name and it activates on that first call.",
       "parameters": {
        "type": "object",
        "required": [
@@ -3566,7 +3566,7 @@
      "type": "function",
      "function": {
       "name": "read",
-      "description": "Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.",
+      "description": "Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete. A .js or .json file of 100+ lines read without offset/limit may come back folded: bodies are replaced by markers and a footer lists the offset/limit ranges to reread; markers are not source, so reread those ranges before quoting or editing them.",
       "parameters": {
        "type": "object",
        "required": [
@@ -3738,7 +3738,7 @@
         },
         "filter": {
          "type": "string",
-         "description": "Only return output lines matching this regex."
+         "description": "Only return output lines matching this regex. An invalid regex is ignored and the whole unfiltered output comes back."
         },
         "view": {
          "description": "'log' returns new raw output (default); 'screen' returns the rendered xterm grid.",
@@ -3793,14 +3793,14 @@
          "items": {
           "type": "string"
          },
-         "description": "Only include search results from these domains"
+         "description": "Only include search results from these domains. Cannot be combined with a non-empty blocked_domains."
         },
         "blocked_domains": {
          "type": "array",
          "items": {
           "type": "string"
          },
-         "description": "Never include search results from these domains"
+         "description": "Never include search results from these domains. Cannot be combined with a non-empty allowed_domains."
         },
         "max_results": {
          "type": "integer",
@@ -3815,7 +3815,7 @@
      "type": "function",
      "function": {
       "name": "webfetch",
-      "description": "Fetches content from a URL and returns it as markdown, plain text, or HTML. Network use is bounded by timeout and response size limits.",
+      "description": "Fetches content from a URL and returns it as markdown, plain text, or HTML. A response over 5MB fails with an error instead of returning partial content, and the text handed back is capped at 50KB with a truncation notice.",
       "parameters": {
        "type": "object",
        "required": [
@@ -3837,7 +3837,7 @@
         },
         "timeout": {
          "type": "number",
-         "description": "Optional timeout in seconds. Maximum 120."
+         "description": "Optional timeout in seconds. Defaults to 30; a missing, zero or negative value means 30. Maximum 120."
         }
        }
       }
@@ -3847,7 +3847,7 @@
      "type": "function",
      "function": {
       "name": "create_goal",
-      "description": "Register a goal for work that outlives this turn: it waits on external state, or the user's requested outcome needs more than one verify-and-fix round before it is true. A single answer, lookup, or one-shot edit needs no goal.\nObjectives are limited to 4,000 characters. For longer instructions, put the full objective in a file and refer to that file.\nReplaces the current goal when it is complete and archives it; fails if an unfinished goal exists.",
+      "description": "Register a goal for work that outlives this turn: it waits on external state, or the user's requested outcome needs more than one verify-and-fix round before it is true. A single answer, lookup, or one-shot edit needs no goal.\nObjectives over 4,000 characters are cut to at most 4,000 including a truncation marker (the full text is saved to a side file). For longer instructions, put the full objective in a file and refer to that file.\nReplaces the current goal when it is complete and archives it; fails if an unfinished goal exists.",
       "parameters": {
        "type": "object",
        "required": [
@@ -3856,7 +3856,7 @@
        "properties": {
         "objective": {
          "type": "string",
-         "description": "Required. The concrete objective to start pursuing. Limit: 4,000 characters. For longer instructions, put the full objective in a file and refer to that file."
+         "description": "Required. The concrete objective to start pursuing. Text past 4,000 characters is truncated, not rejected. For longer instructions, put the full objective in a file and refer to that file."
         }
        },
        "additionalProperties": false
@@ -3867,7 +3867,7 @@
      "type": "function",
      "function": {
       "name": "update_goal",
-      "description": "Set the existing goal's status to `complete` or `blocked`; the completion audit and blocked audit in the goal continuation prompt decide which, and only a passing audit permits the call.\n`complete` is rejected while todo tasks are open, and stopping work is never by itself a reason to complete; after it succeeds, report the final elapsed time and token usage from the result to the user.\n`blocked` requires a non-empty `reason` (omit `reason` for `complete`), and is rejected while any resumption channel can still deliver, and again until the same blocker has survived three goal turns since the goal became active or the user last spoke; a user resume starts a fresh blocked audit.\nA missing user decision is a question for the question tool, not a blocked status, until the user fails to answer it. Retries themselves are unbounded.\nPausing and resuming are user or system actions, not this tool.",
+      "description": "Set the existing goal's status to `complete` or `blocked`; the completion audit and blocked audit in the goal continuation prompt decide which, and only a passing audit permits the call.\n`complete` is rejected while todo tasks are open, and stopping work is never by itself a reason to complete; after it succeeds, report the final elapsed time and token usage from the result to the user.\n`blocked` requires a non-empty `reason` (omit `reason` for `complete`); the tool checks only that, so the blocked audit is yours to pass first: never call it while any resumption channel can still deliver, or before the same blocker has survived three goal turns since the goal became active or the user last spoke; a user resume starts a fresh blocked audit.\nA missing user decision is a question for the question tool, not a blocked status, until the user fails to answer it. Retries themselves are unbounded.\nPausing and resuming are user or system actions, not this tool.",
       "parameters": {
        "type": "object",
        "required": [
@@ -3895,7 +3895,7 @@
      "type": "function",
      "function": {
       "name": "eval",
-      "description": "Run one step of code in a persistent kernel.\n\n<instruction>\n**One eval call = one cell = one logical step.** Top-level names persist per language across eval calls and tool calls: define helpers and clients once and reuse them instead of re-importing or re-reading. For large text, use bounded chunks or write it to a file and read it with offsets; treat truncation notices as incomplete data and follow the full-output path. Rebuild state only after `reset`, a kernel restart, or a `NameError`/`ReferenceError`, and check a sentinel variable first so a re-run cannot duplicate side effects.\n\nBatch a step's independent calls in one cell with `parallel(thunks)`.\n- Write real code around the calls - loops, branches, joins, a try/except per risky item - and keep every failed or missing item in the result verbatim; re-read truncated output before deciding.\n- Long-running build, test run, deploy, or watch work starts with `tool.monitor({ command, filter })`, with the decisive-line filter inside the same cell; keep working until its event wakes the turn.\n\nHost: darwin arm64 · <host:cpu-model> · <host:cores> cores · <child-runtime>. Cells execute here. Size `parallel(thunks)` pools to its cores; `tool.<name>()` shell commands must fit this platform, even when the code you are writing targets another machine.\n\n`language`: `\"py\"` IPython kernel, `\"js\"` persistent JavaScript VM.\n\nA cell that outlives the foreground window detaches and keeps running; further cells on the same language queue behind it in submission order on the same kernel (state is shared, execution is serial) while other languages run at once, up to 15 background cells per session; each detached cell completes as one notification. Do not re-run a detached or queued cell; read, cancel or enumerate them with `eval({ action: \"peek\" | \"stop\", cell_id })` / `eval({ action: \"list\" })`; list shows live and recently settled cells across languages without consuming notifications. Its own execution time is capped at 300s (queue time and time inside host tool calls are not charged; the hard limit stays wall-clock from submission; raise `timeout` only for a declared long run), and a killed js cell that cannot settle restarts its kernel with every global lost.\n\nPython runs on a live event loop: use top-level `await`; `asyncio.run(…)` raises.\nJS runs in-process on Bun 1.4.4: top-level `await`/`return` work; `Bun.*` builtins available, including `new Bun.WebView()`, a headless browser (navigate/click/evaluate/screenshot) to reach for before `curl` or a browser CLI when a page needs JS, a login, or a screenshot. Shell out through `Bun.$` or `Bun.spawn`, never `Bun.spawnSync`: a synchronous child blocks the worker and cannot be interrupted. Before a cell that installs a package, spawns a process, server or PTY, runs tests, or starts a long run, read the bun skill at <repo>/packages/senpi-codemode/src/skill/bun/SKILL.md: its builtins replace the npm packages you would otherwise install, and it lists the Bun.$ / Bun.spawn / bun test traps that cost past sessions hours.\n\nOn error, fix and re-run only the failing step; a normal error keeps state, while a timeout or stop message says whether the kernel restarted.\n</instruction>\n\n<prelude>\nSame helpers + arg order, both runtimes. Python: sync, options = trailing kwargs. JS: async/`await`able, options = ONE trailing object literal, never positional (extras throw).\n```\ndisplay(value) → None\n    Cell output. Images reach you only through display: pass a figure, image bytes, a tool result, or its `images[i]`.\nprint(value, ...) → None\n    Text output.\nread(path, offset?=1, limit?=None) → str\n    File as text; offset/limit are 1-indexed lines. Accepts `local://…`.\nwrite(path, content) → str\n    Write file (creates parents) → resolved path. `local://…` persists across turns/subagents.\nenv(key?=None, value?=None) → str | None | dict\n    No args → full env dict; one → value; two → set `key=value`.\ntool.<name>(args) → { text, images?, details?, hasError? }\n    Invoke any session tool; image results (e.g. `tool.read` on a png) arrive in `images[i]` as { mimeType, dataBase64 }.\ntool_schema(name?) → dict\n    Parameter schema of a tool (omit `name` to list tool names); a failed `tool.<name>()` call also returns the expected parameters.\ncompletion(prompt, model?=\"default\", system?=None, schema?=None) → str | dict\n    Oneshot, stateless. `model`: `\"smol\"` fast | `\"default\"` session | `\"slow\"` most capable. `schema` (JSON-Schema) → parsed structured output.\nworkpool(agent, name, mode?) → { pool_id, push(items), close(), inspect(), cancel() }\n    Thin host-tool adapter; agent is a plain-data spec. The host owns scheduling and keyed yields; explicitly close for automatic aggregate delivery. Requires the host workpool tool; omitted mode uses its default.\nparallel(thunks) → list\n    Thunks through a bounded pool (as wide as a `task` batch), input order kept; a throwing thunk propagates.\npipeline(items, ...stages) → list\n    Map items through one-arg stages with a barrier between stages; each stage receives the previous stage's result.\nlog(message) → None\n    Progress line above the status tree.\nphase(title) → None\n    Phase grouping subsequent status lines.\n```\n</prelude>",
+      "description": "Run one step of code in a persistent kernel.\n\n<instruction>\n**One eval call = one cell = one logical step.** Top-level names persist per language across eval calls and tool calls: define helpers and clients once and reuse them instead of re-importing or re-reading. For large text, use bounded chunks or write it to a file and read it with offsets; treat truncation notices as incomplete data and follow the full-output path. Rebuild state only after `reset`, a kernel restart, or a `NameError`/`ReferenceError`, and check a sentinel variable first so a re-run cannot duplicate side effects.\n\nBatch a step's independent calls in one cell with `parallel(thunks)`.\n- Write real code around the calls - loops, branches, joins, a try/except per risky item - and keep every failed or missing item in the result verbatim; re-read truncated output before deciding.\n- Long-running build, test run, deploy, or watch work starts with `tool.monitor({ command, filter })`, with the decisive-line filter inside the same cell; keep working until its event wakes the turn.\n\nHost: darwin arm64 · <host:cpu-model> · <host:cores> cores · <child-runtime>. Cells execute here. `parallel(thunks)` runs through a fixed-width pool (the codemode `parallelPoolWidth` setting, default 4) whatever the core count; `tool.<name>()` shell commands must fit this platform, even when the code you are writing targets another machine.\n\n`language`: `\"py\"` IPython kernel, `\"js\"` persistent JavaScript VM.\n\nA cell still running when the call stops waiting for it (the detach point in the parameter schema) detaches and keeps running; further cells on the same language queue behind it in submission order on the same kernel (state is shared, execution is serial) while other languages run at once, up to 15 background cells per session (at that cap, a further cell that cannot detach is cancelled when its foreground window ends, so stop or await a live cell first); each detached cell completes as one notification. Do not re-run a detached or queued cell; read, cancel or enumerate them with `eval({ action: \"peek\" | \"stop\", cell_id })` / `eval({ action: \"list\" })`; list shows live and recently settled cells across languages without consuming notifications. Its own execution time is capped at 300s (queue time and time inside host tool calls are not charged; the hard limit stays wall-clock from submission; raise `timeout` only for a declared long run), and a killed js cell that cannot settle restarts its kernel with every global lost.\n\nPython runs on a live event loop: use top-level `await`; `asyncio.run(…)` raises.\nJS runs in-process on Bun 1.4.4: top-level `await`/`return` work; `Bun.*` builtins available, including `new Bun.WebView()`, a headless browser (navigate/click/evaluate/screenshot) to reach for before `curl` or a browser CLI when a page needs JS, a login, or a screenshot. Shell out through `Bun.$` or `Bun.spawn`, never `Bun.spawnSync`: a synchronous child blocks the worker and cannot be interrupted. Before a cell that installs a package, spawns a process, server or PTY, runs tests, or starts a long run, read the bun skill at <repo>/packages/senpi-codemode/src/skill/bun/SKILL.md: its builtins replace the npm packages you would otherwise install, and it lists the Bun.$ / Bun.spawn / bun test traps that cost past sessions hours.\n\nOn error, fix and re-run only the failing step; a normal error keeps state, while a timeout or stop message says whether the kernel restarted.\n</instruction>\n\n<prelude>\nSame helpers + arg order, both runtimes. Python: sync, options = trailing kwargs. JS: async/`await`able, options = ONE trailing object literal, never positional (extras throw).\n```\ndisplay(value) → None\n    Cell output. Images reach you only through display: pass a figure, image bytes, a tool result, or its `images[i]`.\nprint(value, ...) → None\n    Text output.\nread(path, offset?=1, limit?=None) → str\n    File as text; offset/limit are 1-indexed lines. Accepts `local://…`.\nwrite(path, content) → str\n    Write file (creates parents) → resolved path. `local://…` persists across turns/subagents.\nenv(key?=None, value?=None) → str | None | dict\n    No args → full env dict; one → value; two → set `key=value`.\ntool.<name>(args) → { text, images?, details?, hasError? }\n    Invoke any session tool; image results (e.g. `tool.read` on a png) arrive in `images[i]` as { mimeType, dataBase64 }.\ntool_schema(name?) → dict\n    Parameter schema of a tool (omit `name` to list tool names); a failed `tool.<name>()` call also returns the expected parameters.\ncompletion(prompt, model?=\"default\", system?=None, schema?=None) → str | dict\n    Oneshot, stateless. `model`: `\"smol\"` fast | `\"default\"` session | `\"slow\"` most capable. `schema` (JSON-Schema) → parsed structured output.\nworkpool(agent, name, mode?) → { pool_id, push(items), close(), inspect(), cancel() }\n    Thin host-tool adapter; agent is a plain-data spec. The host owns scheduling and keyed yields; explicitly close for automatic aggregate delivery. Requires the host workpool tool; omitted mode uses its default.\nparallel(thunks) → list\n    Thunks through a bounded pool (as wide as a `task` batch), input order kept; a throwing thunk propagates.\npipeline(items, ...stages) → list\n    Map items through one-arg stages with a barrier between stages; each stage receives the previous stage's result.\nlog(message) → None\n    Progress line above the status tree.\nphase(title) → None\n    Phase grouping subsequent status lines.\n```\n</prelude>",
       "parameters": {
        "type": "object",
        "properties": {
@@ -4001,7 +4001,7 @@
      "type": "function",
      "function": {
       "name": "ask_user_question",
-      "description": "Ask the user one to four concise questions. Set waitForAnswer true to pause here until the user answers (the answer returns as this tool's result, or a timeout result after 30 idle minutes); set waitForAnswer false to keep working while the question stays open (the answer arrives later as a user message). Use it only when the answer materially changes the work; if it returns no answers, continue with best judgment instead of asking again, unless you set required true because the answer decides whether you take an action: then no answer means do not take it. Never use it for permission requests; ask those directly in your message. When the user's instructions (in the conversation or their instruction files) say not to ask, or not to ask with choices, do not call it: take the safe default, keep working, and say what you chose. Unavailable to subagents. Users will always be able to type a free-text answer or one comment covering everything; do not add an Other option. Call this tool directly, never from inside an eval cell (a cell that waits on the user would hold the kernel).",
+      "description": "Ask the user one to four concise questions. Set waitForAnswer true to pause here until the user answers (the answer returns as this tool's result, or a timeout result after 30 idle minutes by default, where any user activity on the question restarts the idle clock, up to a 2-hour cap); set waitForAnswer false to keep working while the question stays open (the answer arrives later as a user message). Use it only when the answer materially changes the work; if it returns no answers, continue with best judgment instead of asking again, unless you set required true because the answer decides whether you take an action: then no answer means do not take it. Never use it for permission requests; ask those directly in your message. When the user's instructions (in the conversation or their instruction files) say not to ask, or not to ask with choices, do not call it: take the safe default, keep working, and say what you chose. Unavailable to subagents. Users will always be able to type a free-text answer or one comment covering everything; do not add an Other option. Call this tool directly, never from inside an eval cell (a cell that waits on the user would hold the kernel).",
       "parameters": {
        "type": "object",
        "required": [
@@ -4078,7 +4078,7 @@
      "type": "function",
      "function": {
       "name": "tool_search",
-      "description": "Search the catalog of deferred tools by capability. Returns matching tool names with their parameter schemas and never changes your active tool set; call a returned tool by name and it activates on that first call.",
+      "description": "Search the catalog of deferred tools by capability. Returns at most 5 matching tool names with their parameter schemas and never changes your active tool set; call a returned tool by name and it activates on that first call.",
       "parameters": {
        "type": "object",
        "required": [
@@ -4111,7 +4111,7 @@
      "type": "function",
      "function": {
       "name": "read",
-      "description": "Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.",
+      "description": "Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete. A .js or .json file of 100+ lines read without offset/limit may come back folded: bodies are replaced by markers and a footer lists the offset/limit ranges to reread; markers are not source, so reread those ranges before quoting or editing them.",
       "parameters": {
        "type": "object",
        "required": [
@@ -4283,7 +4283,7 @@
         },
         "filter": {
          "type": "string",
-         "description": "Only return output lines matching this regex."
+         "description": "Only return output lines matching this regex. An invalid regex is ignored and the whole unfiltered output comes back."
         },
         "view": {
          "description": "'log' returns new raw output (default); 'screen' returns the rendered xterm grid.",
@@ -4338,14 +4338,14 @@
          "items": {
           "type": "string"
          },
-         "description": "Only include search results from these domains"
+         "description": "Only include search results from these domains. Cannot be combined with a non-empty blocked_domains."
         },
         "blocked_domains": {
          "type": "array",
          "items": {
           "type": "string"
          },
-         "description": "Never include search results from these domains"
+         "description": "Never include search results from these domains. Cannot be combined with a non-empty allowed_domains."
         },
         "max_results": {
          "type": "integer",
@@ -4360,7 +4360,7 @@
      "type": "function",
      "function": {
       "name": "webfetch",
-      "description": "Fetches content from a URL and returns it as markdown, plain text, or HTML. Network use is bounded by timeout and response size limits.",
+      "description": "Fetches content from a URL and returns it as markdown, plain text, or HTML. A response over 5MB fails with an error instead of returning partial content, and the text handed back is capped at 50KB with a truncation notice.",
       "parameters": {
        "type": "object",
        "required": [
@@ -4382,7 +4382,7 @@
         },
         "timeout": {
          "type": "number",
-         "description": "Optional timeout in seconds. Maximum 120."
+         "description": "Optional timeout in seconds. Defaults to 30; a missing, zero or negative value means 30. Maximum 120."
         }
        }
       }
@@ -4392,7 +4392,7 @@
      "type": "function",
      "function": {
       "name": "create_goal",
-      "description": "Register a goal for work that outlives this turn: it waits on external state, or the user's requested outcome needs more than one verify-and-fix round before it is true. A single answer, lookup, or one-shot edit needs no goal.\nObjectives are limited to 4,000 characters. For longer instructions, put the full objective in a file and refer to that file.\nReplaces the current goal when it is complete and archives it; fails if an unfinished goal exists.",
+      "description": "Register a goal for work that outlives this turn: it waits on external state, or the user's requested outcome needs more than one verify-and-fix round before it is true. A single answer, lookup, or one-shot edit needs no goal.\nObjectives over 4,000 characters are cut to at most 4,000 including a truncation marker (the full text is saved to a side file). For longer instructions, put the full objective in a file and refer to that file.\nReplaces the current goal when it is complete and archives it; fails if an unfinished goal exists.",
       "parameters": {
        "type": "object",
        "required": [
@@ -4401,7 +4401,7 @@
        "properties": {
         "objective": {
          "type": "string",
-         "description": "Required. The concrete objective to start pursuing. Limit: 4,000 characters. For longer instructions, put the full objective in a file and refer to that file."
+         "description": "Required. The concrete objective to start pursuing. Text past 4,000 characters is truncated, not rejected. For longer instructions, put the full objective in a file and refer to that file."
         }
        },
        "additionalProperties": false
@@ -4412,7 +4412,7 @@
      "type": "function",
      "function": {
       "name": "update_goal",
-      "description": "Set the existing goal's status to `complete` or `blocked`; the completion audit and blocked audit in the goal continuation prompt decide which, and only a passing audit permits the call.\n`complete` is rejected while todo tasks are open, and stopping work is never by itself a reason to complete; after it succeeds, report the final elapsed time and token usage from the result to the user.\n`blocked` requires a non-empty `reason` (omit `reason` for `complete`), and is rejected while any resumption channel can still deliver, and again until the same blocker has survived three goal turns since the goal became active or the user last spoke; a user resume starts a fresh blocked audit.\nA missing user decision is a question for the question tool, not a blocked status, until the user fails to answer it. Retries themselves are unbounded.\nPausing and resuming are user or system actions, not this tool.",
+      "description": "Set the existing goal's status to `complete` or `blocked`; the completion audit and blocked audit in the goal continuation prompt decide which, and only a passing audit permits the call.\n`complete` is rejected while todo tasks are open, and stopping work is never by itself a reason to complete; after it succeeds, report the final elapsed time and token usage from the result to the user.\n`blocked` requires a non-empty `reason` (omit `reason` for `complete`); the tool checks only that, so the blocked audit is yours to pass first: never call it while any resumption channel can still deliver, or before the same blocker has survived three goal turns since the goal became active or the user last spoke; a user resume starts a fresh blocked audit.\nA missing user decision is a question for the question tool, not a blocked status, until the user fails to answer it. Retries themselves are unbounded.\nPausing and resuming are user or system actions, not this tool.",
       "parameters": {
        "type": "object",
        "required": [
@@ -4440,7 +4440,7 @@
      "type": "function",
      "function": {
       "name": "eval",
-      "description": "Run one step of code in a persistent kernel.\n\n<instruction>\n**One eval call = one cell = one logical step.** Top-level names persist per language across eval calls and tool calls: define helpers and clients once and reuse them instead of re-importing or re-reading. For large text, use bounded chunks or write it to a file and read it with offsets; treat truncation notices as incomplete data and follow the full-output path. Rebuild state only after `reset`, a kernel restart, or a `NameError`/`ReferenceError`, and check a sentinel variable first so a re-run cannot duplicate side effects.\n\nBatch a step's independent calls in one cell with `parallel(thunks)`.\n- Write real code around the calls - loops, branches, joins, a try/except per risky item - and keep every failed or missing item in the result verbatim; re-read truncated output before deciding.\n- Long-running build, test run, deploy, or watch work starts with `tool.monitor({ command, filter })`, with the decisive-line filter inside the same cell; keep working until its event wakes the turn.\n\nHost: darwin arm64 · <host:cpu-model> · <host:cores> cores · <child-runtime>. Cells execute here. Size `parallel(thunks)` pools to its cores; `tool.<name>()` shell commands must fit this platform, even when the code you are writing targets another machine.\n\n`language`: `\"py\"` IPython kernel, `\"js\"` persistent JavaScript VM.\n\nA cell that outlives the foreground window detaches and keeps running; further cells on the same language queue behind it in submission order on the same kernel (state is shared, execution is serial) while other languages run at once, up to 15 background cells per session; each detached cell completes as one notification. Do not re-run a detached or queued cell; read, cancel or enumerate them with `eval({ action: \"peek\" | \"stop\", cell_id })` / `eval({ action: \"list\" })`; list shows live and recently settled cells across languages without consuming notifications. Its own execution time is capped at 300s (queue time and time inside host tool calls are not charged; the hard limit stays wall-clock from submission; raise `timeout` only for a declared long run), and a killed js cell that cannot settle restarts its kernel with every global lost.\n\nPython runs on a live event loop: use top-level `await`; `asyncio.run(…)` raises.\nJS runs in-process on Bun 1.4.4: top-level `await`/`return` work; `Bun.*` builtins available, including `new Bun.WebView()`, a headless browser (navigate/click/evaluate/screenshot) to reach for before `curl` or a browser CLI when a page needs JS, a login, or a screenshot. Shell out through `Bun.$` or `Bun.spawn`, never `Bun.spawnSync`: a synchronous child blocks the worker and cannot be interrupted. Before a cell that installs a package, spawns a process, server or PTY, runs tests, or starts a long run, read the bun skill at <repo>/packages/senpi-codemode/src/skill/bun/SKILL.md: its builtins replace the npm packages you would otherwise install, and it lists the Bun.$ / Bun.spawn / bun test traps that cost past sessions hours.\n\nOn error, fix and re-run only the failing step; a normal error keeps state, while a timeout or stop message says whether the kernel restarted.\n</instruction>\n\n<prelude>\nSame helpers + arg order, both runtimes. Python: sync, options = trailing kwargs. JS: async/`await`able, options = ONE trailing object literal, never positional (extras throw).\n```\ndisplay(value) → None\n    Cell output. Images reach you only through display: pass a figure, image bytes, a tool result, or its `images[i]`.\nprint(value, ...) → None\n    Text output.\nread(path, offset?=1, limit?=None) → str\n    File as text; offset/limit are 1-indexed lines. Accepts `local://…`.\nwrite(path, content) → str\n    Write file (creates parents) → resolved path. `local://…` persists across turns/subagents.\nenv(key?=None, value?=None) → str | None | dict\n    No args → full env dict; one → value; two → set `key=value`.\ntool.<name>(args) → { text, images?, details?, hasError? }\n    Invoke any session tool; image results (e.g. `tool.read` on a png) arrive in `images[i]` as { mimeType, dataBase64 }.\ntool_schema(name?) → dict\n    Parameter schema of a tool (omit `name` to list tool names); a failed `tool.<name>()` call also returns the expected parameters.\ncompletion(prompt, model?=\"default\", system?=None, schema?=None) → str | dict\n    Oneshot, stateless. `model`: `\"smol\"` fast | `\"default\"` session | `\"slow\"` most capable. `schema` (JSON-Schema) → parsed structured output.\nworkpool(agent, name, mode?) → { pool_id, push(items), close(), inspect(), cancel() }\n    Thin host-tool adapter; agent is a plain-data spec. The host owns scheduling and keyed yields; explicitly close for automatic aggregate delivery. Requires the host workpool tool; omitted mode uses its default.\nparallel(thunks) → list\n    Thunks through a bounded pool (as wide as a `task` batch), input order kept; a throwing thunk propagates.\npipeline(items, ...stages) → list\n    Map items through one-arg stages with a barrier between stages; each stage receives the previous stage's result.\nlog(message) → None\n    Progress line above the status tree.\nphase(title) → None\n    Phase grouping subsequent status lines.\n```\n</prelude>",
+      "description": "Run one step of code in a persistent kernel.\n\n<instruction>\n**One eval call = one cell = one logical step.** Top-level names persist per language across eval calls and tool calls: define helpers and clients once and reuse them instead of re-importing or re-reading. For large text, use bounded chunks or write it to a file and read it with offsets; treat truncation notices as incomplete data and follow the full-output path. Rebuild state only after `reset`, a kernel restart, or a `NameError`/`ReferenceError`, and check a sentinel variable first so a re-run cannot duplicate side effects.\n\nBatch a step's independent calls in one cell with `parallel(thunks)`.\n- Write real code around the calls - loops, branches, joins, a try/except per risky item - and keep every failed or missing item in the result verbatim; re-read truncated output before deciding.\n- Long-running build, test run, deploy, or watch work starts with `tool.monitor({ command, filter })`, with the decisive-line filter inside the same cell; keep working until its event wakes the turn.\n\nHost: darwin arm64 · <host:cpu-model> · <host:cores> cores · <child-runtime>. Cells execute here. `parallel(thunks)` runs through a fixed-width pool (the codemode `parallelPoolWidth` setting, default 4) whatever the core count; `tool.<name>()` shell commands must fit this platform, even when the code you are writing targets another machine.\n\n`language`: `\"py\"` IPython kernel, `\"js\"` persistent JavaScript VM.\n\nA cell still running when the call stops waiting for it (the detach point in the parameter schema) detaches and keeps running; further cells on the same language queue behind it in submission order on the same kernel (state is shared, execution is serial) while other languages run at once, up to 15 background cells per session (at that cap, a further cell that cannot detach is cancelled when its foreground window ends, so stop or await a live cell first); each detached cell completes as one notification. Do not re-run a detached or queued cell; read, cancel or enumerate them with `eval({ action: \"peek\" | \"stop\", cell_id })` / `eval({ action: \"list\" })`; list shows live and recently settled cells across languages without consuming notifications. Its own execution time is capped at 300s (queue time and time inside host tool calls are not charged; the hard limit stays wall-clock from submission; raise `timeout` only for a declared long run), and a killed js cell that cannot settle restarts its kernel with every global lost.\n\nPython runs on a live event loop: use top-level `await`; `asyncio.run(…)` raises.\nJS runs in-process on Bun 1.4.4: top-level `await`/`return` work; `Bun.*` builtins available, including `new Bun.WebView()`, a headless browser (navigate/click/evaluate/screenshot) to reach for before `curl` or a browser CLI when a page needs JS, a login, or a screenshot. Shell out through `Bun.$` or `Bun.spawn`, never `Bun.spawnSync`: a synchronous child blocks the worker and cannot be interrupted. Before a cell that installs a package, spawns a process, server or PTY, runs tests, or starts a long run, read the bun skill at <repo>/packages/senpi-codemode/src/skill/bun/SKILL.md: its builtins replace the npm packages you would otherwise install, and it lists the Bun.$ / Bun.spawn / bun test traps that cost past sessions hours.\n\nOn error, fix and re-run only the failing step; a normal error keeps state, while a timeout or stop message says whether the kernel restarted.\n</instruction>\n\n<prelude>\nSame helpers + arg order, both runtimes. Python: sync, options = trailing kwargs. JS: async/`await`able, options = ONE trailing object literal, never positional (extras throw).\n```\ndisplay(value) → None\n    Cell output. Images reach you only through display: pass a figure, image bytes, a tool result, or its `images[i]`.\nprint(value, ...) → None\n    Text output.\nread(path, offset?=1, limit?=None) → str\n    File as text; offset/limit are 1-indexed lines. Accepts `local://…`.\nwrite(path, content) → str\n    Write file (creates parents) → resolved path. `local://…` persists across turns/subagents.\nenv(key?=None, value?=None) → str | None | dict\n    No args → full env dict; one → value; two → set `key=value`.\ntool.<name>(args) → { text, images?, details?, hasError? }\n    Invoke any session tool; image results (e.g. `tool.read` on a png) arrive in `images[i]` as { mimeType, dataBase64 }.\ntool_schema(name?) → dict\n    Parameter schema of a tool (omit `name` to list tool names); a failed `tool.<name>()` call also returns the expected parameters.\ncompletion(prompt, model?=\"default\", system?=None, schema?=None) → str | dict\n    Oneshot, stateless. `model`: `\"smol\"` fast | `\"default\"` session | `\"slow\"` most capable. `schema` (JSON-Schema) → parsed structured output.\nworkpool(agent, name, mode?) → { pool_id, push(items), close(), inspect(), cancel() }\n    Thin host-tool adapter; agent is a plain-data spec. The host owns scheduling and keyed yields; explicitly close for automatic aggregate delivery. Requires the host workpool tool; omitted mode uses its default.\nparallel(thunks) → list\n    Thunks through a bounded pool (as wide as a `task` batch), input order kept; a throwing thunk propagates.\npipeline(items, ...stages) → list\n    Map items through one-arg stages with a barrier between stages; each stage receives the previous stage's result.\nlog(message) → None\n    Progress line above the status tree.\nphase(title) → None\n    Phase grouping subsequent status lines.\n```\n</prelude>",
       "parameters": {
        "type": "object",
        "properties": {
@@ -4546,7 +4546,7 @@
      "type": "function",
      "function": {
       "name": "ask_user_question",
-      "description": "Ask the user one to four concise questions. Set waitForAnswer true to pause here until the user answers (the answer returns as this tool's result, or a timeout result after 30 idle minutes); set waitForAnswer false to keep working while the question stays open (the answer arrives later as a user message). Use it only when the answer materially changes the work; if it returns no answers, continue with best judgment instead of asking again, unless you set required true because the answer decides whether you take an action: then no answer means do not take it. Never use it for permission requests; ask those directly in your message. When the user's instructions (in the conversation or their instruction files) say not to ask, or not to ask with choices, do not call it: take the safe default, keep working, and say what you chose. Unavailable to subagents. Users will always be able to type a free-text answer or one comment covering everything; do not add an Other option. Call this tool directly, never from inside an eval cell (a cell that waits on the user would hold the kernel).",
+      "description": "Ask the user one to four concise questions. Set waitForAnswer true to pause here until the user answers (the answer returns as this tool's result, or a timeout result after 30 idle minutes by default, where any user activity on the question restarts the idle clock, up to a 2-hour cap); set waitForAnswer false to keep working while the question stays open (the answer arrives later as a user message). Use it only when the answer materially changes the work; if it returns no answers, continue with best judgment instead of asking again, unless you set required true because the answer decides whether you take an action: then no answer means do not take it. Never use it for permission requests; ask those directly in your message. When the user's instructions (in the conversation or their instruction files) say not to ask, or not to ask with choices, do not call it: take the safe default, keep working, and say what you chose. Unavailable to subagents. Users will always be able to type a free-text answer or one comment covering everything; do not add an Other option. Call this tool directly, never from inside an eval cell (a cell that waits on the user would hold the kernel).",
       "parameters": {
        "type": "object",
        "required": [
@@ -4623,7 +4623,7 @@
      "type": "function",
      "function": {
       "name": "tool_search",
-      "description": "Search the catalog of deferred tools by capability. Returns matching tool names with their parameter schemas and never changes your active tool set; call a returned tool by name and it activates on that first call.",
+      "description": "Search the catalog of deferred tools by capability. Returns at most 5 matching tool names with their parameter schemas and never changes your active tool set; call a returned tool by name and it activates on that first call.",
       "parameters": {
        "type": "object",
        "required": [
