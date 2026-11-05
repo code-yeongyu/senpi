@@ -193,6 +193,27 @@ describe.skipIf(process.versions.bun !== undefined || bun === undefined || proce
 			expect(existsSync(`${file}.fence`)).toBe(false);
 		});
 
+		it("fencing the hatch leaves a Bun co-holder that opened earlier writing", async () => {
+			const dirs = setup();
+			const file = await storeSession(dirs, ["b0"]);
+			const early = peer("bun", dirs);
+			const hatch = peer("node", dirs);
+			const later = peer("bun", dirs);
+			await early.send({ op: "open", file });
+			await hatch.send({ op: "open", file });
+			await later.send({ op: "open", file });
+
+			const appended = [
+				await early.send({ op: "append", text: "a1" }),
+				await hatch.send({ op: "append", text: "n1" }),
+				await later.send({ op: "append", text: "c1" }),
+			];
+			await Promise.all([early.exit(), hatch.exit(), later.exit()]);
+
+			expect(appended).toEqual([{ ok: true }, fenced, { ok: true }]);
+			expect((await stored(dirs, file)).entries).toEqual(expect.arrayContaining(["b0", "a1", "c1"]));
+		});
+
 		// DRIFT A: Node first, Bun's open fences the hatch writer. Bun first, the hatch's appends land and are imported,
 		// until a Bun projection rewrite fences it (after importing what it wrote so far).
 		it.each([
