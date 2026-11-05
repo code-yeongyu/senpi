@@ -84,6 +84,7 @@ import {
 	type ProjectionWarning,
 	storeKeyOf,
 } from "./session-store/durable-binding.ts";
+import { markHatchWrite } from "./session-store/hatch-marker.ts";
 import type { StoredEntry } from "@earendil-works/pi-agent-core";
 import {
 	discardFailedFirstFlush,
@@ -1676,6 +1677,7 @@ export class SessionManager {
 			durable.projectionFailed(this.sessionFile, error);
 			return;
 		}
+		markHatchWrite(this.sessionFile);
 		durable?.recordWhole(this.sessionFile);
 	}
 
@@ -1886,6 +1888,7 @@ export class SessionManager {
 			// EEXIST while the entries it was carrying stayed in memory only. Nothing counts as flushed yet.
 			return discardFailedFirstFlushAsync(sessionFile, handle, error);
 		}
+		markHatchWrite(sessionFile);
 		// Synchronous with the last check above: no entry can land between it and the flag.
 		if (this.sessionFile === sessionFile && this.fileEntries === entries && written === entries.length) {
 			this.flushed = true;
@@ -1976,6 +1979,7 @@ export class SessionManager {
 				durable.projectionFailed(this.sessionFile, error);
 				return bytes;
 			}
+			markHatchWrite(this.sessionFile);
 			if (durable && bound) durable.projected(this.sessionFile, bound);
 			return bytes;
 		}
@@ -2029,6 +2033,7 @@ export class SessionManager {
 		}
 		if (this.capturesTranscriptBase) this._captureTranscriptBase(captureAndCloseFileIdentity(fd, this.sessionFile));
 		else closeSync(fd);
+		markHatchWrite(this.sessionFile);
 		this.flushed = true;
 		if (!this.capturesTranscriptBase) this.transcriptBytes = new WeakMap();
 		// Lifecycle bookkeeping created this file before any conversation, so an empty session can still discard it.
@@ -3508,6 +3513,7 @@ export class SessionManager {
 				appendFileSync(newSessionFile, `${JSON.stringify(entry)}\n`);
 			}
 		}
+		markHatchWrite(newSessionFile);
 
 		return new SessionManager(resolvedTargetCwd, dir, newSessionFile, true);
 	}

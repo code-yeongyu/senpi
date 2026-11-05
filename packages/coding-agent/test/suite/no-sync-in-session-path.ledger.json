@@ -317,6 +317,55 @@
 			"symbol": "markNoticesSeen",
 			"count": 1,
 			"note": "auth-notices-seen.json, written once when a credential notice is first shown at startup (senpi#3486; a few hundred bytes, 0600)"
+		},
+		{
+			"file": "src/core/session-store/hatch-marker.ts",
+			"api": "statSync",
+			"symbol": "markHatchWrite",
+			"count": 1,
+			"note": "K9-F2 hatch marker (`<session file>.k9f2`, ~40 bytes) after each session write, ONLY on Node under SENPI_SESSION_STORE=jsonl (senpi#5822): markHatchWrite returns before any fs call on Bun, where the RPC host runs. Synchronous on purpose: the marker must carry the stamp of the write it follows and exist before the process can exit, or S07 adopts a diverged hatch file instead of forking it."
+		},
+		{
+			"file": "src/core/session-store/hatch-marker.ts",
+			"api": "openSync",
+			"symbol": "markHatchWrite",
+			"count": 1,
+			"note": "K9-F2 hatch marker (`<session file>.k9f2`, ~40 bytes) after each session write, ONLY on Node under SENPI_SESSION_STORE=jsonl (senpi#5822): markHatchWrite returns before any fs call on Bun, where the RPC host runs. Synchronous on purpose: the marker must carry the stamp of the write it follows and exist before the process can exit, or S07 adopts a diverged hatch file instead of forking it."
+		},
+		{
+			"file": "src/core/session-store/hatch-marker.ts",
+			"api": "writeSync",
+			"symbol": "markHatchWrite",
+			"count": 1,
+			"note": "K9-F2 hatch marker (`<session file>.k9f2`, ~40 bytes) after each session write, ONLY on Node under SENPI_SESSION_STORE=jsonl (senpi#5822): markHatchWrite returns before any fs call on Bun, where the RPC host runs. Synchronous on purpose: the marker must carry the stamp of the write it follows and exist before the process can exit, or S07 adopts a diverged hatch file instead of forking it."
+		},
+		{
+			"file": "src/core/session-store/hatch-marker.ts",
+			"api": "fsyncSync",
+			"symbol": "markHatchWrite",
+			"count": 1,
+			"note": "K9-F2 hatch marker (`<session file>.k9f2`, ~40 bytes) after each session write, ONLY on Node under SENPI_SESSION_STORE=jsonl (senpi#5822): markHatchWrite returns before any fs call on Bun, where the RPC host runs. Synchronous on purpose: the marker must carry the stamp of the write it follows and exist before the process can exit, or S07 adopts a diverged hatch file instead of forking it."
+		},
+		{
+			"file": "src/core/session-store/hatch-marker.ts",
+			"api": "closeSync",
+			"symbol": "markHatchWrite",
+			"count": 1,
+			"note": "K9-F2 hatch marker (`<session file>.k9f2`, ~40 bytes) after each session write, ONLY on Node under SENPI_SESSION_STORE=jsonl (senpi#5822): markHatchWrite returns before any fs call on Bun, where the RPC host runs. Synchronous on purpose: the marker must carry the stamp of the write it follows and exist before the process can exit, or S07 adopts a diverged hatch file instead of forking it."
+		},
+		{
+			"file": "src/core/session-store/hatch-marker.ts",
+			"api": "renameSync",
+			"symbol": "markHatchWrite",
+			"count": 1,
+			"note": "K9-F2 hatch marker (`<session file>.k9f2`, ~40 bytes) after each session write, ONLY on Node under SENPI_SESSION_STORE=jsonl (senpi#5822): markHatchWrite returns before any fs call on Bun, where the RPC host runs. Synchronous on purpose: the marker must carry the stamp of the write it follows and exist before the process can exit, or S07 adopts a diverged hatch file instead of forking it."
+		},
+		{
+			"file": "src/core/session-store/hatch-marker.ts",
+			"api": "rmSync",
+			"symbol": "markHatchWrite",
+			"count": 1,
+			"note": "K9-F2 hatch marker (`<session file>.k9f2`, ~40 bytes) after each session write, ONLY on Node under SENPI_SESSION_STORE=jsonl (senpi#5822): markHatchWrite returns before any fs call on Bun, where the RPC host runs. Synchronous on purpose: the marker must carry the stamp of the write it follows and exist before the process can exit, or S07 adopts a diverged hatch file instead of forking it."
 		}
 	]
 }
