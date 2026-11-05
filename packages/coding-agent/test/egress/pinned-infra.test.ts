@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	type KeyFactsAnswer,
 	type KmsKeyFacts,
 	MAX_FACTS_AGE_MS,
 	MAX_FACTS_FUTURE_SKEW_MS,
@@ -48,6 +49,7 @@ function facts(kind: KeyPolicyKind, overrides: Partial<KmsKeyFacts> = {}): KmsKe
 		policy: KEY_POLICY_TEMPLATE_V1.render({ accountId: ACCOUNT, keyKind: kind, roles: roles() }),
 		grantCount: 0,
 		readAt: NOW - 1_000,
+		verifierKeyId: "verifier-1",
 		...overrides,
 	};
 }
@@ -195,6 +197,24 @@ describe("checkServiceKey", () => {
 		expect(checkServiceKeyDetailed(custody, custodyFacts({}, { readAt }), opts)).toMatchObject({
 			result: "unknown",
 			reason: "facts-stale",
+		});
+	});
+
+	it("shows the clock notice when the reader refused the facts as stale", () => {
+		const stale = { refusal: "facts-stale" as const, skewMs: 200_000 };
+		expect(
+			checkServiceKeyDetailed(
+				custody,
+				new Map<string, KeyFactsAnswer>([
+					[kemArn, stale],
+					[sigArn, facts("custody-sig")],
+				]),
+				opts,
+			),
+		).toEqual({
+			result: "unknown",
+			reason: "facts-stale",
+			notice: "the custody key facts are out of date; check this device's clock",
 		});
 	});
 

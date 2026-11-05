@@ -13,7 +13,14 @@ import { dirname, join } from "node:path";
 import { getAgentDir } from "../../config.ts";
 import { lockWithLossHandling } from "../file-lock.ts";
 import { decodeBase64 } from "./ecdsa-p256.ts";
-import { type RosterView, type ServiceKeyEntry, type ServiceKeyKind, verifyServiceSig } from "./roster-entries.ts";
+import {
+	type RosterView,
+	rosterViewAt,
+	type ServiceKeyEntry,
+	type ServiceKeyKind,
+	verifyServiceSig,
+} from "./roster-entries.ts";
+import { isVouchRevoked, type VerifierRevocation } from "./verifier-revocations.ts";
 
 export interface LocalKeyVerification {
 	readonly kind: ServiceKeyKind;
@@ -44,6 +51,13 @@ export type VerifiedKeysRead =
 	| { readonly state: "unknown" };
 
 export type ServiceEntryValidity = "valid" | "pending" | "invalid" | "unknown" | "superseded";
+
+/** The clocks and the accepted verifier revocations a validity answer is computed under. */
+export interface ValidityContext {
+	readonly revocations: readonly VerifierRevocation[];
+	readonly now: number;
+	readonly nowMono: number;
+}
 
 const REQUIRED_STRINGS = ["accountId", "sigKeyId", "sigPkSha256"] as const;
 const OPTIONAL_STRINGS = ["kemKeyId", "kemPkSha256", "supersedes"] as const;
@@ -214,17 +228,21 @@ export async function findVerification(
  * devices' attestations and revocations never do. Two validly signed entries for one (kind, account,
  * generation) that differ in key, or share the key but disagree on `supersedes`, make the entry `unknown`. Supersession comes from this device's records only
  * (a checked entry of the same kind and account, strictly higher generation, naming this `sigKeyId`), so it
- * cannot be undone by an entry disappearing from a later roster.
+ * cannot be undone by an entry disappearing from a later roster. The roster view must be fresh (15.15 H-1), and a
+ * record vouched by a revoked verifier key (15.10) never makes an entry `valid`; it still supersedes, because a
+ * revocation only ever removes trust.
  */
 export async function serviceEntryValidity(
 	entry: ServiceKeyEntry,
 	accountId: string,
 	records: readonly LocalKeyVerification[],
 	roster: RosterView,
+	context: ValidityContext,
 ): Promise<ServiceEntryValidity> {
-	if (roster.state === "unknown") return "unknown";
+	const view = rosterViewAt(roster, context.now, context.nowMono);
+	if (view.state === "unknown") return "unknown";
 	if (entry.accountId !== accountId || !(await verifyServiceSig(entry))) return "invalid";
-	for (const other of roster.serviceEntries) {
+	for (const other of view.serviceEntries) {
 		if (other.kind !== entry.kind || other.accountId !== entry.accountId || other.generation !== entry.generation)
 			continue;
 		const sameKey = other.sigKeyId === entry.sigKeyId && other.sigPk === entry.sigPk && other.kemPk === entry.kemPk;
@@ -239,7 +257,10 @@ export async function serviceEntryValidity(
 			record.supersedes === entry.sigKeyId,
 	);
 	if (revoked) return "superseded";
-	return (await findVerification(records, entry)) ? "valid" : "pending";
+	const vouched = records.filter(
+		(record) => !isVouchRevoked(context.revocations, record.verifierKeyId, record.vouchedAt),
+	);
+	return (await findVerification(vouched, entry)) ? "valid" : "pending";
 }
 
 export async function recordVerification(path: string, record: LocalKeyVerification): Promise<void> {

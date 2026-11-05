@@ -48,6 +48,40 @@ export async function signedEntry(fields: EntryFields, signer?: P256Signer): Pro
 	return { ...unsigned, serviceSig: { ...unsigned.serviceSig, sig } };
 }
 
+/** The verifier's own canonical JSON (sorted keys, no whitespace), written independently of the client's check. */
+export function canonical(value: unknown): string {
+	if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+	if (typeof value === "object" && value !== null) {
+		const entries = Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+		return `{${entries.map(([key, inner]) => `${JSON.stringify(key)}:${canonical(inner)}`).join(",")}}`;
+	}
+	return JSON.stringify(value);
+}
+
+/** The wire domain prefix of every verifier-signed statement (custody design 15.10). */
+const STATEMENT_DOMAIN = "omo-key-facts/v1\n";
+
+export interface Verifier {
+	readonly pin: { readonly keyId: string; readonly generation: number; readonly spki: string };
+	readonly signer: P256Signer;
+}
+
+export async function verifierKey(keyId: string, generation: number): Promise<Verifier> {
+	const signer = await p256Signer();
+	return { pin: { keyId, generation, spki: signer.spki }, signer };
+}
+
+/** The `{ payload, sig }` envelope over exactly `text`, as the key-facts verifier serves it. */
+export async function signedEnvelope(text: string, signer: P256Signer): Promise<string> {
+	const bytes = new TextEncoder().encode(text);
+	const message = new Uint8Array([...new TextEncoder().encode(STATEMENT_DOMAIN), ...bytes]);
+	const sig = await signer.sign(message);
+	return JSON.stringify({
+		payload: Buffer.from(bytes).toString("base64url"),
+		sig: Buffer.from(sig).toString("base64url"),
+	});
+}
+
 export const registryFields = (generation: number, supersedes?: string): EntryFields => ({
 	kind: "placement-registry",
 	accountId: "omo-account",

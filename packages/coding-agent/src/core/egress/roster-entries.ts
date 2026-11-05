@@ -59,10 +59,43 @@ export interface ServiceKeyEntry {
 	readonly attestations: readonly ServiceKeyAttestation[];
 }
 
-/** This device's view of its account roster: UNKNOWN until a roster sync has been proven good. */
+/**
+ * This device's view of its account roster: UNKNOWN until a roster sync has been proven good. A known view keeps
+ * the verified roster's `rv`, `iat` and `exp` (ms) and the local monotonic time it was received (15.15 H-1).
+ */
 export type RosterView =
 	| { readonly state: "unknown" }
-	| { readonly state: "known"; readonly serviceEntries: readonly ServiceKeyEntry[] };
+	| {
+			readonly state: "known";
+			readonly serviceEntries: readonly ServiceKeyEntry[];
+			readonly rosterVersion: number;
+			readonly rosterIssuedAt: number;
+			readonly rosterExpiresAt: number;
+			readonly receivedMono: number;
+	  };
+
+const UNKNOWN_ROSTER: RosterView = { state: "unknown" };
+
+/**
+ * The view as of wall-clock `now` and monotonic `nowMono`: `unknown` at the earlier of the roster's lifetime
+ * elapsed on the monotonic clock since receipt and `max(now, iat) >= exp` on the wall clock (15.15 H-1, 15.16 M-1).
+ */
+export function rosterViewAt(view: RosterView, now: number, nowMono: number): RosterView {
+	if (view.state === "unknown") return view;
+	const effectiveNow = Math.max(now, view.rosterIssuedAt);
+	const age = nowMono - view.receivedMono;
+	const lifetime = view.rosterExpiresAt - view.rosterIssuedAt;
+	return effectiveNow >= view.rosterExpiresAt || age < 0 || age >= lifetime ? UNKNOWN_ROSTER : view;
+}
+
+/** The view to hold after verifying `incoming`: it replaces `held` only when strictly newer (15.16 M-2). */
+export function heldRosterView(held: RosterView, incoming: RosterView): RosterView {
+	if (incoming.state === "unknown" || held.state === "unknown") return incoming.state === "unknown" ? held : incoming;
+	const newer =
+		incoming.rosterVersion > held.rosterVersion ||
+		(incoming.rosterVersion === held.rosterVersion && incoming.rosterIssuedAt > held.rosterIssuedAt);
+	return newer ? incoming : held;
+}
 
 type JsonRecord = Readonly<Record<string, unknown>>;
 
