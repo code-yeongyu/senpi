@@ -13,9 +13,11 @@ import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai/compat
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseArgs } from "../../src/cli/args.ts";
 import { createCliRuntimeFactory } from "../../src/main.ts";
+import { createRpcConnectionHandler } from "../../src/modes/rpc/connection-handler.ts";
 import { classifyRpcMethod, type RpcMethodClass, rpcMethodPermitted } from "../../src/modes/rpc/method-classes.ts";
 import { createHostCore } from "../../src/modes/rpc/multi-session-host.ts";
 import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
+import { makeHarness, makeSink } from "../suite/rpc-connection-harness.ts";
 
 type WireRecord = Record<string, unknown>;
 type Opened = { sessionId: string; state: { sessionFile: string; model: { id: string } } };
@@ -213,5 +215,33 @@ describe("C9.a: drive a session's model over RPC", () => {
 		]);
 		expect(host.savedDefaultModel()).toBe("faux-2");
 		expect((await host.open()).state.model.id).toBe("faux-2");
+	});
+
+	// #5933: a client sends `scope: "session"` only to an engine that names it; an older one would also move the default.
+	it("advertises the session scope as session_model_scope on the host", async () => {
+		const host = await startHost();
+		expect(await host.send({ type: "get_protocol_info" })).toMatchObject({
+			success: true,
+			data: { capabilities: expect.arrayContaining(["session_model_scope"]) },
+		});
+	});
+
+	it("advertises the session scope as session_model_scope on a classic connection", async () => {
+		const root = mkdtempSync(join(tmpdir(), "senpi-c9a-classic-"));
+		const harness = makeHarness(root);
+		const collected = makeSink();
+		const handler = createRpcConnectionHandler(harness.runtimeHost, collected.sink, { capabilities: [] });
+		try {
+			const response = collected.waitFor((record) => record.id === "info");
+			await handler.handleInputLine(JSON.stringify({ id: "info", type: "get_protocol_info" }));
+			expect(await response).toMatchObject({
+				success: true,
+				data: { capabilities: expect.arrayContaining(["session_model_scope"]) },
+			});
+		} finally {
+			await handler.dispose();
+			harness.cleanup();
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 });

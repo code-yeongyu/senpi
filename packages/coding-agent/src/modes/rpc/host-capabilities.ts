@@ -42,6 +42,7 @@ import {
 	WARM_CAPABILITY,
 } from "./custom-capability.ts";
 import { EFFECT_LEDGER_CAPABILITY } from "./effect-record.ts";
+import { SESSION_MODEL_SCOPE_CAPABILITY } from "./rpc-session-command-types.ts";
 import { STEER_WHEN_IDLE_CAPABILITY, USER_ACTIVITY_CAPABILITY } from "./rpc-types.ts";
 import { MOVE_SESSION_CAPABILITY, MOVE_SESSION_REVOKE_CAPABILITY } from "./session-move-wire.ts";
 
@@ -94,6 +95,7 @@ export function multiSessionHostCapabilities(options: {
 			QUEUED_MESSAGE_REVISION_CAPABILITY,
 			TOOL_BARRIER_CAPABILITY,
 			USER_ACTIVITY_CAPABILITY,
+			SESSION_MODEL_SCOPE_CAPABILITY,
 			// Both shared runtimes dispatch through the active session-writing holder guard.
 			SESSION_HELD_CAPABILITY,
 			RESUME_SESSION_CAPABILITY,
