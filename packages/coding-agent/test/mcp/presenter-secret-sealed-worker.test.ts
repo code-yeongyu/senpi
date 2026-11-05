@@ -6,7 +6,7 @@ import { createWorkerCredit } from "../../src/modes/rpc/session-worker-credit.ts
 import type { HostToSessionWorker, SessionWorkerToHost } from "../../src/modes/rpc/session-worker-protocol.ts";
 import { WorkerSecretRoutes } from "../../src/modes/rpc/session-worker-secret-route.ts";
 import { WorkerSecretIds } from "../../src/modes/rpc/session-worker-secrets.ts";
-import { accountHost, closeAccountHosts, issuer } from "./fixtures/presenter-account-host.ts";
+import { accountHost, closeAccountHosts, issuer, signedCommand } from "./fixtures/presenter-account-host.ts";
 import { canaryValue, leaked } from "./fixtures/secret-canary.ts";
 import { holder, records, sealedTypes } from "./fixtures/secret-sealed-host.ts";
 import { secretHostIssuer } from "./fixtures/secret-host-issuer.ts";
@@ -350,4 +350,59 @@ it("canary: a worker-runtime sealed answer leaks nothing to the host lanes, the 
 	expect(leaked(w.host.lines.join("\n"), sealed, [stepup]) ?? "clean").toBe("clean");
 	expect(leaked(p.phone.lines.join("\n"), sealed, [stepup]) ?? "clean").toBe("clean");
 	expect(leaked(JSON.stringify([w.answers, w.results]), [canary], [stepup]) ?? "clean").toBe("clean");
+});
+
+it("a queued sealed answer whose grant was revoked while it waited is refused when it leaves the queue", async () => {
+	const w = await workerHost({ holdAnswers: true });
+	const phone = await holder(w.host, w.secret, "phone");
+	const laptop = await holder(w.host, w.secret, "laptop");
+	const state: { value: string | undefined | null } = { value: null };
+	void w.requests.input("API key", undefined).then((value) => {
+		state.value = value;
+	});
+	const hostJkt = w.host.control.sealed?.tokens.hostJkt ?? "";
+	const onPhone = records(phone.lines, "mcp_presenter_secret_request")[0];
+	const onLaptop = records(laptop.lines, "mcp_presenter_secret_request")[0];
+	if (!onPhone || !onLaptop) throw new Error("Both holders must be offered the request");
+	const phoneReq = requestHash(onPhone, hostJkt);
+	const laptopReq = requestHash(onLaptop, hostJkt);
+	const undecryptable = valueAnswer(
+		ids(phone, onPhone, phoneReq, "answer-1"),
+		onPhone,
+		w.secret.stepUp(phone.adopted.device.publicKey, phoneReq),
+		"v",
+		phone.adopted.device.privateKey,
+		{ plaintext: Buffer.concat([Buffer.from([0, 0, 0, 1, 0x61]), Buffer.alloc(251, 1)]) },
+	);
+	const waiting = valueAnswer(
+		ids(laptop, onLaptop, laptopReq, "answer-2"),
+		onLaptop,
+		w.secret.stepUp(laptop.adopted.device.publicKey, laptopReq, { dev: "device-laptop" }),
+		"laptop-value",
+		laptop.adopted.device.privateKey,
+	);
+	w.host.writer.withConnection(phone.id, () => w.host.writer.handleMcpForm(undecryptable));
+	w.host.writer.withConnection(laptop.id, () => w.host.writer.handleMcpForm(waiting));
+	for (let turn = 0; turn < 8; turn++) await new Promise((resolve) => setImmediate(resolve));
+	expect(w.answers).toHaveLength(1);
+	const revoked = await signedCommand(
+		laptop.adopted.peer,
+		laptop.adopted.principalId,
+		laptop.adopted.device.privateKey,
+		{
+			type: "mcp_presenter_revoke",
+			id: "revoke",
+			registrationId: laptop.adopted.acquired?.registrationId,
+		},
+	);
+	expect(revoked).toMatchObject({ type: "mcp_presenter_revoked" });
+	for (let round = 0; round < 2; round++) {
+		w.release();
+		for (let turn = 0; turn < 8; turn++) await new Promise((resolve) => setImmediate(resolve));
+	}
+	expect(records(laptop.lines, "mcp_presenter_secret_reply")).toEqual([
+		{ type: "mcp_presenter_secret_reply", id: "line-answer-2", error: "secret_answer_refused" },
+	]);
+	expect(w.answers).toHaveLength(1);
+	expect(state.value).toBeNull();
 });
