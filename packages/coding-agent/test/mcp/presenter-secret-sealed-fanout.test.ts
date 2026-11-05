@@ -8,6 +8,7 @@ import {
 	enrollAssignAcquire,
 	installation,
 	issuer,
+	signedCommand,
 	type AccountHost,
 } from "./fixtures/presenter-account-host.ts";
 import { jwkThumbprint } from "./fixtures/presenter-account-issuer.ts";
@@ -30,7 +31,9 @@ type Line = Record<string, unknown>;
 const records = (lines: readonly string[], type: string): Line[] =>
 	lines.map((line) => JSON.parse(line) as Line).filter((record) => record.type === type);
 const sealedTypes = (lines: readonly string[]) =>
-	lines.map((line) => String((JSON.parse(line) as Line).type)).filter((type) => type.startsWith("mcp_presenter_secret"));
+	lines
+		.map((line) => String((JSON.parse(line) as Line).type))
+		.filter((type) => type.startsWith("mcp_presenter_secret"));
 
 async function sealedHost(options: { lifetimeS?: number } = {}) {
 	const secret = secretHostIssuer(issuer, options.lifetimeS);
@@ -190,7 +193,7 @@ it("a raiser detach leaves a request with a current sealed holder alive", async 
 	});
 	expect(records(host.lines, "extension_ui_request")).toHaveLength(1);
 	expect(sealedTypes(phone.lines)).toEqual(["mcp_presenter_secret_request"]);
-	host.writer.detachConnectionFromSession("human", "session");
+	host.writer.unregisterConnection("human");
 	await Promise.resolve();
 	expect(settled).toBeNull();
 });
@@ -252,4 +255,76 @@ it("attached devices that are not sealed holders keep the value-free notice; the
 	expect(records(host.lines, "secret_input_notice")).toHaveLength(1);
 	expect(records(phone.lines, "secret_input_notice")).toEqual([]);
 	expect(sealedTypes(phone.lines)).toEqual(["mcp_presenter_secret_request"]);
+});
+
+it("a route without the sealed flag (a worker isolate's, until S5-4) never adds sealed holders", async () => {
+	const { host, secret } = await sealedHost();
+	const phone = await holder(host, secret, "phone");
+	const requests = new SecretInputRequests(host.writer.secretInputRoute("session"), () => {});
+	await expect(requests.input("API key", undefined)).rejects.toMatchObject({ reason: "no_presenter" });
+	expect(sealedTypes(phone.lines)).toEqual([]);
+});
+
+it("revoking the last holder's grant on the control channel ends a sealed-only request unavailable", async () => {
+	const { host, secret, requests } = await sealedHost();
+	const phone = await holder(host, secret, "phone");
+	let settled: string | undefined | null = null;
+	void requests.input("API key", undefined).then((value) => {
+		settled = value;
+	});
+	expect(sealedTypes(phone.lines)).toEqual(["mcp_presenter_secret_request"]);
+	const revoked = await signedCommand(phone.adopted.peer, phone.adopted.principalId, phone.adopted.device.privateKey, {
+		type: "mcp_presenter_revoke",
+		id: "revoke",
+		registrationId: phone.adopted.acquired?.registrationId,
+	});
+	expect(revoked).toMatchObject({ type: "mcp_presenter_revoked" });
+	await Promise.resolve();
+	expect(settled).toBeUndefined();
+});
+
+it("a principal whose attestation lapsed is not a sealed holder while its grant and the host token stay valid", async () => {
+	vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+	const { host, secret, requests } = await sealedHost({ lifetimeS: 900 });
+	const device = host.presenter("phone");
+	await enrollAssignAcquire(host, installation(), {
+		context: device.context,
+		claims: { dev: "device-phone", exp: nowS() + 60 },
+		features: SECRET,
+	});
+	await secret.mints.at(-1)?.done;
+	vi.setSystemTime(Date.now() + 120_000);
+	expect(host.control.sealed?.tokens.current("durable")).toBeDefined();
+	expect(host.binding.capture()).toBeDefined();
+	await expect(requests.input("API key", undefined)).rejects.toMatchObject({ reason: "no_presenter" });
+	expect(sealedTypes(device.lines)).toEqual([]);
+});
+
+it("the host key signs only a binding that names this host instance and this key", async () => {
+	const { host, secret } = await sealedHost();
+	await holder(host, secret, "phone");
+	const tokens = host.control.sealed?.tokens;
+	if (!tokens) throw new Error("No sealed route");
+	const foreign = [
+		"omo-secret-binding-v1",
+		"another-host",
+		tokens.hostJkt,
+		"durable",
+		"r",
+		1,
+		tokens.hostJkt,
+		tokens.hostJkt,
+	] as const;
+	expect(() => tokens.signRequest(foreign)).toThrow("secret_request_foreign");
+	const otherKey = [
+		"omo-secret-binding-v1",
+		host.authority.instance,
+		"another-key",
+		"durable",
+		"r",
+		1,
+		tokens.hostJkt,
+		tokens.hostJkt,
+	] as const;
+	expect(() => tokens.signRequest(otherKey)).toThrow("secret_request_foreign");
 });

@@ -593,6 +593,36 @@ response route; ordinary persisted question-answer commands are not suitable.
 Advertise the capability only after that route and the renderer support it.
 Role-carrying automated/control connections must omit `secret_input_v1`.
 
+#### Sealed holders (same-account presenters)
+
+On an in-process host whose embedding distribution injected an account authority that can mint host tokens, a
+secret prompt can also be answered by a same-account presenter, sealed end to end (D11 secret phase). A sealed
+holder is a current MCP presenter grant whose principal enrolled by same-account attestation (never the inherited
+launch principal), whose signed `mcp_presenter_acquire` listed `secret_input_v1` in `features`, whose
+attestation has not lapsed, and whose session has a valid host token. Holders are snapshotted when the prompt is
+created; a grant acquired later is not offered it.
+
+- A prompt whose raiser route refuses (for example `no_presenter` for a background call) proceeds when it has at
+  least one sealed holder; with none, the refusal is unchanged.
+- Each holder receives one private `mcp_presenter_secret_request` on its presenter connection, never on an event,
+  snapshot, mirror or replay lane: `{type, v: 1, sessionId, durableSessionId, uiRequestId, title, placeholder?,
+  deadlineAtMs, hostInstance, hpkePk, hostPk, hostToken, sig}`. `hpkePk` is the prompt's own X25519 key and
+  `hostPk` the host instance's Ed25519 key (both raw 32 bytes, unpadded base64url). `sig` is 128 lowercase hex
+  characters: the host key's Ed25519 signature over `"omo-secret-request-v1\n" + JSON.stringify(B)`, with
+  `B = ["omo-secret-binding-v1", hostInstance, hostJkt, durableSessionId, uiRequestId, deadlineAtMs, hpkePk,
+  displayHash]`, `hostJkt` the RFC 7638 thumbprint of `hostPk` (equal to the host token's `cnf.jkt`), and
+  `displayHash = b64url(SHA-256(JSON.stringify([title, placeholder ?? null])))`. These byte formats follow
+  omo-relay-spec decision 0022.
+- When the host token is re-minted, every holder of a pending prompt receives
+  `{type: "mcp_presenter_secret_token", v: 1, hostInstance, durableSessionId, hostToken}`. `B` names the host
+  key, not a token, so the prompt stays verifiable under the new token.
+- These records reach only grants that negotiated `secret_input_v1`; any other client sees today's bytes.
+- A prompt with sealed holders but no raiser route never writes a raiser lane, the sole stdio lane included, and
+  never accepts an `extension_ui_response`. It stays pending while any holder's grant is current, through a raiser
+  disconnect or capability change, and ends `unavailable` when the last holder's grant goes.
+- An attached connection that declared `raiser_notice_v1` and is not a sealed holder keeps receiving
+  `secret_input_notice`; a holder receives the request instead.
+
 ### RPC client lifecycle
 
 `RpcClient` accepts an `onDisconnect` callback for an established socket and rejects subsequent transport operations with the typed `RpcTransportGoneError` (also detectable with `isTransportGoneError`). Callers should use the callback to begin recovery and keep the error text out of user-facing output.
