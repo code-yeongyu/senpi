@@ -10,6 +10,7 @@ import {
 	type SyncCommitStore,
 	type SyncSessionHandle,
 } from "@earendil-works/pi-agent-core";
+import type { StoreValue } from "@earendil-works/pi-agent-core/conformance";
 import { createJsonlImporter, type JsonlFileStamp } from "../session-import/jsonl-import.ts";
 
 export interface DurableStoreBinding {
@@ -75,6 +76,12 @@ async function modeOf(path: string): Promise<number | undefined> {
 	}
 }
 
+const isRecord = (value: StoreValue | undefined): value is { readonly [key: string]: StoreValue } =>
+	typeof value === "object" && value !== null && !Array.isArray(value);
+
+const staleSessionIdOf = (mark: StoreValue | undefined): string | undefined =>
+	isRecord(mark) && typeof mark.sessionId === "string" ? mark.sessionId : undefined;
+
 type Importer = ReturnType<typeof createJsonlImporter>;
 type Warn = (warning: ProjectionWarning) => void;
 
@@ -91,14 +98,25 @@ export class DurableSessionBinding {
 	// Bumped by every store commit: a deferred whole-image ledger record is skipped once a later write superseded it.
 	private generation = 0;
 
+	private readonly binding: DurableStoreBinding;
+	private readonly handle: SyncSessionHandle;
+	private readonly importer: Importer;
+	private readonly admission: ReturnType<typeof createAdmissionLine>;
+	private readonly warn: Warn;
+
 	private constructor(
-		private readonly binding: DurableStoreBinding,
-		private readonly handle: SyncSessionHandle,
-		private readonly importer: Importer,
-		private readonly admission: ReturnType<typeof createAdmissionLine>,
-		private readonly warn: Warn,
+		binding: DurableStoreBinding,
+		handle: SyncSessionHandle,
+		importer: Importer,
+		admission: ReturnType<typeof createAdmissionLine>,
+		warn: Warn,
 		projectedSize: number,
 	) {
+		this.binding = binding;
+		this.handle = handle;
+		this.importer = importer;
+		this.admission = admission;
+		this.warn = warn;
 		this.projectedSize = projectedSize;
 	}
 
@@ -117,10 +135,7 @@ export class DurableSessionBinding {
 		let reprojected = false;
 		if ((await stampOf(path)) !== undefined) {
 			const mark = await store.getDocument(staleKey(path));
-			const markedId =
-				typeof mark === "object" && mark !== null && !Array.isArray(mark) && typeof mark.sessionId === "string"
-					? mark.sessionId
-					: undefined;
+			const markedId = staleSessionIdOf(mark);
 			if (markedId !== undefined) {
 				const stored = await openSessionStore(store, epoch).load(markedId);
 				if (stored === undefined) throw new Error(`the store marks ${path} stale but holds no session ${markedId}`);
