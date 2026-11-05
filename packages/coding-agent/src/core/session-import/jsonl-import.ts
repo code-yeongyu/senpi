@@ -394,25 +394,34 @@ export function createJsonlImporter(options: JsonlImporterOptions) {
 				};
 			}),
 		/**
-		 * Record an append the store projected: only the bytes it wrote, so a file that grew by more keeps the extra bytes
-		 * unrecorded for the next import. O(1): the appended line is the new high-water mark, nothing is re-parsed.
+		 * Record the appends the store projected since the last record, in file order: only the bytes it wrote, so a file
+		 * that grew by more keeps the extra bytes unrecorded for the next import. Nothing is re-parsed: the last tail is the
+		 * new high-water mark, and the chain runs through every tail, so a burst of appends recorded at once keeps it.
 		 */
 		async recordProjectedTail(
 			path: string,
 			sessionId: string,
-			tail: { readonly key: string; readonly line: string; readonly offset: number },
+			tails: readonly { readonly key: string; readonly line: string; readonly offset: number }[],
 			written: JsonlFileStamp,
 		): Promise<void> {
 			path = resolve(path);
+			const tail = tails.at(-1);
+			if (tail === undefined) return;
 			const end = tail.offset + Buffer.byteLength(tail.line);
-			// The file must end exactly at this append (+ its newline): bytes another writer added are never recorded.
+			// The file must end exactly at the last append (+ its newline): bytes another writer added are never recorded.
 			if (written.size !== end + 1) throw new Error("Projection size does not match its written image");
 			const previous = await ledger(path);
-			// The chain extends only across an append that directly follows the recorded high-water mark.
-			const prefixDigest =
-				previous?.prefixDigest !== undefined && previous.highWaterMark.end + 1 === tail.offset
-					? chainLine(previous.prefixDigest, tail.line)
-					: undefined;
+			// The chain extends only across appends that directly follow the recorded high-water mark and each other.
+			let prefixDigest = previous?.prefixDigest;
+			let next = previous === undefined ? undefined : previous.highWaterMark.end + 1;
+			for (const each of tails) {
+				if (prefixDigest === undefined || each.offset !== next) {
+					prefixDigest = undefined;
+					break;
+				}
+				prefixDigest = chainLine(prefixDigest, each.line);
+				next = each.offset + Buffer.byteLength(each.line) + 1;
+			}
 			const record: JsonlImportLedger = {
 				...written,
 				path,
