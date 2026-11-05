@@ -1,13 +1,13 @@
 /** Real supervisor/host, with only the supervisor clock and OS-watch failure controlled by the test. */
 import childProcess from "node:child_process";
 import fs from "node:fs";
-import fsPromises from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import net from "node:net";
 import { mock } from "node:test";
 import { callerHostOwner } from "../../src/modes/rpc/host-daemon-state.ts";
 import { runHostSupervisor } from "../../src/modes/rpc/host-lifecycle.ts";
 import { type SupervisorActivity, SupervisorOwner } from "../../src/modes/rpc/host-lifecycle-activity.ts";
+import { signalEndpointReady } from "../helpers/rpc-endpoint-ready.ts";
 
 const [mode, socket, agentDir, generationDir, ownerPid, watchMode] = process.argv.slice(2);
 if (mode === "owner") {
@@ -47,18 +47,14 @@ if (mode === "owner") {
 		return child;
 	});
 	const createServer = net.createServer;
+	const onServer = signalEndpointReady(socket, () => process.send?.({ type: "ready" }));
 	mock.method(net, "createServer", (accept: (peer: net.Socket) => void) => {
 		const server = createServer((peer) => {
 			accept(peer);
 			peer.once("close", () => process.send?.({ type: "detached" }));
 		});
+		onServer(server);
 		return server;
-	});
-	const link = fsPromises.link;
-	// The endpoint exists once the supervisor links its bound socket into place, not at "listening" (#5319).
-	mock.method(fsPromises, "link", async (...args: Parameters<typeof link>) => {
-		await link(...args);
-		if (args[1] === socket) process.send?.({ type: "ready" });
 	});
 	syncBuiltinESMExports();
 	const check = SupervisorOwner.prototype.shouldExit;

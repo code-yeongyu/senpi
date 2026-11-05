@@ -35,7 +35,12 @@ const Params = Type.Object({
 			description: "The format to return the content in. Defaults to markdown.",
 		}),
 	),
-	timeout: Type.Optional(Type.Number({ description: "Optional timeout in seconds. Maximum 120." })),
+	timeout: Type.Optional(
+		Type.Number({
+			description:
+				"Optional timeout in seconds. Defaults to 30; a missing, zero or negative value means 30. Maximum 120.",
+		}),
+	),
 });
 
 export interface WebfetchDetails {
@@ -100,11 +105,12 @@ export function createWebfetchTool(options: WebfetchToolOptions = {}) {
 	const signedInSettings = options.signedInSettings ?? (() => readSignedInBrowserSettings());
 	return defineTool<typeof Params, WebfetchRenderDetails>({
 		name: "webfetch",
+		runs: "brain",
 		workspaceEffect: "read",
 		label: "Web Fetch",
 		description:
 			"Fetches content from a URL and returns it as markdown, plain text, or HTML. " +
-			"Network use is bounded by timeout and response size limits.",
+			"A response over 5MB fails with an error instead of returning partial content, and the text handed back is capped at 50KB with a truncation notice.",
 		promptSnippet: "webfetch: retrieve URL content as markdown, text, or html",
 		fullPromptGuidelines: [
 			"Use webfetch when a specific URL must be retrieved.",

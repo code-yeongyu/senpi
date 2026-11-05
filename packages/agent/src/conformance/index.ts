@@ -89,10 +89,14 @@ export type {
 } from "../execution/ledger-types.ts";
 export { LEDGER_CASES } from "../execution/testing/ledger-cases.ts";
 export { KILL_LEDGER_CASES, KILL_LEDGER_DECLARATIONS } from "../execution/testing/kill-ledger.ts";
+export { EPOCH_CASES } from "../execution/testing/epoch-cases.ts";
 export { FAULT_HAND_CASES } from "../execution/testing/fault-hand-cases.ts";
 export type { HandCaseAdapters } from "../execution/testing/hand-harness.ts";
 export type { KillHandDeclaration } from "../execution/testing/kill-hand.ts";
 export { KILL_HAND_CASES, KILL_HAND_DECLARATIONS } from "../execution/testing/kill-hand.ts";
+export type { KillEpochDeclaration } from "../execution/testing/kill-epoch.ts";
+export { KILL_EPOCH_CASES, KILL_EPOCH_DECLARATIONS } from "../execution/testing/kill-epoch.ts";
+export { MULTI_EPOCH_CASES } from "../execution/testing/multi-epoch-cases.ts";
 export type { KillHookDeclaration } from "../execution/testing/kill-hook.ts";
 export { KILL_HOOK_CASES, KILL_HOOK_DECLARATIONS } from "../execution/testing/kill-hook.ts";
 export { MULTI_HAND_CASES } from "../execution/testing/multi-hand-cases.ts";
