@@ -1,0 +1,336 @@
+import { createPrivateKey, createPublicKey, generateKeyPairSync, sign, type KeyObject } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { strictEd25519Verify } from "../../src/modes/rpc/ed25519-strict.ts";
+import { openSecretAnswer } from "../../src/modes/rpc/secret-sealed-hpke.ts";
+import { closeAccountHosts, type AccountHost } from "./fixtures/presenter-account-host.ts";
+import { holder, records, sealedHost } from "./fixtures/secret-sealed-host.ts";
+import {
+	cancelAnswer,
+	hpkeSeal,
+	requestHash,
+	valueAnswer,
+	type AnswerIds,
+} from "./fixtures/secret-sealed-presenter.ts";
+
+// D11 secret phase S5-3 (senpi#4249): design 7.1-7.3, 5.3 and 6.5, with omo-relay-spec decision 0022's bytes.
+// The presenter side is the independent test implementation in fixtures/secret-sealed-presenter.ts.
+
+beforeEach(() => {
+	vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+});
+afterEach(async () => {
+	await closeAccountHosts();
+	vi.useRealTimers();
+});
+
+type Holder = Awaited<ReturnType<typeof holder>>;
+
+/** A pending sealed-only prompt and what its holder needs to answer it. */
+async function prompt(options: { readonly timeout?: number } = {}) {
+	const setup = await sealedHost();
+	const phone = await holder(setup.host, setup.secret, "phone");
+	const state: { value: string | undefined | null } = { value: null };
+	void setup.requests
+		.input("API key", undefined, options.timeout === undefined ? undefined : { timeout: options.timeout })
+		.then((value) => {
+			state.value = value;
+		});
+	const request = records(phone.lines, "mcp_presenter_secret_request")[0];
+	if (!request) throw new Error("No sealed request");
+	const hostJkt = setup.host.control.sealed?.tokens.hostJkt ?? "";
+	return { ...setup, phone, state, request, req: requestHash(request, hostJkt) };
+}
+
+function ids(phone: Holder, request: Record<string, unknown>, req: string, answerId = "answer-1"): AnswerIds {
+	return {
+		id: `line-${answerId}`,
+		req,
+		principalId: String(phone.adopted.principalId),
+		grantId: String(phone.adopted.acquired?.grantId),
+		uiRequestId: String(request.uiRequestId),
+		answerId,
+	};
+}
+
+const deviceKey = (phone: Holder): KeyObject => phone.adopted.device.privateKey;
+
+/** Sends a private record on the device's connection and waits until its asynchronous reply is written. */
+async function answer(host: AccountHost, phone: Holder, frame: Record<string, unknown>) {
+	host.writer.withConnection(phone.id, () => host.writer.handleMcpForm(frame));
+	for (let turn = 0; turn < 5; turn++) await new Promise((resolve) => setImmediate(resolve));
+	return records(phone.lines, "mcp_presenter_secret_reply").at(-1);
+}
+
+const settledFor = (lines: readonly string[]) => records(lines, "mcp_presenter_secret_settled");
+
+it("a holder's sealed value is opened at the latch and settles everyone; the winner alone is not elsewhere", async () => {
+	const p = await prompt();
+	const tablet = await holder(p.host, p.secret, "tablet");
+	const stepup = p.secret.stepUp(p.phone.adopted.device.publicKey, p.req);
+	const frame = valueAnswer(ids(p.phone, p.request, p.req), p.request, stepup, "s3cr3t-value", deviceKey(p.phone));
+	expect(await answer(p.host, p.phone, frame)).toEqual({
+		type: "mcp_presenter_secret_reply",
+		id: "line-answer-1",
+		disposition: "applied",
+	});
+	expect(p.state.value).toBe("s3cr3t-value");
+	expect(settledFor(p.phone.lines)).toEqual([
+		{
+			type: "mcp_presenter_secret_settled",
+			v: 1,
+			uiRequestId: p.request.uiRequestId,
+			outcome: "answered",
+			elsewhere: false,
+		},
+	]);
+	expect(settledFor(tablet.lines)).toEqual([]);
+	expect(await answer(p.host, p.phone, frame)).toMatchObject({ disposition: "replay" });
+	const other = valueAnswer(
+		ids(p.phone, p.request, p.req, "answer-2"),
+		p.request,
+		stepup,
+		"again",
+		deviceKey(p.phone),
+	);
+	expect(await answer(p.host, p.phone, other)).toMatchObject({ error: "already_answered" });
+});
+
+it("a raiser answer wins: the raiser's settle keeps its bytes, holders settle elsewhere, and the late value is never decrypted", async () => {
+	const setup = await sealedHost();
+	const phone = await holder(setup.host, setup.secret, "phone");
+	setup.host.writer.setConnectionCapabilities("human", [
+		"interactive_user",
+		"mcp_form_presenter_v1",
+		"secret_input_v1",
+	]);
+	void setup.requests.input("API key", undefined);
+	const request = records(phone.lines, "mcp_presenter_secret_request")[0];
+	const raised = records(setup.host.lines, "extension_ui_request")[0];
+	if (!request || !raised) throw new Error("No prompt");
+	const raiserAnswer = {
+		type: "extension_ui_response",
+		id: "r1",
+		uiRequestId: raised.id,
+		answerId: "raiser",
+		secret: true,
+		value: "v",
+	};
+	expect(setup.host.writer.withConnection("human", () => setup.requests.respond(raiserAnswer))).toMatchObject({
+		disposition: "applied",
+	});
+	await new Promise((resolve) => setImmediate(resolve));
+	expect(records(setup.host.lines, "secret_input_settled")).toEqual([
+		{ type: "secret_input_settled", id: raised.id, outcome: "answered", sessionId: "session" },
+	]);
+	expect(settledFor(phone.lines)).toMatchObject([{ outcome: "answered", elsewhere: true }]);
+	const req = requestHash(request, setup.host.control.sealed?.tokens.hostJkt ?? "");
+	const undecryptable = valueAnswer(
+		ids(phone, request, req),
+		request,
+		setup.secret.stepUp(phone.adopted.device.publicKey, req),
+		"late",
+		deviceKey(phone),
+		{
+			sealTo: Buffer.from(
+				String(createPublicKey(generateKeyPairSync("x25519").privateKey).export({ format: "jwk" }).x),
+				"base64url",
+			),
+		},
+	);
+	expect(await answer(setup.host, phone, undecryptable)).toMatchObject({ error: "already_answered" });
+});
+
+it("a device whose grant is not in the request's snapshot is refused before anything is checked", async () => {
+	const p = await prompt();
+	const tablet = await holder(p.host, p.secret, "tablet");
+	const frame = valueAnswer(
+		{ ...ids(p.phone, p.request, p.req), grantId: String(tablet.adopted.acquired?.grantId) },
+		p.request,
+		p.secret.stepUp(tablet.adopted.device.publicKey, p.req, { dev: "device-tablet" }),
+		"value",
+		tablet.adopted.device.privateKey,
+	);
+	expect(await answer(p.host, tablet, frame)).toMatchObject({ error: "secret_answer_refused" });
+	const stolen = valueAnswer(
+		ids(p.phone, p.request, p.req),
+		p.request,
+		p.secret.stepUp(p.phone.adopted.device.publicKey, p.req),
+		"v",
+		deviceKey(p.phone),
+	);
+	expect(await answer(p.host, tablet, stolen)).toMatchObject({ error: "secret_answer_refused" });
+	expect(p.state.value).toBeNull();
+});
+
+const stepUpRefusals = [
+	{ name: "a token for another request", claims: (p: { req: string }) => ({ req: `x${p.req.slice(1)}` }) },
+	{ name: "a token bound to another key", claims: () => ({ cnf: { jkt: "another-key" } }) },
+	{ name: "a token of another device", claims: () => ({ dev: "device-laptop" }) },
+	{ name: "a token for another host device", claims: () => ({ hdev: "another-host" }) },
+	{
+		name: "a token that outlives the prompt's deadline",
+		claims: () => ({ exp: Math.floor(Date.now() / 1000) + 7200 }),
+	},
+	{ name: "a token of another account", claims: () => ({ acc: "account-b" }) },
+];
+
+it.each(stepUpRefusals)("$name is refused secret_stepup_refused and the prompt stays open", async ({ claims }) => {
+	const p = await prompt();
+	const stepup = p.secret.stepUp(p.phone.adopted.device.publicKey, p.req, {
+		iat: Math.floor(Date.now() / 1000),
+		...claims(p),
+	});
+	const frame = valueAnswer(ids(p.phone, p.request, p.req), p.request, stepup, "value", deviceKey(p.phone));
+	expect(await answer(p.host, p.phone, frame)).toMatchObject({ error: "secret_stepup_refused" });
+	expect(p.state.value).toBeNull();
+});
+
+it("a ciphertext that does not open leaves the prompt open, and its step-up token is spent", async () => {
+	const p = await prompt();
+	const stepup = p.secret.stepUp(p.phone.adopted.device.publicKey, p.req);
+	const wrongKey = Buffer.from(
+		String(createPublicKey(generateKeyPairSync("x25519").privateKey).export({ format: "jwk" }).x),
+		"base64url",
+	);
+	const bad = valueAnswer(ids(p.phone, p.request, p.req), p.request, stepup, "value", deviceKey(p.phone), {
+		sealTo: wrongKey,
+	});
+	expect(await answer(p.host, p.phone, bad)).toMatchObject({ error: "invalid_secret_response" });
+	const nonCanonical = valueAnswer(
+		ids(p.phone, p.request, p.req, "answer-2"),
+		p.request,
+		p.secret.stepUp(p.phone.adopted.device.publicKey, p.req),
+		"v",
+		deviceKey(p.phone),
+		{
+			plaintext: Buffer.concat([Buffer.from([0, 0, 0, 1, 0x61]), Buffer.alloc(251, 1)]),
+		},
+	);
+	expect(await answer(p.host, p.phone, nonCanonical)).toMatchObject({ error: "invalid_secret_response" });
+	const reused = valueAnswer(
+		ids(p.phone, p.request, p.req, "answer-3"),
+		p.request,
+		stepup,
+		"value",
+		deviceKey(p.phone),
+	);
+	expect(await answer(p.host, p.phone, reused)).toMatchObject({ error: "secret_stepup_refused" });
+	const fresh = valueAnswer(
+		ids(p.phone, p.request, p.req, "answer-4"),
+		p.request,
+		p.secret.stepUp(p.phone.adopted.device.publicKey, p.req),
+		"value",
+		deviceKey(p.phone),
+	);
+	expect(await answer(p.host, p.phone, fresh)).toMatchObject({ disposition: "applied" });
+	expect(p.state.value).toBe("value");
+});
+
+it("an envelope whose signature is not canonical or not the principal's is invalid (strict Ed25519)", async () => {
+	const p = await prompt();
+	const frame = valueAnswer(
+		ids(p.phone, p.request, p.req),
+		p.request,
+		p.secret.stepUp(p.phone.adopted.device.publicKey, p.req),
+		"v",
+		deviceKey(p.phone),
+	);
+	const signature = Buffer.from(String(frame.sig), "hex");
+	const L = (1n << 252n) + 27742317777372353535851937790883648493n;
+	let s = 0n;
+	for (let i = 63; i >= 32; i--) s = (s << 8n) | BigInt(signature[i] ?? 0);
+	s += L;
+	for (let i = 32; i < 64; i++, s >>= 8n) signature[i] = Number(s & 0xffn);
+	expect(await answer(p.host, p.phone, { ...frame, sig: signature.toString("hex") })).toMatchObject({
+		error: "invalid_secret_response",
+	});
+	const forged = {
+		...frame,
+		sig: sign(null, Buffer.from("anything"), generateKeyPairSync("ed25519").privateKey).toString("hex"),
+	};
+	expect(await answer(p.host, p.phone, forged)).toMatchObject({ error: "invalid_secret_response" });
+	expect(p.state.value).toBeNull();
+});
+
+it("a signed cancel ends the prompt for everyone without a step-up", async () => {
+	const p = await prompt();
+	const frame = cancelAnswer(ids(p.phone, p.request, p.req), deviceKey(p.phone));
+	expect(await answer(p.host, p.phone, frame)).toMatchObject({ disposition: "applied" });
+	expect(p.state.value).toBeUndefined();
+	expect(settledFor(p.phone.lines)).toMatchObject([{ outcome: "cancelled", elsewhere: false }]);
+	expect(await answer(p.host, p.phone, frame)).toMatchObject({ disposition: "replay" });
+});
+
+it("a malformed answer is invalid_secret_response, and every reply goes to the sender alone", async () => {
+	const p = await prompt();
+	const frame = valueAnswer(
+		ids(p.phone, p.request, p.req),
+		p.request,
+		p.secret.stepUp(p.phone.adopted.device.publicKey, p.req),
+		"v",
+		deviceKey(p.phone),
+	);
+	for (const malformed of [
+		{ ...frame, v: 2 },
+		{ ...frame, extra: true },
+		{ ...frame, enc: "short" },
+		{ ...frame, sig: "00" },
+	])
+		expect(await answer(p.host, p.phone, malformed)).toMatchObject({ error: "invalid_secret_response" });
+	expect(records(p.host.lines, "mcp_presenter_secret_reply")).toEqual([]);
+});
+
+it("the strict verifier refuses a small-order key forgery, S >= L and a non-canonical point on every runtime", () => {
+	const identity = Buffer.alloc(32);
+	identity[0] = 1;
+	const message = Buffer.from("omo-secret-answer-v1\n[]");
+	expect(strictEd25519Verify(identity, message, Buffer.concat([identity, Buffer.alloc(32)]))).toBe(false);
+	const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+	const raw = Buffer.from(String(publicKey.export({ format: "jwk" }).x), "base64url");
+	const signature = sign(null, message, privateKey);
+	expect(strictEd25519Verify(raw, message, signature)).toBe(true);
+	const L = (1n << 252n) + 27742317777372353535851937790883648493n;
+	let s = 0n;
+	for (let i = 63; i >= 32; i--) s = (s << 8n) | BigInt(signature[i] ?? 0);
+	const nonCanonical = Buffer.from(signature);
+	for (let i = 32, v = s + L; i < 64; i++, v >>= 8n) nonCanonical[i] = Number(v & 0xffn);
+	expect(strictEd25519Verify(raw, message, nonCanonical)).toBe(false);
+	const highY = Buffer.alloc(32, 0xff);
+	highY[31] = 0x7f;
+	expect(strictEd25519Verify(highY, message, signature)).toBe(false);
+});
+
+it("HPKE open and the test-side seal both reproduce RFC 9180's published base-mode vector for this suite", () => {
+	const vector = JSON.parse(
+		readFileSync(new URL("./fixtures/rfc9180-x25519-sha256-aes256gcm.json", import.meta.url), "utf8"),
+	);
+	const hex = (value: string) => Buffer.from(value, "hex");
+	const sealed = hpkeSeal({
+		recipient: hex(vector.pkRm),
+		info: hex(vector.info),
+		aad: hex(vector.aad),
+		plaintext: hex(vector.pt),
+		ephemeral: { secret: hex(vector.skEm), public: hex(vector.pkEm) },
+	});
+	expect(sealed.enc.toString("hex")).toBe(vector.enc);
+	expect(sealed.ct.toString("hex")).toBe(vector.ct);
+	const privateKey = createPrivateKey({
+		key: {
+			kty: "OKP",
+			crv: "X25519",
+			d: hex(vector.skRm).toString("base64url"),
+			x: hex(vector.pkRm).toString("base64url"),
+		},
+		format: "jwk",
+	});
+	const opened = openSecretAnswer({
+		privateKey,
+		recipientPublicKey: hex(vector.pkRm),
+		enc: hex(vector.enc),
+		ct: hex(vector.ct),
+		info: hex(vector.info),
+		aad: hex(vector.aad),
+	});
+	expect(opened && Buffer.from(opened).toString("hex")).toBe(vector.pt);
+});

@@ -12,12 +12,11 @@ import {
 	type AccountHost,
 } from "./fixtures/presenter-account-host.ts";
 import { jwkThumbprint } from "./fixtures/presenter-account-issuer.ts";
+import { holder, type Line, nowS, records, SECRET, sealedHost, sealedTypes } from "./fixtures/secret-sealed-host.ts";
 import { secretHostIssuer } from "./fixtures/secret-host-issuer.ts";
 
 // D11 secret phase S5-2 (senpi#4249): design 5.1, 5.2 and 4.2-4.3; the binding follows omo-relay-spec decision 0022.
 // Only the host's timers are faked; sockets, the issuer's ES256 and every Ed25519/X25519 key stay real.
-const SECRET = ["secret_input_v1"];
-const nowS = () => Math.floor(Date.now() / 1000);
 
 beforeEach(() => {
 	vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
@@ -26,33 +25,6 @@ afterEach(async () => {
 	await closeAccountHosts();
 	vi.useRealTimers();
 });
-
-type Line = Record<string, unknown>;
-const records = (lines: readonly string[], type: string): Line[] =>
-	lines.map((line) => JSON.parse(line) as Line).filter((record) => record.type === type);
-const sealedTypes = (lines: readonly string[]) =>
-	lines
-		.map((line) => String((JSON.parse(line) as Line).type))
-		.filter((type) => type.startsWith("mcp_presenter_secret"));
-
-async function sealedHost(options: { lifetimeS?: number } = {}) {
-	const secret = secretHostIssuer(issuer, options.lifetimeS);
-	const host = await accountHost({ account: secret.authority });
-	const requests = new SecretInputRequests(host.writer.secretInputRoute("session", true), () => {});
-	return { host, secret, requests };
-}
-
-async function holder(host: AccountHost, secret: ReturnType<typeof secretHostIssuer>, id: string, features = SECRET) {
-	const device = host.presenter(id);
-	const adopted = await enrollAssignAcquire(host, installation(), {
-		context: device.context,
-		claims: { dev: `device-${id}`, exp: nowS() + 900 },
-		features,
-	});
-	expect(adopted.acquired).toMatchObject({ type: "mcp_presenter_acquired" });
-	await secret.mints.at(-1)?.done;
-	return { ...device, adopted };
-}
 
 /** The design 4.2 binding, rebuilt here from the received record: an oracle independent of the engine's helper. */
 function binding(request: Line, title = request.title, placeholder = request.placeholder) {
@@ -180,7 +152,7 @@ it("a sealed-only request survives capability changes and another device's detac
 	host.writer.detachConnectionFromSession("phone", "session");
 	await Promise.resolve();
 	expect(settled).toBeUndefined();
-	expect(sealedTypes(phone.lines)).toEqual(["mcp_presenter_secret_request"]);
+	expect(sealedTypes(phone.lines)).toEqual(["mcp_presenter_secret_request", "mcp_presenter_secret_settled"]);
 });
 
 it("a raiser detach leaves a request with a current sealed holder alive", async () => {
