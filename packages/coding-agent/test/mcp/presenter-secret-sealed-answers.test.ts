@@ -1,7 +1,7 @@
 import { createPrivateKey, createPublicKey, generateKeyPairSync, sign, type KeyObject } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { strictEd25519Verify } from "../../src/modes/rpc/ed25519-strict.ts";
+import { strictEd25519Refusal, strictEd25519Verify } from "../../src/modes/rpc/ed25519-strict.ts";
 import { openSecretAnswer } from "../../src/modes/rpc/secret-sealed-hpke.ts";
 import { closeAccountHosts, type AccountHost } from "./fixtures/presenter-account-host.ts";
 import { holder, records, sealedHost } from "./fixtures/secret-sealed-host.ts";
@@ -377,4 +377,98 @@ it("a receipt names its principal: another holder's same answer id, or the raise
 		error: "already_answered",
 	});
 	expect(setup.host.writer.withConnection("human", () => setup.requests.answered())).toEqual([]);
+});
+
+const littleEndian32 = (value: bigint) => {
+	const out = Buffer.alloc(32);
+	for (let i = 0, v = value; i < 32; i++, v >>= 8n) out[i] = Number(v & 0xffn);
+	return out;
+};
+const FIELD_P = (1n << 255n) - 19n;
+const GROUP_L = (1n << 252n) + 27742317777372353535851937790883648493n;
+const realKey = Buffer.from(
+	String(createPublicKey(generateKeyPairSync("ed25519").privateKey).export({ format: "jwk" }).x),
+	"base64url",
+);
+// Self-made points: y = 3 is a curve point of mixed order (not small, outside the prime-order subgroup); y = 3 + p is
+// its non-canonical encoding; y = 0 has order 4. Each rule is pinned on its own, whatever the native verifier does.
+const strictRules = [
+	{ name: "a small-order public key", key: Buffer.alloc(32), r: littleEndian32(3n), s: 0n, refusal: "small_order" },
+	{ name: "a small-order R", key: realKey, r: Buffer.alloc(32), s: 0n, refusal: "small_order" },
+	{
+		name: "a mixed-order public key",
+		key: littleEndian32(3n),
+		r: littleEndian32(3n),
+		s: 0n,
+		refusal: "not_prime_order",
+	},
+	{
+		name: "a non-canonical public key",
+		key: littleEndian32(3n + FIELD_P),
+		r: littleEndian32(3n),
+		s: 0n,
+		refusal: "encoding",
+	},
+	{ name: "a non-canonical R", key: realKey, r: littleEndian32(3n + FIELD_P), s: 0n, refusal: "encoding" },
+	{
+		name: "a negative-zero x (the identity with its sign bit set)",
+		key: littleEndian32(1n | (1n << 255n)),
+		r: littleEndian32(3n),
+		s: 0n,
+		refusal: "encoding",
+	},
+	{ name: "S >= L", key: realKey, r: littleEndian32(3n), s: GROUP_L, refusal: "scalar" },
+	{
+		name: "a canonical mixed-order R with S < L passes the prechecks",
+		key: realKey,
+		r: littleEndian32(3n),
+		s: GROUP_L - 1n,
+		refusal: undefined,
+	},
+];
+
+it.each(strictRules)("strict Ed25519 prechecks: $name", ({ key, r, s, refusal }) => {
+	const scalar = Buffer.alloc(32);
+	for (let i = 0, v = s; i < 32; i++, v >>= 8n) scalar[i] = Number(v & 0xffn);
+	expect(strictEd25519Refusal(key, Buffer.concat([r, scalar]))).toBe(refusal);
+});
+
+it("the claim re-checks the grant: a grant withdrawn while the step-up is verified is refused, and the prompt stays", async () => {
+	const setup = await sealedHost();
+	const phone = await holder(setup.host, setup.secret, "phone");
+	await holder(setup.host, setup.secret, "tablet");
+	const state: { value: string | undefined | null } = { value: null };
+	void setup.requests.input("API key", undefined).then((value) => {
+		state.value = value;
+	});
+	const request = records(phone.lines, "mcp_presenter_secret_request")[0];
+	if (!request) throw new Error("No sealed request");
+	const req = requestHash(request, setup.host.control.sealed?.tokens.hostJkt ?? "");
+	setup.secret.hooks.beforeVerify = () => setup.host.writer.setConnectionCapabilities(phone.id, ["interactive_user"]);
+	const frame = valueAnswer(
+		ids(phone, request, req),
+		request,
+		setup.secret.stepUp(phone.adopted.device.publicKey, req),
+		"v",
+		deviceKey(phone),
+	);
+	expect(await answer(setup.host, phone, frame)).toMatchObject({ error: "secret_answer_refused" });
+	expect(state.value).toBeNull();
+});
+
+it("a step-up token that expires after the prompt's deadline is refused, even within its own lifetime", async () => {
+	const p = await prompt({ timeout: 30_000 });
+	const stepup = p.secret.stepUp(p.phone.adopted.device.publicKey, p.req, { exp: Math.floor(Date.now() / 1000) + 90 });
+	const frame = valueAnswer(ids(p.phone, p.request, p.req), p.request, stepup, "v", deviceKey(p.phone));
+	expect(await answer(p.host, p.phone, frame)).toMatchObject({ error: "secret_stepup_refused" });
+	expect(p.state.value).toBeNull();
+});
+
+it("an answer that reaches the latch after the deadline times the prompt out instead of applying", async () => {
+	vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+	const p = await prompt({ timeout: 30_000 });
+	vi.setSystemTime(Date.now() + 31_000);
+	const frame = cancelAnswer(ids(p.phone, p.request, p.req), deviceKey(p.phone));
+	expect(await answer(p.host, p.phone, frame)).toMatchObject({ error: "unknown_extension_ui_request" });
+	expect(settledFor(p.phone.lines)).toMatchObject([{ outcome: "timed_out", elsewhere: true }]);
 });

@@ -108,8 +108,13 @@ export function secretHostIssuer(presenter: ReturnType<typeof presenterIssuer>, 
 	}): PresenterAccountAuthority => ({
 		...presenter.authority(host),
 		mintSecretHostToken: (request) => mint(host, request),
-		verifySecretAnswer: async (token, presenterSpki, req, nowS) => verifyStepUp(token, presenterSpki, req, nowS),
+		verifySecretAnswer: async (token, presenterSpki, req, nowS) => {
+			hooks.beforeVerify?.();
+			return verifyStepUp(token, presenterSpki, req, nowS);
+		},
 	});
+	/** Runs inside the step-up verification, before it resolves: a test can change host state mid-answer. */
+	const hooks: { beforeVerify?: () => void } = {};
 	const refused = (reason: SecretAnswerRefusal): SecretAnswerVerification => ({ ok: false, reason });
 	/** The 6.5 verifier the distribution would pin: ES256, constants, 120 s lifetime with 60 s skew, uv, cnf, req. */
 	const verifyStepUp = (
@@ -173,6 +178,7 @@ export function secretHostIssuer(presenter: ReturnType<typeof presenterIssuer>, 
 		});
 	};
 	return {
+		hooks,
 		stepUp,
 		authority,
 		mints,

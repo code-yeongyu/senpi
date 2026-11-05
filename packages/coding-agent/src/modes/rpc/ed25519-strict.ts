@@ -92,16 +92,26 @@ function smallOrder(p: Point): boolean {
 	return isIdentity(times(p, 8n));
 }
 
+export type StrictEd25519Refusal = "length" | "encoding" | "small_order" | "not_prime_order" | "scalar";
+
+/** The strict prechecks alone, run before the native equation; `undefined` when all pass. Exported for tests. */
+export function strictEd25519Refusal(publicKey: Uint8Array, signature: Uint8Array): StrictEd25519Refusal | undefined {
+	if (publicKey.length !== 32 || signature.length !== 64) return "length";
+	const a = decodePoint(publicKey);
+	const r = decodePoint(signature.subarray(0, 32));
+	if (!a || !r) return "encoding";
+	if (smallOrder(a) || smallOrder(r)) return "small_order";
+	if (!isIdentity(times(a, L))) return "not_prime_order";
+	if (littleEndian(signature.subarray(32)) >= L) return "scalar";
+	return undefined;
+}
+
 /**
  * Verifies `signature` (64 bytes) over `message` under the raw 32-byte public key with the strict rules above.
  * Returns false for every refusal; the caller maps it to its own error code.
  */
 export function strictEd25519Verify(publicKey: Uint8Array, message: Uint8Array, signature: Uint8Array): boolean {
-	if (publicKey.length !== 32 || signature.length !== 64) return false;
-	const a = decodePoint(publicKey);
-	const r = decodePoint(signature.subarray(0, 32));
-	if (!a || !r || smallOrder(a) || smallOrder(r) || !isIdentity(times(a, L))) return false;
-	if (littleEndian(signature.subarray(32)) >= L) return false;
+	if (strictEd25519Refusal(publicKey, signature) !== undefined) return false;
 	const key = createPublicKey({
 		key: { kty: "OKP", crv: "Ed25519", x: Buffer.from(publicKey).toString("base64url") },
 		format: "jwk",
