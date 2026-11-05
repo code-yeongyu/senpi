@@ -246,8 +246,13 @@ export class SecretInputRequests {
 	recheck(): void {
 		for (const [id, pending] of this.pending) if (!this.route.available(id)) pending.finish("unavailable");
 	}
-	close(): void {
+	/** Final teardown: also releases the sealed latch, so the route no longer keeps this request set alive. */
+	dispose(): void {
+		this.close();
 		this.route.bindSealedResponder?.(undefined);
+	}
+	/** Ends every prompt; the latch stays bound because the connection reuses this set on every rebind. */
+	close(): void {
 		this.cancelAll();
 		for (const id of this.receipts.keys()) this.route.forget(id);
 		this.receipts.clear();

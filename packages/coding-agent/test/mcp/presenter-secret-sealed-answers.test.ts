@@ -485,3 +485,38 @@ it("unbinding a route removes only its own latch: a second route on the session 
 	expect(await answer(p.host, p.phone, frame)).toMatchObject({ disposition: "applied" });
 	expect(p.state.value).toBe("scoped-value");
 });
+
+async function reprompt(p: Awaited<ReturnType<typeof prompt>>) {
+	const state: { value: string | undefined | null } = { value: null };
+	void p.requests.input("API key", undefined).then((value) => {
+		state.value = value;
+	});
+	const request = records(p.phone.lines, "mcp_presenter_secret_request").at(-1);
+	if (!request) throw new Error("No sealed request");
+	const req = requestHash(request, p.host.control.sealed?.tokens.hostJkt ?? "");
+	const stepup = p.secret.stepUp(p.phone.adopted.device.publicKey, req);
+	const frame = valueAnswer(
+		ids(p.phone, request, req, "answer-2"),
+		request,
+		stepup,
+		"second-value",
+		deviceKey(p.phone),
+	);
+	return { state, reply: await answer(p.host, p.phone, frame) };
+}
+
+it("a request set reused after close() still accepts sealed answers: the connection closes it on every rebind", async () => {
+	const p = await prompt();
+	p.requests.close();
+	const second = await reprompt(p);
+	expect(second.reply).toMatchObject({ disposition: "applied" });
+	expect(second.state.value).toBe("second-value");
+});
+
+it("dispose() releases the sealed latch: a later sealed answer on that session is refused", async () => {
+	const p = await prompt();
+	p.requests.dispose();
+	const second = await reprompt(p);
+	expect(second.reply).toMatchObject({ error: "secret_answer_refused" });
+	expect(second.state.value).toBeNull();
+});

@@ -2445,7 +2445,7 @@ export function createRpcConnectionHandler(
 		relocation?.dispose();
 		relocation = undefined;
 		questions.cancelAll();
-		secretInputs.close();
+		secretInputs.dispose();
 		pendingExtensionRequests.close();
 		unsubscribeProviderAccountEvents();
 		unsubscribe?.();
