@@ -23,6 +23,7 @@ import type {
 	AgentToolCallOutcome,
 	AgentToolResult,
 	AgentToolUpdateCallback,
+	DeviceFiles,
 	ThinkingLevel,
 	ToolExecutionMode,
 } from "@earendil-works/pi-agent-core";
@@ -560,6 +561,12 @@ export interface ExtensionContext {
 	readonly browserEngine?: BrowserEngine;
 	/** Caller env the opener gave THIS session (`open_session.env`, senpi#4381); absent when it gave none. */
 	readonly sessionEnv?: Readonly<Record<string, string>>;
+	/**
+	 * The files of the device this session's tools run on (senpi#5839): the local filesystem on a fused session and on a
+	 * hand, the hand's file channel on the loop side of a split session. Data that must stay on the device goes through
+	 * it. Optional for contexts built outside a runner; every runner-built context has it.
+	 */
+	readonly deviceFiles?: DeviceFiles;
 	/** Model registry for API key resolution */
 	modelRegistry: ModelRegistry;
 	/** Current model (may be undefined) */
@@ -3791,6 +3798,7 @@ export interface ExtensionContextActions {
 	getAskUserSettings?: () => { enabled: boolean; timeoutMinutes: number };
 	getBrowserEngine?: () => BrowserEngine | undefined;
 	getSessionEnv?: () => Readonly<Record<string, string>> | undefined;
+	getDeviceFiles?: () => DeviceFiles;
 	getImageSettings: () => { autoResize: boolean; blockImages: boolean };
 	sessionSettings: ExtensionSessionSettings;
 	compact: (options?: CompactOptions) => void;
