@@ -2,6 +2,7 @@
 // dispatches its pending call again reaches the hand's record of that call instead of running the tool a second time.
 import { describe, expect, it } from "vitest";
 import { remoteExecutionId } from "../../src/execution/remote-tool-host.ts";
+import { openEpochRig } from "../../src/execution/testing/epoch-harness.ts";
 import { call, openHandRig } from "../../src/execution/testing/hand-harness.ts";
 import { handAdapters } from "./hand-adapters.ts";
 
@@ -38,6 +39,27 @@ describe("durable remote execution ids (senpi#5867)", () => {
 
 		expect(rig.bodies).toEqual(["scope:call_1"]);
 		expect(texts(result)).not.toEqual([]);
+	});
+
+	it("after a move, the new owner re-dispatching the turn's call gets the hand's record; the tool ran once", async () => {
+		const rig = await openEpochRig(handAdapters("linux"), {
+			brains: [
+				{ name: "brain-a", epoch: 1 },
+				{ name: "brain-b", epoch: 2 },
+			],
+		});
+		rig.setOwner("s", "brain-a");
+		await rig.settle(rig.execute("brain-a", "s", [call("call_1")], "turn-1"), "the first owner's call settled");
+
+		rig.setOwner("s", "brain-b");
+		await rig.settle(rig.execute("brain-b", "s", [call("call_1")], "turn-1"), "the new owner's re-dispatch settled");
+		const late = await rig.settle(
+			rig.execute("brain-a", "s", [call("call_2")], "turn-1"),
+			"the old owner's call settled",
+		);
+
+		expect(rig.bodies).toEqual(["s:call_1"]);
+		expect(JSON.stringify(late.messages)).toContain("refused");
 	});
 
 	it("ids differ across sessions, turns and calls, and are stable for the same three", () => {
