@@ -147,6 +147,6 @@ export function openSealedValue(
 	});
 	if (!plaintext) return undefined;
 	const value = unpadSecretValue(plaintext);
-	Buffer.from(plaintext).fill(0);
+	plaintext.fill(0);
 	return value;
 }

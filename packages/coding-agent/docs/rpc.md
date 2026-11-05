@@ -636,8 +636,9 @@ created; a grant acquired later is not offered it.
   4. the envelope signature;
   5. for a value, the issuer step-up token through the injected authority (its account, device, host device, request
      binding and expiry no later than the deadline);
-  6. at the latch, synchronously: the prompt is still pending, before its deadline and the grant is current, the
-     step-up `jti` is unused in this host incarnation, and the ciphertext opens to a canonical padded value.
+  6. at the latch, synchronously and in this order: the prompt is still pending; the step-up `jti` is unused in this
+     host incarnation, and it is spent here; the prompt is before its deadline; the grant is current; the
+     ciphertext opens to a canonical padded value. A claim refused after the `jti` check has used up that token.
 
   A value answer that loses the race is never decrypted, and a ciphertext that does not open leaves the prompt open.
 - The answer is acknowledged on the sender's connection only:

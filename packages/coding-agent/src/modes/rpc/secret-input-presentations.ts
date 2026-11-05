@@ -63,6 +63,7 @@ export class SecretInputPresentations {
 	/** `sealed`: this route may add sealed holders (in-process sessions); a worker's route stays raiser-only. */
 	route(session: string, sealed = false): SecretInputRoute {
 		const capable = (connection: string | undefined) => this.capable(connection);
+		let bound: SealedLatch | undefined;
 		return {
 			presenter: (id) => this.owners.get(id)?.connection,
 			select: (id, cancel) => {
@@ -106,7 +107,14 @@ export class SecretInputPresentations {
 					this.sealedSource?.settle(owner.sealed, id, outcome, winner);
 			},
 			bindSealedResponder: (latch) => {
-				if (sealed) this.latches.set(session, latch);
+				// Unbinding removes only this route's own latch: a late exit must not clear a newer binding's.
+				if (!latch) {
+					if (bound !== undefined && this.latches.get(session) === bound) this.latches.delete(session);
+					bound = undefined;
+				} else if (sealed) {
+					bound = latch;
+					this.latches.set(session, latch);
+				}
 			},
 			offerSealed: (id, offer) => {
 				const owner = this.owners.get(id);

@@ -32,7 +32,7 @@ export interface SecretInputRoute {
 	/** Sends every sealed holder the value-free settle; `winner` is the grant whose answer won, if any (7.2). */
 	sealedOutcome?(id: string, outcome: SecretInputOutcome, winner: object | undefined): void;
 	/** Registers this session's latch for sealed answers (7.1 steps 3 and 6). */
-	bindSealedResponder?(latch: SealedLatch): void;
+	bindSealedResponder?(latch: SealedLatch | undefined): void;
 }
 
 /** A sealed answer that passed design 7.1 steps 1, 2, 4 and 5 in the host process; steps 3 and 6 run here. */
@@ -247,6 +247,7 @@ export class SecretInputRequests {
 		for (const [id, pending] of this.pending) if (!this.route.available(id)) pending.finish("unavailable");
 	}
 	close(): void {
+		this.route.bindSealedResponder?.(undefined);
 		this.cancelAll();
 		for (const id of this.receipts.keys()) this.route.forget(id);
 		this.receipts.clear();

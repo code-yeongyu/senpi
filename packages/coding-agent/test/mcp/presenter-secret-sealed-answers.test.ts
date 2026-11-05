@@ -476,3 +476,12 @@ it("an answer that reaches the latch after the deadline times the prompt out ins
 	expect(await answer(p.host, p.phone, frame)).toMatchObject({ error: "unknown_extension_ui_request" });
 	expect(settledFor(p.phone.lines)).toMatchObject([{ outcome: "timed_out", elsewhere: true }]);
 });
+
+it("unbinding a route removes only its own latch: a second route on the session cannot clear the bound session's latch", async () => {
+	const p = await prompt();
+	p.host.writer.secretInputRoute("session", true).bindSealedResponder?.(undefined);
+	const stepup = p.secret.stepUp(p.phone.adopted.device.publicKey, p.req);
+	const frame = valueAnswer(ids(p.phone, p.request, p.req), p.request, stepup, "scoped-value", deviceKey(p.phone));
+	expect(await answer(p.host, p.phone, frame)).toMatchObject({ disposition: "applied" });
+	expect(p.state.value).toBe("scoped-value");
+});

@@ -90,11 +90,17 @@ export function openSecretAnswer(input: SecretOpenInput): Uint8Array | undefined
 	const key = labeledExpand(HPKE_SUITE, secret, "key", context, 32);
 	const nonce = labeledExpand(HPKE_SUITE, secret, "base_nonce", context, 12);
 	const tag = input.ct.subarray(input.ct.length - 16);
+	let plaintext: Buffer | undefined;
 	try {
 		const decipher = createDecipheriv("aes-256-gcm", key, nonce).setAAD(input.aad);
 		decipher.setAuthTag(tag);
-		return Buffer.concat([decipher.update(input.ct.subarray(0, input.ct.length - 16)), decipher.final()]);
+		// GCM's final() yields no bytes: returning update()'s buffer itself lets the caller zero every plaintext byte.
+		plaintext = decipher.update(input.ct.subarray(0, input.ct.length - 16));
+		decipher.final();
+		return plaintext;
 	} catch {
+		// An unauthenticated decryption is still near-plaintext for a bit-flipped ciphertext: zero it too.
+		plaintext?.fill(0);
 		return undefined;
 	} finally {
 		key.fill(0);

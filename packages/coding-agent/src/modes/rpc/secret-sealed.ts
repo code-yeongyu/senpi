@@ -145,7 +145,8 @@ export function secretCancelTranscript(ids: {
  */
 export function unpadSecretValue(plaintext: Uint8Array): string | undefined {
 	if (plaintext.length < 256 || plaintext.length > 65536) return undefined;
-	const bytes = Buffer.from(plaintext);
+	// A view, not a copy, so the caller's zeroing of `plaintext` reaches every byte (design 8.2).
+	const bytes = Buffer.from(plaintext.buffer, plaintext.byteOffset, plaintext.byteLength);
 	const length = bytes.readUInt32BE(0);
 	let size = 256;
 	while (size < 4 + length) size *= 2;
