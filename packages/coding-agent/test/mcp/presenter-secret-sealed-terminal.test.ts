@@ -163,8 +163,9 @@ it("a terminal input that throws ends the race: the caller gets the error and ho
 	const result = raceTerminalSecretInput(sealed, () => Promise.reject(failure), "API key", undefined, {
 		secret: true,
 	});
+	const rejected = expect(result).rejects.toBe(failure);
 	await desktop.waitFor((record) => record.type === "mcp_presenter_secret_request");
-	await expect(result).rejects.toBe(failure);
+	await rejected;
 	expect(await desktop.waitFor((record) => record.type === "mcp_presenter_secret_settled")).toMatchObject({
 		outcome: "cancelled",
 	});
