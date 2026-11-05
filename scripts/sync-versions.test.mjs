@@ -45,6 +45,7 @@ test("synchronizes private dependencies without touching registry aliases, gener
 			["telemetry", "@earendil-works/pi-telemetry"],
 			["senpi-codemode", "@code-yeongyu/senpi-codemode"],
 			["machine-ops", "@code-yeongyu/senpi-machine-ops"],
+			["session-backends/sqlite-bun", "@earendil-works/pi-storage-sqlite-bun"],
 		]) {
 			await writeManifest(root, `packages/${directory}`, {
 				name,

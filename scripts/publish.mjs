@@ -24,7 +24,7 @@ const publishOrder = [...registryPackageNames.values()];
 const packages = getPublicWorkspacePackages()
 	.sort((a, b) => publishOrder.indexOf(a.name) - publishOrder.indexOf(b.name))
 	.map((pkg) => ({ ...pkg, rewriteManifest: true }));
-const sourceOnlyPackages = new Set(["@code-yeongyu/senpi-codemode"]);
+const sourceOnlyPackages = new Set(["@code-yeongyu/senpi-codemode", "@code-yeongyu/senpi-storage-sqlite-bun"]);
 const temporaryPublishDirectories = [];
 
 const dryRun = process.argv.includes("--dry-run");
