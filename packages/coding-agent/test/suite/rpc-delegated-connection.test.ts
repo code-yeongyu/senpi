@@ -38,10 +38,10 @@ import { corpusRequest, NO_ID, type Opened, TODAY } from "../characterization/rp
 type WireRecord = Record<string, unknown>;
 
 /**
- * `RPC_METHOD_CLASSES_DIGEST` on main as of the last merge (fecca3f8ca, which added `account_reset`): this change adds
- * methods outside the table, never a table entry, so the branch digest equals main's.
+ * `RPC_METHOD_CLASSES_DIGEST` at the base this test runs on: main (fecca3f8ca added `account_reset`) plus senpi#5379, which moves
+ * `set_model` from `device_admin` to `dynamic`. Delegated connections add methods outside the table, never a table entry.
  */
-const DIGEST_ON_BASE = "4df5316e9c2712173b8338fdeb1bb1a78ae1f2c3da8b8ac694e1f3cc7c8382ed";
+const DIGEST_ON_BASE = "eee0d88ba62e9e7f9687ac46525b8ceed24b29bee7557d6ca617c7da182e968a";
 const FORWARDABLE = [
 	"observe",
 	"drive",
