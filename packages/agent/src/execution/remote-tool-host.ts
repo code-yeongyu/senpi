@@ -35,6 +35,12 @@ export interface RemoteToolHostOptions {
 	 * every nested request under a file operation is refused `parent_terminal`.
 	 */
 	readonly filePlanes?: readonly string[];
+	/**
+	 * The session's owner epoch (brain/hand S35). With it, each scope lane first raises the hand's floor to this epoch
+	 * and dispatches only after the hand acked exactly it; every invoke, file operation, abort and ack carries it.
+	 * Without it, nothing about epochs is sent (a session that never moves).
+	 */
+	readonly epoch?: number;
 }
 
 function errorResult(text: string): RemoteToolResult {
@@ -66,7 +72,7 @@ export function createRemoteToolHost(
 	options: RemoteToolHostOptions,
 ): ToolHost & { deviceFiles(scope: ExecutionScope): DeviceFiles; close(): void } {
 	const mintId = options.mintId ?? (() => crypto.randomUUID());
-	const link = createHandLink(options.transport, options.planes ?? {}, options.filePlanes ?? []);
+	const link = createHandLink(options.transport, options.planes ?? {}, options.filePlanes ?? [], options.epoch);
 
 	const resultOf = (reply: HandReply): RemoteToolResult => {
 		switch (reply.kind) {
@@ -82,6 +88,8 @@ export function createRemoteToolHost(
 				return errorResult(`The hand is unreachable: ${reply.reason}`);
 			case "closed":
 				return errorResult("The hand link was closed before the call settled");
+			case "epoch_refused":
+				return errorResult(`The hand refused this session's epoch: ${reply.reason}`);
 		}
 	};
 	const dispatch = (

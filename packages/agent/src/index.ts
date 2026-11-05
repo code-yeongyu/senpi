@@ -64,11 +64,15 @@ export {
 	encodeRemoteMessage,
 	HAND_CONTROL_LANE,
 	type RemoteAbort,
+	type EpochRefusal,
 	type RemoteAck,
 	type RemoteHandMessage,
 	type RemoteFile,
 	type RemoteHello,
 	type RemoteInvoke,
+	type RemoteFloor,
+	type RemoteFloorAck,
+	type RemoteFloorRefused,
 	type RemoteRefused,
 	type RemoteSettled,
 	RemoteProtocolError,
@@ -103,6 +107,14 @@ export {
 	type HandAuthority,
 	type WorkspaceRoot,
 } from "./execution/grant-verify.ts";
+export {
+	createHandEpochFence,
+	EPOCH_FLOOR_MAX_STEP,
+	type FloorRaise,
+	HAND_SELF_SENDER,
+	type HandEpochFence,
+	type HandEpochFenceOptions,
+} from "./execution/remote-epoch.ts";
 export {
 	base64Length,
 	DEVICE_FILE_OPS,

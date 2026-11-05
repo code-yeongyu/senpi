@@ -390,6 +390,7 @@ async function performToolInvocation<TContext extends object | undefined>(
 			toolContext,
 			capability.invocation,
 			drive.context,
+			lane.readConfig().onExecutionPipeline,
 		);
 	} catch (error) {
 		capability.expire();
