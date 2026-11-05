@@ -34,6 +34,14 @@ function fixture(script: string): { child: ChildProcess; output: () => string; g
 }
 
 describe("waitForFixtureFile", () => {
+	it("rejects with the cause when the fixture's exit promise itself rejects, never leaving it unhandled", async () => {
+		const ready = join(scratch(), "ready");
+		const spawnFailure = new Error("spawn ENOENT");
+		const gone = Promise.reject(spawnFailure);
+		const waited = waitForFixtureFile(ready, { timeoutMs: budget(20_000), output: () => "", gone });
+		await expect(waited).rejects.toMatchObject({ cause: spawnFailure });
+	});
+
 	it("settles on the real creation event of a file written after it subscribed", async () => {
 		const ready = join(scratch(), "ready");
 		const waited = waitForFixtureFile(ready, { timeoutMs: budget(20_000), output: () => "" });
