@@ -77,7 +77,7 @@ async function inProcess(options: { readonly timeout?: number } = {}) {
 		.then((value) => {
 			state.value = value;
 		});
-	const request = records(phone.lines, "mcp_presenter_secret_request")[0];
+	const request = (await phone.recorded("mcp_presenter_secret_request"))[0];
 	const raised = records(setup.host.lines, "extension_ui_request")[0];
 	if (!request || !raised) throw new Error("No prompt");
 	const req = requestHash(request, setup.host.control.sealed?.tokens.hostJkt ?? "");

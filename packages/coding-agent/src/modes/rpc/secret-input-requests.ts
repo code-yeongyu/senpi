@@ -84,9 +84,12 @@ interface Receipt {
 
 interface Pending {
 	readonly deadline: number;
-	/** The request's private X25519 key while it has sealed holders; dropped with the entry (design 4.1, 8.2). */
-	readonly key?: KeyObject;
-	readonly hpkePk?: string;
+	/**
+	 * The request's private X25519 key while it has sealed holders; dropped with the entry (design 4.1, 8.2). Set once
+	 * the key is generated, before the sealed offer that carries its public half leaves.
+	 */
+	key?: KeyObject;
+	hpkePk?: string;
 	finish(outcome: SecretInputOutcome, value?: string, winnerGrant?: string): void;
 }
 
@@ -132,12 +135,8 @@ export class SecretInputRequests {
 				this.route.settled(id);
 				resolve(value);
 			};
-			const key = this.route.sealed?.(id) === true ? generateSecretRequestKey() : undefined;
-			this.pending.set(id, {
-				deadline,
-				finish,
-				...(key === undefined ? {} : { key: key.privateKey, hpkePk: key.hpkePk }),
-			});
+			const sealed = this.route.sealed?.(id) === true;
+			this.pending.set(id, { deadline, finish });
 			opts?.signal?.addEventListener("abort", onAbort, { once: true });
 			disarm = armSecretInputDeadline(deadline, () => finish("timed_out"));
 			created?.(id);
@@ -154,9 +153,25 @@ export class SecretInputRequests {
 				...(opts?.toolCallId === undefined ? {} : { toolCallId: opts.toolCallId }),
 				...(opts?.parentToolCallId === undefined ? {} : { parentToolCallId: opts.parentToolCallId }),
 			});
-			if (key !== undefined)
-				this.route.offerSealed?.(id, { hpkePk: key.hpkePk, title, placeholder, deadlineAtMs: deadline });
+			if (sealed) this.offerSealed(id, { title, placeholder, deadlineAtMs: deadline });
 		});
+	}
+
+	/** Generates the request key off the host loop, then offers the request to its sealed holders if it is still open. */
+	private offerSealed(
+		id: string,
+		offer: { title: string; placeholder: string | undefined; deadlineAtMs: number },
+	): void {
+		generateSecretRequestKey().then(
+			(key) => {
+				const pending = this.pending.get(id);
+				if (!pending) return;
+				pending.key = key.privateKey;
+				pending.hpkePk = key.hpkePk;
+				this.route.offerSealed?.(id, { hpkePk: key.hpkePk, ...offer });
+			},
+			() => this.pending.get(id)?.finish("unavailable"),
+		);
 	}
 
 	has(id: string): boolean {

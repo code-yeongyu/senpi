@@ -58,7 +58,7 @@ it("a raiser-refused secret with one sealed holder proceeds on the sealed route,
 	const { host, secret, requests } = await sealedHost();
 	const phone = await holder(host, secret, "phone");
 	void requests.input("API key", "sk-...");
-	const [request] = records(phone.lines, "mcp_presenter_secret_request");
+	const [request] = await phone.recorded("mcp_presenter_secret_request");
 	expect(request && Object.keys(request).sort()).toEqual(
 		[
 			"type",
@@ -127,6 +127,7 @@ it("a grant without the feature never receives a sealed record while another dev
 	const phone = await holder(host, secret, "phone");
 	const laptop = await holder(host, secret, "laptop", []);
 	void requests.input("API key", undefined);
+	await phone.recorded("mcp_presenter_secret_request");
 	expect(sealedTypes(phone.lines)).toEqual(["mcp_presenter_secret_request"]);
 	expect(sealedTypes(laptop.lines)).toEqual([]);
 });
@@ -139,6 +140,7 @@ it("a sealed-only request survives capability changes and another device's detac
 	void requests.input("API key", undefined).then((value) => {
 		settled = value;
 	});
+	await phone.recorded("mcp_presenter_secret_request");
 	host.writer.setConnectionCapabilities("human", ["interactive_user", "mcp_form_presenter_v1", "raiser_notice_v1"]);
 	host.writer.setSoleSecretCapabilities(["interactive_user", "secret_input_v1"]);
 	host.writer.detachConnectionFromSession("human", "session");
@@ -160,6 +162,7 @@ it("a raiser detach leaves a request with a current sealed holder alive", async 
 		settled = value;
 	});
 	expect(records(host.lines, "extension_ui_request")).toHaveLength(1);
+	await phone.recorded("mcp_presenter_secret_request");
 	expect(sealedTypes(phone.lines)).toEqual(["mcp_presenter_secret_request"]);
 	host.writer.unregisterConnection("human");
 	await Promise.resolve();
@@ -171,7 +174,7 @@ it("a sealed-only request never accepts an extension_ui_response, not even from 
 	const phone = await holder(host, secret, "phone");
 	host.writer.setSoleSecretCapabilities(["interactive_user", "secret_input_v1"]);
 	void requests.input("API key", undefined);
-	const [request] = records(phone.lines, "mcp_presenter_secret_request");
+	const [request] = await phone.recorded("mcp_presenter_secret_request");
 	const answer = {
 		type: "extension_ui_response",
 		id: "answer",
@@ -195,7 +198,7 @@ it("a re-mint reaches every holder of a pending request, which stays answerable 
 	void requests.input("API key", undefined).then((value) => {
 		settled = value;
 	});
-	const [request] = records(phone.lines, "mcp_presenter_secret_request");
+	const [request] = await phone.recorded("mcp_presenter_secret_request");
 	if (!request) throw new Error("No sealed request");
 	vi.advanceTimersByTime(401_000);
 	await secret.mints.at(-1)?.done;
@@ -222,6 +225,7 @@ it("attached devices that are not sealed holders keep the value-free notice; the
 	void requests.input("API key", undefined);
 	expect(records(host.lines, "secret_input_notice")).toHaveLength(1);
 	expect(records(phone.lines, "secret_input_notice")).toEqual([]);
+	await phone.recorded("mcp_presenter_secret_request");
 	expect(sealedTypes(phone.lines)).toEqual(["mcp_presenter_secret_request"]);
 });
 
@@ -240,6 +244,7 @@ it("revoking the last holder's grant on the control channel ends a sealed-only r
 	void requests.input("API key", undefined).then((value) => {
 		settled = value;
 	});
+	await phone.recorded("mcp_presenter_secret_request");
 	expect(sealedTypes(phone.lines)).toEqual(["mcp_presenter_secret_request"]);
 	const revoked = await signedCommand(phone.adopted.peer, phone.adopted.principalId, phone.adopted.device.privateKey, {
 		type: "mcp_presenter_revoke",

@@ -63,9 +63,13 @@ export async function connectedPair(): Promise<{ hostSide: Socket; peerSide: Soc
 function presenterConnection(writer: SessionEventWriter, id: string, lines: string[] = []) {
 	const requests: Record<string, unknown>[] = [];
 	const waiters: Array<(request: Record<string, unknown>) => void> = [];
+	const written: Record<string, unknown>[] = [];
+	const watchers = new Set<() => void>();
 	const writeRaw = (line: string) => {
 		lines.push(line);
 		const value: unknown = JSON.parse(line);
+		if (isRecord(value)) written.push(value);
+		for (const watcher of [...watchers]) watcher();
 		if (!isRecord(value) || value.type !== "mcp_form_request") return;
 		const waiter = waiters.shift();
 		if (waiter) waiter(value);
@@ -81,7 +85,19 @@ function presenterConnection(writer: SessionEventWriter, id: string, lines: stri
 		const queued = requests.shift();
 		return queued ? Promise.resolve(queued) : new Promise((resolve) => waiters.push(resolve));
 	};
-	return { id, connection, context, request, unread: () => requests.length, lines };
+	/** Every record of `type` written to this connection, once there are at least `count` of them. */
+	const recorded = (type: string, count = 1): Promise<Record<string, unknown>[]> =>
+		new Promise((resolve) => {
+			const check = () => {
+				const matching = written.filter((record) => record.type === type);
+				if (matching.length < count) return;
+				watchers.delete(check);
+				resolve(matching);
+			};
+			watchers.add(check);
+			check();
+		});
+	return { id, connection, context, request, recorded, unread: () => requests.length, lines };
 }
 
 type AccountState = { account: string | undefined; readonly listeners: Set<() => void> };

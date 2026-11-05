@@ -127,7 +127,7 @@ async function pending(w: Awaited<ReturnType<typeof workerHost>>) {
 	void w.requests.input("API key", undefined).then((value) => {
 		state.value = value;
 	});
-	const request = records(phone.lines, "mcp_presenter_secret_request")[0];
+	const request = (await phone.recorded("mcp_presenter_secret_request"))[0];
 	if (!request) throw new Error("No sealed request reached the holder");
 	const req = requestHash(request, w.host.control.sealed?.tokens.hostJkt ?? "");
 	const stepup = () => w.secret.stepUp(phone.adopted.device.publicKey, req);

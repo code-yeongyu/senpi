@@ -1,4 +1,4 @@
-import { createHash, generateKeyPairSync, type KeyObject } from "node:crypto";
+import { createHash, generateKeyPair, type KeyObject } from "node:crypto";
 
 /**
  * The engine half of sealed secret answers: omo-relay-spec decision 0022 section 3, at 5da46fd262 (D11 secret phase, design 4.1-4.3;
@@ -163,10 +163,17 @@ export function secretRequestTranscript(binding: SecretBinding): string {
 	return `omo-secret-request-v1\n${JSON.stringify(binding)}`;
 }
 
-/** A fresh request key, held only by the pending request that owns the latch (design 4.1). */
-export function generateSecretRequestKey(): SecretRequestKey {
-	const { publicKey, privateKey } = generateKeyPairSync("x25519");
-	const { x } = publicKey.export({ format: "jwk" });
-	if (typeof x !== "string") throw new Error("secret_request_key_unavailable");
-	return { hpkePk: b64url(Buffer.from(x, "base64url")), privateKey };
+/**
+ * A fresh request key, held only by the pending request that owns the latch (design 4.1). Generated off the host loop:
+ * it is on the session path, which holds no new synchronous crypto (no-sync-in-session-path, senpi#3993).
+ */
+export function generateSecretRequestKey(): Promise<SecretRequestKey> {
+	return new Promise((resolve, reject) => {
+		generateKeyPair("x25519", (error, publicKey, privateKey) => {
+			if (error) return reject(error);
+			const { x } = publicKey.export({ format: "jwk" });
+			if (typeof x !== "string") return reject(new Error("secret_request_key_unavailable"));
+			resolve({ hpkePk: b64url(Buffer.from(x, "base64url")), privateKey });
+		});
+	});
 }

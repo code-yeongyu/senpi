@@ -36,7 +36,7 @@ async function prompt(options: { readonly timeout?: number } = {}) {
 		.then((value) => {
 			state.value = value;
 		});
-	const request = records(phone.lines, "mcp_presenter_secret_request")[0];
+	const request = (await phone.recorded("mcp_presenter_secret_request"))[0];
 	if (!request) throw new Error("No sealed request");
 	const hostJkt = setup.host.control.sealed?.tokens.hostJkt ?? "";
 	return { ...setup, phone, state, request, req: requestHash(request, hostJkt) };
@@ -105,7 +105,7 @@ it("a raiser answer wins: the raiser's settle keeps its bytes, holders settle el
 		"secret_input_v1",
 	]);
 	void setup.requests.input("API key", undefined);
-	const request = records(phone.lines, "mcp_presenter_secret_request")[0];
+	const request = (await phone.recorded("mcp_presenter_secret_request"))[0];
 	const raised = records(setup.host.lines, "extension_ui_request")[0];
 	if (!request || !raised) throw new Error("No prompt");
 	const raiserAnswer = {
@@ -349,7 +349,7 @@ it("a receipt names its principal: another holder's same answer id, or the raise
 		"secret_input_v1",
 	]);
 	void setup.requests.input("API key", undefined);
-	const request = records(phone.lines, "mcp_presenter_secret_request")[0];
+	const request = (await phone.recorded("mcp_presenter_secret_request"))[0];
 	const raised = records(setup.host.lines, "extension_ui_request")[0];
 	if (!request || !raised) throw new Error("No prompt");
 	const req = requestHash(request, setup.host.control.sealed?.tokens.hostJkt ?? "");
@@ -445,7 +445,7 @@ it("the claim re-checks the grant: a grant withdrawn while the step-up is verifi
 	void setup.requests.input("API key", undefined).then((value) => {
 		state.value = value;
 	});
-	const request = records(phone.lines, "mcp_presenter_secret_request")[0];
+	const request = (await phone.recorded("mcp_presenter_secret_request"))[0];
 	if (!request) throw new Error("No sealed request");
 	const req = requestHash(request, setup.host.control.sealed?.tokens.hostJkt ?? "");
 	setup.secret.hooks.beforeVerify = () => setup.host.writer.setConnectionCapabilities(phone.id, ["interactive_user"]);
@@ -488,10 +488,11 @@ it("unbinding a route removes only its own latch: a second route on the session 
 
 async function reprompt(p: Awaited<ReturnType<typeof prompt>>) {
 	const state: { value: string | undefined | null } = { value: null };
+	const offered = records(p.phone.lines, "mcp_presenter_secret_request").length;
 	void p.requests.input("API key", undefined).then((value) => {
 		state.value = value;
 	});
-	const request = records(p.phone.lines, "mcp_presenter_secret_request").at(-1);
+	const request = (await p.phone.recorded("mcp_presenter_secret_request", offered + 1)).at(-1);
 	if (!request) throw new Error("No sealed request");
 	const req = requestHash(request, p.host.control.sealed?.tokens.hostJkt ?? "");
 	const stepup = p.secret.stepUp(p.phone.adopted.device.publicKey, req);
@@ -530,7 +531,7 @@ it("an answer whose prompt settles while its step-up token is verified answers f
 		"secret_input_v1",
 	]);
 	void setup.requests.input("API key", undefined);
-	const request = records(phone.lines, "mcp_presenter_secret_request")[0];
+	const request = (await phone.recorded("mcp_presenter_secret_request"))[0];
 	const raised = records(setup.host.lines, "extension_ui_request")[0];
 	if (!request || !raised) throw new Error("No prompt");
 	const req = requestHash(request, setup.host.control.sealed?.tokens.hostJkt ?? "");
@@ -559,7 +560,7 @@ it("a settled prompt takes no more host token records when the token is re-minte
 	const setup = await sealedHost({ lifetimeS: 600 });
 	const phone = await holder(setup.host, setup.secret, "phone");
 	void setup.requests.input("API key", undefined);
-	const request = records(phone.lines, "mcp_presenter_secret_request")[0];
+	const request = (await phone.recorded("mcp_presenter_secret_request"))[0];
 	if (!request) throw new Error("No sealed request");
 	const req = requestHash(request, setup.host.control.sealed?.tokens.hostJkt ?? "");
 	expect(await answer(setup.host, phone, cancelAnswer(ids(phone, request, req), deviceKey(phone)))).toMatchObject({
