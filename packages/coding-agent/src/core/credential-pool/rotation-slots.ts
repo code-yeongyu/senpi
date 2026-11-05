@@ -2,6 +2,7 @@ import type { Credential } from "@earendil-works/pi-ai";
 import { slotsOfOwnKind } from "@earendil-works/pi-ai/auth/pool/kinds";
 import type { PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
 import { ConfigReferenceError, type ConfigValue } from "@earendil-works/pi-ai/utils/config-reference";
+import type { PoolState } from "../egress/pool-state.ts";
 import { getConfigValueEnvVarNames, resolveConfigValue } from "../resolve-config-value.ts";
 import { discoverEnvSlots } from "./env-slots.ts";
 import type { RunSlot } from "./failover.ts";
@@ -11,7 +12,6 @@ import type { AccountStrategy } from "./selection-order.ts";
 import {
 	acquireHalfOpenLease,
 	applicableStoredState,
-	type CredentialSlotRepository,
 	type CredentialSlotState,
 	type HalfOpenLease,
 } from "./state-store.ts";
@@ -20,7 +20,7 @@ export type RotationLane = "stored" | "env";
 
 /** Hands a half-open probe lease back, if the slot still holds that exact lease. */
 export async function releaseProbeLease(
-	repository: CredentialSlotRepository,
+	repository: PoolState,
 	providerId: string,
 	lane: RotationLane,
 	slotName: string,
@@ -40,7 +40,7 @@ export async function releaseProbeLease(
  * back: this request cannot run the probe, but a request for another model can.
  */
 async function releaseLeaseIfModelBlocked(
-	repository: CredentialSlotRepository,
+	repository: PoolState,
 	providerId: string,
 	lane: RotationLane,
 	slotName: string,
@@ -58,7 +58,7 @@ async function releaseLeaseIfModelBlocked(
  * request to it while the first is in flight.
  */
 async function probeInFlight<TSlot extends RotationSlot>(
-	repository: CredentialSlotRepository,
+	repository: PoolState,
 	providerId: string,
 	lane: RotationLane,
 	slot: TSlot,
@@ -80,7 +80,7 @@ const PROBE_IN_FLIGHT = "probe_in_flight";
  * written must not turn an expired cooldown into "no account available".
  */
 function probeLease(
-	repository: CredentialSlotRepository,
+	repository: PoolState,
 	providerId: string,
 	lane: RotationLane,
 	slotName: string,
@@ -111,7 +111,7 @@ export type RotationSources = {
 	providerId: string;
 	credential: Credential | undefined;
 	env: (name: string) => string | undefined;
-	repository: CredentialSlotRepository;
+	repository: PoolState;
 	policy?: {
 		affinity?: boolean;
 		accountStrategy?: AccountStrategy;
