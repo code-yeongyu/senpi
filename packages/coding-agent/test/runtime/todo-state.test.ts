@@ -2,6 +2,7 @@
 // and every handler that reads the session belong to the loop, so a hand's generation registers none of its loop
 // handlers, and the loop half takes a todo result that ran outside this process as the session's list. A fused
 // session is unchanged. The split session that already holds a list is closed by the per-call routing of #5641.
+import { createLoopToolHost, createSplitToolHost, loopSideToolNames } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall, type ToolResultMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import todotoolsExtension from "../../src/core/extensions/builtin/todotools/index.ts";
@@ -127,6 +128,69 @@ describe("todo on a split session (S39)", () => {
 				],
 			},
 		]);
+	});
+
+	it("a split session with an existing list runs todo start and done on the brain, as a fused session does", async () => {
+		const run = async (split: boolean) => {
+			const renders: string[] = [];
+			const handCalls: string[] = [];
+			const harness = await todoHarness((key) => renders.push(key));
+			harness.setResponses([
+				fauxAssistantMessage(
+					[fauxToolCall("todo", { op: "init", list: [{ phase: "Setup", items: ["one task", "two task"] }] })],
+					{ stopReason: "toolUse" },
+				),
+				fauxAssistantMessage("planned"),
+				fauxAssistantMessage(
+					[
+						fauxToolCall("todo", { op: "done", task: "one task" }),
+						fauxToolCall("todo", { op: "start", task: "two task" }),
+					],
+					{ stopReason: "toolUse" },
+				),
+				fauxAssistantMessage("ok"),
+			]);
+			await harness.session.prompt("plan it");
+			if (split) {
+				const session = harness.session;
+				const loopSide = loopSideToolNames(
+					session.getAllTools().flatMap((tool) => session.getToolDefinition(tool.name) ?? []),
+				);
+				harness.agent.toolHost = createSplitToolHost({
+					loopSide: (name) => loopSide.has(name),
+					isSequential: (name) => session.getToolDefinition(name)?.executionMode === "sequential",
+					loop: createLoopToolHost(harness.agent),
+					hand: {
+						execute: async (call) => {
+							handCalls.push(...call.calls.map((raw) => raw.name));
+							return { messages: [], terminate: false };
+						},
+					},
+				});
+			}
+			await harness.session.prompt("work on it");
+			const results = harness.session.messages.flatMap((message) =>
+				message.role === "toolResult" ? [message.content] : [],
+			);
+			return { phases: await viewPhases(harness), results, renders, handCalls };
+		};
+
+		const fused = await run(false);
+		const split = await run(true);
+
+		expect(split.handCalls).toEqual([]);
+		expect(split.phases).toEqual(fused.phases);
+		expect(split.phases).toEqual([
+			{
+				name: "Setup",
+				tasks: [
+					{ content: "one task", status: "completed" },
+					{ content: "two task", status: "in_progress" },
+				],
+			},
+		]);
+		expect(split.results).toEqual(fused.results);
+		expect(split.renders).toEqual(fused.renders);
 	});
 
 	it("the loop half ignores a result of another tool that carries a todo list", async () => {
