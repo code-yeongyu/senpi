@@ -2,6 +2,7 @@ import { AgentBusyError } from "../../core/agent-busy-error.ts";
 import type { AgentSession, PromptDisposition, PromptOptions } from "../../core/agent-session.ts";
 import { clientMessageIdentity } from "../../core/client-message-identity.ts";
 import { type ModelNotReadyCode, ModelNotReadyError } from "../../core/model-not-ready-error.ts";
+import { TurnConflictError } from "../../core/turn-conflict.ts";
 import { UNKNOWN_COMMAND_CONFIRM_HINT, UnknownCommandError } from "../../core/unknown-command.ts";
 import {
 	type ClientMessageAdmission,
@@ -12,6 +13,7 @@ import { ClientAdmissions } from "./client-admissions.ts";
 import { clientInputContext } from "./client-message-events.ts";
 import {
 	RPC_ERROR_NO_MODEL_SELECTED,
+	RPC_ERROR_TURN_CONFLICT,
 	RPC_ERROR_PROVIDER_CREDENTIALS_EXPIRED,
 	RPC_ERROR_PROVIDER_CREDENTIALS_MISSING,
 	RPC_ERROR_UNKNOWN_COMMAND,
@@ -27,6 +29,7 @@ const MODEL_NOT_READY_ERROR_CODES = {
 type PromptPathOptions = Pick<
 	PromptOptions,
 	| "streamingBehavior"
+	| "expectedTurnId"
 	| "thinkingLevel"
 	| "sessionTitlePrompt"
 	| "expandPromptTemplates"
@@ -120,6 +123,8 @@ export async function handleClientInput(
 						}
 						return promptPath({
 							streamingBehavior: command.streamingBehavior,
+							// The session checks it where the steer enters the queue, in the same step (senpi#5776).
+							expectedTurnId: command.expectedTurnId,
 							thinkingLevel: command.thinkingLevel,
 							sessionTitlePrompt: command.sessionTitlePrompt,
 							expandPromptTemplates: command.expandPromptTemplates,
@@ -133,10 +138,13 @@ export async function handleClientInput(
 							return promptPath({
 								streamingBehavior: command.type === "steer" ? "steer" : "followUp",
 								enqueueOrder: command.enqueueOrder,
+								expectedTurnId: command.expectedTurnId,
 							});
 						const options = {
 							...clientMessageIdentity(hooks.identity),
 							enqueueOrder: command.enqueueOrder,
+							// Checked where the input enters the queue, in the same step (senpi#5776).
+							expectedTurnId: command.expectedTurnId,
 							source: "rpc" as const,
 							interactiveUser: client.interactiveUser,
 							onQueuedInput: hooks.queued,
@@ -171,6 +179,12 @@ export async function handleClientInput(
 				? {
 						errorCode: MODEL_NOT_READY_ERROR_CODES[error.code],
 						...(error.provider === undefined ? {} : { errorData: { provider: error.provider } }),
+					}
+				: {}),
+			...(error instanceof TurnConflictError
+				? {
+						errorCode: RPC_ERROR_TURN_CONFLICT,
+						...(error.currentTurnId === undefined ? {} : { errorData: { currentTurnId: error.currentTurnId } }),
 					}
 				: {}),
 			...(unknownCommand
