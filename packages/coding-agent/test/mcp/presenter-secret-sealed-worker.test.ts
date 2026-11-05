@@ -97,6 +97,7 @@ async function workerHost(options: { readonly holdAnswers?: boolean; readonly fo
 		requests,
 		answers,
 		results,
+		client,
 		exchange: credit.exchange,
 		release: () => held.splice(0).forEach((run) => run()),
 	};
@@ -405,4 +406,14 @@ it("a queued sealed answer whose grant was revoked while it waited is refused wh
 	]);
 	expect(w.answers).toHaveLength(1);
 	expect(state.value).toBeNull();
+});
+
+it("a worker that exits with a sealed request open tells its holders the request ended", async () => {
+	const w = await workerHost();
+	const p = await pending(w);
+	w.client.worker.emit("exit", 1);
+	for (let turn = 0; turn < 8; turn++) await new Promise((resolve) => setImmediate(resolve));
+	expect(records(p.phone.lines, "mcp_presenter_secret_settled")).toMatchObject([
+		{ uiRequestId: p.request.uiRequestId, outcome: "unavailable" },
+	]);
 });

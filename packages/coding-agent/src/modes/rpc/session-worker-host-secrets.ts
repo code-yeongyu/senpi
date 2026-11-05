@@ -77,6 +77,12 @@ export class WorkerHostSecrets {
 
 	exited(): void {
 		this.route?.bindSealedResponder?.(undefined);
+		// A request the isolate never settled ends with it: its sealed holders are told, then it is forgotten.
+		for (const id of this.ids.ids())
+			if (!this.settledIds.has(id)) {
+				this.route?.sealedOutcome?.(id, "unavailable", undefined);
+				this.route?.settled(id);
+			}
 		for (const id of this.ids.ids()) this.route?.forget(id);
 		this.ids.clear();
 		this.forwarded.clear();
