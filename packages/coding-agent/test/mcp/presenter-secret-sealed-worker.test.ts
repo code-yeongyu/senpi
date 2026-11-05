@@ -332,7 +332,6 @@ it("an isolate's sealed answer result with an unknown error or shape is relayed 
 	}
 });
 
-
 it("canary: a worker-runtime sealed answer leaks nothing to the host lanes, the holder's records or the isolate protocol", async () => {
 	const w = await workerHost();
 	const p = await pending(w);
