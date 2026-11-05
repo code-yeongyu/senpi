@@ -57,25 +57,36 @@ function startSleeper(): Sleeper {
 	if (pid === undefined) throw new Error("the sleeper did not start");
 	return {
 		pid,
-		// A signalled sleeper is gone or a zombie until the runner reaps it.
-		// No process-table tool: kill(pid, 0) alone still answers for a
-		// zombie, so on Linux read /proc/<pid>/stat and treat state Z as
-		// dead. Without /proc (macOS and friends) the kill probe plus the
-		// reaped exit state below is the best available signal.
+		// A signalled sleeper is gone or a zombie until the runner reaps it, and
+		// kill(pid, 0) still succeeds for an unreaped zombie (macOS included), so
+		// the probe alone can never prove the sleeper alive. Read its state from
+		// /proc/<pid>/stat where it exists (Linux, which may have no `ps`), else
+		// from `ps -o stat=` (always present on macOS); state Z is dead. When
+		// neither answers, liveness is unknown and the probe throws, so the
+		// assertion fails instead of passing on an unreadable state.
 		alive: () => {
 			if (child.exitCode !== null || child.signalCode !== null) return false;
 			try {
 				process.kill(pid, 0);
-			} catch {
-				return false;
+			} catch (error) {
+				if (error instanceof Error && "code" in error && error.code === "ESRCH") return false;
+				throw error;
 			}
 			try {
 				const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
 				const state = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[0];
 				return state !== "Z";
 			} catch {
-				return true;
+				// No readable /proc entry: ask the process table instead.
 			}
+			const ps = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" });
+			const state = ps.stdout?.trim() ?? "";
+			if (ps.status === 0 && state !== "") return !state.startsWith("Z");
+			// `ps -p` exits 1 with no row once the pid has left the process table.
+			if (ps.status === 1 && state === "") return false;
+			throw new Error(
+				`sleeper ${pid} liveness unknown: no /proc entry and ps answered status=${ps.status} error=${ps.error?.message ?? "none"}`,
+			);
 		},
 		stop: () => child.kill("SIGKILL"),
 	};
