@@ -79,6 +79,7 @@ import { type Theme, theme } from "../interactive/theme/theme.ts";
 import { holdAutomaticInput } from "./automatic-input-gate.ts";
 import { DURABLE_CLIENT_MESSAGE_ID_CAPABILITY } from "./client-admission-record.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
+import { admitInputChain } from "./chain-admission.ts";
 import { handleClientInput } from "./client-input-handler.ts";
 import { ConnectionQuestionBridge, degradeQuestion, sessionQuestionBridges } from "./connection-question-bridge.ts";
 import { remoteOriginDeclaration, remoteOriginField } from "./remote-origin.ts";
@@ -1321,6 +1322,9 @@ export function createRpcConnectionHandler(
 			// =================================================================
 
 			case "prompt": {
+				const chain = admitInputChain(command.chainCount, session.settingsManager);
+				if (chain.kind === "refused")
+					return error(id, "prompt", chain.refusal.message, chain.refusal.errorCode, chain.refusal.errorData);
 				if (holdAutomaticInput(session, command, hasRole(INTERACTIVE_USER_CAPABILITY)))
 					return success(id, "prompt", { disposition: "handled", heldAsNotice: true });
 				turnRequested = true;
@@ -1403,6 +1407,9 @@ export function createRpcConnectionHandler(
 
 			case "steer":
 			case "follow_up": {
+				const chain = admitInputChain(command.chainCount, session.settingsManager);
+				if (chain.kind === "refused")
+					return error(id, command.type, chain.refusal.message, chain.refusal.errorCode, chain.refusal.errorData);
 				if (holdAutomaticInput(session, command, hasRole(INTERACTIVE_USER_CAPABILITY)))
 					return success(id, command.type, { disposition: "handled", heldAsNotice: true });
 				turnRequested = true;

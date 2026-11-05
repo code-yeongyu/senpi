@@ -1,4 +1,3 @@
-import { admitChainCall, CHAIN_COUNT_LIMIT, ChainCountLimitError } from "@earendil-works/pi-agent-core";
 import { AgentBusyError } from "../../core/agent-busy-error.ts";
 import type { AgentSession, PromptDisposition, PromptOptions } from "../../core/agent-session.ts";
 import { clientMessageIdentity } from "../../core/client-message-identity.ts";
@@ -10,6 +9,7 @@ import {
 	ClientMessageIdConflict,
 	type RpcClientInput,
 } from "./client-admission-record.ts";
+import { admitInputChain, type ChainRefusal } from "./chain-admission.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
 import { clientInputContext } from "./client-message-events.ts";
 import {
@@ -19,6 +19,15 @@ import {
 	RPC_ERROR_PROVIDER_CREDENTIALS_MISSING,
 	RPC_ERROR_UNKNOWN_COMMAND,
 } from "./rpc-types.ts";
+
+class ChainRefusedError extends Error {
+	readonly refusal: ChainRefusal;
+	constructor(refusal: ChainRefusal) {
+		super(refusal.message);
+		this.name = "ChainRefusedError";
+		this.refusal = refusal;
+	}
+}
 
 /** The `prompt` refusal's `errorCode` for each reason a turn cannot start. */
 const MODEL_NOT_READY_ERROR_CODES = {
@@ -56,14 +65,9 @@ export async function handleClientInput(
 ): Promise<void> {
 	try {
 		// A thread call from another session is admitted against the user's count limit before anything of it is recorded.
-		const chain =
-			command.chainCount === undefined
-				? {}
-				: {
-						chainCount: admitChainCall(command.chainCount, () =>
-							session.settingsManager.getThreadChainCountLimit(),
-						),
-					};
+		const admittedChain = admitInputChain(command.chainCount, session.settingsManager);
+		if (admittedChain.kind === "refused") throw new ChainRefusedError(admittedChain.refusal);
+		const chain = admittedChain.chainCount === undefined ? {} : { chainCount: admittedChain.chainCount };
 		const admissions = ClientAdmissions.forSession(session);
 		let disposition: PromptDisposition | undefined;
 		let responded = false;
@@ -199,8 +203,8 @@ export async function handleClientInput(
 						...(error.currentTurnId === undefined ? {} : { errorData: { currentTurnId: error.currentTurnId } }),
 					}
 				: {}),
-			...(error instanceof ChainCountLimitError
-				? { errorCode: CHAIN_COUNT_LIMIT, errorData: { count: error.count, limit: error.limit } }
+			...(error instanceof ChainRefusedError
+				? { errorCode: error.refusal.errorCode, errorData: error.refusal.errorData }
 				: {}),
 			...(unknownCommand
 				? {

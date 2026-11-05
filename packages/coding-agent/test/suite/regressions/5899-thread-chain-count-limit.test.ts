@@ -1,6 +1,10 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import type { InputEvent } from "../../../src/core/extensions/types.ts";
+import { ControlAttachments } from "../../../src/modes/interactive/session-control-attach.ts";
+import { runTuiRpcCommand } from "../../../src/modes/interactive/session-control-rpc-commands.ts";
+import type { ControlConnection } from "../../../src/modes/interactive/session-control-server.ts";
+import { makeSink } from "../rpc-connection-harness.ts";
 import { createIdentityHarness } from "../rpc-client-identity-harness.ts";
 
 // senpi#5899 (S32, decision K8): a thread call from another session arrives as RPC input carrying its chain's hop
@@ -29,8 +33,45 @@ describe("thread chain count limit at RPC input admission", () => {
 		});
 		fixtures.push(fixture);
 		fixture.harness.setResponses([fauxAssistantMessage("answered")]);
-		return { rpc: fixture.bind(), inputs };
+		return { fixture, rpc: fixture.bind(), inputs };
 	};
+
+	type Entry = (
+		setupResult: Awaited<ReturnType<typeof setup>>,
+		command: { readonly type: string } & Record<string, unknown>,
+	) => Promise<Record<string, unknown>>;
+	// Every entry that accepts a prompt, steer or follow_up for a session (senpi#5923 review): a plain RPC connection, an
+	// RPC connection while a hold keeps automatic input as a notice, and a terminal's session-control endpoint.
+	const ENTRIES: ReadonlyArray<readonly [string, Entry]> = [
+		["a plain RPC connection", ({ rpc }, command) => rpc.send(command)],
+		[
+			"an RPC connection while a run hold keeps automatic input as a notice",
+			async ({ fixture, rpc }, command) => {
+				fixture.session.pauseForRun({
+					parentSessionId: "parent",
+					parentPauseSeq: 1,
+					runRef: { kind: "task", id: "r1" },
+				});
+				return rpc.send(command);
+			},
+		],
+		[
+			"a terminal's session-control endpoint",
+			async ({ fixture }, command) => {
+				const attachments = new ControlAttachments(fixture.session, () => 0);
+				const connection: ControlConnection = { id: 1, transport: makeSink().sink, send: () => {} };
+				const answer = await runTuiRpcCommand(
+					{ instanceId: "tui", session: fixture.session, attachments },
+					connection,
+					{
+						...command,
+						id: "t-1",
+					},
+				);
+				return (answer ?? {}) as Record<string, unknown>;
+			},
+		],
+	];
 
 	it("admits a 12-hop thread call when the user set no count limit", async () => {
 		const { rpc, inputs } = await setup({});
@@ -50,21 +91,29 @@ describe("thread chain count limit at RPC input admission", () => {
 		expect(inputs.map((event) => event.chainCount)).toEqual([2]);
 	});
 
-	it.each(["prompt", "steer", "follow_up"])(
-		"refuses %s call N+1 with chain_count_limit before anything of it runs",
-		async (type) => {
-			const { rpc, inputs } = await setup({ threads: { chainCountLimit: 2 } });
+	describe.each(ENTRIES)("through %s", (_name, send) => {
+		it.each(["prompt", "steer", "follow_up"])(
+			"refuses %s call N+1 before anything of it runs or is held",
+			async (type) => {
+				const ready = await setup({ threads: { chainCountLimit: 2 } });
 
-			const response = await rpc.send({ type, message: "from B", chainCount: 3 });
+				const response = await send(ready, { type, message: "from B", chainCount: 3 });
 
-			expect(response).toMatchObject({
-				success: false,
-				errorCode: "chain_count_limit",
-				errorData: { count: 3, limit: 2 },
-			});
-			expect(inputs).toEqual([]);
-		},
-	);
+				expect(response.success).toBe(false);
+				expect(response.heldAsNotice).toBeUndefined();
+				expect(ready.inputs).toEqual([]);
+				expect(ready.fixture.session.messages.filter((message) => message.role === "user")).toEqual([]);
+			},
+		);
+	});
+
+	it("names the typed reason and the count on an RPC refusal", async () => {
+		const { rpc } = await setup({ threads: { chainCountLimit: 2 } });
+
+		const response = await rpc.send({ type: "prompt", message: "from B", chainCount: 3 });
+
+		expect(response).toMatchObject({ errorCode: "chain_count_limit", errorData: { count: 3, limit: 2 } });
+	});
 
 	it("leaves an input that is not a thread call without a chain count", async () => {
 		const { rpc, inputs } = await setup({ threads: { chainCountLimit: 2 } });
