@@ -100,6 +100,7 @@ describe("/gpt-account add", () => {
 			});
 			const { ctx, notices } = createLoginContext(async () => {});
 			Object.assign(ctx.modelRegistry, { modelRuntime: runtime });
+			const loginIdBefore = storage.get(provider.id)?.loginId;
 			await registeredGptCommand().handler("reauthorize default", ctx);
 			expect(login).toHaveBeenCalledOnce();
 			expect(projectSlot(storage.get(provider.id), "default")).toMatchObject({
@@ -112,6 +113,10 @@ describe("/gpt-account add", () => {
 				"work slot",
 			);
 			expect(siblingAfter).toEqual(sibling);
+			// senpi#4099: a completed sign-in restamps the provider loginId; a rejected one leaves it alone.
+			if (reject) expect(_loginId).toBe(loginIdBefore);
+			else expect(_loginId).toEqual(expect.any(String));
+			if (!reject) expect(_loginId).not.toBe(loginIdBefore);
 			expect(listSlots(storage.get(provider.id)).map((slot) => slot.name)).toEqual(["default", "work"]);
 			expect(notices.some((notice) => notice.type === "error")).toBe(reject);
 		},

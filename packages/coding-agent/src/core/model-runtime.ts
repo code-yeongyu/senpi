@@ -117,6 +117,9 @@ import {
 	withVirtualModels,
 } from "./virtual-models.ts";
 
+/** Sessions whose active ChatGPT account is remembered; older entries are dropped first. */
+const MAX_ACTIVE_CREDENTIAL_SESSIONS = 256;
+
 // The product's identity must ride outgoing requests. This lives here because the AI package
 // is already part of this module's graph; the CLI bootstrap deliberately does not import it.
 setWireIdentity(BRAND?.userAgent ?? APP_NAME);
@@ -310,7 +313,10 @@ export class ModelRuntime implements Models {
 	private availabilityError: string | undefined;
 	private readonly credentialOperations = new Map<string, Promise<unknown>>();
 	private readonly servedCredentials = new ServedCredentials();
-	/** Actual stored-slot attempts, scoped to the session rather than a predicted list winner. */
+	/**
+	 * Actual stored-slot attempts, scoped to the session rather than a predicted list winner. Bounded by recency:
+	 * sessions are never released to the runtime, and an evicted session is re-recorded on its next request.
+	 */
 	private readonly activeCredentialAccounts = new Map<string, string>();
 
 	getActiveCredentialAccount(providerId: string, sessionId: string): string | undefined {
@@ -1261,7 +1267,12 @@ export class ModelRuntime implements Models {
 			if (model.provider === "chatgpt-subscription" && slotAuth?.slotName !== undefined && sessionId !== undefined) {
 				const key = `${model.provider}\0${sessionId}`;
 				if (this.activeCredentialAccounts.get(key) !== slotAuth.slotName) {
+					this.activeCredentialAccounts.delete(key);
 					this.activeCredentialAccounts.set(key, slotAuth.slotName);
+					for (const oldest of this.activeCredentialAccounts.keys()) {
+						if (this.activeCredentialAccounts.size <= MAX_ACTIVE_CREDENTIAL_SESSIONS) break;
+						this.activeCredentialAccounts.delete(oldest);
+					}
 					emitProviderAccountsChanged(model.provider);
 				}
 			}
@@ -1494,7 +1505,11 @@ export class ModelRuntime implements Models {
 		const signal = operationSignal(options.signal);
 		return this.enqueueCredentialOperation(providerId, signal, async () => {
 			const storage = this.authStorage;
-			const notices = storage === undefined ? [] : await signOutClaudeCliSlotsForLogout(storage, providerId, process.env, signal);
+			// With `slotId` only that account leaves the Claude CLI store; its signed-in siblings stay.
+			const notices =
+				storage === undefined
+					? []
+					: await signOutClaudeCliSlotsForLogout(storage, providerId, process.env, signal, options.slotId);
 			const result = await this.models.logout(providerId, { ...options, signal });
 			const surviving = await this.credentials.read(providerId, { signal });
 			await this.synchronizeCredentialState(providerId, "logout", surviving, signal);

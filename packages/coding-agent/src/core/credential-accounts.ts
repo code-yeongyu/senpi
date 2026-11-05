@@ -535,6 +535,8 @@ export async function signOutClaudeCliSlotsForLogout(
 	provider: string,
 	env: NodeJS.ProcessEnv = process.env,
 	signal?: AbortSignal,
+	/** Sign out only this stored account (a one-account logout); every account when absent. */
+	slotName?: string,
 ): Promise<readonly string[]> {
 	if (normalizeProviderId(provider) !== "anthropic-subscription") return [];
 	const credential = await storage.read(provider);
@@ -547,6 +549,7 @@ export async function signOutClaudeCliSlotsForLogout(
 		// account never leaves an earlier one stored without its dir.
 		for (const slot of listSlots(credential)) {
 			if (stringField(slot, "store") !== "claude-cli") continue;
+			if (slotName !== undefined && slot.name !== slotName) continue;
 			signal?.throwIfAborted();
 			const notice = await signOutAndDropSlot(storage, provider, slot.name, env, repo, signal);
 			dropped = true;

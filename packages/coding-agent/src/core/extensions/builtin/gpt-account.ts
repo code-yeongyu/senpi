@@ -49,16 +49,15 @@ async function showAccounts(ctx: ExtensionCommandContext): Promise<void> {
 	const now = Date.now();
 	for (const account of accounts) {
 		// SIWC states that replace the health column; otherwise main's row (block reason, per-model limits, pin).
+		// A paused account keeps main's row, so its per-model limits stay listed beside the pause.
 		const override = account.signedOut
 			? "signed out"
-			: account.paused
-				? "paused"
-				: account.planUsageEnabled === false
-					? "plan usage not enabled: enable it or use an API key"
-					: undefined;
+			: account.planUsageEnabled === false
+				? "plan usage not enabled: enable it or use an API key"
+				: undefined;
 		const states =
 			override === undefined
-				? [describeCredentialAccount(account)]
+				? [describeCredentialAccount(account), ...(account.paused ? ["paused"] : [])]
 				: [accountLabel(account), account.source, override, ...(account.pinned ? ["pinned"] : [])];
 		if (account.active) states.push("active");
 		if (account.route) states.push(account.route === "siwc" ? "SIWC" : "legacy");
