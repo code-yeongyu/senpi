@@ -108,14 +108,16 @@ describe.skipIf(process.platform === "win32")("gc against real supervised hosts"
 
 	it("removes an endpoint whose host idled out, which status --all still listed", async () => {
 		const qa = endpointScratch("gcb2");
+		const idleExitMs = 500;
 		// The ensure reaches its readiness probe only after the endpoint has been published for four idle windows, as
 		// a loaded machine can make it: the window waits for that first client, so the host idles out after the
-		// ensure released it, never before it was probed (senpi#6001).
+		// ensure released it, never before it was probed (senpi#6001). The stall is derived from the window so a
+		// different window still forces that race (senpi#6025).
 		const supervisor = await realHost(qa, qa.legacy, {
-			idleExitMs: 500,
+			idleExitMs,
 			beforePidFileWrite: async () => {
 				await fileAppears(qa.legacy);
-				await delay(2_000);
+				await delay(4 * idleExitMs);
 			},
 		});
 		expect(await waitForPidGone(supervisor, 60_000)).toBe(true);
