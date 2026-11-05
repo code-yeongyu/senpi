@@ -52,12 +52,18 @@ export async function runOnPreparedToolHost<T>(
 			return result;
 		},
 	};
-	await createPreparedToolHost({ afterToolFreeze: noPreflightCarry, removedToolHints: {} }, openMemoryBatchStore).execute(
+	await createPreparedToolHost(
+		{ afterToolFreeze: noPreflightCarry, removedToolHints: {} },
+		openMemoryBatchStore,
+	).execute(
 		{ scope: { id: scopeId, root: "" }, calls: [toolCall], mode: "sequential" },
 		{
 			emit: () => undefined,
 			...(recordWitness === undefined ? {} : { recordWitness }),
-			local: { context: { systemPrompt: "", messages: [], tools: [body] }, assistantMessage: issuingMessage(toolCall) },
+			local: {
+				context: { systemPrompt: "", messages: [], tools: [body] },
+				assistantMessage: issuingMessage(toolCall),
+			},
 		},
 	);
 	if (settled === undefined) throw new Error(`agent harness: the prepared host ran no body for ${toolCall.name}`);

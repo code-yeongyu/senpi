@@ -29,7 +29,10 @@ describe("harness tool calls on the ToolHost", () => {
 				return { content: [{ type: "text", text: args.value }], details: { value: args.value } };
 			},
 		};
-		const session = new StorageBackedSession({ id: "toolhost-harness", createdAt: 1, storageVersion: 1 }, new MemoryStorage());
+		const session = new StorageBackedSession(
+			{ id: "toolhost-harness", createdAt: 1, storageVersion: 1 },
+			new MemoryStorage(),
+		);
 		sessions.push(session);
 		const faux = fauxProvider();
 		const models = createModels();
