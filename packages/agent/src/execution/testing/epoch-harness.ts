@@ -12,7 +12,7 @@ import type { ExecutionEntry } from "../ledger-types.ts";
 import { createHandEpochFence, EPOCH_FLOOR_PREFIX } from "../remote-epoch.ts";
 import { createRemoteExecutor } from "../remote-executor.ts";
 import { createHandLedger } from "../remote-hand-ledger.ts";
-import { createRemoteToolHost, type HandPlacement } from "../remote-tool-host.ts";
+import { createRemoteToolHost, type HandPlacement, type OpenScopeResult } from "../remote-tool-host.ts";
 import type { ToolHostResult } from "../tool-host.ts";
 import { type HandCaseAdapters, type TransportPump, transportPump } from "./hand-harness.ts";
 
@@ -31,6 +31,7 @@ export interface EpochRig extends TransportPump {
 	readonly killed: Promise<void>;
 	/** `turn`: the issuing assistant message's durable identity (senpi#5867). */
 	execute(brain: string, scope: string, calls: readonly AgentToolCall[], turn?: string): Promise<ToolHostResult>;
+	openScope(brain: string, scope: string, signal?: AbortSignal): Promise<OpenScopeResult>;
 	/** Moves `scope` to `brain` in the hand's placement record (what `ownerOf` answers). */
 	setOwner(scope: string, brain: string): void;
 	/** Holds the next commit `match` picks until `release()`; `reached` settles when it arrives. */
@@ -236,6 +237,11 @@ export async function openEpochRig(
 				},
 				{ emit: () => {} },
 			);
+		},
+		openScope(brain, scope, signal) {
+			const host = hosts.get(brain);
+			if (host === undefined) throw new Error(`no brain ${brain}`);
+			return host.openScope(scope, signal);
 		},
 		setOwner: (scope, brain) => void owners.set(scope, brain),
 		hold(match) {
