@@ -25,12 +25,26 @@ export interface HandEpochFence {
 	admits(scope: string, epoch: number | undefined, sender: string): boolean;
 }
 
+/**
+ * The owner of a scope's session: the brain principal, and, when the placement is claimed by CAS, the epoch its claim
+ * recorded (SP6 `PlacementOwner`). A claim winner that died before raising its floor leaves the next owner more than one
+ * epoch above the floor; that owner may raise to exactly its recorded epoch, and never above it (senpi#5860).
+ */
+export type ScopeOwner = string | { readonly principal: string; readonly epoch: number };
+
 export interface HandEpochFenceOptions {
 	/**
-	 * The brain principal that owns each scope's session now: the embedder's placement record, which changes when the
-	 * session moves. Only that owner raises the scope's floor; any other sender is refused, whatever grant it holds.
+	 * The hand's copy of the record of the brain principal that owns each scope's session now: the embedder's placement
+	 * record, which changes when the session moves. Only that owner raises the scope's floor; any other sender is refused,
+	 * whatever grant it holds.
 	 */
-	readonly ownerOf: (scope: string) => string | undefined;
+	readonly ownerOf: (scope: string) => ScopeOwner | undefined;
+	/**
+	 * Reads the record itself (record freshness, senpi#5860): called once before a raise whose epoch is above the copy's
+	 * epoch is decided, never for a raise at or below it, and coalesced per scope. A copy that names no epoch is never
+	 * refreshed. Without it, the copy decides.
+	 */
+	readonly refreshOwner?: (scope: string) => Promise<ScopeOwner | undefined>;
 	/**
 	 * Where floors persist: the hand's store, under its owner epoch, on the execution ledger's admission line, so a floor
 	 * and every ledger step are ordered and a restarted hand keeps the floors it acked. Without it, floors live as long
@@ -63,7 +77,7 @@ function decodeFloor(data: StoreValue): Floor {
  * rival at the new owner's epoch is fenced.
  */
 export function createHandEpochFence(options: HandEpochFenceOptions): HandEpochFence {
-	const { durable, ownerOf } = options;
+	const { durable, ownerOf, refreshOwner } = options;
 	const floors = new Map<string, Floor>();
 	const ready = (async () => {
 		if (durable === undefined) return;
@@ -71,14 +85,34 @@ export function createHandEpochFence(options: HandEpochFenceOptions): HandEpochF
 			floors.set(document.key.slice(EPOCH_FLOOR_PREFIX.length), decodeFloor(document.data));
 	})();
 
+	const reading = new Map<string, Promise<ScopeOwner | undefined>>();
+	const refreshed = (scope: string): Promise<ScopeOwner | undefined> => {
+		const inFlight = reading.get(scope);
+		if (inFlight !== undefined) return inFlight;
+		const read = (refreshOwner as NonNullable<typeof refreshOwner>)(scope).finally(() => reading.delete(scope));
+		reading.set(scope, read);
+		return read;
+	};
+	const ownerFor = (scope: string, epoch: number): ScopeOwner | undefined | Promise<ScopeOwner | undefined> => {
+		const copy = ownerOf(scope);
+		const ahead = typeof copy !== "string" && epoch > (copy?.epoch ?? 0);
+		return ahead && refreshOwner !== undefined ? refreshed(scope) : copy;
+	};
+
 	const raiseNow = async (scope: string, epoch: number, sender: string): Promise<FloorRaise> => {
-		if (ownerOf(scope) !== sender) return { kind: "refused", reason: "peer_unauthorized" };
+		const owner = await ownerFor(scope, epoch);
+		const principal = typeof owner === "string" ? owner : owner?.principal;
+		if (principal !== sender) return { kind: "refused", reason: "peer_unauthorized" };
+		const recorded = typeof owner === "string" ? undefined : owner?.epoch;
 		const current = floors.get(scope);
 		const floor = current?.epoch ?? 0;
 		if (epoch < floor) return { kind: "acked", floor };
 		if (current !== undefined && epoch === floor)
 			return current.owner === sender ? { kind: "acked", floor } : { kind: "refused", reason: "epoch_fenced" };
-		if (epoch - floor > EPOCH_FLOOR_MAX_STEP) return { kind: "refused", reason: "epoch_step_exceeded" };
+		// The record's owner below its recorded epoch (an instance that claimed twice): the floor in force, nothing moves.
+		if (current !== undefined && recorded !== undefined && epoch < recorded) return { kind: "acked", floor };
+		const reachable = recorded ?? floor + EPOCH_FLOOR_MAX_STEP;
+		if (epoch > reachable) return { kind: "refused", reason: "epoch_step_exceeded" };
 		const next: Floor = { epoch, owner: sender };
 		if (durable === undefined) floors.set(scope, next);
 		else {

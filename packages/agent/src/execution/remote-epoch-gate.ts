@@ -54,7 +54,8 @@ export function createEpochGate(epoch: number, send: (lane: string, floor: Remot
 			if (state === undefined || state.verdict !== undefined) return;
 			if (message.kind === "floor_refused") return decide(state, message.reason);
 			if (message.floor === epoch) return decide(state, undefined);
-			decide(state, message.floor > epoch ? "epoch_superseded" : "epoch_floor_mismatch");
+			// Above: a newer owner holds the session. Below: the record names a later epoch than this owner's (senpi#5860).
+			decide(state, "epoch_superseded");
 		},
 		resend() {
 			for (const [lane, state] of lanes) if (state.verdict?.refusal === undefined) ask(lane, state);
