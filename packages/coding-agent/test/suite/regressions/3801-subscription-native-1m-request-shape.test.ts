@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { type Api, InMemoryCredentialStore, type Model } from "@earendil-works/pi-ai";
 import { getModels } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { addAccount, emptyCredential } from "../../../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
 import {
 	overrideAuthLaneBoundary,
 	queryWithAuthLane,
@@ -147,18 +146,9 @@ function refusingOnce(models: Array<string | undefined>): SdkQuery {
 
 async function runTurn(id: string, lane: "ambient" | "oauth-slots"): Promise<Array<string | undefined>> {
 	const store = new InMemoryCredentialStore();
-	await store.modify("anthropic-subscription", async () =>
-		addAccount(emptyCredential(), {
-			name: "main",
-			access: "fake-access",
-			refresh: "fake-refresh",
-			expires: Date.now() + 60 * 60_000,
-			source: "login",
-		}),
-	);
 	overrideAuthLaneBoundary({
 		createStore: () => store,
-		env: () => ({ PATH: "/usr/bin" }),
+		env: () => ({ PATH: "/usr/bin", ...(lane === "oauth-slots" ? { CLAUDE_CODE_OAUTH_TOKEN: "fake-access" } : {}) }),
 		getAgentDir: () => directory,
 	});
 	const providerSettings: AnthropicSubscriptionProviderSettings = { tokenInjection: lane };

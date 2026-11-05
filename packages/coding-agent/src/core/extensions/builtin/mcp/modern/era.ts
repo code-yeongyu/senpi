@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { isMcpNeedsAuthError } from "../needs-auth.ts";
+import { loadMcpSdkTypes } from "../sdk.lazy.ts";
 import {
 	buildModernRequest,
 	classifyModernError,
@@ -107,13 +108,28 @@ function errorReply(value: unknown, id?: string | number): boolean {
 		.safeParse(value).success;
 }
 
-/** The newest version both sides support, from a -32022 rejection. */
-function mutualVersion(error: ModernError, options: ProbeOptions): string | undefined {
+/** Preserve modern selection first; the SDK owns the implemented initialize-based versions. */
+async function mutualVersion(error: ModernError, options: ProbeOptions): Promise<string | undefined> {
 	if (error.kind !== "UnsupportedProtocolVersionError" || !error.supportedVersions) return undefined;
-	return error.supportedVersions
+	const modern = error.supportedVersions
 		.filter((candidate) => options.supportedVersions.includes(candidate))
 		.sort()
 		.at(-1);
+	if (modern) return modern;
+	const { SUPPORTED_PROTOCOL_VERSIONS } = await loadMcpSdkTypes();
+	return error.supportedVersions
+		.filter((candidate) => SUPPORTED_PROTOCOL_VERSIONS.includes(candidate))
+		.sort()
+		.at(-1);
+}
+
+function noMutualVersion(error: ModernError): EraOutcome {
+	const supported = error.kind === "UnsupportedProtocolVersionError" ? error.supportedVersions : undefined;
+	return indeterminate(
+		"no-mutual-version",
+		`Update client or server to share a supported protocol version. Server supported versions: ${supported?.join(", ") ?? "not provided"}.`,
+		{ era: "modern" },
+	);
 }
 
 function indeterminate(
@@ -192,14 +208,9 @@ export async function probeHttpEra(url: URL, fetch: ProbeFetch, options: ProbeOp
 					{ era: "modern" },
 				);
 			}
-			const mutual = mutualVersion(error, options);
-			if (!mutual) {
-				return indeterminate(
-					"no-mutual-version",
-					"Update client or server to share a supported protocol version.",
-					{ era: "modern" },
-				);
-			}
+			const mutual = await mutualVersion(error, options);
+			if (!mutual) return noMutualVersion(error);
+			if (!options.supportedVersions.includes(mutual)) return { kind: "legacy-fallback" };
 			version = mutual;
 			continue;
 		}
@@ -251,8 +262,10 @@ export async function probeStdioEra(send: ProbeSend, options: ProbeOptions): Pro
 		if (!errorReply(value, id)) return attempt > 0 ? retryRejected() : { kind: "legacy-fallback", restart: true };
 		const error = modernError(value);
 		if (!error) return attempt > 0 ? retryRejected() : { kind: "legacy-fallback" };
-		const mutual = attempt === 0 ? mutualVersion(error, options) : undefined;
+		const mutual = attempt === 0 ? await mutualVersion(error, options) : undefined;
+		if (attempt === 0 && error.code === -32022 && !mutual) return noMutualVersion(error);
 		if (!mutual) return { kind, version, error };
+		if (!options.supportedVersions.includes(mutual)) return { kind: "legacy-fallback" };
 		version = mutual;
 	}
 	return retryRejected();

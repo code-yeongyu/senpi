@@ -1,6 +1,7 @@
 /** Real supervisor/host, with only the supervisor clock and OS-watch failure controlled by the test. */
 import childProcess from "node:child_process";
 import fs from "node:fs";
+import fsPromises from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import net from "node:net";
 import { mock } from "node:test";
@@ -51,8 +52,13 @@ if (mode === "owner") {
 			accept(peer);
 			peer.once("close", () => process.send?.({ type: "detached" }));
 		});
-		server.once("listening", () => process.send?.({ type: "ready" }));
 		return server;
+	});
+	const link = fsPromises.link;
+	// The endpoint exists once the supervisor links its bound socket into place, not at "listening" (#5319).
+	mock.method(fsPromises, "link", async (...args: Parameters<typeof link>) => {
+		await link(...args);
+		if (args[1] === socket) process.send?.({ type: "ready" });
 	});
 	syncBuiltinESMExports();
 	const check = SupervisorOwner.prototype.shouldExit;

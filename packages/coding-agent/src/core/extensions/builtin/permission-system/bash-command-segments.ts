@@ -19,6 +19,42 @@ export type BashCommandAnalysis =
 	| { readonly kind: "parsed"; readonly segments: readonly (readonly string[])[] }
 	| { readonly kind: "unparsed" };
 
+/** One word of a simple command after quote removal. */
+export interface BashCommandWord {
+	readonly text: string;
+	/** Part of the word comes from an expansion or a glob, so its runtime value is unknown. */
+	readonly dynamic: boolean;
+	/** Part of the word was quoted or escaped. */
+	readonly quoted: boolean;
+	/** The text before the word's first expansion (all of `text` for a literal word): `-$G` has `-`. */
+	readonly literalPrefix: string;
+}
+
+/** A wrapper (`sudo`, `env -i`, `bash -c`, `xargs`, ...) around a simple command, with its own words. */
+export interface BashCommandWrapper {
+	readonly name: string;
+	readonly words: readonly BashCommandWord[];
+}
+
+/** One simple command a bash call would run, with the words the permission lines are made of. */
+export interface BashCommandSegment {
+	/** Basename of the command word. */
+	readonly name: string;
+	/** The command word as written (`/usr/bin/pkill`, `./kill`, `kill`). */
+	readonly nameSpelling: string;
+	readonly nameIsPath: boolean;
+	/** The words after the name; empty for a wrapper's own entry, whose wrapped command is its own segment. */
+	readonly words: readonly BashCommandWord[];
+	/** Wrappers around this command, outermost first. */
+	readonly wrappers: readonly BashCommandWrapper[];
+	/** Commands of one pipeline (`a | b`, and every command a wrapper in it runs) share this number. */
+	readonly pipeline: number;
+}
+
+export type BashCommandWordsAnalysis =
+	| { readonly kind: "parsed"; readonly segments: readonly BashCommandSegment[] }
+	| { readonly kind: "unparsed" };
+
 interface Word {
 	text: string;
 	/** Part of the word comes from an expansion or a glob, so its runtime value is unknown. */
@@ -32,6 +68,24 @@ interface Word {
 	brace: boolean;
 	/** An unquoted `*`, `?` or `[` that pathname expansion may replace. */
 	glob: boolean;
+	/** Length of the text before the first expansion; `undefined` while the word has none. */
+	dynamicAt?: number;
+}
+
+interface LexedSegment {
+	readonly words: Word[];
+	readonly pipeline: number;
+}
+
+/** Collects the simple commands of one command, in source order, and numbers its pipelines. */
+class SegmentSink {
+	readonly segments: LexedSegment[] = [];
+	private pipelines = 0;
+
+	newPipeline(): number {
+		this.pipelines += 1;
+		return this.pipelines;
+	}
 }
 
 class Unparsed extends Error {}
@@ -214,13 +268,15 @@ class Lexer {
 	private inDoubleBracket = false;
 	private readonly source: string;
 	private readonly depth: number;
-	private readonly segments: Word[][];
+	private readonly sink: SegmentSink;
+	private pipeline: number;
 
-	constructor(source: string, depth: number, segments: Word[][]) {
+	constructor(source: string, depth: number, sink: SegmentSink) {
 		if (depth > MAX_DEPTH) fail();
 		this.source = source;
 		this.depth = depth;
-		this.segments = segments;
+		this.sink = sink;
+		this.pipeline = sink.newPipeline();
 	}
 
 	run(): void {
@@ -303,8 +359,10 @@ class Lexer {
 				continue;
 			}
 			if (char === "|") {
-				this.endSegment();
-				this.index += source[this.index + 1] === "|" || source[this.index + 1] === "&" ? 2 : 1;
+				// `|` and `|&` pipe into the next command; `||` starts a new pipeline.
+				const orList = source[this.index + 1] === "|";
+				this.endSegment(!orList);
+				this.index += orList || source[this.index + 1] === "&" ? 2 : 1;
 				continue;
 			}
 			if (char === ";") {
@@ -341,6 +399,7 @@ class Lexer {
 			};
 		}
 		const word = this.word;
+		if (flags.dynamic && word.dynamicAt === undefined) word.dynamicAt = word.text.length;
 		word.text += text;
 		if (flags.dynamic) word.dynamic = true;
 		if (flags.quoted) word.quoted = true;
@@ -349,7 +408,7 @@ class Lexer {
 	}
 
 	private nested(source: string): void {
-		new Lexer(source, this.depth + this.textDepth + 1, this.segments).run();
+		new Lexer(source, this.depth + this.textDepth + 1, this.sink).run();
 	}
 
 	private endWord(): void {
@@ -357,9 +416,15 @@ class Lexer {
 		this.word = undefined;
 		if (word === undefined) return;
 		// Only `{a,b}` and `{1..3}` expand; `{}` (find's placeholder) and `{x}` stay literal.
-		if (word.brace && /\{[^}]*(,|\.\.)[^}]*\}/.test(word.text)) word.dynamic = true;
+		if (word.brace && /\{[^}]*(,|\.\.)[^}]*\}/.test(word.text)) {
+			word.dynamic = true;
+			word.dynamicAt ??= 0;
+		}
 		// `[` and `[[` are the test command and keyword, not a pattern.
-		if (word.glob && word.text !== "[" && word.text !== "[[") word.dynamic = true;
+		if (word.glob && word.text !== "[" && word.text !== "[[") {
+			word.dynamic = true;
+			word.dynamicAt ??= 0;
+		}
 		if (this.redirectNext !== undefined) {
 			const heredoc = this.redirectNext.heredoc;
 			this.redirectNext = undefined;
@@ -380,13 +445,14 @@ class Lexer {
 		this.words.push(word);
 	}
 
-	private endSegment(): void {
+	private endSegment(pipesOn = false): void {
 		this.endWord();
 		// A redirection operator with no target is a syntax error; bash runs nothing.
 		if (this.redirectNext !== undefined) fail();
 		if (this.inDoubleBracket) fail();
-		if (this.words.length > 0) this.segments.push(this.words);
+		if (this.words.length > 0) this.sink.segments.push({ words: this.words, pipeline: this.pipeline });
 		this.words = [];
+		if (!pipesOn) this.pipeline = this.sink.newPipeline();
 	}
 
 	private readDoubleQuoted(): void {
@@ -598,7 +664,23 @@ const UNSUPPORTED_LEADERS = new Set(["case", "esac", "function", "coproc"]);
 const LOOP_HEADERS = new Set(["for", "select"]);
 const SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh", "mksh", "ash", "yash", "posh", "fish", "csh", "tcsh"]);
 
-type Expand = (words: readonly Word[], out: string[][]) => void;
+/** One command line the permission system decides, with the words and context it was built from. */
+interface Entry {
+	readonly line: string[];
+	readonly name: string;
+	readonly nameSpelling: string;
+	readonly words: readonly Word[];
+	readonly wrappers: readonly BashCommandWrapper[];
+	readonly pipeline: number;
+}
+
+/** Where a simple command sits: the wrappers around it (outermost first) and its pipeline. */
+interface Place {
+	readonly wrappers: readonly BashCommandWrapper[];
+	readonly pipeline: number;
+}
+
+type Expand = (words: readonly Word[], out: Entry[], place: Place) => void;
 
 /** Options a wrapper takes: `true` = a flag alone, `"value"` = a flag followed by one value. */
 type OptionTable = Readonly<Record<string, true | "value">>;
@@ -705,7 +787,7 @@ const pathBasename = (text: string) => {
  * Turns one simple command's words into the command lines it runs: the wrapper's own name first,
  * then the wrapped command, recursively. Every name is reduced to its basename.
  */
-const expandSimpleCommand: Expand = (input, out) => {
+const expandSimpleCommand: Expand = (input, out, place) => {
 	let words = input;
 	// Leading assignments and reserved words do not name the command.
 	let start = 0;
@@ -735,65 +817,76 @@ const expandSimpleCommand: Expand = (input, out) => {
 	if (name === "") fail();
 	const rest = words.slice(1);
 	const line = [name, ...rest.map((word) => word.text)];
+	const own: Entry = { line, name, nameSpelling: first.text, words: rest, ...place };
+	/** The wrapper's own entry: its name alone, as the permission line has always had it. */
+	const wrapperEntry: Entry = { line: [name], name, nameSpelling: first.text, words: [], ...place };
+	const inside: Place = {
+		wrappers: [...place.wrappers, { name, words: rest.map(publicWord) }],
+		pipeline: place.pipeline,
+	};
+	const expandScript = (script: string) => {
+		for (const segment of lexSegments(script))
+			expandSimpleCommand(segment.words, out, { ...inside, pipeline: segment.pipeline });
+	};
 
 	if (SHELLS.has(name)) {
-		out.push([name]);
+		out.push(wrapperEntry);
 		const commandIndex = shellCommandIndex(rest);
 		if (commandIndex === undefined) {
-			out.push(line);
+			out.push(own);
 			return;
 		}
 		const script = rest[commandIndex];
 		if (script === undefined || script.dynamic) fail();
-		for (const segment of lexSegments(script.text)) expandSimpleCommand(segment, out);
+		expandScript(script.text);
 		return;
 	}
 	if (name === "eval") {
-		out.push([name]);
+		out.push(wrapperEntry);
 		if (rest.some((word) => word.dynamic)) fail();
 		const args = rest[0]?.text === "--" ? rest.slice(1) : rest;
-		for (const segment of lexSegments(args.map((word) => word.text).join(" "))) expandSimpleCommand(segment, out);
+		expandScript(args.map((word) => word.text).join(" "));
 		return;
 	}
 	if (name === "su") {
-		out.push([name]);
+		out.push(wrapperEntry);
 		const script = suCommand(rest);
 		if (script === undefined) return;
-		for (const segment of lexSegments(script)) expandSimpleCommand(segment, out);
+		expandScript(script);
 		return;
 	}
 	if (name === "trap") {
-		out.push([name]);
+		out.push(wrapperEntry);
 		const scriptIndex = rest.findIndex((word) => !word.text.startsWith("-"));
 		const script = scriptIndex < 0 ? undefined : rest[scriptIndex];
 		if (script === undefined) return;
 		if (script.dynamic) fail();
-		for (const segment of lexSegments(script.text)) expandSimpleCommand(segment, out);
+		expandScript(script.text);
 		return;
 	}
 	if (name === "env") {
-		out.push([name]);
+		out.push(wrapperEntry);
 		if (rest.some((word) => !word.dynamic && (word.text === "-S" || word.text.startsWith("--split-string")))) fail();
 		let index = skipOptions(rest, 0, ENV_OPTIONS);
 		// env itself, not the shell, reads these: any NAME=VALUE word, quoted or not, is an assignment.
 		while (index < rest.length && !rest[index].dynamic && /^[^=]+=/.test(rest[index].text)) index += 1;
-		expandSimpleCommand(rest.slice(index), out);
+		expandSimpleCommand(rest.slice(index), out, inside);
 		return;
 	}
 	if (name === "timeout") {
-		out.push([name]);
+		out.push(wrapperEntry);
 		const index = skipOptions(rest, 0, TIMEOUT_OPTIONS);
 		// The first operand is the duration.
-		expandSimpleCommand(rest.slice(index + 1), out);
+		expandSimpleCommand(rest.slice(index + 1), out, inside);
 		return;
 	}
 	if (name === "xargs") {
-		out.push([name]);
-		expandSimpleCommand(rest.slice(skipOptions(rest, 0, XARGS_OPTIONS)), out);
+		out.push(wrapperEntry);
+		expandSimpleCommand(rest.slice(skipOptions(rest, 0, XARGS_OPTIONS)), out, inside);
 		return;
 	}
 	if (name === "find") {
-		out.push(line);
+		out.push(own);
 		// find reads its words after quote removal, so a quoted action is still an action.
 		if (rest.some((word) => word.dynamic)) fail();
 		for (let index = 0; index < rest.length; index += 1) {
@@ -801,18 +894,18 @@ const expandSimpleCommand: Expand = (input, out) => {
 			let end = index + 1;
 			while (end < rest.length && rest[end].text !== ";" && rest[end].text !== "+") end += 1;
 			if (end >= rest.length) fail();
-			expandSimpleCommand(rest.slice(index + 1, end), out);
+			expandSimpleCommand(rest.slice(index + 1, end), out, inside);
 			index = end;
 		}
 		return;
 	}
 	const wrapperOptions = WRAPPER_OPTIONS[name];
 	if (wrapperOptions !== undefined) {
-		out.push([name]);
-		expandSimpleCommand(rest.slice(skipOptions(rest, 0, wrapperOptions)), out);
+		out.push(wrapperEntry);
+		expandSimpleCommand(rest.slice(skipOptions(rest, 0, wrapperOptions)), out, inside);
 		return;
 	}
-	out.push(line);
+	out.push(own);
 };
 
 /** The command string `su` runs (`-c`, `--command`, `--session-command`, or `c` in a flag cluster), if any. */
@@ -864,10 +957,35 @@ function shellCommandIndex(rest: readonly Word[]): number | undefined {
 	return hasCommandFlag ? index : undefined;
 }
 
-function lexSegments(command: string): Word[][] {
-	const segments: Word[][] = [];
-	new Lexer(command, 0, segments).run();
-	return segments;
+function lexSegments(command: string): LexedSegment[] {
+	const sink = new SegmentSink();
+	new Lexer(command, 0, sink).run();
+	return sink.segments;
+}
+
+function publicWord(word: Word): BashCommandWord {
+	return {
+		text: word.text,
+		dynamic: word.dynamic,
+		quoted: word.quoted,
+		literalPrefix: word.dynamicAt === undefined ? word.text : word.text.slice(0, word.dynamicAt),
+	};
+}
+
+/** Every entry `command` would run, or `undefined` when any part of it is outside what this lexer understands. */
+function analyze(command: string): Entry[] | undefined {
+	steps = 0;
+	if (command.length > MAX_COMMAND_LENGTH) return undefined;
+	try {
+		const out: Entry[] = [];
+		for (const segment of lexSegments(command))
+			expandSimpleCommand(segment.words, out, { wrappers: [], pipeline: segment.pipeline });
+		return out;
+	} catch {
+		// Fail closed: a parse failure, the depth or step budget, or a runtime error (a deep stack)
+		// all mean `unparsed`, which no command-specific rule can allow.
+		return undefined;
+	}
 }
 
 /**
@@ -875,17 +993,31 @@ function lexSegments(command: string): Word[][] {
  * source order; or `unparsed` when any part of the command is outside what this lexer understands.
  */
 export function analyzeBashCommand(command: string): BashCommandAnalysis {
-	steps = 0;
-	if (command.length > MAX_COMMAND_LENGTH) return { kind: "unparsed" };
-	try {
-		const out: string[][] = [];
-		for (const segment of lexSegments(command)) expandSimpleCommand(segment, out);
-		return { kind: "parsed", segments: out };
-	} catch {
-		// Fail closed: a parse failure, the depth or step budget, or a runtime error (a deep stack)
-		// all mean `unparsed`, which no command-specific rule can allow.
-		return { kind: "unparsed" };
-	}
+	const entries = analyze(command);
+	return entries === undefined
+		? { kind: "unparsed" }
+		: { kind: "parsed", segments: entries.map((entry) => entry.line) };
+}
+
+/**
+ * The same simple commands as `analyzeBashCommand`, with each one's words (dynamic and quoted flags kept), the
+ * spelling of its name, the wrappers around it and its pipeline. Each segment's `[name, ...words]` is exactly the
+ * line `analyzeBashCommand` returns for it.
+ */
+export function analyzeBashCommandWords(command: string): BashCommandWordsAnalysis {
+	const entries = analyze(command);
+	if (entries === undefined) return { kind: "unparsed" };
+	return {
+		kind: "parsed",
+		segments: entries.map((entry) => ({
+			name: entry.name,
+			nameSpelling: entry.nameSpelling,
+			nameIsPath: entry.nameSpelling.includes("/"),
+			words: entry.words.map(publicWord),
+			wrappers: entry.wrappers,
+			pipeline: entry.pipeline,
+		})),
+	};
 }
 
 /** Lexer steps the last `analyzeBashCommand` call used (for scaling tests). */

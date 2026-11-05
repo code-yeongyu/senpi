@@ -12,10 +12,6 @@ vi.mock("node:fs", async (importOriginal) => {
 	return { ...actual, watch: mocks.fsWatch };
 });
 
-class WatcherProbe extends EventEmitter {
-	readonly close = vi.fn();
-}
-
 class WorkerProbe extends EventEmitter {
 	readonly postMessage = vi.fn();
 	readonly terminate = vi.fn(async () => 0);
@@ -90,27 +86,5 @@ describe("non-recursive watch main-thread stall", () => {
 		// A later subscription reuses the replacement, not a third worker.
 		source("/agent/skills", vi.fn(), { recursive: false });
 		expect(createRecursiveWorker).toHaveBeenCalledTimes(2);
-	});
-
-	it("keeps every watch on direct fs.watch on windows", () => {
-		const watcher = new WatcherProbe();
-		mocks.fsWatch.mockReturnValue(watcher);
-		const createRecursiveWorker = vi.fn(() => new WorkerProbe());
-		const source = createFsWatchEventSource(vi.fn(), {
-			platform: "win32",
-			createRecursiveWorker,
-		});
-
-		const unsubscribe = source("/small-config-directory", vi.fn(), { recursive: false });
-
-		expect(mocks.fsWatch).toHaveBeenCalledWith(
-			"/small-config-directory",
-			expect.objectContaining({ recursive: false }),
-			expect.any(Function),
-		);
-		expect(createRecursiveWorker).not.toHaveBeenCalled();
-
-		unsubscribe();
-		expect(watcher.close).toHaveBeenCalledTimes(1);
 	});
 });

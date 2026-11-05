@@ -5,6 +5,7 @@ import type {
 	PendingInputDecision,
 	PendingInputEvent,
 	PendingInputFailure,
+	RemovalCause,
 	SubmitEvent,
 } from "./pending-input-types.ts";
 
@@ -23,7 +24,9 @@ export function reducePendingInput(current: PendingInput | undefined, event: Pen
 }
 
 function submit(current: PendingInput | undefined, event: SubmitEvent): PendingInputDecision {
-	if (current !== undefined) {
+	// A steer refused for its turn was never queued, so its id carries no delivery to replay (senpi#5776).
+	const neverQueued = current?.phase === "removed" && current.removedBy === "turn_conflict";
+	if (current !== undefined && !neverQueued) {
 		if (current.fingerprint !== event.fingerprint) {
 			return { next: current, result: answer(current, "client_message_id_conflict"), effects: [] };
 		}
@@ -109,7 +112,11 @@ function reduceLifecycle(current: PendingInput, event: LifecycleEvent): PendingI
 	}
 }
 
-function cancel(current: PendingInput, cause: "stop" | "child_cancel", consumerFenced: boolean): PendingInputDecision {
+function cancel(
+	current: PendingInput,
+	cause: Exclude<RemovalCause, "remove">,
+	consumerFenced: boolean,
+): PendingInputDecision {
 	const removable = current.phase === "queued" || (current.phase === "sending" && consumerFenced);
 	if (!removable) {
 		return current.phase === "sending"

@@ -4,6 +4,7 @@ import type { FallbackChains } from "./chains.ts";
 export interface ProviderRetrySettings {
 	timeoutMs?: number;
 	streamStartTimeoutMs?: number;
+	keepAliveTimeoutMs?: number; // how long keep-alive bytes alone (SSE pings, comment keep-alives) may hold a request without content; default: 900000, 0 disables
 	streamRetryTimeoutMs?: number; // retry-continuation watchdog cap after a provider timeout; reconciled to max(cap, streamStartTimeoutMs) so a granted stream-start budget is never cut short; default: 30000, 0 disables
 	maxRetries?: number;
 	maxRetryDelayMs?: number;
@@ -47,11 +48,11 @@ export interface ResolvedRetryFallbackSettings {
  * `claude-opus-4-8` or `claude-opus-4-6` (senpi#3727).
  */
 export const DEFAULT_FALLBACK_CHAINS: FallbackChains = {
-	...(FABLE55_LAUNCH.released ? { [FABLE55_LAUNCH.modelId]: ["claude-opus-5-5:max", "claude-opus-5:max"] } : {}),
-	// Every rung is `:max`: Opus 5.5 is recommended at max.
-	"claude-fable-5-1": ["claude-opus-5-5:max", "claude-opus-5:max"],
-	"claude-fable-5": ["claude-opus-5-5:max", "claude-opus-5:max"],
-	"claude-opus-5-5": ["claude-opus-5:max"],
+	...(FABLE55_LAUNCH.released ? { [FABLE55_LAUNCH.modelId]: ["claude-opus-5-5", "claude-opus-5"] } : {}),
+	// Rungs carry no explicit level so fallback inherits the session's current thinking effort (senpi#4103).
+	"claude-fable-5-1": ["claude-opus-5-5", "claude-opus-5"],
+	"claude-fable-5": ["claude-opus-5-5", "claude-opus-5"],
+	"claude-opus-5-5": ["claude-opus-5"],
 };
 
 function cloneDefaultFallbackChains(): Record<string, readonly string[]> {
@@ -82,11 +83,12 @@ function isStringArray(value: unknown): value is string[] {
  * Cross-scope replacement (global vs project) stays wholesale and is handled by
  * `deepMergeSettings`; this only resolves defaults against the merged result.
  */
-function resolveFallbackChains(value: unknown): FallbackChains {
-	if (value === undefined || !isPlainObject(value)) return cloneDefaultFallbackChains();
-	const chains: Record<string, readonly string[]> = cloneDefaultFallbackChains();
+function resolveFallbackChains(value: unknown, sessionPolicy: boolean): FallbackChains {
+	const base = (): Record<string, readonly string[]> => (sessionPolicy ? {} : cloneDefaultFallbackChains());
+	if (value === undefined || !isPlainObject(value)) return base();
+	const chains = base();
 	for (const [key, entries] of Object.entries(value)) {
-		if (!isStringArray(entries)) return cloneDefaultFallbackChains();
+		if (!isStringArray(entries)) return base();
 		// An empty list stays in the map as a tombstone: canonicalization needs it to
 		// suppress the expanded default for that family or provider variant, and
 		// dropping it here would let the shipped default reappear after expansion.
@@ -95,10 +97,18 @@ function resolveFallbackChains(value: unknown): FallbackChains {
 	return chains;
 }
 
-export function resolveRetryFallbackSettings(settings: RetrySettings | undefined): ResolvedRetryFallbackSettings {
+/**
+ * `sessionPolicy`: the chains were supplied by the session's opener (`open_session.retryFallback`,
+ * `set_retry_fallback`), so they are the session's whole policy and the shipped defaults are not merged
+ * back under them (senpi#4673). Settings-file chains still layer over the defaults.
+ */
+export function resolveRetryFallbackSettings(
+	settings: RetrySettings | undefined,
+	options: { readonly sessionPolicy?: boolean } = {},
+): ResolvedRetryFallbackSettings {
 	return {
 		modelFallback: typeof settings?.modelFallback === "boolean" ? settings.modelFallback : true,
-		chains: resolveFallbackChains(settings?.fallbackChains),
+		chains: resolveFallbackChains(settings?.fallbackChains, options.sessionPolicy === true),
 		revertPolicy: settings?.fallbackRevertPolicy === "never" ? "never" : "cooldown-expiry",
 	};
 }

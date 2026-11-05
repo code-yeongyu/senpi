@@ -1,0 +1,13 @@
+diff --git a/packages/coding-agent/src/core/extensions/builtin/permission-system/prompt.ts b/packages/coding-agent/src/core/extensions/builtin/permission-system/prompt.ts
+index 65cce7ac54..21dac84b7d 100644
+--- a/packages/coding-agent/src/core/extensions/builtin/permission-system/prompt.ts
++++ b/packages/coding-agent/src/core/extensions/builtin/permission-system/prompt.ts
+@@ -12,7 +12,7 @@ export async function showPermissionPrompt(
+ 	const displayTitle = `${title}\n\n${message}`;
+ 
+ 	const wider = request.widerAlways;
+-	const options = ["Allow once", "Allow always", ...(wider ? [wider.label] : []), "Deny", "Deny with feedback"];
++	const options = ["Allow once", ...(wider ? [wider.label] : []), "Deny", "Deny with feedback"];
+ 
+ 	// Clients bind the dialog to the call it approves by this id; with several calls of one tool in
+ 	// flight (the engine prepares a message's calls before running them), nothing else says which.

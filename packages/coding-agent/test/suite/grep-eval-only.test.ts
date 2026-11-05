@@ -190,11 +190,12 @@ describe("policy", () => {
 		try {
 			expect(harness.session.getActiveToolNames()).not.toContain("grep");
 			expect(harness.agent.removedToolHints.grep).toContain(GREP_HINT);
-			// Pin the callable shape and suffix placement, not the surrounding prose.
-			const lastParagraph = harness.session.systemPrompt.split("\n\n").at(-1);
+			// Pin the callable shapes and suffix placement, not the surrounding prose: the one eval-only paragraph
+			// closes the prompt and lists grep after the other eval-only tools (senpi#5335).
+			const lastParagraph = harness.session.systemPrompt.split("\n\n").at(-1) ?? "";
 			expect(lastParagraph).toContain(GREP_HINT);
-			expect(lastParagraph).not.toContain(PROBE_HINT);
-			expect(harness.session.systemPrompt).toContain(PROBE_HINT);
+			expect(lastParagraph).toContain(PROBE_HINT);
+			expect(lastParagraph.indexOf(GREP_HINT)).toBeGreaterThan(lastParagraph.indexOf(PROBE_HINT));
 		} finally {
 			harness.cleanup();
 		}

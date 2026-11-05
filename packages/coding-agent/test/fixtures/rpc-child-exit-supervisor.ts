@@ -6,7 +6,19 @@ import { mock } from "node:test";
 import { runHostSupervisor } from "../../src/modes/rpc/host-lifecycle.ts";
 
 const [mode, socket, agentDir] = process.argv.slice(2);
+// #4746: the test holds the other end of this socketpair. Its EOF means the test let go (cleanup, failure, or a
+// killed runner), so both fixture processes exit on it; the socket host ignores SIGTERM and its supervisor's death.
+const SUPERVISOR_LEASE_FD = 4;
+const HOST_LEASE_FD = 5;
+function exitWhenLeaseEnds(fd: number): void {
+	const lease = new net.Socket({ fd, readable: true, writable: false });
+	lease.on("error", () => {});
+	lease.once("close", () => process.exit(1));
+	lease.resume();
+	lease.unref();
+}
 if (mode === "host" || mode === "host-term") {
+	exitWhenLeaseEnds(HOST_LEASE_FD);
 	const address = process.argv.find((arg) => arg.startsWith("unix://"))?.slice(7);
 	if (!address) throw new Error("missing internal socket");
 	// The supervisor hands a POSIX host its internal key on stdin and proves readiness over the sealed hop
@@ -49,26 +61,27 @@ if (mode === "host" || mode === "host-term") {
 	if (mode === "host-term") server.once("listening", () => process.stderr.write("host-term-ready\n"));
 } else {
 	if (!socket || !agentDir) throw new Error("missing supervisor paths");
+	exitWhenLeaseEnds(SUPERVISOR_LEASE_FD);
 	const timeout = globalThis.setTimeout;
 	const waits = new Map<number, () => void>();
 	let sequence = 0;
-	if (mode !== "honour-term")
-		mock.method(globalThis, "setTimeout", (run: () => void, ms: number) => {
-			if (![2_000, 5_000, 30_000].includes(ms)) return timeout(run, ms);
-			const timer = timeout(() => {}, 2_147_483_647);
-			const id = ++sequence;
-			waits.set(id, run);
-			process.send?.({ type: "wait", id, ms });
-			return timer;
-		});
+	mock.method(globalThis, "setTimeout", (run: () => void, ms: number) => {
+		if (![2_000, 5_000, 30_000].includes(ms)) return timeout(run, ms);
+		const timer = timeout(() => {}, 2_147_483_647);
+		const id = ++sequence;
+		waits.set(id, run);
+		process.send?.({ type: "wait", id, ms });
+		return timer;
+	});
 	const spawn = childProcess.spawn;
 	let child: childProcess.ChildProcess | undefined;
 	let releaseExit: (() => void) | undefined;
 	mock.method(childProcess, "spawn", (...args: Parameters<typeof childProcess.spawn>) => {
-		if (mode === "honour-term") {
-			if (!Array.isArray(args[2]?.stdio)) throw new Error("normal-stop fixture needs explicit child stdio");
-			args[2] = { ...args[2], stdio: args[2].stdio.map((value, index) => (index === 2 ? "pipe" : value)) };
-		}
+		if (!Array.isArray(args[2]?.stdio)) throw new Error("fixture host spawn needs explicit child stdio");
+		const stdio = args[2].stdio.map((value, index) => (mode === "honour-term" && index === 2 ? "pipe" : value));
+		while (stdio.length < HOST_LEASE_FD) stdio.push("ignore");
+		stdio[HOST_LEASE_FD] = SUPERVISOR_LEASE_FD;
+		args[2] = { ...args[2], stdio };
 		child = spawn(...args);
 		process.send?.({ type: "host", pid: child.pid });
 		if (mode === "honour-term") {
@@ -110,10 +123,10 @@ if (mode === "host" || mode === "host-term") {
 		child.once("exit", (code, signal) => process.send?.({ type: "reaped", pid: child?.pid, code, signal }));
 		return child;
 	});
-	if (mode === "held-kill" || mode === "throw-before-term") {
+	{
 		const kill = process.kill;
 		mock.method(process, "kill", (pid: number, signal?: NodeJS.Signals | number) => {
-			if (pid === child?.pid && mode === "throw-before-term" && (signal === "SIGTERM" || signal === "SIGKILL"))
+			if (pid === child?.pid && (signal === "SIGTERM" || signal === "SIGKILL"))
 				process.send?.({ type: "child-signal", signal });
 			if (mode === "held-kill" && pid === child?.pid && signal === "SIGKILL") {
 				// A live child past the breaker cannot be manufactured with a real SIGKILL.
@@ -123,12 +136,6 @@ if (mode === "host" || mode === "host-term") {
 			return kill(pid, signal);
 		});
 	}
-	const createServer = net.createServer;
-	mock.method(net, "createServer", (...args: Parameters<typeof net.createServer>) => {
-		const server = createServer(...args);
-		server.once("listening", () => process.send?.({ type: "ready" }));
-		return server;
-	});
 	syncBuiltinESMExports();
 	process.on("message", (message: unknown) => {
 		if (typeof message !== "object" || message === null || !("type" in message)) throw new Error("bad control");

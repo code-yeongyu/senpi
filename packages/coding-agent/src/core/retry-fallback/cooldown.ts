@@ -12,6 +12,8 @@ import { isTransportFailureText } from "./transient-network.ts";
  */
 export class SelectorCooldowns {
 	private readonly expiresAtBySelector = new Map<string, number>();
+	/** Wall-clock end of a suppression whose length the provider stated (a reset or retry-after), not a default. */
+	private readonly statedResetAtBySelector = new Map<string, number>();
 	private readonly now: () => number;
 	private readonly random: () => number;
 	private readonly wallNow: () => number;
@@ -23,19 +25,28 @@ export class SelectorCooldowns {
 	}
 
 	note(baseSelector: string, failure: { retryAfterMs?: number; errorMessage?: string }): void {
-		this.expiresAtBySelector.set(baseSelector, this.now() + this.durationFor(failure));
+		const { ms, stated } = this.durationFor(failure);
+		this.expiresAtBySelector.set(baseSelector, this.now() + ms);
+		if (stated) this.statedResetAtBySelector.set(baseSelector, this.wallNow() + ms);
+		else this.statedResetAtBySelector.delete(baseSelector);
 	}
 
 	isSuppressed(baseSelector: string): boolean {
 		const expiresAt = this.expiresAtBySelector.get(baseSelector);
 		if (expiresAt === undefined) return false;
 		if (this.now() < expiresAt) return true;
-		this.expiresAtBySelector.delete(baseSelector);
+		this.clear(baseSelector);
 		return false;
+	}
+
+	/** When a live suppression ends, if the provider stated it; undefined for a guessed default or no suppression. */
+	statedResetAt(baseSelector: string): number | undefined {
+		return this.isSuppressed(baseSelector) ? this.statedResetAtBySelector.get(baseSelector) : undefined;
 	}
 
 	clear(baseSelector: string): void {
 		this.expiresAtBySelector.delete(baseSelector);
+		this.statedResetAtBySelector.delete(baseSelector);
 	}
 
 	/** Clears `baseSelector` and every rung of it (`baseSelector:<thinking level>`), never another model. */
@@ -43,17 +54,38 @@ export class SelectorCooldowns {
 		for (const key of this.expiresAtBySelector.keys()) {
 			// Only a rung of this model: a model id may itself contain ':' (openrouter's `x:batch`).
 			const rung = key.startsWith(`${baseSelector}:`) && isValidThinkingLevel(key.slice(baseSelector.length + 1));
-			if (key === baseSelector || rung) this.expiresAtBySelector.delete(key);
+			if (key === baseSelector || rung) this.clear(key);
 		}
 	}
 
 	clearAll(): void {
 		this.expiresAtBySelector.clear();
+		this.statedResetAtBySelector.clear();
 	}
 
-	private durationFor({ retryAfterMs, errorMessage }: { retryAfterMs?: number; errorMessage?: string }): number {
+	private durationFor(failure: { retryAfterMs?: number; errorMessage?: string }): { ms: number; stated: boolean } {
+		const stated = this.statedDurationMs(failure);
+		return stated === undefined
+			? { ms: this.defaultDurationMs(failure.errorMessage), stated: false }
+			: { ms: stated, stated: true };
+	}
+
+	private statedDurationMs({
+		retryAfterMs,
+		errorMessage,
+	}: {
+		retryAfterMs?: number;
+		errorMessage?: string;
+	}): number | undefined {
 		// Reset hints are wall-clock times; the stored deadline remains monotonic.
 		const resetMs = errorMessage === undefined ? undefined : usageLimitResetMs(errorMessage, this.wallNow());
+		const retryMs =
+			retryAfterMs !== undefined && Number.isFinite(retryAfterMs) && retryAfterMs > 0 ? retryAfterMs : undefined;
+		const hintedMs = Math.max(resetMs ?? 0, retryMs ?? 0);
+		return hintedMs > 0 ? Math.min(MAX_SLOT_BLOCK_MS, hintedMs) : undefined;
+	}
+
+	private defaultDurationMs(errorMessage: string | undefined): number {
 		const message = stripProviderRequestIds(errorMessage ?? "").toLowerCase();
 		const defaultMs =
 			/usage[- ]limit|quota|insufficient_quota|billing|credits[-_ ]required|credits are required/.test(message)
@@ -65,10 +97,6 @@ export class SelectorCooldowns {
 						: /5xx|\b5\d\d\b|server|internal error/.test(message)
 							? 20_000
 							: undefined;
-		const retryMs =
-			retryAfterMs !== undefined && Number.isFinite(retryAfterMs) && retryAfterMs > 0 ? retryAfterMs : undefined;
-		const hintedMs = Math.max(resetMs ?? 0, retryMs ?? 0);
-		if (hintedMs > 0) return Math.min(MAX_SLOT_BLOCK_MS, hintedMs);
 		if (defaultMs !== undefined) return defaultMs;
 		// A reason-less forbidden rejection is a per-request blip on a healthy credential (senpi#2376).
 		if (

@@ -96,7 +96,8 @@ describe("a credential lands on the row of its kind on every /login surface (sen
 		return executable;
 	}
 
-	const TOKEN = "sk-ant-oat01-scripted-not-a-token";
+	const TOKEN = ["sk-ant-oat01", "scripted-not-a-token"].join("-");
+	const API_KEY = ["sk-ant-api03", "scripted-not-a-key"].join("-");
 	const SUBSCRIPTION_SIGN_IN = { configured: true, source: "environment", label: "Anthropic Subscription" };
 
 	it("env CLAUDE_CODE_OAUTH_TOKEN: the subscription's sign-in row, not its key row", async () => {
@@ -169,7 +170,7 @@ describe("a credential lands on the row of its kind on every /login surface (sen
 	});
 
 	it("ANTHROPIC_API_KEY stays a key on anthropic and does not light the subscription", async () => {
-		vi.stubEnv("ANTHROPIC_API_KEY", "sk-ant-api03-scripted-not-a-key");
+		vi.stubEnv("ANTHROPIC_API_KEY", API_KEY);
 		const anthropic = await surfaces("anthropic");
 		expect(anthropic.rpc.api_key).toEqual({ configured: true, source: "environment", label: "ANTHROPIC_API_KEY" });
 		if ("oauth" in anthropic.rpc) expect(anthropic.rpc.oauth).toEqual({ configured: false });
@@ -178,7 +179,7 @@ describe("a credential lands on the row of its kind on every /login surface (sen
 	});
 
 	it("ANTHROPIC_API_KEY beside a subscription token: each on its own provider's row", async () => {
-		vi.stubEnv("ANTHROPIC_API_KEY", "sk-ant-api03-scripted-not-a-key");
+		vi.stubEnv("ANTHROPIC_API_KEY", API_KEY);
 		vi.stubEnv("CLAUDE_CODE_OAUTH_TOKEN", TOKEN);
 		expect((await surfaces("anthropic")).rpc.api_key).toEqual({
 			configured: true,

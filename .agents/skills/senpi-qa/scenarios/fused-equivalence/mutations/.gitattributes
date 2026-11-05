@@ -1,0 +1,2 @@
+# Patch files carry diff context lines verbatim (leading space before tabs, blank context lines): not whitespace errors.
+*.patch -whitespace

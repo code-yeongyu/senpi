@@ -7,7 +7,10 @@ import { type PooledCredential, projectSlot } from "@earendil-works/pi-ai/auth/p
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { sha256SlotHasher, streamWithCredentialRotation } from "../../../src/core/credential-pool/rotation-stream.ts";
 import { CredentialSlotRepository } from "../../../src/core/credential-pool/state-store.ts";
-import type { AccountSlot } from "../../../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
+import type {
+	AccountSlot,
+	ClaudeCliAccountSlot,
+} from "../../../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
 import {
 	rendezvousOrder as claudeRendezvousOrder,
 	selectAccount,
@@ -22,6 +25,7 @@ import {
 	selectAccount as selectCursorAccount,
 } from "../../../src/core/extensions/builtin/cursor-cli-oauth/affinity.ts";
 import { accountFooterSuffix } from "../../../src/modes/interactive/components/footer.ts";
+import { cliSlot } from "../../support/claude-cli-test-slots.ts";
 
 // senpi#3591: a provider's accounts can carry a user order. Selection takes the
 // pin first, then the first unblocked account in the user order, then HRW for
@@ -137,15 +141,8 @@ describe("senpi#3591 account order: the generic rotation path", () => {
 });
 
 describe("senpi#3591 account order: the Claude subscription lane", () => {
-	function account(name: string, extra: Partial<AccountSlot> = {}): AccountSlot {
-		return {
-			name,
-			access: `${name}-access`,
-			refresh: `${name}-refresh`,
-			expires: 4_102_444_800_000,
-			source: "login",
-			...extra,
-		};
+	function account(name: string, extra: Partial<ClaudeCliAccountSlot> = {}): AccountSlot {
+		return cliSlot(name, extra);
 	}
 	const accounts = NAMES.map((name) => account(name));
 	const claudeHrw = claudeRendezvousOrder(AFFINITY_KEY, accounts).map((entry) => entry.name);

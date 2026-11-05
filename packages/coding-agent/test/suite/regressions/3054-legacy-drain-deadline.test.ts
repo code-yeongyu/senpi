@@ -8,6 +8,7 @@ import { HostEnsureRefusedError } from "../../../src/modes/rpc/host-decision.ts"
 import { ensureHost } from "../../../src/modes/rpc/host-ensure.ts";
 import { readProcessStartTime } from "../../../src/utils/process-identity.ts";
 import { generationEnv, generationScratch } from "../../helpers/rpc-generation-support.ts";
+import { hostSpawnEnv } from "../../helpers/rpc-host-spawn-env.ts";
 
 // #3054: a legacy drain cannot inherit the supervised child's 95-second circuit breaker.
 describe.skipIf(process.platform === "win32")("legacy drain deadline", () => {
@@ -19,7 +20,7 @@ describe.skipIf(process.platform === "win32")("legacy drain deadline", () => {
 			process.execPath,
 			[join(import.meta.dirname, "../../fixtures/rpc-legacy-drain-deadline.ts"), legacySocket],
 			{
-				env: { ...process.env, ...generationEnv(qa), SENPI_CODING_AGENT_DIR: qa.agentDir },
+				env: { ...hostSpawnEnv(), ...generationEnv(qa), SENPI_CODING_AGENT_DIR: qa.agentDir },
 				stdio: ["ignore", "ignore", "inherit", "ipc"],
 			},
 		);

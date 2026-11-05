@@ -9,7 +9,11 @@ export function buildClaudeOpus45Prompt(options: BuildDynamicSystemPromptOptions
 	return buildDynamicSystemPrompt({
 		...options,
 		tuningSection: [
-			buildExecutionToolingSection({ toolNames: options.selectedTools, dialect: "claude" }),
+			buildExecutionToolingSection({
+				toolNames: options.selectedTools,
+				dialect: "claude",
+				sharedSections: options.sharedSections,
+			}),
 			buildClaudeOpus45Tuning(),
 		]
 			.filter((section) => section.length > 0)

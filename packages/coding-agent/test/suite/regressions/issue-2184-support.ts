@@ -132,6 +132,7 @@ export function writeSession(sessionDir: string, cwd: string, fixture: SessionFi
 export interface ModuleChild {
 	readonly child: ChildProcess;
 	readonly line: (prefix: string) => Promise<string>;
+	readonly waitForOutput: (text: string) => Promise<string>;
 	readonly send: (text: string) => void;
 	readonly exit: () => Promise<number | null>;
 	readonly output: () => string;
@@ -145,7 +146,8 @@ export function spawnModuleChild(body: string, env: Record<string, string> = {},
 	});
 	liveChildren.add(child);
 	let output = "";
-	const waiters: Array<{ prefix: string; resolve: (line: string) => void }> = [];
+	let stdout = "";
+	const waiters: Array<{ match: (text: string) => string | undefined; resolve: (text: string) => void }> = [];
 	const exited = new Promise<number | null>((resolveExit, reject) => {
 		child.on("error", reject);
 		child.on("close", (code) => {
@@ -154,32 +156,42 @@ export function spawnModuleChild(body: string, env: Record<string, string> = {},
 		});
 	});
 	const deliver = (): void => {
-		for (const line of output.split("\n")) {
-			for (const waiter of waiters.slice()) {
-				if (line.startsWith(waiter.prefix)) {
-					waiters.splice(waiters.indexOf(waiter), 1);
-					waiter.resolve(line);
-				}
+		for (const waiter of waiters.slice()) {
+			const found = waiter.match(stdout);
+			if (found !== undefined) {
+				waiters.splice(waiters.indexOf(waiter), 1);
+				waiter.resolve(found);
 			}
 		}
 	};
-	child.stdout?.on("data", (chunk: Buffer) => {
-		output += chunk.toString();
+	child.stdout?.setEncoding("utf8");
+	child.stdout?.on("data", (chunk: string) => {
+		stdout += chunk;
+		output += chunk;
 		deliver();
 	});
-	child.stderr?.on("data", (chunk: Buffer) => {
-		output += chunk.toString();
+	child.stderr?.setEncoding("utf8");
+	child.stderr?.on("data", (chunk: string) => {
+		output += chunk;
 	});
 	const timeout = setTimeout(() => child.kill("SIGKILL"), CHILD_TIMEOUT_MS);
 	void exited.finally(() => clearTimeout(timeout));
+	const waitFor = (label: string, match: (text: string) => string | undefined): Promise<string> =>
+		new Promise<string>((resolveText, reject) => {
+			waiters.push({ match, resolve: resolveText });
+			deliver();
+			void exited.then((code) => reject(new Error(`child exited (${code}) before "${label}":\n${output}`)));
+		});
 	return {
 		child,
 		line: (prefix) =>
-			new Promise<string>((resolveLine, reject) => {
-				waiters.push({ prefix, resolve: resolveLine });
-				deliver();
-				void exited.then((code) => reject(new Error(`child exited (${code}) before "${prefix}":\n${output}`)));
-			}),
+			waitFor(prefix, (text) =>
+				text
+					.split("\n")
+					.slice(0, -1)
+					.find((line) => line.startsWith(prefix)),
+			),
+		waitForOutput: (text) => waitFor(text, (seen) => (seen.includes(text) ? text : undefined)),
 		send: (text) => child.stdin?.write(text),
 		exit: () => {
 			child.stdin?.end();

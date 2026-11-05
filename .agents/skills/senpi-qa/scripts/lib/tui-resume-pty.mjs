@@ -11,8 +11,10 @@ import {
 	HYDRATE_TIMEOUT_MS,
 	ROWS,
 	SELECTOR_TIMEOUT_MS,
+	STARTUP_TIMEOUT_MS,
 	TUI_ARGS,
 } from "./tui-resume-args.mjs";
+import { createResumeScreen, waitForStartupComplete } from "./tui-resume-screen.mjs";
 
 const require = createRequire(import.meta.url);
 
@@ -103,6 +105,16 @@ export async function driveResume(term, stream, { messages, actions }) {
 		{ timeoutMs: BOOT_TIMEOUT_MS, label: "TUI boot" },
 	);
 	recordAction(actions, "boot", { sentinels: BOOT_SENTINELS });
+
+	// The header is painted before startup finishes, and a submit before then is only parked in the editor
+	// (senpi#5291): wait until the TUI accepts a submit.
+	const screen = createResumeScreen(stream, { cols: COLS, rows: ROWS });
+	try {
+		const probes = await waitForStartupComplete(term, screen, { timeoutMs: STARTUP_TIMEOUT_MS });
+		recordAction(actions, "ready", { probes });
+	} finally {
+		screen.dispose();
+	}
 
 	const selectorWait = waitUntil(
 		stream,
