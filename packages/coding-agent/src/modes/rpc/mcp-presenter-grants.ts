@@ -5,6 +5,8 @@ import type { Binding, Connection, McpPresenterConnection, McpPresenterState } f
 
 /** The one acquire feature this host negotiates: `mcp_form_resolved.elsewhere` and `mcp_form_settled`. */
 const ELSEWHERE_FEATURE = "elsewhere_v1";
+/** A grant that may answer secret prompts on the sealed route (D11 secret phase 4.3, 5.1). */
+export const SECRET_INPUT_FEATURE = "secret_input_v1";
 
 /** A signed acquire's feature list: at most 16 short strings. Unknown names are ignored, never an error. */
 export function features(value: unknown): value is readonly string[] {
@@ -25,6 +27,8 @@ export interface Registration extends McpPresenterRegistration {
 	readonly connection: Connection;
 	readonly kind: McpFormScope["presenterKind"];
 	readonly elsewhere: boolean;
+	/** The signed acquire carried `secret_input_v1`; recorded apart from `elsewhere`. */
+	readonly secretInput: boolean;
 	active: boolean;
 }
 export interface Grant {
@@ -67,6 +71,7 @@ export function enroll(
 				connection,
 				kind: options.kind,
 				elsewhere: options.features?.includes(ELSEWHERE_FEATURE) === true,
+				secretInput: options.features?.includes(SECRET_INPUT_FEATURE) === true,
 				active: true,
 			};
 			state.registrations.set(registration, registration);
@@ -130,6 +135,12 @@ export function current(state: McpPresenterState, grant: Grant): boolean {
 
 export function holders(state: McpPresenterState, binding: Binding): Grant[] {
 	return [...binding.grants].filter((grant) => current(state, grant));
+}
+
+/** Whether a current grant on this binding negotiated `secret_input_v1`. */
+export function secretInputHeld(state: McpPresenterState, handle: McpFormBinding): boolean {
+	const binding = [...state.bindings.values()].find((value) => value === handle);
+	return binding !== undefined && holders(state, binding).some((grant) => grant.registration.secretInput);
 }
 
 export function revoke(state: McpPresenterState, registration: Registration, operation = false): void {

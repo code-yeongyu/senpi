@@ -61,6 +61,11 @@ export class McpPresenterAuthority {
 		return presenterGrants.enroll(this.state, principal, identity);
 	}
 
+	/** Whether a current grant on the binding negotiated `secret_input_v1` (D11 secret phase 3.2). */
+	secretInputHeld(handle: McpFormBinding): boolean {
+		return presenterGrants.secretInputHeld(this.state, handle);
+	}
+
 	receive(sender: McpPresenterConnection, value: unknown): McpPresenterReply {
 		return presenterForms.receive(this.state, sender, value);
 	}
