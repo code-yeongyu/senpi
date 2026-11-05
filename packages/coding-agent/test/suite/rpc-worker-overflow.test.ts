@@ -8,12 +8,19 @@ import { startWorkerHost } from "./rpc-worker-host-support.ts";
 import { observePressure, PRESSURE_BYTES, pressureExtension, pressurePreload } from "./rpc-worker-pressure-support.ts";
 import { reservationStep as pressureStep } from "./rpc-worker-reservation-support.ts";
 
+// Node-hosted: the backpressure cases observe Node's own Socket through --import, so the host runs on Node, where a
+// multi-session host opens session state only under the JSONL developer hatch (senpi#5822), the store it used before.
+const NODE_JSONL_HATCH = { SENPI_SESSION_STORE: "jsonl" };
+
 it("reports oversized worker output as a session-specific failure without terminating siblings", async () => {
-	const host = await startWorkerHost(`export default function (pi) {
+	const host = await startWorkerHost(
+		`export default function (pi) {
 		pi.registerCommand("overflow", { description: "test output bound", handler: async (_args, ctx) => {
 			ctx.ui.notify("x".repeat(16 * 1024 * 1024), "info");
 		} });
-	}`);
+	}`,
+		{ env: NODE_JSONL_HATCH },
+	);
 	try {
 		const a = await host.request({ type: "open_session", cwd: host.cwd });
 		const b = await host.request({ type: "open_session", cwd: host.cwd });
@@ -38,7 +45,12 @@ it.each([false, true])(
 	async (socket) => {
 		// Node's --import observer calls through to the real CLI's Socket and writer methods.
 		// No writable result, callback, queue, drain event, or worker is substituted.
-		const host = await startWorkerHost(pressureExtension, { node: true, socket, preload: pressurePreload() });
+		const host = await startWorkerHost(pressureExtension, {
+			node: true,
+			socket,
+			preload: pressurePreload(),
+			env: NODE_JSONL_HATCH,
+		});
 		const signals = observePressure(host.child.stderr);
 		const wire = socket ? await host.connect() : host;
 		const peer = socket ? await host.connect() : host;

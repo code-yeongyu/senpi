@@ -32,7 +32,8 @@ async function socketHost(qa: EndpointScratch): Promise<{ pid: number; stderr: (
 	const cli = join(import.meta.dirname, "..", "src", "cli.ts");
 	const child = spawn(process.execPath, [cli, "--mode", "rpc", "--listen", `unix://${qa.legacy}`, ...hostArgs()], {
 		cwd: qa.cwd,
-		env: { ...hostSpawnEnv(), ...hostEnv(qa), SENPI_CODING_AGENT_DIR: qa.agentDir },
+		// A header write exists only in the JSONL store: on Node the host keeps it under the developer hatch (senpi#5822).
+		env: { ...hostSpawnEnv(), ...hostEnv(qa), SENPI_CODING_AGENT_DIR: qa.agentDir, SENPI_SESSION_STORE: "jsonl" },
 		stdio: ["ignore", "ignore", "pipe"],
 	});
 	let stderr = "";
