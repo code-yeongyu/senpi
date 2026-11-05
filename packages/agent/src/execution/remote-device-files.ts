@@ -21,6 +21,7 @@ const GRANT_REFUSALS = new Set(["grant_missing", "grant_expired", "workspace_unk
 
 function refusalError(reason: string): DeviceFileError {
 	if (GRANT_REFUSALS.has(reason)) return new DeviceFileError("refused_by_grant", reason);
+	if (reason === "epoch_fenced") return new DeviceFileError("refused_by_policy", reason);
 	if (reason === "hand_closed" || reason.startsWith("scope_unavailable"))
 		return new DeviceFileError("hand_unreachable", reason);
 	return new DeviceFileError("protocol", reason);
@@ -49,6 +50,8 @@ function valueOf(reply: HandReply): JsonValue {
 			throw new DeviceFileError("hand_unreachable", reply.reason);
 		case "closed":
 			throw new DeviceFileError("hand_unreachable", "the hand link was closed");
+		case "epoch_refused":
+			throw new DeviceFileError("refused_by_policy", `epoch: ${reply.reason}`);
 	}
 }
 
