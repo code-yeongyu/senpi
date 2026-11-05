@@ -414,6 +414,8 @@ export function createBrowserSkillRenderer(options: BrowserSkillOptions = {}): P
 				// The daemon can still create the session after we stop waiting for the reply (abort or our own
 				// timeout), and that session owns a window in the user's browser. The reply is kept so the finally
 				// block can stop whatever id arrives, even though this call has already failed.
+				// An abort that landed during system.status or the slot wait must not open a window at all.
+				signal?.throwIfAborted();
 				startCall = callDaemon(sockPath, "session.start", startParams, Math.max(1, left()));
 				pending = startCall;
 				const startReply = startCall.reply.then((reply) => {
@@ -423,10 +425,12 @@ export function createBrowserSkillRenderer(options: BrowserSkillOptions = {}): P
 				});
 				startReply.catch(() => undefined);
 				// An explicit error reply means the daemon created nothing, so the abandoned-session recovery below
-				// (a fixed wait plus a status call) is not owed.
+				// (a fixed wait plus a status call) is not owed. A timeout-shaped error is the exception: the
+				// extension can still open the window after the daemon gave up waiting on it.
 				startReply
 					.then((reply) => {
-						if (reply.error) startAnswered = true;
+						const code = record(reply.error)?.code;
+						if (reply.error && code !== "timeout" && code !== "extension_unresponsive") startAnswered = true;
 					})
 					.catch(() => undefined);
 				const started = record(await settleCall("session.start", startCall, startReply));

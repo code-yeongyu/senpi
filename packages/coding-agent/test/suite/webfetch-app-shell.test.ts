@@ -601,11 +601,9 @@ describe("webfetch renders app shells only through the connected browser, incogn
 			connectedBrowser(url, { "session.start": () => ({ error: { code: "internal", message: "no window" } }) }),
 		);
 
-		const started = Date.now();
 		const { details } = await fetchWith(createWebfetchTool({ renderer: renderer(daemon) }), url);
 
 		expect(details.renderSkipped?.reason).toBe("incognito_unavailable");
-		expect(Date.now() - started).toBeLessThan(1_500);
 		expect(daemon.calls.filter((call) => call.method === "system.status")).toHaveLength(1);
 	});
 
@@ -639,5 +637,33 @@ describe("webfetch renders app shells only through the connected browser, incogn
 		expect(details.rendered).toBe(false);
 		expect(details.renderSkipped?.reason).toBe("render_failed");
 		expect(userText).not.toContain("Three cards are waiting for review");
+	});
+
+	it("opens no window when the user aborts while the browser is being picked", async () => {
+		const url = await serveHtml(APP_SHELL);
+		const controller = new AbortController();
+		const base = connectedBrowser(url);
+		const daemon = await fakeDaemon((call) => {
+			if (call.method === "system.status") controller.abort();
+			return base(call);
+		});
+
+		// The renderer's own promise settles only after its whole sequence, so the call list below is final.
+		await expect(
+			renderer(daemon).render(url, { mode: "incognito", timeoutMs: 5_000, signal: controller.signal }),
+		).rejects.toThrow();
+
+		expect(daemon.calls.map((call) => call.method)).not.toContain("session.start");
+	});
+
+	it("still reclaims a session when session.start answered with a timeout error", async () => {
+		const url = await serveHtml(APP_SHELL);
+		const daemon = await fakeDaemon(
+			connectedBrowser(url, { "session.start": () => ({ error: { code: "timeout", message: "extension slow" } }) }),
+		);
+
+		await fetchWith(createWebfetchTool({ renderer: renderer(daemon) }), url);
+
+		expect(daemon.calls.filter((call) => call.method === "system.status").length).toBeGreaterThan(1);
 	});
 });

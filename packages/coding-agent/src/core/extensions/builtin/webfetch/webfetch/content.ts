@@ -87,10 +87,6 @@ export function htmlToText(html: string, url: string): string {
 }
 
 /**
- * Whether static HTML is a client-rendered app shell: it runs scripts and shows almost no text
- * before they run (an empty mount point, a noscript notice). Such a page needs a rendered read.
- */
-/**
  * Removes every script element from rendered HTML. A page read through the user's browser has already
  * run its scripts, and inline bootstrap state (`window.__INITIAL_STATE__`) is where session tokens and
  * CSRF secrets sit; this drops that carrier before any format, including raw html, leaves the tool.
@@ -101,6 +97,10 @@ export function stripScripts(html: string, url: string): string {
 	return `<!doctype html>\n${document.documentElement.outerHTML}`;
 }
 
+/**
+ * Whether static HTML is a client-rendered app shell: it runs scripts and shows almost no text
+ * before they run (an empty mount point, a noscript notice). Such a page needs a rendered read.
+ */
 export function looksLikeAppShell(html: string, url: string): boolean {
 	const document = parseWebDocument(html, url);
 	const runsScripts = Array.from(document.querySelectorAll("script")).some((script) =>
