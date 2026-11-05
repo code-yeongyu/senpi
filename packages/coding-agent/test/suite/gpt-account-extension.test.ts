@@ -217,9 +217,10 @@ describe("/gpt-account command", () => {
 				expect(response.success).toBe(true);
 				const accounts = (response.data as { accounts: CredentialAccountSummary[] }).accounts;
 				expect(accounts).toMatchObject([
-					{ name: "default", paused: true, active: false },
+					{ name: "default", paused: true },
 					{ name: "work", active: true },
 				]);
+				expect(accounts[0]).not.toHaveProperty("active");
 				expect(accounts[0]).not.toHaveProperty("blockedUntil");
 				expect(accounts[0]).toHaveProperty("usageUrl", "https://chatgpt.com/settings/usage");
 				const { ctx, notices } = createContext();

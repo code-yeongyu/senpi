@@ -291,10 +291,12 @@ export async function getCredentialAccounts(
 		repository ?? credentialPoolRepository(storage),
 	);
 	if (normalizeProviderId(provider) !== "chatgpt-subscription") return accounts;
-	return accounts.map((account) => ({
-		...account,
-		active: account.name === activeName && !account.blocked && !account.signedOut && !account.unused,
-	}));
+	// `active` is additive: present only on the account a request actually used, so other summaries keep their shape.
+	return accounts.map((account) =>
+		account.name === activeName && !account.blocked && !account.signedOut && !account.unused
+			? { ...account, active: true }
+			: account,
+	);
 }
 
 /** Storage-free variant for callers that already hold the credential (e.g. auth check). */
