@@ -1,6 +1,5 @@
-import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import {
 	DurableStoreError,
 	type DurableStoreOptions,
@@ -8,6 +7,7 @@ import {
 	type SyncCommitStore,
 } from "@earendil-works/pi-agent-core";
 import { type BunSqliteMedia, createBunSqliteMedia } from "@earendil-works/pi-storage-sqlite-bun";
+import { defaultSessionStoreMedium } from "./default-store-path.ts";
 
 /** A session's default durable store, bound at the epoch its writes carry. */
 export interface DefaultSessionStore {
@@ -23,7 +23,6 @@ export interface DefaultSessionStoreOptions {
 	readonly onWritePoint?: (point: StoreWritePoint) => void;
 }
 
-const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const medias = new Map<string, BunSqliteMedia>();
 
 function mediaUnder(root: string): BunSqliteMedia {
@@ -52,20 +51,14 @@ function storeFor(root: string, medium: string, options: DurableStoreOptions | u
 
 const lostRace = (error: unknown): boolean => error instanceof DurableStoreError && error.code === "stale-epoch";
 
-/** The session directory's scope segment: two projects may hold the same session id, never the same medium. */
-const scopeOf = (sessionDir: string): string =>
-	createHash("sha256").update(resolve(sessionDir)).digest("hex").slice(0, 16);
-
 /**
- * Opens the session's own medium (`<agentDir>/session-store/<session dir hash>/<sessionId>`; the epoch never crosses
- * sessions). A fresh
- * medium is claimed 0->1; otherwise, or when a peer won the fresh claim, the process binds at the current epoch, so
+ * Opens the session's own medium (`defaultSessionStoreMedium`; the epoch never crosses sessions). A fresh medium is
+ * claimed 0->1; otherwise, or when a peer won the fresh claim, the process binds at the current epoch, so
  * co-bound processes keep writing and sqlite serializes their transactions.
  */
 export async function openDefaultSessionStore(options: DefaultSessionStoreOptions): Promise<DefaultSessionStore> {
-	if (!SESSION_ID.test(options.sessionId)) throw new Error(`not a session id: ${JSON.stringify(options.sessionId)}`);
+	const medium = defaultSessionStoreMedium(options.agentDir, options.sessionDir, options.sessionId);
 	const root = join(options.agentDir, "session-store");
-	const medium = join(root, scopeOf(options.sessionDir), options.sessionId);
 	await mkdir(medium, { recursive: true, mode: 0o700 });
 	const storeOptions: DurableStoreOptions | undefined =
 		options.onWritePoint === undefined ? undefined : { onWritePoint: options.onWritePoint };
