@@ -6,7 +6,7 @@ export const NODE_REQUIRES_BUN_MESSAGE =
 	"Install the senpi binary (recommended), or install Bun 1.4 or newer and run senpi with it.";
 
 /** The variable that keeps the legacy JSONL session store on Node: a Node-only developer hatch. */
-export const SESSION_STORE_ENV_VAR = "SENPI_SESSION_STORE";
+const SESSION_STORE_ENV_VAR = "SENPI_SESSION_STORE";
 
 /** True on Node when the developer hatch asks for the legacy JSONL store. Bun ignores the variable. */
 export function nodeJsonlHatchEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
