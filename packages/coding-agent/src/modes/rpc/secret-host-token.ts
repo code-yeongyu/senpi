@@ -17,6 +17,11 @@ const HOST_TOKEN_TYPE = "secret_host";
 const MAX_LIFETIME_S = 900;
 const SKEW_S = 60;
 const MAX_TOKEN_CHARS = 8192;
+/** A mint that has not settled by then counts as failed; its late result is ignored. */
+const MINT_TIMEOUT_MS = 30_000;
+/** After a failed mint, while a holder remains: retry within this, sooner when a cached token expires first. */
+const RETRY_MAX_MS = 60_000;
+const RETRY_MIN_MS = 5_000;
 
 type SecretAuthority = PresenterAccountAuthority &
 	Required<Pick<PresenterAccountAuthority, "mintSecretHostToken" | "verifySecretAnswer">>;
@@ -33,8 +38,10 @@ export interface SecretHostToken {
 
 interface Entry {
 	readonly binding: McpFormBinding;
+	readonly held: () => boolean;
 	unsubscribe?: () => void;
 	token?: SecretHostToken;
+	/** The next re-mint: the two-thirds refresh after a success, the bounded retry after a failure. */
 	refresh?: NodeJS.Timeout;
 	minting: boolean;
 }
@@ -80,32 +87,36 @@ export class SecretHostTokens {
 	}
 
 	/**
-	 * A grant with `secret_input_v1` was acquired on `binding`. Mints the session's token unless one is held and its
-	 * refresh is armed; `held` reports whether any current grant on the binding still negotiates the feature.
+	 * A grant with `secret_input_v1` was acquired on `binding`. Mints the session's token unless a valid one is held;
+	 * `held` reports whether a current account-principal grant on the binding still negotiates the feature.
 	 */
 	want(durableSessionId: string, binding: McpFormBinding, held: () => boolean): void {
-		if (this.disposed || !binding.subscribe) return;
+		if (this.disposed || !binding.subscribe || !held()) return;
 		let entry = this.entries.get(durableSessionId);
 		if (entry && entry.binding !== binding) {
 			this.drop(durableSessionId, entry);
 			entry = undefined;
 		}
 		if (!entry) {
-			const created: Entry = { binding, minting: false };
+			const created: Entry = { binding, held, minting: false };
 			created.unsubscribe = binding.subscribe(() => {
 				if (!held()) this.drop(durableSessionId, created);
 			});
 			this.entries.set(durableSessionId, created);
 			entry = created;
 		}
-		if (!entry.minting && entry.refresh === undefined) void this.mint(durableSessionId, entry);
+		if (!entry.minting && (entry.refresh === undefined || !this.valid(entry.token)))
+			void this.mint(durableSessionId, entry);
 	}
 
 	/** The session's token while it is valid now and still names the signed-in account; read synchronously. */
 	current(durableSessionId: string): SecretHostToken | undefined {
 		const token = this.entries.get(durableSessionId)?.token;
-		const nowS = Math.floor(Date.now() / 1000);
-		return token && nowS < token.exp && token.acc === this.authority.hostAccount() ? token : undefined;
+		return this.valid(token) ? token : undefined;
+	}
+
+	private valid(token: SecretHostToken | undefined): token is SecretHostToken {
+		return token !== undefined && Date.now() < token.exp * 1000 && token.acc === this.authority.hostAccount();
 	}
 
 	dispose(): void {
@@ -114,6 +125,8 @@ export class SecretHostTokens {
 	}
 
 	private async mint(durableSessionId: string, entry: Entry): Promise<void> {
+		clearTimeout(entry.refresh);
+		entry.refresh = undefined;
 		entry.minting = true;
 		let open = true;
 		const proof = (input: SecretHostProof): string => {
@@ -138,27 +151,39 @@ export class SecretHostTokens {
 			return sign(null, Buffer.from(transcript), this.privateKey).toString("base64url");
 		};
 		let minted: unknown;
+		let deadline: NodeJS.Timeout | undefined;
 		try {
-			if (this.authority.hostAccount() !== undefined)
-				minted = await this.authority.mintSecretHostToken({
-					hostInstance: this.hostInstance,
-					durableSessionId,
-					hostKeySpki: new Uint8Array(this.spki),
-					sign: proof,
+			if (this.authority.hostAccount() !== undefined) {
+				const call = (async () =>
+					this.authority.mintSecretHostToken({
+						hostInstance: this.hostInstance,
+						durableSessionId,
+						hostKeySpki: new Uint8Array(this.spki),
+						sign: proof,
+					}))();
+				const timedOut = new Promise<undefined>((resolve) => {
+					deadline = setTimeout(() => resolve(undefined), MINT_TIMEOUT_MS);
+					deadline.unref();
 				});
-		} catch {
-			// An issuer or authority fault leaves the raiser route only; the key and the session are unaffected.
-			minted = undefined;
+				// An issuer or authority fault leaves the raiser route only; the key and the session are unaffected.
+				minted = await Promise.race([call.catch(() => undefined), timedOut]);
+			}
 		} finally {
+			clearTimeout(deadline);
 			open = false;
 			entry.minting = false;
 		}
 		if (this.disposed || this.entries.get(durableSessionId) !== entry) return;
 		const token = typeof minted === "string" ? this.accept(minted, durableSessionId) : undefined;
-		// A failed re-mint keeps the old token until its own `exp`; the next `secret_input_v1` acquire tries again.
-		if (!token) return;
-		entry.token = token;
-		this.schedule(durableSessionId, entry, token);
+		if (token) {
+			entry.token = token;
+			this.arm(durableSessionId, entry, ((token.exp * 1000 - Date.now()) * 2) / 3);
+			return;
+		}
+		// While a holder remains, a failure is retried; a still-valid token is kept until its own `exp` (3.2).
+		if (!entry.held()) return;
+		const left = this.valid(entry.token) ? (entry.token.exp * 1000 - Date.now()) / 3 : RETRY_MAX_MS;
+		this.arm(durableSessionId, entry, Math.min(RETRY_MAX_MS, Math.max(RETRY_MIN_MS, left)));
 	}
 
 	/** The claims the engine relies on, checked against what it asked for; anything else is not this session's token. */
@@ -191,16 +216,16 @@ export class SecretHostTokens {
 		return Object.freeze({ token, acc, dev, iat, exp });
 	}
 
-	private schedule(durableSessionId: string, entry: Entry, token: SecretHostToken): void {
+	/** Re-mints after `delayMs`, measured on the local clock so issuer clock skew cannot shorten it. */
+	private arm(durableSessionId: string, entry: Entry, delayMs: number): void {
 		clearTimeout(entry.refresh);
-		const at = (token.iat + ((token.exp - token.iat) * 2) / 3) * 1000;
 		entry.refresh = setTimeout(
 			() => {
 				entry.refresh = undefined;
 				if (!this.disposed && this.entries.get(durableSessionId) === entry && !entry.minting)
 					void this.mint(durableSessionId, entry);
 			},
-			Math.max(0, at - Date.now()),
+			Math.max(0, delayMs),
 		);
 		// The host's own lifetime decides when it exits; a pending refresh never holds the process.
 		entry.refresh.unref();
