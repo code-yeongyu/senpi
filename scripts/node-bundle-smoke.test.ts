@@ -16,6 +16,8 @@ const version = z
 // `bin.pi` ships this one file, and whichever runtime installed the package executes it: npm
 // installs run it on Node through its shebang, `bun install -g` runs the same file on Bun.
 const runtimes = ["node", "bun"] as const;
+// Spawns measured up to ~30 s under load, past bun's 5 s default; no spawn here outlives 60 s (senpi#5952).
+const SPAWN_BUDGET_MS = 60_000;
 const responseSchema = z.object({
 	type: z.string(), id: z.string().optional(), success: z.boolean().optional(),
 	data: z.unknown().optional(), error: z.unknown().optional(),
@@ -142,7 +144,7 @@ describe.each(runtimes)("the Node bundle under %s", (runtime) => {
 		} finally {
 			rmSync(state, { recursive: true, force: true });
 		}
-	});
+	}, SPAWN_BUDGET_MS);
 
 	test("loads an external TypeScript extension and lists the flag it registers", () => {
 		// Given: a fresh agent dir, so the help fast path misses its per-extension-set cache and
@@ -163,7 +165,7 @@ describe.each(runtimes)("the Node bundle under %s", (runtime) => {
 			rmSync(extensionDir, { recursive: true, force: true });
 			rmSync(state, { recursive: true, force: true });
 		}
-	});
+	}, SPAWN_BUDGET_MS);
 
 	test("opens and closes a shared session when the bundle receives RPC commands", async () => {
 		// Given: isolated state, with no provider request or user extensions.
