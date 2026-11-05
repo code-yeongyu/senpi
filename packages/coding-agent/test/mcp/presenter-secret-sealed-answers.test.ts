@@ -520,3 +520,53 @@ it("dispose() releases the sealed latch: a later sealed answer on that session i
 	expect(second.reply).toMatchObject({ error: "secret_answer_refused" });
 	expect(second.state.value).toBeNull();
 });
+
+it("an answer whose prompt settles while its step-up token is verified answers from the receipt at the latch", async () => {
+	const setup = await sealedHost();
+	const phone = await holder(setup.host, setup.secret, "phone");
+	setup.host.writer.setConnectionCapabilities("human", [
+		"interactive_user",
+		"mcp_form_presenter_v1",
+		"secret_input_v1",
+	]);
+	void setup.requests.input("API key", undefined);
+	const request = records(phone.lines, "mcp_presenter_secret_request")[0];
+	const raised = records(setup.host.lines, "extension_ui_request")[0];
+	if (!request || !raised) throw new Error("No prompt");
+	const req = requestHash(request, setup.host.control.sealed?.tokens.hostJkt ?? "");
+	setup.secret.hooks.beforeVerify = () =>
+		setup.host.writer.withConnection("human", () =>
+			setup.requests.respond({
+				type: "extension_ui_response",
+				id: "r1",
+				uiRequestId: raised.id,
+				answerId: "raiser",
+				secret: true,
+				value: "v",
+			}),
+		);
+	const frame = valueAnswer(
+		ids(phone, request, req),
+		request,
+		setup.secret.stepUp(phone.adopted.device.publicKey, req),
+		"v",
+		deviceKey(phone),
+	);
+	expect(await answer(setup.host, phone, frame)).toMatchObject({ error: "already_answered" });
+});
+
+it("a settled prompt takes no more host token records when the token is re-minted", async () => {
+	const setup = await sealedHost({ lifetimeS: 600 });
+	const phone = await holder(setup.host, setup.secret, "phone");
+	void setup.requests.input("API key", undefined);
+	const request = records(phone.lines, "mcp_presenter_secret_request")[0];
+	if (!request) throw new Error("No sealed request");
+	const req = requestHash(request, setup.host.control.sealed?.tokens.hostJkt ?? "");
+	expect(await answer(setup.host, phone, cancelAnswer(ids(phone, request, req), deviceKey(phone)))).toMatchObject({
+		disposition: "applied",
+	});
+	vi.advanceTimersByTime(401_000);
+	await setup.secret.mints.at(-1)?.done;
+	expect(setup.secret.mints.length).toBeGreaterThan(1);
+	expect(records(phone.lines, "mcp_presenter_secret_token")).toEqual([]);
+});

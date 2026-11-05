@@ -55,9 +55,9 @@ export class WorkerSecretIds {
 	}
 
 	/**
- * A live id's request, settled record and sealed offer (D11 secret phase 5.5), each at most once and within
- * `secretFrameBytes`; a refusal spends nothing.
- */
+	 * A live id's request, settled record and sealed offer (D11 secret phase 5.5), each at most once and within
+	 * `secretFrameBytes`; a refusal spends nothing.
+	 */
 	admitFrame(id: string, record: object): boolean {
 		const sent = this.sent.get(id);
 		const type = secretFrameType(record);

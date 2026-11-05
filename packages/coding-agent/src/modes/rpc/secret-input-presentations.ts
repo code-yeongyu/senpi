@@ -153,7 +153,7 @@ export class SecretInputPresentations {
 			settled: (id) => {
 				const owner = this.owners.get(id);
 				if (owner) owner.cancel = undefined;
-				this.sealedSource?.withdraw(id);
+				this.sealedSource?.retire(id);
 			},
 			forget: (id) => {
 				this.owners.delete(id);

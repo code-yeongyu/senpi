@@ -203,7 +203,10 @@ export class SessionWorkerClient {
 		this.writer = writer;
 		this.secretRoute = writer.secretInputRoute(sessionId, true);
 		// D11 secret phase 5.5: the host authenticates a sealed answer; this isolate's latch claims, opens and settles it.
-		this.secretRoute.bindSealedResponder?.({ settled: () => undefined, respond: (answer) => this.forwardSealed(answer) });
+		this.secretRoute.bindSealedResponder?.({
+			settled: () => undefined,
+			respond: (answer) => this.forwardSealed(answer),
+		});
 		if (this.acceptance) writer.registerAcceptance(sessionId, this.acceptance);
 		// RULING-111 (LEAK-D): a diagnostic of the compact path; with the flag off the stderr stays as on main.
 		if (compactUpdatesEnabled())

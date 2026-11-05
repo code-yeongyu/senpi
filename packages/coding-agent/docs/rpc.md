@@ -649,6 +649,16 @@ created; a grant acquired later is not offered it.
   `{type: "mcp_presenter_secret_settled", v: 1, uiRequestId, outcome, elsewhere}`, with `elsewhere: false` only for
   the holder whose answer won. A raiser connection still receives `secret_input_settled` with unchanged bytes, and
   `answeredUiRequests` lists raiser-route receipts only.
+- Worker sessions (the worker runtime) behave the same for clients.
+  - The host selects holders, signs the request and authenticates an answer: shape, sender, envelope signature and
+    step-up token.
+  - The session's isolate keeps the per-request key, the receipts and the step-up `jti` cache. It answers `replay`
+    or `already_answered` for a settled request, then claims, opens and settles.
+  - Answers for one request are forwarded one at a time with at most four queued; a further answer is
+    `secret_answer_refused`.
+  - For a settled request, the host's token checks run before the isolate's receipt lookup. A replayed answer whose
+    step-up token has since expired is therefore `secret_stepup_refused` on a worker session, where an in-process
+    session answers `replay`.
 
 ### RPC client lifecycle
 

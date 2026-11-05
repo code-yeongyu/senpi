@@ -215,7 +215,8 @@ export class SecretInputRequests {
 		const id = answer.uiRequestId;
 		const pending = this.pending.get(id);
 		if (!pending) return this.receipt(id, answer.answerId, answer.principal);
-		if (answer.value && !claim.admitJti(answer.value.jti, answer.value.exp)) return { error: "secret_stepup_refused" };
+		if (answer.value && !claim.admitJti(answer.value.jti, answer.value.exp))
+			return { error: "secret_stepup_refused" };
 		if (Date.now() >= pending.deadline) {
 			pending.finish("timed_out");
 			return { error: "unknown_extension_ui_request" };

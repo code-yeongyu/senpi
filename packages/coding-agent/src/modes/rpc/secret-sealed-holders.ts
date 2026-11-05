@@ -32,6 +32,8 @@ export interface SealedSecretSource {
 	offer(sessionId: string, holders: ReadonlySet<SealedHolder>, offer: SealedSecretOffer): void;
 	/** The request settled or was forgotten: it takes no further host token refreshes. */
 	withdraw(uiRequestId: string): void;
+	/** A settled request takes no more token records, but stays answerable for `replay` until withdrawn. */
+	retire(uiRequestId: string): void;
 	/** Fires whenever a grant on a binding the source has read is acquired or revoked. */
 	onChange(listener: () => void): () => void;
 	/** 5.1 conditions 1-5 now: re-checked when an answer arrives (7.1 step 2) and at the claim (step 6). */
@@ -41,7 +43,12 @@ export interface SealedSecretSource {
 	/** 7.1 steps 4 and 5 for a holder's answer; the latch runs steps 3 and 6 on the result. */
 	answer(holder: SealedHolder, frame: SealedAnswerFrame): Promise<SealedAnswer | SealedAnswerReply>;
 	/** Every holder gets the value-free `mcp_presenter_secret_settled`; all but `winner` with `elsewhere: true`. */
-	settle(holders: ReadonlySet<SealedHolder>, uiRequestId: string, outcome: SecretInputOutcome, winnerGrant?: string): void;
+	settle(
+		holders: ReadonlySet<SealedHolder>,
+		uiRequestId: string,
+		outcome: SecretInputOutcome,
+		winnerGrant?: string,
+	): void;
 	/** The host incarnation's step-up `jti` cache (6.5). */
 	admitJti(jti: string, exp: number): boolean;
 }
@@ -54,6 +61,8 @@ interface Offered {
 	readonly holders: ReadonlySet<SealedHolder>;
 	readonly req: string;
 	readonly deadlineAtMs: number;
+	/** Settled: no more token records; kept until forgotten so a worker's replay can still be authenticated (5.5). */
+	settled?: boolean;
 }
 
 /** The control's sealed holders: eligibility, signed requests and token refreshes, all synchronous. */
@@ -94,7 +103,7 @@ export class SealedSecretHolders implements SealedSecretSource {
 		this.principals = principals;
 		this.unsubscribe = tokens.onToken((durableSessionId, token) => {
 			for (const offered of this.offered.values())
-				if (offered.durableSessionId === durableSessionId)
+				if (offered.durableSessionId === durableSessionId && !offered.settled)
 					for (const holder of offered.holders)
 						if (this.current(holder))
 							holder.registration.connection.send({
@@ -166,7 +175,12 @@ export class SealedSecretHolders implements SealedSecretSource {
 		return this.jtis.admit(jti, exp, Math.floor(Date.now() / 1000)) === "ok";
 	}
 
-	settle(holders: ReadonlySet<SealedHolder>, uiRequestId: string, outcome: SecretInputOutcome, winnerGrant?: string): void {
+	settle(
+		holders: ReadonlySet<SealedHolder>,
+		uiRequestId: string,
+		outcome: SecretInputOutcome,
+		winnerGrant?: string,
+	): void {
 		for (const holder of holders)
 			holder.registration.connection.send({
 				type: "mcp_presenter_secret_settled",
@@ -224,6 +238,11 @@ export class SealedSecretHolders implements SealedSecretSource {
 
 	withdraw(uiRequestId: string): void {
 		this.offered.delete(uiRequestId);
+	}
+
+	retire(uiRequestId: string): void {
+		const offered = this.offered.get(uiRequestId);
+		if (offered) offered.settled = true;
 	}
 
 	onChange(listener: () => void): () => void {
