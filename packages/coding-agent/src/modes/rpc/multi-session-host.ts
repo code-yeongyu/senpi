@@ -250,7 +250,14 @@ export function createHostCore(
 		);
 		if (response) await writer.enqueueControl(response);
 	};
-	return { router, handle, handover: gate.handover, handoverAnswered: () => gate.answered() };
+	return {
+		router,
+		handle,
+		handover: gate.handover,
+		handoverAnswered: () => gate.answered(),
+		/** A session's live registry entry by its routing id, for an embedder that holds the core in process. */
+		peekSession: (sessionId: string) => registry.peek(sessionId),
+	};
 }
 
 /** Plain-stdio host with no eagerly-created AgentSessionRuntime. */

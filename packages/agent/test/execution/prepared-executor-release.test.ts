@@ -2,11 +2,11 @@ import type { AgentTool, AgentToolCall } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, type JsonObject } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
-import { createAdmissionLine } from "../../../agent/src/durable/store-admission.ts";
-import { createMemoryStoreMedium, openMemoryStore } from "../../../agent/src/durable/store-memory.ts";
-import { createExecutionLedger } from "../../../agent/src/execution/ledger.ts";
-import { createPreparedExecutor } from "../../src/core/execution/executor.ts";
-import type { PreparationPipeline } from "../../src/core/execution/executor-types.ts";
+import { createAdmissionLine } from "../../src/durable/store-admission.ts";
+import { createMemoryStoreMedium, openMemoryStore } from "../../src/durable/store-memory.ts";
+import { createExecutionLedger } from "../../src/execution/ledger.ts";
+import { createPreparedExecutor } from "../../src/execution/prepared/executor.ts";
+import type { PreparationPipeline } from "../../src/execution/prepared/executor-types.ts";
 
 // Release authority, abort, name correction and admission identity on the prepared executor, over a fake pipeline.
 const ISSUER = "brain";
@@ -14,6 +14,7 @@ const NOW = Date.now();
 
 async function open() {
 	const runs: string[] = [];
+	const frozenPairs: Array<[unknown, unknown]> = [];
 	const echo: AgentTool = {
 		name: "echo",
 		label: "echo",
@@ -30,9 +31,13 @@ async function open() {
 			if (call.name === "boom") throw new Error("resolver failed");
 			return call.name.toLowerCase() === "echo" ? echo : undefined;
 		},
-		beforeToolCall: async () => undefined,
+		beforeToolCall: async (context) =>
+			(context.args as { text?: unknown }).text === "block" ? { block: true, reason: "blocked" } : undefined,
 		afterToolCall: async () => undefined,
 		removedToolHint: () => undefined,
+		afterFreeze: (prepared, frozen) => {
+			frozenPairs.push([prepared, frozen]);
+		},
 	};
 	const medium = createMemoryStoreMedium();
 	await openMemoryStore(medium).claim(0, 1);
@@ -59,7 +64,7 @@ async function open() {
 			actor: { id: options.actor ?? ISSUER },
 			...(options.signal === undefined ? {} : { signal: options.signal }),
 		});
-	return { prepare, release, runs, ledger };
+	return { prepare, release, runs, ledger, frozenPairs };
 }
 
 describe("prepared executor release and admission edges", () => {
@@ -139,5 +144,24 @@ describe("prepared executor release and admission edges", () => {
 
 		// Then
 		expect(complete).toEqual({ kind: "refused", reason: "identity_conflict" });
+	});
+
+	// senpi#5795: preflight facts move from the prepared arguments object to the frozen copy exactly once per frozen call.
+	it("hands afterFreeze the prepared and frozen arguments once per frozen call, never for a blocked one", async () => {
+		// Given
+		const { prepare, release, runs, frozenPairs } = await open();
+
+		// When
+		await prepare({ id: "ran", name: "echo", arguments: { text: "hi" } });
+		await prepare({ id: "blocked", name: "echo", arguments: { text: "block" } });
+		await release("ran");
+
+		// Then
+		expect(frozenPairs).toHaveLength(1);
+		const [prepared, frozen] = frozenPairs[0] ?? [];
+		expect(frozen).toEqual({ text: "hi" });
+		expect(prepared).toEqual(frozen);
+		expect(prepared).not.toBe(frozen);
+		expect(runs).toEqual(["hi"]);
 	});
 });
