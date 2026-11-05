@@ -53,7 +53,9 @@ export default mergeConfig(
 				: {}),
 			server: {
 				deps: {
-					external: [/@silvia-odwyer\/photon-node/],
+					// Under Bun, extensions load through the Bun importer's plugin namespace (senpi-extension:); vitest's
+					// module runner cannot resolve it, so those ids are imported natively, where the plugin answers.
+					external: [/@silvia-odwyer\/photon-node/, /^senpi-extension:/],
 				},
 			},
 		},
