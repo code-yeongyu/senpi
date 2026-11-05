@@ -1,3 +1,6 @@
+// The Bun 1.4 query and transaction API this file uses: referenced, so any program that compiles this source (the
+// coding-agent build included) sees it, not only programs whose include covers the declaration file.
+/// <reference path="./bun-sqlite.d.ts" />
 import type { Database } from "bun:sqlite";
 import {
 	type CommitResult,

@@ -1,3 +1,6 @@
+// The Bun 1.4 query and transaction API this file uses: referenced, so any program that compiles this source (the
+// coding-agent build included) sees it, not only programs whose include covers the declaration file.
+/// <reference path="./bun-sqlite.d.ts" />
 import { Database, type Statement } from "bun:sqlite";
 import type { StoreValue } from "@earendil-works/pi-agent-core/conformance";
 
