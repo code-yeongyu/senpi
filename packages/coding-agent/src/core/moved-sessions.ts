@@ -5,7 +5,7 @@ import { getSessionsDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { sessionCwdMatcher } from "./moved-session-cwd.ts";
 import { compareRepositoryIdentities, type RepositoryIdentity, readRepositoryIdentity } from "./repository-identity.ts";
-import { listSessionsFromDir } from "./session-discovery.ts";
+import { listSessionsFromDir, newestActivityFirst } from "./session-discovery.ts";
 import { findMostRecentSession, getDefaultSessionDir, type SessionInfo } from "./session-manager.ts";
 import { readFileLines } from "./session-summary.ts";
 
@@ -32,10 +32,6 @@ function vanishedClassifier(cwd: string, current: RepositoryIdentity | undefined
 		return compareRepositoryIdentities(session.repositoryIdentity, current) === "same" ? "moved" : undefined;
 	};
 	return { ownCwd, kind };
-}
-
-function newestFirst(a: SessionInfo, b: SessionInfo): number {
-	return b.modified.getTime() - a.modified.getTime();
 }
 
 // A session dir that cannot be read contributes nothing; it never fails a listing or --continue (senpi#2990
@@ -107,8 +103,8 @@ async function vanishedSessions(
 		if (sessionKind === "moved") found.moved.push({ ...session, moved: true });
 		else if (sessionKind === "here" && wantHere) found.here.push(session);
 	}
-	found.here.sort(newestFirst);
-	found.moved.sort(newestFirst);
+	found.here.sort(newestActivityFirst);
+	found.moved.sort(newestActivityFirst);
 	return found;
 }
 
@@ -163,5 +159,5 @@ export async function withMovedSessions(
 	// Defensive dedupe: a session listed by both lookups stays one row, the folder's own.
 	const listed = new Set(own.map((session) => session.path));
 	const extra = [...vanished.here, ...vanished.moved].filter((session) => !listed.has(session.path));
-	return [...own, ...extra].sort(newestFirst);
+	return [...own, ...extra].sort(newestActivityFirst);
 }
