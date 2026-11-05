@@ -3261,12 +3261,18 @@ export class SessionManager {
 	 */
 	static continueRecent(cwd: string, sessionDir?: string): SessionManager {
 		const dir = sessionDir ? normalizePath(sessionDir) : getDefaultSessionDir(cwd);
-		const filterCwd = sessionDir !== undefined && dir !== getDefaultSessionDirPath(cwd);
-		const mostRecent = findMostRecentSession(dir, filterCwd ? cwd : undefined);
+		const mostRecent = SessionManager.recentSessionFile(cwd, sessionDir);
 		if (mostRecent) {
 			return new SessionManager(cwd, dir, mostRecent, true);
 		}
 		return new SessionManager(cwd, dir, undefined, true);
+	}
+
+	/** The file `continueRecent` would open, found without loading it (loading can migrate and rewrite the file). */
+	static recentSessionFile(cwd: string, sessionDir?: string): string | null {
+		const dir = sessionDir ? normalizePath(sessionDir) : getDefaultSessionDir(cwd);
+		const filterCwd = sessionDir !== undefined && dir !== getDefaultSessionDirPath(cwd);
+		return findMostRecentSession(dir, filterCwd ? cwd : undefined);
 	}
 
 	/** Create an in-memory session (no file persistence), optionally from entries held outside the filesystem. */

@@ -20,6 +20,12 @@ export async function prepareSessionOpening(manager: SessionManager, mode: AppMo
 
 export type StartupAdmission = "open" | "cancelled" | "refused";
 
+/**
+ * Exit code of a startup refused because another live process holds the session. The schedule runner reads it to
+ * leave the occurrence pending instead of failing it (senpi#5756).
+ */
+export const SESSION_HELD_EXIT_CODE = 76;
+
 export interface StartupAdmissionIo {
 	readonly canAsk: boolean;
 	readonly confirm: (question: string) => Promise<boolean>;
