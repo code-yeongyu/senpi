@@ -152,6 +152,26 @@ describe("epoch catch-up to the owner's recorded epoch (senpi#5860)", () => {
 		expect(fence.admits("s", 2, "c")).toBe(false);
 	});
 
+	it("a durable raise queued behind a ledger step is decided on the owner at its turn, not when it arrived", async () => {
+		const store = openMemoryStore(createMemoryStoreMedium());
+		await store.claim(0, 1);
+		const admission = createAdmissionLine();
+		let owner = "a";
+		const fence = createHandEpochFence({ ownerOf: () => owner, durable: { store, epoch: 1, admission } });
+		await fence.ready;
+		const step = Promise.withResolvers<void>();
+		const held = admission.admit(() => step.promise);
+		const byOld = fence.raise("s", 1, "a");
+		for (let turn = 0; turn < 64; turn++) await Promise.resolve();
+		owner = "b";
+		step.resolve();
+		await held;
+
+		expect(await byOld).toEqual({ kind: "refused", reason: "peer_unauthorized" });
+		expect(await fence.raise("s", 1, "b")).toEqual({ kind: "acked", floor: 1 });
+		expect(fence.admits("s", 1, "a")).toBe(false);
+	});
+
 	it("answers the record's owner below its recorded epoch with the floor in force, which its gate reads as superseded", async () => {
 		let owner: ScopeOwner = { principal: "a", epoch: 1 };
 		const fence = createHandEpochFence({ ownerOf: () => owner });

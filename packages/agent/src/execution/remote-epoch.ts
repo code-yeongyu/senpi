@@ -107,16 +107,27 @@ export function createHandEpochFence(options: HandEpochFenceOptions): HandEpochF
 		if (typeof read !== "object" || typeof copy === "string") return copy;
 		return copy !== undefined && copy.epoch >= read.epoch ? copy : read;
 	};
-	const ownerFor = async (scope: string, epoch: number): Promise<ScopeOwner | undefined> => {
+	/** The record read a raise needs (`undefined`: none; the copy decides at the raise's turn on the admission line). */
+	const readFor = async (
+		scope: string,
+		epoch: number,
+	): Promise<{ readonly owner: ScopeOwner | undefined } | undefined> => {
 		const ahead = (owner: ScopeOwner | undefined): boolean =>
 			typeof owner !== "string" && epoch > (owner?.epoch ?? 0);
-		const copy = copyOf(scope);
-		if (!ahead(copy) || refreshOwner === undefined) return copy;
+		if (!ahead(copyOf(scope)) || refreshOwner === undefined) return undefined;
 		// A read already in flight may have started before this raiser's claim landed; if it still leaves the raise ahead,
 		// read once more (that read starts after this raise arrived, so after its claim).
 		const joined = reading.has(scope);
 		const owner = await refreshed(scope, refreshOwner);
-		return joined && ahead(owner) ? refreshed(scope, refreshOwner) : owner;
+		return { owner: joined && ahead(owner) ? await refreshed(scope, refreshOwner) : owner };
+	};
+	/** The owner a raise is decided on, at its turn: the copy then, or the read when the copy is not newer than it. */
+	const ownerAtTurn = (scope: string, read: { readonly owner: ScopeOwner | undefined } | undefined) => {
+		const copy = copyOf(scope);
+		if (read === undefined) return copy;
+		return typeof copy === "object" && typeof read.owner === "object" && copy.epoch > read.owner.epoch
+			? copy
+			: read.owner;
 	};
 
 	const raiseNow = async (
@@ -152,8 +163,8 @@ export function createHandEpochFence(options: HandEpochFenceOptions): HandEpochF
 		ready,
 		async raise(scope, epoch, sender) {
 			await ready;
-			const owner = await ownerFor(scope, epoch);
-			const run = (): Promise<FloorRaise> => raiseNow(scope, epoch, sender, owner);
+			const read = await readFor(scope, epoch);
+			const run = (): Promise<FloorRaise> => raiseNow(scope, epoch, sender, ownerAtTurn(scope, read));
 			return durable === undefined ? run() : durable.admission.admit(run);
 		},
 		admits(scope, epoch, sender) {
