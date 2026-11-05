@@ -59,6 +59,12 @@ export const SESSION_RELOCATION_CAPABILITY = "session_relocation";
 export const RETAIN_ON_DISCONNECT_CAPABILITY = "retain_on_disconnect";
 
 /**
+ * HOST capability: a connection that proved the launch key can `declare_delegation`, and the host then enforces its own
+ * method-class table on every record of that connection before dispatch; `classify_record` answers (senpi#5632).
+ */
+export const DELEGATED_CONNECTION_CAPABILITY = "delegated_connection_v1";
+
+/**
  * Advertised by a multi-session host that answers `detach_connection`: it drops every attachment the
  * asking connection holds and replies only once that is done, so a short-lived client can return knowing
  * no other connection will still see it attached (senpi#3238).
@@ -217,6 +223,8 @@ export function buildCustomUnsupportedRequest(
 export const AUTH_KEY_VERIFY_CAPABILITY = "auth_key_verify";
 /** `test_provider_account`: re-run the sign-in connection test on one Claude subscription account (senpi#4436). */
 export const PROVIDER_ACCOUNT_TEST_CAPABILITY = "provider_account_test";
+/** `account_reset`: reset one named account's local health, keeping its credentials (senpi#4879, senpi#5698). */
+export const ACCOUNT_RESET_CAPABILITY = "account_reset";
 
 /** Queued inputs carry a `revision`, and `dequeue_message` / `edit_queued_message` accept `expectedRevision` (senpi#3459). */
 export const QUEUED_MESSAGE_REVISION_CAPABILITY = "queued_message_revision";

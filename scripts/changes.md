@@ -1,3 +1,64 @@
+## 2026-11-04 - senpi vendors machine-ops instead of publishing it (senpi#5784)
+
+### What changed
+
+- `scripts/registry-packages.mjs`: `@code-yeongyu/senpi-machine-ops` leaves the npm publish set.
+- `scripts/prepare-senpi-bundled-workspaces.mjs`: vendors `packages/machine-ops/dist/src` under `vendor/senpi-machine-ops/` in the senpi tarball and rewrites the emitted root and `/in-process-holder` imports to relative paths, the same way it already handles client/protocol. Each vendored workspace now names its manifest and its entry files, and the leak check matches only quoted specifiers, so a comment that names a vendored package no longer fails staging.
+- `scripts/prepare-senpi-publish-manifest.mjs`: the staged senpi manifest drops the machine-ops dependency with client/protocol, so it no longer pins machine-ops to an exact version.
+- `scripts/senpi-publish-pack-checks.mjs`: the senpi tarball must carry the vendored machine-ops entries, and the published-package file check no longer lists machine-ops.
+- `scripts/publish-registry-dependencies.test.mjs`: every registry package source must have a `CHANGELOG.md` next to its `package.json`.
+
+### Why
+
+- #5603 added machine-ops to the publish set without `packages/machine-ops/CHANGELOG.md`, so the v2026.11.4-1 Build Binaries run failed at "Prepare GitHub release payload" (`release-notes.mjs extract --published`). The package was also never on npm, and npm trusted publishing cannot do a first publish. senpi's tools import it at runtime (`packages/coding-agent/src/core/tools/machine.ts`), so it ships inside the senpi tarball instead.
+
+### Why an extension could not handle it
+
+- Release and publish tooling is repository infrastructure.
+
+### Expected merge conflict zones
+
+- LOW: the package lists in `registry-packages.mjs`, `prepare-senpi-publish-manifest.mjs` and `senpi-publish-pack-checks.mjs`.
+
+## 2026-11-03 - Release scripts carry the machine-ops workspace (senpi#5592)
+
+### What changed
+
+- `scripts/release-packages.mjs`: `packages/machine-ops/package.json` joins the lockstep CalVer set.
+- `scripts/local-release.mjs`: local release builds and packs `@code-yeongyu/senpi-machine-ops`.
+- `scripts/registry-packages.mjs`, `scripts/prepare-senpi-publish-manifest.mjs`, `scripts/senpi-publish-pack-checks.mjs`, `scripts/build-all.mjs`: the package is published under its own name with an exact version in the senpi manifest, its tarball must carry `dist/src/index.js` and the conformance entry, and it builds after pty.
+
+### Why
+
+- A remote machine executor and the agent's own tools must share one implementation of file and process operations, their limits and their permission checks. The shared layer is the new engine-free workspace package `packages/machine-ops` (`@code-yeongyu/senpi-machine-ops`), which imports nothing from `packages/agent` or `packages/coding-agent`.
+
+### Why an extension could not handle it
+
+- Release and build tooling is repository infrastructure.
+
+### Expected merge conflict zones
+
+- LOW: the package lists in `release-packages.mjs`, `local-release.mjs`, `registry-packages.mjs` and `build-all.mjs`.
+
+## 2026-10-26 - publish.mjs requires the socket-secret bridge it is told to (senpi#4312)
+
+### What changed
+
+- `scripts/publish.mjs`: new `--require-socket-secret-bridge=win32-<arch>[,...]` flag, passed to `assertSenpiPackedWorkspaceFiles` for the senpi tarball.
+- `scripts/senpi-publish-pack-checks.mjs`: `SOCKET_SECRET_BRIDGE_TARGETS`, `socketSecretBridgeFile(target)`, and an `options.requiredSocketSecretTargets` check that rejects a senpi tarball missing a named bridge.
+
+### Why
+
+- The bridge has no runtime fallback (sisyphuslabs/omo-desktop-app#4199), so unlike the PTY prebuild a missing target must block the publish, the best-effort arm64 build included.
+
+### Why an extension could not handle it
+
+- Publishing runs in the release tooling, outside the agent runtime.
+
+### Expected merge conflict zones
+
+- LOW: argument parsing at the top of `publish.mjs` and `validatePack`.
+
 ## 2026-11-03 - Loopless worker entry in the release binaries (senpi#5438)
 
 ### What changed

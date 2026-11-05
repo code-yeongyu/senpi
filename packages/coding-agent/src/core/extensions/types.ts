@@ -1863,6 +1863,12 @@ export interface AgentBeforeSettleEvent extends BoundaryState {
 /** Fired after an agent run has fully settled and no automatic retry, compaction, or queued continuation will run. */
 export interface AgentSettledEvent {
 	type: "agent_settled";
+	/**
+	 * Present when every fallback rung failed and at least one failure was limit-shaped. `resumeAt`
+	 * (epoch ms) is the soonest future reset the run named, or the latest past reset if all passed.
+	 * It is absent only when no reset was collected. Outage-only exhaustion keeps provider recovery.
+	 */
+	fallbackExhausted?: { resumeAt?: number };
 }
 
 export type UIPromptKind = "select" | "confirm" | "input" | "editor" | "custom" | "question";
@@ -3363,6 +3369,12 @@ export interface ProviderConfig {
 	 * used and blocked all of them (senpi#2081).
 	 */
 	ownsAccountSelection?: boolean;
+	/**
+	 * Capability flag: every request runs through a binary on this machine, under a login stored on this
+	 * machine (for example a CLI driven as a subprocess), so the provider can only be served where that
+	 * binary and login exist. Metadata only: nothing reads it yet, and selection and resolution ignore it.
+	 */
+	localOnly?: boolean;
 }
 
 interface ProviderModelConfigBase {

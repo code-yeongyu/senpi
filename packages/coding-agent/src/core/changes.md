@@ -1,3 +1,231 @@
+## 2026-11-03 - Header-only provider auth is queryable without resolving (senpi#5709, fixes #5707)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-runtime.ts`: `providerAuthIsHeaderOnly(providerId)` reports whether the provider's only credential is a configured header (`configuredAuthIsHeaderOnly` in `provider-request-auth.ts`). Its models.json or extension config must name credential headers and no API key, and the provider's own auth check from the last availability pass must have fallen back to those headers. A built-in provider's own env key keeps it keyed. It reads configuration and the availability snapshot only, and resolves nothing; before any availability pass it answers false.
+- `packages/coding-agent/src/core/model-registry.ts`: `providerAuthIsHeaderOnly(provider)` passes it through. `CredentialResolver` gains it as an optional member.
+
+### Why
+
+- Image-generation availability is now decided from configuration on every open (senpi#5707). A header-only gateway reports `configured` through `getProviderAuthStatus`, yet the image tool needs an API key, so availability must tell the two apart without running key helpers. `getProviderAuthStatus` keeps its shape because RPC `get_auth_providers` serves it.
+
+### Why an extension could not handle it
+
+- The provider config and its extension overlays live in the runtime; an extension sees only resolved request auth.
+
+### Expected merge conflict zones
+
+- LOW: one method after `getProviderAuthStatus` in `model-runtime.ts` and in `model-registry.ts`, plus one import in `model-runtime.ts`.
+
+## 2026-11-03 - Opt-in prepared execution pipeline (senpi#5657)
+
+### What changed
+
+- `packages/coding-agent/src/core/execution/pipeline-prepared.ts` and `pipeline-prepared-batch.ts` are new: the prepared ToolHost and its per-batch coordinator/executor adapter.
+- `packages/coding-agent/src/core/execution/pipeline-witness.ts`: with `SENPI_EXECUTION_PIPELINE=prepared`, installs the prepared ToolHost; it installs no receipt writer, so receipts still come only from an explicitly configured sink.
+- `packages/coding-agent/src/core/execution/executor.ts` and `executor-types.ts`: `ReleaseRequest.onUpdateFor(toolCall)`, so updates carry the prepared call.
+
+### Why
+
+Plan row S18b: the prepared pipeline (executor + coordinator) behind the ToolHost seam, off by default until its phase gate.
+
+### Why an extension could not handle it
+
+The session's ToolHost and receipt sink are bound by the session itself.
+
+### Expected merge conflict zones
+
+`pipeline-witness.ts`; `executor.ts` release body.
+
+## 2026-11-03 - The usage poll also reads claude CLI accounts from the CLI's credential file (senpi#5627)
+
+### What changed
+
+- `packages/coding-agent/src/core/subscription-limits/usage-accounts.ts`: this narrows the 2026-10-27 entry "The usage poll reads Claude only through env tokens (senpi#4436, S7)". Env token accounts are polled as before; a stored claude CLI account with a valid `dirId` and no `signInRequired` is now polled too, with the access token `readClaudeCliAccessToken` reads from its account dir. Nothing is refreshed and nothing is written; a missing, linked, malformed or expired credential offers no token, including a credential file swapped for a link between the check and the read: `claude-cli-account-dir.ts` opens it without following a final link (`O_NOFOLLOW`; on Windows, which has none, the opened handle's inode must match the checked file) and re-checks the account dir afterwards. `AccountSources` gains an optional `agentDir`; without it only env token accounts are listed.
+- `packages/coding-agent/src/core/subscription-limits/usage-poller.ts`: `startSubscriptionUsagePolling` passes its `agentDir` to `listPollAccounts`.
+- `packages/coding-agent/src/core/subscription-limits/usage-cache.ts`, `usage-poller.ts`: a poll with nothing to ask with (a macOS claude CLI account, an expired token) caches its placeholder reading as `pending`, which only schedules the next look; `#adopt` never hands a pending reading to the limit store, so it cannot replace windows a turn's `rate_limit_event` recorded before the first poll, in this process or a sibling that adopts the cache.
+
+### Why
+
+- After senpi#4436 every stored Claude account is a claude CLI account and the poll skipped all of them, while a turn's `rate_limit_event` carries utilization only near a limit, so a signed-in user had no Claude limit record at all. The CLI's file store is where the token lives on Linux and Windows; the macOS Keychain is not read (a separate change with its own security review).
+
+### Why an extension could not handle it
+
+- The poller and its account listing are core subscription-limits plumbing; extensions only read the resulting records.
+
+### Expected merge conflict zones
+
+- LOW: the `claudeAccounts` body and the `AccountSources` interface in `usage-accounts.ts`; the `listPollAccounts` call in `startSubscriptionUsagePolling`.
+
+## 2026-10-30 - An exhausted fallback ladder reports its soonest reset on settle (senpi#3709)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/limit-reset.ts` (new): `limitResetAt` returns the wall-clock reset a failed request names. It reads the structured quota or rate-limit `resetsAt` first, then usage-limit reset fields or prose, then a Retry-After hint.
+- `packages/coding-agent/src/core/agent-session.ts`: records `limitResetAt` and limit-shaped failures for each run and notes when `retry_fallback_exhausted` fires. At settle it emits `agent_settled.fallbackExhausted` only after limit-shaped exhaustion; outage-only exhaustion keeps the existing provider recovery. `resumeAt` is the soonest future reset, or the latest collected past reset when all passed, so the goal resumes with the 1 s margin rather than parking forever. The per-run state is consumed once and cleared. The fallback wall clock is now held as `_fallbackWallNow`.
+
+### Why
+
+- Once the ladder ran out, the reset times the rungs named were dropped. A goal session then either resumed at once into the same limits or never resumed, and sat idle until input (senpi#3709).
+
+### Why an extension could not handle it
+
+- Only the session sees every rung's failure and knows that the ladder ran out. Extensions get `agent_end` before the retry owner decides, and only for the last rung's message.
+
+### Expected merge conflict zones
+
+- LOW: the `_emit` exhaustion flag, the `agent_end` error bookkeeping next to `this._lastAssistantMessage = undefined`, and the `agent_settled` extension emit in `_emitAgentSettled`.
+
+## 2026-11-03 - Lifecycle bridge for a split endpoint (S15, senpi#5681)
+
+### What changed
+
+- `src/core/execution/lifecycle.ts` (new): `createLifecycleBridge` runs a session's lifecycle handlers and tool calls through the endpoint's scope lifecycle. A refused event throws `LifecycleRefusedError`.
+
+### Why
+
+- The commit-before-next-call order of design 5.6.6 needs a seam between a session's lifecycle handlers and its tool calls.
+
+### Why an extension could not handle it
+
+- It sits under the execution layer that dispatches every tool call.
+
+### Expected merge conflict zones
+
+- LOW: a new file.
+
+## 2026-11-03 - session_lifecycle events delivered immediately before their cause (senpi#5682)
+
+### What changed
+
+- `packages/coding-agent/src/core/lifecycle-event-sequencer.ts` is new: `LifecycleEventSequencer` holds the lifecycle events raised while the session handles one agent event and returns them in order (delivering them at once if the handling throws).
+- `packages/coding-agent/src/core/agent-session.ts`: `_handleAgentEvent` runs its synchronous section inside the sequencer's `hold()`, and the event's `_agentEventQueue` step delivers the held lifecycle events just before `_processAgentEvent` (both branches). `_createLifecycleBinding`'s `emit` goes through the sequencer. Lifecycle state still updates synchronously.
+
+### Why
+
+senpi#4360 (R10.c): the lifecycle event and its cause were delivered by two chains (a synchronous observer and the ordered queue), so their order was a race that any extra await in a tool host, a slow handler or a hand across a transport could flip. The B0 goldens place every classifiable lifecycle event before its cause, so that is the rule now made explicit.
+
+### Why an extension could not handle it
+
+The delivery order of the session's own lifecycle and agent events is decided inside `AgentSession`.
+
+### Expected merge conflict zones
+
+`agent-session.ts` `_handleAgentEvent` (its synchronous section is now one `hold()` callback), the `_agentEventQueue` field block, and `_createLifecycleBinding`'s `emit`.
+
+## 2026-11-03 - Terminal wakes through a hand's durable outbox (S14, senpi#5675)
+
+### What changed
+
+- `src/core/execution/wake-delivery.ts` (new): `terminalWakeSender` is the terminal notifier's `sendMessage` on a hand: it offers the notification to the outbox, then re-offers. `deliverTerminalWake` turns a taken wake into the same `sendMessage` a fused session makes.
+- `src/core/extensions/builtin/terminal/extension.ts`: `createTerminalExtension({ sendMessage })` sends the background bash and monitor notifications through the given sender; `registerTerminalExtension` is unchanged.
+
+### Why
+
+- On a split session the hand's background job must wake the brain durably (design 5.6.4).
+
+### Why an extension could not handle it
+
+- The terminal notifier is the builtin terminal extension's own delivery path.
+
+### Expected merge conflict zones
+
+- LOW: the terminal extension's notifier construction in `session_start`.
+
+## 2026-11-03 - A re-sent approval answers prepared (S13, senpi#5669)
+
+### What changed
+
+- `src/core/execution/executor.ts`: the issuer's re-sent approval for a call that is already prepared answers `prepared`, as the reference executor does, instead of `refused` (#5667 review).
+
+### Why
+
+- A brain that restarts before recording the first reply re-sends the approval.
+
+### Why an extension could not handle it
+
+- It is the core prepared-execution executor.
+
+### Expected merge conflict zones
+
+- LOW: the executor's `consent` reply mapping.
+
+## 2026-11-03 - Gate B on the prepared executor (S12, senpi#5663)
+
+### What changed
+
+- `src/core/execution/executor.ts`, `executor-types.ts`: an optional `consent` classifier. A frozen call that needs consent and is not covered by the Gate A approval of an identical request answers `prepared_awaiting_consent`. `consent()` applies the issuer's `consent` ledger event and refuses an approval of another frozen digest. After the lease has expired it answers with the terminal `lease_expired` row.
+- `src/core/execution/consent.ts` (new): `consentFromPermissionPolicy`. Only `ask` needs consent; a `deny` stays with the call's own `tool_call` chain.
+
+### Why
+
+- A cross-machine executor needs Gate B (design 5.6.1). Executors with no classifier (fused, split-local) never wait (K3).
+
+### Why an extension could not handle it
+
+- It is the core prepared-execution executor.
+
+### Expected merge conflict zones
+
+- LOW: the executor's freeze step and its return object.
+
+## 2026-10-30 - Validate account selection strategy (senpi#5068)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-policy-schema.ts`: accept the three `accountStrategy` values in each provider's credential policy and reject other values with a field-specific schema error.
+- `packages/coding-agent/src/core/model-runtime.ts`: `getSessionAuth` passes the provider's strategy and the session's round-robin turn to `selectSessionSlot`, so auxiliary requests (compaction, /btw, look-at, cache keepalive) authenticate as the account the stream's next turn uses.
+
+### Why
+
+- `packages/coding-agent/src/core/credential-policy-schema.ts` previously rejected explicit account strategies, preventing per-provider distribution choices.
+- `packages/coding-agent/src/core/model-runtime.ts`: without the strategy, an auxiliary request under round-robin or fill-first would pick a different account than the stream.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/credential-policy-schema.ts` validates provider configuration before the generic credential pool runs.
+- `packages/coding-agent/src/core/model-runtime.ts` resolves the session's auth for auxiliary callers inside the runtime.
+
+### Expected merge conflict zones
+
+- LOW: optional credential policy fields in `packages/coding-agent/src/core/credential-policy-schema.ts`; the `selectSessionSlot` call in `packages/coding-agent/src/core/model-runtime.ts`.
+
+## 2026-11-03 - Auxiliary session auth follows the headroom preference (senpi#5053)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-runtime.ts`: `sessionSlotAuth` passes the live subscription limit readings and the session's remembered headroom account to `selectSessionSlot`, so compaction, /btw, look-at and cache keepalive authenticate as the account the rotation stream picks first.
+
+### Why
+
+- The rotation stream now skips an account near its subscription limit (omo#9234); without the same readings an auxiliary request would authenticate as the near-limit account the stream skips, breaking the rule that it uses the stream's own first pick.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/model-runtime.ts` resolves auxiliary auth from the credential pool before any extension hook runs.
+
+### Expected merge conflict zones
+
+- LOW: `sessionSlotAuth` in `packages/coding-agent/src/core/model-runtime.ts` and its `subscription-limits/limit-store.ts` import.
+
+## 2026-10-30 - ProviderConfigInput.localOnly capability flag (senpi#5028)
+
+### What changed
+
+- `packages/coding-agent/src/core/provider-composer.ts`: optional `localOnly` on `ProviderConfigInput`, mirroring `ProviderConfig.localOnly`. The runtime stores it with the rest of the registration; no composition, selection or resolution path reads it.
+
+### Why
+
+senpi#5028 (SUBP-LOCAL): keeps the extension-declared capability in the provider registry for the later brain/hand work (senpi#4998).
+
+### Why an extension could not handle it
+
+The registry input type is core-owned.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `ProviderConfigInput`, after `ownsAccountSelection`.
+
 ## 2026-11-03 - Full shared sections for the Opus and Fable presets (senpi#5665)
 
 ### What changed

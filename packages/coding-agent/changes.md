@@ -1,3 +1,58 @@
+## 2026-10-30 - Experimental subscription egress SDK entry (senpi#5039)
+
+### What changed
+
+- `packages/coding-agent/package.json`: exports `./subscription-egress`, with strict versioned model-call schemas and an off-by-default hand executor.
+
+### Why
+
+- `packages/coding-agent/package.json`: gives attachment owners a public entry for executing subscription model calls locally without forwarding credentials or enabling hosted selection.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/package.json`: package exports must exist before an attachment owner imports the SDK.
+
+### Expected merge conflict zones
+
+- LOW: the exports map in `packages/coding-agent/package.json`.
+
+## 2026-11-03 - coding-agent depends on @code-yeongyu/senpi-machine-ops (senpi#5592)
+
+### What changed
+
+- `packages/coding-agent/package.json`: new dependency `@code-yeongyu/senpi-machine-ops`; `build:binary` builds it before coding-agent.
+- `packages/coding-agent/tsconfig.build.json`: paths for `@code-yeongyu/senpi-machine-ops` and its `in-process-holder` subpath to the package's `dist`.
+
+### Why
+
+- A remote machine executor and the agent's own tools must share one implementation of file and process operations, their limits and their permission checks. The shared layer is the new engine-free workspace package `packages/machine-ops` (`@code-yeongyu/senpi-machine-ops`), which imports nothing from `packages/agent` or `packages/coding-agent`.
+
+### Why an extension could not handle it
+
+- A package dependency and build paths are manifest changes, not extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the dependency list and `build:binary` in `package.json`; the `paths` block in `tsconfig.build.json`.
+
+## 2026-10-26 - The senpi package ships the Windows socket-secret bridge (senpi#4312)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `files` includes `native/socket-secret`, where the publish job stages `prebuilds/win32-x64/` and `prebuilds/win32-arm64/senpi_socket_secret.<host>.node`.
+
+### Why
+
+- sisyphuslabs/omo-desktop-app#4199: the Windows public socket secret is published and repaired through a native bridge with no fallback, so the installed package must carry it for both Windows architectures.
+
+### Why an extension could not handle it
+
+- Package contents are decided by the manifest, before any extension runs.
+
+### Expected merge conflict zones
+
+- LOW: the `files` array in `packages/coding-agent/package.json`.
+
 ## 2026-11-03 - Loopless worker entry in the compiled binary (senpi#5438)
 
 ### What changed

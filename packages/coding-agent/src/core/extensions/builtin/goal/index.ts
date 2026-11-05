@@ -357,8 +357,8 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		});
 	});
 
-	pi.on("agent_settled", async (_event, ctx) => {
-		const goal = await monitorContinuation.afterAgentSettled();
+	pi.on("agent_settled", async (event, ctx) => {
+		const goal = await monitorContinuation.afterAgentSettled(event.fallbackExhausted);
 		if (goal !== undefined) syncContinuationGoal(ctx, goal);
 	});
 

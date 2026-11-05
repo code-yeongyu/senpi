@@ -374,7 +374,7 @@ jobs:
         run: |
           # tui-smoke.test.mjs drives the real tmux driver (senpi#4986 regression); make sure tmux exists.
           command -v tmux >/dev/null || { sudo apt-get update && sudo apt-get install -y tmux; }
-          node --test .agents/skills/senpi-qa/scripts/lib/equivalence-normalize.test.mjs .agents/skills/senpi-qa/scripts/lib/equivalence-tui-compare.test.mjs .agents/skills/senpi-qa/scripts/lib/tui-smoke.test.mjs
+          node --test .agents/skills/senpi-qa/scripts/lib/equivalence-normalize.test.mjs .agents/skills/senpi-qa/scripts/lib/equivalence-tui-compare.test.mjs .agents/skills/senpi-qa/scripts/lib/tui-smoke.test.mjs .agents/skills/senpi-qa/scripts/lib/equivalence-mutations.test.mjs
 
       # E29 (example extension gondolin) starts a real micro-VM, so the runner needs QEMU and a gondolin image store with
       # alpine-base:latest pulled ahead of time (the senpi#4751 M0 readiness recipe). Provisioned here so E29 runs on CI
@@ -412,7 +412,7 @@ jobs:
 
       - name: EQ compare against the B0 goldens
         timeout-minutes: 25
-        run: node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --compare --pipeline legacy --placement fused --evidence eq-ci
+        run: node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --compare --placement fused --evidence eq-ci
 
       - name: Z1.n Node smoke (node vs bun)
         timeout-minutes: 10
@@ -1468,6 +1468,7 @@ jobs:
           --workspace packages/agent
           --workspace packages/ai
           --workspace packages/client
+          --workspace packages/machine-ops
           --workspace packages/protocol
           --workspace packages/pty
           --workspace packages/senpi-codemode

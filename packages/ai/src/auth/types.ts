@@ -1,13 +1,17 @@
-import type { ProviderEnv, ProviderHeaders } from "../types.ts";
+import type { Api, Model, ProviderEnv, ProviderHeaders } from "../types.ts";
 
 /**
  * Request auth for a single model request. If a value cannot be expressed as
- * `apiKey`, `headers`, or `baseUrl`, it is provider config, not auth.
+ * `apiKey`, `headers`, `baseUrl`, or the credential's chat route, it is provider config, not auth.
  */
 export interface ModelAuth {
 	apiKey?: string;
 	headers?: ProviderHeaders;
 	baseUrl?: string;
+	/** Credential-selected chat transport; absent preserves the selected model's API. */
+	api?: Api;
+	/** Request restrictions belonging to the selected credential's chat route. */
+	compat?: Model<Api>["compat"];
 }
 
 /**
@@ -27,12 +31,26 @@ export interface OAuthCredentials {
 	refresh: string;
 	access: string;
 	expires: number;
+	/** ChatGPT slots without a route retain the legacy Codex protocol. */
+	route?: "siwc" | "codex";
 	[key: string]: unknown;
 }
 
 /** Stored canonical OAuth credential. */
 export interface OAuthCredential extends OAuthCredentials {
 	type: "oauth";
+	/** Verified account identity, retained only by flows that validate an ID token. */
+	subject?: string;
+	/** Display metadata only; not proof of identity or workspace membership. */
+	email?: string;
+	issuer?: string;
+	/** Issued OAuth client ID, not the dynamic registration entrypoint. */
+	clientId?: string;
+	/** Retained for a later id_token_hint; treat as secret credential material. */
+	idToken?: string;
+	scopes?: string[];
+	/** SIWC plan permission; absent on credentials saved before permission tracking. */
+	planUsageEnabled?: boolean;
 	/** Random id the last sign-in wrote (`stampLogin`); a refresh keeps or drops it, never mints one. Not key material. */
 	loginId?: string;
 }
@@ -266,11 +284,18 @@ export interface LoginOptions {
 	/** Configured product display name, consistent across installations of this app. */
 	appName?: string;
 	/**
+	 * The explicitly selected saved account for reauthorization. Omit when adding
+	 * an account; callers must not infer this from the provider's active credential.
+	 */
+	reauthorize?: OAuthCredential;
+	/**
 	 * Returns the stable ID of this app installation, e.g. sent to OpenAI as its
 	 * agent host ID. Called only by login flows that need it, so apps can create
 	 * the ID on first use and must return the same ID on every later call.
 	 */
 	getDeviceId?: () => string;
+	/** Explicitly enable ChatGPT plan usage for a saved SIWC registration. */
+	planUsageConsent?: { clientId: string };
 }
 
 /**

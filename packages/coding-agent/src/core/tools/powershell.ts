@@ -28,10 +28,10 @@ export type PowerShellToolDetails = BashToolDetails;
 export type PowerShellToolInput = BashToolInput;
 
 export interface PowerShellToolOptions
-	extends Pick<BashToolOptions, "operations" | "exposeSessionEnvironment" | "spawnHook"> {}
+	extends Pick<BashToolOptions, "operations" | "exposeSessionEnvironment" | "spawnHook" | "machine"> {}
 
-export function createLocalPowerShellOperations(): PowerShellOperations {
-	const operations = createLocalShellOperations("PowerShell", getPowerShellConfig);
+export function createLocalPowerShellOperations(machine?: BashToolOptions["machine"]): PowerShellOperations {
+	const operations = createLocalShellOperations("PowerShell", getPowerShellConfig, machine);
 	return {
 		exec: (command, cwd, options) => operations.exec(`${UTF8_OUTPUT_PREFIX}${command}`, cwd, options),
 	};
@@ -55,7 +55,7 @@ export function createPowerShellToolDefinition(
 	// The default PowerShell operations are local, not caller-injected: only a caller's own operations pin the tool.
 	const { serverPinned: _defaultOperationsPin, ...definition } = createShellToolDefinition(cwd, powershellToolConfig, {
 		...options,
-		operations: options?.operations ?? createLocalPowerShellOperations(),
+		operations: options?.operations ?? createLocalPowerShellOperations(options?.machine),
 	});
 	return {
 		...definition,

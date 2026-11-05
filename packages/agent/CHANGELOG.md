@@ -12,6 +12,45 @@
 
 ### Removed
 
+## [2026.11.4-2] - 2026-11-04
+
+### Breaking Changes
+
+### Added
+
+- `ToolHostOptions.local` (the loop's context and assistant message, for a ToolHost running in the loop's process) and main-entry exports of `createBatchCoordinator`, `createExecutionLedger`, `createMemoryStoreMedium`, `openMemoryStore`, `createAdmissionLine` and `withToolNameCorrection` ([#5657](https://github.com/code-yeongyu/senpi/pull/5657)).
+- `DeviceFiles`: extension code reaches the device's files through one channel, the local filesystem on a fused session and the hand's disk, through its grant, `tool_call` handlers and filesystem policy, on a split session ([#5691](https://github.com/code-yeongyu/senpi/pull/5691))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.4-1] - 2026-11-04
+
+### Breaking Changes
+
+### Added
+
+- Added the model plane (`src/execution/plane.ts`, `src/execution/plane-model.ts`): a call running on a hand can ask the brain that owns it for a model completion over the call's own scope lane. The brain admits a nested request only while its parent call is live on that lane, serves each request once (a replay gets the same answer), aborts it with its parent, and keeps only a model's provider and ID, context and sampling options from the hand's request. `createRemoteToolHost()` takes optional `planes`; `HandCall.nested` carries the call's nested requests. Nothing serves or calls a plane yet ([#5640](https://github.com/code-yeongyu/senpi/pull/5640)).
+- Exported the helpers that turn a finished tool call into its `tool_execution_update` / `tool_execution_end` events and its result message (`src/execution/tool-outcome-events.ts`): `createErrorToolResult`, `emitToolExecutionUpdate`, `emitToolExecutionEnd`, `createToolResultMessage`, `emitToolResultMessage`, `shouldTerminateToolBatch`. The agent loop uses the same functions, unchanged ([#5648](https://github.com/code-yeongyu/senpi/pull/5648)).
+- A sequential mode for the durable batch coordinator (`createSequentialCoordinator`), with the SEQ-01 and MULTI-FAIR-02 conformance cases; nothing selects it yet ([#5661](https://github.com/code-yeongyu/senpi/issues/5661))
+- Consent mechanics for cross-machine executions on the durable batch coordinator: Gate A on the raw call, Gate B on the frozen call, durable answers, and the CONSENT-01/02 conformance cases. Nothing configures consent yet ([#5663](https://github.com/code-yeongyu/senpi/issues/5663))
+- Nested admission on the brain that owns a parent execution (`createNestedAdmission`), with the NEST-01..09, CANCEL-01..02 and KILL-NEST-01..03 conformance cases. Nothing routes nested requests to it yet ([#5669](https://github.com/code-yeongyu/senpi/issues/5669))
+- Durable wakes from a hand to the brain that owns its scope (`createWakeOutbox`, `createWakeInbox`: commit before send, dedup by event id, ack after commit, re-offer, 7-day retention), with the WAKEX-01..07 and KILL-WAKEX-01..06 conformance cases. Nothing configures it yet ([#5675](https://github.com/code-yeongyu/senpi/issues/5675))
+- A durable scope lifecycle for split endpoints (`createScopeLifecycle`: commit-before-next-call, issuer-only close, forced close writes outcomes first, the idle TTL spares live scopes), with the LIFECYCLE-01..03, SCOPE-01..02 and MULTI-LIFE-01 conformance cases. Nothing routes lifecycle to it yet ([#5681](https://github.com/code-yeongyu/senpi/issues/5681))
+
+### Changed
+
+- The conformance case that resends a lost transport frame on its own lane's deadline is now `MULTI-FAIR-03` (was `MULTI-FAIR-02`, now the sequential fairness case); its behavior is unchanged ([#5661](https://github.com/code-yeongyu/senpi/issues/5661))
+
+### Fixed
+
+- A sequential run whose call ABORTs on a blocked preparation outcome now replays the later calls as an interrupted preparation, as one batch does ([#5663](https://github.com/code-yeongyu/senpi/issues/5663))
+
+### Removed
+
 ## [2026.11.3-3] - 2026-11-03
 
 ### Breaking Changes
