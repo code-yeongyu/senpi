@@ -80,6 +80,24 @@ describe("a SessionManager bound to the durable store (S20b)", () => {
 		},
 	);
 
+	it("keeps the first entry when the session file cannot be created, warns, and projects it once the directory is writable", async () => {
+		const { session, warnings } = await durableSession();
+		chmodSync(dir, 0o555);
+		try {
+			expect(() => session.appendMessage(userMsg("question"))).not.toThrow();
+		} finally {
+			chmodSync(dir, 0o755);
+		}
+		expect(warnings.map((warning) => warning.code)).toEqual(["EACCES"]);
+		expect(session.getEntries()).toHaveLength(1);
+
+		session.appendMessage(assistantMsg("answer"));
+		await session.settleDurableProjection();
+
+		expect(warnings).toHaveLength(1);
+		expect(readFileSync(fileOf(session), "utf8")).toBe(await storeImage(session.getSessionId()));
+	});
+
 	it("throws a store refusal on the same call and takes nothing", async () => {
 		const { session } = await durableSession();
 		session.appendMessage(userMsg("question"));
