@@ -2,6 +2,7 @@
 // `pkill`, `kill`, `killall` and `sudo` resolve to recording fakes on PATH, and the protected pid every direct signal
 // targets is a sleeper the test owns, so no test here can signal anything else (or elevate) even without the guard.
 import { spawn, spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
@@ -57,9 +58,24 @@ function startSleeper(): Sleeper {
 	return {
 		pid,
 		// A signalled sleeper is gone or a zombie until the runner reaps it.
+		// No process-table tool: kill(pid, 0) alone still answers for a
+		// zombie, so on Linux read /proc/<pid>/stat and treat state Z as
+		// dead. Without /proc (macOS and friends) the kill probe plus the
+		// reaped exit state below is the best available signal.
 		alive: () => {
-			const stat = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).stdout.trim();
-			return stat !== "" && !stat.startsWith("Z");
+			if (child.exitCode !== null || child.signalCode !== null) return false;
+			try {
+				process.kill(pid, 0);
+			} catch {
+				return false;
+			}
+			try {
+				const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+				const state = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[0];
+				return state !== "Z";
+			} catch {
+				return true;
+			}
 		},
 		stop: () => child.kill("SIGKILL"),
 	};
