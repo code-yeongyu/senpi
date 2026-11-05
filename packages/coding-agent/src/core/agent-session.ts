@@ -19,6 +19,7 @@ import { rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { bindPipelineWitness } from "./execution/pipeline-witness.ts";
+import { runExecuteToolOnHost } from "./execute-tool-on-host.ts";
 import { carryPreflightFacts } from "./execution/preflight-carry.ts";
 import type {
 	Agent,
@@ -5394,37 +5395,27 @@ export class AgentSession {
 			);
 		}
 
-		let result: AgentToolResult<unknown>;
-		let isError = false;
-		try {
-			result = await prepared.tool.execute(
-				prepared.toolCall.id,
-				prepared.args as never,
-				options?.signal,
-				options?.onUpdate as AgentToolUpdateCallback<unknown> | undefined,
-			);
-			isError = result.isError === true;
-		} catch (err) {
-			result = {
-				content: [
-					{
-						type: "text",
-						text: err instanceof Error ? err.message : String(err),
-					},
-				],
-				details: { isError: true },
-			};
-			isError = true;
-		}
-		const hookResult = await this._emitAfterToolCallHooks(prepared.toolCall, prepared.args, result, isError);
-
-		if (!hookResult) {
+		const { result, hook } = await runExecuteToolOnHost(
+			{
+				agent: this.agent,
+				afterHooks: (call, result, isError) =>
+					this._emitAfterToolCallHooks(call.toolCall, call.args, result, isError),
+			},
+			prepared,
+			{
+				...(options?.signal === undefined ? {} : { signal: options.signal }),
+				...(options?.onUpdate === undefined
+					? {}
+					: { onUpdate: options.onUpdate as AgentToolUpdateCallback<unknown> }),
+			},
+		);
+		if (!hook) {
 			return result as AgentToolResult<TDetails>;
 		}
 
 		return {
-			content: hookResult.content ?? result.content,
-			details: (hookResult.details ?? result.details) as TDetails,
+			content: hook.content ?? result.content,
+			details: (hook.details ?? result.details) as TDetails,
 			terminate: result.terminate,
 		};
 	}
