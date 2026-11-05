@@ -8,8 +8,6 @@ import {
 import { cursorCliDiagnostic } from "../../../src/core/extensions/builtin/cursor-cli-oauth/provider-diagnostic.ts";
 import { providerRetryAt } from "../../../src/core/extensions/builtin/goal/provider-retry.ts";
 
-// senpi#4092: a Cursor CLI OAuth pool that refuses every account must say why and until when as typed data,
-// like the Anthropic and ChatGPT subscription lanes, so clients and the goal never parse the English sentence.
 const NOW = Date.parse("2026-11-05T05:00:00.000Z");
 
 function refusal(accounts: { name: string; blockedUntil?: number; blockReason?: "rate_limit" | "auth_error" }[]) {
