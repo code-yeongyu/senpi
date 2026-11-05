@@ -222,11 +222,13 @@ describe.skipIf(process.versions.bun !== undefined)("a CLI process on Node (K9.a
 });
 
 describe.skipIf(process.versions.bun !== undefined)("the SDK default-store open on Node (K9.a)", () => {
+	const model = getModel("anthropic", "claude-sonnet-4-5");
+	if (model === undefined) throw new Error("the anthropic test model is missing from the catalog");
 	const create = (root: string) =>
 		createAgentSession({
 			cwd: root,
 			agentDir: join(root, "agent"),
-			model: getModel("anthropic", "claude-sonnet-4-5")!,
+			model,
 			settingsManager: SettingsManager.inMemory(),
 			sessionManager: SessionManager.create(root, join(root, "sessions")),
 			noTools: "all",
