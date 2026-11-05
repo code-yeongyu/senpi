@@ -33,8 +33,8 @@ async function runCli(dirs: ReturnType<typeof setup>, args: string[], requestSta
 	const child = spawn(
 		process.execPath,
 		[
-			"--import",
-			resolver,
+			// The source resolver is Node's loader for .ts sources; Bun runs them natively and has no registerHooks.
+			...(process.versions.bun === undefined ? ["--import", resolver] : []),
 			cli,
 			"--mode",
 			"rpc",
