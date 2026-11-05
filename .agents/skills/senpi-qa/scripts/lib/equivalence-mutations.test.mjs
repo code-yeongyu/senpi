@@ -39,6 +39,7 @@ const PLAN_ROWS = [
 	"broken desktop render",
 	"interrupted call re-run on resume (E25)",
 	"tool result delivered to the other session (E30)",
+		"bypass the prepared executor",
 ];
 
 const ROW = Object.freeze({

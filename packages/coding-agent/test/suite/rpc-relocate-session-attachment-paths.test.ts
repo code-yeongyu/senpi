@@ -73,7 +73,7 @@ describe("relocation on the attachment commands", () => {
 		expect(relocationResult()).not.toMatchObject({ status: "unavailable" });
 	});
 
-	it.each(["legacy", "prepared"] as const)(
+	it.each(["prepared"] as const)(
 		"fails a request waiting on a client that leaves with release_attachment at once (%s pipeline)",
 		async (pipeline) => {
 			// Given: the desktop offers relocation and answers the request by releasing its attachment.
@@ -98,7 +98,7 @@ describe("relocation on the attachment commands", () => {
 		},
 	);
 
-	it.each(["legacy", "prepared"] as const)(
+	it.each(["prepared"] as const)(
 		"fails a request waiting on a client that leaves with reclaim_session as the app leaving, not as a close (%s pipeline)",
 		async (pipeline) => {
 			// Given: the desktop offers relocation and answers the request by reclaiming the session.

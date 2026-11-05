@@ -8,13 +8,9 @@ import type {
 	AgentToolUpdateCallback,
 	BeforeToolCallContext,
 	BeforeToolCallResult,
-} from "@earendil-works/pi-agent-core";
-import type {
-	ExecutionEntry,
-	ExecutionKey,
-	ExecutionLedger,
-	FrozenCall,
-} from "@earendil-works/pi-agent-core/conformance";
+} from "../../types.ts";
+import type { ExecutionEntry, ExecutionKey, FrozenCall } from "../ledger-types.ts";
+import type { ExecutionLedger } from "../ledger.ts";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 
 /** Today's per-call steps, as the executor runs them; the executor owns their order and the ledger around them. */
