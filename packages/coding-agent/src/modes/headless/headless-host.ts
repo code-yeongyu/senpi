@@ -12,6 +12,7 @@ import type {
 import type { MultiSessionHostOptions } from "../rpc/multi-session-host.ts";
 import { resolveSocketTransportAddress } from "../rpc/socket-transport.ts";
 import type { HeadlessPresence } from "./presence.ts";
+import { createHandSelection, type HandDirectory, type HandSelection } from "./hand-selection.ts";
 import { gatePresence } from "./presence-gates.ts";
 
 /** The headless engine's socket under `<agentDir>/rpc/`, apart from the shared host's `rpc.sock`. */
@@ -24,8 +25,13 @@ export interface HeadlessPresenceBinding {
 	readonly handsOf: (runtime: CreateAgentSessionRuntimeResult) => readonly string[];
 }
 
-export type HeadlessHostOptions = Omit<MultiSessionHostOptions, "sessionOwner" | "sessionPresence"> & {
+export type HeadlessHostOptions = Omit<
+	MultiSessionHostOptions,
+	"sessionOwner" | "sessionPresence" | "handSelection"
+> & {
 	readonly presence?: HeadlessPresenceBinding;
+	/** Off unless set: the hands a session's tools can run on (R4); each session's choice is recorded in its file. */
+	readonly hands?: HandDirectory;
 };
 
 export function headlessSocketPath(agentDir: string, platform: NodeJS.Platform = process.platform): string {
@@ -42,15 +48,30 @@ export function headlessEndpoint(
 }
 
 export function headlessHostOptions(options: HeadlessHostOptions): MultiSessionHostOptions {
-	const { presence, ...host } = options;
+	const { presence, hands, ...host } = options;
+	const handSelection = hands === undefined ? undefined : createHandSelection(hands);
+	// The recorded hand is installed before presence gates the session, so a split session's calls wait for presence.
+	const withHands = handSelection === undefined ? host.createRuntime : handRuntime(host.createRuntime, handSelection);
 	return {
 		...host,
 		sessionOwner: "machine",
 		listen: options.listen ?? `unix://${headlessSocketPath(options.agentDir)}`,
-		...(presence === undefined
-			? {}
-			: { sessionPresence: presence.presence, createRuntime: presenceRuntime(options.createRuntime, presence) }),
+		createRuntime: presence === undefined ? withHands : presenceRuntime(withHands, presence),
+		...(presence === undefined ? {} : { sessionPresence: presence.presence }),
+		...(handSelection === undefined ? {} : { handSelection }),
 	};
+}
+
+function handRuntime(
+	createRuntime: CreateAgentSessionRuntimeFactory,
+	selection: HandSelection,
+): CreateAgentSessionRuntimeFactory {
+	const restored: CreateAgentSessionRuntimeFactory = async (input) => {
+		const runtime = await createRuntime(input);
+		selection.restore(runtime.session.sessionId, runtime.session);
+		return runtime;
+	};
+	return Object.assign(restored, createRuntime);
 }
 
 function presenceRuntime(

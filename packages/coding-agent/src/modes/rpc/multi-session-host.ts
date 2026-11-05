@@ -64,6 +64,7 @@ import type { PresenterAccountAuthority } from "./mcp-presenter-account.ts";
 import { presenterBootstrapStream } from "./mcp-presenter-bootstrap.ts";
 import { startMcpPresenterControl } from "./mcp-presenter-control-start.ts";
 import type { HeadlessPresence } from "../headless/presence.ts";
+import type { HandSelection } from "../headless/hand-selection.ts";
 
 export { presenterPipePath } from "./mcp-presenter-control-start.ts";
 
@@ -95,6 +96,8 @@ export interface MultiSessionHostOptions {
 	sessionOwner?: "client" | "machine";
 	/** Set only by a headless host with a presence binding (`modes/headless`): rows and opens carry presence. */
 	sessionPresence?: HeadlessPresence;
+	/** Set only by a headless host with a hand directory (`modes/headless`): `list_hands` and `select_hand`. */
+	handSelection?: HandSelection;
 }
 
 export {

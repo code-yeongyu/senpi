@@ -124,6 +124,8 @@ export const WARM_CAPABILITY = "warm";
  * header id stays authoritative.
  */
 export const DURABLE_SESSION_ID_CAPABILITY = "durable_session_id";
+/** A headless engine with a hand directory: `list_hands` and `select_hand` (R4). */
+export const HAND_SELECTION_CAPABILITY = "hand_selection";
 
 /**
  * HOST capability: this engine runs the builtin `moved-path-guard` and resolves paths the OmO desktop moved

@@ -13,6 +13,7 @@ import { answerRecoveryPage, answerReleaseRecovery } from "./recovery-page-comma
 
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
 import { RPC_ERROR_MISSING_SESSION_ID } from "./rpc-types.ts";
+import { answerListHands, answerSelectHand } from "./hand-selection-commands.ts";
 import { attachSession, reclaimSession, releaseAttachment } from "./session-attachment-commands.ts";
 import { attachmentGate } from "./session-attachment-gate.ts";
 import { runWithSessionAttribution } from "./session-attribution.ts";
@@ -108,6 +109,8 @@ export async function dispatch(
 	if (command.type === "get_protocol_info") return answerProtocolInfo(host, command);
 	if (command.type === "get_subscription_limits") return answerSubscriptionLimits(command);
 	if (command.type === "list_sessions") return answerListSessions(host, command);
+	if (command.type === "list_hands") return answerListHands(host, command);
+	if (command.type === "select_hand") return answerSelectHand(host, command);
 	if (command.type === "detach_connection")
 		return detachConnection(command, host.writer.currentConnection(), (id) => releaseConnection(host, id));
 	if (command.type === "open_session") return openWithBarrier(host, command);
