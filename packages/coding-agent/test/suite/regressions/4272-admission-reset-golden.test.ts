@@ -1,9 +1,16 @@
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { statusHost } from "../rpc-session-status-support.ts";
 import { compareAdmissionGoldens } from "./4272-admission-golden-support.ts";
+
+// This case runs on Node until senpi#6068 lands: under Bun the lane's compact retire can still be in flight when the
+// scratch root is removed, and that retire's rejection is unhandled. A Node process opens session state only under the
+// JSONL developer hatch (senpi#5822), the store this case used before.
+beforeEach(() => {
+	vi.stubEnv("SENPI_SESSION_STORE", "jsonl");
+});
 
 afterEach(() => {
 	vi.restoreAllMocks();

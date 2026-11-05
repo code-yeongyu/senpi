@@ -1,11 +1,17 @@
 import { chmodSync, readFileSync } from "node:fs";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { recoveryCarrier } from "../../../src/core/session-recovery-identity.ts";
 import { type FrozenAcceptedRoot } from "../../../src/modes/rpc/session-acceptance-lane.ts";
 import { RpcSessionRegistry, type RpcSessionEntry } from "../../../src/modes/rpc/session-registry.ts";
 import { dataOf, statusHost } from "../rpc-session-status-support.ts";
 import { EVENT_SAFETY_MS } from "./4272-worker-acceptance-support.ts";
+
+// These cases run on Node: the failed-payload case makes the JSONL session file unwritable, a failure that exists only
+// in the JSONL store, and a Node process opens session state only under the JSONL developer hatch (senpi#5822).
+beforeEach(() => {
+	vi.stubEnv("SENPI_SESSION_STORE", "jsonl");
+});
 
 afterEach(() => {
 	vi.unstubAllEnvs();
