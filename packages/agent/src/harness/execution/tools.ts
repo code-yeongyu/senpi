@@ -136,7 +136,14 @@ export function executeToolCall<TContext extends object | undefined>(
 	return gate.admit(async () => {
 		const admittedContext = withAbortSignal(gate.signal, context);
 		admittedContext.abortSignal?.throwIfAborted();
-		const toolCall: AgentToolCall = { ...call.toolCall, arguments: call.args };
+		// The harness already prepared, validated and hooked this call, so the host gets only its identity and cleared
+		// arguments: a stream flag such as `incomplete` would make the host refuse it before the body runs.
+		const toolCall: AgentToolCall = {
+			type: "toolCall",
+			id: call.toolCall.id,
+			name: call.toolCall.name,
+			arguments: call.args,
+		};
 		return runOnPreparedToolHost(toolCall, invocation.invocationId, recordWitness, async (args) => {
 			let executed: ExecutedToolCall;
 			try {
