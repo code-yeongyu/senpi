@@ -18,6 +18,9 @@ const version = z
 const runtimes = ["node", "bun"] as const;
 // Help/extension spawns measured up to ~30 s under load (senpi#5952); the spawn gets this, its test 10 s more.
 const SPAWN_BUDGET_MS = 60_000;
+// The --cpu-prof spawn respawns the bundle and writes a profile: 12-21 s at ~2.6 load per core, 46 s and one
+// 74.5 s overrun at 3-4 (senpi#6013). The spawn gets 2x that overrun, its test 10 s more.
+const PROFILED_SPAWN_BUDGET_MS = 150_000;
 const responseSchema = z.object({
 	type: z.string(), id: z.string().optional(), success: z.boolean().optional(),
 	data: z.unknown().optional(), error: z.unknown().optional(),
@@ -121,7 +124,7 @@ describe.each(runtimes)("the Node bundle under %s", (runtime) => {
 		try {
 			// When
 			const result = spawnSync(runtime, ["--cpu-prof", "--cpu-prof-dir", state, cli, "--model", "nope/nope", "-p", "hi"], {
-				encoding: "utf8", env: hermeticEnv(state), timeout: 60_000,
+				encoding: "utf8", env: hermeticEnv(state), timeout: PROFILED_SPAWN_BUDGET_MS,
 			});
 			// Then: the agent ran and rejected the model, rather than the entry failing to resolve itself.
 			const output = `${result.stdout}${result.stderr}`;
@@ -130,7 +133,7 @@ describe.each(runtimes)("the Node bundle under %s", (runtime) => {
 		} finally {
 			rmSync(state, { recursive: true, force: true });
 		}
-	}, 70_000);
+	}, PROFILED_SPAWN_BUDGET_MS + 10_000);
 
 	test("prints help and exits successfully", () => {
 		// Given
