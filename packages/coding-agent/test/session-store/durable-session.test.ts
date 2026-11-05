@@ -10,6 +10,7 @@ import {
 } from "../../../agent/src/durable/store-memory.ts";
 import { makeTempDir } from "../../../../scripts/vitest-temp.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
+import { advanceSessionFence, SessionFencedError } from "../../src/core/session-write-fence.ts";
 import type { ProjectionWarning } from "../../src/core/session-store/durable-binding.ts";
 import { assistantMsg, userMsg } from "../utilities.ts";
 
@@ -112,6 +113,39 @@ describe("a SessionManager bound to the durable store (S20b)", () => {
 		const image = await storeImage(session.getSessionId());
 		expect(image).toContain("written while the bind was pending");
 		expect(readFileSync(fileOf(session), "utf8")).toBe(image);
+	});
+
+	it("refuses to attach the binding when the manager moved to a new session while the bind was pending", async () => {
+		const session = SessionManager.create(dir, dir);
+		session.appendMessage(userMsg("old question"));
+		const oldId = session.getSessionId();
+		const bound = session.bindDurableStore({ store: openMemoryStore(medium), epoch: 1 });
+		session.newSession();
+
+		await expect(bound).rejects.toThrow("moved to another file while it was being bound");
+
+		session.appendMessage(userMsg("new question"));
+		session.appendMessage(assistantMsg("new answer"));
+		expect(await storeImage(oldId)).toContain("old question");
+		expect(await storeImage(oldId)).not.toContain("new question");
+	});
+
+	it("never reprojects over a fenced session file: the bind is refused and the file is left as it was", async () => {
+		const { session } = await durableSession();
+		session.appendMessage(userMsg("question"));
+		const file = fileOf(session);
+		chmodSync(file, 0o444);
+		session.appendMessage(assistantMsg("stored, not projected"));
+		chmodSync(file, 0o644);
+		const before = readFileSync(file, "utf8");
+
+		const reopened = SessionManager.open(file, dir);
+		await advanceSessionFence(file);
+
+		await expect(reopened.bindDurableStore({ store: openMemoryStore(medium), epoch: 1 })).rejects.toThrow(
+			SessionFencedError,
+		);
+		expect(readFileSync(file, "utf8")).toBe(before);
 	});
 
 	it("throws a store refusal on the same call and takes nothing", async () => {
