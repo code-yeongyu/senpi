@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative } from "node:path";
 import { test } from "node:test";
 import { parse } from "shell-quote";
+import { bunReleaseExternalFlags } from "./bun-release-externals.mjs";
 
 // Given: parse actual shell argv, excluding adjacent commands and their arguments.
 function compileArgv(command) {
@@ -69,7 +71,9 @@ for (const { name, command } of commands) {
 		const argv = compileArgv(command);
 		// Then: compiling must not resolve canvas's native binding (senpi#6045).
 		const external = argv.flatMap((argument, index) => (argument === "--external" ? [argv[index + 1]] : []));
-		assert.ok(external.includes("canvas"), `${name}: missing --external canvas`);
+		for (let index = 0; index < bunReleaseExternalFlags.length; index += 2) {
+			assert.ok(external.includes(bunReleaseExternalFlags[index + 1]), `${name}: missing ${bunReleaseExternalFlags.slice(index, index + 2).join(" ")}`);
+		}
 	});
 
 	test(`${name} preserves autoload isolation when compiling standalone entries`, () => {
@@ -79,5 +83,63 @@ for (const { name, command } of commands) {
 		assert.ok(argv.includes("--no-compile-autoload-dotenv"));
 		assert.ok(argv.includes("--no-compile-autoload-bunfig"));
 		assert.ok(argv.includes("--compile-autoload-package-json"));
+	});
+}
+
+// Every JS/TS Bun build of the release entry graph takes its externals from one module (senpi#6045), so a
+// new call site cannot silently need canvas's native binding again.
+const repoRoot = new URL("..", import.meta.url);
+function sourceFiles(directory) {
+	return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+		if (entry.name === "node_modules" || entry.name.startsWith(".")) return [];
+		const path = join(directory, entry.name);
+		if (entry.isDirectory()) return sourceFiles(path);
+		return /\.(?:mjs|cjs|js|ts|mts)$/.test(entry.name) ? [path] : [];
+	});
+}
+const root = repoRoot.pathname.replace(/^\/([A-Za-z]:)/, "$1");
+const packagesDir = join(root, "packages");
+const scanned = [
+	...sourceFiles(join(root, "scripts")),
+	...readdirSync(packagesDir, { withFileTypes: true })
+		.filter((entry) => entry.isDirectory())
+		.flatMap((entry) => {
+			try {
+				return sourceFiles(join(packagesDir, entry.name, "scripts"));
+			} catch {
+				return [];
+			}
+		}),
+];
+const bunBuildCall = /["']build["']\s*,\s*["']--(?:compile|target=bun)["']|["']--compile["']\s*,/;
+const releaseGraph = /dist\/bun\/cli\.js|build:binary/;
+const releaseGraphBuilders = scanned
+	.filter((path) => !path.endsWith("build-binaries-flags.test.mjs"))
+	.filter((path) => {
+		const source = readFileSync(path, "utf8");
+		return bunBuildCall.test(source) && releaseGraph.test(source);
+	})
+	.map((path) => relative(root, path).replaceAll("\\", "/"));
+
+test("finds the known release-graph Bun builders when scanning scripts", () => {
+	// Then: the scan itself is not vacuous.
+	for (const known of [
+		"scripts/compiled-extension-load.test.ts",
+		"scripts/bun-bundle-provider-coverage.test.ts",
+		"scripts/release-graph-codemode.test.ts",
+		"scripts/release-graph-exclusions.test.ts",
+		"packages/coding-agent/scripts/qa-rpc-socket/lib/compiled-generations.mjs",
+	]) {
+		assert.ok(releaseGraphBuilders.includes(known), `scan missed ${known}`);
+	}
+});
+
+for (const path of releaseGraphBuilders) {
+	test(`${path} spreads the shared release externals when building the release entry graph`, () => {
+		// When
+		const source = readFileSync(join(root, path), "utf8");
+		// Then
+		assert.match(source, /import \{ bunReleaseExternalFlags \} from "(?:\.\.?\/)+(?:scripts\/)?bun-release-externals\.mjs";/);
+		assert.match(source, /\.\.\.bunReleaseExternalFlags/);
 	});
 }

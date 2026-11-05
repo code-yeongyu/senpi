@@ -18,6 +18,7 @@
 import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { bunReleaseExternalFlags } from "../../../../../scripts/bun-release-externals.mjs";
 
 /** One day, so the two generations are ordered by epoch exactly as two daily releases would be. */
 const EPOCH_STRIDE_SECONDS = 86_400;
@@ -30,8 +31,7 @@ const COMPILE_FLAGS = [
 	"--no-compile-autoload-bunfig",
 	"--minify",
 	"--keep-names",
-	"--external",
-	"canvas",
+	...bunReleaseExternalFlags,
 ];
 
 const ENTRYPOINTS = ["./dist/bun/cli.js", "./src/modes/rpc/session-worker.ts", "./src/modes/rpc/loopless-worker.ts", "./src/utils/image-resize-worker.ts"];

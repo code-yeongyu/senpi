@@ -1410,7 +1410,7 @@ jobs:
         timeout-minutes: 5
         run: |
           bash scripts/install-ci-system-deps.sh \
-            libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
+            fd-find ripgrep
           sudo ln -sf "$(which fdfind)" /usr/local/bin/fd
 
       - name: Install dependencies

@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { z } from "zod";
+import { bunReleaseExternalFlags } from "./bun-release-externals.mjs";
 
 const metadataSchema = z.object({
 	outputs: z.record(z.string(), z.object({
@@ -35,7 +36,7 @@ test("ships no codemode implementation bytes when building the release entry gra
 	try {
 		// When: Bun produces an optimized release contribution metafile.
 		const result = spawnSync(process.execPath, [
-			"build", "--target=bun", "--splitting", "--minify", "--keep-names", "--external", "canvas",
+			"build", "--target=bun", "--splitting", "--minify", "--keep-names", ...bunReleaseExternalFlags,
 			`--metafile=${join(scratch, "meta.json")}`, ...entries, "--outdir", scratch,
 		], { cwd: join(repo, "packages/coding-agent"), encoding: "utf8", timeout: 120_000 });
 		expect(result.status, result.stderr).toBe(0);
