@@ -1,4 +1,5 @@
 import type { AccountLoginReceipt } from "@earendil-works/pi-ai";
+import { accountLabel } from "@earendil-works/pi-ai/auth/pool/slots";
 import { describeCredentialAccount } from "../../../core/credential-account-status.ts";
 import { unblockPooledAccount } from "../../../core/credential-account-unblock.ts";
 import { accountLimitsFor, describeAccountLimits } from "../../subscription-limits/limit-summary.ts";
@@ -6,6 +7,7 @@ import {
 	getCredentialAccounts,
 	pinCredentialAccount,
 	removeCredentialAccount,
+	selectedOAuthAccount,
 } from "../../../core/credential-accounts.ts";
 import type { ExtensionAPI, ExtensionCommandContext } from "../types.ts";
 import { accountDisplayNameCommand, promptAccountDisplayName } from "./account-display-name.ts";
@@ -15,7 +17,7 @@ import { createExtensionLoginInteraction, LOGIN_CANCELLED_MESSAGE } from "./oaut
 const CHATGPT_SUBSCRIPTION_PROVIDER_ID = "chatgpt-subscription";
 const CHATGPT_SUBSCRIPTION_PROVIDER_LABEL = "ChatGPT Subscription OAuth";
 const USAGE_ACTIONS =
-	"[add | remove <id> | pin <id> | unpin | unblock <id> | rename <id> <display name...> | clear-name <id>]";
+	"[add | reauthorize <id> | signout <id> | remove <id> | pin <id> | unpin | unblock <id> | rename <id> <display name...> | clear-name <id>]";
 
 export interface GptAccountExtensionDeps {
 	/** Browser launcher for the browser login method; tests inject a recorder. */
@@ -31,42 +33,92 @@ function usage(ctx: ExtensionCommandContext): void {
 }
 
 async function showAccounts(ctx: ExtensionCommandContext): Promise<void> {
-	const accounts = await getCredentialAccounts(ctx.modelRegistry.authStorage, CHATGPT_SUBSCRIPTION_PROVIDER_ID);
+	const activeName = ctx.modelRegistry.modelRuntime?.getActiveCredentialAccount?.(
+		CHATGPT_SUBSCRIPTION_PROVIDER_ID,
+		ctx.sessionManager.getSessionId(),
+	);
+	const accounts = await getCredentialAccounts(
+		ctx.modelRegistry.authStorage,
+		CHATGPT_SUBSCRIPTION_PROVIDER_ID,
+		process.env,
+		undefined,
+		activeName,
+	);
 	const lines = ["ChatGPT Subscription OAuth accounts:"];
 	if (accounts.length === 0) lines.push("  (none)");
 	const now = Date.now();
 	for (const account of accounts) {
-		lines.push(`  ${describeCredentialAccount(account)}`);
+		// SIWC states that replace the health column; otherwise main's row (block reason, per-model limits, pin).
+		// A paused account keeps main's row, so its per-model limits stay listed beside the pause.
+		const override = account.signedOut
+			? "signed out"
+			: account.planUsageEnabled === false
+				? "plan usage not enabled: enable it or use an API key"
+				: undefined;
+		const states =
+			override === undefined
+				? [describeCredentialAccount(account), ...(account.paused ? ["paused"] : [])]
+				: [accountLabel(account), account.source, override, ...(account.pinned ? ["pinned"] : [])];
+		if (account.active) states.push("active");
+		if (account.route) states.push(account.route === "siwc" ? "SIWC" : "legacy");
+		if (!account.signedOut && account.planUsageEnabled === true) states.push("Using ChatGPT plan");
+		lines.push(`  ${states.join(" | ")}`);
 		const limits = accountLimitsFor(CHATGPT_SUBSCRIPTION_PROVIDER_ID, account.name);
 		lines.push(`    ${describeAccountLimits(limits, now)}`);
 	}
+	lines.push("Manage usage: https://chatgpt.com/settings/usage (ChatGPT Settings > Usage)");
 	ctx.ui.notify(lines.join("\n"), "info");
 }
 
-async function addAccount(ctx: ExtensionCommandContext, deps: GptAccountExtensionDeps): Promise<void> {
+async function addAccount(ctx: ExtensionCommandContext, deps: GptAccountExtensionDeps, name?: string): Promise<void> {
 	if (!ctx.hasUI) {
-		ctx.ui.notify("/gpt-account add requires an interactive UI.", "error");
+		ctx.ui.notify(`/gpt-account ${name === undefined ? "add" : "reauthorize"} requires an interactive UI.`, "error");
 		return;
 	}
 	try {
 		let receipt: AccountLoginReceipt | undefined;
-		await ctx.modelRegistry.modelRuntime.login(CHATGPT_SUBSCRIPTION_PROVIDER_ID, "oauth", {
-			...createExtensionLoginInteraction(ctx, {
-				providerLabel: CHATGPT_SUBSCRIPTION_PROVIDER_LABEL,
-				providerId: CHATGPT_SUBSCRIPTION_PROVIDER_ID,
-				openBrowser: deps.openBrowser,
-			}),
-			onAccountCommitted: (committed) => {
-				receipt = committed;
+		const reauthorize =
+			name === undefined
+				? undefined
+				: selectedOAuthAccount(ctx.modelRegistry.authStorage, CHATGPT_SUBSCRIPTION_PROVIDER_ID, name);
+		await ctx.modelRegistry.modelRuntime.login(
+			CHATGPT_SUBSCRIPTION_PROVIDER_ID,
+			"oauth",
+			{
+				...createExtensionLoginInteraction(ctx, {
+					providerLabel: CHATGPT_SUBSCRIPTION_PROVIDER_LABEL,
+					providerId: CHATGPT_SUBSCRIPTION_PROVIDER_ID,
+					openBrowser: deps.openBrowser,
+				}),
+				onAccountCommitted: (committed) => {
+					receipt = committed;
+				},
 			},
-		});
+			reauthorize === undefined ? undefined : { reauthorize, reauthorizeSlot: name },
+		);
 		emitProviderAccountsChanged(CHATGPT_SUBSCRIPTION_PROVIDER_ID);
-		ctx.ui.notify("ChatGPT Subscription OAuth account added.", "info");
-		await promptAccountDisplayName(ctx, receipt);
+		ctx.ui.notify(
+			name === undefined
+				? "ChatGPT Subscription OAuth account added."
+				: `ChatGPT Subscription OAuth account '${name}' reauthorized.`,
+			"info",
+		);
+		if (name === undefined) await promptAccountDisplayName(ctx, receipt);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		if (message === LOGIN_CANCELLED_MESSAGE) return;
 		ctx.ui.notify(message, "error");
+	}
+}
+
+async function signOutAccount(ctx: ExtensionCommandContext, name: string): Promise<void> {
+	selectedOAuthAccount(ctx.modelRegistry.authStorage, CHATGPT_SUBSCRIPTION_PROVIDER_ID, name);
+	const result = await ctx.modelRegistry.modelRuntime.logout(CHATGPT_SUBSCRIPTION_PROVIDER_ID, { slotId: name });
+	emitProviderAccountsChanged(CHATGPT_SUBSCRIPTION_PROVIDER_ID);
+	if (result?.status === "remote_revocation_unconfirmed") {
+		ctx.ui.notify("remote revocation not confirmed; disconnect the app in ChatGPT Settings", "warning");
+	} else {
+		ctx.ui.notify(`Signed out ChatGPT Subscription OAuth account '${name}'.`, "info");
 	}
 }
 
@@ -144,6 +196,14 @@ export default function gptAccountExtension(pi: ExtensionAPI, deps: GptAccountEx
 				}
 				if (action === "add") {
 					await addAccount(ctx, deps);
+					return;
+				}
+				if (action === "reauthorize" && args[1]) {
+					await addAccount(ctx, deps, args[1]);
+					return;
+				}
+				if (action === "signout" && args[1]) {
+					await signOutAccount(ctx, args[1]);
 					return;
 				}
 				if (action === "remove") {

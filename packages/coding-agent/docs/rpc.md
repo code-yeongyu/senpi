@@ -393,6 +393,8 @@ model context or history.
 
 `get_provider_accounts` returns secret-free descriptors containing `name`, `source`, `blocked`, `pinned`, and optional `displayName`. Render a named account as `displayName (name)`; keep using the immutable `name` for `account_pin`, `account_remove`, and comparisons. Legacy accounts omit `displayName`.
 
+ChatGPT Subscription OAuth accounts also report `route: "siwc" | "legacy"`, optional `planUsageEnabled`, and `signedOut: true` when the registration is retained without session tokens. These are the same fields `/gpt-account` renders. An explicit `planUsageEnabled: false` means "plan usage not enabled: enable it or use an API key"; an absent flag is not an assertion that permission is enabled. Link usage and limit information to [ChatGPT Settings > Usage](https://chatgpt.com/settings/usage). The shared provider login prompt offers **Continue with ChatGPT** first and keeps **Legacy sign-in (existing users)** available.
+
 `logout` deletes the provider's stored credential. For Anthropic Subscription it first signs every Claude CLI account out of the Claude CLI by its config dir (the same removal as `account_remove`), and its `data` is absent unless one could not be signed out cleanly, in which case it is `{ "notices": string[] }`, one user-facing sentence per account, as for `account_remove`.
 
 `account_remove` answers `success: true` once the account is gone. Its `data` is absent unless something could not be cleaned up, in which case it is `{ "notice": string }`, a user-facing sentence a client should show: a Claude CLI account whose `claude auth logout` could not run or failed (the account and its config dir are removed anyway, but the CLI's stored sign-in may remain), or whose stored account dir is missing, malformed, or a link or file (removed without a sign-out, and a link or file is left untouched).
@@ -402,6 +404,10 @@ A blocked account also says why: `blockedReason` is `auth_error` (the provider r
 Use `/account <provider> rename <id> <display name...>` or the corresponding `/gpt-account` and `/claude-account` commands to name saved accounts; `clear-name <id>` removes only the label. `/gpt-account add` offers optional naming after login is saved, and only when Senpi generated the account ID itself; the Claude lane names accounts through its own login prompt and never asks twice. Blank input or cancellation keeps that login usable. Environment accounts cannot be renamed.
 
 A label is stored NFC-normalized with internal whitespace collapsed, must contain at least one visible character, and may not exceed 32 terminal columns (measured in grapheme clusters, so CJK and emoji count two columns each). Uniqueness within a provider folds case, Unicode compatibility forms, invisible code points, and Cyrillic lookalikes, so two labels that render identically are refused.
+
+`active: true` identifies the account actually selected for this session's last stored-account attempt, including failover. Before an attempt there is no active account to report; neither list position nor a pin proves activity. Signed-out, paused, blocked and unused accounts never report active.
+
+A structured SIWC subscription usage limit reports `paused: true` and `usageUrl: "https://chatgpt.com/settings/usage"` for the originating account. Its internal retry probe deadline is not a provider reset time, so `blockedUntil` is omitted for this pause, even after a probe becomes due. A successful probe or changed credentials clears the pause. `/gpt-account` renders the same paused state and Usage link.
 
 ## Account order
 
@@ -2803,6 +2809,14 @@ works against every generation. A watcher can therefore read a session's state a
 `get_entries` with `observe: true`) as often as it likes: the host's attached count stays at 0 and its idle window
 keeps running.
 
+An observer can HOLD the host (senpi#5626): an observing read that also carries `"hold_host": true` makes its
+connection a holder, which counts as an attached connection (it resets the idle window and keeps the host open) until
+an observing read on the same connection carries `"hold_host": false` or the connection closes. Only the literal
+booleans on a read marked `observe: true` count; a `warm` or an unmarked read never holds. A remote-control daemon
+holds the host this way while at least one remote viewer is attached, and releases it when the last one leaves. A
+held observer is occupancy everywhere occupancy is read: the idle-exit window, the empty-host exit, and the
+owner-death quiescence check. Hosts that predate the field ignore it and treat the read as a plain observing read.
+
 A connection from one of the host's OWN sessions is DEPENDENT and never counts either. A host exports its generation
 id (`SENPI_RPC_HOST_INSTANCE_ID`) to the sessions it runs, and `RpcClient` sends that id as `"origin_host_instance"`
 on every socket request. When a connection's first non-observing request names the host's own generation, the
@@ -3074,7 +3088,8 @@ What the host does enforce are lifecycle windows, and they only ever return memo
   `SENPI_RPC_HOST_EMPTY_EXIT_MS` (default 15 minutes), the host exits through its clean shutdown path (flush, socket
   removal), for stdio and `--listen` hosts alike. A connected client counts as occupancy even with no session open,
   so the host never drops a live socket under itself - except a connection whose every request so far was an
-  observing read (`"observe": true`, the same rule as the idle-exit window above) or a `warm`, which never holds the host open.
+  observing read (`"observe": true`, the same rule as the idle-exit window above) or a `warm`, which never holds the host open,
+  unless the observing connection holds the host (`"hold_host": true`, see the idle-exit window above).
   A connection that has not sent its first request yet still counts. Supervised hosts stay clean either way: a supervisor reads a
   child exit of 0 without a signal as an intentional idle stop and exits 0 with the same cleanup, not as a crash.
 
@@ -6504,11 +6519,13 @@ Emitted when an extension throws an error.
 
 Logins are fire-command-then-subscribe: the command answers as soon as the flow has started, and the URL plus the terminal result arrive as events.
 
-- `login_start` `{provider}`: responds immediately with `success: true` (flow started). A second `login_start` for the same provider aborts the earlier attempt.
+- `login_start` `{provider, slotId?}`: responds immediately with `success: true` (flow started). A second `login_start` for the same provider aborts the earlier attempt. With `slotId`, reauthorizes that immutable OAuth account through the shared runtime, preserving its registration and siblings. A selected SIWC account uses its saved client ID and identity rather than offering a legacy route switch. Omit `slotId` to add an account.
 - `auth_login_url` `{provider, url}`: the URL (or device-code verification URL) the user must open.
 - `auth_login_progress` `{provider, text}`: a status line while the login prepares or runs, for example an extension's `provider_login_start` handler reporting `Downloading Claude Code 2.1.306: 10% of 200 MB`. Zero or more per login, always before `auth_login_end`. Every provider progress and info line is forwarded as written, so `text` may name the local callback address a login listens on (for example `Listening for OpenRouter OAuth callback on http://<host>:<port>/<path>`), the same redirect address the `auth_login_url` already carries; the URL the user must open arrives only in `auth_login_url`. Built-in providers put no authorization code or token in these lines.
 - `auth_login_end` `{provider, success, error?, replaced?, backupPath?}`: exactly one per login; `error` is a non-secret message. When a successful login replaced the provider's credential of the other kind (an OAuth login over a stored API key), `replaced` names that kind (`"api_key"` or `"oauth"`) and `backupPath` is the copy of `auth.json` taken before it (absent when the credential store is not a file). A login of the same kind adds an account and carries neither field. A successful `anthropic-subscription` sign-in through the Claude CLI also carries `account` `{name}` (the account it signed in) and `check` `{model, outcome: "ok"|"failed", reason?, at}`, the one-turn connection test run right after sign-in; a failed test keeps the account.
 - `login_cancel` `{provider}`: aborts the in-flight login; the client then sees `auth_login_end` with `success: false`.
+
+`logout` `{provider, slotId?}` invokes the shared runtime revocation path. With `slotId`, only that account is signed out. A provider with remote revocation (ChatGPT Subscription) keeps the signed-out registration for later reauthorization. A provider without it (such as Anthropic Subscription, whose Claude CLI accounts hold no tokens to clear) signs the account out by removing it. For SIWC, the response carries `data: {status: "revoked" | "remote_revocation_unconfirmed"}`. The latter must be shown as "remote revocation not confirmed; disconnect the app in ChatGPT Settings". For ChatGPT Subscription, tokens are cleared locally while the registration remains available for later reauthorization. `account_remove` remains explicit registration deletion. Terminal equivalents are `/gpt-account reauthorize <id>` and `/gpt-account signout <id>`.
 
 Some providers need input mid-flow (a pasted authorization code, a text or secret value, a choice between accounts). Those prompts reuse the extension UI dialog channel described in the next section:
 
@@ -6663,7 +6680,15 @@ context. These identifiers confer no authority.
 
 An embedding distribution may inject a `PresenterAccountAuthority` at host start
 (`presenterAccountAuthority` in the host options); no RPC command, argument,
-environment variable, settings file, or session state can supply one. An enforced host
+environment variable, settings file, or session state can supply one. The CLI's
+only way in is code the distribution runs before the CLI loads: it calls
+`registerPresenterAccountAuthority(authority)` from the side-effect-free
+`@code-yeongyu/senpi/presenter-authority` entry, then imports the CLI. `main()`
+takes the registration as its first statement and seals it, so a second
+registration throws `presenter_authority_already_registered` and any later one
+(an extension, a session, a later import) throws `presenter_authority_sealed`. A
+process the CLI or a host supervisor starts on senpi's own entry has no
+registration and behaves as a host without an authority. An enforced host
 with such an authority has the management endpoint even without the descriptor-4
 bootstrap. A caller discovers it only by asking explicitly:
 `{"type":"mcp_presenter_context","sessionId":"...","discover":true}`. The reply's

@@ -1,9 +1,9 @@
-import fsPromises from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import net from "node:net";
 import { mock } from "node:test";
 import { type HostActivity, IdleExitDecider, runHostSupervisor } from "../../src/modes/rpc/host-lifecycle.ts";
 import { HOST_IDLE_EXIT_MS_ENV } from "../../src/modes/rpc/host-lifecycle-policy.ts";
+import { signalEndpointReady } from "../helpers/rpc-endpoint-ready.ts";
 
 // Drive the real supervisor's clock and timer independently of socket I/O. The
 // child runs in its own process, with the normal clock and transport implementation.
@@ -37,6 +37,7 @@ mock.method(IdleExitDecider.prototype, "update", function (this: IdleExitDecider
 	return decision;
 });
 const createServer = net.createServer;
+const onServer = signalEndpointReady(socket, () => process.send?.({ type: "ready" }));
 mock.method(net, "createServer", (accept: (socket: net.Socket) => void) => {
 	const server = createServer((socket) => {
 		accept(socket);
@@ -44,13 +45,8 @@ mock.method(net, "createServer", (accept: (socket: net.Socket) => void) => {
 		socket.once("close", () => process.send?.({ type: "detached" }));
 		process.send?.({ type: "attached" });
 	});
+	onServer(server);
 	return server;
-});
-const link = fsPromises.link;
-// The endpoint exists once the supervisor links its bound socket into place, not at "listening" (#5319).
-mock.method(fsPromises, "link", async (...args: Parameters<typeof link>) => {
-	await link(...args);
-	if (args[1] === socket) process.send?.({ type: "ready" });
 });
 syncBuiltinESMExports();
 process.on("message", (message: unknown) => {
