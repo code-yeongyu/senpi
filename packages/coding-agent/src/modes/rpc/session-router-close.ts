@@ -112,7 +112,7 @@ export async function finalizeClose(
 	host.finalizations.set(sessionId, finalization);
 	try {
 		try {
-			await binding?.dispose();
+			await disposeWithinGrace(binding, host.registry.closeGraceMs, sessionId);
 		} catch (cause) {
 			process.stderr.write(`senpi rpc binding dispose for session ${sessionId} failed: ${String(cause)}\n`);
 		}
@@ -130,6 +130,35 @@ export async function finalizeClose(
 		finalization.resolve();
 		host.finalizations.delete(sessionId);
 	}
+}
+
+/**
+ * A binding's dispose may wait on the run: it lets the relocation answers that already exist reach their tool calls
+ * before the teardown aborts the run (senpi#5811). The close path's grace window bounds that wait, so a run held by
+ * something only its abort would release still closes; the teardown then aborts it as before (senpi#5903).
+ */
+async function disposeWithinGrace(
+	binding: RpcSessionBinding | undefined,
+	graceMs: number,
+	sessionId: string,
+): Promise<void> {
+	if (binding === undefined) return;
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const late = new Promise<"late">((resolve) => {
+		timer = setTimeout(() => resolve("late"), graceMs);
+	});
+	const disposed = binding.dispose().then(() => "disposed" as const);
+	try {
+		if ((await Promise.race([disposed, late])) === "disposed") return;
+	} finally {
+		clearTimeout(timer);
+	}
+	process.stderr.write(
+		`senpi rpc binding dispose for session ${sessionId} did not settle within ${graceMs} ms; closing anyway\n`,
+	);
+	disposed.catch((cause: unknown) =>
+		process.stderr.write(`senpi rpc binding dispose for session ${sessionId} failed: ${String(cause)}\n`),
+	);
 }
 
 export function createFinalization(): { promise: Promise<void>; resolve: () => void } {
