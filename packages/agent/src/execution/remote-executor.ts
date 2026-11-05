@@ -12,6 +12,7 @@ import {
 	toRemoteToolResult,
 } from "./remote-protocol.ts";
 import { authorize, type HandAuthority } from "./grant-verify.ts";
+import { answerFloor, HAND_SELF_SENDER, type HandEpochFence } from "./remote-epoch.ts";
 import type { HandLedger } from "./remote-hand-ledger.ts";
 import type { ExecutionScope } from "./tool-host.ts";
 
@@ -59,6 +60,12 @@ export interface RemoteExecutorOptions {
 	 * recorded outcome. Without it, the hand remembers execution IDs only while it lives.
 	 */
 	readonly ledger?: HandLedger;
+	/**
+	 * The hand's epoch floors (S35), shared by every link's executor in this process. With it, a scope's owner raises the
+	 * floor before it dispatches, and an invoke, abort or ack below the floor is refused or ignored. Without it, a floor
+	 * is refused `epoch_unsupported`, so a session that moves never dispatches to this hand.
+	 */
+	readonly fence?: HandEpochFence;
 	/** This hand process's identity in its `hello`; a fresh one per start by default. */
 	readonly instance?: string;
 	/** Announce the device file channel (S40) in `hello`; its scopes then serve `HandScope.file`. */
@@ -94,7 +101,10 @@ interface ScopeState {
  * passed on: the hand keys on the scope and does not know the session (R16).
  */
 export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExecutor {
-	const { transport, openScope, ledger, authority } = options;
+	const { transport, openScope, ledger, authority, fence } = options;
+	const sender = authority.kind === "peer" ? authority.peer : HAND_SELF_SENDER;
+	const admits = (lane: string, epoch: number | undefined): boolean =>
+		fence === undefined || fence.admits(lane, epoch, sender);
 	const scopes = new Map<string, ScopeState>();
 	const accepted: string[] = [];
 	const seen = new Set<string>();
@@ -130,6 +140,7 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 		if (lane !== call.scope.id) return refuse(lane, call.executionId, "scope_lane_mismatch");
 		const verdict = authorize(authority, call.scope.root);
 		if (!verdict.ok) return refuse(lane, call.executionId, verdict.reason);
+		if (!admits(lane, call.epoch)) return refuse(lane, call.executionId, "epoch_fenced");
 		if (ledger === undefined && seen.has(call.executionId))
 			return refuse(lane, call.executionId, "duplicate_execution");
 		seen.add(call.executionId);
@@ -143,7 +154,7 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 			return refuse(lane, call.executionId, `scope_unavailable: ${reason}`);
 		}
 		if (ledger !== undefined) {
-			const admission = await ledger.admit(call);
+			const admission = await ledger.admit(call, () => admits(lane, call.epoch));
 			if (admission.kind === "reply") return reply(lane, admission.message);
 			if (admission.kind === "in_flight") return;
 		}
@@ -158,6 +169,12 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 				: [];
 		const done = (async () => {
 			await Promise.allSettled(dependencies);
+			// Without a ledger this is the call's dispatch point: a floor raised while its scope opened or it waited on
+			// earlier calls fences it here. With a ledger, the guarded `dispatch` step already decided it atomically.
+			if (ledger === undefined && !admits(lane, call.epoch)) {
+				running.delete(call.executionId);
+				return refuse(lane, call.executionId, "epoch_fenced");
+			}
 			let result: AgentToolResult<unknown>;
 			try {
 				// The grant must still hold when the call starts: a snapshot installed while it waited (scope opening,
@@ -218,6 +235,7 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 	// The connect hook: one `hello` per hand start, after recovery. The reliable transport re-delivers it across carrier
 	// re-attaches, so only a new hand process announces a new identity.
 	const ready = (async () => {
+		await fence?.ready;
 		if (ledger !== undefined) for (const { lane, message } of await ledger.recover()) reply(lane, message);
 		reply(HAND_CONTROL_LANE, {
 			kind: "hello",
@@ -244,9 +262,13 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 		}
 		try {
 			if (message.kind === "invoke") await invoke(frame.lane, message);
+			else if (message.kind === "floor")
+				reply(frame.lane, await answerFloor(fence, frame.lane, message.epoch, sender));
+			else if ((message.kind === "abort" || message.kind === "ack") && !admits(frame.lane, message.epoch)) return;
 			else if (message.kind === "file") await invoke(frame.lane, fileCall(message), { op: message.op });
 			else if (message.kind === "abort") running.get(message.executionId)?.controller.abort();
-			else if (message.kind === "ack") await ledger?.ack(message.executionId);
+			else if (message.kind === "ack")
+				await ledger?.ack(message.executionId, () => admits(frame.lane, message.epoch));
 		} catch (error) {
 			options.onFault(error);
 		}

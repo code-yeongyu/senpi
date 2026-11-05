@@ -6681,7 +6681,15 @@ context. These identifiers confer no authority.
 
 An embedding distribution may inject a `PresenterAccountAuthority` at host start
 (`presenterAccountAuthority` in the host options); no RPC command, argument,
-environment variable, settings file, or session state can supply one. An enforced host
+environment variable, settings file, or session state can supply one. The CLI's
+only way in is code the distribution runs before the CLI loads: it calls
+`registerPresenterAccountAuthority(authority)` from the side-effect-free
+`@code-yeongyu/senpi/presenter-authority` entry, then imports the CLI. `main()`
+takes the registration as its first statement and seals it, so a second
+registration throws `presenter_authority_already_registered` and any later one
+(an extension, a session, a later import) throws `presenter_authority_sealed`. A
+process the CLI or a host supervisor starts on senpi's own entry has no
+registration and behaves as a host without an authority. An enforced host
 with such an authority has the management endpoint even without the descriptor-4
 bootstrap. A caller discovers it only by asking explicitly:
 `{"type":"mcp_presenter_context","sessionId":"...","discover":true}`. The reply's
