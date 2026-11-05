@@ -84,6 +84,7 @@ import {
 	type ProjectionWarning,
 	storeKeyOf,
 } from "./session-store/durable-binding.ts";
+import type { StoredEntry } from "@earendil-works/pi-agent-core";
 import {
 	discardFailedFirstFlush,
 	discardFailedFirstFlushAsync,
@@ -1802,7 +1803,11 @@ export class SessionManager {
 		const sessionFile = this.sessionFile;
 		const durable = this.durable;
 		if (durable && this.headerWrite === undefined) {
-			durable.commitRewrite(this._headerLine(), this._storedEntries(this.fileEntries));
+			try {
+				durable.commitRewrite(this._headerLine(), this._storedEntries(this.fileEntries));
+			} catch (error) {
+				return Promise.reject(error);
+			}
 		}
 		// Bound: the store already took the header; a failed file write is a projection warning, never the caller's error.
 		this.headerWrite ??= (
@@ -1938,14 +1943,11 @@ export class SessionManager {
 		const durable = this.durable;
 
 		if (this.flushed) {
-			const bytes = this._transcriptEntryBytes(entry);
-			const stored = { key: storeKeyOf(entry.id), line: bytes };
-			if (durable) {
-				durable.commitAppend([stored]);
-				if (durable.projectionStale()) {
-					durable.scheduleRepair(this.sessionFile);
-					return bytes;
-				}
+			// Bound: the store takes the entry before any file work; a refusal throws here and nothing was taken.
+			const bound = durable ? this._commitBoundAppend(durable, entry) : undefined;
+			if (durable && bound && durable.projectionStale()) {
+				durable.scheduleRepair(this.sessionFile);
+				return bound.line;
 			}
 			if (this.tailMayBeTorn) {
 				try {
@@ -1953,21 +1955,22 @@ export class SessionManager {
 					this.tailMayBeTorn = false;
 					if (recovery !== undefined) this._reportRecovery(recovery);
 				} catch (error) {
-					if (!durable) throw error;
+					if (!durable || !bound) throw error;
 					durable.projectionFailed(this.sessionFile, error);
-					return bytes;
+					return bound.line;
 				}
 			}
+			const bytes = bound?.line ?? this._transcriptEntryBytes(entry);
 			try {
 				appendFileSync(this.sessionFile, `${bytes}\n`);
 			} catch (error) {
 				this.tailMayBeTorn = true;
 				this.tornTailCause = sessionRecoveryCause(error);
-				if (!durable) throw error;
+				if (!durable || !bound) throw error;
 				durable.projectionFailed(this.sessionFile, error);
 				return bytes;
 			}
-			durable?.projected(this.sessionFile, stored);
+			if (durable && bound) durable.projected(this.sessionFile, bound);
 			return bytes;
 		}
 
@@ -1975,6 +1978,9 @@ export class SessionManager {
 		// written (#10000: the prompt reaches disk even if the first turn never completes).
 		const durableLifecycle = entry.type === "custom" && LIFECYCLE_ENTRY_TYPES.has(entry.customType);
 		if (!isConversationEntry(entry) && !durableLifecycle && !this._hasConversation()) return;
+		if (this.headerWrite && durableLifecycle) {
+			throw new Error("Lifecycle append requires the pending session header write to finish");
+		}
 		if (durable) {
 			durable.commitRewrite(this._headerLine(), this._storedEntries([...this.fileEntries, entry]));
 			if (durable.projectionStale()) {
@@ -1985,11 +1991,16 @@ export class SessionManager {
 		}
 
 		// An asynchronous header write owns the file until it finishes, and appends this entry.
-		if (this.headerWrite) {
-			if (durableLifecycle) throw new Error("Lifecycle append requires the pending session header write to finish");
-			return;
+		if (this.headerWrite) return;
+		let fd: number;
+		try {
+			fd = openSync(this.sessionFile, "wx");
+		} catch (error) {
+			if (!durable) throw error;
+			this.flushed = true;
+			durable.projectionFailed(this.sessionFile, error);
+			return this._transcriptEntryBytes(entry);
 		}
-		const fd = openSync(this.sessionFile, "wx");
 		let bytes: string | undefined;
 		try {
 			for (const e of [...this.fileEntries, entry]) {
@@ -2018,6 +2029,12 @@ export class SessionManager {
 		if (!isConversationEntry(entry) && !this._hasConversation()) this.ownedHeaderFile = this.sessionFile;
 		durable?.recordWhole(this.sessionFile);
 		return bytes;
+	}
+
+	private _commitBoundAppend(durable: DurableSessionBinding, entry: SessionEntry): StoredEntry {
+		const stored = { key: storeKeyOf(entry.id), line: this._transcriptEntryBytes(entry) };
+		durable.commitAppend([stored]);
+		return stored;
 	}
 
 	/**
