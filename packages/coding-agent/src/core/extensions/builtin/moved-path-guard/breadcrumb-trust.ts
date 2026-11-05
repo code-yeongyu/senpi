@@ -117,7 +117,7 @@ function ignoreBreadcrumb(file: string, reason: string): undefined {
 /**
  * Every OmO desktop data home lives under the user's home (`~/.omo/desktop`, `~/.omo-app`; plan 1.1), so a
  * breadcrumb naming anywhere else is ignored before the walk touches that folder: a committed or planted breadcrumb
- * can never make the guard open a network or automount path. `homes` holds the home as `os.homedir()` spells it and
+ * can never make the guard open a network or automount path. `homes` holds the home as `userHomeDir()` spells it and
  * as its realpath, so a desktop that writes `movedTo` realpath'd on a host whose `$HOME` is a symlink (or macOS
  * `/tmp` vs `/private/tmp`) still names a home under the user's.
  */
