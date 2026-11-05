@@ -25,26 +25,29 @@ export function clearMcpParameterHeaders(headers: Headers): void {
 	}
 }
 
-function parseParameterHeaders(schema: unknown): readonly ParameterHeader[] | undefined {
+function parseParameterHeaders(schema: unknown): readonly ParameterHeader[] | string {
 	const headers: ParameterHeader[] = [];
 	const names = new Set<string>();
+	let reason = "";
 	const visit = (node: unknown, path: readonly string[] | undefined): boolean => {
+		if (Array.isArray(node)) return node.every((child) => visit(child, undefined));
 		if (!isRecord(node)) return true;
 		if (Object.hasOwn(node, "x-mcp-header")) {
 			const name = node["x-mcp-header"];
 			const type = node.type;
-			if (
-				!path?.length ||
-				typeof name !== "string" ||
-				!/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(name) ||
-				names.has(name.toLowerCase()) ||
-				(type !== "string" && type !== "integer" && type !== "boolean")
-			)
-				return false;
-			names.add(name.toLowerCase());
-			headers.push({ name, path, type });
+			if (!path?.length) reason = "x-mcp-header must be on a properties-only path";
+			else if (typeof name !== "string" || !/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(name))
+				reason = "x-mcp-header must be a nonempty HTTP field-name token";
+			else if (names.has(name.toLowerCase())) reason = "x-mcp-header names must be case-insensitively unique";
+			else if (type !== "string" && type !== "integer" && type !== "boolean")
+				reason = "x-mcp-header type must be string, integer, or boolean";
+			else {
+				names.add(name.toLowerCase());
+				headers.push({ name, path, type });
+			}
+			if (reason) return false;
 		}
-		// Only schema-valued keywords are traversed: examples/default/const are instance data.
+		// "Anywhere else" includes unknown keywords; instance-data keywords are not schemas.
 		for (const [keyword, value] of Object.entries(node)) {
 			if (
 				["properties", "patternProperties", "$defs", "definitions", "dependentSchemas", "dependencies"].includes(
@@ -56,47 +59,30 @@ function parseParameterHeaders(schema: unknown): readonly ParameterHeader[] | un
 					const childPath = keyword === "properties" && path !== undefined ? [...path, key] : undefined;
 					if (!visit(child, childPath)) return false;
 				}
-			} else if (
-				[
-					"items",
-					"prefixItems",
-					"allOf",
-					"anyOf",
-					"oneOf",
-					"additionalItems",
-					"additionalProperties",
-					"unevaluatedItems",
-					"unevaluatedProperties",
-					"contains",
-					"propertyNames",
-					"not",
-					"if",
-					"then",
-					"else",
-					"contentSchema",
-				].includes(keyword)
-			) {
-				for (const child of Array.isArray(value) ? value : [value]) {
-					if (!visit(child, undefined)) return false;
-				}
+			} else if (!["examples", "default", "const", "enum"].includes(keyword)) {
+				if (!visit(value, undefined)) return false;
 			}
 		}
 		return true;
 	};
-	return visit(schema, []) ? headers : undefined;
+	return visit(schema, []) ? headers : reason;
 }
+
+/** A local argument error, not a failed transport or an untrusted server diagnostic. */
+export class ParameterHeaderValidationError extends Error {}
 
 /** Connection-local catalog: never shared with another server or transport generation. */
 export class ModernParameterHeaders {
 	readonly #tools = new Map<string, readonly ParameterHeader[]>();
 
-	filterTools(tools: readonly unknown[], firstPage: boolean): unknown[] {
+	filterTools(tools: readonly unknown[], firstPage: boolean, warn: (message: string) => void): unknown[] {
 		if (firstPage) this.#tools.clear();
 		return tools.filter((tool) => {
 			if (!isRecord(tool) || typeof tool.name !== "string") return true;
 			const headers = parseParameterHeaders(tool.inputSchema);
-			if (headers === undefined) {
+			if (typeof headers === "string") {
 				this.#tools.delete(tool.name);
+				warn(`Rejected MCP tool ${JSON.stringify(tool.name)}: ${headers}`);
 				return false;
 			}
 			this.#tools.set(tool.name, headers);
@@ -111,11 +97,17 @@ export class ModernParameterHeaders {
 			for (const key of parameter.path) {
 				value = isRecord(value) && Object.hasOwn(value, key) ? value[key] : undefined;
 			}
+			if (value === undefined) continue;
 			const valid =
 				(parameter.type === "string" && typeof value === "string") ||
 				(parameter.type === "boolean" && typeof value === "boolean") ||
 				(parameter.type === "integer" && typeof value === "number" && Number.isSafeInteger(value));
-			if (valid) headers.set(`Mcp-Param-${parameter.name}`, encodeMcpHeaderValue(String(value)));
+			if (!valid) {
+				throw new ParameterHeaderValidationError(
+					`MCP tool ${JSON.stringify(name)} argument ${JSON.stringify(parameter.path)} must be ${parameter.type === "integer" ? "a safe integer" : `a ${parameter.type}`}`,
+				);
+			}
+			headers.set(`Mcp-Param-${parameter.name}`, encodeMcpHeaderValue(String(value)));
 		}
 	}
 }

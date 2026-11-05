@@ -8,6 +8,7 @@ import { afterEach } from "vitest";
 
 import { hermeticProviderEnv } from "./rpc-hermetic.ts";
 import { JsonlPeer, type RecordValue } from "./rpc-jsonl-peer.ts";
+import { hostSpawnEnv } from "../helpers/rpc-host-spawn-env.ts";
 
 const roots: string[] = [];
 
@@ -44,11 +45,12 @@ export function spawnRpc(
 	args: string[],
 	qa: ReturnType<typeof scratch>,
 	capabilities = "extension_events,custom_unsupported",
+	env: Readonly<Record<string, string>> = {},
 ): ChildProcessWithoutNullStreams {
 	const child = spawn(process.execPath, [join(import.meta.dirname, "..", "..", "src", "cli.ts"), ...args], {
 		cwd: qa.cwd,
 		env: {
-			...process.env,
+			...hostSpawnEnv(),
 			...hermeticProviderEnv(),
 			PI_OFFLINE: "1",
 			PI_TELEMETRY: "0",
@@ -56,6 +58,7 @@ export function spawnRpc(
 			SENPI_CODING_AGENT_DIR: qa.agentDir,
 			SENPI_CODING_AGENT_SESSION_DIR: qa.sessionDir,
 			SENPI_RPC_CLIENT_CAPABILITIES: capabilities,
+			...env,
 		},
 		stdio: ["pipe", "pipe", "pipe"],
 	});

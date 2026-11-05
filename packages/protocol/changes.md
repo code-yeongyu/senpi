@@ -1,5 +1,41 @@
 # changes
 
+## 2026-10-28 - One recovery repair advice schema (S14, part of #4272)
+
+### What changed
+
+- `packages/protocol/src/index.ts`: exports `RecoveryRepairAdviceSchema`, its type and validator from `packages/protocol/src/recovery-repair.ts`.
+
+### Why
+
+- `packages/protocol/src/index.ts`: the producer and client controller must consume exactly one shared wire schema (RULING-84).
+
+### Why an extension could not handle it
+
+- `packages/protocol/src/index.ts`: shared protocol types are below extension boundaries.
+
+### Expected merge conflict zones
+
+- `packages/protocol/src/index.ts`: protocol export list only; no protocol-version change or public admission route.
+
+## 2026-10-29 - Run certified Vitest suites on Bun (senpi#4763)
+
+### What changed
+
+- `packages/protocol/package.json`: launch the existing temp-owning Vitest runner with `bun --bun` instead of Node.
+
+### Why
+
+- The full Node and Vitest-on-Bun controls match at 3 files and 133 passing tests. Bun avoids Node test workers.
+
+### Why an extension could not handle it
+
+- Package test scripts select the runtime before extensions load.
+
+### Expected merge conflict zones
+
+- `packages/protocol/package.json`: preserve the Bun launcher and forwarded Vitest arguments.
+
 ## 2026-10-10 - Test-run temporary storage has an owner (senpi#3064)
 
 ### What changed

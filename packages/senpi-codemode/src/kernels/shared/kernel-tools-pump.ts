@@ -24,10 +24,19 @@ export class KernelToolHostPump {
 	readonly #waiters = new Map<string, Waiter>();
 	readonly #post: (message: HostToKernelMessage) => void;
 	readonly #isOpen: () => boolean;
+	readonly #invocation?: (
+		request: KernelToolsInvokeRequest,
+		options?: AbortSignal | KernelToolsInvokeOptions,
+	) => () => void;
 
-	constructor(post: (message: HostToKernelMessage) => void, isOpen: () => boolean) {
+	constructor(
+		post: (message: HostToKernelMessage) => void,
+		isOpen: () => boolean,
+		invocation?: (request: KernelToolsInvokeRequest, options?: AbortSignal | KernelToolsInvokeOptions) => () => void,
+	) {
 		this.#post = post;
 		this.#isOpen = isOpen;
+		this.#invocation = invocation;
 	}
 
 	consume(message: KernelToHostMessage): boolean {
@@ -70,6 +79,18 @@ export class KernelToolHostPump {
 	 * the message it always did (#1731).
 	 */
 	async invoke(request: KernelToolsInvokeRequest, options?: AbortSignal | KernelToolsInvokeOptions): Promise<unknown> {
+		const release = this.#invocation?.(request, options);
+		try {
+			return await this.#invoke(request, options);
+		} finally {
+			release?.();
+		}
+	}
+
+	async #invoke(
+		request: KernelToolsInvokeRequest,
+		options?: AbortSignal | KernelToolsInvokeOptions,
+	): Promise<unknown> {
 		const { signal, scope } = normalizeInvokeOptions(options);
 		this.events.dispatchEvent(new Event("nestedInvoke"));
 		const reply = await this.#request(

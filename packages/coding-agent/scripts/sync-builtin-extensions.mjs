@@ -14,7 +14,7 @@ const builtinRoot = join(packageDir, "src", "core", "extensions", "builtin");
 // DIR_SYNCS auto-copy a package's src/ tree into builtin/<id>/, rewriting the standalone
 // package's published-API imports to senpi internals via transformVendoredSource. Only
 // packages whose senpi adaptation is FULLY captured by that mechanical transform belong here.
-const DIR_SYNCS = [{ id: "bash-timeout", packageDir: "pi-bash-timeout" }];
+const DIR_SYNCS = [];
 
 // MANUAL_PACKAGES are vendored builtins whose senpi copy has diverged beyond the mechanical
 // import transform, so re-copying would clobber hand-maintained changes. We still record their
@@ -29,6 +29,9 @@ const DIR_SYNCS = [{ id: "bash-timeout", packageDir: "pi-bash-timeout" }];
 //   - websearch/webfetch/nested-agents-md/rules: vendored with transformVendoredSource, then
 //     hand-patched for senpi's erasableSyntaxOnly rule (no parameter properties) and the absence
 //     of DOM globals (HeadersInit).
+//   - bash-timeout (pi-bash-timeout): senpi dropped the upstream "## Bash Tool Timeout Policy"
+//     prompt section (senpi#5335; the terminal section states the facts), so a re-copy would
+//     bring it back.
 //   - anthropic-web-search/openai-web-search/anthropic-bash: single-file copies that import
 //     senpi's typed pi-ai Model and ../../types.ts instead of the standalone packages' loosely
 //     typed peer-dep surface.
@@ -43,6 +46,7 @@ const MANUAL_PACKAGES = [
 	{ id: "anthropic-web-search", packageDir: "pi-anthropic-web-search" },
 	{ id: "openai-web-search", packageDir: "pi-openai-web-search" },
 	{ id: "anthropic-bash", packageDir: "pi-anthropic-bash" },
+	{ id: "bash-timeout", packageDir: "pi-bash-timeout" },
 ];
 
 function readPackageMetadata(packageName) {

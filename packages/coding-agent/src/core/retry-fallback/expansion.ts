@@ -2,18 +2,59 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { isValidThinkingLevel } from "../../cli/args.ts";
 
 /**
- * Providers that never receive a bare selector. Gateways re-publish other
- * vendors' catalogs under namespaced ids, so family expansion would silently
- * route a shipped default through a third-party reseller the user never chose.
- * An explicit provider-qualified selector the user wrote is unaffected.
+ * The only providers a bare selector reaches: each model vendor's own lanes,
+ * keyed by the vendor's model-id prefix. A bare id is a vendor policy, so a
+ * reseller, gateway, cloud re-host or user-added provider that also publishes
+ * the model is reached only through a selector that names it (`provider/id`).
+ * Every provider id here exists in the builtin catalog or is registered by a
+ * builtin extension (`anthropic-subscription`).
  */
-const BARE_EXPANSION_DENYLIST: ReadonlySet<string> = new Set([
-	"cursor",
-	"openrouter",
-	"openrouter-images",
-	"opengateway",
-	"vercel-ai-gateway",
-]);
+export const FIRST_PARTY_PROVIDERS: readonly { readonly family: RegExp; readonly providers: readonly string[] }[] = [
+	{ family: /^claude-/, providers: ["anthropic-subscription", "anthropic"] },
+	{ family: /^(?:gpt-|o\d)/, providers: ["chatgpt-subscription", "openai"] },
+	{ family: /^gemini-/, providers: ["google", "google-vertex"] },
+	{ family: /^(?:kimi-|k\d)/, providers: ["kimi-coding", "moonshotai", "moonshotai-cn"] },
+	{ family: /^glm-/, providers: ["zai", "zai-coding-cn"] },
+	{ family: /^grok-/, providers: ["xai"] },
+	{ family: /^deepseek-/, providers: ["deepseek"] },
+	{ family: /^(?:mistral|codestral|devstral|magistral|ministral|pixtral)/, providers: ["mistral"] },
+	{ family: /^minimax-/, providers: ["minimax", "minimax-cn"] },
+	{
+		family: /^mimo-/,
+		providers: ["xiaomi", "xiaomi-token-plan-cn", "xiaomi-token-plan-sgp", "xiaomi-token-plan-ams"],
+	},
+	{
+		family: /^qwen/,
+		providers: ["qwen-token-plan", "qwen-token-plan-individual", "qwen-token-plan-cn", "alibaba-token-plan"],
+	},
+];
+
+/**
+ * Whether a bare selector for `family` may resolve on `provider`.
+ *
+ * A rung (`sessionProvider` set) runs on the provider the chain key already runs
+ * on: `resolveChainKey` only selects a key matching the running model's
+ * `provider/id`, so that provider is the one the user chose. A fallback never
+ * moves the turn to another account or billing lane of the same vendor (a
+ * Claude subscription never falls onto the Anthropic API key, senpi#5518), and
+ * `rankFamilyModels` keeps only the session's provider whenever it serves the
+ * family. Another vendor's model named in the chain (a bare `k3` rung on a
+ * Claude session) still reaches that vendor's first-party providers; anything
+ * else takes an explicit `provider/id` entry.
+ *
+ * Bare keys pass no session provider: a key never routes a request, so a known
+ * vendor's bare key attaches to its first-party sessions and an unknown
+ * vendor's to every provider serving it.
+ */
+function inBareScope(provider: string, family: string, sessionProvider: string | undefined): boolean {
+	const normalized = provider.toLowerCase();
+	const vendor = FIRST_PARTY_PROVIDERS.find((entry) => entry.family.test(family));
+	if (sessionProvider === undefined) return vendor === undefined || vendor.providers.includes(normalized);
+	const session = sessionProvider.toLowerCase();
+	if (normalized === session) return true;
+	if (vendor === undefined || vendor.providers.includes(session)) return false;
+	return vendor.providers.includes(normalized);
+}
 
 /**
  * Deterministic tie-break inside one auth tier. Earlier wins. Providers absent
@@ -118,7 +159,7 @@ function precedenceIndex(provider: string): number {
 }
 
 /**
- * Ranks one model per eligible provider: OAuth-credential providers first (a
+ * Ranks one model per in-scope, eligible provider: OAuth-credential providers first (a
  * logged-in subscription is the account the user actually wants used), then the
  * fixed precedence table, then alphabetically.
  */
@@ -126,11 +167,11 @@ export function rankFamilyModels(
 	models: readonly Model<Api>[],
 	family: string,
 	tiers: FallbackAuthTiers,
-	options: { limit?: number } = {},
+	options: { limit?: number; sessionProvider?: string } = {},
 ): Model<Api>[] {
 	const byProvider = new Map<string, Model<Api>[]>();
 	for (const model of models) {
-		if (BARE_EXPANSION_DENYLIST.has(model.provider.toLowerCase())) continue;
+		if (!inBareScope(model.provider, family, options.sessionProvider)) continue;
 		// Family first: eligibility reads provider settings from disk, and only family members need it.
 		if (!matchesFamily(model, family)) continue;
 		if (tiers.isFallbackEligible?.(model) === false) continue;
@@ -139,7 +180,10 @@ export function rankFamilyModels(
 		else byProvider.set(model.provider, [model]);
 	}
 
-	const picked = [...byProvider.values()].flatMap((variants) => {
+	// The session's own provider serves the family: the rung stays there and never reaches another lane.
+	const session = options.sessionProvider?.toLowerCase();
+	const own = [...byProvider.entries()].find(([provider]) => provider.toLowerCase() === session)?.[1];
+	const picked = (own === undefined ? [...byProvider.values()] : [own]).flatMap((variants) => {
 		const variant = pickVariant(variants, family);
 		return variant ? [variant] : [];
 	});

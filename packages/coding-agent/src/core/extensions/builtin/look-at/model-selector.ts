@@ -7,7 +7,7 @@ export const DEFAULT_LOOK_AT_CHAIN = [
 	"gpt-5.6-terra:off",
 	"gemini-3.1-pro-preview:low",
 	"gemini-3.5-flash",
-	"kimi-k3",
+	"kimi-k3.1-pro",
 ] as const;
 
 const AMBIGUOUS_ID_PROVIDER_PREFERENCE: readonly string[] = ["openai", "google", "moonshotai"];

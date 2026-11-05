@@ -54,7 +54,10 @@ for (const { name, command } of commands) {
 		for (const entry of [
 			"./dist/bun/cli.js",
 			"./src/modes/rpc/session-worker.ts",
+			"./src/modes/rpc/loopless-worker.ts",
 			"./src/utils/image-resize-worker.ts",
+			"./src/core/extensions/builtin/permission-system/path-identity-worker.ts",
+			"./src/core/kill-guard/index.ts",
 		]) {
 			assert.ok(argv.includes(entry), `${name}: missing ${entry}`);
 		}

@@ -1,4 +1,4 @@
-import type { AnthropicSubscriptionTokenInjection } from "./settings.ts";
+import type { AnthropicSubscriptionAuthLane } from "./options.ts";
 
 /** Prompt-cache lifetimes Claude Code accepts for `CLAUDE_CODE_PROMPT_CACHE_TTL`. */
 export type PromptCacheTtl = "5m" | "1h";
@@ -23,12 +23,12 @@ type QueryEnvironment = { env?: Record<string, string | undefined> };
  * otherwise picks its lifetime per request: 1 hour on a subscription within its usage limits, 5 minutes on an API key
  * or after the limits. `FORCE_PROMPT_CACHING_5M` wins, as it does in Claude Code; then an explicit
  * `CLAUDE_CODE_PROMPT_CACHE_TTL`. The managed subscription lanes pin 1 hour,
- * Claude Code's subscription default. The ambient lane can be an API key or a subscription login, so nothing is
+ * Claude Code's subscription default; so does the `claude-cli` lane, whose account is a verified first-party claude.ai login. The ambient lane can be an API key or a subscription login, so nothing is
  * pinned there and the caller adds no breakpoint.
  */
 export function pinOneShotPromptCacheTtl(
 	options: QueryEnvironment,
-	authLane: AnthropicSubscriptionTokenInjection,
+	authLane: AnthropicSubscriptionAuthLane,
 	environment: Readonly<Record<string, string | undefined>>,
 ): PromptCacheTtl | undefined {
 	const forced5m =

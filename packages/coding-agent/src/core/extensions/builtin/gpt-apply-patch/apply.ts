@@ -1,6 +1,6 @@
 import { mkdir, rename, rm, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { withFileMutationQueue } from "../../../tools/file-mutation-queue.ts";
+import { withFileMutationQueues } from "../../../tools/file-mutation-queue.ts";
 import { ApplyPatchError } from "./errors.ts";
 import { parsePatch } from "./parser.ts";
 import { replaceChunks } from "./patch-replace.ts";
@@ -105,7 +105,7 @@ async function applySingleHunk(
 	const absolutePath = resolvePatchPath(cwd, hunk.filePath);
 	const mutationPaths =
 		hunk.type === "update" && hunk.movePath ? [absolutePath, resolvePatchPath(cwd, hunk.movePath)] : [absolutePath];
-	return withPatchMutationQueues(mutationPaths, async () => {
+	return withFileMutationQueues(mutationPaths, async () => {
 		if (hunk.type === "add") {
 			const source = await readPatchFileSnapshot(absolutePath);
 			const preview = buildPatchPreviewFile({ hunk, source, newContent: hunk.content });
@@ -191,16 +191,6 @@ async function applySingleHunk(
 		await writeFileAtomic(absolutePath, chunkResult.content);
 		return { summary: `update: ${hunk.filePath}`, appliedFile: hunk.filePath, fuzz: chunkResult.fuzz, preview };
 	});
-}
-
-async function withPatchMutationQueues<T>(filePaths: readonly string[], operation: () => Promise<T>): Promise<T> {
-	const sortedPaths = [...new Set(filePaths)].sort((left, right) => left.localeCompare(right));
-	const runQueued = (index: number): Promise<T> => {
-		const filePath = sortedPaths[index];
-		if (filePath === undefined) return operation();
-		return withFileMutationQueue(filePath, () => runQueued(index + 1));
-	};
-	return runQueued(0);
 }
 
 function parseNonEmptyPatch(patchText: string): ParsedPatch[] {

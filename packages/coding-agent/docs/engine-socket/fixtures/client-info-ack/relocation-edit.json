@@ -1,0 +1,30 @@
+{
+	"contractIds": [
+		"T7",
+		"RULING-73"
+	],
+	"flag": true,
+	"id": "relocation-edit",
+	"selected": true,
+	"request": {
+		"id": "h",
+		"type": "set_client_info",
+		"capabilities": [
+			"compact_message_updates_v1",
+			"event_resync",
+			"session_relocation"
+		]
+	},
+	"expectedAck": {
+		"id": "h",
+		"type": "response",
+		"command": "set_client_info",
+		"success": true,
+		"data": {
+			"capabilities": [
+				"compact_message_updates_v1",
+				"event_resync"
+			]
+		}
+	}
+}

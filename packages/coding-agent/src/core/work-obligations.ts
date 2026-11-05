@@ -1,4 +1,5 @@
 import type { DeliveryTicketId, ObligationKind, ObligationToken, WorkObligations } from "./session-lifecycle-types.ts";
+import { normalizeWaitItems, waitItemSignature } from "./lifecycle-wait-items.ts";
 import type { SessionEntry } from "./session-manager.ts";
 import { type CustodyPayload, custodyIsOpen, readWorkCustody, type WorkCustodyRecord } from "./work-custody-record.ts";
 
@@ -83,7 +84,7 @@ export class SessionWorkObligations implements WorkObligations {
 		return this.token(record.id);
 	}
 
-	syncSource(source: string, kind: ObligationKind, activeCount: number): void {
+	syncSource(source: string, kind: ObligationKind, activeCount: number, items?: unknown): void {
 		const key = `${WAKE_SOURCE_KEY_PREFIX}${source}`;
 		this.publishedSources.add(key);
 		const current = this.active.find((record) => record.key === key);
@@ -91,7 +92,13 @@ export class SessionWorkObligations implements WorkObligations {
 			if (current) this.close(current.id, "passive");
 			return;
 		}
-		if (current?.activeCount === activeCount && current.kind === kind) return;
+		const detail = normalizeWaitItems(items);
+		if (
+			current?.activeCount === activeCount &&
+			current.kind === kind &&
+			waitItemSignature(current) === waitItemSignature(detail)
+		)
+			return;
 		this.install({
 			...current,
 			id: current?.id ?? crypto.randomUUID(),
@@ -99,6 +106,8 @@ export class SessionWorkObligations implements WorkObligations {
 			source,
 			kind,
 			activeCount,
+			items: detail.items,
+			omittedItems: detail.omittedItems,
 			state: current?.state ?? "open",
 		});
 		this.store.changed();
@@ -193,6 +202,19 @@ export class SessionWorkObligations implements WorkObligations {
 			if (record.state === "consumed" && record.runId === runId) this.install({ ...record, state: "settled" });
 		}
 		this.store.changed();
+	}
+
+	/**
+	 * At restoration, a consumed delivery of any run other than the restored current one belongs to a run that ended:
+	 * its message is already in the conversation, so it settles as `idle()` would have (senpi#4848). The current run's
+	 * consumed custody stays for crash recovery and `startRun`. With no recorded run nothing proves the consuming run
+	 * ended, so crash recovery keeps all of it.
+	 */
+	settleEndedRuns(currentRunId: string | undefined): void {
+		if (currentRunId === undefined) return;
+		const ended = this.active.filter((record) => record.state === "consumed" && record.runId !== currentRunId);
+		for (const record of ended) this.install({ ...record, state: "settled" });
+		if (ended.length > 0) this.store.changed();
 	}
 
 	private install(record: WorkCustodyRecord): void {

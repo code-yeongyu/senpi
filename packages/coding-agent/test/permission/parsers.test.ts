@@ -1,3 +1,6 @@
+import { realpathSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
 	createBuiltinParserRegistry,
@@ -127,7 +130,7 @@ describe("permission parsers", () => {
 				]);
 			});
 
-			it("keeps home-based external paths in the permission request", () => {
+			it("resolves home-based external paths and retains their original spelling", () => {
 				// given
 				const input = { command: "cat ~/other-project/file.txt" };
 
@@ -139,8 +142,9 @@ describe("permission parsers", () => {
 					{ permission: "bash", patterns: ["cat"], always: ["cat", "cat *"] },
 					{
 						permission: "external_directory",
-						patterns: ["~/other-project/file.txt"],
-						always: ["~/other-project/*"],
+						patterns: [join(realpathSync.native(homedir()), "other-project", "file.txt")],
+						always: [`${join(realpathSync.native(homedir()), "other-project")}/*`],
+						originalPaths: ["~/other-project/file.txt"],
 					},
 				]);
 			});
@@ -184,7 +188,14 @@ describe("permission parsers", () => {
 				const result = registry.parse("edit", input, cwd);
 
 				// then
-				expect(result).toEqual([{ permission: "edit", patterns: ["src/index.ts"], always: ["src/index.ts"] }]);
+				expect(result).toEqual([
+					{
+						permission: "edit",
+						patterns: ["src/index.ts"],
+						always: ["src/index.ts"],
+						executed: [`${cwd}/src/index.ts`],
+					},
+				]);
 			});
 
 			it("maps write to the unified edit permission", () => {
@@ -195,7 +206,14 @@ describe("permission parsers", () => {
 				const result = registry.parse("write", input, cwd);
 
 				// then
-				expect(result).toEqual([{ permission: "edit", patterns: ["src/index.ts"], always: ["src/index.ts"] }]);
+				expect(result).toEqual([
+					{
+						permission: "edit",
+						patterns: ["src/index.ts"],
+						always: ["src/index.ts"],
+						executed: [`${cwd}/src/index.ts`],
+					},
+				]);
 			});
 
 			it("maps apply_patch to the unified edit permission", () => {
@@ -206,7 +224,14 @@ describe("permission parsers", () => {
 				const result = registry.parse("apply_patch", input, cwd);
 
 				// then
-				expect(result).toEqual([{ permission: "edit", patterns: ["src/index.ts"], always: ["src/index.ts"] }]);
+				expect(result).toEqual([
+					{
+						permission: "edit",
+						patterns: ["src/index.ts"],
+						always: ["src/index.ts"],
+						executed: [`${cwd}/src/index.ts`],
+					},
+				]);
 			});
 
 			it("maps multiedit to the unified edit permission", () => {
@@ -217,7 +242,14 @@ describe("permission parsers", () => {
 				const result = registry.parse("multiedit", input, cwd);
 
 				// then
-				expect(result).toEqual([{ permission: "edit", patterns: ["src/index.ts"], always: ["src/index.ts"] }]);
+				expect(result).toEqual([
+					{
+						permission: "edit",
+						patterns: ["src/index.ts"],
+						always: ["src/index.ts"],
+						executed: [`${cwd}/src/index.ts`],
+					},
+				]);
 			});
 
 			it("returns edit wildcard fallback when no path is present", () => {
@@ -241,7 +273,9 @@ describe("permission parsers", () => {
 				const result = registry.parse("read", input, cwd);
 
 				// then
-				expect(result).toEqual([{ permission: "read", patterns: ["README.md"], always: ["README.md"] }]);
+				expect(result).toEqual([
+					{ permission: "read", patterns: ["README.md"], always: ["README.md"], executed: [`${cwd}/README.md`] },
+				]);
 			});
 
 			it("supports file_path alias for read permission requests", () => {
@@ -252,7 +286,9 @@ describe("permission parsers", () => {
 				const result = registry.parse("read", input, cwd);
 
 				// then
-				expect(result).toEqual([{ permission: "read", patterns: ["README.md"], always: ["README.md"] }]);
+				expect(result).toEqual([
+					{ permission: "read", patterns: ["README.md"], always: ["README.md"], executed: [`${cwd}/README.md`] },
+				]);
 			});
 
 			it("returns read wildcard fallback when path is missing", () => {
@@ -276,7 +312,9 @@ describe("permission parsers", () => {
 				const result = registry.parse("grep", input, cwd);
 
 				// then
-				expect(result).toEqual([{ permission: "grep", patterns: ["src"], always: ["*"] }]);
+				expect(result).toEqual([
+					{ permission: "grep", patterns: ["src"], always: ["*"], executed: [`${cwd}/src`] },
+				]);
 			});
 
 			it("falls back to the grep pattern when path is omitted", () => {
@@ -311,7 +349,9 @@ describe("permission parsers", () => {
 				const result = registry.parse("find", input, cwd);
 
 				// then
-				expect(result).toEqual([{ permission: "list", patterns: ["src"], always: ["src"] }]);
+				expect(result).toEqual([
+					{ permission: "list", patterns: ["src"], always: ["src"], executed: [`${cwd}/src`] },
+				]);
 			});
 
 			it("uses current directory when find path is omitted", () => {
@@ -322,7 +362,7 @@ describe("permission parsers", () => {
 				const result = registry.parse("find", input, cwd);
 
 				// then
-				expect(result).toEqual([{ permission: "list", patterns: ["."], always: ["."] }]);
+				expect(result).toEqual([{ permission: "list", patterns: ["."], always: ["."], executed: [cwd] }]);
 			});
 		});
 
@@ -335,7 +375,9 @@ describe("permission parsers", () => {
 				const result = registry.parse("glob", input, cwd);
 
 				// then
-				expect(result).toEqual([{ permission: "list", patterns: ["src"], always: ["src"] }]);
+				expect(result).toEqual([
+					{ permission: "list", patterns: ["src"], always: ["src"], executed: [`${cwd}/src`] },
+				]);
 			});
 		});
 
@@ -348,7 +390,9 @@ describe("permission parsers", () => {
 				const result = registry.parse("ls", input, cwd);
 
 				// then
-				expect(result).toEqual([{ permission: "list", patterns: ["packages"], always: ["packages"] }]);
+				expect(result).toEqual([
+					{ permission: "list", patterns: ["packages"], always: ["packages"], executed: [`${cwd}/packages`] },
+				]);
 			});
 
 			it("uses current directory when ls path is omitted", () => {
@@ -359,7 +403,7 @@ describe("permission parsers", () => {
 				const result = registry.parse("ls", input, cwd);
 
 				// then
-				expect(result).toEqual([{ permission: "list", patterns: ["."], always: ["."] }]);
+				expect(result).toEqual([{ permission: "list", patterns: ["."], always: ["."], executed: [cwd] }]);
 			});
 		});
 

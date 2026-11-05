@@ -1,9 +1,11 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
+import { presetSharedSections } from "../../src/core/extensions/builtin/prompt-preset/contract.ts";
 import {
 	EXECUTION_TOOLING_RULES,
 	type ExecutionToolingConcern,
 	type ExecutionToolingDialect,
+	type ExecutionToolingRule,
 	type ExecutionToolingRuleId,
 } from "../../src/core/extensions/builtin/prompt-preset/execution-tooling.ts";
 import { type PromptPresetSettings, resolvePreset } from "../../src/core/extensions/builtin/prompt-preset/presets.ts";
@@ -38,6 +40,16 @@ function buildPrompt(presetName: PromptPresetName, selectedTools: readonly strin
 		throw new Error(`expected ${presetName} preset to resolve`);
 	}
 	return preset.prompt;
+}
+
+/** The wording `presetName` renders: the full shared-section presets keep the pre-diet directive (senpi#5665). */
+function directiveFor(
+	rule: ExecutionToolingRule,
+	presetName: PromptPresetName,
+	dialect: ExecutionToolingDialect,
+): string {
+	const sections = presetName === "auto" ? "diet" : presetSharedSections(presetName);
+	return (sections === "full" ? rule.fullDirective : rule.directive)[dialect];
 }
 
 function occurrences(haystack: string, needle: string): number {
@@ -104,7 +116,7 @@ describe("execution tooling directive", () => {
 
 		// then
 		for (const rule of EXECUTION_TOOLING_RULES) {
-			expect(occurrences(prompt, rule.directive[dialect]), rule.id).toBe(1);
+			expect(occurrences(prompt, directiveFor(rule, presetName, dialect)), rule.id).toBe(1);
 		}
 	});
 
@@ -114,7 +126,7 @@ describe("execution tooling directive", () => {
 
 		// then
 		for (const rule of EXECUTION_TOOLING_RULES) {
-			expect(prompt, rule.id).not.toContain(rule.directive[dialect]);
+			expect(prompt, rule.id).not.toContain(directiveFor(rule, presetName, dialect));
 		}
 	});
 
@@ -125,8 +137,8 @@ describe("execution tooling directive", () => {
 
 		// then
 		for (const rule of evalRules()) {
-			expect(occurrences(evalSelected, rule.directive[dialect]), rule.id).toBe(1);
-			expect(monitorOnly, rule.id).not.toContain(rule.directive[dialect]);
+			expect(occurrences(evalSelected, directiveFor(rule, presetName, dialect)), rule.id).toBe(1);
+			expect(monitorOnly, rule.id).not.toContain(directiveFor(rule, presetName, dialect));
 		}
 	});
 

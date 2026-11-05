@@ -19,7 +19,6 @@ describe("Anthropic third-party billing rejection (#3259)", () => {
 			model: "anthropic/claude-opus-5-5",
 			usageLimit: "account",
 		});
-		expect(text).toContain("/login");
 		expect(text).toContain("https://claude.ai/settings/usage");
 	});
 

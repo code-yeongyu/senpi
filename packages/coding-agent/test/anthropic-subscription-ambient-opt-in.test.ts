@@ -12,6 +12,7 @@ import {
 } from "../src/core/extensions/builtin/anthropic-subscription/settings.ts";
 import { InMemorySettingsStorage, SettingsManager } from "../src/core/settings-manager.ts";
 import { authContext, composedProvider, credentialStore } from "./support/anthropic-subscription-provider.ts";
+import { cliSlot } from "./support/claude-cli-test-slots.ts";
 
 const AUTH_CHECK = { source: "Anthropic Subscription", type: "oauth" };
 
@@ -86,13 +87,7 @@ describe("claude-sdk-oauth ambient opt-in", () => {
 	it("keeps a stored account available while the flag is unset", async () => {
 		const readAmbientAuthStatus = vi.fn(async () => false);
 		const config = createOAuthConfig({ readAmbientAuthStatus, readCurrent: async () => undefined });
-		const credential = addAccount(emptyCredential(), {
-			name: "managed",
-			access: "stored-access",
-			refresh: "stored-refresh",
-			expires: Date.now() + 60_000,
-			source: "login",
-		});
+		const credential = addAccount(emptyCredential(), cliSlot("managed"));
 
 		expect(await config.check({ ctx: authContext(), credential })).toEqual(AUTH_CHECK);
 		expect(readAmbientAuthStatus).not.toHaveBeenCalled();

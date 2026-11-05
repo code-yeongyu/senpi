@@ -11,7 +11,7 @@ import type { BranchPreparation, BranchSummaryResult } from "../../compaction/br
 import { generateBranchSummaryWithRequest } from "../../compaction/branch-summarization.ts";
 import type { CompactionPreparation, CompactResult, SummaryRequest } from "../../compaction/compaction.ts";
 import { compactWithRequest, prepareCompaction, shouldCompact } from "../../compaction/compaction.ts";
-import { type Context, getTelemetryContext, withAbortSignal } from "../../context.ts";
+import { type Context, getTelemetryContext, withAbortSignal, withSessionCwd } from "../../context.ts";
 import { AbortRequested } from "../../execution/effect-gate.ts";
 import { applyStreamOptionsPatch } from "../../hooks.ts";
 import { insertEntry, insertUsage } from "../../session/commit.ts";
@@ -866,6 +866,7 @@ async function performStructuralAttempt<TContext extends object | undefined>(
 		return response;
 	};
 
+	const summaryContext = withSessionCwd(lane.session.metadata.cwd, drive.context);
 	try {
 		if (summaryKind(effect.task) === "compaction") {
 			if (!("messagesToSummarize" in preparation)) {
@@ -879,7 +880,7 @@ async function performStructuralAttempt<TContext extends object | undefined>(
 					thinkingLevel: effect.summaryContext.configuration.thinkingLevel,
 				},
 				request,
-				drive.context,
+				summaryContext,
 			);
 			if (!result.ok) {
 				return {
@@ -902,7 +903,7 @@ async function performStructuralAttempt<TContext extends object | undefined>(
 			preparation,
 			{ customInstructions: effect.task.customInstructions },
 			request,
-			drive.context,
+			summaryContext,
 		);
 		if (!result.ok) {
 			return {

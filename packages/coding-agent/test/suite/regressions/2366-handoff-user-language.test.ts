@@ -1,6 +1,11 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
-import { buildHandoffSection, HANDOFF_LANGUAGE_RULE } from "../../../src/core/dynamic-prompt/handoff.ts";
+import {
+	buildHandoffSection,
+	FULL_HANDOFF_LANGUAGE_RULE,
+	HANDOFF_LANGUAGE_RULE,
+} from "../../../src/core/dynamic-prompt/handoff.ts";
+import { presetSharedSections } from "../../../src/core/extensions/builtin/prompt-preset/contract.ts";
 import { resolvePreset } from "../../../src/core/extensions/builtin/prompt-preset/presets.ts";
 
 function createModel(id: string): Model<Api> {
@@ -41,7 +46,8 @@ describe("senpi#2366 handoff user-language rule", () => {
 
 		// then
 		expect(preset?.name).toMatch(/^claude-/);
-		expect(occurrences(preset?.prompt ?? "", HANDOFF_LANGUAGE_RULE)).toBe(1);
+		const rule = presetSharedSections(preset?.name) === "full" ? FULL_HANDOFF_LANGUAGE_RULE : HANDOFF_LANGUAGE_RULE;
+		expect(occurrences(preset?.prompt ?? "", rule)).toBe(1);
 	});
 
 	it("keeps the handoff template labels the ttsr repetitive-turns detector parses", () => {

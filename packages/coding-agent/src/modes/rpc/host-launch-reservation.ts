@@ -325,7 +325,7 @@ function parseIdentity(text: string): LaunchIdentity {
  * `IDENTITY_OBSERVATION_ATTEMPTS` times in all within the smaller of `deadlineMs` and the design's five-second bound.
  * Still unreadable after that: `undefined`, which grants nothing; it never becomes an inferred identity.
  */
-export async function observeStartTime(
+async function observeStartTime(
 	pid: number,
 	observe: (pid: number) => Promise<string | undefined>,
 	deadlineMs: number,

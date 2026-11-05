@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { hostSpawnEnv } from "../../helpers/rpc-host-spawn-env.ts";
 
 const child = resolve(__dirname, "../../fixtures/print-then-exit-child.ts");
 const throwingChild = resolve(__dirname, "../../fixtures/print-then-exit-throwing-child.ts");
@@ -17,7 +18,7 @@ const runtimes: Runtime[] = [
 
 function launch(runtime: Runtime) {
 	return spawn(runtime.command, [...runtime.args, String(ROWS)], {
-		env: { ...process.env, TSX_TSCONFIG_PATH: tsconfig },
+		env: { ...hostSpawnEnv(), TSX_TSCONFIG_PATH: tsconfig },
 		stdio: ["ignore", "pipe", "pipe"],
 	});
 }
@@ -80,7 +81,7 @@ describe("senpi#2937 a print-then-exit command delivers all of its output", () =
 		// given a print that writes a line and then throws
 		// when it runs under printThenExit
 		const result = spawnSync(process.execPath, ["--import", "tsx", throwingChild], {
-			env: { ...process.env, TSX_TSCONFIG_PATH: tsconfig },
+			env: { ...hostSpawnEnv(), TSX_TSCONFIG_PATH: tsconfig },
 			encoding: "utf8",
 		});
 

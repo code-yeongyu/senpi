@@ -70,3 +70,47 @@ describe("resolveToolNameMatch", () => {
 		expect(resolveToolNameMatch("mcp__686f__Deploy", ["read", "eval"])).toBeUndefined();
 	});
 });
+
+describe("resolveToolNameMatch with a stray word prefix (omo#12065)", () => {
+	const tools = ["eval", "write", "todo", "read", "kill_bash", "bash", "task_output"];
+
+	it.each([
+		["trophy_eval", "eval"],
+		["fringe_write", "write"],
+		["board_eval", "eval"],
+		["column_todo", "todo"],
+		["stray_task_output", "task_output"],
+	])("resolves %s to the one tool its '_'-separated suffix names (%s)", (requested, expected) => {
+		expect(resolveToolNameMatch(requested, tools)).toBe(expected);
+	});
+
+	it.each(["kill_bash", "task_output", "eval"])("leaves a registered name untouched (%s)", (requested) => {
+		expect(resolveToolNameMatch(requested, tools)).toBe(requested);
+	});
+
+	it("refuses when two registered tools are suffixes of the name", () => {
+		expect(resolveToolNameMatch("x_read_file", ["read_file", "file"])).toBeUndefined();
+	});
+
+	it("refuses a prefixed name whose suffix names no tool", () => {
+		expect(resolveToolNameMatch("foo_bar_baz", tools)).toBeUndefined();
+	});
+
+	it.each([
+		["delete_write", "a destructive verb"],
+		["force_bash", "a destructive verb"],
+		["rm_eval", "a destructive verb"],
+		["Force_Delete_write", "a destructive verb in any case or position"],
+		["drop_todo", "a destructive verb"],
+		["read_write", "a registered tool name"],
+		["Bash_eval", "a registered tool name in another case"],
+		["stray_read_todo", "a registered tool name among its words"],
+	])("refuses %s: its prefix is %s", (requested) => {
+		expect(resolveToolNameMatch(requested, tools)).toBeUndefined();
+	});
+
+	it("leaves mcp-namespaced names to the namespace rules", () => {
+		expect(resolveToolNameMatch("mcp__srv__trophy_eval", tools)).toBeUndefined();
+		expect(resolveToolNameMatch("mcp_github_eval", tools)).toBe("eval");
+	});
+});

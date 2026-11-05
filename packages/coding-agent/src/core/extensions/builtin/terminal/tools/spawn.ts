@@ -36,6 +36,7 @@ export async function spawnCommandSession(
 		cols: request.cols,
 		rows: request.rows,
 		timeoutMs: request.timeoutMs,
+		redactSecretsInOutput: ctx.redactSecretsInOutput,
 	});
 
 	if (ctx.launchBarrier !== undefined) {

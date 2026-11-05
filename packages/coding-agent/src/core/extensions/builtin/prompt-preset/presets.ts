@@ -12,6 +12,7 @@ import { buildClaudeOpus55Prompt } from "./claude-opus-5-5.ts";
 import { buildClaudeSonnet55Prompt } from "./claude-sonnet-5-5.ts";
 import {
 	type ResolvedPresetName as ContractResolvedPresetName,
+	presetSharedSections,
 	resolvePresetName as resolveContractPresetName,
 } from "./contract.ts";
 import { buildDeepseekV41FlashPrompt } from "./deepseek-v4-1-flash.ts";
@@ -69,6 +70,7 @@ export function buildPreset(name: ResolvedPresetName, options: BuildDynamicSyste
 	let parts: readonly DynamicSystemPromptPart[] = [];
 	const preset = renderPreset(name, {
 		...options,
+		sharedSections: presetSharedSections(name),
 		onParts: (composed) => {
 			parts = composed.map((part) => ({
 				...part,
@@ -163,6 +165,7 @@ function withDefaults(options: Partial<BuildDynamicSystemPromptOptions> = {}): B
 		selectedTools: options.selectedTools ?? [],
 		toolSnippets: options.toolSnippets ?? {},
 		promptGuidelines: options.promptGuidelines ?? [],
+		...(options.fullToolPrompt === undefined ? {} : { fullToolPrompt: options.fullToolPrompt }),
 		contextFiles: options.contextFiles ?? [],
 		skills: options.skills ?? [],
 		surface: options.surface ?? "terminal",

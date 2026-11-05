@@ -1,5 +1,11 @@
 import { join } from "node:path";
-import { Agent, type AgentMessage, setDefaultStreamFn, type ThinkingLevel } from "@earendil-works/pi-agent-core";
+import {
+	Agent,
+	type AgentMessage,
+	createInternalAgentChannel,
+	setDefaultStreamFn,
+	type ThinkingLevel,
+} from "@earendil-works/pi-agent-core";
 import type { SimpleStreamOptions, ThinkingSelection } from "@earendil-works/pi-ai";
 import { type Api, type Message, type Model, modelsAreEqual, streamSimple } from "@earendil-works/pi-ai/compat";
 import { getAgentDir } from "../config.ts";
@@ -28,6 +34,7 @@ import {
 } from "./model-resolver.ts";
 import { ModelRuntime } from "./model-runtime.ts";
 import { mergeProviderAttributionHeaders } from "./provider-attribution.ts";
+import { sessionAffinityStreamOptions } from "./session-affinity-key.ts";
 import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
 import { getDefaultSessionDir, SessionManager } from "./session-manager.ts";
@@ -64,8 +71,14 @@ import { getBranchSelection, isVirtualModel } from "./virtual-models.ts";
 setDefaultStreamFn(streamSimple);
 
 import type { ToolRuntimeKind } from "../cli/tool-runtime.ts";
+import { type ExecutionPipelineWitnessSink, resolveWitnessSink } from "./execution/pipeline-witness-sink.ts";
 
 export interface CreateAgentSessionOptions {
+	/**
+	 * Where this session's execution-pipeline receipts go (S18b part 3): a sink outside the session, never a session entry.
+	 * Unset: the file `SENPI_EXECUTION_PIPELINE_WITNESS` names (one JSON line per call), else no receipts.
+	 */
+	executionPipelineWitness?: ExecutionPipelineWitnessSink;
 	/** Working directory for project-local discovery. Default: process.cwd() */
 	cwd?: string;
 	/** Global config directory. Default: ~/.pi/agent */
@@ -145,6 +158,8 @@ export interface CreateAgentSessionOptions {
 	promptSurface?: PromptSurface;
 	/** Browser engine this session's skills drive (`open_session.browserEngine`); omitted means none was chosen. */
 	browserEngine?: BrowserEngine;
+	/** Caller env for this session's tool subprocesses (`open_session.env`, senpi#4381); omitted means none. */
+	sessionEnv?: Readonly<Record<string, string>>;
 	/** Tool runtime for this session (senpi#3566); absent means `in-process`. */
 	toolRuntime?: ToolRuntimeKind;
 }
@@ -173,6 +188,14 @@ export type {
 	ToolDefinition,
 } from "./extensions/index.ts";
 export type { PromptTemplate } from "./prompt-templates.ts";
+export {
+	bootstrapRuntime,
+	buildToolRegistry,
+	type RuntimeBootstrap,
+	type RuntimeBootstrapOptions,
+	type ToolRegistryBuild,
+	type ToolRegistryInput,
+} from "./runtime/bootstrap.ts";
 export type { Skill } from "./skills.ts";
 export type { Tool } from "./tools/index.ts";
 
@@ -318,8 +341,9 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 
 	// If session has data, try to restore model from it
 	if (!model && hasExistingSession && sessionModel) {
+		// Keep the saved reference exactly, signed out or not; the first prompt asks for a login (senpi#4410).
 		const restored = resolveStoredModelReference(sessionModel.provider, sessionModel.modelId, modelRuntime);
-		if (restored && modelRuntime.hasConfiguredAuth(restored.model.provider)) {
+		if (restored) {
 			model = restored.model;
 			initialResolvedThinkingLevel = restored.thinkingLevel;
 			initialThinkingSelection = restored.thinkingSelection;
@@ -476,7 +500,10 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		});
 	};
 
+	const internalChannel = createInternalAgentChannel();
 	agent = new Agent({
+		internalChannel,
+		onExecutionPipeline: resolveWitnessSink(options.executionPipelineWitness),
 		initialState: {
 			systemPrompt: "",
 			model,
@@ -513,6 +540,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			);
 			return modelRuntime.streamSimple(model, context, {
 				...options,
+				...sessionAffinityStreamOptions(model, options, settingsManager.getPromptCacheSessionAffinity(), agentDir),
 				cwd,
 				serviceTier,
 				timeoutMs,
@@ -563,6 +591,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		thinkingBudgets: settingsManager.getThinkingBudgets(),
 		timeoutMs: settingsManager.getAgentStreamIdleTimeoutMs(),
 		streamStartTimeoutMs: settingsManager.getAgentStreamStartTimeoutMs(),
+		streamKeepAliveTimeoutMs: settingsManager.getAgentStreamKeepAliveTimeoutMs(),
 		maxRetryDelayMs: settingsManager.getProviderRetrySettings().maxRetryDelayMs,
 		cursorExecHandlers: (runSignal: AbortSignal) => createSessionCursorExecBridge(sessionRef, () => agent, runSignal),
 	});
@@ -587,6 +616,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 
 	const session = new AgentSession({
 		agent,
+		internalChannel,
 		serviceTier: options.serviceTier,
 		sessionManager,
 		settingsManager,
@@ -608,6 +638,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		autoTitleSessions: options.autoTitleSessions,
 		promptSurface: options.promptSurface,
 		browserEngine: options.browserEngine,
+		sessionEnv: options.sessionEnv,
 		initialThinkingLevelSource: thinkingLevelSource,
 		...(options.toolRuntime !== undefined ? { toolRuntime: options.toolRuntime } : {}),
 	});

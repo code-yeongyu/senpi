@@ -133,7 +133,9 @@ export type ResolvedOpenAICompletionsCompat = Omit<
 	| "veniceParameters"
 	| "supportsForcedToolChoice"
 	| "supportsWebSearch"
+	| "mixedStrictTools"
 > & {
+	mixedStrictTools?: OpenAICompletionsCompat["mixedStrictTools"];
 	supportsWebSearch?: OpenAICompletionsCompat["supportsWebSearch"];
 	/** Declared forced tool_choice support; absent means supported. */
 	supportsForcedToolChoice?: OpenAICompletionsCompat["supportsForcedToolChoice"];
@@ -241,6 +243,7 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Reso
 		zaiToolStream: false,
 		// OpenAI compatibility alone does not imply strict JSON-schema tool support.
 		supportsStrictMode: false,
+		mixedStrictTools: true,
 		toolSchemaFlavor: isMoonshot ? "moonshot-mfjs" : undefined,
 		supportsDisabledThinking: true,
 		toolCallFormat: undefined,
@@ -296,6 +299,7 @@ export function getOpenAICompletionsCompat(model: Model<"openai-completions">): 
 		supportsThinkingTokenBudget: model.compat.supportsThinkingTokenBudget ?? detected.supportsThinkingTokenBudget,
 		thinkingTokenBudgetField: model.compat.thinkingTokenBudgetField ?? detected.thinkingTokenBudgetField,
 		supportsStrictMode: model.compat.supportsStrictMode ?? detected.supportsStrictMode,
+		mixedStrictTools: model.compat.mixedStrictTools ?? detected.mixedStrictTools,
 		toolSchemaFlavor: model.compat.toolSchemaFlavor ?? detected.toolSchemaFlavor,
 		toolCallFormat: model.compat.toolCallFormat ?? detected.toolCallFormat,
 		supportsOpenAIGrammarTools: model.compat.supportsOpenAIGrammarTools ?? detected.supportsOpenAIGrammarTools,

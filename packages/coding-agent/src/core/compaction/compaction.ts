@@ -422,6 +422,42 @@ function weightedChars(text: string): number {
 	return chars;
 }
 
+/**
+ * CJK density correction for cut-point budgets (senpi#4617), mirroring the
+ * wire estimate in `extensions/builtin/compaction/overflow-retry.ts`: CJK
+ * text tokenizes far denser than the chars/4 prose heuristic (roughly one
+ * token per 1.5 Korean characters, not four), so the shared estimator
+ * undercounts it by ~3x. Kept local rather than imported so this module
+ * does not widen its existing import cycle with overflow-retry.
+ */
+const CJK_RUN_RE = /[\u1100-\u11FF\u2E80-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF\uFF00-\uFFEF\u{20000}-\u{2FA1F}]+/gu;
+const CJK_CHAR_WEIGHT = 3;
+
+function cjkExtraChars(text: string): number {
+	let extra = 0;
+	for (const match of text.matchAll(CJK_RUN_RE)) {
+		extra += match[0].length * (CJK_CHAR_WEIGHT - 1);
+	}
+	return extra;
+}
+
+/**
+ * Token estimate used only by the cut-point walks (`findCutPoint` and
+ * `findProjectedCutPoint`, via `keepBudgetTokens`): the shared chars/4
+ * estimate plus the CJK correction over the message's serialized form, so
+ * every content field counts, exactly as the summarizer input sizing does.
+ * Deliberately not `estimateTokens` itself: context usage and compaction
+ * thresholds keep the established heuristic, and only the keep budget —
+ * the quantity the issue shows diverging from wire tokens — gets the
+ * correction.
+ */
+function estimateCutPointTokens(message: AgentMessage): number {
+	const base = estimateTokens(message);
+	const serialized = serializeForEstimate(message);
+	if (serialized === undefined) return base;
+	return base + Math.ceil(cjkExtraChars(serialized) / 4);
+}
+
 function estimateTextAndImageContentChars(content: string | readonly (TextContent | ImageContent)[]): number {
 	if (typeof content === "string") {
 		return weightedChars(content);
@@ -546,7 +582,7 @@ function keepBudgetWeighted(messages: readonly AgentMessage[]): Set<AgentMessage
 }
 
 function keepBudgetTokens(messages: readonly AgentMessage[], weighted: ReadonlySet<AgentMessage>): number {
-	return messages.reduce((sum, message) => (weighted.has(message) ? sum + estimateTokens(message) : sum), 0);
+	return messages.reduce((sum, message) => (weighted.has(message) ? sum + estimateCutPointTokens(message) : sum), 0);
 }
 
 function isTurnStartMessage(message: AgentMessage): boolean {

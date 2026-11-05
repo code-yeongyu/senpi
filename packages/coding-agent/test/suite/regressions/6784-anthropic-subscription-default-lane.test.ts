@@ -29,6 +29,7 @@ import {
 	type SdkQueryHandle,
 } from "../../../src/core/extensions/builtin/anthropic-subscription/sdk-boundary.ts";
 import { streamAnthropicSubscription } from "../../../src/core/extensions/builtin/anthropic-subscription/stream.ts";
+import { cliAccountOf, cliLaneEnv, cliSlot } from "../../support/claude-cli-test-slots.ts";
 
 const model: Model<Api> = {
 	id: "claude-sonnet-5",
@@ -80,10 +81,6 @@ async function storeWith(...credentials: AccountSlot[]): Promise<CredentialStore
 	return store;
 }
 
-function slot(name: string, access: string, expires = Date.now() + 60 * 60_000) {
-	return { name, access, refresh: `${name}-refresh`, expires, source: "login" as const };
-}
-
 function managedEnvironment(): NodeJS.ProcessEnv {
 	return {
 		PATH: "/usr/bin",
@@ -91,6 +88,7 @@ function managedEnvironment(): NodeJS.ProcessEnv {
 		ANTHROPIC_AUTH_TOKEN: "parent-auth-token",
 		CLAUDE_CODE_OAUTH_TOKEN: "parent-oauth-token",
 		SENPI_SEED: "parent-seed",
+		...cliLaneEnv(),
 	};
 }
 
@@ -122,8 +120,8 @@ afterEach(() => {
 });
 
 describe("issue #6784: stored Claude SDK OAuth account is used by default", () => {
-	it("injects the stored OAuth token into the subprocess without an explicit tokenInjection setting", async () => {
-		const store = await storeWith(slot("default", "slot-access"));
+	it("runs a stored Claude CLI account in its own config dir without an explicit tokenInjection setting", async () => {
+		const store = await storeWith(cliSlot("default"));
 		const captured: Options[] = [];
 		const { CLAUDE_CODE_OAUTH_TOKEN: _oauthToken, ...ambientEnvironment } = managedEnvironment();
 		configureAuth(store, ambientEnvironment);
@@ -132,7 +130,8 @@ describe("issue #6784: stored Claude SDK OAuth account is used by default", () =
 		await streamAnthropicSubscription(model, context, { cwd: process.cwd() }).result();
 
 		expect(captured).toHaveLength(1);
-		expect(captured[0]?.env?.CLAUDE_CODE_OAUTH_TOKEN).toBe("slot-access");
+		expect(cliAccountOf(captured[0]?.env)).toBe("default");
+		expect(captured[0]?.env).not.toHaveProperty("CLAUDE_CODE_OAUTH_TOKEN");
 		expect(captured[0]?.env).not.toHaveProperty("ANTHROPIC_API_KEY");
 		expect(captured[0]?.env).not.toHaveProperty("SENPI_SEED");
 	});
@@ -151,7 +150,7 @@ describe("issue #6784: stored Claude SDK OAuth account is used by default", () =
 	});
 
 	it("respects an explicit ambient setting even when accounts are stored", async () => {
-		const store = await storeWith(slot("default", "slot-access"));
+		const store = await storeWith(cliSlot("default"));
 		const captured: Options[] = [];
 		const { CLAUDE_CODE_OAUTH_TOKEN: _oauthToken, ...ambientEnvironment } = managedEnvironment();
 		configureAuth(store, ambientEnvironment, undefined, "ambient");
@@ -174,7 +173,7 @@ describe("issue #6784: stored Claude SDK OAuth account is used by default", () =
 		}) as ReturnType<typeof createOAuthConfig> & { check?: unknown };
 		const credential = {
 			...emptyCredential(),
-			accounts: [account("default", "slot-access")],
+			accounts: [cliSlot("default")],
 		};
 		const ctx = { env: async () => undefined, fileExists: async () => false };
 
@@ -187,7 +186,3 @@ describe("issue #6784: stored Claude SDK OAuth account is used by default", () =
 		expect(readAmbientAuthStatus).not.toHaveBeenCalled();
 	});
 });
-
-function account(name: string, access: string) {
-	return { name, refresh: "refresh", access, expires: Date.now() + 60_000, source: "login" as const };
-}

@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
 import { hermeticProviderEnv, writeRpcModelsJson } from "./helpers/rpc-hermetic.ts";
+import { hostSpawnEnv } from "./helpers/rpc-host-spawn-env.ts";
 
 export type RecordValue = Record<string, unknown>;
 
@@ -59,8 +60,9 @@ export function spawnHost(
 	qa: { agentDir: string; cwd: string },
 	env: Readonly<Record<string, string>> = {},
 ): ChildProcessWithoutNullStreams {
-	const scrubbed = { ...process.env, ...hermeticProviderEnv() };
-	for (const key of ["OMO_RPC_SOCKET_PATH", "SENPI_RPC_HOST_WATCH_FD", "OMO_RPC_SOCKET", "SENPI_RPC_SOCKET"]) {
+	const scrubbed = { ...hostSpawnEnv(), ...hermeticProviderEnv() };
+	// The internal hand-off lane is already gone; these are this suite's own socket overrides.
+	for (const key of ["OMO_RPC_SOCKET_PATH", "OMO_RPC_SOCKET", "SENPI_RPC_SOCKET"]) {
 		delete scrubbed[key];
 	}
 	const child = spawn(process.execPath, [join(import.meta.dirname, "..", "src", "cli.ts"), ...args], {

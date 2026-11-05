@@ -148,6 +148,11 @@ describe("provider retry classification", () => {
 			true,
 			true,
 		],
+		[
+			"Provider stream sent only keep-alives and timed out after 900000ms (raise streamKeepAliveTimeoutMs: retry.provider.keepAliveTimeoutMs in senpi settings; 0 disables)",
+			true,
+			true,
+		],
 		["Idle timeout waiting for provider stream after 5ms (x)", false, false],
 		["WebSocket liveness timeout after 70000ms (2 pings unanswered)", true, true],
 		["WebSocket liveness timeout after 70000ms (2 pings unanswered) extra", false, false],
