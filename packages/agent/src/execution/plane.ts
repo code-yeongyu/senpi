@@ -107,8 +107,11 @@ interface Served {
 export function createPlaneServer(options: {
 	readonly transport: Transport;
 	readonly planes: Readonly<Record<string, PlaneHandler>>;
-	/** The lane of the live call with this execution ID, or `undefined` once it ended (or never existed). */
-	readonly liveLane: (executionId: string) => string | undefined;
+	/**
+	 * The lane of the live parent with this execution ID that may host a request on `plane`, or `undefined` once it ended
+	 * (or never existed, or may not host that plane). `plane` is absent for an abort of a request already admitted.
+	 */
+	readonly liveLane: (executionId: string, plane?: string) => string | undefined;
 }) {
 	const served = new Map<string, Map<string, Served>>();
 	const send = (lane: string, message: PlaneMessage): void =>
@@ -117,7 +120,7 @@ export function createPlaneServer(options: {
 	const serve = (lane: string, request: PlaneRequest): void => {
 		const { parent, childRequestId } = request;
 		const refuse = (reason: string): void => send(lane, { kind: "plane.refused", parent, childRequestId, reason });
-		const parentLane = options.liveLane(parent);
+		const parentLane = options.liveLane(parent, request.plane);
 		if (parentLane === undefined) return refuse("parent_terminal");
 		if (parentLane !== lane) return refuse("scope_lane_mismatch");
 		const children = served.get(parent) ?? new Map<string, Served>();

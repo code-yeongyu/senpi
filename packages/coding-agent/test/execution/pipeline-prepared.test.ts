@@ -95,9 +95,13 @@ async function turn(
 	return { events, results, receipts, error };
 }
 
-async function same(calls: readonly Call[], extensions: ExtensionFactory[] = []) {
-	const legacy = await turn("legacy", calls, extensions);
-	const prepared = await turn("prepared", calls, extensions);
+async function same(
+	calls: readonly Call[],
+	extensions: ExtensionFactory[] = [],
+	options: { readonly duplicateIds?: boolean } = {},
+) {
+	const legacy = await turn("legacy", calls, extensions, options);
+	const prepared = await turn("prepared", calls, extensions, options);
 	expect(prepared.events).toEqual(legacy.events);
 	expect(prepared.results).toEqual(legacy.results);
 	return { legacy, prepared };
@@ -202,9 +206,9 @@ describe("the prepared pipeline equals today's scheduler (S18b)", () => {
 		expect(legacy.events.filter((line) => line.startsWith("tool_execution_start")).length).toBeGreaterThan(0);
 	});
 
-	it("refuses a batch that repeats a call ID instead of silently running one call twice", async () => {
-		const prepared = await turn(
-			"prepared",
+	// senpi#5796: a model may repeat a call ID inside one message; each block is still its own call, never a replay.
+	it("runs each block of a batch that repeats a call ID as its own call, as today", async () => {
+		const { prepared } = await same(
 			[
 				["echo", { n: 1 }],
 				["echo", { n: 2 }],
@@ -213,10 +217,27 @@ describe("the prepared pipeline equals today's scheduler (S18b)", () => {
 			{ duplicateIds: true },
 		);
 
-		expect(prepared.results.map((result) => result.content)).not.toContainEqual([
-			{ type: "text", text: JSON.stringify({ n: 2 }) },
+		expect(prepared.error).toBeUndefined();
+		expect(prepared.results.map((result) => result.content)).toEqual([
+			[{ type: "text", text: JSON.stringify({ n: 1 }) }],
+			[{ type: "text", text: JSON.stringify({ n: 2 }) }],
 		]);
-		expect(prepared.error).toMatch(/duplicate tool call id/);
+	});
+
+	it("keeps each repeated-ID block's own resolved name and outcome, as today", async () => {
+		const { prepared } = await same(
+			[
+				["Serial", { n: 1 }],
+				["echo", { n: 2 }],
+			],
+			[blockNamed("serial")],
+			{ duplicateIds: true },
+		);
+
+		expect(prepared.results.map((result) => [result.name, result.isError])).toEqual([
+			["serial", true],
+			["echo", false],
+		]);
 	});
 
 	it("writes one prepared receipt per call, and the legacy scheduler a legacy one", async () => {

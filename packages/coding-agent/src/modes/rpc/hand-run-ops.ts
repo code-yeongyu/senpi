@@ -8,6 +8,7 @@ import {
 	FILE_CHANNEL_MAX_BYTES,
 } from "@earendil-works/pi-agent-core";
 import { type Flock, holdActivityLock } from "./hand-activity-lock.ts";
+import type { NestedRequest } from "@earendil-works/pi-agent-core";
 import type { HandFileGuards } from "./hand-file-ops.ts";
 import { type HandRunContext, planRun, renderCommand } from "./hand-run-allowlist.ts";
 import { confinePaths, confinedIndexFile, gitIsSupported, hasUrlRewrites, runDirectory } from "./hand-run-checks.ts";
@@ -34,11 +35,11 @@ const RUN_TIMEOUT_CAP_MS = 300_000;
 const DEFAULT_TIMEOUT_MS = 30_000;
 const KILL_GRACE_MS = 10_000;
 
-async function judged(guards: HandFileGuards, command: string): Promise<void> {
+async function judged(guards: HandFileGuards, command: string, nested: NestedRequest | undefined): Promise<void> {
 	const input: Record<string, unknown> = { command };
 	let decision: Awaited<ReturnType<HandFileGuards["beforeToolCall"]>>;
 	try {
-		decision = await guards.beforeToolCall("bash", `run-${randomUUID()}`, input);
+		decision = await guards.beforeToolCall("bash", `run-${randomUUID()}`, input, nested);
 	} catch (error) {
 		throw new DeviceFileError("refused_by_policy", error instanceof Error ? error.message : String(error));
 	}
@@ -59,6 +60,8 @@ export async function runOnHand(
 		readonly guards: HandFileGuards;
 		readonly context: HandRunContext;
 		readonly flock: Flock | undefined;
+		/** The operation's nested requester: a two-sided extension's tool_call runs on the loop's copy (S29). */
+		readonly nested?: NestedRequest;
 	},
 	signal: AbortSignal,
 ): Promise<RunOutcome> {
@@ -79,7 +82,7 @@ export async function runOnHand(
 		if (transport.local && (await hasUrlRewrites(cwd, env)))
 			throw new DeviceFileError("refused_by_policy", "local_url_rewritten: a url.* rewrite is configured");
 	}
-	await judged(deps.guards, renderCommand(plan.exe, transport.argv));
+	await judged(deps.guards, renderCommand(plan.exe, transport.argv), deps.nested);
 	if (plan.exe === "git") {
 		if (env.GIT_INDEX_FILE !== undefined) env.GIT_INDEX_FILE = await confinedIndexFile(env.GIT_INDEX_FILE, cwd, env);
 		for (const { operation, canonicalPath } of await confinePaths(plan.paths, cwd, env)) {

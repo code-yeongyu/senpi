@@ -3360,7 +3360,7 @@ Every `host_response` is acknowledged under its `id`: `{"type":"response","comma
 
 - `list_relocation_targets` `data`: `targets`, each `{ name, online, capacity?, aboutToSleep? }`. `name` is what the agent passes as `target`; `capacity` is a free-form hint. The list passes through unchanged; one that does not parse is refused `invalid_host_answer`.
 - `relocate_session` `data`: `{ accepted: true, moveId, target? }` accepts (`moveId` is the plain id the host will use for `release_session` and `move_session`; `target` is the name to show, defaulting to the asked one), and `{ accepted: false, reason?, detail? }` declines. The host should prepare the receiver before accepting, and must decline a session it cannot release (for example one in a worker isolate, which `release_session` answers `release_unsupported`).
-- The session waits at most 60 seconds for an answer (refused `no_answer`); an aborted tool call is refused `cancelled`; a session closed while waiting is refused `session_closed`; a request whose connection leaves the session (`close_session`, `detach_connection`, a dropped socket) is refused `app_disconnected` at once; `error` is refused `host_error` with the error text.
+- The session waits at most 60 seconds for an answer (refused `no_answer`); an aborted tool call is refused `cancelled`; a session closed while waiting is refused `session_closed`; a request whose connection leaves the session (`close_session`, `detach_connection`, a dropped socket) is refused `app_disconnected` at once; `error` is refused `host_error` with the error text; a request whose `host_request` cannot be written to the connection is refused `send_failed` at once, with the write's error text.
 - A session without a session file answers `unavailable` with reason `not_releasable` without asking. One accepted move per run: a second `relocate_session` while one is scheduled or still being asked is refused `already_scheduled` without asking.
 
 The agent's tool results are typed in `details`: `{ status: "listed", targets }`, `{ status: "scheduled", target, moveId }`, `{ status: "unavailable", reason, detail }`, or `{ status: "refused", reason, detail }` (the host's own `reason` and `detail` when it declined). Every outcome except `scheduled` leaves the session open and writable here.
@@ -4005,6 +4005,12 @@ With images:
 If the agent is streaming and no `streamingBehavior` is specified, the command returns an error.
 Queued prompts cannot include `thinkingLevel`; wait for the current turn to complete before changing it.
 
+**Steering a specific turn**: a steer or follow-up (`prompt` with `streamingBehavior`, or the `steer` and `follow_up` commands) may name the turn it is meant for with `expectedTurnId`, the id `get_state` reports as `currentTurnId`. The name is checked when the steer enters the turn's queue, in the same step, after any `input` extension handlers and pending-input bookkeeping, so the steer is queued only if that turn is still running at that moment. If no turn is running, or a different one is, it is refused with `errorCode: "turn_conflict"`, and `errorData.currentTurnId` names the running turn when there is one, so a steer meant for one turn is never queued into the next. The check holds at the moment of enqueue: an accepted steer whose turn then fails or is aborted stays queued for the next prompt, as any queued steer does. A refused steer is never queued and never held for a later turn, also while a Stop or a parent's run keeps the session paused, and a command-text steer is refused before the command runs. A refused steer's `clientMessageId` stays free: send it again under the same id, naming the turn that runs now or as a plain prompt. `expectedTurnId` must be a non-empty string of at most 256 characters, and on `prompt` it needs `streamingBehavior` (`"steer"` or `"followUp"`); anything else is refused before the session sees it. A steer that names a turn is always delivered as its own text: the bare `.` continue shortcut does not apply to it.
+
+```json
+{"type": "prompt", "message": "Use the other file", "streamingBehavior": "steer", "expectedTurnId": "3"}
+```
+
 **Model not ready**: A prompt that would start a turn is refused before the model is called when the session
 cannot run one. The `error` text is the same guidance the TUI shows; the `errorCode` says why:
 
@@ -4100,6 +4106,12 @@ On an idle session a plain `steer` only queues; it waits for the next turn. Pass
 ```json
 {"type": "steer", "message": "Look at the failing test", "clientMessageId": "m-7", "whenIdle": "start"}
 {"type": "response", "command": "steer", "success": true, "data": {"disposition": "started", "clientMessageId": "m-7"}}
+```
+
+`steer` and `follow_up` accept `expectedTurnId` with the same check as a `prompt` steer (see [Steering a specific turn](#prompt)): an input that names a turn which is not running when it enters the queue is refused `turn_conflict` and queued nowhere.
+
+```json
+{"type": "steer", "message": "Use the other file", "expectedTurnId": "3"}
 ```
 
 See [set_steering_mode](#set_steering_mode) for controlling how steering messages are processed.
@@ -4392,6 +4404,7 @@ Response:
     "fastMode": true,
     "isStreaming": false,
     "isCompacting": false,
+    "currentTurnId": "3",
     "steeringMode": "all",
     "followUpMode": "one-at-a-time",
     "sessionFile": "/path/to/session.jsonl",
@@ -4404,6 +4417,8 @@ Response:
   }
 }
 ```
+
+`currentTurnId` is the id of the running turn, present only while one runs; a steer or follow-up names it as `expectedTurnId` (on `prompt`, `steer` or `follow_up`).
 
 The `model` field is a full [Model](#model) object or `null`. `pendingModelSwitch` is always present: `null` means no held switch, while an object with `provider` and `id` identifies a switch that applies after the next compaction. The `sessionName` field is the display name set via `set_session_name`, or omitted if not set.
 
@@ -6650,22 +6665,84 @@ bootstrap. A caller discovers it only by asking explicitly:
 key is added only when `discover` is the boolean `true` and the host has an account
 authority; every other request, and every host without an authority, gets the five
 context fields exactly as before, so strict decoders that reject unknown keys keep
-working. The endpoint path confers no authority. Account enrollment over it is not yet
-accepted, so it currently admits only the inherited launch principal.
+working. The endpoint path confers no authority; only the exchange below does.
 
 An engine that predates `discover` ignores the key and answers with the five context
 fields. A client must treat a missing `controlEndpoint` as "account enrollment
 unavailable on this host": not an error, and not a reason to retry the request.
 
+A same-account presenter enrolls on a fresh connection to that endpoint, with no owner
+prompt, in one attempt within the connection's 30 s window:
+
+1. `{"type":"account_enroll","version":1,"purpose":"mcp_form","publicKey":"<SPKI PEM>","installationKeyId":"<sha256 hex of the SPKI DER>","attestation":"<token>"}`.
+   The key set is exact and the key must be Ed25519. The attestation is an issuer token
+   with `aud: "omo-mcp-presenter"` and `typ: "mcp_presenter"`, whose `cnf.jkt` is the
+   RFC 7638 OKP thumbprint of this key (the 32 raw bytes after the fixed 12-byte Ed25519
+   SPKI prefix). The injected authority verifies it; the host then requires `acc` to be
+   the host's signed-in account, `dev`, `dname` and `jti` to be 1-256 characters with no
+   control characters, and the `jti` to be unused in this host incarnation. A `jti` is
+   remembered until `exp` plus 60 s; at 4096 live entries the host refuses with
+   `presenter_busy` instead of forgetting one.
+2. The host answers `{"type":"challenge","version":1,"transcript","hostInstance"}`, where
+   `transcript` is the JSON tuple `["mcp-presenter-account-enroll-v1","mcp_form",
+   hostInstance, hostAccount, acc, dev, installationKeyId, jti, nonce, 30000]`.
+3. The presenter signs the exact transcript: `{"type":"proof","signature":"<hex>"}`.
+4. The host answers `{"type":"account_enrolled","version":1,"principalId","hostInstance",
+   "attestedUntil"}` (`attestedUntil` is the attestation's `exp`, in seconds). The same
+   connection then carries that principal's signed `challenge`/`proof` commands; no other
+   connection can act as an account principal.
+
+An enrollment refusal is `{"type":"account_refused","version":1,"reason"}` followed by the
+close of the connection. `reason` is one of `presenter_account_unavailable` (no authority, or the
+host is signed out), `presenter_account_mismatch`, `attestation_malformed`,
+`attestation_signature`, `attestation_audience`, `attestation_expired`,
+`attestation_key_mismatch`, `attestation_replayed`, `presenter_busy`, or
+`presenter_proof_invalid`. A malformed `account_enroll` record closes the connection
+without a reason. Enrolling the same account, device and key again supersedes the earlier
+principal: its connection closes and its grants are revoked.
+
+On its enrollment connection the principal extends `attestedUntil` with
+`{"type":"account_reattest","attestation":"<token>"}`; the host answers
+`{"type":"account_reattested","version":1,"attestedUntil"}`. The same checks apply. A
+token for another key, an account that is no longer the host's, or a signed-out host is
+refused with `account_refused`, revokes the principal's grants and closes the connection.
+Any other re-attestation refusal (for example a reused `jti` or an expired token) is an
+`account_refused` on an open connection, and the principal and its grants stay. An account principal never becomes the launch owner, so it cannot authorize a
+successor host's enrollment.
+
 Acquisition and revocation use the
 separate authenticated management endpoint, with a fresh challenge for each
 `mcp_presenter_assign`, `mcp_presenter_acquire`, or `mcp_presenter_revoke` command.
-Enrollment alone assigns no sessions. Before acquisition, the trusted native
-supervisor signs `mcp_presenter_assign` with `sessionId`, the current `bindingEpoch`,
-and `purpose: "mcp_form"` for a session it opened, or one the user explicitly adopted
-through the trusted host-owner UI. Ordinary RPC attachment cannot assign a session.
-Assignment belongs only to that enrolled principal and live binding; re-enrollment
-or binding replacement requires a new assignment. It is not persisted.
+Enrollment alone assigns no sessions: before acquisition, a principal signs
+`mcp_presenter_assign` with `sessionId`, the current `bindingEpoch`, and
+`purpose: "mcp_form"`. Who may assign depends on the principal:
+
+- The inherited launch principal, the trusted native supervisor, assigns a session it
+  opened, or one the user explicitly adopted through the trusted host-owner UI.
+- An account principal assigns itself. A same-account login is the authorization, so
+  there is no owner prompt. Its `mcp_presenter_assign` and `mcp_presenter_acquire` are
+  accepted only while the host is still signed into the principal's account and the
+  time is before its `attestedUntil`, and acquisition needs the acquiring connection's
+  live attachment to that session. A command from a principal that fails the account
+  or attestation check gets `account_refused` with `presenter_account_mismatch`,
+  `presenter_account_unavailable`, or `attestation_expired`, and its connection closes,
+  revoking its grants.
+
+Ordinary RPC attachment cannot assign a session.
+Assignment belongs only to that enrolled principal and live binding; re-enrollment,
+including the same device and key enrolling again, or binding replacement requires a
+new assignment. It is not persisted, and a successor host knows no earlier principal.
+
+An account principal is also revoked, with its grants, when the embedding distribution
+reports a sign-out or an account switch, and when `attestedUntil` passes without an
+`account_reattest`. The connection receives `account_refused` with
+`presenter_account_unavailable`, `presenter_account_mismatch`, or `attestation_expired`
+and closes. A revoked grant ends its forms under the outcome rules below: a presented
+form cancels without human admission, and one not yet presented is a processing
+failure. A dialog belongs to the grant it was created for. A later holder, including
+another device of the same account, never receives or answers a dialog created for
+another holder, even after that holder leaves.
+
 An acquisition also requires the connection's `interactive_user` and
 `mcp_form_presenter_v1` capabilities, and binds the
 current host, session, binding epoch, connection nonce, attachment ID and epoch, and

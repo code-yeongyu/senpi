@@ -27,6 +27,10 @@ import type {
 } from "./executor-types.ts";
 
 const keyId = ({ issuer, commandId }: ExecutionKey): string => JSON.stringify([issuer, commandId]);
+const keyOf = (request: PrepareRequest): ExecutionKey => ({
+	issuer: request.issuer,
+	commandId: request.commandId ?? request.call.id,
+});
 
 function refusal(reply: LedgerReply): { readonly kind: "refused"; readonly reason: string } {
 	return { kind: "refused", reason: reply.status === "refused" ? reply.reason : reply.status };
@@ -77,7 +81,7 @@ export function createPreparedExecutor(options: PreparedExecutorOptions): Prepar
 
 	async function prepareOnce(request: PrepareRequest, requestDigest: string): Promise<PrepareReply> {
 		const { call, generation, signal } = request;
-		const key = { issuer: request.issuer, commandId: call.id };
+		const key = keyOf(request);
 		const admitted = await ledger.admit({
 			...key,
 			executor,
@@ -144,6 +148,7 @@ export function createPreparedExecutor(options: PreparedExecutorOptions): Prepar
 				options.consent.needsConsent({ name: frozen.name, args: frozen.args });
 			const freeze = await step(key, generation, { kind: "freeze", call: frozen, awaitingConsent });
 			if (freeze.status !== "applied") return refusal(freeze);
+			pipeline.afterFreeze(prepared.args, frozen.args);
 			bodies.set(keyId(key), {
 				...named,
 				tool,
@@ -259,7 +264,7 @@ export function createPreparedExecutor(options: PreparedExecutorOptions): Prepar
 				request.leaseUntil,
 				request.reconcilable ?? false,
 			]);
-			const id = keyId({ issuer: request.issuer, commandId: request.call.id });
+			const id = keyId(keyOf(request));
 			const pending = preparations.get(id);
 			if (pending !== undefined && pending.admission === admission) return pending.reply;
 			if (pending !== undefined) return Promise.resolve({ kind: "refused", reason: "identity_conflict" });

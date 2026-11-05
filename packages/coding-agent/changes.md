@@ -1,3 +1,21 @@
+## 2026-10-30 - Experimental subscription egress SDK entry (senpi#5039)
+
+### What changed
+
+- `packages/coding-agent/package.json`: exports `./subscription-egress`, with strict versioned model-call schemas and an off-by-default hand executor.
+
+### Why
+
+- `packages/coding-agent/package.json`: gives attachment owners a public entry for executing subscription model calls locally without forwarding credentials or enabling hosted selection.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/package.json`: package exports must exist before an attachment owner imports the SDK.
+
+### Expected merge conflict zones
+
+- LOW: the exports map in `packages/coding-agent/package.json`.
+
 ## 2026-11-03 - coding-agent depends on @code-yeongyu/senpi-machine-ops (senpi#5592)
 
 ### What changed

@@ -1,4 +1,4 @@
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { type AgentTool, createRemoteToolHost } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
@@ -10,16 +10,8 @@ import type {
 	ExtensionSide,
 	HandlerRegistrationOptions,
 } from "../../src/core/extensions/types.ts";
-import {
-	cleanupHands,
-	handDirs,
-	openLink,
-	remoteHost,
-	runTurn,
-	startHand,
-	toolCall,
-	toolResultTexts,
-} from "../hand/remote-hand-fixture.ts";
+import { cleanupHands, handDirs, openLink, startHand } from "../hand/remote-hand-fixture.ts";
+import { EXTENSION_EVENTS_PLANE, serveExtensionEvents } from "../../src/core/extensions/two-sided-forwarding.ts";
 import { createHarness, type Harness } from "../suite/harness.ts";
 import { createTestResourceLoader } from "../utilities.ts";
 
@@ -223,18 +215,33 @@ describe("runs: on split-local, through the hand that executes the session's cal
 		const dirs = await handDirs("runs");
 		const link = openLink();
 		startHand(link, dirs, [placementFixture(fired, declare)]);
-		const { agent } = await runTurn({
-			calls: [toolCall("call-1", "child_echo", {})],
-			toolHost: remoteHost(link),
-			root: dirs.cwd,
+		// The brain is a real session with the same extension loaded on its side, as on a split session: a two-sided
+		// extension's forwarded tool events run there (S29).
+		const harness = await createHarness({ extensionFactories: [placementFixture(fired, declare)] });
+		harnesses.push(harness);
+		await harness.session.bindExtensions({});
+		harness.agent.toolHost = createRemoteToolHost({
+			transport: link.brain,
+			placement: "split-local",
+			planes: { [EXTENSION_EVENTS_PLANE]: serveExtensionEvents(harness.getExtensionRunner()) },
 		});
-		return { fired, results: toolResultTexts(agent) };
+		harness.setResponses([
+			fauxAssistantMessage([{ ...fauxToolCall("child_echo", {}), id: "call-1" }], { stopReason: "toolUse" }),
+			fauxAssistantMessage("done"),
+		]);
+		await harness.session.prompt("go");
+		const results = harness.session.messages.flatMap((message) =>
+			message.role === "toolResult"
+				? [message.content.map((part) => (part.type === "text" ? part.text : "")).join("")]
+				: [],
+		);
+		return { fired, results };
 	}
 
 	it("a tool_call handler declared runs: hand runs on the hand for the call it executes", async () => {
 		const { fired, results } = await splitLocalTurn(true);
 
-		expect(fired).toEqual(["tool_call child_echo", "tool_result child_echo"]);
+		expect(fired).toEqual(["before_agent_start", "tool_call child_echo", "tool_result child_echo"]);
 		expect(results).toEqual(["ok"]);
 	});
 

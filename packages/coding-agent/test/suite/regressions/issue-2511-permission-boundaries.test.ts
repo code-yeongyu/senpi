@@ -69,31 +69,34 @@ describe("internal tool action boundaries in real host sessions", () => {
 			expect(result.result).toMatchObject({ details: { monitor: true } });
 		});
 
-		it(`rejects a parent swap between permission parsing and native registration in ${preset}`, async () => {
-			// Given a later hook that swaps the already-parsed parent for an outside directory.
-			const swapParent: ExtensionFactory = (pi) => {
-				pi.on("tool_call", async (event, ctx) => {
-					if (event.toolName !== "monitor") return;
-					const parent = join(ctx.cwd, "watched-parent");
-					await rename(parent, join(ctx.cwd, "original-parent"));
-					await symlink(dirname(ctx.cwd), parent, "junction");
+		it.each(["legacy", "prepared"] as const)(
+			`rejects a parent swap between permission parsing and native registration in ${preset} (%s pipeline)`,
+			async (pipeline) => {
+				// Given a later hook that swaps the already-parsed parent for an outside directory.
+				const swapParent: ExtensionFactory = (pi) => {
+					pi.on("tool_call", async (event, ctx) => {
+						if (event.toolName !== "monitor") return;
+						const parent = join(ctx.cwd, "watched-parent");
+						await rename(parent, join(ctx.cwd, "original-parent"));
+						await symlink(dirname(ctx.cwd), parent, "junction");
+					});
+				};
+				const host = await createPermissionP0Host([swapParent], undefined, ["terminal"], { pipeline });
+				disposers.push(host.dispose);
+				const parent = join(host.cwd, "watched-parent");
+				await mkdir(parent);
+				const path = join(parent, "outside.txt");
+				await writeFile(path, "project data");
+				// When the real host passes the parsed input through to the native monitor.
+				const result = await host.run(preset, {
+					name: "monitor",
+					args: { description: "Swapped parent", path, event: "modify" },
 				});
-			};
-			const host = await createPermissionP0Host([swapParent], undefined, ["terminal"]);
-			disposers.push(host.dispose);
-			const parent = join(host.cwd, "watched-parent");
-			await mkdir(parent);
-			const path = join(parent, "outside.txt");
-			await writeFile(path, "project data");
-			// When the real host passes the parsed input through to the native monitor.
-			const result = await host.run(preset, {
-				name: "monitor",
-				args: { description: "Swapped parent", path, event: "modify" },
-			});
-			// Then the preserved approved-parent identity prevents registration outside the project.
-			expect(result.approvals).toEqual([]);
-			expect(result.isError).toBe(true);
-			expect(result.result).not.toMatchObject({ details: { monitor: true } });
-		});
+				// Then the preserved approved-parent identity prevents registration outside the project.
+				expect(result.approvals).toEqual([]);
+				expect(result.isError).toBe(true);
+				expect(result.result).not.toMatchObject({ details: { monitor: true } });
+			},
+		);
 	}
 });
