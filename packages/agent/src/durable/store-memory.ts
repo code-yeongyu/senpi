@@ -1,6 +1,5 @@
 import {
 	type CommitResult,
-	type DurableStore,
 	DurableStoreError,
 	type DurableStoreOptions,
 	type RecordScan,

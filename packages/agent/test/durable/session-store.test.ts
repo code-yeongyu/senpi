@@ -83,6 +83,41 @@ describe("the session store over a DurableStore", () => {
 		});
 	});
 
+	it("keeps both of two overlapping async appends, in call order", async () => {
+		const medium = await claimedMedium();
+		const session = await openSessionStore(openMemoryStore(medium), 1).open("s1", HEADER);
+
+		await Promise.all([session.append([entry("a")]), session.append([entry("b")])]);
+
+		expect((await openSessionStore(openMemoryStore(medium), 1).load("s1"))?.entries).toEqual([
+			entry("a"),
+			entry("b"),
+		]);
+	});
+
+	it("rejects, never throws, an async duplicate across two overlapping appends", async () => {
+		const medium = await claimedMedium();
+		const session = await openSessionStore(openMemoryStore(medium), 1).open("s1", HEADER);
+
+		const first = session.append([entry("a")]);
+		const second = session.append([entry("a")]);
+
+		await expect(first).resolves.toBeUndefined();
+		await expect(second).rejects.toBeInstanceOf(SessionStoreError);
+		expect((await openSessionStore(openMemoryStore(medium), 1).load("s1"))?.entries).toEqual([entry("a")]);
+	});
+
+	it("keeps an existing session's stored header; the open header applies only to a new session", async () => {
+		const medium = await claimedMedium();
+		const first = await openSyncSessionStore(openMemoryStore(medium), 1).open("s1", HEADER);
+		expect(await openSessionStore(openMemoryStore(medium), 1).load("s1")).toBeUndefined();
+		first.appendSync([entry("a")]);
+
+		const reopened = await openSyncSessionStore(openMemoryStore(medium), 1).open("s1", { ...HEADER, version: 9 });
+
+		expect(reopened.header()).toEqual(HEADER);
+	});
+
 	it("cannot build a sync session store on a backend without commitSync (compile-time)", () => {
 		const compileTimeFailures = (asyncOnly: DurableStore) => {
 			// @ts-expect-error a sync session store needs a SyncCommitStore; an async-only DurableStore has no commitSync
