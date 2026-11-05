@@ -82,14 +82,11 @@ describe("JSONL import", () => {
 		const written = await stat(path);
 
 		await expect(
-			f
-				.reopen()
-				.recordProjectedTail(
-					path,
-					"s",
-					{ key: "b", line, offset },
-					{ size: written.size, mtimeMs: written.mtimeMs, ctimeMs: written.ctimeMs },
-				),
+			f.reopen().recordProjectedTail(path, "s", [{ key: "b", line, offset }], {
+				size: written.size,
+				mtimeMs: written.mtimeMs,
+				ctimeMs: written.ctimeMs,
+			}),
 		).rejects.toThrow("Projection size does not match its written image");
 		expect(await f.reopen().getLedger(path)).toEqual(before);
 	});
