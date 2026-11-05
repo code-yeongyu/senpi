@@ -1,6 +1,6 @@
 import type { JsonValue, ToolResultMessage } from "@earendil-works/pi-ai";
 import type { AgentToolCall, AgentToolResult } from "../types.ts";
-import type { AgentLoopConfig } from "../types.ts";
+import type { AgentEvent, AgentLoopConfig } from "../types.ts";
 import { type NestedRequest, type PlaneHandler, PlaneRefusedError } from "./plane.ts";
 import { createPreparedToolHost } from "./prepared/pipeline-prepared.ts";
 import {
@@ -131,24 +131,41 @@ function segmentsOf(
 	return { segments, owner };
 }
 
-/** Each segment's messages per call ID, in the order its host returned them (a batch may repeat an ID, senpi#5796). */
-function queuesOf(results: readonly ToolHostResult[]): Map<string, ToolResultMessage[]>[] {
-	return results.map((result) => {
-		const queues = new Map<string, ToolResultMessage[]>();
-		for (const message of result.messages) {
-			const queue = queues.get(message.toolCallId) ?? [];
-			queue.push(message);
-			queues.set(message.toolCallId, queue);
-		}
-		return queues;
-	});
+/** Items per call ID in arrival order (a batch may repeat an ID, senpi#5796). */
+function queueBy<T>(items: readonly T[], idOf: (item: T) => string): Map<string, T[]> {
+	const queues = new Map<string, T[]>();
+	for (const item of items) {
+		const queue = queues.get(idOf(item)) ?? [];
+		queue.push(item);
+		queues.set(idOf(item), queue);
+	}
+	return queues;
+}
+
+/** A tool result message's `message_start`/`message_end` pair, held back so a parallel batch emits them in source order. */
+interface HeldResult {
+	readonly toolCallId: string;
+	readonly events: AgentEvent[];
+}
+
+/** Passes every event through except tool result messages, which it holds in `held` as start/end pairs. */
+function holdingResults(emit: ToolHostOptions["emit"], held: HeldResult[]): ToolHostOptions["emit"] {
+	return (event) => {
+		if ((event.type !== "message_start" && event.type !== "message_end") || event.message.role !== "toolResult")
+			return emit(event);
+		const { toolCallId } = event.message;
+		const open = event.type === "message_end" ? held.findLast((entry) => entry.toolCallId === toolCallId) : undefined;
+		if (open !== undefined && open.events.at(-1)?.type === "message_start") open.events.push(event);
+		else held.push({ toolCallId, events: [event] });
+	};
 }
 
 /**
  * The ToolHost of a split session: each call to a loop-side tool runs on `loop` (the session's own pipeline, in its
  * process) and every other call on `hand`. A batch of one side goes to that host whole. A mixed batch keeps the mode:
- * `parallel` runs both sides at once, `sequential` runs each run of same-side calls in source order; the result messages
- * come back in the model's source order and the batch terminates only when every call asked to.
+ * `parallel` runs both sides at once and emits the result messages in source order once both finished, as the fused
+ * pipeline does; `sequential` runs each run of same-side calls in source order and starts none after an abort. Results come
+ * back in the model's source order and the batch terminates only when every call asked to.
  */
 export function createSplitToolHost(options: {
 	readonly loopSide: (toolName: string) => boolean;
@@ -164,14 +181,32 @@ export function createSplitToolHost(options: {
 			const [only] = segments;
 			if (segments.length <= 1) return hostOf(only?.side ?? "hand").execute(call, hostOptions);
 
-			const run = (segment: Segment) => hostOf(segment.side).execute({ ...call, calls: segment.calls }, hostOptions);
+			const parallel = call.mode === "parallel";
+			const held: HeldResult[][] = segments.map(() => []);
+			const run = (segment: Segment, index: number) =>
+				hostOf(segment.side).execute(
+					{ ...call, calls: segment.calls },
+					parallel ? { ...hostOptions, emit: holdingResults(hostOptions.emit, held[index] ?? []) } : hostOptions,
+				);
 			const results: ToolHostResult[] = [];
-			if (call.mode === "parallel") results.push(...(await Promise.all(segments.map(run))));
-			else for (const segment of segments) results.push(await run(segment));
+			if (parallel) results.push(...(await Promise.all(segments.map(run))));
+			else
+				for (const [index, segment] of segments.entries()) {
+					results.push(await run(segment, index));
+					if (hostOptions.signal?.aborted) break;
+				}
 
-			const queues = queuesOf(results);
+			const messages = results.map((result) => queueBy(result.messages, (message) => message.toolCallId));
+			const events = held.map((entries) => queueBy(entries, (entry) => entry.toolCallId));
+			const ordered: ToolResultMessage[] = [];
+			for (const [index, raw] of call.calls.entries()) {
+				const segment = owner[index] ?? -1;
+				for (const event of events[segment]?.get(raw.id)?.shift()?.events ?? []) await hostOptions.emit(event);
+				const message = messages[segment]?.get(raw.id)?.shift();
+				if (message !== undefined) ordered.push(message);
+			}
 			return {
-				messages: call.calls.flatMap((raw, index) => queues[owner[index] ?? -1]?.get(raw.id)?.shift() ?? []),
+				messages: ordered,
 				terminate: results.every((result) => result.terminate),
 			};
 		},

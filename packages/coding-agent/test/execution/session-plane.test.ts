@@ -16,11 +16,12 @@ import {
 	serveSessionPlane,
 	type ToolHost,
 } from "@earendil-works/pi-agent-core";
+import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import { describe, expect, it } from "vitest";
 import type { TodoToolDetails } from "../../src/core/extensions/builtin/todotools/state.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
 import { openLink, startHandOn } from "../hand/remote-hand-fixture.ts";
-import { call, cleanups, recordingHost, scratch, shippedSession, texts } from "./session-plane-fixture.ts";
+import { call, cleanups, recordingHost, resultOf, scratch, shippedSession, texts } from "./session-plane-fixture.ts";
 
 // Q's split (2026-11-03): todo is loop-side; file access and shell are the hand's.
 const LOOP_BY_RULING = ["todo", "web_search", "webfetch"];
@@ -73,6 +74,76 @@ describe("session plane (S32): session tools run where the loop runs", () => {
 		expect(ran).toEqual(["hand:read", "loop:todo", "hand:bash", "loop:todo"]);
 		expect(texts(messages)).toEqual(["hand:read", "loop:todo", "hand:bash", "loop:todo"]);
 		expect(terminate).toBe(false);
+	});
+
+	it("emits a parallel mixed batch's result messages in source order, however the sides finish", async () => {
+		let loopFinished: () => void = () => {};
+		const loopDone = new Promise<void>((resolve) => {
+			loopFinished = resolve;
+		});
+		const emittingHost = (before: () => Promise<void>, after: () => void): ToolHost => ({
+			async execute(batch, { emit }) {
+				await before();
+				const messages = batch.calls.map((raw) => resultOf(raw, raw.name));
+				for (const message of messages) {
+					await emit({ type: "message_start", message });
+					await emit({ type: "message_end", message });
+				}
+				after();
+				return { messages, terminate: false };
+			},
+		});
+		const host = createSplitToolHost({
+			loopSide: (name) => name === "todo",
+			loop: emittingHost(async () => {}, loopFinished),
+			hand: emittingHost(
+				() => loopDone,
+				() => {},
+			),
+		});
+		const ended: string[] = [];
+
+		const { messages } = await host.execute(
+			{ scope: { id: "s32", root: "/work" }, calls: [call("a", "read"), call("b", "todo")], mode: "parallel" },
+			{
+				emit: (event: AgentEvent) => {
+					if (event.type === "message_end" && event.message.role === "toolResult")
+						ended.push(event.message.toolCallId);
+				},
+			},
+		);
+
+		expect(ended).toEqual(["a", "b"]);
+		expect(messages.map((message) => message.toolCallId)).toEqual(["a", "b"]);
+	});
+
+	it("starts no later segment of a sequential batch once the run is aborted", async () => {
+		const controller = new AbortController();
+		const ran: string[] = [];
+		const aborting: ToolHost = {
+			async execute(batch) {
+				ran.push(...batch.calls.map((raw) => `hand:${raw.name}`));
+				controller.abort();
+				return { messages: batch.calls.map((raw) => resultOf(raw, "aborted")), terminate: false };
+			},
+		};
+		const host = createSplitToolHost({
+			loopSide: (name) => name === "todo",
+			loop: recordingHost("loop", ran),
+			hand: aborting,
+		});
+
+		const { messages } = await host.execute(
+			{
+				scope: { id: "s32", root: "/work" },
+				calls: [call("a", "read"), call("b", "todo"), call("c", "bash")],
+				mode: "sequential",
+			},
+			{ emit: () => {}, signal: controller.signal },
+		);
+
+		expect(ran).toEqual(["hand:read"]);
+		expect(texts(messages)).toEqual(["aborted"]);
 	});
 
 	it("serves a hand-run tool's todo call on the brain's own session, and refuses a hand tool on the plane", async () => {
