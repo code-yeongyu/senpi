@@ -61,6 +61,21 @@ console.log(JSON.stringify({ second, first: taken?.hostAccount(), late, sameOnRe
 		});
 	});
 
+	it("stays empty and sealed for good when a foreign value was planted under its key", async () => {
+		const result = await slotScript(`
+const key = Symbol.for("senpi.presenterAccountAuthority.v1");
+globalThis[key] = "planted";
+const { registerPresenterAccountAuthority, takePresenterAccountAuthority } = await import(${JSON.stringify(slotModule)});
+const outcome = (fn) => { try { fn(); return "ok"; } catch (error) { return error.message; } };
+const first = takePresenterAccountAuthority();
+const register = outcome(() => registerPresenterAccountAuthority({ hostAccount: () => "late" }));
+const swapped = outcome(() => { globalThis[key] = { register() {}, take: () => ({ hostAccount: () => "swapped" }) }; });
+const afterSwap = takePresenterAccountAuthority()?.hostAccount?.();
+console.log(JSON.stringify({ first: first ?? null, register, afterSwap: afterSwap ?? null }));
+`);
+		expect(result).toEqual({ first: null, register: "presenter_authority_sealed", afterSwap: null });
+	});
+
 	it("is shared by a second instance of the slot module, as the runtime-snapshot hand-off loads one", async () => {
 		const result = await slotScript(`
 const a = await import(${JSON.stringify(slotModule)});

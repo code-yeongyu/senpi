@@ -11,7 +11,9 @@ import type { PresenterAccountAuthority } from "./modes/rpc/mcp-presenter-accoun
  * written directly. This module has no other imports, so a distribution can load it without evaluating the engine.
  */
 
-export type PresenterAuthorityRegistrationRefusal = "presenter_authority_already_registered" | "presenter_authority_sealed";
+export type PresenterAuthorityRegistrationRefusal =
+	| "presenter_authority_already_registered"
+	| "presenter_authority_sealed";
 
 class PresenterAuthorityRegistrationError extends Error {
 	readonly code: PresenterAuthorityRegistrationRefusal;
@@ -48,13 +50,18 @@ function createSlot(sealedEmpty = false): Slot {
 const isSlot = (value: unknown): value is Slot =>
 	typeof value === "object" && value !== null && "register" in value && "take" in value;
 
+const pin = (value: Slot): Slot => {
+	Object.defineProperty(globalThis, SLOT_KEY, { value, writable: false, configurable: false, enumerable: false });
+	return value;
+};
+
 function slot(): Slot {
-	const existing: unknown = Reflect.get(globalThis, SLOT_KEY);
-	// Anything else under the key is not ours: fail closed as an empty, sealed slot.
-	if (existing !== undefined) return isSlot(existing) ? existing : createSlot(true);
-	const created = createSlot();
-	Object.defineProperty(globalThis, SLOT_KEY, { value: created, writable: false, configurable: false, enumerable: false });
-	return created;
+	const existing = Reflect.getOwnPropertyDescriptor(globalThis, SLOT_KEY);
+	if (existing === undefined) return pin(createSlot());
+	// Only a slot pinned the way pin() pins it is ours. Anything else was planted before this module ran: it reads as
+	// empty and sealed, and is replaced by such a slot when it can be, so a later swap of the value changes nothing.
+	if (existing.writable === false && existing.configurable === false && isSlot(existing.value)) return existing.value;
+	return existing.configurable ? pin(createSlot(true)) : createSlot(true);
 }
 
 /**
