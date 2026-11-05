@@ -3,6 +3,13 @@ import { open, readFile, rename, stat, unlink } from "node:fs/promises";
 import { resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type { DurableStore, StoreValue, StoreWrite } from "@earendil-works/pi-agent-core/conformance";
+import {
+	appendRecordWrites,
+	manifestWrite,
+	readSessionState,
+	rewriteRecordWrite,
+	type SessionState,
+} from "@earendil-works/pi-agent-core";
 import { type FileEntry, migrateSessionEntries } from "../session-manager.ts";
 
 export type JsonlFileStamp = { size: number; mtimeMs: number; ctimeMs: number };
@@ -13,12 +20,17 @@ type JsonlHeader = JsonlObject & { type: "session"; id: string };
 type LocatedRecord = { value: StoreValue; key: string; stored: string; raw: string; offset: number; end: number };
 type HighWaterMark = { id: string; hash: string; offset: number; end: number };
 type Divergence = { kind: "k9f2"; parentSessionId: string; note: string };
-type SessionManifest = {
-	id: string;
-	header: JsonlHeader;
-	entryIds: string[];
-	divergence: Divergence | null;
-};
+
+/** The stored divergence marker, or null for anything that is not one. */
+const isStoreRecord = (value: StoreValue): value is { readonly [key: string]: StoreValue } =>
+	typeof value === "object" && value !== null && !Array.isArray(value);
+
+function divergenceOf(value: StoreValue): Divergence | null {
+	if (!isStoreRecord(value)) return null;
+	return value.kind === "k9f2" && typeof value.parentSessionId === "string" && typeof value.note === "string"
+		? { kind: "k9f2", parentSessionId: value.parentSessionId, note: value.note }
+		: null;
+}
 
 export type JsonlImportLedger = JsonlFileStamp & {
 	path: string;
@@ -117,12 +129,7 @@ export type JsonlImportResult = {
 	imported: number;
 };
 
-const SESSION = "session-import/session/";
-const ENTRY = "session-import/entry/";
 const LEDGER = "session-import/file/";
-const sessionKey = (id: string) => SESSION + encodeURIComponent(id);
-const entryKey = (sessionId: string, id: string) =>
-	`${ENTRY}${encodeURIComponent(sessionId)}/${encodeURIComponent(id)}`;
 const ledgerKey = (path: string) => LEDGER + path;
 const hash = (bytes: Uint8Array | string) => createHash("sha256").update(bytes).digest("hex").slice(0, 32);
 const sameStamp = (a: JsonlFileStamp, b: JsonlFileStamp) =>
@@ -225,16 +232,10 @@ export function createJsonlImporter(options: JsonlImporterOptions) {
 	const files = options.files ?? jsonlFiles;
 	const now = options.now ?? Date.now;
 	const tick = options.mtimeTickMs ?? 1;
-	const manifest = async (id: string) => (await store.getDocument(sessionKey(id))) as SessionManifest | undefined;
+	const manifest = (id: string): Promise<SessionState | undefined> => readSessionState(store, id);
 	const ledger = async (path: string) => (await store.getDocument(ledgerKey(path))) as JsonlImportLedger | undefined;
-	const heldEntries = async (held: SessionManifest): Promise<StoreValue[]> =>
-		Promise.all(
-			held.entryIds.map(async (id) => {
-				const raw = await store.getDocument(entryKey(held.id, id));
-				if (typeof raw !== "string") throw new Error(`Missing imported session entry ${id}`);
-				return JSON.parse(raw) as StoreValue;
-			}),
-		);
+	const heldEntries = (held: SessionState): StoreValue[] =>
+		held.entries.map((entry) => JSON.parse(entry.line) as StoreValue);
 	const commit = (writes: StoreWrite[]) => store.commit(epoch, writes, () => {});
 
 	const importFile = async (path: string): Promise<JsonlImportResult> => {
@@ -264,7 +265,7 @@ export function createJsonlImporter(options: JsonlImporterOptions) {
 		const sourceSessionId = header.value.id;
 		const target = previous?.sourceSessionId === sourceSessionId ? previous.sessionId : sourceSessionId;
 		const held = await manifest(target);
-		const oldEntries = held ? await heldEntries(held) : [];
+		const oldEntries = held ? heldEntries(held) : [];
 		let cursor = 0;
 		for (const record of entries) {
 			if (isDeepStrictEqual(record.value, oldEntries[cursor])) cursor++;
@@ -279,13 +280,8 @@ export function createJsonlImporter(options: JsonlImporterOptions) {
 					parentSessionId: target,
 					note: "Imported a developer-hatch history that diverged from its original session.",
 				}
-			: (held?.divergence ?? null);
-		const next: SessionManifest = {
-			id: sessionId,
-			header: { ...header.value, id: sessionId },
-			entryIds: entries.map((record) => record.key),
-			divergence,
-		};
+			: divergenceOf(held?.divergence ?? null);
+		const nextHeader: StoreValue = { ...header.value, id: sessionId };
 		const nextLedger: JsonlImportLedger = {
 			...stamp,
 			path,
@@ -295,24 +291,25 @@ export function createJsonlImporter(options: JsonlImporterOptions) {
 			writerKind,
 			checkedAt: now(),
 		};
-		const writes: StoreWrite[] = [];
-		const oldByKey = new Map(held?.entryIds.map((key, index) => [key, oldEntries[index]]));
-		const nextIds = new Set(next.entryIds);
-		if (held && !fork) {
-			for (const id of held.entryIds) {
-				if (!nextIds.has(id)) writes.push({ op: "delete", key: entryKey(sessionId, id) });
-			}
-		}
+		const oldByKey = new Map(held?.entries.map((entry, index) => [entry.key, oldEntries[index]]));
 		let imported = 0;
 		for (const record of entries) {
-			if (!fork && isDeepStrictEqual(record.value, oldByKey.get(record.key))) continue;
-			writes.push({ op: "put", key: entryKey(sessionId, record.key), data: record.stored });
-			imported++;
+			if (fork || !isDeepStrictEqual(record.value, oldByKey.get(record.key))) imported++;
 		}
-		writes.push(
-			{ op: "put", key: sessionKey(sessionId), data: next },
-			{ op: "put", key: ledgerKey(path), data: nextLedger },
-		);
+		const stored = entries.map((record) => ({ key: record.key, line: record.stored }));
+		// A file that only adds entries after the held ones is appended as records, so it never overwrites an entry a
+		// co-bound writer appended meanwhile; any other change rewrites the session from the file, as S07 rules.
+		const prefix =
+			held !== undefined &&
+			!fork &&
+			entries.length >= oldEntries.length &&
+			oldEntries.every((value, index) => isDeepStrictEqual(entries[index]?.value, value)) &&
+			isDeepStrictEqual(nextHeader, held.header) &&
+			isDeepStrictEqual(divergence, held.divergence);
+		const writes: StoreWrite[] = prefix
+			? appendRecordWrites(store, sessionId, stored.slice(oldEntries.length))
+			: [manifestWrite(sessionId, nextHeader, divergence), rewriteRecordWrite(store, sessionId, nextHeader, stored)];
+		writes.push({ op: "put", key: ledgerKey(path), data: nextLedger });
 		await commit(writes);
 		return {
 			outcome: !held ? "imported" : fork ? "forked" : extendsHeld ? "extended" : "adopted",
@@ -337,7 +334,7 @@ export function createJsonlImporter(options: JsonlImporterOptions) {
 				return {
 					id: held.id,
 					header: held.header,
-					entries: await heldEntries(held),
+					entries: heldEntries(held),
 					divergence: held.divergence ?? undefined,
 				};
 			}),
@@ -379,7 +376,7 @@ export function createJsonlImporter(options: JsonlImporterOptions) {
 			if (
 				!held ||
 				!isDeepStrictEqual(
-					await heldEntries(held),
+					heldEntries(held),
 					entries.map((record) => record.value),
 				)
 			) {
