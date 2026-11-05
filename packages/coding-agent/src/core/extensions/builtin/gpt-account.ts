@@ -31,6 +31,9 @@ function usage(ctx: ExtensionCommandContext): void {
 	ctx.ui.notify(`Usage: /gpt-account ${USAGE_ACTIONS}`, "error");
 }
 
+/** Signing in again as the same ChatGPT account replaces that account's saved credential in place (senpi#5009). */
+const GPT_ACCOUNT_SIGN_IN_AGAIN = "run /gpt-account add and sign in as this account";
+
 async function showAccounts(ctx: ExtensionCommandContext): Promise<void> {
 	const accounts = await getCredentialAccounts(ctx.modelRegistry.authStorage, CHATGPT_SUBSCRIPTION_PROVIDER_ID);
 	const lines = ["ChatGPT Subscription OAuth accounts:"];
@@ -45,7 +48,7 @@ async function showAccounts(ctx: ExtensionCommandContext): Promise<void> {
 				: undefined;
 		const states =
 			override === undefined
-				? [describeCredentialAccount(account)]
+				? [describeCredentialAccount(account, GPT_ACCOUNT_SIGN_IN_AGAIN)]
 				: [accountLabel(account), account.source, override, ...(account.pinned ? ["pinned"] : [])];
 		if (account.route) states.push(account.route === "siwc" ? "SIWC" : "legacy");
 		if (!account.signedOut && account.planUsageEnabled === true) states.push("Using ChatGPT plan");
