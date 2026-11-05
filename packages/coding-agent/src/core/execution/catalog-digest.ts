@@ -1,5 +1,5 @@
-import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { digestOf, toStoreValue } from "./executor-freeze.ts";
+import { createHash } from "node:crypto";
+import { type AgentTool, canonicalJson, toStoreValue } from "@earendil-works/pi-agent-core";
 
 /** The fields of a tool that decide what a call means: what the model is shown and how the executor runs it. */
 export type CatalogTool = Pick<AgentTool, "name" | "description" | "parameters" | "outputSchema" | "executionMode">;
@@ -10,7 +10,7 @@ export type CatalogTool = Pick<AgentTool, "name" | "description" | "parameters" 
  * stale while a change to any other tool does not.
  */
 export function toolSchemaDigest(tool: CatalogTool): string {
-	return digestOf(
+	const value = canonicalJson(
 		toStoreValue({
 			name: tool.name,
 			description: tool.description,
@@ -19,4 +19,5 @@ export function toolSchemaDigest(tool: CatalogTool): string {
 			executionMode: tool.executionMode,
 		}),
 	);
+	return createHash("sha256").update(value).digest("hex");
 }

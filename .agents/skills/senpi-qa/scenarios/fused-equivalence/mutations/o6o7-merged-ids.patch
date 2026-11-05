@@ -1,5 +1,5 @@
 diff --git a/packages/agent/src/execution/tool-outcome-events.ts b/packages/agent/src/execution/tool-outcome-events.ts
-index 74c228e606..c7ef0ecb2d 100644
+index c13c672de3..da448d2ec7 100644
 --- a/packages/agent/src/execution/tool-outcome-events.ts
 +++ b/packages/agent/src/execution/tool-outcome-events.ts
 @@ -41,7 +41,8 @@ export async function emitToolExecutionEnd(finalized: AgentToolCallOutcome, emit

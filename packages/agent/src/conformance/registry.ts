@@ -1,4 +1,5 @@
 import { KILL_HAND_DECLARATIONS } from "../execution/testing/kill-hand.ts";
+import { KILL_HOOK_DECLARATIONS } from "../execution/testing/kill-hook.ts";
 import { BATCH_REGISTRY } from "../execution/testing/batch-registry.ts";
 import { LEDGER_REGISTRY } from "../execution/testing/ledger-registry.ts";
 import { LIFECYCLE_REGISTRY } from "../execution/testing/lifecycle-registry.ts";
@@ -90,6 +91,14 @@ const HAND_REGISTRY: readonly RegisteredCase[] = [
 		"hand unreachable past the resume window: dependent calls pause, then each scope resumes exactly once",
 	),
 ];
+const KILL_HOOK_IMPL = "packages/agent/src/execution/testing/kill-hook.ts";
+const HOOK_REGISTRY: readonly RegisteredCase[] = KILL_HOOK_DECLARATIONS.map(({ id, expected }) => ({
+	id,
+	impl: KILL_HOOK_IMPL,
+	intro: "#5726",
+	adapters: ["transport", "executor"],
+	expected,
+}));
 const storeCase = (id: string, impl: string, expected: string): RegisteredCase => ({
 	id,
 	impl,
@@ -263,4 +272,5 @@ export const CONFORMANCE_REGISTRY: readonly RegisteredCase[] = [
 	faultCase(4, "flap"),
 	faultCase(5, "drop-reattach"),
 	...HAND_REGISTRY,
+	...HOOK_REGISTRY,
 ];

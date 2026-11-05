@@ -1,7 +1,8 @@
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
-import { describe, expect, it, vi } from "vitest";
-import { createPreparedToolHost } from "../../../src/core/execution/pipeline-prepared.ts";
+import { noPreflightCarry } from "@earendil-works/pi-agent-core";
+import { expect, it, vi } from "vitest";
+import { carryPreflightFacts } from "../../../src/core/execution/preflight-carry.ts";
 import { authorizeToolDispatch } from "../../../src/core/extensions/builtin/permission-system/dispatch.ts";
 import { registerDispatchIdentity } from "../../../src/core/extensions/builtin/permission-system/dispatch-metadata.ts";
 import permissionSystemExtension from "../../../src/core/extensions/builtin/permission-system/index.ts";
@@ -9,7 +10,7 @@ import { createHarness, createTestUiContext } from "../harness.ts";
 
 // senpi#5795: under the prepared pipeline the tool executes a frozen copy of its arguments, so a Once approval
 // recorded in the tool_call preflight must follow the call to that copy, and only while its content is unchanged.
-async function run(pipeline: "legacy" | "prepared", mutateAfterPreflight: boolean) {
+async function run(mutateAfterPreflight: boolean) {
 	const remoteWrite = vi.fn();
 	const identity = { owner: {}, metadata: "offered-operation" };
 	const parameters = Type.Object({ value: Type.String() });
@@ -41,7 +42,6 @@ async function run(pipeline: "legacy" | "prepared", mutateAfterPreflight: boolea
 		],
 	});
 	try {
-		if (pipeline === "prepared") harness.agent.toolHost = createPreparedToolHost(harness.agent);
 		await harness.session.bindExtensions({
 			uiContext: createTestUiContext({
 				select: async () => {
@@ -61,16 +61,24 @@ async function run(pipeline: "legacy" | "prepared", mutateAfterPreflight: boolea
 	}
 }
 
-describe.each(["legacy", "prepared"] as const)("%s pipeline", (pipeline) => {
-	it("asks once for an unchanged call and executes it under that approval", async () => {
-		const { prompts, remoteWrite } = await run(pipeline, false);
-		expect(prompts).toBe(1);
-		expect(remoteWrite).toHaveBeenCalledExactlyOnceWith("payload");
-	});
+it("asks once for an unchanged call and executes it under that approval", async () => {
+	const { prompts, remoteWrite } = await run(false);
+	expect(prompts).toBe(1);
+	expect(remoteWrite).toHaveBeenCalledExactlyOnceWith("payload");
+});
 
-	it("asks again when a later tool_call hook changed the input in place after the approval", async () => {
-		const { prompts, remoteWrite } = await run(pipeline, true);
-		expect(prompts).toBe(2);
-		expect(remoteWrite).toHaveBeenCalledExactlyOnceWith("changed");
-	});
+it("asks again when a later tool_call hook changed the input in place after the approval", async () => {
+	const { prompts, remoteWrite } = await run(true);
+	expect(prompts).toBe(2);
+	expect(remoteWrite).toHaveBeenCalledExactlyOnceWith("changed");
+});
+
+it("installs the preflight carry on every session, replacing the package entry's no-op default", async () => {
+	const harness = await createHarness({ extensionFactories: [] });
+	try {
+		expect(harness.agent.afterToolFreeze).toBe(carryPreflightFacts);
+		expect(harness.agent.afterToolFreeze).not.toBe(noPreflightCarry);
+	} finally {
+		harness.cleanup();
+	}
 });

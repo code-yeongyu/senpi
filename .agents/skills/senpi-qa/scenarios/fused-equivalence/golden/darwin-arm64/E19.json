@@ -517,6 +517,82 @@
       }
      },
      {
+      "type": "message_update",
+      "usage": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "totalTokens": 0,
+       "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+       }
+      },
+      "assistantMessageEvent": {
+       "type": "text_end",
+       "contentIndex": 0,
+       "content": "Reading the QA target file now."
+      }
+     },
+     {
+      "type": "message_update",
+      "usage": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "totalTokens": 0,
+       "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+       }
+      },
+      "assistantMessageEvent": {
+       "type": "toolcall_start",
+       "contentIndex": 1,
+       "id": "<id:6>",
+       "toolName": "read"
+      },
+      "resolvedToolName": "read"
+     },
+     {
+      "type": "message_update",
+      "usage": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "totalTokens": 0,
+       "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+       }
+      },
+      "assistantMessageEvent": {
+       "type": "toolcall_end",
+       "contentIndex": 1,
+       "toolCall": {
+        "type": "toolCall",
+        "id": "<id:6>",
+        "name": "read",
+        "arguments": {
+         "path": "<sandbox>/work/cursor-target.txt"
+        }
+       }
+      },
+      "resolvedToolName": "read"
+     },
+     {
       "type": "session_lifecycle",
       "lifecycle": {
        "state": "running",
@@ -558,28 +634,6 @@
       "toolName": "read",
       "args": {
        "path": "<sandbox>/work/cursor-target.txt"
-      }
-     },
-     {
-      "type": "message_update",
-      "usage": {
-       "input": 0,
-       "output": 0,
-       "cacheRead": 0,
-       "cacheWrite": 0,
-       "totalTokens": 0,
-       "cost": {
-        "input": 0,
-        "output": 0,
-        "cacheRead": 0,
-        "cacheWrite": 0,
-        "total": 0
-       }
-      },
-      "assistantMessageEvent": {
-       "type": "text_end",
-       "contentIndex": 0,
-       "content": "Reading the QA target file now."
       }
      },
      {
@@ -664,30 +718,6 @@
       "startedAt": "<ts:events.startedAt:7>",
       "phase": "start",
       "statusMessage": "running hooks"
-     },
-     {
-      "type": "message_update",
-      "usage": {
-       "input": 0,
-       "output": 0,
-       "cacheRead": 0,
-       "cacheWrite": 0,
-       "totalTokens": 0,
-       "cost": {
-        "input": 0,
-        "output": 0,
-        "cacheRead": 0,
-        "cacheWrite": 0,
-        "total": 0
-       }
-      },
-      "assistantMessageEvent": {
-       "type": "toolcall_start",
-       "contentIndex": 1,
-       "id": "<id:6>",
-       "toolName": "read"
-      },
-      "resolvedToolName": "read"
      },
      {
       "type": "tool_hook_status",
@@ -821,83 +851,6 @@
       "statusMessage": "running mcp",
       "completedAt": "<ts:events.completedAt:9>",
       "status": "completed"
-     },
-     {
-      "type": "message_update",
-      "usage": {
-       "input": 0,
-       "output": 0,
-       "cacheRead": 0,
-       "cacheWrite": 0,
-       "totalTokens": 0,
-       "cost": {
-        "input": 0,
-        "output": 0,
-        "cacheRead": 0,
-        "cacheWrite": 0,
-        "total": 0
-       }
-      },
-      "assistantMessageEvent": {
-       "type": "toolcall_end",
-       "contentIndex": 1,
-       "toolCall": {
-        "type": "toolCall",
-        "id": "<id:6>",
-        "name": "read",
-        "arguments": {
-         "path": "<sandbox>/work/cursor-target.txt"
-        }
-       }
-      },
-      "resolvedToolName": "read"
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:4>",
-       "role": "root",
-       "rootSessionId": "<uuid:16>",
-       "activityRevision": {
-        "instanceId": "<uuid:18>",
-        "revision": 3
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "runId": "<uuid:17>",
-       "activity": {
-        "kind": "model",
-        "since": "<ts:activity.since:3>"
-       },
-       "observedAt": "<ts:lifecycle.observedAt:4>"
-      }
-     },
-     {
-      "type": "tool_execution_end",
-      "toolCallId": "<id:6>",
-      "toolName": "read",
-      "result": {
-       "content": [
-        {
-         "type": "text",
-         "text": "E19-CURSOR-READ\nsecond line\n"
-        }
-       ]
-      },
-      "isError": false
      },
      {
       "type": "tool_hook_status",
@@ -1048,6 +1001,53 @@
       "statusMessage": "running goal",
       "completedAt": "<ts:events.completedAt:15>",
       "status": "completed"
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:4>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 3
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "runId": "<uuid:17>",
+       "activity": {
+        "kind": "model",
+        "since": "<ts:activity.since:3>"
+       },
+       "observedAt": "<ts:lifecycle.observedAt:4>"
+      }
+     },
+     {
+      "type": "tool_execution_end",
+      "toolCallId": "<id:6>",
+      "toolName": "read",
+      "result": {
+       "content": [
+        {
+         "type": "text",
+         "text": "E19-CURSOR-READ\nsecond line\n"
+        }
+       ]
+      },
+      "isError": false
      },
      {
       "type": "message_update",
@@ -1882,7 +1882,7 @@
         "arguments": {
          "path": "<sandbox>/work/cursor-target.txt"
         },
-        "runtimeItemKey": "exe:<uuid:3>"
+        "runtimeItemKey": "blk:<uuid:3>:1"
        },
        {
         "type": "text",
@@ -1935,7 +1935,7 @@
       "isError": false,
       "timestamp": "<ts:message.timestamp:3>"
      },
-     "runtimeItemKey": "exe:<uuid:3>"
+     "runtimeItemKey": "blk:<uuid:3>:1"
     },
     {
      "type": "custom",

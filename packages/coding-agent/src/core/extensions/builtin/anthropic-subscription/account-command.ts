@@ -44,7 +44,12 @@ function accountStatus(slot: AccountSlot, now: number): string | undefined {
 
 function slotStatus(slot: AccountSlot): string {
 	const now = Date.now();
-	const states = [accountStatus(slot, now), ...describeModelBlocks(slot.modelBlocks, now)];
+	// The cadence block of an expired login is the self-heal re-probe, not something the user waits out (senpi#5350).
+	const account =
+		slot.store === "claude-cli" && slot.signInRequired === "login_expired"
+			? "sign-in expired - run /login anthropic-subscription"
+			: accountStatus(slot, now);
+	const states = [account, ...describeModelBlocks(slot.modelBlocks, now)];
 	const blocked = states.filter((state): state is string => state !== undefined);
 	return blocked.length === 0 ? "available" : blocked.join(", ");
 }

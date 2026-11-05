@@ -226,8 +226,12 @@ function blockedAccount(
 		const blocked = {
 			...account,
 			blockedUntil: now + AUTH_BLOCK_REPROBE_MS,
-			blockReason: "auth_error",
+			blockReason: "auth_error" as const,
 			blockedAt: now,
+			// Only a claude CLI login can be marked for a new sign-in; an env token account has no login to expire (senpi#5350).
+			...(classification.signInRequired !== undefined && account.store === "claude-cli"
+				? { signInRequired: classification.signInRequired }
+				: {}),
 		};
 		// The verdict names the sign-in it is about, so a block another engine writes is told apart (senpi#5623).
 		return blocked.store === "claude-cli" ? { ...blocked, authVerdict: { dirId: blocked.dirId, at: now } } : blocked;
@@ -365,6 +369,9 @@ async function persistBlock(
 						blockedUntil: account.blockedUntil,
 						blockReason: account.blockReason,
 						...(account.blockedAt === undefined ? {} : { blockedAt: account.blockedAt }),
+						...(account.store === "claude-cli" && account.signInRequired !== undefined
+							? { signInRequired: account.signInRequired }
+							: {}),
 						// Only this write's own auth verdict stays with the block (senpi#5623).
 						authVerdict: existing.store === "claude-cli" ? account.authVerdict : undefined,
 						modelBlocks: mergeModelBlocks(existing.modelBlocks, account.modelBlocks, now),

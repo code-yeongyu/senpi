@@ -70,9 +70,15 @@ export function presenterIssuer() {
 		const signature = sign("sha256", Buffer.from(`${header}.${body}`), { key: signer, dsaEncoding: "ieee-p1363" });
 		return `${header}.${body}.${signature.toString("base64url")}`;
 	};
-	const authority = (host: { account: string | undefined }): PresenterAccountAuthority => ({
+	const authority = (host: {
+		account: string | undefined;
+		readonly listeners?: Set<() => void>;
+	}): PresenterAccountAuthority => ({
 		hostAccount: () => host.account,
-		onAccountChange: () => () => {},
+		onAccountChange: (listener) => {
+			host.listeners?.add(listener);
+			return () => host.listeners?.delete(listener);
+		},
 		verify: async (token, publicKeySpkiDer, nowS) => {
 			verified++;
 			const parts = token.split(".");
