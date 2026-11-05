@@ -3,7 +3,7 @@ import { once } from "node:events";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
 	captureStderr,
 	caseBudget,
@@ -99,5 +99,25 @@ describe("caseBudget", () => {
 
 	it("never returns a non-positive bound for a case that already spent its budget", () => {
 		expect(budget(0)).toBe(1_000);
+	});
+});
+
+// The bound is per CASE: `beforeEach` restarts the clock, so time a previous case spent never shrinks the
+// next case's budget. The clock is faked (Date only), so both cases measure exact elapsed time.
+describe("caseBudget restarts for every case", () => {
+	beforeAll(() => {
+		vi.useFakeTimers({ toFake: ["Date"] });
+	});
+	afterAll(() => {
+		vi.useRealTimers();
+	});
+
+	it("counts the time this case spent", () => {
+		vi.advanceTimersByTime(10_000);
+		expect(budget(20_000)).toBe(20_000 - REPORT_MARGIN_MS - 10_000);
+	});
+
+	it("starts the next case with its whole budget again", () => {
+		expect(budget(20_000)).toBe(20_000 - REPORT_MARGIN_MS);
 	});
 });
