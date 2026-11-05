@@ -50,7 +50,11 @@ const BUDGETS = {
 			// Both are browser-safe leaves without new runtime dependencies. Measured: 33 files.
 			// +1 (senpi#4099): auth/pool/login-id.ts, the one-function leaf that stamps a fresh loginId on a sign-in's
 			// credential so a re-login (never a token refresh) releases a billing-pinned fallback. Measured: 34 files.
-			maxFiles: 34,
+			// +3 (senpi#3975): api/lazy.ts keeps the diagnostic a credential pool attaches to its all-blocked refusal
+			// (a rate limit with the soonest unblock time), read through provider-diagnostic.ts, which validates it
+			// against utils/provider-diagnostic-vocabulary.ts from utils/provider-diagnostic-carrier.ts. All three are
+			// dependency-free leaves. Measured with senpi#4099 in the graph: 36 files.
+			maxFiles: 36,
 			forbid: ["providers/", "models.generated.ts", "index.ts", "utils/validation.ts", "utils/typebox-helpers.ts"],
 		},
 		"./utils/*": {

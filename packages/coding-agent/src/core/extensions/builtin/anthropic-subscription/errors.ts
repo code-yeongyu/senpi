@@ -7,6 +7,8 @@ export type SdkErrorKind =
 	| "rate_limit"
 	| "overloaded"
 	| "auth_error"
+	/** Claude Code found no login it could read in the account's dir (senpi#5630); says nothing about the account. */
+	| "login_unreadable"
 	| "billing"
 	| "org_not_allowed"
 	| "entitlement"
@@ -18,6 +20,8 @@ export type SdkErrorClassification = {
 	retryable: boolean;
 	/** Set on a rate limit that binds one model family ("Fable limit"), so only that family is blocked. */
 	modelFamily?: string;
+	/** Set on an auth failure that proves the login itself is gone, so the account needs a new sign-in (senpi#5350). */
+	signInRequired?: "login_expired";
 };
 
 const SDK_ERROR_CLASSIFICATIONS: Partial<Record<SDKAssistantMessageError, SdkErrorClassification>> = {
@@ -133,6 +137,9 @@ function classifyErrorKind(error: unknown, askedLegacyLongContext: boolean): Sdk
 	if (/\b(?:extra usage|usage credits) (?:is|are) required for long context\b/.test(text)) {
 		return { kind: "long_context_unavailable", retryable: true };
 	}
+	// Claude Code's own text when it cannot read a login (no login, or a locked macOS keychain): a fact about this
+	// process, not a server verdict on the account, so it never becomes a shared auth block (senpi#5630).
+	if (/\bnot logged in\b/.test(text)) return { kind: "login_unreadable", retryable: true };
 	if (
 		/\b(enotfound|eai_again|econnreset|econnrefused|etimedout|enetunreach|ehostunreach|und_err_connect_timeout|und_err_socket)\b|fetch failed|socket hang up|connection reset by peer/.test(
 			text,
@@ -167,6 +174,12 @@ function classifyErrorKind(error: unknown, askedLegacyLongContext: boolean): Sdk
 	// A server, gateway or timeout status is the provider's fault even when its body echoes "unauthorized":
 	// only a 401 is a rejected token, so this must not become an auth block (senpi#2081).
 	if (/\bhttp\s*(?:408|5\d\d)\b/.test(text)) return { kind: "other", retryable: true };
+	// Claude Code's own refresh was refused: it reports this as a successful-subtype result with is_error, no HTTP
+	// status and terminal_reason api_error, so only the text identifies it, and `claude auth status` still says
+	// signed in. The login is gone; only a new sign-in brings the account back (senpi#5350).
+	if (/\boauth session expired and could not be refreshed\b/.test(text)) {
+		return { kind: "auth_error", retryable: true, signInRequired: "login_expired" };
+	}
 	if (/\binvalid_grant\b|\binvalid_token\b|\b(?:http\s*)?401\b|\bunauthorized\b/.test(text)) {
 		return { kind: "auth_error", retryable: true };
 	}

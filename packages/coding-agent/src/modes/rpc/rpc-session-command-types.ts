@@ -31,6 +31,11 @@ export type RpcSessionCommand =
 			unknownCommandAsText?: boolean;
 			clientMessageId?: string;
 			clientTurnId?: string;
+			/**
+			 * With `streamingBehavior` set: the turn the caller means to reach, as `get_state.currentTurnId` reports it. An input
+			 * that names a turn which is not running is refused `turn_conflict` (senpi#5776).
+			 */
+			expectedTurnId?: string;
 			/** Arm the tool barrier for the turn this prompt starts (capability `tool_barrier`, senpi#3717). */
 			toolBarrier?: ToolBarrierSpec;
 	  }
@@ -66,6 +71,8 @@ export type RpcSessionCommand =
 			enqueueOrder?: number;
 			/** `"start"` starts a turn with this message when the session is idle (capability `steer_when_idle`). */
 			whenIdle?: RpcWhenIdle;
+			/** The turn (`get_state.currentTurnId`) this input is for; any other turn refuses it `turn_conflict` (senpi#5776). */
+			expectedTurnId?: string;
 	  } & ClientMessageIdentity)
 	| ({
 			id?: string;
@@ -75,6 +82,8 @@ export type RpcSessionCommand =
 			enqueueOrder?: number;
 			/** `"start"` starts a turn with this message when the session is idle (capability `steer_when_idle`). */
 			whenIdle?: RpcWhenIdle;
+			/** The turn (`get_state.currentTurnId`) this input is for; any other turn refuses it `turn_conflict` (senpi#5776). */
+			expectedTurnId?: string;
 	  } & ClientMessageIdentity)
 	/**
 	 * `effectId` (1-256 chars, capability `effect_ledger`) records the abort as a durable effect BEFORE it is
@@ -318,10 +327,10 @@ export type RpcSessionCommand =
 	// completion is delivered via auth_login_url / auth_login_end EVENTS, because
 	// an interactive OAuth round-trip cannot fit the 30s request timeout.
 	| { id?: string; type: "get_auth_providers" }
-	| { id?: string; type: "login_start"; provider: string }
+	| { id?: string; type: "login_start"; provider: string; slotId?: string }
 	| { id?: string; type: "login_cancel"; provider: string }
 	| { id?: string; type: "login_api_key"; provider: string; key: string; region?: string }
-	| { id?: string; type: "logout"; provider: string }
+	| { id?: string; type: "logout"; provider: string; slotId?: string }
 	// Checks a key with the provider's model list without storing it (desktop #2510).
 	| { id?: string; type: "verify_api_key"; provider: string; key: string }
 
@@ -330,6 +339,7 @@ export type RpcSessionCommand =
 	| { id?: string; type: "get_provider_accounts"; provider: string }
 	| { id?: string; type: "account_pin"; provider: string; name: string | null }
 	| { id?: string; type: "account_remove"; provider: string; name: string }
+	| { id?: string; type: "account_reset"; provider: string; name: string }
 	| { id?: string; type: "account_order"; provider: string; names: string[] | null }
 	| { id?: string; type: "test_provider_account"; provider: string; name: string }
 	| {

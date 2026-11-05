@@ -111,12 +111,14 @@ import { collectSettingsDiagnosticsWithContext } from "./core/settings-diagnosti
 import { SettingsManager } from "./core/settings-manager.ts";
 import { startSubscriptionUsagePolling } from "./core/subscription-limits/usage-poller.ts";
 import { type ClampedThinkingSelection, formatThinkingClampWarning } from "./core/thinking-levels.ts";
+import { startOpenTimer } from "./core/open-timing.ts";
 import { printTimings, recordTiming, resetTimings, time } from "./core/timings.ts";
 import { getSavedProjectTrust, hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
 import { builtInExtensions } from "./extensions/index.ts";
 import { getFromSourceRealConfigWarning } from "./from-source-config-guard.ts";
 import { legacyPiEditStartupNotice } from "./legacy-pi-edits.ts";
 import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
+import { takePresenterAccountAuthority } from "./presenter-authority-slot.ts";
 import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
 import { runPrintMode } from "./modes/print-mode.ts";
 import { startHostChildReaper } from "./modes/rpc/child-reaper.ts";
@@ -896,11 +898,13 @@ export function createCliRuntimeFactory(
 	}: Omit<Parameters<CreateAgentSessionRuntimeFactory>[0], "sessionManager" | "sessionStartEvent"> & {
 		isInitialRuntime: boolean;
 	}) => {
+		const timer = startOpenTimer("runtime-services");
 		const projectTrustDiagnostics: AgentSessionRuntimeDiagnostic[] = [];
 		const cachedProjectTrust = projectTrustByCwd.get(cwd);
 		const hasTrustRequiringResources = hasTrustRequiringProjectResources(cwd);
 		// The saved decision, including the one a linked git worktree inherits from its main checkout (senpi#4388).
 		const savedProjectTrust = await getSavedProjectTrust(trustStore, cwd);
+		timer.mark("project_trust");
 		// A full-access session trusts its project without asking, for that session only: nothing is
 		// cached here or saved to the trust store, and a saved "do not trust" still wins (#2465).
 		const fullAccessTrust =
@@ -984,6 +988,7 @@ export function createCliRuntimeFactory(
 				extensionFactories,
 			},
 		});
+		timer.mark("services");
 		return { services, projectTrustDiagnostics };
 	};
 	const createRuntime: CreateAgentSessionRuntimeFactory = async ({
@@ -1074,6 +1079,7 @@ export function createCliRuntimeFactory(
 			startupLoadingIndicator.setPhase("opening session");
 		}
 		markSwitch("sessionOptions");
+		const timer = startOpenTimer("runtime-session");
 		const created = await createAgentSessionFromServices({
 			services,
 			sessionManager,
@@ -1101,6 +1107,7 @@ export function createCliRuntimeFactory(
 			...(toolRuntime !== undefined ? { toolRuntime } : {}),
 		});
 		markSwitch("createSession");
+		timer.mark("create_session");
 		const cliThinkingOverride = runtimeParsed.thinking !== undefined || cliThinkingFromModel;
 		if (created.session.model && cliThinkingOverride) {
 			// senpi#2395: re-apply the level the CLI asked for, so a clamp keeps its requested level and reason.
@@ -1121,6 +1128,8 @@ export function createCliRuntimeFactory(
 }
 
 export async function main(args: string[], options?: MainOptions) {
+	// First statement: seals the slot before any extension or resource path can load code (D11, senpi#4249).
+	const presenterAccountAuthority = takePresenterAccountAuthority();
 	resetTimings();
 	// The pre-main phase - runtime boot, cli.js, and this module's static import graph - is already
 	// over when the first statement runs, so it is read from the process clock rather than measured.
@@ -1396,6 +1405,7 @@ export async function main(args: string[], options?: MainOptions) {
 		await runMultiSessionHost({
 			presenterBootstrapFd,
 			mcpPresenterEnforcement,
+			...(presenterAccountAuthority === undefined ? {} : { presenterAccountAuthority }),
 			agentDir,
 			createRuntime: createCliRuntimeFactory(runtimeConfiguration, {
 				...(hostModelRuntime === undefined ? {} : { modelRuntime: hostModelRuntime }),

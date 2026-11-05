@@ -1,5 +1,6 @@
 import { buildRpcSessionState } from "./connection-handler.ts";
 import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
+import { startOpenTimer } from "../../core/open-timing.ts";
 import { compactOpen, type OpenAcceptance } from "./compact-open-admission.ts";
 import { CompactAdmissionError } from "./compact-admission-error.ts";
 import { runAdmissionProducer } from "./compact-admission-producer.ts";
@@ -114,11 +115,13 @@ export async function open(
 	const profile = validatedOpenProfile(host, command, options);
 	if ("type" in profile) return profile;
 	let opened: OpenRpcSession | undefined;
+	const timer = startOpenTimer(`host-open:${command.id ?? "-"}`);
 	const assertSessionNotHeld = sessionHeldCheck(
 		(observedStarts) => host.registry.holderPids?.(observedStarts) ?? Promise.resolve([]),
 	);
 	try {
 		await assertSessionNotHeld(command.sessionPath);
+		timer.mark("held_check");
 		options?.signal?.throwIfAborted();
 		if (invalidSpawnedBy(command)) return error(command.id, "open_session", "invalid_spawned_by");
 		const ancestry = command.spawnedBy;
@@ -130,6 +133,7 @@ export async function open(
 				attachOnly: command.expectedHostInstance !== undefined,
 			},
 		);
+		timer.mark("registry_open");
 		options?.signal?.throwIfAborted();
 		const openedSession = opened;
 		if (host.writer.isSessionSealed(openedSession.sessionId)) {
@@ -152,6 +156,7 @@ export async function open(
 			entry.runtime?.session.sessionFile ?? state?.sessionFile ?? entry.sessionPath,
 			entry.runtime?.session.sessionId ?? state?.sessionId ?? entry.durableSessionId,
 		);
+		timer.mark("held_recheck");
 		host.writer.setSessionKind(openedSession.sessionId, entry.kind);
 		host.writer.setSessionMedia(
 			openedSession.sessionId,
@@ -208,6 +213,7 @@ export async function open(
 					},
 				),
 			);
+			timer.mark("binding");
 			if (entry.worker) entry.worker.bindingReady = true;
 			// Wake the drain sweep the moment a session settles, so a handoff parks it
 			// without waiting for the next timer tick. Both hooks are OPTIONAL: an
@@ -255,6 +261,7 @@ export async function open(
 		const replyState =
 			entry.worker?.snapshot?.state ?? (entry.runtime ? buildRpcSessionState(entry.runtime.session) : undefined);
 		if (!replyState) throw new Error("Session state was not created");
+		timer.mark("reply");
 		if (options?.reply !== false)
 			host.writer.enqueue(opened.sessionId, {
 				id: command.id,
@@ -265,6 +272,9 @@ export async function open(
 					sessionId: opened.sessionId,
 					state: replyState,
 					...(opened.attached ? { attached: true } : {}),
+					...(host.defaults.sessionPresence
+						? { presence: host.defaults.sessionPresence.view(replyState.sessionId) }
+						: {}),
 				},
 			});
 		return undefined;

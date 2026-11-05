@@ -4,6 +4,7 @@ import {
 	toolRuntimeCapabilities,
 } from "../../cli/tool-runtime.ts";
 import { messagePathProjectRoot, resolveMessagePath } from "../../core/message-path-resolution.ts";
+import { startOpenTimer } from "../../core/open-timing.ts";
 import { apiKeyLoginCredential } from "./api-key-login-credential.ts";
 import { clientFacingIdentity } from "./client-admission-record.ts";
 import type { ExtensionRpcRequestContext } from "../../core/extensions/rpc-context.ts";
@@ -28,7 +29,7 @@ import { ExtensionOwnerLifetime } from "./extension-owner-lifetime.ts";
 
 import * as crypto from "node:crypto";
 import { basename, dirname, extname } from "node:path";
-import type { ImageContent } from "@earendil-works/pi-ai";
+import type { ImageContent, OAuthLoginCallbacks } from "@earendil-works/pi-ai";
 import type { OAuthProviderId } from "@earendil-works/pi-ai/compat";
 import { VERSION } from "../../config.ts";
 import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
@@ -37,7 +38,8 @@ import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import { authMethodStatus, buildLoginProviderInfos } from "../../core/auth-providers.ts";
 import { ContinueFromLeafError } from "../../core/continue-from-leaf.ts";
 import { listCredentialAccounts, orderCredentialAccounts } from "../../core/credential-account-order.ts";
-import { pinCredentialAccount, removeCredentialAccount } from "../../core/credential-accounts.ts";
+import { CredentialAccountNotFoundError, resetCredentialAccount } from "../../core/credential-account-reset.ts";
+import { pinCredentialAccount, removeCredentialAccount, selectedOAuthAccount } from "../../core/credential-accounts.ts";
 import { AssistantEditError, SessionStreamingError } from "../../core/edited-assistant-message.ts";
 import { UserEditError } from "../../core/edited-user-message.ts";
 import {
@@ -83,6 +85,7 @@ import { remoteOriginDeclaration, remoteOriginField } from "./remote-origin.ts";
 import { advertisedCompactCapabilities, sessionDeclaration } from "./compact-negotiation.ts";
 import { ConnectionRoles, roleConnection } from "./connection-roles.ts";
 import {
+	ACCOUNT_RESET_CAPABILITY,
 	AUTH_KEY_VERIFY_CAPABILITY,
 	AUTO_TITLE_SESSIONS_CAPABILITY,
 	buildCustomUnsupportedRequest,
@@ -113,7 +116,12 @@ import {
 import { EffectLedger } from "./effect-ledger.ts";
 import { EFFECT_LEDGER_CAPABILITY } from "./effect-record.ts";
 import { createRpcEventOutputBuffer } from "./event-output-buffer.ts";
-import { answeredUiRequestId, refusedExtensionUiResponse, settleExtensionUiResponse } from "./extension-ui-response.ts";
+import {
+	answeredUiRequestId,
+	extensionUiProgressReply,
+	refusedExtensionUiResponse,
+	settleExtensionUiResponse,
+} from "./extension-ui-response.ts";
 import { SecretInputRequests, type SecretInputRoute } from "./secret-input-requests.ts";
 import { answerGetEntries } from "./get-entries-command.ts";
 import { runHoldInput } from "./held-input-commands.ts";
@@ -792,6 +800,10 @@ export function createRpcConnectionHandler(
 			} as RpcExtensionUIRequest);
 		},
 
+		setProgramStatus(): void {
+			// OSC 7501 is a terminal report; an RPC session owns no terminal, so it sends no frame.
+		},
+
 		async custom() {
 			// Custom UI cannot be rendered in RPC mode. By default this returns
 			// undefined synchronously with NO wire message — byte-identical to the
@@ -1013,7 +1025,7 @@ export function createRpcConnectionHandler(
 		);
 		session.setControlEndpointHost?.(sessionControl);
 		// Only a host session can be released for a move, so only it offers relocation (docs/rpc.md).
-		relocation?.dispose();
+		void relocation?.dispose();
 		relocation =
 			routingSessionId === undefined
 				? undefined
@@ -1158,8 +1170,11 @@ export function createRpcConnectionHandler(
 			);
 			return;
 		}
+		const timer = startOpenTimer("rebind");
 		await refresh;
+		timer.mark("bind_extensions");
 		await ClientAdmissions.forSession(session).ready;
+		timer.mark("client_admissions");
 		// The open-time readers above (receipt seals, extension starts) read the full history; an idle
 		// session lets it go now instead of holding it until its first turn settles (senpi#3519).
 		session.releaseSettledSessionMemory();
@@ -1181,7 +1196,7 @@ export function createRpcConnectionHandler(
 	 * text/option labels, and a success flag (plus a non-secret error message)
 	 * cross the wire; a client's answer is consumed in-process.
 	 */
-	const startLogin = async (provider: string): Promise<void> => {
+	const startLogin = async (provider: string, slotId?: string): Promise<void> => {
 		// A second login_start for the same provider aborts the prior attempt.
 		activeLogins.get(provider)?.abort();
 		const controller = new AbortController();
@@ -1193,7 +1208,7 @@ export function createRpcConnectionHandler(
 		authStorage.takeReplacement(provider);
 
 		try {
-			await authStorage.login(provider as OAuthProviderId, {
+			const callbacks: OAuthLoginCallbacks = {
 				onAuth: (info) => {
 					outputEvent({ type: "auth_login_url", provider, url: info.url });
 				},
@@ -1205,7 +1220,47 @@ export function createRpcConnectionHandler(
 					outputEvent({ type: "auth_login_progress", provider, text: message });
 				},
 				signal: controller.signal,
-			});
+			};
+			if (slotId !== undefined) {
+				const reauthorize = selectedOAuthAccount(authStorage, provider, slotId);
+				await session.modelRuntime.login(
+					provider,
+					"oauth",
+					{
+						signal: controller.signal,
+						prompt: async (prompt) => {
+							const answer =
+								prompt.type === "select"
+									? await callbacks.onSelect?.(prompt)
+									: await callbacks.onPrompt?.(prompt);
+							if (answer === undefined) throw new Error("Login cancelled");
+							return answer;
+						},
+						notify: (event) => {
+							switch (event.type) {
+								case "auth_url":
+									callbacks.onAuth(event);
+									break;
+								case "device_code":
+									callbacks.onDeviceCode(event);
+									break;
+								case "progress":
+									callbacks.onProgress?.(event.message);
+									break;
+								case "info":
+									callbacks.onProgress?.(
+										[event.message, ...(event.links ?? []).map((link) => link.url)].join("\n"),
+									);
+									break;
+							}
+						},
+					},
+					{ reauthorize, reauthorizeSlot: slotId },
+				);
+				emitProviderAccountsChanged(provider);
+			} else {
+				await authStorage.login(provider as OAuthProviderId, callbacks);
+			}
 			session.modelRegistry.refresh();
 			emitProviderAccountsChanged(provider, "login");
 			// The client shows what this login replaced and where the previous credential is (senpi#3486).
@@ -1279,6 +1334,7 @@ export function createRpcConnectionHandler(
 								EVAL_CELLS_CAPABILITY,
 								AUTH_KEY_VERIFY_CAPABILITY,
 								PROVIDER_ACCOUNT_TEST_CAPABILITY,
+								ACCOUNT_RESET_CAPABILITY,
 								QUEUED_MESSAGE_REVISION_CAPABILITY,
 								TOOL_BARRIER_CAPABILITY,
 								USER_ACTIVITY_CAPABILITY,
@@ -2181,7 +2237,7 @@ export function createRpcConnectionHandler(
 				// URL and terminal result are delivered via auth_login_url /
 				// auth_login_end events, because an interactive OAuth round-trip
 				// cannot fit within the request timeout.
-				void startLogin(command.provider);
+				void startLogin(command.provider, command.slotId);
 				return success(id, "login_start");
 			}
 
@@ -2219,15 +2275,35 @@ export function createRpcConnectionHandler(
 
 			case "logout": {
 				// The runtime's logout signs every Claude CLI account out of the CLI before deleting the credential
-				// (senpi#4436); the runtime key is dropped too, as `AuthStorage.logout` did.
-				const { notices } = await session.modelRuntime.logoutProvider(command.provider);
-				session.modelRegistry.authStorage.removeRuntimeApiKey(command.provider);
+				// (senpi#4436); a provider-wide logout drops the runtime key too, as `AuthStorage.logout` did. `slotId`
+				// signs out one ChatGPT account and keeps its registration.
+				if (command.slotId !== undefined)
+					selectedOAuthAccount(session.modelRegistry.authStorage, command.provider, command.slotId);
+				const { notices, revocation } = await session.modelRuntime.logoutProvider(command.provider, {
+					slotId: command.slotId,
+				});
+				if (command.slotId === undefined) session.modelRegistry.authStorage.removeRuntimeApiKey(command.provider);
 				await session.modelRegistry.refresh();
-				return success(id, "logout", notices.length === 0 ? undefined : { notices });
+				emitProviderAccountsChanged(command.provider);
+				const data = {
+					...(notices.length === 0 ? {} : { notices: [...notices] }),
+					...(revocation === undefined ? {} : { status: revocation.status }),
+				};
+				return success(id, "logout", Object.keys(data).length === 0 ? undefined : data);
 			}
 
 			case "get_provider_accounts": {
-				const listing = await listCredentialAccounts(session.modelRegistry.authStorage, command.provider);
+				const activeName = session.modelRuntime.getActiveCredentialAccount(
+					command.provider,
+					session.sessionManager.getSessionId(),
+				);
+				const listing = await listCredentialAccounts(
+					session.modelRegistry.authStorage,
+					command.provider,
+					process.env,
+					undefined,
+					activeName,
+				);
 				return success(id, "get_provider_accounts", { accounts: listing.accounts, ordered: listing.ordered });
 			}
 
@@ -2259,6 +2335,26 @@ export function createRpcConnectionHandler(
 						return error(id, "test_provider_account", testError.code);
 					throw testError;
 				}
+			}
+
+			case "account_reset": {
+				if (typeof command.provider !== "string" || typeof command.name !== "string") {
+					return error(id, "account_reset", "provider and name must be strings", "invalid_argument");
+				}
+				try {
+					await resetCredentialAccount(session.modelRegistry.authStorage, command.provider, command.name);
+				} catch (resetError: unknown) {
+					if (resetError instanceof CredentialAccountNotFoundError) {
+						return error(
+							id,
+							"account_reset",
+							"Provider account not found. Refresh the account list.",
+							resetError.code,
+						);
+					}
+					return error(id, "account_reset", "Could not reset this account. Try again.", "account_reset_failed");
+				}
+				return success(id, "account_reset");
 			}
 
 			case "account_order": {
@@ -2305,7 +2401,9 @@ export function createRpcConnectionHandler(
 				output(refusedExtensionUiResponse(progress.id, "invalid_secret_response"));
 				return;
 			}
-			questions.progress(parsed as RpcExtensionUIProgress);
+			// One correlated reply, after the question_updated the draft causes: a forwarder waits for a reply to every
+			// record it passes on, and must not need a list of records that have none (senpi#5761).
+			output(extensionUiProgressReply(progress.id, questions.progress(progress)));
 			return;
 		}
 
@@ -2400,7 +2498,7 @@ export function createRpcConnectionHandler(
 		stopLimitEvents();
 		sessionControl?.dispose();
 		sessionControl = undefined;
-		relocation?.dispose();
+		const relocationSettled = relocation?.dispose();
 		relocation = undefined;
 		questions.cancelAll();
 		secretInputs.close();
@@ -2416,6 +2514,8 @@ export function createRpcConnectionHandler(
 		unsubscribeBackpressure = undefined;
 		unsubscribeLoadedSurfaces = undefined;
 		unsubscribeExtensionEvents = undefined;
+		// The session teardown aborts the run after this dispose: a relocation answer already given reaches its tool first.
+		await relocationSettled;
 		if (options.disposeRuntime !== false) {
 			await runtimeHost.dispose(disposeOptions);
 		}

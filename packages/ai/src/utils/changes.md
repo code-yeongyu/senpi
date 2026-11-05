@@ -1,3 +1,75 @@
+## 2026-10-30 - Typed OAuth reauthorization and client configuration errors (senpi#5003)
+
+### What changed
+
+- `packages/ai/src/utils/oauth-refresh-error.ts` adds `OAuthReauthorizationRequiredError` with a closed refresh-code union and `OAuthClientConfigurationError`. Both extend the existing status-bearing token endpoint error and set its facts: the reauthorization error carries its code as `oauthError` with `credentialRefused: true`, and the configuration error carries `oauthError: "invalid_client"` (not a refused credential, so the credential pool never blocks the account for it).
+
+### Why
+
+- `packages/ai/src/utils/oauth-refresh-error.ts` must preserve HTTP status and existing transient/permanent behavior while letting callers distinguish terminal recovery actions.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/utils/oauth-refresh-error.ts` defines the shared refresh error contract below provider extensions.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/utils/oauth-refresh-error.ts`: declarations beside `OAuthTokenEndpointError`.
+
+## 2026-10-30 - Credential-pool-blocked diagnostic token (senpi#3975)
+
+### What changed
+
+- `packages/ai/src/utils/provider-diagnostic-vocabulary.ts`: `CREDENTIAL_POOL_BLOCKED_CODE` (`credential_pool_blocked`, category `rate_limit`) and `credentialPoolBlockedDiagnostic(resetsAt)`.
+
+### Why
+
+- senpi#3975: a pool whose every account is limited needs a structured rate limit with its reset, not an unclassified failure.
+
+### Why an extension could not handle it
+
+- The diagnostic vocabulary is a closed allowlist validated by `sanitizeProviderDiagnostic`.
+
+### Expected merge conflict zones
+
+- LOW: the head of the file and the `rate_limit` cases of `categoryForProviderCode` / `isProviderCodeStatusCompatible`.
+
+## 2026-10-28 - Account-pool refusal tokens in the provider diagnostic vocabulary (#4676)
+
+### What changed
+
+- `packages/ai/src/utils/provider-diagnostic-vocabulary.ts`: `categoryForProviderCode` accepts `account_pool_auth_blocked` (`auth`) and `account_pool_blocked` (`rate_limit`). Neither is compatible with any HTTP status, since the refusal is local.
+
+### Why
+
+- A subscription extension that refuses a request from its own account pool needs a code that survives `sanitizeProviderDiagnostic`; an opaque code may only name an `unknown` failure, and one code maps to one category, hence two tokens (#4676).
+
+### Why an extension could not handle it
+
+- The vocabulary is the closed allowlist every diagnostic is revalidated against.
+
+### Expected merge conflict zones
+
+- LOW: the `auth` and `rate_limit` arms of `categoryForProviderCode`.
+
+## 2026-10-27 - OAuth result pages show the host's brand, not the pi logo (senpi#4434, closes #4432)
+
+### What changed
+
+- `packages/ai/src/utils/oauth-page.ts`: the hard-coded upstream pi `LOGO_SVG` is gone. `setOAuthPageBrand({ name, logo? })` sets the product shown on the sign-in success and error pages; it is kept in a `processSingleton` slot. The page renders the name as text and the logo as an `<img src>` only when it is a base64 image data URI (svg+xml, png, webp, jpeg); any other logo is dropped. Without a brand the page carries no product mark. `oauthBrandName()` returns the brand name for sign-in surfaces outside our pages (consent screens), or `senpi` when no brand is set.
+
+### Why
+
+- A desktop beta user saw the inherited pi mark on OmO's sign-in page (#4432). The page has to show the product that runs the engine.
+
+### Why an extension could not handle it
+
+- The callback servers render these pages inside the `ai` package's OAuth flows; no extension hook reaches them.
+
+### Expected merge conflict zones
+
+- MEDIUM: the top of `oauth-page.ts` and the logo markup in `renderPage`, if upstream restyles its OAuth page.
+
 ## 2026-10-31 - TLS chain-verification codes are structured transport codes (senpi#5253, closes #5244)
 
 ### What changed

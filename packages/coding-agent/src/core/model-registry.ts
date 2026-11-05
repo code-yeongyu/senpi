@@ -188,6 +188,10 @@ export class ModelRegistry {
 		return this.resolveProviderAuth(provider).status;
 	}
 
+	providerAuthIsHeaderOnly(provider: string): boolean {
+		return this.runtime.providerAuthIsHeaderOnly(provider);
+	}
+
 	/** `getProviderAuthStatus` plus whether it is a non-stored sign-in, from one resolution (#3537). */
 	resolveProviderAuth(provider: string): { status: AuthStatus; signIn: boolean } {
 		this.retryBusyCredentialRead();

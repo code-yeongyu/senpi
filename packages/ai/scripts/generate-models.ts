@@ -3413,15 +3413,39 @@ const CLOUDFLARE_WORKERS_AI_CLASSIFIER_MODELS: ClassifierModel<"cloudflare-worke
 // Static OpenAI image models. OpenRouter's image listing stays the only live
 // source; these entries are hand-authored because OpenAI's own API exposes no
 // public image-model catalog to fetch from.
-// Source: platform.openai.com model pages, verified 2026-09-09:
+// Source: platform.openai.com model pages, verified 2026-09-09 (2.6 entries 2026-11-05):
+// https://platform.openai.com/docs/models/gpt-image-2.6-sunburst
+// https://platform.openai.com/docs/models/gpt-image-2.6-flare
 // https://platform.openai.com/docs/models/gpt-image-2.5-sunburst
 // https://platform.openai.com/docs/models/gpt-image-2.5-flare
 // https://platform.openai.com/docs/models/gpt-image-2
-// GPT Image 2/2.5: $5 text input / $8 image input / $30 image output / $1.25
+// GPT Image 2/2.5/2.6: $5 text input / $8 image input / $30 image output / $1.25
 // cache-read per 1M tokens (`imageInput` prices reference and edit inputs).
 // Keep the existing gpt-image-1.5 zero-filled pricing unchanged.
-// GPT Image 2/2.5 accept text generation and reference images via /images/edits.
+// GPT Image 2/2.5/2.6 accept text generation and reference images via /images/edits.
 const OPENAI_IMAGE_MODELS: ImageModel<"openai-images">[] = [
+	{
+		type: "image",
+		id: "gpt-image-2.6-sunburst",
+		name: "GPT Image 2.6 Sunburst",
+		api: "openai-images",
+		provider: "openai",
+		baseUrl: "https://api.openai.com/v1",
+		input: ["text", "image"],
+		output: ["image"],
+		cost: { input: 5, output: 30, cacheRead: 1.25, cacheWrite: 0, imageInput: 8 },
+	},
+	{
+		type: "image",
+		id: "gpt-image-2.6-flare",
+		name: "GPT Image 2.6 Flare",
+		api: "openai-images",
+		provider: "openai",
+		baseUrl: "https://api.openai.com/v1",
+		input: ["text", "image"],
+		output: ["image"],
+		cost: { input: 5, output: 30, cacheRead: 1.25, cacheWrite: 0, imageInput: 8 },
+	},
 	{
 		type: "image",
 		id: "gpt-image-2.5-sunburst",
