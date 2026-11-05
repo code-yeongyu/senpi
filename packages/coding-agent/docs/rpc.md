@@ -2805,6 +2805,14 @@ works against every generation. A watcher can therefore read a session's state a
 `get_entries` with `observe: true`) as often as it likes: the host's attached count stays at 0 and its idle window
 keeps running.
 
+An observer can HOLD the host (senpi#5626): an observing read that also carries `"hold_host": true` makes its
+connection a holder, which counts as an attached connection (it resets the idle window and keeps the host open) until
+an observing read on the same connection carries `"hold_host": false` or the connection closes. Only the literal
+booleans on a read marked `observe: true` count; a `warm` or an unmarked read never holds. A remote-control daemon
+holds the host this way while at least one remote viewer is attached, and releases it when the last one leaves. A
+held observer is occupancy everywhere occupancy is read: the idle-exit window, the empty-host exit, and the
+owner-death quiescence check. Hosts that predate the field ignore it and treat the read as a plain observing read.
+
 A connection from one of the host's OWN sessions is DEPENDENT and never counts either. A host exports its generation
 id (`SENPI_RPC_HOST_INSTANCE_ID`) to the sessions it runs, and `RpcClient` sends that id as `"origin_host_instance"`
 on every socket request. When a connection's first non-observing request names the host's own generation, the
@@ -3076,7 +3084,8 @@ What the host does enforce are lifecycle windows, and they only ever return memo
   `SENPI_RPC_HOST_EMPTY_EXIT_MS` (default 15 minutes), the host exits through its clean shutdown path (flush, socket
   removal), for stdio and `--listen` hosts alike. A connected client counts as occupancy even with no session open,
   so the host never drops a live socket under itself - except a connection whose every request so far was an
-  observing read (`"observe": true`, the same rule as the idle-exit window above) or a `warm`, which never holds the host open.
+  observing read (`"observe": true`, the same rule as the idle-exit window above) or a `warm`, which never holds the host open,
+  unless the observing connection holds the host (`"hold_host": true`, see the idle-exit window above).
   A connection that has not sent its first request yet still counts. Supervised hosts stay clean either way: a supervisor reads a
   child exit of 0 without a signal as an intentional idle stop and exits 0 with the same cleanup, not as a crash.
 

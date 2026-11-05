@@ -72,7 +72,7 @@ host-endpoint-names.ts, host-generation-paths.ts, host-state-json.ts
                           Endpoint dir/socket names, a generation's file paths, the atomic JSON writer the evidence files use
 host-lifecycle-policy.ts  Cold-start / idle-exit policy resolution + the pure IdleExitDecider
 host-client-occupancy.ts, host-observe-request.ts
-                          Which public clients count for idle exit; `observe: true` reads never do
+                          Which public clients count for idle exit; `observe: true` reads never do, unless they hold the host (`hold_host`)
 rpc-client.ts, rpc-types.ts, custom-capability.ts, event-output-buffer.ts
 changes.md                Fork-specific RPC behavior record
 ```

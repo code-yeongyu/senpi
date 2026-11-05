@@ -1,4 +1,6 @@
+import { appendFileSync } from "node:fs";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import type { KernelToHostMessage } from "../src/bridge/protocol.ts";
 import { JavaScriptKernel } from "../src/kernels/js/context-manager.ts";
 import { parseJavaScriptResult, runJavaScriptCell } from "./eval/js-kernel-harness.ts";
 import {
@@ -36,10 +38,81 @@ function fixtureUrl(): string {
 	return page.url;
 }
 
+// senpi#5712: vitest runs each file in its own process, so the first chrome-backed cell of this file pays the
+// run's one-time cold Chrome launch, CDP target attach and first navigation. That took 30-51 s of the case's
+// 60 s on green windows-latest main runs and ran past it on slow ones, while later cells take a few seconds.
+// A user's first chrome-backed cell pays that cost too, so it is not hidden: the file pays it once here, through
+// the same eval-cell path, under a bounded budget of its own. Every stage prints before it starts, so a warm-up
+// that stalls fails naming the stage and the time spent: `launch` waits for Chrome to start and attach (the
+// constructor alone starts nothing, so a blank navigation stands for it), then `navigate` loads the fixture and
+// `evaluate` reads it. The stage times go to SENPI_WEBVIEW_READINESS_LOG when it is set. No case deadline is raised.
+const WARM_UP_CELL_TIMEOUT_MS = 110_000;
+const WARM_UP_TIMEOUT_MS = WARM_UP_CELL_TIMEOUT_MS + 30_000;
+
+function stdoutOf(messages: readonly KernelToHostMessage[]): string {
+	return messages
+		.map((message) => (message.type === "text" && message.stream === "stdout" ? message.data : ""))
+		.join("");
+}
+
+async function warmUpChromeCell(): Promise<void> {
+	const kernel = new JavaScriptKernel({
+		sessionId: `webview-warm-up-${crypto.randomUUID()}`,
+		cwd: process.cwd(),
+		parallelPoolWidth: 2,
+	});
+	const startedAt = performance.now();
+	let failure: Error | undefined;
+	let leftover: number[] = [];
+	try {
+		const run = await runJavaScriptCell(
+			kernel,
+			[
+				`const started = performance.now();`,
+				`const stage = (name) => console.log(\`stage \${name} at \${Math.round(performance.now() - started)} ms\`);`,
+				`const view = new Bun.WebView({ backend: "chrome", width: 320, height: 240 });`,
+				`stage("launch");`,
+				`await view.navigate("about:blank");`,
+				`stage("navigate");`,
+				`await view.navigate(${JSON.stringify(fixtureUrl())});`,
+				`stage("evaluate");`,
+				`const greeting = await view.evaluate("document.getElementById('greeting').textContent");`,
+				`stage("done");`,
+				`view.close();`,
+				`return greeting;`,
+			].join("\n"),
+			WARM_UP_CELL_TIMEOUT_MS,
+		);
+		const stages = stdoutOf(run.messages).trim().split("\n").join("; ");
+		if (!run.result.ok)
+			throw new Error(`chrome warm-up cell failed (${run.result.error.message}); stages: ${stages}`);
+		expect(parseJavaScriptResult(run.result)).toBe("hello from the fixture");
+		const path = process.env.SENPI_WEBVIEW_READINESS_LOG;
+		if (path) appendFileSync(path, `${new Date().toISOString()} pid=${process.pid} chrome cell warm-up ${stages}\n`);
+	} catch (error) {
+		failure = error instanceof Error ? error : new Error(String(error));
+	} finally {
+		const retireStartedAt = performance.now();
+		await kernel.close();
+		const retireMs = Math.round(performance.now() - retireStartedAt);
+		// Closing the kernel retires the Chrome it used; check that on the failure path too.
+		leftover = await bunChromeChildren();
+		const path = process.env.SENPI_WEBVIEW_READINESS_LOG;
+		if (path)
+			appendFileSync(
+				path,
+				`${new Date().toISOString()} pid=${process.pid} chrome cell warm-up totalMs=${Math.round(performance.now() - startedAt)} retireMs=${retireMs}\n`,
+			);
+	}
+	if (failure) throw new Error(`${failure.message}; Chrome left after close: ${JSON.stringify(leftover)}`);
+	expect(leftover).toEqual([]);
+}
+
 describe.skipIf(!bunWebViewAvailable)("Bun.WebView from an eval cell", { timeout: TEST_TIMEOUT_MS }, () => {
 	beforeAll(async () => {
 		page = await serveFixturePage();
-	});
+		await warmUpChromeCell();
+	}, WARM_UP_TIMEOUT_MS);
 
 	// Closing the kernel releases its views and retires the Chrome they used, and resolves once that
 	// Chrome is gone; it runs even when the test failed, so nothing reaches the next test.
