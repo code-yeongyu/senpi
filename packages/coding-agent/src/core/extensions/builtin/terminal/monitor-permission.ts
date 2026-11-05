@@ -18,6 +18,20 @@ export function getApprovedMonitorParent(input: Record<string, unknown>): string
 	return (input as MonitorPermissionInput)[APPROVED_MONITOR_PARENT];
 }
 
+/**
+ * Carry the parent the permission parser approved onto the frozen copy of a monitor call (senpi#5795): the JSON freeze
+ * drops symbol keys, which would skip the parent-swap check at registration. Only for the same watched path; never
+ * throws.
+ */
+export function transferApprovedMonitorParent(from: unknown, to: unknown): void {
+	if (typeof from !== "object" || from === null || typeof to !== "object" || to === null) return;
+	const source = from as Record<string, unknown>;
+	const target = to as Record<string, unknown>;
+	const parent = getApprovedMonitorParent(source);
+	if (parent === undefined || source.path !== target.path) return;
+	setApprovedMonitorParent(target, parent);
+}
+
 export function monitorParent(path: string): string {
 	return dirname(path);
 }

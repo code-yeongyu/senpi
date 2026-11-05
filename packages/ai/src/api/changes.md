@@ -1,3 +1,59 @@
+## 2026-11-02 - openai-completions keeps proxy-returned thought signatures on replayed tool calls (senpi#4564)
+
+### What changed
+
+- `packages/ai/src/api/openai-completions.ts`: a streamed tool-call delta's `provider_specific_fields.thought_signature` (sent by OpenAI-compatible proxies such as LiteLLM when they serve Gemini) is kept on the tool call's `thoughtSignature`. `convertMessages()` sends it back as `provider_specific_fields: { thought_signature }` on the replayed assistant tool call (function and custom calls). A `thoughtSignature` that holds a legacy encrypted reasoning detail keeps travelling through `reasoning_details` and is not sent here. Tool-call ids are still normalized for every replay, so the c44e3d1481 protection for long or foreign ids is unchanged.
+
+### Why
+
+- LiteLLM returns Gemini's thought signature twice: appended to the tool-call id after `__thought__`, and in `provider_specific_fields`. On the next request it reads the field first and falls back to the id. senpi dropped the field while parsing and normalized the id (character replacement plus the 40-character cut), so the turn after every tool call answered `400 Invalid value at '...thought_signature' (TYPE_BYTES)` or `400 Invalid thought signature.` (senpi#4564, reported by bluet). Sending the field back is enough for the proxy, which prefers it over the id.
+- `transformMessages()` already drops `thoughtSignature` when a tool call is replayed to a different model, so a signature only reaches the model that produced it.
+
+### Why an extension could not handle it
+
+- Stream parsing and the request payload are built inside the provider adapter; extensions see neither the raw tool-call deltas nor the replayed `tool_calls` entries.
+
+### Expected merge conflict zones
+
+- LOW: the `choice.delta.tool_calls` loop in `streamOpenAICompletions` and the `assistantMsg.tool_calls` mapping in `convertMessages()`.
+
+## 2026-10-30 - Anthropic affinity header carries the session-affinity key (senpi#2553)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: the session-affinity header (`x-session-affinity`, or `x-session-id` for OpenRouter) carries `options.sessionAffinityKey ?? options.sessionId`; the `createClient` parameter is renamed `affinityKey`. Compat gating is unchanged.
+- `packages/ai/src/api/simple-options.ts`: `buildBaseOptions` forwards `sessionAffinityKey`.
+
+### Why
+
+- The coding agent sends an HMAC of the session id there so a gateway never learns the session id (senpi#2553).
+
+### Why an extension could not handle it
+
+- The header value is computed inside the provider's client construction.
+
+### Expected merge conflict zones
+
+- LOW: the `cacheSessionId`/`affinityKey` line before `createClient(` in `streamAnthropic`, the `createClient` signature, and the affinity-header block in `createClient`; one added line in `buildBaseOptions`.
+
+## 2026-10-30 - lazyStream keeps an attached provider diagnostic (senpi#3975)
+
+### What changed
+
+- `packages/ai/src/api/lazy.ts`: `createSetupErrorMessage` reads the diagnostic a provider adapter or credential pool attached to the error (`readProviderDiagnostic`) and keeps it on the error message as `providerDiagnostic`.
+
+### Why
+
+- senpi#3975: a credential pool whose every slot is limited throws its refusal through `lazyStream`. The rate-limit diagnostic it attaches, with the soonest unblock time, was dropped there, so the turn read as unclassified and the goal retried at once.
+
+### Why an extension could not handle it
+
+- `lazyStream` builds the error message every lazily loaded API returns; no extension sees the thrown error.
+
+### Expected merge conflict zones
+
+- LOW: the import block and `createSetupErrorMessage` in `lazy.ts`.
+
 ## 2026-11-03 - Replayed thinking bound to a different conversation no longer wedges a session (senpi#5587)
 
 ### What changed

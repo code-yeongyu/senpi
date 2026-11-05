@@ -1,12 +1,12 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 import { SOURCE_COMPILE_CACHE_ENV } from "../src/experimental/source-compile-cache.ts";
-import setupSourceCompileCache from "./helpers/source-compile-cache-global-setup.ts";
+import setupSourceCompileCache, { removeRunDirectory } from "./helpers/source-compile-cache-global-setup.ts";
 
 const resolverUrl = new URL("../src/experimental/source-resolver.ts", import.meta.url).href;
 const probePath = fileURLToPath(new URL("./fixtures/source-compile-cache-probe.ts", import.meta.url));
@@ -134,18 +134,80 @@ describe("source compile cache global setup", () => {
 		const directory = process.env[SOURCE_COMPILE_CACHE_ENV] ?? "";
 		const writers = await Promise.all(Array.from({ length: CACHE_WRITERS }, () => startCacheWriter(directory)));
 
+		// A writer only stops by itself once the directory is gone, so every failure here stops them all before
+		// the test ends instead of leaving unbounded write loops on the worker (senpi#5678).
+		let removed = false;
 		try {
 			expect(() => teardown?.()).not.toThrow();
-		} catch (error) {
-			for (const writer of writers) writer.child.kill();
-			throw error;
+			expect(existsSync(directory), "teardown left the run directory").toBe(false);
+			expect(existsSync(`${directory}-removing`), "teardown left the renamed run directory").toBe(false);
+			removed = true;
+		} finally {
+			if (!removed) for (const writer of writers) writer.child.kill();
 		}
 
 		for (const output of await Promise.all(writers.map((writer) => writer.stopped))) {
 			expect(output).toContain("stopped ENOENT");
 		}
+	});
+
+	// A write that resolved the old path before the rename lands in the renamed tree while the delete walks it.
+	// Node's compile cache writes a temporary file and renames it over the entry, so such a write can take an
+	// entry away between the walk listing it and unlinking it; Node 24's rmSync then reads that ENOENT as "the
+	// path is already gone" and returns without an error, leaving the tree (senpi#5678). A create that lands
+	// after the walk instead fails the final rmdir with ENOTEMPTY. Each case forces its write into the first
+	// delete pass, after the rename.
+	test.each([
+		{
+			case: "returns without an error while an entry it listed was renamed away",
+			firstPass: (removing: string) => {
+				renameSync(join(removing, "v-test", "entry.tmp"), join(removing, "v-test", "entry"));
+			},
+		},
+		{
+			case: "fails with ENOTEMPTY while an entry was created after its walk",
+			firstPass: (removing: string) => {
+				rmSync(join(removing, "v-test", "entry.tmp"));
+				writeFileSync(join(removing, "v-test", "late.tmp"), "cache");
+				throw Object.assign(new Error(`ENOTEMPTY: directory not empty, rm '${removing}'`), { code: "ENOTEMPTY" });
+			},
+		},
+	])("deletes the renamed run directory when a delete pass $case", ({ firstPass }) => {
+		const directory = mkdtempSync(join(tmpdir(), "senpi-source-compile-cache-"));
+		directories.add(directory).add(`${directory}-removing`);
+		mkdirSync(join(directory, "v-test"));
+		writeFileSync(join(directory, "v-test", "entry.tmp"), "cache");
+		let passes = 0;
+
+		removeRunDirectory(directory, (removing) => {
+			passes += 1;
+			if (passes === 1) firstPass(removing);
+			else rmSync(removing, { recursive: true, force: true });
+		});
+
 		expect(existsSync(directory)).toBe(false);
-		expect(existsSync(`${directory}-removing`)).toBe(false);
+		expect(existsSync(`${directory}-removing`), "teardown left the renamed run directory").toBe(false);
+		expect(passes).toBe(2);
+	});
+
+	test("fails naming the renamed run directory and the last error when every delete pass leaves it", () => {
+		const directory = mkdtempSync(join(tmpdir(), "senpi-source-compile-cache-"));
+		directories.add(directory).add(`${directory}-removing`);
+		const notEmpty = Object.assign(new Error("ENOTEMPTY: directory not empty"), { code: "ENOTEMPTY" });
+
+		let thrown: unknown;
+		try {
+			removeRunDirectory(directory, () => {
+				throw notEmpty;
+			});
+		} catch (error) {
+			thrown = error;
+		}
+
+		expect(thrown).toBeInstanceOf(Error);
+		expect(thrown instanceof Error ? thrown.message : "").toContain(`${directory}-removing`);
+		expect(thrown instanceof Error ? thrown.cause : undefined).toBe(notEmpty);
+		expect(existsSync(`${directory}-removing`)).toBe(true);
 	});
 
 	test("keeps a directory the caller already named", () => {

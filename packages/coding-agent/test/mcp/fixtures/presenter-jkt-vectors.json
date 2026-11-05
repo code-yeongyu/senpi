@@ -1,0 +1,7 @@
+[
+	{
+		"source": "RFC 8037 Appendix A.3 (the RFC 8032 test 1 Ed25519 public key)",
+		"spkiPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n-----END PUBLIC KEY-----\n",
+		"jkt": "kPrK_qmxVWaYVA9wwBF6Iuo3vVzz7TxHCTwXBygrS4k"
+	}
+]

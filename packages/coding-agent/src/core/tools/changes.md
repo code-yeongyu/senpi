@@ -1,5 +1,65 @@
 # core/tools changes
 
+## 2026-11-03 - Multi-file mutation slots are taken once per file and in one order (senpi#5691)
+
+### What changed
+
+- `packages/machine-ops/src/files/mutation-queue.ts` (`@code-yeongyu/senpi-machine-ops`, re-exported from `packages/coding-agent/src/core/tools/file-mutation-queue.ts`): adds `withFileMutationQueues(filePaths, fn)`. It keys every path as the queue does (realpath, case-folded), takes one slot per file, and takes the slots in key order. The hand's device-file rename and the `apply_patch` builtin use it.
+
+### Why
+
+- Nesting two `withFileMutationQueue` calls waits forever when both paths name one file (`a.md` and `./a.md`, a case-only alias, a symlink). Two operations over the same files in swapped order can also wait on each other. `apply_patch` deduplicated and sorted by raw path string, so an alias inside one patch deadlocked it.
+
+### Why an extension could not handle it
+
+- The slot keys and the queue are private to this module; only the module can order and deduplicate by the key it uses.
+
+### Expected merge conflict zones
+
+- LOW: `packages/machine-ops/src/files/mutation-queue.ts`, next to `withFileMutationQueue`.
+
+## 2026-11-03 - Built-in file and shell tools run on the shared machine-ops layer (senpi#5592)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/read.ts`, `packages/coding-agent/src/core/tools/write.ts`, `packages/coding-agent/src/core/tools/edit.ts`, `packages/coding-agent/src/core/tools/ls.ts`: the default `ReadOperations`, `WriteOperations`, `EditOperations` and `LsOperations` call `MachineOps.files` (`read`, `write`, `edit`'s read/write, `stat`, `list`) through a `ToolMachine` (new `machine` option). Caller-supplied `operations` still win, and `serverPinned` and the write baseline still key on them. Rendering, truncation and error text are unchanged: filesystem errors pass through the layer as the same `fs` errors.
+- `packages/coding-agent/src/core/tools/find.ts`: the default fd search runs as `MachineOps.files.glob` (same fd arguments, `.gitignore` handling, limit notice and error text); custom `FindOperations.glob` is unchanged.
+- `packages/coding-agent/src/core/tools/bash.ts`, `packages/coding-agent/src/core/tools/powershell.ts`: `createLocalShellOperations` runs the shell through `MachineOps.process.exec` (own process group, same abort/timeout/stream-callback handling, same detached-group tracking via `onSpawn`/`onExit`). The tool path records no scope token: it writes nothing under the agent dir and the command's environment is exactly `getShellEnv()`, as before. `createLocalBashOperations` and `createLocalPowerShellOperations` take an optional machine.
+- `packages/coding-agent/src/core/tools/index.ts`: `ToolsOptions` gains `machineOps` and `machinePolicy` (typed `ToolPathPolicy`: only `beforeOp`; `filesystem` and `afterOp` are compile errors because the tool path would ignore them); `createAllToolDefinitions`, `createCodingTools` and `createReadOnlyTools` pass one `ToolMachine` to every tool. With a `machinePolicy.beforeOp`, each tool call runs it exactly once before any effect, and a denial throws its reason; without one the tools keep their exact timing (no added await).
+- `packages/coding-agent/src/core/tools/file-mutation-queue.ts`, `packages/coding-agent/src/core/tools/filesystem-policy.ts`, `packages/coding-agent/src/core/tools/bounded-realpath.ts`: re-export the implementations that moved to `@code-yeongyu/senpi-machine-ops`. The package carries its own copies of the open-free realpath walker and `waitForChildProcess`; `src/utils/paths.ts` and `src/utils/child-process.ts` keep theirs because release scripts and worker bundles load them from source without a package build.
+- New `packages/coding-agent/src/core/tools/machine.ts`: the process-wide local `MachineOps` (no `stateDir`, so no disk state; in-process PTY holder, `killProcessTree`, fd via `ensureTool`) and `createToolMachine`.
+- `packages/coding-agent/src/core/tools/grep/index.ts`: the path probe uses `MachineOps.files.stat`; the search engine is unchanged.
+
+### Why
+
+- A remote machine executor and the agent's own tools must share one implementation of file and process operations, their limits and their permission checks. The shared layer is the new engine-free workspace package `packages/machine-ops` (`@code-yeongyu/senpi-machine-ops`), which imports nothing from `packages/agent` or `packages/coding-agent`.
+
+### Why an extension could not handle it
+
+- The built-in tools' default operations live in core; an extension can replace a tool but cannot change the default implementation behind `ReadOperations`, `WriteOperations`, `EditOperations`, `LsOperations` or `createLocalBashOperations`.
+
+### Expected merge conflict zones
+
+- MEDIUM: the default-operations blocks and the start of `execute` in `read.ts`, `write.ts`, `edit.ts`, `ls.ts`, `find.ts`; `createLocalShellOperations` in `bash.ts`; `createAllToolDefinitions` in `index.ts`.
+
+## 2026-11-03 - Full-section guidelines for the built-in tools (senpi#5665)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/bash.ts`, `powershell.ts`, `edit.ts`, `read.ts`, `write.ts`, `grep/index.ts`: each `*ToolSystemPromptContribution` keeps its pre-#5342 `fullGuidelines` beside the diet `guidelines`, exposed as `fullPromptGuidelines` (`ShellToolConfig.fullPromptGuidelines` for the shell tools).
+
+### Why
+
+- A beta tester reported that Opus 5.5 got slower and less capable after the senpi#5335 diet (#5342) shipped. Q's order: revert the diet only for the Fable and Opus presets; every other model keeps it.
+
+### Why an extension could not handle it
+
+- The text lives in builtin prompt generators, builtin tool definitions, and builtin extension prompt hooks, and the preset that selects the wording is a builtin extension.
+
+### Expected merge conflict zones
+
+- LOW: the contribution constants and the definitions' prompt fields.
+
 ## 2026-11-01 - System prompt diet, shared modules (senpi#5335)
 
 ### What changed

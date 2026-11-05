@@ -12,6 +12,54 @@
 
 ### Removed
 
+## [2026.11.4-2] - 2026-11-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.4-1] - 2026-11-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Validate Sign in with ChatGPT ID-token signatures and claims before returning credentials, retaining verified identity and the ID token for later sign-in hints ([#5012](https://github.com/code-yeongyu/senpi/pull/5012)).
+- Sign in with ChatGPT refresh errors distinguish reauthorization-required tokens from invalid client configuration while preserving transient network and server failures.
+- Keep validated ChatGPT sign-ins without plan permission, reject inference with actionable typed errors, and allow explicit later plan consent without forcing it on ordinary sign-ins ([#5044](https://github.com/code-yeongyu/senpi/pull/5044)).
+- Reauthorize saved Sign in with ChatGPT accounts using their issued client ID and retained hints, rejecting callback-client or verified-subject mismatches before credentials change ([#5046](https://github.com/code-yeongyu/senpi/pull/5046)).
+- OpenAI-compatible providers that return a tool call's thought signature in `provider_specific_fields` (LiteLLM serving Gemini) no longer fail the request after every tool call: the signature is kept and sent back on the replayed tool call. Thanks to @bluet for the report ([#4564](https://github.com/code-yeongyu/senpi/issues/4564))
+
+### Removed
+
+## [2026.11.3-3] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+- `StreamOptions.sessionAffinityKey`: an opaque routing key that Anthropic Messages sends in the session-affinity header instead of `sessionId` ([#5086](https://github.com/code-yeongyu/senpi/pull/5086))
+
+### Changed
+
+### Fixed
+
+- Sign in with ChatGPT uses a free IPv4 loopback callback port when port 1455 is occupied, keeping the same redirect URI for authorization, code exchange and manual paste ([#5008](https://github.com/code-yeongyu/senpi/pull/5008)).
+- OAuth refresh can use an injected session lock to prevent rotating-token reuse across processes without blocking unrelated accounts.
+- A credential pool's all-blocked refusal reports a rate limit with the time the first account is due back instead of an unclassified error ([#5032](https://github.com/code-yeongyu/senpi/pull/5032))
+
+### Removed
+
 ## [2026.11.3-2] - 2026-11-03
 
 ### Breaking Changes

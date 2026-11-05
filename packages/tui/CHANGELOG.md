@@ -12,6 +12,49 @@
 
 ### Removed
 
+## [2026.11.4-2] - 2026-11-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.4-1] - 2026-11-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Appending an inline Kitty image below a full terminal screen no longer clears the screen and scrollback and replays the whole transcript; the image scrolls into place like appended text. Thanks to @copycatcode for the report ([#4583](https://github.com/code-yeongyu/senpi/issues/4583))
+- Complete BEL-terminated OSC52 clipboard writes reach the terminal while the TUI stdout guard is active, preserving the validated bytes, writer completion and backpressure ([#5680](https://github.com/code-yeongyu/senpi/pull/5680))
+
+### Removed
+
+## [2026.11.3-3] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+- `encodeProgramStatus` builds a sanitized OSC 7501 Program Status report ([#5323](https://github.com/code-yeongyu/senpi/issues/5323))
+
+### Changed
+
+### Fixed
+
+- Shift+Enter inserts a newline instead of submitting in macOS Terminal.app ([#5647](https://github.com/code-yeongyu/senpi/pull/5647))
+
+### Removed
+
 ## [2026.11.3-2] - 2026-11-03
 
 ### Breaking Changes
