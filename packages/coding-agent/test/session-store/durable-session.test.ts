@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openSessionStore } from "../../../agent/src/durable/session-store.ts";
-import { createMemoryStoreMedium, type MemoryStoreMedium, openMemoryStore } from "../../../agent/src/durable/store-memory.ts";
+import {
+	createMemoryStoreMedium,
+	type MemoryStoreMedium,
+	openMemoryStore,
+} from "../../../agent/src/durable/store-memory.ts";
 import { makeTempDir } from "../../../../scripts/vitest-temp.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import type { ProjectionWarning } from "../../src/core/session-store/durable-binding.ts";
@@ -33,7 +37,9 @@ async function durableSession(path?: string): Promise<{ session: SessionManager;
 async function storeImage(sessionId: string): Promise<string> {
 	const stored = await openSessionStore(openMemoryStore(medium), 1).load(sessionId);
 	if (stored === undefined) throw new Error(`the store holds no session ${sessionId}`);
-	return [JSON.stringify(stored.header), ...stored.entries.map((entry) => entry.line)].map((line) => `${line}\n`).join("");
+	return [JSON.stringify(stored.header), ...stored.entries.map((entry) => entry.line)]
+		.map((line) => `${line}\n`)
+		.join("");
 }
 
 function fileOf(session: SessionManager): string {
@@ -44,11 +50,16 @@ function fileOf(session: SessionManager): string {
 
 describe("a SessionManager bound to the durable store (S20b)", () => {
 	it("commits every write to the store and projects the JSONL byte for byte", async () => {
-		const { session } = await durableSession();
+		const { session, warnings } = await durableSession();
 
-		session.appendMessage(userMsg("question"));
+		const question = session.appendMessage(userMsg("question"));
 		session.appendCustomEntry("note", { n: 1 });
 		session.appendMessage(assistantMsg("answer"));
+		session.appendLabelChange(question, "start");
+		session.appendSessionInfo("durable parity");
+		await session.settleDurableProjection();
+
+		expect(warnings).toEqual([]);
 
 		const file = fileOf(session);
 		expect(readFileSync(file, "utf8")).toBe(await storeImage(session.getSessionId()));
@@ -80,6 +91,7 @@ describe("a SessionManager bound to the durable store (S20b)", () => {
 		expect(session.getEntries().map((entry) => entry.id)).toContain(id);
 		expect(warnings).toEqual([expect.objectContaining({ path: file, code: "EACCES" })]);
 		session.appendCustomEntry("note", { after: true });
+		await session.settleDurableProjection();
 		expect(readFileSync(file, "utf8")).toBe(await storeImage(session.getSessionId()));
 	});
 
@@ -91,8 +103,12 @@ describe("a SessionManager bound to the durable store (S20b)", () => {
 
 		session.appendMessage(assistantMsg("one"));
 		session.appendMessage(assistantMsg("two"));
+		await session.settleDurableProjection();
 
 		expect(warnings.map((warning) => warning.code)).toEqual(["EACCES", "EACCES"]);
+		session.appendMessage(assistantMsg("three"));
+		await session.settleDurableProjection();
+		expect(warnings.map((warning) => warning.code)).toEqual(["EACCES", "EACCES", "EACCES"]);
 	});
 
 	it("reprojects the JSONL from the store on the next open after a crash between the commit and the projection", async () => {
