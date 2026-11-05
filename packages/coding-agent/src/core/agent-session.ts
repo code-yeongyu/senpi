@@ -19,6 +19,7 @@ import { rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { bindPipelineWitness } from "./execution/pipeline-witness.ts";
+import { carryPreflightFacts } from "./execution/preflight-carry.ts";
 import type {
 	Agent,
 	AgentContinuationOptions,
@@ -222,6 +223,8 @@ import {
 	type ResumeCompactionRequirement,
 } from "./extensions/builtin/compaction/resume-admission.ts";
 import {
+	chargeContextTokens,
+	contextTokenParts,
 	planResumeSlice,
 	RESUME_SLICE_ORIGIN,
 	RESUME_SLICE_SCHEMA,
@@ -357,7 +360,11 @@ import {
 	monotonicNow,
 } from "./retry-fallback/circuit.ts";
 import { isHealthExhaustionFailure } from "./retry-fallback/circuit-probes.ts";
-import { followProviderAccountChanges, RetryFallbackController } from "./retry-fallback/controller.ts";
+import {
+	type FallbackRungRefusal,
+	followProviderAccountChanges,
+	RetryFallbackController,
+} from "./retry-fallback/controller.ts";
 import { SelectorCooldowns } from "./retry-fallback/cooldown.ts";
 import {
 	classifyRateLimitedWait,
@@ -458,6 +465,7 @@ import {
 } from "./thinking-levels.ts";
 import { resetTimings, time } from "./timings.ts";
 import { ToolBarrier, type ToolBarrierSpec, toolBarrierSpecError } from "./tool-barrier.ts";
+import { TurnConflictError, turnConflict } from "./turn-conflict.ts";
 import { type SessionMessageUpdateEvent, withResolvedToolName } from "./tool-call-display-name.ts";
 import type { HostCallTarget, RegisteredHostCallKind } from "./tool-child-host-calls.ts";
 import type { StuckModuleNotice } from "./tool-dispatch/in-process-module.ts";
@@ -779,6 +787,8 @@ export type AgentSessionEvent =
 			primaryError?: FallbackRungFailure;
 			/** Every rung that failed this turn, in the order it ran, the primary first. */
 			failures?: FallbackRungFailure[];
+			/** Rungs this turn's walk could not switch to (senpi#3447), each with the guard's reason and numbers. */
+			refusals?: readonly FallbackRungRefusal[];
 	  }
 	| ModelConfigErrorEvent
 	| {
@@ -1216,6 +1226,8 @@ export interface QueuedInputOptions extends ClientMessageIdentity {
 	interactiveUser?: boolean;
 	/** Persist the prepared queue record before publishing or enqueuing it. */
 	onQueuedInput?: (input: PreparedClientInput) => void;
+	/** A steer meant only for this turn (`currentTurnId`): checked where it enters the queue, else `TurnConflictError`. */
+	expectedTurnId?: string;
 }
 
 /** Internal: the id of the `input` event a queued input passed, so its delivery can report `started`. */
@@ -1240,6 +1252,8 @@ export interface PromptOptions extends ClientMessageIdentity {
 	inputOrigin?: InputOrigin;
 	/** When streaming, how to queue the message: "steer" (interrupt) or "followUp" (wait). Required if streaming. */
 	streamingBehavior?: "steer" | "followUp";
+	/** With `streamingBehavior: "steer"`: the turn (`currentTurnId`) this steer is for; any other outcome is `TurnConflictError`. */
+	expectedTurnId?: string;
 	/** Session-only thinking level applied before starting this prompt. */
 	thinkingLevel?: ThinkingLevel;
 	/** Source of input for extension input event handlers. Defaults to "interactive". */
@@ -1621,6 +1635,8 @@ export class AgentSession {
 	private _requiredCompactionTurnError: RequiredCompactionError | undefined;
 	private _resumeCompactionRequirement: ResumeCompactionRequirement | undefined;
 	private _pendingModelSwitch: PendingModelSwitch | undefined;
+	// Reported tokens per estimated token when the pending switch was admitted (senpi#3447).
+	private _pendingSwitchTokenScale = 1;
 	private _resumeSlice: ResumeSlicePlan | undefined;
 	// A retry continuation immediately follows an accepted compaction. Its first
 	// response must not retrigger threshold compaction from stale provider usage.
@@ -2387,6 +2403,9 @@ export class AgentSession {
 		};
 		this._bindToolSearchRemovedHints();
 
+		// The tool_call chain below binds facts to the arguments object; the prepared executor runs a frozen copy, so the
+		// carrier is installed with the binder and cannot be left out of any session (senpi#5795).
+		this.agent.afterToolFreeze = carryPreflightFacts;
 		this.agent.beforeToolCall = async ({ toolCall, args, assistantMessage }, signal) => {
 			this._toolExecutionDepth++;
 			this._toolCallIssuers.set(toolCall.id, assistantMessage);
@@ -3011,6 +3030,10 @@ export class AgentSession {
 		if (event.type === "retry_fallback_exhausted") this._runFallbackExhausted = true;
 		if (event.type === "entry_appended") {
 			event = { ...event, entry: describeUsageLimitEntry(event.entry) };
+		}
+		if (event.type === "retry_fallback_exhausted" && event.refusals === undefined) {
+			const refusals = this._retryFallback.turnRefusals;
+			if (refusals.length > 0) event = { ...event, refusals };
 		}
 		if (event.type === "retry_fallback_exhausted") {
 			event = describeExhaustedFailures(event, this.model?.provider ?? "");
@@ -5125,6 +5148,11 @@ export class AgentSession {
 		return this._isAgentRunActive;
 	}
 
+	/** The running turn's id (its admission epoch); undefined while no turn runs. A steer names it as `expectedTurnId`. */
+	get currentTurnId(): string | undefined {
+		return this._isAgentRunActive ? String(this.externalAdmission.turnEpoch) : undefined;
+	}
+
 	/** True while a provider retry is in flight; the deadline lease treats it as turn progress. */
 	get isRetryInFlight(): boolean {
 		return this._retryPromise !== undefined;
@@ -5903,6 +5931,8 @@ export class AgentSession {
 		this._standingRecovery = undefined;
 		const barrierError = options?.toolBarrier === undefined ? undefined : toolBarrierSpecError(options.toolBarrier);
 		if (barrierError !== undefined) throw new Error(barrierError);
+		// A steer naming a turn that is not running is refused before a run hold or a command can take it (senpi#5776).
+		this._refuseStaleNamedTurn(options, this._runHolds.inheritedOwner() !== undefined);
 		if (isHumanInput(options) && options?.humanInputReported !== true) this._humanInputAdmitted(promptKind(options));
 		// Held synchronously, before any await: an external delivery never overtakes this input.
 		const hold = this.externalAdmission.beginInput({
@@ -5915,6 +5945,8 @@ export class AgentSession {
 		try {
 			const origin = options?.inputOrigin ?? inputOriginOf(options?.source);
 			if (origin === "person" && this._runHolds.inheritedOwner() !== undefined) {
+				// A held input is delivered into a later turn, which a steer that names its turn must never reach.
+				if (options?.expectedTurnId !== undefined) throw new TurnConflictError(this.currentTurnId);
 				// A run-owned pause holds every person input before anything runs, a "." or a command included (senpi#3811).
 				this._holdForRun(text, options);
 				hold.accepted();
@@ -6237,7 +6269,9 @@ export class AgentSession {
 			// empty session, or a "." carrying image attachments (the user is sending
 			// the images, not asking to continue), falls through to ordinary prompt
 			// handling below.
+			// A steer that names a turn is delivered as its own text through the checked queue path below.
 			if (
+				options?.expectedTurnId === undefined &&
 				isManualContinueSubmission({
 					text,
 					hasMessages: this.agent.state.messages.length > 0,
@@ -6463,6 +6497,9 @@ export class AgentSession {
 				preflightResult?.(true);
 				return;
 			}
+
+			// Every queue path above checked the named turn at its enqueue; reaching a start means that turn is not running.
+			if (options?.expectedTurnId !== undefined) throw new TurnConflictError(this.currentTurnId);
 
 			// Flush any pending bash messages before the new prompt
 			this._flushPendingBashMessages();
@@ -6863,6 +6900,17 @@ export class AgentSession {
 	}
 
 	/**
+	 * An input that names a turn is refused before any admission side effect (human-input record, person input, input
+	 * handlers) when that turn is not running, or when a hold would deliver the input into a later turn (senpi#5776).
+	 */
+	private _refuseStaleNamedTurn(options: QueuedInputOptions | PromptOptions | undefined, held: boolean): void {
+		const stale = turnConflict(options?.expectedTurnId, this.currentTurnId);
+		if (stale !== undefined) throw stale;
+		if (options?.expectedTurnId !== undefined && held && originOf(options) === "person")
+			throw new TurnConflictError(this.currentTurnId);
+	}
+
+	/**
 	 * Queue a steering message while the agent is running.
 	 * Delivered after the current assistant turn finishes executing its tool calls,
 	 * before the next LLM call.
@@ -6873,6 +6921,7 @@ export class AgentSession {
 	 * @throws Error if text is an extension command
 	 */
 	async steer(text: string, images?: ImageContent[], options?: QueuedInputOptions): Promise<QueuedInputDisposition> {
+		this._refuseStaleNamedTurn(options, this._engineTurnHold.held);
 		if (isHumanInput(options)) this._humanInputAdmitted("steer");
 		return this._queueUserInput(text, images, "steer", options);
 	}
@@ -6891,6 +6940,7 @@ export class AgentSession {
 		images?: ImageContent[],
 		options?: QueuedInputOptions,
 	): Promise<QueuedInputDisposition> {
+		this._refuseStaleNamedTurn(options, this._engineTurnHold.held);
 		if (isHumanInput(options)) this._humanInputAdmitted("follow_up");
 		return this._queueUserInput(text, images, "followUp", options);
 	}
@@ -7015,13 +7065,18 @@ export class AgentSession {
 	): Promise<void> {
 		const clientMessageId = input.clientMessageId;
 		const sourced = { ...input, source: input.source ?? "interactive" };
+		// Read in the same synchronous step as the enqueue it guards (senpi#5776).
+		const refusal = (): TurnConflictError | undefined => turnConflict(input.expectedTurnId, this.currentTurnId);
 		if (clientMessageId === undefined) {
+			const refused = refusal();
+			if (refused !== undefined) throw refused;
 			this._enqueuePreparedInput(sourced);
 			return;
 		}
 		await this._pendingInputs.admit(
 			{ clientMessageId, text: input.text, ...(input.images ? { images: input.images } : {}), mode: input.mode },
 			(queuedId) => this._enqueuePreparedInput({ ...sourced, queuedId }),
+			refusal,
 		);
 	}
 
@@ -8975,6 +9030,7 @@ export class AgentSession {
 		const pending = createPendingModelSwitch({ model, projection, persistDefault, origin });
 		this._clearPendingModelSwitch();
 		this._pendingModelSwitch = pending;
+		this._pendingSwitchTokenScale = this._switchTokenScale(projection.liveContextTokens);
 		this._emit({
 			type: "model_change_pending",
 			model,
@@ -9008,26 +9064,49 @@ export class AgentSession {
 	 */
 	private _reduceForSwitchTarget(model: Model<Api>, liveContextTokens: number): number {
 		if (!this._getCompactionSettings().enabled) return liveContextTokens;
-		const projection = this._projectSwitchFit(model);
-		if (projection.usable || projection.verdict !== "fits-after-compaction") return liveContextTokens;
-		const plan = planResumeSlice({ entries: this.sessionManager.getBranch(), projection });
-		if (!plan) return liveContextTokens;
+		// senpi#3447: on a downswitch the repair decision, the slice and the guard
+		// charge one measure, so the figure handed to the guard is the one the decision
+		// used. A rung that is not a downswitch carries no fit charge
+		// (`_getDownswitchLiveContextTokens` returns 0); it is still repaired on the
+		// plain estimate, and the guard is still handed that 0.
+		const notDownswitch = liveContextTokens <= 0;
+		const tokenScale = notDownswitch ? 1 : this._switchTokenScale(liveContextTokens);
+		const charged = (figure: number) => (notDownswitch ? liveContextTokens : figure);
+		const projection = this._projectSwitchFit(model, tokenScale);
+		if (projection.usable || projection.verdict !== "fits-after-compaction")
+			return charged(projection.liveContextTokens);
+		const plan = planResumeSlice({ entries: this.sessionManager.getBranch(), projection, tokenScale });
+		if (!plan) return charged(projection.liveContextTokens);
 		this.applyResumeSlice(plan);
-		return this._projectSwitchFit(model).liveContextTokens;
+		return charged(this._projectSwitchFit(model, tokenScale).liveContextTokens);
 	}
 
-	private _projectSwitchFit(model: Model<Api>): ModelUsabilityBudgetProjection {
-		// Measured per message rather than through the context estimate: a retained
-		// turn keeps the usage it reported before the reduction, so a usage-derived
-		// total cannot observe the compaction that just ran (the sdk.ts convention).
-		const liveContextTokens = filterContextExcludedMessages(
-			this.sessionManager.buildSessionContext().messages,
-		).reduce((total, message) => total + estimateTokens(message), 0);
+	/**
+	 * Reported tokens per estimated token, never below 1 (senpi#3447): the reported
+	 * live context when it is above the per-message estimate, the estimate otherwise.
+	 * A reported figure implausibly above a large estimate (a Cursor cacheRead spike)
+	 * is ignored, as the compaction threshold already does.
+	 */
+	private _switchTokenScale(liveContextTokens: number): number {
+		const { summaryTokens, otherTokens } = contextTokenParts(this._switchContextMessages());
+		if (otherTokens <= 0) return 1;
+		const charged = resolveThresholdContextTokens(liveContextTokens, summaryTokens + otherTokens);
+		return Math.max(1, (charged - summaryTokens) / otherTokens);
+	}
+
+	// Measured per message rather than through the context estimate: a retained
+	// turn keeps the usage it reported before the reduction, so a usage-derived
+	// total cannot observe the compaction that just ran (the sdk.ts convention).
+	private _switchContextMessages(): AgentMessage[] {
+		return filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages);
+	}
+
+	private _projectSwitchFit(model: Model<Api>, tokenScale = 1): ModelUsabilityBudgetProjection {
 		return projectModelUsabilityBudget({
 			model,
 			systemPrompt: this.agent.state.systemPrompt,
 			tools: this.agent.state.tools,
-			liveContextTokens,
+			liveContextTokens: chargeContextTokens(this._switchContextMessages(), tokenScale),
 			compaction: this._getCompactionSettings(),
 			includeSpeculationLead: false,
 			admission: "switch",
@@ -9059,12 +9138,15 @@ export class AgentSession {
 			pendingSwitchKeepRecentTokens(pending.projection),
 		);
 
-		let projection = this._projectSwitchFit(pending.model);
+		// The post-compaction transcript has no reported usage yet, so it is charged
+		// at the ratio the switch was admitted on (senpi#3447).
+		const tokenScale = this._pendingSwitchTokenScale;
+		let projection = this._projectSwitchFit(pending.model, tokenScale);
 		if (!projection.usable) {
-			const plan = planResumeSlice({ entries: this.sessionManager.getBranch(), projection });
+			const plan = planResumeSlice({ entries: this.sessionManager.getBranch(), projection, tokenScale });
 			if (plan) {
 				this.applyResumeSlice(plan);
-				projection = this._projectSwitchFit(pending.model);
+				projection = this._projectSwitchFit(pending.model, tokenScale);
 			}
 		}
 
@@ -9178,8 +9260,13 @@ export class AgentSession {
 		const currentUsableContext = currentBudget.contextWindow - currentBudget.requiredTokens;
 		const targetUsableContext = targetBudget.contextWindow - targetBudget.requiredTokens;
 		if (targetUsableContext >= currentUsableContext) return 0;
-		const fixedPrefixTokens = currentBudget.systemPromptTokens + currentBudget.activeToolSchemaTokens;
-		return Math.max(0, (this.getContextUsage()?.tokens ?? 0) - fixedPrefixTokens);
+		// Reported usage includes the system prompt and tool schemas; a per-message
+		// estimate never did, so only a reported figure has them taken out (senpi#3447).
+		const measured = this._measureContextTokens();
+		const fixedPrefixTokens = measured.reported
+			? currentBudget.systemPromptTokens + currentBudget.activeToolSchemaTokens
+			: 0;
+		return Math.max(0, measured.tokens - fixedPrefixTokens);
 	}
 
 	/**
@@ -14280,6 +14367,16 @@ export class AgentSession {
 		const contextWindow = model.contextWindow ?? 0;
 		if (contextWindow <= 0) return undefined;
 
+		const { tokens } = this._measureContextTokens();
+		return {
+			tokens,
+			contextWindow,
+			percent: (tokens / contextWindow) * 100,
+		};
+	}
+
+	/** The live context in tokens, and whether a provider reported it (otherwise it is a per-message estimate). */
+	private _measureContextTokens(): { readonly tokens: number; readonly reported: boolean } {
 		const messages = filterContextExcludedMessages(this.messages);
 
 		// After compaction, kept assistant usage reflects pre-compaction context size.
@@ -14307,12 +14404,7 @@ export class AgentSession {
 			}
 
 			if (!hasPostCompactionUsage) {
-				const tokens = messages.reduce((sum, message) => sum + estimateTokens(message), 0);
-				return {
-					tokens,
-					contextWindow,
-					percent: (tokens / contextWindow) * 100,
-				};
+				return { tokens: messages.reduce((sum, message) => sum + estimateTokens(message), 0), reported: false };
 			}
 		}
 
@@ -14321,13 +14413,7 @@ export class AgentSession {
 		const estimate = branchEntries.some((entry) => entry.type === "context_edit")
 			? estimateProjectedContextTokens(this.sessionManager.buildSessionProjection(), branchEntries)
 			: estimateContextTokens(messages);
-		const percent = (estimate.tokens / contextWindow) * 100;
-
-		return {
-			tokens: estimate.tokens,
-			contextWindow,
-			percent,
-		};
+		return { tokens: estimate.tokens, reported: estimate.usageTokens > 0 };
 	}
 
 	/**

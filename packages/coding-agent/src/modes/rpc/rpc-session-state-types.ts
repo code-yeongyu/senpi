@@ -75,6 +75,10 @@ export interface RpcProviderAccount {
 	/** Epoch ms when the block lifts; absent for `disabled` and for a block that names no time. */
 	blockedUntil?: number;
 	pinned: boolean;
+	/** Same ChatGPT registration metadata rendered by /gpt-account. */
+	route?: "siwc" | "legacy";
+	planUsageEnabled?: boolean;
+	signedOut?: boolean;
 	/** `claude-cli`: signed in through the bundled Claude Code CLI, whose own store holds the login (senpi#4436). */
 	store?: "claude-cli";
 	/** Epoch ms of the account's last sign-in. */
@@ -134,6 +138,8 @@ export interface RpcSessionModelEntry {
 }
 
 export interface RpcSessionState {
+	/** The running turn's id; absent when no turn is running. A steer or follow-up names it as `expectedTurnId` (senpi#5776). */
+	currentTurnId?: string;
 	/** Latest 64 UI-answer receipts in this session generation, oldest first. */
 	answeredUiRequests?: UiAnswerReceipt[];
 	paused: boolean;

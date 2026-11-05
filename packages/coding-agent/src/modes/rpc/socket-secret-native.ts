@@ -3,6 +3,7 @@
  * There is no optional fallback: a Windows public-secret mutation that cannot load the bridge must fail, never fall
  * back to a direct final-path write. Nothing here runs at import time.
  */
+import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -53,6 +54,124 @@ export interface NativeSocketSecretBinding {
 	publishNoReplace(stagingPath: string, finalPath: string, bytes: Buffer): NativePublishResult;
 	kernelSessionIdentity(): NativeKernelSessionIdentity;
 	classifyVolume(path: string): NativeVolumeLocality;
+}
+
+/**
+ * A successful probe is retained native release evidence, never a transient "free" hint. A blocking wait's `acquired`
+ * is NOT yet evidence: that handle becomes evidence only once `probeRetained` applies the admissibility rules to it
+ * (design Revision 8, r7 note 4), inside the recovery transaction.
+ */
+export type NativePresenceResult =
+	| { readonly status: "acquired" | "occupied" | "valid" | "released" | "cancelled" }
+	| { readonly status: "unknown" | "fenced"; readonly reason: string; readonly code?: number | null }
+	| { readonly status: "unavailable"; readonly reason: "unsupported_platform" };
+
+export interface NativePresenceProbe {
+	readonly presenceId: string;
+	readonly path: string;
+	/**
+	 * The object's whole immutable header as the row recorded it (design 4.2a: random tag, schema, creation timestamp).
+	 * The bridge compares the opened object with it byte for byte; the tag alone never matches.
+	 */
+	readonly header: Buffer;
+	readonly volumeSerial: string;
+	readonly fileId: string;
+	readonly createdLocal: boolean;
+	readonly relocated: boolean;
+	readonly kernelSession: string | null;
+}
+
+/**
+ * Why a guard leaves the registry (design 4.2a recovery transaction order). `released` is the holder's own quiescence
+ * commit; the other three are the points at which recovery releases guards it recovered: `recovery_abandoned` when step 3
+ * meets contention or an error and the attempt cannot retire, `discharged` when step 4 finds the role committed
+ * `released` meanwhile, `retired` after step 5's retirement commit and object deletion. Nothing else releases a guard.
+ */
+export type PresenceReleaseReason = "released" | "recovery_abandoned" | "discharged" | "retired";
+
+/** The caller commits the state named by `state` (terminal, drained, or the recovery step) before supplying this receipt. */
+export interface PresenceReleasedReceipt {
+	readonly presenceId: string;
+	readonly state: PresenceReleaseReason;
+}
+
+export interface NativePresenceBinding {
+	presenceAcquire(presenceId: string, path: string): NativePresenceResult;
+	presenceProbe(request: NativePresenceProbe): NativePresenceResult;
+	/**
+	 * The probe's admissibility rules applied to a guard this process already retains, the one a blocking wait acquired
+	 * (design Revision 8, r7 note 4): `acquired` keeps it, an inadmissible handle is released at once (`unknown`,
+	 * `inadmissible`), and a guard not held is `unknown` (`not_held`). The handle is never closed and reacquired.
+	 */
+	presenceProbeRetained(request: NativePresenceProbe): NativePresenceResult;
+	presencePreActionCheck(presenceId: string): NativePresenceResult;
+	presenceWaitAndAcquire(presenceId: string, path: string, waitId: string): Promise<NativePresenceResult>;
+	presenceCancelWait(waitId: string): void;
+	presenceReleaseAfterQuiescence(receipt: PresenceReleasedReceipt): NativePresenceResult;
+}
+
+export interface SocketSecretPresence {
+	acquire(presenceId: string, path: string): NativePresenceResult;
+	probe(request: NativePresenceProbe): NativePresenceResult;
+	/** Step 3's admissibility check for the guard `waitAndAcquire` retained; see `presenceProbeRetained`. */
+	probeRetained(request: NativePresenceProbe): NativePresenceResult;
+	preActionCheck(presenceId: string): NativePresenceResult;
+	waitAndAcquire(presenceId: string, path: string, signal?: AbortSignal): Promise<NativePresenceResult>;
+	releaseAfterQuiescence(receipt: PresenceReleasedReceipt): NativePresenceResult;
+}
+
+/** POSIX endpoints have no public-secret presence contract. Do not load a Windows bridge there. */
+export function loadSocketSecretPresence(
+	options: SocketSecretNativeOptions = {},
+	native?: NativePresenceBinding,
+):
+	| { readonly status: "available"; readonly guard: SocketSecretPresence }
+	| { readonly status: "unavailable"; readonly reason: "unsupported_platform" } {
+	if ((options.platform ?? process.platform) !== "win32") {
+		return { status: "unavailable", reason: "unsupported_platform" };
+	}
+	const binding = native ?? loadSocketSecretNative(options);
+	assertPresenceBinding(binding);
+	return {
+		status: "available",
+		guard: {
+			acquire: (id, path) => binding.presenceAcquire(id, path),
+			probe: (request) => binding.presenceProbe(request),
+			probeRetained: (request) => binding.presenceProbeRetained(request),
+			preActionCheck: (id) => binding.presencePreActionCheck(id),
+			releaseAfterQuiescence: (receipt) => binding.presenceReleaseAfterQuiescence(receipt),
+			async waitAndAcquire(id, path, signal) {
+				if (signal?.aborted) return { status: "cancelled" };
+				// The native call registers its cancellation token synchronously before queuing work.
+				const waitId = randomUUID();
+				const waiting = binding.presenceWaitAndAcquire(id, path, waitId);
+				const cancel = () => binding.presenceCancelWait(waitId);
+				signal?.addEventListener("abort", cancel, { once: true });
+				try {
+					return await waiting;
+				} finally {
+					signal?.removeEventListener("abort", cancel);
+				}
+			},
+		},
+	};
+}
+
+function assertPresenceBinding(value: object): asserts value is NativePresenceBinding {
+	const exports = value as Record<string, unknown>;
+	if (
+		![
+			"presenceAcquire",
+			"presenceProbe",
+			"presenceProbeRetained",
+			"presencePreActionCheck",
+			"presenceWaitAndAcquire",
+			"presenceCancelWait",
+			"presenceReleaseAfterQuiescence",
+		].every((name) => typeof exports[name] === "function")
+	) {
+		throw new SocketSecretNativeAbiMismatchError("presence registry");
+	}
 }
 
 export interface SocketSecretNativeOptions {

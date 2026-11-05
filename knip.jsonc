@@ -1171,8 +1171,8 @@
       "packages/coding-agent/src/modes/rpc/session-router-routing.ts": ["dispatch", "setSessionContext"],
       // pre-existing at origin main aceb1cc1d9: unused exports DETACHED_RETIREMENT_GRACE_MS
       "packages/coding-agent/src/modes/rpc/session-sweep.ts": ["DETACHED_RETIREMENT_GRACE_MS"],
-      // pre-existing at origin main aceb1cc1d9: unused exports SOCKET_IDENTITY_WAIT_MS, lsofSocketHolders
-      "packages/coding-agent/src/modes/rpc/socket-ownership.ts": ["SOCKET_IDENTITY_WAIT_MS", "lsofSocketHolders"],
+      // pre-existing at origin main aceb1cc1d9: unused export SOCKET_IDENTITY_WAIT_MS
+      "packages/coding-agent/src/modes/rpc/socket-ownership.ts": ["SOCKET_IDENTITY_WAIT_MS"],
       // pre-existing at origin main aceb1cc1d9: unused exports SOCKET_CUT_GRACE_MS
       "packages/coding-agent/src/modes/rpc/socket-sink.ts": ["SOCKET_CUT_GRACE_MS"],
       // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_LAUNCH_SLOTS
