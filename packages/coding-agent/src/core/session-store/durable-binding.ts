@@ -15,9 +15,15 @@ import { captureFileIdentity } from "../session-file-identity.ts";
 import { createJsonlImporter, type JsonlFileStamp } from "../session-import/jsonl-import.ts";
 import type { FileIdentity } from "../session-transcript-journal.ts";
 
+/** The binding's asynchronous whole-file projection writes; the default is the atomic replace below. A test seam for win32. */
+export interface ProjectionFiles {
+	replace(path: string, contents: string): Promise<void>;
+}
+
 export interface DurableStoreBinding {
 	readonly store: SyncCommitStore;
 	readonly epoch: number;
+	readonly files?: ProjectionFiles;
 }
 
 /** SessionManager's write discipline for the binding's own file writes (repair, reprojection on open). */
@@ -94,6 +100,13 @@ const isRecord = (value: StoreValue | undefined): value is { readonly [key: stri
 
 const staleSessionIdOf = (mark: StoreValue | undefined): string | undefined =>
 	isRecord(mark) && typeof mark.sessionId === "string" ? mark.sessionId : undefined;
+
+/** A provided ProjectionFiles is called as a method, so a class implementing it keeps its `this`; its identity is unknown. */
+async function replaceWith(files: ProjectionFiles | undefined, path: string, contents: string): Promise<FileIdentity | undefined> {
+	if (files === undefined) return replaceAtomically(path, contents);
+	await files.replace(path, contents);
+	return undefined;
+}
 
 type Importer = ReturnType<typeof createJsonlImporter>;
 type Warn = (warning: ProjectionWarning) => void;
@@ -260,7 +273,7 @@ export class DurableSessionBinding {
 				const generation = this.generation;
 				const contents = projectionImage(this.handle.header(), this.handle.entries());
 				this.hooks.beforeWrite(path);
-				this.hooks.afterReplace(path, await replaceAtomically(path, contents));
+				this.hooks.afterReplace(path, await replaceWith(this.binding.files, path, contents));
 				if (generation !== this.generation) return this.scheduleRepair(path);
 				this.binding.store.commitSync(this.binding.epoch, [{ op: "delete", key: staleKey(path) }], () => {});
 				this.stale = false;
@@ -297,7 +310,7 @@ async function reprojectFile(
 	contents: string,
 ): Promise<void> {
 	hooks.beforeWrite(path);
-	hooks.afterReplace(path, await replaceAtomically(path, contents));
+	hooks.afterReplace(path, await replaceWith(binding.files, path, contents));
 	const written = await stampOf(path);
 	if (written !== undefined) await admission.admit(() => importer.recordProjection(path, contents, written));
 	binding.store.commitSync(binding.epoch, [{ op: "delete", key: staleKey(path) }], () => {});
