@@ -6,6 +6,7 @@ import net from "node:net";
 import { mock } from "node:test";
 import { runHostSupervisor } from "../../src/modes/rpc/host-lifecycle.ts";
 import { attachJsonlLineReader } from "../../src/modes/rpc/jsonl.ts";
+import { signalEndpointReady } from "../helpers/rpc-endpoint-ready.ts";
 import { admitInternalConnection } from "../helpers/sealed-internal-admit.ts";
 
 const [mode, socket, agentDir] = process.argv.slice(2);
@@ -96,6 +97,7 @@ if (mode === "host" || mode === "successor-host") {
 		}
 		return rename(...args);
 	});
+	const onServer = signalEndpointReady(socket, () => process.send?.({ type: "ready" }));
 	mock.method(net, "createServer", (accept: (peer: net.Socket) => void) => {
 		const server = createServer((peer) => {
 			accept(peer);
@@ -104,7 +106,7 @@ if (mode === "host" || mode === "successor-host") {
 				if (request.type === "get_protocol_info") process.send?.({ type: "public-probe" });
 			});
 		});
-		server.once("listening", () => process.send?.({ type: "ready" }));
+		onServer(server);
 		return server;
 	});
 	syncBuiltinESMExports();

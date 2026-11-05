@@ -37,7 +37,7 @@ import { closeHostConnections, type HostConnection } from "./host-shutdown-conne
 import { runAsHostGenerationProcess } from "./host-process-role.ts";
 import { createEndpointReservations } from "./host-reservations.ts";
 import { hostChildDrainRequestFile, watchDrainRequest } from "./host-stop-intent.ts";
-import { armHostWatchdog } from "./host-watchdog.ts";
+import { armHostWatchdog, type HostWatchdogConfig } from "./host-watchdog.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
 import { hostGeneration, hostInstanceId, protocolIdentity } from "./protocol-identity.ts";
 import { rpcCommandShapeError } from "./rpc-input-validation.ts";
@@ -681,10 +681,12 @@ function errorMessage(cause: unknown): string {
  * the instance is not. The FIRST generation runs this before its supervisor has created the socket's
  * directory, a successor after, so the directory is canonicalized through its deepest existing
  * ancestor: both then stamp the same spelling. `host_socket` is omitted where no public path exists
- * (abstract sockets, a supervised win32 host, whose supervisor publishes none).
+ * (abstract sockets, a supervised host whose supervisor passed none). Exported for tests.
  */
-function hostSessionContext(socketPath: string): SessionContext {
-	const supervised = hostWatchdogBinding();
+export function hostSessionContext(
+	socketPath: string,
+	supervised: HostWatchdogConfig | undefined = hostWatchdogBinding(),
+): SessionContext {
 	const endpoint = supervised === undefined ? socketPath : supervised.publicSocket;
 	if (endpoint === undefined || endpoint.startsWith("\0")) return { host_instance: hostInstanceId() };
 	const directory = canonicalSessionPath(dirname(endpoint));
