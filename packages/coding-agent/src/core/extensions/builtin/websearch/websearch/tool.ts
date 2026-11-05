@@ -97,6 +97,7 @@ export function createWebSearchTool(getConfig: ConfigProvider, options: WebSearc
 
 	return defineTool<typeof Params, SearchRenderDetails>({
 		name: "web_search",
+		runs: "brain",
 		workspaceEffect: "read",
 		label: "Web Search",
 		description: "Search the web for current information and return source URLs for citation.",

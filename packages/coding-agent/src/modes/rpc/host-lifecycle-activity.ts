@@ -10,6 +10,7 @@ import { ClientOccupancy } from "./host-client-occupancy.ts";
 import { type HostLifetimeOwner, hostOwnerGone, readHostOwner, sameHostOwner } from "./host-daemon-state.ts";
 import { type HostActivity, IdleExitDecider, type IdleExitDecision } from "./host-lifecycle-policy.ts";
 import { holdIdleExitForSettling, SessionRunActivity } from "./host-run-activity.ts";
+import { startupHandOff } from "./host-startup-beacon.ts";
 import { supervisorLog } from "./host-supervisor-log.ts";
 import { connectInternalConnection } from "./internal-channel.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
@@ -48,7 +49,9 @@ export class SupervisorActivity {
 		// Everything `current()` reads exists before any client can be accepted: a connection admitted
 		// during startup asks for the activity snapshot, and a successor's first `open_session` once
 		// failed on a binding read before its initializer ran.
-		this.decider = new IdleExitDecider(options.idleExitMs);
+		// A coordinated start's launcher probes once the endpoint is published: the window waits for that first
+		// client for as long as the launcher may still decide the start (senpi#6001).
+		this.decider = new IdleExitDecider(options.idleExitMs, Date.now, startupHandOff()?.budgetMs);
 		// A settled session's agent_settled handlers hold idle exit for at most one idle window (omo#11419).
 		this.runs = new SessionRunActivity({
 			settleHoldMs: options.idleExitMs,

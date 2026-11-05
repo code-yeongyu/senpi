@@ -61,6 +61,7 @@ export type WebfetchRenderDetails = WebfetchDetails | WebfetchProgressDetails;
 
 export const webfetch = defineTool<typeof Params, WebfetchRenderDetails>({
 	name: "webfetch",
+	runs: "brain",
 	workspaceEffect: "read",
 	label: "Web Fetch",
 	description:
