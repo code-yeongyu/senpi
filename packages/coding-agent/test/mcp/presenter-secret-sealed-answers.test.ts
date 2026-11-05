@@ -164,7 +164,11 @@ it("a device whose grant is not in the request's snapshot is refused before anyt
 });
 
 const stepUpRefusals = [
-	{ name: "a token for another request", claims: (p: { req: string }) => ({ req: `x${p.req.slice(1)}` }) },
+	{
+		name: "a token for another request",
+		// The first character always changes, so the forged hash never equals the real one.
+		claims: (p: { req: string }) => ({ req: `${p.req.startsWith("x") ? "y" : "x"}${p.req.slice(1)}` }),
+	},
 	{ name: "a token bound to another key", claims: () => ({ cnf: { jkt: "another-key" } }) },
 	{ name: "a token of another device", claims: () => ({ dev: "device-laptop" }) },
 	{ name: "a token for another host device", claims: () => ({ hdev: "another-host" }) },
