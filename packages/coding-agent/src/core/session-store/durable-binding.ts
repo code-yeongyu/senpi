@@ -12,7 +12,7 @@ import {
 } from "@earendil-works/pi-agent-core";
 import type { StoreValue } from "@earendil-works/pi-agent-core/conformance";
 import { captureFileIdentity } from "../session-file-identity.ts";
-import { createJsonlImporter, type JsonlFileStamp } from "../session-import/jsonl-import.ts";
+import { createJsonlImporter, jsonlFiles, type JsonlFileStamp } from "../session-import/jsonl-import.ts";
 import type { FileIdentity } from "../session-transcript-journal.ts";
 
 /** The binding's asynchronous whole-file projection writes; the default is the atomic replace below. A test seam for win32. */
@@ -114,6 +114,12 @@ async function replaceWith(
 	return undefined;
 }
 
+/** Whether a Node developer-hatch write is the file's last change: its K9-F2 marker matches the file's stamp. */
+async function hatchWroteLast(path: string): Promise<boolean> {
+	const [stamp, marker] = await Promise.all([stampOf(path), jsonlFiles.marker(path)]);
+	return stamp !== undefined && marker?.size === stamp.size && marker.mtimeMs === stamp.mtimeMs;
+}
+
 type Importer = ReturnType<typeof createJsonlImporter>;
 type Warn = (warning: ProjectionWarning) => void;
 
@@ -172,7 +178,8 @@ export class DurableSessionBinding {
 		const { store, epoch } = binding;
 		const path = resolve(sessionFile);
 		const admission = createAdmissionLine();
-		const importer = createJsonlImporter({ store, epoch, admission });
+		// The importer runs on this binding's admission line: each call is admitted by its caller, once, never nested.
+		const importer = createJsonlImporter({ store, epoch, admission: { admit: (mutation) => mutation() } });
 		let id = sessionId;
 		let reprojected = false;
 		await hooks.fenceHatchWriters(path);
@@ -180,6 +187,7 @@ export class DurableSessionBinding {
 			const mark = await store.getDocument(staleKey(path));
 			const markedId = staleSessionIdOf(mark);
 			if (markedId !== undefined) {
+				if (await hatchWroteLast(path)) await admission.admit(() => importer.importFile(path));
 				const stored = await openSessionStore(store, epoch).load(markedId);
 				if (stored === undefined) throw new Error(`the store marks ${path} stale but holds no session ${markedId}`);
 				await reprojectFile(
@@ -193,7 +201,7 @@ export class DurableSessionBinding {
 				id = markedId;
 				reprojected = true;
 			} else {
-				id = (await importer.importFile(path)).sessionId;
+				id = (await admission.admit(() => importer.importFile(path))).sessionId;
 			}
 		}
 		const handle = await openSyncSessionStore(store, epoch).open(id, JSON.parse(headerLine) as SessionHeader);
@@ -293,8 +301,12 @@ export class DurableSessionBinding {
 		void this.admission
 			.admit(async () => {
 				if (!this.stale) return;
+				// S07's check first, on a file a hatch writer changed last: what it wrote joins the store, so the rewrite below
+				// keeps it. A file that is only behind the store (its projection failed) is not imported: the store's copy wins.
+				await this.hooks.fenceHatchWriters(path);
+				if (await hatchWroteLast(path)) await this.importer.importFile(path);
 				const generation = this.generation;
-				const contents = projectionImage(this.handle.header(), this.handle.entries());
+				const contents = await this.storeImage();
 				this.hooks.beforeWrite(path);
 				this.hooks.afterReplace(path, await replaceWith(this.binding.files, path, contents));
 				if (generation !== this.generation) return this.scheduleRepair(path);
@@ -309,6 +321,13 @@ export class DurableSessionBinding {
 				}
 			})
 			.catch((error: unknown) => this.projectionFailed(path, error));
+	}
+
+	private async storeImage(): Promise<string> {
+		const id = String(this.handle.header().id);
+		const stored = await openSessionStore(this.binding.store, this.binding.epoch).load(id);
+		if (stored === undefined) throw new Error(`the store holds no session ${id} to project`);
+		return projectionImage(stored.header, stored.entries);
 	}
 
 	// A ledger record a later write superseded (it committed while this one awaited) is dropped, not reported: the later
