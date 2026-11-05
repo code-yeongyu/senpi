@@ -626,8 +626,9 @@ created; a grant acquired later is not offered it.
   `{type, id, v: 1, grantId, uiRequestId, answerId, stepup, enc, ct, sig}`; a cancel is
   `{type, id, v: 1, grantId, uiRequestId, answerId, cancelled: true, sig}`. `id` is 1-128 characters and
   `answerId` 1-256. `enc` (32 bytes) and `ct` (HPKE base mode, DHKEM(X25519, HKDF-SHA256) / HKDF-SHA256 /
-  AES-256-GCM, at most 64 KiB + 16 bytes) are unpadded base64url. `sig` is the installation key's Ed25519 signature,
-  verified strictly (canonical points, no small-order or non-prime-order key, `S < L`).
+  AES-256-GCM, at least 256 + 16 and at most 64 KiB + 16 bytes) are unpadded base64url. `sig` is the installation
+  key's Ed25519 signature as 128 lowercase hex characters, verified strictly (canonical points, no small-order or
+  non-prime-order key, `S < L`).
 - The host checks, in order:
   1. the exact shape;
   2. that the sender holds a grant in the prompt's sealed snapshot that is still eligible;
@@ -636,9 +637,10 @@ created; a grant acquired later is not offered it.
   4. the envelope signature;
   5. for a value, the issuer step-up token through the injected authority (its account, device, host device, request
      binding and expiry no later than the deadline);
-  6. at the latch, synchronously and in this order: the prompt is still pending; the step-up `jti` is unused in this
-     host incarnation, and it is spent here; the prompt is before its deadline; the grant is current; the
-     ciphertext opens to a canonical padded value. A claim refused after the `jti` check has used up that token.
+  6. at the latch, synchronously and in this order: the prompt is still pending; for a value answer, the step-up
+     `jti` is unused in this host incarnation, and it is spent here (a cancel carries no `jti`); the prompt is before
+     its deadline; the grant is current; a value answer's ciphertext opens to a canonical padded value. A value
+     answer refused after the `jti` check has used up that token.
 
   A value answer that loses the race is never decrypted, and a ciphertext that does not open leaves the prompt open.
 - The answer is acknowledged on the sender's connection only:
