@@ -9,7 +9,8 @@ const PACKAGE_ROOT = join(import.meta.dirname, "..", "..");
 
 /**
  * Node runs only (senpi#6036): a test file that reaches session state on Node, in process or through a CLI or host child
- * that inherits the log variable, fails at its end with an error that names it and the list it belongs on.
+ * that inherits the log variable, fails at its end with an error that names it and the list it belongs on. A child spawned
+ * with an explicit environment must forward NODE_HOST_REFUSAL_LOG_ENV to be counted (test/runtime-snapshot/inventory.ts).
  */
 export function installNodeHostRefusalGuard(): void {
 	const testPath = expect.getState().testPath;

@@ -33,6 +33,8 @@ describe("qa-e2e-eval sandbox", () => {
 				env: {
 					...process.env,
 					PI_OFFLINE: "1",
+					// The driver runs on Node, where sessions open only in the JSONL store through the developer hatch (#5822).
+					SENPI_SESSION_STORE: "jsonl",
 					SENPI_CODING_AGENT_DIR: inheritedAgentDir,
 				},
 			});

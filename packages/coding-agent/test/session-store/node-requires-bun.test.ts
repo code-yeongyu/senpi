@@ -241,25 +241,29 @@ describe.skipIf(process.versions.bun !== undefined)("a CLI process on Node (K9.a
 		);
 	});
 
-	it("refuses to start a multi-session RPC host, before any session opens", async () => {
-		const dirs = setup();
-		const result = await runCli(
-			dirs,
-			stayOnNode(dirs, "not-bun-install"),
-			[...SESSION_ARGS, "--multi-session"],
-			false,
-		);
-		expect(result.stderr.split(NODE_REQUIRES_BUN_MESSAGE)).toHaveLength(2);
-		expect(result.code).toBe(1);
-		expect(existsSync(dirs.sessions)).toBe(false);
-	});
+	it.each(["--multi-session", "--listen"])(
+		"refuses to start a %s RPC host, before any session opens",
+		async (flag) => {
+			const dirs = setup();
+			const hostArgs = flag === "--listen" ? [flag, `unix://${join(dirs.root, "h.sock")}`] : [flag];
+			const result = await runCli(dirs, stayOnNode(dirs, "not-bun-install"), [...SESSION_ARGS, ...hostArgs], false);
+			expect(result.stderr.split(NODE_REQUIRES_BUN_MESSAGE)).toHaveLength(2);
+			expect(result.code).toBe(1);
+			expect(existsSync(dirs.sessions)).toBe(false);
+		},
+	);
 
 	it("the test run's refusal log changes nothing the refusal prints, and records one NODE_HOST_REFUSED line", async () => {
 		const dirs = setup();
 		const run = stayOnNode(dirs, "not-bun-install");
 		const log = join(dirs.root, "refusals.log");
 		const unset = await runCli(dirs, run, SESSION_ARGS, false);
-		const set = await runCli(dirs, { ...run, env: { ...run.env, [NODE_HOST_REFUSAL_LOG_ENV]: log } }, SESSION_ARGS, false);
+		const set = await runCli(
+			dirs,
+			{ ...run, env: { ...run.env, [NODE_HOST_REFUSAL_LOG_ENV]: log } },
+			SESSION_ARGS,
+			false,
+		);
 		expect(unset.stderr.split(NODE_REQUIRES_BUN_MESSAGE)).toHaveLength(2);
 		expect({ code: set.code, stderr: set.stderr, stdout: set.stdout }).toEqual({
 			code: unset.code,

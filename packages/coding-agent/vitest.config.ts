@@ -11,6 +11,10 @@ quarantineVitestAgentDir();
 
 // Under Bun this config runs only the Bun-hosted files; under Node it runs everything else (test/bun-hosted-tests.ts).
 const runsOnBun = process.versions.bun !== undefined;
+// The split governs whole-suite discovery only. A run that names its test files (a targeted CI step) runs exactly those,
+// on the runtime that started it, so the split never turns a named file into "No test files found" (senpi#6036).
+const namesTestFiles = process.argv.slice(2).some((arg) => !arg.startsWith("-") && /\.test\.[cm]?[jt]sx?$/.test(arg));
+const splitsByRuntime = !namesTestFiles;
 
 export default mergeConfig(
 	baseConfig,
@@ -26,11 +30,11 @@ export default mergeConfig(
 			],
 			// test/manual-qa/ holds real-surface QA drivers, not default-suite tests (test/AGENTS.md).
 			// Run one explicitly with SENPI_MANUAL_QA=1 npx vitest run test/manual-qa/<file>.
-			...(runsOnBun ? { include: [...BUN_HOSTED_TEST_FILES] } : {}),
+			...(splitsByRuntime && runsOnBun ? { include: [...BUN_HOSTED_TEST_FILES] } : {}),
 			exclude: [
 				...configDefaults.exclude,
 				...(process.env.SENPI_MANUAL_QA ? [] : ["test/manual-qa/**"]),
-				...(runsOnBun ? [] : BUN_HOSTED_TEST_FILES),
+				...(splitsByRuntime && !runsOnBun ? BUN_HOSTED_TEST_FILES : []),
 			],
 			// Tests run offline by default; opt in with allowNetwork() from test/test-network-env.ts.
 			// Vitest runs on Node, so the Node.js runtime notice is off unless a test unstubs it.

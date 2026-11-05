@@ -932,8 +932,9 @@ jobs:
         run: node ../../scripts/run-tests.mjs vitest run test/suite/host-private-fds-pair.test.ts test/suite/host-private-fds-pair-inherit.test.ts test/suite/host-private-fds-proof-gate.test.ts test/suite/host-private-fd-inherit.test.ts --reporter=verbose
         working-directory: packages/coding-agent
 
+      # The host-lifecycle suite opens sessions, so it runs on Bun like the rest of test/bun-hosted-tests.ts (#5822).
       - name: Run RPC host lifecycle tests
-        run: node ../../scripts/run-tests.mjs vitest run test/rpc-host-lifecycle.test.ts --reporter=verbose
+        run: node ../../scripts/run-tests.mjs bun --bun ../../node_modules/vitest/vitest.mjs run test/rpc-host-lifecycle.test.ts --reporter=verbose
         working-directory: packages/coding-agent
 
       - name: Run RPC socket transport tests
