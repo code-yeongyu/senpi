@@ -368,6 +368,7 @@ export function createBrowserSkillRenderer(options: BrowserSkillOptions = {}): P
 			}
 			let sessionId: string | undefined;
 			let startCall: DaemonCall | undefined;
+			let startAnswered = false;
 			let pending: DaemonCall | undefined;
 			const onAbort = (): void => pending?.abort();
 			signal?.addEventListener("abort", onAbort, { once: true });
@@ -421,6 +422,13 @@ export function createBrowserSkillRenderer(options: BrowserSkillOptions = {}): P
 					return reply;
 				});
 				startReply.catch(() => undefined);
+				// An explicit error reply means the daemon created nothing, so the abandoned-session recovery below
+				// (a fixed wait plus a status call) is not owed.
+				startReply
+					.then((reply) => {
+						if (reply.error) startAnswered = true;
+					})
+					.catch(() => undefined);
 				const started = record(await settleCall("session.start", startCall, startReply));
 				const startedId = started?.session_id;
 				if (typeof startedId !== "string" || !startedId)
@@ -460,6 +468,7 @@ export function createBrowserSkillRenderer(options: BrowserSkillOptions = {}): P
 				let stableReads = 0;
 				let unsteadyReads = 0;
 				let reads = 0;
+				let refusal: BrowserSkillError | undefined;
 				for (;;) {
 					reads++;
 					try {
@@ -480,17 +489,19 @@ export function createBrowserSkillRenderer(options: BrowserSkillOptions = {}): P
 						if (steady && next.length > 0) good = { url: after, html: next, truncated: read?.truncated === true };
 						if (steady && (stableReads + 1 >= SETTLED_READS || left() <= settlePollMs)) break;
 						if (!steady && unsteadyReads >= MAX_UNSTEADY_READS) {
-							throw skip(
+							refusal = skip(
 								"render_failed",
 								"the browser read failed",
 								"the page kept navigating while it was read",
 							);
+							throw refusal;
 						}
 						if (reads >= MAX_SETTLE_READS) break;
 					} catch (error) {
-						// A read that fails after an earlier one succeeded keeps the page already in hand; only a render
-						// that read nothing at all fails.
-						if (good === undefined || signal?.aborted || error instanceof BrowserSkillError) throw error;
+						// A read that fails after an earlier one succeeded keeps the page already in hand, whether the
+						// daemon answered with an error, lost the tab, or never answered at all. Only an abort, a render
+						// that read nothing at all, and this loop's own refusal still fail.
+						if (good === undefined || signal?.aborted || error === refusal) throw error;
 						break;
 					}
 					await delay(settlePollMs);
@@ -511,7 +522,7 @@ export function createBrowserSkillRenderer(options: BrowserSkillOptions = {}): P
 				);
 			} finally {
 				signal?.removeEventListener("abort", onAbort);
-				if (sessionId === undefined && startCall !== undefined) {
+				if (sessionId === undefined && startCall !== undefined && !startAnswered) {
 					sessionId = await abandonedSession(sockPath, controllerName, statusTimeoutMs);
 				}
 				if (sessionId !== undefined) {

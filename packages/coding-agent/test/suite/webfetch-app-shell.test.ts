@@ -564,4 +564,48 @@ describe("webfetch renders app shells only through the connected browser, incogn
 		expect(details.rendered).toBe(true);
 		expect(reads).toBe(12);
 	});
+
+	it.each([
+		["the daemon answers a later read with an error", "error"],
+		["the tab is gone by a later read", "notab"],
+	] as const)("keeps the page it already read when %s", async (_name, mode) => {
+		const url = await serveHtml(APP_SHELL);
+		let reads = 0;
+		let lists = 0;
+		const daemon = await fakeDaemon(
+			connectedBrowser(url, {
+				"tool.get_html": () => {
+					reads++;
+					if (mode === "error" && reads > 2) return { error: { code: "internal", message: "read failed" } };
+					const body = RENDERED.replace("Team board", `Team board ${"x".repeat(reads)}`);
+					return { result: { html: body, truncated: false, byte_size: body.length, tab_id: 1 } };
+				},
+				"tool.tab_list": () => {
+					lists++;
+					if (mode === "notab" && lists > 4) return { result: { tabs: [] } };
+					return { result: { tabs: [{ tab_id: 1, url, scope: "agent" }] } };
+				},
+			}),
+		);
+
+		const { details, userText } = await fetchWith(createWebfetchTool({ renderer: renderer(daemon) }), url);
+
+		expect(details.rendered).toBe(true);
+		expect(userText).toContain("Three cards are waiting for review");
+		expect(daemon.calls.at(-1)?.method).toBe("session.stop");
+	});
+
+	it("does not wait for an abandoned session when session.start answered with an error", async () => {
+		const url = await serveHtml(APP_SHELL);
+		const daemon = await fakeDaemon(
+			connectedBrowser(url, { "session.start": () => ({ error: { code: "internal", message: "no window" } }) }),
+		);
+
+		const started = Date.now();
+		const { details } = await fetchWith(createWebfetchTool({ renderer: renderer(daemon) }), url);
+
+		expect(details.renderSkipped?.reason).toBe("incognito_unavailable");
+		expect(Date.now() - started).toBeLessThan(1_500);
+		expect(daemon.calls.filter((call) => call.method === "system.status")).toHaveLength(1);
+	});
 });
