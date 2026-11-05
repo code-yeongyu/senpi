@@ -78,4 +78,15 @@ describe("the loop-hook lane is fenced by the tool scope's floor (senpi#5916)", 
 		expect(h.runs).toEqual(["before_agent_start"]);
 		expect(kinds(h.sent).filter((kind) => kind === "hook.reply")).toHaveLength(2);
 	});
+
+	it("a stale owner re-sending a known call id below the epoch it ran at is refused, not answered", async () => {
+		const h = await hand();
+		await h.fence.raise("s", 1, "brain-b");
+		await h.fence.raise("s", 2, "brain-b");
+		await h.call("c2", 2);
+		await h.call("c2", 1);
+		expect(h.runs).toEqual(["before_agent_start"]);
+		expect(kinds(h.sent).filter((kind) => kind === "hook.reply")).toHaveLength(1);
+		expect(h.sent.at(-1)).toMatchObject({ kind: "hook.failed", callId: "c2", error: "epoch_fenced" });
+	});
 });

@@ -51,6 +51,8 @@ export function serveLoopHooks(options: LoopHookHandOptions): LoopHookHand {
 	const { transport, lane } = options;
 	const instance = options.instance ?? crypto.randomUUID();
 	const answers = new Map<string, LoopHookMessage | undefined>();
+	/** The epoch each known call was admitted at: a re-send below it is a stale owner reusing the id (senpi#5916). */
+	const admittedAt = new Map<string, number>();
 	let dead = false;
 
 	const send = (message: LoopHookMessage): Promise<void> => transport.send(lane, encodeLoopHookMessage(message));
@@ -81,6 +83,9 @@ export function serveLoopHooks(options: LoopHookHandOptions): LoopHookHand {
 
 	const serve = async (call: LoopHookCall): Promise<void> => {
 		if (answers.has(call.callId)) {
+			const at = admittedAt.get(call.callId);
+			if (at !== undefined && (call.epoch ?? 0) < at)
+				return send({ kind: "hook.failed", callId: call.callId, error: "epoch_fenced" });
 			const answer = answers.get(call.callId);
 			if (answer !== undefined) await send(answer);
 			return;
@@ -89,6 +94,7 @@ export function serveLoopHooks(options: LoopHookHandOptions): LoopHookHand {
 		if (refusal !== undefined) return send({ kind: "hook.failed", callId: call.callId, error: refusal });
 		point("received", call.callId);
 		answers.set(call.callId, undefined);
+		if (call.epoch !== undefined) admittedAt.set(call.callId, call.epoch);
 		await send({ kind: "hook.started", callId: call.callId, instance });
 		point("started", call.callId);
 		let answer: LoopHookMessage;
