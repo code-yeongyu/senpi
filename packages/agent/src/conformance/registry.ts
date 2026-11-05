@@ -6,6 +6,7 @@ import { LIFECYCLE_REGISTRY } from "../execution/testing/lifecycle-registry.ts";
 import { NEST_REGISTRY } from "../execution/testing/nest-registry.ts";
 import { WAKE_EXEC_REGISTRY } from "../execution/testing/wake-registry.ts";
 import { SEQ_REGISTRY } from "../execution/testing/seq-registry.ts";
+import { DIALOG_REGISTRY } from "../execution/testing/dialog-registry.ts";
 
 export const ADAPTER_KINDS = ["store", "wake", "transport", "executor", "host"] as const;
 
@@ -273,4 +274,5 @@ export const CONFORMANCE_REGISTRY: readonly RegisteredCase[] = [
 	faultCase(5, "drop-reattach"),
 	...HAND_REGISTRY,
 	...HOOK_REGISTRY,
+	...DIALOG_REGISTRY,
 ];

@@ -89,6 +89,7 @@ export type {
 } from "../execution/ledger-types.ts";
 export { LEDGER_CASES } from "../execution/testing/ledger-cases.ts";
 export { KILL_LEDGER_CASES, KILL_LEDGER_DECLARATIONS } from "../execution/testing/kill-ledger.ts";
+export { DIALOG_CASES, type DialogDeclaration, DIALOG_DECLARATIONS } from "../execution/testing/dialog-cases.ts";
 export { FAULT_HAND_CASES } from "../execution/testing/fault-hand-cases.ts";
 export type { HandCaseAdapters } from "../execution/testing/hand-harness.ts";
 export type { KillHandDeclaration } from "../execution/testing/kill-hand.ts";
