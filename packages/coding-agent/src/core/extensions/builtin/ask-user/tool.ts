@@ -324,6 +324,7 @@ export function createAskUserTool(variant: AskUserVariant, pi: ExtensionAPI, sta
 			: "Ask the user one to four concise questions.";
 	return {
 		name: TOOL_NAMES[variant],
+		runs: "brain",
 		workspaceEffect: "read",
 		label: "Ask user",
 		exposure: "direct",

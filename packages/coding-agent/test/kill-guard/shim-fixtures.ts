@@ -1,7 +1,7 @@
 // Shared setup for the kill guard's runtime-layer tests (senpi#5349, L2). The "real" kill/pkill/killall are recording
 // fakes placed on PATH before the system directories and the judge is a recording fake; the only pids a test names for
 // an allowed `kill` are sleepers it spawned in their own process group, so an escaped signal reaches nothing else.
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -39,18 +39,67 @@ export interface OwnedSleeper {
 }
 
 /**
+ * Worst-case lifetime of a sleeper orphaned by a SIGKILLed worker (senpi#5410):
+ * 60 s instead of the previous 300 s. The suites that use these sleepers run in
+ * about a second, so 60 s still leaves a wide margin.
+ */
+const SLEEPER_TTL_SECONDS = 60;
+
+/** Sleepers still alive in this process, so exit/signal handlers can stop them (senpi#5410). */
+const liveSleepers = new Set<ChildProcess>();
+let sleeperExitHooksRegistered = false;
+
+function stopAllOwnedSleepers(): void {
+	for (const child of liveSleepers) {
+		try {
+			child.kill();
+		} catch {
+			// Already gone; nothing to stop.
+		}
+	}
+	liveSleepers.clear();
+}
+
+function registerSleeperExitHooks(): void {
+	if (sleeperExitHooksRegistered) return;
+	sleeperExitHooksRegistered = true;
+	// `afterAll` never runs when the worker is killed; stop the sleepers on any
+	// graceful exit instead of orphaning them for the full TTL.
+	process.on("exit", stopAllOwnedSleepers);
+	for (const signal of ["SIGINT", "SIGTERM"] as const) {
+		const handler = () => {
+			stopAllOwnedSleepers();
+			process.removeListener(signal, handler);
+			process.kill(process.pid, signal);
+		};
+		process.on(signal, handler);
+	}
+}
+
+/**
  * A `sleep` the test spawned as the leader of its own session and process group: the only pid (or, negated, group) a
  * test lets a shell's `kill` name, so even a signal that escaped the recorders reaches only this child.
+ * The sleeper is stopped on process exit (senpi#5410), so a killed worker never orphans it past the 60 s TTL.
  */
 export function spawnOwnedSleeper(): OwnedSleeper {
-	const child = spawn("sleep", ["300"], { detached: true, stdio: "ignore" });
+	registerSleeperExitHooks();
+	const child = spawn("sleep", [String(SLEEPER_TTL_SECONDS)], { detached: true, stdio: "ignore" });
 	child.unref();
 	const pid = child.pid;
 	if (pid === undefined) throw new Error("the test's sleeper did not start");
+	liveSleepers.add(child);
+	let stopped = false;
 	return {
 		pid,
 		stop() {
-			child.kill();
+			if (stopped) return;
+			stopped = true;
+			liveSleepers.delete(child);
+			try {
+				child.kill();
+			} catch {
+				// Already gone; nothing to stop.
+			}
 		},
 	};
 }

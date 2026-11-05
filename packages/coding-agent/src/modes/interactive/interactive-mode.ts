@@ -309,11 +309,13 @@ import {
 import { getModelSearchText } from "./model-search.ts";
 import { PAUSE_STATUS_KEY, pauseFooterText, resumeCommandTarget } from "./pause-footer.ts";
 import {
+	episodeOwnsFailure,
 	isNetworkProviderError,
-	isNetworkProviderMessage,
 	isRetryableProviderError,
+	isRetryableProviderMessage,
 	ProviderErrorPresentation,
 } from "./provider-error-presentation.ts";
+import { providerErrorReason } from "./provider-error-reason.ts";
 import { replayAssistantTools } from "./replay-assistant-tools.ts";
 import { interactiveErrorText } from "./required-compaction-wording.ts";
 import { allScopeSessions, chooseResumePath, currentScopeSessions } from "./resume-rebind.ts";
@@ -5604,7 +5606,7 @@ export class InteractiveMode {
 						this.session.retryAttempt,
 						this.session.currentAbortSource,
 					);
-					if (isNetworkProviderMessage(renderedMessage)) {
+					if (isRetryableProviderMessage(renderedMessage, this.session)) {
 						this.getProviderErrors().record(renderedMessage.errorMessage ?? "", this.toolOutputExpanded);
 					} else if (renderedMessage.stopReason === "stop" || renderedMessage.stopReason === "toolUse") {
 						this.providerErrors?.clear();
@@ -5722,7 +5724,13 @@ export class InteractiveMode {
 				}
 				this.detachAssistantTextSegments();
 				this.clearPendingTools();
-				if (event.failure !== undefined && !event.willRetry && !failureAlreadyDescribed(event.messages))
+				// A failure the quiet episode owns gets its one final notice when the episode finishes (senpi#6012).
+				if (
+					event.failure !== undefined &&
+					!event.willRetry &&
+					!failureAlreadyDescribed(event.messages) &&
+					!episodeOwnsFailure(event.messages, this.providerErrors, this.session)
+				)
 					this.showError(formatProviderFailure(event.failure));
 
 				this.ui.requestRender();
@@ -6196,6 +6204,7 @@ export class InteractiveMode {
 				event.delayMs,
 				indicator,
 				isRetryableProviderError(event.errorMessage),
+				providerErrorReason(event.errorMessage),
 			),
 		);
 		this.ui.requestRender();
@@ -6433,7 +6442,7 @@ export class InteractiveMode {
 				break;
 			}
 			case "assistant": {
-				if (isNetworkProviderMessage(message)) {
+				if (isRetryableProviderMessage(message, this.session)) {
 					this.getProviderErrors().record(message.errorMessage ?? "", this.toolOutputExpanded);
 					this.providerErrors?.finish();
 				} else if (message.stopReason === "stop" || message.stopReason === "toolUse") {
@@ -6448,7 +6457,7 @@ export class InteractiveMode {
 					this.getMarkdownTransformers(),
 				);
 				assistantComponent.setExpanded(this.toolOutputExpanded);
-				assistantComponent.setProviderErrorOwned(isNetworkProviderMessage(message));
+				assistantComponent.setProviderErrorOwned(isRetryableProviderMessage(message, this.session));
 				if (options?.replayOwnsTurnNotice === true) assistantComponent.setOwnsTurnNotice(true);
 				if (options?.replayOwnsTurnNotice === false) assistantComponent.setProviderErrorOwned(true);
 				this.chatContainer.addChild(assistantComponent);
@@ -6471,7 +6480,7 @@ export class InteractiveMode {
 	private syncTrailingAssistantText(message: AssistantMessage): void {
 		if (!this.streamingComponent) return;
 		this.streamingComponent.setProviderErrorOwned(
-			isNetworkProviderMessage(message) || headNoticeShownElsewhere(message),
+			isRetryableProviderMessage(message, this.session) || headNoticeShownElsewhere(message),
 		);
 		const head = assistantStreamingHeadMessage(message);
 		// Single writer: while smooth streaming paces the head (no toolCall block),
@@ -6503,7 +6512,7 @@ export class InteractiveMode {
 			}
 			const runMessage: AssistantMessage = { ...message, content: runBlocks };
 			// Only the run that ends the message shows the turn's error; earlier runs repeat it otherwise (senpi#4954).
-			const errorShownElsewhere = isNetworkProviderMessage(message) || index < content.length;
+			const errorShownElsewhere = isRetryableProviderMessage(message, this.session) || index < content.length;
 			const existing = this.assistantTextSegments.get(runStart);
 			if (existing) {
 				existing.setProviderErrorOwned(errorShownElsewhere);
