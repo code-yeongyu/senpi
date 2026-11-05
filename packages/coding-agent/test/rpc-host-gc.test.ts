@@ -8,6 +8,7 @@
 import { realpathSync } from "node:fs";
 import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHostDaemonPaths } from "../src/modes/rpc/host-daemon-paths.ts";
 import { gcHostEndpoints } from "../src/modes/rpc/host-gc.ts";
@@ -107,7 +108,16 @@ describe.skipIf(process.platform === "win32")("gc against real supervised hosts"
 
 	it("removes an endpoint whose host idled out, which status --all still listed", async () => {
 		const qa = endpointScratch("gcb2");
-		const supervisor = await realHost(qa, qa.legacy, { idleExitMs: 500 });
+		// The ensure reaches its readiness probe only after the endpoint has been published for four idle windows, as
+		// a loaded machine can make it: the window waits for that first client, so the host idles out after the
+		// ensure released it, never before it was probed (senpi#6001).
+		const supervisor = await realHost(qa, qa.legacy, {
+			idleExitMs: 500,
+			beforePidFileWrite: async () => {
+				await fileAppears(qa.legacy);
+				await delay(2_000);
+			},
+		});
 		expect(await waitForPidGone(supervisor, 60_000)).toBe(true);
 		const paths = createHostDaemonPaths({ socket: qa.legacy, agentDir: qa.agentDir });
 		await expect(stat(paths.pointerFile)).rejects.toEqual(gone);
