@@ -4,7 +4,7 @@
 // cases FAIL with the expected diff row.
 //
 //   node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-mutations-qa.mjs \
-//     [--mutations id,id] [--pipeline legacy] [--scratch-root <dir>] [--keep-scratch] [--evidence <slug>]
+//     [--mutations id,id] [--scratch-root <dir>] [--keep-scratch] [--evidence <slug>]
 //   node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-mutations-qa.mjs --self-test
 //
 // The working tree is never patched. The driver makes one scratch copy of the (clean, committed) tree, runs the
@@ -60,7 +60,6 @@ function parseArgs(argv) {
 	return {
 		selfTest: argv.includes("--self-test"),
 		selected,
-		pipeline: value("--pipeline") ?? "legacy",
 		scratchRoot: value("--scratch-root") ?? process.env.TMPDIR ?? tmpdir(),
 		keepScratch: argv.includes("--keep-scratch"),
 		evidence: value("--evidence"),
@@ -68,8 +67,8 @@ function parseArgs(argv) {
 }
 
 /** Run the EQ harness in the scratch copy; the receipt's rows are the result (stdout is kept in the log). */
-function runEq(dir, { surface, caseIds, pipeline, slug, log }) {
-	const args = [HARNESS_REL, "--compare", "--pipeline", pipeline, "--placement", "fused"];
+function runEq(dir, { surface, caseIds, slug, log }) {
+	const args = [HARNESS_REL, "--compare", "--placement", "fused"];
 	args.push("--surface", surface, "--cases", caseIds.join(","), "--evidence", slug);
 	return new Promise((resolve, reject) => {
 		const out = createWriteStream(log);
@@ -204,7 +203,6 @@ async function main() {
 	const receipt = {
 		platform,
 		head: scratch.head,
-		pipeline: options.pipeline,
 		workingTreeUntouched: untouched,
 		mutations: rows,
 	};

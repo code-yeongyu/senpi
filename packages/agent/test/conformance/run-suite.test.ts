@@ -11,7 +11,10 @@ import { KILL_WAKE_CASES } from "../../src/durable/testing/kill-wake.ts";
 import { MULTI_HOST_CASES } from "../../src/durable/testing/multi-host-cases.ts";
 import { STORE_CASES } from "../../src/durable/testing/store-cases.ts";
 import { WAKE_CASES } from "../../src/durable/testing/wake-cases.ts";
+import { EPOCH_CASES } from "../../src/execution/testing/epoch-cases.ts";
 import { FAULT_HAND_CASES } from "../../src/execution/testing/fault-hand-cases.ts";
+import { KILL_EPOCH_CASES } from "../../src/execution/testing/kill-epoch.ts";
+import { MULTI_EPOCH_CASES } from "../../src/execution/testing/multi-epoch-cases.ts";
 import { KILL_HAND_CASES } from "../../src/execution/testing/kill-hand.ts";
 import { KILL_HOOK_CASES } from "../../src/execution/testing/kill-hook.ts";
 import { BATCH_CASES } from "../../src/execution/testing/batch-cases.ts";
@@ -138,11 +141,14 @@ describe("the ./conformance export", () => {
 			"CONFORMANCE_REGISTRY",
 			"CONSENT_CASES",
 			"DurableStoreError",
+			"EPOCH_CASES",
 			"FAULT_HAND_CASES",
 			"FAULT_PROFILE_NAMES",
 			"FAULT_TRANSPORT_CASES",
 			"KILL_BATCH_CASES",
 			"KILL_BATCH_DECLARATIONS",
+			"KILL_EPOCH_CASES",
+			"KILL_EPOCH_DECLARATIONS",
 			"KILL_HAND_CASES",
 			"KILL_HAND_DECLARATIONS",
 			"KILL_HOOK_CASES",
@@ -158,6 +164,7 @@ describe("the ./conformance export", () => {
 			"LEDGER_CASES",
 			"LIFECYCLE_CASES",
 			"MULTI_CASES",
+			"MULTI_EPOCH_CASES",
 			"MULTI_HAND_CASES",
 			"MULTI_HOST_CASES",
 			"MULTI_LIFECYCLE_CASES",
@@ -234,6 +241,9 @@ const HOST_IMPLEMENTATIONS = new Map<string, CaseImplementation<BunSqliteHostAda
 	...KILL_HOOK_CASES,
 	...MULTI_HAND_CASES,
 	...FAULT_HAND_CASES,
+	...EPOCH_CASES,
+	...MULTI_EPOCH_CASES,
+	...KILL_EPOCH_CASES,
 ]);
 
 function resolveHost(name: string, hosts: Readonly<Record<string, HostFactory>>): HostFactory {

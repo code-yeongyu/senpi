@@ -1115,8 +1115,6 @@
       "packages/coding-agent/src/modes/rpc/host-handover-wire.ts": ["handoverWire"],
       // pre-existing at origin main aceb1cc1d9: unused exports RPC_SESSION_IDLE_EVICTION_MS_ENV, RPC_HOST_EMPTY_EXIT_MS_ENV, DEFAULT_SESSION_IDLE_EVICTION_MS, DEFAULT_HOST_EMPTY_EXIT_MS
       "packages/coding-agent/src/modes/rpc/host-idle-policy.ts": ["DEFAULT_HOST_EMPTY_EXIT_MS", "DEFAULT_SESSION_IDLE_EVICTION_MS", "RPC_HOST_EMPTY_EXIT_MS_ENV", "RPC_SESSION_IDLE_EVICTION_MS_ENV"],
-      // pre-existing at origin main aceb1cc1d9: unused exports OWNER_EXIT_GRACE_MS
-      "packages/coding-agent/src/modes/rpc/host-lifecycle-activity.ts": ["OWNER_EXIT_GRACE_MS"],
       // pre-existing at origin main aceb1cc1d9: parseColdStart: declared here, reported because the host-lifecycle.ts entry re-exports it and nothing imports it (newly export-checked; the file stays checked)
       "packages/coding-agent/src/modes/rpc/host-lifecycle-policy.ts": ["parseColdStart"],
       // pre-existing at origin main aceb1cc1d9: unused exports CHILD_STOP_TIMEOUT_MS, childExited, waitForChildExit
@@ -1171,8 +1169,8 @@
       "packages/coding-agent/src/modes/rpc/session-router-routing.ts": ["dispatch", "setSessionContext"],
       // pre-existing at origin main aceb1cc1d9: unused exports DETACHED_RETIREMENT_GRACE_MS
       "packages/coding-agent/src/modes/rpc/session-sweep.ts": ["DETACHED_RETIREMENT_GRACE_MS"],
-      // pre-existing at origin main aceb1cc1d9: unused exports SOCKET_IDENTITY_WAIT_MS, lsofSocketHolders
-      "packages/coding-agent/src/modes/rpc/socket-ownership.ts": ["SOCKET_IDENTITY_WAIT_MS", "lsofSocketHolders"],
+      // pre-existing at origin main aceb1cc1d9: unused export SOCKET_IDENTITY_WAIT_MS
+      "packages/coding-agent/src/modes/rpc/socket-ownership.ts": ["SOCKET_IDENTITY_WAIT_MS"],
       // pre-existing at origin main aceb1cc1d9: unused exports SOCKET_CUT_GRACE_MS
       "packages/coding-agent/src/modes/rpc/socket-sink.ts": ["SOCKET_CUT_GRACE_MS"],
       // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_LAUNCH_SLOTS
