@@ -25,8 +25,8 @@ export interface HandRow {
 
 /**
  * Where hands come from: the device service in production, an in-process link in tests. `link` is called only for a
- * listed, reachable hand. The directory closes a link when its hand leaves, and the remote host then answers that
- * hand's calls with error results.
+ * listed, reachable hand, once per session that chooses it, and returns a transport of its own for that session: the
+ * selection closes it when the session leaves the hand or ends, which never touches another session on the same hand.
  */
 export interface HandDirectory {
 	readonly list: () => readonly HandRow[];
@@ -52,14 +52,27 @@ export interface HandSelection {
 		session: HandSession,
 		device: string | null,
 	) => { readonly ok: true } | { readonly ok: false; readonly refusal: HandRefusal };
-	/** Re-applies the choice a session file recorded; a hand that cannot be linked now fails the session's calls. */
+	/**
+	 * Starts tracking a session that just opened and re-applies the choice its file recorded; a hand that cannot be
+	 * linked now fails the session's calls. Nothing from an earlier runtime of the same id is kept.
+	 */
 	readonly restore: (durableSessionId: string, session: HandSession) => void;
+	/** Forgets a session that ended and closes its link to the hand. */
+	readonly release: (durableSessionId: string) => void;
 }
 
-interface Applied {
+interface SessionHands {
+	/** The ToolHost the session had before any choice; `null` gives it back. */
 	readonly own: ToolHost | undefined;
-	readonly device: string;
-	readonly remote: { close(): void };
+	readonly device: string | null;
+	readonly remote: { close(): void } | undefined;
+}
+
+export interface HandSelectionOptions {
+	/** Wraps every host the selection installs (the presence gate on a headless engine with presence). */
+	readonly gate?: (durableSessionId: string, host: ToolHost) => ToolHost;
+	/** Called after a session's hand changes, with the device or `null` for local. */
+	readonly onChange?: (durableSessionId: string, device: string | null) => void;
 }
 
 /** A remote host on a transport that never connects: each call it gets ends as "The hand is unreachable". */
@@ -82,53 +95,66 @@ function recordedDevice(session: HandSession): string | null {
 	return device;
 }
 
-export function createHandSelection(directory: HandDirectory): HandSelection {
-	const applied = new Map<string, Applied>();
+export function createHandSelection(directory: HandDirectory, options: HandSelectionOptions = {}): HandSelection {
+	const sessions = new Map<string, SessionHands>();
+	const gate = options.gate ?? ((_id: string, host: ToolHost) => host);
+
+	const stateOf = (durableSessionId: string, session: HandSession): SessionHands => {
+		const known = sessions.get(durableSessionId);
+		if (known !== undefined) return known;
+		const fresh = { own: session.agent.toolHost, device: null, remote: undefined };
+		sessions.set(durableSessionId, fresh);
+		return fresh;
+	};
 
 	const install = (
 		durableSessionId: string,
 		session: HandSession,
-		device: string,
-		remote: ToolHost & { close(): void },
+		device: string | null,
+		remote: (ToolHost & { close(): void }) | undefined,
 	) => {
-		const previous = applied.get(durableSessionId);
-		previous?.remote.close();
-		applied.set(durableSessionId, {
-			own: previous === undefined ? session.agent.toolHost : previous.own,
-			device,
-			remote,
-		});
-		session.agent.toolHost = remote;
+		const state = stateOf(durableSessionId, session);
+		state.remote?.close();
+		sessions.set(durableSessionId, { own: state.own, device, remote });
+		session.agent.toolHost = remote === undefined ? state.own : gate(durableSessionId, remote);
+		options.onChange?.(durableSessionId, device);
 	};
 
-	const linked = (device: string) => createRemoteToolHost(directory.link(device));
+	const linked = (device: string): ToolHost & { close(): void } => {
+		try {
+			return createRemoteToolHost(directory.link(device));
+		} catch {
+			return unreachableHost();
+		}
+	};
 
 	return {
 		hands: () => directory.list(),
-		selected: (durableSessionId) => applied.get(durableSessionId)?.device ?? null,
+		selected: (durableSessionId) => sessions.get(durableSessionId)?.device ?? null,
 		select: (durableSessionId, session, device) => {
-			if (device === null) {
-				const previous = applied.get(durableSessionId);
-				if (previous !== undefined) {
-					previous.remote.close();
-					session.agent.toolHost = previous.own;
-					applied.delete(durableSessionId);
-				}
-				session.sessionManager.appendCustomEntry(HAND_SELECTION_ENTRY, { device: null });
-				return { ok: true };
+			if (stateOf(durableSessionId, session).device === device) return { ok: true };
+			if (device !== null) {
+				const row = directory.list().find((hand) => hand.device === device);
+				if (row === undefined) return { ok: false, refusal: "hand_not_listed" };
+				if (!row.reachable) return { ok: false, refusal: "hand_unreachable" };
 			}
-			const row = directory.list().find((hand) => hand.device === device);
-			if (row === undefined) return { ok: false, refusal: "hand_not_listed" };
-			if (!row.reachable) return { ok: false, refusal: "hand_unreachable" };
-			install(durableSessionId, session, device, linked(device));
+			// Recorded first: a failed write leaves the session as it was.
 			session.sessionManager.appendCustomEntry(HAND_SELECTION_ENTRY, { device });
+			install(durableSessionId, session, device, device === null ? undefined : linked(device));
 			return { ok: true };
 		},
 		restore: (durableSessionId, session) => {
+			sessions.get(durableSessionId)?.remote?.close();
+			sessions.delete(durableSessionId);
+			stateOf(durableSessionId, session);
 			const device = recordedDevice(session);
 			if (device === null) return;
 			const row = directory.list().find((hand) => hand.device === device);
 			install(durableSessionId, session, device, row?.reachable === true ? linked(device) : unreachableHost());
+		},
+		release: (durableSessionId) => {
+			sessions.get(durableSessionId)?.remote?.close();
+			sessions.delete(durableSessionId);
 		},
 	};
 }

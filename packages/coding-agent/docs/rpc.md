@@ -1428,7 +1428,8 @@ ToolHost. `null` gives the session back its own ToolHost. A device that is not l
 `hand_not_listed`, and a listed one with no carrier up with `hand_unreachable`, both with `errorData.device`; a host
 without a directory answers `hand_selection_unsupported`. When the session opens again, the recorded hand is applied
 again. If it cannot be linked then, the session's tool calls end as "The hand is unreachable" error results: a chosen
-hand never falls back to running the calls in this process.
+hand never falls back to running the calls in this process. Like `list_sessions`, `list_hands` needs no attachment, so
+any connection may read a session's recorded hand.
 
 ### Host identity (`get_protocol_info`)
 
