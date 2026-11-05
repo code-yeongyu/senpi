@@ -1,3 +1,57 @@
+## 2026-11-03 - session_start handlers carry open-timing spans (senpi#5709, fixes #5707)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: with `SENPI_OPEN_TIMING=1`, `dispatchEmit` writes one `senpi open-timing` stderr line per `session_start` handler, naming the extension. With the flag unset, the timer is a no-op and no clock is read.
+
+### Why
+
+- A warm `open_session` idled 2.6 s on a macOS host inside the binding phase. Per-handler timing is what named the `openai-image-gen` handler as the one holding it.
+
+### Why an extension could not handle it
+
+- Handler dispatch is the runner's own loop. An extension cannot time the other extensions' handlers.
+
+### Expected merge conflict zones
+
+- LOW: `dispatchEmit` in `runner.ts` (one timer line before the handler loop, one mark after each handler).
+
+## 2026-10-30 - AgentSettledEvent.fallbackExhausted (senpi#3709)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `AgentSettledEvent` gains an optional `fallbackExhausted?: { resumeAt?: number }`. It is present when every fallback rung failed and at least one failure was limit-shaped; `resumeAt` (epoch ms) is the soonest future reset the run named, or its latest past reset if all passed. `docs/extensions.md` documents it.
+
+### Why
+
+- A resumer, such as the goal extension, needs to know that the ladder is spent and when it can recover, so it can wait for that reset instead of retrying into the same limits.
+
+### Why an extension could not handle it
+
+- This is the event contract itself. The session is the only producer of the information.
+
+### Expected merge conflict zones
+
+- LOW: the `AgentSettledEvent` interface.
+
+## 2026-10-30 - ProviderConfig.localOnly capability flag (senpi#5028)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: optional `localOnly` on `ProviderConfig`. A provider whose every request runs a binary on this machine, under a login stored on this machine, sets it. `anthropic-subscription` and `cursor-cli-oauth` set it; nothing reads it yet.
+
+### Why
+
+senpi#5028 (SUBP-LOCAL): later brain/hand work (senpi#4998) needs to tell a provider that can only be served where its local binary and login live from a hosted one. Recording it now as inert metadata keeps that later change small and leaves one-machine selection and resolution byte-identical.
+
+### Why an extension could not handle it
+
+The flag is the extension's way to declare the capability on its registration; the registration type is core API.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `ProviderConfig`, after `ownsAccountSelection`.
+
 ## 2026-11-03 - Tools carry full-section guidelines (senpi#5665 selection) (senpi#5665)
 
 ### What changed

@@ -98,6 +98,7 @@ import {
 	validateExtensionProvider,
 } from "./provider-composer.ts";
 import { createProviderSemaphores } from "./provider-concurrency.ts";
+import { configuredAuthIsHeaderOnly } from "./provider-request-auth.ts";
 import { type ProviderOrigin, providerOriginOf } from "./provider-origin.ts";
 import { remoteCatalogServesProvider, withRemoteCatalog } from "./remote-catalog-provider.ts";
 import { RuntimeCredentials } from "./runtime-credentials.ts";
@@ -980,6 +981,15 @@ export class ModelRuntime implements Models {
 		return this.resolveProviderAuth(providerId).status;
 	}
 
+	/** Whether the provider's only credential is a configured header: no configured key, and no key of its own. */
+	providerAuthIsHeaderOnly(providerId: string): boolean {
+		return configuredAuthIsHeaderOnly(
+			this.config.getProvider(providerId),
+			this.extensionProviders.get(providerId),
+			this.snapshot.auth.get(providerId),
+		);
+	}
+
 	/**
 	 * The provider's auth status plus whether it is a non-stored sign-in (#3537). `signIn` is set
 	 * only by the last branch, the provider's own check resolving `type: "oauth"`, so a runtime key,
@@ -1048,11 +1058,15 @@ export class ModelRuntime implements Models {
 				: undefined;
 		const upstreamModelId = compatibility.upstreamModelId;
 		const requestModel: TModel =
-			resolution.auth.baseUrl || upstreamModelId
+			resolution.auth.baseUrl || upstreamModelId || ((resolution.auth.api || resolution.auth.compat) && isModelType(model, "chat"))
 				? {
 						...model,
 						...(upstreamModelId ? { id: upstreamModelId } : {}),
 						...(resolution.auth.baseUrl ? { baseUrl: resolution.auth.baseUrl } : {}),
+						...(resolution.auth.api && isModelType(model, "chat") ? { api: resolution.auth.api } : {}),
+						...(resolution.auth.compat && isModelType(model, "chat")
+							? { compat: { ...model.compat, ...resolution.auth.compat } }
+							: {}),
 					}
 				: model;
 		const rejectedTokenStatuses = provider.auth.oauth?.rejectedTokenStatuses;

@@ -1,39 +1,50 @@
-import { randomBytes, randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:net";
 import type { Duplex } from "node:stream";
 import { isRecord } from "../../core/extensions/builtin/mcp/modern/form-schema.ts";
+import {
+	McpPresenterAccounts,
+	type AccountPrincipal,
+	type PresenterAccountAuthority,
+} from "./mcp-presenter-account.ts";
 import type { McpPresenterAuthority, McpPresenterRegistration } from "./mcp-presenter-authority.ts";
 import type { McpFormBinding } from "../../core/mcp-form-types.ts";
-import type { SessionEventWriter } from "./session-event-writer.ts";
+import type { PresenterHostSurface } from "./mcp-presenter-host-surface.ts";
 import { McpPresenterEnrollment, type PresenterPrincipal } from "./mcp-presenter-enrollment.ts";
-import { McpPresenterSuccessors } from "./mcp-presenter-successor.ts";
-import { privateFrames, send, signed } from "./mcp-presenter-wire.ts";
+import { features } from "./mcp-presenter-grants.ts";
+import { McpPresenterSuccessors, type LaunchOwner } from "./mcp-presenter-successor.ts";
+import { challengeTranscript, privateFrames, send, signed } from "./mcp-presenter-wire.ts";
 
 type Owner = ReturnType<McpPresenterAuthority["enroll"]>;
-interface Principal extends PresenterPrincipal {
-	readonly sessions: WeakSet<McpFormBinding>;
-}
+type Principal =
+	| (PresenterPrincipal & { readonly kind: "inherited"; readonly sessions: WeakSet<McpFormBinding> })
+	| AccountPrincipal;
 
 /** Separate authenticated control endpoint. Ordinary RPC credentials cannot enroll or acquire. */
 export class McpPresenterControl {
-	private readonly writer: SessionEventWriter;
+	private readonly host: PresenterHostSurface;
 	private readonly authority: McpPresenterAuthority;
 	private readonly principals = new Map<string, Principal>();
 	private readonly controls = new Set<Duplex>();
 	private readonly revokeControls = new Map<Duplex, () => void>();
-	private launchOwner?: { readonly stream: Duplex; readonly principal: Principal; readonly backendGeneration: string };
+	private launchOwner?: LaunchOwner;
 	private readonly backendGenerations = new Map<Duplex, { principal: Principal; generation: string }>();
 	private readonly enrollment: McpPresenterEnrollment;
 	private readonly successors: McpPresenterSuccessors;
+	private readonly accounts: McpPresenterAccounts;
 	private readonly server: Server;
+	private readonly account: PresenterAccountAuthority | undefined;
 	readonly path: string;
 
-	constructor(writer: SessionEventWriter, path: string) {
-		this.writer = writer;
-		this.authority = writer.enableMcpPresenters();
+	constructor(host: PresenterHostSurface, path: string, account?: PresenterAccountAuthority) {
+		this.host = host;
+		this.authority = host.authority;
 		this.path = path;
+		this.account = account;
 		this.enrollment = new McpPresenterEnrollment(this.authority.instance, path);
 		this.successors = new McpPresenterSuccessors(this.authority.instance, this.enrollment.nonces);
+		this.accounts = new McpPresenterAccounts(this.authority.instance, this.principals, account, (stream) =>
+			this.revokeControls.get(stream)?.(),
+		);
 		this.server = createServer((stream) => this.manage(stream));
 	}
 
@@ -42,6 +53,8 @@ export class McpPresenterControl {
 			this.server.once("error", reject);
 			this.server.listen(this.path, () => {
 				this.server.off("error", reject);
+				// Only a listening endpoint that can enroll a same-account presenter is discoverable (senpi#4249).
+				if (this.account) this.host.advertiseMcpPresenterControl(this.path);
 				resolve();
 			});
 		});
@@ -64,15 +77,17 @@ export class McpPresenterControl {
 	/** Only the inherited launch channel may introduce the installation public key. */
 	bootstrap(stream: Duplex): void {
 		this.enrollment.bootstrap(stream, (principal) => {
-			this.principals.set(principal.id, { ...principal, sessions: new WeakSet() });
+			this.principals.set(principal.id, { ...principal, kind: "inherited", sessions: new WeakSet() });
 		});
 	}
 
 	dispose(): void {
+		this.host.withdrawMcpPresenterControl(this.path);
 		this.authority.dispose();
 		for (const stream of this.controls) stream.destroy();
 		this.controls.clear();
 		this.successors.dispose();
+		this.accounts.dispose();
 		this.enrollment.dispose();
 		this.principals.clear();
 		this.server.close();
@@ -112,6 +127,8 @@ export class McpPresenterControl {
 					return;
 				}
 				if (this.successors.receive(stream, value)) return;
+				if (this.accounts.receive(stream, value, !principal && !pending, () => clearTimeout(challengeTimer)))
+					return;
 				if (value.type === "challenge") {
 					if (
 						pending ||
@@ -123,7 +140,9 @@ export class McpPresenterControl {
 						return;
 					}
 					const requested = this.principals.get(value.principalId);
-					if (!requested || (principal && principal !== requested)) {
+					// An account principal is managed only on the stream it enrolled on (D11 S3-2).
+					const foreign = requested?.kind === "account" && requested.stream !== stream;
+					if (!requested || foreign || (principal && principal !== requested)) {
 						stream.destroy();
 						return;
 					}
@@ -133,14 +152,7 @@ export class McpPresenterControl {
 					deadline = performance.now() + 30_000;
 					clearTimeout(challengeTimer);
 					challengeTimer = setTimeout(() => stream.destroy(), 30_000);
-					transcript = JSON.stringify([
-						"mcp-presenter-control-v1",
-						this.authority.instance,
-						value.backendGeneration,
-						randomUUID(),
-						randomBytes(32).toString("hex"),
-						pending,
-					]);
+					transcript = challengeTranscript(this.authority.instance, value.backendGeneration, pending);
 					send(stream, { type: "challenge", transcript, hostInstance: this.authority.instance });
 					return;
 				}
@@ -158,6 +170,7 @@ export class McpPresenterControl {
 				clearTimeout(challengeTimer);
 				pending = undefined;
 				transcript = undefined;
+				if (this.accounts.lapsed(principal)) return;
 				owner ??= this.authority.enroll(principal.id);
 				if (backendGeneration === undefined) {
 					stream.destroy();
@@ -170,19 +183,20 @@ export class McpPresenterControl {
 					}
 				}
 				this.backendGenerations.set(stream, { principal, generation: backendGeneration });
-				this.launchOwner = { stream, principal, backendGeneration };
+				// Only the inherited launch principal can authorize a successor; never an adopted device (D11 T7).
+				if (principal.kind === "inherited") this.launchOwner = { stream, principal, backendGeneration };
 				const id = typeof command.id === "string" ? command.id : undefined;
 				try {
 					switch (command.type) {
 						case "mcp_presenter_assign": {
 							const binding =
 								typeof command.sessionId === "string"
-									? this.writer.getMcpFormBinding(command.sessionId)
+									? this.host.getMcpFormBinding(command.sessionId)
 									: undefined;
 							if (!binding || binding.epoch !== command.bindingEpoch || command.purpose !== "mcp_form")
 								throw new Error("presenter_not_authorized");
-							// Only a signed native-supervisor decision assigns an opened/adopted session.
-							// Enrollment and ordinary RPC attachment do not imply assignment.
+							// The inherited supervisor assigns sessions it opened or the user adopted; an account principal
+							// assigns itself under D1 while current. Enrollment and RPC attachment never imply assignment.
 							principal.sessions.add(binding);
 							send(stream, { type: "mcp_presenter_assigned", id, sessionId: command.sessionId });
 							return;
@@ -193,11 +207,12 @@ export class McpPresenterControl {
 								typeof command.sessionId !== "string" ||
 								typeof command.bindingEpoch !== "string" ||
 								typeof command.connectionNonce !== "string" ||
-								(command.kind !== "desktop" && command.kind !== "gateway")
+								(command.kind !== "desktop" && command.kind !== "gateway") ||
+								(command.features !== undefined && !features(command.features))
 							)
 								throw new Error("presenter_not_authorized");
-							const binding = this.writer.getMcpFormBinding(command.sessionId);
-							const connection = this.writer.findMcpPresenterConnection(command.connectionNonce);
+							const binding = this.host.getMcpFormBinding(command.sessionId);
+							const connection = this.host.findMcpPresenterConnection(command.connectionNonce);
 							if (
 								!binding ||
 								!principal.sessions.has(binding) ||
@@ -205,7 +220,7 @@ export class McpPresenterControl {
 								!connection
 							)
 								throw new Error("presenter_not_authorized");
-							const capabilities = this.writer.getConnectionCapabilities(connection.id);
+							const capabilities = this.host.getConnectionCapabilities(connection.id);
 							if (!capabilities?.includes("interactive_user") || !capabilities.includes("mcp_form_presenter_v1"))
 								throw new Error("presenter_not_authorized");
 							const context = this.authority.connectionContext(connection, command.sessionId);
@@ -216,7 +231,11 @@ export class McpPresenterControl {
 								command.attachmentEpoch !== context.attachmentEpoch
 							)
 								throw new Error("presenter_not_authorized");
-							const registration = owner.register(binding, connection, { kind: command.kind });
+							// `features` is inside the signed transcript, so the grant records only what the principal asked for.
+							const registration = owner.register(binding, connection, {
+								kind: command.kind,
+								features: command.features,
+							});
 							const grant = owner.acquire(registration);
 							registrations.set(registration.id, registration);
 							send(stream, { type: "mcp_presenter_acquired", id, registrationId: registration.id, ...grant });

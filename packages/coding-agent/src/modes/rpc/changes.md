@@ -1,3 +1,157 @@
+## 2026-11-04 - The presenter control endpoint takes a host surface, not the writer (senpi#4249)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-host-surface.ts` is new: the `PresenterHostSurface` interface (`authority`, `getMcpFormBinding`, `findMcpPresenterConnection`, `getConnectionCapabilities`, `advertiseMcpPresenterControl`, `withdrawMcpPresenterControl`).
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-control.ts`: `McpPresenterControl` takes a `PresenterHostSurface` instead of a `SessionEventWriter`. No behaviour change.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-presenters.ts`: implements `PresenterHostSurface`; its `authority` getter returns `enableMcpPresenters()`.
+
+### Why
+
+- D11 S3-6a (senpi#4249): a terminal session has no `SessionEventWriter`, so the control endpoint needs an interface a terminal adapter can provide (S3-6b).
+
+### Why an extension could not handle it
+
+- The presenter control endpoint and the writer's presenter state are host internals of the RPC mode; no extension sees them.
+
+### Expected merge conflict zones
+
+- None: all three paths are fork-only.
+
+## 2026-11-04 - Several same-account presenters hold one MCP form binding; first answer wins (senpi#4249)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-grants.ts`: a binding holds a set of grants, at most one per (principal, connection), each checked by `current()` on its own; `holders()`; `features` parses a signed acquire's feature list and `ELSEWHERE_FEATURE` (`elsewhere_v1`) is recorded on the registration; `enroll(principal, identity)` records the verified presenter identity for `answeredBy`; a presence (id + lifetime) opens with the first holder and closes with the last.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-bindings.ts`: `grants`, `queue` and `presence` replace the single `grant`; `version()` is the presence id and `capture()` a binding-level presentation; detach, withdraw and dispose revoke every grant the connection holds.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-forms.ts`: `receive` finds the caller's grant by (connection, grantId) before any private parsing; one FIFO per binding (`binding.queue`); when a form reaches the head, each current holder gets its own dialog in one group.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-form-group.ts` (new): `McpFormGroup`, the one terminal latch per form: first valid human action wins, any holder's presentation counts, one holder's loss ends only its dialog, the last holder's loss ends the form; settles `mcp_form_resolved` (with `elsewhere: true` for negotiated non-winners) and the value-free `mcp_form_settled`.
+- `packages/coding-agent/src/modes/rpc/mcp-form-dialog.ts`: one holder's view of a group (deliver, sync, presented, respond, close, resolved, settled).
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-control.ts`: `mcp_presenter_acquire` accepts `features`; a malformed list is refused.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-authority.ts`, `packages/coding-agent/src/core/mcp-form-types.ts`, `packages/coding-agent/src/modes/interactive/mcp-local-presenter.ts`: the identity parameter, the `elsewhere`/`McpFormSettled`/`McpPresenterIdentity` types, and the widened private frame union.
+
+### Why
+
+- D11 (senpi#4249), design section 2.5: every attached same-account device shows the form and the first answer wins, with one FIFO per binding and holders snapshotted at dialog creation. The new wire keys are negotiated per grant because the shipping desktop decodes private records strictly.
+
+### Why an extension could not handle it
+
+- The presenter authority, its grants and private form frames are host internals of the RPC writer; no extension sees them.
+
+### Expected merge conflict zones
+
+- None: every path is fork-only.
+
+## 2026-11-04 - The presenter control endpoint opens for an injected account authority (senpi#4249)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-account.ts` is new: the `PresenterAccountAuthority` interface (`hostAccount`, `verify` with typed refusals, `onAccountChange`) that a distribution injects at host start. Nothing calls `verify` yet.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-control-start.ts` is new: `startMcpPresenterControl` starts the management endpoint on an enforced host that has the fd-4 bootstrap, an account authority, or both; `presenterPipePath` moved here.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `presenterAccountAuthority` host option; the control start is delegated to `startMcpPresenterControl`; `presenterPipePath` is re-exported.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-control.ts`: the constructor takes the optional authority; only once `listen()` succeeds is the path advertised to the writer, and only when an authority is present. `dispose()` withdraws it.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-presenters.ts` and `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: `mcp_presenter_context` adds `context.controlEndpoint` only for `discover: true` on a host whose control has an account authority.
+
+### Why
+
+- D11 (senpi#4249): a same-account presenter must be able to reach the management endpoint of a host it did not launch. Discovery is opt-in because the shipping desktop decodes the context reply strictly and would reject an unrequested key.
+
+### Why an extension could not handle it
+
+- The presenter control endpoint, its start, and the private `mcp_presenter_context` record are host internals of the RPC writer; no extension sees them.
+
+### Expected merge conflict zones
+
+- LOW: `multi-session-host.ts` around the presenter control start in `runSocketHost`; the other paths are fork-only.
+
+## 2026-11-03 - Delegated connections: the engine enforces its own method classes (senpi#5632)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/delegated-connection.ts` (new): `declare_delegation {principal, granted}` and `classify_record {record}`, answered by the host core outside the class table. A connection that proved the launch key may declare before any record other than `get_protocol_info`/`authenticate`; later declarations only narrow (`delegation_unauthenticated`, `delegation_late`, `delegation_fixed`). On a delegated connection every record is classified and checked against the grant before dispatch (`delegation_malformed` only for what the local path also refuses before dispatch: not an object, no string `type`; `delegation_unclassified`; `delegation_not_granted` with `errorData.class`), so it accepts exactly what a local connection accepts. `connection_local` records act on the connection itself except `subscribe_sessions` (`observe`), `record_user_activity` (`drive`), `release_session`, `warm`, `reclaim_session`, `move_session` (`device_admin`), refused `delegation_local_only` without that grant (exhaustive `CONNECTION_LOCAL_REQUIREMENT`); `set_client_info` is unfiltered. The codes are omo-relay-spec decision 0018's `delegationRefusal` set.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `createHostCore.handle` runs that decision synchronously after `JSON.parse`, before any await; `runSocketHost` registers each connection with the proof source its transport reports.
+- `packages/coding-agent/src/modes/rpc/host-internal-transport.ts`, `rpc-public-auth.ts`, `host-admission-proxy.ts`, `host-lifecycle-proxy.ts`, `rpc-auth-proof.ts`, `host-observe-request.ts`: how the launch-key proof reaches the host core. The public-key filter forwards one `launch_proven` record, in order, after a successful `authenticate`, and refuses that record from a client (`reserved_record`); the supervisor's proxy refuses it from a client too and writes it first for a client that proved the Windows public secret. The host trusts it only on a connection whose transport delivers proof in band (the supervisor's hop, the bare host's filter); the Windows bare secret is proof at admission. The record is an observing line for occupancy.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-connections.ts`: per-connection delegation state, created at `registerConnection` (`launchProof` option) and dropped at `unregisterConnection`.
+- `packages/coding-agent/src/modes/rpc/protocol-identity.ts`, `rpc-protocol-info-types.ts`, `host-capabilities.ts`, `custom-capability.ts`: `get_protocol_info.method_classes` carries the whole table description (`classes`, `dynamic_versions`) next to `version`/`digest`; multi-session hosts advertise `delegated_connection_v1`. `RPC_METHOD_CLASS` and its digest are unchanged.
+
+### Why
+
+- A forwarder had to keep its own copy of the class table, and every engine table change broke remote use until it shipped a new copy (senpi#5632, S1a of the DS2b split).
+
+### Why an extension could not handle it
+
+- The decision has to run inside the host core before dispatch, on the connection state and launch-key proof only the RPC transport holds.
+
+### Expected merge conflict zones
+
+- LOW: the top of `createHostCore.handle`, `accept` in `runSocketHost`, `PublicRpcConnection.line`, `proxyWithAdmission.requests`.
+
+## 2026-11-03 - RPC replies are written at any depth; an unwritable reply answers its id with `response_unwritable` (senpi#5702)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/jsonl.ts`: `legacyJsonText` keeps native `JSON.stringify` as the fast path and, only on the engine's own stack overflow, falls back to an explicit-stack writer (`jsonNormalValue` + a non-recursive text writer) with `JSON.stringify`'s exact semantics (`toJSON(key)`, boxed primitives, undefined/function/symbol omitted in objects and `null` in arrays, BigInt and cycle `TypeError`, `Object.keys` order, `-0` to `0`, non-finite to `null`), so it no longer throws `LegacyRecordDepthError`. `isStackOverflow` is exported. No module is added to the lifecycle supervisor's import graph.
+- `packages/coding-agent/src/modes/rpc/json-normal-value.ts`: the recursive normalizer's stack-overflow fallback is the explicit-stack `jsonNormalValue` instead of `JSON.parse(legacyJsonText(...))`.
+- `packages/coding-agent/src/modes/rpc/legacy-record-depth.ts`: `enqueueLegacyRecord` answers a reply (`type: "response"`) whose enqueue throws for any reason with `unwritableReply` (same `id` and `command`, `success: false`, a one-line `error`, `errorCode: "response_unwritable"`), reported once on stderr and counted in `legacyRefusals`; a non-reply record whose path overflows the stack is still the typed, counted `LegacyRecordDepthError` refusal. The same function runs inside a worker session's isolate, so worker replies get the same answer.
+- `packages/coding-agent/src/modes/rpc/rpc-error-types.ts`: `RPC_ERROR_RESPONSE_UNWRITABLE = "response_unwritable"`, added to `RpcErrorCode`.
+
+### Why
+
+- Native `JSON.stringify` recurses per nesting level, and `get_tree` nests one level per chained entry: on Node 24 a session of about 3,000+ entries overflowed, the reply was refused on stderr only, and the caller (a relay forwarding `get_tree`) waited its whole 30-minute deadline. The LEAD ruling for senpi#5702 keeps the `get_tree` wire shape, makes serialization depth-independent, and requires every reply that still cannot be written to answer its caller with a typed error for every RPC method; it supersedes RULING-68's "refused, never delivered" for replies.
+
+### Why an extension could not handle it
+
+- The record writer and its failure handling sit on the RPC host's output path below every command handler; no extension hook sees or replaces a serialized reply.
+
+### Expected merge conflict zones
+
+- LOW: `jsonl.ts` (`legacyJsonText` and the helpers above it), `json-normal-value.ts` (the final fallback), `legacy-record-depth.ts` (`LegacyRecordRefusals`, `enqueueLegacyRecord`), `rpc-error-types.ts` (after `RPC_ERROR_RESPONSE_TOO_LARGE`, the end of `RpcErrorCode`).
+
+## 2026-11-03 - Advertise account_reset in get_protocol_info (senpi#5698)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts`: `ACCOUNT_RESET_CAPABILITY = "account_reset"`.
+- `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: the multi-session host advertises `account_reset`, after `provider_account_test`.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: classic `get_protocol_info` advertises `account_reset`, after `provider_account_test`.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the `resetProviderAccount` doc comment names the capability.
+
+### Why
+
+- `account_reset { provider, name }` (senpi#4879) was accepted by both host kinds but no capability said so, so capability-gated clients (the desktop Unblock action) kept the action hidden on engines that support it.
+
+### Why an extension could not handle it
+
+- `get_protocol_info` capability lists are built by the protocol-owned connection handler and multi-session host.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/connection-handler.ts` and `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: capability imports and the `get_protocol_info` capability lists.
+
+## 2026-11-02 - A marked admission retry is never re-run as a fresh admission (senpi#5285, RULING-125, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-host-command-types.ts`, `packages/coding-agent/src/modes/rpc/attachment-types.ts`, `packages/coding-agent/src/modes/rpc/method-classes-schema-host.ts`: `open_session`, `attach_session` and `subscribe_sessions` accept an optional `retry: true`.
+- `packages/coding-agent/src/modes/rpc/compact-admissions.ts`: a marked retry whose ID has no row on the socket epoch (evicted into the retired ring, forgotten after the ring overflowed, or never seen) is refused with `admission_unknown` before any producer runs. A marked retry of a done row still answers the stored result and of a live pending ID still joins the in-flight admission; unmarked requests are unchanged (`admission_retired` for a retired ID, a fresh admission for a forgotten one).
+- `packages/coding-agent/src/modes/rpc/compact-admission-error.ts`, `packages/coding-agent/src/modes/rpc/compact-admission-types.ts`: the `admission_unknown` reason (wire code `admission_admission_unknown`) and the identity's `retry` flag.
+- `packages/coding-agent/src/modes/rpc/compact-open-admission.ts`, `packages/coding-agent/src/modes/rpc/compact-subscribe-admission.ts`: the marker is passed to the admission index and left out of the request fingerprint, so a marked retry matches its original row instead of answering `admission_conflict`.
+- `packages/coding-agent/src/modes/rpc/rpc-client-admissions.ts`: `RpcClient.openSession` sends `retry: true` whenever it re-sends an `admissionId` this client instance already sent, including after a refused or unanswered first send and across a disconnect and reconnect. The sent IDs live in a 4,096-entry LRU (least recently sent dropped first) that a disconnect does not clear.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/compact-admissions.ts`: a C4.4 retry is the same `admissionId` sent again, and the wire could not tell it from a fresh open. #5274 bounded a socket epoch's IDs (a 128-row LRU plus a 4,096-digest ring), so a retry older than the ring ran again as a fresh admission and could duplicate its effect (the RULING-114 residual). That residual blocks turning `SENPI_ENGINE_SOCKET_COMPACT_UPDATES` on by default.
+- `packages/coding-agent/src/modes/rpc/compact-open-admission.ts`, `packages/coding-agent/src/modes/rpc/compact-subscribe-admission.ts`: every request field fed the fingerprint, so a marked retry of an existing row would otherwise have been refused as a conflicting request.
+- `packages/coding-agent/src/modes/rpc/rpc-client-admissions.ts`: the residual stays open for any client that does not mark its retries. The typical C4.4 retry follows a reconnect, on a socket epoch that has never seen the ID, so a client that forgot its sent IDs on disconnect would re-send unmarked and open again; the LRU bound keeps that memory from growing with the client's lifetime.
+
+### Why an extension could not handle it
+
+- Compact admission is host RPC transport state; extensions cannot reach the per-socket admission index or the inbound command schemas.
+
+### Expected merge conflict zones
+
+- LOW: `compact-admissions.ts` `run()` registration branch; the `open_session`, `subscribe_sessions` and `attach_session` command types and schemas.
+
 ## 2026-11-03 - A host signal between a permit worker's checks and its wait no longer leaves it parked (senpi#5591)
 
 ### What changed

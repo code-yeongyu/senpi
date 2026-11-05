@@ -1,3 +1,75 @@
+## 2026-11-03 - Runtime creation carries open-timing spans (senpi#5709, fixes #5707)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: with `SENPI_OPEN_TIMING=1`, `createCliRuntimeFactory` marks `project_trust` and `services` while building services, and `create_session` once the session exists. These marks join the host-open, worker-open, worker-commit, registry-open and rebind spans that `src/core/open-timing.ts` writes for each open phase.
+
+### Why
+
+- senpi#5707 asked for per-phase timing of the open path, behind a flag, so the await that idles a warm open can be named.
+
+### Why an extension could not handle it
+
+- Runtime creation runs before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `createCliRuntimeFactory` in `main.ts` (two timers, three marks, one import).
+
+## 2026-10-30 - Opt-in hand-side subscription executor (senpi#5039)
+
+### What changed
+
+- `packages/coding-agent/src/subscription-egress/`: adds JSON wire schemas, safe output projection, and a nonresident executor reusing the existing subscription adapter.
+
+### Why
+
+- Subscription model calls need local credential custody, attachment-scoped cancellation, ordered streaming, and subscription-tagged usage without changing today's provider path.
+
+### Why an extension could not handle it
+
+- The public SDK boundary must be importable independently of extension startup. The existing provider remains the authentication and account-failover implementation.
+
+### Expected merge conflict zones
+
+- LOW: new fork-only files under `packages/coding-agent/src/subscription-egress/`.
+
+## 2026-11-03 - Source runtime resolves the machine-ops workspace package (senpi#5592)
+
+### What changed
+
+- `packages/coding-agent/src/experimental/source-resolver.ts`: the workspace source aliases include `@code-yeongyu/senpi-machine-ops` (and its subpaths), so source-run child processes (tool child, session workers) load its sources instead of a missing or stale `dist`.
+
+### Why
+
+- Core tools now import `@code-yeongyu/senpi-machine-ops`; without the alias a source-run tool child exited before ready.
+
+### Why an extension could not handle it
+
+- The resolver is the internal-process preload; extensions do not run before it.
+
+### Expected merge conflict zones
+
+- LOW: the alias filter in `registerWorkspaceSourceResolver`.
+
+## 2026-10-31 - A coordinated host start keeps its startup pipe through CLI entry and re-execution (senpi#4602)
+
+### What changed
+
+- `packages/coding-agent/src/cli.ts`: before anything can spawn or re-execute, `releaseInheritedStartupFillers(process.env)` closes the filler pipes a coordinated host spawn put in unused stdio slots 3..15 and strips their list from the hand-off. `reexecStdio()` now wraps the presenter-channel rule (`channelStdio()`, unchanged) and, while `SENPI_RPC_HOST_STARTUP_EVENTS` is set and descriptor 16 is a pipe or socket, forwards descriptor 16 at its own number to the Bun re-exec and the isolated-child spawn.
+
+### Why
+
+- senpi#4602: a host started by `ensureHost()` reports its startup progress on a dedicated pipe at descriptor 16. A bundled install starts the host child through `cli.js`, which can re-execute under Bun or spawn an isolated child; without forwarding, that child loses the pipe and its startup phases time out. The filler pipes only keep macOS libuv from aborting the spawn that created them (a pipe at a high stdio slot above unfilled slots, with free descriptors below it, aborts the spawning process on Node 24 and 26), so nothing may keep them open.
+
+### Why an extension could not handle it
+
+- Descriptor inheritance and re-execution happen in the CLI launcher before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the import block and the `reexecStdio()` helper above `reexecUnderBunIfNeeded()` in `cli.ts`; the import list at the top of `bun/cli.ts`.
+
 ## 2026-11-02 - One tool-catalog projection for hand/fused parity (S22, senpi#5419)
 
 ### What changed

@@ -21,6 +21,7 @@ export type {
 	StoreWritePoint,
 } from "../durable/store.ts";
 export { DurableStoreError } from "../durable/store.ts";
+export type { AdmissionLine } from "../durable/store-admission.ts";
 export type { KillDeclaration } from "../durable/testing/kill-store.ts";
 export { KILL_STORE_CASES, KILL_STORE_DECLARATIONS } from "../durable/testing/kill-store.ts";
 export { STORE_CASES } from "../durable/testing/store-cases.ts";
@@ -92,6 +93,8 @@ export { FAULT_HAND_CASES } from "../execution/testing/fault-hand-cases.ts";
 export type { HandCaseAdapters } from "../execution/testing/hand-harness.ts";
 export type { KillHandDeclaration } from "../execution/testing/kill-hand.ts";
 export { KILL_HAND_CASES, KILL_HAND_DECLARATIONS } from "../execution/testing/kill-hand.ts";
+export type { KillHookDeclaration } from "../execution/testing/kill-hook.ts";
+export { KILL_HOOK_CASES, KILL_HOOK_DECLARATIONS } from "../execution/testing/kill-hook.ts";
 export { MULTI_HAND_CASES } from "../execution/testing/multi-hand-cases.ts";
 export type { KillLedgerDeclaration } from "../execution/testing/kill-ledger.ts";
 export type { BatchCoordinator, BatchCoordinatorOptions } from "../execution/coordinator.ts";
