@@ -1406,7 +1406,8 @@ export class SessionManager {
 	/** Points this manager at `sessionFile`; the path when it exists, undefined when a new session was started there. */
 	private _beginSessionFile(sessionFile: string, newSessionOptions?: NewSessionOptions): string | undefined {
 		const resolvedFile = resolvePath(sessionFile);
-		this.durable = undefined;
+		// A reload of the bound file keeps its binding; any other file ends it.
+		if (this.sessionFile !== resolvedFile) this.durable = undefined;
 		if (this.persist) {
 			reserveSessionWrite(resolvedFile);
 			this.writeFence.opened(resolvedFile);
@@ -3319,6 +3320,8 @@ export class SessionManager {
 			}
 			this.mirrorTrimmed = false;
 			this.trimmedIds.clear();
+			// The branch is a new session: the original's binding never takes its writes (it is imported on a durable open).
+			this.durable = undefined;
 			this.sessionId = newSessionId;
 			this.sessionFile = newSessionFile;
 			this.fileEntries = [header, ...branchedEntries.map((entry) => this.residentStore.externalize(entry))];
