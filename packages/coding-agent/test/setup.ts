@@ -12,9 +12,13 @@
 import { dirname } from "node:path";
 import { trackTempDir } from "../../../scripts/vitest-temp.ts";
 import { installHostScratchRemovalGuard } from "./support/host-scratch-removal-guard.ts";
+import { installNodeHostRefusalGuard } from "./support/node-host-refusal-guard.ts";
 import { resolveQuarantineAgentDir, scrubAmbientAgentDirEnv, scrubHostLifecycleEnv } from "./support/quarantine.ts";
 
 installHostScratchRemovalGuard();
+
+// Under Node, a file that reaches session state fails at its end naming itself (senpi#6036); Bun runs open sessions.
+if (process.versions.bun === undefined) installNodeHostRefusalGuard();
 
 // Run from inside a host generation (the normal agent case), the suite would otherwise inherit that
 // host's lifecycle and hand it to every host it spawns.

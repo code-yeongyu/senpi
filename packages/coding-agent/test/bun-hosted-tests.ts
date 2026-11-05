@@ -223,3 +223,9 @@ export const BUN_HOSTED_TEST_FILES: readonly string[] = [
 	"test/suite/switch-timings.test.ts",
 	"test/suite/tool-child-session-replace.test.ts",
 ];
+
+/**
+ * Node-hosted test files whose cases assert the Node refusal itself, so their refusals are expected. Every other Node-run
+ * file that reaches session state on Node fails at its end, naming itself (test/support/node-host-refusal-guard.ts).
+ */
+export const NODE_HOST_REFUSAL_TEST_FILES: readonly string[] = ["test/session-store/node-requires-bun.test.ts"];

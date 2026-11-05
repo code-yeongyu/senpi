@@ -1,3 +1,4 @@
+import { appendFileSync } from "node:fs";
 import chalk from "chalk";
 import { isBunRuntime } from "../../config.ts";
 
@@ -5,6 +6,37 @@ import { isBunRuntime } from "../../config.ts";
 export const NODE_REQUIRES_BUN_MESSAGE =
 	"senpi stores sessions in a durable store that runs on Bun, and this process is running on Node.js. " +
 	"Install the senpi binary (recommended), or install Bun 1.4 or newer and run senpi with it.";
+
+/** The stable code every Node refusal carries: the SDK's typed error, and the test run's refusal log. */
+export const NODE_HOST_REFUSED = "NODE_HOST_REFUSED";
+
+/** The SDK's refusal on Node: the steering message, typed so a caller can tell it from any other open failure. */
+export class NodeHostRefusedError extends Error {
+	readonly code = NODE_HOST_REFUSED;
+
+	constructor() {
+		super(NODE_REQUIRES_BUN_MESSAGE);
+		this.name = "NodeHostRefusedError";
+	}
+}
+
+/**
+ * Test seam (senpi#6036): only the coding-agent Node test run (test/setup.ts) sets this, to a per-test-file log, so a file
+ * that reaches session state on Node is named, including through a CLI or host child that inherits it. Unset (every real
+ * run), a refusal writes nothing and behaves exactly as without the seam.
+ */
+export const NODE_HOST_REFUSAL_LOG_ENV = "SENPI_TEST_NODE_HOST_REFUSAL_LOG";
+
+function recordRefusal(): void {
+	const log = process.env[NODE_HOST_REFUSAL_LOG_ENV];
+	if (log) appendFileSync(log, `${NODE_HOST_REFUSED} ${process.pid}\n`);
+}
+
+/** The SDK's refusal: recorded for the test run when it asks, then returned for the caller to throw. */
+export function nodeHostRefusal(): NodeHostRefusedError {
+	recordRefusal();
+	return new NodeHostRefusedError();
+}
 
 /** The variable that keeps the legacy JSONL session store on Node: a Node-only developer hatch. */
 const SESSION_STORE_ENV_VAR = "SENPI_SESSION_STORE";
@@ -25,6 +57,7 @@ function sessionStateAvailable(env: NodeJS.ProcessEnv = process.env): boolean {
  */
 export function exitUnlessSessionStateAvailable(): void {
 	if (sessionStateAvailable()) return;
+	recordRefusal();
 	console.error(chalk.red(NODE_REQUIRES_BUN_MESSAGE));
 	process.exit(1);
 }
