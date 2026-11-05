@@ -208,7 +208,7 @@ describe("webfetch renders app shells only through the connected browser, incogn
 		]);
 		expect(daemon.calls[1]?.params).toEqual({
 			task_name: "webfetch",
-			controller: { name: "senpi webfetch" },
+			controller: { name: expect.stringMatching(/^senpi webfetch [0-9a-f]{8}$/u) },
 			browser_instance_id: "b1",
 			incognito: true,
 			focused: false,
@@ -487,5 +487,81 @@ describe("webfetch renders app shells only through the connected browser, incogn
 		});
 		expect(daemon.calls.filter((call) => call.method === "tool.get_html")).toHaveLength(8);
 		expect(daemon.calls.at(-1)?.method).toBe("session.stop");
+	});
+
+	it("keeps the page it already read when a later read fails, instead of losing the whole render", async () => {
+		const url = await serveHtml(APP_SHELL);
+		let reads = 0;
+		const daemon = await fakeDaemon(
+			connectedBrowser(url, {
+				"tool.get_html": () => {
+					reads++;
+					if (reads > 2) return "never";
+					const body = RENDERED.replace("Team board", `Team board ${"x".repeat(reads)}`);
+					return { result: { html: body, truncated: false, byte_size: body.length, tab_id: 1 } };
+				},
+			}),
+		);
+
+		const { details, userText } = await fetchWith(
+			createWebfetchTool({ renderer: renderer(daemon) }),
+			url,
+			"markdown",
+			undefined,
+			4,
+		);
+
+		expect(details.rendered).toBe(true);
+		expect(userText).toContain("Three cards are waiting for review");
+		expect(daemon.calls.at(-1)?.method).toBe("session.stop");
+	});
+
+	it("stops a session the daemon created after the start call was abandoned", async () => {
+		const url = await serveHtml(APP_SHELL);
+		const controller = new AbortController();
+		const started: Array<Record<string, unknown>> = [];
+		const daemon = await fakeDaemon(
+			connectedBrowser(url, {
+				"session.start": async (call) => {
+					controller.abort(new Error("user cancelled"));
+					await new Promise((resolve) => setTimeout(resolve, 50));
+					started.push(call.params);
+					return { result: { session_id: "s-orphan" } };
+				},
+				"system.status": () => ({
+					result: {
+						protocol_version: "1.4",
+						browsers: [BROWSER],
+						sessions: started.map((params) => ({ session_id: "s-orphan", controller: params.controller })),
+					},
+				}),
+			}),
+		);
+
+		await expect(
+			fetchWith(createWebfetchTool({ renderer: renderer(daemon) }), url, "markdown", controller.signal),
+		).rejects.toThrow("user cancelled");
+
+		const stop = daemon.calls.find((call) => call.method === "session.stop");
+		expect(stop?.params).toEqual({ session_id: "s-orphan" });
+	});
+
+	it("reads a never-settling page a bounded number of times and returns the last one", async () => {
+		const url = await serveHtml(APP_SHELL);
+		let reads = 0;
+		const daemon = await fakeDaemon(
+			connectedBrowser(url, {
+				"tool.get_html": () => {
+					reads++;
+					const body = RENDERED.replace("Team board", `Team board ${"x".repeat(reads)}`);
+					return { result: { html: body, truncated: false, byte_size: body.length, tab_id: 1 } };
+				},
+			}),
+		);
+
+		const { details } = await fetchWith(createWebfetchTool({ renderer: renderer(daemon) }), url);
+
+		expect(details.rendered).toBe(true);
+		expect(reads).toBe(12);
 	});
 });

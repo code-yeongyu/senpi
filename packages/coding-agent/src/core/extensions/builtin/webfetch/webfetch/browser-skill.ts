@@ -117,6 +117,11 @@ const MAX_HTML_BYTES = 5 * 1024 * 1024;
 const MAX_SESSIONS = 2;
 // A page whose URL changes across this many reads in a row is still navigating and is refused.
 const MAX_UNSTEADY_READS = 8;
+// A page whose HTML never settles (live counters, carousels) is read at most this many times; the last
+// steady read is returned instead of spending the whole request timeout and losing it to a late failure.
+const MAX_SETTLE_READS = 12;
+// How long a failed session.start is given to still answer, so a session the daemon created is stopped.
+const LATE_SESSION_WAIT_MS = 1_500;
 const WINDOWS_PIPE_PREFIX = "\\\\.\\pipe\\";
 
 export function browserSkillHome(env: NodeJS.ProcessEnv = process.env): string {
@@ -285,22 +290,24 @@ class Semaphore {
 		this.#free = size;
 	}
 
-	async acquire(deadline: number): Promise<boolean> {
+	async acquire(deadline: number, signal?: AbortSignal): Promise<boolean> {
 		if (this.#free > 0) {
 			this.#free--;
 			return true;
 		}
 		return await new Promise<boolean>((resolve) => {
-			const timer = setTimeout(
-				() => {
-					const index = this.#waiters.indexOf(grant);
-					if (index !== -1) this.#waiters.splice(index, 1);
-					resolve(false);
-				},
-				Math.max(0, deadline - Date.now()),
-			);
+			const give = (): void => {
+				const index = this.#waiters.indexOf(grant);
+				if (index !== -1) this.#waiters.splice(index, 1);
+				clearTimeout(timer);
+				signal?.removeEventListener("abort", give);
+				resolve(false);
+			};
+			const timer = setTimeout(give, Math.max(0, deadline - Date.now()));
+			signal?.addEventListener("abort", give, { once: true });
 			const grant = (): void => {
 				clearTimeout(timer);
+				signal?.removeEventListener("abort", give);
 				resolve(true);
 			};
 			this.#waiters.push(grant);
@@ -321,6 +328,7 @@ export function createBrowserSkillRenderer(options: BrowserSkillOptions = {}): P
 	return {
 		name: "your connected browser (BrowserSkill)",
 		async render(url, { mode, timeoutMs, signal, browser: preferred }) {
+			let controllerName = "";
 			signal?.throwIfAborted();
 			const deadline = Date.now() + timeoutMs;
 			const left = (): number => deadline - Date.now();
@@ -354,47 +362,69 @@ export function createBrowserSkillRenderer(options: BrowserSkillOptions = {}): P
 				);
 			}
 
-			if (!(await sessions.acquire(deadline))) {
+			if (!(await sessions.acquire(deadline, signal))) {
+				signal?.throwIfAborted();
 				throw skip("no_time_left", "no browser session slot was free within the request timeout");
 			}
 			let sessionId: string | undefined;
+			let startCall: DaemonCall | undefined;
 			let pending: DaemonCall | undefined;
 			const onAbort = (): void => pending?.abort();
 			signal?.addEventListener("abort", onAbort, { once: true });
-			const call = async (method: string, params: Record<string, unknown>, budgetMs = left()): Promise<unknown> => {
-				signal?.throwIfAborted();
-				if (budgetMs <= 0) throw new DaemonTimeout(`no time left for ${method}`);
-				pending = callDaemon(sockPath, method, params, budgetMs);
-				let reply: DaemonReply;
+			const settleCall = async (
+				method: string,
+				handle: DaemonCall,
+				reply: Promise<DaemonReply>,
+			): Promise<unknown> => {
+				let answered: DaemonReply;
 				try {
-					reply = await pending.reply;
+					answered = await reply;
 				} catch (error) {
 					signal?.throwIfAborted();
-					if (error instanceof DaemonTimeout && pending) {
-						const cancel = callDaemon(sockPath, "cancel", { rpc_id: pending.id }, CANCEL_TIMEOUT_MS);
+					if (error instanceof DaemonTimeout) {
+						const cancel = callDaemon(sockPath, "cancel", { rpc_id: handle.id }, CANCEL_TIMEOUT_MS);
 						await cancel.reply.catch(() => undefined);
 					}
 					throw error;
 				} finally {
 					pending = undefined;
 				}
-				if (reply.error) throw daemonError(method, mode, reply.error);
-				return reply.result;
+				if (answered.error) throw daemonError(method, mode, answered.error);
+				return answered.result;
+			};
+			const call = async (method: string, params: Record<string, unknown>, budgetMs = left()): Promise<unknown> => {
+				signal?.throwIfAborted();
+				if (budgetMs <= 0) throw new DaemonTimeout(`no time left for ${method}`);
+				const handle = callDaemon(sockPath, method, params, budgetMs);
+				pending = handle;
+				return await settleCall(method, handle, handle.reply);
 			};
 			try {
-				const started = record(
-					await call("session.start", {
-						task_name: "webfetch",
-						controller: { name: "senpi webfetch" },
-						browser_instance_id: chosen.instanceId,
-						incognito: mode === "incognito",
-						focused: false,
-					}),
-				);
+				// A unique controller name per render, so a session the daemon created after this call was
+				// abandoned can be found in system.status and stopped instead of leaving a window open.
+				controllerName = `senpi webfetch ${randomBytes(4).toString("hex")}`;
+				const startParams = {
+					task_name: "webfetch",
+					controller: { name: controllerName },
+					browser_instance_id: chosen.instanceId,
+					incognito: mode === "incognito",
+					focused: false,
+				};
+				// The daemon can still create the session after we stop waiting for the reply (abort or our own
+				// timeout), and that session owns a window in the user's browser. The reply is kept so the finally
+				// block can stop whatever id arrives, even though this call has already failed.
+				startCall = callDaemon(sockPath, "session.start", startParams, Math.max(1, left()));
+				pending = startCall;
+				const startReply = startCall.reply.then((reply) => {
+					const id = record(reply.result)?.session_id;
+					if (typeof id === "string" && id) sessionId = id;
+					return reply;
+				});
+				startReply.catch(() => undefined);
+				const started = record(await settleCall("session.start", startCall, startReply));
 				const startedId = started?.session_id;
 				if (typeof startedId !== "string" || !startedId)
 					throw skip("render_failed", "session.start returned no session_id");
-				sessionId = startedId;
 				const navigated = record(
 					await call("tool.navigate", {
 						session_id: sessionId,
@@ -426,28 +456,49 @@ export function createBrowserSkillRenderer(options: BrowserSkillOptions = {}): P
 				};
 				let html = "";
 				let pageUrl = "";
-				let truncated = false;
+				let good: RenderedPage | undefined;
 				let stableReads = 0;
 				let unsteadyReads = 0;
+				let reads = 0;
 				for (;;) {
-					const before = await tabUrl();
-					const read = record(await call("tool.get_html", { session_id: sessionId, max_bytes: MAX_HTML_BYTES }));
-					const after = await tabUrl();
-					const next = typeof read?.html === "string" ? read.html : "";
-					const steady = before === after;
-					stableReads =
-						steady && after === pageUrl && next.length > 0 && next.length === html.length ? stableReads + 1 : 0;
-					html = next;
-					pageUrl = steady ? after : "";
-					truncated = read?.truncated === true;
-					if (steady && (stableReads + 1 >= SETTLED_READS || left() <= settlePollMs)) break;
-					unsteadyReads = steady ? 0 : unsteadyReads + 1;
-					if (!steady && (unsteadyReads >= MAX_UNSTEADY_READS || left() <= settlePollMs)) {
-						throw skip("render_failed", "the browser read failed", "the page kept navigating while it was read");
+					reads++;
+					try {
+						const before = await tabUrl();
+						const read = record(
+							await call("tool.get_html", { session_id: sessionId, max_bytes: MAX_HTML_BYTES }),
+						);
+						const after = await tabUrl();
+						const next = typeof read?.html === "string" ? read.html : "";
+						const steady = before === after;
+						stableReads =
+							steady && after === pageUrl && next.length > 0 && next.length === html.length
+								? stableReads + 1
+								: 0;
+						html = next;
+						pageUrl = steady ? after : "";
+						unsteadyReads = steady ? 0 : unsteadyReads + 1;
+						if (steady && next.length > 0) good = { url: after, html: next, truncated: read?.truncated === true };
+						if (steady && (stableReads + 1 >= SETTLED_READS || left() <= settlePollMs)) break;
+						if (!steady && unsteadyReads >= MAX_UNSTEADY_READS) {
+							throw skip(
+								"render_failed",
+								"the browser read failed",
+								"the page kept navigating while it was read",
+							);
+						}
+						if (reads >= MAX_SETTLE_READS) break;
+					} catch (error) {
+						// A read that fails after an earlier one succeeded keeps the page already in hand; only a render
+						// that read nothing at all fails.
+						if (good === undefined || signal?.aborted || error instanceof BrowserSkillError) throw error;
+						break;
 					}
 					await delay(settlePollMs);
 				}
-				return { page: { url: pageUrl, html, truncated }, browser: chosen };
+				if (good === undefined) {
+					throw skip("render_failed", "the browser read failed", "the page never held still long enough to read");
+				}
+				return { page: good, browser: chosen };
 			} catch (error) {
 				if (signal?.aborted) throw error;
 				if (error instanceof BrowserSkillError) throw error;
@@ -460,6 +511,9 @@ export function createBrowserSkillRenderer(options: BrowserSkillOptions = {}): P
 				);
 			} finally {
 				signal?.removeEventListener("abort", onAbort);
+				if (sessionId === undefined && startCall !== undefined) {
+					sessionId = await abandonedSession(sockPath, controllerName, statusTimeoutMs);
+				}
 				if (sessionId !== undefined) {
 					await callDaemon(sockPath, "session.stop", { session_id: sessionId }, STOP_TIMEOUT_MS).reply.catch(
 						() => undefined,
@@ -469,6 +523,26 @@ export function createBrowserSkillRenderer(options: BrowserSkillOptions = {}): P
 			}
 		},
 	};
+}
+
+/** The session a start call created after it was abandoned, named by this render's own controller name. */
+async function abandonedSession(
+	sockPath: string,
+	controllerName: string,
+	timeoutMs: number,
+): Promise<string | undefined> {
+	if (!controllerName) return undefined;
+	await delay(LATE_SESSION_WAIT_MS);
+	const status = record(await callDaemon(sockPath, "system.status", {}, timeoutMs).reply.catch(() => undefined));
+	const sessions = Array.isArray(record(status?.result)?.sessions)
+		? (record(status?.result)?.sessions as unknown[])
+		: [];
+	for (const entry of sessions) {
+		const session = record(entry);
+		if (record(session?.controller)?.name !== controllerName) continue;
+		if (typeof session?.session_id === "string" && session.session_id) return session.session_id;
+	}
+	return undefined;
 }
 
 function daemonError(method: string, mode: BrowserMode, error: Readonly<Record<string, unknown>>): BrowserSkillError {
