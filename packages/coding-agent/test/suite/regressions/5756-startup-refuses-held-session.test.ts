@@ -34,8 +34,10 @@ afterEach(async () => {
 });
 
 class Exited extends Error {
-	constructor(readonly code: number | undefined) {
+	readonly code: number | undefined;
+	constructor(code: number | undefined) {
 		super(`exit ${code}`);
+		this.code = code;
 	}
 }
 
