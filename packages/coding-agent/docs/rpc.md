@@ -622,6 +622,32 @@ created; a grant acquired later is not offered it.
   disconnect or capability change, and ends `unavailable` when the last holder's grant goes.
 - An attached connection that declared `raiser_notice_v1` and is not a sealed holder keeps receiving
   `secret_input_notice`; a holder receives the request instead.
+- A holder answers on its presenter connection with `mcp_presenter_secret_answer`. A value answer is
+  `{type, id, v: 1, grantId, uiRequestId, answerId, stepup, enc, ct, sig}`; a cancel is
+  `{type, id, v: 1, grantId, uiRequestId, answerId, cancelled: true, sig}`. `id` is 1-128 characters and
+  `answerId` 1-256. `enc` (32 bytes) and `ct` (HPKE base mode, DHKEM(X25519, HKDF-SHA256) / HKDF-SHA256 /
+  AES-256-GCM, at most 64 KiB + 16 bytes) are unpadded base64url. `sig` is the installation key's Ed25519 signature,
+  verified strictly (canonical points, no small-order or non-prime-order key, `S < L`).
+- The host checks, in order:
+  1. the exact shape;
+  2. that the sender holds a grant in the prompt's sealed snapshot that is still eligible;
+  3. for a prompt that has already settled, the receipt: `replay` for the same `answerId` and principal, else
+     `already_answered`;
+  4. the envelope signature;
+  5. for a value, the issuer step-up token through the injected authority (its account, device, host device, request
+     binding and expiry no later than the deadline);
+  6. at the latch, synchronously: the prompt is still pending, before its deadline and the grant is current, the
+     step-up `jti` is unused in this host incarnation, and the ciphertext opens to a canonical padded value.
+
+  A value answer that loses the race is never decrypted, and a ciphertext that does not open leaves the prompt open.
+- The answer is acknowledged on the sender's connection only:
+  `{type: "mcp_presenter_secret_reply", id, disposition: "applied" | "replay"}` or
+  `{type: "mcp_presenter_secret_reply", id, error}`, where `error` is `invalid_secret_response`,
+  `secret_answer_refused`, `secret_stepup_refused`, `already_answered` or `unknown_extension_ui_request`.
+- When the prompt ends, every holder receives the value-free
+  `{type: "mcp_presenter_secret_settled", v: 1, uiRequestId, outcome, elsewhere}`, with `elsewhere: false` only for
+  the holder whose answer won. A raiser connection still receives `secret_input_settled` with unchanged bytes, and
+  `answeredUiRequests` lists raiser-route receipts only.
 
 ### RPC client lifecycle
 

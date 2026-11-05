@@ -334,3 +334,47 @@ it("HPKE open and the test-side seal both reproduce RFC 9180's published base-mo
 	});
 	expect(opened && Buffer.from(opened).toString("hex")).toBe(vector.pt);
 });
+
+it("a receipt names its principal: another holder's same answer id, or the raiser's, is already_answered, never replay", async () => {
+	const setup = await sealedHost();
+	const phone = await holder(setup.host, setup.secret, "phone");
+	const tablet = await holder(setup.host, setup.secret, "tablet");
+	setup.host.writer.setConnectionCapabilities("human", [
+		"interactive_user",
+		"mcp_form_presenter_v1",
+		"secret_input_v1",
+	]);
+	void setup.requests.input("API key", undefined);
+	const request = records(phone.lines, "mcp_presenter_secret_request")[0];
+	const raised = records(setup.host.lines, "extension_ui_request")[0];
+	if (!request || !raised) throw new Error("No prompt");
+	const req = requestHash(request, setup.host.control.sealed?.tokens.hostJkt ?? "");
+	const won = valueAnswer(
+		ids(phone, request, req),
+		request,
+		setup.secret.stepUp(phone.adopted.device.publicKey, req),
+		"v",
+		deviceKey(phone),
+	);
+	expect(await answer(setup.host, phone, won)).toMatchObject({ disposition: "applied" });
+	const sameId = valueAnswer(
+		{ ...ids(tablet, request, req), answerId: "answer-1" },
+		request,
+		setup.secret.stepUp(tablet.adopted.device.publicKey, req, { dev: "device-tablet" }),
+		"v",
+		tablet.adopted.device.privateKey,
+	);
+	expect(await answer(setup.host, tablet, sameId)).toMatchObject({ error: "already_answered" });
+	const raiserSameId = {
+		type: "extension_ui_response",
+		id: "r1",
+		uiRequestId: raised.id,
+		answerId: "answer-1",
+		secret: true,
+		value: "v",
+	};
+	expect(setup.host.writer.withConnection("human", () => setup.requests.respond(raiserSameId))).toMatchObject({
+		error: "already_answered",
+	});
+	expect(setup.host.writer.withConnection("human", () => setup.requests.answered())).toEqual([]);
+});
