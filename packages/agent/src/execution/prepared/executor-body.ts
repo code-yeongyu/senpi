@@ -1,10 +1,4 @@
-import type {
-	AgentContext,
-	AgentTool,
-	AgentToolCall,
-	AgentToolResult,
-	AgentToolUpdateCallback,
-} from "@earendil-works/pi-agent-core";
+import type { AgentContext, AgentTool, AgentToolCall, AgentToolResult, AgentToolUpdateCallback } from "../../types.ts";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { PreparationPipeline } from "./executor-types.ts";
 

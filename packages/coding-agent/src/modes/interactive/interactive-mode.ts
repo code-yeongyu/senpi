@@ -387,6 +387,21 @@ function adoptDefaultEditorActions(defaultEditor: CustomEditor, editor: EditorCo
 	for (const [action, handler] of defaultEditor.actionHandlers) editor.actionHandlers.set(action, handler);
 }
 
+/**
+ * Run a submission parked during startup once the real submit path is installed (senpi#5731). The person
+ * already pressed Enter, so the parked text is submitted unless they edited it since. A free function, like
+ * `adoptDefaultEditorActions`, so `init()` gains no new `this` dependency.
+ */
+export function replayStartupSubmission(
+	parked: { readonly text: string; readonly details?: EditorSubmitDetails } | undefined,
+	editor: Pick<EditorComponent, "getText" | "setText">,
+	defaultEditor: { onSubmit?: (text: string, details?: EditorSubmitDetails) => void | Promise<void> } | undefined,
+): void {
+	if (parked === undefined || editor.getText() !== parked.text) return;
+	editor.setText("");
+	void defaultEditor?.onSubmit?.(parked.text, parked.details);
+}
+
 function isWorkingStatusEditor(editor: EditorComponent): editor is WorkingStatusEditor {
 	return (
 		"embedWorkingStatus" in editor &&
@@ -1033,6 +1048,7 @@ export class InteractiveMode {
 	 * ordinary submission that never references it.
 	 */
 	private preResolvedSubmissionImages?: ImageContent[];
+	private startupParkedSubmission: { readonly text: string; readonly details?: EditorSubmitDetails } | undefined;
 	private activeStatusIndicator: StatusIndicator | undefined = undefined;
 	private activeWorkingIndicatorEmbedded = false;
 	private readonly idleStatus = new IdleStatus();
@@ -1698,7 +1714,7 @@ export class InteractiveMode {
 		if (this.defaultEditor) {
 			this.defaultEditor.onAction("app.clear", () => this.handleCtrlC());
 			this.defaultEditor.onCtrlD = () => this.handleCtrlD();
-			this.defaultEditor.onSubmit = (text) => this.handleStartupSubmit(text);
+			this.defaultEditor.onSubmit = (text, details) => this.handleStartupSubmit(text, details);
 		}
 		this.ui.setFocus(this.editor);
 
@@ -1828,6 +1844,9 @@ export class InteractiveMode {
 		this.setupEditorSubmitHandler();
 		this.sessionControlHost?.attachEditor(this.defaultEditor, () => this.composerHold() !== undefined);
 		adoptDefaultEditorActions(this.defaultEditor, this.editor);
+		const parkedSubmission = this.startupParkedSubmission;
+		this.startupParkedSubmission = undefined;
+		replayStartupSubmission(parkedSubmission, this.editor, this.defaultEditor);
 		this.ui.requestRender();
 		time("keyHandlers", "tui");
 
@@ -4972,7 +4991,7 @@ export class InteractiveMode {
 		return this.sessionLogger;
 	}
 
-	private handleStartupSubmit(text: string): void {
+	private handleStartupSubmit(text: string, details?: EditorSubmitDetails): void {
 		// Quit is a control action, not a prompt: honor it even while managed-tool setup
 		// is still running. Parking it in the editor would also disable the Ctrl+D quit
 		// escape, which CustomEditor only forwards while the editor is empty.
@@ -4981,6 +5000,7 @@ export class InteractiveMode {
 			void this.shutdown();
 			return;
 		}
+		this.startupParkedSubmission = { text, ...(details === undefined ? {} : { details }) };
 		this.editor.setText(text);
 		this.showStatus("Startup is still in progress");
 	}

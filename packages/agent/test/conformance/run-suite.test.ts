@@ -13,6 +13,7 @@ import { STORE_CASES } from "../../src/durable/testing/store-cases.ts";
 import { WAKE_CASES } from "../../src/durable/testing/wake-cases.ts";
 import { FAULT_HAND_CASES } from "../../src/execution/testing/fault-hand-cases.ts";
 import { KILL_HAND_CASES } from "../../src/execution/testing/kill-hand.ts";
+import { KILL_HOOK_CASES } from "../../src/execution/testing/kill-hook.ts";
 import { BATCH_CASES } from "../../src/execution/testing/batch-cases.ts";
 import { KILL_BATCH_CASES } from "../../src/execution/testing/kill-batch.ts";
 import { MULTI_SEQ_CASES } from "../../src/execution/testing/multi-seq-cases.ts";
@@ -144,6 +145,8 @@ describe("the ./conformance export", () => {
 			"KILL_BATCH_DECLARATIONS",
 			"KILL_HAND_CASES",
 			"KILL_HAND_DECLARATIONS",
+			"KILL_HOOK_CASES",
+			"KILL_HOOK_DECLARATIONS",
 			"KILL_LEDGER_CASES",
 			"KILL_LEDGER_DECLARATIONS",
 			"KILL_NEST_CASES",
@@ -228,6 +231,7 @@ const HOST_IMPLEMENTATIONS = new Map<string, CaseImplementation<BunSqliteHostAda
 	...MULTI_CASES,
 	...FAULT_TRANSPORT_CASES,
 	...KILL_HAND_CASES,
+	...KILL_HOOK_CASES,
 	...MULTI_HAND_CASES,
 	...FAULT_HAND_CASES,
 ]);
