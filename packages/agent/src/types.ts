@@ -181,6 +181,18 @@ export type FinishTurn = (
 	signal?: AbortSignal,
 ) => AgentTurnDecision | void | Promise<AgentTurnDecision | undefined> | Promise<void>;
 
+/** One model step as the loop finished it: its terminal assistant message and the provider tool results emitted for it. */
+export interface StepCommit {
+	readonly message: AssistantMessage;
+	readonly providerToolResults: readonly ToolResultMessage[];
+}
+
+/**
+ * Makes one finished model step durable before the loop acts on it. A rejection leaves the loop with no further
+ * events and no tool dispatch for that step.
+ */
+export type StepCommitFn = (step: StepCommit) => Promise<void>;
+
 /** Replacement runtime state used by the agent loop before starting another provider request. */
 export interface AgentLoopTurnUpdate {
 	/** Context for the next provider request. */
@@ -325,6 +337,13 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 * hard exits.
 	 */
 	finishTurn?: FinishTurn;
+
+	/**
+	 * Called once per model step, after the step's provider tool results are emitted and before the loop decides
+	 * whether the turn ends or dispatches tools; it covers success and terminal-failure messages alike. Unset on
+	 * every local assembly; a hosted brain host sets it to commit the step durably.
+	 */
+	commitStep?: StepCommitFn;
 
 	/**
 	 * Called immediately before every conversational provider request, including the first.
