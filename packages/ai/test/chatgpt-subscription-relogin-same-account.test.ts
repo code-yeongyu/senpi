@@ -189,3 +189,48 @@ describe("Models.login stores a ChatGPT re-login over the saved account (omo#963
 		expect(listSlots(stored).map((slot) => [slot.name, slot.refresh])).toEqual([["default", "refresh-new"]]);
 	});
 });
+
+// #5974 review HIGH: reauthorizing a signed-out account restored nothing and appended a duplicate login-N.
+describe("reauthorizing a named saved account restores it in place (#5003)", () => {
+	const signedOut = { access: "", refresh: "", expires: 0, signedOut: true as const };
+
+	test("a one-account sign-out is restored, not duplicated, and its sibling is untouched", () => {
+		const work = { ...login(personA, "work", 1), name: "work", source: "login" as const, displayName: "Work" };
+		const home = { ...login(personB, "home", 1), name: "home", source: "login" as const };
+		const stored: PooledCredential = {
+			...home,
+			accounts: [{ ...work, ...signedOut }, home],
+		};
+		let allocated: string | undefined;
+		const next = appendLoginSlot(
+			stored,
+			login(personA, "fresh", 9),
+			(name) => {
+				allocated = name;
+			},
+			{ accountIdentity: identity, reauthorizeSlot: "work" },
+		) as PooledCredential;
+
+		expect(allocated).toBe("work");
+		expect(listSlots(next).map((slot) => slot.name)).toEqual(["work", "home"]);
+		const restored = listSlots(next).find((slot) => slot.name === "work");
+		expect(restored).toMatchObject({ refresh: "refresh-fresh", expires: 9, displayName: "Work", source: "login" });
+		expect(restored).not.toHaveProperty("signedOut");
+		expect(listSlots(next).find((slot) => slot.name === "home")).toEqual(home);
+		expect(next).toMatchObject({ refresh: home.refresh });
+	});
+
+	test("a whole signed-out credential takes the restored account as its projection", () => {
+		const only = { ...login(personA, "old", 1), name: "default", source: "login" as const };
+		const stored: PooledCredential = { ...only, ...signedOut, accounts: [{ ...only, ...signedOut }] };
+		const next = appendLoginSlot(stored, login(personA, "fresh", 9), undefined, {
+			accountIdentity: identity,
+			reauthorizeSlot: "default",
+		}) as PooledCredential;
+
+		expect(listSlots(next).map((slot) => slot.name)).toEqual(["default"]);
+		expect(next).toMatchObject({ refresh: "refresh-fresh", expires: 9 });
+		expect(next).not.toHaveProperty("signedOut");
+		expect(listSlots(next)[0]).not.toHaveProperty("signedOut");
+	});
+});

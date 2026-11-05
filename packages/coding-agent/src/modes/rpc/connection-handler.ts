@@ -1255,7 +1255,7 @@ export function createRpcConnectionHandler(
 							}
 						},
 					},
-					{ reauthorize },
+					{ reauthorize, reauthorizeSlot: slotId },
 				);
 				emitProviderAccountsChanged(provider);
 			} else {

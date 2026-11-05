@@ -818,7 +818,7 @@ class ModelsImpl implements MutableModels {
 							committedName = name;
 							committedOrigin = origin;
 						},
-						{ accountIdentity: provider.auth.oauth?.accountIdentity },
+						{ accountIdentity: provider.auth.oauth?.accountIdentity, reauthorizeSlot: options?.reauthorizeSlot },
 					),
 				);
 			},

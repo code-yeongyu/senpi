@@ -455,6 +455,9 @@ export function appendLoginSlot(
 		if (!provided) onAllocated?.(DEFAULT_SLOT_NAME, "generated");
 		return flat;
 	}
+	const target =
+		provided || options?.reauthorizeSlot === undefined ? undefined : findSlot(current, options.reauthorizeSlot);
+	if (target) return restoreReauthorizedSlot(current, target, flat, onAllocated);
 	const storedAccounts = Array.isArray(current.accounts) ? current.accounts : undefined;
 	if (!provided && "signedOut" in current && current.signedOut === true) {
 		// Sign-out keeps only the registration for a later sign-in (senpi#5003 W7). That sign-in takes over
@@ -511,7 +514,36 @@ export function appendLoginSlot(
 export type AppendLoginSlotOptions = {
 	/** The provider's `OAuthAuth.accountIdentity`. */
 	accountIdentity?: (credential: { access: string }) => string | undefined;
+	/** `LoginOptions.reauthorizeSlot`: the saved account this login reauthorizes. */
+	reauthorizeSlot?: string;
 };
+
+/**
+ * A reauthorization of a named saved account rewrites that account and nothing else (#5003). A signed-out account
+ * holds blank tokens, so neither the token-identity match nor the sign-in takeover can find it, and both used to
+ * append a duplicate `login-N`. The account keeps its name, label and source and drops `signedOut`; the flat
+ * projection moves to it when it carried that account or when the whole credential was signed out.
+ */
+function restoreReauthorizedSlot(
+	current: PooledCredential,
+	target: CredentialSlot,
+	flat: Credential,
+	onAllocated: ((name: string, origin: "generated" | "provider") => void) | undefined,
+): Credential {
+	onAllocated?.(target.name, "generated");
+	if (!Array.isArray(current.accounts) || current.accounts.length === 0) return flat;
+	const fresh: CredentialSlot = {
+		...slotFromFlatCredentialNamed(flat, target.name),
+		...(target.displayName === undefined ? {} : { displayName: target.displayName }),
+		...(target.source === undefined ? {} : { source: target.source }),
+	};
+	const accounts = listSlots(current).map((slot) => (slot.name === target.name ? fresh : slot));
+	const wholeSignedOut = "signedOut" in current && current.signedOut === true;
+	const reproject = wholeSignedOut || slotMirrorsFlat(current, target);
+	const next: PooledCredential = { ...(reproject ? projectFlatFields(current, fresh) : current), accounts };
+	if (reproject) Reflect.deleteProperty(next, "signedOut");
+	return next;
+}
 
 /**
  * A login of an account that is already saved rewrites that account instead of

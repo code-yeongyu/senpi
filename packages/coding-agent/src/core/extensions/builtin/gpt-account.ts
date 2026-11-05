@@ -94,7 +94,7 @@ async function addAccount(ctx: ExtensionCommandContext, deps: GptAccountExtensio
 					receipt = committed;
 				},
 			},
-			reauthorize === undefined ? undefined : { reauthorize },
+			reauthorize === undefined ? undefined : { reauthorize, reauthorizeSlot: name },
 		);
 		emitProviderAccountsChanged(CHATGPT_SUBSCRIPTION_PROVIDER_ID);
 		ctx.ui.notify(
