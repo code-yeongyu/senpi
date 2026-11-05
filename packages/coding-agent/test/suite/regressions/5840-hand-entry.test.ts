@@ -2,7 +2,7 @@
 // socket with the reference transport, runs a model-issued tool call end to end on the hand's loopless runtime, and
 // after its connection drops mid-call and re-attaches, every frame still arrives once: the hand runs the call once and
 // the session sees one result.
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createConnection, type Socket } from "node:net";
 import { join } from "node:path";
 import { createReliableTransport, HAND_CONTROL_LANE, type TransportSide } from "@earendil-works/pi-agent-core";
@@ -125,3 +125,32 @@ it("--hand runs a tool call end to end over its socket and survives a re-attach 
 		rmSync(agentDir, { recursive: true, force: true });
 	}
 }, 90_000);
+
+it("a second --hand on the same agent dir refuses the live endpoint, and a stopped hand removes only its own entry", async () => {
+	const qa = scratch("5840-hand-owner");
+	const agentDir = mkdtempSync(join("/tmp", "s5840o-"));
+	const endpoint = handSocketPath(agentDir);
+	const env = { SENPI_CODING_AGENT_DIR: agentDir };
+	const first = spawnRpc(["--hand", "--no-skills", "--no-context-files"], qa, undefined, env);
+	try {
+		await waitForStderr(first, `senpi hand: listening on ${endpoint}`, 60_000);
+		const second = spawnRpc(["--hand", "--no-skills", "--no-context-files"], qa, undefined, env);
+		let secondErr = "";
+		second.stderr.on("data", (chunk: Buffer) => {
+			secondErr += chunk.toString("utf8");
+		});
+		const exitCode = await new Promise<number | null>((resolve) => second.once("exit", resolve));
+		expect(exitCode).not.toBe(0);
+		expect(secondErr).toContain("address already in use by a live server");
+
+		const stillServed = await dial(endpoint);
+		stillServed.destroy();
+		expect(first.exitCode).toBeNull();
+
+		await stopChild(first);
+		expect(existsSync(endpoint)).toBe(false);
+	} finally {
+		await stopChild(first);
+		rmSync(agentDir, { recursive: true, force: true });
+	}
+}, 120_000);

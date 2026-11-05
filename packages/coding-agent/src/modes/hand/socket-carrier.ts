@@ -74,10 +74,13 @@ export function attachSocketCarrier(socket: Socket, side: CarrierSide): () => vo
 	socket.once("close", detach);
 	socket.on("error", () => socket.destroy());
 	side.attached({
+		// `false` means "not taken": the side resends after `writable()`. So refuse while the socket is over its
+		// high-water mark instead of queueing a line the side will send again.
 		send: (message) => {
+			if (!live || socket.destroyed || socket.writableNeedDrain) return false;
 			const line = encodeCarrierLine(message);
-			if (!live || socket.destroyed) return false;
-			return line === undefined ? true : socket.write(line);
+			if (line !== undefined) socket.write(line);
+			return true;
 		},
 		close: () => socket.destroy(),
 	});

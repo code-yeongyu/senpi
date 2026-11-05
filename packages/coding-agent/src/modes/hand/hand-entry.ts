@@ -4,9 +4,8 @@
  * transport over {@link serveSocketCarrier}. It never runs a loop and opens no transcript; the process lives until it is
  * signalled.
  */
-import { mkdir, rm } from "node:fs/promises";
 import { createServer } from "node:net";
-import { dirname, posix, win32 } from "node:path";
+import { posix, win32 } from "node:path";
 import {
 	createReliableTransport,
 	createRemoteExecutor,
@@ -15,8 +14,10 @@ import {
 } from "@earendil-works/pi-agent-core";
 import type { InlineExtension } from "../../core/extensions/types.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
+import { closeServer, prepareSocketPath } from "../rpc/host-lifecycle-proxy.ts";
 import { listen } from "../rpc/host-socket-bind.ts";
 import { createLooplessHand } from "../rpc/remote-executor-scope.ts";
+import { shieldSocketDuringClose, unlinkOwnedSocket } from "../rpc/socket-ownership.ts";
 import { resolveSocketTransportAddress } from "../rpc/socket-transport.ts";
 import { serveSocketCarrier } from "./socket-carrier.ts";
 
@@ -92,24 +93,33 @@ export async function runHand(options: HandEntryOptions): Promise<never> {
 	});
 
 	const socketPath = handSocketPath(agentDir);
-	if (process.platform !== "win32") {
-		await mkdir(dirname(socketPath), { recursive: true, mode: 0o700 });
-		await rm(socketPath, { force: true });
-	}
+	// Refuses an entry a live hand still serves; only a dead (stale) entry is removed.
+	await prepareSocketPath(socketPath);
 	const server = createServer();
 	serveSocketCarrier(server, transport);
-	await listen(server, socketPath);
+	const boundIdentity = await listen(server, socketPath);
 	report(`listening on ${handEndpoint(agentDir)}`);
 
 	return new Promise<never>(() => {
 		const stop = async (): Promise<void> => {
-			server.close();
-			loopHooks.close();
-			transport.close();
-			await executor.close();
-			await hand.close();
-			if (process.platform !== "win32") await rm(socketPath, { force: true });
-			process.exit(0);
+			let exitCode = 0;
+			const step = async (name: string, run: () => unknown): Promise<void> => {
+				try {
+					await run();
+				} catch (error) {
+					exitCode = 1;
+					report(`${name} failed during shutdown: ${String(error)}`);
+				}
+			};
+			// libuv unlinks the bound name on close, which would delete a newer hand's entry: shield it for the close,
+			// then remove only the entry this process bound.
+			await step("listener close", () => shieldSocketDuringClose(socketPath, () => closeServer(server)));
+			await step("loop hooks", () => loopHooks.close());
+			await step("transport", () => transport.close());
+			await step("executor", () => executor.close());
+			await step("hand runtimes", () => hand.close());
+			await step("socket removal", () => unlinkOwnedSocket(socketPath, boundIdentity, report));
+			process.exit(exitCode);
 		};
 		process.once("SIGTERM", () => void stop());
 		process.once("SIGINT", () => void stop());
