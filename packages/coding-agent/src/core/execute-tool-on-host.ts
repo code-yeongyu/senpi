@@ -8,6 +8,7 @@ import {
 	type PreparedAgentToolCall,
 } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { carryPreflightFacts } from "./execution/preflight-carry.ts";
 
 type HostAgent = Pick<Agent, "batchStoreFactory" | "executionScope" | "getExecutionScope" | "onExecutionPipeline">;
@@ -37,6 +38,8 @@ export interface ExecuteToolHostOutcome {
 }
 
 type Failure = { readonly error: unknown };
+
+const PREFLIGHTED_ARGUMENTS = Type.Unknown();
 
 function issuingMessage(prepared: PreparedAgentToolCall): AssistantMessage {
 	return {
@@ -83,6 +86,8 @@ export async function runExecuteToolOnHost(
 	let threw = false;
 	const body: AgentTool = Object.create(tool, {
 		prepareArguments: { value: undefined },
+		// The `tool_call` chain may rewrite the arguments, and its contract is that they are not validated again.
+		parameters: { value: PREFLIGHTED_ARGUMENTS },
 		execute: {
 			value: async (toolCallId: string, args: unknown): Promise<AgentToolResult<unknown>> => {
 				try {

@@ -49,6 +49,38 @@ describe("pi.executeTool hook dispatch", () => {
 		}
 	});
 
+	it.each([
+		["a number", 5],
+		["an object", { nested: true }],
+	])("runs the body with a tool_call mutation to %s unchanged, never re-validated", async (_name, mutated) => {
+		const received: unknown[] = [];
+		const harness = await createExecuteToolHarness((pi) => {
+			pi.registerTool({
+				name: "typed_ext",
+				label: "Typed",
+				description: "Takes a string",
+				parameters: Type.Object({ value: Type.String() }),
+				execute: async (_toolCallId, params) => {
+					received.push(params.value);
+					return { content: [{ type: "text", text: "ran" }], details: {} };
+				},
+			});
+			pi.on("tool_call", (event) => {
+				(event.input as Record<string, unknown>).value = mutated;
+				return undefined;
+			});
+		});
+
+		try {
+			const result = await harness.api.executeTool("typed_ext", { value: "start" });
+
+			expect(textOf(result)).toBe("ran");
+			expect(received).toEqual([mutated]);
+		} finally {
+			harness.cleanup();
+		}
+	});
+
 	it("dispatches built-in tools from the active set", async () => {
 		const harness = await createExecuteToolHarness(() => {});
 		try {

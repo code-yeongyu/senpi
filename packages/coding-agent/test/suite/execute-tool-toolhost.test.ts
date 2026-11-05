@@ -1,7 +1,7 @@
 import type { ExecutionPipelineWitness } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
-import { createExecuteToolHarness } from "./helpers/execute-tool-harness.ts";
+import { createExecuteToolHarness } from "../helpers/execute-tool-harness.ts";
 
 describe("pi.executeTool on the session's ToolHost", () => {
 	it("runs the tool body on the prepared pipeline and records its witness for that call", async () => {
