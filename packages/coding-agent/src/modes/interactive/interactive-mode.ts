@@ -142,6 +142,7 @@ import { attachMcpGrantPresentation } from "../../core/mcp-grant-presentations.t
 import { registerMcpMrtrPresentation } from "../../core/mcp-mrtr-presentations.ts";
 import { markMcpFormPresented } from "../../core/mcp-form-types.ts";
 import { type LocalMcpPresenter, registerLocalMcpPresenter } from "./mcp-local-presenter.ts";
+import { raceTerminalSecretInput } from "./terminal-sealed-secrets.ts";
 import { createCompactionSummaryMessage, createCustomMessage } from "../../core/messages.ts";
 import type { ModelChangeOrigin } from "../../core/model-change-origin.ts";
 import {
@@ -3816,7 +3817,14 @@ export class InteractiveMode {
 				this.withBlockedHostDialog(
 					crypto.randomUUID(),
 					title,
-					() => this.showExtensionInput(title, placeholder, opts),
+					() =>
+						raceTerminalSecretInput(
+							this.mcpLocalPresenter?.sealed,
+							(local) => this.showExtensionInput(title, placeholder, local),
+							title,
+							placeholder,
+							opts,
+						),
 					opts?.secret ? { ...opts, ephemeral: true } : opts,
 				),
 			// Async answers are delivered by the ask-user extension, not here: the

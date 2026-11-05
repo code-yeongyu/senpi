@@ -3,6 +3,7 @@ import { connect, createConnection, type Socket } from "node:net";
 import type { ExtensionUIContext } from "../../../src/core/extensions/types.ts";
 import { markMcpFormPresented, type McpFormInput } from "../../../src/core/mcp-form-types.ts";
 import { registerLocalMcpPresenter } from "../../../src/modes/interactive/mcp-local-presenter.ts";
+import type { PresenterAccountAuthority } from "../../../src/modes/rpc/mcp-presenter-account.ts";
 import { socketSecretPath } from "../../../src/modes/rpc/socket-transport.ts";
 import { startEndpoint } from "../../helpers/session-control-fixture.ts";
 import { createHarness } from "../../suite/harness.ts";
@@ -109,7 +110,11 @@ export function formInput(overrides: Partial<McpFormInput> = {}): McpFormInput {
 
 /** A terminal session with enforcement on: the TUI's own presenter, its control endpoint, and an account authority. */
 export async function terminalPresenter(
-	options: { readonly select?: ExtensionUIContext["select"]; readonly input?: ExtensionUIContext["input"] } = {},
+	options: {
+		readonly select?: ExtensionUIContext["select"];
+		readonly input?: ExtensionUIContext["input"];
+		readonly account?: (host: { account: string | undefined }) => PresenterAccountAuthority;
+	} = {},
 ) {
 	const tui = mrtrTui(options.select, options.input);
 	const harness = await createHarness({ persistSession: true });
@@ -119,7 +124,7 @@ export async function terminalPresenter(
 	const local = registerLocalMcpPresenter(tui.ui, sessionId, lifetime.signal, () => admissions++);
 	const fixture = await startEndpoint({
 		harness,
-		mcpPresenter: { local, account: issuer.authority({ account: "account-a" }) },
+		mcpPresenter: { local, account: (options.account ?? issuer.authority)({ account: "account-a" }) },
 	});
 	const sockets: Array<{ close(): void; destroy?(): void }> = [];
 	const client = async (capabilities: readonly string[] = PRESENTER_ROLES, attached = true) => {
@@ -135,7 +140,7 @@ export async function terminalPresenter(
 		return presentation.present(formInput(input));
 	};
 	/** A same-account desktop: discovers the control endpoint over its terminal connection, enrolls, assigns, acquires. */
-	const enrollDesktop = async (desktop: ControlClient) => {
+	const enrollDesktop = async (desktop: ControlClient, features: readonly string[] = ["elsewhere_v1"]) => {
 		const discovered = await desktop.request({ type: "mcp_presenter_context", sessionId, discover: true });
 		const { controlEndpoint, ...context } = (discovered.context ?? {}) as Wire;
 		if (typeof controlEndpoint !== "string") return { discovered };
@@ -158,9 +163,9 @@ export async function terminalPresenter(
 			sessionId,
 			kind: "desktop",
 			purpose: "mcp_form",
-			features: ["elsewhere_v1"],
+			features,
 		});
-		return { discovered, reply, assigned, acquired };
+		return { discovered, reply, assigned, acquired, device, principalId };
 	};
 	const close = async () => {
 		for (const socket of sockets.splice(0)) socket.close();

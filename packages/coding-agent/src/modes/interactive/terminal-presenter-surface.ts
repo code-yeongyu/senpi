@@ -15,13 +15,16 @@ import type { McpPresenterAuthority, McpPresenterConnection } from "../rpc/mcp-p
 import { startMcpPresenterControl } from "../rpc/mcp-presenter-control-start.ts";
 import { type PresenterHostSurface, presenterContextReply } from "../rpc/mcp-presenter-host-surface.ts";
 import type { SessionEventWriterConnection } from "../rpc/session-event-connection.ts";
+import type { SealedSecretSource } from "../rpc/secret-sealed-holders.ts";
 import type { LocalMcpPresenter } from "./mcp-local-presenter.ts";
+import { TerminalSealedSecrets } from "./terminal-sealed-secrets.ts";
 
 export const TERMINAL_PRESENTER_COMMANDS = [
 	"mcp_presenter_context",
 	"mcp_form_presented",
 	"mcp_form_response",
 	"mcp_form_sync",
+	"mcp_presenter_secret_answer",
 ] as const;
 
 export interface TerminalMcpPresenter {
@@ -77,10 +80,22 @@ export class TerminalPresenterSurface implements PresenterHostSurface {
 	private readonly peers = new Map<string, Peer>();
 	private controlEndpoint?: string;
 
+	private readonly local: LocalMcpPresenter;
+
 	constructor(local: LocalMcpPresenter) {
+		this.local = local;
 		this.authority = local.authority;
 		this.binding = local.binding;
 		this.sessionId = local.sessionId;
+	}
+
+	attachSealedSecrets(source: SealedSecretSource): () => void {
+		const sealed = new TerminalSealedSecrets(source, this.sessionId, this.local.admit);
+		this.local.sealed = sealed;
+		return () => {
+			if (this.local.sealed === sealed) this.local.sealed = undefined;
+			sealed.dispose();
+		};
 	}
 
 	getMcpFormBinding(sessionId: string): McpFormBinding | undefined {
@@ -155,6 +170,15 @@ export class TerminalPresenterSurface implements PresenterHostSurface {
 	receive(id: string, frame: Readonly<Record<string, unknown>>): void {
 		const peer = this.peers.get(id);
 		if (!peer) return;
+		if (frame.type === "mcp_presenter_secret_answer") {
+			const lineId = typeof frame.id === "string" ? { id: frame.id } : {};
+			const answered =
+				this.local.sealed?.receive(id, frame) ?? Promise.resolve({ error: "secret_answer_refused" as const });
+			void answered
+				.catch(() => ({ error: "secret_answer_refused" as const }))
+				.then((reply) => writePrivate(peer.transport, { type: "mcp_presenter_secret_reply", ...lineId, ...reply }));
+			return;
+		}
 		const sender = peer.sender;
 		const reply =
 			frame.type === "mcp_presenter_context"

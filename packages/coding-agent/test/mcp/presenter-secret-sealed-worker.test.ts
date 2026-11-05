@@ -7,6 +7,7 @@ import type { HostToSessionWorker, SessionWorkerToHost } from "../../src/modes/r
 import { WorkerSecretRoutes } from "../../src/modes/rpc/session-worker-secret-route.ts";
 import { WorkerSecretIds } from "../../src/modes/rpc/session-worker-secrets.ts";
 import { accountHost, closeAccountHosts, issuer } from "./fixtures/presenter-account-host.ts";
+import { canaryValue, leaked } from "./fixtures/secret-canary.ts";
 import { holder, records, sealedTypes } from "./fixtures/secret-sealed-host.ts";
 import { secretHostIssuer } from "./fixtures/secret-host-issuer.ts";
 import { cancelAnswer, requestHash, valueAnswer, type AnswerIds } from "./fixtures/secret-sealed-presenter.ts";

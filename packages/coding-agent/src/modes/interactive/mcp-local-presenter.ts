@@ -3,6 +3,7 @@ import { queuedForm } from "../../core/extensions/builtin/mcp/modern/consent-que
 import type { ExtensionUIContext } from "../../core/extensions/types.ts";
 import type { McpFormBinding, McpFormInput } from "../../core/mcp-form-types.ts";
 import { McpPresenterAuthority } from "../rpc/mcp-presenter-authority.ts";
+import type { TerminalSealedSecrets } from "./terminal-sealed-secrets.ts";
 
 /**
  * The terminal's form binding plus what its control endpoint needs to add presenters to the same authority (D11 S3-6b):
@@ -12,6 +13,10 @@ export interface LocalMcpPresenter extends McpFormBinding {
 	readonly authority: McpPresenterAuthority;
 	readonly binding: McpFormBinding;
 	readonly sessionId: string;
+	/** Admits a human answer on the terminal's session. */
+	readonly admit: () => void;
+	/** The session's sealed secret prompts while a presenter control with sealed holders is attached (S3-6b parity). */
+	sealed?: TerminalSealedSecrets;
 }
 
 /** The terminal itself is the principal; an RPC attachment never receives this handle. */
@@ -72,6 +77,7 @@ export function registerLocalMcpPresenter(
 		authority,
 		binding,
 		sessionId,
+		admit,
 		epoch: binding.epoch,
 		signal: binding.signal,
 		capture: () => {

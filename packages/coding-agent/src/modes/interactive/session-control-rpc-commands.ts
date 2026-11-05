@@ -112,6 +112,7 @@ export async function runTuiRpcCommand(
 		case "mcp_form_presented":
 		case "mcp_form_response":
 		case "mcp_form_sync":
+		case "mcp_presenter_secret_answer":
 			if (!context.attachments.presenters) return undefined;
 			context.attachments.presenters.receive(keyOf(connection), command);
 			return null;

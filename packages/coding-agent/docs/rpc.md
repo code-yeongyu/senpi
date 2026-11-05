@@ -659,6 +659,14 @@ created; a grant acquired later is not offered it.
   - For a settled request, the host's token checks run before the isolate's receipt lookup. A replayed answer whose
     step-up token has since expired is therefore `secret_stepup_refused` on a worker session, where an in-process
     session answers `replay`.
+- A terminal (TUI) session that runs a control endpoint with an account authority offers its own secret prompts to its
+  sealed holders, the same-account presenters attached over the control socket:
+  - they receive `mcp_presenter_secret_request` on their control connection and answer there with
+    `mcp_presenter_secret_answer`;
+  - the terminal's own input and the sealed answers race one latch, the first answer wins, and the losing side is
+    dismissed;
+  - holders receive `mcp_presenter_secret_settled` as above, `elsewhere: true` when the terminal answered;
+  - without a sealed holder the terminal's prompt is unchanged.
 
 ### RPC client lifecycle
 

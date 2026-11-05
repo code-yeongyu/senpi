@@ -106,7 +106,13 @@ export class SecretInputRequests {
 		});
 	}
 
-	input(title: string, placeholder: string | undefined, opts?: ExtensionUIInputOptions): Promise<string | undefined> {
+	/** `created` receives the request id once the prompt is pending, for a local answer through `answerLocal`. */
+	input(
+		title: string,
+		placeholder: string | undefined,
+		opts?: ExtensionUIInputOptions,
+		created?: (id: string) => void,
+	): Promise<string | undefined> {
 		if (opts?.signal?.aborted) return Promise.resolve(undefined);
 		const timeout = resolveSecretInputTimeout(opts);
 		const id = randomUUID();
@@ -134,6 +140,7 @@ export class SecretInputRequests {
 			});
 			opts?.signal?.addEventListener("abort", onAbort, { once: true });
 			disarm = armSecretInputDeadline(deadline, () => finish("timed_out"));
+			created?.(id);
 			if (opts?.signal?.aborted) return finish("cancelled");
 			this.route.send(id, {
 				type: "extension_ui_request",
@@ -246,6 +253,17 @@ export class SecretInputRequests {
 		return receipt.answerId === answerId && receipt.principal === principal
 			? { disposition: "replay" }
 			: { error: "already_answered" };
+	}
+
+	/**
+	 * The terminal's own answer to a prompt it also offered to sealed holders (D11 S3-6b parity): the same latch, so the
+	 * first answer wins. The terminal's component admits its own human answer, so this does not.
+	 */
+	answerLocal(id: string, value: string | undefined): void {
+		const pending = this.pending.get(id);
+		if (!pending) return;
+		pending.finish(value === undefined ? "cancelled" : "answered", value);
+		this.receipts.set(id, { answerId: "terminal" });
 	}
 
 	cancelAll(outcome: SecretInputOutcome = "cancelled"): void {

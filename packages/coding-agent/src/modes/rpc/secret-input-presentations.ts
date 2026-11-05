@@ -4,7 +4,7 @@ import { serializeJsonLine } from "./jsonl.ts";
 import { type ConnectionLocality, RaiserNotices } from "./raiser-notices.ts";
 import { type RpcRemoteOrigin, remoteOriginField } from "./remote-origin.ts";
 import type { SealedAnswerReply, SealedLatch } from "./secret-input-requests.ts";
-import { parseSealedAnswer } from "./secret-sealed-answers.ts";
+import { answerSealedFrame } from "./secret-sealed-answer-route.ts";
 import type { SealedHolder, SealedSecretSource } from "./secret-sealed-holders.ts";
 
 interface SecretOwner {
@@ -168,25 +168,10 @@ export class SecretInputPresentations {
 	 * An `mcp_presenter_secret_answer` from `connection` (design 7.1): the shape, then the sender must hold a grant in
 	 * the request's sealed snapshot that is still eligible, then the authority's checks; the session's latch decides.
 	 */
-	async answerSealed(connection: string, value: unknown): Promise<SealedAnswerReply> {
-		const frame = parseSealedAnswer(value);
-		if (!frame) return { error: "invalid_secret_response" };
-		const owner = this.owners.get(frame.uiRequestId);
-		const source = this.sealedSource;
-		const holder =
-			owner && source
-				? [...owner.sealed].find((grant) => grant.id === frame.grantId && source.connectionOf(grant) === connection)
-				: undefined;
-		const latch = owner && this.latches.get(owner.session);
-		if (!owner || !source || !holder || !latch || !source.eligible(holder)) return { error: "secret_answer_refused" };
-		const principal = source.principalOf(holder);
-		const settled = principal === undefined ? undefined : latch.settled(frame.uiRequestId, frame.answerId, principal);
-		if (settled) return settled;
-		const checked = await source.answer(holder, frame);
-		if ("error" in checked || "disposition" in checked) return checked;
-		return latch.respond(checked, {
-			current: () => source.eligible(holder),
-			admitJti: (jti, exp) => source.admitJti(jti, exp),
+	answerSealed(connection: string, value: unknown): Promise<SealedAnswerReply> {
+		return answerSealedFrame(connection, value, this.sealedSource, (id) => {
+			const owner = this.owners.get(id);
+			return owner && { sealed: owner.sealed, latch: this.latches.get(owner.session) };
 		});
 	}
 	recheck(): void {
