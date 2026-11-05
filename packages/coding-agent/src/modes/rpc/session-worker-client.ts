@@ -12,7 +12,7 @@ import { roleConnection } from "./connection-roles.ts";
 import { originField } from "./remote-origin.ts";
 import { answeredUiRequestId, isGrantSelectRequest, refusedExtensionUiResponse } from "./extension-ui-response.ts";
 import { enqueueLegacyRecord } from "./legacy-record-depth.ts";
-import type { SecretInputRoute } from "./secret-input-requests.ts";
+import type { SealedAnswer, SealedAnswerReply, SecretInputRoute } from "./secret-input-requests.ts";
 import type { RpcSessionBinding } from "./session-binding.ts";
 import type { RpcExtensionUIResponse } from "./rpc-types.ts";
 import { SessionAcceptanceLane } from "./session-acceptance-lane.ts";
@@ -26,7 +26,7 @@ import { SessionWorkerRequests, type WorkerRequestInput } from "./session-worker
 import { WorkerIntake } from "./session-worker-intake.ts";
 import { acknowledge, acknowledgeGrant } from "./session-worker-signals.ts";
 import { WorkerOwnerGates } from "./session-worker-owners.ts";
-import { WorkerSecretIds } from "./session-worker-secrets.ts";
+import { isSealedOffer, WorkerSecretIds } from "./session-worker-secrets.ts";
 import { randomUUID } from "node:crypto";
 import type { McpFormBinding } from "../../core/mcp-form-types.ts";
 import { recoveryAgentDir } from "./compact-storage-health.ts";
@@ -37,6 +37,7 @@ import { reconcileWorkerReplacement } from "./session-worker-replacement.ts";
 export class SessionWorkerClient {
 	private secretRoute?: SecretInputRoute;
 	private readonly secretIds = new WorkerSecretIds();
+	private readonly sealedQueue = new Map<string, { tail: Promise<void>; depth: number }>();
 	private privateBinding?: McpFormBinding;
 	private stopPrivateBinding?: () => void;
 	private readonly privateOperations = new Map<
@@ -200,7 +201,9 @@ export class SessionWorkerClient {
 	): Promise<RpcSessionBinding> {
 		this.sessionId = sessionId;
 		this.writer = writer;
-		this.secretRoute = writer.secretInputRoute(sessionId);
+		this.secretRoute = writer.secretInputRoute(sessionId, true);
+		// D11 secret phase 5.5: the host authenticates a sealed answer; this isolate's latch claims, opens and settles it.
+		this.secretRoute.bindSealedResponder?.({ settled: () => undefined, respond: (answer) => this.forwardSealed(answer) });
 		if (this.acceptance) writer.registerAcceptance(sessionId, this.acceptance);
 		// RULING-111 (LEAK-D): a diagnostic of the compact path; with the flag off the stderr stays as on main.
 		if (compactUpdatesEnabled())
@@ -295,6 +298,32 @@ export class SessionWorkerClient {
 		this.worker.postMessage(message);
 	}
 
+	/**
+	 * Forwards an authenticated sealed answer to this isolate (5.5): only for ids it holds, one in flight and four
+	 * queued per id, beyond that `secret_answer_refused`.
+	 */
+	private forwardSealed(answer: SealedAnswer): Promise<SealedAnswerReply> {
+		const id = answer.uiRequestId;
+		const queued = this.sealedQueue.get(id);
+		if (!this.secretIds.has(id) || (queued?.depth ?? 0) >= 5)
+			return Promise.resolve({ error: "secret_answer_refused" });
+		const run = async (): Promise<SealedAnswerReply> => {
+			const reply = await this.request({ type: "secret_sealed_answer", answer });
+			return reply.type === "secret_sealed_result" ? reply.reply : { error: "secret_answer_refused" };
+		};
+		const result = (queued?.tail ?? Promise.resolve())
+			.then(run)
+			.catch((): SealedAnswerReply => ({ error: "secret_answer_refused" }));
+		const entry = { tail: result.then(() => undefined), depth: (queued?.depth ?? 0) + 1 };
+		this.sealedQueue.set(id, entry);
+		void result.finally(() => {
+			const current = this.sealedQueue.get(id);
+			if (current === entry) this.sealedQueue.delete(id);
+			else if (current) current.depth--;
+		});
+		return result;
+	}
+
 	private receive(message: SessionWorkerToHost): void {
 		if (this.stopped) {
 			if ("signal" in message && message.signal) acknowledge(message.signal, false);
@@ -314,7 +343,12 @@ export class SessionWorkerClient {
 					if (reason === undefined) this.secretIds.add(message.id);
 					const result =
 						reason === undefined
-							? { accepted: true, connection: this.secretRoute?.presenter(message.id) }
+							? {
+									accepted: true,
+									connection: this.secretRoute?.presenter(message.id),
+									raiser: this.secretRoute?.raiser?.(message.id) ?? true,
+									sealed: this.secretRoute?.sealed?.(message.id) ?? false,
+								}
 							: { accepted: false, reason };
 					const encoded = new TextEncoder().encode(JSON.stringify(result));
 					new Uint8Array(message.decision, 4).set(encoded);
@@ -330,10 +364,15 @@ export class SessionWorkerClient {
 					acknowledge(message.signal, false);
 					return;
 				}
-				this.secretRoute?.send(message.id, message.record);
+				if (isSealedOffer(message.record)) {
+					const { hpkePk, title, placeholder, deadlineAtMs } = message.record;
+					this.secretRoute?.offerSealed?.(message.id, { hpkePk, title, placeholder, deadlineAtMs });
+				} else this.secretRoute?.send(message.id, message.record);
 				acknowledge(message.signal, true);
 				return;
 			case "secret_settled":
+				if (message.outcome !== undefined)
+					this.secretRoute?.sealedOutcome?.(message.id, message.outcome, message.winnerGrant);
 				this.secretRoute?.settled(message.id);
 				acknowledge(message.signal, true);
 				return;
@@ -426,6 +465,9 @@ export class SessionWorkerClient {
 				});
 				return;
 			}
+			case "secret_sealed_result":
+				this.requests.receive(message);
+				return;
 			case "prepared":
 			case "ready":
 			case "result": {

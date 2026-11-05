@@ -7,7 +7,7 @@ import type { PresenterHostSurface } from "./mcp-presenter-host-surface.ts";
 import { PresenterJtiCache } from "./mcp-presenter-attestation.ts";
 import type { SealedAnswer, SealedAnswerReply, SecretInputOutcome } from "./secret-input-requests.ts";
 import { SecretHostTokens } from "./secret-host-token.ts";
-import { checkSealedAnswer, openSealedValue, type SealedAnswerFrame } from "./secret-sealed-answers.ts";
+import { checkSealedAnswer, type SealedAnswerFrame } from "./secret-sealed-answers.ts";
 import { secretBinding, secretRequestHash } from "./secret-sealed.ts";
 
 /** A grant that may answer one request on the sealed route; opaque outside this module. */
@@ -41,7 +41,9 @@ export interface SealedSecretSource {
 	/** 7.1 steps 4 and 5 for a holder's answer; the latch runs steps 3 and 6 on the result. */
 	answer(holder: SealedHolder, frame: SealedAnswerFrame): Promise<SealedAnswer | SealedAnswerReply>;
 	/** Every holder gets the value-free `mcp_presenter_secret_settled`; all but `winner` with `elsewhere: true`. */
-	settle(holders: ReadonlySet<SealedHolder>, uiRequestId: string, outcome: SecretInputOutcome, winner?: object): void;
+	settle(holders: ReadonlySet<SealedHolder>, uiRequestId: string, outcome: SecretInputOutcome, winnerGrant?: string): void;
+	/** The host incarnation's step-up `jti` cache (6.5). */
+	admitJti(jti: string, exp: number): boolean;
 }
 
 /** The control's principals, keyed by id; only an account principal can hold a sealed grant. */
@@ -146,32 +148,32 @@ export class SealedSecretHolders implements SealedSecretSource {
 		});
 		if (!checked.ok) return { error: checked.error };
 		const { jti, exp } = checked;
+		const value = frame.value;
 		return {
 			uiRequestId: frame.uiRequestId,
 			principal: principal.id,
+			grantId: frame.grantId,
 			answerId: frame.answerId,
-			winner: holder,
-			current: () => this.eligible(holder),
-			...(jti === undefined || exp === undefined
+			req,
+			...(value === undefined || jti === undefined || exp === undefined
 				? {}
-				: {
-						value: {
-							admitJti: () => this.jtis.admit(jti, exp, Math.floor(Date.now() / 1000)) === "ok",
-							open: (key, hpkePk) =>
-								openSealedValue(frame, { req, principalId: principal.id, jti }, key, hpkePk),
-						},
-					}),
+				: { value: { jti, exp, enc: value.enc.toString("base64url"), ct: value.ct.toString("base64url") } }),
 		};
 	}
 
-	settle(holders: ReadonlySet<SealedHolder>, uiRequestId: string, outcome: SecretInputOutcome, winner?: object): void {
+	/** The host incarnation's step-up `jti` cache (6.5), for in-process latches. */
+	admitJti(jti: string, exp: number): boolean {
+		return this.jtis.admit(jti, exp, Math.floor(Date.now() / 1000)) === "ok";
+	}
+
+	settle(holders: ReadonlySet<SealedHolder>, uiRequestId: string, outcome: SecretInputOutcome, winnerGrant?: string): void {
 		for (const holder of holders)
 			holder.registration.connection.send({
 				type: "mcp_presenter_secret_settled",
 				v: 1,
 				uiRequestId,
 				outcome,
-				elsewhere: holder !== winner,
+				elsewhere: holder.id !== winnerGrant,
 			});
 	}
 

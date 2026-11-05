@@ -2,6 +2,7 @@ import type { KeyObject } from "node:crypto";
 import { isRecord } from "../../core/extensions/builtin/mcp/modern/form-schema.ts";
 import { strictEd25519Verify } from "./ed25519-strict.ts";
 import type { AccountPrincipal, PresenterAccountAuthority } from "./mcp-presenter-account.ts";
+import type { SealedAnswer } from "./secret-input-requests.ts";
 import type { SecretHostToken } from "./secret-host-token.ts";
 import { openSecretAnswer } from "./secret-sealed-hpke.ts";
 import {
@@ -130,20 +131,16 @@ export async function checkSealedAnswer(context: SealedAnswerContext): Promise<C
 }
 
 /** Step 6's open, run at the latch with the request key: HPKE open, then the canonical unpad. */
-export function openSealedValue(
-	frame: SealedAnswerFrame,
-	ids: { readonly req: string; readonly principalId: string; readonly jti: string },
-	key: KeyObject,
-	hpkePk: string,
-): string | undefined {
-	if (!frame.value) return undefined;
+export function openSealedValue(answer: SealedAnswer, key: KeyObject, hpkePk: string): string | undefined {
+	if (!answer.value) return undefined;
+	const { req, principal, grantId, answerId } = answer;
 	const plaintext = openSecretAnswer({
 		privateKey: key,
 		recipientPublicKey: Buffer.from(hpkePk, "base64url"),
-		enc: frame.value.enc,
-		ct: frame.value.ct,
-		info: secretAnswerInfo(ids.req),
-		aad: secretAnswerAad(ids.req, ids.principalId, frame.grantId, frame.answerId, ids.jti),
+		enc: Buffer.from(answer.value.enc, "base64url"),
+		ct: Buffer.from(answer.value.ct, "base64url"),
+		info: secretAnswerInfo(req),
+		aad: secretAnswerAad(req, principal, grantId, answerId, answer.value.jti),
 	});
 	if (!plaintext) return undefined;
 	const value = unpadSecretValue(plaintext);

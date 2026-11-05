@@ -43,7 +43,13 @@ import {
 import { createSessionWorkerRegistry } from "./session-worker-registry.ts";
 import { IssuedWorkerOwners } from "./session-worker-owners.ts";
 import { McpFormWorker } from "./mcp-form-worker.ts";
-import type { SecretInputRoute } from "./secret-input-requests.ts";
+import { PresenterJtiCache } from "./mcp-presenter-attestation.ts";
+import type {
+	SealedAnswerReply,
+	SealedLatch,
+	SecretInputOutcome,
+	SecretInputRoute,
+} from "./secret-input-requests.ts";
 import type { SecretInputUnavailableReason } from "../../core/extensions/secret-input.ts";
 
 if (isBunBinary) {
@@ -71,8 +77,13 @@ installWriteReservation(canonicalSessionPath);
 
 class WorkerEventWriter extends SessionEventWriter {
 	readonly secretCancels = new Map<string, () => void>();
+	/** The session's latch for sealed answers the host forwards (D11 secret phase 5.5). */
+	sealedLatch?: SealedLatch;
+	/** Step-up `jti`s admitted beside the receipts, after the replay check (5.5, gate r2 L2). */
+	readonly sealedJtis = new PresenterJtiCache();
 	override secretInputRoute(_sessionId: string): SecretInputRoute {
-		const presenters = new Map<string, string | undefined>();
+		const presenters = new Map<string, { connection?: string; raiser: boolean; sealed: boolean }>();
+		const outcomes = new Map<string, { outcome: SecretInputOutcome; winnerGrant?: string }>();
 		return {
 			select: (id, unavailable) => {
 				const decision = new SharedArrayBuffer(8192);
@@ -85,25 +96,44 @@ class WorkerEventWriter extends SessionEventWriter {
 				}));
 				const length = new Int32Array(decision, 0, 1)[0];
 				const result = JSON.parse(new TextDecoder().decode(new Uint8Array(decision, 4, length))) as
-					| { accepted: true; connection?: string }
+					| { accepted: true; connection?: string; raiser: boolean; sealed: boolean }
 					| { accepted: false; reason: SecretInputUnavailableReason };
 				if (!result.accepted) return result.reason;
-				presenters.set(id, result.connection);
+				presenters.set(id, { connection: result.connection, raiser: result.raiser, sealed: result.sealed });
 				this.secretCancels.set(id, unavailable);
 				return undefined;
 			},
-			presenter: (id) => presenters.get(id),
-			// The parent authorizes the actual sender before forwarding a response into this isolate.
-			accepts: (id) => presenters.has(id) && presenters.get(id) === this.currentConnection(),
+			presenter: (id) => presenters.get(id)?.connection,
+			// The parent authorizes the actual sender before forwarding a response into this isolate; a sealed-only
+			// request has no raiser and accepts no forwarded response, not even on the sole lane (5.5).
+			accepts: (id) => {
+				const presenter = presenters.get(id);
+				return presenter?.raiser === true && presenter.connection === this.currentConnection();
+			},
 			available: (id) => presenters.has(id),
-			send: (id, record) => exchange((signal) => ({ type: "secret_frame", id, record, signal })),
+			sealed: (id) => presenters.get(id)?.sealed === true,
+			raiser: (id) => presenters.get(id)?.raiser === true,
+			send: (id, record) => {
+				if (presenters.get(id)?.raiser === false) return;
+				exchange((signal) => ({ type: "secret_frame", id, record, signal }));
+			},
+			offerSealed: (id, offer) =>
+				exchange((signal) => ({ type: "secret_frame", id, record: { type: "secret_sealed_offer", ...offer }, signal })),
+			sealedOutcome: (id, outcome, winnerGrant) =>
+				outcomes.set(id, { outcome, ...(winnerGrant === undefined ? {} : { winnerGrant }) }),
+			bindSealedResponder: (latch) => {
+				this.sealedLatch = latch;
+			},
 			settled: (id) => {
 				this.secretCancels.delete(id);
-				exchange((signal) => ({ type: "secret_settled", id, signal }));
+				const settle = outcomes.get(id);
+				outcomes.delete(id);
+				exchange((signal) => ({ type: "secret_settled", id, signal, ...settle }));
 			},
 			forget: (id) => {
 				this.secretCancels.delete(id);
 				presenters.delete(id);
+				outcomes.delete(id);
 				exchange((signal) => ({ type: "secret_forget", id, signal }));
 			},
 			handshake: (capabilities) => {
@@ -368,6 +398,20 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 		case "cancel_secret":
 			writer.secretCancels.get(message.id)?.();
 			return;
+		case "secret_sealed_answer": {
+			const { answer } = message;
+			const latch = writer.sealedLatch;
+			// 7.1 steps 3 and 6 at this isolate's latch, synchronously; the host already authenticated the answer.
+			const reply: SealedAnswerReply = latch
+				? (latch.settled(answer.uiRequestId, answer.answerId, answer.principal) ??
+					(await latch.respond(answer, {
+						current: () => true,
+						admitJti: (jti, exp) => writer.sealedJtis.admit(jti, exp, Math.floor(Date.now() / 1000)) === "ok",
+					})))
+				: { error: "secret_answer_refused" };
+			send({ type: "secret_sealed_result", request: message.request, reply });
+			return;
+		}
 		case "command": {
 			const privileged =
 				"type" in message.command &&

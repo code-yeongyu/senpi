@@ -101,6 +101,7 @@ export class SecretInputPresentations {
 				return owner?.session === session && this.available(owner);
 			},
 			sealed: (id) => (this.owners.get(id)?.sealed.size ?? 0) > 0,
+			raiser: (id) => this.owners.get(id)?.raiser === true,
 			sealedOutcome: (id, outcome, winner) => {
 				const owner = this.owners.get(id);
 				if (owner?.session === session && owner.sealed.size > 0)
@@ -183,7 +184,10 @@ export class SecretInputPresentations {
 		if (settled) return settled;
 		const checked = await source.answer(holder, frame);
 		if ("error" in checked || "disposition" in checked) return checked;
-		return latch.respond(checked);
+		return latch.respond(checked, {
+			current: () => source.eligible(holder),
+			admitJti: (jti, exp) => source.admitJti(jti, exp),
+		});
 	}
 	recheck(): void {
 		for (const owner of this.owners.values()) if (!this.available(owner)) owner.cancel?.();
