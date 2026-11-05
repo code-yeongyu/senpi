@@ -203,9 +203,10 @@ describe.skipIf(process.versions.bun !== undefined)("a CLI process on Node (K9.a
 			async () => {
 				const dirs = setup();
 				const result = await runCli(dirs, stayOnNode(dirs, reason), SESSION_ARGS, false);
-				expect(result.stderr).toContain(NODE_REQUIRES_BUN_MESSAGE);
-				expect(result.code).not.toBe(0);
-				expect(created(dirs)).toEqual({ sessionFiles: 0, store: false });
+				expect(result.stderr.split(NODE_REQUIRES_BUN_MESSAGE)).toHaveLength(2);
+				expect(result.code).toBe(1);
+				// Without the guard the session directory exists by now (its holder record), even before a prompt.
+				expect(existsSync(dirs.sessions)).toBe(false);
 			},
 		);
 
@@ -222,14 +223,15 @@ describe.skipIf(process.versions.bun !== undefined)("a CLI process on Node (K9.a
 				);
 				expect(result.state?.success).toBe(true);
 				expect(result.stderr).not.toContain(NODE_REQUIRES_BUN_MESSAGE);
-				// The session is bound to a JSONL file under the session directory, and no durable store exists.
+				// The session is bound to a JSONL path under the session directory (the file itself is written with the
+				// first entry, which this run never sends), and the session directory holds this process's holder record.
 				expect(result.state?.data).toEqual(
 					expect.objectContaining({ sessionFile: expect.stringContaining(dirs.sessions) }),
 				);
 				expect(result.state?.data).toEqual(
 					expect.objectContaining({ sessionFile: expect.stringMatching(/\.jsonl$/) }),
 				);
-				expect(created(dirs).store).toBe(false);
+				expect(existsSync(join(dirs.sessions, "session-holders"))).toBe(true);
 			},
 		);
 	});
@@ -242,9 +244,9 @@ describe.skipIf(process.versions.bun !== undefined)("a CLI process on Node (K9.a
 			[...SESSION_ARGS, "--multi-session"],
 			false,
 		);
-		expect(result.stderr).toContain(NODE_REQUIRES_BUN_MESSAGE);
+		expect(result.stderr.split(NODE_REQUIRES_BUN_MESSAGE)).toHaveLength(2);
 		expect(result.code).toBe(1);
-		expect(created(dirs)).toEqual({ sessionFiles: 0, store: false });
+		expect(existsSync(dirs.sessions)).toBe(false);
 	});
 
 	it.each([["--version"], ["--help"]])("%s still works on Node", async (flag) => {

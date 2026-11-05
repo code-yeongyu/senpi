@@ -115,7 +115,8 @@ describe("CLI in-process fast path", () => {
 		});
 
 		test("#when the CLI exits non-zero #then the launcher reports that exact code", () => {
-			const result = runCli(["--model", UNKNOWN_MODEL_ID, "--print", "hi"]);
+			// --no-session: on Node a persisted session is refused before model resolution (senpi#5822).
+			const result = runCli(["--no-session", "--model", UNKNOWN_MODEL_ID, "--print", "hi"]);
 
 			// Deterministic failure: an unknown model id is rejected before any provider call. The text
 			// pins WHICH failure produced the 1, so an import-time crash cannot stand in for it.
@@ -130,7 +131,7 @@ describe("CLI in-process fast path", () => {
 			// Port 0 lets the OS pick a free port, so concurrent runs cannot collide. The launch must
 			// reach the agent: a cached `--help` is answered before the isolation decision, because no
 			// agent runs for a help screen and there is no socket to hand over.
-			const result = runCli(["--model", UNKNOWN_MODEL_ID, "--print", "hi"], "--inspect=127.0.0.1:0");
+			const result = runCli(["--no-session", "--model", UNKNOWN_MODEL_ID, "--print", "hi"], "--inspect=127.0.0.1:0");
 
 			// The spawned child inherits this process's stderr, so the agent's rejection proves the child
 			// reached model resolution rather than dying at import with the same exit code.
