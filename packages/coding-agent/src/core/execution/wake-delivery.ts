@@ -1,6 +1,6 @@
 import type { StoreValue, WakeEvent, WakeOutbox, WakeReceipt } from "@earendil-works/pi-agent-core/conformance";
 import type { TerminalNotifierDeps } from "../extensions/builtin/terminal/notify.ts";
-import { toStoreValue } from "./executor-freeze.ts";
+import { toStoreValue } from "@earendil-works/pi-agent-core";
 
 const TERMINAL_WAKE_SOURCE = "terminal";
 
