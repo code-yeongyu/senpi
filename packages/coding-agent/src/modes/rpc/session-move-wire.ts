@@ -36,7 +36,12 @@ export type RpcMoveRecord = MoveAnswer | { state: "ready"; expires_at: string };
 /** What became of the sender's uncommitted changes on import; `kept` leaves `patch_file` for the user to apply. */
 export type RpcWorkingTreeResult =
 	| { state: "applied" | "nothing" }
-	| { state: "kept"; reason: "receiver_dirty" | "head_differs" | "conflict"; patch_file: string; detail: string };
+	| {
+			state: "kept";
+			reason: "receiver_dirty" | "head_differs" | "conflict" | "not_a_repository";
+			patch_file: string;
+			detail: string;
+	  };
 
 export type RpcMoveSessionData =
 	| RpcMoveRecord

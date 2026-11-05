@@ -21,8 +21,10 @@ const GIT_LOCATION_ENV = new Set(["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", 
 
 interface GitResult {
 	readonly ok: boolean;
-	readonly stdout: string;
+	readonly stdout: Buffer;
 }
+
+const text = (result: GitResult) => result.stdout.toString("utf8").trim();
 
 function git(
 	dir: string,
@@ -38,7 +40,7 @@ function git(
 			"git",
 			["-C", dir, ...args],
 			{ env, timeout: GIT_TIMEOUT_MS, maxBuffer: MAX_PATCH_BYTES + 1024, windowsHide: true, encoding: "buffer" },
-			(error, stdout) => resolve({ ok: error === null, stdout: stdout.toString("latin1") }),
+			(error, stdout) => resolve({ ok: error === null, stdout }),
 		);
 	});
 }
@@ -56,6 +58,12 @@ export type HeadCheck =
 			readonly detail: string;
 	  };
 
+/** The repository's top folder: patches are made and applied there, whatever subfolder the session works in. */
+async function topLevel(cwd: string): Promise<string | undefined> {
+	const result = await git(cwd, ["rev-parse", "--show-toplevel"]);
+	return result.ok ? text(result) : undefined;
+}
+
 /** Uses the remote-tracking refs this checkout already has; it does not reach the network. */
 export async function checkHeadOnRemote(cwd: string): Promise<HeadCheck> {
 	const head = await git(cwd, ["rev-parse", "--verify", "HEAD"]);
@@ -66,21 +74,21 @@ export async function checkHeadOnRemote(cwd: string): Promise<HeadCheck> {
 			detail: `${cwd} is not a git checkout with a commit, so the other device cannot check out the same files. Move from a checkout of the repository.`,
 		};
 	const remotes = await git(cwd, ["remote"]);
-	if (remotes.stdout.trim() === "")
+	if (text(remotes) === "")
 		return {
 			ok: false,
 			code: "no_remote",
 			detail: `${cwd} has no remote, so the other device cannot get this repository. Add a remote and push, then move again.`,
 		};
 	const containing = await git(cwd, ["for-each-ref", "--contains", "HEAD", "--format=%(refname)", "refs/remotes"]);
-	if (containing.stdout.trim() === "")
+	if (text(containing) === "")
 		return {
 			ok: false,
 			code: "head_not_pushed",
 			detail:
 				"Your last commit is not on a remote yet, so the other device cannot check it out. Push it, then move again.",
 		};
-	return { ok: true, head: head.stdout.trim() };
+	return { ok: true, head: text(head) };
 }
 
 /**
@@ -91,22 +99,31 @@ export async function captureWorkingTree(
 	cwd: string,
 	outDir: string,
 ): Promise<{ readonly head: string; readonly changed: boolean }> {
-	const head = (await git(cwd, ["rev-parse", "--verify", "HEAD"])).stdout.trim();
+	const root = await topLevel(cwd);
+	if (root === undefined) throw new Error(`${cwd} is not a git checkout, so its changes cannot travel.`);
+	const head = text(await git(root, ["rev-parse", "--verify", "HEAD"]));
 	const scratch = await mkdtemp(join(tmpdir(), "senpi-move-index-"));
 	try {
 		const env = { GIT_INDEX_FILE: join(scratch, "index") };
-		await git(cwd, ["read-tree", "HEAD"], env);
-		await git(cwd, ["add", "-A"], env);
-		const diff = await git(cwd, ["diff", "--cached", "--binary", "HEAD"], env);
-		if (!diff.ok) throw new Error(`Could not read the uncommitted changes in ${cwd}.`);
-		if (Buffer.byteLength(diff.stdout, "latin1") > MAX_PATCH_BYTES)
+		// A failed step would leave a partial patch that looks complete: refuse instead.
+		for (const step of [
+			["read-tree", "HEAD"],
+			["add", "-A"],
+		])
+			if (!(await git(root, step, env)).ok)
+				throw new Error(
+					`Could not read the uncommitted changes in ${root}. Commit and push them, then move again.`,
+				);
+		const diff = await git(root, ["diff", "--cached", "--binary", "HEAD"], env);
+		if (!diff.ok) throw new Error(`Could not read the uncommitted changes in ${root}.`);
+		if (diff.stdout.byteLength > MAX_PATCH_BYTES)
 			throw new Error(
 				`The uncommitted changes in ${cwd} are larger than ${MAX_PATCH_BYTES / 1024 / 1024} MB. Commit and push them, then move again.`,
 			);
 		await mkdir(outDir, { recursive: true });
 		await writeFile(join(outDir, HEAD_FILE), `${head}\n`);
-		if (diff.stdout !== "") await writeFile(join(outDir, PATCH_FILE), Buffer.from(diff.stdout, "latin1"));
-		return { head, changed: diff.stdout !== "" };
+		if (diff.stdout.byteLength > 0) await writeFile(join(outDir, PATCH_FILE), diff.stdout);
+		return { head, changed: diff.stdout.byteLength > 0 };
 	} finally {
 		await rm(scratch, { recursive: true, force: true });
 	}
@@ -116,7 +133,7 @@ export type ApplyResult =
 	| { readonly state: "applied" | "nothing" }
 	| {
 			readonly state: "kept";
-			readonly reason: "receiver_dirty" | "head_differs" | "conflict";
+			readonly reason: "receiver_dirty" | "head_differs" | "conflict" | "not_a_repository";
 			readonly patchFile: string;
 			readonly detail: string;
 	  };
@@ -128,19 +145,24 @@ export type ApplyResult =
 export async function applyWorkingTree(cwd: string, payloadDir: string): Promise<ApplyResult> {
 	const patchFile = join(payloadDir, PATCH_FILE);
 	if (!(await pathExists(patchFile)) || (await stat(patchFile)).size === 0) return { state: "nothing" };
-	const kept = (reason: "receiver_dirty" | "head_differs" | "conflict", why: string): ApplyResult => ({
+	const kept = (reason: Extract<ApplyResult, { state: "kept" }>["reason"], why: string): ApplyResult => ({
 		state: "kept",
 		reason,
 		patchFile,
 		detail: `${why} The uncommitted changes from the other device were not applied; they are in ${patchFile}. Apply them yourself with git apply.`,
 	});
-	const status = await git(cwd, ["status", "--porcelain"]);
-	if (!status.ok || status.stdout.trim() !== "")
-		return kept("receiver_dirty", `${cwd} has its own uncommitted changes.`);
-	const want = (await readFile(join(payloadDir, HEAD_FILE), "utf8")).trim();
-	const have = (await git(cwd, ["rev-parse", "--verify", "HEAD"])).stdout.trim();
+	const root = await topLevel(cwd);
+	const status = root === undefined ? undefined : await git(root, ["status", "--porcelain"]);
+	if (root === undefined || status === undefined || !status.ok)
+		return kept("not_a_repository", `${cwd} is not a git checkout.`);
+	if (text(status) !== "") return kept("receiver_dirty", `${root} has its own uncommitted changes.`);
+	const headFile = join(payloadDir, HEAD_FILE);
+	const want = (await pathExists(headFile)) ? (await readFile(headFile, "utf8")).trim() : "";
+	if (want === "") return kept("head_differs", "The moved changes do not name the commit they were made on.");
+	const have = text(await git(root, ["rev-parse", "--verify", "HEAD"]));
 	if (have !== want)
-		return kept("head_differs", `${cwd} is at another commit than the other device (${want.slice(0, 10)}).`);
-	const applied = await git(cwd, ["apply", "--binary", "--whitespace=nowarn", patchFile]);
+		return kept("head_differs", `${root} is at another commit than the other device (${want.slice(0, 10)}).`);
+	// From the top folder: a subfolder apply would skip every change outside it and still succeed.
+	const applied = await git(root, ["apply", "--binary", "--whitespace=nowarn", patchFile]);
 	return applied.ok ? { state: "applied" } : kept("conflict", "Some of the changes did not apply cleanly.");
 }

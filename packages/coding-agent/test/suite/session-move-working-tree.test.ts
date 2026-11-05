@@ -112,4 +112,42 @@ describe("captureWorkingTree and applyWorkingTree (senpi#3676)", () => {
 		expect(await applyWorkingTree(b, out)).toMatchObject({ state: "kept", reason: "head_differs" });
 		expect(readFileSync(join(b, "tracked.txt"), "utf8")).toBe("one\n");
 	});
+
+	it("#given a session in a subfolder of the repository #then every change anywhere in it lands on the receiver", async () => {
+		const { base, a, b } = repos();
+		for (const repo of [a, b]) mkdirSync(join(repo, "sub"));
+		writeFileSync(join(a, "sub", "f.txt"), "in sub\n");
+		writeFileSync(join(a, "tracked.txt"), "one\noutside sub\n");
+		writeFileSync(join(a, "top.txt"), "new at the top\n");
+		const out = join(base, "payload");
+
+		await captureWorkingTree(join(a, "sub"), out);
+
+		expect(await applyWorkingTree(join(b, "sub"), out)).toEqual({ state: "applied" });
+		expect(readFileSync(join(b, "sub", "f.txt"), "utf8")).toBe("in sub\n");
+		expect(readFileSync(join(b, "tracked.txt"), "utf8")).toBe("one\noutside sub\n");
+		expect(readFileSync(join(b, "top.txt"), "utf8")).toBe("new at the top\n");
+	});
+
+	it("#given a receiving folder that is not a git checkout #then the patch is kept with its own reason", async () => {
+		const { base, a } = repos();
+		writeFileSync(join(a, "tracked.txt"), "one\nedited\n");
+		const out = join(base, "payload");
+		await captureWorkingTree(a, out);
+		const plain = join(base, "plain");
+		mkdirSync(plain);
+
+		expect(await applyWorkingTree(plain, out)).toMatchObject({ state: "kept", reason: "not_a_repository" });
+	});
+
+	it("#given a payload whose base commit file is missing #then the patch is kept, never thrown", async () => {
+		const { base, a, b } = repos();
+		writeFileSync(join(a, "tracked.txt"), "one\nedited\n");
+		const out = join(base, "payload");
+		await captureWorkingTree(a, out);
+		rmSync(join(out, "head"));
+
+		expect(await applyWorkingTree(b, out)).toMatchObject({ state: "kept", reason: "head_differs" });
+		expect(readFileSync(join(b, "tracked.txt"), "utf8")).toBe("one\n");
+	});
 });
