@@ -62,7 +62,8 @@ export type WebfetchNotConnectedCause =
 	| "daemon_unreachable"
 	| "incompatible"
 	| "no_browser"
-	| "browser_unresponsive";
+	| "browser_unresponsive"
+	| "pinned_browser_missing";
 
 export interface WebfetchBrowserSkip {
 	readonly reason: WebfetchBrowserSkipReason;
@@ -265,6 +266,11 @@ function pickBrowser(
 		preferred === undefined
 			? undefined
 			: eligible.find((browser) => browser.instance_id === preferred || browser.label === preferred);
+	// A pinned browser is the user's choice of signed-in profile; reading through another one would use a
+	// session they did not pick, so a pin that matches nothing refuses the read instead of falling back.
+	if (preferred !== undefined && pinned === undefined) {
+		throw notConnected("pinned_browser_missing", `no connected browser matches the pinned browser "${preferred}"`);
+	}
 	const chosen =
 		pinned ??
 		eligible.reduce((best, browser) =>
