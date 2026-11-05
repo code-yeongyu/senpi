@@ -23,7 +23,7 @@ import { GOAL_CONTINUATION_SCHEDULED_EVENT, MonitorAwareGoalContinuation } from 
 import { reengageGoalAfterReload } from "./reload-reengagement.ts";
 import { registerGoalFireNowRequest } from "./rpc-wait-surface.ts";
 import { isStaleExtensionContextError } from "./stale-context.ts";
-import { markStopPaused, markStopResumed, pausedByStop, stopHoldLive } from "./stop-pause.ts";
+import { interruptedRunHeld, markStopPaused, markStopResumed, pausedByStop, stopHoldLive } from "./stop-pause.ts";
 import { accountGoalUsage, migrateLegacyGoal, readGoal, updateGoal } from "./store.ts";
 import { GOAL_STORE_CHANGED_EVENT, isGoalStoreChangedEvent } from "./store-changed-event.ts";
 import { goalStoreRef as buildGoalStoreRef } from "./store-ref.ts";
@@ -185,7 +185,18 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		todoOwedBackstop.resetChain();
 		const ref = goalStoreRef(ctx);
 		await migrateLegacyGoal(ref);
-		const goal = await readGoal(goalStoreRef(ctx));
+		let goal = await readGoal(goalStoreRef(ctx));
+		// A process that died mid-turn never ran the quit-time abort that stops an active goal (senpi#5753). Stop it the
+		// same way here, so the resume prompt below asks before any continuation runs (senpi#5755).
+		if (
+			event.reason === "resume" &&
+			ctx.hasUI &&
+			goal?.status === "active" &&
+			goal.continuationStoppedAt === undefined &&
+			interruptedRunHeld(ctx)
+		) {
+			goal = await pauseOrBlockOnUserAbort(ctx, goal.id);
+		}
 		if (goal?.status === "active") {
 			beginAgentGoalAccounting(goal);
 		} else {

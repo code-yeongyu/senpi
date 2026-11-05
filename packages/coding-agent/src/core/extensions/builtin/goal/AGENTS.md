@@ -59,7 +59,9 @@ blocks — user interrupt or a model-declared `update_goal` block — stay non-r
 Resuming with 8+ trailing continuation entries suppresses session-start auto-resume. On
 `session_start` reason `resume`, an idle TUI session with a stopped-but-unfinished goal
 (`paused`/`blocked`) prompts first (`isResumeOfStoppedGoal`); accepting flips to `active` as
-a `"user"` mutation. `active`/`complete` never prompt.
+a `"user"` mutation. `active`/`complete` never prompt, except an `active` goal reopened over an
+interrupted run (its process died mid-turn): it is first stopped as interrupted, as a quit
+would have, so it prompts too (senpi#5755).
 
 ## CONVENTIONS
 
