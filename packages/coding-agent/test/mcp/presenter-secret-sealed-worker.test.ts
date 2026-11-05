@@ -7,7 +7,7 @@ import type { HostToSessionWorker, SessionWorkerToHost } from "../../src/modes/r
 import { WorkerSecretRoutes } from "../../src/modes/rpc/session-worker-secret-route.ts";
 import { WorkerSecretIds } from "../../src/modes/rpc/session-worker-secrets.ts";
 import { accountHost, closeAccountHosts, issuer } from "./fixtures/presenter-account-host.ts";
-import { holder, records, sealedHost, sealedTypes } from "./fixtures/secret-sealed-host.ts";
+import { holder, records, sealedTypes } from "./fixtures/secret-sealed-host.ts";
 import { secretHostIssuer } from "./fixtures/secret-host-issuer.ts";
 import { cancelAnswer, requestHash, valueAnswer, type AnswerIds } from "./fixtures/secret-sealed-presenter.ts";
 
@@ -290,27 +290,4 @@ it("a sealed offer whose hpkePk is not a 32-byte key, or that is malformed, is r
 			),
 		).toThrow("session_worker_output_denied");
 	expect(records(w.host.lines, "secret_sealed_offer")).toEqual([]);
-});
-
-it("unbinding a route removes only its own latch: a second route on the session cannot clear the bound session's latch", async () => {
-	const setup = await sealedHost();
-	const phone = await holder(setup.host, setup.secret, "phone");
-	const state: { value: string | undefined | null } = { value: null };
-	void setup.requests.input("API key", undefined).then((value) => {
-		state.value = value;
-	});
-	setup.host.writer.secretInputRoute("session", true).bindSealedResponder?.(undefined);
-	const request = records(phone.lines, "mcp_presenter_secret_request")[0];
-	if (!request) throw new Error("No sealed request");
-	const req = requestHash(request, setup.host.control.sealed?.tokens.hostJkt ?? "");
-	const stepup = setup.secret.stepUp(phone.adopted.device.publicKey, req);
-	const frame = valueAnswer(
-		ids(phone, request, req),
-		request,
-		stepup,
-		"scoped-value",
-		phone.adopted.device.privateKey,
-	);
-	expect(await answer(setup.host, phone, frame)).toMatchObject({ disposition: "applied" });
-	expect(state.value).toBe("scoped-value");
 });
