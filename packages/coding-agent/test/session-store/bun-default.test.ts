@@ -30,6 +30,7 @@ interface Writer {
 	readonly child: ChildProcessWithoutNullStreams;
 	next(): Promise<Result>;
 	exit(): Promise<number | null>;
+	stderr(): string;
 }
 
 function start(sessionId: string, action: Action, extra: { count?: number; tag?: string } = {}): Writer {
@@ -39,7 +40,8 @@ function start(sessionId: string, action: Action, extra: { count?: number; tag?:
 	child.stderr.on("data", (chunk: Buffer) => {
 		stderr += chunk.toString();
 	});
-	const exited = once(child, "exit").then(([code]) => code as number | null);
+	// "close", not "exit": stdout and stderr are fully read by then.
+	const exited = once(child, "close").then(([code]) => code as number | null);
 	return {
 		child,
 		async next() {
@@ -48,6 +50,7 @@ function start(sessionId: string, action: Action, extra: { count?: number; tag?:
 			return JSON.parse(line.value) as Result;
 		},
 		exit: () => exited,
+		stderr: () => stderr,
 	};
 }
 
@@ -127,6 +130,7 @@ describe(
 		it("refuses a session id that is not a single path segment", async () => {
 			const writer = start("../escape", "append");
 			expect(await writer.exit()).not.toBe(0);
+			expect(writer.stderr()).toContain("not a session id");
 		});
 	},
 );
