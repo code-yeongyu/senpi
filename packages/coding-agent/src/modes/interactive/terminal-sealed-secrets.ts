@@ -108,6 +108,25 @@ export function raceTerminalSecretInput(
 	if (!sealed || !opened) return local(opts);
 	const dismiss = new AbortController();
 	const signal = opts?.signal ? AbortSignal.any([opts.signal, dismiss.signal]) : dismiss.signal;
-	void local({ ...opts, signal }).then((value) => sealed.requests.answerLocal(opened.id, value));
-	return opened.result.finally(() => dismiss.abort());
+	// A failure of the terminal's own input before the race settles cancels the sealed request and reaches the caller,
+	// as it does without a sealed route; one after the race settled (the dismissed input) is ignored.
+	let settled = false;
+	let failure: { readonly error: unknown } | undefined;
+	void local({ ...opts, signal }).then(
+		(value) => sealed.requests.answerLocal(opened.id, value),
+		(error: unknown) => {
+			if (settled) return;
+			failure = { error };
+			sealed.requests.answerLocal(opened.id, undefined);
+		},
+	);
+	return opened.result
+		.finally(() => {
+			settled = true;
+			dismiss.abort();
+		})
+		.then((value) => {
+			if (failure) throw failure.error;
+			return value;
+		});
 }

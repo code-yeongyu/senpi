@@ -154,3 +154,18 @@ it("a sealed answer from a connection that is not a holder is refused, and the r
 	expect(desktop.records.some((record) => record.type === "mcp_presenter_secret_reply")).toBe(false);
 	local.answer.resolve(undefined);
 });
+
+it("a terminal input that throws ends the race: the caller gets the error and holders settle cancelled", async () => {
+	const { t, secret } = await sealedTerminal();
+	const { desktop } = await holder(t, secret);
+	const sealed = await hostTokenReady(t);
+	const failure = new Error("terminal input failed");
+	const result = raceTerminalSecretInput(sealed, () => Promise.reject(failure), "API key", undefined, {
+		secret: true,
+	});
+	await desktop.waitFor((record) => record.type === "mcp_presenter_secret_request");
+	await expect(result).rejects.toBe(failure);
+	expect(await desktop.waitFor((record) => record.type === "mcp_presenter_secret_settled")).toMatchObject({
+		outcome: "cancelled",
+	});
+});
