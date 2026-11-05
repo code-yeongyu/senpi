@@ -1,11 +1,14 @@
-// S18b (R10.c): the prepared pipeline gives a session the same event ORDER as today's scheduler, the session's own
-// lifecycle events included, for a parallel batch and for session-wide sequential mode. It compares the whole event
-// sequence of the two pipelines; a sequential tool between parallel ones is covered by pipeline-prepared.test.ts.
+// S18b (R10.c), S36 (senpi#5728): the prepared pipeline gives a session the same event ORDER as the loop's removed
+// scheduler, the session's own lifecycle events included, for a parallel batch and for session-wide sequential mode.
+// Each expected sequence was recorded from that scheduler at the last commit that still had it (prepared matched it
+// there); a sequential tool between parallel ones is covered by pipeline-prepared.test.ts.
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { sessionPreparationSource } from "./preparation-source.ts";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
-import { createPreparedToolHost } from "../../src/core/execution/pipeline-prepared.ts";
+import { openMemoryBatchStore } from "../../../agent/src/execution/prepared/memory-batch-store.ts";
+import { createPreparedToolHost } from "../../../agent/src/execution/prepared/pipeline-prepared.ts";
 import { createHarness, type Harness } from "../suite/harness.ts";
 
 const harnesses: Harness[] = [];
@@ -39,15 +42,11 @@ function line(event: Harness["events"][number]): string[] {
 	return [];
 }
 
-async function order(
-	pipeline: "legacy" | "prepared",
-	calls: readonly string[],
-	sequential: boolean,
-): Promise<string[]> {
+async function order(calls: readonly string[], sequential: boolean): Promise<string[]> {
 	const harness = await createHarness({ tools: [echo] });
 	harnesses.push(harness);
 	if (sequential) harness.agent.toolExecution = "sequential";
-	if (pipeline === "prepared") harness.agent.toolHost = createPreparedToolHost(harness.agent);
+	harness.agent.toolHost = createPreparedToolHost(sessionPreparationSource(harness.agent), openMemoryBatchStore);
 	harness.setResponses([
 		fauxAssistantMessage(
 			calls.map((name, index) => ({ ...fauxToolCall(name, { n: index }), id: `call-${index}` })),
@@ -59,15 +58,104 @@ async function order(
 	return harness.events.flatMap(line);
 }
 
-describe("the prepared pipeline keeps today's session event order (S18b, R10.c)", () => {
-	it.each([
-		["one call", ["echo"], false],
-		["three parallel calls", ["echo", "echo", "echo"], false],
-		["session-wide sequential mode", ["echo", "echo"], true],
-	] as const)("%s", async (_label, calls, sequential) => {
-		const legacy = await order("legacy", calls, sequential);
+const LEGACY_ORDERS: ReadonlyArray<readonly [string, readonly string[], boolean, readonly string[]]> = [
+	[
+		"one call",
+		["echo"],
+		false,
+		[
+			"lifecycle none",
+			"message_start user",
+			"message_end user",
+			"lifecycle model",
+			"message_start assistant",
+			"lifecycle none",
+			"message_end assistant",
+			"lifecycle tool call-0",
+			"tool_execution_start call-0",
+			"lifecycle none",
+			"tool_execution_end call-0",
+			"message_start toolResult call-0",
+			"message_end toolResult call-0",
+			"lifecycle model",
+			"message_start assistant",
+			"lifecycle none",
+			"message_end assistant",
+			"lifecycle none",
+		],
+	],
+	[
+		"three parallel calls",
+		["echo", "echo", "echo"],
+		false,
+		[
+			"lifecycle none",
+			"message_start user",
+			"message_end user",
+			"lifecycle model",
+			"message_start assistant",
+			"lifecycle none",
+			"message_end assistant",
+			"lifecycle tool call-0",
+			"tool_execution_start call-0",
+			"lifecycle tool call-0",
+			"tool_execution_start call-1",
+			"lifecycle tool call-0",
+			"tool_execution_start call-2",
+			"lifecycle tool call-1",
+			"tool_execution_end call-0",
+			"lifecycle tool call-2",
+			"tool_execution_end call-1",
+			"lifecycle none",
+			"tool_execution_end call-2",
+			"message_start toolResult call-0",
+			"message_end toolResult call-0",
+			"message_start toolResult call-1",
+			"message_end toolResult call-1",
+			"message_start toolResult call-2",
+			"message_end toolResult call-2",
+			"lifecycle model",
+			"message_start assistant",
+			"lifecycle none",
+			"message_end assistant",
+			"lifecycle none",
+		],
+	],
+	[
+		"session-wide sequential mode",
+		["echo", "echo"],
+		true,
+		[
+			"lifecycle none",
+			"message_start user",
+			"message_end user",
+			"lifecycle model",
+			"message_start assistant",
+			"lifecycle none",
+			"message_end assistant",
+			"lifecycle tool call-0",
+			"tool_execution_start call-0",
+			"lifecycle none",
+			"tool_execution_end call-0",
+			"message_start toolResult call-0",
+			"message_end toolResult call-0",
+			"lifecycle tool call-1",
+			"tool_execution_start call-1",
+			"lifecycle none",
+			"tool_execution_end call-1",
+			"message_start toolResult call-1",
+			"message_end toolResult call-1",
+			"lifecycle model",
+			"message_start assistant",
+			"lifecycle none",
+			"message_end assistant",
+			"lifecycle none",
+		],
+	],
+];
 
-		expect(legacy).toContain("lifecycle tool call-0");
-		expect(await order("prepared", calls, sequential)).toEqual(legacy);
+describe("the prepared pipeline keeps the removed scheduler's session event order (S18b, R10.c; S36)", () => {
+	it.each(LEGACY_ORDERS)("%s", async (_label, calls, sequential, expected) => {
+		expect(await order(calls, sequential)).toEqual(expected);
 	});
 });

@@ -5,9 +5,9 @@ import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, expect, it, vi } from "vitest";
 import { SessionManager } from "../../../src/core/session-manager.ts";
 import { SessionAcceptanceLane } from "../../../src/modes/rpc/session-acceptance-lane.ts";
-import { RpcSessionRegistry, type RpcSessionEntry } from "../../../src/modes/rpc/session-registry.ts";
 import { dataOf, statusHost } from "../rpc-session-status-support.ts";
 import { EVENT_SAFETY_MS } from "./4272-worker-acceptance-support.ts";
+import { observeInProcessOpens } from "../rpc-in-process-entry-support.ts";
 
 afterEach(() => {
 	vi.unstubAllEnvs();
@@ -78,12 +78,10 @@ it("RULING-26 Q4 a real in-process session folds its own lifecycle and run state
 	vi.spyOn(Date, "now").mockReturnValue(Date.UTC(2026, 9, 29));
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
 	await using host = await statusHost();
-	const admissions = vi.spyOn(RpcSessionRegistry.prototype, "getForCommand");
+	const admissions = observeInProcessOpens(host);
 	const client = host.client("components");
 	const sessionId = String(dataOf(await client.request({ type: "open_session", cwd: host.cwd })).sessionId);
-	const entry = admissions.mock.results.findLast((result) => result.type === "return")?.value as
-		| RpcSessionEntry
-		| undefined;
+	const entry = admissions.entryFor(sessionId);
 	const lane = entry?.acceptance;
 	if (!lane) throw new Error("no real lane");
 	host.faux.setResponses([fauxAssistantMessage("done", { timestamp: 1 })]);

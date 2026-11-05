@@ -124,7 +124,8 @@ describe("turn inactivity lease and max runtime (senpi#3227)", () => {
 	// senpi#5797: the prepared pipeline awaits real work (its Web Crypto plan digest) between the model's tool call and
 	// tool_execution_start. The drive waits out that real hop instead of jumping fake time across it, so both pipelines
 	// are held to the same contract: tool progress renews the lease, and only the max runtime ends the turn.
-	it.each(["legacy", "prepared"] as const)(
+	// S36: the prepared pipeline is the only one, so the case runs once on it.
+	it.each(["prepared"] as const)(
 		"renews on tool execution progress so only the hard max runtime stops the turn (%s pipeline)",
 		async (pipeline) => {
 			vi.stubEnv("SENPI_EXECUTION_PIPELINE", pipeline);

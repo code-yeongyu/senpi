@@ -40,6 +40,9 @@ export {
 } from "@earendil-works/pi-telemetry";
 export * from "./agent.ts";
 export * from "./agent-loop.ts";
+export * from "./egress/types.ts";
+export { isStepCommitError, StepCommitError, type StepCommitFailure } from "./step-commit.ts";
+export { Agent, agentLoop, agentLoopContinue, runAgentLoop, runAgentLoopContinue } from "./public-entry.ts";
 export { createInternalAgentChannel, type InternalAgentChannel, type OrderedAgentRecord } from "./internal-events.ts";
 export { EMPTY_TOOL_USE_DEMOTION_DIAGNOSTIC, ProviderRetryWatchdogAbortError } from "./assistant-terminal-state.ts";
 export {
@@ -61,11 +64,15 @@ export {
 	encodeRemoteMessage,
 	HAND_CONTROL_LANE,
 	type RemoteAbort,
+	type EpochRefusal,
 	type RemoteAck,
 	type RemoteHandMessage,
 	type RemoteFile,
 	type RemoteHello,
 	type RemoteInvoke,
+	type RemoteFloor,
+	type RemoteFloorAck,
+	type RemoteFloorRefused,
 	type RemoteRefused,
 	type RemoteSettled,
 	RemoteProtocolError,
@@ -101,6 +108,14 @@ export {
 	type WorkspaceRoot,
 } from "./execution/grant-verify.ts";
 export {
+	createHandEpochFence,
+	EPOCH_FLOOR_MAX_STEP,
+	type FloorRaise,
+	HAND_SELF_SENDER,
+	type HandEpochFence,
+	type HandEpochFenceOptions,
+} from "./execution/remote-epoch.ts";
+export {
 	base64Length,
 	DEVICE_FILE_OPS,
 	type DeviceFileArgs,
@@ -131,6 +146,24 @@ export {
 	serveModelPlane,
 } from "./execution/plane-model.ts";
 export {
+	createLoopToolHost,
+	createSessionPlaneClient,
+	createSplitToolHost,
+	decodeSessionPlaneRequest,
+	loopSideToolNames,
+	SESSION_PLANE,
+	type SessionPlaneRequest,
+	serveSessionPlane,
+} from "./execution/plane-session.ts";
+export {
+	admitChainCall,
+	CHAIN_COUNT_LIMIT,
+	CHAIN_ORIGIN,
+	ChainCountLimitError,
+	decodeChainCount,
+	nextChainCount,
+} from "./execution/chain-count.ts";
+export {
 	decodePlaneMessage,
 	encodePlaneMessage,
 	type NestedRequest,
@@ -153,6 +186,12 @@ export {
 	serveLoopHooks,
 } from "./execution/loop-hook-host-hand.ts";
 export { createRemoteToolHost, type HandPlacement, type RemoteToolHostOptions } from "./execution/remote-tool-host.ts";
+export { canonicalJson } from "./execution/canonical-digest.ts";
+export { toStoreValue } from "./execution/prepared/executor-freeze.ts";
+export type { ConsentClassifier } from "./execution/prepared/executor-types.ts";
+export { openMemoryBatchStore } from "./execution/prepared/memory-batch-store.ts";
+export { BatchStoreMissingError, noPreflightCarry, PreflightCarryMissingError } from "./execution/tool-host.ts";
+export { createPreparedToolHost } from "./execution/prepared/pipeline-prepared.ts";
 export { type CarrierLink, createInProcessNetwork, type InProcessNetwork } from "./transport/in-process-carrier.ts";
 export { type LocalEndpoint, localEndpoint } from "./transport/local-endpoint.ts";
 export { createReliableTransport, type ReliableTransportOptions } from "./transport/reliable-transport.ts";

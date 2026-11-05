@@ -1,4 +1,4 @@
-import type { ConsentClassifier } from "./executor-types.ts";
+import type { ConsentClassifier } from "@earendil-works/pi-agent-core";
 
 /** A permission decision for one call, as the permission system's dispatch policy computes it without prompting. */
 export type PermissionAction = "allow" | "ask" | "deny";

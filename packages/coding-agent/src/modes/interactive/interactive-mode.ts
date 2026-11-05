@@ -308,11 +308,13 @@ import {
 import { getModelSearchText } from "./model-search.ts";
 import { PAUSE_STATUS_KEY, pauseFooterText, resumeCommandTarget } from "./pause-footer.ts";
 import {
+	episodeOwnsFailure,
 	isNetworkProviderError,
-	isNetworkProviderMessage,
 	isRetryableProviderError,
+	isRetryableProviderMessage,
 	ProviderErrorPresentation,
 } from "./provider-error-presentation.ts";
+import { providerErrorReason } from "./provider-error-reason.ts";
 import { replayAssistantTools } from "./replay-assistant-tools.ts";
 import { interactiveErrorText } from "./required-compaction-wording.ts";
 import { allScopeSessions, chooseResumePath, currentScopeSessions } from "./resume-rebind.ts";
@@ -385,6 +387,21 @@ interface WorkingStatusEditor extends EditorComponent {
 function adoptDefaultEditorActions(defaultEditor: CustomEditor, editor: EditorComponent): void {
 	if (editor === defaultEditor || !("actionHandlers" in editor) || !(editor.actionHandlers instanceof Map)) return;
 	for (const [action, handler] of defaultEditor.actionHandlers) editor.actionHandlers.set(action, handler);
+}
+
+/**
+ * Run a submission parked during startup once the real submit path is installed (senpi#5731). The person
+ * already pressed Enter, so the parked text is submitted unless they edited it since. A free function, like
+ * `adoptDefaultEditorActions`, so `init()` gains no new `this` dependency.
+ */
+export function replayStartupSubmission(
+	parked: { readonly text: string; readonly details?: EditorSubmitDetails } | undefined,
+	editor: Pick<EditorComponent, "getText" | "setText">,
+	defaultEditor: { onSubmit?: (text: string, details?: EditorSubmitDetails) => void | Promise<void> } | undefined,
+): void {
+	if (parked === undefined || editor.getText() !== parked.text) return;
+	editor.setText("");
+	void defaultEditor?.onSubmit?.(parked.text, parked.details);
 }
 
 function isWorkingStatusEditor(editor: EditorComponent): editor is WorkingStatusEditor {
@@ -1033,6 +1050,7 @@ export class InteractiveMode {
 	 * ordinary submission that never references it.
 	 */
 	private preResolvedSubmissionImages?: ImageContent[];
+	private startupParkedSubmission: { readonly text: string; readonly details?: EditorSubmitDetails } | undefined;
 	private activeStatusIndicator: StatusIndicator | undefined = undefined;
 	private activeWorkingIndicatorEmbedded = false;
 	private readonly idleStatus = new IdleStatus();
@@ -1698,7 +1716,7 @@ export class InteractiveMode {
 		if (this.defaultEditor) {
 			this.defaultEditor.onAction("app.clear", () => this.handleCtrlC());
 			this.defaultEditor.onCtrlD = () => this.handleCtrlD();
-			this.defaultEditor.onSubmit = (text) => this.handleStartupSubmit(text);
+			this.defaultEditor.onSubmit = (text, details) => this.handleStartupSubmit(text, details);
 		}
 		this.ui.setFocus(this.editor);
 
@@ -1828,6 +1846,9 @@ export class InteractiveMode {
 		this.setupEditorSubmitHandler();
 		this.sessionControlHost?.attachEditor(this.defaultEditor, () => this.composerHold() !== undefined);
 		adoptDefaultEditorActions(this.defaultEditor, this.editor);
+		const parkedSubmission = this.startupParkedSubmission;
+		this.startupParkedSubmission = undefined;
+		replayStartupSubmission(parkedSubmission, this.editor, this.defaultEditor);
 		this.ui.requestRender();
 		time("keyHandlers", "tui");
 
@@ -4972,7 +4993,7 @@ export class InteractiveMode {
 		return this.sessionLogger;
 	}
 
-	private handleStartupSubmit(text: string): void {
+	private handleStartupSubmit(text: string, details?: EditorSubmitDetails): void {
 		// Quit is a control action, not a prompt: honor it even while managed-tool setup
 		// is still running. Parking it in the editor would also disable the Ctrl+D quit
 		// escape, which CustomEditor only forwards while the editor is empty.
@@ -4981,6 +5002,7 @@ export class InteractiveMode {
 			void this.shutdown();
 			return;
 		}
+		this.startupParkedSubmission = { text, ...(details === undefined ? {} : { details }) };
 		this.editor.setText(text);
 		this.showStatus("Startup is still in progress");
 	}
@@ -5569,7 +5591,7 @@ export class InteractiveMode {
 						this.session.retryAttempt,
 						this.session.currentAbortSource,
 					);
-					if (isNetworkProviderMessage(renderedMessage)) {
+					if (isRetryableProviderMessage(renderedMessage, this.session)) {
 						this.getProviderErrors().record(renderedMessage.errorMessage ?? "", this.toolOutputExpanded);
 					} else if (renderedMessage.stopReason === "stop" || renderedMessage.stopReason === "toolUse") {
 						this.providerErrors?.clear();
@@ -5687,7 +5709,13 @@ export class InteractiveMode {
 				}
 				this.detachAssistantTextSegments();
 				this.clearPendingTools();
-				if (event.failure !== undefined && !event.willRetry && !failureAlreadyDescribed(event.messages))
+				// A failure the quiet episode owns gets its one final notice when the episode finishes (senpi#6012).
+				if (
+					event.failure !== undefined &&
+					!event.willRetry &&
+					!failureAlreadyDescribed(event.messages) &&
+					!episodeOwnsFailure(event.messages, this.providerErrors, this.session)
+				)
 					this.showError(formatProviderFailure(event.failure));
 
 				this.ui.requestRender();
@@ -6161,6 +6189,7 @@ export class InteractiveMode {
 				event.delayMs,
 				indicator,
 				isRetryableProviderError(event.errorMessage),
+				providerErrorReason(event.errorMessage),
 			),
 		);
 		this.ui.requestRender();
@@ -6398,7 +6427,7 @@ export class InteractiveMode {
 				break;
 			}
 			case "assistant": {
-				if (isNetworkProviderMessage(message)) {
+				if (isRetryableProviderMessage(message, this.session)) {
 					this.getProviderErrors().record(message.errorMessage ?? "", this.toolOutputExpanded);
 					this.providerErrors?.finish();
 				} else if (message.stopReason === "stop" || message.stopReason === "toolUse") {
@@ -6413,7 +6442,7 @@ export class InteractiveMode {
 					this.getMarkdownTransformers(),
 				);
 				assistantComponent.setExpanded(this.toolOutputExpanded);
-				assistantComponent.setProviderErrorOwned(isNetworkProviderMessage(message));
+				assistantComponent.setProviderErrorOwned(isRetryableProviderMessage(message, this.session));
 				if (options?.replayOwnsTurnNotice === true) assistantComponent.setOwnsTurnNotice(true);
 				if (options?.replayOwnsTurnNotice === false) assistantComponent.setProviderErrorOwned(true);
 				this.chatContainer.addChild(assistantComponent);
@@ -6436,7 +6465,7 @@ export class InteractiveMode {
 	private syncTrailingAssistantText(message: AssistantMessage): void {
 		if (!this.streamingComponent) return;
 		this.streamingComponent.setProviderErrorOwned(
-			isNetworkProviderMessage(message) || headNoticeShownElsewhere(message),
+			isRetryableProviderMessage(message, this.session) || headNoticeShownElsewhere(message),
 		);
 		const head = assistantStreamingHeadMessage(message);
 		// Single writer: while smooth streaming paces the head (no toolCall block),
@@ -6468,7 +6497,7 @@ export class InteractiveMode {
 			}
 			const runMessage: AssistantMessage = { ...message, content: runBlocks };
 			// Only the run that ends the message shows the turn's error; earlier runs repeat it otherwise (senpi#4954).
-			const errorShownElsewhere = isNetworkProviderMessage(message) || index < content.length;
+			const errorShownElsewhere = isRetryableProviderMessage(message, this.session) || index < content.length;
 			const existing = this.assistantTextSegments.get(runStart);
 			if (existing) {
 				existing.setProviderErrorOwned(errorShownElsewhere);
