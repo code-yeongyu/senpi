@@ -10,7 +10,7 @@ import { openSessionStore } from "@earendil-works/pi-agent-core";
 
 const { root, action } = JSON.parse(process.argv[2] ?? "{}") as {
 	root: string;
-	action: "wire" | "jsonl" | "edited" | "rebind";
+	action: "wire" | "jsonl" | "edited" | "rebind" | "two-projects";
 };
 const agentDir = join(root, "agent");
 const sessionDir = join(root, "sessions");
@@ -30,16 +30,16 @@ async function create(sessionManager: SessionManager, sessionStore?: "jsonl") {
 	created.session.dispose();
 }
 
-async function storedKeys(sessionId: string): Promise<string[]> {
-	const bound = await openDefaultSessionStore({ agentDir, sessionId });
+async function storedKeys(sessionId: string, dir = sessionDir): Promise<string[]> {
+	const bound = await openDefaultSessionStore({ agentDir, sessionDir: dir, sessionId });
 	return ((await openSessionStore(bound.store, bound.epoch).load(sessionId))?.entries ?? []).map((entry) => entry.key);
 }
 
 if (action === "rebind") {
 	// One process binding one session again (/resume, a reload, the startup retry) must reuse its store connection.
-	const first = await openDefaultSessionStore({ agentDir, sessionId: "rebind-session" });
-	const second = await openDefaultSessionStore({ agentDir, sessionId: "rebind-session" });
-	const other = await openDefaultSessionStore({ agentDir, sessionId: "rebind-other" });
+	const first = await openDefaultSessionStore({ agentDir, sessionDir, sessionId: "rebind-session" });
+	const second = await openDefaultSessionStore({ agentDir, sessionDir, sessionId: "rebind-session" });
+	const other = await openDefaultSessionStore({ agentDir, sessionDir, sessionId: "rebind-other" });
 	console.log(
 		JSON.stringify({
 			same: first.store === second.store,
@@ -51,6 +51,24 @@ if (action === "rebind") {
 }
 
 const user = (text: string) => ({ role: "user" as const, content: [{ type: "text" as const, text }], timestamp: 1 });
+
+if (action === "two-projects") {
+	// `--session-id` is a project session id: two projects may use the same one, each with its own transcript.
+	const projects = ["a", "b"].map((name) => {
+		const dir = join(root, `sessions-${name}`);
+		return { name, dir, manager: SessionManager.create(join(root, name), dir, { id: "shared-id" }) };
+	});
+	const written: Record<string, string> = {};
+	for (const { name, manager } of projects) {
+		written[name] = manager.appendMessage(user(`question ${name}`));
+		await create(manager);
+		await manager.settleDurableProjection();
+	}
+	const stored: Record<string, string[]> = {};
+	for (const { name, dir } of projects) stored[name] = await storedKeys("shared-id", dir);
+	console.log(JSON.stringify({ written, stored }));
+	process.exit(0);
+}
 const sessionManager = SessionManager.create(root, sessionDir);
 const first = sessionManager.appendMessage(user("question"));
 await create(sessionManager, action === "jsonl" ? "jsonl" : undefined);

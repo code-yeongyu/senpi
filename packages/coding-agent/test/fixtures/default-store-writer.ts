@@ -12,6 +12,8 @@ interface Args {
 }
 
 const args = JSON.parse(process.argv[2] ?? "{}") as Args;
+// Every writer here belongs to one project; scoping by project is covered through createAgentSession.
+const sessionDir = "/project";
 const header: SessionHeader = {
 	type: "session",
 	version: 3,
@@ -28,6 +30,7 @@ async function released(): Promise<void> {
 if (args.action === "crash-at-claim") {
 	await openDefaultSessionStore({
 		agentDir: args.agentDir,
+		sessionDir,
 		sessionId: args.sessionId,
 		onWritePoint: (point) => {
 			if (point.op === "claim" && point.at === "before") process.exit(70);
@@ -35,7 +38,7 @@ if (args.action === "crash-at-claim") {
 	});
 	say({ crashed: false });
 } else {
-	let bound = await openDefaultSessionStore({ agentDir: args.agentDir, sessionId: args.sessionId });
+	let bound = await openDefaultSessionStore({ agentDir: args.agentDir, sessionDir, sessionId: args.sessionId });
 	if (args.action === "takeover-then-append") bound = await takeOverSessionStore(bound);
 	const handle = await openSyncSessionStore(bound.store, bound.epoch).open(args.sessionId, header);
 	if (args.action === "read") {

@@ -162,6 +162,18 @@ describe("createAgentSession's default session store on Bun (S21b b1b)", { timeo
 		expect(result).toEqual({ same: true, distinct: true, epochs: [1, 1] });
 	});
 
+	// #5991 review: the store was keyed by session id alone, so a second project binding the same id replaced the first's.
+	it("keeps two projects' sessions with the same id in separate stores", async () => {
+		const { written, stored } = (await step("two-projects")) as unknown as {
+			written: Record<"a" | "b", string>;
+			stored: Record<"a" | "b", string[]>;
+		};
+		expect(stored.a).toContain(written.a);
+		expect(stored.a).not.toContain(written.b);
+		expect(stored.b).toContain(written.b);
+		expect(stored.b).not.toContain(written.a);
+	});
+
 	// Nothing reads the variable on Bun today; this guards against a future reader that would let it switch stores.
 	it("ignores SENPI_SESSION_STORE=jsonl on Bun", async () => {
 		const result = await step("wire", { SENPI_SESSION_STORE: "jsonl" });
