@@ -14,6 +14,7 @@ import {
 	MAX_RATE_LIMIT_BLOCK_MS,
 	runFailover,
 } from "../../../src/core/extensions/builtin/anthropic-subscription/failover.ts";
+import { cliSlot } from "../../support/claude-cli-test-slots.ts";
 
 const PROVIDER = "anthropic-subscription";
 const T0 = Date.UTC(2026, 9, 16, 10, 0, 0);
@@ -21,10 +22,7 @@ const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 
 function pool(tag: string): AccountSlot[] {
-	return [
-		{ name: `a-${tag}`, refresh: "r-a", access: "x-a", expires: 1, source: "login" },
-		{ name: `b-${tag}`, refresh: "r-b", access: "x-b", expires: 1, source: "login" },
-	];
+	return [cliSlot(`a-${tag}`), cliSlot(`b-${tag}`)];
 }
 
 function credentialOf(accounts: AccountSlot[]): AnthropicSubscriptionCredential {

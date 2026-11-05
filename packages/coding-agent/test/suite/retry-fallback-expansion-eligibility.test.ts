@@ -60,18 +60,20 @@ describe("bare expansion eligibility gate", () => {
 		expect(entries.some((entry) => entry.includes(OPUS5))).toBe(true);
 	});
 
-	it("keeps an eligible OAuth provider while the exact Cursor provider stays out of bare expansion by policy", () => {
-		// cursor (the exact denylisted provider id) never enters bare expansion even with an
-		// OAuth credential; cursor-cli-oauth is a different provider id and is NOT denylisted.
+	it("keeps the session's own eligible lane while the exact Cursor provider stays out of bare expansion by policy", () => {
+		// cursor is not one of Anthropic's first-party providers, so it never enters bare
+		// expansion of a Claude family, even with an OAuth credential.
 		const withCursor = [...catalog, model("cursor", OPUS5)];
 		const chains = canonicalizeFallbackChains(BARE_CHAINS, lookup(withCursor, ["anthropic-subscription", "cursor"]));
 
 		const entries = chains[`anthropic/${FABLE}`] ?? [];
-		expect(entries.some((entry) => entry.startsWith("anthropic-subscription/"))).toBe(true);
+		// senpi#5518: the rung stays on the session's own lane; the OAuth subscription lane is never borrowed.
+		expect(entries).toContain(`anthropic/${OPUS5}:xhigh`);
+		expect(entries.some((entry) => entry.startsWith("anthropic-subscription/"))).toBe(false);
 		expect(entries.some((entry) => entry.startsWith("cursor/"))).toBe(false);
 	});
 
-	it("keeps eligible providers when the registry exposes no eligibility gate", () => {
+	it("keeps the session's own lane when the registry exposes no eligibility gate", () => {
 		const withCursor = [...catalog, model("cursor", OPUS5)];
 		const chains = canonicalizeFallbackChains(BARE_CHAINS, {
 			getAll: () => withCursor,
@@ -80,7 +82,9 @@ describe("bare expansion eligibility gate", () => {
 		});
 
 		const entries = chains[`anthropic/${FABLE}`] ?? [];
-		expect(entries.some((entry) => entry.startsWith("anthropic-subscription/"))).toBe(true);
+		// senpi#5518: the rung stays on the session's own lane; the OAuth subscription lane is never borrowed.
+		expect(entries).toContain(`anthropic/${OPUS5}:xhigh`);
+		expect(entries.some((entry) => entry.startsWith("anthropic-subscription/"))).toBe(false);
 		expect(entries.some((entry) => entry.startsWith("cursor/"))).toBe(false);
 	});
 });

@@ -7,24 +7,21 @@ import { AUTH_BLOCK_REPROBE_MS } from "../../../src/core/credential-pool/auth-re
 import { classifyCredentialFailure } from "../../../src/core/credential-pool/classify.ts";
 import { listRotationSlots, streamWithCredentialRotation } from "../../../src/core/credential-pool/rotation-stream.ts";
 import { CredentialSlotRepository, slotHealth } from "../../../src/core/credential-pool/state-store.ts";
-import type { AccountSlot } from "../../../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
+import type {
+	AccountSlot,
+	ClaudeCliAccountSlot,
+} from "../../../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
 import {
 	AllAccountsBlockedError,
 	selectAccount,
 } from "../../../src/core/extensions/builtin/anthropic-subscription/affinity.ts";
 import { runFailover } from "../../../src/core/extensions/builtin/anthropic-subscription/failover.ts";
+import { cliSlot } from "../../support/claude-cli-test-slots.ts";
 
 const NOW = 1_800_000_000_000;
 
-function account(name: string, extra: Partial<AccountSlot> = {}): AccountSlot {
-	return {
-		name,
-		refresh: `refresh-${name}`,
-		access: `access-${name}`,
-		expires: NOW + 3_600_000,
-		source: "login",
-		...extra,
-	};
+function account(name: string, extra: Partial<ClaudeCliAccountSlot> = {}): AccountSlot {
+	return cliSlot(name, extra);
 }
 
 function memoryStore(initial: { accounts: AccountSlot[] }): CredentialStore & { accounts: () => AccountSlot[] } {

@@ -1,3 +1,4 @@
+import { compactOpen } from "./compact-open-admission.ts";
 import type { RpcAttachmentCommand } from "./attachment-types.ts";
 import { clearHandoverParkedSession } from "./host-handover-parked.ts";
 import { hostInstanceId } from "./protocol-identity.ts";
@@ -52,7 +53,7 @@ function attach(host: RouterContext, owner: string, sessionId: string): void {
 export function attachSession(
 	host: RouterContext,
 	command: Extract<RpcAttachmentCommand, { type: "attach_session" }>,
-): RpcResponse {
+): RpcResponse | Promise<RpcResponse | undefined> {
 	const draining = drainingRefusal(host, command);
 	if (draining) return draining;
 	const entry = host.registry.peek(command.sessionId);
@@ -62,6 +63,19 @@ export function attachSession(
 		return error(command.id, command.type, "session_identity_mismatch", {});
 	const owner = host.writer.currentConnection();
 	if (owner === undefined) return error(command.id, command.type, "session_not_attached", { reason: "no_connection" });
+	if (command.admissionId !== undefined && host.admissions)
+		return compactOpen(host, command, async (accept, signal) => {
+			signal.throwIfAborted();
+			attach(host, owner, command.sessionId);
+			try {
+				await accept({ sessionId: command.sessionId, durableSessionId: command.durableSessionId, attached: true });
+			} catch (cause) {
+				releaseOwnerAttachment(host, owner, command.sessionId);
+				await releaseDisconnectAttachment(host, command.sessionId);
+				throw cause;
+			}
+			return undefined;
+		});
 	try {
 		attach(host, owner, command.sessionId);
 		return {

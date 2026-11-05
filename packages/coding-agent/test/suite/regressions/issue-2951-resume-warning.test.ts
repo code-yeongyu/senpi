@@ -16,11 +16,12 @@ import * as sessionHolders from "../../../src/core/session-holders.ts";
 import { SessionManager } from "../../../src/core/session-manager.ts";
 import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
 import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
-import { reservationPhase } from "../rpc-worker-reservation-support.ts";
-import { startSessionHolder } from "./issue-2951-holder-support.ts";
+import { reservationStep } from "../rpc-worker-reservation-support.ts";
 
 // senpi#2951: exercise command-context -> controller -> real runtime replacement, with a virtual terminal.
-it.each(["holder", "lookup-error"] as const)("resumes through the public controller and warns for %s", async (kind) => {
+// A live holder no longer gets a warn-and-switch: senpi#5744 asks to cancel or take over first, covered by
+// 5744-resume-refuses-held-session.test.ts. A failed holder lookup stays advisory, as pinned here.
+it("resumes through the public controller and warns when the holder lookup fails", async () => {
 	const root = await mkdtemp(join(tmpdir(), "held-resume-public-"));
 	const target = join(root, "target.jsonl");
 	const id = randomUUID();
@@ -95,15 +96,12 @@ it.each(["holder", "lookup-error"] as const)("resumes through the public control
 		if (needle && text.includes(needle)) printed.resolve();
 	});
 	try {
-		await using holder = kind === "holder" ? await startSessionHolder(target, id, root) : undefined;
 		await mode.init();
-		if (kind === "lookup-error")
-			vi.spyOn(sessionHolders, "liveSessionHolders").mockRejectedValueOnce(new Error("ENOTDIR"));
-		needle = holder ? String(holder.pid) : "Unable to inspect session holders";
+		vi.spyOn(sessionHolders, "liveSessionHolders").mockRejectedValueOnce(new Error("ENOTDIR"));
+		needle = "Unable to inspect session holders";
 		await runtime.session.prompt("/fixture-resume");
 		expect(runtime.session.sessionManager.getSessionId()).toBe(id);
-		await reservationPhase("resume-warning-rendered", printed.promise);
-		if (holder) expect(output.join("\n")).toContain(root);
+		await reservationStep("resume-warning-rendered", printed.promise);
 	} finally {
 		mode.stop();
 		await runtime.dispose();

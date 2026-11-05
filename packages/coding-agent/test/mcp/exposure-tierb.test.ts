@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { McpToolCatalogEntry } from "../../src/core/extensions/builtin/mcp/catalog.ts";
 import { defaultSettings } from "../../src/core/extensions/builtin/mcp/config-schema.ts";
 import { orderActiveSet, registerMcpTierBTools } from "../../src/core/extensions/builtin/mcp/expose/tier-b.ts";
+import { createMcpResourceTools } from "../../src/core/extensions/builtin/mcp/resources.ts";
 import { getMcpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
 import { TOOL_SEARCH_ACTIVATION_MARKER_V2 } from "../../src/core/extensions/builtin/tool-search/engine/marker.ts";
 import { ToolSearchService } from "../../src/core/extensions/builtin/tool-search/service.ts";
@@ -291,6 +292,78 @@ describe("stubSwap re-registration keeps promoted tools full", () => {
 		expect(isStub("mcp_fx_alpha")).toBe(false);
 		expect(isStub("mcp_fx_beta")).toBe(true);
 		expect(active).toContain("mcp_fx_alpha");
+	});
+});
+
+describe("direct-mode MCP tools keep one order whichever server connects first (#5289)", () => {
+	function recordingPi(initialActive: string[]) {
+		let active = [...initialActive];
+		return {
+			getActiveTools: () => [...active],
+			setActiveTools: (names: string[]) => {
+				active = [...names];
+			},
+			registerTool<TParams extends TSchema, TDetails, TState>(
+				definition: ToolDefinition<TParams, TDetails, TState>,
+			) {
+				if (!active.includes(definition.name)) active.push(definition.name);
+			},
+		};
+	}
+	function entry(server: string): McpToolCatalogEntry {
+		return {
+			server,
+			tool: "tool_1",
+			schema: { type: "object" },
+			requestTimeoutMs: 1_000,
+			connection: {} as McpToolCatalogEntry["connection"],
+		};
+	}
+	// Each server's connect re-registers the catalog of the servers connected so far.
+	function activeAfterConnects(order: readonly string[], withUtilities = false): string[] {
+		const pi = recordingPi(["read", "bash"]);
+		const toolSearchService = new ToolSearchService({
+			getAllTools: () => [],
+			getActiveTools: () => pi.getActiveTools(),
+			setActiveTools: (names) => pi.setActiveTools([...names]),
+		});
+		const connected: McpToolCatalogEntry[] = [];
+		for (const server of order) {
+			connected.push(entry(server));
+			registerMcpTierBTools(
+				pi,
+				{
+					registeredEntries: [...connected],
+					activeEntries: [...connected],
+					searchMode: false,
+					settings: defaultSettings,
+					...(withUtilities ? { utilityTools: createMcpResourceTools(() => []) } : {}),
+				},
+				toolSearchService,
+			);
+		}
+		return pi.getActiveTools();
+	}
+
+	it("stdio-first and http-first connects produce the same active set: base tools first, MCP tools by name", () => {
+		const httpFirst = activeAfterConnects(["fxhttp", "fxstdio"]);
+		const stdioFirst = activeAfterConnects(["fxstdio", "fxhttp"]);
+		expect(stdioFirst).toEqual(httpFirst);
+		expect(httpFirst).toEqual(["read", "bash", "mcp_fxhttp_tool_1", "mcp_fxstdio_tool_1"]);
+	});
+
+	it("the fixed resource utility tools keep their place ahead of the per-server tools", () => {
+		const httpFirst = activeAfterConnects(["fxhttp", "fxstdio"], true);
+		const stdioFirst = activeAfterConnects(["fxstdio", "fxhttp"], true);
+		expect(stdioFirst).toEqual(httpFirst);
+		expect(httpFirst).toEqual([
+			"read",
+			"bash",
+			"mcp_list_resources",
+			"mcp_read_resource",
+			"mcp_fxhttp_tool_1",
+			"mcp_fxstdio_tool_1",
+		]);
 	});
 });
 

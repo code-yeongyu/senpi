@@ -4,7 +4,11 @@ import { buildExecutionToolingSection } from "./execution-tooling.ts";
 export function buildClaudeOpus46Prompt(options: BuildDynamicSystemPromptOptions): string {
 	return buildDynamicSystemPrompt({
 		...options,
-		tuningSection: buildExecutionToolingSection({ toolNames: options.selectedTools, dialect: "claude" }),
+		tuningSection: buildExecutionToolingSection({
+			toolNames: options.selectedTools,
+			dialect: "claude",
+			sharedSections: options.sharedSections,
+		}),
 		workstationDialect: "claude",
 	});
 }

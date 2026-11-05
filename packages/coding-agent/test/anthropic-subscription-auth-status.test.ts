@@ -2,6 +2,7 @@ import type { AuthCheck, AuthContext, OAuthCredential } from "@earendil-works/pi
 import { describe, expect, it, vi } from "vitest";
 import { emptyCredential } from "../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
 import { createOAuthConfig } from "../src/core/extensions/builtin/anthropic-subscription/oauth-login.ts";
+import { cliSlot } from "./support/claude-cli-test-slots.ts";
 
 type OAuthAvailabilityCheck = (input: {
 	ctx: AuthContext;
@@ -34,31 +35,31 @@ function availabilityCheck(
 	return config.check as OAuthAvailabilityCheck;
 }
 
-function account(name = "managed", access = "access") {
-	return { name, refresh: "refresh", access, expires: Date.now() + 60_000, source: "login" as const };
+// A stored Claude account is a Claude CLI account (senpi#4436).
+function account(name = "managed") {
+	return cliSlot(name);
 }
 
 describe("claude-sdk-oauth availability", () => {
 	it("accepts a stored managed account without probing ambient auth", async () => {
 		const readAmbientAuthStatus = vi.fn(async () => false);
 		const check = availabilityCheck(readAmbientAuthStatus);
-		const credential = {
-			...emptyCredential(),
-			accounts: [
-				{
-					name: "managed",
-					refresh: "refresh",
-					access: "access",
-					expires: Date.now() + 60_000,
-					source: "login" as const,
-				},
-			],
-		};
+		const credential = { ...emptyCredential(), accounts: [account()] };
 
 		expect(await check({ ctx: authContext(), credential })).toEqual({
 			type: "oauth",
 			source: "Anthropic Subscription",
 		});
+		expect(readAmbientAuthStatus).not.toHaveBeenCalled();
+	});
+
+	it("does not count a lone legacy token slot as a configured account", async () => {
+		const readAmbientAuthStatus = vi.fn(async () => true);
+		const check = availabilityCheck(readAmbientAuthStatus);
+		const legacy = { name: "legacy", refresh: "refresh", access: "access", expires: Date.now() + 60_000 };
+		const credential = { ...emptyCredential(), accounts: [legacy] };
+
+		expect(await check({ ctx: authContext(), credential })).toBeUndefined();
 		expect(readAmbientAuthStatus).not.toHaveBeenCalled();
 	});
 

@@ -59,6 +59,7 @@ export function parkedEntryFromProfile(
 			: {}),
 		...(profile?.autoTitle !== undefined ? { autoTitle: profile.autoTitle } : {}),
 		...(profile?.retryFallback !== undefined ? { retryFallback: profile.retryFallback } : {}),
+		...(profile?.sessionEnv !== undefined ? { sessionEnv: profile.sessionEnv } : {}),
 	};
 }
 
@@ -83,6 +84,7 @@ export function parkedOpenCommand(entry: HandoverParkedEntry): OpenSessionComman
 		...(entry.sessionContext !== undefined ? { context: entry.sessionContext } : {}),
 		...(entry.autoTitle !== undefined ? { auto_title: entry.autoTitle } : {}),
 		...(entry.retryFallback !== undefined ? { retryFallback: entry.retryFallback } : {}),
+		...(entry.sessionEnv !== undefined ? { env: { ...entry.sessionEnv } } : {}),
 		retain_on_disconnect: entry.retainOnDisconnect,
 	};
 	return command;

@@ -39,6 +39,7 @@ Discovery rules:
 - In all skill locations, directories containing `SKILL.md` are discovered recursively
 - In `~/.agents/skills/` and project `.agents/skills/`, root `.md` files are ignored, but nested `.md` files in grouping folders are discovered when they declare skill frontmatter
 - Root Markdown files other than `SKILL.md` that do not look like skills are ignored silently
+- `.gitignore`, `.ignore` and `.fdignore` files inside a skill location hide the folders and files they list. A symlinked entry is not hidden by the ignore files above it: it belongs to another tree, so a skill linked in from its own repository loads even when the location's `.gitignore` lists the link. The linked tree's own ignore files still apply inside it. To keep git ignoring a link, list it in `.git/info/exclude`; to stop loading a linked skill on purpose, exclude it with the settings `skills` array (`!pattern` or `-path`, see [Settings](settings.md))
 
 Disable discovery with `--no-skills` (explicit `--skill` paths still load).
 
@@ -91,16 +92,16 @@ appears inline. Bare inline dollar text remains literal, so `Use $HOME` and `exp
 do not become skill invocations.
 
 After resolving the explicit tokens, Senpi removes only those tokens and wraps the remaining text once
-as the user request. Unknown tokens stay literal, duplicates are skipped, and at most five distinct
-skills expand per prompt. Raise that limit with `maxSkillExpansionsPerPrompt` in `settings.json`
-when you deliberately compose more skills.
+as the user request. Unknown tokens stay literal and duplicates are skipped. There is no limit on how
+many skills one prompt composes: every invoked skill loads. Skill bodies are inlined until they total
+about 128K characters; any skill past that budget is still loaded, as a reference that names its
+`SKILL.md` path and tells the model to read it before acting. The first skill is always inlined.
 
 Toggle skill commands via `/settings` in interactive mode or in `settings.json`:
 
 ```json
 {
-  "enableSkillCommands": true,
-  "maxSkillExpansionsPerPrompt": 5
+  "enableSkillCommands": true
 }
 ```
 

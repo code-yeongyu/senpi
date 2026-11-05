@@ -1,4 +1,4 @@
-import { readFile, unlink, writeFile } from "node:fs/promises";
+import { open, readFile, unlink, writeFile } from "node:fs/promises";
 
 /**
  * The asynchronous file seam of compact current-state storage (senpi#4272) and the failures it
@@ -8,6 +8,8 @@ import { readFile, unlink, writeFile } from "node:fs/promises";
 export type CompactStorageOperation =
 	| "spool_create"
 	| "spill_write"
+	| "value_write"
+	| "node_write"
 	| "page_write"
 	| "leaf_read"
 	| "page_read"
@@ -21,16 +23,32 @@ export interface CompactStorageFailure {
 	readonly retainedInMemoryBytes: number;
 }
 
+/** One leaf's bytes inside a segment file that packs a flush batch. */
+export interface CompactFileRange {
+	readonly offset: number;
+	readonly length: number;
+}
+
 /** Asynchronous file access the host supplies; the default is node's promise filesystem. */
 export interface CompactStorageIo {
 	writeFile(path: string, data: Buffer): Promise<void>;
-	readFile(path: string): Promise<Buffer>;
+	/** The whole file, or at most `range.length` bytes from `range.offset`. */
+	readFile(path: string, range?: CompactFileRange): Promise<Buffer>;
 	unlink(path: string): Promise<void>;
 }
 
 export const nodeCompactStorageIo: CompactStorageIo = {
 	writeFile: (path, data) => writeFile(path, data, { flag: "wx", mode: 0o600 }),
-	readFile: (path) => readFile(path),
+	readFile: async (path, range) => {
+		if (!range) return readFile(path);
+		const handle = await open(path, "r");
+		try {
+			const { buffer, bytesRead } = await handle.read(Buffer.alloc(range.length), 0, range.length, range.offset);
+			return buffer.subarray(0, bytesRead);
+		} finally {
+			await handle.close();
+		}
+	},
 	unlink: (path) => unlink(path),
 };
 

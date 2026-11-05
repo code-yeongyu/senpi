@@ -103,9 +103,9 @@ function aliasedTempRoot(label: string): string {
 	return alias;
 }
 
-export function supervisorLaunch(args: readonly string[]): { command: string; args: string[] } {
+export function supervisorLaunch(args: readonly string[]): { command: string; args: string[]; reportsStartup: true } {
 	const entry = join(import.meta.dirname, "..", "..", "src", "modes", "rpc", "host-lifecycle.ts");
-	return { command: process.execPath, args: [entry, ...args] };
+	return { command: process.execPath, args: [entry, ...args], reportsStartup: true };
 }
 
 export function hostEnv(qa: EndpointScratch): Record<string, string> {

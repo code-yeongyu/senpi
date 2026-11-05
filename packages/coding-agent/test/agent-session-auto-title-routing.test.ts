@@ -7,7 +7,7 @@ import {
 	waitForCallCount,
 	waitForSessionName,
 } from "./agent-session-auto-title-helpers.ts";
-import type { Harness } from "./suite/harness.ts";
+import { getAssistantTexts, type Harness } from "./suite/harness.ts";
 
 describe("agent session auto title routing", () => {
 	const harnesses: Harness[] = [];
@@ -157,23 +157,30 @@ describe("agent session auto title routing", () => {
 		expect(harness.sessionManager.getSessionName()).toBeUndefined();
 	});
 
-	it("does not stack title requests while one is already running", async () => {
+	it("runs input sent while the title is pending after it, without a second title request", async () => {
 		const titleResponse = createDeferred<ReturnType<typeof fauxAssistantMessage>>();
+		const titleRequested = createDeferred<void>();
 		const harness = await createAutoTitleHarness();
 		harnesses.push(harness);
 		harness.setResponses([
 			fauxAssistantMessage("first turn complete"),
-			() => titleResponse.promise,
+			() => {
+				titleRequested.resolve();
+				return titleResponse.promise;
+			},
 			fauxAssistantMessage("second turn complete"),
 		]);
 
 		const sessionName = waitForSessionName(harness);
-		await harness.session.prompt("fix the OAuth login button on mobile");
-		await waitForCallCount(harness, 2);
-		await harness.session.prompt("add keyboard navigation for the login form");
-
-		expect(harness.faux.getCallLog()).toHaveLength(3);
+		const running = harness.session.prompt("fix the OAuth login button on mobile");
+		await titleRequested.promise;
+		await harness.session.prompt("add keyboard navigation for the login form", { streamingBehavior: "followUp" });
 		titleResponse.resolve(fauxAssistantMessage("<title>OAuth Mobile Login</title>"));
+		await running;
+		await harness.session.waitForSettledSessionWork();
+
 		await expect(sessionName).resolves.toBe("OAuth Mobile Login");
+		expect(harness.faux.getCallLog()).toHaveLength(3);
+		expect(getAssistantTexts(harness)).toEqual(["first turn complete", "second turn complete"]);
 	});
 });

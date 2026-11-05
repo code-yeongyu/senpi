@@ -57,6 +57,17 @@ async function storedKeyWithoutCatalogModel<TModel extends ImageGenAuthModel>(
 	};
 }
 
+/** The tier `resolveConfiguredOpenAi` would resolve, read from configuration alone (senpi#5707). */
+export function configuredOpenAiTier<TModel extends ImageGenAuthModel>(
+	registry: ImageGenAuthRegistry<TModel>,
+): { tier: OpenAiTier; baseUrl: string } | undefined {
+	const stored = isStoredApiKey(registry.authStorage.get("openai"));
+	const model = registry.getAll().find((candidate) => candidate.provider === "openai" && nonEmpty(candidate.baseUrl));
+	if (!model) return stored ? { tier: "store", baseUrl: OPENAI_BASE_URL } : undefined;
+	const tier = openAiTier(stored, model, registry.getProviderAuthStatus?.("openai").source);
+	return tier === undefined ? undefined : { tier, baseUrl: model.baseUrl };
+}
+
 export async function resolveConfiguredOpenAi<TModel extends ImageGenAuthModel>(
 	registry: ImageGenAuthRegistry<TModel>,
 ): Promise<ConfiguredOpenAi | undefined> {

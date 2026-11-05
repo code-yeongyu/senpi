@@ -1,20 +1,20 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import type { ResponseStreamEvent } from "openai/resources/responses/responses.js";
 import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { stream as anthropicStream } from "../src/api/anthropic-messages.ts";
 import { stream as completionsStream } from "../src/api/openai-completions.ts";
-import { processResponsesStream } from "../src/api/openai-responses-shared.ts";
 import { getModel } from "../src/compat.ts";
-import type { AssistantMessage, AssistantMessageEvent, Model } from "../src/types.ts";
+import type { AssistantMessageEvent } from "../src/types.ts";
 import {
 	assistantRecords,
 	getAssistantCapture,
 	isAssistantProgress,
 	subscribeAssistantCapture,
 } from "../src/utils/assistant-capture.ts";
-import { AssistantMessageEventStream } from "../src/utils/event-stream.ts";
+import type { AssistantMessageEventStream } from "../src/utils/event-stream.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
+
+import { raw, responses } from "./producer-responses-capture-fixture.ts";
 
 const wire = vi.hoisted(() => ({ chunks: [] as Record<string, unknown>[] }));
 vi.mock("openai", () => ({
@@ -42,27 +42,7 @@ afterEach(() => {
 	releaseCapture();
 });
 
-const raw = '{ "value": "\\uD83D\\uDE00", "quote": "\\\\\\"𝄞" }';
 const context = normalizeContext({ messages: [{ role: "user", content: "fixture", timestamp: 1 }] });
-function output(): AssistantMessage {
-	return {
-		role: "assistant",
-		api: "openai-responses",
-		provider: "openai",
-		model: "gpt-5",
-		content: [],
-		stopReason: "pending",
-		timestamp: 1,
-		usage: {
-			input: 0,
-			output: 0,
-			cacheRead: 0,
-			cacheWrite: 0,
-			totalTokens: 0,
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-		},
-	};
-}
 async function publicEvents(stream: AssistantMessageEventStream) {
 	const events: AssistantMessageEvent[] = [];
 	for await (const record of assistantRecords(stream)) if (!isAssistantProgress(record)) events.push(record);
@@ -127,39 +107,6 @@ function completions(deferred: boolean, custom = false) {
 		{ apiKey: "fixture", maxRetries: 0 },
 	);
 }
-async function responses(seed = "", reset = false) {
-	const stream = new AssistantMessageEventStream();
-	const message = output();
-	const item = { type: "function_call", id: "fc_fixture", call_id: "call_fixture", name: "echo", arguments: seed };
-	const frames = [
-		{ type: "response.output_item.added", output_index: 0, item },
-		...[raw.slice(seed.length, 20), "", raw.slice(20)].map((delta) => ({
-			type: "response.function_call_arguments.delta",
-			output_index: 0,
-			delta,
-		})),
-		...(reset
-			? [{ type: "response.function_call_arguments.done", output_index: 0, arguments: '{ "reset": true }' }]
-			: []),
-		{
-			type: "response.output_item.done",
-			output_index: 0,
-			item: { ...item, arguments: reset ? '{ "reset": true }' : raw },
-		},
-		{ type: "response.completed", response: { id: "resp_fixture", status: "completed", output: [] } },
-	] as ResponseStreamEvent[];
-	await processResponsesStream(
-		(async function* () {
-			yield* frames;
-		})(),
-		message,
-		stream,
-		getModel("openai", "gpt-5") as Model<"openai-responses">,
-	);
-	stream.push({ type: "done", reason: "toolUse", message });
-	stream.end(message);
-	return stream;
-}
 
 describe("producer capture #4272", () => {
 	it("keeps baseline public bytes for the three provider fixture paths", async () => {
@@ -216,6 +163,7 @@ describe("producer capture #4272", () => {
 			rawArgumentPrefix: raw.slice(0, 5),
 			parsedThrough: 0,
 			coveredCodeUnits: 5,
+			nextOffset: 5,
 		});
 		assertDeltas(events, 5);
 	});
@@ -227,6 +175,7 @@ describe("producer capture #4272", () => {
 		expect(getAssistantCapture(toolStart(events))).toMatchObject({
 			rawArgumentPrefix: deferred ? raw : "",
 			coveredCodeUnits: deferred ? raw.length : 0,
+			nextOffset: 0,
 			parsedThrough: deferred ? raw.length : 0,
 			block: { arguments: deferred ? JSON.parse(raw) : {} },
 		});

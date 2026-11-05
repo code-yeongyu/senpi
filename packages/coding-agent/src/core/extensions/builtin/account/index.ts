@@ -1,11 +1,6 @@
-import { accountLabel } from "@earendil-works/pi-ai/auth/pool/slots";
 import { resetCredentialAccount } from "../../../credential-account-reset.ts";
-import {
-	type CredentialAccountSummary,
-	getCredentialAccounts,
-	pinCredentialAccount,
-	removeCredentialAccount,
-} from "../../../credential-accounts.ts";
+import { describeCredentialAccount } from "../../../credential-account-status.ts";
+import { getCredentialAccounts, pinCredentialAccount, removeCredentialAccount } from "../../../credential-accounts.ts";
 import type { ExtensionAPI, ExtensionCommandContext } from "../../types.ts";
 import { accountDisplayNameCommand } from "../account-display-name.ts";
 
@@ -20,25 +15,11 @@ function usage(ctx: ExtensionCommandContext): void {
 	);
 }
 
-function statusOf(account: CredentialAccountSummary): string {
-	const availability = account.unused
-		? "unused (other login kind; switch with /login)"
-		: account.blocked
-			? "blocked"
-			: "available";
-	const states = [accountLabel(account), account.source, availability];
-	for (const { model, until } of account.blockedModels ?? []) {
-		states.push(`blocked for ${model} until ${new Date(until).toISOString()}`);
-	}
-	if (account.pinned) states.push("pinned");
-	return states.join(" | ");
-}
-
 async function showAccounts(ctx: ExtensionCommandContext, provider: string): Promise<void> {
 	const accounts = await getCredentialAccounts(ctx.modelRegistry.authStorage, provider);
 	const lines = [`Credential accounts for ${provider}:`];
 	if (accounts.length === 0) lines.push("  (none)");
-	for (const account of accounts) lines.push(`  ${statusOf(account)}`);
+	for (const account of accounts) lines.push(`  ${describeCredentialAccount(account)}`);
 	ctx.ui.notify(lines.join("\n"), "info");
 }
 
@@ -87,8 +68,8 @@ export default function accountExtension(pi: ExtensionAPI): void {
 					return;
 				}
 				if (action === "remove" && args[2] !== undefined) {
-					await removeCredentialAccount(ctx.modelRegistry.authStorage, provider, args[2]);
-					ctx.ui.notify(`Removed ${provider} account '${args[2]}'.`, "info");
+					const { notice } = await removeCredentialAccount(ctx.modelRegistry.authStorage, provider, args[2]);
+					ctx.ui.notify(notice ?? `Removed ${provider} account '${args[2]}'.`, notice ? "warning" : "info");
 					return;
 				}
 				usage(ctx);

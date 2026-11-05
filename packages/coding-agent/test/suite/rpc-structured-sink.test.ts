@@ -11,6 +11,7 @@ import { createRpcSessionBinding } from "../../src/modes/rpc/session-binding.ts"
 import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
 import type { RpcSessionEntry } from "../../src/modes/rpc/session-registry.ts";
 import { createHarness } from "./harness.ts";
+import { expectSameBytesExceptDeliveryStamp } from "../helpers/rpc-delivery-stamp.ts";
 
 // Part of #4272, T6/X07: the binding must reach the writer before JSON amplification.
 it("delivers faux streaming records by reference before the event output buffer", async () => {
@@ -114,7 +115,7 @@ it("delivers faux streaming records by reference before the event output buffer"
 		expect(originals.every(Boolean), "writer must receive the subscription's message and event objects").toBe(true);
 		expect(buffered, "shared delivery must not construct the event output buffer").not.toHaveBeenCalled();
 		expect(sessionBytes, "SESSION serialized bytes before writer").toBe(0);
-		expect(actual).toEqual(expected);
+		expectSameBytesExceptDeliveryStamp(actual, expected);
 		const sink = handlers.mock.calls[0]?.[1];
 		expect(sink?.writeRecord).toBeTypeOf("function");
 		const parse = vi.spyOn(JSON, "parse");

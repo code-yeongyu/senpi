@@ -11,6 +11,12 @@ import { lazyStream } from "@earendil-works/pi-ai/api/lazy";
 
 export const VERTEX_MODEL_GARDEN_LOCATION = "global";
 
+/**
+ * The registration baseUrl. It only satisfies registration: while a model still carries it, the request URL is
+ * built per call from the ADC-resolved project. Any other value is the user's models.json baseUrl (senpi#4765).
+ */
+export const VERTEX_MODEL_GARDEN_REGISTRATION_BASE_URL = "https://aiplatform.googleapis.com/v1";
+
 export type ResolveVertexAccess = (options?: SimpleStreamOptions) => Promise<VertexAdcAccess>;
 
 /**
@@ -43,7 +49,11 @@ export function streamVertexModelGarden(
 ): AssistantMessageEventStream {
 	return lazyStream(model, async () => {
 		const access = await resolveAccess(options);
-		const target = { ...model, baseUrl: buildVertexOpenApiBaseUrl(access.project) };
+		const baseUrl =
+			model.baseUrl === VERTEX_MODEL_GARDEN_REGISTRATION_BASE_URL
+				? buildVertexOpenApiBaseUrl(access.project)
+				: model.baseUrl;
+		const target = { ...model, baseUrl };
 		return requireApi("openai-completions").streamSimple(target, context, {
 			...options,
 			apiKey: access.accessToken,

@@ -29,7 +29,7 @@ function hasKimiK3CatalogSignal(model: Model<Api>): boolean {
 }
 
 function getKimiK3CatalogModels(): Model<Api>[] {
-	return getProviders().flatMap((provider) => (getModels(provider) as Model<Api>[]).filter(hasKimiK3CatalogSignal));
+	return getProviders().flatMap((provider) => getModels(provider).filter(hasKimiK3CatalogSignal));
 }
 
 describe("Kimi K3 prompt preset", () => {

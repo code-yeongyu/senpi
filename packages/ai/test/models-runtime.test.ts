@@ -897,7 +897,7 @@ describe("Models runtime", () => {
 			notify: () => {},
 		});
 		expect(credential).toEqual({ type: "api_key", key: "logged-in" });
-		expect(await credentials.read("p1")).toEqual(credential);
+		expect(await credentials.read("p1")).toEqual({ ...credential, loginId: expect.any(String) });
 
 		await models.logout("p1");
 		expect(await credentials.read("p1")).toBeUndefined();

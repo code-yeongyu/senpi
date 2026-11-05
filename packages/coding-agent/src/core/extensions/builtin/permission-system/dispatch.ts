@@ -40,7 +40,8 @@ interface DispatchRegistration {
 }
 
 const authorizers = new WeakMap<object, DispatchRegistration>();
-// AgentSession passes this validated object unchanged from preflight to execution.
+// The legacy loop passes this validated object unchanged from preflight to execution; the prepared executor runs a
+// frozen copy instead and moves the approval to it with transferDispatchApproval (senpi#5795).
 // Identical calls, including calls with duplicate provider IDs, get distinct objects.
 const approvals = new WeakMap<object, Approval>();
 
@@ -79,6 +80,22 @@ export function prepareDispatchApproval(session: object, request: DispatchReques
 		if (authorizers.get(session) !== registration) throw new Error("Permission authorizer was retired");
 		approvals.set(request.input, approval);
 	};
+}
+
+/**
+ * Move the approval recorded for the preflight's arguments object onto the frozen copy the tool will execute. The
+ * approval leaves `from` in every case (that object never executes); it lands on `to` only while `to` is exactly
+ * the input that was approved and its authorizer is not retired, so a later in-place change asks again (senpi#5795).
+ * Never throws: anything that is not an object is a no-op.
+ */
+export function transferDispatchApproval(from: unknown, to: unknown): void {
+	if (typeof from !== "object" || from === null || typeof to !== "object" || to === null) return;
+	const approval = approvals.get(from);
+	if (approval === undefined) return;
+	approvals.delete(from);
+	if (approval.registration.retired.signal.aborted) return;
+	if (approval.input !== JSON.stringify(to)) return;
+	approvals.set(to, approval);
 }
 
 export function forgetDispatchApproval(input: object): void {

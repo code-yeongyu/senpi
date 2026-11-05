@@ -75,9 +75,7 @@ describe("AgentSession dynamic tool registration", () => {
 		// Eval-only routing keeps `bash` out of the model-visible tool array; it stays
 		// reachable through the registry, which is the path an eval cell uses.
 		const bashTool = session.getRegisteredTool("bash")!;
-		expect(session.systemPrompt).toContain(
-			"You can inspect PI_* environment variables for current model and session details.",
-		);
+		expect(session.systemPrompt).toContain("PI_* env vars = current model + session details.");
 		await bashTool.execute("bash-env", { command: "printf ok" });
 		expect(sessionEnv).toMatchObject({
 			PI_SESSION_ID: session.sessionId,
@@ -109,6 +107,14 @@ describe("AgentSession dynamic tool registration", () => {
 			extensionFactories: [
 				(pi) => {
 					pi.on("session_start", () => {
+						pi.registerTool({
+							name: "bare_tool",
+							label: "Bare Tool",
+							description: "",
+							promptSnippet: "Run bare test behavior",
+							parameters: Type.Object({}),
+							execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
+						});
 						pi.registerTool({
 							name: "dynamic_tool",
 							label: "Dynamic Tool",
@@ -161,7 +167,9 @@ describe("AgentSession dynamic tool registration", () => {
 			origin: "top-level",
 		});
 		expect(session.getActiveToolNames()).toContain("dynamic_tool");
-		expect(session.systemPrompt).toContain("- dynamic_tool: Run dynamic test behavior");
+		// senpi#5335: a tool whose schema carries a description gets no snippet line; one without keeps it.
+		expect(session.systemPrompt).not.toContain("- dynamic_tool:");
+		expect(session.systemPrompt).toContain("- bare_tool: Run bare test behavior");
 		expect(session.systemPrompt).toContain("- Use dynamic_tool when the user asks for dynamic behavior tests.");
 
 		session.dispose();

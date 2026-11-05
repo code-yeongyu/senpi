@@ -1,3 +1,95 @@
+## 2026-10-30 - Goal parks until the soonest reset after an exhausted fallback ladder (senpi#3709)
+
+### What changed
+
+- `monitor-continuation.ts` `afterAgentSettled(fallbackExhausted)`: on a limit-exhausted ladder the generic provider recovery is replaced. With a `resumeAt`, the goal arms one `providerRetry` wait for that time (or the 1 s margin when it already passed); without one, it arms nothing and stays parked until input. Outage-only exhaustion retains immediate first recovery and the existing 15 s to 30 min backoff.
+- `provider-retry.ts` `exhaustedLadderResumeDelayMs`: waits until `resumeAt` + 1 s, skips the 6 h wake cap, and is clamped to the timer maximum.
+- `index.ts` passes `event.fallbackExhausted` to `afterAgentSettled`.
+
+### Why
+
+- senpi#3709: after exhaustion the goal either resumed at once into the same limits or never resumed.
+
+### Why an extension could not handle it
+
+- The change is inside this builtin extension, driven by the new `agent_settled` field.
+
+### Expected merge conflict zones
+
+- LOW: `afterAgentSettled` in `monitor-continuation.ts`; the provider-retry delay helpers.
+
+## 2026-10-30 - Goal parks on a provider limit with one notice; refused turns are not stalls (senpi#3975)
+
+### What changed
+
+- `monitor-continuation.ts`: a provider-retry park with a known resume time notifies once ("Goal paused until <local time> (<ISO>) ..."). A turn whose last assistant message ended in an error neither counts toward nor clears the toolless stall streak.
+
+### Why
+
+- senpi#3975: refused turns while every credential was limited injected `<goal_stall_check>` after three blocks, and the park was silent.
+
+### Why an extension could not handle it
+
+- This is the goal extension itself.
+
+### Expected merge conflict zones
+
+- LOW: `afterAgentEnd` around `#recordToollessContinuationTurn`, and the provider-retry branch of `afterAgentSettled`.
+
+## 2026-10-27 - get_goal is search-exposed (senpi#4454)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/tool-registration.ts`: `get_goal` is deferred to by-name activation through the tool search; `create_goal` and `update_goal` stay active.
+
+### Why
+
+- Each deferred tool leaves the first request's tool list and system prompt, so every request carries fewer tool-schema tokens (senpi#4454).
+
+### Why an extension could not handle it
+
+- This builtin owns its tool registration.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/goal/tool-registration.ts`.
+
+## 2026-10-26 - Request-level refusals retain goal recovery (senpi#2491)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/terminal-provider-error.ts`: exclude runtime-marked request-level auth refusals from terminal credential failures; retain the normal provider recovery continuation.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/terminal-provider-error.ts`: a request refusal must not block an active goal with contradictory login guidance.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/terminal-provider-error.ts`: this goal builtin owns terminal auth classification and automatic recovery.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/goal/terminal-provider-error.ts` `terminalProviderAuthFailure` guard.
+
+## 2026-10-26 - Goal retries exclude refused calls (senpi#4321)
+
+### What changed
+
+- `prompt.ts`: the no-progress check, which says retries are unbounded and to change the source, namespace, tool or assumption each time, now says that a permission denial, a refusal by the user or a rule block is final for that intent. The model asks the user or leaves that part out. The GPT-6 Astra prompt carries the same sentence.
+
+### Why
+
+- An unattended goal read "change the tool each time" as covering refusals, so a denied call could be retried another way.
+
+### Why an extension could not handle it
+
+- The continuation prompt is this builtin's own text.
+
+### Expected merge conflict zones
+
+- `buildContinuationPrompt` and `buildGpt6AstraContinuationPrompt` line lists.
+
 ## 2026-10-25 - Report the todo backstop outcome to the lifecycle (senpi#3864)
 
 ### What changed

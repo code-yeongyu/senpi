@@ -32,10 +32,23 @@ export function createAmbientProviderCheck(source: ProviderAuthStatusSource): (p
 }
 
 /**
+ * Metered API lane -> the subscription-plan lanes that sell the same vendor's models. When both are
+ * available, the automatic default takes the plan, whatever order `providerDefaults` declares.
+ */
+const SUBSCRIPTION_LANES: Readonly<Record<string, readonly string[]>> = {
+	openai: ["chatgpt-subscription"],
+	anthropic: ["anthropic-subscription"],
+	moonshotai: ["kimi-coding"],
+	"moonshotai-cn": ["kimi-coding"],
+	xiaomi: ["xiaomi-token-plan-cn", "xiaomi-token-plan-ams", "xiaomi-token-plan-sgp"],
+};
+
+/**
  * The automatic default among available models. Models from providers the user configured are
  * considered first; ambient-only providers only when nothing else is available. Within that group
- * the first `providerDefaults` entry (declared order) that is available wins, else the group's
- * first available model.
+ * the first `providerDefaults` entry (declared order) that is available wins, except that an
+ * available subscription lane of that entry's provider wins over it; else the group's first
+ * available model.
  */
 export function selectProviderDefault(
 	availableModels: readonly Model<Api>[],
@@ -45,9 +58,13 @@ export function selectProviderDefault(
 	const isAmbient = createAmbientProviderCheck(source);
 	const configured = availableModels.filter((model) => !isAmbient(model.provider));
 	const group = configured.length > 0 ? configured : availableModels;
-	for (const [provider, modelId] of Object.entries(providerDefaults)) {
-		const match = group.find((model) => model.provider === provider && model.id === modelId);
-		if (match) return { model: match, provenance: "provider-default" };
+	const defaultOf = (provider: string) =>
+		group.find((model) => model.provider === provider && model.id === providerDefaults[provider]);
+	for (const provider of Object.keys(providerDefaults)) {
+		const match = defaultOf(provider);
+		if (!match) continue;
+		const subscription = SUBSCRIPTION_LANES[provider]?.map(defaultOf).find((model) => model !== undefined);
+		return { model: subscription ?? match, provenance: "provider-default" };
 	}
 	const first = group[0];
 	return first ? { model: first, provenance: "first-available" } : undefined;

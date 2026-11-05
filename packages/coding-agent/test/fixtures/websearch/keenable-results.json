@@ -1,0 +1,130 @@
+{
+	"query": "typescript satisfies operator",
+	"results": [
+		{
+			"title": "Result 1",
+			"url": "https://example.com/result-1",
+			"snippet": "The satisfies operator narrows a value without widening the type it was declared with, so the compiler keeps the literal type of the expression while still proving that it matches the shape the constraint requires. It was added in TypeScript 4.9 and it is most useful where a type annotation would erase information the rest of the file still needs, for example when building a configuration object whose keys must stay literal. It was added in TypeScript 4.9 and it is most useful where a type annotation would erase information the rest of the file still needs, for example when building a configuration object whose keys must stay literal."
+		},
+		{
+			"title": "Result 2",
+			"url": "https://example.com/result-2",
+			"snippet": "Snippet 2"
+		},
+		{
+			"title": "Result 3",
+			"url": "https://example.com/result-3",
+			"snippet": "Snippet 3"
+		},
+		{
+			"title": "Result 4",
+			"url": "https://example.com/result-4",
+			"snippet": "Snippet 4"
+		},
+		{
+			"title": "Result 5",
+			"url": "https://example.com/result-5",
+			"snippet": "Snippet 5"
+		},
+		{
+			"title": "Result 6",
+			"url": "https://example.com/result-6",
+			"snippet": "Snippet 6"
+		},
+		{
+			"title": "Result 7",
+			"url": "https://example.com/result-7",
+			"snippet": "Snippet 7"
+		},
+		{
+			"title": "Result 8",
+			"url": "https://example.com/result-8",
+			"snippet": "Snippet 8"
+		},
+		{
+			"title": "Result 9",
+			"url": "https://example.com/result-9",
+			"snippet": "Snippet 9"
+		},
+		{
+			"title": "Result 10",
+			"url": "https://example.com/result-10",
+			"snippet": "Snippet 10"
+		},
+		{
+			"title": "Result 11",
+			"url": "https://example.com/result-11",
+			"snippet": "Snippet 11"
+		},
+		{
+			"title": "Result 12",
+			"url": "https://example.com/result-12",
+			"snippet": "Snippet 12"
+		},
+		{
+			"title": "Result 13",
+			"url": "https://example.com/result-13",
+			"snippet": "Snippet 13"
+		},
+		{
+			"title": "Result 14",
+			"url": "https://example.com/result-14",
+			"snippet": "Snippet 14"
+		},
+		{
+			"title": "Result 15",
+			"url": "https://example.com/result-15",
+			"snippet": "Snippet 15"
+		},
+		{
+			"title": "Result 16",
+			"url": "https://example.com/result-16",
+			"snippet": "Snippet 16"
+		},
+		{
+			"title": "Result 17",
+			"url": "https://example.com/result-17",
+			"snippet": "Snippet 17"
+		},
+		{
+			"title": "Result 18",
+			"url": "https://example.com/result-18",
+			"snippet": "Snippet 18"
+		},
+		{
+			"title": "Result 19",
+			"url": "https://example.com/result-19",
+			"snippet": "Snippet 19"
+		},
+		{
+			"title": "Result 20",
+			"url": "https://example.com/result-20",
+			"snippet": "Snippet 20"
+		},
+		{
+			"title": "Result 21",
+			"url": "https://example.com/result-21",
+			"snippet": "Snippet 21"
+		},
+		{
+			"title": "Result 22",
+			"url": "https://example.com/result-22",
+			"snippet": "Snippet 22"
+		},
+		{
+			"title": "Result 23",
+			"url": "https://example.com/result-23",
+			"snippet": "Snippet 23"
+		},
+		{
+			"title": "Result 24",
+			"url": "https://example.com/result-24",
+			"snippet": "Snippet 24"
+		},
+		{
+			"title": "Result 25",
+			"url": "https://example.com/result-25",
+			"snippet": "Snippet 25"
+		}
+	]
+}

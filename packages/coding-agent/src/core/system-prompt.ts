@@ -3,7 +3,8 @@
  */
 
 import { getDocsPath, getExamplesPath, getReadmePath } from "../config.ts";
-import type { PromptSurface } from "./dynamic-prompt/types.ts";
+import type { ContextFile } from "./context-files.ts";
+import type { PromptSurface, SharedSections } from "./dynamic-prompt/types.ts";
 import { formatSkillsForPrompt, type Skill } from "./skills.ts";
 
 export interface BuildSystemPromptOptions {
@@ -26,7 +27,7 @@ export interface BuildSystemPromptOptions {
 	/** Working directory. */
 	cwd: string;
 	/** Pre-loaded context files. */
-	contextFiles?: Array<{ path: string; content: string }>;
+	contextFiles?: ContextFile[];
 	/** Pre-loaded skills. */
 	skills?: Skill[];
 	/** Where replies render (`SENPI_PROMPT_SURFACE`); read by the dynamic prompt and presets. */
@@ -37,10 +38,12 @@ export interface BuildSystemPromptOptions {
 export function getEvalOnlyGrepGuideline(
 	selectedTools: string[],
 	toolSnippets?: Record<string, string>,
+	sharedSections: SharedSections = "diet",
 ): string | undefined {
-	return toolSnippets?.grep && !selectedTools.includes("grep")
+	if (!toolSnippets?.grep || selectedTools.includes("grep")) return undefined;
+	return sharedSections === "full"
 		? "Search file contents with tool.grep({ pattern, path }) inside eval; prefer it over rg/grep in shell"
-		: undefined;
+		: "Content search: tool.grep({ pattern, path }) in eval, not rg/grep in shell; page full -> skip, narrow with glob/path.";
 }
 
 export type NormalizedBuildSystemPromptOptions = BuildSystemPromptOptions & {
@@ -50,7 +53,7 @@ export type NormalizedBuildSystemPromptOptions = BuildSystemPromptOptions & {
 	promptGuidelines: string[];
 	appendSystemPrompt: string;
 	sections: Record<string, string>;
-	contextFiles: Array<{ path: string; content: string }>;
+	contextFiles: ContextFile[];
 	skills: Skill[];
 };
 
