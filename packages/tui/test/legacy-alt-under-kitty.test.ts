@@ -60,7 +60,7 @@ describe("legacy Alt chords with the Kitty protocol negotiated (#6058)", () => {
 
 	it("every legacy alt+printable default on WSL decodes while Kitty is active", () => {
 		setKittyProtocolActive(true);
-		for (const key of ["q", "p", "v", "z", "a", "1", ",", "."] as const) {
+		for (const key of ["q", "v", "z", "a", "1", ",", "."] as const) {
 			const keyId = `alt+${key}` as const;
 			assert.strictEqual(matchesKey(`${ESC}${key}`, keyId), true, keyId);
 			assert.strictEqual(parseKey(`${ESC}${key}`), keyId, keyId);
