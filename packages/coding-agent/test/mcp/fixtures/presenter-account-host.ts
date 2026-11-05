@@ -98,7 +98,10 @@ export async function accountHost(
 		listeners: new Set(),
 	};
 	const lines: string[] = [];
-	const writer = new SessionEventWriter(() => {});
+	const sole: string[] = [];
+	const writer = new SessionEventWriter((chunk) => {
+		sole.push(chunk);
+	});
 	const authority = writer.enableMcpPresenters();
 	writer.bindMcpForms("session", "durable", {}, () => {});
 	const human = presenterConnection(writer, "human", lines);
@@ -127,6 +130,7 @@ export async function accountHost(
 	return {
 		state,
 		lines,
+		sole,
 		writer,
 		authority,
 		binding,

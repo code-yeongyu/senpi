@@ -57,12 +57,14 @@ async function workerHost(options: { readonly holdAnswers?: boolean; readonly fo
 	const host = await accountHost({ account: secret.authority });
 	const held: Array<() => void> = [];
 	const answers: HostToSessionWorker[] = [];
+	const results: unknown[] = [];
 	let routes: WorkerSecretRoutes | undefined;
 	bridge.onPost = (worker, message) => {
 		if (message.type === "secret_sealed_answer") {
 			answers.push(message);
 			const reply = async () => {
 				const result = "forgedReply" in options ? options.forgedReply : await routes?.answer(message.answer);
+				results.push(result);
 				worker.emit("message", { type: "secret_sealed_result", request: message.request, reply: result });
 			};
 			if (options.holdAnswers) held.push(() => void reply());
@@ -94,6 +96,7 @@ async function workerHost(options: { readonly holdAnswers?: boolean; readonly fo
 		secret,
 		requests,
 		answers,
+		results,
 		exchange: credit.exchange,
 		release: () => held.splice(0).forEach((run) => run()),
 	};
@@ -327,4 +330,42 @@ it("an isolate's sealed answer result with an unknown error or shape is relayed 
 			error: "secret_answer_refused",
 		});
 	}
+});
+
+
+it("a record that claims to be a sealed offer but is malformed is refused by the host, never relayed as a raiser frame", async () => {
+	const w = await workerHost();
+	w.host.writer.setConnectionCapabilities("human", ["interactive_user", "mcp_form_presenter_v1", "secret_input_v1"]);
+	void w.requests.input("API key", undefined);
+	const raised = records(w.host.lines, "extension_ui_request")[0];
+	if (!raised) throw new Error("No raiser request");
+	expect(() =>
+		w.exchange((signal) => ({
+			type: "secret_frame",
+			id: String(raised.id),
+			record: { type: "secret_sealed_offer", hpkePk: 123, title: "t", deadlineAtMs: 1 },
+			signal,
+		})),
+	).toThrow("session_worker_output_denied");
+	expect(records(w.host.lines, "secret_sealed_offer")).toEqual([]);
+});
+
+it("canary: a worker-runtime sealed answer leaks nothing to the host lanes, the holder's records or the isolate protocol", async () => {
+	const w = await workerHost();
+	const p = await pending(w);
+	const canary = canaryValue();
+	const stepup = p.stepup();
+	const frame = valueAnswer(
+		ids(p.phone, p.request, p.req),
+		p.request,
+		stepup,
+		canary,
+		p.phone.adopted.device.privateKey,
+	);
+	expect(await answer(w.host, p.phone, frame)).toMatchObject({ disposition: "applied" });
+	expect(p.state.value).toBe(canary);
+	const sealed = [canary, String(frame.ct), String(frame.enc)];
+	expect(leaked(w.host.lines.join("\n"), sealed, [stepup]) ?? "clean").toBe("clean");
+	expect(leaked(p.phone.lines.join("\n"), sealed, [stepup]) ?? "clean").toBe("clean");
+	expect(leaked(JSON.stringify([w.answers, w.results]), [canary], [stepup]) ?? "clean").toBe("clean");
 });

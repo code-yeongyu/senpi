@@ -176,7 +176,14 @@ export class TerminalPresenterSurface implements PresenterHostSurface {
 				this.local.sealed?.receive(id, frame) ?? Promise.resolve({ error: "secret_answer_refused" as const });
 			void answered
 				.catch(() => ({ error: "secret_answer_refused" as const }))
-				.then((reply) => writePrivate(peer.transport, { type: "mcp_presenter_secret_reply", ...lineId, ...reply }));
+				.then((reply) => {
+					const written = writePrivate(peer.transport, {
+						type: "mcp_presenter_secret_reply",
+						...lineId,
+						...reply,
+					});
+					if (!written && peer.sender) this.authority.detach(peer.sender);
+				});
 			return;
 		}
 		const sender = peer.sender;
