@@ -19,6 +19,8 @@ export interface LoopHookCall {
 	readonly callId: string;
 	readonly event: string;
 	readonly payload: JsonValue;
+	/** The caller's owner epoch, stamped at each transmission (senpi#5916); the hand checks it against the tool scope's floor. */
+	readonly epoch?: number;
 }
 
 /** Hand to loop host, once per hand process, before it serves anything. */
@@ -75,9 +77,16 @@ export function decodeLoopHookMessage(payload: Uint8Array): LoopHookMessage | un
 	if (!isRecord(value) || !KINDS.includes(value.kind as LoopHookMessage["kind"])) return undefined;
 	switch (value.kind) {
 		case "hook.call":
-			return isId(value.callId) && isId(value.event) && "payload" in value
-				? { kind: "hook.call", callId: value.callId, event: value.event, payload: value.payload as JsonValue }
-				: undefined;
+			if (!isId(value.callId) || !isId(value.event) || !("payload" in value)) return undefined;
+			if (value.epoch !== undefined && !(Number.isSafeInteger(value.epoch) && (value.epoch as number) >= 1))
+				return undefined;
+			return {
+				kind: "hook.call",
+				callId: value.callId,
+				event: value.event,
+				payload: value.payload as JsonValue,
+				...(value.epoch === undefined ? {} : { epoch: value.epoch as number }),
+			};
 		case "hook.hello":
 			return isId(value.instance) ? { kind: "hook.hello", instance: value.instance } : undefined;
 		case "hook.started":

@@ -34,6 +34,8 @@ export interface LoopHookHostOptions {
 	/** The lane the link uses; one per session. */
 	readonly lane: string;
 	readonly mintId?: () => string;
+	/** The session's owner epoch, stamped on every hook call it sends (senpi#5916); absent: calls carry none. */
+	readonly epoch?: number;
 }
 
 /** The hooks ran on the user's machine and failed there; the message is the hook's own. */
@@ -121,7 +123,13 @@ export function createLoopHookHost(options: LoopHookHostOptions): LoopHookHost {
 		run(event, payload, signal, callKey) {
 			if (closed) return Promise.reject(new LoopHookClosedError("The loop-hook link is closed"));
 			if (signal?.aborted) return Promise.reject(new Error("Operation aborted"));
-			const call: LoopHookCall = { kind: "hook.call", callId: callKey ?? mintId(), event, payload };
+			const call: LoopHookCall = {
+				kind: "hook.call",
+				callId: callKey ?? mintId(),
+				event,
+				payload,
+				...(options.epoch === undefined ? {} : { epoch: options.epoch }),
+			};
 			const result = new Promise<JsonValue>((resolve, reject) => {
 				pending.set(call.callId, { call, resolve, reject });
 			});
