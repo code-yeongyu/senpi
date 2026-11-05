@@ -4,8 +4,11 @@ import { accountLapse } from "./mcp-presenter-account-lifetime.ts";
 import type { McpPresenterAuthority } from "./mcp-presenter-authority.ts";
 import type { Grant } from "./mcp-presenter-grants.ts";
 import type { PresenterHostSurface } from "./mcp-presenter-host-surface.ts";
+import { PresenterJtiCache } from "./mcp-presenter-attestation.ts";
+import type { SealedAnswer, SealedAnswerReply, SecretInputOutcome } from "./secret-input-requests.ts";
 import { SecretHostTokens } from "./secret-host-token.ts";
-import { secretBinding } from "./secret-sealed.ts";
+import { checkSealedAnswer, openSealedValue, type SealedAnswerFrame } from "./secret-sealed-answers.ts";
+import { secretBinding, secretRequestHash } from "./secret-sealed.ts";
 
 /** A grant that may answer one request on the sealed route; opaque outside this module. */
 export type SealedHolder = Grant;
@@ -31,6 +34,14 @@ export interface SealedSecretSource {
 	withdraw(uiRequestId: string): void;
 	/** Fires whenever a grant on a binding the source has read is acquired or revoked. */
 	onChange(listener: () => void): () => void;
+	/** 5.1 conditions 1-5 now: re-checked when an answer arrives (7.1 step 2) and at the claim (step 6). */
+	eligible(holder: SealedHolder): boolean;
+	/** The holder's account principal id while it has not lapsed. */
+	principalOf(holder: SealedHolder): string | undefined;
+	/** 7.1 steps 4 and 5 for a holder's answer; the latch runs steps 3 and 6 on the result. */
+	answer(holder: SealedHolder, frame: SealedAnswerFrame): Promise<SealedAnswer | SealedAnswerReply>;
+	/** Every holder gets the value-free `mcp_presenter_secret_settled`; all but `winner` with `elsewhere: true`. */
+	settle(holders: ReadonlySet<SealedHolder>, uiRequestId: string, outcome: SecretInputOutcome, winner?: object): void;
 }
 
 /** The control's principals, keyed by id; only an account principal can hold a sealed grant. */
@@ -39,6 +50,8 @@ type PrincipalsById = ReadonlyMap<string, AccountPrincipal | { readonly kind: "i
 interface Offered {
 	readonly durableSessionId: string;
 	readonly holders: ReadonlySet<SealedHolder>;
+	readonly req: string;
+	readonly deadlineAtMs: number;
 }
 
 /** The control's sealed holders: eligibility, signed requests and token refreshes, all synchronous. */
@@ -50,6 +63,8 @@ export class SealedSecretHolders implements SealedSecretSource {
 	private readonly principals: PrincipalsById;
 	private readonly offered = new Map<string, Offered>();
 	private readonly listeners = new Set<() => void>();
+	/** Step-up `jti`s of this host incarnation (6.5): kept until `exp + 60`, refusing rather than evicting at 4096. */
+	private readonly jtis = new PresenterJtiCache();
 	private readonly watched = new WeakSet<McpFormBinding>();
 	private readonly detach: (() => void) | undefined;
 	private readonly unsubscribe: () => void;
@@ -100,11 +115,64 @@ export class SealedSecretHolders implements SealedSecretSource {
 				for (const listener of [...this.listeners]) listener();
 			});
 		}
-		return new Set(
-			this.authority
-				.secretCandidates(binding)
-				.filter((grant) => this.eligible(grant) && this.tokens.current(grant.scope.durableSessionId)),
+		return new Set(this.authority.secretCandidates(binding).filter((grant) => this.eligible(grant)));
+	}
+
+	eligible(holder: SealedHolder): boolean {
+		const binding = holder.registration.binding;
+		return (
+			this.authority.secretCandidates(binding).includes(holder) &&
+			this.unlapsed(holder) !== undefined &&
+			this.tokens.current(holder.scope.durableSessionId) !== undefined
 		);
+	}
+
+	principalOf(holder: SealedHolder): string | undefined {
+		return this.unlapsed(holder)?.id;
+	}
+
+	async answer(holder: SealedHolder, frame: SealedAnswerFrame): Promise<SealedAnswer | SealedAnswerReply> {
+		const offered = this.offered.get(frame.uiRequestId);
+		const principal = this.unlapsed(holder);
+		if (!offered || !offered.holders.has(holder) || !principal) return { error: "secret_answer_refused" };
+		const { req } = offered;
+		const checked = await checkSealedAnswer({
+			frame,
+			principal,
+			req,
+			deadlineAtMs: offered.deadlineAtMs,
+			hostToken: this.tokens.current(offered.durableSessionId),
+			account: this.account,
+		});
+		if (!checked.ok) return { error: checked.error };
+		const { jti, exp } = checked;
+		return {
+			uiRequestId: frame.uiRequestId,
+			principal: principal.id,
+			answerId: frame.answerId,
+			winner: holder,
+			current: () => this.eligible(holder),
+			...(jti === undefined || exp === undefined
+				? {}
+				: {
+						value: {
+							admitJti: () => this.jtis.admit(jti, exp, Math.floor(Date.now() / 1000)) === "ok",
+							open: (key, hpkePk) =>
+								openSealedValue(frame, { req, principalId: principal.id, jti }, key, hpkePk),
+						},
+					}),
+		};
+	}
+
+	settle(holders: ReadonlySet<SealedHolder>, uiRequestId: string, outcome: SecretInputOutcome, winner?: object): void {
+		for (const holder of holders)
+			holder.registration.connection.send({
+				type: "mcp_presenter_secret_settled",
+				v: 1,
+				uiRequestId,
+				outcome,
+				elsewhere: holder !== winner,
+			});
 	}
 
 	current(holder: SealedHolder): boolean {
@@ -128,7 +196,12 @@ export class SealedSecretHolders implements SealedSecretSource {
 			...offer,
 		});
 		const sig = this.tokens.signRequest(binding);
-		this.offered.set(offer.uiRequestId, { durableSessionId, holders });
+		this.offered.set(offer.uiRequestId, {
+			durableSessionId,
+			holders,
+			req: secretRequestHash(binding),
+			deadlineAtMs: offer.deadlineAtMs,
+		});
 		for (const holder of holders)
 			holder.registration.connection.send({
 				type: "mcp_presenter_secret_request",
@@ -161,12 +234,15 @@ export class SealedSecretHolders implements SealedSecretSource {
 		this.unsubscribe();
 		this.listeners.clear();
 		this.offered.clear();
+		this.jtis.clear();
 		this.tokens.dispose();
 	}
 
-	/** 5.1 condition 4 (the principal has not lapsed); conditions 1-3 come from `secretCandidates`, 5 from the caller. */
-	private eligible(grant: Grant): boolean {
+	/** 5.1 condition 4: the grant's account principal when it has not lapsed. */
+	private unlapsed(grant: Grant): AccountPrincipal | undefined {
 		const principal = this.principals.get(grant.registration.principal);
-		return principal?.kind === "account" && accountLapse(principal, this.account) === undefined;
+		return principal?.kind === "account" && accountLapse(principal, this.account) === undefined
+			? principal
+			: undefined;
 	}
 }

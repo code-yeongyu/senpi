@@ -3,6 +3,8 @@ import type { SessionEventFanout } from "./session-event-fanout.ts";
 import { serializeJsonLine } from "./jsonl.ts";
 import { type ConnectionLocality, RaiserNotices } from "./raiser-notices.ts";
 import { type RpcRemoteOrigin, remoteOriginField } from "./remote-origin.ts";
+import type { SealedAnswerReply, SealedLatch } from "./secret-input-requests.ts";
+import { parseSealedAnswer } from "./secret-sealed-answers.ts";
 import type { SealedHolder, SealedSecretSource } from "./secret-sealed-holders.ts";
 
 interface SecretOwner {
@@ -32,6 +34,7 @@ export class SecretInputPresentations {
 	private soleCapabilities: readonly string[] = [];
 	private sealedSource?: SealedSecretSource;
 	private unsubscribeSealed?: () => void;
+	private readonly latches = new Map<string, SealedLatch>();
 	constructor(
 		fanout: SessionEventFanout,
 		current: () => string | undefined,
@@ -97,6 +100,14 @@ export class SecretInputPresentations {
 				return owner?.session === session && this.available(owner);
 			},
 			sealed: (id) => (this.owners.get(id)?.sealed.size ?? 0) > 0,
+			sealedOutcome: (id, outcome, winner) => {
+				const owner = this.owners.get(id);
+				if (owner?.session === session && owner.sealed.size > 0)
+					this.sealedSource?.settle(owner.sealed, id, outcome, winner);
+			},
+			bindSealedResponder: (latch) => {
+				if (sealed) this.latches.set(session, latch);
+			},
 			offerSealed: (id, offer) => {
 				const owner = this.owners.get(id);
 				if (owner?.session === session && owner.sealed.size > 0)
@@ -143,6 +154,28 @@ export class SecretInputPresentations {
 				if (this.current() === undefined) this.handshake(capabilities);
 			},
 		};
+	}
+	/**
+	 * An `mcp_presenter_secret_answer` from `connection` (design 7.1): the shape, then the sender must hold a grant in
+	 * the request's sealed snapshot that is still eligible, then the authority's checks; the session's latch decides.
+	 */
+	async answerSealed(connection: string, value: unknown): Promise<SealedAnswerReply> {
+		const frame = parseSealedAnswer(value);
+		if (!frame) return { error: "invalid_secret_response" };
+		const owner = this.owners.get(frame.uiRequestId);
+		const source = this.sealedSource;
+		const holder =
+			owner && source
+				? [...owner.sealed].find((grant) => grant.id === frame.grantId && source.connectionOf(grant) === connection)
+				: undefined;
+		const latch = owner && this.latches.get(owner.session);
+		if (!owner || !source || !holder || !latch || !source.eligible(holder)) return { error: "secret_answer_refused" };
+		const principal = source.principalOf(holder);
+		const settled = principal === undefined ? undefined : latch.settled(frame.uiRequestId, frame.answerId, principal);
+		if (settled) return settled;
+		const checked = await source.answer(holder, frame);
+		if ("error" in checked || "disposition" in checked) return checked;
+		return latch.respond(checked);
 	}
 	recheck(): void {
 		for (const owner of this.owners.values()) if (!this.available(owner)) owner.cancel?.();

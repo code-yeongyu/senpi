@@ -2,9 +2,10 @@ import { bindPrivateMcpForms, type McpFormBinding } from "../../core/mcp-form-ty
 import { McpPresenterAuthority, type McpPresenterConnection } from "./mcp-presenter-authority.ts";
 import { type PresenterHostSurface, presenterContextReply } from "./mcp-presenter-host-surface.ts";
 import type { SealedSecretSource } from "./secret-sealed-holders.ts";
+import { serializeJsonLine } from "./jsonl.ts";
 import { SessionEventWriterConnections } from "./session-event-writer-connections.ts";
 
-/** The MCP form presenter surface; its private-record handler stays in session-event-writer.ts. */
+/** The MCP form presenter surface and its private-record handler (MCP forms and sealed secret answers). */
 export abstract class SessionEventWriterPresenters
 	extends SessionEventWriterConnections
 	implements PresenterHostSurface
@@ -41,6 +42,62 @@ export abstract class SessionEventWriterPresenters
 
 	protected mcpPresenterContextReply(sender: McpPresenterConnection | undefined, request: object): object {
 		return presenterContextReply(this.presenterAuthority, sender, request, this.presenterControlEndpoint);
+	}
+
+	/** Private records bypass event queues, snapshots, mirrors, replay, and overflow preview errors. */
+	handleMcpForm(value: unknown): boolean {
+		if (!this.presenterAuthority) return false;
+		if (
+			typeof value !== "object" ||
+			value === null ||
+			!("type" in value) ||
+			typeof value.type !== "string" ||
+			(!value.type.startsWith("mcp_form_") &&
+				value.type !== "mcp_presenter_context" &&
+				value.type !== "mcp_presenter_secret_answer")
+		)
+			return false;
+		const id = this.currentConnection();
+		const connection = id === undefined ? undefined : this.fanout.get(id)?.connection;
+		if (value.type === "mcp_presenter_secret_answer") {
+			const lineId = "id" in value && typeof value.id === "string" ? { id: value.id } : {};
+			// D11 secret phase 5.3: the reply goes to the sender only, never an event, snapshot, mirror or replay lane.
+			if (id !== undefined && connection)
+				void this.secretPresentations
+					.answerSealed(id, value)
+					.catch(() => ({ error: "secret_answer_refused" as const }))
+					.then((reply) => {
+						try {
+							connection.writeRaw(
+								serializeJsonLine({ type: "mcp_presenter_secret_reply", ...lineId, ...reply }),
+							);
+						} catch {
+							// A closed connection simply misses its reply; the request's own state is unaffected.
+						}
+					});
+			return true;
+		}
+		const sender = id === undefined ? undefined : this.presenterConnections.get(id);
+		const reply =
+			value.type === "mcp_presenter_context"
+				? this.mcpPresenterContextReply(sender, value)
+				: sender && this.presenterAuthority
+					? this.presenterAuthority.receive(sender, value)
+					: { error: "presenter_not_authorized" };
+		if (connection) {
+			try {
+				connection.writeRaw(
+					serializeJsonLine({
+						type: "mcp_form_reply",
+						...("id" in value && typeof value.id === "string" ? { id: value.id } : {}),
+						...reply,
+					}),
+				);
+			} catch {
+				if (sender) this.presenterAuthority?.detach(sender);
+			}
+		}
+		return true;
 	}
 
 	getMcpPresenterConnection(id: string): McpPresenterConnection | undefined {

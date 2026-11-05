@@ -29,13 +29,58 @@ export interface SecretInputRoute {
 	sealed?(id: string): boolean;
 	/** Signs the request for its sealed holders and sends it to each (4.3). */
 	offerSealed?(id: string, offer: Omit<SealedSecretOffer, "uiRequestId">): void;
+	/** Sends every sealed holder the value-free settle; `winner` is the grant whose answer won, if any (7.2). */
+	sealedOutcome?(id: string, outcome: SecretInputOutcome, winner: object | undefined): void;
+	/** Registers this session's latch for sealed answers (7.1 steps 3 and 6). */
+	bindSealedResponder?(latch: SealedLatch): void;
+}
+
+/** A sealed answer that passed design 7.1 steps 1, 2, 4 and 5 in the host process; steps 3 and 6 run here. */
+export interface SealedAnswer {
+	readonly uiRequestId: string;
+	readonly principal: string;
+	readonly answerId: string;
+	/** The answering grant, so every other holder settles with `elsewhere: true`. */
+	readonly winner: object;
+	/** 5.1 re-checked at the claim: the grant is current and still eligible. */
+	readonly current: () => boolean;
+	/** Absent for a cancel. `admitJti` consumes the step-up token; `open` decrypts with the request key. */
+	readonly value?: {
+		readonly admitJti: () => boolean;
+		readonly open: (key: KeyObject, hpkePk: string) => string | undefined;
+	};
+}
+
+export type SealedAnswerReply =
+	| { readonly disposition: "applied" | "replay" }
+	| {
+			readonly error:
+				| "already_answered"
+				| "unknown_extension_ui_request"
+				| "secret_stepup_refused"
+				| "invalid_secret_response"
+				| "secret_answer_refused";
+	  };
+
+/** What a route's sealed answers reach at the session's latch. */
+export interface SealedLatch {
+	/** 7.1 step 3 for a request that is no longer pending; `undefined` while it is. */
+	settled(uiRequestId: string, answerId: string, principal: string): SealedAnswerReply | undefined;
+	respond(answer: SealedAnswer): SealedAnswerReply;
+}
+
+interface Receipt {
+	readonly answerId: string;
+	/** The sealed answer's principal; absent for an answer on the raiser route. */
+	readonly principal?: string;
 }
 
 interface Pending {
 	readonly deadline: number;
 	/** The request's private X25519 key while it has sealed holders; dropped with the entry (design 4.1, 8.2). */
 	readonly key?: KeyObject;
-	finish(outcome: SecretInputOutcome, value?: string): void;
+	readonly hpkePk?: string;
+	finish(outcome: SecretInputOutcome, value?: string, winner?: object): void;
 }
 
 /** Private, live-only state. Never registered in progress, snapshot, transcript or answer-ledger maps. */
@@ -43,10 +88,15 @@ export class SecretInputRequests {
 	private readonly route: SecretInputRoute;
 	private readonly admit: () => void;
 	private readonly pending = new Map<string, Pending>();
-	private readonly receipts = new Map<string, string | undefined>();
+	private readonly receipts = new Map<string, Receipt | undefined>();
 	constructor(route: SecretInputRoute, admit: () => void) {
 		this.route = route;
 		this.admit = admit;
+		route.bindSealedResponder?.({
+			settled: (id, answerId, principal) =>
+				this.pending.has(id) ? undefined : this.receipt(id, answerId, principal),
+			respond: (answer) => this.respondSealed(answer),
+		});
 	}
 
 	input(title: string, placeholder: string | undefined, opts?: ExtensionUIInputOptions): Promise<string | undefined> {
@@ -59,17 +109,22 @@ export class SecretInputRequests {
 			const deadline = Date.now() + timeout;
 			let disarm: (() => void) | undefined;
 			const onAbort = () => finish("cancelled");
-			const finish = (outcome: SecretInputOutcome, value?: string) => {
+			const finish = (outcome: SecretInputOutcome, value?: string, winner?: object) => {
 				if (!this.pending.delete(id)) return;
 				disarm?.();
 				opts?.signal?.removeEventListener("abort", onAbort);
 				this.remember(id);
 				this.route.send(id, { type: "secret_input_settled", id, outcome });
+				this.route.sealedOutcome?.(id, outcome, winner);
 				this.route.settled(id);
 				resolve(value);
 			};
 			const key = this.route.sealed?.(id) === true ? generateSecretRequestKey() : undefined;
-			this.pending.set(id, { deadline, finish, ...(key === undefined ? {} : { key: key.privateKey }) });
+			this.pending.set(id, {
+				deadline,
+				finish,
+				...(key === undefined ? {} : { key: key.privateKey, hpkePk: key.hpkePk }),
+			});
 			opts?.signal?.addEventListener("abort", onAbort, { once: true });
 			disarm = armSecretInputDeadline(deadline, () => finish("timed_out"));
 			if (opts?.signal?.aborted) return finish("cancelled");
@@ -95,9 +150,12 @@ export class SecretInputRequests {
 	}
 	answered(): { uiRequestId: string; answerId: string }[] {
 		return [...this.receipts]
-			.filter((entry): entry is [string, string] => entry[1] !== undefined && this.route.accepts(entry[0]))
+			.filter(
+				(entry): entry is [string, Receipt] =>
+					entry[1] !== undefined && entry[1].principal === undefined && this.route.accepts(entry[0]),
+			)
 			.slice(-64)
-			.map(([uiRequestId, answerId]) => ({ uiRequestId, answerId }));
+			.map(([uiRequestId, receipt]) => ({ uiRequestId, answerId: receipt.answerId }));
 	}
 
 	respond(frame: Record<string, unknown>): ExtensionUiResponseReply {
@@ -121,9 +179,10 @@ export class SecretInputRequests {
 		const pending = this.pending.get(requestId);
 		const reply = { type: "response", command: "extension_ui_response", id } as const;
 		if (!pending) {
-			const answerId = this.receipts.get(requestId);
-			if (answerId === frame.answerId) return { ...reply, success: true, disposition: "replay" };
-			return answerId === undefined
+			const receipt = this.receipts.get(requestId);
+			if (receipt?.answerId === frame.answerId && receipt.principal === undefined)
+				return { ...reply, success: true, disposition: "replay" };
+			return receipt === undefined
 				? refusedExtensionUiResponse(id, "unknown_extension_ui_request")
 				: { ...reply, success: false, error: "already_answered", disposition: "already_answered" };
 		}
@@ -136,8 +195,49 @@ export class SecretInputRequests {
 			frame.cancelled === true ? "cancelled" : "answered",
 			typeof frame.value === "string" ? frame.value : undefined,
 		);
-		this.receipts.set(requestId, frame.answerId);
+		this.receipts.set(requestId, { answerId: frame.answerId });
 		return { ...reply, success: true, disposition: "applied" };
+	}
+
+	/**
+	 * Design 7.1 steps 3 and 6 at the latch, synchronously: a settled request answers `replay` or `already_answered`
+	 * from its receipt before the step-up token is consumed; then the claim re-checks the request, the deadline and the
+	 * grant, and only then opens the ciphertext. A losing answer is never decrypted.
+	 */
+	respondSealed(answer: SealedAnswer): SealedAnswerReply {
+		const id = answer.uiRequestId;
+		const pending = this.pending.get(id);
+		if (!pending) return this.receipt(id, answer.answerId, answer.principal);
+		if (answer.value && !answer.value.admitJti()) return { error: "secret_stepup_refused" };
+		if (Date.now() >= pending.deadline) {
+			pending.finish("timed_out");
+			return { error: "unknown_extension_ui_request" };
+		}
+		if (!answer.current()) return { error: "secret_answer_refused" };
+		let value: string | undefined;
+		if (answer.value) {
+			if (!pending.key || pending.hpkePk === undefined) return { error: "invalid_secret_response" };
+			try {
+				value = answer.value.open(pending.key, pending.hpkePk);
+			} catch {
+				// No fault inside the open may escape or carry the plaintext: it is a refusal (decision 0022 SP-0 L2).
+				value = undefined;
+			}
+			if (value === undefined || !isSecretInputValue(value)) return { error: "invalid_secret_response" };
+		}
+		this.admit();
+		pending.finish(answer.value ? "answered" : "cancelled", value, answer.winner);
+		this.receipts.set(id, { answerId: answer.answerId, principal: answer.principal });
+		return { disposition: "applied" };
+	}
+
+	/** 7.1 step 3: `replay` for the same answer id and principal, else `already_answered`; no receipt is unknown. */
+	private receipt(id: string, answerId: string, principal: string): SealedAnswerReply {
+		const receipt = this.receipts.get(id);
+		if (receipt === undefined) return { error: "unknown_extension_ui_request" };
+		return receipt.answerId === answerId && receipt.principal === principal
+			? { disposition: "replay" }
+			: { error: "already_answered" };
 	}
 
 	cancelAll(outcome: SecretInputOutcome = "cancelled"): void {

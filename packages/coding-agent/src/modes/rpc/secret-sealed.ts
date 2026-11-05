@@ -45,7 +45,16 @@ export interface McpPresenterSecretToken {
 	readonly hostToken: string;
 }
 
-export type McpPresenterSecretFrame = McpPresenterSecretRequest | McpPresenterSecretToken;
+/** Engine to holder (design 4.3, 7.2): value-free; `elsewhere` is false only for the winning holder. */
+export interface McpPresenterSecretSettled {
+	readonly type: "mcp_presenter_secret_settled";
+	readonly v: 1;
+	readonly uiRequestId: string;
+	readonly outcome: "answered" | "cancelled" | "timed_out" | "unavailable";
+	readonly elsewhere: boolean;
+}
+
+export type McpPresenterSecretFrame = McpPresenterSecretRequest | McpPresenterSecretToken | McpPresenterSecretSettled;
 
 /** The per-request X25519 key of 0022 3.1: the public half as unpadded base64url of the raw 32 bytes. */
 export interface SecretRequestKey {
@@ -85,6 +94,67 @@ export function secretBinding(input: SecretBindingInput): SecretBinding {
 		input.hpkePk,
 		displayHash,
 	];
+}
+
+/** `req = b64url(SHA-256(UTF-8(JSON.stringify(B))))`: names one request everywhere an answer is bound to it. */
+export function secretRequestHash(binding: SecretBinding): string {
+	return sha256b64url(JSON.stringify(binding));
+}
+
+/** HPKE `info`: `UTF-8("omo-secret-answer-v1") || 0x00 || req` (its 32 bytes). */
+export function secretAnswerInfo(req: string): Buffer {
+	return Buffer.concat([Buffer.from("omo-secret-answer-v1"), Buffer.from([0]), Buffer.from(req, "base64url")]);
+}
+
+/** HPKE AAD: `UTF-8(JSON.stringify(["omo-secret-answer-aad-v1", req, principalId, grantId, answerId, stepupJti]))`. */
+export function secretAnswerAad(
+	req: string,
+	principalId: string,
+	grantId: string,
+	answerId: string,
+	jti: string,
+): Buffer {
+	return Buffer.from(JSON.stringify(["omo-secret-answer-aad-v1", req, principalId, grantId, answerId, jti]));
+}
+
+/** What the installation key signs for a value answer; the ciphertext enters as `b64url(SHA-256(enc || ct))`. */
+export function secretAnswerTranscript(
+	ids: { readonly req: string; readonly principalId: string; readonly grantId: string; readonly answerId: string },
+	jti: string,
+	enc: Uint8Array,
+	ct: Uint8Array,
+): string {
+	const sealed = createHash("sha256").update(enc).update(ct).digest("base64url");
+	return `omo-secret-answer-v1\n${JSON.stringify([ids.req, ids.principalId, ids.grantId, ids.answerId, jti, sealed])}`;
+}
+
+/** What the installation key signs for a cancel. */
+export function secretCancelTranscript(ids: {
+	readonly req: string;
+	readonly principalId: string;
+	readonly grantId: string;
+	readonly answerId: string;
+}): string {
+	return `omo-secret-answer-v1\n${JSON.stringify([ids.req, ids.principalId, ids.grantId, ids.answerId, "cancel"])}`;
+}
+
+/**
+ * The canonical plaintext only: `u32be(byteLength) || UTF-8(value) || zeros`, exactly the next power of two of at
+ * least 256 and at most 64 KiB, all-zero padding and valid UTF-8 (a leading BOM is kept). Anything else is
+ * `undefined`.
+ */
+export function unpadSecretValue(plaintext: Uint8Array): string | undefined {
+	if (plaintext.length < 256 || plaintext.length > 65536) return undefined;
+	const bytes = Buffer.from(plaintext);
+	const length = bytes.readUInt32BE(0);
+	let size = 256;
+	while (size < 4 + length) size *= 2;
+	if (size !== bytes.length || bytes.subarray(4 + length).some((byte) => byte !== 0)) return undefined;
+	try {
+		return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes.subarray(4, 4 + length));
+	} catch {
+		return undefined;
+	}
 }
 
 /** The host key signs exactly this: `"omo-secret-request-v1\n" + JSON.stringify(B)`. */
