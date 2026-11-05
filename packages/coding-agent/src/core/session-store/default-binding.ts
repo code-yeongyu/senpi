@@ -1,3 +1,4 @@
+import { dirname } from "node:path";
 import { isBunRuntime } from "../../config.ts";
 import type { SessionManager } from "../session-manager.ts";
 import { loadDefaultSessionStore } from "./default-store.lazy.ts";
@@ -14,10 +15,12 @@ export async function bindDefaultSessionStore(
 	options: { readonly agentDir: string; readonly sessionStore?: SessionStoreChoice },
 ): Promise<void> {
 	if (!isBunRuntime || options.sessionStore === "jsonl") return;
-	if (!sessionManager.isPersisted() || sessionManager.getSessionFile() === undefined) return;
+	const sessionFile = sessionManager.getSessionFile();
+	if (!sessionManager.isPersisted() || sessionFile === undefined) return;
 	const { openDefaultSessionStore } = await loadDefaultSessionStore();
 	const bound = await openDefaultSessionStore({
 		agentDir: options.agentDir,
+		sessionDir: dirname(sessionFile),
 		sessionId: sessionManager.getSessionId(),
 	});
 	await sessionManager.bindDurableStore(bound);
