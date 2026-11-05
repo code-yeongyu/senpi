@@ -1,8 +1,8 @@
-import { chmodSync, readFileSync } from "node:fs";
+import { appendFileSync, chmodSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { openSessionStore } from "../../../agent/src/durable/session-store.ts";
+import { openSessionStore, openSyncSessionStore } from "../../../agent/src/durable/session-store.ts";
 import {
 	createMemoryStoreMedium,
 	type MemoryStoreMedium,
@@ -65,6 +65,38 @@ describe("a SessionManager bound to the durable store (S20b)", () => {
 		const file = fileOf(session);
 		expect(readFileSync(file, "utf8")).toBe(await storeImage(session.getSessionId()));
 		expect(SessionManager.open(file, dir).getEntries()).toEqual(session.getEntries());
+	});
+
+	// #5955 review: a burst of appends (a message and its tool result) commits before the ledger records run, so only
+	// the last one is recorded; the chain must still cover the whole burst, or the next import takes the rewrite path and
+	// erases what a co-bound process appended to the store.
+	it("keeps a co-bound peer's entry when the file is reopened after a burst of appends", async () => {
+		const { session, warnings } = await durableSession();
+		session.appendMessage(userMsg("question"));
+		session.appendMessage(assistantMsg("answer"));
+		await session.settleDurableProjection();
+		// The file exists now; the next turn's entries are separate appends, committed before any ledger record runs.
+		session.appendMessage(userMsg("follow-up"));
+		session.appendMessage(assistantMsg("second answer"));
+		await session.settleDurableProjection();
+		const sessionId = session.getSessionId();
+		const stored = await openSessionStore(openMemoryStore(medium), 1).load(sessionId);
+		if (stored === undefined) throw new Error("the session was not stored");
+		const peer = await openSyncSessionStore(openMemoryStore(medium), 1).open(sessionId, stored.header);
+		const peerLine = JSON.stringify({ type: "custom", id: "peer-1", parentId: null, customType: "peer" });
+		peer.appendSync([{ key: "peer-1", line: peerLine }]);
+		// Another writer then grows the file, so the reopen imports it.
+		const lastId = session.getLeafId();
+		appendFileSync(
+			fileOf(session),
+			`${JSON.stringify({ type: "custom", id: "outside-1", parentId: lastId, customType: "outside" })}\n`,
+		);
+
+		await durableSession(fileOf(session));
+
+		expect(warnings).toEqual([]);
+		const reloaded = await openSessionStore(openMemoryStore(medium), 1).load(sessionId);
+		expect(reloaded?.entries.map((entry) => entry.key)).toEqual(expect.arrayContaining(["peer-1", "outside-1"]));
 	});
 
 	it.each([0, 1, 2, 5, 20])(
