@@ -81,7 +81,7 @@ function presenterConnection(writer: SessionEventWriter, id: string, lines: stri
 		const queued = requests.shift();
 		return queued ? Promise.resolve(queued) : new Promise((resolve) => waiters.push(resolve));
 	};
-	return { id, connection, context, request, unread: () => requests.length };
+	return { id, connection, context, request, unread: () => requests.length, lines };
 }
 
 type AccountState = { account: string | undefined; readonly listeners: Set<() => void> };
