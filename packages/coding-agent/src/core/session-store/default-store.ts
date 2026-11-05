@@ -31,6 +31,22 @@ function mediaUnder(root: string): BunSqliteMedia {
 	return created;
 }
 
+const stores = new Map<string, Promise<SyncCommitStore>>();
+
+/**
+ * One connection per session medium per process: binding a session again (/resume, a reload, the startup retry) reuses
+ * it instead of opening another that nothing would close. A write-point hook (kill-point tests) gets its own connection.
+ */
+function storeFor(root: string, medium: string, options: DurableStoreOptions | undefined): Promise<SyncCommitStore> {
+	if (options !== undefined) return mediaUnder(root).open(medium, options);
+	const existing = stores.get(medium);
+	if (existing !== undefined) return existing;
+	const opened = mediaUnder(root).open(medium);
+	stores.set(medium, opened);
+	opened.catch(() => stores.delete(medium));
+	return opened;
+}
+
 const lostRace = (error: unknown): boolean => error instanceof DurableStoreError && error.code === "stale-epoch";
 
 /**
@@ -45,7 +61,7 @@ export async function openDefaultSessionStore(options: DefaultSessionStoreOption
 	await mkdir(medium, { recursive: true, mode: 0o700 });
 	const storeOptions: DurableStoreOptions | undefined =
 		options.onWritePoint === undefined ? undefined : { onWritePoint: options.onWritePoint };
-	const store = await mediaUnder(root).open(medium, storeOptions);
+	const store = await storeFor(root, medium, storeOptions);
 	const current = await store.readEpoch();
 	if (current > 0) return { store, epoch: current };
 	try {
