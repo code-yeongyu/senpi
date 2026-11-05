@@ -9,10 +9,10 @@ import type { TransportSide } from "../../transport/transport.ts";
 import { createGrantVerifier } from "../grant-verify.ts";
 import { createExecutionLedger } from "../ledger.ts";
 import type { ExecutionEntry } from "../ledger-types.ts";
-import { createHandEpochFence, EPOCH_FLOOR_PREFIX } from "../remote-epoch.ts";
+import { createHandEpochFence, EPOCH_FLOOR_PREFIX, type HandEpochFence } from "../remote-epoch.ts";
 import { createRemoteExecutor } from "../remote-executor.ts";
 import { createHandLedger } from "../remote-hand-ledger.ts";
-import { createRemoteToolHost, type HandPlacement } from "../remote-tool-host.ts";
+import { createRemoteToolHost, type HandPlacement, type OpenScopeResult } from "../remote-tool-host.ts";
 import type { ToolHostResult } from "../tool-host.ts";
 import { type HandCaseAdapters, type TransportPump, transportPump } from "./hand-harness.ts";
 
@@ -31,6 +31,7 @@ export interface EpochRig extends TransportPump {
 	readonly killed: Promise<void>;
 	/** `turn`: the issuing assistant message's durable identity (senpi#5867). */
 	execute(brain: string, scope: string, calls: readonly AgentToolCall[], turn?: string): Promise<ToolHostResult>;
+	openScope(brain: string, scope: string, signal?: AbortSignal): Promise<OpenScopeResult>;
 	/** Moves `scope` to `brain` in the hand's placement record (what `ownerOf` answers). */
 	setOwner(scope: string, brain: string): void;
 	/** Holds the next commit `match` picks until `release()`; `reached` settles when it arrives. */
@@ -40,6 +41,8 @@ export interface EpochRig extends TransportPump {
 	rows(): Promise<ExecutionEntry[]>;
 	/** The floor persisted for `scope` (read from a fresh store instance), or `undefined`. */
 	floor(scope: string): Promise<StoreValue | undefined>;
+	/** The current hand process's fence, so a test can serve another lane (the loop-hook lane) behind it. */
+	fence(): HandEpochFence;
 }
 
 const LEASE_MS = 3_600_000;
@@ -175,6 +178,7 @@ export async function openEpochRig(
 
 	const { medium } = await claimedStore(adapters.store);
 	const owners = new Map<string, string>();
+	let currentFence: HandEpochFence | undefined;
 	const bodies: string[] = [];
 	const faults: unknown[] = [];
 	const holds: Hold[] = [];
@@ -194,6 +198,7 @@ export async function openEpochRig(
 			ownerOf: (scope) => owners.get(scope),
 			durable: { store, epoch: 1, admission },
 		});
+		currentFence = fence;
 		const executors = options.brains.map(({ name }) => {
 			const transport = handSides.get(name);
 			if (transport === undefined) throw new Error(`no link for ${name}`);
@@ -237,6 +242,11 @@ export async function openEpochRig(
 				{ emit: () => {} },
 			);
 		},
+		openScope(brain, scope, signal) {
+			const host = hosts.get(brain);
+			if (host === undefined) throw new Error(`no brain ${brain}`);
+			return host.openScope(scope, signal);
+		},
 		setOwner: (scope, brain) => void owners.set(scope, brain),
 		hold(match) {
 			const hold: Hold = { match, reached: Promise.withResolvers(), gate: Promise.withResolvers() };
@@ -247,5 +257,9 @@ export async function openEpochRig(
 		rows: async () =>
 			createExecutionLedger({ store: await reader(), epoch: 1, admission: createAdmissionLine() }).scan(),
 		floor: async (scope) => (await reader()).getDocument(`${EPOCH_FLOOR_PREFIX}${scope}`),
+		fence: () => {
+			if (currentFence === undefined) throw new Error("the hand has not started");
+			return currentFence;
+		},
 	};
 }

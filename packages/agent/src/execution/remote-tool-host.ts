@@ -25,6 +25,9 @@ export function remoteExecutionId(scope: ExecutionScope, turn: string, toolCallI
 	return canonicalJson({ scope: scope.id, turn, toolCallId });
 }
 
+/** Whether a scope's epoch floor is open at the session's epoch (senpi#5932), or why the hand refused it. */
+export type OpenScopeResult = { readonly kind: "open" } | { readonly kind: "refused"; readonly reason: string };
+
 export interface RemoteToolHostOptions {
 	/** The session's end of the link to the hand; lanes are execution scope IDs. */
 	readonly transport: Transport;
@@ -77,9 +80,12 @@ function terminalResult(placement: HandPlacement, terminal: RemoteTerminal): Rem
  * source order. A call whose send is refused (the transport closed) becomes an error result, never a retry. The one
  * re-send is on a durable hand's `hello` (see `createHandLink`). `deviceFiles(scope)` reaches the hand's files (S40).
  */
-export function createRemoteToolHost(
-	options: RemoteToolHostOptions,
-): ToolHost & { deviceFiles(scope: ExecutionScope): DeviceFiles; close(): void } {
+export function createRemoteToolHost(options: RemoteToolHostOptions): ToolHost & {
+	deviceFiles(scope: ExecutionScope): DeviceFiles;
+	/** Opens `scopeId`'s epoch floor before any tool call, e.g. before the session's first loop hook (senpi#5932). */
+	openScope(scopeId: string, signal?: AbortSignal): Promise<OpenScopeResult>;
+	close(): void;
+} {
 	const mintId = options.mintId ?? (() => crypto.randomUUID());
 	const link = createHandLink(options.transport, options.planes ?? {}, options.filePlanes ?? [], options.epoch);
 
@@ -169,6 +175,10 @@ export function createRemoteToolHost(
 			};
 		},
 		deviceFiles: (scope) => createRemoteDeviceFiles(link, scope, mintId),
+		openScope: async (scopeId, signal) => {
+			const refusal = await link.openScope(scopeId, signal);
+			return refusal === undefined ? { kind: "open" } : { kind: "refused", reason: refusal };
+		},
 		close: () => link.close(),
 	};
 }

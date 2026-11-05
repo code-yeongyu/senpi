@@ -27,6 +27,11 @@ export interface HandLink {
 	dispatch(message: RemoteInvoke | RemoteFile, signal?: AbortSignal): Promise<HandReply>;
 	/** The hand's `hello`, waiting at most `ms` for it (never past `signal`); `undefined` when none came. */
 	hello(ms: number, signal?: AbortSignal): Promise<RemoteHello | undefined>;
+	/**
+	 * Opens `lane`'s epoch floor now, through the same gate the first dispatch uses (senpi#5932): `undefined` once the hand
+	 * acked the floor at this epoch (or the session has no epoch), else the refusal; `aborted` when `signal` ends first.
+	 */
+	openScope(lane: string, signal?: AbortSignal): Promise<string | undefined>;
 	close(): void;
 }
 
@@ -155,6 +160,16 @@ export function createHandLink(
 				});
 			});
 			return replied;
+		},
+		openScope(lane, signal) {
+			if (gate === undefined) return Promise.resolve(undefined);
+			const opened = gate.open(lane);
+			if (signal === undefined) return opened;
+			if (signal.aborted) return Promise.resolve("aborted");
+			const aborted = new Promise<string>((resolve) =>
+				signal.addEventListener("abort", () => resolve("aborted"), { once: true }),
+			);
+			return Promise.race([opened, aborted]);
 		},
 		hello(ms, signal) {
 			if (announced !== undefined || waitedOut || signal?.aborted) return Promise.resolve(announced);
