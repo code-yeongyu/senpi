@@ -1,6 +1,7 @@
 // senpi#5349 / code-yeongyu/oh-my-openagent#12096 (L2): the kill-guard builtin installs the runtime shims at session
 // start and every agent shell environment (`getShellEnv`: PTY bash, core bash, monitors) carries them; the user's
-// `terminal.killGuard: "off"` leaves the environment untouched. Nothing here runs a command.
+// `terminal.killGuard: "off"` leaves the environment untouched. Only the senpi#5371 case runs a real command (`printf`)
+// through the default bash operations.
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
@@ -141,8 +142,9 @@ describe.runIf(posix)("kill guard runtime layer delivery", () => {
 		expect(value("AGENT_PID")).toBe(process.env.SENPI_KILL_GUARD_AGENT_PID ?? "");
 		expect(value("PROTECTED")).toBe(process.env.SENPI_KILL_GUARD_PROTECTED ?? "");
 		expect(value("PROMPT")).toBe(process.env.PROMPT_COMMAND ?? "");
-		expect(result.output).not.toContain("bash_env.sh");
-		expect(result.output).not.toContain("bash_kill.sh");
+		// This session's own shim root, never the bare shim file names: a suite run from inside an agent shell inherits
+		// that outer agent's BASH_ENV (another agent dir's bash_env.sh), and the lines above already pin it through.
+		expect(result.output).not.toContain(shimRoot(agentDir));
 	});
 
 	it("switching the guard off in one session leaves another session's layer in place", async () => {
