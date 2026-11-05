@@ -1,6 +1,6 @@
 import type { Transport, TransportFrame } from "../transport/transport.ts";
 import type { AgentToolResult } from "../types.ts";
-import { FILE_CHANNEL } from "./device-files.ts";
+import { FILE_CHANNEL, RUN_CHANNEL } from "./device-files.ts";
 import { createPlaneClient, decodePlaneMessage, type NestedRequest } from "./plane.ts";
 import { fileCall, fileRefusal, fileStopped } from "./remote-file-call.ts";
 import {
@@ -38,7 +38,7 @@ export interface HandScope {
 	 * Runs one device file operation (S40) after its grant was checked: the scope's `tool_call` handlers, filesystem
 	 * policy and the operation itself, the outcome in `details.file`. Absent: the scope serves no file channel.
 	 */
-	file?(op: string, args: unknown, signal: AbortSignal): Promise<AgentToolResult<unknown>>;
+	file?(op: string, args: unknown, signal: AbortSignal, nested: NestedRequest): Promise<AgentToolResult<unknown>>;
 	dispose(): Promise<void>;
 }
 
@@ -192,7 +192,13 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 							})
 						: scope.file === undefined
 							? fileRefusal("unsupported", "this hand serves no file channel")
-							: await scope.file(file.op, call.arguments, controller.signal);
+							: await scope.file(
+									file.op,
+									call.arguments,
+									controller.signal,
+									// Only planes the brain lets file operations host answer it (a two-sided extension's forwarded tool events).
+									planes.requestFor(call.executionId, lane, controller.signal),
+								);
 				// A file operation that ended aborted ships no payload: a revoked grant is a refusal (R7), never data.
 				if (file !== undefined && controller.signal.aborted)
 					result = fileStopped(authorize(authority, call.scope.root).ok);
@@ -235,7 +241,7 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 			kind: "hello",
 			instance: options.instance ?? crypto.randomUUID(),
 			durable: ledger !== undefined,
-			ops: options.fileChannel === true ? [FILE_CHANNEL] : [],
+			ops: options.fileChannel === true ? [FILE_CHANNEL, RUN_CHANNEL] : [],
 		});
 	})();
 	ready.catch((error: unknown) => options.onFault(error));

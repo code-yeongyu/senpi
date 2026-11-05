@@ -168,8 +168,14 @@ export class ConnectionQuestionBridge {
 		if (pending) return pending.respond(response, beforeAnswer) || "question_incomplete";
 		return this.resolved.has(response.id) ? "question_already_resolved" : false;
 	}
-	progress(draft: RpcExtensionUIProgress): void {
-		this.pending.get(draft.id)?.progress(draft);
+	/** Hands a draft to its pending question; reports whether one took it, or why none did (senpi#5761). */
+	progress(draft: RpcExtensionUIProgress): "applied" | "question_already_resolved" | "unknown_extension_ui_request" {
+		const pending = this.pending.get(draft.id);
+		if (pending) {
+			pending.progress(draft);
+			return "applied";
+		}
+		return this.resolved.has(draft.id) ? "question_already_resolved" : "unknown_extension_ui_request";
 	}
 	cancelAll(): void {
 		for (const pending of this.pending.values()) pending.cancel();

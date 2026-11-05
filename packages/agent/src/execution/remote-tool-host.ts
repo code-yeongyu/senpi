@@ -30,6 +30,12 @@ export interface RemoteToolHostOptions {
 	 */
 	readonly planes?: Readonly<Record<string, PlaneHandler>>;
 	/**
+	 * The planes a pending device file operation (S40) may host, on its own lane: a two-sided extension's forwarded tool
+	 * events (S29), so its handler runs on the loop's copy for a file operation as for a tool call. Absent: none, so
+	 * every nested request under a file operation is refused `parent_terminal`.
+	 */
+	readonly filePlanes?: readonly string[];
+	/**
 	 * The session's owner epoch (brain/hand S35). With it, each scope lane first raises the hand's floor to this epoch
 	 * and dispatches only after the hand acked exactly it; every invoke, file operation, abort and ack carries it.
 	 * Without it, nothing about epochs is sent (a session that never moves).
@@ -66,7 +72,7 @@ export function createRemoteToolHost(
 	options: RemoteToolHostOptions,
 ): ToolHost & { deviceFiles(scope: ExecutionScope): DeviceFiles; close(): void } {
 	const mintId = options.mintId ?? (() => crypto.randomUUID());
-	const link = createHandLink(options.transport, options.planes ?? {}, options.epoch);
+	const link = createHandLink(options.transport, options.planes ?? {}, options.filePlanes ?? [], options.epoch);
 
 	const resultOf = (reply: HandReply): RemoteToolResult => {
 		switch (reply.kind) {

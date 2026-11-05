@@ -44,19 +44,24 @@ interface Pending {
 export function createHandLink(
 	transport: Transport,
 	planeHandlers: Readonly<Record<string, PlaneHandler>> = {},
+	filePlanes: readonly string[] = [],
 	epoch?: number,
 ): HandLink {
 	const pending = new Map<string, Pending>();
 	const stamp = epoch === undefined ? {} : { epoch };
 	/** Messages handed to the transport: a hand's `hello` re-sends only these, never one still waiting on its floor. */
 	const sent = new Set<string>();
-	// Nested requests (S31) are admitted only while their parent CALL is live on its lane; a file operation hosts none.
+	// Nested requests (S31) are admitted only while their parent CALL is live on its lane. A pending file operation
+	// (S40) hosts only the planes in `filePlanes` (a two-sided extension's forwarded tool events, S29); every other
+	// plane under it is refused as if it had no live parent. An abort names no plane and reaches what was admitted.
 	const planes = createPlaneServer({
 		transport,
 		planes: planeHandlers,
-		liveLane: (executionId) => {
+		liveLane: (executionId, plane) => {
 			const waiting = pending.get(executionId)?.message;
-			return waiting?.kind === "invoke" ? waiting.scope.id : undefined;
+			if (waiting?.kind === "invoke") return waiting.scope.id;
+			if (waiting?.kind === "file" && (plane === undefined || filePlanes.includes(plane))) return waiting.scope.id;
+			return undefined;
 		},
 	});
 	let announced: RemoteHello | undefined;
