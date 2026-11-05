@@ -9,7 +9,9 @@ import { createServer } from "node:net";
 import { dirname, posix, win32 } from "node:path";
 import {
 	createReliableTransport,
+	createHandEpochFence,
 	createRemoteExecutor,
+	HAND_SELF_SENDER,
 	serveLoopHooks,
 	type Transport,
 } from "@earendil-works/pi-agent-core";
@@ -77,8 +79,12 @@ export async function runHand(options: HandEntryOptions): Promise<never> {
 		onHandlerError: (error) => report(`frame handler failed: ${String(error)}`),
 	});
 	const lanes = splitLane(transport, HAND_LOOP_HOOK_LANE);
+	// S35 on the production hand (senpi#5924): the local socket's only peer is the user's own session, so the self sender
+	// owns every scope and a moved session's earlier epoch is fenced by the floor its later epoch raised.
+	const fence = createHandEpochFence({ ownerOf: () => HAND_SELF_SENDER });
 	const executor = createRemoteExecutor({
 		authority: { kind: "self" },
+		fence,
 		fileChannel: true,
 		transport: lanes.rest,
 		openScope: hand.openScope,

@@ -1,6 +1,6 @@
-// senpi#5924: the production `--hand` enforces S35's epoch floor. After the session's owner raised the scope's floor to
-// epoch 2, a call that still carries epoch 1 (the owner before a move) is refused on the spawned hand and the tool never
-// runs; the call at epoch 2 ran once.
+// senpi#5924: the production `--hand` enforces S35's epoch floor. The session runs a call at epoch 1, moves and runs
+// one at epoch 2; a late call that still carries epoch 1 (the owner before the move) is refused on the spawned hand and
+// the tool does not run a third time.
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createConnection, type Socket } from "node:net";
 import { join } from "node:path";
@@ -66,28 +66,35 @@ it("--hand refuses a call below the scope's epoch floor; the tool does not run",
 	const sockets: Socket[] = [];
 	try {
 		await waitForStderr(child, `senpi hand: listening on ${endpoint}`, 60_000);
-		const owner = await attach(endpoint, sockets);
+		// One carrier link per hand: each brain process in turn takes over the session's end of it (S05).
+		const link = await attach(endpoint, sockets);
+		const before = await runTurn({
+			calls: [toolCall("call-0", "count", {})],
+			toolHost: createRemoteToolHost({ transport: link, placement: "split-local", epoch: 1 }),
+			root: qa.cwd,
+			scopeId: "scope-5924",
+		});
+		expect(toolResultTexts(before.agent)).toEqual(["counted"]);
+
 		const current = await runTurn({
 			calls: [toolCall("call-1", "count", {})],
-			toolHost: createRemoteToolHost({ transport: owner, placement: "split-local", epoch: 2 }),
+			toolHost: createRemoteToolHost({ transport: link, placement: "split-local", epoch: 2 }),
 			root: qa.cwd,
 			scopeId: "scope-5924",
 		});
 		expect(toolResultTexts(current.agent)).toEqual(["counted"]);
 
-		const stale = await attach(endpoint, sockets);
 		const late = await runTurn({
 			calls: [toolCall("call-2", "count", {})],
-			toolHost: createRemoteToolHost({ transport: stale, placement: "split-local", epoch: 1 }),
+			toolHost: createRemoteToolHost({ transport: link, placement: "split-local", epoch: 1 }),
 			root: qa.cwd,
 			scopeId: "scope-5924",
 		});
 
 		expect(toolResultTexts(late.agent).join("\n")).toContain("refused");
-		expect(readFileSync(join(qa.cwd, "count.txt"), "utf8")).toBe("x");
+		expect(readFileSync(join(qa.cwd, "count.txt"), "utf8")).toBe("xx");
 		expect(child.exitCode).toBeNull();
-		owner.close();
-		stale.close();
+		link.close();
 	} finally {
 		for (const socket of sockets) socket.destroy();
 		await stopChild(child);
