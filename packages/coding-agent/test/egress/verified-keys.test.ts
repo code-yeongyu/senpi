@@ -1,8 +1,9 @@
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import lockfile from "proper-lockfile";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	findVerification,
 	type LocalKeyVerification,
@@ -12,6 +13,7 @@ import {
 	verificationFor,
 	verifiedKeysPath,
 } from "../../src/core/egress/verified-keys.ts";
+import { FileLockLostError } from "../../src/core/file-lock.ts";
 import { p256Signer, registryFields, signedEntry } from "./signed-entry.ts";
 
 let root: string;
@@ -23,6 +25,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	vi.restoreAllMocks();
 	rmSync(root, { recursive: true, force: true });
 });
 
@@ -118,6 +121,22 @@ describe("verified-keys store", () => {
 		writeFileSync(path, "{");
 		await recordVerification(path, record);
 		expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ v: 2, records: [record] });
+	});
+
+	it("writes nothing more once its lock is lost: no temp file, the stored records unchanged, a typed error", async () => {
+		await recordVerification(path, record);
+		const before = readFileSync(path, "utf8");
+		const realLock = lockfile.lock;
+		vi.spyOn(lockfile, "lock").mockImplementation(async (file, options) => {
+			const release = await realLock(file, options);
+			await release();
+			options?.onCompromised?.(Object.assign(new Error("lock reclaimed"), { code: "ECOMPROMISED" }));
+			return async () => {};
+		});
+
+		await expect(recordVerification(path, { ...record, generation: 2 })).rejects.toBeInstanceOf(FileLockLostError);
+		expect(readFileSync(path, "utf8")).toBe(before);
+		expect(readdirSync(dirname(path)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
 	});
 });
 
