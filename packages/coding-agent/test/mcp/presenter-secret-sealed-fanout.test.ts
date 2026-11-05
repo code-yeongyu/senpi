@@ -166,7 +166,7 @@ it("a grant without the feature never receives a sealed record while another dev
 it("a sealed-only request survives capability changes and another device's detach, and ends unavailable with its last holder", async () => {
 	const { host, secret, requests } = await sealedHost();
 	const phone = await holder(host, secret, "phone");
-	const tablet = await holder(host, secret, "tablet");
+	await holder(host, secret, "tablet");
 	let settled: string | undefined | null = null;
 	void requests.input("API key", undefined).then((value) => {
 		settled = value;

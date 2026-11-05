@@ -66,7 +66,7 @@ function is32ByteB64url(value: string): boolean {
 }
 
 /** `b64url(SHA-256(UTF-8(JSON.stringify([title, placeholder ?? null]))))`. */
-export function secretDisplayHash(title: string, placeholder: string | undefined): string {
+function secretDisplayHash(title: string, placeholder: string | undefined): string {
 	return sha256b64url(JSON.stringify([title, placeholder ?? null]));
 }
 
@@ -85,11 +85,6 @@ export function secretBinding(input: SecretBindingInput): SecretBinding {
 		input.hpkePk,
 		displayHash,
 	];
-}
-
-/** `req = b64url(SHA-256(UTF-8(JSON.stringify(B))))`. */
-export function secretRequestHash(binding: SecretBinding): string {
-	return sha256b64url(JSON.stringify(binding));
 }
 
 /** The host key signs exactly this: `"omo-secret-request-v1\n" + JSON.stringify(B)`. */
