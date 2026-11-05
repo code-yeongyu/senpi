@@ -2,6 +2,7 @@ import { createPrivateKey, createPublicKey, generateKeyPairSync, sign, type KeyO
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { strictEd25519Refusal, strictEd25519Verify } from "../../src/modes/rpc/ed25519-strict.ts";
+import { SecretInputRequests } from "../../src/modes/rpc/secret-input-requests.ts";
 import { openSecretAnswer } from "../../src/modes/rpc/secret-sealed-hpke.ts";
 import { closeAccountHosts, type AccountHost } from "./fixtures/presenter-account-host.ts";
 import { holder, records, sealedHost } from "./fixtures/secret-sealed-host.ts";
@@ -569,4 +570,22 @@ it("a settled prompt takes no more host token records when the token is re-minte
 	await setup.secret.mints.at(-1)?.done;
 	expect(setup.secret.mints.length).toBeGreaterThan(1);
 	expect(records(phone.lines, "mcp_presenter_secret_token")).toEqual([]);
+});
+
+it("disposing an older request set leaves a newer binding's latch in place: the session's sealed answers still reach it", async () => {
+	const setup = await sealedHost();
+	const phone = await holder(setup.host, setup.secret, "phone");
+	const newer = new SecretInputRequests(setup.host.writer.secretInputRoute("session", true), () => {});
+	setup.requests.dispose();
+	const state: { value: string | undefined | null } = { value: null };
+	void newer.input("API key", undefined).then((value) => {
+		state.value = value;
+	});
+	const request = records(phone.lines, "mcp_presenter_secret_request").at(-1);
+	if (!request) throw new Error("No sealed request");
+	const req = requestHash(request, setup.host.control.sealed?.tokens.hostJkt ?? "");
+	const stepup = setup.secret.stepUp(phone.adopted.device.publicKey, req);
+	const frame = valueAnswer(ids(phone, request, req), request, stepup, "newer-value", deviceKey(phone));
+	expect(await answer(setup.host, phone, frame)).toMatchObject({ disposition: "applied" });
+	expect(state.value).toBe("newer-value");
 });
