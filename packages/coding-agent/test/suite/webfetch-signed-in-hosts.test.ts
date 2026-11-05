@@ -108,6 +108,26 @@ describe("signed-in browser settings", () => {
 	});
 
 	it.each([
+		["*.co.uk", false],
+		["*.com.tw", false],
+		["*.co.th", false],
+		["*.or.jp", false],
+		["*.github.io", false],
+		["*.blogspot.com", false],
+		["*.amazonaws.com", false],
+		["*.ngrok.io", false],
+		["127.0.0.1", false],
+		["2130706433", false],
+		["0x7f000001", false],
+		["*.ibm.de", true],
+		["*.corp.example.co.uk", true],
+		["*.team.github.io", true],
+	])("a listed %s is kept: %s", (host, kept) => {
+		const parsed = parseSignedInBrowserSettings({ webfetch: { signedInBrowser: { hosts: [host] } } });
+		expect(parsed.hosts).toEqual(kept ? [host] : []);
+	});
+
+	it.each([
 		["https://wiki.example.test/page", true],
 		["https://wiki.example.test:8443/page", true],
 		["https://user:pass@wiki.example.test/page", true],

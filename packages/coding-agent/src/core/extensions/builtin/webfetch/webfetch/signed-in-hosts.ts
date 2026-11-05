@@ -17,10 +17,12 @@ export interface SignedInBrowserSettings {
 	readonly browser?: string;
 }
 
-// ASCII host labels only. A wildcard needs a registrable name under a known suffix, so neither "*.com" nor
-// "*.co.uk" nor "*.github.io" can hand a whole public suffix to the browser.
+// ASCII host labels only. A wildcard is refused on a single label ("*.com"), on a country second-level
+// domain ("*.co.uk", "*.com.tw": a generic second label under a two-letter country code), and on the shared
+// hosting suffixes listed below ("*.github.io"). This is not a full public suffix list: a suffix outside
+// these rules is accepted, and only the user can add a host.
 const HOST_PATTERN = /^(?:\*\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)*$/u;
-// Multi-label public suffixes a wildcard must sit below, not on.
+// Shared hosting suffixes a wildcard must sit below, not on.
 const PUBLIC_SUFFIXES = new Set([
 	"co.uk",
 	"org.uk",
@@ -53,13 +55,23 @@ const PUBLIC_SUFFIXES = new Set([
 	"appspot.com",
 	"web.app",
 	"firebaseapp.com",
+	"amazonaws.com",
+	"blogspot.com",
+	"ngrok.io",
+	"ngrok-free.app",
 ]);
+// Generic second labels that, under a two-letter country code, form a country's public second level.
+const COUNTRY_SECOND_LEVELS = new Set(["com", "co", "org", "net", "ac", "or", "ne", "go", "gov", "edu", "mil", "gob"]);
 const IPV4 = /^\d+(?:\.\d+){0,3}$|^0x[0-9a-f]+$/u;
 
 function isWildcardTooBroad(pattern: string): boolean {
 	if (!pattern.startsWith("*.")) return false;
 	const base = pattern.slice(2);
-	return base.split(".").length < 2 || PUBLIC_SUFFIXES.has(base);
+	const labels = base.split(".");
+	if (labels.length < 2 || PUBLIC_SUFFIXES.has(base)) return true;
+	if (labels.length !== 2) return false;
+	const [second = "", top = ""] = labels;
+	return top.length === 2 && COUNTRY_SECOND_LEVELS.has(second);
 }
 
 function record(value: unknown): Readonly<Record<string, unknown>> | undefined {
