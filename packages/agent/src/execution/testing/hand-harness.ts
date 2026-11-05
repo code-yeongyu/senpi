@@ -1,4 +1,4 @@
-import type { AgentToolCall, ToolExecutionMode } from "../../types.ts";
+import type { AgentToolCall, AgentToolResult, ToolExecutionMode } from "../../types.ts";
 import { createAdmissionLine } from "../../durable/store-admission.ts";
 import type { DurableStore, StoreWritePoint } from "../../durable/store.ts";
 import { createManualTimers, type ManualTimers } from "../../durable/testing/manual-timers.ts";
@@ -10,7 +10,8 @@ import type { CarrierFault, TransportCaseAdapters } from "../../transport/testin
 import type { CarrierSide, TransportSide } from "../../transport/transport.ts";
 import { createExecutionLedger } from "../ledger.ts";
 import type { ExecutionEntry } from "../ledger-types.ts";
-import { createRemoteExecutor, type HandScope } from "../remote-executor.ts";
+import type { PlaneHandler } from "../plane.ts";
+import { createRemoteExecutor, type HandCall, type HandScope } from "../remote-executor.ts";
 import { createHandLedger } from "../remote-hand-ledger.ts";
 import { createRemoteToolHost, type HandPlacement } from "../remote-tool-host.ts";
 import type { ToolHostResult } from "../tool-host.ts";
@@ -31,6 +32,8 @@ export interface HandRig {
 	readonly faults: readonly unknown[];
 	readonly killed: Promise<void>;
 	execute(scope: string, calls: readonly AgentToolCall[], mode?: ToolExecutionMode): Promise<ToolHostResult>;
+	/** Kills the hand process now, wherever its calls are (a body waiting on the session included): it writes nothing more. */
+	kill(): void;
 	/** A new hand process on the reopened store and the same link; resolves once it announced itself. */
 	restart(): Promise<void>;
 	/** Hold every body until `release(toolCallId)`. */
@@ -68,6 +71,10 @@ export async function openHandRig(
 		readonly placement: HandPlacement;
 		readonly killAt?: KillPoint;
 		readonly fault?: (timers: ManualTimers) => CarrierFault;
+		/** The planes the session serves to its calls' nested requests (S26b dialogs). */
+		readonly planes?: Readonly<Record<string, PlaneHandler>>;
+		/** Replaces the default body (`ran:<toolCallId>`), for cases whose calls ask the session something. */
+		readonly body?: (handCall: HandCall) => Promise<AgentToolResult<unknown>>;
 	},
 ): Promise<HandRig> {
 	const timers = createManualTimers(1_000);
@@ -96,6 +103,7 @@ export async function openHandRig(
 				gates.set(handCall.toolCallId, gate);
 				await gate.promise;
 			}
+			if (options.body !== undefined) return options.body(handCall);
 			return { content: [{ type: "text", text: `ran:${handCall.toolCallId}` }], details: {} };
 		},
 		isSequential: () => false,
@@ -133,7 +141,11 @@ export async function openHandRig(
 	};
 	let current = await adapters.store.open(medium, { onWritePoint: killing });
 	await startHand(current).ready;
-	const host = createRemoteToolHost({ transport: sessionSide, placement: options.placement });
+	const host = createRemoteToolHost({
+		transport: sessionSide,
+		placement: options.placement,
+		...(options.planes === undefined ? {} : { planes: options.planes }),
+	});
 
 	const pump = async (stop: () => boolean, ms: number): Promise<void> => {
 		const end = timers.now() + ms;
@@ -164,6 +176,10 @@ export async function openHandRig(
 		killed: killed.promise,
 		execute: (scope, calls, mode = "parallel") =>
 			host.execute({ scope: { id: scope, root: `/work/${scope}` }, calls, mode }, { emit: () => {} }),
+		kill() {
+			dead = true;
+			killed.resolve();
+		},
 		async restart() {
 			current = await adapters.store.open(medium);
 			await settle(startHand(current).ready, "the restarted hand recovered");

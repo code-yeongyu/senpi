@@ -23,6 +23,8 @@ export interface HandCall {
 	readonly signal: AbortSignal;
 	/** Asks the brain that owns this call (a model-backed tool's completion, S31); fails once the call has ended. */
 	readonly nested: NestedRequest;
+	/** The nested planes the brain serves to this call (S26b); empty when it serves none. */
+	readonly planes?: readonly string[];
 }
 
 /**
@@ -172,6 +174,7 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 								arguments: call.arguments,
 								signal: controller.signal,
 								nested: planes.requestFor(call.executionId, lane, controller.signal),
+								planes: call.planes ?? [],
 							})
 						: scope.file === undefined
 							? fileRefusal("unsupported", "this hand serves no file channel")
