@@ -11,7 +11,14 @@ import type { JsonValue } from "@earendil-works/pi-ai";
  * replacement, so a hook that had run runs a second time. At-most-once dispatch therefore holds only on a hand whose
  * endpoint is the machine's long-lived link endpoint, not one owned by the hand process.
  */
-export type LoopHookMessage = LoopHookCall | LoopHookHello | LoopHookStarted | LoopHookReply | LoopHookFailed;
+export type LoopHookMessage =
+	| LoopHookCall
+	| LoopHookHello
+	| LoopHookStarted
+	| LoopHookReply
+	| LoopHookFailed
+	| LoopHookRefused
+	| LoopHookRestarted;
 
 /** Loop host to hand: run the hooks for `event`. A re-send after a hand restart carries the same `callId`. */
 export interface LoopHookCall {
@@ -19,6 +26,8 @@ export interface LoopHookCall {
 	readonly callId: string;
 	readonly event: string;
 	readonly payload: JsonValue;
+	/** The caller's owner epoch, stamped at each transmission (senpi#5916); the hand checks it against the tool scope's floor. */
+	readonly epoch?: number;
 }
 
 /** Hand to loop host, once per hand process, before it serves anything. */
@@ -47,12 +56,43 @@ export interface LoopHookFailed {
 	readonly error: string;
 }
 
+export type LoopHookRefusal = "epoch_fenced" | "floor_missing" | "callId_taken";
+
+/**
+ * Hand to loop host: the call never ran and is not recorded (senpi#5916). `epoch` echoes the call's epoch, so a loop host
+ * that owns a newer epoch can tell a stale re-delivery from a real refusal; `floor` is the scope's floor, absent when
+ * `reason` is `floor_missing`.
+ */
+export type LoopHookRefused =
+	| {
+			readonly kind: "hook.refused";
+			readonly callId: string;
+			readonly reason: "floor_missing";
+			readonly epoch: number;
+	  }
+	| {
+			readonly kind: "hook.refused";
+			readonly callId: string;
+			readonly reason: "epoch_fenced" | "callId_taken";
+			readonly epoch: number;
+			readonly floor: number;
+	  };
+
+/** Hand to loop host: another hand process started this call and may have run it; `instance` is the current process. */
+export interface LoopHookRestarted {
+	readonly kind: "hook.restarted";
+	readonly callId: string;
+	readonly instance: string;
+}
+
 const KINDS: readonly LoopHookMessage["kind"][] = [
 	"hook.call",
 	"hook.hello",
 	"hook.started",
 	"hook.reply",
 	"hook.failed",
+	"hook.refused",
+	"hook.restarted",
 ];
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -63,6 +103,17 @@ export function encodeLoopHookMessage(message: LoopHookMessage): Uint8Array {
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
 const isId = (value: unknown): value is string => typeof value === "string" && value.length > 0;
+const isEpoch = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 1;
+
+function decodeRefused(value: Record<string, unknown>): LoopHookRefused | undefined {
+	const { callId, reason, epoch, floor } = value;
+	if (!isId(callId) || !isEpoch(epoch)) return undefined;
+	if (reason === "floor_missing")
+		return floor === undefined ? { kind: "hook.refused", callId, reason, epoch } : undefined;
+	if ((reason === "epoch_fenced" || reason === "callId_taken") && isEpoch(floor))
+		return { kind: "hook.refused", callId, reason, epoch, floor };
+	return undefined;
+}
 
 /** Parses one frame payload as a loop-hook message; anything else is `undefined`. */
 export function decodeLoopHookMessage(payload: Uint8Array): LoopHookMessage | undefined {
@@ -75,9 +126,15 @@ export function decodeLoopHookMessage(payload: Uint8Array): LoopHookMessage | un
 	if (!isRecord(value) || !KINDS.includes(value.kind as LoopHookMessage["kind"])) return undefined;
 	switch (value.kind) {
 		case "hook.call":
-			return isId(value.callId) && isId(value.event) && "payload" in value
-				? { kind: "hook.call", callId: value.callId, event: value.event, payload: value.payload as JsonValue }
-				: undefined;
+			if (!isId(value.callId) || !isId(value.event) || !("payload" in value)) return undefined;
+			if (value.epoch !== undefined && !isEpoch(value.epoch)) return undefined;
+			return {
+				kind: "hook.call",
+				callId: value.callId,
+				event: value.event,
+				payload: value.payload as JsonValue,
+				...(value.epoch === undefined ? {} : { epoch: value.epoch as number }),
+			};
 		case "hook.hello":
 			return isId(value.instance) ? { kind: "hook.hello", instance: value.instance } : undefined;
 		case "hook.started":
@@ -87,6 +144,12 @@ export function decodeLoopHookMessage(payload: Uint8Array): LoopHookMessage | un
 		case "hook.reply":
 			return isId(value.callId) && "result" in value
 				? { kind: "hook.reply", callId: value.callId, result: value.result as JsonValue }
+				: undefined;
+		case "hook.refused":
+			return decodeRefused(value);
+		case "hook.restarted":
+			return isId(value.callId) && isId(value.instance)
+				? { kind: "hook.restarted", callId: value.callId, instance: value.instance }
 				: undefined;
 		default:
 			return isId(value.callId) && typeof value.error === "string"

@@ -23,6 +23,8 @@ export interface HandEpochFence {
 	 * or the floor's own owner at the floor's epoch. Synchronous, so it can run inside a ledger step's admission slot.
 	 */
 	admits(scope: string, epoch: number | undefined, sender: string): boolean;
+	/** The scope's floor in force, or `undefined` while no owner raised one (senpi#5916). */
+	floorOf(scope: string): number | undefined;
 }
 
 export interface HandEpochFenceOptions {
@@ -95,6 +97,7 @@ export function createHandEpochFence(options: HandEpochFenceOptions): HandEpochF
 			const run = () => raiseNow(scope, epoch, sender);
 			return durable === undefined ? run() : durable.admission.admit(run);
 		},
+		floorOf: (scope) => floors.get(scope)?.epoch,
 		admits(scope, epoch, sender) {
 			const floor = floors.get(scope);
 			if (floor === undefined) return true;
