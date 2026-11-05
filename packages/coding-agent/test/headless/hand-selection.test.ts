@@ -388,4 +388,80 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 		expect(selection.selected("s-ending")).toBeNull();
 		await expect(transport.send("probe", new Uint8Array([1]))).rejects.toThrow("transport closed");
 	});
+
+	it("a recorded hand that was gone at reopen is linked again when chosen after it returns", async () => {
+		const rows: HandRow[] = [{ ...ROW, reachable: false }];
+		const selection = createHandSelection(await handDirectory(rows));
+		const entries: SessionEntry[] = [
+			{
+				type: "custom",
+				id: "e1",
+				parentId: null,
+				timestamp: "0",
+				customType: HAND_SELECTION_ENTRY,
+				data: { device: "dev-b" },
+			},
+		];
+		const session = {
+			agent: { toolHost: undefined as ToolHost | undefined },
+			sessionManager: { getEntries: () => entries, appendCustomEntry: () => "e" },
+		};
+		selection.restore("s-back", session);
+		expect(links).toBe(0);
+
+		rows[0] = ROW;
+		expect(selection.select("s-back", session, "dev-b")).toEqual({ ok: true });
+
+		expect(links).toBe(1);
+		expect(await runProbe(session.agent.toolHost, "/")).toEqual(["hand 7"]);
+	});
+
+	it("a tool batch after a choice waits for presence to track the chosen hand before asking presence", async () => {
+		const order: string[] = [];
+		let releaseTrack = () => {};
+		let opened = false;
+		const presence = {
+			placement: "split",
+			track: async () => {
+				if (!opened) {
+					opened = true;
+					return;
+				}
+				await new Promise<void>((resolve) => {
+					releaseTrack = resolve;
+				});
+				order.push("tracked");
+			},
+			machineOffline: async () => {},
+			machineOnline: async () => {},
+			view: () => ({}) as never,
+			ready: async () => {
+				order.push("ready");
+			},
+			subscribe: () => () => {},
+		};
+		const session = {
+			sessionId: "s-gated",
+			agent: { toolHost: undefined as ToolHost | undefined },
+			sessionManager: { getEntries: () => [] as SessionEntry[], appendCustomEntry: () => "e" },
+			dispose: () => {},
+		};
+		const options = headlessHostOptions({
+			agentDir: "/agent",
+			cwd: "/work",
+			listen: "stdio://",
+			hands: await handDirectory([ROW]),
+			presence: { presence, handsOf: () => [] },
+			createRuntime: (async () => ({ session })) as unknown as CreateAgentSessionRuntimeFactory,
+		});
+		await options.createRuntime({} as Parameters<CreateAgentSessionRuntimeFactory>[0]);
+		options.handSelection?.select("s-gated", session, "dev-b");
+
+		const probe = runProbe(session.agent.toolHost, "/");
+		expect(order).toEqual([]);
+		releaseTrack();
+
+		expect(await probe).toEqual(["hand 7"]);
+		expect(order).toEqual(["tracked", "ready"]);
+	});
 });

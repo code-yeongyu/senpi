@@ -66,6 +66,13 @@ interface SessionHands {
 	readonly own: ToolHost | undefined;
 	readonly device: string | null;
 	readonly remote: { close(): void } | undefined;
+	/** Whether `remote` is a live link to `device`, not the placeholder for a hand that could not be linked. */
+	readonly linked: boolean;
+}
+
+interface Remote {
+	readonly host: ToolHost & { close(): void };
+	readonly linked: boolean;
 }
 
 export interface HandSelectionOptions {
@@ -102,7 +109,7 @@ export function createHandSelection(directory: HandDirectory, options: HandSelec
 	const stateOf = (durableSessionId: string, session: HandSession): SessionHands => {
 		const known = sessions.get(durableSessionId);
 		if (known !== undefined) return known;
-		const fresh = { own: session.agent.toolHost, device: null, remote: undefined };
+		const fresh = { own: session.agent.toolHost, device: null, remote: undefined, linked: false };
 		sessions.set(durableSessionId, fresh);
 		return fresh;
 	};
@@ -111,20 +118,21 @@ export function createHandSelection(directory: HandDirectory, options: HandSelec
 		durableSessionId: string,
 		session: HandSession,
 		device: string | null,
-		remote: (ToolHost & { close(): void }) | undefined,
+		remote: Remote | undefined,
 	) => {
 		const state = stateOf(durableSessionId, session);
 		state.remote?.close();
-		sessions.set(durableSessionId, { own: state.own, device, remote });
-		session.agent.toolHost = remote === undefined ? state.own : gate(durableSessionId, remote);
+		sessions.set(durableSessionId, { own: state.own, device, remote: remote?.host, linked: remote?.linked ?? false });
+		session.agent.toolHost = remote === undefined ? state.own : gate(durableSessionId, remote.host);
 		options.onChange?.(durableSessionId, device);
 	};
 
-	const linked = (device: string): ToolHost & { close(): void } => {
+	const unreachable = (): Remote => ({ host: unreachableHost(), linked: false });
+	const linkTo = (device: string): Remote => {
 		try {
-			return createRemoteToolHost(directory.link(device));
+			return { host: createRemoteToolHost(directory.link(device)), linked: true };
 		} catch {
-			return unreachableHost();
+			return unreachable();
 		}
 	};
 
@@ -132,15 +140,17 @@ export function createHandSelection(directory: HandDirectory, options: HandSelec
 		hands: () => directory.list(),
 		selected: (durableSessionId) => sessions.get(durableSessionId)?.device ?? null,
 		select: (durableSessionId, session, device) => {
-			if (stateOf(durableSessionId, session).device === device) return { ok: true };
+			const current = stateOf(durableSessionId, session);
+			// Already on it: nothing to do. A recorded hand that was not linked (gone at reopen) is linked again below.
+			if (current.device === device && (device === null || current.linked)) return { ok: true };
 			if (device !== null) {
 				const row = directory.list().find((hand) => hand.device === device);
 				if (row === undefined) return { ok: false, refusal: "hand_not_listed" };
 				if (!row.reachable) return { ok: false, refusal: "hand_unreachable" };
 			}
 			// Recorded first: a failed write leaves the session as it was.
-			session.sessionManager.appendCustomEntry(HAND_SELECTION_ENTRY, { device });
-			install(durableSessionId, session, device, device === null ? undefined : linked(device));
+			if (current.device !== device) session.sessionManager.appendCustomEntry(HAND_SELECTION_ENTRY, { device });
+			install(durableSessionId, session, device, device === null ? undefined : linkTo(device));
 			return { ok: true };
 		},
 		restore: (durableSessionId, session) => {
@@ -150,7 +160,7 @@ export function createHandSelection(directory: HandDirectory, options: HandSelec
 			const device = recordedDevice(session);
 			if (device === null) return;
 			const row = directory.list().find((hand) => hand.device === device);
-			install(durableSessionId, session, device, row?.reachable === true ? linked(device) : unreachableHost());
+			install(durableSessionId, session, device, row?.reachable === true ? linkTo(device) : unreachable());
 		},
 		release: (durableSessionId) => {
 			sessions.get(durableSessionId)?.remote?.close();

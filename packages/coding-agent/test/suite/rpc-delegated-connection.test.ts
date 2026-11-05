@@ -38,10 +38,10 @@ import { corpusRequest, NO_ID, type Opened, TODAY } from "../characterization/rp
 type WireRecord = Record<string, unknown>;
 
 /**
- * `RPC_METHOD_CLASSES_DIGEST` on main as of the last merge (fecca3f8ca, which added `account_reset`): this change adds
- * methods outside the table, never a table entry, so the branch digest equals main's.
+ * `RPC_METHOD_CLASSES_DIGEST` with `list_hands` (observe) and `select_hand` (device_admin) in the table (senpi#5938);
+ * before them it was 4df5316e9c… (fecca3f8ca, which added `account_reset`).
  */
-const DIGEST_ON_BASE = "4df5316e9c2712173b8338fdeb1bb1a78ae1f2c3da8b8ac694e1f3cc7c8382ed";
+const DIGEST_ON_BASE = "85c74d833ae2071658f88062a9f7573d80002ffc8a4bd4351b0ceea21cd55acd";
 const FORWARDABLE = [
 	"observe",
 	"drive",

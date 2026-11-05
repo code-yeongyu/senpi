@@ -77,9 +77,13 @@ function presenceHooks(
 	binding: HeadlessPresenceBinding,
 	runtimes: ReadonlyMap<string, CreateAgentSessionRuntimeResult>,
 ): HandSelectionOptions {
+	// The presence update for each session's latest choice: a tool batch waits for it before asking presence, so it
+	// is gated on the hand it will run on, and a failed update fails that batch instead of going unhandled.
+	const tracking = new Map<string, Promise<void>>();
 	return {
 		gate: (sessionId, host) => ({
 			execute: async (call, options) => {
+				await tracking.get(sessionId);
 				await binding.presence.ready(sessionId, "tools", options.signal);
 				return host.execute(call, options);
 			},
@@ -87,7 +91,9 @@ function presenceHooks(
 		onChange: (sessionId, device) => {
 			const runtime = runtimes.get(sessionId);
 			const sessionHands = device !== null ? [device] : runtime === undefined ? [] : binding.handsOf(runtime);
-			void binding.presence.track(sessionId, sessionHands);
+			const update = binding.presence.track(sessionId, sessionHands);
+			update.catch(() => {});
+			tracking.set(sessionId, update);
 		},
 	};
 }
