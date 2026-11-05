@@ -98,6 +98,22 @@ describe("a SessionManager bound to the durable store (S20b)", () => {
 		expect(readFileSync(fileOf(session), "utf8")).toBe(await storeImage(session.getSessionId()));
 	});
 
+	it("commits to the store the writes that landed while the bind was still pending", async () => {
+		const session = SessionManager.create(dir, dir);
+		const warnings: ProjectionWarning[] = [];
+		session.onProjectionWarning((warning) => warnings.push(warning));
+		const bound = session.bindDurableStore({ store: openMemoryStore(medium), epoch: 1 });
+		session.appendMessage(userMsg("written while the bind was pending"));
+		await bound;
+		session.appendMessage(assistantMsg("after the bind"));
+		await session.settleDurableProjection();
+
+		expect(warnings).toEqual([]);
+		const image = await storeImage(session.getSessionId());
+		expect(image).toContain("written while the bind was pending");
+		expect(readFileSync(fileOf(session), "utf8")).toBe(image);
+	});
+
 	it("throws a store refusal on the same call and takes nothing", async () => {
 		const { session } = await durableSession();
 		session.appendMessage(userMsg("question"));

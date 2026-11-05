@@ -70,6 +70,22 @@ async function fixture(options: DurableStoreOptions = {}) {
 
 // R1.f / S07, #4995: the durable documents and actual file bytes are the assertion boundary.
 describe("JSONL import", () => {
+	it("does not record a projected append when the file grew past it (another writer's bytes)", async () => {
+		const f = await fixture();
+		const path = await f.put("s", text("s", [entry("a")]));
+		await f.reopen().open([path]);
+		const before = await f.reopen().getLedger(path);
+		const line = JSON.stringify(entry("b", "a"));
+		const offset = (await stat(path)).size;
+		await writeFile(path, `${text("s", [entry("a")])}${line}\n${JSON.stringify(entry("x", "a"))}\n`);
+		const written = await stat(path);
+
+		await expect(
+			f.reopen().recordProjectedTail(path, "s", { key: "b", line, offset }, { size: written.size, mtimeMs: written.mtimeMs, ctimeMs: written.ctimeMs }),
+		).rejects.toThrow("Projection size does not match its written image");
+		expect(await f.reopen().getLedger(path)).toEqual(before);
+	});
+
 	it("imports a new session and later tails exactly once across reopen, preserving interleaved parent links", async () => {
 		const f = await fixture();
 		const a = entry("a");
