@@ -45,7 +45,6 @@ import { IssuedWorkerOwners } from "./session-worker-owners.ts";
 import { McpFormWorker } from "./mcp-form-worker.ts";
 import type { SecretInputRoute } from "./secret-input-requests.ts";
 import { WorkerSecretRoutes } from "./session-worker-secret-route.ts";
-import type { SecretInputUnavailableReason } from "../../core/extensions/secret-input.ts";
 
 if (isBunBinary) {
 	const { registerBunRuntimeModules } = await import("../../bun/runtime-modules.ts");
