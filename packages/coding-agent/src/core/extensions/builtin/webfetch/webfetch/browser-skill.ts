@@ -115,6 +115,8 @@ const CANCEL_TIMEOUT_MS = 2_000;
 const GET_HTML_RESERVE_MS = 1_500;
 const MAX_HTML_BYTES = 5 * 1024 * 1024;
 const MAX_SESSIONS = 2;
+// A page whose URL changes across this many reads in a row is still navigating and is refused.
+const MAX_UNSTEADY_READS = 8;
 const WINDOWS_PIPE_PREFIX = "\\\\.\\pipe\\";
 
 export function browserSkillHome(env: NodeJS.ProcessEnv = process.env): string {
@@ -401,20 +403,51 @@ export function createBrowserSkillRenderer(options: BrowserSkillOptions = {}): P
 						timeout_ms: Math.max(1, left() - GET_HTML_RESERVE_MS),
 					}),
 				);
-				const finalUrl = typeof navigated?.final_url === "string" ? navigated.final_url : url;
+				const tabId = typeof navigated?.tab_id === "number" ? navigated.tab_id : undefined;
+				// The page can navigate on its own after the load settled (a timer or meta refresh), so navigate's
+				// final_url does not name the document get_html reads later. Each read is bracketed by the tab's
+				// live URL; a read counts only when the URL did not change across it, and the URL returned is the
+				// one the HTML was read from. A page that never holds still is refused.
+				const tabUrl = async (): Promise<string> => {
+					const listed = record(await call("tool.tab_list", { session_id: sessionId, scope: "agent" }));
+					const tabs = Array.isArray(listed?.tabs)
+						? listed.tabs.flatMap((tab) => (record(tab) ? [record(tab)] : []))
+						: [];
+					const tab =
+						tabId === undefined
+							? tabs.length === 1
+								? tabs[0]
+								: undefined
+							: tabs.find((entry) => entry?.tab_id === tabId);
+					if (typeof tab?.url !== "string" || !tab.url) {
+						throw skip("render_failed", "the browser read failed", "the session's tab reported no URL");
+					}
+					return tab.url;
+				};
 				let html = "";
+				let pageUrl = "";
 				let truncated = false;
 				let stableReads = 0;
+				let unsteadyReads = 0;
 				for (;;) {
+					const before = await tabUrl();
 					const read = record(await call("tool.get_html", { session_id: sessionId, max_bytes: MAX_HTML_BYTES }));
+					const after = await tabUrl();
 					const next = typeof read?.html === "string" ? read.html : "";
-					stableReads = next.length > 0 && next.length === html.length ? stableReads + 1 : 0;
+					const steady = before === after;
+					stableReads =
+						steady && after === pageUrl && next.length > 0 && next.length === html.length ? stableReads + 1 : 0;
 					html = next;
+					pageUrl = steady ? after : "";
 					truncated = read?.truncated === true;
-					if (stableReads + 1 >= SETTLED_READS || left() <= settlePollMs) break;
+					if (steady && (stableReads + 1 >= SETTLED_READS || left() <= settlePollMs)) break;
+					unsteadyReads = steady ? 0 : unsteadyReads + 1;
+					if (!steady && (unsteadyReads >= MAX_UNSTEADY_READS || left() <= settlePollMs)) {
+						throw skip("render_failed", "the browser read failed", "the page kept navigating while it was read");
+					}
 					await delay(settlePollMs);
 				}
-				return { page: { url: finalUrl, html, truncated }, browser: chosen };
+				return { page: { url: pageUrl, html, truncated }, browser: chosen };
 			} catch (error) {
 				if (signal?.aborted) throw error;
 				if (error instanceof BrowserSkillError) throw error;

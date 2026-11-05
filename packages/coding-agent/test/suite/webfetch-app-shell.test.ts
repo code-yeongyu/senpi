@@ -136,6 +136,8 @@ function connectedBrowser(
 				return { result: { tab_id: 1, url: pageUrl, final_url: pageUrl, reached: "networkidle" } };
 			case "tool.get_html":
 				return { result: { html: RENDERED, truncated: false, byte_size: RENDERED.length, tab_id: 1 } };
+			case "tool.tab_list":
+				return { result: { tabs: [{ tab_id: 1, url: pageUrl, scope: "agent" }] } };
 			default:
 				return { result: {} };
 		}
@@ -196,8 +198,12 @@ describe("webfetch renders app shells only through the connected browser, incogn
 			"system.status",
 			"session.start",
 			"tool.navigate",
+			"tool.tab_list",
 			"tool.get_html",
+			"tool.tab_list",
+			"tool.tab_list",
 			"tool.get_html",
+			"tool.tab_list",
 			"session.stop",
 		]);
 		expect(daemon.calls[1]?.params).toEqual({
@@ -207,7 +213,8 @@ describe("webfetch renders app shells only through the connected browser, incogn
 			incognito: true,
 			focused: false,
 		});
-		expect(daemon.calls[3]?.params).toEqual({ session_id: "s1", max_bytes: FIVE_MIB });
+		expect(daemon.calls[3]?.params).toEqual({ session_id: "s1", scope: "agent" });
+		expect(daemon.calls[4]?.params).toEqual({ session_id: "s1", max_bytes: FIVE_MIB });
 	});
 
 	it("reports the exact not-connected message and connects to nothing when no daemon.json exists", async () => {
@@ -442,5 +449,43 @@ describe("webfetch renders app shells only through the connected browser, incogn
 		expect(liveWhileTwoHeld).toBe(2);
 		expect(daemon.maxLiveSessions).toBe(2);
 		expect(results.every((result) => result.details.rendered)).toBe(true);
+	});
+
+	it("returns the URL the HTML was read from when the page navigated after the load settled", async () => {
+		const url = await serveHtml(APP_SHELL);
+		let tabListCalls = 0;
+		const daemon = await fakeDaemon(
+			connectedBrowser(url, {
+				"tool.tab_list": () => {
+					tabListCalls++;
+					const current = tabListCalls === 1 ? url : "https://mail.other.test/inbox";
+					return { result: { tabs: [{ tab_id: 1, url: current, scope: "agent" }] } };
+				},
+			}),
+		);
+
+		const { page } = await renderer(daemon).render(url, { mode: "incognito", timeoutMs: 5_000 });
+
+		expect(page.url).toBe("https://mail.other.test/inbox");
+	});
+
+	it("refuses a page that never holds still while it is read, and stops the session", async () => {
+		const url = await serveHtml(APP_SHELL);
+		let tabListCalls = 0;
+		const daemon = await fakeDaemon(
+			connectedBrowser(url, {
+				"tool.tab_list": () => {
+					tabListCalls++;
+					const current = tabListCalls % 2 === 0 ? url : "https://mail.other.test/inbox";
+					return { result: { tabs: [{ tab_id: 1, url: current, scope: "agent" }] } };
+				},
+			}),
+		);
+
+		await expect(renderer(daemon).render(url, { mode: "incognito", timeoutMs: 5_000 })).rejects.toMatchObject({
+			skip: { reason: "render_failed", detail: "the page kept navigating while it was read" },
+		});
+		expect(daemon.calls.filter((call) => call.method === "tool.get_html")).toHaveLength(8);
+		expect(daemon.calls.at(-1)?.method).toBe("session.stop");
 	});
 });
