@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { recoveryAgentDir } from "../../../src/modes/rpc/compact-storage-health.ts";
 import { LegacyReplayStore } from "../../../src/modes/rpc/legacy-replay-store.ts";
 import { MAX_RPC_MESSAGE_CHARACTERS } from "../../../src/modes/rpc/rpc-input-validation.ts";
@@ -25,6 +25,12 @@ const PROMPT = "x".repeat(MAX_RPC_MESSAGE_CHARACTERS - 100_000);
 const TURN_MS = 120_000;
 const SPILL_DIR = /^senpi-(transcript|settled|current)-/;
 const HEALTH_DIR = /^\.senpi-recovery-health-/;
+
+// These cases run on Node: their real-isolate worker case cannot run under the Bun vitest path (senpi#4667), and a Node
+// process opens session state only under the JSONL developer hatch (senpi#5822). This is the store Node used before.
+beforeEach(() => {
+	vi.stubEnv("SENPI_SESSION_STORE", "jsonl");
+});
 
 afterEach(() => {
 	vi.unstubAllEnvs();

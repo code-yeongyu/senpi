@@ -47,6 +47,11 @@ export async function startWorkerHost(
 	extensionSource?: string,
 	options: {
 		socket?: boolean;
+		/**
+		 * Start the built dist entry with this test process's runtime instead of SENPI_RPC_TEST_BUN or
+		 * SENPI_RPC_TEST_BINARY. These suites run under Bun (test/bun-hosted-tests.ts), so that runtime is Bun: a Node
+		 * multi-session host refuses before it starts (senpi#5822).
+		 */
 		node?: boolean;
 		preload?: string;
 		sessionRuntime?: HostSessionRuntime;
