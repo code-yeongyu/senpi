@@ -695,7 +695,11 @@ describe("#4199 participant presence: acquire before authority, release after qu
 				result = await startHost(paths, socket, {
 					agentDir,
 					socket,
-					_test: { readProcessStartTime: async () => SUPERVISOR_START },
+					_test: {
+						readProcessStartTime: async () => SUPERVISOR_START,
+						// An uncoordinated launch: the dummy child reports no startup progress, so readiness alone decides.
+						launch: (args) => ({ command: process.execPath, args: [...args] }),
+					},
 				});
 			},
 		);
