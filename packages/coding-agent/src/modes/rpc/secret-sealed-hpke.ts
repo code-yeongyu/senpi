@@ -26,20 +26,29 @@ function extract(salt: Buffer, ikm: Buffer): Buffer {
 		.digest();
 }
 
+/** HKDF-Expand into one output buffer; every intermediate block is zeroed as soon as it is used (design 8.2). */
 function expand(prk: Buffer, info: Buffer, length: number): Buffer {
-	const blocks: Buffer[] = [];
+	const out = Buffer.alloc(length);
 	let previous = Buffer.alloc(0);
-	for (let i = 1; Buffer.concat(blocks).length < length; i++) {
-		previous = createHmac("sha256", prk)
-			.update(Buffer.concat([previous, info, Buffer.from([i])]))
-			.digest();
-		blocks.push(previous);
+	for (let i = 1, written = 0; written < length; i++) {
+		const input = Buffer.concat([previous, info, Buffer.from([i])]);
+		const block = createHmac("sha256", prk).update(input).digest();
+		input.fill(0);
+		previous.fill(0);
+		written += block.copy(out, written);
+		previous = block;
 	}
-	return Buffer.concat(blocks).subarray(0, length);
+	previous.fill(0);
+	return out;
 }
 
 function labeledExtract(suite: Buffer, salt: Buffer, label: string, ikm: Buffer): Buffer {
-	return extract(salt, Buffer.concat([VERSION, suite, Buffer.from(label), ikm]));
+	const input = Buffer.concat([VERSION, suite, Buffer.from(label), ikm]);
+	try {
+		return extract(salt, input);
+	} finally {
+		input.fill(0);
+	}
 }
 
 function labeledExpand(suite: Buffer, prk: Buffer, label: string, info: Buffer, length: number): Buffer {
@@ -104,8 +113,10 @@ export function openSecretAnswer(input: SecretOpenInput): Uint8Array | undefined
 		return undefined;
 	} finally {
 		key.fill(0);
+		nonce.fill(0);
 		sharedSecret.fill(0);
 		secret.fill(0);
+		eaePrk.fill(0);
 		dh.fill(0);
 	}
 }
