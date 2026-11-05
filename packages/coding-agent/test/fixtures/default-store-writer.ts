@@ -12,7 +12,13 @@ interface Args {
 }
 
 const args = JSON.parse(process.argv[2] ?? "{}") as Args;
-const header: SessionHeader = { type: "session", version: 3, id: args.sessionId, timestamp: "2026-11-05T00:00:00.000Z", cwd: "/" };
+const header: SessionHeader = {
+	type: "session",
+	version: 3,
+	id: args.sessionId,
+	timestamp: "2026-11-05T00:00:00.000Z",
+	cwd: "/",
+};
 const say = (value: object): void => console.log(JSON.stringify(value));
 
 async function released(): Promise<void> {
@@ -43,11 +49,17 @@ if (args.action === "crash-at-claim") {
 		try {
 			for (let index = 0; index < (args.count ?? 1); index++) {
 				const key = `${tag}-${index}`;
-				handle.appendSync([{ key, line: JSON.stringify({ type: "custom", id: key, customType: "probe", data: { tag, index } }) }]);
+				handle.appendSync([
+					{ key, line: JSON.stringify({ type: "custom", id: key, customType: "probe", data: { tag, index } }) },
+				]);
 			}
 			say({ ok: true, epoch: bound.epoch });
 		} catch (error) {
-			say({ ok: false, epoch: bound.epoch, code: error instanceof Error && "code" in error ? String(error.code) : "unknown" });
+			say({
+				ok: false,
+				epoch: bound.epoch,
+				code: error instanceof Error && "code" in error ? String(error.code) : "unknown",
+			});
 		}
 	}
 }

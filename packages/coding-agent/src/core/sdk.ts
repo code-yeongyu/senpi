@@ -37,6 +37,7 @@ import { mergeProviderAttributionHeaders } from "./provider-attribution.ts";
 import { sessionAffinityStreamOptions } from "./session-affinity-key.ts";
 import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
+import { bindDefaultSessionStore, type SessionStoreChoice } from "./session-store/default-binding.ts";
 import { getDefaultSessionDir, SessionManager } from "./session-manager.ts";
 import type { ThinkingLevelSource } from "./session-thinking-memory.ts";
 import { DEFAULT_TOOL_NAMES, SettingsManager } from "./settings-manager.ts";
@@ -74,6 +75,8 @@ import type { ToolRuntimeKind } from "../cli/tool-runtime.ts";
 import { type ExecutionPipelineWitnessSink, resolveWitnessSink } from "./execution/pipeline-witness-sink.ts";
 
 export interface CreateAgentSessionOptions {
+	/** Test-only: keep the legacy JSONL session store on Bun, where the durable store is the default (S21b). */
+	sessionStore?: SessionStoreChoice;
 	/**
 	 * Where this session's execution-pipeline receipts go (S18b part 3): a sink outside the session, never a session entry.
 	 * Unset: the file `SENPI_EXECUTION_PIPELINE_WITNESS` names (one JSON line per call), else no receipts.
@@ -293,6 +296,10 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
 	modelRuntime.setSettingsManager(settingsManager);
 	const sessionManager = options.sessionManager ?? SessionManager.create(cwd, getDefaultSessionDir(cwd, agentDir));
+	await bindDefaultSessionStore(sessionManager, {
+		agentDir,
+		...(options.sessionStore === undefined ? {} : { sessionStore: options.sessionStore }),
+	});
 	const scopedModels =
 		options.scopedModels ??
 		(await resolveModelScope(
