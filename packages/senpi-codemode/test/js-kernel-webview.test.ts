@@ -43,8 +43,9 @@ function fixtureUrl(): string {
 // 60 s on green windows-latest main runs and ran past it on slow ones, while later cells take a few seconds.
 // A user's first chrome-backed cell pays that cost too, so it is not hidden: the file pays it once here, through
 // the same eval-cell path, under a bounded budget of its own. Every stage prints before it starts, so a warm-up
-// that stalls fails naming the stage (launch, navigate, evaluate) and the time spent; the stage times go to
-// SENPI_WEBVIEW_READINESS_LOG when it is set. No case deadline is raised.
+// that stalls fails naming the stage and the time spent: `launch` waits for Chrome to start and attach (the
+// constructor alone starts nothing, so a blank navigation stands for it), then `navigate` loads the fixture and
+// `evaluate` reads it. The stage times go to SENPI_WEBVIEW_READINESS_LOG when it is set. No case deadline is raised.
 const WARM_UP_CELL_TIMEOUT_MS = 110_000;
 const WARM_UP_TIMEOUT_MS = WARM_UP_CELL_TIMEOUT_MS + 30_000;
 
@@ -61,15 +62,17 @@ async function warmUpChromeCell(): Promise<void> {
 		parallelPoolWidth: 2,
 	});
 	const startedAt = performance.now();
-	let retireMs = 0;
+	let failure: Error | undefined;
+	let leftover: number[] = [];
 	try {
 		const run = await runJavaScriptCell(
 			kernel,
 			[
 				`const started = performance.now();`,
 				`const stage = (name) => console.log(\`stage \${name} at \${Math.round(performance.now() - started)} ms\`);`,
-				`stage("launch");`,
 				`const view = new Bun.WebView({ backend: "chrome", width: 320, height: 240 });`,
+				`stage("launch");`,
+				`await view.navigate("about:blank");`,
 				`stage("navigate");`,
 				`await view.navigate(${JSON.stringify(fixtureUrl())});`,
 				`stage("evaluate");`,
@@ -86,10 +89,14 @@ async function warmUpChromeCell(): Promise<void> {
 		expect(parseJavaScriptResult(run.result)).toBe("hello from the fixture");
 		const path = process.env.SENPI_WEBVIEW_READINESS_LOG;
 		if (path) appendFileSync(path, `${new Date().toISOString()} pid=${process.pid} chrome cell warm-up ${stages}\n`);
+	} catch (error) {
+		failure = error instanceof Error ? error : new Error(String(error));
 	} finally {
 		const retireStartedAt = performance.now();
 		await kernel.close();
-		retireMs = Math.round(performance.now() - retireStartedAt);
+		const retireMs = Math.round(performance.now() - retireStartedAt);
+		// Closing the kernel retires the Chrome it used; check that on the failure path too.
+		leftover = await bunChromeChildren();
 		const path = process.env.SENPI_WEBVIEW_READINESS_LOG;
 		if (path)
 			appendFileSync(
@@ -97,7 +104,8 @@ async function warmUpChromeCell(): Promise<void> {
 				`${new Date().toISOString()} pid=${process.pid} chrome cell warm-up totalMs=${Math.round(performance.now() - startedAt)} retireMs=${retireMs}\n`,
 			);
 	}
-	expect(await bunChromeChildren()).toEqual([]);
+	if (failure) throw new Error(`${failure.message}; Chrome left after close: ${JSON.stringify(leftover)}`);
+	expect(leftover).toEqual([]);
 }
 
 describe.skipIf(!bunWebViewAvailable)("Bun.WebView from an eval cell", { timeout: TEST_TIMEOUT_MS }, () => {
