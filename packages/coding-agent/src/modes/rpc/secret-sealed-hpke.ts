@@ -48,7 +48,7 @@ function labeledExpand(suite: Buffer, prk: Buffer, label: string, info: Buffer, 
 }
 
 /** A strict X25519 public value: 32 bytes, top bit clear, u < p, not one of the five low-order points. */
-export function strictX25519(raw: Uint8Array): boolean {
+function strictX25519(raw: Uint8Array): boolean {
 	if (raw.length !== 32 || ((raw[31] ?? 0) & 0x80) !== 0) return false;
 	let u = 0n;
 	for (let i = 31; i >= 0; i--) u = (u << 8n) | BigInt(raw[i] ?? 0);
