@@ -177,8 +177,8 @@ it("stays off when SENPI_RPC_HOST_REAPER is 0 and defaults to a window above the
 	expect(enabled.tickMs).toBe(1_000);
 });
 
-it("does nothing but warn on a runtime without the syscalls", async () => {
-	// Given: this suite runs under Node, which has no bun:ffi bindings.
+it.skipIf(process.versions.bun !== undefined)("does nothing but warn on a runtime without the syscalls", async () => {
+	// Given: Node, which has no bun:ffi bindings (under Bun, the case below holds instead).
 	const logged: string[] = [];
 
 	// When: the host arms the reaper.
@@ -190,6 +190,21 @@ it("does nothing but warn on a runtime without the syscalls", async () => {
 	expect(logged[0]).toContain("Node");
 	expect(() => stop()).not.toThrow();
 });
+
+it.skipIf(process.versions.bun === undefined || process.platform === "win32")(
+	"arms with the bun:ffi bindings and no warning on Bun",
+	async () => {
+		const logged: string[] = [];
+
+		const stop = await startHostChildReaper((message) => logged.push(message));
+
+		expect(await loadChildReaperSyscalls()).toEqual(
+			expect.objectContaining({ reapExited: expect.any(Function), listDirectChildren: expect.any(Function) }),
+		);
+		expect(logged).toEqual([]);
+		expect(() => stop()).not.toThrow();
+	},
+);
 
 it("reaps the children a terminated worker orphaned, and leaves them when disabled", () => {
 	// Given/When: real orphans under Bun, with the reaper enabled and disabled.
