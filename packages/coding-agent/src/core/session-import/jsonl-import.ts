@@ -19,6 +19,20 @@ type JsonlHeader = JsonlObject & { type: "session"; id: string };
 /** `key` names the entry in the store; `stored` is what is written there (the migrated JSON for a legacy file). */
 type LocatedRecord = { value: StoreValue; key: string; stored: string; raw: string; offset: number; end: number };
 type HighWaterMark = { id: string; hash: string; offset: number; end: number };
+
+/** The file's lines from its header through the high-water mark, chained: an edit or removal anywhere before it differs. */
+const PREFIX_DOMAIN = "senpi-jsonl-prefix/1";
+const chainLine = (previous: string, raw: string): string =>
+	createHash("sha256").update(previous).update("\u0000").update(raw).digest("hex");
+const chainOf = (raws: readonly string[]): string[] => {
+	const digests: string[] = [];
+	let digest = createHash("sha256").update(PREFIX_DOMAIN).digest("hex");
+	for (const raw of raws) {
+		digest = chainLine(digest, raw);
+		digests.push(digest);
+	}
+	return digests;
+};
 type Divergence = { kind: "k9f2"; parentSessionId: string; note: string };
 
 /** The stored divergence marker, or null for anything that is not one. */
@@ -37,6 +51,8 @@ export type JsonlImportLedger = JsonlFileStamp & {
 	sourceSessionId: string;
 	sessionId: string;
 	highWaterMark: HighWaterMark;
+	/** The chained digest of every line through the high-water mark; absent in ledgers written before it existed. */
+	prefixDigest?: string;
 	writerKind: "store" | "hatch" | "other";
 	checkedAt: number;
 };
@@ -265,6 +281,39 @@ export function createJsonlImporter(options: JsonlImporterOptions) {
 		const sourceSessionId = header.value.id;
 		const target = previous?.sourceSessionId === sourceSessionId ? previous.sessionId : sourceSessionId;
 		const held = await manifest(target);
+		const lines = [header, ...entries];
+		const digests = chainOf(lines.map((line) => line.raw));
+		// A file that only grew past what it last held: its lines through the high-water mark are byte-for-byte unchanged,
+		// so every later line is new and is appended beside whatever co-bound writers appended meanwhile.
+		const markIndex =
+			held !== undefined && previous?.sessionId === target && previous.prefixDigest !== undefined
+				? lines.findIndex(
+						(line, index) => line.key === previous.highWaterMark.id && digests[index] === previous.prefixDigest,
+					)
+				: -1;
+		if (held !== undefined && markIndex >= 0) {
+			const heldKeys = new Set(held.entries.map((entry) => entry.key));
+			const fresh = entries.slice(markIndex).filter((record) => !heldKeys.has(record.key));
+			const grown: JsonlImportLedger = {
+				...stamp,
+				path,
+				sourceSessionId,
+				sessionId: target,
+				highWaterMark: highWaterMark(lines.at(-1) ?? header),
+				prefixDigest: digests.at(-1),
+				writerKind: marker?.size === stamp.size && marker.mtimeMs === stamp.mtimeMs ? "hatch" : "other",
+				checkedAt: now(),
+			};
+			await commit([
+				...appendRecordWrites(
+					store,
+					target,
+					fresh.map((record) => ({ key: record.key, line: record.stored })),
+				),
+				{ op: "put", key: ledgerKey(path), data: grown },
+			]);
+			return { outcome: "extended", sessionId: target, imported: fresh.length };
+		}
 		const oldEntries = held ? heldEntries(held) : [];
 		let cursor = 0;
 		for (const record of entries) {
@@ -288,6 +337,7 @@ export function createJsonlImporter(options: JsonlImporterOptions) {
 			sourceSessionId,
 			sessionId,
 			highWaterMark: highWaterMark(entries.at(-1) ?? header),
+			prefixDigest: digests.at(-1),
 			writerKind,
 			checkedAt: now(),
 		};
@@ -352,12 +402,19 @@ export function createJsonlImporter(options: JsonlImporterOptions) {
 			const end = tail.offset + Buffer.byteLength(tail.line);
 			// The file must end exactly at this append (+ its newline): bytes another writer added are never recorded.
 			if (written.size !== end + 1) throw new Error("Projection size does not match its written image");
+			const previous = await ledger(path);
+			// The chain extends only across an append that directly follows the recorded high-water mark.
+			const prefixDigest =
+				previous?.prefixDigest !== undefined && previous.highWaterMark.end + 1 === tail.offset
+					? chainLine(previous.prefixDigest, tail.line)
+					: undefined;
 			const record: JsonlImportLedger = {
 				...written,
 				path,
 				sourceSessionId: sessionId,
 				sessionId,
 				highWaterMark: { id: tail.key, hash: hash(tail.line), offset: tail.offset, end },
+				...(prefixDigest === undefined ? {} : { prefixDigest }),
 				writerKind: "store",
 				checkedAt: now(),
 			};
@@ -388,6 +445,7 @@ export function createJsonlImporter(options: JsonlImporterOptions) {
 				sourceSessionId: header.value.id,
 				sessionId: held.id,
 				highWaterMark: highWaterMark(entries.at(-1) ?? header),
+				prefixDigest: chainOf([header.raw, ...entries.map((record) => record.raw)]).at(-1),
 				writerKind: "store",
 				checkedAt: now(),
 			};
