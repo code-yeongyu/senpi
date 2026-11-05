@@ -22,7 +22,7 @@ test("excludes retired DOM dependencies when building the release entry graph", 
 	try {
 		// When: Bun's optimized release bundle produces a real contribution metafile.
 		const result = spawnSync(process.execPath, [
-			"build", "--target=bun", "--splitting", "--minify", "--keep-names",
+			"build", "--target=bun", "--splitting", "--minify", "--keep-names", "--external", "canvas",
 			`--metafile=${join(scratch, "meta.json")}`, ...entries, "--outdir", scratch,
 		], { cwd: join(repo, "packages/coding-agent"), encoding: "utf8", timeout: 120_000 });
 		expect(result.status, result.stderr).toBe(0);

@@ -1425,7 +1425,6 @@ jobs:
 
       - name: Fresh release entry graphs (codemode and exclusions)
         run: |
-          npm rebuild canvas --foreground-scripts
           node scripts/run-tests.mjs bun test scripts/release-graph-codemode.test.ts
           node scripts/run-tests.mjs bun test scripts/release-graph-exclusions.test.ts
 

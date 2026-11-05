@@ -35,7 +35,7 @@ test("ships no codemode implementation bytes when building the release entry gra
 	try {
 		// When: Bun produces an optimized release contribution metafile.
 		const result = spawnSync(process.execPath, [
-			"build", "--target=bun", "--splitting", "--minify", "--keep-names",
+			"build", "--target=bun", "--splitting", "--minify", "--keep-names", "--external", "canvas",
 			`--metafile=${join(scratch, "meta.json")}`, ...entries, "--outdir", scratch,
 		], { cwd: join(repo, "packages/coding-agent"), encoding: "utf8", timeout: 120_000 });
 		expect(result.status, result.stderr).toBe(0);

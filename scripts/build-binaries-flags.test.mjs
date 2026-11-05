@@ -64,6 +64,14 @@ for (const { name, command } of commands) {
 		assert.ok(!argv.some((argument) => String(argument).includes("xhr-sync-worker.js")));
 	});
 
+	test(`${name} keeps linkedom's optional canvas binding external when compiling standalone entries`, () => {
+		// When
+		const argv = compileArgv(command);
+		// Then: compiling must not resolve canvas's native binding (senpi#6045).
+		const external = argv.flatMap((argument, index) => (argument === "--external" ? [argv[index + 1]] : []));
+		assert.ok(external.includes("canvas"), `${name}: missing --external canvas`);
+	});
+
 	test(`${name} preserves autoload isolation when compiling standalone entries`, () => {
 		// When
 		const argv = compileArgv(command);

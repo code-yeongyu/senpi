@@ -30,6 +30,8 @@ const COMPILE_FLAGS = [
 	"--no-compile-autoload-bunfig",
 	"--minify",
 	"--keep-names",
+	"--external",
+	"canvas",
 ];
 
 const ENTRYPOINTS = ["./dist/bun/cli.js", "./src/modes/rpc/session-worker.ts", "./src/modes/rpc/loopless-worker.ts", "./src/utils/image-resize-worker.ts"];

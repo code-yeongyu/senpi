@@ -55,8 +55,8 @@ cell grid. Prefixes encode role:
 
 ## Release entry graph validation
 
-After a lifecycle-disabled install, run `npm rebuild canvas --foreground-scripts`
-(as the release builder does) to provide its native binding. Then run
+No native build is needed: every release compile keeps linkedom's optional `canvas`
+external (`--external canvas`, senpi#6045), so a lifecycle-disabled install is enough. Run
 `bun test scripts/release-graph-codemode.test.ts` followed by
 `bun test scripts/release-graph-exclusions.test.ts`. The codemode suite rebuilds
 all workspace entries and prepares compile assets before measuring real Bun output
