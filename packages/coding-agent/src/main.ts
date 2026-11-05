@@ -6,6 +6,7 @@
  * createAgentSession() options. The SDK does the heavy lifting.
  */
 
+import { NODE_REQUIRES_BUN_MESSAGE, sessionStateAvailable } from "./core/session-store/node-guard.ts";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -533,6 +534,12 @@ export async function createSessionManager(
 	}
 	if (parsed.noSession || parsed.help || parsed.listModels !== undefined || parsed.listTips) {
 		return SessionManager.inMemory(cwd, { id: parsed.sessionId, spawnedBy: parsed.spawnedBy });
+	}
+	// K9.a (senpi#5822): this runs after the Bun re-exec attempt, and only where session state would open. A process
+	// still on Node gets one steering message and exits before any session file or store exists.
+	if (!sessionStateAvailable()) {
+		console.error(chalk.red(NODE_REQUIRES_BUN_MESSAGE));
+		process.exit(1);
 	}
 
 	if (parsed.fork) {
