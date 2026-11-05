@@ -6,6 +6,8 @@ import { readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { InlineExtension } from "../../src/core/extensions/types.ts";
+import { gatePresence } from "../../src/modes/headless/presence-gates.ts";
+import type { HeadlessPresence } from "../../src/modes/headless/presence.ts";
 import { createHarness, type Harness } from "../suite/harness.ts";
 import { cleanupHands, handDirs, openLink, remoteHost, startHand } from "./remote-hand-fixture.ts";
 
@@ -56,5 +58,23 @@ describe("an extension's device files (senpi#5839)", () => {
 		expect(text).toBe("split");
 		expect(await readFile(join(dirs.cwd, "note.md"), "utf8")).toBe("split");
 		expect(seen).toEqual(["write note.md", "read note.md"]);
+	});
+
+	it("on a presence-gated split session, still goes through the hand's file channel", async () => {
+		const seen: string[] = [];
+		const dirs = await handDirs("devfiles-gated");
+		const link = openLink();
+		startHand(link, dirs, [handlerRecorder(seen, () => dirs.cwd)]);
+		const harness = await createHarness();
+		harnesses.push(harness);
+		harness.agent.toolHost = remoteHost(link);
+		harness.agent.executionScope = { id: `scope-${crypto.randomUUID()}`, root: dirs.cwd };
+		const online = { ready: async () => {} } as unknown as HeadlessPresence;
+		gatePresence(harness.agent, online, "session-gated");
+		const context = harness.getExtensionRunner().createContext();
+
+		await context.deviceFiles?.write(join(dirs.cwd, "note.md"), encode("gated"));
+
+		expect(seen).toEqual(["write note.md"]);
 	});
 });
