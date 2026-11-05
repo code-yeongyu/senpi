@@ -1,16 +1,32 @@
 # Changelog
 
-## [Unreleased]
+## [2026.11.5-1] - 2026-11-05
 
 ### Breaking Changes
 
 ### Added
 
+- The conformance entry exports the `AdmissionLine` type, so a writer outside the package can take a store's single admission line ([#5652](https://github.com/code-yeongyu/senpi/issues/5652))
+- `createRemoteToolHost({ filePlanes })`: the planes a pending device file operation may host on its own lane, so a split session can serve a two-sided extension's forwarded tool events for a file operation. Absent, the default, a file operation hosts no nested request, as before. A hand passes each file operation its own nested requester (`HandScope.file` takes it) ([#5664](https://github.com/code-yeongyu/senpi/pull/5664)).
+- `DeviceFiles.run`: the memory component's `git` and `lsof` calls run on the device through an allowlisted operation, with no shell, a bounded environment, the hand's `tool_call` handlers, and the git-activity lock held as fd 3 ([#5696](https://github.com/code-yeongyu/senpi/pull/5696))
+- Main-entry exports of `createPreparedToolHost` (the prepared pipeline as an in-process ToolHost), `canonicalJson` and `toStoreValue` ([#5738](https://github.com/code-yeongyu/senpi/pull/5738)).
+- `AgentLoopConfig.batchStoreFactory` / `AgentOptions.batchStoreFactory`, `openMemoryBatchStore` (a fresh in-memory store per tool batch) and `BatchStoreMissingError` ([#5738](https://github.com/code-yeongyu/senpi/pull/5738)).
+- `AgentLoopConfig.afterToolFreeze` / `AgentOptions.afterToolFreeze` (runs once per call after it is frozen, with the arguments object `beforeToolCall` saw and the frozen copy the tool receives), `noPreflightCarry` and `PreflightCarryMissingError` ([#5795](https://github.com/code-yeongyu/senpi/issues/5795)).
+- A hand fences a moved session's old owner with an epoch floor (`src/execution/remote-epoch.ts`, brain/hand S35, relay design 4.4): `createHandEpochFence({ ownerOf, durable? })` keeps one floor per execution scope that only the scope's owner raises, one epoch at a time, that never lowers and remembers its owner; with `durable` it persists on the hand's store on the ledger's admission line. `createRemoteExecutor({ fence })` answers `floor` frames and refuses an invoke below the floor (`epoch_fenced`) before anything of it is recorded, opened or run, also inside each step of a call's walk. `createRemoteToolHost({ epoch })` dispatches a scope lane's calls only after the hand acked exactly its epoch; a late or duplicate floor answer cannot change a decided lane, and after a hand restart a pending call is re-sent only once the re-sent floor is acked. Without a ledger the hand re-checks the epoch right before the tool runs, and an acknowledgement is fenced inside its admission slot. A second link's executor on a live hand no longer re-runs restart recovery. Adds the EPOCH, MULTI-EPOCH and KILL-EPOCH conformance cases ([#5739](https://github.com/code-yeongyu/senpi/pull/5739)).
+- Loop-hook link for a loop that runs away from the user's machine: `createLoopHookHost` sends each hooked loop event to the user's machine (`serveLoopHooks`) and resolves with its result before the provider request. While that machine is offline the call waits and resumes exactly once. A call the previous process never started is sent again with the same ID; one it started is never re-run and ends `LoopHookRestartedError`. KILL-HOOK-01..05 conformance cases are registered and exported from `./conformance` ([#5741](https://github.com/code-yeongyu/senpi/pull/5741)).
+- `AgentLoopConfig.commitStep` (optional): called once per model step after its provider tool results are emitted and before the loop ends the turn or dispatches tools; a rejection ends the run with that error. Plus the `ModelEgress` route types, `StepCommitError` and `isStepCommitError` ([#5857](https://github.com/code-yeongyu/senpi/pull/5857))
+- `AgentHarnessOptions.onExecutionPipeline`: every harness tool body now runs on the in-process prepared ToolHost, and this sink receives one `{ pipeline: "prepared", toolCallId }` receipt per call, as `Agent.onExecutionPipeline` does ([#5859](https://github.com/code-yeongyu/senpi/pull/5859)).
+- Added the session plane (`src/execution/plane-session.ts`): `createSplitToolHost()` runs each call to a tool declared `runs: "brain"` on the loop's own pipeline (`createLoopToolHost()`) and every other call on the hand, keeping the batch's mode and the model's source order; `serveSessionPlane()` / `createSessionPlaneClient()` let a hand-run tool ask the brain that owns its call for a loop-side tool call, and refuse any tool that is not loop-side. Added the thread chain count (`src/execution/chain-count.ts`): a chain call carries its hop count and is refused with `chain_count_limit` only past a count the user set; unset means unlimited, and there is no cost limit ([#5882](https://github.com/code-yeongyu/senpi/pull/5882)).
+
 ### Changed
+
+- An agent loop with no `toolHost` runs model-issued tool batches on the prepared pipeline (batch coordinator + prepared executor) instead of its own scheduler. The package entry's `Agent`, `agentLoop`, `agentLoopContinue`, `runAgentLoop` and `runAgentLoopContinue` supply `openMemoryBatchStore` unless a factory is passed, so existing callers change nothing. A batch that repeats a tool call ID runs each block as its own call, as the removed scheduler did ([#5796](https://github.com/code-yeongyu/senpi/issues/5796)). The package entry also supplies `noPreflightCarry` unless an `afterToolFreeze` is passed. The loop core alone refuses a tool batch with `BatchStoreMissingError` when no factory is configured and with `PreflightCarryMissingError` when no `afterToolFreeze` is configured ([#5738](https://github.com/code-yeongyu/senpi/pull/5738), [#5795](https://github.com/code-yeongyu/senpi/issues/5795)).
 
 ### Fixed
 
 ### Removed
+
+- The agent loop's own tool scheduler; every tool batch without a `toolHost` runs on the prepared pipeline ([#5738](https://github.com/code-yeongyu/senpi/pull/5738)).
 
 ## [2026.11.4-2] - 2026-11-04
 

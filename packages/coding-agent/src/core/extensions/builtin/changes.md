@@ -1,3 +1,21 @@
+## 2026-10-30 - ChatGPT account route and plan states (part of senpi#5003)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/gpt-account.ts`: renders registration route, disabled plan permission and signed-out states, with a ChatGPT Settings > Usage link.
+
+### Why
+
+- The account command must explain when ChatGPT plan usage is unavailable.
+
+### Why an extension could not handle it
+
+- This is the existing account extension.
+
+### Expected merge conflict zones
+
+- The account-list renderer.
+
 ## 2026-11-03 - Dangling ask-user questions restore on startup opens (senpi#5700, fixes #4764)
 
 ### What changed
