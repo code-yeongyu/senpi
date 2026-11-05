@@ -40,10 +40,11 @@ export interface HandEpochFenceOptions {
 	 */
 	readonly ownerOf: (scope: string) => ScopeOwner | undefined;
 	/**
-	 * Reads the record itself (record freshness, senpi#5860): called once before a raise whose epoch is above the copy's
-	 * epoch is decided, never for a raise at or below it, and coalesced per scope. It runs before the raise joins the
-	 * ledger's admission line, so a slow read never holds a ledger step. A copy that names a bare principal is never
-	 * refreshed; a missing copy is. Without it, the copy decides.
+	 * Reads the record itself (record freshness, senpi#5860): called before a raise whose epoch is above the owner the
+	 * hand believes (the copy, or a newer read), never for a raise at or below it, and coalesced per scope; a raise that
+	 * joined a read already in flight reads once more when that read still leaves it ahead. It runs before the raise joins
+	 * the ledger's admission line, so a slow read never holds a ledger step. A copy that names a bare principal is never
+	 * refreshed; a missing copy, or a removal the newest read found, is. Without it, the copy decides.
 	 */
 	readonly refreshOwner?: (scope: string) => Promise<ScopeOwner | undefined>;
 	/**
@@ -86,53 +87,60 @@ export function createHandEpochFence(options: HandEpochFenceOptions): HandEpochF
 			floors.set(document.key.slice(EPOCH_FLOOR_PREFIX.length), decodeFloor(document.data));
 	})();
 
-	const reading = new Map<string, Promise<ScopeOwner | undefined>>();
-	/** The latest record a read returned, per scope: a copy older than it never decides again. */
-	const lastRead = new Map<string, ScopeOwner | undefined>();
-	const refreshed = (scope: string, read: NonNullable<typeof refreshOwner>): Promise<ScopeOwner | undefined> => {
+	/** One record read: what it answered (`undefined`: the record is removed) and its place in this fence's read order. */
+	interface RecordRead {
+		readonly owner: ScopeOwner | undefined;
+		readonly seq: number;
+	}
+	let reads = 0;
+	const reading = new Map<string, Promise<RecordRead>>();
+	/** The newest read per scope, a removal included: until a newer read, it outranks any copy no newer than it. */
+	const lastRead = new Map<string, RecordRead>();
+	const refreshed = (scope: string, read: NonNullable<typeof refreshOwner>): Promise<RecordRead> => {
 		const inFlight = reading.get(scope);
 		if (inFlight !== undefined) return inFlight;
+		const seq = ++reads;
 		const next = read(scope)
 			.then((owner) => {
-				// Only a read answering nothing removes the owner (I5, senpi#6040); a missing copy is refreshed, never trusted.
-				if (owner === undefined) lastRead.delete(scope);
-				else lastRead.set(scope, owner);
-				return owner;
+				const result: RecordRead = { owner, seq };
+				if ((lastRead.get(scope)?.seq ?? 0) < seq) lastRead.set(scope, result);
+				return result;
 			})
 			.finally(() => reading.delete(scope));
 		reading.set(scope, next);
 		return next;
 	};
+	/** The owner the hand believes now: the copy, unless the newest read is newer than it or found the record removed. */
 	const copyOf = (scope: string): ScopeOwner | undefined => {
 		const copy = ownerOf(scope);
-		// A missing copy is not a removal: it decides nothing on its own, keeps the last read, and a raise that needs an
-		// owner reads the record (I1).
-		if (copy === undefined) return undefined;
-		const read = lastRead.get(scope);
+		const read = lastRead.get(scope)?.owner;
+		// Fail closed: a missing copy, or a read that found the record removed, names no owner. A raise arriving then reads
+		// the record before it joins the line (I1) and decides on the newest read at its turn (I2); a raise already on the
+		// line with no read of its own is refused `peer_unauthorized`, since no read runs inside the line.
+		if (copy === undefined || (lastRead.has(scope) && read === undefined)) return undefined;
 		if (typeof read !== "object" || typeof copy === "string") return copy;
 		return copy.epoch >= read.epoch ? copy : read;
 	};
 	/** The record read a raise needs (`undefined`: none; the copy decides at the raise's turn on the admission line). */
-	const readFor = async (
-		scope: string,
-		epoch: number,
-	): Promise<{ readonly owner: ScopeOwner | undefined } | undefined> => {
+	const readFor = async (scope: string, epoch: number): Promise<RecordRead | undefined> => {
 		const ahead = (owner: ScopeOwner | undefined): boolean =>
 			typeof owner !== "string" && epoch > (owner?.epoch ?? 0);
 		if (!ahead(copyOf(scope)) || refreshOwner === undefined) return undefined;
 		// A read already in flight may have started before this raiser's claim landed; if it still leaves the raise ahead,
 		// read once more (that read starts after this raise arrived, so after its claim).
 		const joined = reading.has(scope);
-		const owner = await refreshed(scope, refreshOwner);
-		return { owner: joined && ahead(owner) ? await refreshed(scope, refreshOwner) : owner };
+		const first = await refreshed(scope, refreshOwner);
+		return joined && ahead(first.owner) ? refreshed(scope, refreshOwner) : first;
 	};
-	/** The owner a raise is decided on, at its turn: the copy then, or the read when the copy is not newer than it. */
-	const ownerAtTurn = (scope: string, read: { readonly owner: ScopeOwner | undefined } | undefined) => {
-		const copy = copyOf(scope);
-		if (read === undefined) return copy;
-		return typeof copy === "object" && typeof read.owner === "object" && copy.epoch > read.owner.epoch
-			? copy
-			: read.owner;
+	/** The owner a raise is decided on, at its turn: the newest read by then (its own or a later one), unless the copy
+	 * names a higher epoch; with no read of its own, the copy as the hand believes it then. */
+	const ownerAtTurn = (scope: string, read: RecordRead | undefined): ScopeOwner | undefined => {
+		if (read === undefined) return copyOf(scope);
+		const newest = lastRead.get(scope);
+		const decided = newest !== undefined && newest.seq > read.seq ? newest.owner : read.owner;
+		if (decided === undefined) return undefined;
+		const copy = ownerOf(scope);
+		return typeof copy === "object" && typeof decided === "object" && copy.epoch > decided.epoch ? copy : decided;
 	};
 
 	const raiseNow = async (
