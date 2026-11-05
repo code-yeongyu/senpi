@@ -13,5 +13,28 @@ describe("a removed owner record (senpi#6040)", () => {
 		copy = undefined;
 
 		expect(await fence.raise("s", 2, "b")).toEqual({ kind: "refused", reason: "peer_unauthorized" });
+		record = { principal: "a", epoch: 1 };
+		copy = { principal: "a", epoch: 1 };
+		expect(await fence.raise("s", 2, "b")).toEqual({ kind: "refused", reason: "peer_unauthorized" });
+	});
+
+	it("a copy missing for a moment is not a removal: an older copy coming back never outranks the last read", async () => {
+		const copies: (ScopeOwner | undefined)[] = [
+			{ principal: "a", epoch: 1 },
+			{ principal: "a", epoch: 1 },
+			{ principal: "a", epoch: 1 },
+			undefined,
+		];
+		const fence = createHandEpochFence({
+			ownerOf: () => (copies.length > 0 ? copies.shift() : { principal: "a", epoch: 2 }),
+			refreshOwner: async () => ({ principal: "b", epoch: 3 }),
+		});
+		expect(await fence.raise("s", 3, "x")).toEqual({ kind: "refused", reason: "peer_unauthorized" });
+		expect(await fence.raise("s", 2, "b")).toEqual({ kind: "refused", reason: "peer_unauthorized" });
+
+		expect(await fence.raise("s", 2, "a")).toEqual({ kind: "refused", reason: "peer_unauthorized" });
+		expect(fence.admits("s", 2, "a")).toBe(true);
+		expect(await fence.raise("s", 3, "b")).toEqual({ kind: "acked", floor: 3 });
+		expect(fence.admits("s", 2, "a")).toBe(false);
 	});
 });

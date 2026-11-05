@@ -94,7 +94,9 @@ export function createHandEpochFence(options: HandEpochFenceOptions): HandEpochF
 		if (inFlight !== undefined) return inFlight;
 		const next = read(scope)
 			.then((owner) => {
-				lastRead.set(scope, owner);
+				// Only a read answering nothing removes the owner (I5, senpi#6040); a missing copy is refreshed, never trusted.
+				if (owner === undefined) lastRead.delete(scope);
+				else lastRead.set(scope, owner);
 				return owner;
 			})
 			.finally(() => reading.delete(scope));
@@ -103,11 +105,9 @@ export function createHandEpochFence(options: HandEpochFenceOptions): HandEpochF
 	};
 	const copyOf = (scope: string): ScopeOwner | undefined => {
 		const copy = ownerOf(scope);
-		// A removed record removes its owner too: the last read never outlives it (I5, senpi#6040).
-		if (copy === undefined) {
-			lastRead.delete(scope);
-			return undefined;
-		}
+		// A missing copy is not a removal: it decides nothing on its own, keeps the last read, and a raise that needs an
+		// owner reads the record (I1).
+		if (copy === undefined) return undefined;
 		const read = lastRead.get(scope);
 		if (typeof read !== "object" || typeof copy === "string") return copy;
 		return copy.epoch >= read.epoch ? copy : read;
