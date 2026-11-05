@@ -53,6 +53,14 @@ export class LoopHookRestartedError extends Error {
 	}
 }
 
+/** The loop host closed its link on purpose: a deliberate close, never a dead link (senpi#5867). */
+export class LoopHookClosedError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "LoopHookClosedError";
+	}
+}
+
 interface Pending {
 	readonly call: LoopHookCall;
 	startedBy?: string;
@@ -111,7 +119,7 @@ export function createLoopHookHost(options: LoopHookHostOptions): LoopHookHost {
 
 	return {
 		run(event, payload, signal, callKey) {
-			if (closed) return Promise.reject(new Error("The loop-hook link is closed"));
+			if (closed) return Promise.reject(new LoopHookClosedError("The loop-hook link is closed"));
 			if (signal?.aborted) return Promise.reject(new Error("Operation aborted"));
 			const call: LoopHookCall = { kind: "hook.call", callId: callKey ?? mintId(), event, payload };
 			const result = new Promise<JsonValue>((resolve, reject) => {
@@ -130,7 +138,9 @@ export function createLoopHookHost(options: LoopHookHostOptions): LoopHookHost {
 		close() {
 			closed = true;
 			for (const callId of [...pending.keys()])
-				settle(callId, (waiter) => waiter.reject(new Error("The loop-hook link was closed before the hooks ran")));
+				settle(callId, (waiter) =>
+					waiter.reject(new LoopHookClosedError("The loop-hook link was closed before the hooks ran")),
+				);
 			transport.close();
 		},
 	};

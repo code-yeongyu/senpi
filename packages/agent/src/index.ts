@@ -176,6 +176,7 @@ export {
 	loopHookCallKey,
 	type LoopHookHost,
 	type LoopHookHostOptions,
+	LoopHookClosedError,
 	LoopHookFailedError,
 	LoopHookRestartedError,
 } from "./execution/loop-hook-host.ts";
