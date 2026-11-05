@@ -62,13 +62,19 @@ async function readState(store: DurableStore, id: string): Promise<SessionState 
 const manifestWrite = (state: SessionState): StoreWrite => ({
 	op: "put",
 	key: sessionKey(state.id),
-	data: { id: state.id, header: state.header, entryIds: state.entries.map((entry) => entry.key), divergence: state.divergence },
+	data: {
+		id: state.id,
+		header: state.header,
+		entryIds: state.entries.map((entry) => entry.key),
+		divergence: state.divergence,
+	},
 });
 
 function planAppend(state: SessionState, added: readonly StoredEntry[]): Plan {
 	const held = new Set(state.entries.map((entry) => entry.key));
 	for (const entry of added) {
-		if (held.has(entry.key)) throw new SessionStoreError("duplicate-entry", `session ${state.id} already holds ${entry.key}`);
+		if (held.has(entry.key))
+			throw new SessionStoreError("duplicate-entry", `session ${state.id} already holds ${entry.key}`);
 		held.add(entry.key);
 	}
 	const next = { ...state, entries: [...state.entries, ...added] };
@@ -79,24 +85,31 @@ function planAppend(state: SessionState, added: readonly StoredEntry[]): Plan {
 function planRewrite(state: SessionState, header: SessionHeader, entries: readonly StoredEntry[]): Plan {
 	const kept = new Set<string>();
 	for (const entry of entries) {
-		if (kept.has(entry.key)) throw new SessionStoreError("duplicate-entry", `rewrite of ${state.id} repeats ${entry.key}`);
+		if (kept.has(entry.key))
+			throw new SessionStoreError("duplicate-entry", `rewrite of ${state.id} repeats ${entry.key}`);
 		kept.add(entry.key);
 	}
 	const next = { ...state, header, entries: [...entries] };
 	const deletes = state.entries
 		.filter((entry) => !kept.has(entry.key))
 		.map((entry): StoreWrite => ({ op: "delete", key: entryKey(state.id, entry.key) }));
-	const puts = entries.map((entry): StoreWrite => ({ op: "put", key: entryKey(state.id, entry.key), data: entry.line }));
+	const puts = entries.map((entry): StoreWrite => ({
+		op: "put",
+		key: entryKey(state.id, entry.key),
+		data: entry.line,
+	}));
 	return { writes: [...deletes, ...puts, manifestWrite(next)], next };
 }
 
 const stored = ({ id, header, entries }: SessionState): StoredSession => ({ id, header, entries });
 
+/** An existing session keeps its stored header; `header` only seeds a session the store does not hold yet. */
 async function openState(store: DurableStore, id: string, header: SessionHeader): Promise<SessionState> {
 	return (await readState(store, id)) ?? { id, header, entries: [], divergence: null };
 }
 
 export interface SessionHandle {
+	header(): SessionHeader;
 	entries(): readonly StoredEntry[];
 	append(entries: readonly StoredEntry[]): Promise<void>;
 	rewrite(header: SessionHeader, entries: readonly StoredEntry[]): Promise<void>;
@@ -111,20 +124,29 @@ export function openSessionStore(store: DurableStore, epoch: number) {
 		},
 		open: async (id: string, header: SessionHeader): Promise<SessionHandle> => {
 			let state = await openState(store, id, header);
-			const commit = async (plan: Plan): Promise<void> => {
-				await store.commit(epoch, plan.writes, () => {});
-				state = plan.next;
+			// One write at a time, each planned from the state the previous one committed.
+			let tail: Promise<void> = Promise.resolve();
+			const enqueue = (plan: () => Plan): Promise<void> => {
+				const run = tail.then(async () => {
+					const next = plan();
+					await store.commit(epoch, next.writes, () => {});
+					state = next.next;
+				});
+				tail = run.catch(() => undefined);
+				return run;
 			};
 			return {
+				header: () => state.header,
 				entries: () => state.entries,
-				append: (entries) => commit(planAppend(state, entries)),
-				rewrite: (header2, entries) => commit(planRewrite(state, header2, entries)),
+				append: (entries) => enqueue(() => planAppend(state, entries)),
+				rewrite: (header2, entries) => enqueue(() => planRewrite(state, header2, entries)),
 			};
 		},
 	};
 }
 
 export interface SyncSessionHandle {
+	header(): SessionHeader;
 	entries(): readonly StoredEntry[];
 	/** Durable when it returns; a refusal throws on this call and leaves the session and the store unchanged. */
 	appendSync(entries: readonly StoredEntry[]): void;
@@ -142,6 +164,7 @@ export function openSyncSessionStore(store: SyncCommitStore, epoch: number) {
 				state = plan.next;
 			};
 			return {
+				header: () => state.header,
 				entries: () => state.entries,
 				appendSync: (entries) => commit(planAppend(state, entries)),
 				rewriteSync: (header2, entries) => commit(planRewrite(state, header2, entries)),

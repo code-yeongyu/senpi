@@ -1,8 +1,14 @@
 import type { CaseImplementation } from "../../conformance/runner.ts";
 import type { RegisteredCase } from "../../conformance/registry.ts";
-import type { DurableStoreErrorCode, DurableStoreOptions, StoreWrite, StoreWritePoint, SyncCommitStore } from "../store.ts";
+import type {
+	DurableStoreErrorCode,
+	DurableStoreOptions,
+	StoreWrite,
+	StoreWritePoint,
+	SyncCommitStore,
+} from "../store.ts";
 import { DurableStoreError } from "../store.ts";
-import { adoptLog, cutOnceAt, expectEqual, reopenSnapshot } from "./store-harness.ts";
+import { adoptLog, cutOnceAt, expectEqual, isCutSignal, reopenSnapshot } from "./store-harness.ts";
 import { append, put, stored } from "./store-cases.ts";
 
 /** What a backend that offers `commitSync` provides to the SYNC-COMMIT cases. */
@@ -67,15 +73,13 @@ const REFUSALS: readonly Refusal[] = [
 	{ what: "stale epoch", epoch: 2, writes: BATCH, expected: "stale-epoch" },
 	{ what: "duplicate record id", epoch: 1, writes: [append("r2"), append("r1")], expected: "duplicate-record-id" },
 	{ what: "cut before", epoch: 1, writes: BATCH, options: cutOnceAt({ op: "commit", at: "before" }), expected: "cut" },
-	...BATCH.map(
-		(_, index): Refusal => ({
-			what: `cut at write ${index}`,
-			epoch: 1,
-			writes: BATCH,
-			options: cutOnceAt({ op: "commit", at: "write", index } satisfies StoreWritePoint),
-			expected: "cut",
-		}),
-	),
+	...BATCH.map((_, index): Refusal => ({
+		what: `cut at write ${index}`,
+		epoch: 1,
+		writes: BATCH,
+		options: cutOnceAt({ op: "commit", at: "write", index } satisfies StoreWritePoint),
+		expected: "cut",
+	})),
 ];
 
 const refusedThrowsOnTheSameCall: SyncCommitCase = async ({ store: adapter }) => {
@@ -89,7 +93,12 @@ const refusedThrowsOnTheSameCall: SyncCommitCase = async ({ store: adapter }) =>
 		if (!("threw" in outcome)) {
 			throw new Error(`${refusal.what}: the refused sync commit did not throw on the same call`);
 		}
-		const code = outcome.threw instanceof DurableStoreError ? outcome.threw.code : "cut";
+		const code =
+			outcome.threw instanceof DurableStoreError
+				? outcome.threw.code
+				: isCutSignal(outcome.threw)
+					? "cut"
+					: `unexpected ${String(outcome.threw)}`;
 		expectEqual(code, refusal.expected, `${refusal.what}: the refusal`);
 		expectEqual(log.calls, [], `${refusal.what}: no adopt`);
 		expectEqual(await reopenSnapshot(adapter, medium), before, `${refusal.what}: the store is unchanged`);
