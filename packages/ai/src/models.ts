@@ -2,7 +2,13 @@ import { lazyStream } from "./api/lazy.ts";
 import { defaultProviderAuthContext as defaultAuthContext } from "./auth/context.ts";
 import { InMemoryCredentialStore, revokeStoredOAuth } from "./auth/credential-store.ts";
 import { stampLogin } from "./auth/pool/login-id.ts";
-import { appendLoginSlot, assertLoginKeyPresent, removeSlot, withoutBlankKey } from "./auth/pool/slots.ts";
+import {
+	appendLoginSlot,
+	assertLoginKeyPresent,
+	ReauthorizeAccountMismatchError,
+	removeSlot,
+	withoutBlankKey,
+} from "./auth/pool/slots.ts";
 import { resolveRefreshCredential } from "./auth/refresh-credential.ts";
 import {
 	type AuthResolutionOverrides,
@@ -846,6 +852,8 @@ class ModelsImpl implements MutableModels {
 			await mutation;
 		} catch (error) {
 			signal.throwIfAborted();
+			// The user must see why a reauthorization changed nothing, not a storage failure.
+			if (error instanceof ReauthorizeAccountMismatchError) throw error;
 			throw new ModelsError("auth", `Credential store modify failed for ${providerId}`, { cause: error });
 		}
 		if (committedName !== undefined && committedOrigin !== undefined) {
