@@ -608,4 +608,36 @@ describe("webfetch renders app shells only through the connected browser, incogn
 		expect(Date.now() - started).toBeLessThan(1_500);
 		expect(daemon.calls.filter((call) => call.method === "system.status")).toHaveLength(1);
 	});
+
+	it("reports the rendered page's URL as the final URL", async () => {
+		const url = await serveHtml(APP_SHELL);
+		const landed = `${url}/board`;
+		const daemon = await fakeDaemon(
+			connectedBrowser(landed, {
+				"tool.navigate": () => ({ result: { tab_id: 1, final_url: landed } }),
+			}),
+		);
+
+		const { details } = await fetchWith(createWebfetchTool({ renderer: renderer(daemon) }), url);
+
+		expect(details.rendered).toBe(true);
+		expect(details.finalUrl).toBe(landed);
+	});
+
+	it("does not count a read that came from another tab than the one it navigated", async () => {
+		const url = await serveHtml(APP_SHELL);
+		const daemon = await fakeDaemon(
+			connectedBrowser(url, {
+				"tool.get_html": () => ({
+					result: { html: RENDERED, truncated: false, byte_size: RENDERED.length, tab_id: 7 },
+				}),
+			}),
+		);
+
+		const { details, userText } = await fetchWith(createWebfetchTool({ renderer: renderer(daemon) }), url);
+
+		expect(details.rendered).toBe(false);
+		expect(details.renderSkipped?.reason).toBe("render_failed");
+		expect(userText).not.toContain("Three cards are waiting for review");
+	});
 });

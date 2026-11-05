@@ -478,7 +478,10 @@ export function createBrowserSkillRenderer(options: BrowserSkillOptions = {}): P
 						);
 						const after = await tabUrl();
 						const next = typeof read?.html === "string" ? read.html : "";
-						const steady = before === after;
+						// A read from another tab than the one navigate opened is not this page, whatever its URL says.
+						const readTab = typeof read?.tab_id === "number" ? read.tab_id : undefined;
+						const steady =
+							before === after && (tabId === undefined || readTab === undefined || readTab === tabId);
 						stableReads =
 							steady && after === pageUrl && next.length > 0 && next.length === html.length
 								? stableReads + 1

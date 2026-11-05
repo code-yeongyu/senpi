@@ -161,6 +161,7 @@ export function createWebfetchTool(options: WebfetchToolOptions = {}) {
 			let renderSkipped: WebfetchBrowserSkip | undefined;
 			let browser: ConnectedBrowser | undefined;
 			let renderTruncated = false;
+			let renderedUrl: string | undefined;
 
 			if (isHtml && format !== "html") {
 				const convert = format === "markdown" ? htmlToMarkdown : htmlToText;
@@ -180,6 +181,7 @@ export function createWebfetchTool(options: WebfetchToolOptions = {}) {
 						rendered = true;
 						browser = outcome.browser;
 						renderTruncated = outcome.truncated === true;
+						renderedUrl = outcome.url;
 					} else {
 						renderSkipped = outcome.skipped;
 					}
@@ -190,7 +192,8 @@ export function createWebfetchTool(options: WebfetchToolOptions = {}) {
 
 			const details: WebfetchDetails = {
 				url: params.url,
-				finalUrl: fetched.url,
+				// A rendered read reports the URL its text came from, which can differ from the static response's.
+				finalUrl: renderedUrl ?? fetched.url,
 				format,
 				status: fetched.status,
 				statusText: fetched.statusText,
@@ -229,6 +232,7 @@ function isBrowserEnabled(): boolean {
 
 interface RenderOutcome {
 	readonly text?: string;
+	readonly url?: string;
 	readonly browser?: ConnectedBrowser;
 	readonly truncated?: boolean;
 	readonly skipped?: WebfetchBrowserSkip;
@@ -256,7 +260,7 @@ async function readRendered(
 		if (text.trim().length <= staticText.trim().length) {
 			return { skipped: { reason: "no_more_text", message: "the rendered page had no more text" } };
 		}
-		return { text, browser, truncated: page.truncated };
+		return { text, url: page.url, browser, truncated: page.truncated };
 	} catch (error) {
 		if (signal?.aborted) throw error;
 		if (error instanceof BrowserSkillError) return { skipped: error.skip };
