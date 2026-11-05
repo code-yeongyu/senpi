@@ -86,6 +86,7 @@ import {
 } from "./session-store/durable-binding.ts";
 import { fenceHatchWriters } from "./session-store/hatch-fence.ts";
 import { markHatchWrite } from "./session-store/hatch-marker.ts";
+import { nodeJsonlHatchEnabled } from "./session-store/node-guard.ts";
 import type { StoredEntry } from "@earendil-works/pi-agent-core";
 import {
 	discardFailedFirstFlush,
@@ -1198,7 +1199,7 @@ export class SessionManager {
 	private cwd: string;
 	private persist: boolean;
 	private readonly writeGuard = new SessionWriteGuard();
-	private readonly writeFence = new SessionWriteFence();
+	private readonly writeFence = new SessionWriteFence(nodeJsonlHatchEnabled);
 	// S20b: set by bindDurableStore; every write then commits to the store before its JSONL projection.
 	private durable: DurableSessionBinding | undefined;
 	private bindPending = false;

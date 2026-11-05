@@ -17,19 +17,39 @@ export function sessionFenceFile(sessionFile: string): string {
 	return `${sessionFile}.fence`;
 }
 
-/** The fence token now on disk; empty when the file was never taken over. Any other read failure throws. */
-export function readSessionFence(sessionFile: string): string {
+/**
+ * The fence only Node developer-hatch writers check (K9-F2, senpi#5822). The durable store advances it to stop a hatch
+ * writer without touching a Bun co-holder, which checks only the takeover fence above.
+ */
+export function sessionHatchFenceFile(sessionFile: string): string {
+	return `${sessionFile}.hatch-fence`;
+}
+
+function readToken(file: string): string {
 	try {
-		return readFileSync(sessionFenceFile(sessionFile), "utf8").trim();
+		return readFileSync(file, "utf8").trim();
 	} catch (cause) {
 		if ((cause as NodeJS.ErrnoException).code === "ENOENT") return "";
 		throw cause;
 	}
 }
 
+/** The fence token now on disk; empty when the file was never taken over. Any other read failure throws. */
+export function readSessionFence(sessionFile: string): string {
+	return readToken(sessionFenceFile(sessionFile));
+}
+
 /** Gives the file a new token, so every writer that opened it before this call refuses its next write. */
 export async function advanceSessionFence(sessionFile: string): Promise<void> {
-	const file = sessionFenceFile(sessionFile);
+	await replaceToken(sessionFenceFile(sessionFile));
+}
+
+/** Gives the hatch fence a new token, so every hatch writer that opened the file before this call refuses its next write. */
+export async function advanceHatchFence(sessionFile: string): Promise<void> {
+	await replaceToken(sessionHatchFenceFile(sessionFile));
+}
+
+async function replaceToken(file: string): Promise<void> {
 	const temporary = `${file}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
 	try {
 		await writeFile(temporary, `${randomUUID()}\n`, { mode: 0o600 });
@@ -40,14 +60,28 @@ export async function advanceSessionFence(sessionFile: string): Promise<void> {
 	}
 }
 
-/** One writer's view of its file's fence: the token seen when the file was opened, re-checked before every write. */
+/**
+ * One writer's view of its file's fence: the token seen when the file was opened, re-checked before every write. A hatch
+ * writer (`isHatchWriter()` true) also checks the hatch fence.
+ */
 export class SessionWriteFence {
 	private seen: { readonly file: string; readonly token: string } | undefined;
 	private fencedFile: string | undefined;
 
+	private readonly isHatchWriter: () => boolean;
+
+	constructor(isHatchWriter: () => boolean = () => false) {
+		this.isHatchWriter = isHatchWriter;
+	}
+
+	private token(sessionFile: string): string {
+		const takeover = readSessionFence(sessionFile);
+		return this.isHatchWriter() ? `${takeover}\n${readToken(sessionHatchFenceFile(sessionFile))}` : takeover;
+	}
+
 	opened(sessionFile: string): void {
 		if (this.fencedFile !== sessionFile) this.fencedFile = undefined;
-		this.seen = { file: sessionFile, token: readSessionFence(sessionFile) };
+		this.seen = { file: sessionFile, token: this.token(sessionFile) };
 	}
 
 	assertOwned(sessionFile: string): void {
@@ -57,7 +91,7 @@ export class SessionWriteFence {
 			this.opened(sessionFile);
 			return;
 		}
-		if (readSessionFence(sessionFile) === this.seen.token) return;
+		if (this.token(sessionFile) === this.seen.token) return;
 		this.fencedFile = sessionFile;
 		throw new SessionFencedError(sessionFile);
 	}
