@@ -21,7 +21,7 @@ export interface LaunchProvenance {
 	readonly directoryLocal: boolean;
 }
 
-export const LAUNCH_PROVENANCE_SCHEMA = 1;
+const LAUNCH_PROVENANCE_SCHEMA = 1;
 
 /** Writes the record atomically, before the launch spawns anything that could write a row beside it. */
 export async function recordLaunchProvenance(file: string, provenance: LaunchProvenance): Promise<void> {
