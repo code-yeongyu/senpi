@@ -142,13 +142,17 @@ export function holders(state: McpPresenterState, binding: Binding): Grant[] {
  * sealed holders (D11 secret phase 5.1 conditions 2 and 3), so only they need a host token.
  */
 export function secretInputHeld(state: McpPresenterState, handle: McpFormBinding): boolean {
+	return secretCandidates(state, handle).length > 0;
+}
+
+/** The current account-principal grants on this binding that negotiated `secret_input_v1` (5.1 conditions 1-3). */
+export function secretCandidates(state: McpPresenterState, handle: McpFormBinding): Grant[] {
 	const binding = [...state.bindings.values()].find((value) => value === handle);
-	return (
-		binding !== undefined &&
-		holders(state, binding).some(
-			(grant) => grant.registration.secretInput && grant.answeredBy.principalKind === "account",
-		)
-	);
+	return binding === undefined
+		? []
+		: holders(state, binding).filter(
+				(grant) => grant.registration.secretInput && grant.answeredBy.principalKind === "account",
+			);
 }
 
 export function revoke(state: McpPresenterState, registration: Registration, operation = false): void {

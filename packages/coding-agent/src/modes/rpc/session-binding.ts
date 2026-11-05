@@ -174,7 +174,7 @@ export async function createRpcSessionBinding(
 			},
 			...options,
 			workerSecurityBridge: writer.workerSecurityBridge,
-			secretInputRoute: writer.secretInputRoute(sessionId),
+			secretInputRoute: writer.secretInputRoute(sessionId, true),
 			grantDialogSettled: (id) => writer.settleGrantDialog(sessionId, id),
 			grantDialogRaised: (id, title) => writer.noticeGrantDialog(sessionId, id, title),
 			bindSecurityPresentation: (session, ui) =>

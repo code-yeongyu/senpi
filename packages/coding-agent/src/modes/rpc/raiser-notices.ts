@@ -25,12 +25,18 @@ export class RaiserNotices {
 		this.flush = flush;
 	}
 
-	raised(sessionId: string, uiRequestId: string, presenter: string | undefined, notice: NoticeRecord): void {
+	/** `excluded`: the presenter, plus every connection that receives the prompt itself (a sealed holder). */
+	raised(
+		sessionId: string,
+		uiRequestId: string,
+		excluded: readonly (string | undefined)[],
+		notice: NoticeRecord,
+	): void {
 		const session = this.#pending.get(sessionId) ?? new Map<string, readonly string[]>();
 		if (session.has(uiRequestId)) return;
 		const recipients = this.fanout
 			.attachedConnections(sessionId)
-			.filter((id) => id !== presenter && this.fanout.connectionHas(id, RAISER_NOTICE_CAPABILITY));
+			.filter((id) => !excluded.includes(id) && this.fanout.connectionHas(id, RAISER_NOTICE_CAPABILITY));
 		if (recipients.length === 0) return;
 		session.set(uiRequestId, recipients);
 		this.#pending.set(sessionId, session);

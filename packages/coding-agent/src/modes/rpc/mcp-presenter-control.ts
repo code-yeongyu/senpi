@@ -12,7 +12,7 @@ import type { McpFormBinding } from "../../core/mcp-form-types.ts";
 import type { PresenterHostSurface } from "./mcp-presenter-host-surface.ts";
 import { McpPresenterEnrollment, type PresenterPrincipal } from "./mcp-presenter-enrollment.ts";
 import { features, SECRET_INPUT_FEATURE } from "./mcp-presenter-grants.ts";
-import { SecretHostTokens, type SecretHostToken } from "./secret-host-token.ts";
+import { SealedSecretHolders } from "./secret-sealed-holders.ts";
 import { McpPresenterSuccessors, type LaunchOwner } from "./mcp-presenter-successor.ts";
 import { challengeTranscript, privateFrames, send, signed } from "./mcp-presenter-wire.ts";
 
@@ -35,7 +35,8 @@ export class McpPresenterControl {
 	private readonly accounts: McpPresenterAccounts;
 	private readonly server: Server;
 	private readonly account: PresenterAccountAuthority | undefined;
-	private readonly secretTokens: SecretHostTokens | undefined;
+	/** The sealed secret route's holders and host token cache (D11 secret phase); absent without both seam methods. */
+	readonly sealed: SealedSecretHolders | undefined;
 	readonly path: string;
 
 	constructor(host: PresenterHostSurface, path: string, account?: PresenterAccountAuthority) {
@@ -48,13 +49,8 @@ export class McpPresenterControl {
 		this.accounts = new McpPresenterAccounts(this.authority.instance, this.principals, account, (stream) =>
 			this.revokeControls.get(stream)?.(),
 		);
-		this.secretTokens = SecretHostTokens.create(this.authority.instance, account);
+		this.sealed = SealedSecretHolders.create(host, account, this.principals);
 		this.server = createServer((stream) => this.manage(stream));
-	}
-
-	/** The session's cached host token (D11 secret phase 3.2); `undefined` when none is valid now. */
-	secretHostToken(durableSessionId: string): SecretHostToken | undefined {
-		return this.secretTokens?.current(durableSessionId);
 	}
 
 	listen(): Promise<void> {
@@ -91,7 +87,7 @@ export class McpPresenterControl {
 	}
 
 	dispose(): void {
-		this.secretTokens?.dispose();
+		this.sealed?.dispose();
 		this.host.withdrawMcpPresenterControl(this.path);
 		const streams = [...this.controls];
 		for (const revoke of [...this.revokeControls.values()]) revoke();
@@ -254,7 +250,7 @@ export class McpPresenterControl {
 							const grant = owner.acquire(registration);
 							registrations.set(registration.id, registration);
 							if (features(command.features) && command.features.includes(SECRET_INPUT_FEATURE))
-								this.secretTokens?.want(grant.scope.durableSessionId, binding, () =>
+								this.sealed?.tokens.want(grant.scope.durableSessionId, binding, () =>
 									this.authority.secretInputHeld(binding),
 								);
 							send(stream, { type: "mcp_presenter_acquired", id, registrationId: registration.id, ...grant });

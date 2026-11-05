@@ -140,7 +140,7 @@ export class RpcSecurityPresentations {
 	}
 	/** Attached connections other than the presenter see that a grant select is pending; only the presenter answers. */
 	noticeGrant(sessionId: string, requestId: string, title: string, presenter: string | undefined): void {
-		this.notices.raised(sessionId, requestId, presenter, { type: "grant_select_notice", title });
+		this.notices.raised(sessionId, requestId, [presenter], { type: "grant_select_notice", title });
 	}
 	acceptWorkerResponse(sessionId: string, requestId: string, connection: string | undefined): boolean | undefined {
 		const state = this.#sessions.get(sessionId);

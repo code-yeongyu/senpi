@@ -43,7 +43,7 @@ function phone(host: AccountHost, features?: readonly string[]) {
 
 it("the first secret_input_v1 acquire mints one host token for (hin, sid), proven with this instance's host key", async () => {
 	const { host, secret } = await secretHost();
-	expect(host.control.secretHostToken("durable")).toBeUndefined();
+	expect(host.control.sealed?.tokens.current("durable")).toBeUndefined();
 	const adopted = await enrollAssignAcquire(host, installation(), { features: SECRET });
 	expect(adopted.acquired).toMatchObject({ type: "mcp_presenter_acquired" });
 	expect(secret.mints).toHaveLength(1);
@@ -51,7 +51,7 @@ it("the first secret_input_v1 acquire mints one host token for (hin, sid), prove
 	await mint?.done;
 	expect(mint?.request).toMatchObject({ hostInstance: host.authority.instance, durableSessionId: "durable" });
 	expect(mint?.proofVerified).toBe(true);
-	const token = host.control.secretHostToken("durable");
+	const token = host.control.sealed?.tokens.current("durable");
 	expect(token).toMatchObject({ acc: "account-a", dev: "host-device" });
 	expect(claimsOf(token?.token ?? "")).toEqual(mint?.claims);
 
@@ -69,7 +69,7 @@ it("an acquire without secret_input_v1 mints nothing", async () => {
 	const adopted = await enrollAssignAcquire(host, installation(), { features: ["elsewhere_v1"] });
 	expect(adopted.acquired).toMatchObject({ type: "mcp_presenter_acquired" });
 	expect(secret.mints).toHaveLength(0);
-	expect(host.control.secretHostToken("durable")).toBeUndefined();
+	expect(host.control.sealed?.tokens.current("durable")).toBeUndefined();
 });
 
 it("an authority without both secret methods gets no host key and no call; the acquired reply keeps its keys", async () => {
@@ -90,7 +90,7 @@ it("an authority without both secret methods gets no host key and no call; the a
 	expect(withFeature.acquired).toMatchObject({ type: "mcp_presenter_acquired" });
 	expect(Object.keys(withFeature.acquired ?? {})).toEqual(Object.keys(without.acquired ?? {}));
 	expect(mint).not.toHaveBeenCalled();
-	expect(host.control.secretHostToken("durable")).toBeUndefined();
+	expect(host.control.sealed?.tokens.current("durable")).toBeUndefined();
 });
 
 it("the token stays while any secret_input_v1 grant holds the session and is dropped with the last one", async () => {
@@ -100,9 +100,9 @@ it("the token stays while any secret_input_v1 grant holds the session and is dro
 	await phone(host, SECRET);
 	const timers = vi.getTimerCount();
 	host.writer.detachConnectionFromSession("phone", "session");
-	expect(host.control.secretHostToken("durable")).toBeDefined();
+	expect(host.control.sealed?.tokens.current("durable")).toBeDefined();
 	host.writer.detachConnectionFromSession("human", "session");
-	expect(host.control.secretHostToken("durable")).toBeUndefined();
+	expect(host.control.sealed?.tokens.current("durable")).toBeUndefined();
 	// The refresh timer goes with the token; the principals' attestation timers stay.
 	expect(vi.getTimerCount()).toBe(timers - 1);
 });
@@ -114,20 +114,20 @@ it("a grant without the feature does not keep the token alive", async () => {
 	await phone(host);
 	host.writer.detachConnectionFromSession("human", "session");
 	expect(host.binding.capture()).toBeDefined();
-	expect(host.control.secretHostToken("durable")).toBeUndefined();
+	expect(host.control.sealed?.tokens.current("durable")).toBeUndefined();
 });
 
 it("the token is re-minted at two thirds of its lifetime, not before", async () => {
 	const { host, secret } = await secretHost(600);
 	await enrollAssignAcquire(host, installation(), { features: SECRET, claims: { exp: nowS() + 900 } });
 	await secret.mints[0]?.done;
-	const first = host.control.secretHostToken("durable");
+	const first = host.control.sealed?.tokens.current("durable");
 	vi.advanceTimersByTime(399_000);
 	expect(secret.mints).toHaveLength(1);
 	vi.advanceTimersByTime(2_000);
 	expect(secret.mints).toHaveLength(2);
 	await secret.mints[1]?.done;
-	const second = host.control.secretHostToken("durable");
+	const second = host.control.sealed?.tokens.current("durable");
 	expect(second?.token).not.toBe(first?.token);
 	expect(claimsOf(second?.token ?? "")).toEqual(secret.mints[1]?.claims);
 });
@@ -136,17 +136,17 @@ it("a failed re-mint is retried while a holder remains, and the old token serves
 	const { host, secret } = await secretHost(600);
 	await enrollAssignAcquire(host, installation(), { features: SECRET, claims: { exp: nowS() + 900 } });
 	await secret.mints[0]?.done;
-	const first = host.control.secretHostToken("durable");
+	const first = host.control.sealed?.tokens.current("durable");
 	secret.plan({ fail: true });
 	vi.advanceTimersByTime(401_000);
 	await secret.mints[1]?.done;
-	expect(host.control.secretHostToken("durable")).toEqual(first);
+	expect(host.control.sealed?.tokens.current("durable")).toEqual(first);
 	vi.advanceTimersByTime(59_000);
 	expect(secret.mints).toHaveLength(2);
 	vi.advanceTimersByTime(2_000);
 	expect(secret.mints).toHaveLength(3);
 	await secret.mints[2]?.done;
-	expect(claimsOf(host.control.secretHostToken("durable")?.token ?? "")).toEqual(secret.mints[2]?.claims);
+	expect(claimsOf(host.control.sealed?.tokens.current("durable")?.token ?? "")).toEqual(secret.mints[2]?.claims);
 });
 
 it("the refresh is measured on the local clock, so an issuer iat in the past does not bring it forward", async () => {
@@ -154,7 +154,7 @@ it("the refresh is measured on the local clock, so an issuer iat in the past doe
 	secret.plan({ claims: { iat: nowS() - 500, exp: nowS() + 300 } });
 	await enrollAssignAcquire(host, installation(), { features: SECRET });
 	await secret.mints[0]?.done;
-	expect(host.control.secretHostToken("durable")).toBeDefined();
+	expect(host.control.sealed?.tokens.current("durable")).toBeDefined();
 	vi.advanceTimersByTime(190_000);
 	expect(secret.mints).toHaveLength(1);
 	vi.advanceTimersByTime(11_000);
@@ -171,7 +171,7 @@ it("a mint that has not settled in 30 s counts as failed and its late result is 
 	await secret.mints[1]?.done;
 	secret.release();
 	await secret.mints[0]?.done;
-	expect(claimsOf(host.control.secretHostToken("durable")?.token ?? "")).toEqual(secret.mints[1]?.claims);
+	expect(claimsOf(host.control.sealed?.tokens.current("durable")?.token ?? "")).toEqual(secret.mints[1]?.claims);
 });
 
 it("only an account-principal grant with the feature needs a token; an inherited one neither mints nor keeps it", async () => {
@@ -210,7 +210,7 @@ it("a signed-out host makes no refresh call and holds no valid token", async () 
 	host.state.account = undefined;
 	vi.advanceTimersByTime(401_000);
 	expect(secret.mints).toHaveLength(1);
-	expect(host.control.secretHostToken("durable")).toBeUndefined();
+	expect(host.control.sealed?.tokens.current("durable")).toBeUndefined();
 });
 
 it("a mint still in flight when the last grant leaves is discarded", async () => {
@@ -220,7 +220,7 @@ it("a mint still in flight when the last grant leaves is discarded", async () =>
 	host.writer.detachConnectionFromSession("human", "session");
 	secret.release();
 	await secret.mints[0]?.done;
-	expect(host.control.secretHostToken("durable")).toBeUndefined();
+	expect(host.control.sealed?.tokens.current("durable")).toBeUndefined();
 	expect(vi.getTimerCount()).toBe(1);
 });
 
@@ -241,13 +241,13 @@ it.each(refused)("a mint result naming $name is never cached and is retried with
 	secret.plan(plan);
 	await enrollAssignAcquire(host, installation(), { features: SECRET });
 	await secret.mints[0]?.done;
-	expect(host.control.secretHostToken("durable")).toBeUndefined();
+	expect(host.control.sealed?.tokens.current("durable")).toBeUndefined();
 	vi.advanceTimersByTime(59_000);
 	expect(secret.mints).toHaveLength(1);
 	vi.advanceTimersByTime(2_000);
 	expect(secret.mints).toHaveLength(2);
 	await secret.mints[1]?.done;
-	expect(host.control.secretHostToken("durable")).toMatchObject({ acc: "account-a" });
+	expect(host.control.sealed?.tokens.current("durable")).toMatchObject({ acc: "account-a" });
 });
 
 it("the proof callback signs only bounded claims and only while its mint is pending", async () => {

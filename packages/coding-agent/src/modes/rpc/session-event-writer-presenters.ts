@@ -1,6 +1,7 @@
 import { bindPrivateMcpForms, type McpFormBinding } from "../../core/mcp-form-types.ts";
 import { McpPresenterAuthority, type McpPresenterConnection } from "./mcp-presenter-authority.ts";
 import { type PresenterHostSurface, presenterContextReply } from "./mcp-presenter-host-surface.ts";
+import type { SealedSecretSource } from "./secret-sealed-holders.ts";
 import { SessionEventWriterConnections } from "./session-event-writer-connections.ts";
 
 /** The MCP form presenter surface; its private-record handler stays in session-event-writer.ts. */
@@ -31,6 +32,11 @@ export abstract class SessionEventWriterPresenters
 
 	withdrawMcpPresenterControl(path: string): void {
 		if (this.presenterControlEndpoint === path) this.presenterControlEndpoint = undefined;
+	}
+
+	attachSealedSecrets(source: SealedSecretSource): () => void {
+		this.secretPresentations.useSealed(source);
+		return () => this.secretPresentations.useSealed(undefined);
 	}
 
 	protected mcpPresenterContextReply(sender: McpPresenterConnection | undefined, request: object): object {

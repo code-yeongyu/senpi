@@ -3,11 +3,17 @@ import type { SessionEventFanout } from "./session-event-fanout.ts";
 import { serializeJsonLine } from "./jsonl.ts";
 import { type ConnectionLocality, RaiserNotices } from "./raiser-notices.ts";
 import { type RpcRemoteOrigin, remoteOriginField } from "./remote-origin.ts";
+import type { SealedHolder, SealedSecretSource } from "./secret-sealed-holders.ts";
 
 interface SecretOwner {
 	readonly session: string;
-	readonly connection?: string;
+	/** The raiser route's connection; `undefined` is the sole stdio client only while `raiser` holds. */
+	connection?: string;
 	cancel?: () => void;
+	/** The raiser route selected and its connection has not detached (D11 secret phase 5.2). */
+	raiser: boolean;
+	/** The sealed holders snapshotted at creation; the set never grows. */
+	readonly sealed: ReadonlySet<SealedHolder>;
 	/** No connection raised it: the host picked a local presenter (D11 S3-5), never a delegated or remote one. */
 	readonly background: boolean;
 	readonly raisedBy: string;
@@ -24,6 +30,8 @@ export class SecretInputPresentations {
 	private readonly notices: RaiserNotices;
 	private readonly owners = new Map<string, SecretOwner>();
 	private soleCapabilities: readonly string[] = [];
+	private sealedSource?: SealedSecretSource;
+	private unsubscribeSealed?: () => void;
 	constructor(
 		fanout: SessionEventFanout,
 		current: () => string | undefined,
@@ -43,23 +51,35 @@ export class SecretInputPresentations {
 		this.soleCapabilities = [...capabilities];
 		this.recheck();
 	}
-	route(session: string): SecretInputRoute {
+	/** The presenter control's sealed holders (D11 secret phase); `undefined` detaches them. */
+	useSealed(source: SealedSecretSource | undefined): void {
+		this.unsubscribeSealed?.();
+		this.sealedSource = source;
+		this.unsubscribeSealed = source?.onChange(() => this.recheck());
+	}
+	/** `sealed`: this route may add sealed holders (in-process sessions); a worker's route stays raiser-only. */
+	route(session: string, sealed = false): SecretInputRoute {
 		const capable = (connection: string | undefined) => this.capable(connection);
 		return {
 			presenter: (id) => this.owners.get(id)?.connection,
 			select: (id, cancel) => {
 				const preferred = this.current();
 				const attached = this.fanout.attachedConnections(session);
-				if (preferred !== undefined && (!attached.includes(preferred) || !capable(preferred)))
-					return "client_unsupported";
+				let refused: "client_unsupported" | "no_presenter" | undefined;
 				const connection = preferred ?? attached.find((candidate) => capable(candidate) && this.local(candidate));
-				if (connection === undefined && !(this.fanout.isEmpty() && capable(undefined)))
-					return this.fanout.isEmpty() ? "client_unsupported" : "no_presenter";
+				if (preferred !== undefined && (!attached.includes(preferred) || !capable(preferred)))
+					refused = "client_unsupported";
+				else if (connection === undefined && !(this.fanout.isEmpty() && capable(undefined)))
+					refused = this.fanout.isEmpty() ? "client_unsupported" : "no_presenter";
+				const holders = sealed ? this.sealedSource?.holders(session) : undefined;
+				if (refused !== undefined && !holders?.size) return refused;
 				const origin = preferred === undefined ? undefined : this.locality.originOf(preferred);
 				this.owners.set(id, {
 					session,
-					connection,
+					...(refused === undefined ? { connection } : {}),
 					cancel,
+					raiser: refused === undefined,
+					sealed: holders ?? new Set(),
 					background: preferred === undefined,
 					raisedBy: preferred ?? "agent",
 					...(origin === undefined ? {} : { origin }),
@@ -68,19 +88,29 @@ export class SecretInputPresentations {
 			},
 			accepts: (id) => {
 				const owner = this.owners.get(id);
-				return owner?.session === session && owner.connection === this.current() && this.live(owner);
+				return (
+					owner?.session === session && owner.raiser && owner.connection === this.current() && this.live(owner)
+				);
 			},
 			available: (id) => {
 				const owner = this.owners.get(id);
-				return owner?.session === session && this.live(owner);
+				return owner?.session === session && this.available(owner);
+			},
+			sealed: (id) => (this.owners.get(id)?.sealed.size ?? 0) > 0,
+			offerSealed: (id, offer) => {
+				const owner = this.owners.get(id);
+				if (owner?.session === session && owner.sealed.size > 0)
+					this.sealedSource?.offer(session, owner.sealed, { uiRequestId: id, ...offer });
 			},
 			send: (id, record) => {
 				const owner = this.owners.get(id);
 				if (owner?.session === session) this.notify(id, owner, record);
-				if (!owner || owner.session !== session || !this.live(owner)) {
+				if (!owner || owner.session !== session || !this.available(owner)) {
 					owner?.cancel?.();
 					return;
 				}
+				// A sealed-only request never writes a raiser lane, the sole stdio lane included (5.2).
+				if (!owner.raiser || !this.live(owner)) return;
 				const line = serializeJsonLine({ ...record, sessionId: session });
 				if (owner.connection === undefined) this.writeSole(line);
 				else
@@ -103,9 +133,11 @@ export class SecretInputPresentations {
 			settled: (id) => {
 				const owner = this.owners.get(id);
 				if (owner) owner.cancel = undefined;
+				this.sealedSource?.withdraw(id);
 			},
 			forget: (id) => {
 				this.owners.delete(id);
+				this.sealedSource?.withdraw(id);
 			},
 			handshake: (capabilities) => {
 				if (this.current() === undefined) this.handshake(capabilities);
@@ -113,11 +145,15 @@ export class SecretInputPresentations {
 		};
 	}
 	recheck(): void {
-		for (const owner of this.owners.values()) if (!this.live(owner)) owner.cancel?.();
+		for (const owner of this.owners.values()) if (!this.available(owner)) owner.cancel?.();
 	}
+	/** The raiser leaves; the request ends only when no sealed holder is current either (5.2, gate r2 L1). */
 	detach(connection: string): void {
 		for (const [id, owner] of this.owners)
 			if (owner.connection === connection) {
+				owner.raiser = false;
+				owner.connection = undefined;
+				if (this.available(owner)) continue;
 				owner.cancel?.();
 				this.owners.delete(id);
 			}
@@ -125,8 +161,8 @@ export class SecretInputPresentations {
 	/** The prompt's title and deadline reach non-presenters as a notice; its value, answer id and receipt never do. */
 	private notify(id: string, owner: SecretOwner, record: object): void {
 		const type = Reflect.get(record, "type");
-		if (type === "extension_ui_request" && this.live(owner))
-			this.notices.raised(owner.session, id, owner.connection, {
+		if (type === "extension_ui_request" && this.available(owner))
+			this.notices.raised(owner.session, id, [owner.connection, ...this.holderConnections(owner)], {
 				type: "secret_input_notice",
 				title: Reflect.get(record, "title"),
 				deadlineAtMs: Reflect.get(record, "deadlineAtMs"),
@@ -138,6 +174,16 @@ export class SecretInputPresentations {
 				type: "secret_input_notice_settled",
 				outcome: Reflect.get(record, "outcome"),
 			});
+	}
+	private available(owner: SecretOwner): boolean {
+		return (
+			(owner.raiser && this.live(owner)) ||
+			[...owner.sealed].some((holder) => this.sealedSource?.current(holder) === true)
+		);
+	}
+	private holderConnections(owner: SecretOwner): string[] {
+		const source = this.sealedSource;
+		return source ? [...owner.sealed].map((holder) => source.connectionOf(holder)) : [];
 	}
 	private local(connection: string): boolean {
 		return !this.locality.isRemote(connection);

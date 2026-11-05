@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, type KeyObject } from "node:crypto";
 import {
 	armSecretInputDeadline,
 	isSecretInputValue,
@@ -7,6 +7,8 @@ import {
 	type SecretInputUnavailableReason,
 } from "../../core/extensions/secret-input.ts";
 import type { ExtensionUIInputOptions } from "../../core/extensions/types.ts";
+import type { SealedSecretOffer } from "./secret-sealed-holders.ts";
+import { generateSecretRequestKey } from "./secret-sealed.ts";
 import {
 	answeredUiRequestId,
 	refusedExtensionUiResponse,
@@ -23,10 +25,16 @@ export interface SecretInputRoute {
 	settled(id: string): void;
 	forget(id: string): void;
 	handshake?(capabilities: readonly string[]): void;
+	/** The request has sealed holders (D11 secret phase 5.2); only an in-process route can. */
+	sealed?(id: string): boolean;
+	/** Signs the request for its sealed holders and sends it to each (4.3). */
+	offerSealed?(id: string, offer: Omit<SealedSecretOffer, "uiRequestId">): void;
 }
 
 interface Pending {
 	readonly deadline: number;
+	/** The request's private X25519 key while it has sealed holders; dropped with the entry (design 4.1, 8.2). */
+	readonly key?: KeyObject;
 	finish(outcome: SecretInputOutcome, value?: string): void;
 }
 
@@ -60,7 +68,8 @@ export class SecretInputRequests {
 				this.route.settled(id);
 				resolve(value);
 			};
-			this.pending.set(id, { deadline, finish });
+			const key = this.route.sealed?.(id) === true ? generateSecretRequestKey() : undefined;
+			this.pending.set(id, { deadline, finish, ...(key === undefined ? {} : { key: key.privateKey }) });
 			opts?.signal?.addEventListener("abort", onAbort, { once: true });
 			disarm = armSecretInputDeadline(deadline, () => finish("timed_out"));
 			if (opts?.signal?.aborted) return finish("cancelled");
@@ -76,6 +85,8 @@ export class SecretInputRequests {
 				...(opts?.toolCallId === undefined ? {} : { toolCallId: opts.toolCallId }),
 				...(opts?.parentToolCallId === undefined ? {} : { parentToolCallId: opts.parentToolCallId }),
 			});
+			if (key !== undefined)
+				this.route.offerSealed?.(id, { hpkePk: key.hpkePk, title, placeholder, deadlineAtMs: deadline });
 		});
 	}
 

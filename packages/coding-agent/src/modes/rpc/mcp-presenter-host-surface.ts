@@ -1,5 +1,6 @@
 import type { McpFormBinding } from "../../core/mcp-form-types.ts";
 import type { McpPresenterAuthority, McpPresenterConnection } from "./mcp-presenter-authority.ts";
+import type { SealedSecretSource } from "./secret-sealed-holders.ts";
 
 /**
  * What the presenter control endpoint needs from the host that carries the sessions (senpi#4249, D11 2.9).
@@ -15,6 +16,8 @@ export interface PresenterHostSurface {
 	getConnectionCapabilities(id: string): readonly string[] | undefined;
 	advertiseMcpPresenterControl(path: string): void;
 	withdrawMcpPresenterControl(path: string): void;
+	/** Lets in-process secret prompts reach sealed holders (D11 secret phase 5.2); returns the detach function. */
+	attachSealedSecrets?(source: SealedSecretSource): () => void;
 }
 
 /**

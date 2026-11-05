@@ -22,8 +22,8 @@ export { MAX_SHARED_STDIO_QUEUE_BYTES, MAX_SHARED_STDIO_QUEUE_RECORDS } from "./
  * scheduling boundary and violate D9.
  */
 export class SessionEventWriter extends SessionEventWriterDestinations {
-	secretInputRoute(sessionId: string): SecretInputRoute {
-		return this.secretPresentations.route(sessionId);
+	secretInputRoute(sessionId: string, sealed = false): SecretInputRoute {
+		return this.secretPresentations.route(sessionId, sealed);
 	}
 	setSoleSecretCapabilities(capabilities: readonly string[]): void {
 		this.secretPresentations.handshake(capabilities);

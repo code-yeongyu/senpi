@@ -3,6 +3,7 @@ import { isRecord } from "../../core/extensions/builtin/mcp/modern/form-schema.t
 import type { McpFormBinding } from "../../core/mcp-form-types.ts";
 import type { PresenterAccountAuthority, SecretHostProof } from "./mcp-presenter-account.ts";
 import { boundedClaim, presenterKeyThumbprint } from "./mcp-presenter-attestation.ts";
+import { type SecretBinding, secretRequestTranscript } from "./secret-sealed.ts";
 
 /**
  * Host tokens of the sealed secret route (D11 secret phase, section 3). One in-memory Ed25519 host key per host
@@ -66,8 +67,12 @@ export class SecretHostTokens {
 	private readonly authority: SecretAuthority;
 	private readonly privateKey: KeyObject;
 	private readonly spki: Buffer;
-	private readonly jkt: string;
+	/** The host key as 0022 puts it on the wire: the raw 32 bytes, unpadded base64url (`hostPk`). */
+	readonly hostPk: string;
+	/** Its RFC 7638 OKP thumbprint: the host token's `cnf.jkt` and `B`'s `hostJkt`. */
+	readonly hostJkt: string;
 	private readonly entries = new Map<string, Entry>();
+	private readonly listeners = new Set<(durableSessionId: string, token: SecretHostToken) => void>();
 	private disposed = false;
 
 	/** `undefined` unless the authority can both mint host tokens and verify step-up tokens: then no key exists. */
@@ -83,7 +88,8 @@ export class SecretHostTokens {
 		this.spki = publicKey.export({ type: "spki", format: "der" });
 		const jkt = presenterKeyThumbprint(this.spki);
 		if (jkt === undefined) throw new Error("secret_host_key_unavailable");
-		this.jkt = jkt;
+		this.hostJkt = jkt;
+		this.hostPk = this.spki.subarray(12).toString("base64url");
 	}
 
 	/**
@@ -119,7 +125,23 @@ export class SecretHostTokens {
 		return token !== undefined && Date.now() < token.exp * 1000 && token.acc === this.authority.hostAccount();
 	}
 
+	/**
+	 * The host key's signature over a request binding, as 128 lowercase hex characters (0022 3.5). It signs only a `B`
+	 * naming this host instance and this key, so the key signs nothing outside the request domain for another host.
+	 */
+	signRequest(binding: SecretBinding): string {
+		if (binding[1] !== this.hostInstance || binding[2] !== this.hostJkt) throw new Error("secret_request_foreign");
+		return sign(null, Buffer.from(secretRequestTranscript(binding)), this.privateKey).toString("hex");
+	}
+
+	/** Fires after every successful mint or re-mint, so pending sealed requests can carry the new token (3.2). */
+	onToken(listener: (durableSessionId: string, token: SecretHostToken) => void): () => void {
+		this.listeners.add(listener);
+		return () => this.listeners.delete(listener);
+	}
+
 	dispose(): void {
+		this.listeners.clear();
 		this.disposed = true;
 		for (const [durableSessionId, entry] of [...this.entries]) this.drop(durableSessionId, entry);
 	}
@@ -143,7 +165,7 @@ export class SecretHostTokens {
 				"omo-secret-host-proof/v1",
 				issuer,
 				HOST_TOKEN_AUDIENCE,
-				this.jkt,
+				this.hostJkt,
 				nonce,
 				this.hostInstance,
 				durableSessionId,
@@ -177,6 +199,7 @@ export class SecretHostTokens {
 		const token = typeof minted === "string" ? this.accept(minted, durableSessionId) : undefined;
 		if (token) {
 			entry.token = token;
+			for (const listener of [...this.listeners]) listener(durableSessionId, token);
 			this.arm(durableSessionId, entry, ((token.exp * 1000 - Date.now()) * 2) / 3);
 			return;
 		}
@@ -198,7 +221,7 @@ export class SecretHostTokens {
 			typ !== HOST_TOKEN_TYPE ||
 			hin !== this.hostInstance ||
 			sid !== durableSessionId ||
-			claims.cnf.jkt !== this.jkt ||
+			claims.cnf.jkt !== this.hostJkt ||
 			typeof acc !== "string" ||
 			acc !== this.authority.hostAccount() ||
 			typeof dev !== "string" ||
