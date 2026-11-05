@@ -6,6 +6,7 @@
  * rewrite can be held at a barrier between the store's checks and its file write.
  */
 import { chmodSync, renameSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { createInterface } from "node:readline";
 import { createJsonlImporter } from "../../src/core/session-import/jsonl-import.ts";
 import { holdSessionFile, type SessionHold } from "../../src/core/session-holders.ts";
@@ -55,7 +56,7 @@ async function adopt(next: SessionManager, agentDir: string): Promise<void> {
 	next.onProjectionWarning((warning) => warnings.push(`${warning.code}: ${warning.message}`));
 	if (!onBun) return;
 	const { openDefaultSessionStore } = await import("../../src/core/session-store/default-store.ts");
-	bound = await openDefaultSessionStore({ agentDir, sessionId: next.getSessionId() });
+	bound = await openDefaultSessionStore({ agentDir, sessionDir: dirname(file), sessionId: next.getSessionId() });
 	await next.bindDurableStore({
 		...bound,
 		files: {
