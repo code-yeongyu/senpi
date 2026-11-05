@@ -18,6 +18,7 @@ import {
 	permissionRequestsFor,
 	toolOwnedPermissionRequests,
 } from "./parsers.ts";
+import { sharedPathIdentityResolver } from "./path-identity-host.ts";
 import { registerPermissionPresetReader } from "./preset-registry.ts";
 import { showPermissionPrompt } from "./prompt.ts";
 import { PermissionService } from "./service.ts";
@@ -61,9 +62,17 @@ function denyReason(
 	settingsManager: SettingsManager | null,
 	cliRuleset: Ruleset,
 	request: Request,
+	service?: PermissionService,
 ): string {
 	if (settingsManager === null) return error.message;
-	const provenance = findDenyProvenance(settingsManager, cliRuleset, request.permission, request.patterns);
+	const matchesIdentity = service?.identityMatcher(request.permission, error.identity);
+	const provenance = findDenyProvenance(
+		settingsManager,
+		cliRuleset,
+		request.permission,
+		request.patterns,
+		matchesIdentity,
+	);
 	if (!provenance) return error.message;
 	const source = provenance.layer === "cli" ? "--permission" : `${provenance.layer} settings.json`;
 	// Only promise an unblock when no other layer still denies the call: naming the winning rule and
@@ -148,21 +157,46 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		type: "string",
 	});
 
+	// Boot point (senpi#5218): a session attaches at session_start; a runtime with no session attaches at
+	// the first tool call a context sees. Each context attaches once.
+	const attachedContexts = new WeakSet<object>();
+	// A context with no session manager is the runtime itself: one attach per runtime, keyed here.
+	const runtimeKey = {};
+	const contextKey = (ctx: ExtensionContext): object => ctx.sessionManager ?? runtimeKey;
+
 	pi.on("session_start", async (_event, ctx) => {
-		cellSession = ctx.sessionManager;
-		retireCellAuthorizers.get(ctx.sessionManager)?.();
+		attachedContexts.add(contextKey(ctx));
+		attach(ctx);
+		applyToolDenials();
+	});
+
+	// The active set is the session's tool projection, so a context with no session start skips that
+	// trim; its denied calls are still refused at tool_call.
+	const attachWithoutSession = (ctx: ExtensionContext): void => {
+		if (attachedContexts.has(contextKey(ctx))) return;
+		attachedContexts.add(contextKey(ctx));
+		try {
+			attach(ctx);
+		} catch {
+			// attach recorded the failure in setupError, which refuses this call and every later one.
+		}
+	};
+
+	const attach = (ctx: ExtensionContext): void => {
+		cellSession = contextKey(ctx);
+		retireCellAuthorizers.get(contextKey(ctx))?.();
 		retireCellAuthorizers.set(
-			ctx.sessionManager,
+			contextKey(ctx),
 			registerCellAuthorizer(
-				ctx.sessionManager,
+				contextKey(ctx),
 				createCellDecision(
 					() => {
 						followPresetFlag(ctx.cwd, ctx.agentDir);
 						return { service, parsers: parserRegistry, preset: activePreset, setupError };
 					},
-					(permission, patterns) => {
+					(permission, patterns, matchesIdentity) => {
 						const rule = activeSettingsManager
-							? findDenyProvenance(activeSettingsManager, cliRuleset, permission, patterns)
+							? findDenyProvenance(activeSettingsManager, cliRuleset, permission, patterns, matchesIdentity)
 							: undefined;
 						return rule ? { permission: rule.permission, pattern: rule.pattern, layer: rule.layer } : undefined;
 					},
@@ -171,10 +205,10 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 			),
 		);
 		// Registered before loading, so a failed load reports no preset instead of an older load's.
-		retirePresetReaders.get(ctx.sessionManager)?.();
+		retirePresetReaders.get(contextKey(ctx))?.();
 		retirePresetReaders.set(
-			ctx.sessionManager,
-			registerPermissionPresetReader(ctx.sessionManager, () => {
+			contextKey(ctx),
+			registerPermissionPresetReader(contextKey(ctx), () => {
 				followPresetFlag(ctx.cwd, ctx.agentDir);
 				return setupError === null ? (activePreset ?? undefined) : undefined;
 			}),
@@ -189,10 +223,9 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 			if (cellSession) updateCellEnforcement(cellSession, staticRuleset, activePreset, true);
 			throw error;
 		}
-		retireAuthorizers.get(ctx.sessionManager)?.();
-		retireAuthorizers.set(ctx.sessionManager, registerDispatchAuthorizer(ctx.sessionManager, dispatchAuthorizer));
-		applyToolDenials();
-	});
+		retireAuthorizers.get(contextKey(ctx))?.();
+		retireAuthorizers.set(contextKey(ctx), registerDispatchAuthorizer(contextKey(ctx), dispatchAuthorizer));
+	};
 
 	// `sessionApproved` carries this session's "Always" answers, not yet written to disk, across a reload.
 	const loadPermissionRules = (cwd: string, sessionApproved: Ruleset = [], agentDir?: string): void => {
@@ -220,6 +253,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		activePreset = loadedSettings.preset;
 		const approved = loadedSettings.approved;
 		parserRegistry = createBuiltinParserRegistry();
+		const previous = service;
 		service = new PermissionService(
 			staticRuleset,
 			[...approved, ...sessionApproved],
@@ -227,7 +261,9 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 			activePreset,
 			cwd,
 			agentDir,
+			sharedPathIdentityResolver(),
 		);
+		previous?.dispose();
 		if (cellSession) updateCellEnforcement(cellSession, staticRuleset, activePreset);
 	};
 
@@ -267,6 +303,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 	const dispatchAuthorizer = createDispatchAuthorizer(
 		pi,
 		(ctx) => {
+			attachWithoutSession(ctx);
 			followPresetFlag(ctx.cwd, ctx.agentDir);
 			return { service, parsers: parserRegistry, preset: activePreset, setupError };
 		},
@@ -278,6 +315,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		ctx: ExtensionContext,
 		signal?: AbortSignal,
 	): Promise<ToolCallEventResult | undefined> => {
+		attachWithoutSession(ctx);
 		followPresetFlag(ctx.cwd, ctx.agentDir);
 		if (setupError !== null) {
 			return { block: true, reason: `Permission setup failed: ${setupError}` };
@@ -307,8 +345,10 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 			return undefined;
 		}
 		const permissionRequests = permissionRequestsFor(getTools, parserRegistry, event.toolName, event.input, ctx.cwd);
-		const sessionID = ctx.sessionManager.getSessionId();
-		const approve = prepareMcpDispatchApproval(pi, event, ctx, dispatchAuthorizer);
+		const sessionID = ctx.sessionManager === undefined ? "" : ctx.sessionManager.getSessionId();
+		// The MCP dispatch approval is keyed by the session; a runtime with no session decides MCP calls here only.
+		const approve =
+			ctx.sessionManager === undefined ? undefined : prepareMcpDispatchApproval(pi, event, ctx, dispatchAuthorizer);
 
 		for (const permissionRequest of permissionRequests) {
 			const request: Request = {
@@ -336,6 +376,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 					approveBlanketAsk: auto?.approveBlanketAsk ?? false,
 					presetBound: callPreset === "auto",
 					...(permissionRequest.ruleAliases ? { ruleAliases: permissionRequest.ruleAliases } : {}),
+					...(permissionRequest.executed ? { executed: permissionRequest.executed } : {}),
 				})
 				.then(
 					() => ({ ok: true as const }),
@@ -350,7 +391,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 						block: true,
 						reason:
 							askResult.error instanceof DeniedError
-								? denyReason(askResult.error, activeSettingsManager, cliRuleset, request)
+								? denyReason(askResult.error, activeSettingsManager, cliRuleset, request, activeService)
 								: getReason(askResult.error),
 					};
 				}
@@ -383,7 +424,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 					block: true,
 					reason:
 						askResult.error instanceof DeniedError
-							? denyReason(askResult.error, activeSettingsManager, cliRuleset, request)
+							? denyReason(askResult.error, activeSettingsManager, cliRuleset, request, activeService)
 							: getReason(askResult.error),
 				};
 			}
@@ -409,15 +450,21 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 			return;
 		}
 
-		const approved = service
-			.getSessionApproved()
-			.filter((rule) => !persistedAtAnswer.has(`${rule.permission}:${rule.pattern}`));
-		if (approved.length > 0) {
-			appendApproved(ctx.agentDir, ctx.cwd, approved);
-		}
+		// The shared resolver outlives this extension generation, so its hold on the service is released
+		// whatever persisting the answers or rejecting the open requests does.
+		try {
+			const approved = service
+				.getSessionApproved()
+				.filter((rule) => !persistedAtAnswer.has(`${rule.permission}:${rule.pattern}`));
+			if (approved.length > 0) {
+				appendApproved(ctx.agentDir, ctx.cwd, approved);
+			}
 
-		for (const pendingRequest of service.list()) {
-			service.reply({ requestID: pendingRequest.id, reply: "reject" });
+			for (const pendingRequest of service.list()) {
+				service.reply({ requestID: pendingRequest.id, reply: "reject" });
+			}
+		} finally {
+			service.dispose();
 		}
 	});
 }

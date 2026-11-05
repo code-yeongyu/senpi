@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
-import { applyAccountOrder } from "@earendil-works/pi-ai/auth/pool/select";
 import { activeModelBlockUntil, pruneModelBlocks } from "../../../credential-pool/model-scope.ts";
+import { roundRobinState } from "../../../credential-pool/round-robin-state.ts";
+import { type AccountStrategy, orderAccounts, preferHeadroom } from "../../../credential-pool/selection-order.ts";
+import { subscriptionLimits } from "../../../subscription-limits/limit-store.ts";
 import type { AccountSlot } from "./accounts.ts";
 
 export const DEFAULT_AFFINITY_KEY = "claude-sdk-oauth-default";
@@ -20,6 +22,7 @@ export type AffinityOptions = {
 	readonly accountFallback?: boolean;
 	/** The user's account order (senpi#3591): tried after the pin and the session's own account, before HRW. */
 	accountOrder?: readonly string[];
+	readonly accountStrategy?: AccountStrategy;
 	now?: number;
 	/** The requested model; an account blocked only for another model stays eligible for it. */
 	model?: string;
@@ -39,6 +42,19 @@ export type UnavailableAccount = {
 /** The origin of an account pin, highest precedence first (`resolveClaudeAccountPin`). */
 export type PinSource = "cli" | "settings" | "stored";
 
+/** One pool member's state when the pool refused a request: why it is out, and until when. */
+export type BlockedAccountState = {
+	readonly name: string;
+	readonly reason: string;
+	readonly until: number | undefined;
+};
+
+function describeAccountState(state: BlockedAccountState): string {
+	const until = state.until === undefined ? "re-login" : new Date(state.until).toISOString();
+	const login = state.reason === "auth_error" ? ` (run /login anthropic-subscription for ${state.name})` : "";
+	return `${state.name}: ${state.reason} until ${until}${login}`;
+}
+
 export class AllAccountsBlockedError extends Error {
 	readonly soonestUnblockAt: number | undefined;
 	/**
@@ -57,26 +73,39 @@ export class AllAccountsBlockedError extends Error {
 	readonly limitedModel: string | undefined;
 	/** Set only when account fallback is off, so the guidance names that account instead of the whole pool. */
 	readonly unavailableAccount: UnavailableAccount | undefined;
+	/** Every candidate's state, so the error names which account needs /login and which waits on a reset (senpi#4671). */
+	readonly accounts: readonly BlockedAccountState[];
+	/**
+	 * When the pool waits only on rate limits, the soonest of them; else undefined (senpi#3975). Accounts out
+	 * for billing, organization, or authentication cannot serve until someone acts, so they are not counted;
+	 * every other account must be rate-limited (account-wide or on the requested model), and an unknown block
+	 * is not a rate limit. A billing deadline is a re-probe time, never the pool's reset.
+	 */
+	readonly rateLimitedUntil: number | undefined;
 
 	constructor(
 		soonestUnblockAt: number | undefined,
 		blockReason?: "auth_error",
 		limitedModel?: string,
 		unavailableAccount?: UnavailableAccount,
+		accounts: readonly BlockedAccountState[] = [],
+		rateLimitedUntil?: number,
 	) {
 		const until = soonestUnblockAt === undefined ? undefined : new Date(soonestUnblockAt).toISOString();
-		super(
+		const summary =
 			limitedModel !== undefined && until !== undefined
 				? `All Anthropic Subscription accounts have hit the usage limit for model ${limitedModel} until ${until}.`
 				: until === undefined
 					? "All Anthropic Subscription accounts are blocked until re-login."
-					: `All Anthropic Subscription accounts are blocked until ${until}.`,
-		);
+					: `All Anthropic Subscription accounts are blocked until ${until}.`;
+		super(accounts.length === 0 ? summary : `${summary} Accounts: ${accounts.map(describeAccountState).join("; ")}.`);
+		this.accounts = accounts;
 		this.limitedModel = limitedModel;
 		this.name = "AllAccountsBlockedError";
 		this.soonestUnblockAt = soonestUnblockAt;
 		this.blockReason = blockReason;
 		this.unavailableAccount = unavailableAccount;
+		this.rateLimitedUntil = rateLimitedUntil;
 	}
 }
 
@@ -99,7 +128,8 @@ export function rendezvousOrder(key: string, accounts: readonly AccountSlot[]): 
 		.map(({ account }) => account);
 }
 
-function isAccountBlocked(account: AccountSlot, now: number): boolean {
+/** Account-level block for selection; an auth block with no deadline or a passed one is re-probed (senpi#3264). */
+export function isAccountBlocked(account: Pick<AccountSlot, "blockedUntil">, now: number): boolean {
 	return account.blockedUntil !== undefined && account.blockedUntil > now;
 }
 
@@ -117,7 +147,13 @@ export function clearExpiredBlocks(accounts: readonly AccountSlot[], now = Date.
 	return accounts.map((account) => {
 		let available = account;
 		if (account.blockReason !== undefined && (account.blockedUntil === undefined || account.blockedUntil <= now)) {
-			const { blockedUntil: _blockedUntil, blockReason: _blockReason, blockedAt: _blockedAt, ...rest } = account;
+			const {
+				blockedUntil: _blockedUntil,
+				blockReason: _blockReason,
+				blockedAt: _blockedAt,
+				authVerdict: _authVerdict,
+				...rest
+			} = account;
 			available = rest;
 		}
 		if (available.modelBlocks === undefined) return available;
@@ -131,6 +167,7 @@ function selectUnblocked(
 	accounts: readonly AccountSlot[],
 	options: AffinityOptions,
 	now: number,
+	roundRobinOffset = 0,
 ): AccountSlot | undefined {
 	const pinned =
 		options.pinnedAccount === undefined
@@ -141,10 +178,14 @@ function selectUnblocked(
 		options.preferredAccount === undefined
 			? undefined
 			: accounts.find((account) => account.name === options.preferredAccount);
-	if (preferred && !isBlockedFor(preferred, now, options.model)) return preferred;
-	return applyAccountOrder(options.accountOrder, rendezvousOrder(getAffinityKey(options), accounts)).find(
-		(account) => !isBlockedFor(account, now, options.model),
-	);
+	const usable = orderAccounts(
+		accounts,
+		rendezvousOrder(getAffinityKey(options), accounts),
+		options.accountOrder,
+		options.accountStrategy,
+		roundRobinOffset,
+	).filter((account) => !isBlockedFor(account, now, options.model));
+	return preferHeadroom(usable, "anthropic-subscription", subscriptionLimits.snapshot(), now, preferred?.name)[0];
 }
 
 function unblockAt(account: AccountSlot, now: number, model: string | undefined): number | undefined {
@@ -166,6 +207,29 @@ function soonestUnblockAt(
 	return candidates.length === 0 ? undefined : Math.min(...candidates);
 }
 
+/** Account blocks that need the user (top-up, organization access, a new login), not a wait. */
+const OUT_OF_POOL_REASONS: ReadonlySet<string> = new Set(["billing", "org_not_allowed", "auth_error"]);
+
+function poolRateLimitedUntil(
+	accounts: readonly AccountSlot[],
+	now: number,
+	model: string | undefined,
+): number | undefined {
+	const waiting = accounts.filter(
+		(account) => !(isAccountBlocked(account, now) && OUT_OF_POOL_REASONS.has(account.blockReason ?? "")),
+	);
+	const resets: number[] = [];
+	for (const account of waiting) {
+		const rateLimited = isAccountBlocked(account, now)
+			? account.blockReason === "rate_limit"
+			: activeModelBlockUntil(account.modelBlocks, model, now) !== undefined;
+		const until = unblockAt(account, now, model);
+		if (!rateLimited || until === undefined) return undefined;
+		resets.push(until);
+	}
+	return resets.length === 0 ? undefined : Math.min(...resets);
+}
+
 function limitedModel(accounts: readonly AccountSlot[], now: number, model: string | undefined): string | undefined {
 	const modelOnly = accounts.some(
 		(account) =>
@@ -174,8 +238,16 @@ function limitedModel(accounts: readonly AccountSlot[], now: number, model: stri
 	return modelOnly ? model : undefined;
 }
 
-/** Selects a pinned or HRW-ranked account with no provider-global selection state. */
-export function selectAccount(accounts: readonly AccountSlot[], options: AffinityOptions = {}): AccountSlot {
+/** Selects a pinned, resident, or strategy-ranked account; only round-robin holds a distribution cursor. */
+export function selectAccount(accounts: readonly AccountSlot[], requestedOptions: AffinityOptions = {}): AccountSlot {
+	const roundRobin =
+		requestedOptions.accountStrategy === "round-robin"
+			? roundRobinState.session("anthropic-subscription", getAffinityKey(requestedOptions))
+			: undefined;
+	const options =
+		roundRobin?.account !== undefined && requestedOptions.preferredAccount === undefined
+			? { ...requestedOptions, preferredAccount: roundRobin.account }
+			: requestedOptions;
 	const now = options.now ?? Date.now();
 	let candidates = accounts;
 	let unavailableAccount: UnavailableAccount | undefined;
@@ -183,7 +255,13 @@ export function selectAccount(accounts: readonly AccountSlot[], options: Affinit
 		const name =
 			options.pinnedAccount ??
 			options.preferredAccount ??
-			applyAccountOrder(options.accountOrder, rendezvousOrder(getAffinityKey(options), accounts))[0]?.name;
+			orderAccounts(
+				accounts,
+				rendezvousOrder(getAffinityKey(options), accounts),
+				options.accountOrder,
+				options.accountStrategy,
+				roundRobin?.offset,
+			)[0]?.name;
 		candidates = accounts.filter((account) => account.name === name);
 		const pinnedBy = options.pinnedAccount !== undefined ? options.pinSource : undefined;
 		if (name !== undefined)
@@ -193,14 +271,20 @@ export function selectAccount(accounts: readonly AccountSlot[], options: Affinit
 				...(pinnedBy === undefined ? {} : { pinnedBy }),
 			};
 	}
-	const selected = selectUnblocked(candidates, options, now);
-	if (selected) return selected;
+	const selected = selectUnblocked(candidates, options, now, roundRobin?.offset);
+	if (selected) {
+		if (roundRobin !== undefined) roundRobin.account = selected.name;
+		return selected;
+	}
 
 	// A stale persisted rate-limit entry must not dead-end the pool. Retry once
 	// against the cleared view before reporting the earliest available account.
 	const cleared = clearExpiredBlocks(candidates, now);
-	const afterClear = selectUnblocked(cleared, options, now);
-	if (afterClear) return afterClear;
+	const afterClear = selectUnblocked(cleared, options, now, roundRobin?.offset);
+	if (afterClear) {
+		if (roundRobin !== undefined) roundRobin.account = afterClear.name;
+		return afterClear;
+	}
 	throw new AllAccountsBlockedError(
 		soonestUnblockAt(candidates, now, options.model),
 		candidates.length > 0 && candidates.every((account) => account.blockReason === "auth_error")
@@ -208,5 +292,11 @@ export function selectAccount(accounts: readonly AccountSlot[], options: Affinit
 			: undefined,
 		limitedModel(candidates, now, options.model),
 		unavailableAccount,
+		candidates.map((account) => ({
+			name: account.name,
+			reason: account.blockReason ?? (isAccountBlocked(account, now) ? "blocked" : "model_limit"),
+			until: unblockAt(account, now, options.model),
+		})),
+		poolRateLimitedUntil(candidates, now, options.model),
 	);
 }

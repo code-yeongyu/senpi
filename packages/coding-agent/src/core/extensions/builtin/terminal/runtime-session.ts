@@ -54,6 +54,7 @@ export class TerminalRuntimeSession {
 	private droppedChars = 0;
 	private consumed = 0;
 	private readonly outputListeners = new Set<(chunk: string) => void>();
+	private readonly disposeListeners = new Set<() => void>();
 	private unsubscribeData: (() => void) | null = null;
 
 	constructor(command: string, options: TerminalRuntimeOptions) {
@@ -167,6 +168,12 @@ export class TerminalRuntimeSession {
 		return () => this.outputListeners.delete(listener);
 	}
 
+	/** Called once when the wrapper is disposed (registry eviction or teardown). */
+	onDispose(listener: () => void): () => void {
+		this.disposeListeners.add(listener);
+		return () => this.disposeListeners.delete(listener);
+	}
+
 	/** Return output produced since the last read and advance the read cursor. */
 	readDelta(): DeltaRead {
 		const start = Math.max(this.consumed, this.droppedChars);
@@ -215,5 +222,8 @@ export class TerminalRuntimeSession {
 		this.outputListeners.clear();
 		this.screen?.dispose();
 		this.screen = null;
+		const disposeListeners = [...this.disposeListeners];
+		this.disposeListeners.clear();
+		for (const listener of disposeListeners) listener();
 	}
 }

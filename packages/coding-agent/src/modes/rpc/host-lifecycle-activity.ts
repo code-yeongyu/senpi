@@ -9,7 +9,8 @@ import type { Duplex } from "node:stream";
 import { ClientOccupancy } from "./host-client-occupancy.ts";
 import { type HostLifetimeOwner, hostOwnerGone, readHostOwner, sameHostOwner } from "./host-daemon-state.ts";
 import { type HostActivity, IdleExitDecider, type IdleExitDecision } from "./host-lifecycle-policy.ts";
-import { SessionRunActivity } from "./host-run-activity.ts";
+import { holdIdleExitForSettling, SessionRunActivity } from "./host-run-activity.ts";
+import { supervisorLog } from "./host-supervisor-log.ts";
 import { connectInternalConnection } from "./internal-channel.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
 import { activeTurnsForIdleDecision, createObserverLink, type ObserverLink } from "./observer-link.ts";
@@ -37,7 +38,7 @@ export const INTERNAL_OBSERVER_HANDSHAKE_MS = 5_000;
 export class SupervisorActivity {
 	readonly decider: IdleExitDecider;
 	readonly clients: ClientOccupancy;
-	private readonly runs = new SessionRunActivity();
+	private readonly runs: SessionRunActivity;
 	private readonly observerLink: ObserverLink;
 	private observerSocket: Duplex | undefined;
 	private readonly options: SupervisorActivityOptions;
@@ -48,6 +49,14 @@ export class SupervisorActivity {
 		// during startup asks for the activity snapshot, and a successor's first `open_session` once
 		// failed on a binding read before its initializer ran.
 		this.decider = new IdleExitDecider(options.idleExitMs);
+		// A settled session's agent_settled handlers hold idle exit for at most one idle window (omo#11419).
+		this.runs = new SessionRunActivity({
+			settleHoldMs: options.idleExitMs,
+			onSettleHoldExpired: (sessionId, heldMs) =>
+				supervisorLog(
+					`session ${sessionId} settled ${heldMs} ms ago and its agent_settled extension handlers have not finished; idle exit no longer waits for them`,
+				),
+		});
 		this.clients = new ClientOccupancy(() => this.refresh(), options.instanceId);
 		this.observerLink = createObserverLink({
 			open: () => this.connectObserver(),
@@ -79,7 +88,7 @@ export class SupervisorActivity {
 		const current = this.current();
 		if (current.connections > 0 || current.activeTurns > 0 || this.clients.unclassifiedCount > 0)
 			this.options.onActivity?.();
-		return this.decider.update(current);
+		return holdIdleExitForSettling(this.decider.update(current), this.runs);
 	}
 
 	/** Owner death never turns an unknown observer snapshot into permission to stop a turn. */
@@ -87,6 +96,7 @@ export class SupervisorActivity {
 		return (
 			this.observerLink.healthy() &&
 			this.runs.busySessions === 0 &&
+			this.runs.settlingSessions === 0 &&
 			this.clients.attachedCount === 0 &&
 			this.clients.unclassifiedCount === 0
 		);
@@ -142,8 +152,7 @@ export class SupervisorActivity {
 
 /** Continuous quiet time, in addition to attach holds and confirmed owner death (#3044). */
 export const OWNER_EXIT_GRACE_MS = 2_000;
-/** The owner-death probe backs off to this, so an observation can lag the death by at most one interval. */
-export const OWNER_PROBE_MAX_INTERVAL_MS = 5_000;
+const OWNER_PROBE_MAX_INTERVAL_MS = 5_000;
 
 /**
  * Fresh starts inherit an event-loop pipe on POSIX and Windows. An existing supervisor cannot
@@ -158,8 +167,6 @@ export class SupervisorOwner {
 	private nextProbeAt = 0;
 	private probeIntervalMs = 1_000;
 	private gone = false;
-	/** When this supervisor OBSERVED its owner gone: its own clocks, so a reader never mixes in a client's. */
-	private goneAt: { readonly monotonicMs: number; readonly wallMs: number } | undefined;
 	private revision = 0;
 	private stopped = false;
 	private readonly idle = new IdleExitDecider(OWNER_EXIT_GRACE_MS, () => performance.now());
@@ -178,7 +185,7 @@ export class SupervisorOwner {
 			const bound = this.owner;
 			let failed = false;
 			const eof = (): void => {
-				if (!failed && !this.stopped && sameHostOwner(this.owner, bound)) this.markGone();
+				if (!failed && !this.stopped && sameHostOwner(this.owner, bound)) this.gone = true;
 			};
 			pipe.once("end", eof);
 			// Windows may report a clean close without an end; an errored pipe remains unknown.
@@ -203,7 +210,6 @@ export class SupervisorOwner {
 			this.pipe?.destroy();
 			this.pipe = undefined;
 			this.gone = false;
-			this.goneAt = undefined;
 			this.nextProbeAt = 0;
 			this.probeIntervalMs = 1_000;
 			this.activity();
@@ -238,11 +244,17 @@ export class SupervisorOwner {
 		if (!this.watcher) await this.reload();
 		const owner = this.owner;
 		const revision = this.revision;
-		if (owner != null && !this.pipe && !this.gone && performance.now() >= this.nextProbeAt) {
+		// Bun can leave the inherited pipe silent after its writer dies (#4845). Reparenting
+		// re-enables the OS-identity check; it never bypasses ownership or the quiet-state gate.
+		if (
+			owner != null &&
+			(!this.pipe || process.ppid !== owner.pid) &&
+			!this.gone &&
+			performance.now() >= this.nextProbeAt
+		) {
 			const gone = await hostOwnerGone(owner);
 			if (this.stopped || revision !== this.revision) return false;
-			if (gone) this.markGone();
-			else this.gone = false;
+			this.gone = gone;
 			this.nextProbeAt = performance.now() + this.probeIntervalMs;
 			this.probeIntervalMs = Math.min(OWNER_PROBE_MAX_INTERVAL_MS, this.probeIntervalMs * 2);
 		}
@@ -251,27 +263,7 @@ export class SupervisorOwner {
 		// fs.watch may lag a new owner's atomic write. Its ensure holds a connection until this
 		// publication, so re-read the record AND occupancy before authorizing synchronous shutdown.
 		const current = await readHostOwner(this.generationDir);
-		if (this.stopped || revision !== this.revision) return false;
-		// `fs.watch` can also DROP that write entirely (senpi#4629 measured the same loss in a test
-		// wait on this machine class). Refusing on the mismatch alone left this supervisor bound to a
-		// dead predecessor forever: it never adopted the replacement, so the replacement's own death
-		// could not end the generation and the host outlived its owner until the idle window. Adopt
-		// the record here - the watcher stays the fast path - and decide for the real owner next tick.
-		if (!sameHostOwner(owner, current)) {
-			await this.reload();
-			return false;
-		}
-		return activity.quiescent();
-	}
-
-	/** First observation wins: a later probe confirming the same death must not restart the measurement. */
-	private markGone(): void {
-		this.gone = true;
-		this.goneAt ??= { monotonicMs: performance.now(), wallMs: Date.now() };
-	}
-
-	observedGoneAt(): { readonly monotonicMs: number; readonly wallMs: number } | undefined {
-		return this.goneAt;
+		return !this.stopped && revision === this.revision && sameHostOwner(owner, current) && activity.quiescent();
 	}
 
 	stop(): void {

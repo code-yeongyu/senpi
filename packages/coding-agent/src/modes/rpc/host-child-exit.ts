@@ -31,12 +31,7 @@ export interface ChildExitContext {
 	readonly signal: NodeJS.Signals | null;
 	readonly childStartedAt: number;
 	/** Set while the supervisor is shutting down: the stop is the engine's even without an intent file. */
-	readonly shutdown?: {
-		readonly reason: string;
-		readonly supervisor: HostStopSender;
-		/** Owner-death stops only: the supervisor's own observation instant and its decision latency. */
-		readonly ownerGone?: { readonly at: string; readonly decisionDelayMs: number };
-	};
+	readonly shutdown?: { readonly reason: string; readonly supervisor: HostStopSender };
 	readonly now?: number;
 }
 
@@ -64,23 +59,15 @@ export async function noteChildExit(context: ChildExitContext): Promise<void> {
 	}).catch(() => undefined);
 }
 
-type ExitOutcome = Pick<
-	HostCrashRecord,
-	"detection" | "sender" | "chain" | "reason" | "stopIntent" | "ownerGoneAt" | "decisionDelayMs"
->;
+type ExitOutcome = Pick<HostCrashRecord, "detection" | "sender" | "chain" | "reason" | "stopIntent">;
 
 function describeExit(context: ChildExitContext, intent: HostStopIntent | undefined): ExitOutcome | undefined {
-	// The supervisor writes its own stop intent before signalling the child, so an owner-death stop
-	// arrives here through the INTENT branch; the latency belongs on the record either way.
-	const ownerGone = context.shutdown?.ownerGone;
-	const latency = ownerGone ? { ownerGoneAt: ownerGone.at, decisionDelayMs: ownerGone.decisionDelayMs } : {};
 	if (intent !== undefined) {
 		return {
 			detection: "engine_stop",
 			sender: intent.sender,
 			...(intent.chain ? { chain: intent.chain } : {}),
 			reason: intent.reason,
-			...latency,
 			stopIntent: true,
 		};
 	}
@@ -89,7 +76,6 @@ function describeExit(context: ChildExitContext, intent: HostStopIntent | undefi
 			detection: "engine_stop",
 			sender: context.shutdown.supervisor,
 			reason: context.shutdown.reason,
-			...latency,
 			stopIntent: false,
 		};
 	}

@@ -61,7 +61,7 @@ describe("monitor permission parser: approved parent", () => {
 
 		// then
 		expect(getApprovedMonitorParent(input)).toBe(parent);
-		expect(requests[0]).toEqual({ permission: "read", patterns: [target], always: [target] });
+		expect(requests[0]).toEqual({ permission: "read", patterns: [target], always: [target], executed: [target] });
 	});
 
 	it("resolves a relative monitor path against the cwd", () => {

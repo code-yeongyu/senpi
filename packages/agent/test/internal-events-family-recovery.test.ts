@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { stream as streamDevin } from "../../ai/src/api/devin-agent.ts";
 import { getAssistantCapture } from "../../ai/src/utils/assistant-capture.ts";
 import { closeStubServers, frame, MODEL, serveEdge, trailer } from "../../ai/test/devin-agent-stream-harness.ts";
-import { Agent } from "../src/agent.ts";
+import { Agent } from "../src/index.ts";
 import { type OrderedAgentRecord, createInternalAgentChannel } from "../src/internal-events.ts";
 
 afterEach(closeStubServers);

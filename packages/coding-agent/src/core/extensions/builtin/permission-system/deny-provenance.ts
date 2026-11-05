@@ -1,5 +1,6 @@
 import type { SettingsManager } from "../../../settings-manager.ts";
 import { fromConfig } from "./config.ts";
+import type { IdentityMatcher } from "./evaluate.ts";
 import type { PermissionConfig, Ruleset } from "./types.ts";
 import { Wildcard } from "./wildcard.ts";
 
@@ -9,6 +10,7 @@ export function findDenyProvenance(
 	cliRuleset: Ruleset,
 	permission: string,
 	patterns: readonly string[],
+	matchesIdentity?: IdentityMatcher,
 ):
 	| {
 			layer: "global" | "project" | "cli";
@@ -23,11 +25,12 @@ export function findDenyProvenance(
 			(rule) =>
 				rule.action === "deny" &&
 				Wildcard.match(permission, rule.permission) &&
-				patterns.some(
+				(patterns.some(
 					(value) =>
 						Wildcard.match(value, rule.pattern) ||
 						(rule.pattern.endsWith(" *") && Wildcard.match(value, rule.pattern.slice(0, -2))),
-				),
+				) ||
+					(matchesIdentity?.(rule.pattern) ?? false)),
 		);
 	const globalPermission = (settingsManager.getGlobalSettings() as { permission?: PermissionConfig }).permission;
 	const globalMatches = matches(globalPermission ? fromConfig(globalPermission) : []);
