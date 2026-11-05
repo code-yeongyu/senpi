@@ -1,13 +1,16 @@
-// One process opening a store file once every go-file appears: prints "ok" or the error message.
-import { existsSync } from "node:fs";
+// Opens a store file when its parent writes a line to stdin: prints "start", then "ok <ms>" or "ERR <ms> <message>".
+import { createInterface } from "node:readline";
 import { openStoreFile } from "../src/sqlite-file.ts";
 
-const [path, go] = process.argv.slice(2);
-if (path === undefined || go === undefined) throw new Error("usage: <store path> <go file>");
-while (!existsSync(go)) await Bun.sleep(1);
+const [path] = process.argv.slice(2);
+if (path === undefined) throw new Error("usage: <store path>");
+await createInterface({ input: process.stdin })[Symbol.asyncIterator]().next();
+console.log("start");
+const started = Date.now();
 try {
 	openStoreFile(path).db.close();
-	console.log("ok");
+	console.log(`ok ${Date.now() - started}`);
 } catch (error) {
-	console.log(`ERR ${error instanceof Error ? error.message : String(error)}`);
+	console.log(`ERR ${Date.now() - started} ${error instanceof Error ? error.message : String(error)}`);
 }
+process.exit(0);

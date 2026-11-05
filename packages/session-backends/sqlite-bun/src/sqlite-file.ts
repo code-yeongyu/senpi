@@ -1,5 +1,3 @@
-import { randomUUID } from "node:crypto";
-import { existsSync, linkSync, rmSync } from "node:fs";
 import { Database, type Statement } from "bun:sqlite";
 import type { StoreValue } from "@earendil-works/pi-agent-core/conformance";
 
@@ -31,28 +29,26 @@ export interface StoreStatements {
 	readonly deleteAllDocuments: Statement<never>;
 }
 
+const BUSY_TIMEOUT_MS = 5000;
+const PAUSE = new Int32Array(new SharedArrayBuffer(4));
+
 /**
- * Creates a store file atomically. SQLite switches a file to WAL with one exclusive-lock attempt that never waits on the
- * busy handler, so a file must not be visible at its path before it is in WAL mode: another process opening it then
- * races the switch and fails with "database is locked". The file is made in WAL under a private name, then hard-linked
- * into place; a link fails when the path exists, so exactly one creator wins and every other opener finds a WAL file.
+ * Two processes that open a new store file at once both switch it to WAL: each holds a shared lock and asks for the
+ * exclusive one, and SQLite fails one of them at once with "database is locked" instead of calling the busy handler
+ * (it would deadlock). The failed statement releases its lock, so the switch retries until the other finishes, bounded
+ * by the same timeout as every other statement.
  */
-function createStoreFile(path: string): void {
-	const staging = `${path}.creating-${process.pid}-${randomUUID()}`;
-	try {
-		const db = new Database(staging, { create: true });
+function switchToWal(db: Database): void {
+	const deadline = Date.now() + BUSY_TIMEOUT_MS;
+	for (let pause = 1; ; pause = Math.min(pause * 2, 50)) {
 		try {
 			db.exec("PRAGMA journal_mode = WAL");
-		} finally {
-			db.close();
-		}
-		try {
-			linkSync(staging, path);
+			return;
 		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+			const busy = typeof error === "object" && error !== null && "code" in error && error.code === "SQLITE_BUSY";
+			if (!busy || Date.now() >= deadline) throw error;
+			Atomics.wait(PAUSE, 0, 0, pause);
 		}
-	} finally {
-		for (const file of [staging, `${staging}-wal`, `${staging}-shm`]) rmSync(file, { force: true });
 	}
 }
 
@@ -61,13 +57,10 @@ function createStoreFile(path: string): void {
  * and a process killed at any point recovers to the last committed transaction on the next open.
  */
 export function openStoreFile(path: string): { readonly db: Database; readonly statements: StoreStatements } {
-	if (!existsSync(path)) createStoreFile(path);
-	const db = new Database(path);
-	db.exec("PRAGMA busy_timeout = 5000");
-	// Files are created in WAL (createStoreFile); one made before that rule is switched here.
-	if (db.query<{ readonly journal_mode: string }, []>("PRAGMA journal_mode").get()?.journal_mode !== "wal") {
-		db.exec("PRAGMA journal_mode = WAL");
-	}
+	const db = new Database(path, { create: true });
+	db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
+	if (db.query<{ readonly journal_mode: string }>("PRAGMA journal_mode").get()?.journal_mode !== "wal")
+		switchToWal(db);
 	db.exec("PRAGMA synchronous = FULL");
 	db.transaction(() => {
 		const version = db.query<{ readonly user_version: number }>("PRAGMA user_version").get()?.user_version ?? 0;
