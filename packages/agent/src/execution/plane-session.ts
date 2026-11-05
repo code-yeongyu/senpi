@@ -113,22 +113,40 @@ interface Segment {
 	readonly calls: AgentToolCall[];
 }
 
-/** `owner[i]` is the segment that runs call `i`. */
-function segmentsOf(
+/**
+ * Splits a batch into stages run one after another, each a set of same-side segments run at once; `owner[i]` is the
+ * segment that runs call `i`. `parallel` keeps the loop's dependency order (`batchDependencies`): a sequential call is a
+ * stage of its own, so it waits for every earlier call and every later call waits for it; the calls between two
+ * sequential calls share one stage. Otherwise each run of same-side calls is a stage.
+ */
+function stagesOf(
 	calls: readonly AgentToolCall[],
 	sideOf: (call: AgentToolCall) => Side,
-	merge: boolean,
-): { readonly segments: Segment[]; readonly owner: number[] } {
+	isSequential: (call: AgentToolCall) => boolean,
+	parallel: boolean,
+): { readonly stages: Segment[][]; readonly segments: Segment[]; readonly owner: number[] } {
+	const stages: Segment[][] = [];
 	const segments: Segment[] = [];
 	const owner: number[] = [];
+	let open = false;
 	for (const call of calls) {
 		const side = sideOf(call);
-		let index = merge ? segments.findIndex((segment) => segment.side === side) : segments.length - 1;
-		if (index < 0 || segments[index]?.side !== side) index = segments.push({ side, calls: [] }) - 1;
-		segments[index]?.calls.push(call);
-		owner.push(index);
+		const barrier = parallel && isSequential(call);
+		const stage = stages.at(-1);
+		const joinable = open && !barrier && stage !== undefined && (parallel || stage[0]?.side === side);
+		if (!joinable) stages.push([]);
+		const current = stages.at(-1) ?? [];
+		let segment = current.find((entry) => entry.side === side);
+		if (segment === undefined) {
+			segment = { side, calls: [] };
+			current.push(segment);
+			segments.push(segment);
+		}
+		segment.calls.push(call);
+		owner.push(segments.indexOf(segment));
+		open = !barrier;
 	}
-	return { segments, owner };
+	return { stages, segments, owner };
 }
 
 /** Items per call ID in arrival order (a batch may repeat an ID, senpi#5796). */
@@ -169,34 +187,38 @@ function holdingResults(emit: ToolHostOptions["emit"], held: HeldResult[]): Tool
  */
 export function createSplitToolHost(options: {
 	readonly loopSide: (toolName: string) => boolean;
+	/** The tools declared `executionMode: "sequential"`: in a parallel batch each waits for every earlier call. */
+	readonly isSequential: (toolName: string) => boolean;
 	readonly loop: ToolHost;
 	readonly hand: ToolHost;
 }): ToolHost {
 	const sideOf = (call: AgentToolCall): Side => (options.loopSide(call.name) ? "loop" : "hand");
+	const isSequential = (call: AgentToolCall): boolean => options.isSequential(call.name);
 	const hostOf = (side: Side): ToolHost => (side === "loop" ? options.loop : options.hand);
 
 	return {
 		async execute(call: ToolHostCall, hostOptions: ToolHostOptions): Promise<ToolHostResult> {
-			const { segments, owner } = segmentsOf(call.calls, sideOf, call.mode === "parallel");
-			const [only] = segments;
-			if (segments.length <= 1) return hostOf(only?.side ?? "hand").execute(call, hostOptions);
-
 			const parallel = call.mode === "parallel";
+			const { stages, segments, owner } = stagesOf(call.calls, sideOf, isSequential, parallel);
+			const [only] = segments;
+			if (segments.every((segment) => segment.side === only?.side))
+				return hostOf(only?.side ?? "hand").execute(call, hostOptions);
+
 			const held: HeldResult[][] = segments.map(() => []);
-			const run = (segment: Segment, index: number) =>
-				hostOf(segment.side).execute(
+			const run = async (segment: Segment): Promise<void> => {
+				const index = segments.indexOf(segment);
+				results[index] = await hostOf(segment.side).execute(
 					{ ...call, calls: segment.calls },
 					parallel ? { ...hostOptions, emit: holdingResults(hostOptions.emit, held[index] ?? []) } : hostOptions,
 				);
-			const results: ToolHostResult[] = [];
-			if (parallel) results.push(...(await Promise.all(segments.map(run))));
-			else
-				for (const [index, segment] of segments.entries()) {
-					results.push(await run(segment, index));
-					if (hostOptions.signal?.aborted) break;
-				}
+			};
+			const results: Array<ToolHostResult | undefined> = segments.map(() => undefined);
+			for (const stage of stages) {
+				await Promise.all(stage.map(run));
+				if (hostOptions.signal?.aborted) break;
+			}
 
-			const messages = results.map((result) => queueBy(result.messages, (message) => message.toolCallId));
+			const messages = results.map((result) => queueBy(result?.messages ?? [], (message) => message.toolCallId));
 			const events = held.map((entries) => queueBy(entries, (entry) => entry.toolCallId));
 			const ordered: ToolResultMessage[] = [];
 			for (const [index, raw] of call.calls.entries()) {
@@ -205,9 +227,11 @@ export function createSplitToolHost(options: {
 				const message = messages[segment]?.get(raw.id)?.shift();
 				if (message !== undefined) ordered.push(message);
 			}
+			const ran = results.filter((result): result is ToolHostResult => (result?.messages.length ?? 0) > 0);
 			return {
 				messages: ordered,
-				terminate: results.every((result) => result.terminate),
+				// As the fused pipeline: only segments whose calls ran decide; a batch where nothing ran does not terminate.
+				terminate: ran.length > 0 && ran.every((result) => result.terminate),
 			};
 		},
 	};

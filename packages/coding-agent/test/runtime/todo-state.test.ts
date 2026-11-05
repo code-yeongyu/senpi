@@ -158,6 +158,7 @@ describe("todo on a split session (S39)", () => {
 				);
 				harness.agent.toolHost = createSplitToolHost({
 					loopSide: (name) => loopSide.has(name),
+					isSequential: (name) => session.getToolDefinition(name)?.executionMode === "sequential",
 					loop: createLoopToolHost(harness.agent),
 					hand: {
 						execute: async (call) => {

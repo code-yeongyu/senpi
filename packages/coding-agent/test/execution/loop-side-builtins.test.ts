@@ -43,6 +43,7 @@ async function webfetchTurn(split: boolean): Promise<{ readonly results: unknown
 		const hand: ToolHost = recordingHost("hand", onHand);
 		harness.agent.toolHost = createSplitToolHost({
 			loopSide: (name) => loopSide.has(name),
+			isSequential: (name) => harness.session.getToolDefinition(name)?.executionMode === "sequential",
 			loop: createLoopToolHost(harness.agent),
 			hand,
 		});
@@ -71,6 +72,7 @@ describe("loop-side built-ins on a split session (S32)", () => {
 		const ran: string[] = [];
 		const host = createSplitToolHost({
 			loopSide: (name) => loopSide.has(name),
+			isSequential: () => false,
 			loop: recordingHost("loop", ran),
 			hand: recordingHost("hand", ran),
 		});
