@@ -15,7 +15,6 @@ import {
 	type CompactionResult,
 	DEFAULT_COMPACTION_SETTINGS,
 	estimateContextTokens,
-	estimateTokens,
 	prepareCompaction,
 } from "../../../compaction/index.ts";
 import {
@@ -47,6 +46,7 @@ import {
 import { computeEffectiveKeepRecentTokens, computeEffectiveThreshold } from "./policy.ts";
 import { buildPrompt, type MergedCompactionPromptVariant } from "./prompts.ts";
 import {
+	estimateSummaryRequestTokens,
 	generateSummaryMessage,
 	getSummaryText,
 	hasSummarizationReasoningOverride,
@@ -353,7 +353,7 @@ export async function runExtensionCompaction(
 		// retry transient failures without the 120s-era retry budget disqualifying
 		// every slow attempt (#1068).
 		const attemptBudgetMs = summarizationMaxDurationMs(
-			messages.reduce((total, message) => total + estimateTokens(message), 0),
+			estimateSummaryRequestTokens(requestSnapshot, messages, prompt),
 			snapshot.preparation.settings.summarizationMaxDurationMs,
 		);
 		try {
