@@ -123,9 +123,11 @@ describe("startHost and an existing valid public socket secret", () => {
 					// The platform is stubbed to win32 above; the real child runs here, so its identity is read the POSIX way.
 					readProcessStartTime: (pid) => readProcessStartTime(pid, "linux"),
 					stopTimeoutMs: 2_000,
+					// The default startup decision budget is minutes; this start only has to reach its readiness verdict.
+					readinessTimeoutMs: 10_000,
 				},
 			}),
-		).rejects.toThrow(/did not answer get_protocol_info/);
+		).rejects.toThrow(/RPC host startup timed out/);
 
 		const generation = await generationState(storePath);
 		expect(generation).toMatchObject({ state: "cancelling", roles: [{ role: "supervisor", status: "granted" }] });
