@@ -2,16 +2,16 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { waitForFixtureFile } from "./fixture-ready.ts";
 
 // senpi#4629: the ready file WAS written (the fixture's own stamps prove it) while the directory
 // watcher never reported it. With `watch` delivering nothing, the wait must still settle, so this
 // file - and only this file - replaces it; the real watcher is covered in fixture-ready.test.ts.
+// vitest hoists `vi.mock` above the imports, so the static import below already sees the mock.
 vi.mock("node:fs", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("node:fs")>();
 	return { ...actual, watch: () => ({ close: () => {} }) };
 });
-
-const { waitForFixtureFile } = await import("./fixture-ready.ts");
 
 const roots: string[] = [];
 
