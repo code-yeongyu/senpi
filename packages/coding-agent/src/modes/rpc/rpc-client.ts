@@ -21,7 +21,7 @@ import { signalSpawnedChild } from "../../utils/child-signal.ts";
 import { DETACH_CONNECTION_CAPABILITY } from "./custom-capability.ts";
 import { ORIGIN_HOST_INSTANCE_FIELD, originHostInstance } from "./host-observe-request.ts";
 import { RpcCommandError } from "./rpc-command-error.ts";
-import { handleRpcReply } from "./rpc-client-replies.ts";
+import { handleRpcReply, UnawaitedReplies } from "./rpc-client-replies.ts";
 import {
 	RpcClientAdmissions,
 	type CompactOpenResult,
@@ -167,6 +167,8 @@ export class RpcClient {
 	private socket: Socket | null = null;
 	private stopReadingStdout: (() => void) | null = null;
 	private eventListeners: RpcEventListener[] = [];
+	/** Replies to records this client sent without waiting (senpi#5761), consumed quietly. */
+	private readonly unawaitedReplies = new UnawaitedReplies();
 	private pendingRequests: Map<
 		string,
 		{
@@ -1342,7 +1344,7 @@ export class RpcClient {
 	private handleLine(line: string): void {
 		try {
 			const data = JSON.parse(line);
-			if (handleRpcReply(data, this.pendingRequests, this.admissions)) return;
+			if (handleRpcReply(data, this.pendingRequests, this.admissions, this.unawaitedReplies)) return;
 			this.admissions.receive(data);
 
 			if (data.type === "queued" && typeof data.for_request === "string")
@@ -1444,6 +1446,7 @@ export class RpcClient {
 		} as RpcCommand;
 
 		if (!expectResponse) {
+			this.unawaitedReplies.note(id);
 			stream.write(serializeJsonLine(fullCommand));
 			return Promise.resolve({ type: "response", command: command.type, success: true } as RpcResponse);
 		}

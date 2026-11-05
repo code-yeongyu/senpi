@@ -81,6 +81,11 @@ export {
 	emitToolResultMessage,
 	shouldTerminateToolBatch,
 } from "./execution/tool-outcome-events.ts";
+export { createAdmissionLine } from "./durable/store-admission.ts";
+export { createMemoryStoreMedium, openMemoryStore } from "./durable/store-memory.ts";
+export { createBatchCoordinator } from "./execution/coordinator.ts";
+export type { BatchExecutor, BatchPlan } from "./execution/coordinator-types.ts";
+export { createExecutionLedger } from "./execution/ledger.ts";
 export {
 	authorize,
 	createGrantVerifier,
@@ -103,6 +108,8 @@ export {
 	type DeviceFileErrorCode,
 	type DeviceFileOp,
 	type DeviceFileOptions,
+	type DeviceRunRequest,
+	type DeviceRunResult,
 	type DeviceFileOutcome,
 	type DeviceFiles,
 	type DeviceFileStat,
@@ -111,6 +118,7 @@ export {
 	encodeBase64,
 	FILE_CHANNEL,
 	FILE_CHANNEL_MAX_BYTES,
+	RUN_CHANNEL,
 	fileOutcomeOf,
 } from "./execution/device-files.ts";
 export { HELLO_WAIT_MS } from "./execution/remote-device-files.ts";
@@ -130,6 +138,20 @@ export {
 	type PlaneMessage,
 	PlaneRefusedError,
 } from "./execution/plane.ts";
+export {
+	createLoopHookHost,
+	type LoopHookHost,
+	type LoopHookHostOptions,
+	LoopHookFailedError,
+	LoopHookRestartedError,
+} from "./execution/loop-hook-host.ts";
+export {
+	type LoopHookHand,
+	type LoopHookHandOptions,
+	type LoopHookPoint,
+	type LoopHookRunner,
+	serveLoopHooks,
+} from "./execution/loop-hook-host-hand.ts";
 export { createRemoteToolHost, type HandPlacement, type RemoteToolHostOptions } from "./execution/remote-tool-host.ts";
 export { type CarrierLink, createInProcessNetwork, type InProcessNetwork } from "./transport/in-process-carrier.ts";
 export { type LocalEndpoint, localEndpoint } from "./transport/local-endpoint.ts";
@@ -249,5 +271,5 @@ export * from "./response-timing.ts";
 export * from "./search/index.ts";
 export { setDefaultStreamFn } from "./stream-fn.ts";
 export { prepareToolArguments } from "./tool-arguments.ts";
-export { resolveToolNameAlias } from "./tool-name-alias.ts";
+export { resolveToolNameAlias, withToolNameCorrection } from "./tool-name-alias.ts";
 export * from "./types.ts";

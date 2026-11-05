@@ -18,6 +18,7 @@ import type { CliRuntimeConfiguration } from "../../main.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { startHostChildReaper } from "./child-reaper.ts";
 import type { RpcConnectionSink } from "./connection-handler.ts";
+import type { LaunchProofSource } from "./delegated-connection.ts";
 import { parseClientCapabilities } from "./custom-capability.ts";
 import { ClientOccupancy } from "./host-client-occupancy.ts";
 import { HostCoreGate, type HostCoreHooks } from "./host-core-gate.ts";
@@ -63,6 +64,7 @@ import type { PresenterAccountAuthority } from "./mcp-presenter-account.ts";
 import { presenterBootstrapStream } from "./mcp-presenter-bootstrap.ts";
 import type { AttachLedger } from "./attach-ledger.ts";
 import { startMcpPresenterControl } from "./mcp-presenter-control-start.ts";
+import type { HeadlessPresence } from "../headless/presence.ts";
 
 export { presenterPipePath } from "./mcp-presenter-control-start.ts";
 
@@ -97,6 +99,8 @@ export interface MultiSessionHostOptions {
 	 * holder }` then takes a session over and lets its other clients go quietly. Absent, a takeover is refused.
 	 */
 	sessionTakeover?: AttachLedger;
+	/** Set only by a headless host with a presence binding (`modes/headless`): rows and opens carry presence. */
+	sessionPresence?: HeadlessPresence;
 }
 
 export {
@@ -220,11 +224,21 @@ export function createHostCore(
 		});
 	const gate = new HostCoreGate(registry, (command) => router.handle(command), hooks);
 	const handle = async (line: string): Promise<void> => {
+		const connection = writer.currentConnection();
 		let parsed: unknown;
 		try {
 			parsed = JSON.parse(line);
 		} catch {
-			await writer.enqueueControl(parseError("Failed to parse command: invalid JSON"));
+			await writer.enqueueControl(
+				writer.delegations.unparsable(connection, "Failed to parse command: invalid JSON"),
+			);
+			return;
+		}
+		// Before any await: a declaration takes effect for the very next line of its connection (senpi#5632).
+		const delegation = writer.delegations.inspect(connection, parsed);
+		if (delegation.kind === "consumed") return;
+		if (delegation.kind === "reply") {
+			await writer.enqueueControl(delegation.response);
 			return;
 		}
 		if (writer.handleMcpForm(parsed)) return;
@@ -433,7 +447,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	let supervisorPublicIdentity: SocketFileIdentity | undefined;
 	const server = createServer((rawSocket) => {
 		const arrivedBeforeDrain = !draining && !shuttingDown;
-		const accept = (socket: Duplex = rawSocket): void => {
+		const accept = (socket: Duplex = rawSocket, launchProof?: LaunchProofSource): void => {
 			if (draining && !shuttingDown && handoff.deliverLate(socket, arrivedBeforeDrain)) return;
 			if (draining || shuttingDown) {
 				socket.destroy();
@@ -441,7 +455,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			}
 			const id = `socket-${++nextConnection}`;
 			const sink = socketSink(socket);
-			writer.registerConnection(id, sink);
+			writer.registerConnection(id, sink, launchProof === undefined ? {} : { launchProof });
 			occupancy.admit(socket);
 			const detachReader = attachJsonlLineReader(
 				socket,

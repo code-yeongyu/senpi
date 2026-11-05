@@ -116,7 +116,12 @@ import {
 import { EffectLedger } from "./effect-ledger.ts";
 import { EFFECT_LEDGER_CAPABILITY } from "./effect-record.ts";
 import { createRpcEventOutputBuffer } from "./event-output-buffer.ts";
-import { answeredUiRequestId, refusedExtensionUiResponse, settleExtensionUiResponse } from "./extension-ui-response.ts";
+import {
+	answeredUiRequestId,
+	extensionUiProgressReply,
+	refusedExtensionUiResponse,
+	settleExtensionUiResponse,
+} from "./extension-ui-response.ts";
 import { SecretInputRequests, type SecretInputRoute } from "./secret-input-requests.ts";
 import { answerGetEntries } from "./get-entries-command.ts";
 import { runHoldInput } from "./held-input-commands.ts";
@@ -2336,7 +2341,9 @@ export function createRpcConnectionHandler(
 				output(refusedExtensionUiResponse(progress.id, "invalid_secret_response"));
 				return;
 			}
-			questions.progress(parsed as RpcExtensionUIProgress);
+			// One correlated reply, after the question_updated the draft causes: a forwarder waits for a reply to every
+			// record it passes on, and must not need a list of records that have none (senpi#5761).
+			output(extensionUiProgressReply(progress.id, questions.progress(progress)));
 			return;
 		}
 

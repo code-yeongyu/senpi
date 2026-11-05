@@ -1,3 +1,25 @@
+## 2026-11-04 - senpi vendors machine-ops instead of publishing it (senpi#5784)
+
+### What changed
+
+- `scripts/registry-packages.mjs`: `@code-yeongyu/senpi-machine-ops` leaves the npm publish set.
+- `scripts/prepare-senpi-bundled-workspaces.mjs`: vendors `packages/machine-ops/dist/src` under `vendor/senpi-machine-ops/` in the senpi tarball and rewrites the emitted root and `/in-process-holder` imports to relative paths, the same way it already handles client/protocol. Each vendored workspace now names its manifest and its entry files, and the leak check matches only quoted specifiers, so a comment that names a vendored package no longer fails staging.
+- `scripts/prepare-senpi-publish-manifest.mjs`: the staged senpi manifest drops the machine-ops dependency with client/protocol, so it no longer pins machine-ops to an exact version.
+- `scripts/senpi-publish-pack-checks.mjs`: the senpi tarball must carry the vendored machine-ops entries, and the published-package file check no longer lists machine-ops.
+- `scripts/publish-registry-dependencies.test.mjs`: every registry package source must have a `CHANGELOG.md` next to its `package.json`.
+
+### Why
+
+- #5603 added machine-ops to the publish set without `packages/machine-ops/CHANGELOG.md`, so the v2026.11.4-1 Build Binaries run failed at "Prepare GitHub release payload" (`release-notes.mjs extract --published`). The package was also never on npm, and npm trusted publishing cannot do a first publish. senpi's tools import it at runtime (`packages/coding-agent/src/core/tools/machine.ts`), so it ships inside the senpi tarball instead.
+
+### Why an extension could not handle it
+
+- Release and publish tooling is repository infrastructure.
+
+### Expected merge conflict zones
+
+- LOW: the package lists in `registry-packages.mjs`, `prepare-senpi-publish-manifest.mjs` and `senpi-publish-pack-checks.mjs`.
+
 ## 2026-11-03 - Release scripts carry the machine-ops workspace (senpi#5592)
 
 ### What changed

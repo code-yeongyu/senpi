@@ -1,15 +1,24 @@
 import { bindPrivateMcpForms, type McpFormBinding } from "../../core/mcp-form-types.ts";
 import { McpPresenterAuthority, type McpPresenterConnection } from "./mcp-presenter-authority.ts";
+import type { PresenterHostSurface } from "./mcp-presenter-host-surface.ts";
 import { SessionEventWriterConnections } from "./session-event-writer-connections.ts";
 
 /** The MCP form presenter surface; its private-record handler stays in session-event-writer.ts. */
-export abstract class SessionEventWriterPresenters extends SessionEventWriterConnections {
+export abstract class SessionEventWriterPresenters
+	extends SessionEventWriterConnections
+	implements PresenterHostSurface
+{
 	private presenterControlEndpoint?: string;
 
 	/** Deployment switch. Ordinary RPC behavior is unchanged unless the host explicitly enables it. */
 	enableMcpPresenters(): McpPresenterAuthority {
 		this.presenterAuthority ??= new McpPresenterAuthority();
 		return this.presenterAuthority;
+	}
+
+	/** The presenter control's view: reading it enables the authority, as `enableMcpPresenters()` does. */
+	get authority(): McpPresenterAuthority {
+		return this.enableMcpPresenters();
 	}
 
 	get mcpPresenters(): McpPresenterAuthority | undefined {

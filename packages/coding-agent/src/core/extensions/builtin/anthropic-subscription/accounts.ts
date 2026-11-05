@@ -58,7 +58,11 @@ export type ClaudeCliAccountSlot = SlotBlockState & {
 	signedInAt?: number;
 	profile?: ClaudeCliAccountProfile;
 	check?: ClaudeCliAccountCheck;
-	signInRequired?: "legacy_sign_in_retired";
+	/**
+	 * Never selected for a turn. `login_expired`: a due auth re-probe found the CLI signed out (senpi#5350); the slot
+	 * keeps its `auth_error` block so the probe keeps running, and a `signed_in` probe or `/login` clears it.
+	 */
+	signInRequired?: "legacy_sign_in_retired" | "login_expired";
 	/** Set with an `auth_error` block this engine reached about the sign-in in `dirId` (senpi#5623). */
 	authVerdict?: ClaudeCliAuthVerdict;
 	/** A CLI slot never holds token material; declared so reads on an `AccountSlot` see `undefined`, not a missing field. */
@@ -85,8 +89,11 @@ export function isForeignAuthBlock(slot: object): boolean {
 		dirId?: unknown;
 		blockedAt?: unknown;
 		authVerdict?: unknown;
+		signInRequired?: unknown;
 	};
 	if (fields.store !== "claude-cli" || fields.blockReason !== "auth_error") return false;
+	// Only this engine marks a login expired (senpi#5350), so that block is never another engine's.
+	if (fields.signInRequired === "login_expired") return false;
 	const verdict = fields.authVerdict as Partial<ClaudeCliAuthVerdict> | undefined;
 	return verdict?.dirId !== fields.dirId || verdict?.at !== fields.blockedAt;
 }

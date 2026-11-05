@@ -14,7 +14,7 @@ export const mutations = Object.freeze([
 		patch: "o1-dropped-prompt-segment.patch",
 		cases: ["E01"],
 		expect: {
-			E01: /^\$\.O1\[0\]\.body\.messages\[0\]\.content: golden=".*- Judgment asks \(what do you think, review\).*" actual="(?![\s\S]*Judgment asks \(what do you think)/,
+			E01: /^\$\.O1\[0\]\.body\.messages\[0\]\.content: golden=".*- Judgment ask \(what do you think, review\).*" actual="(?![\s\S]*Judgment ask \(what do you think)/,
 		},
 	},
 	{

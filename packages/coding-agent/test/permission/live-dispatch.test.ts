@@ -1,6 +1,7 @@
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
 import { expect, it, vi } from "vitest";
+import { createPreparedToolHost } from "../../src/core/execution/pipeline-prepared.ts";
 import { authorizeToolDispatch } from "../../src/core/extensions/builtin/permission-system/dispatch.ts";
 import { registerDispatchIdentity } from "../../src/core/extensions/builtin/permission-system/dispatch-metadata.ts";
 import permissionSystemExtension from "../../src/core/extensions/builtin/permission-system/index.ts";
@@ -9,6 +10,7 @@ import { createHarness, createTestUiContext, getToolResult } from "../suite/harn
 async function fixture(
 	preset: string,
 	select: (prompt: number) => Promise<string | undefined> = async () => "Allow once",
+	pipeline: "legacy" | "prepared" = "legacy",
 ) {
 	const entered = Promise.withResolvers<void>();
 	const release = Promise.withResolvers<void>();
@@ -44,6 +46,7 @@ async function fixture(
 		],
 	});
 	try {
+		if (pipeline === "prepared") harness.agent.toolHost = createPreparedToolHost(harness.agent);
 		await harness.session.bindExtensions({
 			uiContext: createTestUiContext({
 				select: async () => select(++prompts),
@@ -60,21 +63,24 @@ async function fixture(
 	}
 }
 
-it("retains an unchanged Once approval after real permission preflight and readiness", async () => {
-	const fx = await fixture("ask");
-	const prompt = fx.harness.session.prompt("write");
-	try {
-		await fx.entered.promise;
-		fx.release.resolve();
-		await prompt;
-		expect(fx.prompts()).toBe(1);
-		expect(fx.remoteWrite).toHaveBeenCalledOnce();
-	} finally {
-		fx.release.resolve();
-		await prompt;
-		fx.harness.cleanup();
-	}
-});
+it.each(["legacy", "prepared"] as const)(
+	"retains an unchanged Once approval after real permission preflight and readiness (%s pipeline)",
+	async (pipeline) => {
+		const fx = await fixture("ask", undefined, pipeline);
+		const prompt = fx.harness.session.prompt("write");
+		try {
+			await fx.entered.promise;
+			fx.release.resolve();
+			await prompt;
+			expect(fx.prompts()).toBe(1);
+			expect(fx.remoteWrite).toHaveBeenCalledOnce();
+		} finally {
+			fx.release.resolve();
+			await prompt;
+			fx.harness.cleanup();
+		}
+	},
+);
 
 it("uses a stricter live preset after readiness instead of an earlier Allow", async () => {
 	const fx = await fixture("full-access", async () => "Deny");
