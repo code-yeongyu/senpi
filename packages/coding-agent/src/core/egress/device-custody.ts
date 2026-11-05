@@ -33,6 +33,9 @@ const KNOWN_PATHS: ReadonlySet<string> = new Set(
 	]),
 );
 
+/** A property name that would read as path syntax (`a.b`, `m[]`, `*`, `{key}`) is never a declared field. */
+const PATH_SYNTAX = /[.[\]*{}]/;
+
 function isPlainObject(value: unknown): value is Readonly<Record<string, unknown>> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -58,7 +61,7 @@ function walk(value: unknown, path: string, reasons: Set<DeviceCustodyReason>): 
 	const isRecord = classifyModelsJsonField(`${path}.{key}`) !== undefined;
 	for (const [key, child] of Object.entries(value)) {
 		const childPath = isRecord ? `${path}.*` : `${path}.${key}`;
-		if (KNOWN_PATHS.has(childPath)) walk(child, childPath, reasons);
+		if ((isRecord || !PATH_SYNTAX.test(key)) && KNOWN_PATHS.has(childPath)) walk(child, childPath, reasons);
 		else reasons.add("undeclared-field");
 	}
 }
@@ -68,7 +71,9 @@ function hasModelHeaderCollision(provider: ModelsJsonProvider): boolean {
 		const override = Object.hasOwn(provider.modelOverrides ?? {}, model.id)
 			? provider.modelOverrides?.[model.id]?.headers
 			: undefined;
-		return override !== undefined && Object.keys(model.headers ?? {}).some((name) => Object.hasOwn(override, name));
+		if (override === undefined) return false;
+		const overrideNames = new Set(Object.keys(override).map((name) => name.toLowerCase()));
+		return Object.keys(model.headers ?? {}).some((name) => overrideNames.has(name.toLowerCase()));
 	});
 }
 

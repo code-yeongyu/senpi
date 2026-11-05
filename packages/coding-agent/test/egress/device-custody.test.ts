@@ -58,6 +58,19 @@ describe("deviceCustodyReasons", () => {
 		],
 		["unsplittable provider URL", `{ "baseUrl": "https://h.test/v1#x" }`, "unsplittable-base-url"],
 		["unsplittable model URL", `{ "models": [{ "id": "m", "baseUrl": "ftp://h.test" }] }`, "unsplittable-base-url"],
+		["a provider key spelled as a declared path", `{ "compat.supportsStore": "sk-123" }`, "undeclared-field"],
+		["a model key spelled as an array path", `{ "models[]": { "id": "sk-123" } }`, "undeclared-field"],
+		["a nested key spelled as a path", `{ "compat": { "openRouterRouting.zdr": true } }`, "undeclared-field"],
+		[
+			"a key spelled as a record wildcard",
+			`{ "modelOverrides": { "m": { "headers.*": "sk-123" } } }`,
+			"undeclared-field",
+		],
+		[
+			"one header name at both model levels in different case",
+			`{ "models": [{ "id": "m", "headers": { "X-K": "1" } }], "modelOverrides": { "m": { "headers": { "x-k": "2" } } } }`,
+			"model-header-collision",
+		],
 		[
 			"one header name at both model levels",
 			`{ "models": [{ "id": "m", "headers": { "x-k": "1" } }], "modelOverrides": { "m": { "headers": { "x-k": "2" } } } }`,
