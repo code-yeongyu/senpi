@@ -28,7 +28,7 @@ describe("codemode feature settings", () => {
 	it("Given no settings file when the new keys resolve then each equals today's behaviour", () => {
 		const settings = defaultCodemodeSettings;
 
-		expect(resolveJsIsolation(settings, {}, { executable: "node" })).toBe("worker");
+		expect(resolveJsIsolation(settings, {}, { executable: "node", platform: "linux" })).toBe("worker");
 		expect(resolveSandbox(settings, {})).toEqual({ enabled: false, memoryMb: 64, timeoutSeconds: 300 });
 		expect(resolveEnvironments(settings)).toEqual({ autoProvision: true, jsInstaller: "auto", pyInstaller: "pip" });
 		expect(resolveAdvertiseHelpers(settings)).toBe(false);
@@ -117,13 +117,15 @@ describe("codemode feature settings", () => {
 		const loaded = await loadFile({ isolation: { js: "thread" }, runBudgetSeconds: 120 });
 
 		expect(loaded.warnings.some((warning) => warning.includes("Falling back to codemode defaults"))).toBe(true);
-		expect(resolveJsIsolation(loaded.settings, {})).toBe("worker");
+		expect(resolveJsIsolation(loaded.settings, {}, { executable: "node", platform: "linux" })).toBe("worker");
 	});
 
 	it.each([
-		["a bun executable", { executable: "bun" } as const, "process"],
-		["a node executable", { executable: "node" } as const, "worker"],
-		["a compiled binary", { executable: undefined } as const, "worker"],
+		["a bun executable on macOS", { executable: "bun", platform: "darwin" } as const, "process"],
+		["a bun executable on Linux", { executable: "bun", platform: "linux" } as const, "process"],
+		["a bun executable on Windows", { executable: "bun", platform: "win32" } as const, "worker"],
+		["a node executable", { executable: "node", platform: "darwin" } as const, "worker"],
+		["a compiled binary", { executable: undefined, platform: "darwin" } as const, "worker"],
 	])(
 		"Given no isolation setting when the host runs on %s then the default isolation is %s",
 		(_label, host, expected) => {
@@ -136,42 +138,44 @@ describe("codemode feature settings", () => {
 		const worker = await loadFile({ isolation: { js: "worker" } });
 		const process = await loadFile({ isolation: { js: "process" } });
 
-		expect(resolveJsIsolation(worker.settings, {}, { executable: "bun" })).toBe("worker");
-		expect(resolveJsIsolation(process.settings, {}, { executable: "node" })).toBe("process");
-		expect(resolveJsIsolation(process.settings, {}, { executable: undefined })).toBe("process");
+		const macBun = { executable: "bun", platform: "darwin" } as const;
+		const winBun = { executable: "bun", platform: "win32" } as const;
+		const node = { executable: "node", platform: "linux" } as const;
+		const compiled = { executable: undefined, platform: "darwin" } as const;
+		expect(resolveJsIsolation(worker.settings, {}, macBun)).toBe("worker");
+		expect(resolveJsIsolation(process.settings, {}, node)).toBe("process");
+		expect(resolveJsIsolation(process.settings, {}, compiled)).toBe("process");
+		expect(resolveJsIsolation(process.settings, {}, winBun)).toBe("process");
 	});
 
 	it.each([
-		["/home/tester/.bun/bin/bun", "bun"],
-		["/c/Users/tester/.bun/bin/bun.exe", "bun"],
-		["/usr/local/bin/node", "node"],
-		["/Applications/OmO.app/Contents/Resources/omo-runtime/darwin-arm64/omo", undefined],
-	])(
-		"Given the host executable %s when the isolation host is read then its executable is %s",
-		(execPath, executable) => {
-			expect(currentJsIsolationHost(execPath)).toEqual({ executable });
+		["/home/tester/.bun/bin/bun", "linux", "bun"],
+		["/c/Users/tester/.bun/bin/bun.exe", "win32", "bun"],
+		["/usr/local/bin/node", "darwin", "node"],
+		["/Applications/OmO.app/Contents/Resources/omo-runtime/darwin-arm64/omo", "darwin", undefined],
+	] as const)(
+		"Given the host executable %s on %s when the isolation host is read then its executable is %s",
+		(execPath, platform, executable) => {
+			expect(currentJsIsolationHost(execPath, platform)).toEqual({ executable, platform });
 		},
 	);
 
-	it("Given the running test host when the isolation host is read then it names this process's own runtime", () => {
-		expect(currentJsIsolationHost()).toEqual({ executable: process.versions.bun === undefined ? "node" : "bun" });
+	it("Given the running test host when the isolation host is read then it names this process's own runtime and platform", () => {
+		expect(currentJsIsolationHost()).toEqual({
+			executable: process.versions.bun === undefined ? "node" : "bun",
+			platform: process.platform,
+		});
 	});
 
 	it("Given environment overrides when isolation and the sandbox memory resolve then valid values win and invalid ones are ignored", () => {
 		const settings = defaultCodemodeSettings;
+		const node = { executable: "node", platform: "linux" } as const;
+		const bun = { executable: "bun", platform: "darwin" } as const;
 
-		expect(resolveJsIsolation(settings, { SENPI_CODEMODE_JS_ISOLATION: "process" }, { executable: "node" })).toBe(
-			"process",
-		);
-		expect(resolveJsIsolation(settings, { SENPI_CODEMODE_JS_ISOLATION: "worker" }, { executable: "bun" })).toBe(
-			"worker",
-		);
-		expect(resolveJsIsolation(settings, { SENPI_CODEMODE_JS_ISOLATION: "thread" }, { executable: "node" })).toBe(
-			"worker",
-		);
-		expect(resolveJsIsolation(settings, { SENPI_CODEMODE_JS_ISOLATION: "thread" }, { executable: "bun" })).toBe(
-			"process",
-		);
+		expect(resolveJsIsolation(settings, { SENPI_CODEMODE_JS_ISOLATION: "process" }, node)).toBe("process");
+		expect(resolveJsIsolation(settings, { SENPI_CODEMODE_JS_ISOLATION: "worker" }, bun)).toBe("worker");
+		expect(resolveJsIsolation(settings, { SENPI_CODEMODE_JS_ISOLATION: "thread" }, node)).toBe("worker");
+		expect(resolveJsIsolation(settings, { SENPI_CODEMODE_JS_ISOLATION: "thread" }, bun)).toBe("process");
 		expect(resolveSandbox(settings, { SENPI_CODEMODE_SANDBOX_MEMORY_MB: "256" }).memoryMb).toBe(256);
 		expect(resolveSandbox(settings, { SENPI_CODEMODE_SANDBOX_MEMORY_MB: "-1" }).memoryMb).toBe(64);
 	});

@@ -52,25 +52,31 @@ export type CodemodeFeatureSettings = Static<typeof featureSettingsSchema>;
 
 export type JsIsolation = "worker" | "process";
 
-/** The host as the JavaScript kernel's default isolation sees it: what its own executable is. */
+/** The host as the JavaScript kernel's default isolation sees it: what its own executable is, and on which platform. */
 export interface JsIsolationHost {
 	/** "bun" or "node" when the host's executable is that runtime; undefined for a compiled binary. */
 	readonly executable: "bun" | "node" | undefined;
+	readonly platform: NodeJS.Platform;
 }
 
-export function currentJsIsolationHost(execPath: string = process.execPath): JsIsolationHost {
-	return { executable: runtimeNameOf(execPath) };
+export function currentJsIsolationHost(
+	execPath: string = process.execPath,
+	platform: NodeJS.Platform = process.platform,
+): JsIsolationHost {
+	return { executable: runtimeNameOf(execPath), platform };
 }
 
 /**
- * Without a setting, a host whose executable is bun runs the kernel in its own process: a Bun 1.4.4 Worker thread can
- * corrupt the JavaScriptCore heap and take the whole host down with it (SIGBUS/SIGTRAP, the open upstream class behind
- * omo#12369), and a kernel process cannot. A Node.js host keeps the worker thread, and so does a compiled binary: its
- * executable cannot run process-entry.js, so process mode there needs a bun or node on PATH, which only an explicit
- * setting asks for.
+ * Without a setting, a POSIX host whose executable is bun runs the kernel in its own process: a Bun 1.4.4 Worker thread
+ * can corrupt the JavaScriptCore heap and take the whole host down with it (SIGBUS/SIGTRAP on macOS, the open upstream
+ * class behind omo#12369), and a kernel process cannot. A Node.js host keeps the worker thread, and so does a compiled
+ * binary: its executable cannot run process-entry.js, so process mode there needs a bun or node on PATH, which only an
+ * explicit setting asks for. A Windows bun host keeps the worker thread too: the crash evidence is macOS, and the
+ * process kernel's Windows channel (no libc, cell output shares the frame channel) has no CI coverage, so there the
+ * mode stays opt-in.
  */
 export function defaultJsIsolation(host: JsIsolationHost): JsIsolation {
-	return host.executable === "bun" ? "process" : "worker";
+	return host.executable === "bun" && host.platform !== "win32" ? "process" : "worker";
 }
 
 export interface ResolvedSandbox {
