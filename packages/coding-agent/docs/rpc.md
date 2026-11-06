@@ -1529,6 +1529,69 @@ a hand a session's tool calls run on is offline, that session's tool calls pause
 `held` counts the steps parked until the machines reconnect. Each pause and its resume are durable records, so a
 reconnect resumes the session exactly once, also after a restart.
 
+### Hand selection (headless engine)
+
+A headless host built with a hand directory (no CLI flag selects one yet; every other host is unchanged) advertises
+the capability `hand_selection` and answers `list_hands` and `select_hand`. A host without a directory refuses both
+with `hand_selection_unsupported`.
+
+#### list_hands
+
+Lists the hands the engine can run a session's tools on. With `sessionId`, it also answers that session's recorded hand.
+
+```json
+{"id": "h1", "type": "list_hands", "sessionId": "rpc-1"}
+```
+
+Response:
+```json
+{"id": "h1", "type": "response", "command": "list_hands", "success": true, "data": {"hands": [{"device": "dev-a", "label": "Studio", "platform": "darwin", "reachable": true}], "selected": null}}
+```
+
+`hands` is every hand in the directory. `reachable: false` means the hand is listed but no carrier is up: it can be
+shown, not chosen. `selected` is present only when the request named a session: that session's recorded hand, or
+`null` when its tools run in this process.
+
+Errors: `hand_selection_unsupported` (no hand directory), `unknown_session` (`sessionId` names no open session).
+
+Who may call it: any connection. It changes nothing and is an observing read (method class `observe`), so like
+`list_sessions` and `get_state` it is exempt from the attachment gate: a connection that is not attached to a session
+may still read which hand it runs on.
+
+#### select_hand
+
+Records which hand runs a session's tools. `device` names a hand from `list_hands`; `null` gives the session back its
+own ToolHost, so its tools run in this process again.
+
+```json
+{"id": "h2", "type": "select_hand", "sessionId": "rpc-1", "device": "dev-a"}
+```
+
+Response:
+```json
+{"id": "h2", "type": "response", "command": "select_hand", "success": true, "data": {"sessionId": "rpc-1", "selected": "dev-a"}}
+```
+
+The choice is written to the session file (a `custom` entry `hand_selection`) before it takes effect. The session's
+next tool batch then runs on that hand through a remote ToolHost. Choosing the hand the session is already on changes
+nothing. When the session opens again, the recorded hand is applied again. If it cannot be linked then, the session's
+tool calls end as "The hand is unreachable" error results: a chosen hand never falls back to running the calls in this
+process.
+
+Errors. Each of these carries `errorData.device`, and nothing is recorded:
+
+- `hand_not_listed`: the device is not in the hand directory.
+- `hand_unreachable`: the hand is listed but no carrier is up, or its link cannot be made.
+- `session_busy`: a turn is running. A running turn keeps the ToolHost it started with, so choose between turns.
+
+`hand_selection_unsupported` (no hand directory), `unknown_session`, and `session_closing` (the session is already
+ending, so a choice could not be kept) carry no `errorData`.
+
+Who may call it: only a connection attached to the session. It moves where the session's tools run, which changes what
+the agent can reach (method class `device_admin`), so the attachment gate applies to it: under enforcement
+(`SENPI_RPC_REQUIRE_ATTACH=1`) an unattached connection is refused with `session_not_attached`. Until enforcement is
+the default, the host logs such a call and serves it, as for every gated command.
+
 ### Host identity (`get_protocol_info`)
 
 Supervised socket hosts additionally report `lifecycle: "ready" | "stopping"`.
@@ -2716,6 +2779,22 @@ would refuse is not refused by the delegation check, it gets the same response a
 (`success: false`, `error`, `errorCode`). Secret and grant-select dialogs stay answerable only from the connection
 that raised them, delegated or not.
 
+Private MCP presenter records are the exception: on a delegated connection, every record whose `type` starts with
+`mcp_form_` or `mcp_presenter_` is answered in the private reply shape `{ "type": "mcp_form_reply", "id"?, ... }`,
+never with `type: "response"`, so a forwarder can route the answer by its type alone. The four presenter client
+records (`mcp_presenter_context`, `mcp_form_presented`, `mcp_form_response`, `mcp_form_sync`) reach the presenter
+authority exactly as on a local connection when the declaration granted `answer`; that authority still decides
+every form. Otherwise the reply is `{ "type": "mcp_form_reply", "id": "...", "error": "<code>" }`:
+
+| Record | `error` |
+|---|---|
+| A presenter client record without the `answer` grant (also after a narrowing re-declaration drops it) | `delegation_not_granted` |
+| `mcp_presenter_control_info` | `presenter_not_authorized` |
+| Any other `mcp_form_*` or `mcp_presenter_*` type | `delegation_unclassified` |
+
+A private reply bypasses the connection's event queue, snapshots, mirrors and replay. These records are not in the
+method-class table, so `classify_record` answers `class: null` for them and the digest is unchanged.
+
 `classify_record` answers the class of one record without running it, on any connection:
 
 ```json
@@ -3438,12 +3517,15 @@ A move hands a session to another host under the same id (capability `move_sessi
 | `status` | receiver | `moveId`, `sessionPath?` | the answer for the sender: `receiving`, `accepted`, or `declined` / `failed` with `reason`; an unknown move is recorded `declined` (`no_record`) before the answer. `accepted` carries `revoked: true` once the import was revoked, with or without `sessionPath`; `revoked: true` wins over `accepted` for writability: that copy refuses every write (`session_moved_away`). A `sessionPath` whose file is not this move's import is refused with `move_mismatch` |
 | `finish` | sender | `sessionPath`, `moveId`, `answer` (the `status` data, `revoked` included) | `{ ownership: "moved" \| "writable" \| "moving" }`; an answer with `revoked: true` takes the session back (`writable`), and is refused with `move_already_moved` if the file was already marked moved |
 | `revoke` | receiver | `sessionPath` (the imported copy), `moveId` | `{ ownership: "moved" }`; capability `move_session_revoke` |
+| `copy` | either | `sessionPath`, `sessionId` (a plain id), `sessionDir?` (absolute) | `{ session_id, session_path }`: a new writable session with the source's history; capability `move_session_copy` |
 
 A move lands in one file only. The first `import` that starts receiving a move records the session file it lands as; from then on, while the move is receiving or accepted, an `import` for any other folder is refused with `move_fenced` before anything is written, so two imports at once, or an import after a crash lost the `accepted` record, never land a second copy. The rename itself also runs only into that recorded file. Importing again into the same file returns it unchanged when it is there (a landed file whose `accepted` record a crash lost is accepted then). A move lands once: if the landed copy was deleted, the copy is gone, and an `import` for the move is refused with `move_fenced` whether or not it was revoked (copy the session to a new thread to keep working). A move an older version started receiving, whose record names no landing file, accepts only the file it already landed (an `import` into that same folder); an `import` into any other folder is refused with `move_fenced`.
 
 An interrupted step never leaves two writable copies, and the record always ends up agreeing with the files. Before the import renames the session into place, the record is stamped `committing`, so a crash or a failure on either side of the rename never lets the move land again: a failure after the rename never records `failed` beside the landed copy. `status` then settles the move from the file at the recorded landing target. If this move's file is there, the move is `accepted` (with `revoked: true` if it is sealed); if no file is there, the move is `failed`, and the sender takes the session back. A same-file `import` confirms a landed file the same way and keeps its revoke mark, and `status` also restores a revoke mark a crash lost after the copy was sealed. A repeated `finish` re-queues the dropped input once and removes the bundle.
 
 `revoke` seals the copy this host imported for a move after the sender took the session back, so two writable copies never exist. It appends `session_moved` with `reason: "revoked"` (and `target` set to the import's `from`), and from then on any write to the copy is refused with `session_moved_away`. It runs under the same move lock as `export` and `finish` (`session_held`, `session_open_here`). Only a file whose latest ownership entry is this move's `session_moved_in` is revoked; a repeat for the same move changes nothing and answers the same, and any other file (another move's import, the sender's released copy, a session that was never imported) is refused with `move_mismatch`. A client checks for the `move_session_revoke` capability before relying on it.
+
+`copy` lets work go on from a session that is read-only here (one that moved away, or a revoked import). It writes a new session file with the source's entries under the header id `sessionId`, in `sessionDir` or in this host's session folder for the source's `cwd`. The inherited ownership entries name the old session id, so they do not apply to the copy, which is writable. The source is only read. An id that a session file in that folder already carries is refused with `move_target_occupied`; the source's own id, or an id that is not plain, is refused with `invalid_move_request`; in both cases nothing is written. A client checks for the `move_session_copy` capability before relying on it.
 
 A copy the receiver already used is still revoked: entries written to it after the import (turns typed on this host) are kept, and the copy becomes read-only for good, so the client offers "Copy to a new thread" to keep working from it. Refusing would leave two writable copies of one session.
 
@@ -3719,6 +3801,8 @@ names a valid preset.
 | `get_protocol_info` | - | `{ protocolVersion: 1, serverVersion: string, capabilities: string[], mode: "classic"\|"multi", instanceId: string, generation: number, engineVersion: string, engineOrdinal: [y, m, d, n, epoch], launch_profile: { profile_id, core }, method_classes: { version, digest }, memory_pressure?: boolean }` | Answered in BOTH modes; side-effect-free; the capability probe. Multi-session hosts include `multi_session`, `session_held` (the active foreign-holder admission guard, in both runtimes), `retain_on_disconnect`, `session_kind`, `session_context`, `auto_title_per_session`, `durable_session_id`, `moved_path_guard` (senpi resolves and guards paths the OmO desktop moved with its data home), `prompt_surface` and `prompt_surface_chat` plus the negotiated launch capabilities. Those are HOST capabilities (a client never sends them) and are advertised only in multi-session mode, where the host owns the attachment refcount and the per-session launch profile. The identity fields are described under "Host identity" above; compatibility is decided from `protocolVersion`, `capabilities` and `engineOrdinal`, NEVER from `serverVersion`. |
 | `open_session` | `sessionPath?`, `cwd?`, `provider?`, `modelId?`, `thinkingLevel?`, `permissionPreset?`, `retain_on_disconnect?`, `kind?`, `context?`, `auto_title?`, `durableSessionId?`, `promptSurface?`, `browserEngine?`, `retryFallback?`, `env?` (all optional; paths MUST be absolute) | `{ sessionId, state: RpcSessionState, attached?: true }` | `sessionPath` = today's `--session` semantics (open-if-exists else create persisting there, `session-manager.ts:926-940`); `provider`/`modelId` applied only on create (resume restores the session's model — mirrors `SenpiSessionRuntime.ts:198-200`); params form the immutable launch profile (D8). When the path is already held by a fully-open session, the open ATTACHES to it: same routing handle, `attached: true`, one more attachment counted; the runtime is torn down only when the last attachment closes. Idle sessions past the eviction window are closed by the host itself. `retain_on_disconnect: true` (default false) makes a dropped connection DETACH from this session instead of closing it — see "Retained sessions" below. `kind` (default `interactive`) and the opaque `context` map are described under "Session kind and context" above; both are stored frozen for the session's life and never influence auth, model or resource resolution. |
 | `close_session` | `sessionId` | `{}` | Refused with `unknown_session` when the requesting connection never attached to that handle (a close releases the CALLER's attachment, and `list_sessions` publishes every handle). Otherwise aborts active work, awaits agent idle + settled persistence for up to the host grace window (default 10s), then quarantines any worker that has not exited without releasing its path reservation; its response is the LAST record tagged with that handle for the first closer — no events after (test-pinned). An admitted concurrent close joins the same teardown and receives its own successful response; output saturation rejects admission with the bounded close-overflow/resync notice described above. |
+| `list_hands` | `sessionId?` | `{ hands: [{ device, label, platform, reachable }], selected? }` | Headless engine with a hand directory only (capability `hand_selection`; otherwise `hand_selection_unsupported`). See "Hand selection (headless engine)". |
+| `select_hand` | `sessionId`, `device: string \| null` | `{ sessionId, selected }` | Records which hand runs the session's tools (`null` = this process). Refusals: `hand_not_listed`, `hand_unreachable` (`errorData.device`), `session_busy`, `hand_selection_unsupported`, `unknown_session`, `session_closing`. Method class `device_admin`. |
 | `list_sessions` | `include_workers?` (default false) | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status, attachments, retain_on_disconnect, kind, context? }] }` | Includes `opening`/`closing` entries. `retain_on_disconnect` is true when the session outlives its last attachment (an open or attach asked for it; retention is never revoked), so no client's release or disconnect can end it. Internally quarantined workers remain externally `closing` until exit. `attachments` is the session's live client attachment count; `0` on an `open` row is a retained session with no client attached. Every row carries `kind`. Rows with `kind: "worker"` are omitted unless `include_workers: true`, and `context` is published ONLY on that listing — a default listing carries no `context` at all. |
 | `detach_connection` | - | `{ deferred: string[] }` | Multi-session hosts that advertise `detach_connection`. Meant as the connection's last request: the host releases every session attachment this connection holds and answers only after that, so another connection's next `list_sessions` no longer counts it. `deferred` names the sessions that still count it (see `#### detach_connection`). Closing the socket afterwards releases nothing more. `senpi host session` sends it before closing, bounded at 5 s; on a host without the capability, or after a request timed out or the connection was lost, it relies on the release at socket close. |
 | `release_session` | `sessionId`, `reason: "takeover" \| "move"`, `moveId?` (required for `move`), `target?`, `interrupt?`, `force?` | `{ released: true, session_path, attachments }` | Hands the session to a runtime outside this host. See "Handing a session over (`release_session`)" below. |
@@ -4237,6 +4321,12 @@ On an idle session a plain `steer` only queues; it waits for the next turn. Pass
 ```
 
 `steer` and `follow_up` accept `expectedTurnId` with the same check as a `prompt` steer (see [Steering a specific turn](#prompt)): an input that names a turn which is not running when it enters the queue is refused `turn_conflict` and queued nowhere.
+
+**Thread chains**: `prompt`, `steer` and `follow_up` accept `chainCount`, a positive integer, when the input is a thread call from another session: the hop count of its chain (1 for the first call, one more per hop; a chain may come back to a session it already visited). It is checked against the user's `threads.chainCountLimit` setting before anything of the input is recorded. A `chainCount` that is not a positive integer is refused with `errorCode: "invalid_chain_count"` and `errorData: { chainCount }`. With no limit set every valid count is admitted; past the limit the input is refused with `errorCode: "chain_count_limit"` and `errorData: { count, limit }`. An admitted count is reported on the session's `input` event as `chainCount`, so a thread call that session sends next carries one more. The limit holds while a run hold keeps automatic input as a notice: an over-limit call is refused, never held. A terminal's session-control endpoint cannot carry a hop count through its text-only admission and refuses `chainCount` with `unsupported_field`.
+
+```json
+{"type": "prompt", "message": "Review the plan", "chainCount": 2}
+```
 
 ```json
 {"type": "steer", "message": "Use the other file", "expectedTurnId": "3"}
@@ -6830,6 +6920,25 @@ closing the connection, or declaring without a role revokes what it holds. When 
 terminal also has the management endpoint and answers `discover`. A terminal has no descriptor-4 bootstrap,
 so every other presenter on it is a same-account principal. The terminal itself stays one `local_tui`
 holder: a form reaches the terminal and every enrolled holder, and the first human answer wins.
+
+A host-side forwarder that is not attached to any session (a relay host) asks with
+`mcp_presenter_control_info` instead, on its own connection:
+
+```json
+{ "id": "i1", "type": "mcp_presenter_control_info" }
+{ "id": "i1", "type": "response", "command": "mcp_presenter_control_info", "success": true, "data": { "controlEndpoint": "/tmp/senpi-presenter-AbC123/control.sock" } }
+```
+
+- It is answered only on a connection that proved the endpoint's launch key (see
+  "Authentication"; on Windows, the socket secret) and has not declared a delegation.
+  Any other connection gets `presenter_not_authorized`: an ordinary error response
+  (`errorCode: "presenter_not_authorized"`), or on a delegated connection the private
+  reply `{ "type": "mcp_form_reply", "id": "i1", "error": "presenter_not_authorized" }`.
+- `data.controlEndpoint` is present only while an account-enrolling control endpoint
+  is listening; otherwise `data` is `{}`. Like `discover`, the path confers no
+  authority.
+- An engine that predates this record answers it with an error. Read that as "no
+  control endpoint", not as a reason to retry.
 
 A same-account presenter enrolls on a fresh connection to that endpoint, with no owner
 prompt, in one attempt within the connection's 30 s window:

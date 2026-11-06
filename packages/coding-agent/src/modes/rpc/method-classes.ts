@@ -165,6 +165,7 @@ export const RPC_METHOD_CLASS = {
 	get_protocol_info: "observe",
 	get_subscription_limits: "observe",
 	list_sessions: "observe",
+	list_hands: "observe",
 	get_state: "observe",
 	get_snapshot: "observe",
 	get_entries: "observe",
@@ -241,6 +242,8 @@ export const RPC_METHOD_CLASS = {
 	set_session_context: "thread",
 	attach_session: "thread",
 	// device_admin
+	// Moves where the session's tools run (onto another machine): it changes what the agent can reach.
+	select_hand: "device_admin",
 	bash: "device_admin",
 	abort_bash: "device_admin",
 	record_bash_result: "device_admin",

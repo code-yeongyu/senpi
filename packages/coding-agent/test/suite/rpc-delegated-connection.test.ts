@@ -38,10 +38,11 @@ import { corpusRequest, NO_ID, type Opened, TODAY } from "../characterization/rp
 type WireRecord = Record<string, unknown>;
 
 /**
- * `RPC_METHOD_CLASSES_DIGEST` at the base this test runs on: main (fecca3f8ca added `account_reset`) plus senpi#5379, which moves
- * `set_model` from `device_admin` to `dynamic`. Delegated connections add methods outside the table, never a table entry.
+ * `RPC_METHOD_CLASSES_DIGEST` at the base this test runs on: main (with `list_hands` (observe) and `select_hand`
+ * (device_admin) in the table, senpi#5938) plus senpi#5379, which moves `set_model` from `device_admin` to `dynamic`.
+ * Delegated connections add methods outside the table, never a table entry.
  */
-const DIGEST_ON_BASE = "eee0d88ba62e9e7f9687ac46525b8ceed24b29bee7557d6ca617c7da182e968a";
+const DIGEST_ON_BASE = "56c692be165af1736661e24017ebd1526ae2e7aed1beb726abd2c3691bca9f43";
 const FORWARDABLE = [
 	"observe",
 	"drive",
