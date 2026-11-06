@@ -1,6 +1,6 @@
 {
 	"methodClassesVersion": 1,
-	"methodClassesDigest": "85c74d833ae2071658f88062a9f7573d80002ffc8a4bd4351b0ceea21cd55acd",
+	"methodClassesDigest": "56c692be165af1736661e24017ebd1526ae2e7aed1beb726abd2c3691bca9f43",
 	"sampleId": "00000000-0000-7000-8000-000000000000",
 	"samplePathRoot": "/nonexistent/senpi-rpc-inbound-sample",
 	"methodCount": 118,
@@ -1037,7 +1037,8 @@
 		},
 		{
 			"method": "set_model",
-			"class": "device_admin",
+			"class": "dynamic",
+			"dynamicVersion": 1,
 			"sampleClass": "device_admin",
 			"connectionLocal": false,
 			"sample": {
