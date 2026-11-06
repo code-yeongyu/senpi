@@ -111,18 +111,14 @@ import {
 	runAbort,
 	runGetEffectStatus,
 	runQueuedInputChange,
-	runSetModel,
 	runSetThinkingLevel,
 } from "./effect-commands.ts";
 import { EffectLedger } from "./effect-ledger.ts";
 import { EFFECT_LEDGER_CAPABILITY } from "./effect-record.ts";
+import { handleModelCommand } from "./handlers-model.ts";
 import { createRpcEventOutputBuffer } from "./event-output-buffer.ts";
-import {
-	answeredUiRequestId,
-	extensionUiProgressReply,
-	refusedExtensionUiResponse,
-	settleExtensionUiResponse,
-} from "./extension-ui-response.ts";
+import { extensionUiProgressReply, refusedExtensionUiResponse } from "./extension-ui-response.ts";
+import { answerExtensionUiResponse } from "./handlers-answer.ts";
 import { SecretInputRequests, type SecretInputRoute } from "./secret-input-requests.ts";
 import { answerGetEntries } from "./get-entries-command.ts";
 import { runHoldInput } from "./held-input-commands.ts";
@@ -164,8 +160,9 @@ import {
 	STEER_WHEN_IDLE_CAPABILITY,
 	USER_ACTIVITY_CAPABILITY,
 } from "./rpc-types.ts";
+import { SESSION_MODEL_SCOPE_CAPABILITY } from "./rpc-session-command-types.ts";
 import { runPauseForRun, runResumeForRun } from "./run-hold-commands.ts";
-import { availableModelsData, interruptRunningTurn } from "./session-control-actions-data.ts";
+import { interruptRunningTurn } from "./session-control-actions-data.ts";
 import { SessionExtensionUiRequests, sessionDialogRequests } from "./session-extension-ui-requests.ts";
 import { subscribeSessionRecords } from "./session-record-stream.ts";
 import { subscribeStructuredSessionRecords } from "./structured-session-records.ts";
@@ -1343,6 +1340,7 @@ export function createRpcConnectionHandler(
 								QUEUED_MESSAGE_REVISION_CAPABILITY,
 								TOOL_BARRIER_CAPABILITY,
 								USER_ACTIVITY_CAPABILITY,
+								SESSION_MODEL_SCOPE_CAPABILITY,
 								RESUME_SESSION_CAPABILITY,
 								ENTRIES_TAIL_CAPABILITY,
 								...(options.retryFallbackCommand ? [RETRY_FALLBACK_COMMAND_CAPABILITY] : []),
@@ -1656,28 +1654,11 @@ export function createRpcConnectionHandler(
 			// =================================================================
 
 			case "set_model":
-				return runSetModel(effectContext(), command);
-
 			case "set_favorite_models":
-				session.setFavoriteModels(command.models);
-				return success(id, "set_favorite_models");
-
 			case "set_scoped_models":
-				session.setScopedModels(command.models);
-				return success(id, "set_scoped_models");
-
-			case "cycle_model": {
-				const result = await session.cycleModel(command.direction, {
-					origin: { source: "rpc", actor: "cycle_model" },
-				});
-				if (!result) {
-					return success(id, "cycle_model", null);
-				}
-				return success(id, "cycle_model", result);
-			}
-
+			case "cycle_model":
 			case "get_available_models":
-				return success(id, "get_available_models", await availableModelsData(session));
+				return handleModelCommand(effectContext(), command);
 
 			// =================================================================
 			// Thinking
@@ -2430,30 +2411,16 @@ export function createRpcConnectionHandler(
 			"type" in parsed &&
 			parsed.type === "extension_ui_response"
 		) {
-			const response = parsed as RpcExtensionUIResponse;
-			// The grant rules apply to the request this response answers (`uiRequestId`, or `id` in the
-			// short form), the same request `settleExtensionUiResponse` settles.
-			const answered = answeredUiRequestId(response);
-			if (
-				(answered !== undefined && secretInputs.has(answered)) ||
-				("secret" in response && response.secret === true)
-			) {
-				output(secretInputs.respond(parsed as Record<string, unknown>));
-				return;
-			}
-			if (!options.workerSecurityBridge && answered !== undefined && grantRequests.has(answered)) {
-				const sender = options.clientInfo?.connectionId();
-				const capable =
+			const sender = options.clientInfo?.connectionId();
+			const reply = answerExtensionUiResponse(parsed as RpcExtensionUIResponse, {
+				secretInputs,
+				grantRequests,
+				workerSecurityBridge: options.workerSecurityBridge === true,
+				sender,
+				grantCapable: () =>
 					sender === undefined
 						? clientCapabilities?.includes("grant_select") === true
-						: options.clientInfo?.hasCapability?.(sender, "grant_select") === true;
-				// The sender hears the refusal, so its dialog does not vanish as if the answer had counted.
-				if (grantRequests.get(answered) !== sender || !capable) {
-					output(refusedExtensionUiResponse(response.id, "grant_answer_refused"));
-					return;
-				}
-			}
-			const reply = settleExtensionUiResponse(response, {
+						: options.clientInfo?.hasCapability?.(sender, "grant_select") === true,
 				questions,
 				dialogs: pendingExtensionRequests,
 				routed: routingSessionId !== undefined,

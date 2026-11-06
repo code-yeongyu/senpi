@@ -50,6 +50,7 @@ describe("multi-session RPC protocol info", () => {
 					"queued_message_revision",
 					"tool_barrier",
 					"user_activity",
+					"session_model_scope", // senpi#5933: set_model honours scope "session".
 					"session_held",
 					"resume_session",
 					"attended",

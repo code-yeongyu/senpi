@@ -63,6 +63,7 @@ import { ensureSocketSecret, SOCKET_SECRET_FILE_ENV, socketSecretPath } from "./
 import { WorkerSessionRegistry } from "./worker-session-registry.ts";
 import type { PresenterAccountAuthority } from "./mcp-presenter-account.ts";
 import { presenterBootstrapStream } from "./mcp-presenter-bootstrap.ts";
+import type { AttachLedger } from "./attach-ledger.ts";
 import { startMcpPresenterControl } from "./mcp-presenter-control-start.ts";
 import type { HeadlessPresence } from "../headless/presence.ts";
 import type { HandSelection } from "../headless/hand-selection.ts";
@@ -95,6 +96,11 @@ export interface MultiSessionHostOptions {
 	 * an explicit `false` is honored) and never exits for being empty.
 	 */
 	sessionOwner?: "client" | "machine";
+	/**
+	 * The durable takeover ledger (R21; S37). Honored only with `sessionOwner: "machine"`: `attach_session { takeover,
+	 * holder }` then takes a session over and lets its other clients go quietly. Absent, a takeover is refused.
+	 */
+	sessionTakeover?: AttachLedger;
 	/** Set only by a headless host with a presence binding (`modes/headless`): rows and opens carry presence. */
 	sessionPresence?: HeadlessPresence;
 	/** Set only by a headless host with a hand directory (`modes/headless`): `list_hands` and `select_hand`. */

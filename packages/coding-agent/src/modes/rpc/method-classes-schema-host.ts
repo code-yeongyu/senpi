@@ -118,6 +118,8 @@ export const HOST_RECORD_SCHEMAS = {
 		durableSessionId: Id,
 		expectedHostInstance: OptId,
 		retry: Opt(Type.Literal(true)),
+		takeover: Opt(Type.Literal(true)),
+		holder: OptId,
 	}),
 	release_attachment: command("release_attachment", { sessionId: Id }),
 	list_hands: command("list_hands", { sessionId: OptId }),
