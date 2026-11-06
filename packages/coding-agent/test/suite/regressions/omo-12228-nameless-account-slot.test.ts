@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Api, type Context, InMemoryCredentialStore, type Model } from "@earendil-works/pi-ai";
@@ -86,9 +86,10 @@ async function storeWithRawSlots(slots: readonly unknown[]): Promise<InMemoryCre
 	return store;
 }
 
-function configure(store: InMemoryCredentialStore, seen: Options[]): void {
+function configure(store: InMemoryCredentialStore, seen: Options[], settings?: unknown): void {
 	const agentDir = temporaryDirectory();
 	process.env.SENPI_CODING_AGENT_DIR = agentDir;
+	if (settings !== undefined) writeFileSync(join(agentDir, "settings.json"), JSON.stringify(settings));
 	overrideAuthLaneBoundary({
 		createStore: () => store,
 		env: () => ({ PATH: "/usr/bin", ...cliLaneEnv() }),
@@ -133,6 +134,18 @@ describe("oh-my-openagent#12228 a stored Claude account with no name", () => {
 		expect(final.stopReason).toBe("error");
 		expect(final.errorMessage ?? "").not.toContain("Received undefined");
 		expect(final.errorMessage ?? "").toContain("claude_account_unusable");
+	});
+
+	it("never refuses when the user configured the ambient lane explicitly", async () => {
+		const seen: Options[] = [];
+		configure(await storeWithRawSlots([namelessStoredSlot]), seen, {
+			anthropicSubscriptionProvider: { tokenInjection: "ambient" },
+		});
+
+		const final = await streamAnthropicSubscription(model, context, { cwd: process.cwd() }).result();
+
+		expect(seen).toHaveLength(1);
+		expect(final.errorMessage ?? "").not.toContain("claude_account_unusable");
 	});
 
 	it("keeps a credential whose only stored entries are legacy token slots on the ambient path", async () => {
