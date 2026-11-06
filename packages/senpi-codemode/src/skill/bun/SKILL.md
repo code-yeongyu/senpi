@@ -29,9 +29,9 @@ Bun 1.4.0 (Aug 2026) through 1.4.4 (Oct 2026) ships builtins and CLIs that repla
 | Serve a static dir (ETag/Range/304 handled) | `Bun.serve({ routes: { "/x/*": { dir } } })` | express.static, serve-static, sirv | http-networking |
 | HTTP/2 + HTTP/3 server; fetch protocol/compress/proxy; per-client pools | `http2: true`, `http3: true`, `fetch(url, { protocol, compress, proxy })`, `new Bun.FetchSession()` | undici Agent | http-networking |
 | Stream a download to disk; replay a request as curl | `Bun.write(path, await fetch(url))`, `BUN_CONFIG_VERBOSE_FETCH=curl` | pipeline + createWriteStream | http-networking |
-| Tests across CPU workers / CI shards / changed files / flaky retry | `bun test --parallel --shard=1/3 --changed=main --retry` | jest/vitest infra | test |
+| Tests across CPU workers / CI shards / changed files / flaky retry | `bun test --parallel --shard=1/3 --changed=main --retry=3` | jest/vitest infra | test |
 | Kill "passes alone, fails in suite" bugs; hunt flakes | `bun test --isolate`, `--rerun-each N`, `--only-failures` | vitest default behavior | test |
-| Single-file executables with embedded assets and profile-guided startup; feature flags; in-memory bundling; metafile; React Compiler | `bun build --compile --asset ./public --bytecode-order`, `bun:bundle feature()`, `files:{}`, `metafile: true`, `--react-compiler` | pkg hacks, esbuild define/plugins, babel-plugin-react-compiler | build |
+| Single-file executables with embedded assets and profile-guided startup; feature flags; in-memory bundling; metafile; React Compiler | `bun build --compile --bytecode --bytecode-order=<profile> --asset ./public`, `bun:bundle feature()`, `files:{}`, `metafile: true`, `--react-compiler` | pkg hacks, esbuild define/plugins, babel-plugin-react-compiler | build |
 | Diff package versions, fix vulns, dedupe/prune, licenses, explain a dep | `bun pm diff`, `bun audit fix`, `bun dedupe`, `bun prune`, `bun pm licenses`, `bun why` | npm-diff, npm audit fix, npm ls | install |
 | Offline / cached installs; Docker layers; CI cache; 7x faster CI | `bun install --offline\|--prefer-offline`, `bun pm fetch`, `bun pm cache pack\|unpack`, `linker = "isolated"` | pnpm store | install |
 | Profile CPU/heap/bundle as grep-able Markdown | `bun --cpu-prof-md`, `--heap-prof-md`, `bun build --metafile-md` | Chrome DevTools round-trip | dev-tooling |
