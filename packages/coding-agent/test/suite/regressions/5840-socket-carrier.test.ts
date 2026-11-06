@@ -6,7 +6,6 @@ import { createConnection, createServer, type Server, type Socket } from "node:n
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { attachSocketCarrier, type CarrierSide } from "../../../src/modes/hand/socket-carrier.ts";
-
 const cleanups: Array<() => void> = [];
 afterEach(() => {
 	for (const cleanup of cleanups.splice(0)) cleanup();
@@ -35,14 +34,18 @@ it("refuses a send while the socket is over its high-water mark and takes it onc
 	const { local, remote } = await socketPair();
 	let connection: Parameters<CarrierSide["attached"]>[0] | undefined;
 	const writable = Promise.withResolvers<void>();
-	attachSocketCarrier(local, {
-		attached: (attachedConnection) => {
-			connection = attachedConnection;
+	attachSocketCarrier(
+		local,
+		{
+			attached: (attachedConnection) => {
+				connection = attachedConnection;
+			},
+			message: () => {},
+			writable: () => writable.resolve(),
+			detached: () => {},
 		},
-		message: () => {},
-		writable: () => writable.resolve(),
-		detached: () => {},
-	});
+		() => {},
+	);
 	if (connection === undefined) throw new Error("carrier never attached");
 	const ack = { kind: "ack", lane: "scope-1", seq: 1 };
 
@@ -53,4 +56,21 @@ it("refuses a send while the socket is over its high-water mark and takes it onc
 	remote.resume();
 	await writable.promise;
 	expect(connection.send(ack)).toBe(true);
+});
+
+it("reports a carrier socket error once per connection, then destroys the socket", async () => {
+	const { local } = await socketPair();
+	const reported: string[] = [];
+	attachSocketCarrier(
+		local,
+		{ attached: () => {}, message: () => {}, writable: () => {}, detached: () => {} },
+		(line) => reported.push(line),
+	);
+	const error = Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" });
+
+	local.emit("error", error);
+	local.emit("error", error);
+
+	expect(reported).toEqual(["carrier socket error ECONNRESET: read ECONNRESET"]);
+	expect(local.destroyed).toBe(true);
 });
