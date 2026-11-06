@@ -251,9 +251,11 @@ export function spawnCli(args, { env, cwd, stdio } = {}) {
 			: runtime.kind === "bun"
 				? [cliEntry(root), ...args]
 				: [tsxEntry(root), "--tsconfig", join(root, "tsconfig.json"), cliEntry(root), ...args];
+	// A Node child opens sessions only in the JSONL store through the developer hatch; the durable store runs on Bun (#5822).
+	const childEnv = runtime.kind === "binary" || runtime.kind === "bun" ? env || process.env : { ...(env || process.env), SENPI_SESSION_STORE: "jsonl" };
 	const child = spawn(runtime.command, argv, {
 		cwd: cwd || root,
-		env: env || process.env,
+		env: childEnv,
 		stdio: stdio || ["pipe", "pipe", "pipe"],
 	});
 	track(child);

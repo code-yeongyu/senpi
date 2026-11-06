@@ -10,6 +10,7 @@ import {
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
+	readFileSync,
 	readdirSync,
 	realpathSync,
 	rmSync,
@@ -25,7 +26,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { readBunVersion, resolveBunReexec, type StayReason } from "../../src/bun-runtime.ts";
 import { createAgentSession } from "../../src/core/sdk.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
-import { NODE_REQUIRES_BUN_MESSAGE } from "../../src/core/session-store/node-guard.ts";
+import {
+	NODE_HOST_REFUSAL_LOG_ENV,
+	NODE_HOST_REFUSED,
+	NODE_REQUIRES_BUN_MESSAGE,
+} from "../../src/core/session-store/node-guard.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
 import { MOCK_MODEL, MOCK_PROVIDER, writeRpcModelsJson } from "../helpers/rpc-hermetic.ts";
 import { sourceRuntimeArgs } from "../helpers/source-runtime-args.ts";
@@ -236,17 +241,36 @@ describe.skipIf(process.versions.bun !== undefined)("a CLI process on Node (K9.a
 		);
 	});
 
-	it("refuses to start a multi-session RPC host, before any session opens", async () => {
+	it.each(["--multi-session", "--listen"])(
+		"refuses to start a %s RPC host, before any session opens",
+		async (flag) => {
+			const dirs = setup();
+			const hostArgs = flag === "--listen" ? [flag, `unix://${join(dirs.root, "h.sock")}`] : [flag];
+			const result = await runCli(dirs, stayOnNode(dirs, "not-bun-install"), [...SESSION_ARGS, ...hostArgs], false);
+			expect(result.stderr.split(NODE_REQUIRES_BUN_MESSAGE)).toHaveLength(2);
+			expect(result.code).toBe(1);
+			expect(existsSync(dirs.sessions)).toBe(false);
+		},
+	);
+
+	it("the test run's refusal log changes nothing the refusal prints, and records one NODE_HOST_REFUSED line", async () => {
 		const dirs = setup();
-		const result = await runCli(
+		const run = stayOnNode(dirs, "not-bun-install");
+		const log = join(dirs.root, "refusals.log");
+		const unset = await runCli(dirs, run, SESSION_ARGS, false);
+		const set = await runCli(
 			dirs,
-			stayOnNode(dirs, "not-bun-install"),
-			[...SESSION_ARGS, "--multi-session"],
+			{ ...run, env: { ...run.env, [NODE_HOST_REFUSAL_LOG_ENV]: log } },
+			SESSION_ARGS,
 			false,
 		);
-		expect(result.stderr.split(NODE_REQUIRES_BUN_MESSAGE)).toHaveLength(2);
-		expect(result.code).toBe(1);
-		expect(existsSync(dirs.sessions)).toBe(false);
+		expect(unset.stderr.split(NODE_REQUIRES_BUN_MESSAGE)).toHaveLength(2);
+		expect({ code: set.code, stderr: set.stderr, stdout: set.stdout }).toEqual({
+			code: unset.code,
+			stderr: unset.stderr,
+			stdout: unset.stdout,
+		});
+		expect(readFileSync(log, "utf8")).toMatch(new RegExp(`^${NODE_HOST_REFUSED} \\d+\\n$`));
 	});
 
 	it.each([["--version"], ["--help"]])("%s still works on Node", async (flag) => {
@@ -300,7 +324,11 @@ describe.skipIf(process.versions.bun !== undefined)("the SDK default-store open 
 	it("throws the steering message for a persisted session", async () => {
 		const root = realpathSync(mkdtempSync(join(tmpdir(), "senpi-sdk-node-")));
 		roots.push(root);
-		await expect(create(root)).rejects.toThrow(NODE_REQUIRES_BUN_MESSAGE);
+		await expect(create(root)).rejects.toMatchObject({
+			name: "NodeHostRefusedError",
+			code: NODE_HOST_REFUSED,
+			message: NODE_REQUIRES_BUN_MESSAGE,
+		});
 		expect(existsSync(join(root, "agent", "session-store"))).toBe(false);
 	});
 

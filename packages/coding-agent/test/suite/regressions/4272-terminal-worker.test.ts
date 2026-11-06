@@ -1,8 +1,15 @@
 import { chmodSync } from "node:fs";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { recoveryCarrier, SessionRecoveryIdentity } from "../../../src/core/session-recovery-identity.ts";
 import type { FrozenAcceptedRoot } from "../../../src/modes/rpc/session-acceptance-lane.ts";
 import { creditOf, type OutputFrame, workerAcceptanceHost } from "./4272-worker-acceptance-support.ts";
+
+// This file runs on Node: its failure cases make the JSONL session file unwritable, a failure that exists only in the
+// JSONL store. A Node process opens session state only under the JSONL developer hatch
+// (#5822), the store this file used before.
+beforeEach(() => {
+	vi.stubEnv("SENPI_SESSION_STORE", "jsonl");
+});
 
 afterEach(() => {
 	vi.unstubAllEnvs();

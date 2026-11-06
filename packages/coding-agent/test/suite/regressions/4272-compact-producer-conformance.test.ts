@@ -1,7 +1,14 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { SessionWorkerToHost } from "../../../src/modes/rpc/session-worker-protocol.ts";
 import { expectOneNumbering, recordFolds } from "./4272-compact-lane-support.ts";
 import { builtFauxPath, workerAcceptanceHost } from "./4272-worker-acceptance-support.ts";
+
+// This file runs on Node: its real-worker case needs structured frames, which a Bun vitest isolate does not send
+// (senpi#4667). A Node process opens session state only under the JSONL developer hatch
+// (#5822), the store this file used before.
+beforeEach(() => {
+	vi.stubEnv("SENPI_SESSION_STORE", "jsonl");
+});
 
 afterEach(() => {
 	vi.unstubAllEnvs();
