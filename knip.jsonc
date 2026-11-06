@@ -1071,8 +1071,6 @@
       "packages/coding-agent/src/modes/interactive/components/ask-user-question-state.ts": ["DISMISS_NOTICE", "PARTIAL_SUBMIT_NOTICE"],
       // pre-existing at origin main aceb1cc1d9: unused exports RESUME_FALLBACK_DIAGNOSTIC_TYPE
       "packages/coding-agent/src/modes/interactive/components/continuity-notice.ts": ["RESUME_FALLBACK_DIAGNOSTIC_TYPE"],
-      // pre-existing at origin main aceb1cc1d9: unused exports elideHead
-      "packages/coding-agent/src/modes/interactive/components/footer-layout.ts": ["elideHead"],
       // pre-existing at origin main aceb1cc1d9: unused exports DaxnutsComponent, FavoriteModelsSelectorComponent, FirstTimeSetupComponent, TrustSelectorComponent
       "packages/coding-agent/src/modes/interactive/components/index.ts": ["DaxnutsComponent", "FavoriteModelsSelectorComponent", "FirstTimeSetupComponent", "TrustSelectorComponent"],
       // pre-existing at origin main aceb1cc1d9: unused exports formatAuthSelectorProviderStatus
