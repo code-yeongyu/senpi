@@ -4258,7 +4258,8 @@
         "runtime": {
          "name": "bun",
          "version": "1.4.4",
-         "path": "<host:bun-path>"
+         "path": "<host:bun-path>",
+         "isolation": "process"
         },
         "summary": "a cell that never finishes",
         "toolCallCount": 0,
@@ -4273,7 +4274,8 @@
           "runtime": {
            "name": "bun",
            "version": "1.4.4",
-           "path": "<host:bun-path>"
+           "path": "<host:bun-path>",
+           "isolation": "process"
           },
           "output": "",
           "status": "queued",
@@ -4307,7 +4309,8 @@
         "runtime": {
          "name": "bun",
          "version": "1.4.4",
-         "path": "<host:bun-path>"
+         "path": "<host:bun-path>",
+         "isolation": "process"
         },
         "summary": "a cell that never finishes",
         "toolCallCount": 0,
@@ -4322,7 +4325,8 @@
           "runtime": {
            "name": "bun",
            "version": "1.4.4",
-           "path": "<host:bun-path>"
+           "path": "<host:bun-path>",
+           "isolation": "process"
           },
           "output": "",
           "status": "running",
@@ -4666,7 +4670,8 @@
         "runtime": {
          "name": "bun",
          "version": "1.4.4",
-         "path": "<host:bun-path>"
+         "path": "<host:bun-path>",
+         "isolation": "process"
         },
         "summary": "a cell that never finishes",
         "toolCallCount": 0,
@@ -4681,7 +4686,8 @@
           "runtime": {
            "name": "bun",
            "version": "1.4.4",
-           "path": "<host:bun-path>"
+           "path": "<host:bun-path>",
+           "isolation": "process"
           },
           "output": "",
           "status": "detached",
@@ -4712,7 +4718,8 @@
         "runtime": {
          "name": "bun",
          "version": "1.4.4",
-         "path": "<host:bun-path>"
+         "path": "<host:bun-path>",
+         "isolation": "process"
         },
         "summary": "a cell that never finishes",
         "toolCallCount": 0,
@@ -4727,7 +4734,8 @@
           "runtime": {
            "name": "bun",
            "version": "1.4.4",
-           "path": "<host:bun-path>"
+           "path": "<host:bun-path>",
+           "isolation": "process"
           },
           "output": "",
           "status": "detached",
@@ -4759,7 +4767,8 @@
         "runtime": {
          "name": "bun",
          "version": "1.4.4",
-         "path": "<host:bun-path>"
+         "path": "<host:bun-path>",
+         "isolation": "process"
         },
         "summary": "a cell that never finishes",
         "toolCallCount": 0,
@@ -4774,7 +4783,8 @@
           "runtime": {
            "name": "bun",
            "version": "1.4.4",
-           "path": "<host:bun-path>"
+           "path": "<host:bun-path>",
+           "isolation": "process"
           },
           "output": "",
           "status": "detached",
@@ -4811,7 +4821,8 @@
          "runtime": {
           "name": "bun",
           "version": "1.4.4",
-          "path": "<host:bun-path>"
+          "path": "<host:bun-path>",
+          "isolation": "process"
          },
          "summary": "a cell that never finishes",
          "toolCallCount": 0,
@@ -4826,7 +4837,8 @@
            "runtime": {
             "name": "bun",
             "version": "1.4.4",
-            "path": "<host:bun-path>"
+            "path": "<host:bun-path>",
+            "isolation": "process"
            },
            "output": "",
            "status": "detached",
@@ -4903,7 +4915,8 @@
          "runtime": {
           "name": "bun",
           "version": "1.4.4",
-          "path": "<host:bun-path>"
+          "path": "<host:bun-path>",
+          "isolation": "process"
          },
          "summary": "a cell that never finishes",
          "toolCallCount": 0,
@@ -4918,7 +4931,8 @@
            "runtime": {
             "name": "bun",
             "version": "1.4.4",
-            "path": "<host:bun-path>"
+            "path": "<host:bun-path>",
+            "isolation": "process"
            },
            "output": "",
            "status": "detached",
@@ -5338,7 +5352,8 @@
          "runtime": {
           "name": "bun",
           "version": "1.4.4",
-          "path": "<host:bun-path>"
+          "path": "<host:bun-path>",
+          "isolation": "process"
          },
          "summary": "a cell that never finishes",
          "toolCallCount": 0,
@@ -5353,7 +5368,8 @@
            "runtime": {
             "name": "bun",
             "version": "1.4.4",
-            "path": "<host:bun-path>"
+            "path": "<host:bun-path>",
+            "isolation": "process"
            },
            "output": "",
            "status": "detached",
@@ -6820,7 +6836,8 @@
        "runtime": {
         "name": "bun",
         "version": "1.4.4",
-        "path": "<host:bun-path>"
+        "path": "<host:bun-path>",
+        "isolation": "process"
        },
        "summary": "a cell that never finishes",
        "toolCallCount": 0,
@@ -6835,7 +6852,8 @@
          "runtime": {
           "name": "bun",
           "version": "1.4.4",
-          "path": "<host:bun-path>"
+          "path": "<host:bun-path>",
+          "isolation": "process"
          },
          "output": "",
          "status": "detached",

@@ -4258,7 +4258,8 @@
         "runtime": {
          "name": "bun",
          "version": "1.4.4",
-         "path": "<host:bun-path>"
+         "path": "<host:bun-path>",
+         "isolation": "process"
         },
         "summary": "start the background waiter",
         "toolCallCount": 0,
@@ -4273,7 +4274,8 @@
           "runtime": {
            "name": "bun",
            "version": "1.4.4",
-           "path": "<host:bun-path>"
+           "path": "<host:bun-path>",
+           "isolation": "process"
           },
           "output": "",
           "status": "queued",
@@ -4307,7 +4309,8 @@
         "runtime": {
          "name": "bun",
          "version": "1.4.4",
-         "path": "<host:bun-path>"
+         "path": "<host:bun-path>",
+         "isolation": "process"
         },
         "summary": "start the background waiter",
         "toolCallCount": 0,
@@ -4322,7 +4325,8 @@
           "runtime": {
            "name": "bun",
            "version": "1.4.4",
-           "path": "<host:bun-path>"
+           "path": "<host:bun-path>",
+           "isolation": "process"
           },
           "output": "",
           "status": "running",
@@ -4845,7 +4849,8 @@
         "runtime": {
          "name": "bun",
          "version": "1.4.4",
-         "path": "<host:bun-path>"
+         "path": "<host:bun-path>",
+         "isolation": "process"
         },
         "summary": "start the background waiter",
         "toolCallCount": 1,
@@ -4871,7 +4876,8 @@
           "runtime": {
            "name": "bun",
            "version": "1.4.4",
-           "path": "<host:bun-path>"
+           "path": "<host:bun-path>",
+           "isolation": "process"
           },
           "output": "",
           "status": "running",
@@ -4905,7 +4911,8 @@
         "runtime": {
          "name": "bun",
          "version": "1.4.4",
-         "path": "<host:bun-path>"
+         "path": "<host:bun-path>",
+         "isolation": "process"
         },
         "summary": "start the background waiter",
         "toolCallCount": 1,
@@ -4931,7 +4938,8 @@
           "runtime": {
            "name": "bun",
            "version": "1.4.4",
-           "path": "<host:bun-path>"
+           "path": "<host:bun-path>",
+           "isolation": "process"
           },
           "output": "Command running in background with ID: <id:11>\n(native PTY unavailable: running via pipe fallback; bash_input/bash_resize are limited.)\n",
           "status": "running",
@@ -4965,7 +4973,8 @@
         "runtime": {
          "name": "bun",
          "version": "1.4.4",
-         "path": "<host:bun-path>"
+         "path": "<host:bun-path>",
+         "isolation": "process"
         },
         "summary": "start the background waiter",
         "toolCallCount": 1,
@@ -4991,7 +5000,8 @@
           "runtime": {
            "name": "bun",
            "version": "1.4.4",
-           "path": "<host:bun-path>"
+           "path": "<host:bun-path>",
+           "isolation": "process"
           },
           "output": "Command running in background with ID: <id:11>\n(native PTY unavailable: running via pipe fallback; bash_input/bash_resize are limited.)",
           "status": "complete",
@@ -5205,7 +5215,8 @@
         "runtime": {
          "name": "bun",
          "version": "1.4.4",
-         "path": "<host:bun-path>"
+         "path": "<host:bun-path>",
+         "isolation": "process"
         },
         "summary": "start the background waiter",
         "toolCallCount": 1,
@@ -5231,7 +5242,8 @@
           "runtime": {
            "name": "bun",
            "version": "1.4.4",
-           "path": "<host:bun-path>"
+           "path": "<host:bun-path>",
+           "isolation": "process"
           },
           "output": "Command running in background with ID: <id:11>\n(native PTY unavailable: running via pipe fallback; bash_input/bash_resize are limited.)",
           "status": "complete",
@@ -5240,7 +5252,7 @@
         ],
         "memory": {
          "liveBytes": "<measured>",
-         "measure": "heap"
+         "measure": "footprint"
         }
        }
       },
@@ -5266,7 +5278,8 @@
         "runtime": {
          "name": "bun",
          "version": "1.4.4",
-         "path": "<host:bun-path>"
+         "path": "<host:bun-path>",
+         "isolation": "process"
         },
         "summary": "start the background waiter",
         "toolCallCount": 1,
@@ -5292,7 +5305,8 @@
           "runtime": {
            "name": "bun",
            "version": "1.4.4",
-           "path": "<host:bun-path>"
+           "path": "<host:bun-path>",
+           "isolation": "process"
           },
           "output": "Command running in background with ID: <id:11>\n(native PTY unavailable: running via pipe fallback; bash_input/bash_resize are limited.)",
           "status": "complete",
@@ -5301,7 +5315,7 @@
         ],
         "memory": {
          "liveBytes": "<measured>",
-         "measure": "heap"
+         "measure": "footprint"
         }
        },
        "isError": false,
@@ -5328,7 +5342,8 @@
         "runtime": {
          "name": "bun",
          "version": "1.4.4",
-         "path": "<host:bun-path>"
+         "path": "<host:bun-path>",
+         "isolation": "process"
         },
         "summary": "start the background waiter",
         "toolCallCount": 1,
@@ -5354,7 +5369,8 @@
           "runtime": {
            "name": "bun",
            "version": "1.4.4",
-           "path": "<host:bun-path>"
+           "path": "<host:bun-path>",
+           "isolation": "process"
           },
           "output": "Command running in background with ID: <id:11>\n(native PTY unavailable: running via pipe fallback; bash_input/bash_resize are limited.)",
           "status": "complete",
@@ -5363,7 +5379,7 @@
         ],
         "memory": {
          "liveBytes": "<measured>",
-         "measure": "heap"
+         "measure": "footprint"
         }
        },
        "isError": false,
@@ -5395,7 +5411,8 @@
          "runtime": {
           "name": "bun",
           "version": "1.4.4",
-          "path": "<host:bun-path>"
+          "path": "<host:bun-path>",
+          "isolation": "process"
          },
          "summary": "start the background waiter",
          "toolCallCount": 1,
@@ -5421,7 +5438,8 @@
            "runtime": {
             "name": "bun",
             "version": "1.4.4",
-            "path": "<host:bun-path>"
+            "path": "<host:bun-path>",
+            "isolation": "process"
            },
            "output": "Command running in background with ID: <id:11>\n(native PTY unavailable: running via pipe fallback; bash_input/bash_resize are limited.)",
            "status": "complete",
@@ -5430,7 +5448,7 @@
          ],
          "memory": {
           "liveBytes": "<measured>",
-          "measure": "heap"
+          "measure": "footprint"
          }
         },
         "isError": false,
@@ -5502,7 +5520,8 @@
          "runtime": {
           "name": "bun",
           "version": "1.4.4",
-          "path": "<host:bun-path>"
+          "path": "<host:bun-path>",
+          "isolation": "process"
          },
          "summary": "start the background waiter",
          "toolCallCount": 1,
@@ -5528,7 +5547,8 @@
            "runtime": {
             "name": "bun",
             "version": "1.4.4",
-            "path": "<host:bun-path>"
+            "path": "<host:bun-path>",
+            "isolation": "process"
            },
            "output": "Command running in background with ID: <id:11>\n(native PTY unavailable: running via pipe fallback; bash_input/bash_resize are limited.)",
            "status": "complete",
@@ -5537,7 +5557,7 @@
          ],
          "memory": {
           "liveBytes": "<measured>",
-          "measure": "heap"
+          "measure": "footprint"
          }
         },
         "isError": false,
@@ -5952,7 +5972,8 @@
          "runtime": {
           "name": "bun",
           "version": "1.4.4",
-          "path": "<host:bun-path>"
+          "path": "<host:bun-path>",
+          "isolation": "process"
          },
          "summary": "start the background waiter",
          "toolCallCount": 1,
@@ -5978,7 +5999,8 @@
            "runtime": {
             "name": "bun",
             "version": "1.4.4",
-            "path": "<host:bun-path>"
+            "path": "<host:bun-path>",
+            "isolation": "process"
            },
            "output": "Command running in background with ID: <id:11>\n(native PTY unavailable: running via pipe fallback; bash_input/bash_resize are limited.)",
            "status": "complete",
@@ -5987,7 +6009,7 @@
          ],
          "memory": {
           "liveBytes": "<measured>",
-          "measure": "heap"
+          "measure": "footprint"
          }
         },
         "isError": false,
@@ -7363,7 +7385,8 @@
        "runtime": {
         "name": "bun",
         "version": "1.4.4",
-        "path": "<host:bun-path>"
+        "path": "<host:bun-path>",
+        "isolation": "process"
        },
        "summary": "start the background waiter",
        "toolCallCount": 1,
@@ -7389,7 +7412,8 @@
          "runtime": {
           "name": "bun",
           "version": "1.4.4",
-          "path": "<host:bun-path>"
+          "path": "<host:bun-path>",
+          "isolation": "process"
          },
          "output": "Command running in background with ID: <id:11>\n(native PTY unavailable: running via pipe fallback; bash_input/bash_resize are limited.)",
          "status": "complete",
@@ -7398,7 +7422,7 @@
        ],
        "memory": {
         "liveBytes": "<measured>",
-        "measure": "heap"
+        "measure": "footprint"
        }
       },
       "isError": false,
