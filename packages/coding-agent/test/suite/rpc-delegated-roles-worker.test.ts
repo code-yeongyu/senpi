@@ -164,6 +164,36 @@ describe("omo-relay-daemon#307: a revocation reaches a record already admitted t
 	}, 60_000);
 });
 
+describe("omo-relay-daemon#307: a session worker never keeps the authority of the command that opened it", () => {
+	it("R1: responses a worker forwards later carry only their own command's receipt, on every connection", async () => {
+		// P opens the session itself, so its worker is created inside P's numbered command (exec 7).
+		const p = await host.proven();
+		expect(await declare(p, GRANT, VIEWER, { roles: BOTH })).toMatchObject({ success: true });
+		const opened = await p.send({ type: "open_session", retain_on_disconnect: true, relayExec: 7 });
+		expect(opened).toMatchObject({ success: true, authority: { exec: 7 } });
+		const data = opened.data as { sessionId: string; state: { sessionId: string } };
+		const session = { sessionId: data.sessionId, durableSessionId: data.state.sessionId };
+		expect(await p.send({ type: "set_client_info", capabilities: ["interactive_user"] })).toMatchObject({
+			success: true,
+		});
+		const q = await peerOn(session);
+		for (const peer of [p, q]) {
+			const unnumbered = [
+				await peer.send(hold(session)),
+				await peer.send({ type: "get_state", sessionId: session.sessionId }),
+			];
+			for (const answer of unnumbered) {
+				expect(answer).toMatchObject({ success: true });
+				expect(answer).not.toHaveProperty("authority");
+			}
+			expect(await peer.send(hold(session, { relayExec: 9 }))).toMatchObject({
+				success: true,
+				authority: { exec: 9, incarnation: 1, roles: ["interactive_user"] },
+			});
+		}
+	}, 60_000);
+});
+
 describe("omo-relay-daemon#307: a declaration carries the incarnation it was made under (v5 §3.6)", () => {
 	it("L2: a declaration delayed past detach_connection is refused alone; k+1 claims; a close leaves the worker", async () => {
 		const session = await retained();

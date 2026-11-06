@@ -74,6 +74,15 @@ export class CommandAuthority {
 export const commandAuthority = new AsyncLocalStorage<CommandAuthority>();
 
 /**
+ * Runs `create` outside any command's authority. On Node, a Worker (and every MessagePort) runs its listeners in the
+ * async context it was constructed in, so a session worker created by a role-bound command would otherwise stamp that
+ * command's receipt onto every later response it forwards. Anything long-lived a command creates is built through this.
+ */
+export function outsideCommand<T>(create: () => T): T {
+	return commandAuthority.exit(create);
+}
+
+/**
  * Adds the running command's receipt to a response addressed to that command's connection. A response that already
  * has a top-level `authority` (a worker's own, stamped where it ran) is never overwritten.
  */

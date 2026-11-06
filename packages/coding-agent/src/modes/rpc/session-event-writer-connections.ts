@@ -218,6 +218,18 @@ export abstract class SessionEventWriterConnections extends SessionEventWriterLa
 		if (target) await settleActors([target.actor]);
 	}
 
+	/**
+	 * omo-relay-daemon#307: a socket whose incarnations ran out is ended once its `detach_connection` answer is flushed
+	 * (engine_closed). `sinkOf` is the sink the socket host registered under that connection id; its `close` half-closes,
+	 * so the answer still buffered in the transport reaches a peer that reads late, instead of a destroy discarding it.
+	 */
+	endExhaustedConnections(sinkOf: (id: string) => { close?(): void } | undefined): void {
+		this.delegations.endConnection = (id) => {
+			const sink = sinkOf(id);
+			if (sink) void this.flushConnection(id).finally(() => sink.close?.());
+		};
+	}
+
 	/** Execute a connection's command with its response destination in context. */
 	withConnection<T>(id: string, task: () => T): T {
 		return this.connectionContext.run(id, task);

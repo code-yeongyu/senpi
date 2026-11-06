@@ -446,10 +446,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	let nextConnection = 0;
 	let shuttingDown = false;
 	// omo-relay-daemon#307: a socket whose incarnations ran out is ended once its detach answer is flushed (engine_closed).
-	writer.delegations.endConnection = (id) => {
-		const ended = connections.get(id);
-		if (ended) void writer.flushConnection(id).finally(() => ended.socket.destroy());
-	};
+	writer.endExhaustedConnections((id) => connections.get(id)?.sink);
 	const secret =
 		process.platform === "win32"
 			? await ensureSocketSecret(process.env[SOCKET_SECRET_FILE_ENV] ?? socketSecretPath(socketPath))

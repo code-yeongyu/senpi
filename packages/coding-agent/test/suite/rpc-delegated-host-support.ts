@@ -15,6 +15,7 @@ import { expect, vi } from "vitest";
 import { parseArgs } from "../../src/cli/args.ts";
 import { createCliRuntimeFactory } from "../../src/main.ts";
 import { attachJsonlLineReader } from "../../src/modes/rpc/jsonl.ts";
+import { ConnectionDelegations } from "../../src/modes/rpc/delegated-connection.ts";
 import { createHostCore } from "../../src/modes/rpc/multi-session-host.ts";
 import { connectAuthenticatedRpcSocket } from "../../src/modes/rpc/rpc-auth-client.ts";
 import { PublicRpcConnection } from "../../src/modes/rpc/rpc-public-auth.ts";
@@ -49,7 +50,7 @@ export default function (pi) {
 `;
 }
 
-export async function startHost(options: { readonly workers?: boolean } = {}) {
+export async function startHost(options: { readonly workers?: boolean; readonly incarnationMax?: number } = {}) {
 	const scratch = await mkdtemp(join(tmpdir(), "x5632-"));
 	const cwd = join(scratch, "cwd");
 	const agentDir = join(scratch, "agent");
@@ -71,6 +72,9 @@ export async function startHost(options: { readonly workers?: boolean } = {}) {
 		appMode: "rpc" as const,
 	};
 	const writer = new SessionEventWriter(() => {});
+	// A small incarnation ceiling makes L4 exhaustion reachable; it replaces the writer's ledger before any connection.
+	if (options.incarnationMax !== undefined)
+		Object.assign(writer, { delegations: new ConnectionDelegations({ incarnationMax: options.incarnationMax }) });
 	const core = createHostCore(
 		{
 			agentDir,
@@ -105,6 +109,12 @@ export async function startHost(options: { readonly workers?: boolean } = {}) {
 	const endpoint = new RpcPublicEndpoint(agentDir, socketPath);
 	await endpoint.publish();
 	const sockets = new Set<Socket>();
+	const sinks = new Map<string, ReturnType<typeof socketSink>>();
+	const ending = new Map<string, () => void>();
+	writer.endExhaustedConnections((id) => {
+		ending.get(id)?.();
+		return sinks.get(id);
+	});
 	let connections = 0;
 	let accepted = "";
 	// The bare host's wiring: the public-key filter in front of the per-connection dispatch, the connection
@@ -115,9 +125,12 @@ export async function startHost(options: { readonly workers?: boolean } = {}) {
 		accepted = id;
 		const stream = new PublicRpcConnection(raw, endpoint, false).stream;
 		stream.on("error", () => {});
-		writer.registerConnection(id, socketSink(stream), { launchProof: "in_band" });
+		const sink = socketSink(stream);
+		sinks.set(id, sink);
+		writer.registerConnection(id, sink, { launchProof: "in_band" });
 		raw.once("close", () => {
 			sockets.delete(raw);
+			sinks.delete(id);
 			writer.unregisterConnection(id);
 			void core.router.releaseConnection(id).catch(() => {});
 		});
@@ -142,6 +155,10 @@ export async function startHost(options: { readonly workers?: boolean } = {}) {
 			const peer = new Peer(socket, `k${++peers}`);
 			expect(await peer.send({ type: "get_protocol_info" })).toMatchObject({ success: true });
 			return peer;
+		},
+		/** Resolves when the host decides to end connection `id` (its incarnations ran out), before the socket ends. */
+		ending(id: string): Promise<void> {
+			return new Promise<void>((resolve) => ending.set(id, resolve));
 		},
 		/** Resolves once the worker thread is blocked inside `/block`; `release` lets it continue. */
 		async blocked(): Promise<{ release(): Promise<void> }> {
