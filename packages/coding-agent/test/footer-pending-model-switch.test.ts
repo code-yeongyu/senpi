@@ -8,6 +8,10 @@ import { createFooterData, createFooterSession } from "./helpers/footer-test-fix
 
 const WIDE = 180;
 const NARROW = 90;
+const EIGHTY = 80;
+const SIXTY = 60;
+const LONG_TARGET = "deepseek/deepseek-v4.1-flash-ultrafast";
+const ELIDED_TARGET = "…ash-ultrafast";
 
 function render(width: number, options: Parameters<typeof createFooterSession>[0], providerCount = 1): string {
 	const footer = new FooterComponent(createFooterSession(options), createFooterData(providerCount));
@@ -45,19 +49,70 @@ describe("footer names a held model switch (senpi#6092)", () => {
 		);
 	});
 
-	it("keeps the held target in the compact floor form on a narrow terminal", () => {
+	it("keeps the full held target in the compact form while the left block still fits", () => {
 		const plain = stripAnsi(
-			render(NARROW, {
+			render(140, {
 				sessionName: "a-session-name-that-costs-width",
 				modelId: "claude-opus-5-5",
 				provider: "anthropic",
 				reasoning: true,
 				thinkingLevel: "medium",
-				pendingModelSwitch: { id: "deepseek/deepseek-v4.1-flash-ultrafast", provider: "deepseek" },
+				pendingModelSwitch: { id: LONG_TARGET, provider: "deepseek" },
 			}),
 		);
-		expect(plain).toContain("claude-opus-5-5:medium → deepseek/deepseek-v4.1-flash-ultrafast (after compact)");
+		expect(plain).toContain(`claude-opus-5-5:medium → ${LONG_TARGET} (after compact)`);
+		expect(plain).toContain("(12.3%)");
 		expect(plain).not.toContain("effort medium");
+	});
+
+	it.each([NARROW, EIGHTY])(
+		"elides the held target and keeps the context meter at %i columns (senpi#6120)",
+		(width) => {
+			const plain = stripAnsi(
+				render(width, {
+					sessionName: "a-session-name-that-costs-width",
+					modelId: "claude-opus-5-5",
+					provider: "anthropic",
+					reasoning: true,
+					thinkingLevel: "medium",
+					pendingModelSwitch: { id: LONG_TARGET, provider: "deepseek" },
+				}),
+			);
+			expect(plain).toContain(`claude-opus-5-5:medium → ${ELIDED_TARGET} (after compact)`);
+			expect(plain).toContain("(12.3%)");
+			expect(plain).not.toContain("deepseek/");
+		},
+	);
+
+	it("never shows a mid-id fragment of the held target at 60 columns (senpi#6120)", () => {
+		const plain = stripAnsi(
+			render(SIXTY, {
+				sessionName: "",
+				modelId: "claude-opus-5-5",
+				provider: "anthropic",
+				reasoning: true,
+				thinkingLevel: "medium",
+				pendingModelSwitch: { id: LONG_TARGET, provider: "deepseek" },
+			}),
+		);
+		expect(plain).toMatch(/claude-opus-5-5:medium → …ash-ultrafast \(after compact\)$/);
+		expect(plain).not.toContain("deepseek/");
+	});
+
+	it("keeps a short held target whole and adds no extra rung", () => {
+		const plain = stripAnsi(
+			render(EIGHTY, {
+				sessionName: "",
+				modelId: "claude-opus-5-5",
+				provider: "anthropic",
+				reasoning: true,
+				thinkingLevel: "medium",
+				pendingModelSwitch: { id: "mock-small", provider: "mock" },
+			}),
+		);
+		expect(plain).toContain("claude-opus-5-5:medium → mock-small (after compact)");
+		expect(plain).toContain("(12.3%)");
+		expect(plain).not.toContain("…ock-small");
 	});
 
 	it("colours the held target as pending, apart from the running model's accent", () => {
@@ -66,10 +121,22 @@ describe("footer names a held model switch (senpi#6092)", () => {
 			modelId: "claude-opus-5-5",
 			provider: "anthropic",
 			reasoning: false,
-			pendingModelSwitch: { id: "deepseek/deepseek-v4.1-flash-ultrafast", provider: "deepseek" },
+			pendingModelSwitch: { id: LONG_TARGET, provider: "deepseek" },
 		});
 		expect(line).toContain(theme.fg("accent", "claude-opus-5-5"));
-		expect(line).toContain(theme.fg("warning", "deepseek/deepseek-v4.1-flash-ultrafast"));
+		expect(line).toContain(theme.fg("warning", LONG_TARGET));
+		expect(line).toContain(theme.fg("muted", " (after compact)"));
+	});
+
+	it("colours the elided held target the same way on the floor", () => {
+		const line = render(EIGHTY, {
+			sessionName: "",
+			modelId: "claude-opus-5-5",
+			provider: "anthropic",
+			reasoning: false,
+			pendingModelSwitch: { id: LONG_TARGET, provider: "deepseek" },
+		});
+		expect(line).toContain(theme.fg("warning", ELIDED_TARGET));
 		expect(line).toContain(theme.fg("muted", " (after compact)"));
 	});
 
