@@ -60,9 +60,9 @@ const LEASE_MS = 3_600_000;
 // conformance run takes three `setTimeout(0)` hops per write), and microtasks alone never let that write land
 // between two clock steps. One event-loop turn per step is not enough either: a write that needs several hops
 // lands one hop per 5 ms tick while a fault profile's own timers keep re-arming ahead of it, and `settle` burns
-// its whole transport budget (senpi#6114). A step therefore takes a fixed number of event-loop turns, enough for
-// the slowest adapter's write to land in one step: the async store's three hops plus the delivery that started
-// them, doubled for headroom. Measured on the FAULT-HAND cases: 2 turns still fails, 4 and 8 pass every run.
+// its whole transport budget (senpi#6114). A step therefore takes a fixed number of event-loop turns. The count
+// is measured, not derived (an immediate turn and a timer hop are not one-to-one): on the FAULT-HAND cases over
+// the async store, 2 turns per step still fails, 4 passes every run, and 8 is 4 with the same margin again.
 // `setImmediate` is the turn: each one runs after the loop's timers and I/O phases, so a pending `setTimeout(0)`
 // hop lands between two of them, and it costs microseconds where `setTimeout(0)` costs its 1 ms clamp, which over
 // the 120,000 ticks of a 600 s transport budget is the difference between a 0.3 s and a 150 s case. Where the
