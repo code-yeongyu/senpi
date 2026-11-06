@@ -12,7 +12,7 @@ import type { RpcExtensionUIProgress, RpcExtensionUIResponse, RpcQuestionUiReque
 type Options = Parameters<NonNullable<ExtensionUIContext["question"]>>[1];
 type Pending = {
 	frame: RpcQuestionUiRequest;
-	progress: (draft: RpcExtensionUIProgress) => void;
+	progress: (draft: RpcExtensionUIProgress) => "applied" | "question_already_resolved";
 	respond: (response: RpcExtensionUIResponse, beforeAnswer?: () => void) => boolean;
 	cancel: () => void;
 };
@@ -66,6 +66,9 @@ export class ConnectionQuestionBridge {
 			let comment: string | undefined;
 			let timer: ReturnType<typeof setTimeout> | undefined;
 			let finished = false;
+			// A winner is admitted before the question settles: from that point the answer is decided, so a draft that
+			// lands during its admission must not overwrite the selections it settles with (senpi#5960).
+			let claimed = false;
 			const unanswered = () => unansweredQuestionIds(request.questions, answers);
 			const finish = (
 				status: QuestionResponse["status"],
@@ -123,6 +126,7 @@ export class ConnectionQuestionBridge {
 				frame,
 				cancel,
 				progress: (draft) => {
+					if (claimed) return "question_already_resolved";
 					if (draft.answers !== undefined) answers = draft.answers;
 					if (draft.comment !== undefined) comment = draft.comment;
 					arm();
@@ -134,6 +138,7 @@ export class ConnectionQuestionBridge {
 							deadlineAtMs: frame.deadlineAtMs,
 							remainingMs: Math.max(0, frame.deadlineAtMs - Date.now()),
 						});
+					return "applied";
 				},
 				respond: (response, beforeAnswer) => {
 					// The client's cancel is the user's; a closed connection or an abort is a lifecycle cancel.
@@ -148,7 +153,14 @@ export class ConnectionQuestionBridge {
 					if (status === undefined) return false;
 					// Only a tool-result answer is reported here. An async or resumed answer is delivered as a
 					// user message, whose question-input release reports it; reporting both would count it twice.
-					if (request.waitForAnswer && opts?.deliver !== "user-message") beforeAnswer?.();
+					claimed = true;
+					try {
+						if (request.waitForAnswer && opts?.deliver !== "user-message") beforeAnswer?.();
+					} catch (error) {
+						// A failed admission releases the claim, so the question stays answerable (senpi#5960).
+						claimed = false;
+						throw error;
+					}
 					finish(status, "rpc_connection");
 					return true;
 				},
@@ -171,10 +183,7 @@ export class ConnectionQuestionBridge {
 	/** Hands a draft to its pending question; reports whether one took it, or why none did (senpi#5761). */
 	progress(draft: RpcExtensionUIProgress): "applied" | "question_already_resolved" | "unknown_extension_ui_request" {
 		const pending = this.pending.get(draft.id);
-		if (pending) {
-			pending.progress(draft);
-			return "applied";
-		}
+		if (pending) return pending.progress(draft);
 		return this.resolved.has(draft.id) ? "question_already_resolved" : "unknown_extension_ui_request";
 	}
 	cancelAll(): void {
