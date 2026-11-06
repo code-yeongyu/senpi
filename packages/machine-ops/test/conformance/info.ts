@@ -38,5 +38,17 @@ export function defineInfoCases(runner: ConformanceRunner, target: ConformanceTa
 				assert.ok(host.cores > 0);
 			}),
 		);
+		it(
+			"host reports load averages, memory and the home volume",
+			withFixture(target, async ({ ops }) => {
+				const host = ops.info.host();
+				for (const load of [host.load1, host.load5, host.load15]) assert.ok(Number.isFinite(load) && load >= 0);
+				assert.ok(host.memTotalBytes > 0);
+				assert.ok(host.memFreeBytes >= 0 && host.memFreeBytes <= host.memTotalBytes);
+				const { diskTotalBytes, diskFreeBytes } = host;
+				assert.ok(diskTotalBytes !== undefined && diskTotalBytes > 0);
+				assert.ok(diskFreeBytes !== undefined && diskFreeBytes >= 0 && diskFreeBytes <= diskTotalBytes);
+			}),
+		);
 	});
 }

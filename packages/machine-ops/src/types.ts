@@ -310,8 +310,15 @@ export interface HostFacts {
 	readonly os: NodeJS.Platform;
 	readonly arch: string;
 	readonly load1: number;
+	readonly load5: number;
+	readonly load15: number;
 	readonly cores: number;
 	readonly runtime: string;
+	readonly memTotalBytes: number;
+	readonly memFreeBytes: number;
+	/** The volume holding the home directory; absent when it cannot be read. */
+	readonly diskTotalBytes?: number;
+	readonly diskFreeBytes?: number;
 }
 
 export interface MessageResult {

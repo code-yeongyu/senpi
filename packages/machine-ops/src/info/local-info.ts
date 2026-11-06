@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
+import { statfsSync } from "node:fs";
 import { appendFile, mkdir, readFile } from "node:fs/promises";
-import { arch, availableParallelism, loadavg, platform } from "node:os";
+import { arch, availableParallelism, freemem, homedir, loadavg, platform, totalmem } from "node:os";
 import { join } from "node:path";
 import { MachineOpError } from "../errors.ts";
 import { gated } from "../policy/gate.ts";
@@ -36,6 +37,16 @@ function psDurationMs(value: string): number {
 	while (parts.length < 3) parts.unshift(0);
 	const [hours, minutes, seconds] = parts;
 	return ((Number(days) * 24 + hours) * 60 + minutes) * 60_000 + seconds * 1000;
+}
+
+/** Total and free-to-this-user bytes of the volume holding the home directory; empty when statfs fails. */
+function homeDisk(): { diskTotalBytes?: number; diskFreeBytes?: number } {
+	try {
+		const fs = statfsSync(homedir());
+		return { diskTotalBytes: fs.blocks * fs.bsize, diskFreeBytes: fs.bavail * fs.bsize };
+	} catch {
+		return {};
+	}
 }
 
 async function otherProcessInfo(pid: number): Promise<ProcessInfo> {
@@ -76,12 +87,18 @@ export function createLocalInfoOps(options: {
 		},
 
 		host(): HostFacts {
+			const [load1, load5, load15] = loadavg();
 			return {
 				os: platform(),
 				arch: arch(),
-				load1: loadavg()[0],
+				load1,
+				load5,
+				load15,
 				cores: availableParallelism(),
 				runtime: process.versions.bun !== undefined ? `bun ${process.versions.bun}` : `node ${process.version}`,
+				memTotalBytes: totalmem(),
+				memFreeBytes: freemem(),
+				...homeDisk(),
 			};
 		},
 
