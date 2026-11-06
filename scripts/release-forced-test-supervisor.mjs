@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * Runs the release's forced test suite as the leader of its own process group and, when the budget runs out,
- * SIGKILLs the whole group, so a hung vitest worker (a grandchild of npm) cannot outlive the release step
- * (senpi#2291). `release-test-gate.mjs` `runForcedTestSuite` calls it synchronously and maps exit 124 to the
- * named timeout error.
+ * Runs one step of the release's forced test suite as the leader of its own process group and, when the budget
+ * runs out, SIGKILLs the whole group, so a hung vitest worker (a grandchild of npm) cannot outlive the release step
+ * (senpi#2291). `release-forced-test-suite.mjs` `runForcedTestSuite` runs one per step (the coding-agent shards at
+ * once) and maps exit 124 to the timeout error naming that step.
  *
  * Usage: node release-forced-test-supervisor.mjs <timeoutMs> <bin> [args...]
  */
