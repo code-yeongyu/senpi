@@ -117,12 +117,8 @@ import { EffectLedger } from "./effect-ledger.ts";
 import { EFFECT_LEDGER_CAPABILITY } from "./effect-record.ts";
 import { handleModelCommand } from "./handlers-model.ts";
 import { createRpcEventOutputBuffer } from "./event-output-buffer.ts";
-import {
-	answeredUiRequestId,
-	extensionUiProgressReply,
-	refusedExtensionUiResponse,
-	settleExtensionUiResponse,
-} from "./extension-ui-response.ts";
+import { extensionUiProgressReply, refusedExtensionUiResponse } from "./extension-ui-response.ts";
+import { answerExtensionUiResponse } from "./handlers-answer.ts";
 import { SecretInputRequests, type SecretInputRoute } from "./secret-input-requests.ts";
 import { answerGetEntries } from "./get-entries-command.ts";
 import { runHoldInput } from "./held-input-commands.ts";
@@ -2415,30 +2411,16 @@ export function createRpcConnectionHandler(
 			"type" in parsed &&
 			parsed.type === "extension_ui_response"
 		) {
-			const response = parsed as RpcExtensionUIResponse;
-			// The grant rules apply to the request this response answers (`uiRequestId`, or `id` in the
-			// short form), the same request `settleExtensionUiResponse` settles.
-			const answered = answeredUiRequestId(response);
-			if (
-				(answered !== undefined && secretInputs.has(answered)) ||
-				("secret" in response && response.secret === true)
-			) {
-				output(secretInputs.respond(parsed as Record<string, unknown>));
-				return;
-			}
-			if (!options.workerSecurityBridge && answered !== undefined && grantRequests.has(answered)) {
-				const sender = options.clientInfo?.connectionId();
-				const capable =
+			const sender = options.clientInfo?.connectionId();
+			const reply = answerExtensionUiResponse(parsed as RpcExtensionUIResponse, {
+				secretInputs,
+				grantRequests,
+				workerSecurityBridge: options.workerSecurityBridge === true,
+				sender,
+				grantCapable: () =>
 					sender === undefined
 						? clientCapabilities?.includes("grant_select") === true
-						: options.clientInfo?.hasCapability?.(sender, "grant_select") === true;
-				// The sender hears the refusal, so its dialog does not vanish as if the answer had counted.
-				if (grantRequests.get(answered) !== sender || !capable) {
-					output(refusedExtensionUiResponse(response.id, "grant_answer_refused"));
-					return;
-				}
-			}
-			const reply = settleExtensionUiResponse(response, {
+						: options.clientInfo?.hasCapability?.(sender, "grant_select") === true,
 				questions,
 				dialogs: pendingExtensionRequests,
 				routed: routingSessionId !== undefined,
