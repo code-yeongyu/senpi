@@ -13,7 +13,7 @@ import {
 	overrideAuthLaneBoundary,
 	resetAuthLaneBoundary,
 } from "../../../src/core/extensions/builtin/anthropic-subscription/auth-lane.ts";
-import { accountDirFor } from "../../../src/core/extensions/builtin/anthropic-subscription/claude-cli-account-dir.ts";
+import { isServableAccountSlot } from "../../../src/core/extensions/builtin/anthropic-subscription/sign-in-again.ts";
 import {
 	type Options,
 	overrideSdkBoundary,
@@ -118,7 +118,9 @@ describe("oh-my-openagent#12228 a Claude CLI account with an unusable account di
 		expect(final.stopReason).not.toBe("error");
 	});
 
-	it("still refuses to name a directory for an id the store cannot use", () => {
-		expect(() => accountDirFor(temporaryDirectory(), "")).toThrow("Invalid Claude account dir id");
+	it("decides serviceability from the sign-in state and the account dir id", () => {
+		expect(isServableAccountSlot(cliSlot("work"))).toBe(true);
+		expect(isServableAccountSlot(cliSlot("no-dir", { dirId: "" }))).toBe(false);
+		expect(isServableAccountSlot(cliSlot("flagged", { signInRequired: "login_expired" }))).toBe(false);
 	});
 });
