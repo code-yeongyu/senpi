@@ -1296,6 +1296,7 @@ pi.on("input", async (event, ctx) => {
   // event.source - "interactive" (typed), "rpc" (API), or "extension" (via sendUserMessage)
   // event.attribution - "user" (a person sent it) or "agent" (an extension, tool, subagent, another agent's RPC client, or the session)
   // event.streamingBehavior - "steer" | "followUp" | undefined
+  // event.chainCount - the hop count of a thread call from another session (RPC `chainCount`), else undefined
   //   undefined when idle, "steer" for mid-stream interrupts,
   //   "followUp" for messages queued until the agent finishes
 

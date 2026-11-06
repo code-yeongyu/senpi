@@ -2896,6 +2896,8 @@ export class ExtensionRunner {
 		attribution: InputAttribution = inputAttributionOf({ origin: inputOriginOf(source), source }),
 		/** Dispatch only to these extensions (a hand running a hosted loop's user hooks, S33); absent: all. */
 		only?: (extensionPath: string) => boolean,
+		/** The hop count of a thread call this input arrived as (K8); absent for any other input. */
+		chainCount?: number,
 	): Promise<InputEventResult> {
 		let currentText = text;
 		let currentImages = images;
@@ -2912,6 +2914,7 @@ export class ExtensionRunner {
 						source,
 						attribution,
 						streamingBehavior,
+						...(chainCount === undefined ? {} : { chainCount }),
 					};
 					const result = (await handler(event, this.createContext(ext.path))) as InputEventResult | undefined;
 					if (result?.action === "handled") return result;

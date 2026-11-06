@@ -36,6 +36,7 @@ export const REVIEWED_FIELDS = {
 		version: 1,
 		fields: [
 			"admissionId",
+			"chainCount",
 			"clientMessageId",
 			"clientTurnId",
 			"expandPromptTemplates",
@@ -56,6 +57,7 @@ export const REVIEWED_FIELDS = {
 		version: 1,
 		fields: [
 			"admissionId",
+			"chainCount",
 			"clientMessageId",
 			"clientTurnId",
 			"enqueueOrder",
@@ -72,6 +74,7 @@ export const REVIEWED_FIELDS = {
 		version: 1,
 		fields: [
 			"admissionId",
+			"chainCount",
 			"clientMessageId",
 			"clientTurnId",
 			"enqueueOrder",
