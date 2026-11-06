@@ -90,7 +90,14 @@ function launch(args: string[], env: NodeJS.ProcessEnv) {
 async function rig(owned = true, watchMode = "normal") {
 	const qa = generationScratch("rv");
 	roots.push(qa);
-	const env = { ...hostSpawnEnv(), ...generationEnv(qa), SENPI_CODING_AGENT_DIR: qa.agentDir };
+	// The fixture patches node:net through node:test mocks, so it runs on Node, and the host it starts keeps session state
+	// only under the JSONL developer hatch there (senpi#5822).
+	const env = {
+		...hostSpawnEnv(),
+		...generationEnv(qa),
+		SENPI_CODING_AGENT_DIR: qa.agentDir,
+		SENPI_SESSION_STORE: "jsonl",
+	};
 	const owner = owned ? launch(["owner"], env) : undefined;
 	let identity: HostLifetimeOwner | null = null;
 	if (owner) {

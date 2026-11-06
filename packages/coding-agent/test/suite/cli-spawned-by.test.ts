@@ -8,9 +8,9 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import { MOCK_MODEL, MOCK_PROVIDER, writeRpcModelsJson } from "../helpers/rpc-hermetic.ts";
+import { sourceRuntimeArgs } from "../helpers/source-runtime-args.ts";
 
 const cli = fileURLToPath(new URL("../../src/cli.ts", import.meta.url));
-const resolver = new URL("../../src/experimental/source-resolver.ts", import.meta.url).href;
 const roots: string[] = [];
 const ancestry = { parentSessionId: "parent", rootSessionId: "root", taskId: "task" };
 
@@ -33,8 +33,7 @@ async function runCli(dirs: ReturnType<typeof setup>, args: string[], requestSta
 	const child = spawn(
 		process.execPath,
 		[
-			"--import",
-			resolver,
+			...sourceRuntimeArgs(),
 			cli,
 			"--mode",
 			"rpc",

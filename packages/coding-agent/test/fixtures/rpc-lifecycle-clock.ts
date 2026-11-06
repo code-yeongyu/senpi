@@ -1,4 +1,3 @@
-import { syncBuiltinESMExports } from "node:module";
 import net from "node:net";
 import { mock } from "node:test";
 import { type HostActivity, IdleExitDecider, runHostSupervisor } from "../../src/modes/rpc/host-lifecycle.ts";
@@ -32,18 +31,20 @@ mock.method(IdleExitDecider.prototype, "update", function (this: IdleExitDecider
 	if (decision === "exit") shuttingDown = true;
 	return decision;
 });
-const createServer = net.createServer;
-mock.method(net, "createServer", (accept: (socket: net.Socket) => void) => {
-	const server = createServer((socket) => {
-		accept(socket);
-		// Register after the supervisor, so detached means its occupancy changed.
-		socket.once("close", () => process.send?.({ type: "detached" }));
+// Observe the supervisor's server through the event it emits. Replacing `net.createServer` reaches the
+// supervisor's named `createServer` import only through Node's `syncBuiltinESMExports`, which Bun does not
+// implement, so under Bun no hook was installed and every case waited for a `ready` that never came.
+const emit = net.Server.prototype.emit;
+mock.method(net.Server.prototype, "emit", function (this: net.Server, event: string | symbol, ...args: unknown[]) {
+	const handled = emit.call(this, event, ...args);
+	if (event === "listening") process.send?.({ type: "ready" });
+	else if (event === "connection" && args[0] instanceof net.Socket) {
+		// Register after the supervisor's own listener, so detached means its occupancy changed.
+		args[0].once("close", () => process.send?.({ type: "detached" }));
 		process.send?.({ type: "attached" });
-	});
-	server.once("listening", () => process.send?.({ type: "ready" }));
-	return server;
+	}
+	return handled;
 });
-syncBuiltinESMExports();
 process.on("message", (message: unknown) => {
 	if (typeof message !== "object" || message === null || !("now" in message) || typeof message.now !== "number") {
 		throw new Error("clock command requires now");

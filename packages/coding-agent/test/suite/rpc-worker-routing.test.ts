@@ -102,7 +102,7 @@ it("reserves a switch target before its append-side normalization and keeps both
 	}
 }, 60_000);
 
-it("starts real session workers under Node as well as Bun", async () => {
+it("starts real session workers from the built entry as well as the source entry", async () => {
 	const host = await startWorkerHost(undefined, { node: true });
 	try {
 		const opened = await host.request({ type: "open_session", cwd: host.cwd });

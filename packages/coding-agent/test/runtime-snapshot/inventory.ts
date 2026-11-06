@@ -13,6 +13,7 @@ import {
 } from "node:fs";
 import { delimiter, dirname, isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { NODE_HOST_REFUSAL_LOG_ENV } from "../../src/core/session-store/node-guard.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -50,6 +51,12 @@ export function inventoryRuntime(snapshot: string, state: string, runtime: strin
 		PI_OFFLINE: "1",
 		SENPI_INVENTORY_LOG: log,
 		SENPI_INVENTORY_RECEIPT: receipt,
+		// A Node run opens sessions only in the JSONL store through the developer hatch: the durable store runs on Bun (#5822).
+		...(runtime === "node" ? { SENPI_SESSION_STORE: "jsonl" } : {}),
+		// The Node test run's refusal log reaches this explicit environment too, so a refusal here names this file (#6036).
+		...(process.env[NODE_HOST_REFUSAL_LOG_ENV]
+			? { [NODE_HOST_REFUSAL_LOG_ENV]: process.env[NODE_HOST_REFUSAL_LOG_ENV] }
+			: {}),
 	};
 	const preload = join(here, "inventory-preload.mjs");
 	const cli = join(snapshot, "dist/bundle/cli.js");

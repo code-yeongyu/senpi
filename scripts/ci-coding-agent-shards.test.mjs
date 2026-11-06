@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { configDefaults } from "vitest/config";
 import { BaseSequencer } from "vitest/node";
 import { parse } from "yaml";
+import { BUN_HOSTED_TEST_FILES } from "../packages/coding-agent/test/bun-hosted-tests.ts";
 
 const workflow = parse(readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8"));
 const job = workflow.jobs["test-coding-agent"];
@@ -142,3 +143,16 @@ if (args[0] === "bash" && !fs.existsSync(marker)) {
 		}
 	});
 }
+
+// senpi#5822 (S21b K9.a): files that open persisted session state run under Bun; the Node shards leave them out
+// (vitest.config.ts) and one job runs exactly them under a Bun-hosted vitest.
+test("the Bun-hosted coding-agent files exist and one gated job runs them under Bun", () => {
+	assert.ok(BUN_HOSTED_TEST_FILES.length > 0);
+	for (const file of BUN_HOSTED_TEST_FILES) assert.ok(globSync(file, { cwd: root }).length === 1, file);
+	const bunJob = workflow.jobs["test-coding-agent-bun"];
+	const step = bunJob.steps.find((candidate) => candidate.name === "Test on Bun");
+	assert.equal(step["working-directory"], "packages/coding-agent");
+	assert.equal(step.run, "node ../../scripts/run-tests.mjs bun --bun ../../node_modules/vitest/vitest.mjs run");
+	assert.ok(bunJob.steps.some((candidate) => candidate.uses?.startsWith("oven-sh/setup-bun@")));
+	assert.ok(workflow.jobs["check-and-test"].needs.includes("test-coding-agent-bun"));
+});

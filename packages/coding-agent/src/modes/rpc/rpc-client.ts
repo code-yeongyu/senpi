@@ -5,6 +5,7 @@
  */
 
 import { type ChildProcess, spawn } from "node:child_process";
+import { isBunRuntime } from "../../config.ts";
 import type { Socket } from "node:net";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ImageContent } from "@earendil-works/pi-ai";
@@ -258,17 +259,19 @@ export class RpcClient {
 			args.push(...this.options.args);
 		}
 
-		const childProcess = spawn("node", [cliPath, ...args], {
+		// The child runs on this client's own runtime, pinned to it: on Bun that child is Bun, which opens the durable
+		// session store, and on Node it stays Node, where session state opens only under the developer hatch (#5822,
+		// #6036). `cliPath` is a script path, so the child is that script started by this runtime, as before.
+		const childProcess = spawn(isBunRuntime ? process.execPath : "node", [cliPath, ...args], {
 			cwd: this.options.cwd,
 			env: {
 				...process.env,
-				// The spawned child must BE the process this client signals and reaps. An ambient
-				// SENPI_RUNTIME=bun pin makes the launcher re-exec under Bun via spawnSync, so a
-				// SIGTERM to the wrapper leaves the Bun host running: it keeps the session lease
-				// and keeps writing session state after stop() resolved. Pin the runtime to the
-				// interpreter chosen here; options.env is
-				// spread last so a caller can still override the pin explicitly.
-				SENPI_RUNTIME: "node",
+				// The spawned child must BE the process this client signals and reaps. A pin that differs from the
+				// child's interpreter makes the launcher re-exec via spawnSync, so a SIGTERM to the wrapper leaves the
+				// re-exec'd host running: it keeps the session lease and keeps writing session state after stop()
+				// resolved. Pin the runtime to the interpreter chosen here; options.env is spread last so a caller can
+				// still override the pin explicitly.
+				SENPI_RUNTIME: isBunRuntime ? "bun" : "node",
 				...this.options.env,
 			},
 			stdio: ["pipe", "pipe", "pipe"],

@@ -40,8 +40,10 @@ function createState(): string {
 	return state;
 }
 
-function hermeticEnv(state: string): Record<string, string> {
+/** A Node run keeps its sessions in the JSONL store through the developer hatch: the durable store runs on Bun (K9.a, #5822). */
+function hermeticEnv(state: string, runtime: (typeof runtimes)[number]): Record<string, string> {
 	return {
+		...(runtime === "node" ? { SENPI_SESSION_STORE: "jsonl" } : {}),
 		PATH: process.env.PATH ?? "", HOME: join(state, "home"), TMPDIR: state, TEMP: state, TMP: state,
 		JITI_RESPECT_TMPDIR_ENV: "1",
 		SENPI_CODING_AGENT_DIR: state, PI_OFFLINE: "1",
@@ -73,7 +75,7 @@ test("loads the embedded JavaScript grammar from an isolated Node bundle", () =>
 			const result = spawnSync(runtime, ["--input-type=module", "-e", probe], {
 				cwd: state,
 				encoding: "utf8",
-				env: hermeticEnv(state),
+				env: hermeticEnv(state, runtime),
 			});
 			expect(result.status, `${runtime}: ${result.stderr}`).toBe(0);
 			expect(result.stdout.trim(), runtime).toBe("tree-sitter-wasm");
@@ -119,7 +121,7 @@ describe.each(runtimes)("the Node bundle under %s", (runtime) => {
 		try {
 			// When
 			const result = spawnSync(runtime, ["--cpu-prof", "--cpu-prof-dir", state, cli, "--model", "nope/nope", "-p", "hi"], {
-				encoding: "utf8", env: hermeticEnv(state), timeout: 60_000,
+				encoding: "utf8", env: hermeticEnv(state, runtime), timeout: 60_000,
 			});
 			// Then: the agent ran and rejected the model, rather than the entry failing to resolve itself.
 			const output = `${result.stdout}${result.stderr}`;
@@ -135,7 +137,7 @@ describe.each(runtimes)("the Node bundle under %s", (runtime) => {
 		const state = createState();
 		try {
 			// When
-			const result = spawnSync(runtime, [cli, "--help"], { encoding: "utf8", env: hermeticEnv(state), timeout: 30_000 });
+			const result = spawnSync(runtime, [cli, "--help"], { encoding: "utf8", env: hermeticEnv(state, runtime), timeout: 30_000 });
 			// Then
 			expect(result.status, result.stderr).toBe(0);
 			expect(result.stdout.length).toBeGreaterThan(0);
@@ -154,7 +156,7 @@ describe.each(runtimes)("the Node bundle under %s", (runtime) => {
 		try {
 			// When
 			const result = spawnSync(runtime, [cli, "--extension", extension, "--help"], {
-				encoding: "utf8", env: hermeticEnv(state), timeout: 60_000,
+				encoding: "utf8", env: hermeticEnv(state, runtime), timeout: 60_000,
 			});
 			// Then
 			expect(result.status, result.stderr).toBe(0);
@@ -169,7 +171,7 @@ describe.each(runtimes)("the Node bundle under %s", (runtime) => {
 		// Given: isolated state, with no provider request or user extensions.
 		const state = createState();
 		const child = spawn(runtime, [cli, "--mode", "rpc", "--multi-session"], {
-			cwd: state, stdio: ["pipe", "pipe", "pipe"], env: hermeticEnv(state),
+			cwd: state, stdio: ["pipe", "pipe", "pipe"], env: hermeticEnv(state, runtime),
 		});
 		const exit = once(child, "exit", { signal: AbortSignal.timeout(90_000) });
 		let stderr = "";
@@ -212,7 +214,7 @@ describe.each(runtimes)("the Node bundle under %s", (runtime) => {
 		// so an embedded asset path that is resolved against cwd cannot exist.
 		const state = createState();
 		const child = spawn(runtime, [cli, "--mode", "rpc"], {
-			cwd: state, stdio: ["pipe", "pipe", "pipe"], env: { ...hermeticEnv(state), OPENAI_API_KEY: "sk-bundle-smoke-dummy" },
+			cwd: state, stdio: ["pipe", "pipe", "pipe"], env: { ...hermeticEnv(state, runtime), OPENAI_API_KEY: "sk-bundle-smoke-dummy" },
 		});
 		const exit = once(child, "exit", { signal: AbortSignal.timeout(90_000) });
 		let stderr = "";
@@ -251,7 +253,7 @@ describe.each(runtimes)("the Node bundle under %s", (runtime) => {
 		// must exist beside the chunk that imports it; a missing one surfaces as "Cannot find module".
 		const state = createState();
 		const child = spawn(runtime, [cli, "--mode", "rpc"], {
-			cwd: state, stdio: ["pipe", "pipe", "pipe"], env: hermeticEnv(state),
+			cwd: state, stdio: ["pipe", "pipe", "pipe"], env: hermeticEnv(state, runtime),
 		});
 		const exit = once(child, "exit", { signal: AbortSignal.timeout(90_000) });
 		let stderr = "";

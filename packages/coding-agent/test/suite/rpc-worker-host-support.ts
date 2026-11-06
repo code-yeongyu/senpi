@@ -47,6 +47,10 @@ export async function startWorkerHost(
 	extensionSource?: string,
 	options: {
 		socket?: boolean;
+		/**
+		 * Start the built dist entry with this test process's runtime instead of SENPI_RPC_TEST_BUN or
+		 * SENPI_RPC_TEST_BINARY. On Node a multi-session host starts only under the JSONL developer hatch (senpi#5822).
+		 */
 		node?: boolean;
 		preload?: string;
 		sessionRuntime?: HostSessionRuntime;

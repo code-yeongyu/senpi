@@ -128,6 +128,8 @@ describe.each(runtimes)("a running bundle under %s", (runtime) => {
 			env: {
 				PATH: process.env.PATH ?? "", HOME: join(state, "home"), TMPDIR: state, TEMP: state, TMP: state,
 				JITI_RESPECT_TMPDIR_ENV: "1", SENPI_CODING_AGENT_DIR: state, PI_OFFLINE: "1",
+				// On Node the session runs in the JSONL store through the developer hatch: the durable store runs on Bun (#5822).
+				...(runtime === "node" ? { SENPI_SESSION_STORE: "jsonl" } : {}),
 			},
 		});
 		const exit = once(child, "exit", { signal: AbortSignal.timeout(150_000) });

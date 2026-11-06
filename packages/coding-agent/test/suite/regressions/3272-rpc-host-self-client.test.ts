@@ -4,7 +4,7 @@ import { existsSync, watch } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { Socket } from "node:net";
 import { dirname, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHostDaemonPaths, generationPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
 import { readHostRegistration } from "../../../src/modes/rpc/host-daemon-registration.ts";
 import { STOP_WAIT_BUDGET_MS } from "../../../src/modes/rpc/host-ensure-stop.ts";
@@ -115,6 +115,13 @@ async function exitOwner(owner: ChildProcess): Promise<void> {
 	owner.send("exit");
 	await exited;
 }
+
+// This file runs on Node: its supervisor hands the exit pipe to this process as a Node IPC socket handle, which a Bun
+// process cannot receive. A Node process opens session state only under the JSONL developer hatch
+// (#5822), the store this file used before.
+beforeEach(() => {
+	vi.stubEnv("SENPI_SESSION_STORE", "jsonl");
+});
 
 afterEach(async () => {
 	for (const peer of peers.splice(0)) peer.destroy();

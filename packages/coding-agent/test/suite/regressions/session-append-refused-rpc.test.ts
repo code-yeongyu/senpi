@@ -1,5 +1,5 @@
 import { chmodSync } from "node:fs";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { type RpcHermeticSession, startHermeticRpcSession } from "../../helpers/rpc-hermetic.ts";
 import { assertWorkspaceBuildPrerequisite } from "../../support/workspace-build-prerequisite.ts";
 
@@ -7,6 +7,12 @@ assertWorkspaceBuildPrerequisite(import.meta.url);
 
 let session: RpcHermeticSession | undefined;
 let lockedFile: string | undefined;
+
+// This file runs on Node: its case makes the JSONL session file refuse an entry, a failure that exists only in the JSONL
+// store. A Node process opens session state only under the JSONL developer hatch (#5822), the store this file used before.
+beforeEach(() => {
+	vi.stubEnv("SENPI_SESSION_STORE", "jsonl");
+});
 
 afterEach(async () => {
 	if (lockedFile) chmodSync(lockedFile, 0o644);

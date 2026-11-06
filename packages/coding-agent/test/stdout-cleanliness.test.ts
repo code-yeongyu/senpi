@@ -2,18 +2,16 @@ import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ENV_AGENT_DIR } from "../src/config.ts";
 import { assertWorkspaceBuildPrerequisite } from "./support/workspace-build-prerequisite.ts";
 import { allowNetwork } from "./test-network-env.ts";
 import { hostSpawnEnv } from "./helpers/rpc-host-spawn-env.ts";
+import { sourceRuntimeArgs } from "./helpers/source-runtime-args.ts";
 
 assertWorkspaceBuildPrerequisite(import.meta.url);
 
 const cliPath = resolve(__dirname, "../src/cli.ts");
-// --import takes a module specifier, not a filesystem path.
-const sourceResolverUrl = pathToFileURL(resolve(__dirname, "../src/experimental/source-resolver.ts")).href;
 
 const tempDirs: string[] = [];
 
@@ -66,7 +64,7 @@ async function runCli(args: string[]): Promise<{ stdout: string; stderr: string;
 	);
 
 	return await new Promise((resolvePromise, reject) => {
-		const child = spawn(process.execPath, ["--import", sourceResolverUrl, cliPath, ...args], {
+		const child = spawn(process.execPath, [...sourceRuntimeArgs(), cliPath, ...args], {
 			cwd: projectDir,
 			env: {
 				...hostSpawnEnv(),

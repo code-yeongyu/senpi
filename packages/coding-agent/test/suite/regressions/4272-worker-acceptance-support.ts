@@ -1,6 +1,5 @@
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { findPackageJSON } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,12 +14,24 @@ import { WorkerSessionRegistry } from "../../../src/modes/rpc/worker-session-reg
 import { EVENT_SAFETY_MS } from "../event-safety-bound.ts";
 
 const fauxPath = fileURLToPath(new URL("../../../../ai/src/providers/faux.ts", import.meta.url));
+
+/**
+ * The package.json of the copy of `name` that module resolution from `from` finds: the nearest ancestor `node_modules`
+ * holding it, the lookup `node:module` findPackageJSON does. Bun has no findPackageJSON, and these suites run on both.
+ */
+function installedPackageJson(name: string, from: string): string | undefined {
+	for (let dir = from; ; dir = dirname(dir)) {
+		const candidate = join(dir, "node_modules", name, "package.json");
+		if (existsSync(candidate)) return candidate;
+		if (dirname(dir) === dir) return undefined;
+	}
+}
 /**
  * The isolate's own build of the faux provider, so its provider capture is the one the isolate's session reads. It is
  * taken from the `@earendil-works/pi-ai` the isolate resolves, never from this checkout's `packages/ai`: a worktree whose
  * `node_modules` links to another checkout loads that checkout's build, and a second copy splits the capture state.
  */
-const installedAi = findPackageJSON("@earendil-works/pi-ai", import.meta.url);
+const installedAi = installedPackageJson("@earendil-works/pi-ai", dirname(fileURLToPath(import.meta.url)));
 if (!installedAi) throw new Error("@earendil-works/pi-ai is not installed for the worker isolate");
 export const builtFauxPath = join(realpathSync(dirname(installedAi)), "dist/providers/faux.js");
 const extensionSource = (faux: string, prelude: string, responses: string) => `

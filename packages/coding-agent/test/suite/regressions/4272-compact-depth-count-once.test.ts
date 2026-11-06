@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { recoveryCarrier } from "../../../src/core/session-recovery-identity.ts";
 import { CALL_RECORDS } from "../../../src/modes/rpc/compact-call-model.ts";
 import { CanonicalPairing } from "../../../src/modes/rpc/compact-canonical-pairing.ts";
@@ -48,6 +48,12 @@ function serialized(record: object): boolean {
 	const type = String(Reflect.get(record, "type"));
 	return type === "message_end" || CALL_RECORDS.has(type) || COMPONENT_RECORDS.has(type);
 }
+
+// These cases run on Node: their real-isolate worker case cannot run under the Bun vitest path (senpi#4667), and a Node
+// process opens session state only under the JSONL developer hatch (senpi#5822). This is the store Node used before.
+beforeEach(() => {
+	vi.stubEnv("SENPI_SESSION_STORE", "jsonl");
+});
 
 afterEach(() => {
 	vi.unstubAllEnvs();

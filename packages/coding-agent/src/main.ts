@@ -6,6 +6,7 @@
  * createAgentSession() options. The SDK does the heavy lifting.
  */
 
+import { exitUnlessSessionStateAvailable } from "./core/session-store/node-guard.ts";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -534,6 +535,9 @@ export async function createSessionManager(
 	if (parsed.noSession || parsed.help || parsed.listModels !== undefined || parsed.listTips) {
 		return SessionManager.inMemory(cwd, { id: parsed.sessionId, spawnedBy: parsed.spawnedBy });
 	}
+	// K9.a (senpi#5822): this runs after the Bun re-exec attempt, and only where session state would open. A process
+	// still on Node gets one steering message and exits before any session file or store exists.
+	exitUnlessSessionStateAvailable();
 
 	if (parsed.fork) {
 		if (parsed.sessionId) {
@@ -1365,6 +1369,8 @@ export async function main(args: string[], options?: MainOptions) {
 	installMemoryReportSignal();
 
 	if (appMode === "rpc" && parsed.multiSession) {
+		// Every session this host serves opens session state, so on Node the host refuses before it starts (K9.a).
+		exitUnlessSessionStateAvailable();
 		if (options?.extensionFactories?.length)
 			throw new Error("Shared RPC workers require file-backed extensions; inline factories cannot cross isolates");
 		const { presenterBootstrapFd, mcpPresenterEnforcement, ...sessionArgs } = parsed;

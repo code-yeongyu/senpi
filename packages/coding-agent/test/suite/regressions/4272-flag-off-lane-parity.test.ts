@@ -1,13 +1,19 @@
 // Part of #4272, RULING-112: flag off, in process == worker, both lane-free (legacy) even for a session with the lane.
 import { existsSync } from "node:fs";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { type RpcSessionEntry, RpcSessionRegistry } from "../../../src/modes/rpc/session-registry.ts";
 import { dataOf, statusHost, type WireRecord } from "../rpc-session-status-support.ts";
 import { builtFauxPath, workerAcceptanceHost } from "./4272-worker-acceptance-support.ts";
 
 const FLAG = "SENPI_ENGINE_SOCKET_COMPACT_UPDATES";
 const REPLY = "ok";
+
+// These cases run on Node: their real-isolate worker case cannot run under the Bun vitest path (senpi#4667), and a Node
+// process opens session state only under the JSONL developer hatch (senpi#5822). This is the store Node used before.
+beforeEach(() => {
+	vi.stubEnv("SENPI_SESSION_STORE", "jsonl");
+});
 
 afterEach(() => {
 	vi.unstubAllEnvs();
