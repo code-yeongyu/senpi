@@ -1223,6 +1223,8 @@ export interface QueuedInputOptions extends ClientMessageIdentity {
 	inputOrigin?: InputOrigin;
 	/** RPC input: the connection declared `interactive_user`; without it the `input` event attributes it to an agent. */
 	interactiveUser?: boolean;
+	/** RPC input that arrived as a thread call from another session: its chain hop count, reported on the `input` event. */
+	chainCount?: number;
 	/** Persist the prepared queue record before publishing or enqueuing it. */
 	onQueuedInput?: (input: PreparedClientInput) => void;
 	/** A steer meant only for this turn (`currentTurnId`): checked where it enters the queue, else `TurnConflictError`. */
@@ -1259,6 +1261,8 @@ export interface PromptOptions extends ClientMessageIdentity {
 	source?: InputSource;
 	/** RPC input: the connection declared `interactive_user`; without it the `input` event attributes it to an agent. */
 	interactiveUser?: boolean;
+	/** RPC input that arrived as a thread call from another session: its chain hop count, reported on the `input` event. */
+	chainCount?: number;
 	/**
 	 * Send command-shaped text that no command handles to the model as plain text. Without it, such
 	 * interactive or RPC input is rejected with `UnknownCommandError`.
@@ -5885,6 +5889,7 @@ export class AgentSession {
 		source: InputSource,
 		attribution: InputAttribution,
 		streamingBehavior?: "steer" | "followUp",
+		chainCount?: number,
 	): Promise<{ text: string; images: ImageContent[] | undefined; inputId?: string } | undefined> {
 		if (!this._extensionRunner.hasHandlers("input")) {
 			return { text, images };
@@ -5898,6 +5903,8 @@ export class AgentSession {
 			streamingBehavior,
 			inputId,
 			attribution,
+			undefined,
+			chainCount,
 		);
 		if (inputResult.action === "handled") {
 			await this._emitInputDisposition(inputId, "handled");
@@ -6328,6 +6335,8 @@ export class AgentSession {
 					this.isStreaming ? options?.streamingBehavior : undefined,
 					inputId,
 					attributionOf(options),
+					undefined,
+					options?.chainCount,
 				);
 				throwIfCancelled();
 				if (inputResult.action === "handled") {
@@ -6868,6 +6877,7 @@ export class AgentSession {
 			options?.source ?? "interactive",
 			attributionOf(options),
 			this.isStreaming ? behavior : undefined,
+			options?.chainCount,
 		);
 		if (!processedInput) return "handled";
 
