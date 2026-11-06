@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { parentPort, workerData } from "node:worker_threads";
+import "../../windows-power-throttling-startup.ts";
 import { captureAdmissionReply } from "./compact-admission-reply.ts";
 import { workerAdmissionCommand } from "./worker-admission-command.ts";
 import { runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
