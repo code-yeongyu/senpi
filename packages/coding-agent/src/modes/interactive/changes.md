@@ -1,3 +1,144 @@
+## 2026-11-06 - The footer names a held model switch (senpi#6097, fixes #6092)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/footer.ts`: the right label reads `session.pendingModelSwitch` next to `state.model` and hands the held target to `buildRightLabel` as `pending`.
+- `packages/coding-agent/src/modes/interactive/components/footer-right-label.ts`: `RightLabelInput.pending` renders ` → <target> (after compact)` after the running model in every form of the ladder (after the `:level` run in the compact forms), the target in the warning colour and the marker muted, so the pick survives width elision as long as the model id does. Below the compact form with the full target id sits one more rung, the floor, where the target id is head-elided to `HELD_TARGET_FLOOR_COLUMNS` (14, e.g. `…ash-ultrafast`) and ` (after compact)` is kept whole, so an 80-column terminal keeps its whole context meter and a 60-column one never shows a mid-id fragment (review LOW at e55328ce17, ruled binding by the LEAD; #6120 folded here).
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `model_change_pending` requests a render after invalidating the footer; a new `model_change_cancelled` case does the same so a hold that ends without landing takes the marker back off; `applyModelSelection` appends ` · after the next compaction` to the `Model: <id>` status when the session holds the pick instead of applying it (and says "then the default model for new sessions" rather than "now" for a held `--default` pick).
+
+### Why
+
+- #1876 holds a switch onto a model that one compaction would admit (senpi#1873) and announces it with a warning only; the footer kept naming the model still running until the next message compacted and the switch landed, so the one place the user watches for the current model disagreed with what they had just selected (#6092).
+
+### Why an extension could not handle it
+
+- The footer component and the interactive event switch are core TUI surfaces; no extension hook renders the footer's model label or receives `model_change_pending`/`model_change_cancelled`.
+
+### Expected merge conflict zones
+
+- LOW: the right-label construction in `footer.ts` `render()`, the `model_change_pending` case and the `applyModelSelection` status line in `interactive-mode.ts`; `footer-right-label.ts` is fork-only.
+
+## 2026-11-06 - Cancel sealed input when local input rejects (senpi#6062)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/terminal-sealed-secrets.ts`: the local input and sealed latch share a cancellation signal. A local rejection cancels that request immediately and emits the existing typed `cancelled` outcome.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/terminal-sealed-secrets.ts`: an unhandled local rejection previously left the sealed request open until its deadline.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/terminal-sealed-secrets.ts`: the terminal adapter owns the local promise and sealed latch race.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/interactive/terminal-sealed-secrets.ts`, `raceTerminalSecretInput`.
+
+## 2026-11-05 - Provider logout reports unconfirmed ChatGPT revocation (part of #5003)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the provider-wide `/logout` adds the "Remote revocation was not confirmed; disconnect the app in ChatGPT Settings." warning when the runtime reports `remote_revocation_unconfirmed`.
+
+### Why
+
+- ChatGPT Subscription now revokes on logout, and `docs/rpc.md` says an unconfirmed revocation must be shown; `/gpt-account signout` already did.
+
+### Why an extension could not handle it
+
+- The builtin `/logout` selector lives in interactive mode.
+
+### Expected merge conflict zones
+
+- The `/logout` provider selector's success status.
+
+## 2026-11-05 - Terminal secret prompts race sealed holders (senpi#4249)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/terminal-sealed-secrets.ts` is new:
+  - `TerminalSealedSecrets`, the terminal session's sealed route over its presenter control;
+  - `raceTerminalSecretInput`, which races the terminal's own input against sealed answers on one latch. The first answer wins, the losing side is dismissed, and without a sealed route the input runs alone, unchanged.
+- `packages/coding-agent/src/modes/interactive/terminal-presenter-surface.ts`:
+  - `attachSealedSecrets` attaches the route;
+  - `mcp_presenter_secret_answer` is answered with `mcp_presenter_secret_reply` on the sender's connection only.
+- `packages/coding-agent/src/modes/interactive/mcp-local-presenter.ts`: the local presenter carries `admit` and the attached `sealed` route.
+- `packages/coding-agent/src/modes/interactive/session-control-rpc-commands.ts`: `mcp_presenter_secret_answer` is a terminal control command.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the extension UI `input` callback goes through `raceTerminalSecretInput`.
+
+### Why
+
+- D11 secret phase (senpi#4249), row S5-5: on a terminal session an enrolled same-account desktop may answer a secret prompt, sealed, and the first answer wins (compatibility table, TUI own session).
+
+### Why an extension could not handle it
+
+- The TUI's secret input, its control endpoint and the presenter surface are host internals of the interactive mode.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: one call site in `createExtensionUIContext`'s `input`.
+
+## 2026-11-05 - A terminal refuses a thread call's `chainCount` (senpi#5923)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-control-input-commands.ts`: `chainCount` is in `UNSERVED_INPUT_FIELDS`, so a terminal's session-control endpoint refuses a thread call carrying it with `unsupported_field` instead of admitting it.
+
+### Why
+
+A terminal admits input as text through its external admission, which cannot carry a hop count; admitting the call would restart its chain there and bypass the user's `threads.chainCountLimit` (decision K8).
+
+### Why an extension could not handle it
+
+The terminal's input admission is the session-control endpoint itself.
+
+### Expected merge conflict zones
+
+- LOW: `UNSERVED_INPUT_FIELDS`.
+
+## 2026-11-04 - Terminal control connections present MCP forms on the TUI's own authority (senpi#4249)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/terminal-presenter-surface.ts` is new: `TerminalPresenterSurface` implements `PresenterHostSurface` over the TUI's existing `McpPresenterAuthority`. A control connection that declared `interactive_user` + `mcp_form_presenter_v1` with `set_client_info` becomes a presenter connection, is attached while it holds a live attachment, and is withdrawn when it loses a role. Its private frames are answered on its own socket as `mcp_form_reply`. `startTerminalPresenters` also starts an `McpPresenterControl` over the surface when an account authority is injected.
+- `packages/coding-agent/src/modes/interactive/session-control-rpc-commands.ts`: `TUI_RPC_COMMANDS` gains `mcp_presenter_context`, `mcp_form_presented`, `mcp_form_response` and `mcp_form_sync`, which are routed to the presenter surface. `set_client_info` records the declared capabilities there. Input admission moved verbatim to the new `packages/coding-agent/src/modes/interactive/session-control-input-commands.ts`.
+- `packages/coding-agent/src/modes/interactive/session-control-attach.ts`: connection open, attach, detach and close reach the presenter surface.
+- `packages/coding-agent/src/modes/interactive/session-control-endpoint.ts`, `session-control-lifecycle.ts`: `TuiControlContext.mcpPresenter` carries the TUI's local presenter and the injected account authority. The endpoint starts the presenter surface and stops its control when the endpoint is disposed.
+- `packages/coding-agent/src/modes/interactive/mcp-local-presenter.ts`: `registerLocalMcpPresenter` returns a `LocalMcpPresenter` that also exposes its authority, binding and session id.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `InteractiveModeOptions.presenterAccountAuthority`, plus the control context's `mcpPresenter` when enforcement created the local presenter.
+
+### Why
+
+- D11 S3-6b (senpi#4249, design 2.9): a terminal session had no presenter connections, attachment, capabilities or private-frame route, so no same-account device could answer an MCP form on it. The terminal stays one `local_tui` holder, and the first answer wins.
+
+### Why an extension could not handle it
+
+- The MCP form authority and the terminal control endpoint are host internals. No extension can add a holder to the TUI's private form binding.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `InteractiveModeOptions`, the `mcpLocalPresenter` field, and `sessionControlContext()`.
+
+## 2026-11-04 - The terminal endpoint refuses a takeover (S37, senpi#5732)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-control-rpc-commands.ts`: `attach_session { takeover: true }` on a terminal's control endpoint answers `takeover_unsupported` instead of a plain attach; without `takeover` it is unchanged.
+
+### Why
+
+- Only a headless engine takes sessions over; a terminal that silently attached would let a client believe it holds the session alone (senpi#5732).
+
+### Why an extension could not handle it
+
+- The control endpoint's command set is interactive-mode internals.
+
+### Expected merge conflict zones
+
+- LOW: one early return in `attachSession`.
+
 ## 2026-11-05 - Retryable gateway failures collapse into one retry status per turn (senpi#6012)
 
 ### What changed

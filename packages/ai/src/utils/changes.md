@@ -1,3 +1,40 @@
+## 2026-11-02 - Shared tri-state Anthropic long-cache retention decision (senpi#1248)
+
+### What changed
+
+- `packages/ai/src/utils/prompt-cache-ttl.ts`: adds the exported `allowsAnthropicLongCacheRetention(model)` helper. An explicit `compat.supportsLongCacheRetention` of `true` or `false` wins on any host; only an unset flag falls back to `isAnthropicApiBaseUrl(model.baseUrl) && getAnthropicCompat(model).supportsLongCacheRetention` (which keeps the Fireworks carve-out). The `anthropic-messages` branch of `resolvePromptCacheLifetime()` uses it to pick the 3600 s vs 300 s TTL. `getAnthropicCompat` is unchanged.
+
+### Why
+
+- `compat.supportsLongCacheRetention` is a documented models.json field, but for `anthropic-messages` the one-hour TTL was additionally gated on the native hostname, so an explicit proxy opt-in did nothing. Only the `foreign host + true` case changes behavior.
+
+### Why an extension could not handle it
+
+- Extensions sit above the provider request and cache-accounting boundary; they cannot change the wire `cache_control.ttl` and the core `resolvePromptCacheLifetime()` result together.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `anthropic-messages` branch of `resolvePromptCacheLifetime()`, now a helper call instead of an inline conjunction.
+- LOW: the helper inserted just above `getAnthropicCompat`.
+
+## 2026-11-06 - Shared tri-state warming eligibility for Anthropic hosts (senpi#1248)
+
+### What changed
+
+- `packages/ai/src/utils/prompt-cache-ttl.ts`: adds `supportsAnthropicCacheWarming(model)`. The native host always qualifies; a proxy qualifies only when its model entry asserts `compat.supportsLongCacheRetention: true`. It sits beside `allowsAnthropicLongCacheRetention` and neither reads the other's state.
+
+### Why
+
+- Warming a host that ignores `cache_control` sends a request for no benefit, while refusing a host that honours it leaves a real prompt cache cold (senpi#1248). An unset flag cannot tell a host that caches for five minutes without the one-hour option apart from one that ignores `cache_control`, so only an explicit assertion widens eligibility.
+
+### Why an extension could not handle it
+
+- Provider-host cache capability belongs to the shared cache matrix; extensions consume it.
+
+### Expected merge conflict zones
+
+- LOW: a helper inserted below `allowsAnthropicLongCacheRetention`.
+
 ## 2026-10-30 - Typed OAuth reauthorization and client configuration errors (senpi#5003)
 
 ### What changed

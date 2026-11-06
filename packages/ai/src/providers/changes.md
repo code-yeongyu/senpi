@@ -1,3 +1,21 @@
+## 2026-10-30 - Selected SIWC account lifecycle (part of #5003)
+
+### What changed
+
+- `packages/ai/src/providers/chatgpt-subscription.ts` routes reauthorization directly by the selected credential and dispatches revocation to the matching OAuth flow.
+
+### Why
+
+- Returning SIWC accounts must reuse their issued registration and cannot switch to legacy during reauthorization. Sign-out must reach the SIWC revocation hook.
+
+### Why an extension could not handle it
+
+- Provider composition owns credential-route dispatch before terminal or RPC interaction.
+
+### Expected merge conflict zones
+
+- The ChatGPT subscription OAuth login, refresh and revoke object.
+
 ## 2026-10-30 - Shared ChatGPT sign-in route choice (part of senpi#5003)
 
 ### What changed

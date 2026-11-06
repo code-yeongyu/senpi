@@ -1,3 +1,40 @@
+## 2026-11-05 - Login forwards the reauthorized account name (part of #5003)
+
+### What changed
+
+- `packages/ai/src/models.ts`: `Models.login` passes `LoginOptions.reauthorizeSlot` to `appendLoginSlot`.
+- `Models.login` rethrows `ReauthorizeAccountMismatchError` unwrapped, so the user sees why nothing changed.
+
+### Why
+
+- So a reauthorization restores the selected account instead of adding a copy.
+
+### Why an extension could not handle it
+
+- `Models.login` owns the credential write for every provider.
+
+### Expected merge conflict zones
+
+- The `appendLoginSlot` call inside `Models.login`.
+
+## 2026-11-06 - The warming-eligibility helper is exported from the package root (senpi#1248)
+
+### What changed
+
+- `packages/ai/src/index.ts`: re-exports `supportsAnthropicCacheWarming` from `./utils/prompt-cache-ttl.ts`, so the builtin keep-alive in `packages/coding-agent` decides warmth eligibility with the same helper its warm request uses.
+
+### Why
+
+- Two independent host checks let the keep-alive pre-flight disagree with `warmPromptCache`: one warmed a host the other refused, which is how an Anthropic-compatible gateway stayed cold while its requests carried `cache_control` (senpi#1248).
+
+### Why an extension could not handle it
+
+- A root barrel export is package surface, outside any extension.
+
+### Expected merge conflict zones
+
+- LOW: one name in the `prompt-cache-ttl` export list.
+
 ## 2026-10-30 - Carry credential-selected chat transport into dispatch (part of senpi#5003)
 
 ### What changed
