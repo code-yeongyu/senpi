@@ -264,6 +264,20 @@ describe("senpi#4436 a provider logout of several claude-cli accounts", () => {
 		return { root, record, storage, dirs, runtime, storedNames };
 	}
 
+	it("a one-account logout (slotId) signs out only that account and keeps its siblings signed in", async () => {
+		const lane = await logoutLane("logout-ok", ["first", "second"]);
+
+		await lane.runtime.logoutProvider(PROVIDER, { slotId: "second" });
+
+		const logouts = readFileSync(lane.record, "utf8")
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line) as { configDir: string });
+		expect(logouts.map((entry) => entry.configDir)).toEqual([lane.dirs[1]]);
+		expect(existsSync(lane.dirs[0] ?? "")).toBe(true);
+		expect(await lane.storedNames()).toEqual(["first"]);
+	});
+
 	it("drops each account as it is signed out, so a failure on a later one leaves no earlier one stored without its dir", async () => {
 		const lane = await logoutLane("logout-ok", ["first", "second"]);
 		// The second account's dir cannot be removed: a read-only subdir holds a file.
