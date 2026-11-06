@@ -135,6 +135,19 @@ describe("oh-my-openagent#12228 a stored Claude account with no name", () => {
 		expect(final.errorMessage ?? "").toContain("claude_account_unusable");
 	});
 
+	it("keeps a credential whose only stored entries are legacy token slots on the ambient path", async () => {
+		const seen: Options[] = [];
+		configure(
+			await storeWithRawSlots([{ name: "legacy", source: "login", access: "a", refresh: "r", expires: 1 }]),
+			seen,
+		);
+
+		const final = await streamAnthropicSubscription(model, context, { cwd: process.cwd() }).result();
+
+		expect(seen).toHaveLength(1);
+		expect(final.errorMessage ?? "").not.toContain("claude_account_unusable");
+	});
+
 	it("refuses to hash a seat for a nameless account with a named error", () => {
 		expect(() => seatDigest(undefined as unknown as string)).toThrow(/claude_account_unusable/);
 	});
