@@ -342,6 +342,31 @@ export function createJsonlImporter(options: JsonlImporterOptions) {
 				};
 			}),
 		/**
+		 * Record an append the store projected: only the bytes it wrote, so a file that grew by more keeps the extra bytes
+		 * unrecorded for the next import. O(1): the appended line is the new high-water mark, nothing is re-parsed.
+		 */
+		async recordProjectedTail(
+			path: string,
+			sessionId: string,
+			tail: { readonly key: string; readonly line: string; readonly offset: number },
+			written: JsonlFileStamp,
+		): Promise<void> {
+			path = resolve(path);
+			const end = tail.offset + Buffer.byteLength(tail.line);
+			// The file must end exactly at this append (+ its newline): bytes another writer added are never recorded.
+			if (written.size !== end + 1) throw new Error("Projection size does not match its written image");
+			const record: JsonlImportLedger = {
+				...written,
+				path,
+				sourceSessionId: sessionId,
+				sessionId,
+				highWaterMark: { id: tail.key, hash: hash(tail.line), offset: tail.offset, end },
+				writerKind: "store",
+				checkedAt: now(),
+			};
+			await commit([{ op: "put", key: ledgerKey(path), data: record }]);
+		},
+		/**
 		 * Record only the snapshot S20 wrote, never bytes an interleaving writer added afterward. S20 must pass a
 		 * captured stamp and the exact written image, under its projection admission (do not nest admissions).
 		 */
