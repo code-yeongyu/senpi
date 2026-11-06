@@ -1,3 +1,282 @@
+## 2026-11-05 - An embedding distribution registers a presenter account authority before main() (D11 M-1, senpi#4249)
+
+### What changed
+
+- `packages/coding-agent/src/presenter-authority-slot.ts` (new): `registerPresenterAccountAuthority` and `takePresenterAccountAuthority` over one process-global slot (`Symbol.for("senpi.presenterAccountAuthority.v1")`), defined once as non-writable and non-configurable, whose value is a frozen `{ register, take }` with the state in a closure. Registration is first-wins (`presenter_authority_already_registered`); `take()` seals (`presenter_authority_sealed`) and is idempotent. A foreign value under the key reads as an empty, sealed slot.
+- `packages/coding-agent/src/main.ts`: `main()` takes the slot as its first statement, before any extension or resource path loads code, and passes the authority to `runMultiSessionHost` as `presenterAccountAuthority`. Without a registration nothing is passed, so the host behaves exactly as before.
+- `packages/coding-agent/src/index.ts`: type exports `PresenterAccountAuthority`, `PresenterAttestation`, `PresenterAttestationRefusal`, `PresenterAttestationResult`.
+
+### Why
+
+- The `presenterAccountAuthority` host option (S3-1) had no caller outside tests, so omo could not supply the account authority that same-account presenter enrollment needs (D11 M-1, senpi#4249). The design gate (two rounds, APPROVE) fixed the shape: code the distribution runs before the CLI, never data, and sealed before any extension loads.
+
+### Why an extension could not handle it
+
+- Extensions load per `open_session` or inside `main()` after the host starts, and the seam exists precisely so that no extension can supply or replace the authority.
+
+### Expected merge conflict zones
+
+- LOW: one import and two lines at the top of `main()`, one spread line in the `runMultiSessionHost` call, one type-export block in `index.ts`.
+
+## 2026-11-03 - Offline pause and exactly-once resume for the headless engine (S34, senpi#5652)
+
+### What changed
+
+- `packages/coding-agent/src/modes/headless/presence-ledger.ts` (new): durable `presence.pause` / `presence.resume` records and open-pause documents on a DurableStore, under the store's admission line; a resume deletes the open pause in the same commit, so it is applied exactly once.
+- `packages/coding-agent/src/modes/headless/presence.ts` (new): `openHeadlessPresence`: machines going offline and online, per-session pauses (owner: every session; hand: the sessions whose tool calls run on it), the view, and `ready` gates; a restart recovers the open pauses.
+- `packages/coding-agent/src/modes/headless/presence-gates.ts` (new): `gatePresence` wraps a session's `prepareRequest` (waits for the owner) and an explicit ToolHost (waits for the owner and the session's hands); a fused session has no ToolHost to wrap.
+- `packages/coding-agent/src/modes/headless/headless-host.ts`: `HeadlessHostOptions.presence?: HeadlessPresenceBinding`; when set, each runtime is tracked and gated as it is created. No CLI flag sets it yet.
+- `packages/coding-agent/src/modes/headless/testing/kill-presence.ts` (new): KILL-PRESENCE-01..05.
+
+### Why
+
+- C2 and K7: an offline owner or hand pauses the dependent work, reconnect resumes it exactly once, and other sessions keep running (senpi#5652).
+
+### Why an extension could not handle it
+
+- It gates the loop of every session a headless host creates and changes the host's answers.
+
+### Expected merge conflict zones
+
+- LOW: new files; the options type and `headlessHostOptions` in `headless-host.ts`.
+
+## 2026-10-30 - Print mode names refused fallback rungs (senpi#3447)
+
+### What changed
+
+- `packages/coding-agent/src/modes/print-mode.ts`: a `retry_fallback_exhausted` event with `refusals` prints one stderr line per
+  refused rung with its model and the reason it was refused.
+
+### Why
+
+- Without it a non-interactive run that exhausted fallback on context fit gave no reason for the stop.
+
+### Why an extension could not handle it
+
+- Print mode's diagnostics come from core events that extensions do not format.
+
+### Expected merge conflict zones
+
+- LOW: the `retry_fallback_exhausted` handling in `print-mode.ts`.
+
+## 2026-11-03 - Runtime creation carries open-timing spans (senpi#5709, fixes #5707)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: with `SENPI_OPEN_TIMING=1`, `createCliRuntimeFactory` marks `project_trust` and `services` while building services, and `create_session` once the session exists. These marks join the host-open, worker-open, worker-commit, registry-open and rebind spans that `src/core/open-timing.ts` writes for each open phase.
+
+### Why
+
+- senpi#5707 asked for per-phase timing of the open path, behind a flag, so the await that idles a warm open can be named.
+
+### Why an extension could not handle it
+
+- Runtime creation runs before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `createCliRuntimeFactory` in `main.ts` (two timers, three marks, one import).
+
+## 2026-10-30 - Opt-in hand-side subscription executor (senpi#5039)
+
+### What changed
+
+- `packages/coding-agent/src/subscription-egress/`: adds JSON wire schemas, safe output projection, and a nonresident executor reusing the existing subscription adapter.
+
+### Why
+
+- Subscription model calls need local credential custody, attachment-scoped cancellation, ordered streaming, and subscription-tagged usage without changing today's provider path.
+
+### Why an extension could not handle it
+
+- The public SDK boundary must be importable independently of extension startup. The existing provider remains the authentication and account-failover implementation.
+
+### Expected merge conflict zones
+
+- LOW: new fork-only files under `packages/coding-agent/src/subscription-egress/`.
+
+## 2026-11-03 - Source runtime resolves the machine-ops workspace package (senpi#5592)
+
+### What changed
+
+- `packages/coding-agent/src/experimental/source-resolver.ts`: the workspace source aliases include `@code-yeongyu/senpi-machine-ops` (and its subpaths), so source-run child processes (tool child, session workers) load its sources instead of a missing or stale `dist`.
+
+### Why
+
+- Core tools now import `@code-yeongyu/senpi-machine-ops`; without the alias a source-run tool child exited before ready.
+
+### Why an extension could not handle it
+
+- The resolver is the internal-process preload; extensions do not run before it.
+
+### Expected merge conflict zones
+
+- LOW: the alias filter in `registerWorkspaceSourceResolver`.
+
+## 2026-10-31 - A coordinated host start keeps its startup pipe through CLI entry and re-execution (senpi#4602)
+
+### What changed
+
+- `packages/coding-agent/src/cli.ts`: before anything can spawn or re-execute, `releaseInheritedStartupFillers(process.env)` closes the filler pipes a coordinated host spawn put in unused stdio slots 3..15 and strips their list from the hand-off. `reexecStdio()` now wraps the presenter-channel rule (`channelStdio()`, unchanged) and, while `SENPI_RPC_HOST_STARTUP_EVENTS` is set and descriptor 16 is a pipe or socket, forwards descriptor 16 at its own number to the Bun re-exec and the isolated-child spawn.
+
+### Why
+
+- senpi#4602: a host started by `ensureHost()` reports its startup progress on a dedicated pipe at descriptor 16. A bundled install starts the host child through `cli.js`, which can re-execute under Bun or spawn an isolated child; without forwarding, that child loses the pipe and its startup phases time out. The filler pipes only keep macOS libuv from aborting the spawn that created them (a pipe at a high stdio slot above unfilled slots, with free descriptors below it, aborts the spawning process on Node 24 and 26), so nothing may keep them open.
+
+### Why an extension could not handle it
+
+- Descriptor inheritance and re-execution happen in the CLI launcher before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the import block and the `reexecStdio()` helper above `reexecUnderBunIfNeeded()` in `cli.ts`; the import list at the top of `bun/cli.ts`.
+
+## 2026-11-02 - One tool-catalog projection for hand/fused parity (S22, senpi#5419)
+
+### What changed
+
+- `packages/coding-agent/src/modes/hand/tool-catalog.ts` (new): `toolCatalog` projects each tool as a caller sees it (name, description, parameter schema and the normalized search exposure), in catalog order. `handToolCatalog` applies it to a hand runtime's definitions. Nothing in the product imports it yet; `test/hand/catalog-parity.test.ts` requires the hand's catalog to equal the fused engine's for the same configuration.
+
+### Why
+
+- A hand must expose exactly the tools the fused engine exposes, or callers see a different tool set depending on placement (senpi#5419).
+
+### Why an extension could not handle it
+
+- It compares the core runtime's tool registry across two runtime compositions.
+
+### Expected merge conflict zones
+
+- LOW: new directory.
+
+## 2026-11-02 - The headless engine's host options and endpoint (S23, senpi#5418)
+
+### What changed
+
+- `packages/coding-agent/src/modes/headless/headless-host.ts` (new): `headlessHostOptions` sets `sessionOwner: "machine"` and the engine's own endpoint, `<agentDir>/rpc/headless.sock` (a named pipe on Windows), apart from the shared host's `rpc.sock`. It also exports `headlessSocketPath`, `headlessEndpoint` and `runHeadlessHost`. No CLI flag or entry point selects it yet.
+
+### Why
+
+- It is the headless engine's composition of the host and its endpoint, built before the flag that selects it (senpi#5418).
+
+### Why an extension could not handle it
+
+- It configures the RPC host itself.
+
+### Expected merge conflict zones
+
+- LOW: new directory.
+
+## 2026-11-01 - Export `ProgramStatus` (senpi#5323)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: re-exports the `ProgramStatus` type used by `ctx.ui.setProgramStatus`.
+
+### Why
+
+- Extensions type the status they pass to the new UI method from the public package.
+
+### Why an extension could not handle it
+
+- The package's public type surface is defined only here.
+
+### Expected merge conflict zones
+
+- LOW: one name in the extension type export list.
+
+## 2026-10-30 - Print mode lists the primary failure first on exhaustion (senpi#4084)
+
+### What changed
+
+- `packages/coding-agent/src/modes/print-mode.ts`: the fallback-exhaustion stderr line lists the primary failure first, then each failed rung.
+
+### Why
+
+- `packages/coding-agent/src/modes/print-mode.ts`: senpi#4084: print mode reported only the last rung's error, hiding the failure that started the fallback.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/print-mode.ts`: print mode writes its own exhaustion line before any extension output; no hook rewrites it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/print-mode.ts`: LOW, the exhaustion line.
+
+## 2026-11-01 - Kill guard runtime layer: hidden judge subcommand and exports (senpi#5349, PR #5358)
+
+### What changed
+
+- `packages/coding-agent/src/cli.ts` and `packages/coding-agent/src/bun/cli.ts`: both entries first call `dispatchKillGuardCommand()` from the new `src/cli/kill-guard-command.ts`. When the first argument is the hidden `__kill-guard`, it loads only `core/kill-guard/check-command.ts`, runs the check and exits. In the Node launcher that happens before any runtime re-exec or engine import; in the compiled binary's entry (`src/bun/cli.ts`, which `scripts/build-binaries.sh` compiles) it happens before the agent-directory command, provider registration and `cli-main`, so the check never creates or touches the agent dir. The command never appears in help.
+- `packages/coding-agent/src/index.ts`: exports `activateKillGuardRuntime`, `releaseKillGuardRuntime`, `activeKillGuardEnvironment` and the `KillGuardRuntime` and `ActivateKillGuardRuntimeOptions` types from the new `core/kill-guard/runtime.ts`. A holder's release (session end, or the user switching the guard off) drops only that holder; the most recently activated remaining holder's layer stays active.
+
+### Why
+
+- The runtime shims judge the real argv of every agent-spawned `kill`, `pkill` and `killall`. In the compiled binary the only executable they can call is the binary itself, and the binary starts at `src/bun/cli.ts`, not `src/cli.ts`; without the dispatch there, every judged kill in the shipped binary failed closed (exit 126) and booted the engine against the agent dir. The codemode extension hands the same runtime layer to eval kernels through the package root.
+
+### Why an extension could not handle it
+
+- The compiled binary's argv dispatch is the CLI launcher itself, and the bundled codemode extension reaches the coding agent only through `@code-yeongyu/senpi`.
+
+### Expected merge conflict zones
+
+- LOW: the block after the static imports and before `reexecUnderBunIfNeeded()` in `src/cli.ts`; the first statements after the static imports in `src/bun/cli.ts`; the kill-guard export list in `src/index.ts`.
+
+## 2026-11-01 - Kill guard judge exported for the codemode bridge and workers (senpi#5349, PR #5354)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: exports `decideKillGuardRequest`, `KILL_GUARD_TAG`, `KILL_GUARD_MODULE_URL`, `killGuardProtectedPids`, `readKillGuardSetting` and the `KillGuardRequest`, `KillGuardVerdict`, `KillGuardSetting` types from the new `core/kill-guard/` module.
+
+### Why
+
+- The codemode extension decides Python kernels' kill-guard checks on the host, exports the protected pids to its kernels, reads the user switch, and hands its JS workers the judge module's URL; all of it comes from the coding agent so there is one judge.
+- Release ordering: this PR judges `bash_input` only when the call is plain typing; a line edited with keys, recalled from history or built by an expansion is judged where the shell runs it, which #5358 delivers. Between the merges of #5354 and #5358 those lines are unjudged at every layer, so no senpi release and no omo pin bump is cut between the two.
+
+### Why an extension could not handle it
+
+- The bundled codemode extension reaches the coding agent only through the package root (`@code-yeongyu/senpi`); the judge must live in the coding agent because its own `tool_call` guard and durable-monitor restore use it too.
+
+### Expected merge conflict zones
+
+- LOW: the export list next to `createEventBus` in `src/index.ts`.
+
+## 2026-10-31 - Coordinator publishes its readiness socket last (senpi#5185)
+
+### What changed
+
+- `packages/coding-agent/src/experimental/coordinator.ts`: `main()` now listens on the public socket before the control socket (previously control first). Stale-socket cleanup on a failed start is unchanged.
+
+### Why
+
+- `ensureCoordinator()` treats an accepting control socket as "coordinator ready", and `startServer()` registers and returns `socketPath` as soon as that registration completes. With control published first, a client that connected right after `startServer()` resolved could get `connect ENOENT` on the public socket (seen as a load flake in `experimental-remote-runtime.test.ts`).
+
+### Why an extension could not handle it
+
+- The coordinator is an internal transport process started by the experimental runtime; no extension hook runs in it.
+
+### Expected merge conflict zones
+
+- LOW: the two `listen`/`restrictSocket` pairs in `main()` of `packages/coding-agent/src/experimental/coordinator.ts`.
+
+## 2026-10-26 - Export the failed-compaction error (senpi#4161)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: export `RequiredCompactionError` and `REQUIRED_COMPACTION_ERROR_MESSAGE` from the package root.
+
+### Why
+
+- `packages/coding-agent/src/index.ts`: SDK callers need the typed error (`code: "compaction_failed"`) to tell a failed compaction from other prompt failures.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/index.ts`: the package root export list is not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/index.ts` next to the `auth-storage.ts` export.
+
 ## 2026-10-31 - Detect Windows private pipes by mode bits (senpi#5142)
 
 ### What changed

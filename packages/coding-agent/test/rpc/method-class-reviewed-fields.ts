@@ -36,9 +36,11 @@ export const REVIEWED_FIELDS = {
 		version: 1,
 		fields: [
 			"admissionId",
+			"chainCount",
 			"clientMessageId",
 			"clientTurnId",
 			"expandPromptTemplates",
+			"expectedTurnId",
 			"id",
 			"images",
 			"message",
@@ -55,9 +57,11 @@ export const REVIEWED_FIELDS = {
 		version: 1,
 		fields: [
 			"admissionId",
+			"chainCount",
 			"clientMessageId",
 			"clientTurnId",
 			"enqueueOrder",
+			"expectedTurnId",
 			"id",
 			"images",
 			"message",
@@ -70,9 +74,11 @@ export const REVIEWED_FIELDS = {
 		version: 1,
 		fields: [
 			"admissionId",
+			"chainCount",
 			"clientMessageId",
 			"clientTurnId",
 			"enqueueOrder",
+			"expectedTurnId",
 			"id",
 			"images",
 			"message",
@@ -187,6 +193,7 @@ export const REVIEWED_FIELDS = {
 			"promptSurface",
 			"provider",
 			"retain_on_disconnect",
+			"retry",
 			"retryFallback",
 			"sessionPath",
 			"spawnedBy",
@@ -202,5 +209,7 @@ export const REVIEWED_FIELDS = {
 		fields: ["admissionId", "children", "clearQueue", "effectId", "force", "id", "interrupt", "sessionId", "type"],
 	},
 	set_session_context: { fields: ["admissionId", "id", "patch", "sessionId", "type"] },
-	attach_session: { fields: ["admissionId", "durableSessionId", "expectedHostInstance", "id", "sessionId", "type"] },
+	attach_session: {
+		fields: ["admissionId", "durableSessionId", "expectedHostInstance", "id", "retry", "sessionId", "type"],
+	},
 } as const;

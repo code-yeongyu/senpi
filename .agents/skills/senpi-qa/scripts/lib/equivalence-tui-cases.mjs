@@ -175,7 +175,7 @@ function normalizerFor(run) {
 	});
 }
 
-/** Run one case through the TUI; returns its O8 TUI observation and the session file for the witness reader. */
+/** Run one case through the TUI; returns its O8 TUI observation and the session file, whose tool calls the witness check counts. */
 export async function runTuiCase(testCase, env) {
 	const drive = TUI_DRIVES[testCase.id];
 	if (!drive) throw new Error(`${testCase.id} has no TUI drive (EQ.tui cases: ${TUI_CASE_IDS.join(", ")})`);

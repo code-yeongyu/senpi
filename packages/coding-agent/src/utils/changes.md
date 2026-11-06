@@ -1,5 +1,23 @@
 # changes
 
+## 2026-11-01 - getShellEnv carries the kill guard's runtime layer (senpi#5349, PR #5358)
+
+### What changed
+
+- `packages/coding-agent/src/utils/shell.ts`: `getShellEnv()` passes `getUserShellEnv()` (the previous `getShellEnv()` body, now also used for the user's own `!` commands) through `withKillGuardRuntime()`. While a session has the kill guard's runtime layer active, that function puts the shim directory first on `PATH`, sets `BASH_ENV` to the wrapper (keeping a user's own `BASH_ENV` in `SENPI_KILL_GUARD_USER_BASH_ENV`), exports the judge variables, and sets `SHLVL=1` when the environment has no usable level. bash skips `BASH_ENV` in a top-level shell whose stdin is a socket (its rshd rule; Node and libuv pipes are sockets) or that sshd started, and an inherited `SHLVL` makes every agent `bash -c` a nested shell. With no active layer the environment is unchanged.
+
+### Why
+
+- PTY bash, the core bash tool and monitors all spawn with `getShellEnv()`. Putting the shims there makes every agent command and its children judge `kill`, `pkill` and `killall` on their real argv.
+
+### Why an extension could not handle it
+
+- The environment is built here before any extension can intervene, and the core bash tool that SDK consumers get never passes through the terminal extension.
+
+### Expected merge conflict zones
+
+- LOW: `getShellEnv()`, the new `getUserShellEnv()` below it, and the new import.
+
 ## 2026-11-02 - Order zero-padded and -1 CalVer versions (#5406, PR #5411)
 
 ### What changed

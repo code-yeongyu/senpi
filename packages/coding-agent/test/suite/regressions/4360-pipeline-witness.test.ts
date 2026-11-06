@@ -45,7 +45,7 @@ it.each([false, true])("only records pipeline receipts with an explicit sink (co
 		if (!sessionFile) throw new Error("Expected a persisted session file");
 		const persisted = readFileSync(sessionFile, "utf8");
 		if (configured) {
-			expect(witnesses[0]).toMatchObject({ data: { pipeline: "legacy", toolCallId: call.id } });
+			expect(witnesses[0]).toMatchObject({ data: { pipeline: "prepared", toolCallId: call.id } });
 			expect(persisted).toContain('"execution-pipeline"');
 		} else {
 			expect(persisted).not.toContain('"execution-pipeline"');

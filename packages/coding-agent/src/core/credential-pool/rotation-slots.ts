@@ -7,6 +7,7 @@ import { discoverEnvSlots } from "./env-slots.ts";
 import type { RunSlot } from "./failover.ts";
 import { STORE_BUSY, writeHealthUnlessStoreBusy } from "./health-write.ts";
 import { activeModelBlockUntil } from "./model-scope.ts";
+import type { AccountStrategy } from "./selection-order.ts";
 import {
 	acquireHalfOpenLease,
 	applicableStoredState,
@@ -113,6 +114,7 @@ export type RotationSources = {
 	repository: CredentialSlotRepository;
 	policy?: {
 		affinity?: boolean;
+		accountStrategy?: AccountStrategy;
 		cooldownBaseMs?: number;
 		cooldownCapMs?: number;
 		slots?: Record<string, { env?: string; value?: ConfigValue }>;
@@ -208,6 +210,7 @@ export async function listRotationSlots(
 		const slots: RotationSlot[] = [];
 		// A slot of the other kind cannot project, so a session must never be handed it (senpi#3486).
 		for (const slot of slotsOfOwnKind(credential)) {
+			if (slot.signedOut === true) continue;
 			const persisted = state[slot.name];
 			const revisions = await repository.storedSlotRevisions(providerId, slot.name, {
 				key: slot.key,

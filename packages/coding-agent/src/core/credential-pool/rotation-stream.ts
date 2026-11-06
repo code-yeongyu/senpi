@@ -1,8 +1,14 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
-import { applyAccountOrder, rendezvousOrder, type SlotHasher } from "@earendil-works/pi-ai/auth/pool/select";
+import { type AssistantMessageEvent, sanitizeProviderDiagnostic } from "@earendil-works/pi-ai";
+import { credentialPoolBlockedDiagnostic } from "@earendil-works/pi-ai/utils/provider-diagnostic-vocabulary";
+import type { SlotHasher } from "@earendil-works/pi-ai/auth/pool/select";
 import type { PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
-import { emitProviderAccountsChanged } from "../extensions/builtin/anthropic-subscription/account-events.ts";
+import {
+	emitProviderAccountFailover,
+	emitProviderAccountsChanged,
+} from "../extensions/builtin/anthropic-subscription/account-events.ts";
+import type { SdkErrorKind } from "../extensions/builtin/anthropic-subscription/errors.ts";
+import { subscriptionLimits } from "../subscription-limits/limit-store.ts";
 import { AUTH_BLOCK_REPROBE_MS } from "./auth-reprobe.ts";
 import { type CredentialBlock, classifyCredentialFailure } from "./classify.ts";
 import { runCredentialFailover } from "./failover.ts";
@@ -10,6 +16,14 @@ import { STORE_BUSY, writeHealthUnlessStoreBusy } from "./health-write.ts";
 import { modelBlockKey, pruneModelBlocks, withModelBlock } from "./model-scope.ts";
 import { isCommittedRotationOutput, isRotationStreamStart, rotationErrorFromEvent } from "./rotation-events.ts";
 import { listRotationSlots, type RotationSlot, type RotationSources, releaseProbeLease } from "./rotation-slots.ts";
+import { roundRobinState } from "./round-robin-state.ts";
+import {
+	orderRotationSlots,
+	pickRotationSlot,
+	rememberedHeadroomAccount,
+	rememberHeadroomAccount,
+	type SlotPickPolicy,
+} from "./session-slot.ts";
 import type { CredentialSlotState } from "./state-store.ts";
 
 export { listRotationSlots, type RotationLane, type RotationSlot, type RotationSources } from "./rotation-slots.ts";
@@ -73,11 +87,35 @@ function blockPatch(
 			...base,
 			blockedUntil: now + Math.min(policy?.cooldownCapMs ?? block.cooldownMs, block.cooldownMs),
 			blockReason: "rate_limit",
+			...(block.usageLimit ? { usageLimit: true as const } : {}),
 		};
 	}
 	if (block.reason === "auth_error")
 		return { ...base, blockedUntil: now + AUTH_BLOCK_REPROBE_MS, blockReason: "auth_error" };
 	return { ...base, blockReason: block.reason };
+}
+
+/**
+ * The last slot's error, forwarded when every slot is limited, carries the time the first slot is due back:
+ * a limit the provider classified keeps its own reset when it named one, and a failure with no diagnostic or
+ * an unclassified 429 becomes the pool's rate limit (senpi#3975). Anything else (auth, a 402/403/404 status)
+ * is left exactly as the provider said, status included.
+ */
+function withPoolRetryAt(event: AssistantMessageEvent, retryAt: number): AssistantMessageEvent {
+	if (event.type !== "error") return event;
+	const own = sanitizeProviderDiagnostic(event.error.providerDiagnostic);
+	const limit = own?.category === "rate_limit" || own?.category === "quota";
+	const unclassifiedLimit = own === undefined || (own.category === "unknown" && own.httpStatus === 429);
+	if (!limit && !unclassifiedLimit) return event;
+	const providerDiagnostic =
+		own !== undefined && limit
+			? (sanitizeProviderDiagnostic({ ...own, resetsAt: own.resetsAt ?? retryAt }) ?? own)
+			: credentialPoolBlockedDiagnostic(retryAt);
+	return providerDiagnostic === undefined ? event : { ...event, error: { ...event.error, providerDiagnostic } };
+}
+
+function failoverReason(block: CredentialBlock): SdkErrorKind {
+	return block.reason === "account_disabled" ? "billing" : block.reason;
 }
 
 export type CredentialRotationOptions = {
@@ -94,7 +132,7 @@ export type CredentialRotationOptions = {
 
 /**
  * In-lane credential rotation for one provider request. Selection follows the
- * HRW order for the affinity key. Rotation and same-slot retry stay transparent
+ * configured strategy for the affinity key. Rotation and same-slot retry stay transparent
  * while only announcement frames have reached the caller; the first delta bars
  * them, and a failure after it is forwarded as the provider's own terminal
  * event for the session layer to recover from.
@@ -109,26 +147,68 @@ export function streamWithCredentialRotation(
 	const { sources, runAttempt } = options;
 	const hasher = options.hasher ?? sha256SlotHasher;
 	const affinityKey = options.affinityKey ?? randomUUID();
-	const useAffinity = sources.policy?.affinity !== false;
+	const useAffinity = sources.policy?.accountStrategy !== undefined || sources.policy?.affinity !== false;
 	const pooled: PooledCredential | undefined = sources.credential;
 	const now = sources.now ?? Date.now;
+	const rememberAffinity = useAffinity && options.affinityKey !== undefined;
+	const roundRobin =
+		sources.policy?.accountStrategy === "round-robin"
+			? roundRobinState.session(sources.providerId, options.affinityKey)
+			: undefined;
+	// The account a failover just left. The switch is announced once the next account's attempt starts,
+	// so RPC clients and the TUI hear "from -> to" only for a switch that actually happens (senpi#2304).
+	let leaving: { name: string; block: CredentialBlock } | undefined;
 
 	return runCredentialFailover<AssistantMessageEvent, RotationSlot>({
 		listSlots: () => listRotationSlots(sources, options.modelId === undefined ? {} : { modelId: options.modelId }),
 		select: (candidates) => {
-			const pinned = candidates.find((candidate) => candidate.pinned === true);
-			if (pinned) return pinned;
-			const ranked = useAffinity ? rendezvousOrder(affinityKey, candidates, hasher) : candidates;
-			const ordered = applyAccountOrder(pooled?.order, ranked);
-
-			const winner = ordered[0];
+			const remembered =
+				roundRobin?.account ??
+				(rememberAffinity
+					? rememberedHeadroomAccount(sources.repository, sources.providerId, affinityKey)
+					: undefined);
+			const policy: SlotPickPolicy = {
+				affinityKey,
+				useAffinity,
+				hasher,
+				...(pooled?.order === undefined ? {} : { order: pooled.order }),
+				...(sources.policy?.accountStrategy === undefined ? {} : { strategy: sources.policy.accountStrategy }),
+				...(roundRobin === undefined ? {} : { roundRobinOffset: roundRobin.offset }),
+				headroom: {
+					providerId: sources.providerId,
+					limits: subscriptionLimits.snapshot(),
+					now: now(),
+					...(remembered === undefined ? {} : { remembered }),
+				},
+			};
+			const winner = pickRotationSlot(candidates, policy);
 			if (!winner) throw new Error("credential rotation selected from an empty candidate set");
+			// A pinned winner is the user's choice, not a headroom move or a round-robin turn, so it is never remembered.
+			if (roundRobin !== undefined) {
+				if (winner.pinned !== true) roundRobin.account = winner.name;
+			} else if (
+				rememberAffinity &&
+				winner.pinned !== true &&
+				(remembered !== undefined || winner !== orderRotationSlots(candidates, policy)[0])
+			) {
+				rememberHeadroomAccount(sources.repository, sources.providerId, affinityKey, winner.name);
+			}
 			return winner;
 		},
-		runAttempt,
+		runAttempt: (slot) => {
+			if (leaving !== undefined && leaving.name !== slot.name) {
+				emitProviderAccountFailover(sources.providerId, leaving.name, slot.name, failoverReason(leaving.block));
+			}
+			leaving = undefined;
+			return runAttempt(slot);
+		},
+		onRotate: ({ slot, block, committedOutput }) => {
+			leaving = committedOutput ? undefined : { name: slot.name, block };
+		},
 		isCommittedOutput: isCommittedRotationOutput,
 		isStreamStart: isRotationStreamStart,
 		errorFromEvent: rotationErrorFromEvent,
+		withPoolRetryAt,
 		classify: (error, context) =>
 			classifyCredentialFailure(error, {
 				...context,
@@ -156,6 +236,7 @@ export function streamWithCredentialRotation(
 						lease: undefined,
 						blockedUntil: undefined,
 						blockReason: undefined,
+						usageLimit: undefined,
 						// A healthy answer ends the failure run; a later limit starts its backoff afresh (senpi#3771).
 						failureCount: undefined,
 						modelBlocks,

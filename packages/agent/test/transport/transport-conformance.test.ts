@@ -26,10 +26,10 @@ const IMPLEMENTATIONS = new Map<string, CaseImplementation<TransportCaseAdapters
 	...FAULT_TRANSPORT_CASES,
 ]);
 const TRANSPORT_REGISTRY = CONFORMANCE_REGISTRY.filter((entry) =>
-	/^(TRANSPORT-|MULTI-LANE-|MULTI-FAIR-0[12]$|FAULT-TRANSPORT-)/.test(entry.id),
+	/^(TRANSPORT-|MULTI-LANE-|MULTI-FAIR-0[13]$|FAULT-TRANSPORT-)/.test(entry.id),
 );
 const TRANSPORT_IDS = ["TRANSPORT-01", "TRANSPORT-02", "TRANSPORT-03"];
-const MULTI_IDS = ["MULTI-LANE-01", "MULTI-FAIR-01", "MULTI-FAIR-02"];
+const MULTI_IDS = ["MULTI-LANE-01", "MULTI-FAIR-01", "MULTI-FAIR-03"];
 const FAULT_IDS = ["01", "02", "03", "04", "05"].map((n) => `FAULT-TRANSPORT-${n}`);
 const ALL_IDS = [...TRANSPORT_IDS, ...MULTI_IDS, ...FAULT_IDS];
 

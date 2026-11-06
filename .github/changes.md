@@ -1,3 +1,112 @@
+## 2026-11-05 - CI runs the coding-agent tests on ten shards with a 15-minute per-shard budget (senpi#5910, senpi#5855)
+
+### What changed
+
+- `.github/workflows/ci.yml`: `test-coding-agent` runs ten shards (`N/10`) instead of four. Each shard records the time right before its tests (`Start the shard budget clock`, the step before `Test shard`, so a slow apt mirror or download cannot spend the budget). After `Test shard`, a new `Shard time budget` step runs `scripts/ci-shard-budget.mjs`, which fails the job once its tests ran past 900 s, naming the measured time. The `Test shard` step keeps its 25-minute timeout and the job keeps 30 minutes.
+
+### Why
+
+- Four shards ran 15-25 min on hosted main and reached the 25-minute step timeout with no failing test (senpi#5855). Main run 41947601029 spent 4905 s in its four test steps, the slowest 1.22x the mean, so ten shards project the slowest test step near 600 s (an estimate from the four-shard ratio; the budget step measures every run). The budget step turns future suite growth into a named red with a number, instead of a silent kill at the timeout.
+
+### Why an extension could not handle it
+
+- This is GitHub Actions workflow wiring; it has no runtime surface an extension could reach.
+
+### Expected merge conflict zones
+
+- LOW: `.github/workflows/ci.yml` around the `test-coding-agent` job's matrix, its first step and the step after `Test shard`.
+
+## 2026-11-04 - The Fused EQ job runs the mutation library's tests (senpi#5772)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the Fused equivalence job's "senpi-qa harness unit tests" step also runs `equivalence-mutations.test.mjs`.
+
+### Why
+
+- Its "every shipped patch applies to this tree" test went red on main unnoticed when #5648 and #5665 moved the code three mutation patches target: no CI job ran it.
+
+### Why an extension could not handle it
+
+- CI test selection is repository configuration.
+
+### Expected merge conflict zones
+
+- LOW: the Fused equivalence job's "senpi-qa harness unit tests" command line.
+
+## 2026-11-04 - The Fused EQ job compares the one pipeline (senpi#5728)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the Fused equivalence job's EQ compare no longer passes `--pipeline legacy`.
+
+### Why
+
+- S36 removes the agent loop's own scheduler and EQ's `--pipeline` option, so the harness refuses the flag and every run's witness must show the prepared pipeline.
+
+### Why an extension could not handle it
+
+- CI test selection is repository configuration.
+
+### Expected merge conflict zones
+
+- LOW: the Fused equivalence job's `EQ compare against the B0 goldens` command line.
+
+## 2026-11-03 - CI runs the machine-ops workspace tests (senpi#5592)
+
+### What changed
+
+- `.github/workflows/ci.yml`: `--workspace packages/machine-ops` in the workspace test step, which runs the package's conformance suite (50 cases), its dependency-boundary test and its scope-registry tests.
+
+### Why
+
+- A remote machine executor and the agent's own tools must share one implementation of file and process operations, their limits and their permission checks. The shared layer is the new engine-free workspace package `packages/machine-ops` (`@code-yeongyu/senpi-machine-ops`), which imports nothing from `packages/agent` or `packages/coding-agent`.
+
+### Why an extension could not handle it
+
+- CI configuration is repository infrastructure.
+
+### Expected merge conflict zones
+
+- LOW: the workspace list of the "Workspace tests (all but coding-agent)" step.
+
+## 2026-10-26 - Native prebuilds and the npm publish carry the socket-secret bridge (senpi#4312)
+
+### What changed
+
+- `.github/workflows/native-prebuilds.yml`: Windows rows build `crates/senpi-socket-secret`, the win32-x64 row loads it and checks its ABI sentinel, and "Stage artifact" stages it at `native/socket-secret/prebuilds/<host>/` (three addons expected on Windows).
+- `.github/workflows/publish-npm.yml`: a publish-only step stages both Windows bridges into `packages/coding-agent` and fails when one is missing; the publish passes `--require-socket-secret-bridge=win32-x64,win32-arm64`.
+
+### Why
+
+- sisyphuslabs/omo-desktop-app#4199 section 7: native packaging failure of the bridge is a release blocker.
+
+### Why an extension could not handle it
+
+- CI and release workflows run outside the agent runtime.
+
+### Expected merge conflict zones
+
+- MEDIUM: the "Stage artifact" step of `native-prebuilds.yml` and the publish command line in `publish-npm.yml`.
+
+## 2026-11-01 - Provision QEMU and a gondolin image store so EQ E29 runs in the Fused EQ job (senpi#5265)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the Fused equivalence job enables KVM when the runner exposes `/dev/kvm`, installs QEMU, caches a gondolin image store, pulls `alpine-base:latest` into it with the repository's gondolin CLI, smoke-tests one micro-VM, and exports `EQ_GONDOLIN_IMAGE_STORE` before the EQ compare.
+
+### Why
+
+- E29 starts the unmodified gondolin example's micro-VM offline from a pre-pulled image store; without QEMU and the store the case could not run on CI, so main's Fused EQ job stayed red and the steps after it never ran.
+
+### Why an extension could not handle it
+
+- The runner's system packages and job environment are set up by the workflow before any senpi process or extension starts.
+
+### Expected merge conflict zones
+
+- LOW: the Fused equivalence job's steps before `EQ compare against the B0 goldens`.
+
 ## 2026-11-01 - Run the Windows pair inheritance proof (#5267)
 
 ### What changed

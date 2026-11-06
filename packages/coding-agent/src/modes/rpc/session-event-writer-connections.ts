@@ -2,6 +2,7 @@ import type { ExtensionUIContext, SessionKind } from "../../core/extensions/type
 import type { SecurityNoticeSnapshot, SecurityNoticeState } from "../../core/security-notices.ts";
 import type { CanonicalControl } from "./compact-canonical-pairing.ts";
 import { COMPACT_EVENTS_CAPABILITY } from "./custom-capability.ts";
+import { ConnectionDelegations, type LaunchProofSource } from "./delegated-connection.ts";
 import { serializeJsonLine } from "./jsonl.ts";
 import type { MediaPersister } from "./media-placeholders.ts";
 import type { SessionAcceptanceLane } from "./session-acceptance-lane.ts";
@@ -13,6 +14,13 @@ import type { SocketEventSinkActor } from "./socket-event-fanout.ts";
 
 /** Connection registration, capabilities, security presentations and per-session delivery settings. */
 export abstract class SessionEventWriterConnections extends SessionEventWriterLanes {
+	/** Which connections act for someone else, and what they were granted (senpi#5632). */
+	readonly delegations = new ConnectionDelegations();
+
+	protected isRemoteConnection(connection: string): boolean {
+		return this.delegations.isDelegated(connection) || this.originOf?.(connection) !== undefined;
+	}
+
 	protected isTargetedRecord(record: RpcRecord): boolean {
 		return (
 			record.type === "response" ||
@@ -32,8 +40,13 @@ export abstract class SessionEventWriterConnections extends SessionEventWriterLa
 	registerConnection(
 		id: string,
 		connection: SessionEventWriterConnection,
-		options: { readonly maxQueueBytes?: number; readonly stallMs?: number } = {},
+		options: {
+			readonly maxQueueBytes?: number;
+			readonly stallMs?: number;
+			readonly launchProof?: LaunchProofSource;
+		} = {},
 	): void {
+		this.delegations.admit(id, options.launchProof);
 		const previousPresenter = this.presenterConnections.get(id);
 		if (previousPresenter) this.presenterAuthority?.detach(previousPresenter);
 		this.fanout.registerConnection(id, connection, options);
@@ -55,6 +68,7 @@ export abstract class SessionEventWriterConnections extends SessionEventWriterLa
 	}
 
 	unregisterConnection(id: string): void {
+		this.delegations.drop(id);
 		this.secretPresentations.detach(id);
 		const sender = this.presenterConnections.get(id);
 		if (sender) this.presenterAuthority?.detach(sender);
@@ -121,8 +135,13 @@ export abstract class SessionEventWriterConnections extends SessionEventWriterLa
 		preferred: string | undefined,
 		capabilities: readonly string[],
 		cancel: () => void,
+		title?: string,
 	): { readonly accepted: boolean; readonly connection?: string } {
-		return this.securityPresentations.routeWorkerGrant(sessionId, requestId, preferred, capabilities, cancel);
+		return this.securityPresentations.routeWorkerGrant(sessionId, requestId, preferred, capabilities, cancel, title);
+	}
+	/** An in-process grant select is presented on the connection in context; the others see its notice. */
+	noticeGrantDialog(sessionId: string, id: string, title: string): void {
+		this.securityPresentations.noticeGrant(sessionId, id, title, this.currentConnection());
 	}
 	acceptWorkerGrantResponse(sessionId: string, id: string, connection: string | undefined): boolean | undefined {
 		return this.securityPresentations.acceptWorkerResponse(sessionId, id, connection);

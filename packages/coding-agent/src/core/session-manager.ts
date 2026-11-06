@@ -33,6 +33,7 @@ import { EventLoopSlicer, mapInSlices } from "./event-loop-slicer.ts";
 import { projectRetainedMessages } from "./extensions/builtin/compaction/retained-message-projection.ts";
 import { resolveMovedPath } from "./extensions/builtin/moved-path-guard/resolve.ts";
 import type { InputSource } from "./extensions/types.ts";
+import { SessionFileCallKeys } from "./session-file-call-keys.ts";
 import type { RecoveryCarrier } from "./session-recovery-identity.ts";
 import type { ModelChangeOrigin, ModelChangeSource } from "./model-change-origin.ts";
 import { sessionCwdMatcher } from "./moved-session-cwd.ts";
@@ -74,6 +75,7 @@ import {
 } from "./session-transcript-journal.ts";
 import { branchFlow, compactionFlow, contextEditFlow, ownedFlowMessage } from "./session-transcript-flows.ts";
 import { TranscriptFile } from "./session-transcript-file.ts";
+import type { SessionOwnership } from "./session-move/ownership.ts";
 import { SessionWriteGuard } from "./session-move/write-guard.ts";
 import { type ResidentStoreStats, ResidentStringStore } from "./session-resident-store.ts";
 import { SessionWriteFence } from "./session-write-fence.ts";
@@ -1216,6 +1218,7 @@ export class SessionManager {
 	private transcriptBytes = new WeakMap<FileEntry, string>();
 	private readonly capturesTranscriptBase = compactUpdatesEnabled();
 	private residentStore = new ResidentStringStore();
+	private readonly callKeys = new SessionFileCallKeys();
 	private mirrorTrimmed = false;
 	// Set while a navigation to an entry outside the mirror reloads the whole file into it.
 	private loadingFullMirror = false;
@@ -1404,6 +1407,7 @@ export class SessionManager {
 		this.mirrorTrimmed = false;
 		this.trimmedIds.clear();
 		this.residentStore.clear();
+		this.callKeys.clear();
 		if (existsSync(resolvedFile)) {
 			// This process opens the session for append; a final line torn by an interrupted write is set aside now
 			// (senpi#4295: every open path, `-c` included), never from read-only loadEntriesFromFile callers.
@@ -1452,6 +1456,7 @@ export class SessionManager {
 		// adopts a fresh id in memory instead of creating a replacement session file
 		// (which `_loadEntries`' header-less branch would do for ingested entries).
 		this.fileEntries = entries;
+		this.callKeys.adopt(entries);
 
 		const header = this.fileEntries.find((e) => e.type === "session") as SessionHeader | undefined;
 		this.sessionId = header?.id ?? createSessionId();
@@ -1514,6 +1519,7 @@ export class SessionManager {
 			...(options?.spawnedBy ? { spawnedBy: options.spawnedBy } : {}),
 		};
 		this.fileEntries = [header];
+		this.callKeys.clear();
 		this.transcriptFile.reset();
 		this.transcriptBytes = new WeakMap();
 		this.historyGeneration++;
@@ -1548,8 +1554,10 @@ export class SessionManager {
 	private _loadEntries(entries: FileEntry[], options?: NewSessionOptions): void {
 		const header = entries.find((e) => e.type === "session") as SessionHeader | undefined;
 
+		// Ingested entries load like a file's: their persisted call keys go to the side table (RULING-127 (c)).
 		if (header) {
 			this.fileEntries = entries;
+			this.callKeys.adopt(entries);
 			this.sessionId = header.id;
 
 			if (migrateToCurrentVersion(this.fileEntries)) {
@@ -1557,6 +1565,7 @@ export class SessionManager {
 			}
 		} else {
 			this.newSession(options);
+			this.callKeys.adopt(entries);
 			this.fileEntries = this.fileEntries.concat(entries);
 		}
 
@@ -1698,7 +1707,7 @@ export class SessionManager {
 	private _transcriptEntryBytes(entry: FileEntry): string {
 		const cached = this.transcriptBytes.get(entry);
 		if (cached !== undefined) return cached;
-		const bytes = JSON.stringify(this.residentStore.materialize(entry));
+		const bytes = JSON.stringify(this.callKeys.decorate(this.residentStore.materialize(entry)));
 		if (
 			this.persist &&
 			this.capturesTranscriptBase &&
@@ -1742,6 +1751,11 @@ export class SessionManager {
 
 	getSessionFile(): string | undefined {
 		return this.sessionFile;
+	}
+
+	/** Who may write this file now, from the same fold every persisted write is checked against. */
+	getOwnership(): SessionOwnership {
+		return this.writeGuard.ownership(this.fileEntries);
 	}
 
 	/**
@@ -2023,7 +2037,7 @@ export class SessionManager {
 		// when an evicted blob is needed by a branch or read operation.
 		if (missingResidentString && this.sessionFile) {
 			const persisted = loadEntriesFromFile(this.sessionFile).find((candidate) => candidate.id === entry.id);
-			if (persisted) return persisted as SessionEntry;
+			if (persisted) return this.callKeys.strip(persisted) as SessionEntry;
 		}
 		if (materialized.type === "message") {
 			const order = this.entryOrdersById.get(materialized.id);
@@ -2081,9 +2095,19 @@ export class SessionManager {
 	 */
 	appendOwnedMessage(
 		message: Message | CustomMessage | BashExecutionMessage,
-		options?: { readonly inputSource?: InputSource | undefined; readonly recoveryOwner?: RecoveryCarrier },
+		options?: {
+			readonly inputSource?: InputSource | undefined;
+			readonly recoveryOwner?: RecoveryCarrier;
+			/** The message's bridge-started calls, content index to the key minted with their start (RULING-127 (b)). */
+			readonly bridgedCalls?: ReadonlyMap<number, string>;
+		},
 	): string {
-		return this._appendMessage(message, true, options?.inputSource, options?.recoveryOwner);
+		return this._appendMessage(message, true, options?.inputSource, options?.recoveryOwner, options?.bridgedCalls);
+	}
+
+	/** `entry` as the session file holds it: its persisted call keys back in place (RULING-127 (c)). */
+	persistedEntry(entry: SessionEntry): FileEntry {
+		return this.callKeys.decorate(entry);
 	}
 
 	private _appendMessage(
@@ -2091,6 +2115,7 @@ export class SessionManager {
 		owned: boolean,
 		inputSource?: InputSource,
 		recoveryOwner?: RecoveryCarrier,
+		bridgedCalls?: ReadonlyMap<number, string>,
 	): string {
 		const entry: SessionMessageEntry = {
 			type: "message",
@@ -2100,6 +2125,8 @@ export class SessionManager {
 			message,
 			...(inputSource === undefined ? {} : { inputSource }),
 		};
+		if (message.role === "assistant") this.callKeys.recordAssistant(entry, recoveryOwner?.messageId, bridgedCalls);
+		if (message.role === "toolResult") this.callKeys.recordResult(entry, this.leafId, (id) => this.byId.get(id));
 		this._appendEntry(entry, owned ? message : undefined, recoveryOwner);
 		const order = this.entryOrdersById.get(entry.id);
 		if (order !== undefined) {
@@ -2901,8 +2928,10 @@ export class SessionManager {
 		return materialized;
 	}
 
+	/** The file's whole history, its persisted call keys taken out like a load does (RULING-126 (1a)). */
 	private _loadFullHistoryEntries(): FileEntry[] {
-		return this.sessionFile ? sessionEntryLoader(this.sessionFile) : this.fileEntries;
+		if (!this.sessionFile) return this.fileEntries;
+		return sessionEntryLoader(this.sessionFile).map((entry) => this.callKeys.strip(entry));
 	}
 
 	/**
