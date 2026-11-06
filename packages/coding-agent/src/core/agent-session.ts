@@ -42,6 +42,7 @@ import {
 	resolveToolNameAlias,
 	runToolCall,
 } from "@earendil-works/pi-agent-core";
+import { localDeviceFiles } from "@earendil-works/pi-agent-core/node";
 import {
 	type AssistantMessageEvent,
 	contentText,
@@ -12245,6 +12246,10 @@ export class AgentSession {
 				getAskUserSettings: () => this.settingsManager.getAskUserSettings(),
 				getBrowserEngine: () => this._browserEngine,
 				getSessionEnv: () => this._sessionEnv,
+				// A split session's tools run on its hand, so its device files are the hand's file channel (senpi#5839).
+				getDeviceFiles: () =>
+					this.agent.toolHost?.deviceFiles?.(this.agent.getExecutionScope?.() ?? this.agent.executionScope) ??
+					localDeviceFiles(),
 				getImageSettings: () => ({
 					autoResize: this.settingsManager.getImageAutoResize(),
 					blockImages: this.settingsManager.getBlockImages(),

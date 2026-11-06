@@ -186,6 +186,9 @@ describe("anchored key-facts reader (custody design 15.10)", () => {
 		["trailing bytes", (text: string) => `${text} `],
 		["a duplicate field", (text: string) => text.replace('{"arn":', `{"arn":"${ARN.replace("aa", "ff")}","arn":`)],
 		["a missing field", (text: string) => text.replace(/"readAt":\d+,/, "")],
+		// senpi#5961: signed bytes carry exactly one encoding. A decoder that strips a leading byte-order mark
+		// would let EF BB BF + canonical JSON pass the "bytes equal their canonical JSON" rule.
+		["a leading byte-order mark", (text: string) => `\uFEFF${text}`],
 	])("answers unknown for signed bytes with %s", async (_name, edit) => {
 		serve((nonce) => signedEnvelope(edit(canonical(factsStatement(nonce))), v1.signer));
 		expect(await reader().describe(ARN)).toBe("unknown");
