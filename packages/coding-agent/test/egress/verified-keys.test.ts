@@ -103,9 +103,17 @@ describe("verified-keys store", () => {
 		}
 		const read = await readVerifiedKeys(path);
 		if (read.state !== "ok") throw new Error("store unreadable");
-		const roster = { state: "known" as const, serviceEntries: [old, reissued] };
-		expect(await serviceEntryValidity(old, "omo-account", read.records, roster)).toBe("superseded");
-		expect(await serviceEntryValidity(reissued, "omo-account", read.records, roster)).toBe("valid");
+		const roster = {
+			state: "known" as const,
+			serviceEntries: [old, reissued],
+			rosterVersion: 1,
+			rosterIssuedAt: 100,
+			rosterExpiresAt: 200,
+			receivedMono: 0,
+		};
+		const context = { revocations: [], now: 150, nowMono: 10 };
+		expect(await serviceEntryValidity(old, "omo-account", read.records, roster, context)).toBe("superseded");
+		expect(await serviceEntryValidity(reissued, "omo-account", read.records, roster, context)).toBe("valid");
 	});
 
 	it("replaces an unreadable file instead of failing the check that just passed", async () => {

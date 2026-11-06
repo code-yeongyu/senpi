@@ -47,11 +47,19 @@ export async function verifyEcdsaP256Sha256(
 	message: Uint8Array<ArrayBuffer>,
 	derSigBase64: string,
 ): Promise<boolean> {
-	const spki = decodeBase64(spkiBase64);
 	const der = decodeBase64(derSigBase64);
-	if (!spki || !der) return false;
-	const signature = derEcdsaSignatureToP1363(der);
-	if (!signature) return false;
+	const signature = der && derEcdsaSignatureToP1363(der);
+	return signature ? verifyP1363Sha256(spkiBase64, message, signature) : false;
+}
+
+/** ECDSA P-256 / SHA-256 verification of an IEEE P1363 `r || s` signature under a base64 SPKI public key. */
+export async function verifyP1363Sha256(
+	spkiBase64: string,
+	message: Uint8Array<ArrayBuffer>,
+	signature: Uint8Array<ArrayBuffer>,
+): Promise<boolean> {
+	const spki = decodeBase64(spkiBase64);
+	if (!spki || signature.length !== P256_ORDER_BYTES * 2) return false;
 	try {
 		const key = await crypto.subtle.importKey("spki", spki, { name: "ECDSA", namedCurve: "P-256" }, false, [
 			"verify",

@@ -7,7 +7,12 @@
  */
 import { canonicalJson, toStoreValue } from "@earendil-works/pi-agent-core";
 import { decodeBase64 } from "./ecdsa-p256.ts";
-import { type KmsKeyFacts, MAX_FACTS_AGE_MS, MAX_FACTS_FUTURE_SKEW_MS } from "./key-facts-client.ts";
+import {
+	type KeyFactsAnswer,
+	type KmsKeyFacts,
+	MAX_FACTS_AGE_MS,
+	MAX_FACTS_FUTURE_SKEW_MS,
+} from "./key-facts-client.ts";
 import {
 	type CustodyRoleArns,
 	KEY_POLICY_TEMPLATE_V1,
@@ -15,6 +20,7 @@ import {
 	type KeyPolicyTemplate,
 } from "./key-policy-template.ts";
 import type { ServiceKeyEntry } from "./roster-entries.ts";
+import type { VerifierKeyPin } from "./signed-statement.ts";
 
 export type CustodyRole = keyof CustodyRoleArns;
 
@@ -24,6 +30,10 @@ export interface PinnedCustodyInfra {
 	readonly arnNamespace: string;
 	readonly roleNames: Readonly<Record<CustodyRole, readonly string[]>>;
 	readonly templates: Readonly<Record<number, KeyPolicyTemplate>>;
+	/** Transport only, never a trust anchor (15.10); `undefined` until the verifier is deployed. */
+	readonly keyFactsEndpoint: string | undefined;
+	/** The verifier signing keys this release trusts (three consecutive generations once minted, 15.15 M-2). */
+	readonly keyFactsVerifierKeys: readonly VerifierKeyPin[];
 }
 
 export const PINNED_CUSTODY_INFRA: PinnedCustodyInfra = {
@@ -37,6 +47,8 @@ export const PINNED_CUSTODY_INFRA: PinnedCustodyInfra = {
 		breakglass: ["custody-breakglass"],
 	},
 	templates: { 1: KEY_POLICY_TEMPLATE_V1 },
+	keyFactsEndpoint: undefined,
+	keyFactsVerifierKeys: [],
 };
 
 export type ServiceKeyCheckReason =
@@ -189,7 +201,7 @@ function outcome(result: ServiceKeyCheck["result"], reason: ServiceKeyCheckReaso
 /** `facts` maps each of `entry.kmsKeyArns` to the verifier's answer for exactly that ARN. */
 export function checkServiceKeyDetailed(
 	entry: ServiceKeyEntry,
-	facts: ReadonlyMap<string, KmsKeyFacts | "unknown">,
+	facts: ReadonlyMap<string, KeyFactsAnswer>,
 	options: ServiceKeyCheckOptions,
 ): ServiceKeyCheck {
 	const pinned = options.pinned ?? PINNED_CUSTODY_INFRA;
@@ -203,6 +215,7 @@ export function checkServiceKeyDetailed(
 	for (const arn of entry.kmsKeyArns) {
 		const fact = facts.get(arn);
 		if (fact === undefined || fact === "unknown") return outcome("unknown", "facts-unknown");
+		if ("refusal" in fact) return outcome("unknown", "facts-stale");
 		if (!isFresh(fact, options.now)) return outcome("unknown", "facts-stale");
 		known.push(fact);
 	}
@@ -218,7 +231,7 @@ export function checkServiceKeyDetailed(
 
 export function checkServiceKey(
 	entry: ServiceKeyEntry,
-	facts: ReadonlyMap<string, KmsKeyFacts | "unknown">,
+	facts: ReadonlyMap<string, KeyFactsAnswer>,
 	options: ServiceKeyCheckOptions,
 ): "ok" | "mismatch" | "unknown" {
 	return checkServiceKeyDetailed(entry, facts, options).result;
