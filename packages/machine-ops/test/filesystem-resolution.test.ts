@@ -47,7 +47,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 let root: string;
 beforeEach(() => {
-	root = mkdtempSync(join(realpathSync(tmpdir()), "resolution-regression-"));
+	root = realpathSync.native(mkdtempSync(join(tmpdir(), "resolution-regression-")));
 });
 afterEach(() => {
 	vi.useRealTimers();

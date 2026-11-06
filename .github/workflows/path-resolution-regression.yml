@@ -39,6 +39,19 @@ jobs:
           bun-version: "1.4.4"
       - run: npm ci --ignore-scripts
       - run: npm run check
+      - name: Setup Rust for script-test native dependency
+        run: |
+          toolchain=$(python3 -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml", "rb"))["toolchain"]["channel"])')
+          rustup toolchain install "$toolchain" --profile minimal
+          rustup default "$toolchain"
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Build native grep addon for script tests
+        working-directory: crates/senpi-grep
+        run: |
+          npm exec --yes --package @napi-rs/cli@3.7.2 -- napi build --platform --release -- --locked
+          node_file=$(ls senpi_grep.*.node)
+          echo "SENPI_GREP_NATIVE_PATH=$PWD/$node_file" >> "$GITHUB_ENV"
       - run: npm run test:scripts
 
   regression:
@@ -60,13 +73,30 @@ jobs:
       - run: npm ci --ignore-scripts
       - name: Filesystem regression and coverage
         working-directory: packages/machine-ops
-        run: node ../../node_modules/vitest/vitest.mjs run test/filesystem-resolution.test.ts test/operation-errors.test.ts --coverage --coverage.include=src/policy/filesystem.ts --coverage.include=src/errors.ts --coverage.reporter=text --coverage.reporter=json-summary --coverage.thresholds.lines=95 --coverage.thresholds.statements=95 --coverage.thresholds.functions=95 --coverage.thresholds.branches=95 --coverage.thresholds.perFile=true
+        shell: bash
+        run: |
+          node ../../node_modules/vitest/vitest.mjs run \
+            test/filesystem-resolution.test.ts test/operation-errors.test.ts \
+            --coverage --coverage.include=src/policy/filesystem.ts --coverage.include=src/errors.ts \
+            --coverage.reporter=text --coverage.reporter=json-summary \
+            --coverage.thresholds.lines=95 --coverage.thresholds.statements=95 \
+            --coverage.thresholds.functions=95 --coverage.thresholds.branches=95 \
+            --coverage.thresholds.perFile=true
       - name: Cancelled write has no effect
         working-directory: packages/machine-ops
         run: node ../../node_modules/vitest/vitest.mjs run test/local-conformance.test.ts -t "cancelled request"
       - name: Guard cancellation regression
         working-directory: packages/coding-agent
-        run: node ../../node_modules/vitest/vitest.mjs run test/suite/moved-path-guard-cancellation.test.ts test/suite/moved-path-guard-step-timeouts.test.ts test/suite/moved-path-guard-trust.test.ts test/suite/moved-path-guard-reused.test.ts --coverage --coverage.include=src/core/extensions/builtin/moved-path-guard/resolve-async.ts --coverage.reporter=text --coverage.reporter=json-summary --coverage.thresholds.lines=95 --coverage.thresholds.statements=95 --coverage.thresholds.functions=95 --coverage.thresholds.branches=95
+        shell: bash
+        run: |
+          node ../../node_modules/vitest/vitest.mjs run \
+            test/suite/moved-path-guard-cancellation.test.ts \
+            test/suite/moved-path-guard-step-timeouts.test.ts \
+            test/suite/moved-path-guard-trust.test.ts test/suite/moved-path-guard-reused.test.ts \
+            --coverage --coverage.include=src/core/extensions/builtin/moved-path-guard/resolve-async.ts \
+            --coverage.reporter=text --coverage.reporter=json-summary \
+            --coverage.thresholds.lines=95 --coverage.thresholds.statements=95 \
+            --coverage.thresholds.functions=95 --coverage.thresholds.branches=95
       - name: Node filesystem integration
         run: node scripts/qa/path-resolution-smoke.ts
       - name: Bun filesystem integration
