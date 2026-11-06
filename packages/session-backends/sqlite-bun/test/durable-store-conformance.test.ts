@@ -14,6 +14,8 @@ import {
 	runSuite,
 	STORE_CASES,
 	type StoreCaseAdapters,
+	SYNC_COMMIT_CASES,
+	SYNC_COMMIT_REGISTRY,
 } from "@earendil-works/pi-agent-core/conformance";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type BunSqliteMedia, createBunSqliteMedia } from "../src/index.ts";
@@ -55,6 +57,24 @@ describe("the Bun SQLite backend on the STORE and KILL-STORE cases", () => {
 	});
 
 	for (const entry of STORE_REGISTRY) {
+		it(`passes ${entry.id}`, () => {
+			expect(report.results.find((result) => result.id === entry.id)).toEqual({ id: entry.id, status: "pass" });
+		});
+	}
+});
+
+describe("the Bun SQLite backend on the SYNC-COMMIT cases", () => {
+	let report: HostReport;
+	beforeAll(async () => {
+		const manifest = await buildManifest(SYNC_COMMIT_REGISTRY, (file) => readFile(path.join(REPO_ROOT, file)));
+		report = await runSuite(
+			manifest,
+			{ name: "bun-sqlite", provides: ["store"], adapters: { store: media } },
+			SYNC_COMMIT_CASES,
+		);
+	});
+
+	for (const entry of SYNC_COMMIT_REGISTRY) {
 		it(`passes ${entry.id}`, () => {
 			expect(report.results.find((result) => result.id === entry.id)).toEqual({ id: entry.id, status: "pass" });
 		});
