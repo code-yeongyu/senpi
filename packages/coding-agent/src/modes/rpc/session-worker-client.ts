@@ -8,6 +8,7 @@ import type { CliRuntimeConfiguration } from "../../main.ts";
 import type { RpcConnectionOptions } from "./connection-handler.ts";
 import { workerCapabilities } from "./worker-client-capabilities.ts";
 import { captureAdmissionReply, withAdmissionReply } from "./compact-admission-reply.ts";
+import { commandAuthority } from "./command-authority.ts";
 import { roleConnection } from "./connection-roles.ts";
 import { originField } from "./remote-origin.ts";
 import { answeredUiRequestId, isGrantSelectRequest, refusedExtensionUiResponse } from "./extension-ui-response.ts";
@@ -209,12 +210,15 @@ export class SessionWorkerClient {
 			);
 		this.requestClose = requestClose;
 		this.options = options;
+		// omo-relay-daemon#307: the descriptor the attaching line captured at its start, never a lookup made now.
+		const bound = writer.connectionContext.delegation;
 		await this.request({
 			type: "bind",
 			sessionId,
 			capabilities: options.capabilities ?? [],
 			connection: writer.currentConnection(),
-			roles: options.connectionRoles?.rolesOf(roleConnection(writer.currentConnection())),
+			roles: options.connectionRoles?.rolesOf(roleConnection(writer.currentConnection()), bound?.incarnation),
+			...(bound === undefined ? {} : { delegation: bound }),
 			mcpFormsEnforced: writer.mcpPresenters !== undefined,
 		});
 		return {
@@ -235,14 +239,18 @@ export class SessionWorkerClient {
 					writer.enqueue(sessionId, refusedExtensionUiResponse(response.id, "secret_answer_refused"));
 					return;
 				}
+				const delegation = writer.connectionContext.delegation;
+				const exec = commandAuthority.getStore()?.exec;
 				await this.request({
 					type: "command",
 					admissionReply: captureAdmissionReply(),
 					command,
 					connection,
-					roles: options.connectionRoles?.rolesOf(roleConnection(connection)),
+					roles: options.connectionRoles?.rolesOf(roleConnection(connection), delegation?.incarnation),
 					...originField(options.connectionRoles?.originOf(connection)),
 					...(owner === undefined ? {} : { owner }),
+					...(delegation === undefined ? {} : { delegation }),
+					...(exec === undefined ? {} : { exec }),
 				});
 			},
 			cancelPendingExtensionUiRequests: () => this.post({ type: "cancel_ui" }),

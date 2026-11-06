@@ -22,7 +22,19 @@
  * is answered only on a launch-proven connection that is not delegated.
  */
 
-import { type Principal, parseDeclaration, samePrincipal } from "./delegation-declaration.ts";
+import { INCARNATION_MAX } from "./connection-authority.ts";
+import type { DelegatedConnectionView } from "./connection-roles.ts";
+import { parseDeclaration } from "./delegation-declaration.ts";
+import {
+	closeRecord,
+	createRecord,
+	type DelegationDescriptor,
+	type DelegationRecord,
+	descriptorOf,
+	echoedRoles,
+	narrowRecord,
+	rotateIncarnation,
+} from "./delegation-record.ts";
 import { type DelegationResponse, type DelegationVerdict, refused, requestId } from "./delegation-wire.ts";
 import {
 	isPrivatePresenterType,
@@ -83,16 +95,14 @@ const CONNECTION_LOCAL_REQUIREMENT = {
 
 /** The records a connection may send before its first declaration without making that declaration late. */
 const PRE_DECLARATION: ReadonlySet<unknown> = new Set(["get_protocol_info", "authenticate", RPC_LAUNCH_PROOF_RECORD]);
-interface Delegation {
-	readonly principal: Principal;
-	granted: ReadonlySet<RpcMethodClass>;
-}
 
 interface ConnectionState {
 	readonly proofSource: LaunchProofSource | undefined;
 	proven: boolean;
 	spoken: boolean;
-	delegation: Delegation | undefined;
+	delegation: DelegationRecord | undefined;
+	/** The incarnation counter ran out at this line's `detach_connection`: end the socket once it is answered. */
+	endAfterAnswer?: true;
 }
 
 const PASS: DelegationVerdict = { kind: "pass" };
@@ -101,6 +111,14 @@ const CONSUMED: DelegationVerdict = { kind: "consumed" };
 /** Per-connection delegation state of one host; keyed by the connection id the writer runs each line under. */
 export class ConnectionDelegations {
 	private readonly connections = new Map<string, ConnectionState>();
+	private readonly incarnationMax: number;
+	/** Ends a socket whose incarnations are exhausted (omo-relay-daemon#307); the socket host wires it. */
+	endConnection: ((id: string) => void) | undefined;
+
+	constructor(options: { readonly incarnationMax?: number; readonly endConnection?: (id: string) => void } = {}) {
+		this.incarnationMax = options.incarnationMax ?? INCARNATION_MAX;
+		this.endConnection = options.endConnection;
+	}
 
 	admit(id: string, proofSource: LaunchProofSource | undefined): void {
 		// A re-registration under a live id keeps its state: forgetting a delegation would widen it.
@@ -113,8 +131,41 @@ export class ConnectionDelegations {
 		});
 	}
 
-	drop(id: string): void {
+	/**
+	 * Physical close (omo-relay-daemon#307): a delegated record's current word reads retired from now on, and the record
+	 * stays, so a record still in flight never reads "not delegated". Only `forget`, once the socket is gone, deletes it.
+	 */
+	close(id: string): void {
+		const delegation = this.connections.get(id)?.delegation;
+		if (delegation === undefined) this.connections.delete(id);
+		else closeRecord(delegation);
+	}
+
+	forget(id: string): void {
 		this.connections.delete(id);
+	}
+
+	recordOf(id: string): DelegationRecord | undefined {
+		return this.connections.get(id)?.delegation;
+	}
+
+	/** What a line of connection `id` captures before its first await; undefined for a connection that never declared. */
+	descriptorOf(id: string): DelegationDescriptor | undefined {
+		const record = this.recordOf(id);
+		return record === undefined ? undefined : descriptorOf(record);
+	}
+
+	viewOf(id: string): DelegatedConnectionView | undefined {
+		const record = this.recordOf(id);
+		return record === undefined ? undefined : { descriptor: descriptorOf(record), closed: record.closed };
+	}
+
+	/** After a line's answer is enqueued: ends the socket whose `detach_connection` exhausted its incarnations. */
+	lineAnswered(id: string | undefined): void {
+		const state = id === undefined ? undefined : this.connections.get(id);
+		if (id === undefined || state?.endAfterAnswer !== true) return;
+		delete state.endAfterAnswer;
+		this.endConnection?.(id);
 	}
 
 	isDelegated(id: string | undefined): boolean {
@@ -169,7 +220,11 @@ export class ConnectionDelegations {
 		if (isPrivatePresenterType(type))
 			return privatePresenterVerdict(type, requestId(record as object), delegation.granted);
 		const refusal = refuseOnDelegation(record, delegation.granted);
-		return refusal === undefined ? PASS : { kind: "reply", response: refusal };
+		if (refusal !== undefined) return { kind: "reply", response: refusal };
+		// A logical detach retires this incarnation at line receipt: every later line captures the next one.
+		if (type === "detach_connection" && !rotateIncarnation(delegation, this.incarnationMax))
+			state.endAfterAnswer = true;
+		return PASS;
 	}
 
 	private state(id: string): ConnectionState {
@@ -192,19 +247,15 @@ export class ConnectionDelegations {
 				"delegation_unauthenticated",
 				"declare_delegation needs a connection that proved the endpoint's launch key",
 			);
-		const current = state.delegation;
+		let current = state.delegation;
 		if (current !== undefined) {
-			if (
-				!samePrincipal(current.principal, parsed.principal) ||
-				[...parsed.granted].some((c) => !current.granted.has(c))
-			)
+			if (!narrowRecord(current, parsed))
 				return refused(
 					id,
 					DECLARE_DELEGATION_COMMAND,
 					"delegation_fixed",
-					"a delegated connection keeps its principal and can only narrow its grant",
+					"a delegated connection keeps its principal and mode and can only narrow its grant and roles",
 				);
-			current.granted = parsed.granted;
 		} else if (state.spoken) {
 			return refused(
 				id,
@@ -213,14 +264,15 @@ export class ConnectionDelegations {
 				"declare_delegation must come before any record other than get_protocol_info or authenticate",
 			);
 		} else {
-			state.delegation = { principal: parsed.principal, granted: parsed.granted };
+			current = createRecord(parsed.principal, parsed.granted, parsed.roles);
+			state.delegation = current;
 		}
 		return {
 			...(id === undefined ? {} : { id }),
 			type: "response",
 			command: DECLARE_DELEGATION_COMMAND,
 			success: true,
-			data: { granted: [...parsed.granted], digest: RPC_METHOD_CLASSES_DIGEST },
+			data: { granted: [...parsed.granted], digest: RPC_METHOD_CLASSES_DIGEST, ...echoedRoles(current) },
 		};
 	}
 }

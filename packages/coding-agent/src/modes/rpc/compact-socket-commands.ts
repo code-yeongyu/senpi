@@ -1,9 +1,14 @@
 import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
-import { CONNECTION_ROLE_FIXED, roleConnection } from "./connection-roles.ts";
+import { commandAuthority } from "./command-authority.ts";
+import { CONNECTION_ROLE_FIXED, DELEGATION_INCARNATION_STALE, roleConnection } from "./connection-roles.ts";
 import { remoteOriginDeclaration } from "./remote-origin.ts";
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
 import type { RouterContext } from "./session-router-context.ts";
 import { error } from "./session-router-errors.ts";
+
+function staleError(id: string | undefined, command: string, message: string): RpcResponse {
+	return { id, type: "response", command, success: false, error: message, errorCode: "delegation_incarnation_stale" };
+}
 
 /** Validate the full declaration before committing role, media, recovery or pending state. */
 export function declareSocketClient(
@@ -12,7 +17,13 @@ export function declareSocketClient(
 ): RpcResponse {
 	const peer = host.writer.currentConnection();
 	const selection = peer === undefined ? undefined : host.writer.compactSelection(peer);
-	const role = (caps: readonly string[]) => host.connectionRoles.declare(roleConnection(peer), caps);
+	const connection = roleConnection(peer);
+	// omo-relay-daemon#307 (v5 review H1): the stale check runs first and touches nothing, so a declaration captured before
+	// a `detach_connection` can never reach `CompactSelection.declare`, whose role refusal can mark the selection refused.
+	const incarnation = commandAuthority.getStore()?.incarnation;
+	if (host.connectionRoles.isStale(connection, incarnation))
+		return staleError(command.id, command.type, DELEGATION_INCARNATION_STALE);
+	const role = (caps: readonly string[]) => host.connectionRoles.declare(connection, caps, incarnation) === "declared";
 	const origin = remoteOriginDeclaration(command.remoteOrigin, (declared) =>
 		host.connectionRoles.acceptsOrigin(roleConnection(peer), declared),
 	);

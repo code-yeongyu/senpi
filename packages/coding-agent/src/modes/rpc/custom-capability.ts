@@ -63,6 +63,11 @@ export const RETAIN_ON_DISCONNECT_CAPABILITY = "retain_on_disconnect";
  * method-class table on every record of that connection before dispatch; `classify_record` answers (senpi#5632).
  */
 export const DELEGATED_CONNECTION_CAPABILITY = "delegated_connection_v1";
+/**
+ * A host whose delegated connections take `declare_delegation.roles` (omo-relay-daemon#307): an authority word per
+ * incarnation, `relayExec` and the `authority` receipt.
+ */
+export const DELEGATION_ROLES_CAPABILITY = "delegation_roles_v1";
 
 /**
  * Client opt-in (D11 S3-5): the connection renders the value-free `secret_input_notice` and `grant_select_notice` of a

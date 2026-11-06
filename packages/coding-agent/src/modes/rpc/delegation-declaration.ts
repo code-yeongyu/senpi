@@ -17,9 +17,17 @@ export interface Principal {
 	readonly conn?: string;
 }
 
-export function parseDeclaration(
-	record: object,
-): { readonly principal: Principal; readonly granted: ReadonlySet<RpcMethodClass> } | string {
+/** The connection roles a host-mode declaration may carry (omo-relay-daemon#307). */
+const DECLARABLE_ROLES: ReadonlySet<string> = new Set(["interactive_user", "task_parent"]);
+
+export interface Declaration {
+	readonly principal: Principal;
+	readonly granted: ReadonlySet<RpcMethodClass>;
+	/** Present: host mode (`delegation_roles_v1`), the role ceiling the forwarder allows. Absent: legacy mode. */
+	readonly roles?: ReadonlySet<string>;
+}
+
+export function parseDeclaration(record: object): Declaration | string {
 	const principal: unknown = Reflect.get(record, "principal");
 	if (typeof principal !== "object" || principal === null || Array.isArray(principal))
 		return "principal must be an object";
@@ -38,7 +46,10 @@ export function parseDeclaration(
 			return "granted holds each of observe, drive, answer, thread, device_admin at most once";
 		classes.add(entry as RpcMethodClass);
 	}
+	const roles = parseRoles(Reflect.get(record, "roles"));
+	if (typeof roles === "string") return roles;
 	return {
+		...(roles === undefined ? {} : { roles }),
 		principal: {
 			deviceId: deviceId as string,
 			...(deviceName === undefined ? {} : { deviceName: deviceName as string }),
@@ -50,6 +61,18 @@ export function parseDeclaration(
 
 export function samePrincipal(a: Principal, b: Principal): boolean {
 	return a.deviceId === b.deviceId && a.deviceName === b.deviceName && a.conn === b.conn;
+}
+
+function parseRoles(value: unknown): ReadonlySet<string> | undefined | string {
+	if (value === undefined) return undefined;
+	const invalid = "roles holds each of interactive_user, task_parent at most once";
+	if (!Array.isArray(value)) return invalid;
+	const roles = new Set<string>();
+	for (const entry of value) {
+		if (typeof entry !== "string" || !DECLARABLE_ROLES.has(entry) || roles.has(entry)) return invalid;
+		roles.add(entry);
+	}
+	return roles;
 }
 
 function boundedString(value: unknown, max: number): boolean {

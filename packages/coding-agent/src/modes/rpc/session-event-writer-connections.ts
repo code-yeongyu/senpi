@@ -3,6 +3,7 @@ import type { SecurityNoticeSnapshot, SecurityNoticeState } from "../../core/sec
 import type { CanonicalControl } from "./compact-canonical-pairing.ts";
 import { COMPACT_EVENTS_CAPABILITY } from "./custom-capability.ts";
 import { ConnectionDelegations, type LaunchProofSource } from "./delegated-connection.ts";
+import type { DelegationDescriptor } from "./delegation-record.ts";
 import { serializeJsonLine } from "./jsonl.ts";
 import type { MediaPersister } from "./media-placeholders.ts";
 import type { SessionAcceptanceLane } from "./session-acceptance-lane.ts";
@@ -16,6 +17,10 @@ import type { SocketEventSinkActor } from "./socket-event-fanout.ts";
 export abstract class SessionEventWriterConnections extends SessionEventWriterLanes {
 	/** Which connections act for someone else, and what they were granted (senpi#5632). */
 	readonly delegations = new ConnectionDelegations();
+
+	protected delegationDescriptorOf(id: string): DelegationDescriptor | undefined {
+		return this.delegations.descriptorOf(id);
+	}
 
 	protected isRemoteConnection(connection: string): boolean {
 		return this.delegations.isDelegated(connection) || this.originOf?.(connection) !== undefined;
@@ -68,7 +73,7 @@ export abstract class SessionEventWriterConnections extends SessionEventWriterLa
 	}
 
 	unregisterConnection(id: string): void {
-		this.delegations.drop(id);
+		this.delegations.close(id);
 		this.secretPresentations.detach(id);
 		const sender = this.presenterConnections.get(id);
 		if (sender) this.presenterAuthority?.detach(sender);

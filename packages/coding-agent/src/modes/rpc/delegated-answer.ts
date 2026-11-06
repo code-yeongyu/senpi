@@ -3,9 +3,21 @@
  * A private presenter outcome goes through the private write (`writeMcpFormReply`) and never the control queue, so
  * it keeps the private shape's promise: no event queue, snapshot, mirror or replay.
  */
-import type { DelegationVerdict } from "./delegation-wire.ts";
+import { type DelegationResponse, type DelegationVerdict, refused, requestId } from "./delegation-wire.ts";
 import { PRESENTER_CONTROL_INFO_COMMAND } from "./delegated-presenter-records.ts";
 import type { SessionEventWriter } from "./session-event-writer.ts";
+
+/** A host-mode record whose `relayExec` is not a positive safe integer is refused, never dispatched (#307). */
+export function relayExecRefusal(record: unknown): DelegationResponse {
+	const object = typeof record === "object" && record !== null ? record : {};
+	const type: unknown = Reflect.get(object, "type");
+	return refused(
+		requestId(object),
+		typeof type === "string" ? type : "parse",
+		"delegation_malformed",
+		"relayExec must be a positive safe integer",
+	);
+}
 
 export async function answerDelegation(
 	writer: SessionEventWriter,

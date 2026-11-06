@@ -18,7 +18,8 @@ import type { CliRuntimeConfiguration } from "../../main.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { startHostChildReaper } from "./child-reaper.ts";
 import type { RpcConnectionSink } from "./connection-handler.ts";
-import { answerDelegation } from "./delegated-answer.ts";
+import { CommandAuthority, commandAuthority, takeRelayExec } from "./command-authority.ts";
+import { answerDelegation, relayExecRefusal } from "./delegated-answer.ts";
 import type { LaunchProofSource } from "./delegated-connection.ts";
 import { parseClientCapabilities } from "./custom-capability.ts";
 import { ClientOccupancy } from "./host-client-occupancy.ts";
@@ -232,6 +233,20 @@ export function createHostCore(
 			);
 			return;
 		}
+		// omo-relay-daemon#307: a host-mode delegated line runs under one authority snapshot, its forwarder's `relayExec`
+		// taken out of the record before anything else reads it.
+		const delegation = writer.connectionContext.delegation;
+		if (delegation?.mode !== "host") return handleParsed(connection, parsed);
+		const exec = takeRelayExec(parsed);
+		if (exec === "malformed") {
+			await writer.enqueueControl(relayExecRefusal(parsed));
+			return;
+		}
+		return commandAuthority.run(new CommandAuthority(connection, delegation, exec), () =>
+			handleParsed(connection, parsed),
+		);
+	};
+	const handleParsed = async (connection: string | undefined, parsed: unknown): Promise<void> => {
 		// Before any await: a declaration takes effect for the very next line of its connection (senpi#5632).
 		const delegation = writer.delegations.inspect(connection, parsed);
 		if (delegation.kind !== "pass") {
@@ -252,6 +267,7 @@ export function createHostCore(
 				: command,
 		);
 		if (response) await writer.enqueueControl(response);
+		writer.delegations.lineAnswered(connection);
 	};
 	return {
 		router,
@@ -423,6 +439,11 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	});
 	let nextConnection = 0;
 	let shuttingDown = false;
+	// omo-relay-daemon#307: a socket whose incarnations ran out is ended once its detach answer is flushed (engine_closed).
+	writer.delegations.endConnection = (id) => {
+		const ended = connections.get(id);
+		if (ended) void writer.flushConnection(id).finally(() => ended.socket.destroy());
+	};
 	const secret =
 		process.platform === "win32"
 			? await ensureSocketSecret(process.env[SOCKET_SECRET_FILE_ENV] ?? socketSecretPath(socketPath))

@@ -84,7 +84,8 @@ import { handleClientInput } from "./client-input-handler.ts";
 import { ConnectionQuestionBridge, degradeQuestion, sessionQuestionBridges } from "./connection-question-bridge.ts";
 import { remoteOriginDeclaration, remoteOriginField } from "./remote-origin.ts";
 import { advertisedCompactCapabilities, sessionDeclaration } from "./compact-negotiation.ts";
-import { ConnectionRoles, roleConnection } from "./connection-roles.ts";
+import { commandAuthority } from "./command-authority.ts";
+import { ConnectionRoles, DELEGATION_INCARNATION_STALE, roleConnection } from "./connection-roles.ts";
 import {
 	ACCOUNT_RESET_CAPABILITY,
 	AUTH_KEY_VERIFY_CAPABILITY,
@@ -208,7 +209,12 @@ export interface RpcConnectionOptions {
 	 * registers them for the connection that sent it; absent on a classic connection.
 	 */
 	clientInfo?: RelocationClientInfo & {
-		setCapabilities: (connectionId: string | undefined, capabilities: readonly string[]) => void;
+		/** `"stale"`: the host refused a declaration captured under a retired incarnation (omo-relay-daemon#307). */
+		setCapabilities: (
+			connectionId: string | undefined,
+			capabilities: readonly string[],
+			incarnation?: number,
+		) => "stale" | void;
 		hasCapability?: (connectionId: string, capability: string) => boolean;
 	};
 	bindSecurityPresentation?: (
@@ -1610,10 +1616,17 @@ export function createRpcConnectionHandler(
 					options,
 					command,
 					clientCapabilities,
-					(caps) => connectionRoles.declare(currentConnectionId(), caps),
+					(caps, incarnation) => connectionRoles.declare(currentConnectionId(), caps, incarnation),
 					replaceClientCapabilities,
+					commandAuthority.getStore()?.incarnation,
 				);
-				if (next.refusal) return error(id, "set_client_info", next.refusal);
+				if (next.refusal)
+					return error(
+						id,
+						"set_client_info",
+						next.refusal,
+						next.refusal === DELEGATION_INCARNATION_STALE ? "delegation_incarnation_stale" : undefined,
+					);
 				if (origin.origin !== undefined) connectionRoles.declareOrigin(currentConnectionId(), origin.origin);
 				clientCapabilities = next.capabilities;
 				if (command.capabilities !== undefined) {
