@@ -1755,6 +1755,9 @@ export class SessionManager {
 
 	/** Who may write this file now, from the same fold every persisted write is checked against. */
 	getOwnership(): SessionOwnership {
+		// A session that persists nothing never reaches the write guard (`_persist` returns first), so ownership must
+		// not refuse it either: admission and the write path answer the same (senpi#5922).
+		if (!this.persist || !this.sessionFile) return { writable: true };
 		return this.writeGuard.ownership(this.fileEntries);
 	}
 
