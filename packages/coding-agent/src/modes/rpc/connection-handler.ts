@@ -222,6 +222,8 @@ export interface RpcConnectionOptions {
 	workerSecurityBridge?: boolean;
 	secretInputRoute?: SecretInputRoute;
 	grantDialogSettled?: (id: string) => void;
+	/** A grant select was emitted on the connection in context; its non-presenters get a value-free notice (D11 S3-5). */
+	grantDialogRaised?: (id: string, title: string) => void;
 	/** Shared hosts dedupe `loaded_surfaces_changed` per connection by inventory digest; absent emits inline. */
 	publishLoadedSurfacesChanged?: (previous: string | undefined, digest: string) => void;
 }
@@ -659,6 +661,8 @@ export function createRpcConnectionHandler(
 			});
 			if (request.grantSelect === true) grantRequests.set(id, options.clientInfo?.connectionId());
 			output({ type: "extension_ui_request", id, ...raised } as RpcExtensionUIRequest);
+			if (request.grantSelect === true && typeof request.title === "string")
+				options.grantDialogRaised?.(id, request.title);
 		});
 	}
 	const selectGrantDialog: ExtensionUIContext["select"] = (title, choices, opts) =>
@@ -2501,7 +2505,7 @@ export function createRpcConnectionHandler(
 		const relocationSettled = relocation?.dispose();
 		relocation = undefined;
 		questions.cancelAll();
-		secretInputs.close();
+		secretInputs.dispose();
 		pendingExtensionRequests.close();
 		unsubscribeProviderAccountEvents();
 		unsubscribe?.();
