@@ -19,6 +19,19 @@ export interface DeviceFiles {
 	mkdir(path: string, options?: DeviceFileOptions): Promise<void>;
 	/** Runs git or lsof on the device (split: only the calls the hand's allowlist admits; fused: a direct spawn). */
 	run(request: DeviceRunRequest, options?: DeviceFileOptions): Promise<DeviceRunResult>;
+	readonly [LOCAL_DEVICE_FILES]?: true;
+}
+
+/**
+ * Marks the local filesystem's {@link DeviceFiles} (a fused session, or a hand's own runtime), so extension code that
+ * keeps its own local file path can tell it from a split session's file channel. A registry symbol, so a second copy
+ * of this package marks the same objects.
+ */
+export const LOCAL_DEVICE_FILES: unique symbol = Symbol.for("senpi.device-files.local");
+
+/** Whether `files` is the local filesystem rather than a split session's file channel to the hand. */
+export function isLocalDeviceFiles(files: DeviceFiles): boolean {
+	return files[LOCAL_DEVICE_FILES] === true;
 }
 
 export interface DeviceFileOptions {
