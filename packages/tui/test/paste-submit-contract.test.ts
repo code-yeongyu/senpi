@@ -31,7 +31,15 @@ function createHarness() {
 const REQUEST = Array.from({ length: 30 }, (_, index) => `line ${index + 1}: follow the instructions above`).join("\n");
 
 describe("paste then Enter submit contract (senpi#3076)", () => {
-	it("submits an unbracketed paste whose Enter arrives in the same write", () => {
+	it("keeps an unbracketed CR-only paste in the paste", () => {
+		const harness = createHarness();
+		harness.write("l1\rl2\rl3\r");
+		assert.deepStrictEqual(harness.submitted, []);
+		assert.strictEqual(harness.editor.getText(), "l1\nl2\nl3\n");
+		harness.destroy();
+	});
+
+	it("submits an unbracketed LF paste whose Enter arrives in the same write", () => {
 		const harness = createHarness();
 		harness.write(`${REQUEST}\r`);
 		assert.deepStrictEqual(harness.submitted, [REQUEST]);

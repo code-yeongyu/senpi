@@ -327,6 +327,8 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 	private heldNewline: string = "";
 	private heldNewlineKind: HeldLineBreakKind = "keystroke";
 	private lastBurstPasteAt: number | undefined;
+	/** True when the last burst paste's own line breaks were bare CR (an unbracketed paste from xterm/VTE/iTerm2). */
+	private lastBurstPasteUsesCrLineBreaks = false;
 	private burstTimer: ReturnType<typeof setTimeout> | null = null;
 
 	constructor(options: StdinBufferOptions = {}) {
@@ -506,21 +508,22 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 			return false;
 		}
 		const trailing = text.match(TRAILING_LINE_BREAK_RUN)?.[0];
-		// Raw mode separates a key from a paste: an Enter key is a bare CR, while a paste carries LF or CRLF.
-		// A sender that writes its text and then presses Enter (send-text, then send-keys Enter) is writing
-		// two independent reads, so the CR ending one of them is a submit rather than the end of a paste.
-		const endsWithEnter = trailing !== undefined && trailing.endsWith("\r");
+		const trailingEndsWithCr = trailing !== undefined && trailing.endsWith("\r");
+		// An unbracketed paste from a terminal that turns pasted newlines into bare CR (xterm, VTE, iTerm2) carries
+		// no LF at all, so its own trailing CR closes that paste. Only a burst whose breaks include LF or CRLF can
+		// end in the Enter key that submits it; anything else would submit a human's CR-only paste.
+		const crOnlyPasteBurst = trailingEndsWithCr && !text.includes("\n") && /[^\r\n]/.test(text);
 		// Typing delivers one key per read, so a single read that holds two line breaks, or text after a
 		// line break, is pasted. Both carry text: a run of bare Enters stays keystrokes.
 		if ((breaks >= 2 || LINE_BREAK_BEFORE_TEXT.test(text)) && /[^\r\n]/.test(text)) {
-			this.buffer = "";
+			const endsWithEnter = trailingEndsWithCr && !crOnlyPasteBurst;
 			const body = endsWithEnter ? text.slice(0, -1) : text;
-			if (body.length > 0) {
-				this.lastBurstPasteAt = this.lastInputAt;
-				this.emit("paste", body);
-			}
+			this.buffer = "";
+			this.lastBurstPasteAt = this.lastInputAt;
+			this.lastBurstPasteUsesCrLineBreaks = !body.includes("\n");
+			this.emit("paste", body);
 			if (endsWithEnter) {
-				// The paste is committed first, so the Enter that trails it submits the whole block. It waits out
+				// The paste is committed first, so the Enter that trails it submits the block after it. It waits out
 				// the window only because a CRLF split across reads still belongs to its paste.
 				this.holdTrailingNewline("\r", "enter");
 			}
@@ -536,9 +539,11 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 			this.lastBurstPasteAt !== undefined &&
 			this.lastInputAt !== undefined &&
 			this.lastInputAt - this.lastBurstPasteAt < this.burstWindowMs;
-		// A read of bare line breaks is a keystroke unless it closes a paste, and a trailing CR is always the
-		// Enter key, so both are forwarded at once instead of waiting out the window.
-		if (endsWithEnter || (head.length === 0 && !endsPaste)) {
+		// A CR closing a burst whose own breaks were bare CR continues that paste, exactly as the same text in one
+		// read keeps it; after an LF/CRLF paste it is the Enter key the sender pressed.
+		const crContinuesPaste = endsPaste && this.lastBurstPasteUsesCrLineBreaks;
+		// A read of bare line breaks is a keystroke unless it closes a paste, and a submit is never held back.
+		if ((trailingEndsWithCr && !crContinuesPaste) || (head.length === 0 && !endsPaste)) {
 			return false;
 		}
 		for (const chunk of head) {
@@ -634,6 +639,7 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 		this.heldNewline = "";
 		this.heldNewlineKind = "keystroke";
 		this.lastBurstPasteAt = undefined;
+		this.lastBurstPasteUsesCrLineBreaks = false;
 		this.buffer = "";
 		this.pasteMode = false;
 		this.pasteBuffer = "";
