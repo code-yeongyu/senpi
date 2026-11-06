@@ -10,6 +10,10 @@
 
 export const JOB_OBJECT_LIMIT_BREAKAWAY_OK = 0x0000_0800;
 export const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x0000_2000;
+/** A tool child generation: an explicit `detached: true` launch may leave it. */
+export const TOOL_CHILD_JOB_LIMITS = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK;
+/** A managed launch and its session (senpi#4236): nothing may break away, so session end reaches every member. */
+export const MANAGED_LAUNCH_JOB_LIMITS = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
 export const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS = 9;
 export const JOB_OBJECT_BASIC_PROCESS_ID_LIST_CLASS = 3;
 /** `JOBOBJECT_EXTENDED_LIMIT_INFORMATION` on a 64-bit Windows: 64-byte basic limits, 48-byte IO counters, 4 sizes. */
@@ -45,13 +49,9 @@ export class WindowsJobError extends Error {
 	}
 }
 
-export function extendedLimitInformation(): Uint8Array {
+export function extendedLimitInformation(limitFlags = TOOL_CHILD_JOB_LIMITS): Uint8Array {
 	const info = new Uint8Array(EXTENDED_LIMIT_INFORMATION_BYTES);
-	new DataView(info.buffer).setUint32(
-		LIMIT_FLAGS_OFFSET,
-		JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK,
-		true,
-	);
+	new DataView(info.buffer).setUint32(LIMIT_FLAGS_OFFSET, limitFlags, true);
 	return info;
 }
 
@@ -66,10 +66,10 @@ export class WindowsJob {
 		this.handle = handle;
 	}
 
-	static create(kernel: Kernel32Job): WindowsJob {
+	static create(kernel: Kernel32Job, limitFlags = TOOL_CHILD_JOB_LIMITS): WindowsJob {
 		const handle = kernel.CreateJobObjectW(null, null);
 		if (!handle) throw new WindowsJobError("CreateJobObjectW", kernel.GetLastError());
-		const info = extendedLimitInformation();
+		const info = extendedLimitInformation(limitFlags);
 		if (
 			kernel.SetInformationJobObject(handle, JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS, info, info.byteLength) ===
 			0
@@ -118,6 +118,26 @@ export class WindowsJob {
 		const view = new DataView(list.buffer);
 		const count = Math.min(view.getUint32(4, true), PROCESS_ID_LIST_CAPACITY);
 		return Array.from({ length: count }, (_, index) => Number(view.getBigUint64(8 + index * 8, true)));
+	}
+
+	/** Every active member, or `undefined` when the kernel did not answer or listed fewer than it counts. */
+	activeMembers(): number[] | undefined {
+		const list = new Uint8Array(PROCESS_ID_LIST_BYTES);
+		if (
+			this.closed ||
+			this.kernel.QueryInformationJobObject(
+				this.handle,
+				JOB_OBJECT_BASIC_PROCESS_ID_LIST_CLASS,
+				list,
+				list.byteLength,
+				null,
+			) === 0
+		)
+			return undefined;
+		const view = new DataView(list.buffer);
+		const listed = view.getUint32(4, true);
+		if (listed !== view.getUint32(0, true) || listed > PROCESS_ID_LIST_CAPACITY) return undefined;
+		return Array.from({ length: listed }, (_, index) => Number(view.getBigUint64(8 + index * 8, true)));
 	}
 
 	terminate(exitCode = 1): void {
