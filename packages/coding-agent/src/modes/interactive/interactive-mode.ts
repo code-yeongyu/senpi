@@ -5495,6 +5495,13 @@ export class InteractiveMode {
 			case "model_change_pending":
 				this.showWarning(event.notice);
 				this.footer.invalidate();
+				this.ui.requestRender();
+				break;
+
+			case "model_change_cancelled":
+				// The footer carried the held target (senpi#6092); a hold that ends without landing takes it back off.
+				this.footer.invalidate();
+				this.ui.requestRender();
 				break;
 
 			case "high_reasoning_warning":
@@ -8407,11 +8414,16 @@ export class InteractiveMode {
 		const systemPromptStr = systemPromptChange?.systemPromptName
 			? ` (optimized system prompt applied: ${systemPromptChange.systemPromptName})`
 			: "";
-		mode.showStatus(
-			persistDefault
-				? `Model: ${model.id}${systemPromptStr} · now the default model for new sessions`
-				: `Model: ${model.id}${systemPromptStr}`,
-		);
+		const held = mode.session.pendingModelSwitch?.model;
+		const isHeld = held !== undefined && held.provider === model.provider && held.id === model.id;
+		const tail = isHeld
+			? persistDefault
+				? " · after the next compaction, then the default model for new sessions"
+				: " · after the next compaction"
+			: persistDefault
+				? " · now the default model for new sessions"
+				: "";
+		mode.showStatus(`Model: ${model.id}${systemPromptStr}${tail}`);
 		mode.showRiskyMainModelWarning(model);
 		void mode.maybeWarnAboutAnthropicSubscriptionAuth(model);
 		mode.checkDaxnutsEasterEgg(model);
