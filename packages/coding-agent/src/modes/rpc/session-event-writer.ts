@@ -22,35 +22,12 @@ export { MAX_SHARED_STDIO_QUEUE_BYTES, MAX_SHARED_STDIO_QUEUE_RECORDS } from "./
  * scheduling boundary and violate D9.
  */
 export class SessionEventWriter extends SessionEventWriterDestinations {
-	secretInputRoute(sessionId: string): SecretInputRoute {
-		return this.secretPresentations.route(sessionId);
+	secretInputRoute(sessionId: string, sealed = false): SecretInputRoute {
+		return this.secretPresentations.route(sessionId, sealed);
 	}
 	setSoleSecretCapabilities(capabilities: readonly string[]): void {
 		this.secretPresentations.handshake(capabilities);
 	}
-	/** Private records bypass event queues, snapshots, mirrors, replay, and overflow preview errors. */
-	handleMcpForm(value: unknown): boolean {
-		if (!this.presenterAuthority) return false;
-		if (
-			typeof value !== "object" ||
-			value === null ||
-			!("type" in value) ||
-			typeof value.type !== "string" ||
-			(!value.type.startsWith("mcp_form_") && value.type !== "mcp_presenter_context")
-		)
-			return false;
-		const id = this.currentConnection();
-		const sender = id === undefined ? undefined : this.presenterConnections.get(id);
-		const reply =
-			value.type === "mcp_presenter_context"
-				? this.mcpPresenterContextReply(sender, value)
-				: sender && this.presenterAuthority
-					? this.presenterAuthority.receive(sender, value)
-					: { error: "presenter_not_authorized" };
-		this.writeMcpFormReply("id" in value && typeof value.id === "string" ? value.id : undefined, reply);
-		return true;
-	}
-
 	/** Queue a session record. Content events target connections attached to the session. */
 	enqueue(sessionId: string, value: object): boolean {
 		if (declarationReply(value, undefined) === undefined) return true;
