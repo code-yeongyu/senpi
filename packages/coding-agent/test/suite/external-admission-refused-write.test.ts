@@ -7,7 +7,7 @@
  */
 import { chmodSync, readFileSync } from "node:fs";
 import { type FauxResponseStep, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/compat";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { gatewayFixture } from "./rpc-release-gateway-fixture.ts";
 import { nextEvent, startReleaseHost } from "./rpc-release-host-support.ts";
 
@@ -24,6 +24,13 @@ function deliveryCopiesOnDisk(sessionPath: string, marker: string): number {
 		.join("\n");
 	return transcript.split(marker).length - 1;
 }
+
+// This file runs on Node: its refused-write cases make the JSONL session file refuse an entry, a failure that exists
+// only in the JSONL store. A Node process opens session state only under the JSONL developer hatch
+// (#5822), the store this file used before.
+beforeEach(() => {
+	vi.stubEnv("SENPI_SESSION_STORE", "jsonl");
+});
 
 describe.skipIf(!unprivileged)("a delivery whose entry the session file refuses", () => {
 	it("is settled as failed, does not hold later deliveries, and is redelivered once the file takes writes", async () => {
