@@ -17,6 +17,10 @@ export abstract class SessionEventWriterConnections extends SessionEventWriterLa
 	/** Which connections act for someone else, and what they were granted (senpi#5632). */
 	readonly delegations = new ConnectionDelegations();
 
+	protected isRemoteConnection(connection: string): boolean {
+		return this.delegations.isDelegated(connection) || this.originOf?.(connection) !== undefined;
+	}
+
 	protected isTargetedRecord(record: RpcRecord): boolean {
 		return (
 			record.type === "response" ||
@@ -131,8 +135,13 @@ export abstract class SessionEventWriterConnections extends SessionEventWriterLa
 		preferred: string | undefined,
 		capabilities: readonly string[],
 		cancel: () => void,
+		title?: string,
 	): { readonly accepted: boolean; readonly connection?: string } {
-		return this.securityPresentations.routeWorkerGrant(sessionId, requestId, preferred, capabilities, cancel);
+		return this.securityPresentations.routeWorkerGrant(sessionId, requestId, preferred, capabilities, cancel, title);
+	}
+	/** An in-process grant select is presented on the connection in context; the others see its notice. */
+	noticeGrantDialog(sessionId: string, id: string, title: string): void {
+		this.securityPresentations.noticeGrant(sessionId, id, title, this.currentConnection());
 	}
 	acceptWorkerGrantResponse(sessionId: string, id: string, connection: string | undefined): boolean | undefined {
 		return this.securityPresentations.acceptWorkerResponse(sessionId, id, connection);

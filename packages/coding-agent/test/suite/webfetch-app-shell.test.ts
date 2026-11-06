@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+	BrowserSkillError,
 	createBrowserSkillRenderer,
 	NOT_CONNECTED_MESSAGE,
 	type BrowserSkillOptions,
@@ -665,5 +666,57 @@ describe("webfetch renders app shells only through the connected browser, incogn
 		await fetchWith(createWebfetchTool({ renderer: renderer(daemon) }), url);
 
 		expect(daemon.calls.filter((call) => call.method === "system.status").length).toBeGreaterThan(1);
+	});
+
+	it("discards a signed-in read whose tab navigated to an unlisted host after the load settled", async () => {
+		const url = (await serveHtml(ARTICLE)).replace("127.0.0.1", "localhost");
+		let tabListCalls = 0;
+		const daemon = await fakeDaemon(
+			connectedBrowser(url, {
+				"tool.tab_list": () => {
+					tabListCalls++;
+					const current = tabListCalls === 1 ? url : "https://mail.other.test/inbox";
+					return { result: { tabs: [{ tab_id: 1, url: current, scope: "agent" }] } };
+				},
+			}),
+		);
+		const tool = createWebfetchTool({
+			renderer: renderer(daemon),
+			signedInSettings: () => ({ hosts: ["localhost"] }),
+		});
+
+		const { details, userText } = await fetchWith(tool, url);
+
+		expect(userText).not.toContain("Three cards are waiting for review");
+		expect(userText).toContain("long articles keep every paragraph");
+		expect(details.route).toBe("http");
+		expect(details.signedInSkipped?.reason).toBe("host_not_allowed");
+		expect(details.signedInSkipped?.detail).toContain("mail.other.test");
+		expect(daemon.calls.at(-1)?.method).toBe("session.stop");
+	});
+
+	it("refuses a signed-in read when the pinned browser is not connected, and uses it when it is", async () => {
+		const url = await serveHtml(ARTICLE);
+		const work = { ...BROWSER, instance_id: "work", label: "Work Chrome", connected_at_ms: 1 };
+		const personal = { ...BROWSER, instance_id: "personal", label: "Personal", connected_at_ms: 9 };
+		const daemon = await fakeDaemon(connectedBrowser(url, { "system.status": () => status([personal]) }));
+
+		const refused = await renderer(daemon)
+			.render(url, { mode: "signed-in", timeoutMs: 5_000, browser: "Work Chrome" })
+			.then(
+				() => undefined,
+				(error: unknown) => (error instanceof BrowserSkillError ? error.skip : undefined),
+			);
+
+		expect(refused).toMatchObject({ reason: "integration_not_connected", cause: "pinned_browser_missing" });
+		expect(daemon.calls.some((call) => call.method === "session.start")).toBe(false);
+
+		const both = await fakeDaemon(connectedBrowser(url, { "system.status": () => status([work, personal]) }));
+		const { browser } = await renderer(both).render(url, {
+			mode: "signed-in",
+			timeoutMs: 5_000,
+			browser: "Work Chrome",
+		});
+		expect(browser.instanceId).toBe("work");
 	});
 });
