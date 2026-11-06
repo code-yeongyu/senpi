@@ -4,6 +4,7 @@
 // process. A split-local hand shares the loop's disk, so the hand's handler record is what tells the two apart.
 import { readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
+import { isLocalDeviceFiles } from "@earendil-works/pi-agent-core";
 import { afterEach, describe, expect, it } from "vitest";
 import type { InlineExtension } from "../../src/core/extensions/types.ts";
 import { gatePresence } from "../../src/modes/headless/presence-gates.ts";
@@ -58,6 +59,23 @@ describe("an extension's device files (senpi#5839)", () => {
 		expect(text).toBe("split");
 		expect(await readFile(join(dirs.cwd, "note.md"), "utf8")).toBe("split");
 		expect(seen).toEqual(["write note.md", "read note.md"]);
+	});
+
+	it("tells the local filesystem of a fused session from a split session's file channel", async () => {
+		const dirs = await handDirs("devfiles-brand");
+		const link = openLink();
+		startHand(link, dirs, []);
+		const fused = await createHarness();
+		const split = await createHarness();
+		harnesses.push(fused, split);
+		split.agent.toolHost = remoteHost(link);
+		split.agent.executionScope = { id: `scope-${crypto.randomUUID()}`, root: dirs.cwd };
+
+		const fusedFiles = fused.getExtensionRunner().createContext().deviceFiles;
+		const splitFiles = split.getExtensionRunner().createContext().deviceFiles;
+
+		expect(fusedFiles !== undefined && isLocalDeviceFiles(fusedFiles)).toBe(true);
+		expect(splitFiles !== undefined && isLocalDeviceFiles(splitFiles)).toBe(false);
 	});
 
 	it("on a presence-gated split session, still goes through the hand's file channel", async () => {
