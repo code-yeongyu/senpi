@@ -11,7 +11,7 @@ const { database, action, path, key } = JSON.parse(process.argv[2] ?? "{}") as {
 	path?: string;
 	key?: string;
 };
-const { store, db } = openSqliteStore(database);
+const { store, db } = await openSqliteStore(database);
 let epoch = await store.readEpoch();
 if (epoch === 0) {
 	await store.claim(0, 1);

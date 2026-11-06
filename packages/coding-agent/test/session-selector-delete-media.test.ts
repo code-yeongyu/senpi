@@ -2,6 +2,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { defaultSessionStoreMedium } from "../src/core/session-store/default-store-path.ts";
 import { deleteSessionFile } from "../src/modes/interactive/components/session-selector.ts";
 import { persistToolImage } from "../src/modes/rpc/tool-media-store.ts";
 
@@ -69,6 +70,28 @@ describe("deleting a session from the selector", () => {
 		expect(existsSync(sessionFile)).toBe(false);
 		expect(result.ok).toBe(true);
 		expect(result.mediaError).toContain(join(sessionDir, "media", SESSION_ID));
+	});
+
+	// #5991 review: on Bun every entry of a session is also in its durable store; deleting the session must not keep it.
+	it("removes the session's durable store, and only that project's, with the session file", async () => {
+		const agentDir = mkdtempSync(join(tmpdir(), "senpi-selector-store-"));
+		try {
+			const medium = defaultSessionStoreMedium(agentDir, sessionDir, SESSION_ID);
+			const otherProject = defaultSessionStoreMedium(agentDir, join(agentDir, "other-project"), SESSION_ID);
+			for (const path of [medium, otherProject]) {
+				mkdirSync(path, { recursive: true });
+				writeFileSync(join(path, "store.sqlite"), "entries");
+			}
+
+			const result = await deleteSessionFile(sessionFile, agentDir);
+
+			expect(result.ok).toBe(true);
+			expect(result.mediaError).toBeUndefined();
+			expect(existsSync(medium)).toBe(false);
+			expect(existsSync(join(otherProject, "store.sqlite"))).toBe(true);
+		} finally {
+			rmSync(agentDir, { recursive: true, force: true });
+		}
 	});
 
 	it("leaves a session that is not stored in the selector's directory alone", async () => {

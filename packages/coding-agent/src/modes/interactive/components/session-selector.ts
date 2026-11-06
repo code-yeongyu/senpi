@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { unlink } from "node:fs/promises";
 import * as os from "node:os";
 import {
@@ -13,7 +13,9 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
+import { getAgentDir } from "../../../config.ts";
 import { KeybindingsManager } from "../../../core/keybindings.ts";
+import { defaultSessionStoreMedium } from "../../../core/session-store/default-store-path.ts";
 import type { SessionInfo, SessionListProgress } from "../../../core/session-manager.ts";
 import { removeToolMedia, toolMediaRoot, toolMediaScopeOfSessionFile } from "../../rpc/tool-media-store.ts";
 import { theme } from "../theme/theme.ts";
@@ -577,23 +579,31 @@ function withMediaOutcome<T extends object>(result: T, mediaError: string | unde
 
 /**
  * Delete a session file, trying the `trash` CLI first, then falling back to unlink. The session's
- * tool images go with it; when they cannot be removed the session is still deleted (its id is gone
- * with the file) and `mediaError` names the leftover directory so the caller can say so.
+ * tool images and its durable store (Bun keeps every entry there too) go with it; when they cannot be removed the
+ * session is still deleted (its id is gone with the file) and `mediaError` names what was left so the caller can say so.
  */
 export async function deleteSessionFile(
 	sessionPath: string,
+	agentDir: string = getAgentDir(),
 ): Promise<{ ok: boolean; method: "trash" | "unlink"; error?: string; mediaError?: string }> {
 	// The header is read before the file goes: the media directory is named after the session id.
 	const mediaScope = await toolMediaScopeOfSessionFile(sessionPath);
 	const removeMedia = (): string | undefined => {
 		if (mediaScope === undefined) return undefined;
+		const left: string[] = [];
 		try {
 			removeToolMedia(mediaScope);
-			return undefined;
 		} catch (cause) {
 			const reason = cause instanceof Error ? cause.message : String(cause);
-			return `${toolMediaRoot(mediaScope)}: ${reason}`;
+			left.push(`${toolMediaRoot(mediaScope)}: ${reason}`);
 		}
+		try {
+			const { sessionDir, durableSessionId } = mediaScope;
+			rmSync(defaultSessionStoreMedium(agentDir, sessionDir, durableSessionId), { recursive: true, force: true });
+		} catch (cause) {
+			left.push(`durable store: ${cause instanceof Error ? cause.message : String(cause)}`);
+		}
+		return left.length === 0 ? undefined : left.join("; ");
 	};
 	// Try `trash` first (if installed)
 	const trashArgs = sessionPath.startsWith("-") ? ["--", sessionPath] : [sessionPath];
@@ -798,7 +808,7 @@ export class SessionSelectorComponent extends Container implements Focusable {
 				const msg = result.method === "trash" ? "Session moved to trash" : "Session deleted";
 				if (result.mediaError) {
 					this.header.setStatusMessage(
-						{ type: "error", message: `${msg}, but its images were not removed: ${result.mediaError}` },
+						{ type: "error", message: `${msg}, but some of its data was not removed: ${result.mediaError}` },
 						8000,
 					);
 				} else {

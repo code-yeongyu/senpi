@@ -16,7 +16,7 @@ async function main() {
 	const b = { ...a, id: "b", parentId: "a", data: "b" };
 	const contents = (entries: (typeof a | typeof b)[]) =>
 		[session, ...entries].map((value) => JSON.stringify(value)).join("\n") + "\n";
-	let connection = openSqliteStore(database);
+	let connection = await openSqliteStore(database);
 	const importer = () =>
 		createJsonlImporter({
 			store: connection.store,
@@ -29,17 +29,17 @@ async function main() {
 		await writeFile(path, contents([a]));
 		await importer().importFile(path);
 		connection.db.close();
-		connection = openSqliteStore(database);
+		connection = await openSqliteStore(database);
 		await writeFile(path, contents([a, b]));
 		assert.deepEqual(await importer().importFile(path), { outcome: "extended", sessionId: "s", imported: 1 });
 		connection.db.close();
-		connection = openSqliteStore(database);
+		connection = await openSqliteStore(database);
 		assert.deepEqual((await importer().getSession("s"))?.entries, [a, b]);
 		await writeFile(path, contents([b]));
 		await writeHatchMarker(path, await jsonlFiles.stat(path));
 		const fork = await importer().importFile(path);
 		connection.db.close();
-		connection = openSqliteStore(database);
+		connection = await openSqliteStore(database);
 		assert.deepEqual((await importer().getSession("s"))?.entries, [a, b]);
 		const forked = await importer().getSession(fork.sessionId);
 		assert.deepEqual(forked?.entries, [b]);

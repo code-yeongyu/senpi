@@ -112,6 +112,7 @@
         "@earendil-works/pi-client": "^2026.11.4-2",
         "@earendil-works/pi-protocol": "^2026.11.4-2",
         "@earendil-works/pi-pty": "^2026.11.4-2",
+        "@earendil-works/pi-storage-sqlite-bun": "^2026.11.4-2",
         "@earendil-works/pi-tui": "^2026.11.4-2",
         "@modelcontextprotocol/sdk": "1.32.1",
         "@mozilla/readability": "0.6.0",
@@ -267,7 +268,7 @@
     },
     "packages/session-backends/sqlite-bun": {
       "name": "@earendil-works/pi-storage-sqlite-bun",
-      "version": "2026.10.27-2",
+      "version": "2026.11.4-2",
       "dependencies": {
         "@earendil-works/pi-agent-core": "^2026.11.4-2",
       },
