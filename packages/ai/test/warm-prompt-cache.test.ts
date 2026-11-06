@@ -105,12 +105,16 @@ describe("warmPromptCache", () => {
 		});
 	});
 
-	it("returns unsupported without sending a request for non-native Anthropic lanes", async () => {
+	it("returns unsupported without sending a request for non-native Anthropic lanes that do not opt in", async () => {
 		const fetch = vi.fn();
 		const gatewayModel = {
 			...getModel("anthropic", "claude-sonnet-4-5"),
 			provider: "gateway",
 			baseUrl: "https://gateway.example.test/anthropic",
+		} as Model<"anthropic-messages">;
+		const optedOutGatewayModel = {
+			...gatewayModel,
+			compat: { supportsLongCacheRetention: false },
 		} as Model<"anthropic-messages">;
 		const nonAnthropicModel = {
 			...gatewayModel,
@@ -118,6 +122,9 @@ describe("warmPromptCache", () => {
 		} as unknown as Model<"openai-completions">;
 
 		await expect(warmPromptCache(gatewayModel, context, { apiKey: "test-key", fetch })).resolves.toEqual({
+			supported: false,
+		});
+		await expect(warmPromptCache(optedOutGatewayModel, context, { apiKey: "test-key", fetch })).resolves.toEqual({
 			supported: false,
 		});
 		await expect(warmPromptCache(nonAnthropicModel, context, { apiKey: "test-key", fetch })).resolves.toEqual({

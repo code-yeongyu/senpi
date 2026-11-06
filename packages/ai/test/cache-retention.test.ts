@@ -189,6 +189,37 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 			expect(capturedPayload.system[0].cache_control).toEqual({ type: "ephemeral" });
 		});
 
+		it("should send the one-hour ttl for a proxy that opts into long cache retention", async () => {
+			const baseModel = getModel("anthropic", "claude-haiku-4-5");
+			const proxyModel = {
+				...baseModel,
+				baseUrl: "https://my-proxy.example.com/v1",
+				compat: { supportsLongCacheRetention: true },
+			};
+			let capturedPayload: AnthropicCachePayload | null = null;
+
+			const { streamAnthropic } = await import("../src/providers/anthropic.ts");
+
+			try {
+				const s = streamAnthropic(proxyModel, context, {
+					apiKey: "fake-key",
+					cacheRetention: "long",
+					onPayload: (payload) => {
+						capturedPayload = payload as AnthropicCachePayload;
+					},
+				});
+
+				for await (const event of s) {
+					if (event.type === "error") break;
+				}
+			} catch {
+				// Expected to fail: the proxy host does not exist.
+			}
+
+			expect(capturedPayload).not.toBeNull();
+			expect(capturedPayload?.system?.[0]?.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+		});
+
 		it("should omit ttl when supportsLongCacheRetention is false", async () => {
 			const baseModel = getModel("anthropic", "claude-haiku-4-5");
 			const proxyModel = {

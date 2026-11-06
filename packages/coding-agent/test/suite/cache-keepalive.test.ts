@@ -166,9 +166,14 @@ describe("cache keep-alive", () => {
 		expect(h.warm).toHaveBeenCalledOnce();
 	});
 
-	it("does not ping an Anthropic-compatible gateway that asserts no cache support", async () => {
+	it("does not ping an Anthropic-compatible gateway that opts out of cache support", async () => {
 		const h = harness({
-			warmModel: { ...model, provider: "gateway", baseUrl: "https://gateway.example.test/anthropic" },
+			warmModel: {
+				...model,
+				provider: "gateway",
+				baseUrl: "https://gateway.example.test/anthropic",
+				compat: { supportsLongCacheRetention: false },
+			},
 		});
 		await h.fire("agent_end", agentEnd);
 		await advance(480_000);
