@@ -11395,6 +11395,25 @@ The classic capability list in `connection-handler.ts`.
 
 - `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the `login_api_key` case.
 
+## 2026-11-06 - Settle only offered sealed secret requests (senpi#6062)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/secret-sealed-holders.ts`: settled frames are limited to the request's offered holders. Requests ending before key generation completes emit no unmatched holder frame.
+- Deterministic key-failure and settle-before-key tests cover the asynchronous request latch.
+
+### Why
+
+- A holder snapshot alone does not prove a request was offered.
+
+### Why an extension could not handle it
+
+- The holder source owns request delivery and settlement.
+
+### Expected merge conflict zones
+
+- LOW: `SealedSecretHolders.settle`.
+
 ## 2026-10-23 - Tell the agent when scheduled relocation is cancelled (senpi#4078)
 
 ### What changed
