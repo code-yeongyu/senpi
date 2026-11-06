@@ -6,13 +6,14 @@ import type {
 } from "../../core/extensions/types.ts";
 import type { UiRequestChange } from "./snapshot-types.ts";
 import { settledQuestionStatus, unansweredQuestionIds } from "./extension-ui-response.ts";
+import { type RpcRemoteOrigin, remoteOriginField } from "./remote-origin.ts";
 import type { RpcExtensionUIProgress, RpcExtensionUIResponse, RpcQuestionUiRequest } from "./rpc-types.ts";
 
 type Options = Parameters<NonNullable<ExtensionUIContext["question"]>>[1];
 type Pending = {
 	frame: RpcQuestionUiRequest;
 	progress: (draft: RpcExtensionUIProgress) => void;
-	respond: (response: RpcExtensionUIResponse, beforeAnswer?: () => void) => boolean;
+	respond: (response: RpcExtensionUIResponse, beforeAnswer?: () => void) => boolean | "question_already_resolved";
 	cancel: () => void;
 };
 export const sessionQuestionBridges = new WeakMap<object, ConnectionQuestionBridge>();
@@ -23,14 +24,17 @@ export class ConnectionQuestionBridge {
 	private readonly output: (record: object) => void;
 	private readonly changed: ((change?: UiRequestChange) => void) | undefined;
 	private readonly raiser: () => string | undefined;
+	private readonly origin: () => RpcRemoteOrigin | undefined;
 	constructor(
 		output: (record: object) => void,
 		changed?: (change?: UiRequestChange) => void,
 		raiser: () => string | undefined = () => undefined,
+		origin: () => RpcRemoteOrigin | undefined = () => undefined,
 	) {
 		this.output = output;
 		this.changed = changed;
 		this.raiser = raiser;
+		this.origin = origin;
 	}
 	pendingQuestions(): RpcQuestionUiRequest[] {
 		return [...this.pending.values()].map(({ frame }) => ({
@@ -51,6 +55,7 @@ export class ConnectionQuestionBridge {
 			waitForAnswer: request.waitForAnswer,
 			questions: request.questions,
 			raisedBy: this.raiser() ?? "agent",
+			...remoteOriginField(this.origin()),
 			timeout,
 			askedAtMs,
 			deadlineAtMs: askedAtMs + timeout,
@@ -61,6 +66,7 @@ export class ConnectionQuestionBridge {
 			let comment: string | undefined;
 			let timer: ReturnType<typeof setTimeout> | undefined;
 			let finished = false;
+			let claimed = false;
 			const unanswered = () => unansweredQuestionIds(request.questions, answers);
 			const finish = (
 				status: QuestionResponse["status"],
@@ -131,6 +137,8 @@ export class ConnectionQuestionBridge {
 						});
 				},
 				respond: (response, beforeAnswer) => {
+					// The first answer wins: one that arrives while the winner's `beforeAnswer` runs settles nothing.
+					if (claimed) return "question_already_resolved";
 					// The client's cancel is the user's; a closed connection or an abort is a lifecycle cancel.
 					if ("cancelled" in response) {
 						finish("cancelled", undefined, "user");
@@ -143,7 +151,16 @@ export class ConnectionQuestionBridge {
 					if (status === undefined) return false;
 					// Only a tool-result answer is reported here. An async or resumed answer is delivered as a
 					// user message, whose question-input release reports it; reporting both would count it twice.
-					if (request.waitForAnswer && opts?.deliver !== "user-message") beforeAnswer?.();
+					if (request.waitForAnswer && opts?.deliver !== "user-message") {
+						claimed = true;
+						try {
+							beforeAnswer?.();
+						} finally {
+							claimed = false;
+						}
+						// A cancel or abort that ran inside `beforeAnswer` settled the question first.
+						if (finished) return "question_already_resolved";
+					}
 					finish(status, "rpc_connection");
 					return true;
 				},
@@ -160,11 +177,20 @@ export class ConnectionQuestionBridge {
 		beforeAnswer?: () => void,
 	): boolean | "question_incomplete" | "question_already_resolved" {
 		const pending = this.pending.get(response.id);
-		if (pending) return pending.respond(response, beforeAnswer) || "question_incomplete";
+		if (pending) {
+			const result = pending.respond(response, beforeAnswer);
+			return result === false ? "question_incomplete" : result;
+		}
 		return this.resolved.has(response.id) ? "question_already_resolved" : false;
 	}
-	progress(draft: RpcExtensionUIProgress): void {
-		this.pending.get(draft.id)?.progress(draft);
+	/** Hands a draft to its pending question; reports whether one took it, or why none did (senpi#5761). */
+	progress(draft: RpcExtensionUIProgress): "applied" | "question_already_resolved" | "unknown_extension_ui_request" {
+		const pending = this.pending.get(draft.id);
+		if (pending) {
+			pending.progress(draft);
+			return "applied";
+		}
+		return this.resolved.has(draft.id) ? "question_already_resolved" : "unknown_extension_ui_request";
 	}
 	cancelAll(): void {
 		for (const pending of this.pending.values()) pending.cancel();

@@ -5,6 +5,7 @@
 import type { Socket } from "node:net";
 import type { Duplex } from "node:stream";
 import { VERSION } from "../../config.ts";
+import type { LaunchProofSource } from "./delegated-connection.ts";
 import { consumeHostWatchdogEnv, type HostWatchdogConfig, scrubHostWatchdogEnv } from "./host-watchdog.ts";
 import { getInternalHostBootstrap } from "./internal-bootstrap.ts";
 import { acceptInternalConnection } from "./internal-channel.ts";
@@ -25,8 +26,12 @@ export function hostWatchdogBinding(): HostWatchdogConfig | undefined {
 
 export interface InternalHostTransport {
 	readonly watchdogConfig: HostWatchdogConfig | undefined;
-	/** Authenticates and seals (POSIX key), authenticates (Windows secret), filters (public), or accepts as is. */
-	admit(socket: Socket, accept: (socket?: Duplex) => void): void;
+	/**
+	 * Authenticates and seals (POSIX key), authenticates (Windows secret), filters (public), or accepts as is, naming
+	 * how the accepted connection proves the launch key (senpi#5632): the supervisor's hop carries its filter's proof
+	 * in band, the Windows secret is the proof, the public filter delivers it in band, a plain socket has none.
+	 */
+	admit(socket: Socket, accept: (socket?: Duplex, launchProof?: LaunchProofSource) => void): void;
 	/** Publishes the public endpoint's key record after listening; a failure is logged and `onFailure` ends the host. */
 	publish(onFailure: () => Promise<void>): Promise<void>;
 	dispose(): Promise<void>;
@@ -54,7 +59,7 @@ export function internalHostTransport(
 		admit(socket, accept) {
 			if (bootstrap)
 				void acceptInternalConnection(socket, bootstrap.key, { protocolVersion: 1, serverVersion: VERSION })
-					.then(accept)
+					.then((hop) => accept(hop, "in_band"))
 					.catch((cause: unknown) => {
 						// One line per refused connection: the refusal code only (auth_required, auth_failed, a timeout).
 						process.stderr.write(
@@ -62,8 +67,8 @@ export function internalHostTransport(
 						);
 						socket.destroy();
 					});
-			else if (secret) authenticateSocket(socket, secret, () => accept());
-			else if (publicEndpoint) accept(new PublicRpcConnection(socket, publicEndpoint).stream);
+			else if (secret) authenticateSocket(socket, secret, () => accept(undefined, "proven"));
+			else if (publicEndpoint) accept(new PublicRpcConnection(socket, publicEndpoint).stream, "in_band");
 			else accept();
 		},
 		async publish(onFailure) {

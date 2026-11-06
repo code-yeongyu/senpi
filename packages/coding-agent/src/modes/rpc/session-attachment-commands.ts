@@ -1,3 +1,4 @@
+import { takeOver } from "./attach-takeover.ts";
 import { compactOpen } from "./compact-open-admission.ts";
 import type { RpcAttachmentCommand } from "./attachment-types.ts";
 import { clearHandoverParkedSession } from "./host-handover-parked.ts";
@@ -63,6 +64,7 @@ export function attachSession(
 		return error(command.id, command.type, "session_identity_mismatch", {});
 	const owner = host.writer.currentConnection();
 	if (owner === undefined) return error(command.id, command.type, "session_not_attached", { reason: "no_connection" });
+	if (command.takeover === true) return takeOver(host, command, owner, () => attach(host, owner, command.sessionId));
 	if (command.admissionId !== undefined && host.admissions)
 		return compactOpen(host, command, async (accept, signal) => {
 			signal.throwIfAborted();

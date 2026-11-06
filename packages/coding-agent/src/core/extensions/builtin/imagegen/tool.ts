@@ -1,18 +1,18 @@
 import { existsSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
-import type { AssistantImages, ImageModel } from "@earendil-works/pi-ai/compat";
-import {
-	generateImages,
-	getImageModel,
-	parseOpenAIImageOutputOptions,
-	parseOpenAIImageSize,
-} from "@earendil-works/pi-ai/compat";
+import { parseOpenAIImageOutputOptions, parseOpenAIImageSize } from "@earendil-works/pi-ai/compat";
 import { defineTool, type ExtensionContext } from "../../types.ts";
-import { type ImageGenAuthResolution, imageGenCandidates, SETUP_REASON } from "./auth.ts";
-import { DEFAULT_IMAGE_MODEL, failure, type GenerateImageDetails, IMAGE_MODEL_NAMES, Params } from "./params.ts";
+import {
+	type ImageGenAuthResolution,
+	imageGenAvailability,
+	imageGenCandidates,
+	setupReason,
+	unsupportedImageGateways,
+} from "./auth.ts";
+import { type ModelAttempt, requestImagesWithModelFallback } from "./model-request.ts";
+import { DEFAULT_IMAGE_MODEL, failure, type GenerateImageDetails, Params, supportsComplexity } from "./params.ts";
 import { displayPath, outputFormatOf, resolveTargets, withFormatExtension } from "./paths.ts";
 import { loadMaskImage, loadReferenceImages } from "./reference-images.ts";
+import { collectImages, writeImages } from "./saved-images.ts";
 import { exhaustedProvidersMessage, requestImagesAcrossCandidates, skippedProvidersNote } from "./request.ts";
 import { imageGenRegistryOverride, isNativeBypass, NATIVE_BYPASS_MESSAGE } from "./state.ts";
 
@@ -24,74 +24,13 @@ function sourceLabel(auth: ImageGenAuthResolution): string {
 	return `${auth.provenance}:${auth.providerId ?? auth.kind}`;
 }
 
-function synthesizeModel(
-	auth: Extract<ImageGenAuthResolution, { kind: "native-openai" | "gateway" }>,
-	id: keyof typeof IMAGE_MODEL_NAMES,
-) {
-	const model: ImageModel<"openai-images"> = {
-		type: "image",
-		id,
-		name: IMAGE_MODEL_NAMES[id],
-		api: "openai-images",
-		provider: auth.providerId ?? "openai",
-		baseUrl: auth.baseUrl,
-		input: ["text", "image"],
-		output: ["image"],
-		cost: getImageModel("openai", id).cost,
-	};
-	return model;
-}
-
-interface GeneratedImage {
-	data: string;
-	mimeType: string;
-	revisedPrompt?: string;
-}
-
-function collectImages(images: AssistantImages): GeneratedImage[] {
-	const collected: GeneratedImage[] = [];
-	let pendingText: string | undefined;
-	for (const block of images.output) {
-		if (block.type === "text") {
-			const text = block.text.trim();
-			pendingText = text.length > 0 ? text : undefined;
-			continue;
-		}
-		collected.push({
-			data: block.data,
-			mimeType: block.mimeType,
-			...(pendingText === undefined ? {} : { revisedPrompt: pendingText }),
-		});
-		pendingText = undefined;
-	}
-	return collected;
-}
-
-async function writeImages(paths: string[], images: GeneratedImage[]): Promise<string | undefined> {
-	const written: string[] = [];
-	for (const [index, image] of images.entries()) {
-		const target = paths[index];
-		if (target === undefined) break;
-		try {
-			await mkdir(dirname(target), { recursive: true });
-			await writeFile(target, Buffer.from(image.data, "base64"), { flag: "wx" });
-			written.push(target);
-		} catch (error) {
-			for (const path of written) await rm(path, { force: true }).catch(() => undefined);
-			const reason = error instanceof Error ? error.message : String(error);
-			return `Error: failed to write generated image to ${target}: ${reason}`;
-		}
-	}
-	return undefined;
-}
-
 export const GENERATE_IMAGE_TOOL_NAME = "generate_image";
 
 export const generateImageTool = defineTool<typeof Params, GenerateImageDetails>({
 	name: GENERATE_IMAGE_TOOL_NAME,
 	label: "Generate Image",
 	description:
-		"Generate or edit an image with OpenAI gpt-image-2.5 (Sunburst by default, the most capable; Flare when speed matters more than quality) and save it as a png, jpeg, or webp file, optionally with a transparent background. Pass reference_image_paths to edit or reference existing images. Generate directly when the request is clear instead of asking for confirmation. Returns the saved file paths.",
+		"Generate or edit an image with OpenAI gpt-image-2.6 (Sunburst by default, the most capable; Flare when speed matters more than quality; an endpoint without 2.6 falls back to 2.5) and save it as a png, jpeg, or webp file, optionally with a transparent background. Pass reference_image_paths to edit or reference existing images. Generate directly when the request is clear instead of asking for confirmation. Returns the saved file paths.",
 	promptSnippet:
 		"Generate or edit images from prompts and optional reference images, saving them as png/jpeg/webp files.",
 	// Deferred: the schema costs ~1K prompt tokens on every request and the bundled imagegen skill
@@ -125,11 +64,31 @@ export const generateImageTool = defineTool<typeof Params, GenerateImageDetails>
 		if (isNativeBypass()) {
 			return failure(NATIVE_BYPASS_MESSAGE, "provider_native_bypass", context);
 		}
+		if (params.complexity !== undefined && !supportsComplexity(modelId)) {
+			return failure(
+				`Error: complexity is supported only on GPT Image 2.6 models, not ${modelId}.`,
+				"invalid_params",
+				context,
+			);
+		}
 
-		const candidates = imageGenCandidates({ modelRegistry: imageGenRegistryOverride() ?? ctx.modelRegistry });
+		const modelRegistry = imageGenRegistryOverride() ?? ctx.modelRegistry;
+		const candidates = imageGenCandidates({ modelRegistry });
 		const firstCandidate = await candidates.next();
 		if (firstCandidate.done) {
-			return failure(SETUP_REASON, "missing_config", context);
+			// A configured source whose credential did not resolve (a failing key command) is not "not configured" (senpi#5707).
+			const configured = await imageGenAvailability({ modelRegistry });
+			if (configured.kind !== "none") {
+				return failure(
+					`Error: image generation is configured through ${configured.providerId ?? "OPENAI_API_KEY"}, but its credential could not be resolved (a key command failed or returned nothing, or the key is a placeholder). Fix that credential and retry.`,
+					"credential_unavailable",
+					context,
+				);
+			}
+			const unsupported = await unsupportedImageGateways({ modelRegistry });
+			const result = failure(setupReason(unsupported), "missing_config", context);
+			if (unsupported.length === 0) return result;
+			return { ...result, details: { ...result.details, unsupportedProviders: unsupported } };
 		}
 		let source = sourceLabel(firstCandidate.value);
 		const parsedSize = parseOpenAIImageSize(size);
@@ -168,13 +127,13 @@ export const generateImageTool = defineTool<typeof Params, GenerateImageDetails>
 			}
 		}
 
-		const outcome = await requestImagesAcrossCandidates(firstCandidate.value, candidates, (auth) =>
-			generateImages(
-				synthesizeModel(auth, modelId),
+		let lastAttempt: ModelAttempt | undefined;
+		const outcome = await requestImagesAcrossCandidates(firstCandidate.value, candidates, async (auth) => {
+			const attempt = await requestImagesWithModelFallback(
+				auth,
+				modelId,
 				{ input: [{ type: "text", text: prompt }, ...references.images] },
 				{
-					...(auth.apiKey === undefined ? {} : { apiKey: auth.apiKey }),
-					...(auth.headers === undefined ? {} : { headers: auth.headers }),
 					...(signal === undefined ? {} : { signal }),
 					size,
 					quality,
@@ -185,13 +144,19 @@ export const generateImageTool = defineTool<typeof Params, GenerateImageDetails>
 					...(params.moderation === undefined ? {} : { moderation: params.moderation }),
 					...(mask === undefined ? {} : { mask: mask.image }),
 				},
-			),
-		);
+				params.complexity,
+			);
+			lastAttempt = attempt;
+			return attempt.images;
+		});
 		if (outcome.kind === "exhausted") {
 			return failure(exhaustedProvidersMessage(outcome.skipped), "provider_error", { ...context, source });
 		}
 		const { images } = outcome;
 		source = sourceLabel(outcome.auth);
+		const usedModel = lastAttempt?.model ?? modelId;
+		const fallbackFrom = lastAttempt?.fallbackFrom;
+		context.model = usedModel;
 		if (images.stopReason !== "stop") {
 			const message = images.errorMessage ?? `Image generation ${images.stopReason}.`;
 			return failure(`Error: ${message}`, "provider_error", { ...context, source });
@@ -225,7 +190,8 @@ export const generateImageTool = defineTool<typeof Params, GenerateImageDetails>
 		const revisedPrompts = generated.flatMap((image) => (image.revisedPrompt ? [image.revisedPrompt] : []));
 		const details: GenerateImageDetails = {
 			paths: savedPaths,
-			model: modelId,
+			model: usedModel,
+			...(fallbackFrom === undefined ? {} : { fallbackFrom }),
 			source,
 			size,
 			quality,
@@ -244,6 +210,9 @@ export const generateImageTool = defineTool<typeof Params, GenerateImageDetails>
 				: [
 						`Note: the provider returned ${savedFormat} instead of the requested ${outputFormat}; saved with the matching extension.`,
 					]),
+			...(fallbackFrom === undefined
+				? []
+				: [`Note: ${source} does not serve ${fallbackFrom} yet; generated with ${usedModel} instead.`]),
 			...(images.background === undefined ? [] : [`Background: ${images.background}`]),
 			...[skippedProvidersNote(outcome.skipped)].flatMap((note) => (note === undefined ? [] : [note])),
 			...revisedPrompts.map((revised) => `Revised prompt: ${revised}`),

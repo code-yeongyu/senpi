@@ -71,6 +71,7 @@ import type {
 	ExtensionFactory,
 	ExtensionRuntime,
 	ExtensionSessionProfile,
+	ExtensionSide,
 	ExtensionVirtualModel,
 	FilesystemPolicy,
 	LazyToolActivator,
@@ -99,13 +100,23 @@ import { DEFAULT_EXTENSION_SESSION_PROFILE, EMPTY_SESSION_CONTEXT } from "./type
 export interface ExtensionSessionOptions {
 	sessionKind?: SessionKind;
 	sessionContext?: SessionContext;
+	/** The side of a split session to load for; a handler declared `runs` for the other side is not registered. Absent: fused. */
+	side?: ExtensionSide;
 }
 
 function sessionProfile(options: ExtensionSessionOptions | undefined): ExtensionSessionProfile {
 	return {
 		sessionKind: options?.sessionKind ?? "interactive",
 		sessionContext: options?.sessionContext ?? EMPTY_SESSION_CONTEXT,
+		...(options?.side === undefined ? {} : { side: options.side }),
 	};
+}
+
+function assertExtensionSide(extension: Extension, runs: unknown, registration: string): void {
+	if (runs === "brain" || runs === "hand") return;
+	throw new Error(
+		`Extension "${extension.path}" declared runs: ${JSON.stringify(runs)} for ${registration}; runs must be "brain" or "hand".`,
+	);
 }
 
 /** Modules available to extensions via virtualModules (for compiled binaries) */
@@ -460,6 +471,11 @@ function createExtensionAPI(
 			options?: BeforeAgentStartHandlerOptions & ContextHandlerOptions,
 		): () => void {
 			assertActive();
+			const runs = options?.runs;
+			if (runs !== undefined) {
+				assertExtensionSide(extension, runs, `"${event}"`);
+				if (session.side !== undefined && runs !== session.side) return () => {};
+			}
 			const registeredHandler: HandlerFn = ownedBy(extension, (...args: unknown[]) => {
 				// A child event can run inside its parent's task-tool async scope.
 				// Bind the host context here, preserving registered-handler metadata.
@@ -472,6 +488,10 @@ function createExtensionAPI(
 			const list = extension.handlers.get(event) ?? [];
 			list.push(registeredHandler);
 			extension.handlers.set(event, list);
+			if (runs !== undefined) {
+				extension.handlerSides ??= new WeakMap();
+				extension.handlerSides.set(registeredHandler, runs);
+			}
 			if (event === "before_agent_start" && options?.previewSafe === true) {
 				extension.previewSafeHandlers ??= new WeakSet();
 				extension.previewSafeHandlers.add(registeredHandler);
@@ -505,6 +525,7 @@ function createExtensionAPI(
 					`Tool "${tool.name}" registered by extension "${extension.path}" must define an object parameter schema.`,
 				);
 			}
+			if (tool.runs !== undefined) assertExtensionSide(extension, tool.runs, `tool "${tool.name}"`);
 			extension.tools.set(tool.name, {
 				definition: Object.assign(Object.create(Object.getPrototypeOf(tool)), tool, {
 					execute: ownedBy(extension, tool.execute),

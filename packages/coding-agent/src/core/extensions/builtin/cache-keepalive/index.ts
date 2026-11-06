@@ -2,9 +2,9 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
 	type Context,
 	costCardAt,
-	isAnthropicApiBaseUrl,
 	type Model,
 	resolvePromptCacheTtlSeconds,
+	supportsAnthropicCacheWarming,
 	type Tool,
 	type WarmPromptCacheOptions,
 	type WarmPromptCacheResult,
@@ -186,7 +186,9 @@ export function createCacheKeepAliveExtension(
 								.getAllTools()
 								.filter((tool) => activeToolNames.has(tool.name))
 								.map(({ name, description, parameters }) => ({ name, description, parameters }));
-				const auth = await current.modelRegistry.getApiKeyAndHeaders(current.model);
+				const auth = await current.modelRegistry.getApiKeyAndHeaders(current.model, {
+					sessionId: current.sessionManager.getSessionId(),
+				});
 				if (pingGeneration !== generation) {
 					inFlight = false;
 					arm();
@@ -312,7 +314,7 @@ export function createCacheKeepAliveExtension(
 }
 
 function isWarmSupportedModel(model: Model<any>): model is Model<"anthropic-messages"> {
-	return model.api === "anthropic-messages" && isAnthropicApiBaseUrl(model.baseUrl);
+	return model.api === "anthropic-messages" && supportsAnthropicCacheWarming(model);
 }
 
 function lastAssistantUsage(

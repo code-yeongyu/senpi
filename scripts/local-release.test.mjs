@@ -163,6 +163,7 @@ function writeLocalReleaseFixture(repoRoot) {
 		["packages/telemetry", "@earendil-works/pi-telemetry"],
 		["packages/ai", "@earendil-works/pi-ai"],
 		["packages/pty", "@earendil-works/pi-pty"],
+		["packages/machine-ops", "@code-yeongyu/senpi-machine-ops"],
 		["packages/tui", "@earendil-works/pi-tui"],
 		["packages/agent", "@earendil-works/pi-agent-core"],
 		["packages/protocol", "@earendil-works/pi-protocol"],
@@ -191,6 +192,13 @@ function writeLocalReleaseFixture(repoRoot) {
 		// Staging vendors the built client/protocol output, so both need their declarations.
 		if (directory === "packages/client" || directory === "packages/protocol") {
 			writeFileSync(join(repoRoot, directory, "dist", "index.d.ts"), "");
+		}
+		// ...and machine-ops' runtime entries, which it builds under dist/src (senpi#5784).
+		if (directory === "packages/machine-ops") {
+			mkdirSync(join(repoRoot, directory, "dist", "src", "process"), { recursive: true });
+			for (const file of ["index.js", "index.d.ts", "process/in-process-holder.js", "process/in-process-holder.d.ts"]) {
+				writeFileSync(join(repoRoot, directory, "dist", "src", file), "");
+			}
 		}
 	}
 }

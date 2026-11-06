@@ -218,7 +218,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   # `npm run build` (scripts/build-all.mjs) is a pure function of the checked-out tree and writes only
-  # `packages/**/dist`, yet each of the four shards below used to run it: 4 x ~35 s of identical work on a
+  # `packages/**/dist`, yet each of the (then four) shards below used to run it: 4 x ~35 s of identical work on a
   # congested runner pool (senpi#4610). It runs once here and the shards unpack its output.
   #
   # The outputs travel as ONE tarball, not as a bare artifact path: `packages/*/dist` is thousands of small
@@ -266,17 +266,18 @@ jobs:
           if-no-files-found: error
 
   # The coding-agent vitest suite dominates CI wall time (2467+ files; three
-  # shards reached 27-minute jobs). Sharding it across four
-  # runners divides that wall while each shard keeps the CI fork-pool settings
+  # shards reached 27-minute jobs). Four shards later ran 15-25 min against the 25-minute step timeout
+  # (senpi#5855), so the suite runs on ten runners and every shard fails its "Shard time budget" step
+  # once its tests ran past 15 min, naming that time, long before the timeout. Sharding divides that wall while each shard keeps the CI fork-pool settings
   # from vitest.config.ts (forks pool, capped workers) that prevent the historical
   # subprocess-suite pool hang.
   test-coding-agent:
-    name: Test (coding-agent ${{ matrix.shard }}/4)
+    name: Test (coding-agent ${{ matrix.shard }}/10)
     needs: build-coding-agent
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -319,17 +320,26 @@ jobs:
         shell: bash
         run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
 
+      - name: Start the shard budget clock
+        shell: bash
+        run: echo "SHARD_BUDGET_STARTED=$(date +%s)" >> "$GITHUB_ENV"
+
       - name: Test shard
         timeout-minutes: 25
-        run: node ../../scripts/run-tests.mjs vitest run --shard=${{ matrix.shard }}/4
+        run: node ../../scripts/run-tests.mjs vitest run --shard=${{ matrix.shard }}/10
         working-directory: packages/coding-agent
+
+      - name: Shard time budget
+        env:
+          SHARD_LABEL: Test (coding-agent ${{ matrix.shard }}/10)
+        run: node scripts/ci-shard-budget.mjs
 
       - name: Workflow summary
         if: always()
         shell: bash
         run: |
           {
-            echo "## Test (coding-agent ${{ matrix.shard }}/4)"
+            echo "## Test (coding-agent ${{ matrix.shard }}/10)"
             echo "- Status: ${{ job.status }}"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Check OS temp after tests
@@ -374,11 +384,45 @@ jobs:
         run: |
           # tui-smoke.test.mjs drives the real tmux driver (senpi#4986 regression); make sure tmux exists.
           command -v tmux >/dev/null || { sudo apt-get update && sudo apt-get install -y tmux; }
-          node --test .agents/skills/senpi-qa/scripts/lib/equivalence-normalize.test.mjs .agents/skills/senpi-qa/scripts/lib/equivalence-tui-compare.test.mjs .agents/skills/senpi-qa/scripts/lib/tui-smoke.test.mjs
+          node --test .agents/skills/senpi-qa/scripts/lib/equivalence-normalize.test.mjs .agents/skills/senpi-qa/scripts/lib/equivalence-tui-compare.test.mjs .agents/skills/senpi-qa/scripts/lib/tui-smoke.test.mjs .agents/skills/senpi-qa/scripts/lib/equivalence-mutations.test.mjs
+
+      # E29 (example extension gondolin) starts a real micro-VM, so the runner needs QEMU and a gondolin image store with
+      # alpine-base:latest pulled ahead of time (the senpi#4751 M0 readiness recipe). Provisioned here so E29 runs on CI
+      # instead of reporting SKIPPED(host-capability) (#5265). KVM is enabled when the runner exposes /dev/kvm; gondolin
+      # falls back to TCG otherwise.
+      - name: Enable KVM for the E29 micro-VM
+        shell: bash
+        run: |
+          if [ -e /dev/kvm ]; then
+            echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+            sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+          fi
+
+      - name: Install QEMU for E29
+        shell: bash
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils
+
+      - name: Cache the gondolin image store for E29
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/gondolin-images
+          key: gondolin-images-alpine-base-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Pull alpine-base into the gondolin image store and smoke-test a VM
+        shell: bash
+        env:
+          GONDOLIN_IMAGE_STORE: ${{ runner.temp }}/gondolin-images
+        run: |
+          set -euo pipefail
+          gondolin=node_modules/@earendil-works/gondolin/dist/bin/gondolin.js
+          node "$gondolin" image pull alpine-base:latest --arch x86_64
+          timeout 900 node "$gondolin" exec -- /bin/sh -c 'uname -m; echo VM_OK' | tee gondolin-smoke.log
+          grep -q '^VM_OK' gondolin-smoke.log
+          echo "EQ_GONDOLIN_IMAGE_STORE=$GONDOLIN_IMAGE_STORE" >> "$GITHUB_ENV"
 
       - name: EQ compare against the B0 goldens
         timeout-minutes: 25
-        run: node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --compare --pipeline legacy --placement fused --evidence eq-ci
+        run: node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --compare --placement fused --evidence eq-ci
 
       - name: Z1.n Node smoke (node vs bun)
         timeout-minutes: 10
@@ -1366,7 +1410,7 @@ jobs:
         timeout-minutes: 5
         run: |
           bash scripts/install-ci-system-deps.sh \
-            libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
+            fd-find ripgrep
           sudo ln -sf "$(which fdfind)" /usr/local/bin/fd
 
       - name: Install dependencies
@@ -1381,7 +1425,6 @@ jobs:
 
       - name: Fresh release entry graphs (codemode and exclusions)
         run: |
-          npm rebuild canvas --foreground-scripts
           node scripts/run-tests.mjs bun test scripts/release-graph-codemode.test.ts
           node scripts/run-tests.mjs bun test scripts/release-graph-exclusions.test.ts
 
@@ -1434,6 +1477,7 @@ jobs:
           --workspace packages/agent
           --workspace packages/ai
           --workspace packages/client
+          --workspace packages/machine-ops
           --workspace packages/protocol
           --workspace packages/pty
           --workspace packages/senpi-codemode

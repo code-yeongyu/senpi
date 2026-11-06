@@ -1,4 +1,5 @@
 import type { CliRuntimeConfiguration } from "../../main.ts";
+import { outsideCommand } from "./command-authority.ts";
 import type { SessionPathReservations as DaemonPathReservations } from "./host-reservations.ts";
 import { refreshesSessionActivity } from "./session-command-activity.ts";
 import { publishedSessionContext } from "./session-context-patch.ts";
@@ -17,6 +18,7 @@ import { SessionWorkerClient } from "./session-worker-client.ts";
 import type { SessionWriteGrant } from "./session-worker-protocol.ts";
 import type { WorkerSessionClaims } from "./worker-session-claims.ts";
 import { openWorkerSession } from "./worker-session-open.ts";
+import type { WorkerCapacity } from "./worker-capacity.ts";
 
 type SessionWorkerCallbacks = ConstructorParameters<typeof SessionWorkerClient>[0];
 
@@ -27,6 +29,8 @@ export interface WorkerSessionRegistryOptions {
 	/** Production builds the real worker; a caller may supply one to drive a lifecycle path deterministically. */
 	readonly createWorker?: (callbacks: SessionWorkerCallbacks) => SessionWorkerClient;
 	readonly pathReservations?: DaemonPathReservations;
+	/** A worker budget shared with the process's other worker pools; absent means this registry's own count (senpi#5413). */
+	readonly capacity?: WorkerCapacity;
 }
 
 /** Transport-side lifecycle owner. Caller paths are never inspected on this event loop. */
@@ -46,8 +50,11 @@ export class WorkerSessionRegistry {
 		this.options = options;
 		this.closeGraceMs = options.closeGraceMs;
 		this.now = options.now;
-		this.createWorker =
+		const createWorker =
 			options.createWorker ?? ((callbacks) => new SessionWorkerClient(callbacks, options.configuration.agentDir));
+		// The opening command may be role-bound: its worker must never keep that command's authority (omo-relay-daemon#307).
+		this.createWorker = (callbacks) => outsideCommand(() => createWorker(callbacks));
+		options.capacity?.track(() => this.entries.size);
 	}
 
 	get size(): number {
@@ -66,7 +73,7 @@ export class WorkerSessionRegistry {
 				claims: this.claims,
 				options: this.options,
 				closeGraceMs: this.closeGraceMs,
-				size: this.size,
+				size: this.options.capacity?.inUse() ?? this.size,
 				now: this.now,
 				nextHandle: () => `rpc-${++this.serial}`,
 				knownReservationKey: (path) => this.knownReservationKey(path),
