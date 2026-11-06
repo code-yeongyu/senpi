@@ -4,8 +4,11 @@ import type { AssistantMessage, Message, ToolResultMessage } from "@earendil-wor
 import { describe, expect, it } from "vitest";
 import { makeTempDir } from "../../../../../scripts/vitest-temp.ts";
 import { DEFAULT_COMPACTION_SETTINGS, prepareCompaction } from "../../../src/core/compaction/index.ts";
-import { createRequiredCompactionFallback } from "../../../src/core/extensions/builtin/compaction/deterministic-fallback.ts";
-import { convertToLlm } from "../../../src/core/messages.ts";
+import {
+	createRequiredCompactionFallback,
+	type DeterministicFallbackDiagnostic,
+} from "../../../src/core/extensions/builtin/compaction/deterministic-fallback.ts";
+import { COMPACTION_SUMMARY_PREFIX, convertToLlm } from "../../../src/core/messages.ts";
 import { type CompactionEntry, type SessionEntry, SessionManager } from "../../../src/core/session-manager.ts";
 import { assistantMsg, userMsg } from "../../utilities.ts";
 
@@ -48,6 +51,7 @@ function appendToolStep(session: SessionManager, text = LONG_ENGLISH_OUTPUT): vo
 function persistedSession(userText: string): SessionManager {
 	const dir = makeTempDir(join(tmpdir(), "s12625-"));
 	const session = SessionManager.create(dir, dir);
+	session.appendModelChange("anthropic", "claude-opus-5-5");
 	session.appendMessage(userMsg(userText));
 	appendToolStep(session);
 	appendToolStep(session);
@@ -64,14 +68,16 @@ function deterministicCheckpoint(session: SessionManager): CompactionEntry {
 	const branch = session.getBranch();
 	const preparation = prepareCompaction(branch, { ...DEFAULT_COMPACTION_SETTINGS, keepRecentTokens: 1 }, true);
 	if (!preparation) throw new Error("expected a compaction preparation");
+	const diagnostics: DeterministicFallbackDiagnostic = {};
 	const result = createRequiredCompactionFallback(
 		preparation,
 		200_000,
 		"summarization-provider-failure",
 		{},
 		branch,
+		diagnostics,
 	);
-	if (!result) throw new Error("expected a deterministic checkpoint");
+	if (!result) throw new Error(`expected a deterministic checkpoint: ${JSON.stringify(diagnostics)}`);
 	session.appendCompaction(result.summary, result.firstKeptEntryId, result.tokensBefore, result.details, true);
 	return session.getBranch().findLast((entry): entry is CompactionEntry => entry.type === "compaction")!;
 }
@@ -88,6 +94,12 @@ function context(session: SessionManager): Message[] {
 	return convertToLlm(session.buildSessionContext().messages);
 }
 
+function summaryNotes(session: SessionManager): string[] {
+	return texts(context(session)).filter(
+		(text) => text.startsWith(COMPACTION_SUMMARY_PREFIX) && text.includes(KOREAN_NOTE),
+	);
+}
+
 function reopened(session: SessionManager): SessionManager {
 	return SessionManager.open(session.getSessionFile() ?? "", session.getSessionDir());
 }
@@ -102,9 +114,8 @@ describe("omo#12625 reply language across compactions of a persisted session", (
 
 		// then no Korean turn is resident, yet the summary names Korean, live and after a reopen
 		for (const current of [session, reopened(session)]) {
-			const rendered = texts(context(current));
-			expect(rendered.some((text) => text.includes("빌드"))).toBe(false);
-			expect(rendered.filter((text) => text.includes(KOREAN_NOTE))).toHaveLength(1);
+			expect(texts(context(current)).some((text) => text.includes("빌드"))).toBe(false);
+			expect(summaryNotes(current)).toHaveLength(1);
 		}
 	});
 
@@ -123,9 +134,8 @@ describe("omo#12625 reply language across compactions of a persisted session", (
 		// then every checkpoint records the language and the context names it, live and after a reopen
 		expect(checkpoints.map((checkpoint) => checkpoint.userLanguage)).toEqual(["Korean", "Korean", "Korean"]);
 		for (const current of [session, reopened(session)]) {
-			const rendered = texts(context(current));
-			expect(rendered.some((text) => text.includes("빌드"))).toBe(false);
-			expect(rendered.filter((text) => text.includes(KOREAN_NOTE))).toHaveLength(1);
+			expect(texts(context(current)).some((text) => text.includes("빌드"))).toBe(false);
+			expect(summaryNotes(current)).toHaveLength(1);
 		}
 	});
 
