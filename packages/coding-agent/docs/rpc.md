@@ -651,10 +651,12 @@ created; a grant acquired later is not offered it.
   `{type: "mcp_presenter_secret_reply", id, disposition: "applied" | "replay"}` or
   `{type: "mcp_presenter_secret_reply", id, error}`, where `error` is `invalid_secret_response`,
   `secret_answer_refused`, `secret_stepup_refused`, `already_answered` or `unknown_extension_ui_request`.
-- When the prompt ends, every holder receives the value-free
+- When the prompt ends, every holder that received its request receives the value-free
   `{type: "mcp_presenter_secret_settled", v: 1, uiRequestId, outcome, elsewhere}`, with `elsewhere: false` only for
   the holder whose answer won. A raiser connection still receives `secret_input_settled` with unchanged bytes, and
   `answeredUiRequests` lists raiser-route receipts only.
+  If the prompt ends before its asynchronous request key is ready, no request or settled frame reaches holders.
+  Key-generation failure ends the prompt as `unavailable`.
 - Worker sessions (the worker runtime) behave the same for clients.
   - The host selects holders, signs the request and authenticates an answer: shape, sender, envelope signature and
     step-up token.
@@ -671,6 +673,8 @@ created; a grant acquired later is not offered it.
     `mcp_presenter_secret_answer`;
   - the terminal's own input and the sealed answers race one latch, the first answer wins, and the losing side is
     dismissed;
+  - a rejected local input cancels the pending latch immediately, dismissing the input and settling offered holders
+    with `outcome: "cancelled"` without forwarding the error;
   - holders receive `mcp_presenter_secret_settled` as above, `elsewhere: true` when the terminal answered;
   - without a sealed holder the terminal's prompt is unchanged.
 

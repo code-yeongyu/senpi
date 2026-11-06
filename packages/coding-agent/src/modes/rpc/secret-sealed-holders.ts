@@ -181,7 +181,10 @@ export class SealedSecretHolders implements SealedSecretSource {
 		outcome: SecretInputOutcome,
 		winnerGrant?: string,
 	): void {
-		for (const holder of holders)
+		const offered = this.offered.get(uiRequestId);
+		if (!offered) return;
+		for (const holder of holders) {
+			if (!offered.holders.has(holder)) continue;
 			holder.registration.connection.send({
 				type: "mcp_presenter_secret_settled",
 				v: 1,
@@ -189,6 +192,7 @@ export class SealedSecretHolders implements SealedSecretSource {
 				outcome,
 				elsewhere: holder.id !== winnerGrant,
 			});
+		}
 	}
 
 	current(holder: SealedHolder): boolean {
