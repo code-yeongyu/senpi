@@ -36,6 +36,8 @@ const UNSERVED_INPUT_FIELDS = [
 	"unknownCommandAsText",
 	"sessionTitlePrompt",
 	"enqueueOrder",
+	// A thread call's hop count cannot travel through text-only admission, so its chain would restart here (K8).
+	"chainCount",
 ] as const;
 
 export function admitInput(

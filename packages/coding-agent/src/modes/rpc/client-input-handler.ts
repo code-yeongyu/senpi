@@ -10,6 +10,7 @@ import {
 	ClientMessageIdConflict,
 	type RpcClientInput,
 } from "./client-admission-record.ts";
+import { admitInputChain, type ChainRefusal } from "./chain-admission.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
 import { clientInputContext } from "./client-message-events.ts";
 import {
@@ -19,6 +20,15 @@ import {
 	RPC_ERROR_PROVIDER_CREDENTIALS_MISSING,
 	RPC_ERROR_UNKNOWN_COMMAND,
 } from "./rpc-types.ts";
+
+class ChainRefusedError extends Error {
+	readonly refusal: ChainRefusal;
+	constructor(refusal: ChainRefusal) {
+		super(refusal.message);
+		this.name = "ChainRefusedError";
+		this.refusal = refusal;
+	}
+}
 
 /** The `prompt` refusal's `errorCode` for each reason a turn cannot start. */
 const MODEL_NOT_READY_ERROR_CODES = {
@@ -55,6 +65,10 @@ export async function handleClientInput(
 	client: InputClient = { interactiveUser: false },
 ): Promise<void> {
 	try {
+		// A thread call from another session is admitted against the user's count limit before anything of it is recorded.
+		const admittedChain = admitInputChain(command.chainCount, session.settingsManager);
+		if (admittedChain.kind === "refused") throw new ChainRefusedError(admittedChain.refusal);
+		const chain = admittedChain.chainCount === undefined ? {} : { chainCount: admittedChain.chainCount };
 		const admissions = ClientAdmissions.forSession(session);
 		let disposition: PromptDisposition | undefined;
 		let responded = false;
@@ -95,6 +109,7 @@ export async function handleClientInput(
 							...options,
 							source: "rpc",
 							interactiveUser: client.interactiveUser,
+							...chain,
 							onQueuedInput: hooks.queued,
 							promptDisposition: (next) => {
 								disposition = next;
@@ -152,6 +167,7 @@ export async function handleClientInput(
 							expectedTurnId: command.expectedTurnId,
 							source: "rpc" as const,
 							interactiveUser: client.interactiveUser,
+							...chain,
 							onQueuedInput: hooks.queued,
 						};
 						disposition =
@@ -194,6 +210,9 @@ export async function handleClientInput(
 						errorCode: RPC_ERROR_TURN_CONFLICT,
 						...(error.currentTurnId === undefined ? {} : { errorData: { currentTurnId: error.currentTurnId } }),
 					}
+				: {}),
+			...(error instanceof ChainRefusedError
+				? { errorCode: error.refusal.errorCode, errorData: error.refusal.errorData }
 				: {}),
 			...(unknownCommand
 				? {

@@ -8,6 +8,7 @@ import { SecretInputUnavailableError } from "./secret-input.ts";
 import type { ExtensionRpcRequestContext } from "./rpc-context.ts";
 import { requestExtensionRpc } from "./rpc-request.ts";
 import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
+import { localDeviceFiles } from "@earendil-works/pi-agent-core/node";
 import type { Api, ImageContent, Model, Provider, ProviderHeaders } from "@earendil-works/pi-ai";
 import type { KeyId } from "@earendil-works/pi-tui";
 import { getAgentDir } from "../../config.ts";
@@ -681,6 +682,8 @@ export class ExtensionRunner {
 	});
 	private getBrowserEngineFn: NonNullable<ExtensionContextActions["getBrowserEngine"]> = () => undefined;
 	private getSessionEnvFn: NonNullable<ExtensionContextActions["getSessionEnv"]> = () => undefined;
+	// A runner with no session (a hand's runtime) runs its tools on this machine, so its device files are local.
+	private getDeviceFilesFn: NonNullable<ExtensionContextActions["getDeviceFiles"]> = localDeviceFiles;
 	private getImageSettingsFn: ExtensionContextActions["getImageSettings"] = () => ({
 		autoResize: true,
 		blockImages: false,
@@ -891,6 +894,7 @@ export class ExtensionRunner {
 		if (contextActions.getAskUserSettings) this.getAskUserSettingsFn = contextActions.getAskUserSettings;
 		if (contextActions.getBrowserEngine) this.getBrowserEngineFn = contextActions.getBrowserEngine;
 		if (contextActions.getSessionEnv) this.getSessionEnvFn = contextActions.getSessionEnv;
+		if (contextActions.getDeviceFiles) this.getDeviceFilesFn = contextActions.getDeviceFiles;
 		this.getImageSettingsFn = contextActions.getImageSettings;
 		this.sessionSettingsFn = contextActions.sessionSettings;
 		this.compactFn = contextActions.compact;
@@ -1733,6 +1737,10 @@ export class ExtensionRunner {
 			get sessionEnv() {
 				runner.assertActive();
 				return runner.getSessionEnvFn();
+			},
+			get deviceFiles() {
+				runner.assertActive();
+				return runner.getDeviceFilesFn();
 			},
 			get modelRegistry() {
 				runner.assertActive();
@@ -2896,6 +2904,8 @@ export class ExtensionRunner {
 		attribution: InputAttribution = inputAttributionOf({ origin: inputOriginOf(source), source }),
 		/** Dispatch only to these extensions (a hand running a hosted loop's user hooks, S33); absent: all. */
 		only?: (extensionPath: string) => boolean,
+		/** The hop count of a thread call this input arrived as (K8); absent for any other input. */
+		chainCount?: number,
 	): Promise<InputEventResult> {
 		let currentText = text;
 		let currentImages = images;
@@ -2912,6 +2922,7 @@ export class ExtensionRunner {
 						source,
 						attribution,
 						streamingBehavior,
+						...(chainCount === undefined ? {} : { chainCount }),
 					};
 					const result = (await handler(event, this.createContext(ext.path))) as InputEventResult | undefined;
 					if (result?.action === "handled") return result;
