@@ -26,8 +26,9 @@ export async function listCredentialAccounts(
 	provider: string,
 	env: NodeJS.ProcessEnv = process.env,
 	repository?: CredentialSlotRepository,
+	activeName?: string,
 ): Promise<CredentialAccountListing> {
-	const accounts = await getCredentialAccounts(storage, provider, env, repository);
+	const accounts = await getCredentialAccounts(storage, provider, env, repository, activeName);
 	const order = storedOrder(storage.get(provider));
 	return { accounts, ordered: accounts.some((account) => order.includes(account.name)) };
 }

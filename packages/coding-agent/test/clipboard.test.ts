@@ -29,12 +29,17 @@ vi.mock("node:os", async () => ({
 }));
 
 let originalWrite: typeof process.stdout.write;
+let originalIsTTY: PropertyDescriptor | undefined;
 let osc52Writes: string[];
+function setStdoutIsTTY(value: boolean): void {
+	Object.defineProperty(process.stdout, "isTTY", { value, configurable: true, writable: true });
+}
 beforeEach(() => {
 	vi.resetAllMocks();
 	for (const name of [
 		"SSH_CONNECTION",
 		"SSH_CLIENT",
+		"SSH_TTY",
 		"MOSH_CONNECTION",
 		"WAYLAND_DISPLAY",
 		"DISPLAY",
@@ -50,6 +55,8 @@ beforeEach(() => {
 	mocks.clipboard.setText.mockResolvedValue();
 	mocks.command.mockResolvedValue(Buffer.alloc(0));
 	osc52Writes = [];
+	originalIsTTY = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+	setStdoutIsTTY(false);
 	originalWrite = process.stdout.write.bind(process.stdout);
 	process.stdout.write = ((...args: Parameters<typeof process.stdout.write>) => {
 		const [chunk] = args;
@@ -62,6 +69,8 @@ beforeEach(() => {
 });
 afterEach(() => {
 	process.stdout.write = originalWrite;
+	if (originalIsTTY) Object.defineProperty(process.stdout, "isTTY", originalIsTTY);
+	else Reflect.deleteProperty(process.stdout, "isTTY");
 	vi.unstubAllEnvs();
 });
 
@@ -111,11 +120,40 @@ describe("readClipboardText", () => {
 });
 
 describe("copyToClipboard", () => {
-	test("local native success skips OSC 52 and commands", async () => {
+	test("native success without a terminal on stdout skips OSC 52 and commands", async () => {
 		await copyToClipboard("hello");
 		expect(mocks.clipboard.setText).toHaveBeenCalledWith("hello");
 		expect(osc52Writes).toHaveLength(0);
 		expect(mocks.command).not.toHaveBeenCalled();
+	});
+	test("native success also emits OSC 52 to a terminal without SSH or Mosh markers", async () => {
+		// Regression test for #6108: a persistent session viewed from another machine has no
+		// remote markers, so the execution host's clipboard is not the viewer's.
+		setStdoutIsTTY(true);
+		await copyToClipboard("hello");
+		expect(mocks.clipboard.setText).toHaveBeenCalledWith("hello");
+		expect(osc52Writes).toEqual([`\x1b]52;c;${Buffer.from("hello").toString("base64")}\x07`]);
+		expect(mocks.command).not.toHaveBeenCalled();
+	});
+	test("a terminal on stdout never turns a failed local copy into success", async () => {
+		setStdoutIsTTY(true);
+		mocks.clipboard.setText.mockRejectedValue(new Error("native failed"));
+		mocks.command.mockResolvedValue(undefined);
+		await expect(copyToClipboard("hello")).rejects.toThrow("Clipboard unavailable");
+		expect(osc52Writes).toHaveLength(0);
+	});
+	test("native success with an oversized payload still succeeds without OSC 52", async () => {
+		setStdoutIsTTY(true);
+		await copyToClipboard("x".repeat(80_000));
+		expect(mocks.clipboard.setText).toHaveBeenCalledOnce();
+		expect(osc52Writes).toHaveLength(0);
+	});
+	test("SSH_TTY alone marks a remote session", async () => {
+		vi.stubEnv("SSH_TTY", "/dev/pts/3");
+		mocks.clipboard.setText.mockRejectedValue(new Error("native failed"));
+		mocks.command.mockResolvedValue(undefined);
+		await copyToClipboard("hello");
+		expect(osc52Writes).toHaveLength(1);
 	});
 	test("Linux skips the native writer", async () => {
 		mocks.platform.mockReturnValue("linux");

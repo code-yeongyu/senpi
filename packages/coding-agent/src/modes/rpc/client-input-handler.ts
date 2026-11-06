@@ -2,6 +2,7 @@ import { AgentBusyError } from "../../core/agent-busy-error.ts";
 import type { AgentSession, PromptDisposition, PromptOptions } from "../../core/agent-session.ts";
 import { clientMessageIdentity } from "../../core/client-message-identity.ts";
 import { type ModelNotReadyCode, ModelNotReadyError } from "../../core/model-not-ready-error.ts";
+import { SessionMovedAwayError } from "../../core/session-move/ownership.ts";
 import { TurnConflictError } from "../../core/turn-conflict.ts";
 import { UNKNOWN_COMMAND_CONFIRM_HINT, UnknownCommandError } from "../../core/unknown-command.ts";
 import {
@@ -9,6 +10,7 @@ import {
 	ClientMessageIdConflict,
 	type RpcClientInput,
 } from "./client-admission-record.ts";
+import { admitInputChain, type ChainRefusal } from "./chain-admission.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
 import { clientInputContext } from "./client-message-events.ts";
 import {
@@ -18,6 +20,15 @@ import {
 	RPC_ERROR_PROVIDER_CREDENTIALS_MISSING,
 	RPC_ERROR_UNKNOWN_COMMAND,
 } from "./rpc-types.ts";
+
+class ChainRefusedError extends Error {
+	readonly refusal: ChainRefusal;
+	constructor(refusal: ChainRefusal) {
+		super(refusal.message);
+		this.name = "ChainRefusedError";
+		this.refusal = refusal;
+	}
+}
 
 /** The `prompt` refusal's `errorCode` for each reason a turn cannot start. */
 const MODEL_NOT_READY_ERROR_CODES = {
@@ -54,12 +65,18 @@ export async function handleClientInput(
 	client: InputClient = { interactiveUser: false },
 ): Promise<void> {
 	try {
+		// A thread call from another session is admitted against the user's count limit before anything of it is recorded.
+		const admittedChain = admitInputChain(command.chainCount, session.settingsManager);
+		if (admittedChain.kind === "refused") throw new ChainRefusedError(admittedChain.refusal);
+		const chain = admittedChain.chainCount === undefined ? {} : { chainCount: admittedChain.chainCount };
 		const admissions = ClientAdmissions.forSession(session);
 		let disposition: PromptDisposition | undefined;
+		let turnId: string | undefined;
 		let responded = false;
 		const respond = (admission: ClientMessageAdmission | undefined): void => {
 			responded = true;
 			const finalDisposition = admission?.disposition ?? disposition;
+			const admittedTurnId = admission?.turnId ?? turnId;
 			io.output({
 				id: command.id,
 				type: "response",
@@ -67,6 +84,7 @@ export async function handleClientInput(
 				success: true,
 				data: {
 					disposition: finalDisposition,
+					...(admittedTurnId === undefined ? {} : { turnId: admittedTurnId }),
 					...clientMessageIdentity(command),
 					...(admission ? { admission } : {}),
 					...(command.type === "prompt" && command.toolBarrier !== undefined
@@ -77,6 +95,10 @@ export async function handleClientInput(
 		};
 		const admission = await clientInputContext.run(clientMessageIdentity(command), () =>
 			admissions.admit(command, async (hooks) => {
+				// A sealed file would refuse this input only when the turn writes it, after `prompt` was accepted (senpi#5889).
+				const ownership = session.sessionManager.getOwnership();
+				if (!ownership.writable)
+					throw new SessionMovedAwayError(session.sessionManager.getSessionFile() ?? "", ownership);
 				// `prompt` and `steer`/`follow_up { whenIdle: "start" }` share one path: the session decides
 				// atomically whether the input starts a turn or joins the running one.
 				const promptPath = (options: PromptPathOptions): Promise<PromptDisposition> => {
@@ -90,17 +112,26 @@ export async function handleClientInput(
 							...options,
 							source: "rpc",
 							interactiveUser: client.interactiveUser,
+							...chain,
 							onQueuedInput: hooks.queued,
 							promptDisposition: (next) => {
 								disposition = next;
-								acceptedAdmission = hooks.accepted(next);
+								if (next !== "started") acceptedAdmission = hooks.accepted(next);
 							},
 							preflightResult: (succeeded) => {
-								if (succeeded && disposition !== undefined) {
+								if (succeeded && disposition !== undefined && disposition !== "started") {
 									preflightSucceeded = true;
 									accepted.resolve(disposition);
 									respond(acceptedAdmission);
 								}
+							},
+							onTurnAdmitted: () => {
+								// The epoch exists here, before agent.prompt emits the user message.
+								turnId = session.currentTurnId;
+								acceptedAdmission = hooks.accepted("started", turnId);
+								preflightSucceeded = true;
+								accepted.resolve("started");
+								respond(acceptedAdmission);
 							},
 						})
 						.catch((error: unknown) => {
@@ -147,6 +178,7 @@ export async function handleClientInput(
 							expectedTurnId: command.expectedTurnId,
 							source: "rpc" as const,
 							interactiveUser: client.interactiveUser,
+							...chain,
 							onQueuedInput: hooks.queued,
 						};
 						disposition =
@@ -181,11 +213,17 @@ export async function handleClientInput(
 						...(error.provider === undefined ? {} : { errorData: { provider: error.provider } }),
 					}
 				: {}),
+			...(error instanceof SessionMovedAwayError
+				? { errorCode: error.code, errorData: { state: error.ownership.state } }
+				: {}),
 			...(error instanceof TurnConflictError
 				? {
 						errorCode: RPC_ERROR_TURN_CONFLICT,
 						...(error.currentTurnId === undefined ? {} : { errorData: { currentTurnId: error.currentTurnId } }),
 					}
+				: {}),
+			...(error instanceof ChainRefusedError
+				? { errorCode: error.refusal.errorCode, errorData: error.refusal.errorData }
 				: {}),
 			...(unknownCommand
 				? {
