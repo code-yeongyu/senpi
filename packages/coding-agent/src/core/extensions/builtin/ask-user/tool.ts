@@ -324,13 +324,14 @@ export function createAskUserTool(variant: AskUserVariant, pi: ExtensionAPI, sta
 			: "Ask the user one to four concise questions.";
 	return {
 		name: TOOL_NAMES[variant],
+		runs: "brain",
 		workspaceEffect: "read",
 		label: "Ask user",
 		exposure: "direct",
 		allowLazyActivation: false,
 		parameters: variant === "codex" ? CODEX_PARAMS : CLAUDE_PARAMS,
 		promptSnippet: "Ask a material question, explicitly choosing whether to wait or receive the answer later.",
-		description: `${opener} Set ${flag} true to pause here until the user answers (the answer returns as this tool's result, or a timeout result after 30 idle minutes); set ${flag} false to keep working while the question stays open (the answer arrives later as a user message). Use it only when the answer materially changes the work; if it returns no answers, continue with best judgment instead of asking again, unless you set required true because the answer decides whether you take an action: then no answer means do not take it. Never use it for permission requests; ask those directly in your message. When the user's instructions (in the conversation or their instruction files) say not to ask, or not to ask with choices, do not call it: take the safe default, keep working, and say what you chose. Unavailable to subagents.${variant === "claude" ? " Users will always be able to type a free-text answer or one comment covering everything; do not add an Other option." : ""} Call this tool directly, never from inside an eval cell (a cell that waits on the user would hold the kernel).`,
+		description: `${opener} Set ${flag} true to pause here until the user answers (the answer returns as this tool's result, or a timeout result after 30 idle minutes by default, where any user activity on the question restarts the idle clock, up to a 2-hour cap); set ${flag} false to keep working while the question stays open (the answer arrives later as a user message). Use it only when the answer materially changes the work; if it returns no answers, continue with best judgment instead of asking again, unless you set required true because the answer decides whether you take an action: then no answer means do not take it. Never use it for permission requests; ask those directly in your message. When the user's instructions (in the conversation or their instruction files) say not to ask, or not to ask with choices, do not call it: take the safe default, keep working, and say what you chose. Unavailable to subagents.${variant === "claude" ? " Users will always be able to type a free-text answer or one comment covering everything; do not add an Other option." : ""} Call this tool directly, never from inside an eval cell (a cell that waits on the user would hold the kernel).`,
 		prepareArguments(args) {
 			toCanonical(variant, args);
 			return args;

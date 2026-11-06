@@ -40,6 +40,8 @@ export {
 } from "@earendil-works/pi-telemetry";
 export * from "./agent.ts";
 export * from "./agent-loop.ts";
+export * from "./egress/types.ts";
+export { isStepCommitError, StepCommitError, type StepCommitFailure } from "./step-commit.ts";
 export { Agent, agentLoop, agentLoopContinue, runAgentLoop, runAgentLoopContinue } from "./public-entry.ts";
 export { createInternalAgentChannel, type InternalAgentChannel, type OrderedAgentRecord } from "./internal-events.ts";
 export { EMPTY_TOOL_USE_DEMOTION_DIAGNOSTIC, ProviderRetryWatchdogAbortError } from "./assistant-terminal-state.ts";
@@ -62,11 +64,15 @@ export {
 	encodeRemoteMessage,
 	HAND_CONTROL_LANE,
 	type RemoteAbort,
+	type EpochRefusal,
 	type RemoteAck,
 	type RemoteHandMessage,
 	type RemoteFile,
 	type RemoteHello,
 	type RemoteInvoke,
+	type RemoteFloor,
+	type RemoteFloorAck,
+	type RemoteFloorRefused,
 	type RemoteRefused,
 	type RemoteSettled,
 	RemoteProtocolError,
@@ -83,6 +89,15 @@ export {
 	shouldTerminateToolBatch,
 } from "./execution/tool-outcome-events.ts";
 export { createAdmissionLine } from "./durable/store-admission.ts";
+export type {
+	SessionHandle,
+	SessionHeader,
+	StoredEntry,
+	StoredSession,
+	SyncSessionHandle,
+} from "./durable/session-store.ts";
+export { openSessionStore, openSyncSessionStore, SessionStoreError } from "./durable/session-store.ts";
+export type { SyncCommit, SyncCommitStore } from "./durable/store.ts";
 export { createMemoryStoreMedium, openMemoryStore } from "./durable/store-memory.ts";
 export { createBatchCoordinator } from "./execution/coordinator.ts";
 export type { BatchExecutor, BatchPlan } from "./execution/coordinator-types.ts";
@@ -101,6 +116,14 @@ export {
 	type HandAuthority,
 	type WorkspaceRoot,
 } from "./execution/grant-verify.ts";
+export {
+	createHandEpochFence,
+	EPOCH_FLOOR_MAX_STEP,
+	type FloorRaise,
+	HAND_SELF_SENDER,
+	type HandEpochFence,
+	type HandEpochFenceOptions,
+} from "./execution/remote-epoch.ts";
 export {
 	base64Length,
 	DEVICE_FILE_OPS,
@@ -133,6 +156,24 @@ export {
 	type ModelPlaneRequest,
 	serveModelPlane,
 } from "./execution/plane-model.ts";
+export {
+	createLoopToolHost,
+	createSessionPlaneClient,
+	createSplitToolHost,
+	decodeSessionPlaneRequest,
+	loopSideToolNames,
+	SESSION_PLANE,
+	type SessionPlaneRequest,
+	serveSessionPlane,
+} from "./execution/plane-session.ts";
+export {
+	admitChainCall,
+	CHAIN_COUNT_LIMIT,
+	CHAIN_ORIGIN,
+	ChainCountLimitError,
+	decodeChainCount,
+	nextChainCount,
+} from "./execution/chain-count.ts";
 export {
 	decodePlaneMessage,
 	encodePlaneMessage,

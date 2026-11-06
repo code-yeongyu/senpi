@@ -12,6 +12,25 @@
 
 ### Removed
 
+## [2026.11.5-1] - 2026-11-05
+
+### Breaking Changes
+
+### Added
+
+- Add opt-in SIWC request shaping to the public Responses adapter, including supported tool loading and HTTP history replay ([#5021](https://github.com/code-yeongyu/senpi/pull/5021)). Provider registration remains separate.
+- Route saved SIWC ChatGPT accounts through public Responses, retain native web search, and keep legacy account requests unchanged (part of #5003).
+- Continue with ChatGPT signs in through SIWC on the existing ChatGPT subscription provider; signing in again with the same verified registration replaces its slot instead of duplicating it (part of #5003).
+- Offer Continue with ChatGPT alongside legacy sign-in through the shared subscription provider.
+
+### Changed
+
+### Fixed
+
+- Sign in with ChatGPT models are ineligible for prompt-cache prewarm even when their catalog enables explicit caching (#5101).
+
+### Removed
+
 ## [2026.11.4-2] - 2026-11-04
 
 ### Breaking Changes

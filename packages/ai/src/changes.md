@@ -1,3 +1,39 @@
+## 2026-10-30 - Carry credential-selected chat transport into dispatch (part of senpi#5003)
+
+### What changed
+
+- `packages/ai/src/models.ts`: apply an optional credential-selected chat API alongside its base URL.
+
+### Why
+
+- `packages/ai/src/models.ts`: a model's catalog API cannot choose the route of the selected account.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/models.ts`: auth resolution and provider dispatch are shared core operations.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/models.ts`: `applyAuth`.
+
+## 2026-10-30 - Add an explicit credential-route switch for SIWC (senpi#5003 W8)
+
+### What changed
+
+- `packages/ai/src/types.ts`: add optional `OpenAIResponsesCompat.siwc`. The provider integration sets it on the model for a selected SIWC credential route; it defaults to false.
+
+### Why
+
+- `packages/ai/src/types.ts`: SIWC placement is still separate work. Provider IDs and token prefixes cannot identify the selected route without guessing.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/types.ts`: the exported compatibility contract must carry the route to the Responses adapter.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/types.ts`: the fork's `OpenAIResponsesCompat` extension.
+
 ## 2026-10-30 - Keep retained SIWC hints out of CLI output (senpi#5046)
 
 ### What changed

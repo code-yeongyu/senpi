@@ -68,6 +68,8 @@ async function closeFixture() {
 			case "mcp_form_availability":
 			case "mcp_form_settlement":
 				throw new Error("Private forms must be disabled in this fixture");
+			case "secret_sealed_answer":
+				throw new Error("This fixture raises no secret prompts");
 			default: {
 				const exhaustive: never = message;
 				throw new Error(`Unexpected message ${exhaustive}`);

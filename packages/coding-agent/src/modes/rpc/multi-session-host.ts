@@ -18,6 +18,7 @@ import type { CliRuntimeConfiguration } from "../../main.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { startHostChildReaper } from "./child-reaper.ts";
 import type { RpcConnectionSink } from "./connection-handler.ts";
+import { answerDelegation } from "./delegated-answer.ts";
 import type { LaunchProofSource } from "./delegated-connection.ts";
 import { parseClientCapabilities } from "./custom-capability.ts";
 import { ClientOccupancy } from "./host-client-occupancy.ts";
@@ -37,7 +38,7 @@ import { closeHostConnections, type HostConnection } from "./host-shutdown-conne
 import { runAsHostGenerationProcess } from "./host-process-role.ts";
 import { createEndpointReservations } from "./host-reservations.ts";
 import { hostChildDrainRequestFile, watchDrainRequest } from "./host-stop-intent.ts";
-import { armHostWatchdog } from "./host-watchdog.ts";
+import { armHostWatchdog, type HostWatchdogConfig } from "./host-watchdog.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
 import { hostGeneration, hostInstanceId, protocolIdentity } from "./protocol-identity.ts";
 import { rpcCommandShapeError } from "./rpc-input-validation.ts";
@@ -230,9 +231,8 @@ export function createHostCore(
 		}
 		// Before any await: a declaration takes effect for the very next line of its connection (senpi#5632).
 		const delegation = writer.delegations.inspect(connection, parsed);
-		if (delegation.kind === "consumed") return;
-		if (delegation.kind === "reply") {
-			await writer.enqueueControl(delegation.response);
+		if (delegation.kind !== "pass") {
+			await answerDelegation(writer, delegation, parsed);
 			return;
 		}
 		if (writer.handleMcpForm(parsed)) return;
@@ -250,7 +250,17 @@ export function createHostCore(
 		);
 		if (response) await writer.enqueueControl(response);
 	};
-	return { router, handle, handover: gate.handover, handoverAnswered: () => gate.answered() };
+	return {
+		router,
+		handle,
+		handover: gate.handover,
+		handoverAnswered: () => gate.answered(),
+		/**
+		 * A session's live registry entry by its routing id. Only in-process test fixtures read it today, in place of
+		 * spying on the registry prototype (senpi#5802); the host itself never calls it.
+		 */
+		peekSession: (sessionId: string) => registry.peek(sessionId),
+	};
 }
 
 /** Plain-stdio host with no eagerly-created AgentSessionRuntime. */
@@ -674,10 +684,12 @@ function errorMessage(cause: unknown): string {
  * the instance is not. The FIRST generation runs this before its supervisor has created the socket's
  * directory, a successor after, so the directory is canonicalized through its deepest existing
  * ancestor: both then stamp the same spelling. `host_socket` is omitted where no public path exists
- * (abstract sockets, a supervised win32 host, whose supervisor publishes none).
+ * (abstract sockets, a supervised host whose supervisor passed none). Exported for tests.
  */
-function hostSessionContext(socketPath: string): SessionContext {
-	const supervised = hostWatchdogBinding();
+export function hostSessionContext(
+	socketPath: string,
+	supervised: HostWatchdogConfig | undefined = hostWatchdogBinding(),
+): SessionContext {
 	const endpoint = supervised === undefined ? socketPath : supervised.publicSocket;
 	if (endpoint === undefined || endpoint.startsWith("\0")) return { host_instance: hostInstanceId() };
 	const directory = canonicalSessionPath(dirname(endpoint));

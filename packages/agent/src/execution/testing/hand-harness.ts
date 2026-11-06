@@ -46,6 +46,8 @@ export interface HandRig {
 	/** Advances transport time until `promise` settles; fails past the budget. */
 	settle<T>(promise: Promise<T>, what: string, budgetMs?: number): Promise<T>;
 	runUntil(done: () => boolean, what: string, budgetMs?: number): Promise<void>;
+	/** As `runUntil`, for a condition that needs an asynchronous read (the hand's durable rows). */
+	waitFor(done: () => Promise<boolean>, what: string, budgetMs?: number): Promise<void>;
 	/** Drops the carrier between session and hand (the hand becomes unreachable) and attaches it again. */
 	disconnect(): void;
 	reconnect(): void;
@@ -54,12 +56,58 @@ export interface HandRig {
 
 const TICK_MS = 5;
 const LEASE_MS = 3_600_000;
+// One event-loop turn first: a store may confirm a write only after I/O (a Durable Object commit awaits
+// `storage.sync()`), and microtasks alone never let that write land between two clock steps. `setImmediate`
+// keeps the step cheap where the host has it; `setTimeout(0)` is the turn everywhere else.
+const ioTurn = (): Promise<void> =>
+	new Promise<void>((resolve) =>
+		typeof setImmediate === "function" ? void setImmediate(resolve) : void setTimeout(resolve, 0),
+	);
 const drain = async (): Promise<void> => {
+	await ioTurn();
 	for (let turn = 0; turn < 32; turn++) await Promise.resolve();
 };
 
 export function call(id: string): AgentToolCall {
 	return { type: "toolCall", id, name: "probe", arguments: { id } };
+}
+
+export type TransportPump = Pick<HandRig, "advance" | "settle" | "runUntil" | "waitFor">;
+
+/** Steps transport time on `timers` the way every hand rig waits (see {@link HandRig.advance}). */
+export function transportPump(timers: ManualTimers): TransportPump {
+	const pump = async (stop: () => boolean, ms: number): Promise<void> => {
+		const end = timers.now() + ms;
+		await drain();
+		while (!stop() && timers.now() < end) {
+			await timers.advanceTo(Math.min(end, timers.now() + TICK_MS));
+			await drain();
+		}
+	};
+	const runUntil = async (done: () => boolean, what: string, budgetMs = 600_000): Promise<void> => {
+		await pump(done, budgetMs);
+		if (!done()) throw new Error(`${what}: not reached within ${budgetMs} ms of transport time`);
+	};
+	const settle = async <T>(promise: Promise<T>, what: string, budgetMs = 600_000): Promise<T> => {
+		let outcome: { value: T } | { error: unknown } | undefined;
+		promise.then(
+			(value) => void (outcome = { value }),
+			(error: unknown) => void (outcome = { error }),
+		);
+		await runUntil(() => outcome !== undefined, what, budgetMs);
+		if (outcome === undefined || "error" in outcome) throw outcome?.error;
+		return outcome.value;
+	};
+	const waitFor = async (done: () => Promise<boolean>, what: string, budgetMs = 600_000): Promise<void> => {
+		const end = timers.now() + budgetMs;
+		await drain();
+		while (!(await done())) {
+			if (timers.now() >= end) throw new Error(`${what}: not reached within ${budgetMs} ms of transport time`);
+			await timers.advanceTo(Math.min(end, timers.now() + TICK_MS));
+			await drain();
+		}
+	};
+	return { advance: (ms) => pump(() => false, ms), settle, runUntil, waitFor };
 }
 
 export async function openHandRig(
@@ -134,31 +182,9 @@ export async function openHandRig(
 	let current = await adapters.store.open(medium, { onWritePoint: killing });
 	await startHand(current).ready;
 	const host = createRemoteToolHost({ transport: sessionSide, placement: options.placement });
-
-	const pump = async (stop: () => boolean, ms: number): Promise<void> => {
-		const end = timers.now() + ms;
-		await drain();
-		while (!stop() && timers.now() < end) {
-			await timers.advanceTo(Math.min(end, timers.now() + TICK_MS));
-			await drain();
-		}
-	};
-	const runUntil = async (done: () => boolean, what: string, budgetMs = 600_000): Promise<void> => {
-		await pump(done, budgetMs);
-		if (!done()) throw new Error(`${what}: not reached within ${budgetMs} ms of transport time`);
-	};
-	const settle = async <T>(promise: Promise<T>, what: string, budgetMs = 600_000): Promise<T> => {
-		let outcome: { value: T } | { error: unknown } | undefined;
-		promise.then(
-			(value) => void (outcome = { value }),
-			(error: unknown) => void (outcome = { error }),
-		);
-		await runUntil(() => outcome !== undefined, what, budgetMs);
-		if (outcome === undefined || "error" in outcome) throw outcome?.error;
-		return outcome.value;
-	};
+	const { advance, settle, runUntil, waitFor } = transportPump(timers);
 	return {
-		advance: (ms) => pump(() => false, ms),
+		advance,
 		bodies,
 		faults,
 		killed: killed.promise,
@@ -178,6 +204,7 @@ export async function openHandRig(
 		},
 		settle,
 		runUntil,
+		waitFor,
 		disconnect: () => link.drop(),
 		reconnect: () => link.connect(),
 		rows: async () =>

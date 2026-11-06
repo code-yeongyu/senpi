@@ -81,6 +81,11 @@ const server = createServer((socket) => {
 				});
 				continue;
 			}
+			if (behavior === "exit-after-answer") {
+				// Answers once, then exits as a supervisor ending its own idle shutdown does.
+				socket.write(answer(request), () => process.exit(0));
+				return;
+			}
 			socket.write(answer(request));
 		}
 	});
