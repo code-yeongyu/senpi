@@ -1,3 +1,21 @@
+## 2026-11-05 - web_search runs loop-side on a split session (senpi#5882)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/websearch/websearch/tool.ts`: the tool declares `runs: "brain"`.
+
+### Why
+
+On a split session (brain/hand, S32) web_search runs where the agent loop runs, never on the hand: under the 2026-11-03 split, web search and fetch run loop-side, and senpi#5641 names `ask_user` a session tool. Fused sessions are unchanged.
+
+### Why an extension could not handle it
+
+The declaration belongs to the tool's own definition.
+
+### Expected merge conflict zones
+
+- LOW: the tool definition's field list.
+
 ## 2026-11-03 - Full web search text for the Opus and Fable presets (senpi#5665)
 
 ### What changed

@@ -23,6 +23,9 @@ async function open() {
 		execute: async (_id, params) => {
 			const text = typeof params === "object" && params !== null && "text" in params ? String(params.text) : "";
 			runs.push(text);
+			// An untyped tool that breaks the content contract: JSON cannot carry a BigInt.
+			if (text === "bigint")
+				return { content: [Object.assign({ type: "text" as const, text: "n" }, { size: 1n })], details: {} };
 			return { content: [{ type: "text", text: `tool:${text}` }], details: {} };
 		},
 	};
@@ -163,5 +166,27 @@ describe("prepared executor release and admission edges", () => {
 		expect(prepared).toEqual(frozen);
 		expect(prepared).not.toBe(frozen);
 		expect(runs).toEqual(["hi"]);
+	});
+
+	// senpi#5864: content JSON cannot carry settles that call as a tool error instead of rejecting the release.
+	it("settles a body whose result content JSON cannot carry as a tool error naming the problem", async () => {
+		// Given
+		const { prepare, release, ledger } = await open();
+		await prepare({ id: "bigint", name: "echo", arguments: { text: "bigint" } });
+
+		// When
+		const released = await release("bigint");
+
+		// Then
+		expect(released).toMatchObject({
+			kind: "settled",
+			isError: true,
+			result: { content: [{ type: "text", text: expect.stringMatching(/^Tool result content is not JSON: /) }] },
+		});
+		const row = await ledger.read({ issuer: ISSUER, commandId: "bigint" });
+		expect(row?.progress.state === "settled" && row.progress.outcome).toMatchObject({
+			reason: "result",
+			value: { isError: true },
+		});
 	});
 });

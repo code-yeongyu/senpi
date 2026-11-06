@@ -10,6 +10,7 @@ import { ClientOccupancy } from "./host-client-occupancy.ts";
 import { type HostLifetimeOwner, hostOwnerGone, readHostOwner, sameHostOwner } from "./host-daemon-state.ts";
 import { type HostActivity, IdleExitDecider, type IdleExitDecision } from "./host-lifecycle-policy.ts";
 import { holdIdleExitForSettling, SessionRunActivity } from "./host-run-activity.ts";
+import { startupHandOff } from "./host-startup-beacon.ts";
 import { supervisorLog } from "./host-supervisor-log.ts";
 import { connectInternalConnection } from "./internal-channel.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
@@ -48,7 +49,9 @@ export class SupervisorActivity {
 		// Everything `current()` reads exists before any client can be accepted: a connection admitted
 		// during startup asks for the activity snapshot, and a successor's first `open_session` once
 		// failed on a binding read before its initializer ran.
-		this.decider = new IdleExitDecider(options.idleExitMs);
+		// A coordinated start's launcher probes once the endpoint is published: the window waits for that first
+		// client for as long as the launcher may still decide the start (senpi#6001).
+		this.decider = new IdleExitDecider(options.idleExitMs, Date.now, startupHandOff()?.budgetMs);
 		// A settled session's agent_settled handlers hold idle exit for at most one idle window (omo#11419).
 		this.runs = new SessionRunActivity({
 			settleHoldMs: options.idleExitMs,
@@ -263,7 +266,17 @@ export class SupervisorOwner {
 		// fs.watch may lag a new owner's atomic write. Its ensure holds a connection until this
 		// publication, so re-read the record AND occupancy before authorizing synchronous shutdown.
 		const current = await readHostOwner(this.generationDir);
-		return !this.stopped && revision === this.revision && sameHostOwner(owner, current) && activity.quiescent();
+		if (this.stopped || revision !== this.revision) return false;
+		// `fs.watch` can also DROP that write entirely (senpi#4629 measured the same loss in a test
+		// wait on this machine class). Refusing on the mismatch alone left this supervisor bound to a
+		// dead predecessor forever: it never adopted the replacement, so the replacement's own death
+		// could not end the generation and the host outlived its owner until the idle window. Adopt
+		// the record here - the watcher stays the fast path - and decide for the real owner next tick.
+		if (!sameHostOwner(owner, current)) {
+			await this.reload();
+			return false;
+		}
+		return activity.quiescent();
 	}
 
 	stop(): void {

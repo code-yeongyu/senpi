@@ -24,6 +24,8 @@ export function declareSocketClient(
 			: undefined;
 	if (reason)
 		return error(command.id, command.type, reason === "connection_role_fixed" ? CONNECTION_ROLE_FIXED : reason);
+	// Before the capability commit: its recheck must already see a background presenter that now speaks for a remote device.
+	if (origin.origin !== undefined) host.connectionRoles.declareOrigin(roleConnection(peer), origin.origin);
 	if (peer !== undefined) {
 		// RULING-111 (LEAK-B): with the flag off a declaration without capabilities resets them, exactly as on main.
 		const caps = compactUpdatesEnabled()
@@ -32,7 +34,6 @@ export function declareSocketClient(
 		host.pendingCapabilities.set(peer, [...caps]);
 		host.writer.setConnectionCapabilities(peer, caps);
 	} else if (command.capabilities !== undefined) host.writer.setSoleSecretCapabilities(command.capabilities);
-	if (origin.origin !== undefined) host.connectionRoles.declareOrigin(roleConnection(peer), origin.origin);
 	return {
 		id: command.id,
 		type: "response",
