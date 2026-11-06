@@ -18,6 +18,7 @@ import type { CliRuntimeConfiguration } from "../../main.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { startHostChildReaper } from "./child-reaper.ts";
 import type { RpcConnectionSink } from "./connection-handler.ts";
+import { answerDelegation } from "./delegated-answer.ts";
 import type { LaunchProofSource } from "./delegated-connection.ts";
 import { parseClientCapabilities } from "./custom-capability.ts";
 import { ClientOccupancy } from "./host-client-occupancy.ts";
@@ -64,6 +65,7 @@ import type { PresenterAccountAuthority } from "./mcp-presenter-account.ts";
 import { presenterBootstrapStream } from "./mcp-presenter-bootstrap.ts";
 import { startMcpPresenterControl } from "./mcp-presenter-control-start.ts";
 import type { HeadlessPresence } from "../headless/presence.ts";
+import type { HandSelection } from "../headless/hand-selection.ts";
 
 export { presenterPipePath } from "./mcp-presenter-control-start.ts";
 
@@ -95,6 +97,8 @@ export interface MultiSessionHostOptions {
 	sessionOwner?: "client" | "machine";
 	/** Set only by a headless host with a presence binding (`modes/headless`): rows and opens carry presence. */
 	sessionPresence?: HeadlessPresence;
+	/** Set only by a headless host with a hand directory (`modes/headless`): `list_hands` and `select_hand`. */
+	handSelection?: HandSelection;
 }
 
 export {
@@ -230,9 +234,8 @@ export function createHostCore(
 		}
 		// Before any await: a declaration takes effect for the very next line of its connection (senpi#5632).
 		const delegation = writer.delegations.inspect(connection, parsed);
-		if (delegation.kind === "consumed") return;
-		if (delegation.kind === "reply") {
-			await writer.enqueueControl(delegation.response);
+		if (delegation.kind !== "pass") {
+			await answerDelegation(writer, delegation, parsed);
 			return;
 		}
 		// A delegated connection ends with the viewer it forwards for, while the forwarder keeps serving what it opened to

@@ -1,9 +1,9 @@
 {
 	"methodClassesVersion": 1,
-	"methodClassesDigest": "4df5316e9c2712173b8338fdeb1bb1a78ae1f2c3da8b8ac694e1f3cc7c8382ed",
+	"methodClassesDigest": "85c74d833ae2071658f88062a9f7573d80002ffc8a4bd4351b0ceea21cd55acd",
 	"sampleId": "00000000-0000-7000-8000-000000000000",
 	"samplePathRoot": "/nonexistent/senpi-rpc-inbound-sample",
-	"methodCount": 116,
+	"methodCount": 118,
 	"methods": [
 		{
 			"method": "abort",
@@ -664,6 +664,15 @@
 			}
 		},
 		{
+			"method": "list_hands",
+			"class": "observe",
+			"sampleClass": "observe",
+			"connectionLocal": false,
+			"sample": {
+				"type": "list_hands"
+			}
+		},
+		{
 			"method": "list_sessions",
 			"class": "observe",
 			"sampleClass": "observe",
@@ -930,6 +939,17 @@
 			"connectionLocal": false,
 			"sample": {
 				"type": "resume_session"
+			}
+		},
+		{
+			"method": "select_hand",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "select_hand",
+				"sessionId": "00000000-0000-7000-8000-000000000000",
+				"device": null
 			}
 		},
 		{

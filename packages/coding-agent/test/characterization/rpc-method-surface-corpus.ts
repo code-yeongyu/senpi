@@ -12,7 +12,7 @@ export type Opened = { sessionId: string; state: { sessionFile: string } };
 export const NO_ID = "00000000-0000-7000-8000-000000000000";
 /** Host commands carry no `sessionId` routing envelope; every other method is routed to the fresh session. */
 const HOST_METHODS = new Set(
-	"get_protocol_info open_session close_session release_session unload_session detach_connection get_subscription_limits list_sessions subscribe_sessions unsubscribe_sessions set_session_context warm attach_session release_attachment reclaim_session move_session".split(
+	"get_protocol_info open_session close_session release_session unload_session detach_connection get_subscription_limits list_sessions subscribe_sessions unsubscribe_sessions set_session_context warm attach_session release_attachment reclaim_session move_session list_hands select_hand".split(
 		" ",
 	),
 );
@@ -44,6 +44,8 @@ export const TODAY: { readonly [M in RpcCommand["type"]]: string } = {
 	attach_session:
 		'{"sessionId":"$SID","durableSessionId":"$NO"} => no:session_identity_mismatch:session_identity_mismatch',
 	release_attachment: '{"sessionId":"$SID"} => ok{deferred}',
+	list_hands: "no::hand_selection_unsupported",
+	select_hand: '{"sessionId":"$SID","device":null} => no::hand_selection_unsupported',
 	reclaim_session:
 		'{"sessionPath":"$PATH","durableSessionId":"$NO","expectedHostInstance":"$NO"} => no:session_identity_mismatch:session_identity_mismatch',
 	move_session: '{"op":"status","moveId":"$NO"} => ok{reason,state}',

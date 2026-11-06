@@ -1,4 +1,5 @@
 import type { ToolRuntimeKind } from "../../cli/tool-runtime.ts";
+import type { HandSelection } from "../headless/hand-selection.ts";
 import type { HeadlessPresence } from "../headless/presence.ts";
 
 import type { createRpcSessionBinding } from "./session-binding.ts";
@@ -22,6 +23,8 @@ export type RpcHostSessionDefaults = Pick<
 	readonly agentDir?: string;
 	/** A headless host's presence (`modes/headless`): `open_session` and `list_sessions` carry each session's. */
 	readonly sessionPresence?: HeadlessPresence;
+	/** A headless host's hand selection (`modes/headless`): answers `list_hands` and `select_hand`. */
+	readonly handSelection?: HandSelection;
 	/** The host's `--tool-runtime`; absent means `in-process`. */
 	readonly toolRuntime?: ToolRuntimeKind;
 };
