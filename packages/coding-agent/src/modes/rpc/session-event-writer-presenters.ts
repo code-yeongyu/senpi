@@ -36,8 +36,7 @@ export abstract class SessionEventWriterPresenters
 	}
 
 	attachSealedSecrets(source: SealedSecretSource): () => void {
-		this.secretPresentations.useSealed(source);
-		return () => this.secretPresentations.useSealed(undefined);
+		return this.secretPresentations.useSealed(source);
 	}
 
 	protected mcpPresenterContextReply(sender: McpPresenterConnection | undefined, request: object): object {
