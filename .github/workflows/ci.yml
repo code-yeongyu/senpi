@@ -586,6 +586,8 @@ jobs:
   # timeouts and cmd.exe `--exec` hooks all behave differently on Windows.
   # senpi#3566 todo 4 (Windows half): the tool child's Job Object containment against the real kernel32. These tests need
   # bun:ffi, so vitest runs under Bun here; under Node they skip themselves, which the last step refuses.
+  # senpi#6125 rides the same job: the EcoQoS opt-out reads the real kernel32 power-throttling state of this process
+  # and of spawned children.
   tool-child-windows:
     name: Tool child Job Object (Windows)
     needs: platform-scope
@@ -620,14 +622,14 @@ jobs:
 
       - name: Run tool child Windows tests under Bun
         shell: bash
-        run: node ../../scripts/run-tests.mjs bun --bun ../../node_modules/vitest/vitest.mjs run src/modes/rpc/tool-child/windows-job.win32.test.ts src/modes/rpc/tool-child/launch-barrier.win32.test.ts src/modes/rpc/tool-child/child-containment.test.ts src/modes/rpc/tool-child/windows-breakaway.test.ts src/modes/rpc/tool-child/windows-command-line.test.ts --reporter=verbose --reporter=json --outputFile=vitest-tool-child-win32.json
+        run: node ../../scripts/run-tests.mjs bun --bun ../../node_modules/vitest/vitest.mjs run src/modes/rpc/tool-child/windows-job.win32.test.ts src/modes/rpc/tool-child/launch-barrier.win32.test.ts src/modes/rpc/tool-child/child-containment.test.ts src/modes/rpc/tool-child/windows-breakaway.test.ts src/modes/rpc/tool-child/windows-command-line.test.ts src/core/windows-power-throttling.test.ts src/core/windows-power-throttling.win32.test.ts --reporter=verbose --reporter=json --outputFile=vitest-tool-child-win32.json
         working-directory: packages/coding-agent
 
       # A skipped suite exits 0: fail unless both real-kernel files executed and every test in them passed.
       - name: Require the real-kernel tests to have executed
         shell: bash
         run: |
-          for name in windows-job.win32.test.ts launch-barrier.win32.test.ts; do
+          for name in windows-job.win32.test.ts launch-barrier.win32.test.ts windows-power-throttling.win32.test.ts; do
             node -e '
               const r = JSON.parse(require("fs").readFileSync("vitest-tool-child-win32.json", "utf8"));
               const file = r.testResults.find((t) => t.name.split("\\").join("/").endsWith(process.argv[1]));
