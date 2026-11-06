@@ -18,6 +18,7 @@ import type { CliRuntimeConfiguration } from "../../main.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { startHostChildReaper } from "./child-reaper.ts";
 import type { RpcConnectionSink } from "./connection-handler.ts";
+import { answerDelegation } from "./delegated-answer.ts";
 import type { LaunchProofSource } from "./delegated-connection.ts";
 import { parseClientCapabilities } from "./custom-capability.ts";
 import { ClientOccupancy } from "./host-client-occupancy.ts";
@@ -230,9 +231,8 @@ export function createHostCore(
 		}
 		// Before any await: a declaration takes effect for the very next line of its connection (senpi#5632).
 		const delegation = writer.delegations.inspect(connection, parsed);
-		if (delegation.kind === "consumed") return;
-		if (delegation.kind === "reply") {
-			await writer.enqueueControl(delegation.response);
+		if (delegation.kind !== "pass") {
+			await answerDelegation(writer, delegation, parsed);
 			return;
 		}
 		if (writer.handleMcpForm(parsed)) return;

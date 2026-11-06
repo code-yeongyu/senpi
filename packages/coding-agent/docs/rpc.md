@@ -2716,6 +2716,22 @@ would refuse is not refused by the delegation check, it gets the same response a
 (`success: false`, `error`, `errorCode`). Secret and grant-select dialogs stay answerable only from the connection
 that raised them, delegated or not.
 
+Private MCP presenter records are the exception: on a delegated connection, every record whose `type` starts with
+`mcp_form_` or `mcp_presenter_` is answered in the private reply shape `{ "type": "mcp_form_reply", "id"?, ... }`,
+never with `type: "response"`, so a forwarder can route the answer by its type alone. The four presenter client
+records (`mcp_presenter_context`, `mcp_form_presented`, `mcp_form_response`, `mcp_form_sync`) reach the presenter
+authority exactly as on a local connection when the declaration granted `answer`; that authority still decides
+every form. Otherwise the reply is `{ "type": "mcp_form_reply", "id": "...", "error": "<code>" }`:
+
+| Record | `error` |
+|---|---|
+| A presenter client record without the `answer` grant (also after a narrowing re-declaration drops it) | `delegation_not_granted` |
+| `mcp_presenter_control_info` | `presenter_not_authorized` |
+| Any other `mcp_form_*` or `mcp_presenter_*` type | `delegation_unclassified` |
+
+A private reply bypasses the connection's event queue, snapshots, mirrors and replay. These records are not in the
+method-class table, so `classify_record` answers `class: null` for them and the digest is unchanged.
+
 `classify_record` answers the class of one record without running it, on any connection:
 
 ```json
@@ -4237,6 +4253,12 @@ On an idle session a plain `steer` only queues; it waits for the next turn. Pass
 ```
 
 `steer` and `follow_up` accept `expectedTurnId` with the same check as a `prompt` steer (see [Steering a specific turn](#prompt)): an input that names a turn which is not running when it enters the queue is refused `turn_conflict` and queued nowhere.
+
+**Thread chains**: `prompt`, `steer` and `follow_up` accept `chainCount`, a positive integer, when the input is a thread call from another session: the hop count of its chain (1 for the first call, one more per hop; a chain may come back to a session it already visited). It is checked against the user's `threads.chainCountLimit` setting before anything of the input is recorded. A `chainCount` that is not a positive integer is refused with `errorCode: "invalid_chain_count"` and `errorData: { chainCount }`. With no limit set every valid count is admitted; past the limit the input is refused with `errorCode: "chain_count_limit"` and `errorData: { count, limit }`. An admitted count is reported on the session's `input` event as `chainCount`, so a thread call that session sends next carries one more. The limit holds while a run hold keeps automatic input as a notice: an over-limit call is refused, never held. A terminal's session-control endpoint cannot carry a hop count through its text-only admission and refuses `chainCount` with `unsupported_field`.
+
+```json
+{"type": "prompt", "message": "Review the plan", "chainCount": 2}
+```
 
 ```json
 {"type": "steer", "message": "Use the other file", "expectedTurnId": "3"}
@@ -6820,6 +6842,25 @@ closing the connection, or declaring without a role revokes what it holds. When 
 terminal also has the management endpoint and answers `discover`. A terminal has no descriptor-4 bootstrap,
 so every other presenter on it is a same-account principal. The terminal itself stays one `local_tui`
 holder: a form reaches the terminal and every enrolled holder, and the first human answer wins.
+
+A host-side forwarder that is not attached to any session (a relay host) asks with
+`mcp_presenter_control_info` instead, on its own connection:
+
+```json
+{ "id": "i1", "type": "mcp_presenter_control_info" }
+{ "id": "i1", "type": "response", "command": "mcp_presenter_control_info", "success": true, "data": { "controlEndpoint": "/tmp/senpi-presenter-AbC123/control.sock" } }
+```
+
+- It is answered only on a connection that proved the endpoint's launch key (see
+  "Authentication"; on Windows, the socket secret) and has not declared a delegation.
+  Any other connection gets `presenter_not_authorized`: an ordinary error response
+  (`errorCode: "presenter_not_authorized"`), or on a delegated connection the private
+  reply `{ "type": "mcp_form_reply", "id": "i1", "error": "presenter_not_authorized" }`.
+- `data.controlEndpoint` is present only while an account-enrolling control endpoint
+  is listening; otherwise `data` is `{}`. Like `discover`, the path confers no
+  authority.
+- An engine that predates this record answers it with an error. Read that as "no
+  control endpoint", not as a reason to retry.
 
 A same-account presenter enrolls on a fresh connection to that endpoint, with no owner
 prompt, in one attempt within the connection's 30 s window:

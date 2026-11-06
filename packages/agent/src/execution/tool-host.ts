@@ -1,5 +1,6 @@
 import type { AssistantMessage, ToolResultMessage } from "@earendil-works/pi-ai";
 import type { AgentContext, AgentEvent, AgentToolCall, ToolExecutionMode } from "../types.ts";
+import type { DeviceFiles } from "./device-files.ts";
 
 /** Brain-minted identity and execution root; the executor treats the identity as opaque. */
 export interface ExecutionScope {
@@ -62,4 +63,6 @@ export function noPreflightCarry(_prepared: unknown, _frozen: unknown): void {}
 
 export interface ToolHost {
 	execute(call: ToolHostCall, options: ToolHostOptions): Promise<ToolHostResult>;
+	/** The files of the device this host runs calls on, for `scope` (S40); absent: the loop's own machine. */
+	deviceFiles?(scope: ExecutionScope): DeviceFiles;
 }
