@@ -16,8 +16,19 @@
  *
  * Neither method is in `RPC_METHOD_CLASS`: adding them would change `RPC_METHOD_CLASSES_DIGEST`, and a forwarder that
  * pins the digest would then refuse every record (senpi#5632 rollout split, S1a).
+ *
+ * senpi#4249 R-1b: on a delegated connection a private presenter record (`mcp_form_*`, `mcp_presenter_*`) is decided
+ * by `delegated-presenter-records.ts` and always answered in the private reply shape; `mcp_presenter_control_info`
+ * is answered only on a launch-proven connection that is not delegated.
  */
 
+import { type Principal, parseDeclaration, samePrincipal } from "./delegation-declaration.ts";
+import { type DelegationResponse, type DelegationVerdict, refused, requestId } from "./delegation-wire.ts";
+import {
+	isPrivatePresenterType,
+	PRESENTER_CONTROL_INFO_COMMAND,
+	privatePresenterVerdict,
+} from "./delegated-presenter-records.ts";
 import {
 	classifyRpcMethod,
 	RPC_METHOD_CLASS,
@@ -28,6 +39,8 @@ import {
 } from "./method-classes.ts";
 import { RPC_LAUNCH_PROOF_RECORD } from "./rpc-auth-proof.ts";
 
+export type { DelegationRefusal, DelegationResponse, DelegationVerdict } from "./delegation-wire.ts";
+
 const DECLARE_DELEGATION_COMMAND = "declare_delegation";
 const CLASSIFY_RECORD_COMMAND = "classify_record";
 
@@ -37,25 +50,6 @@ const CLASSIFY_RECORD_COMMAND = "classify_record";
  * (the bare host's own filter, or the supervisor's for a relayed connection; both refuse that record from a client).
  */
 export type LaunchProofSource = "proven" | "in_band";
-
-/** A response record this module answers with, in the router's error shape (`session-router-errors.ts`). */
-export interface DelegationResponse {
-	readonly id?: string;
-	readonly type: "response";
-	readonly command: string;
-	readonly success: boolean;
-	readonly [field: string]: unknown;
-}
-
-/** The refusal codes of omo-relay-spec decision 0018 (`delegationRefusal`). */
-export type DelegationRefusal =
-	| "delegation_malformed"
-	| "delegation_unclassified"
-	| "delegation_local_only"
-	| "delegation_not_granted"
-	| "delegation_unauthenticated"
-	| "delegation_late"
-	| "delegation_fixed";
 
 type ConnectionLocalType = {
 	[K in RpcMethodType]: (typeof RPC_METHOD_CLASS)[K] extends "connection_local" ? K : never;
@@ -87,24 +81,8 @@ const CONNECTION_LOCAL_REQUIREMENT = {
 	reset_stream: "self",
 } as const satisfies Record<ConnectionLocalType, "self" | Exclude<RpcMethodClass, "connection_local">>;
 
-const FORWARDABLE_CLASSES: ReadonlySet<string> = new Set<Exclude<RpcMethodClass, "connection_local">>([
-	"observe",
-	"drive",
-	"answer",
-	"thread",
-	"device_admin",
-]);
 /** The records a connection may send before its first declaration without making that declaration late. */
 const PRE_DECLARATION: ReadonlySet<unknown> = new Set(["get_protocol_info", "authenticate", RPC_LAUNCH_PROOF_RECORD]);
-const MAX_PRINCIPAL_FIELD = 256;
-const MAX_CONN_FIELD = 64;
-
-interface Principal {
-	readonly deviceId: string;
-	readonly deviceName?: string;
-	readonly conn?: string;
-}
-
 interface Delegation {
 	readonly principal: Principal;
 	granted: ReadonlySet<RpcMethodClass>;
@@ -116,12 +94,6 @@ interface ConnectionState {
 	spoken: boolean;
 	delegation: Delegation | undefined;
 }
-
-/** `pass`: dispatch as today. `consumed`: nothing to answer. `reply`: answer this instead of dispatching. */
-export type DelegationVerdict =
-	| { readonly kind: "pass" }
-	| { readonly kind: "consumed" }
-	| { readonly kind: "reply"; readonly response: DelegationResponse };
 
 const PASS: DelegationVerdict = { kind: "pass" };
 const CONSUMED: DelegationVerdict = { kind: "consumed" };
@@ -176,10 +148,26 @@ export class ConnectionDelegations {
 			if (state) state.spoken = true;
 			return { kind: "reply", response: classifyRecord(record as object) };
 		}
+		if (type === PRESENTER_CONTROL_INFO_COMMAND && state?.delegation === undefined) {
+			if (state) state.spoken = true;
+			return state?.proven === true
+				? { kind: "control_info", id: requestId(record as object) }
+				: {
+						kind: "reply",
+						response: refused(
+							requestId(record as object),
+							PRESENTER_CONTROL_INFO_COMMAND,
+							"presenter_not_authorized",
+							"mcp_presenter_control_info needs a connection that proved the endpoint's launch key",
+						),
+					};
+		}
 		if (state === undefined) return PASS;
 		if (!PRE_DECLARATION.has(type)) state.spoken = true;
 		const delegation = state.delegation;
 		if (delegation === undefined) return PASS;
+		if (isPrivatePresenterType(type))
+			return privatePresenterVerdict(type, requestId(record as object), delegation.granted);
 		const refusal = refuseOnDelegation(record, delegation.granted);
 		return refusal === undefined ? PASS : { kind: "reply", response: refusal };
 	}
@@ -286,67 +274,5 @@ function classifyRecord(record: object): DelegationResponse {
 					? { static: true }
 					: { static: false, rule: entry.version }),
 		},
-	};
-}
-
-function parseDeclaration(
-	record: object,
-): { readonly principal: Principal; readonly granted: ReadonlySet<RpcMethodClass> } | string {
-	const principal: unknown = Reflect.get(record, "principal");
-	if (typeof principal !== "object" || principal === null || Array.isArray(principal))
-		return "principal must be an object";
-	const deviceId: unknown = Reflect.get(principal, "deviceId");
-	const deviceName: unknown = Reflect.get(principal, "deviceName");
-	const conn: unknown = Reflect.get(principal, "conn");
-	if (!boundedString(deviceId, MAX_PRINCIPAL_FIELD)) return "principal.deviceId must be 1-256 characters";
-	if (deviceName !== undefined && !boundedString(deviceName, MAX_PRINCIPAL_FIELD))
-		return "principal.deviceName must be 1-256 characters";
-	if (conn !== undefined && !boundedString(conn, MAX_CONN_FIELD)) return "principal.conn must be 1-64 characters";
-	const granted: unknown = Reflect.get(record, "granted");
-	if (!Array.isArray(granted)) return "granted must be an array of method classes";
-	const classes = new Set<RpcMethodClass>();
-	for (const entry of granted) {
-		if (typeof entry !== "string" || !FORWARDABLE_CLASSES.has(entry) || classes.has(entry as RpcMethodClass))
-			return "granted holds each of observe, drive, answer, thread, device_admin at most once";
-		classes.add(entry as RpcMethodClass);
-	}
-	return {
-		principal: {
-			deviceId: deviceId as string,
-			...(deviceName === undefined ? {} : { deviceName: deviceName as string }),
-			...(conn === undefined ? {} : { conn: conn as string }),
-		},
-		granted: classes,
-	};
-}
-
-function boundedString(value: unknown, max: number): boolean {
-	return typeof value === "string" && value.length >= 1 && value.length <= max;
-}
-
-function samePrincipal(a: Principal, b: Principal): boolean {
-	return a.deviceId === b.deviceId && a.deviceName === b.deviceName && a.conn === b.conn;
-}
-
-function requestId(record: object): string | undefined {
-	const id: unknown = Reflect.get(record, "id");
-	return typeof id === "string" ? id : undefined;
-}
-
-function refused(
-	id: string | undefined,
-	command: string,
-	code: DelegationRefusal,
-	message: string,
-	data?: Readonly<Record<string, unknown>>,
-): DelegationResponse {
-	return {
-		...(id === undefined ? {} : { id }),
-		type: "response",
-		command,
-		success: false,
-		error: `${code}: ${message}`,
-		errorCode: code,
-		...(data === undefined ? {} : { errorData: data }),
 	};
 }
