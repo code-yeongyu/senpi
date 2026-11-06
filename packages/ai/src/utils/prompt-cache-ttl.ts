@@ -82,6 +82,17 @@ export function allowsAnthropicLongCacheRetention(model: Model<"anthropic-messag
 	);
 }
 
+/**
+ * Whether this Anthropic-messages host applies `cache_control` at all, and therefore whether warming its
+ * prompt cache can achieve anything. The native host always does. A proxy does only when its model entry
+ * asserts cache support with `compat.supportsLongCacheRetention: true` — the documented assertion for a
+ * gateway that honours `cache_control` — because an unset or `false` flag cannot tell a host that caches
+ * for five minutes without the one-hour option apart from one that ignores `cache_control`.
+ */
+export function supportsAnthropicCacheWarming(model: Model<"anthropic-messages">): boolean {
+	return isAnthropicApiBaseUrl(model.baseUrl) || model.compat?.supportsLongCacheRetention === true;
+}
+
 export function getAnthropicCompat(
 	model: Model<"anthropic-messages">,
 ): Required<
