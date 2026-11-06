@@ -83,7 +83,6 @@ export function attachSocketCarrier(socket: Socket, side: CarrierSide, report: (
 		live = false;
 		stopReading();
 		socket.off("drain", onDrain);
-		socket.off("error", onError);
 		side.detached();
 	};
 	socket.on("drain", onDrain);
