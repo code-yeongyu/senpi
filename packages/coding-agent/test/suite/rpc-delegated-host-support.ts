@@ -21,115 +21,16 @@ import { PublicRpcConnection } from "../../src/modes/rpc/rpc-public-auth.ts";
 import { RpcPublicEndpoint } from "../../src/modes/rpc/rpc-public-key.ts";
 import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
 import { socketSink } from "../../src/modes/rpc/socket-sink.ts";
+import { ANSWER_DEADLINE_MS, Peer, type WireRecord } from "./rpc-delegated-peer.ts";
 import { waitForFifoReader } from "./rpc-worker-host-support.ts";
 
-export type WireRecord = Record<string, unknown>;
+export { ANSWER_DEADLINE_MS, Peer, type WireRecord };
 
 export const PRINCIPAL = { deviceId: "x5632-device" };
 export const LEAN_ARGS = ["--mode", "rpc", "--multi-session", "--no-extensions", "--no-skills", "--no-context-files"];
 export const SECRET_COMMAND = "x5632-secret";
 /** A non-secret dialog the peer's own command raises, so its `remoteOrigin` can be read (omo-relay-daemon#307 O1). */
 export const ASK_COMMAND = "x307-ask";
-export const ANSWER_DEADLINE_MS = 20_000;
-
-export class Peer {
-	private readonly answers = new Map<string, (record: WireRecord) => void>();
-	private readonly frames: WireRecord[] = [];
-	private readonly watchers = new Set<(record: WireRecord) => void>();
-	private serial = 0;
-	readonly socket: Socket;
-	readonly name: string;
-	/** The id the host registered this socket under (`socket-N`), for host-side mechanism reads. */
-	readonly connectionId: string;
-
-	constructor(socket: Socket, name: string, connectionId = "") {
-		this.socket = socket;
-		this.name = name;
-		this.connectionId = connectionId;
-		attachJsonlLineReader(socket, (line) => {
-			const record = JSON.parse(line) as WireRecord;
-			if (record.type === "response" && typeof record.id === "string") this.answers.get(record.id)?.(record);
-			this.frames.push(record);
-			for (const watch of this.watchers) watch(record);
-		});
-	}
-
-	nextId(): string {
-		return `${this.name}-${++this.serial}`;
-	}
-
-	send(record: WireRecord): Promise<WireRecord> {
-		const id = typeof record.id === "string" ? record.id : this.nextId();
-		const answered = this.answer(id, String(record.type));
-		this.socket.write(`${JSON.stringify({ ...record, id })}\n`);
-		return answered;
-	}
-
-	/** Writes several records in ONE socket write, so the host decides them in line order; resolves every answer. */
-	sendTogether(records: readonly WireRecord[]): Promise<WireRecord>[] {
-		const stamped = records.map((record) => ({
-			...record,
-			id: typeof record.id === "string" ? record.id : this.nextId(),
-		}));
-		const answers = stamped.map((record) => this.answer(record.id, String(record.type)));
-		this.socket.write(stamped.map((record) => `${JSON.stringify(record)}\n`).join(""));
-		return answers;
-	}
-
-	/** True while `id` was sent and no response to it has arrived. */
-	pending(id: string): boolean {
-		return this.answers.has(id);
-	}
-
-	/**
-	 * For a record the host may answer with nothing (an answer to a dialog nobody raised): resolves with its response if
-	 * one precedes the answer to a `get_protocol_info` sent right behind it on this connection, else `undefined`.
-	 */
-	async sendSettled(record: WireRecord): Promise<WireRecord | undefined> {
-		const id = this.nextId();
-		let answer: WireRecord | undefined;
-		this.answers.set(id, (response) => {
-			answer = response;
-		});
-		this.socket.write(`${JSON.stringify({ ...record, id })}\n`);
-		const sentinel = this.send({ type: "get_protocol_info", observe: true });
-		await sentinel;
-		this.answers.delete(id);
-		return answer;
-	}
-
-	answer(id: string, type = "record"): Promise<WireRecord> {
-		return new Promise<WireRecord>((resolve, reject) => {
-			const timer = setTimeout(
-				() => reject(new Error(`${this.name}: no answer to ${type} ${id}`)),
-				ANSWER_DEADLINE_MS,
-			);
-			this.answers.set(id, (record) => {
-				clearTimeout(timer);
-				this.answers.delete(id);
-				resolve(record);
-			});
-		});
-	}
-
-	frame(predicate: (record: WireRecord) => boolean): Promise<WireRecord> {
-		const seen = this.frames.find(predicate);
-		if (seen) return Promise.resolve(seen);
-		return new Promise<WireRecord>((resolve, reject) => {
-			const timer = setTimeout(() => {
-				this.watchers.delete(watch);
-				reject(new Error(`${this.name}: no matching frame`));
-			}, ANSWER_DEADLINE_MS);
-			const watch = (record: WireRecord) => {
-				if (!predicate(record)) return;
-				clearTimeout(timer);
-				this.watchers.delete(watch);
-				resolve(record);
-			};
-			this.watchers.add(watch);
-		});
-	}
-}
 
 /** The worker-side extension: a provider the isolate can open sessions with, and `/block` reading `fifo`. */
 function workerExtension(fifo: string): string {

@@ -24,6 +24,7 @@
 
 import { INCARNATION_MAX } from "./connection-authority.ts";
 import type { DelegatedConnectionView } from "./connection-roles.ts";
+import { CLASSIFY_RECORD_COMMAND, classifyRecord } from "./delegation-classify.ts";
 import { parseDeclaration } from "./delegation-declaration.ts";
 import {
 	closeRecord,
@@ -43,9 +44,8 @@ import {
 } from "./delegated-presenter-records.ts";
 import {
 	classifyRpcMethod,
-	RPC_METHOD_CLASS,
+	type RPC_METHOD_CLASS,
 	RPC_METHOD_CLASSES_DIGEST,
-	RPC_METHOD_CLASSES_VERSION,
 	type RpcMethodClass,
 	type RpcMethodType,
 } from "./method-classes.ts";
@@ -54,7 +54,6 @@ import { RPC_LAUNCH_PROOF_RECORD } from "./rpc-auth-proof.ts";
 export type { DelegationRefusal, DelegationResponse, DelegationVerdict } from "./delegation-wire.ts";
 
 const DECLARE_DELEGATION_COMMAND = "declare_delegation";
-const CLASSIFY_RECORD_COMMAND = "classify_record";
 
 /**
  * How a connection's transport proves the launch key: `proven` at admission (the Windows socket secret), `in_band`
@@ -302,29 +301,4 @@ function refuseOnDelegation(record: unknown, granted: ReadonlySet<RpcMethodClass
 		`${command} on a delegated connection needs the ${required} grant`,
 		{ class: required },
 	);
-}
-
-function classifyRecord(record: object): DelegationResponse {
-	const id = requestId(record);
-	const target: unknown = Reflect.get(record, "record");
-	const methodClass = classifyRpcMethod(target);
-	const type = typeof target === "object" && target !== null ? Reflect.get(target, "type") : undefined;
-	const entry =
-		methodClass !== undefined && typeof type === "string" ? RPC_METHOD_CLASS[type as RpcMethodType] : undefined;
-	return {
-		...(id === undefined ? {} : { id }),
-		type: "response",
-		command: CLASSIFY_RECORD_COMMAND,
-		success: true,
-		data: {
-			class: methodClass ?? null,
-			version: RPC_METHOD_CLASSES_VERSION,
-			digest: RPC_METHOD_CLASSES_DIGEST,
-			...(entry === undefined
-				? {}
-				: typeof entry === "string"
-					? { static: true }
-					: { static: false, rule: entry.version }),
-		},
-	};
 }
