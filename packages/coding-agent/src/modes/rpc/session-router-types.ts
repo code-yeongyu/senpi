@@ -1,5 +1,6 @@
 import type { ToolRuntimeKind } from "../../cli/tool-runtime.ts";
 import type { HandSelection } from "../headless/hand-selection.ts";
+import type { AttachLedger } from "./attach-ledger.ts";
 import type { HeadlessPresence } from "../headless/presence.ts";
 
 import type { createRpcSessionBinding } from "./session-binding.ts";
@@ -27,6 +28,10 @@ export type RpcHostSessionDefaults = Pick<
 	readonly handSelection?: HandSelection;
 	/** The host's `--tool-runtime`; absent means `in-process`. */
 	readonly toolRuntime?: ToolRuntimeKind;
+	/** `"machine"` on a headless engine; takeover needs it and `sessionTakeover`. */
+	readonly sessionOwner?: "client" | "machine";
+	/** The durable takeover ledger (R21; S37); absent, `attach_session { takeover }` is refused. */
+	readonly sessionTakeover?: AttachLedger;
 };
 
 /**

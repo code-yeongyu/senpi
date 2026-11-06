@@ -215,6 +215,16 @@ export const REVIEWED_FIELDS = {
 	},
 	set_session_context: { fields: ["admissionId", "id", "patch", "sessionId", "type"] },
 	attach_session: {
-		fields: ["admissionId", "durableSessionId", "expectedHostInstance", "id", "retry", "sessionId", "type"],
+		fields: [
+			"admissionId",
+			"durableSessionId",
+			"expectedHostInstance",
+			"holder",
+			"id",
+			"retry",
+			"sessionId",
+			"takeover",
+			"type",
+		],
 	},
 } as const;
