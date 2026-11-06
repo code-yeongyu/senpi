@@ -14,10 +14,13 @@ export function gatePresence(agent: Agent, presence: HeadlessPresence, sessionId
 	};
 	const host = agent.toolHost;
 	if (host === undefined) return;
+	// The wrapper keeps the host's device files: a split session's extension data must stay on the hand (senpi#5839).
+	const deviceFiles = host.deviceFiles?.bind(host);
 	agent.toolHost = {
 		execute: async (call, options) => {
 			await presence.ready(sessionId, "tools", options.signal);
 			return host.execute(call, options);
 		},
+		...(deviceFiles === undefined ? {} : { deviceFiles }),
 	};
 }
