@@ -4,7 +4,9 @@
  * test once: `test:scripts`, then each workspace's own `test` script one at a time in path order, then
  * packages/coding-agent as `FORCED_CODING_AGENT_SHARDS` parallel `vitest --shard=i/N` runs, the split
  * `.github/workflows/ci.yml` uses. Each step runs under `release-forced-test-supervisor.mjs`, which SIGKILLs its
- * whole process group when the suite's one shared budget runs out, hung workers included.
+ * step's process group when the suite's one shared budget runs out and fails the release there. That group does not
+ * hold the vitest workers: run-workspaces and run-tests start npm and vitest detached, in groups of their own, so a
+ * hung worker can outlive the kill (senpi#6141).
  */
 
 import { spawn } from "node:child_process";
