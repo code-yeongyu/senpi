@@ -578,8 +578,11 @@ only when its `set_client_info` declared `raiser_notice_v1`:
 never carries a value, draft, `answerId` or receipt, it is not replayed, and it
 grants no answering authority: an answer from that connection is still
 `secret_answer_refused`. A connection without `raiser_notice_v1` receives
-nothing, as before. The owner can query its bounded, value-free
-`get_state.answeredUiRequests` receipts after acknowledgement loss. Discard the
+nothing, as before. The connection that raised the request is never a
+recipient, including when its own lane was refused (`client_unsupported`,
+`no_presenter`) and the request proceeds on the sealed route. The owner can
+query its bounded, value-free `get_state.answeredUiRequests` receipts after
+acknowledgement loss. Discard the
 value instead of resending or saving it in a reconnect queue. A missing receipt
 after eviction/restart means unknown outcome, not proof the callback did not run.
 
