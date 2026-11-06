@@ -1,3 +1,64 @@
+## 2026-11-05 - An embedding distribution registers a presenter account authority before main() (D11 M-1, senpi#4249)
+
+### What changed
+
+- `packages/coding-agent/src/presenter-authority-slot.ts` (new): `registerPresenterAccountAuthority` and `takePresenterAccountAuthority` over one process-global slot (`Symbol.for("senpi.presenterAccountAuthority.v1")`), defined once as non-writable and non-configurable, whose value is a frozen `{ register, take }` with the state in a closure. Registration is first-wins (`presenter_authority_already_registered`); `take()` seals (`presenter_authority_sealed`) and is idempotent. A foreign value under the key reads as an empty, sealed slot.
+- `packages/coding-agent/src/main.ts`: `main()` takes the slot as its first statement, before any extension or resource path loads code, and passes the authority to `runMultiSessionHost` as `presenterAccountAuthority`. Without a registration nothing is passed, so the host behaves exactly as before.
+- `packages/coding-agent/src/index.ts`: type exports `PresenterAccountAuthority`, `PresenterAttestation`, `PresenterAttestationRefusal`, `PresenterAttestationResult`.
+
+### Why
+
+- The `presenterAccountAuthority` host option (S3-1) had no caller outside tests, so omo could not supply the account authority that same-account presenter enrollment needs (D11 M-1, senpi#4249). The design gate (two rounds, APPROVE) fixed the shape: code the distribution runs before the CLI, never data, and sealed before any extension loads.
+
+### Why an extension could not handle it
+
+- Extensions load per `open_session` or inside `main()` after the host starts, and the seam exists precisely so that no extension can supply or replace the authority.
+
+### Expected merge conflict zones
+
+- LOW: one import and two lines at the top of `main()`, one spread line in the `runMultiSessionHost` call, one type-export block in `index.ts`.
+
+## 2026-11-03 - Offline pause and exactly-once resume for the headless engine (S34, senpi#5652)
+
+### What changed
+
+- `packages/coding-agent/src/modes/headless/presence-ledger.ts` (new): durable `presence.pause` / `presence.resume` records and open-pause documents on a DurableStore, under the store's admission line; a resume deletes the open pause in the same commit, so it is applied exactly once.
+- `packages/coding-agent/src/modes/headless/presence.ts` (new): `openHeadlessPresence`: machines going offline and online, per-session pauses (owner: every session; hand: the sessions whose tool calls run on it), the view, and `ready` gates; a restart recovers the open pauses.
+- `packages/coding-agent/src/modes/headless/presence-gates.ts` (new): `gatePresence` wraps a session's `prepareRequest` (waits for the owner) and an explicit ToolHost (waits for the owner and the session's hands); a fused session has no ToolHost to wrap.
+- `packages/coding-agent/src/modes/headless/headless-host.ts`: `HeadlessHostOptions.presence?: HeadlessPresenceBinding`; when set, each runtime is tracked and gated as it is created. No CLI flag sets it yet.
+- `packages/coding-agent/src/modes/headless/testing/kill-presence.ts` (new): KILL-PRESENCE-01..05.
+
+### Why
+
+- C2 and K7: an offline owner or hand pauses the dependent work, reconnect resumes it exactly once, and other sessions keep running (senpi#5652).
+
+### Why an extension could not handle it
+
+- It gates the loop of every session a headless host creates and changes the host's answers.
+
+### Expected merge conflict zones
+
+- LOW: new files; the options type and `headlessHostOptions` in `headless-host.ts`.
+
+## 2026-10-30 - Print mode names refused fallback rungs (senpi#3447)
+
+### What changed
+
+- `packages/coding-agent/src/modes/print-mode.ts`: a `retry_fallback_exhausted` event with `refusals` prints one stderr line per
+  refused rung with its model and the reason it was refused.
+
+### Why
+
+- Without it a non-interactive run that exhausted fallback on context fit gave no reason for the stop.
+
+### Why an extension could not handle it
+
+- Print mode's diagnostics come from core events that extensions do not format.
+
+### Expected merge conflict zones
+
+- LOW: the `retry_fallback_exhausted` handling in `print-mode.ts`.
+
 ## 2026-11-03 - Runtime creation carries open-timing spans (senpi#5709, fixes #5707)
 
 ### What changed

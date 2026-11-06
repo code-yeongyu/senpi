@@ -1,3 +1,57 @@
+## 2026-11-05 - CI runs the coding-agent tests on ten shards with a 15-minute per-shard budget (senpi#5910, senpi#5855)
+
+### What changed
+
+- `.github/workflows/ci.yml`: `test-coding-agent` runs ten shards (`N/10`) instead of four. Each shard records the time right before its tests (`Start the shard budget clock`, the step before `Test shard`, so a slow apt mirror or download cannot spend the budget). After `Test shard`, a new `Shard time budget` step runs `scripts/ci-shard-budget.mjs`, which fails the job once its tests ran past 900 s, naming the measured time. The `Test shard` step keeps its 25-minute timeout and the job keeps 30 minutes.
+
+### Why
+
+- Four shards ran 15-25 min on hosted main and reached the 25-minute step timeout with no failing test (senpi#5855). Main run 41947601029 spent 4905 s in its four test steps, the slowest 1.22x the mean, so ten shards project the slowest test step near 600 s (an estimate from the four-shard ratio; the budget step measures every run). The budget step turns future suite growth into a named red with a number, instead of a silent kill at the timeout.
+
+### Why an extension could not handle it
+
+- This is GitHub Actions workflow wiring; it has no runtime surface an extension could reach.
+
+### Expected merge conflict zones
+
+- LOW: `.github/workflows/ci.yml` around the `test-coding-agent` job's matrix, its first step and the step after `Test shard`.
+
+## 2026-11-04 - The Fused EQ job runs the mutation library's tests (senpi#5772)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the Fused equivalence job's "senpi-qa harness unit tests" step also runs `equivalence-mutations.test.mjs`.
+
+### Why
+
+- Its "every shipped patch applies to this tree" test went red on main unnoticed when #5648 and #5665 moved the code three mutation patches target: no CI job ran it.
+
+### Why an extension could not handle it
+
+- CI test selection is repository configuration.
+
+### Expected merge conflict zones
+
+- LOW: the Fused equivalence job's "senpi-qa harness unit tests" command line.
+
+## 2026-11-04 - The Fused EQ job compares the one pipeline (senpi#5728)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the Fused equivalence job's EQ compare no longer passes `--pipeline legacy`.
+
+### Why
+
+- S36 removes the agent loop's own scheduler and EQ's `--pipeline` option, so the harness refuses the flag and every run's witness must show the prepared pipeline.
+
+### Why an extension could not handle it
+
+- CI test selection is repository configuration.
+
+### Expected merge conflict zones
+
+- LOW: the Fused equivalence job's `EQ compare against the B0 goldens` command line.
+
 ## 2026-11-03 - CI runs the machine-ops workspace tests (senpi#5592)
 
 ### What changed
