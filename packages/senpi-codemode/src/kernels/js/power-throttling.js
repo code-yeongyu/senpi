@@ -15,7 +15,7 @@ function optOutState() {
 	return info;
 }
 
-export function loadKernel32PowerThrottling(platform = process.platform) {
+function loadKernel32PowerThrottling(platform = process.platform) {
 	if (platform !== "win32") return undefined;
 	const ffi = process.getBuiltinModule("bun:ffi");
 	if (ffi === undefined) return undefined;
@@ -38,7 +38,7 @@ export function loadKernel32PowerThrottling(platform = process.platform) {
 	};
 }
 
-export function disableExecutionSpeedThrottling(kernel, pid) {
+function disableExecutionSpeedThrottling(kernel, pid) {
 	try {
 		const handle = kernel.OpenProcess(PROCESS_SET_INFORMATION, 0, pid);
 		if (!handle) return false;

@@ -8,7 +8,6 @@ interface KernelPowerThrottling {
 	CloseHandle(handle: unknown): number;
 }
 interface PowerThrottlingModule {
-	disableExecutionSpeedThrottling(kernel: KernelPowerThrottling, pid: number): boolean;
 	installKernelPowerThrottlingOptOut(options: object): {
 		status: string;
 		reason?: string;
@@ -20,9 +19,7 @@ interface PowerThrottlingModule {
 // The kernel entries import the plain-JS module (typed by power-throttling.d.ts); .ts files may not import .js, so it is
 // loaded by URL.
 const moduleUrl = pathToFileURL(join(process.cwd(), "src", "kernels", "js", "power-throttling.js")).href;
-const { disableExecutionSpeedThrottling, installKernelPowerThrottlingOptOut } = (await import(
-	moduleUrl
-)) as PowerThrottlingModule;
+const { installKernelPowerThrottlingOptOut } = (await import(moduleUrl)) as PowerThrottlingModule;
 
 function fakeKernel(options: { throws?: boolean } = {}) {
 	const set: { pid: number; info: number[] }[] = [];
@@ -103,6 +100,5 @@ describe("installKernelPowerThrottlingOptOut", () => {
 		});
 		expect(launchers.childProcessPrototype.spawn.call({})).toBe("spawned");
 		expect(launchers.bun.spawn().pid).toBeGreaterThan(0);
-		expect(disableExecutionSpeedThrottling(fakeKernel({ throws: true }).kernel, 1)).toBe(false);
 	});
 });
