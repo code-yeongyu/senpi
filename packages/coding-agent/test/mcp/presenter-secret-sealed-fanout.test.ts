@@ -337,3 +337,34 @@ it("the host key signs only a binding that names this host instance and this key
 	] as const;
 	expect(() => tokens.signRequest(otherKey)).toThrow("secret_request_foreign");
 });
+
+// senpi#5934 item 4: a source owns only its own detach, even after a replacement attaches.
+it("disposing an older sealed source leaves the replacement able to offer a request", async () => {
+	const { host, secret, requests } = await sealedHost();
+	const phone = await holder(host, secret, "phone");
+	const source = host.control.sealed;
+	if (!source) throw new Error("No sealed source");
+	const detachOlder = host.writer.attachSealedSecrets(new Proxy(source, {}));
+	const detachNewer = host.writer.attachSealedSecrets(source);
+	detachOlder();
+	const pending = requests.input("API key", undefined);
+	const [request] = await phone.recorded("mcp_presenter_secret_request");
+	expect(request).toMatchObject({ title: "API key", durableSessionId: "durable" });
+	detachNewer();
+	await expect(pending).resolves.toBeUndefined();
+});
+
+// senpi#5934 item 8: shutdown ends the request without waiting for its deadline.
+it("disposing the presenter control ends a pending sealed-only request at once", async () => {
+	const { host, secret, requests } = await sealedHost();
+	await holder(host, secret, "phone");
+	const state: { value: string | undefined | null } = { value: null };
+	host.writer.withConnection("human", () => {
+		void requests.input("API key", undefined).then((value) => {
+			state.value = value;
+		});
+	});
+	host.control.dispose();
+	await Promise.resolve();
+	expect(state.value).toBeUndefined();
+});
