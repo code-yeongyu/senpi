@@ -876,7 +876,7 @@ reader (which stops near 4,000 levels on Node) never drops it.
 #### get_recovery_page
 
 Behind the same flag, one bounded page of a frozen checkpoint component, through the recovery-token owner
-(senpi#4272, R4.B3). The command is additive: with the flag off it answers exactly as any unknown session command.
+(senpi#4272, R4.B3). The command is additive: with the flag off it answers the typed refusal `{"success": false, "error": "feature_disabled", "errorCode": "feature_disabled", "errorData": {"feature": "compact_updates"}}` (plus `sessionId` when the request named one), as does the classic single-session handler, which has no compact transport; with `SENPI_RPC_REQUIRE_ATTACH=1`, an unattached caller of a session-addressed request gets the attachment gate's `session_not_attached` first.
 
 Compact generations are allocated per durable session, not per socket or accepted-state epoch (RULING-99).
 A reconnect receives a higher generation; a host restart resumes above the persisted reservation ceiling in
@@ -1134,7 +1134,7 @@ reference was the last (`remaining: 0`, the content goes once reads in flight un
 admission still references it, and `duplicate` for a receipt this admission already gave, which changes nothing, so
 a consumer may retry a receipt after a rollback. A lease of another connection or session, or an unknown one, is
 `recovery_repair_needed` with `reason: "unknown_token"`; a malformed request is `recovery_malformed_request`.
-With the flag off it answers as any unknown session command.
+With the flag off it answers the typed refusal `{"success": false, "error": "feature_disabled", "errorCode": "feature_disabled", "errorData": {"feature": "compact_updates"}}` (plus `sessionId` when the request named one), as does the classic single-session handler, which has no compact transport; with `SENPI_RPC_REQUIRE_ATTACH=1`, an unattached caller of a session-addressed request gets the attachment gate's `session_not_attached` first.
 
 #### cancel_attempt
 
@@ -1152,7 +1152,7 @@ admission this connection currently holds (never used, already cancelled, or com
 `unknown_admission`. Otherwise the answer's `data` is `{outcome}`: `cancelled` for a pending attempt (its late result
 is never applied) and `already_complete` for an admission this connection holds (cancel does not undo it). Only a
 socket connection has admissions, so on any other transport the id is unknown. A malformed `admissionId` is refused
-with `admission_malformed_request`. With the flag off it answers as any unknown command.
+with `admission_malformed_request`. With the flag off it answers the typed refusal `{"success": false, "error": "feature_disabled", "errorCode": "feature_disabled", "errorData": {"feature": "compact_updates"}}` (plus `sessionId` when the request named one), as does the classic single-session handler, which has no compact transport; with `SENPI_RPC_REQUIRE_ATTACH=1`, an unattached caller of a session-addressed request gets the attachment gate's `session_not_attached` first.
 
 #### reset_stream
 
@@ -1171,7 +1171,7 @@ admission. Read the checkpoint with `get_recovery_page`. An `admissionId` this c
 `unknown_admission` before the command runs. A held admission that is not
 complete, not for `sessionId` or no longer on the session's stream is refused with `recovery_unknown_token` and
 `errorData: {kind: "repair_needed", reason: "unknown_token"}`; a checkpoint that cannot be frozen is refused with
-`recovery_<kind>` and that failure as `errorData`. With the flag off it answers as any unknown command.
+`recovery_<kind>` and that failure as `errorData`. With the flag off it answers the typed refusal `{"success": false, "error": "feature_disabled", "errorCode": "feature_disabled", "errorData": {"feature": "compact_updates"}}` (plus `sessionId` when the request named one), as does the classic single-session handler, which has no compact transport; with `SENPI_RPC_REQUIRE_ATTACH=1`, an unattached caller of a session-addressed request gets the attachment gate's `session_not_attached` first.
 
 **Admission IDs per socket (senpi#5274, RULING-113, RULING-117 and RULING-118).** A socket's admissions are capped by what is
 live, never by how many IDs it has used. At most 16 attempts run at once (`admission_admission_busy` past that). Running
@@ -3838,7 +3838,7 @@ names a valid preset.
 
 | Command | Params | Success data | Notes |
 | --- | --- | --- | --- |
-| `attach_session` | `sessionId`, `durableSessionId`, `expectedHostInstance?` | `{ sessionId, attached: true }` | Live-only, identity-fenced attachment; never opens/resumes or changes the launch profile. Capability `attach_session`. |
+| `attach_session` | `sessionId`, `durableSessionId`, `expectedHostInstance?`, `takeover?`, `holder?` | `{ sessionId, attached: true, holder?, generation?, released? }` | Live-only, identity-fenced attachment; never opens/resumes or changes the launch profile. `takeover` (headless engine only) lets the other clients go quietly. Capability `attach_session`. |
 | `release_attachment` | `sessionId` | `{ deferred: boolean }` | Releases exactly one caller hold with disconnect semantics; `deferred` is true only when settlement owns the final release, and false while draining. Capability `release_attachment`. |
 | `reclaim_session` | `sessionPath`, `durableSessionId`, `expectedHostInstance` | `{ reclaimed: true, sessionId }` | Atomic attach-and-claim of every caller hold; refuses other connections before aborting. Capability `reclaim_session`. |
 | `get_protocol_info` | - | `{ protocolVersion: 1, serverVersion: string, capabilities: string[], mode: "classic"\|"multi", instanceId: string, generation: number, engineVersion: string, engineOrdinal: [y, m, d, n, epoch], launch_profile: { profile_id, core }, method_classes: { version, digest }, memory_pressure?: boolean }` | Answered in BOTH modes; side-effect-free; the capability probe. Multi-session hosts include `multi_session`, `session_held` (the active foreign-holder admission guard, in both runtimes), `retain_on_disconnect`, `session_kind`, `session_context`, `auto_title_per_session`, `durable_session_id`, `moved_path_guard` (senpi resolves and guards paths the OmO desktop moved with its data home), `prompt_surface` and `prompt_surface_chat` plus the negotiated launch capabilities. Those are HOST capabilities (a client never sends them) and are advertised only in multi-session mode, where the host owns the attachment refcount and the per-session launch profile. The identity fields are described under "Host identity" above; compatibility is decided from `protocolVersion`, `capabilities` and `engineOrdinal`, NEVER from `serverVersion`. |
@@ -3870,6 +3870,23 @@ prompt surface, or browser engine. Each success adds one attachment, connects th
 `open_session { sessionPath, permissionPreset, ... }` retain their existing behavior. Behind
 `SENPI_ENGINE_SOCKET_COMPACT_UPDATES`, `admissionId` and `retry: true` make it a compact admission, as on
 `open_session` (see "Admission retries").
+
+**Quiet takeover (headless engine).** On a headless engine built with a takeover ledger,
+`attach_session { sessionId, durableSessionId, takeover: true, holder }` takes the session over for
+`holder`, the taking client's stable identity across its reconnects. The takeover is recorded durably
+first; then the caller attaches, and every other connection holding the session receives one
+`{ "type": "session_released", "sessionId", "reason": "taken_over" }` record and loses its holds. No
+error reaches it, and the session and its running turn go on. The answer adds `holder`, its `generation`
+(1 for the session's first holder, one more for each new holder) and `released` (how many connections
+were let go). A takeover by the current holder records nothing new. Without `holder` the command
+returns `takeover_holder_required`; any other host, the interactive terminal's endpoint included, returns
+`takeover_unsupported`. A failed takeover record returns `takeover_failed` with `errorData.reason`. After the
+record is written the host checks again before it attaches anyone: a draining host answers `session_busy_lifecycle`
+(`reason: "host_draining"`), a caller that disconnected meanwhile gets `session_not_attached`
+(`reason: "no_connection"`) and nobody is let go, and a session that closed meanwhile answers `unknown_session`.
+The other clients' holds are removed in the same step as the caller's attach, so a client that disconnects or
+releases, or a second takeover, while the `session_released` notices go out cannot release a hold twice.
+Without `takeover`, `attach_session` behaves as above on every host.
 
 #### release_attachment
 
@@ -4033,6 +4050,9 @@ codes or code prefixes in `error`:
 - `session_identity_mismatch` (`attach_session` or `reclaim_session` selected a different durable identity or host instance)
 - `session_busy_lifecycle` (`reclaim_session` found an opening or closing target, or `attach_session` / `reclaim_session` reached a draining or shutting-down host: then `errorData.reason` is `host_draining`)
 - `attached_elsewhere` (`reclaim_session` found another connection's holds; `errorData.attachments` counts them)
+- `takeover_unsupported` (`attach_session { takeover: true }` on a host that is not a headless engine with a takeover ledger)
+- `takeover_holder_required` (`attach_session { takeover: true }` without `holder`)
+- `takeover_failed` (`attach_session { takeover: true }` could not write its takeover record; `errorData.reason` says why)
 - `invalid_release_reason` (`release_session` with a `reason` other than `takeover`)
 - `release_unsupported` (`release_session` for a session this host cannot hand over; `errorData.detail` is `worker_runtime` - a worker isolate owns the runtime - or `no_session_file`)
 - `release_failed` (`release_session` whose hand-over failed after it began - the release entry could not be written or the teardown threw; `errorData.detail` is the error message, plus `interrupted`/`dropped` after an interrupt)
@@ -4201,7 +4221,7 @@ Replay: the same id with the same request answers the stored status with
 `replayed: true` and performs nothing. The same id with a different request is refused
 with `errorCode: "effect_id_conflict"` and `errorData: { effectId, reason, action }`
 (inputs keep `client_message_id_conflict`). The comparison covers only the semantic
-fields: `abort { awaitIdle, clearQueue, graceMs }`, `set_model { provider, modelId }`,
+fields: `abort { awaitIdle, clearQueue, graceMs }`, `set_model { provider, modelId, scope }`,
 `set_thinking_level { level, scope }`.
 
 Reopen seal: a reopened session (or a restarted host) has no live turn and no pending
@@ -4818,6 +4838,18 @@ Switch to a specific model. A provider/model pair the session's registry does no
 
 ```json
 {"type": "set_model", "provider": "anthropic", "modelId": "claude-sonnet-4-20250514"}
+```
+
+Without a scope, the switch also becomes the device's default model (written to the settings file), so new
+sessions open on it. `"scope": "session"` switches only this session: the switch is recorded in its history and
+restored on resume, extensions see the same `model_select`, and the default model and every other session are left
+as they were. The engine's method-class table classes the scoped form as `drive` and the unscoped form as
+`device_admin`. An engine that honours the scope advertises `session_model_scope` in
+`get_protocol_info.capabilities` (host and classic connection alike); an older engine ignores the field and also moves
+the default model, so send the scope only when that capability is listed.
+
+```json
+{"type": "set_model", "provider": "anthropic", "modelId": "claude-sonnet-4-20250514", "scope": "session"}
 ```
 
 An optional `effectId` records the switch as an effect: the response adds `effectId`,
@@ -6045,6 +6077,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 | `service_tier_changed` | Effective service tier or fast-mode state changed |
 | `session_closed` | Multi-session host: a routing handle ended. Optional `reason`: `client_close`, `idle_evicted`, `host_shutdown`, `replaced`, `handoff_parked`, `session_dir_removed`, `error` |
 | `session_parked` | Multi-session host: a retained session was released to disk at the idle window (`sessionId`, `sessionPath`). Replaces `session_closed` for that handle |
+| `session_released` | Headless engine: a quiet takeover let this connection go (`sessionId`, `reason: "taken_over"`); the session runs on for its new holder. Sent to that connection only |
 | `host_stalled` | Multi-session host: the event loop was blocked past `SENPI_RPC_LOOP_LAG_ERROR_MS`, with the drift and the session/tool blamed for it |
 | `host_memory_pressure` | Multi-session host: the memory footprint is above `SENPI_RPC_HOST_RSS_WARN_MB`, with RSS beside it and the live session count |
 | `subscription_limits` | A subscription account reported new limit windows: `{ provider, account, windows, reportedAt }`, the same shape as one `get_subscription_limits` account; every connection hears it once per report |

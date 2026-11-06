@@ -197,6 +197,11 @@ function attachSession(
 			reason: "durableSessionId or expectedHostInstance does not name this terminal's session",
 			action: "read list_sessions and get_protocol_info again, then attach with their ids",
 		});
+	if (command.takeover === true)
+		return refusal(id, "attach_session", "takeover_unsupported", {
+			reason: "only a headless engine with a takeover ledger takes sessions over",
+			action: "attach without takeover",
+		});
 	attachments.run(connection, () => {
 		attachments.attach(connection);
 		attachments.writer.enqueue(attachments.handle, {
