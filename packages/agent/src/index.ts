@@ -89,6 +89,15 @@ export {
 	shouldTerminateToolBatch,
 } from "./execution/tool-outcome-events.ts";
 export { createAdmissionLine } from "./durable/store-admission.ts";
+export type {
+	SessionHandle,
+	SessionHeader,
+	StoredEntry,
+	StoredSession,
+	SyncSessionHandle,
+} from "./durable/session-store.ts";
+export { openSessionStore, openSyncSessionStore, SessionStoreError } from "./durable/session-store.ts";
+export type { SyncCommit, SyncCommitStore } from "./durable/store.ts";
 export { createMemoryStoreMedium, openMemoryStore } from "./durable/store-memory.ts";
 export { createBatchCoordinator } from "./execution/coordinator.ts";
 export type { BatchExecutor, BatchPlan } from "./execution/coordinator-types.ts";
@@ -133,6 +142,8 @@ export {
 	encodeBase64,
 	FILE_CHANNEL,
 	FILE_CHANNEL_MAX_BYTES,
+	isLocalDeviceFiles,
+	LOCAL_DEVICE_FILES,
 	RUN_CHANNEL,
 	fileOutcomeOf,
 } from "./execution/device-files.ts";

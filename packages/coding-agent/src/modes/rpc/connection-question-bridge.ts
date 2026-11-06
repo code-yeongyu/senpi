@@ -13,7 +13,7 @@ type Options = Parameters<NonNullable<ExtensionUIContext["question"]>>[1];
 type Pending = {
 	frame: RpcQuestionUiRequest;
 	progress: (draft: RpcExtensionUIProgress) => "applied" | "question_already_resolved";
-	respond: (response: RpcExtensionUIResponse, beforeAnswer?: () => void) => boolean;
+	respond: (response: RpcExtensionUIResponse, beforeAnswer?: () => void) => boolean | "question_already_resolved";
 	cancel: () => void;
 };
 export const sessionQuestionBridges = new WeakMap<object, ConnectionQuestionBridge>();
@@ -66,8 +66,6 @@ export class ConnectionQuestionBridge {
 			let comment: string | undefined;
 			let timer: ReturnType<typeof setTimeout> | undefined;
 			let finished = false;
-			// A winner is admitted before the question settles: from that point the answer is decided, so a draft that
-			// lands during its admission must not overwrite the selections it settles with (senpi#5960).
 			let claimed = false;
 			const unanswered = () => unansweredQuestionIds(request.questions, answers);
 			const finish = (
@@ -126,6 +124,8 @@ export class ConnectionQuestionBridge {
 				frame,
 				cancel,
 				progress: (draft) => {
+					// A claimed question already has its winner: a draft that lands while that answer is being admitted
+					// must not overwrite the selections it settles with (senpi#5960).
 					if (claimed) return "question_already_resolved";
 					if (draft.answers !== undefined) answers = draft.answers;
 					if (draft.comment !== undefined) comment = draft.comment;
@@ -141,6 +141,8 @@ export class ConnectionQuestionBridge {
 					return "applied";
 				},
 				respond: (response, beforeAnswer) => {
+					// The first answer wins: one that arrives while the winner's `beforeAnswer` runs settles nothing.
+					if (claimed) return "question_already_resolved";
 					// The client's cancel is the user's; a closed connection or an abort is a lifecycle cancel.
 					if ("cancelled" in response) {
 						finish("cancelled", undefined, "user");
@@ -153,13 +155,15 @@ export class ConnectionQuestionBridge {
 					if (status === undefined) return false;
 					// Only a tool-result answer is reported here. An async or resumed answer is delivered as a
 					// user message, whose question-input release reports it; reporting both would count it twice.
-					claimed = true;
-					try {
-						if (request.waitForAnswer && opts?.deliver !== "user-message") beforeAnswer?.();
-					} catch (error) {
-						// A failed admission releases the claim, so the question stays answerable (senpi#5960).
-						claimed = false;
-						throw error;
+					if (request.waitForAnswer && opts?.deliver !== "user-message") {
+						claimed = true;
+						try {
+							beforeAnswer?.();
+						} finally {
+							claimed = false;
+						}
+						// A cancel or abort that ran inside `beforeAnswer` settled the question first.
+						if (finished) return "question_already_resolved";
 					}
 					finish(status, "rpc_connection");
 					return true;
@@ -177,7 +181,10 @@ export class ConnectionQuestionBridge {
 		beforeAnswer?: () => void,
 	): boolean | "question_incomplete" | "question_already_resolved" {
 		const pending = this.pending.get(response.id);
-		if (pending) return pending.respond(response, beforeAnswer) || "question_incomplete";
+		if (pending) {
+			const result = pending.respond(response, beforeAnswer);
+			return result === false ? "question_incomplete" : result;
+		}
 		return this.resolved.has(response.id) ? "question_already_resolved" : false;
 	}
 	/** Hands a draft to its pending question; reports whether one took it, or why none did (senpi#5761). */

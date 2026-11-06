@@ -31,6 +31,21 @@ const notAttached = (reason: "no_connection" | "not_attached") => z.strictObject
 
 export const attachmentWireResponse = z.union([
 	success("attach_session", z.strictObject({ sessionId: z.string(), attached: z.literal(true) })),
+	// A takeover on a headless engine (senpi#5732): the holder now, its generation, and how many clients were let go.
+	success(
+		"attach_session",
+		z.strictObject({
+			sessionId: z.string(),
+			attached: z.literal(true),
+			holder: z.string().min(1),
+			generation: z.number().int().positive(),
+			released: z.number().int().nonnegative(),
+		}),
+	),
+	refusal("attach_session", ["takeover_unsupported", "takeover_failed"]).extend({
+		errorData: z.strictObject({ reason: z.string(), action: z.string().optional() }),
+	}),
+	refusal("attach_session", ["takeover_holder_required"]).extend({ errorData: z.strictObject({}) }),
 	refusal("attach_session", ["unknown_session", "session_identity_mismatch"]),
 	refusal("attach_session", ["session_not_attached"]).extend({ errorData: notAttached("no_connection") }),
 	refusal("attach_session", ["session_busy_lifecycle"]).extend({ errorData: draining }),

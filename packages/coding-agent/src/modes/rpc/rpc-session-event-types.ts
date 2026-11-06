@@ -124,6 +124,18 @@ export type RpcSessionParkedEvent = {
 };
 
 /**
+ * Sent only to the connections a headless engine's quiet takeover let go (senpi#5732): this connection no longer holds
+ * the session, which goes on running for its new holder. Not the `session_released` transcript entry that
+ * `release_session` writes; that one is a session entry, this one is a connection record.
+ */
+export type RpcSessionReleasedEvent = {
+	type: "session_released";
+	/** Routing handle this connection held; another client holds it now. */
+	sessionId: string;
+	reason: "taken_over";
+};
+
+/**
  * Why a `session_closed` record was emitted, when the host names a reason.
  *
  * Optional on the wire and open to new members: a client that does not recognise a reason, or

@@ -1,6 +1,7 @@
 import { createHash, createPublicKey, verify } from "node:crypto";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { SecretInputRequests } from "../../src/modes/rpc/secret-input-requests.ts";
+import * as sealedKeys from "../../src/modes/rpc/secret-sealed.ts";
 import {
 	claimsOf,
 	closeAccountHosts,
@@ -19,6 +20,7 @@ beforeEach(() => {
 });
 afterEach(async () => {
 	await closeAccountHosts();
+	vi.restoreAllMocks();
 	vi.useRealTimers();
 });
 
@@ -52,6 +54,40 @@ const signed = (request: Line, b: unknown[]) =>
 it("a raiser-refused secret with no sealed holder keeps today's refusal", async () => {
 	const { requests } = await sealedHost();
 	await expect(requests.input("API key", undefined)).rejects.toMatchObject({ reason: "no_presenter" });
+});
+
+// senpi#6062: failed key generation must close the latch without offering a request.
+it("a request key failure settles unavailable without sending an unmatched holder frame", async () => {
+	const { host, secret, requests } = await sealedHost();
+	const phone = await holder(host, secret, "phone");
+	host.writer.setConnectionCapabilities("human", ["interactive_user", "mcp_form_presenter_v1", "secret_input_v1"]);
+	const key = Promise.withResolvers<sealedKeys.SecretRequestKey>();
+	vi.spyOn(sealedKeys, "generateSecretRequestKey").mockReturnValueOnce(key.promise);
+	let result: string | undefined | null = null;
+	void requests.input("API key", undefined).then((value) => {
+		result = value;
+	});
+	await host.human.recorded("extension_ui_request");
+	key.reject(new Error("injected key failure"));
+	await key.promise.catch(() => undefined);
+	expect(result).toBeUndefined();
+	expect(await host.human.recorded("secret_input_settled")).toMatchObject([{ outcome: "unavailable" }]);
+	expect(sealedTypes(phone.lines)).toEqual([]);
+});
+
+// senpi#6062: explicit key gate, with settlement before the asynchronous offer can leave.
+it("a request settled before its key resolves never offers or settles a holder request", async () => {
+	const { host, secret, requests } = await sealedHost();
+	const phone = await holder(host, secret, "phone");
+	const generated = await sealedKeys.generateSecretRequestKey();
+	const key = Promise.withResolvers<sealedKeys.SecretRequestKey>();
+	vi.spyOn(sealedKeys, "generateSecretRequestKey").mockReturnValueOnce(key.promise);
+	const result = requests.input("API key", undefined);
+	requests.cancelAll();
+	expect(await result).toBeUndefined();
+	key.resolve(generated);
+	await key.promise;
+	expect(sealedTypes(phone.lines)).toEqual([]);
 });
 
 it("a raiser-refused secret with one sealed holder proceeds on the sealed route, signed by the host key", async () => {
@@ -300,4 +336,35 @@ it("the host key signs only a binding that names this host instance and this key
 		tokens.hostJkt,
 	] as const;
 	expect(() => tokens.signRequest(otherKey)).toThrow("secret_request_foreign");
+});
+
+// senpi#5934 item 4: a source owns only its own detach, even after a replacement attaches.
+it("disposing an older sealed source leaves the replacement able to offer a request", async () => {
+	const { host, secret, requests } = await sealedHost();
+	const phone = await holder(host, secret, "phone");
+	const source = host.control.sealed;
+	if (!source) throw new Error("No sealed source");
+	const detachOlder = host.writer.attachSealedSecrets(new Proxy(source, {}));
+	const detachNewer = host.writer.attachSealedSecrets(source);
+	detachOlder();
+	const pending = requests.input("API key", undefined);
+	const [request] = await phone.recorded("mcp_presenter_secret_request");
+	expect(request).toMatchObject({ title: "API key", durableSessionId: "durable" });
+	detachNewer();
+	await expect(pending).resolves.toBeUndefined();
+});
+
+// senpi#5934 item 8: shutdown ends the request without waiting for its deadline.
+it("disposing the presenter control ends a pending sealed-only request at once", async () => {
+	const { host, secret, requests } = await sealedHost();
+	await holder(host, secret, "phone");
+	const state: { value: string | undefined | null } = { value: null };
+	host.writer.withConnection("human", () => {
+		void requests.input("API key", undefined).then((value) => {
+			state.value = value;
+		});
+	});
+	host.control.dispose();
+	await Promise.resolve();
+	expect(state.value).toBeUndefined();
 });
