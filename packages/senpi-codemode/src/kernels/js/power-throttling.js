@@ -2,9 +2,8 @@
 // (packages/coding-agent/src/core/windows-power-throttling.ts). Plain JS (with power-throttling.d.ts) because the worker
 // and process kernel entries import it before interpose.js captures the launchers. The policy is per process and not
 // inherited, and the launcher patch is per JavaScript realm, so each kernel realm installs its own. A no-op off Windows,
-// without bun:ffi, or with SENPI_KEEP_POWER_THROTTLING=1.
-import { ChildProcess } from "node:child_process";
-
+// without bun:ffi, or with SENPI_KEEP_POWER_THROTTLING=1; off Windows it imports nothing, so the interposition that
+// follows sees the same module graph as before.
 const PROCESS_POWER_THROTTLING_CLASS = 4;
 const PROCESS_SET_INFORMATION = 0x0200;
 
@@ -62,7 +61,7 @@ export function installKernelPowerThrottlingOptOut(options = {}) {
 	const kernel = (options.load ?? loadKernel32PowerThrottling)(platform);
 	if (kernel === undefined) return { status: "skipped", reason: "no-ffi" };
 	const self = disableExecutionSpeedThrottling(kernel, options.pid ?? process.pid);
-	const proto = options.childProcessPrototype ?? ChildProcess.prototype;
+	const proto = options.childProcessPrototype ?? process.getBuiltinModule("node:child_process").ChildProcess.prototype;
 	const bun = options.bun ?? globalThis.Bun;
 	const optOut = (pid) => {
 		if (typeof pid === "number" && pid > 0) disableExecutionSpeedThrottling(kernel, pid);

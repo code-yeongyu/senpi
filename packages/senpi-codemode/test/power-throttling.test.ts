@@ -1,10 +1,28 @@
 // senpi#6125: the eval kernel realms' EcoQoS opt-out, against a fake kernel32 (any platform).
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
-import {
-	disableExecutionSpeedThrottling,
-	installKernelPowerThrottlingOptOut,
-	type KernelPowerThrottling,
-} from "../src/kernels/js/power-throttling.js";
+interface KernelPowerThrottling {
+	OpenProcess(access: number, inherit: number, pid: number): unknown;
+	SetProcessInformation(handle: unknown, infoClass: number, info: Uint8Array, length: number): number;
+	CloseHandle(handle: unknown): number;
+}
+interface PowerThrottlingModule {
+	disableExecutionSpeedThrottling(kernel: KernelPowerThrottling, pid: number): boolean;
+	installKernelPowerThrottlingOptOut(options: object): {
+		status: string;
+		reason?: string;
+		self?: boolean;
+		restore?(): void;
+	};
+}
+
+// The kernel entries import the plain-JS module (typed by power-throttling.d.ts); .ts files may not import .js, so it is
+// loaded by URL.
+const moduleUrl = pathToFileURL(join(process.cwd(), "src", "kernels", "js", "power-throttling.js")).href;
+const { disableExecutionSpeedThrottling, installKernelPowerThrottlingOptOut } = (await import(
+	moduleUrl
+)) as PowerThrottlingModule;
 
 function fakeKernel(options: { throws?: boolean } = {}) {
 	const set: { pid: number; info: number[] }[] = [];
@@ -70,7 +88,7 @@ describe("installKernelPowerThrottlingOptOut", () => {
 		expect(set.map((entry) => entry.pid)).toEqual([7, child.pid, bunChild.pid]);
 		expect(set[0]?.info).toEqual([1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0]);
 		expect(closed).toEqual([7, child.pid, bunChild.pid]);
-		if (install.status === "installed") install.restore();
+		if (install.status === "installed") install.restore?.();
 		launchers.childProcessPrototype.spawn.call({});
 		expect(set).toHaveLength(3);
 	});
