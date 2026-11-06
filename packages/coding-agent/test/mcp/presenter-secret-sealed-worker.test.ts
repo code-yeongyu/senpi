@@ -352,6 +352,8 @@ it("canary: a worker-runtime sealed answer leaks nothing to the host lanes, the 
 	expect(leaked(p.phone.lines.join("\n"), sealed, [stepup]) ?? "clean").toBe("clean");
 	expect(leaked(JSON.stringify([w.answers, w.results]), [canary], [stepup]) ?? "clean").toBe("clean");
 });
+
+// senpi#5934 item 7: worker death must not leave a holder displaying a live prompt.
 it("a worker that exits with a sealed request open tells its holders the request ended", async () => {
 	const w = await workerHost();
 	const p = await pending(w);

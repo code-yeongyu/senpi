@@ -572,11 +572,12 @@ it("a settled prompt takes no more host token records when the token is re-minte
 	expect(records(phone.lines, "mcp_presenter_secret_token")).toEqual([]);
 });
 
+// senpi#5934 item 6: the signed deadline uses whole, safe integer milliseconds.
 it("a fractional timeout still offers the sealed request with an integer deadline", async () => {
 	const setup = await sealedHost();
 	const phone = await holder(setup.host, setup.secret, "phone");
 	const pending = setup.requests.input("API key", undefined, { timeout: 60_000.5 });
-	const request = records(phone.lines, "mcp_presenter_secret_request").at(-1);
+	const [request] = await phone.recorded("mcp_presenter_secret_request");
 	if (!request) throw new Error("No sealed request");
 	expect(Number.isSafeInteger(request.deadlineAtMs)).toBe(true);
 	setup.requests.dispose();

@@ -55,12 +55,15 @@ export class SecretInputPresentations {
 		this.recheck();
 	}
 	/** The presenter control's sealed holders (D11 secret phase); `undefined` detaches them. */
-	useSealed(source: SealedSecretSource | undefined): void {
+	useSealed(source: SealedSecretSource | undefined): () => void {
 		this.unsubscribeSealed?.();
 		this.sealedSource = source;
 		this.unsubscribeSealed = source?.onChange(() => this.recheck());
 		// A request that only the old source's holders could answer ends now, not at its deadline (gate L3).
 		this.recheck();
+		return () => {
+			if (this.sealedSource === source) this.useSealed(undefined);
+		};
 	}
 	/** `sealed`: this route may add sealed holders (an in-process session, or a worker isolate's host half; D11 5.5). */
 	route(session: string, sealed = false): SecretInputRoute {
