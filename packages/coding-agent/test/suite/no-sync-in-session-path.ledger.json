@@ -207,20 +207,6 @@
 			"note": "DELIBERATE transcript path: one JSONL entry appended per persisted entry (KB-scale), or a full flush of the pending entries on the first assistant message (session-scale)"
 		},
 		{
-			"file": "src/core/session-manager.ts",
-			"api": "appendFileSync",
-			"symbol": "forkFrom",
-			"count": 1,
-			"note": "DELIBERATE transcript path: forked transcript written once (session-scale)"
-		},
-		{
-			"file": "src/core/session-manager.ts",
-			"api": "writeFileSync",
-			"symbol": "forkFrom",
-			"count": 1,
-			"note": "DELIBERATE transcript path: forked transcript written once (session-scale)"
-		},
-		{
 			"file": "src/core/session-resident-store.ts",
 			"api": "readFileSync",
 			"symbol": "_readBlob",

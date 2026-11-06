@@ -57,30 +57,41 @@ export function backupTornBytes(path: string, bytes: Buffer, cause: SessionRecov
  * that failed part-way (ENOSPC) can leave a partial line, and the next append would be glued onto it, losing both
  * entries on reload. A file that already ends in a newline is left untouched and returns undefined; a refused copy
  * throws before anything is cut.
+ *
+ * A failed header catch-up instead supplies its exact durable boundary (`knownCompleteBytes`): every byte past it
+ * belongs to entries the writer still holds and writes again before its next append, whole lines included, so they
+ * are cut with no backup and no recovery to report.
  */
-export function truncateToLastCompleteLine(path: string, cause: SessionRecoveryCause): SessionRecovery | undefined {
+export function truncateToLastCompleteLine(
+	path: string,
+	cause: SessionRecoveryCause,
+	knownCompleteBytes?: number,
+): SessionRecovery | undefined {
 	const fd = openSync(path, "r+");
 	try {
 		const size = fstatSync(fd).size;
-		const chunk = Buffer.alloc(Math.min(SCAN_CHUNK_BYTES, size));
+		let completeLength = knownCompleteBytes;
+		let recovery: SessionRecovery | undefined;
+		const chunk = Buffer.alloc(completeLength === undefined ? Math.min(SCAN_CHUNK_BYTES, size) : 0);
 		const tail: Buffer[] = [];
-		let end = size;
+		let end = completeLength === undefined ? size : 0;
 		while (end > 0) {
 			const start = Math.max(0, end - chunk.length);
 			const read = readSync(fd, chunk, 0, end - start, start);
 			const newline = chunk.subarray(0, read).lastIndexOf(NEWLINE);
 			if (newline >= 0) {
-				const completeLength = start + newline + 1;
+				completeLength = start + newline + 1;
 				if (completeLength >= size) return undefined;
 				tail.unshift(Buffer.from(chunk.subarray(newline + 1, read)));
-				const recovery = backupTornBytes(path, Buffer.concat(tail), cause);
-				ftruncateSync(fd, completeLength);
-				return recovery;
+				recovery = backupTornBytes(path, Buffer.concat(tail), cause);
+				break;
 			}
 			tail.unshift(Buffer.from(chunk.subarray(0, read)));
 			end = start;
 		}
-		return undefined;
+		if (completeLength === undefined || completeLength >= size) return undefined;
+		ftruncateSync(fd, completeLength);
+		return recovery;
 	} finally {
 		closeSync(fd);
 	}
