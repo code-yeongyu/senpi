@@ -1,8 +1,8 @@
 import { bindPrivateMcpForms, type McpFormBinding } from "../../core/mcp-form-types.ts";
+import { serializeJsonLine } from "./jsonl.ts";
 import { McpPresenterAuthority, type McpPresenterConnection } from "./mcp-presenter-authority.ts";
 import { type PresenterHostSurface, presenterContextReply } from "./mcp-presenter-host-surface.ts";
 import type { SealedSecretSource } from "./secret-sealed-holders.ts";
-import { serializeJsonLine } from "./jsonl.ts";
 import { SessionEventWriterConnections } from "./session-event-writer-connections.ts";
 
 /** The MCP form presenter surface and its private-record handler (MCP forms and sealed secret answers). */
@@ -35,10 +35,41 @@ export abstract class SessionEventWriterPresenters
 		if (this.presenterControlEndpoint === path) this.presenterControlEndpoint = undefined;
 	}
 
+	/** The listening account-enrolling control endpoint, if any (`mcp_presenter_control_info`, senpi#4249 R-1b d2). */
+	get mcpPresenterControlEndpoint(): string | undefined {
+		return this.presenterControlEndpoint;
+	}
+
+	/**
+	 * Writes the private reply to `request` straight to the current connection: never an event queue, snapshot,
+	 * mirror or replay. A failed write detaches that connection's presenter.
+	 */
+	writeMcpFormReply(requestId: string | undefined, reply: object): void {
+		const id = this.currentConnection();
+		const connection = id === undefined ? undefined : this.fanout.get(id)?.connection;
+		if (!connection) return;
+		try {
+			connection.writeRaw(
+				serializeJsonLine({
+					type: "mcp_form_reply",
+					...(requestId === undefined ? {} : { id: requestId }),
+					...reply,
+				}),
+			);
+		} catch {
+			const sender = id === undefined ? undefined : this.presenterConnections.get(id);
+			if (sender) this.presenterAuthority?.detach(sender);
+		}
+	}
+
 	attachSealedSecrets(source: SealedSecretSource): () => void {
 		return this.secretPresentations.useSealed(source);
 	}
 
+	/**
+	 * The `mcp_presenter_context` reply. `controlEndpoint` is added only on an explicit `discover: true` and only
+	 * when an account-enrolling control is advertised; otherwise the reply keeps the shape strict clients decode.
+	 */
 	protected mcpPresenterContextReply(sender: McpPresenterConnection | undefined, request: object): object {
 		return presenterContextReply(this.presenterAuthority, sender, request, this.presenterControlEndpoint);
 	}
@@ -83,19 +114,7 @@ export abstract class SessionEventWriterPresenters
 				: sender && this.presenterAuthority
 					? this.presenterAuthority.receive(sender, value)
 					: { error: "presenter_not_authorized" };
-		if (connection) {
-			try {
-				connection.writeRaw(
-					serializeJsonLine({
-						type: "mcp_form_reply",
-						...("id" in value && typeof value.id === "string" ? { id: value.id } : {}),
-						...reply,
-					}),
-				);
-			} catch {
-				if (sender) this.presenterAuthority?.detach(sender);
-			}
-		}
+		this.writeMcpFormReply("id" in value && typeof value.id === "string" ? value.id : undefined, reply);
 		return true;
 	}
 
