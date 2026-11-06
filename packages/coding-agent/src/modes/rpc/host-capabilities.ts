@@ -43,7 +43,11 @@ import {
 } from "./custom-capability.ts";
 import { EFFECT_LEDGER_CAPABILITY } from "./effect-record.ts";
 import { STEER_WHEN_IDLE_CAPABILITY, USER_ACTIVITY_CAPABILITY } from "./rpc-types.ts";
-import { MOVE_SESSION_CAPABILITY, MOVE_SESSION_REVOKE_CAPABILITY } from "./session-move-wire.ts";
+import {
+	MOVE_SESSION_CAPABILITY,
+	MOVE_SESSION_COPY_CAPABILITY,
+	MOVE_SESSION_REVOKE_CAPABILITY,
+} from "./session-move-wire.ts";
 
 /** `unload_session` and `session_parked.reason` (senpi#3225). */
 export const UNLOAD_SESSION_CAPABILITY = "unload_session";
@@ -115,6 +119,7 @@ export function multiSessionHostCapabilities(options: {
 			// Only a multi-session host owns a move ledger and the hosted-session list export checks against.
 			MOVE_SESSION_CAPABILITY,
 			MOVE_SESSION_REVOKE_CAPABILITY,
+			MOVE_SESSION_COPY_CAPABILITY,
 			// A host session asks the client that offers it to continue the session elsewhere (`host_request`).
 			SESSION_RELOCATION_CAPABILITY,
 			SESSION_CONTEXT_CAPABILITY,

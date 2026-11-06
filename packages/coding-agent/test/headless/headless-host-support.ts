@@ -8,7 +8,8 @@ import {
 	createAgentSessionServices,
 } from "../../src/core/agent-session-runtime.ts";
 import type { HostIdleOverrides } from "../../src/modes/rpc/host-idle-policy.ts";
-import { headlessHostOptions } from "../../src/modes/headless/headless-host.ts";
+import type { AgentSession } from "../../src/core/agent-session.ts";
+import { type HeadlessHostOptions, headlessHostOptions } from "../../src/modes/headless/headless-host.ts";
 import { createHostCore, type MultiSessionHostOptions } from "../../src/modes/rpc/multi-session-host.ts";
 import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
 
@@ -35,6 +36,8 @@ export interface HostRig {
 	readonly core: ReturnType<typeof createHostCore>;
 	readonly writer: SessionEventWriter;
 	readonly turnStarted: Promise<void>;
+	/** Every session runtime this host created, in creation order. */
+	readonly sessions: readonly AgentSession[];
 	newSessionFile(): Promise<string>;
 	connect(connection: string): void;
 	/** Every record delivered to `connection`, in order. */
@@ -53,7 +56,7 @@ export const OWNED_TURN_ENTRY = "owned-turn-finished";
 export async function startHostRig(
 	kind: HostKind,
 	idle: HostIdleOverrides = {},
-	host: Pick<MultiSessionHostOptions, "sessionTakeover"> = {},
+	host: Pick<MultiSessionHostOptions, "sessionTakeover"> & Pick<HeadlessHostOptions, "hands"> = {},
 ): Promise<HostRig> {
 	const root = await mkdtemp(join(tmpdir(), "headless-host-"));
 	const records: unknown[] = [];
@@ -61,6 +64,7 @@ export async function startHostRig(
 	const writer = new SessionEventWriter((line) => records.push(JSON.parse(line)));
 	const started = Promise.withResolvers<void>();
 	const release = Promise.withResolvers<void>();
+	const sessions: AgentSession[] = [];
 	const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionManager, sessionStartEvent }) => {
 		const services = await createAgentSessionServices({
 			cwd,
@@ -82,14 +86,14 @@ export async function startHostRig(
 				],
 			},
 		});
-		return {
-			...(await createAgentSessionFromServices({ services, sessionManager, sessionStartEvent })),
-			services,
-			diagnostics: services.diagnostics,
-		};
+		const created = await createAgentSessionFromServices({ services, sessionManager, sessionStartEvent });
+		sessions.push(created.session);
+		return { ...created, services, diagnostics: services.diagnostics };
 	};
-	const base: MultiSessionHostOptions = { ...host, agentDir: root, cwd: root, createRuntime, listen: "stdio://" };
-	const core = createHostCore(kind === "headless" ? headlessHostOptions(base) : base, writer, [], {
+	const { hands, ...shared } = host;
+	const base: MultiSessionHostOptions = { ...shared, agentDir: root, cwd: root, createRuntime, listen: "stdio://" };
+	const headless: Pick<HeadlessHostOptions, "hands"> = hands === undefined ? {} : { hands };
+	const core = createHostCore(kind === "headless" ? headlessHostOptions({ ...base, ...headless }) : base, writer, [], {
 		closeGraceMs: 100,
 		...idle,
 	});
@@ -111,6 +115,7 @@ export async function startHostRig(
 		root,
 		core,
 		writer,
+		sessions,
 		turnStarted: started.promise,
 		newSessionFile: async () => {
 			const file = join(root, `${randomUUID()}.jsonl`);

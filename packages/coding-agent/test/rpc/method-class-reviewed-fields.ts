@@ -10,6 +10,7 @@ export const REVIEWED_FIELDS = {
 	get_protocol_info: { fields: ["admissionId", "auth", "id", "observe", "type"] },
 	get_subscription_limits: { fields: ["admissionId", "id", "observe", "type"] },
 	list_sessions: { fields: ["admissionId", "id", "include_workers", "observe", "type"] },
+	list_hands: { fields: ["admissionId", "id", "sessionId", "type"] },
 	get_state: { fields: ["admissionId", "id", "sessionId", "type"] },
 	get_snapshot: { fields: ["admissionId", "id", "maxBytes", "observe", "sessionId", "tail", "type"] },
 	get_entries: { fields: ["admissionId", "before", "id", "limit", "maxBytes", "sessionId", "since", "tail", "type"] },
