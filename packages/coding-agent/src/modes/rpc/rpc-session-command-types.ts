@@ -338,7 +338,7 @@ export type RpcSessionCommand =
 	| { id?: string; type: "login_api_key"; provider: string; key: string; region?: string }
 	| { id?: string; type: "logout"; provider: string; slotId?: string }
 	// Checks a key with the provider's model list without storing it (desktop #2510).
-	| { id?: string; type: "verify_api_key"; provider: string; key: string }
+	| { id?: string; type: "verify_api_key"; provider: string; key: string; region?: string }
 
 	// Provider accounts (task 13) are additive. The desktop consumer contract
 	// lives in ../omo-desktop-app/packages/contracts/src/rpc.ts and is updated separately.

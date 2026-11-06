@@ -6763,6 +6763,14 @@ Response `data` is `{ok: true}` or `{ok: false, reason, status?}`:
 - `unsupported`: the key cannot be checked this way. Either the provider's API has no probe, the list is not where it was expected (another 4xx or 3xx), or the list answers any key (OpenRouter, keyless local servers). In that last case a 200 proves nothing, so the host also asks with a made-up key and reports `ok` only when that one is refused.
 - `unknown-provider`: no model is configured for the provider.
 
+A provider whose API-key login asks a region (Kimi Code: `"mainland-cn"` or `"global"`) takes the same `region` as `login_api_key`, and the key is checked on the host for that region — the same mapping `/login` uses — instead of the catalog host. Without a region the check probes the catalog host, as before:
+
+```json
+{"type": "verify_api_key", "provider": "kimi-coding", "key": "<key>", "region": "global"}
+```
+
+A region the provider does not offer fails the command and checks nothing.
+
 #### login_api_key
 
 Stores an API key for a provider. The response comes after the model registry has seen the key, so a client that re-reads `get_auth_providers` on it gets the new state.
