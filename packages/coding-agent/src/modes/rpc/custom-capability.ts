@@ -65,6 +65,12 @@ export const RETAIN_ON_DISCONNECT_CAPABILITY = "retain_on_disconnect";
 export const DELEGATED_CONNECTION_CAPABILITY = "delegated_connection_v1";
 
 /**
+ * Client opt-in (D11 S3-5): the connection renders the value-free `secret_input_notice` and `grant_select_notice` of a
+ * raiser-only dialog another connection presents, and their `*_notice_settled` records. It never answers them.
+ */
+export const RAISER_NOTICE_CAPABILITY = "raiser_notice_v1";
+
+/**
  * Advertised by a multi-session host that answers `detach_connection`: it drops every attachment the
  * asking connection holds and replies only once that is done, so a short-lived client can return knowing
  * no other connection will still see it attached (senpi#3238).

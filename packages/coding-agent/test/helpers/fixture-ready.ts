@@ -50,8 +50,8 @@ export function outputTail(output: string): string {
 	return trimmed.trim() === "" ? "<no fixture output>" : trimmed;
 }
 
-function failure(message: string, wait: FixtureWait): Error {
-	return new Error(`${message}\n[fixture output]\n${outputTail(wait.output())}`);
+function failure(message: string, wait: FixtureWait, cause?: unknown): Error {
+	return new Error(`${message}\n[fixture output]\n${outputTail(wait.output())}`, { cause });
 }
 
 /**
@@ -78,11 +78,16 @@ export function waitForFixtureFile(path: string, wait: FixtureWait): Promise<voi
 			() => settle(failure(`${path} was not written within ${String(wait.timeoutMs)}ms`, wait)),
 			wait.timeoutMs,
 		);
-		void wait.gone?.then(() => {
-			// The exit can land before the write it preceded is visible; one last check decides.
-			if (existsSync(path)) return settle();
-			settle(failure(`${path} was never written: the fixture exited first`, wait));
-		});
+		void wait.gone?.then(
+			() => {
+				// The exit can land before the write it preceded is visible; one last check decides.
+				if (existsSync(path)) return settle();
+				settle(failure(`${path} was never written: the fixture exited first`, wait));
+			},
+			// An exit promise that rejects (`once(child, "exit")` on a spawn error) means the fixture
+			// can never write `path`; settle with that cause instead of leaving the rejection unhandled.
+			(error: unknown) => settle(failure(`${path} was never written: the fixture failed`, wait, error)),
+		);
 		check();
 	});
 }

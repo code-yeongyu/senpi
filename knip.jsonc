@@ -979,8 +979,8 @@
       "packages/coding-agent/src/core/session-summary-index.ts": ["SESSION_SUMMARY_INDEX_MAX_BYTES"],
       // pre-existing at origin main aceb1cc1d9: unused exports modelThinkingKey, deriveSessionModelThinkingLevels
       "packages/coding-agent/src/core/session-thinking-memory.ts": ["deriveSessionModelThinkingLevels", "modelThinkingKey"],
-      // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_PROVIDER_STREAM_RETRY_TIMEOUT_MS, resolveSettingsSource
-      "packages/coding-agent/src/core/settings-manager.ts": ["DEFAULT_PROVIDER_STREAM_RETRY_TIMEOUT_MS", "resolveSettingsSource"],
+      // pre-existing at origin main aceb1cc1d9: unused export DEFAULT_PROVIDER_STREAM_RETRY_TIMEOUT_MS (resolveSettingsSource is used by webfetch's signed-in-hosts.ts since #5962)
+      "packages/coding-agent/src/core/settings-manager.ts": ["DEFAULT_PROVIDER_STREAM_RETRY_TIMEOUT_MS"],
       // pre-existing at origin main aceb1cc1d9: unused exports shannonBitsPerChar, readsAsWords, looksGenerated, joinedLooksGenerated
       "packages/coding-agent/src/core/share/share-entropy.ts": ["joinedLooksGenerated", "looksGenerated", "readsAsWords", "shannonBitsPerChar"],
       // pre-existing at origin main aceb1cc1d9: unused exports prepareShare, describeShare
@@ -1113,8 +1113,6 @@
       "packages/coding-agent/src/modes/rpc/host-handover-wire.ts": ["handoverWire"],
       // pre-existing at origin main aceb1cc1d9: unused exports RPC_SESSION_IDLE_EVICTION_MS_ENV, RPC_HOST_EMPTY_EXIT_MS_ENV, DEFAULT_SESSION_IDLE_EVICTION_MS, DEFAULT_HOST_EMPTY_EXIT_MS
       "packages/coding-agent/src/modes/rpc/host-idle-policy.ts": ["DEFAULT_HOST_EMPTY_EXIT_MS", "DEFAULT_SESSION_IDLE_EVICTION_MS", "RPC_HOST_EMPTY_EXIT_MS_ENV", "RPC_SESSION_IDLE_EVICTION_MS_ENV"],
-      // pre-existing at origin main aceb1cc1d9: unused exports OWNER_EXIT_GRACE_MS
-      "packages/coding-agent/src/modes/rpc/host-lifecycle-activity.ts": ["OWNER_EXIT_GRACE_MS"],
       // pre-existing at origin main aceb1cc1d9: parseColdStart: declared here, reported because the host-lifecycle.ts entry re-exports it and nothing imports it (newly export-checked; the file stays checked)
       "packages/coding-agent/src/modes/rpc/host-lifecycle-policy.ts": ["parseColdStart"],
       // pre-existing at origin main aceb1cc1d9: unused exports CHILD_STOP_TIMEOUT_MS, childExited, waitForChildExit

@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
+import { bunReleaseExternalFlags } from "./bun-release-externals.mjs";
 
 const repo = resolve(import.meta.dir, "..");
 const cwd = join(repo, "packages/coding-agent");
@@ -22,7 +23,7 @@ const normalized = (path: string): string => path.replaceAll("\\", "/");
 beforeAll(() => {
 	// Given: the same three entries and optimization flags as the release build, without --compile.
 	const result = spawnSync(process.execPath, [
-		"build", "--target=bun", "--splitting", "--minify", "--keep-names", `--metafile=${join(scratch, "metafile.json")}`,
+		"build", "--target=bun", "--splitting", "--minify", "--keep-names", ...bunReleaseExternalFlags, `--metafile=${join(scratch, "metafile.json")}`,
 		"./dist/bun/cli.js", "./src/modes/rpc/session-worker.ts", "./src/utils/image-resize-worker.ts",
 		"--outdir", scratch,
 	], { cwd, encoding: "utf8", timeout: 120_000 });
