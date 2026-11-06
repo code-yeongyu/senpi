@@ -1,3 +1,21 @@
+## 2026-10-30 - SIWC remote compaction never falls through to the compact endpoint (senpi#5101)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote.ts`: retains the Responses v2 stream route for SIWC, then returns to local summarization if v2 is disabled or produces no checkpoint; timeout metadata names that same next step.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote.ts`: SIWC plan usage supports streaming POST `/v1/responses`, not `/v1/responses/compact` or a WebSocket fallback.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote.ts`: the builtin remote-compaction runner owns the transport fallback chain.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote.ts` v2 timeout next-step selection and fallback boundary.
+
 ## 2026-11-02 - Speculative warm summaries are kept across turns (senpi#5481, PR #5504)
 
 ### What changed

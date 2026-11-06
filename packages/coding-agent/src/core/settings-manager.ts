@@ -262,6 +262,8 @@ export interface Settings {
 	engineTurns?: { maxPerUserInput?: number; maxToolFreePerMinute?: number; maxPerResumeWindow?: number };
 	turn_inactivity_ms?: number; // default: 3_600_000, min 60_000, 0 disables; see core/turn-deadline.ts
 	turn_max_runtime_ms?: number; // default: 21_600_000, 0 disables
+	/** A thread chain (A→B→A…) is refused past `chainCountLimit` hops; unset (the default) means unlimited. No cost limit. */
+	threads?: { chainCountLimit?: number };
 	todo?: TodoSettings;
 	recommendedModels?: string[]; // Preferred default model ids, in priority order
 	favoriteModels?: string[]; // Model patterns for Ctrl+P cycling (same format as --models CLI flag)
@@ -1163,6 +1165,14 @@ export class SettingsManager {
 
 	getTurnMaxRuntimeMs(): number | undefined {
 		return this.settings.turn_max_runtime_ms;
+	}
+
+	/** The user's thread chain count limit (`threads.chainCountLimit`, K8): a non-negative integer, else unlimited. */
+	getThreadChainCountLimit(): number | undefined {
+		const configured = this.settings.threads?.chainCountLimit;
+		return typeof configured === "number" && Number.isSafeInteger(configured) && configured >= 0
+			? configured
+			: undefined;
 	}
 
 	getTodoFirstTurnPlan(): TodoFirstTurnPlan {
