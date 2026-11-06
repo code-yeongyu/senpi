@@ -82,8 +82,8 @@
       ".agents/skills/senpi-qa/scripts/lib/anthropic-subscription-spike-support.mjs": ["LIVE_GATE", "redactSecrets", "stripCredentialEnvironment"],
       // pre-existing at origin main aceb1cc1d9: unused export toolUseSseBody (run-by-path entry, newly export-checked)
       ".agents/skills/senpi-qa/scripts/lib/anthropic-subscription-toolless-compact-server.mjs": ["toolUseSseBody"],
-      // pre-existing at origin main aceb1cc1d9: unused exports APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_SESSION_DIR, realAgentDir, scrubSandboxEnv, freePort, inspectProcess, OwnedSignalRefusedError, dateStamp, readJsonl (run-by-path entry, newly export-checked)
-      ".agents/skills/senpi-qa/scripts/lib/common.mjs": ["APP_NAME", "CONFIG_DIR_NAME", "ENV_AGENT_DIR", "ENV_SESSION_DIR", "OwnedSignalRefusedError", "dateStamp", "freePort", "inspectProcess", "readJsonl", "realAgentDir", "scrubSandboxEnv"],
+      // pre-existing at origin main aceb1cc1d9: unused exports APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_SESSION_DIR, realAgentDir, freePort, inspectProcess, OwnedSignalRefusedError, dateStamp, readJsonl (run-by-path entry, newly export-checked)
+      ".agents/skills/senpi-qa/scripts/lib/common.mjs": ["APP_NAME", "CONFIG_DIR_NAME", "ENV_AGENT_DIR", "ENV_SESSION_DIR", "OwnedSignalRefusedError", "dateStamp", "freePort", "inspectProcess", "readJsonl", "realAgentDir"],
       // pre-existing at origin main aceb1cc1d9: unused export runTextToolLeakCommand (run-by-path entry, newly export-checked)
       ".agents/skills/senpi-qa/scripts/lib/mock-loop-text-leak.mjs": ["runTextToolLeakCommand"],
       // pre-existing at origin main aceb1cc1d9: unused export inspectProcess (run-by-path entry, newly export-checked)
