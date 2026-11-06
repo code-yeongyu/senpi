@@ -74,3 +74,23 @@ it("reports a carrier socket error once per connection, then destroys the socket
 	expect(reported).toEqual(["carrier socket error ECONNRESET: read ECONNRESET"]);
 	expect(local.destroyed).toBe(true);
 });
+
+// senpi#5993 review LOW: `detach` must keep the socket's error handler. The hand destroys the socket right after
+// detaching it, but `attachSocketCarrier` is exported for clients, and a connection that is detached while still open
+// would otherwise throw its next error as unhandled instead of destroying the socket.
+it("keeps destroying a detached connection's socket on a later error, and reports nothing", async () => {
+	const { local } = await socketPair();
+	const reported: string[] = [];
+	const detach = attachSocketCarrier(
+		local,
+		{ attached: () => {}, message: () => {}, writable: () => {}, detached: () => {} },
+		(line) => reported.push(line),
+	);
+
+	detach();
+	expect(local.destroyed).toBe(false);
+	expect(() => local.emit("error", Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }))).not.toThrow();
+
+	expect(local.destroyed).toBe(true);
+	expect(reported).toEqual([]);
+});
