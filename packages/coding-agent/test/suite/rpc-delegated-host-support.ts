@@ -109,6 +109,7 @@ export async function startHost(options: { readonly workers?: boolean; readonly 
 	const endpoint = new RpcPublicEndpoint(agentDir, socketPath);
 	await endpoint.publish();
 	const sockets = new Set<Socket>();
+	const releases = new Set<() => void>();
 	const sinks = new Map<string, ReturnType<typeof socketSink>>();
 	const ending = new Map<string, () => void>();
 	writer.endExhaustedConnections((id) => {
@@ -132,7 +133,14 @@ export async function startHost(options: { readonly workers?: boolean; readonly 
 			sockets.delete(raw);
 			sinks.delete(id);
 			writer.unregisterConnection(id);
-			void core.router.releaseConnection(id).catch(() => {});
+			// What `runSocketHost` does for a dropped socket: release every attachment the connection still holds.
+			void core.router
+				.releaseConnection(id)
+				.catch(() => [])
+				.then(() => {
+					for (const released of releases) released();
+					releases.clear();
+				});
 		});
 		attachJsonlLineReader(stream, (line) => void writer.withConnection(id, () => core.handle(line)));
 	});
@@ -148,6 +156,12 @@ export async function startHost(options: { readonly workers?: boolean; readonly 
 			const { socket } = await connectAuthenticatedRpcSocket(socketPath, undefined, { keyRoot: agentDir });
 			// The authenticated connect resolves only after the server accepted, and peers are created one at a time.
 			return new Peer(socket, `p${++peers}`, accepted);
+		},
+		/** Ends `peer`'s socket and resolves once the host has released what that connection held. */
+		async drop(peer: Peer): Promise<void> {
+			const released = new Promise<void>((resolve) => releases.add(resolve));
+			peer.socket.destroy();
+			await released;
 		},
 		async keyless(): Promise<Peer> {
 			const socket = connect(socketPath);
