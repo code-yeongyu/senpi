@@ -6034,6 +6034,17 @@
 			],
 			"reason": "senpi#6095 (Fixes #6094): the JavaScript kernel defaults to process isolation when the host's executable is bun (Bun 1.4.4 Worker threads corrupt the JSC heap and kill the session with SIGBUS/SIGTRAP; upstream oven-sh/bun#41857, #43663 open). Reviewed additions only: ten new contract titles (feature-settings.test.ts: the host-dependent default table, explicit-setting precedence, currentJsIsolationHost on bun/.exe/node/compiled paths and the running host; js-process-kernel.test.ts: a bun host with no setting survives a SIGBUS of its kernel child) and the new module packages/senpi-codemode/src/kernels/js/runtime-name.ts (runtimeNameOf moved out of process-worker.ts so feature-settings.ts does not import the kernel graph) in the extension and firstKernel import maps. No prompt cell, schema, helper census or invariant moves; the frozen baseline is unchanged.",
 			"changes": []
+		},
+		"senpi#6131": {
+			"additions": [
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/power-throttling-startup.js",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/power-throttling.js",
+				"legacyContracts/test/power-throttling.test.ts/installKernelPowerThrottlingOptOut loads nothing off Windows or with SENPI_KEEP_POWER_THROTTLING=1",
+				"legacyContracts/test/power-throttling.test.ts/installKernelPowerThrottlingOptOut opts the kernel process and every child of both launchers out with ControlMask=EXECUTION_SPEED, StateMask=0",
+				"legacyContracts/test/power-throttling.test.ts/installKernelPowerThrottlingOptOut never turns a launch into an exception when kernel32 throws"
+			],
+			"reason": "senpi#6131 (Fixes #6125): the JavaScript kernel entries (worker-entry.js, inline-worker-entry.js, process-entry.js) import power-throttling-startup.js first, which opts the kernel realm's children out of Windows EcoQoS throttling. Reviewed additions only: the two new modules in the firstKernel import graph (off Windows they import nothing and patch nothing) and the three contract titles of test/power-throttling.test.ts.",
+			"changes": []
 		}
 	}
 }
