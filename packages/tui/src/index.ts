@@ -163,6 +163,7 @@ export {
 	ProcessTerminal,
 	type ProcessTerminalOptions,
 	type Terminal,
+	writeTerminalSequence,
 } from "./terminal.ts";
 // Terminal colors
 export {
