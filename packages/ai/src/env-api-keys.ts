@@ -107,6 +107,7 @@ const API_KEY_ENV_VARS: Readonly<Record<string, string>> = {
 	opencode: "OPENCODE_API_KEY",
 	"opencode-go": "OPENCODE_API_KEY",
 	"kimi-coding": "KIMI_API_KEY",
+	commandcode: "CMD_API_KEY",
 	meta: "META_API_KEY",
 	"cloudflare-workers-ai": "CLOUDFLARE_API_KEY",
 	"cloudflare-ai-gateway": "CLOUDFLARE_API_KEY",
@@ -166,6 +167,11 @@ export function getApiKeyEnvVars(provider: string): readonly string[] | undefine
 	// getEnvApiKey() skips it because requests must pass it as Authorization: Bearer.
 	if (provider === "anthropic") {
 		return [ANTHROPIC_AUTH_TOKEN_ENV, ANTHROPIC_OAUTH_TOKEN_ENV, ANTHROPIC_API_KEY_ENV];
+	}
+
+	// Command Code documents CMD_API_KEY; the descriptive name is accepted too.
+	if (provider === "commandcode") {
+		return ["CMD_API_KEY", "COMMANDCODE_API_KEY"];
 	}
 
 	const envVar = API_KEY_ENV_VARS[provider];
