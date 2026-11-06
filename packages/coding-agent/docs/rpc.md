@@ -4039,6 +4039,12 @@ cannot run one. The `error` text is the same guidance the TUI shows; the `errorC
 {"type": "response", "command": "prompt", "success": false, "error": "No API key found for openai. ...", "errorCode": "provider_credentials_missing", "errorData": {"provider": "openai"}}
 ```
 
+**Sealed session**: A `prompt`, `steer` or `follow_up` into a session file that is read-only because it was moved away or revoked (see [Moving a session to another device](#moving-a-session-to-another-device-move_session)) is refused with `errorCode: "session_moved_away"` and `errorData.state`: `moving` while the move is still in flight, `moved` once it finished or the copy was revoked. Nothing is written; the session stays readable, and a copy under a new session id is writable.
+
+```json
+{"type": "response", "command": "prompt", "success": false, "error": "This session was moved to another device; it is read-only here. ...", "errorCode": "session_moved_away", "errorData": {"state": "moved"}}
+```
+
 **Extension commands**: If the message is an extension command (e.g., `/mycommand`), it executes immediately even during streaming. Extension commands manage their own LLM interaction via `pi.sendMessage()`.
 
 **Input expansion**: Leading skill tokens (`/skill:name`, `$name`, or `$skill:name`), inline explicit
