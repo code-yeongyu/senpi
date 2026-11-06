@@ -549,14 +549,36 @@ refused. The pending host record determines sensitivity even if the incoming
 
 Requests belong to one immutable presenter and live session incarnation. The
 initiating attached client must itself be eligible; it cannot borrow another
-client's declaration. Background calls choose an eligible attached presenter in
-registration order. Unsupported presentation raises `secret_input_unavailable`
-before emission. Worker isolates negotiate accepted/refused-with-reason with the
-parent before registering a request; a refusal is not user cancellation.
+client's declaration. Background calls (no connection's command raised them)
+choose an eligible attached presenter in registration order, but only a local
+one: a connection that declared a delegation (`declare_delegation`) or a
+`remoteOrigin` is never chosen, whatever it declares, and with no local
+eligible presenter the call ends `secret_input_unavailable` (`no_presenter`). A
+background request whose presenter later declares a `remoteOrigin` ends
+`unavailable`. Unsupported presentation raises `secret_input_unavailable`
+before emission. A secret raised by a remote device's own turn is presented only
+on that device's connection; a relay forwarder never declares `secret_input_v1`
+for it, so that secret ends `secret_input_unavailable` (`client_unsupported`)
+with no prompt and no notice anywhere. Worker isolates negotiate
+accepted/refused-with-reason with the parent before registering a request; a
+refusal is not user cancellation.
 
 The private transport bypasses replay, observer, transcript and trace-record
-publication. Generic `get_state`/`get_snapshot` and non-owner views contain no
-secret prompt or receipt. The owner can query its bounded, value-free
+publication. Generic `get_state`/`get_snapshot` contain no secret prompt or
+receipt. Another attached connection sees only that a secret is pending, and
+only when its `set_client_info` declared `raiser_notice_v1`:
+
+```json
+{"type":"secret_input_notice","sessionId":"session-id","uiRequestId":"request-id","title":"Credential","deadlineAtMs":1900000000000,"raisedBy":"socket-1"}
+{"type":"secret_input_notice_settled","sessionId":"session-id","uiRequestId":"request-id","outcome":"answered"}
+```
+
+`raisedBy` is the raising connection, or `"agent"` for a background call;
+`remoteOrigin` is present when the raising connection declared one. A notice
+never carries a value, draft, `answerId` or receipt, it is not replayed, and it
+grants no answering authority: an answer from that connection is still
+`secret_answer_refused`. A connection without `raiser_notice_v1` receives
+nothing, as before. The owner can query its bounded, value-free
 `get_state.answeredUiRequests` receipts after acknowledgement loss. Discard the
 value instead of resending or saving it in a reconnect queue. A missing receipt
 after eviction/restart means unknown outcome, not proof the callback did not run.
@@ -576,6 +598,81 @@ causes. A desktop integration needs its own authenticated, untraced transient
 response route; ordinary persisted question-answer commands are not suitable.
 Advertise the capability only after that route and the renderer support it.
 Role-carrying automated/control connections must omit `secret_input_v1`.
+
+#### Sealed holders (same-account presenters)
+
+On an in-process host whose embedding distribution injected an account authority that can mint host tokens, a
+secret prompt can also be answered by a same-account presenter, sealed end to end (D11 secret phase). A sealed
+holder is a current MCP presenter grant whose principal enrolled by same-account attestation (never the inherited
+launch principal), whose signed `mcp_presenter_acquire` listed `secret_input_v1` in `features`, whose
+attestation has not lapsed, and whose session has a valid host token. Holders are snapshotted when the prompt is
+created; a grant acquired later is not offered it.
+
+- A prompt whose raiser route refuses (for example `no_presenter` for a background call) proceeds when it has at
+  least one sealed holder; with none, the refusal is unchanged.
+- Each holder receives one private `mcp_presenter_secret_request` on its presenter connection, never on an event,
+  snapshot, mirror or replay lane: `{type, v: 1, sessionId, durableSessionId, uiRequestId, title, placeholder?,
+  deadlineAtMs, hostInstance, hpkePk, hostPk, hostToken, sig}`. `hpkePk` is the prompt's own X25519 key and
+  `hostPk` the host instance's Ed25519 key (both raw 32 bytes, unpadded base64url). `sig` is 128 lowercase hex
+  characters: the host key's Ed25519 signature over `"omo-secret-request-v1\n" + JSON.stringify(B)`, with
+  `B = ["omo-secret-binding-v1", hostInstance, hostJkt, durableSessionId, uiRequestId, deadlineAtMs, hpkePk,
+  displayHash]`, `hostJkt` the RFC 7638 thumbprint of `hostPk` (equal to the host token's `cnf.jkt`), and
+  `displayHash = b64url(SHA-256(JSON.stringify([title, placeholder ?? null])))`. These byte formats follow
+  omo-relay-spec decision 0022.
+- When the host token is re-minted, every holder of a pending prompt receives
+  `{type: "mcp_presenter_secret_token", v: 1, hostInstance, durableSessionId, hostToken}`. `B` names the host
+  key, not a token, so the prompt stays verifiable under the new token.
+- These records reach only grants that negotiated `secret_input_v1`; any other client sees today's bytes.
+- A prompt with sealed holders but no raiser route never writes a raiser lane, the sole stdio lane included, and
+  never accepts an `extension_ui_response`. It stays pending while any holder's grant is current, through a raiser
+  disconnect or capability change, and ends `unavailable` when the last holder's grant goes.
+- An attached connection that declared `raiser_notice_v1` and is not a sealed holder keeps receiving
+  `secret_input_notice`; a holder receives the request instead.
+- A holder answers on its presenter connection with `mcp_presenter_secret_answer`. A value answer is
+  `{type, id, v: 1, grantId, uiRequestId, answerId, stepup, enc, ct, sig}`; a cancel is
+  `{type, id, v: 1, grantId, uiRequestId, answerId, cancelled: true, sig}`. `id` is 1-128 characters and
+  `answerId` 1-256. `enc` (32 bytes) and `ct` (HPKE base mode, DHKEM(X25519, HKDF-SHA256) / HKDF-SHA256 /
+  AES-256-GCM, at most 64 KiB + 16 bytes) are unpadded base64url. `sig` is the installation key's Ed25519 signature,
+  verified strictly (canonical points, no small-order or non-prime-order key, `S < L`).
+- The host checks, in order:
+  1. the exact shape;
+  2. that the sender holds a grant in the prompt's sealed snapshot that is still eligible;
+  3. for a prompt that has already settled, the receipt: `replay` for the same `answerId` and principal, else
+     `already_answered`;
+  4. the envelope signature;
+  5. for a value, the issuer step-up token through the injected authority (its account, device, host device, request
+     binding and expiry no later than the deadline);
+  6. at the latch, synchronously and in this order: the prompt is still pending; the step-up `jti` is unused in this
+     host incarnation, and it is spent here; the prompt is before its deadline; the grant is current; the
+     ciphertext opens to a canonical padded value. A claim refused after the `jti` check has used up that token.
+
+  A value answer that loses the race is never decrypted, and a ciphertext that does not open leaves the prompt open.
+- The answer is acknowledged on the sender's connection only:
+  `{type: "mcp_presenter_secret_reply", id, disposition: "applied" | "replay"}` or
+  `{type: "mcp_presenter_secret_reply", id, error}`, where `error` is `invalid_secret_response`,
+  `secret_answer_refused`, `secret_stepup_refused`, `already_answered` or `unknown_extension_ui_request`.
+- When the prompt ends, every holder receives the value-free
+  `{type: "mcp_presenter_secret_settled", v: 1, uiRequestId, outcome, elsewhere}`, with `elsewhere: false` only for
+  the holder whose answer won. A raiser connection still receives `secret_input_settled` with unchanged bytes, and
+  `answeredUiRequests` lists raiser-route receipts only.
+- Worker sessions (the worker runtime) behave the same for clients.
+  - The host selects holders, signs the request and authenticates an answer: shape, sender, envelope signature and
+    step-up token.
+  - The session's isolate keeps the per-request key, the receipts and the step-up `jti` cache. It answers `replay`
+    or `already_answered` for a settled request, then claims, opens and settles.
+  - Answers for one request are forwarded one at a time with at most four queued; a further answer is
+    `secret_answer_refused`.
+  - For a settled request, the host's token checks run before the isolate's receipt lookup. A replayed answer whose
+    step-up token has since expired is therefore `secret_stepup_refused` on a worker session, where an in-process
+    session answers `replay`.
+- A terminal (TUI) session that runs a control endpoint with an account authority offers its own secret prompts to its
+  sealed holders, the same-account presenters attached over the control socket:
+  - they receive `mcp_presenter_secret_request` on their control connection and answer there with
+    `mcp_presenter_secret_answer`;
+  - the terminal's own input and the sealed answers race one latch, the first answer wins, and the losing side is
+    dismissed;
+  - holders receive `mcp_presenter_secret_settled` as above, `elsewhere: true` when the terminal answered;
+  - without a sealed holder the terminal's prompt is unchanged.
 
 ### RPC client lifecycle
 
@@ -634,6 +731,16 @@ may answer. Only **Grant and save permanently** persists the names for that
 declaration; **Start without them**, cancellation, disconnect and timeout save
 nothing. A client that never answers reaches the deadline and the server starts
 filtered. A headless or question-only client receives no grant dialog.
+
+Without a raising connection that declares `grant_select`, the dialog goes to the
+first attached local connection that does; a connection that declared a
+delegation or a `remoteOrigin` is never that fallback, and is never registered as
+an in-process grant presentation. With no local candidate the decision ends at
+once with nothing saved. The other attached connections that declared
+`raiser_notice_v1` receive
+`{type:"grant_select_notice", sessionId, uiRequestId, title}` and, when the
+dialog ends, `{type:"grant_select_notice_settled", sessionId, uiRequestId}`;
+an answer from them is still `grant_answer_refused`.
 
 Sessions retain skill-link and withheld-environment warnings. Every attached
 RPC connection receives the current snapshot as warning `notify` requests on
@@ -2609,6 +2716,22 @@ would refuse is not refused by the delegation check, it gets the same response a
 (`success: false`, `error`, `errorCode`). Secret and grant-select dialogs stay answerable only from the connection
 that raised them, delegated or not.
 
+Private MCP presenter records are the exception: on a delegated connection, every record whose `type` starts with
+`mcp_form_` or `mcp_presenter_` is answered in the private reply shape `{ "type": "mcp_form_reply", "id"?, ... }`,
+never with `type: "response"`, so a forwarder can route the answer by its type alone. The four presenter client
+records (`mcp_presenter_context`, `mcp_form_presented`, `mcp_form_response`, `mcp_form_sync`) reach the presenter
+authority exactly as on a local connection when the declaration granted `answer`; that authority still decides
+every form. Otherwise the reply is `{ "type": "mcp_form_reply", "id": "...", "error": "<code>" }`:
+
+| Record | `error` |
+|---|---|
+| A presenter client record without the `answer` grant (also after a narrowing re-declaration drops it) | `delegation_not_granted` |
+| `mcp_presenter_control_info` | `presenter_not_authorized` |
+| Any other `mcp_form_*` or `mcp_presenter_*` type | `delegation_unclassified` |
+
+A private reply bypasses the connection's event queue, snapshots, mirrors and replay. These records are not in the
+method-class table, so `classify_record` answers `class: null` for them and the digest is unchanged.
+
 `classify_record` answers the class of one record without running it, on any connection:
 
 ```json
@@ -4039,6 +4162,12 @@ cannot run one. The `error` text is the same guidance the TUI shows; the `errorC
 {"type": "response", "command": "prompt", "success": false, "error": "No API key found for openai. ...", "errorCode": "provider_credentials_missing", "errorData": {"provider": "openai"}}
 ```
 
+**Sealed session**: A `prompt`, `steer` or `follow_up` into a session file that is read-only because it was moved away or revoked (see [Moving a session to another device](#moving-a-session-to-another-device-move_session)) is refused with `errorCode: "session_moved_away"` and `errorData.state`: `moving` while the move is still in flight, `moved` once it finished or the copy was revoked. Nothing is written; the session stays readable, and a copy under a new session id is writable.
+
+```json
+{"type": "response", "command": "prompt", "success": false, "error": "This session was moved to another device; it is read-only here. ...", "errorCode": "session_moved_away", "errorData": {"state": "moved"}}
+```
+
 **Extension commands**: If the message is an extension command (e.g., `/mycommand`), it executes immediately even during streaming. Extension commands manage their own LLM interaction via `pi.sendMessage()`.
 
 **Input expansion**: Leading skill tokens (`/skill:name`, `$name`, or `$skill:name`), inline explicit
@@ -4124,6 +4253,12 @@ On an idle session a plain `steer` only queues; it waits for the next turn. Pass
 ```
 
 `steer` and `follow_up` accept `expectedTurnId` with the same check as a `prompt` steer (see [Steering a specific turn](#prompt)): an input that names a turn which is not running when it enters the queue is refused `turn_conflict` and queued nowhere.
+
+**Thread chains**: `prompt`, `steer` and `follow_up` accept `chainCount`, a positive integer, when the input is a thread call from another session: the hop count of its chain (1 for the first call, one more per hop; a chain may come back to a session it already visited). It is checked against the user's `threads.chainCountLimit` setting before anything of the input is recorded. A `chainCount` that is not a positive integer is refused with `errorCode: "invalid_chain_count"` and `errorData: { chainCount }`. With no limit set every valid count is admitted; past the limit the input is refused with `errorCode: "chain_count_limit"` and `errorData: { count, limit }`. An admitted count is reported on the session's `input` event as `chainCount`, so a thread call that session sends next carries one more. The limit holds while a run hold keeps automatic input as a notice: an over-limit call is refused, never held. A terminal's session-control endpoint cannot carry a hop count through its text-only admission and refuses `chainCount` with `unsupported_field`.
+
+```json
+{"type": "prompt", "message": "Review the plan", "chainCount": 2}
+```
 
 ```json
 {"type": "steer", "message": "Use the other file", "expectedTurnId": "3"}
@@ -6695,6 +6830,37 @@ working. The endpoint path confers no authority; only the exchange below does.
 An engine that predates `discover` ignores the key and answers with the five context
 fields. A client must treat a missing `controlEndpoint` as "account enrollment
 unavailable on this host": not an error, and not a reason to retry the request.
+
+An enforced interactive terminal serves the same private surface on its control endpoint. A control
+connection that declared `interactive_user` and `mcp_form_presenter_v1` with `set_client_info` and holds a
+live attachment (`attach_session` or `open_session`) answers `mcp_presenter_context`, and sends
+`mcp_form_presented`, `mcp_form_response` and `mcp_form_sync` like an RPC connection. Each is answered on
+that connection only, as `mcp_form_reply`. Private frames never reach the terminal's `subscribe` feed, a
+`subscribe_sessions` observer, another control connection, or a session entry. Releasing the attachment,
+closing the connection, or declaring without a role revokes what it holds. When the distribution injects a
+`PresenterAccountAuthority` into the terminal (`presenterAccountAuthority` in the interactive options), the
+terminal also has the management endpoint and answers `discover`. A terminal has no descriptor-4 bootstrap,
+so every other presenter on it is a same-account principal. The terminal itself stays one `local_tui`
+holder: a form reaches the terminal and every enrolled holder, and the first human answer wins.
+
+A host-side forwarder that is not attached to any session (a relay host) asks with
+`mcp_presenter_control_info` instead, on its own connection:
+
+```json
+{ "id": "i1", "type": "mcp_presenter_control_info" }
+{ "id": "i1", "type": "response", "command": "mcp_presenter_control_info", "success": true, "data": { "controlEndpoint": "/tmp/senpi-presenter-AbC123/control.sock" } }
+```
+
+- It is answered only on a connection that proved the endpoint's launch key (see
+  "Authentication"; on Windows, the socket secret) and has not declared a delegation.
+  Any other connection gets `presenter_not_authorized`: an ordinary error response
+  (`errorCode: "presenter_not_authorized"`), or on a delegated connection the private
+  reply `{ "type": "mcp_form_reply", "id": "i1", "error": "presenter_not_authorized" }`.
+- `data.controlEndpoint` is present only while an account-enrolling control endpoint
+  is listening; otherwise `data` is `{}`. Like `discover`, the path confers no
+  authority.
+- An engine that predates this record answers it with an error. Read that as "no
+  control endpoint", not as a reason to retry.
 
 A same-account presenter enrolls on a fresh connection to that endpoint, with no owner
 prompt, in one attempt within the connection's 30 s window:

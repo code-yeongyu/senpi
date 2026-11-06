@@ -79,6 +79,7 @@ import { type Theme, theme } from "../interactive/theme/theme.ts";
 import { holdAutomaticInput } from "./automatic-input-gate.ts";
 import { DURABLE_CLIENT_MESSAGE_ID_CAPABILITY } from "./client-admission-record.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
+import { admitInputChain } from "./chain-admission.ts";
 import { handleClientInput } from "./client-input-handler.ts";
 import { ConnectionQuestionBridge, degradeQuestion, sessionQuestionBridges } from "./connection-question-bridge.ts";
 import { remoteOriginDeclaration, remoteOriginField } from "./remote-origin.ts";
@@ -222,6 +223,8 @@ export interface RpcConnectionOptions {
 	workerSecurityBridge?: boolean;
 	secretInputRoute?: SecretInputRoute;
 	grantDialogSettled?: (id: string) => void;
+	/** A grant select was emitted on the connection in context; its non-presenters get a value-free notice (D11 S3-5). */
+	grantDialogRaised?: (id: string, title: string) => void;
 	/** Shared hosts dedupe `loaded_surfaces_changed` per connection by inventory digest; absent emits inline. */
 	publishLoadedSurfacesChanged?: (previous: string | undefined, digest: string) => void;
 }
@@ -659,6 +662,8 @@ export function createRpcConnectionHandler(
 			});
 			if (request.grantSelect === true) grantRequests.set(id, options.clientInfo?.connectionId());
 			output({ type: "extension_ui_request", id, ...raised } as RpcExtensionUIRequest);
+			if (request.grantSelect === true && typeof request.title === "string")
+				options.grantDialogRaised?.(id, request.title);
 		});
 	}
 	const selectGrantDialog: ExtensionUIContext["select"] = (title, choices, opts) =>
@@ -1361,6 +1366,9 @@ export function createRpcConnectionHandler(
 			// =================================================================
 
 			case "prompt": {
+				const chain = admitInputChain(command.chainCount, session.settingsManager);
+				if (chain.kind === "refused")
+					return error(id, "prompt", chain.refusal.message, chain.refusal.errorCode, chain.refusal.errorData);
 				if (holdAutomaticInput(session, command, hasRole(INTERACTIVE_USER_CAPABILITY)))
 					return success(id, "prompt", { disposition: "handled", heldAsNotice: true });
 				turnRequested = true;
@@ -1443,6 +1451,9 @@ export function createRpcConnectionHandler(
 
 			case "steer":
 			case "follow_up": {
+				const chain = admitInputChain(command.chainCount, session.settingsManager);
+				if (chain.kind === "refused")
+					return error(id, command.type, chain.refusal.message, chain.refusal.errorCode, chain.refusal.errorData);
 				if (holdAutomaticInput(session, command, hasRole(INTERACTIVE_USER_CAPABILITY)))
 					return success(id, command.type, { disposition: "handled", heldAsNotice: true });
 				turnRequested = true;
@@ -2501,7 +2512,7 @@ export function createRpcConnectionHandler(
 		const relocationSettled = relocation?.dispose();
 		relocation = undefined;
 		questions.cancelAll();
-		secretInputs.close();
+		secretInputs.dispose();
 		pendingExtensionRequests.close();
 		unsubscribeProviderAccountEvents();
 		unsubscribe?.();

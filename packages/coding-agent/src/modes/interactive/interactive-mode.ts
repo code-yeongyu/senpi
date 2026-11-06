@@ -140,8 +140,9 @@ import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.t
 import { isManualContinueSubmission } from "../../core/manual-continue.ts";
 import { attachMcpGrantPresentation } from "../../core/mcp-grant-presentations.ts";
 import { registerMcpMrtrPresentation } from "../../core/mcp-mrtr-presentations.ts";
-import { markMcpFormPresented, type McpFormBinding } from "../../core/mcp-form-types.ts";
-import { registerLocalMcpPresenter } from "./mcp-local-presenter.ts";
+import { markMcpFormPresented } from "../../core/mcp-form-types.ts";
+import { type LocalMcpPresenter, registerLocalMcpPresenter } from "./mcp-local-presenter.ts";
+import { raceTerminalSecretInput } from "./terminal-sealed-secrets.ts";
 import { createCompactionSummaryMessage, createCustomMessage } from "../../core/messages.ts";
 import type { ModelChangeOrigin } from "../../core/model-change-origin.ts";
 import {
@@ -322,6 +323,7 @@ import { isRiskyMainModel, RISKY_MAIN_MODEL_WARNING } from "./risky-main-model-w
 import { maybeShowRuntimeNotice } from "./runtime-notice-presenter.ts";
 import { type SubmissionTicket, TuiSessionControlHost } from "./session-control-host.ts";
 import type { TuiControlContext } from "./session-control-lifecycle.ts";
+import type { PresenterAccountAuthority } from "../rpc/mcp-presenter-account.ts";
 import { formatSessionFailureInfo } from "./session-failure-info.ts";
 import { DEFAULT_SMOOTH_FPS, StreamingRevealController } from "./streaming-reveal.ts";
 import {
@@ -911,6 +913,8 @@ async function attachClipboardImage(
 export interface InteractiveModeOptions {
 	/** Opt in to host-issued MCP form authority; ordinary terminal forms remain the default. */
 	mcpPresenterEnforcement?: boolean;
+	/** Lets same-account devices enroll as form presenters on this terminal; injected by the distribution (D11 S3-6b). */
+	presenterAccountAuthority?: PresenterAccountAuthority;
 	/** Renderer mode for the interactive terminal. */
 	uiMode?: TuiMode;
 	/** Providers that were migrated to auth.json (shows warning) */
@@ -2813,7 +2817,7 @@ export class InteractiveMode {
 	private detachMcpGrantPresentation?: () => void;
 	/** A presentation is optional until extension UI is created; shutdown may precede it. */
 	private mcpMrtrPresentationLifetime?: AbortController;
-	private mcpLocalPresenter?: McpFormBinding;
+	private mcpLocalPresenter?: LocalMcpPresenter;
 	private async bindCurrentSessionExtensions(): Promise<void> {
 		this.mcpMrtrPresentationLifetime?.abort();
 		this.mcpMrtrPresentationLifetime = new AbortController();
@@ -3815,7 +3819,14 @@ export class InteractiveMode {
 				this.withBlockedHostDialog(
 					crypto.randomUUID(),
 					title,
-					() => this.showExtensionInput(title, placeholder, opts),
+					() =>
+						raceTerminalSecretInput(
+							this.mcpLocalPresenter?.sealed,
+							(local) => this.showExtensionInput(title, placeholder, local),
+							title,
+							placeholder,
+							opts,
+						),
 					opts?.secret ? { ...opts, ephemeral: true } : opts,
 				),
 			// Async answers are delivered by the ask-user extension, not here: the
@@ -4219,7 +4230,11 @@ export class InteractiveMode {
 	}
 
 	private sessionControlContext(): Omit<TuiControlContext, "editorRevision"> {
+		const account = this.options?.presenterAccountAuthority;
 		return {
+			...(this.mcpLocalPresenter && {
+				mcpPresenter: { local: this.mcpLocalPresenter, ...(account && { account }) },
+			}),
 			session: this.session,
 			agentDir: this.session.agentDir,
 			surface: {

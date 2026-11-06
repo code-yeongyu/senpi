@@ -1367,6 +1367,16 @@ export async function main(args: string[], options?: MainOptions) {
 	// Installs nothing unless SENPI_MEMORY_REPORT=1; then SIGUSR2 writes a memory report for every live session.
 	installMemoryReportSignal();
 
+	if (parsed.hand) {
+		const { runHand } = await import("./modes/hand/hand-entry.ts");
+		initTheme(startupSettingsManager.getTheme(), false);
+		printTimings();
+		await runHand({
+			configuration: { parsed, cwd, agentDir, appMode, toolRuntime },
+			...(options?.extensionFactories ? { extensionFactories: options.extensionFactories } : {}),
+		});
+	}
+
 	if (appMode === "rpc" && parsed.multiSession) {
 		if (options?.extensionFactories?.length)
 			throw new Error("Shared RPC workers require file-backed extensions; inline factories cannot cross isolates");
@@ -1377,6 +1387,7 @@ export async function main(args: string[], options?: MainOptions) {
 		// is passed, so withholding it is what selects the uncapped in-process registry.
 		const sessionRuntime = resolveSessionRuntime(parsed);
 		const { runMultiSessionHost } = await import("./modes/rpc/multi-session-host.ts");
+		const { headlessHostOptions } = await import("./modes/headless/headless-host.ts");
 		// In-process sessions share the host's model runtime: one agent dir, one
 		// catalog. Worker sessions build their own inside the isolate - an object
 		// cannot cross that boundary - so the shared one is offered only here.
@@ -1402,7 +1413,7 @@ export async function main(args: string[], options?: MainOptions) {
 			startSubscriptionUsagePolling({ agentDir, report: (message) => void process.stderr.write(`${message}\n`) });
 		}
 		printTimings();
-		await runMultiSessionHost({
+		const hostOptions = {
 			presenterBootstrapFd,
 			mcpPresenterEnforcement,
 			...(presenterAccountAuthority === undefined ? {} : { presenterAccountAuthority }),
@@ -1417,7 +1428,8 @@ export async function main(args: string[], options?: MainOptions) {
 			initialThinkingLevel: parsed.thinking,
 			listen: parsed.listen,
 			toolRuntime,
-		});
+		};
+		await runMultiSessionHost(parsed.headless ? headlessHostOptions(hostOptions) : hostOptions);
 	}
 
 	// Decide the final runtime cwd before creating cwd-bound runtime services.
