@@ -56,16 +56,35 @@ export interface HandRig {
 
 const TICK_MS = 5;
 const LEASE_MS = 3_600_000;
-// One event-loop turn first: a store may confirm a write only after I/O (a Durable Object commit awaits
-// `storage.sync()`), and microtasks alone never let that write land between two clock steps. `setImmediate`
-// keeps the step cheap where the host has it; `setTimeout(0)` is the turn everywhere else.
+// A store may confirm a write only after I/O (a Durable Object commit awaits `storage.sync()`; the async-store
+// conformance run takes three `setTimeout(0)` hops per write), and microtasks alone never let that write land
+// between two clock steps. One event-loop turn per step is not enough either: a write that needs several hops
+// lands one hop per 5 ms tick while a fault profile's own timers keep re-arming ahead of it, and `settle` burns
+// its whole transport budget (senpi#6114). A step therefore keeps taking event-loop turns until the host loop is
+// quiet: a turn in which the probe's own pair of immediates ran back to back with nothing scheduled between them.
+// `setImmediate` is the turn: each one runs after the loop's timers and I/O phases, so a pending `setTimeout(0)`
+// hop lands between two of them, and it costs microseconds where `setTimeout(0)` costs its 1 ms clamp, which over
+// the 120,000 ticks of a 600 s transport budget is the difference between a 0.3 s and a 150 s case. Bounded so
+// a runaway cannot hang the rig; where the host has no `setImmediate`, a single timer turn is the step as before.
+const IO_TURN_LIMIT = 64;
+const hasImmediate = typeof setImmediate === "function";
 const ioTurn = (): Promise<void> =>
-	new Promise<void>((resolve) =>
-		typeof setImmediate === "function" ? void setImmediate(resolve) : void setTimeout(resolve, 0),
-	);
+	new Promise<void>((resolve) => (hasImmediate ? void setImmediate(resolve) : void setTimeout(resolve, 0)));
+const quietTurn = (): Promise<boolean> =>
+	new Promise<boolean>((resolve) => {
+		let others = 0;
+		const sentinel = setImmediate(() => void others++);
+		setImmediate(() => {
+			clearImmediate(sentinel);
+			resolve(others === 0);
+		});
+	});
 const drain = async (): Promise<void> => {
-	await ioTurn();
-	for (let turn = 0; turn < 32; turn++) await Promise.resolve();
+	for (let io = 0; io < IO_TURN_LIMIT; io++) {
+		await ioTurn();
+		for (let turn = 0; turn < 32; turn++) await Promise.resolve();
+		if (!hasImmediate || (await quietTurn())) break;
+	}
 };
 
 export function call(id: string): AgentToolCall {
