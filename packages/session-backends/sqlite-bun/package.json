@@ -1,8 +1,8 @@
 {
 	"name": "@earendil-works/pi-storage-sqlite-bun",
-	"version": "2026.10.27-2",
+	"version": "2026.11.4-2",
 	"private": true,
-	"description": "Source-only Bun SQLite backend of the durable core's DurableStore contract",
+	"description": "Bun SQLite backend of senpi's durable store (DurableStore/SyncCommitStore), the default session store on Bun",
 	"type": "module",
 	"main": "./src/index.ts",
 	"types": "./src/index.ts",
@@ -11,7 +11,10 @@
 		"./package.json": "./package.json"
 	},
 	"files": [
-		"src"
+		"src",
+		"README.md",
+		"CHANGELOG.md",
+		"LICENSE"
 	],
 	"scripts": {
 		"test": "node ../../../scripts/run-tests.mjs bun --bun ../../../node_modules/vitest/vitest.mjs run",
@@ -20,6 +23,16 @@
 	},
 	"engines": {
 		"bun": ">=1.4.0"
+	},
+	"author": "Yeongyu Kim",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/code-yeongyu/senpi.git",
+		"directory": "packages/session-backends/sqlite-bun"
+	},
+	"publishConfig": {
+		"access": "public"
 	},
 	"dependencies": {
 		"@earendil-works/pi-agent-core": "^2026.11.4-2"

@@ -5,6 +5,7 @@
 export const registryPackageNames = new Map([
 	["@earendil-works/pi-ai", "@code-yeongyu/senpi-ai"],
 	["@earendil-works/pi-agent-core", "@code-yeongyu/senpi-agent-core"],
+	["@earendil-works/pi-storage-sqlite-bun", "@code-yeongyu/senpi-storage-sqlite-bun"],
 	["@earendil-works/pi-tui", "@code-yeongyu/senpi-tui"],
 	["@earendil-works/pi-pty", "@code-yeongyu/senpi-pty"],
 	["@earendil-works/pi-telemetry", "@code-yeongyu/senpi-telemetry"],

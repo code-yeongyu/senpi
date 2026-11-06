@@ -20,6 +20,7 @@ const packages = [
 	{ directory: "packages/machine-ops", name: "@code-yeongyu/senpi-machine-ops" },
 	{ directory: "packages/tui", name: "@earendil-works/pi-tui" },
 	{ directory: "packages/agent", name: "@earendil-works/pi-agent-core" },
+	{ directory: "packages/session-backends/sqlite-bun", name: "@earendil-works/pi-storage-sqlite-bun" },
 	{ directory: "packages/protocol", name: "@earendil-works/pi-protocol" },
 	{ directory: "packages/client", name: "@earendil-works/pi-client" },
 	{ directory: "packages/senpi-codemode", name: "@code-yeongyu/senpi-codemode" },

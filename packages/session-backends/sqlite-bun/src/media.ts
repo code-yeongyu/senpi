@@ -67,7 +67,7 @@ export function createBunSqliteMedia(root: string, fs: MediaFileSystem = NATIVE_
 		async open(medium, options) {
 			const key = await fs.resolve(medium);
 			const file = fs.join(medium, STORE_FILE);
-			const { store, db } = openSqliteStore(await fs.resolve(file), options);
+			const { store, db } = await openSqliteStore(await fs.resolve(file), options);
 			const held = await fs.hold(file);
 			connections.set(key, [...(connections.get(key) ?? []), { db, held }]);
 			return store;

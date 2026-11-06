@@ -39,6 +39,7 @@ describe("release package versioning", () => {
 			"packages/pty/package.json",
 			"packages/telemetry/package.json",
 			"packages/senpi-codemode/package.json",
+			"packages/session-backends/sqlite-bun/package.json",
 			"packages/tui/package.json",
 		]) {
 			writeJson(join(tempDir, file), { name: file, version: "0.0.0" });

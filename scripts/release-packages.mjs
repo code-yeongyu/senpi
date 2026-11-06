@@ -13,6 +13,7 @@ export const WORKSPACE_PACKAGES = [
 	"packages/pty/package.json",
 	"packages/telemetry/package.json",
 	"packages/senpi-codemode/package.json",
+	"packages/session-backends/sqlite-bun/package.json",
 	"packages/machine-ops/package.json",
 	"packages/tui/package.json",
 ];

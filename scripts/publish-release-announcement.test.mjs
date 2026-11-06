@@ -12,6 +12,7 @@ test("announces every fork-owned registry package from private sources", () => {
 			"@code-yeongyu/senpi",
 			"@code-yeongyu/senpi-pty",
 			"@code-yeongyu/senpi-codemode",
+			"@code-yeongyu/senpi-storage-sqlite-bun",
 			"@code-yeongyu/senpi-telemetry",
 			"@code-yeongyu/senpi-tui",
 		],
