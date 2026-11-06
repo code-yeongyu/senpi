@@ -205,7 +205,6 @@ export const BUN_HOSTED_TEST_FILES: readonly string[] = [
 	"test/suite/regressions/retained-session-dir-removed.test.ts",
 	"test/suite/regressions/rpc-second-session-inherits-capabilities.test.ts",
 	"test/suite/regressions/rpc-unknown-capability-ignored.test.ts",
-	"test/suite/regressions/session-append-refused-rpc.test.ts",
 	"test/suite/regressions/shared-host-join-removed.test.ts",
 	"test/suite/regressions/todo-39-auto-permission-preset.test.ts",
 	"test/suite/reload-efficiency.test.ts",

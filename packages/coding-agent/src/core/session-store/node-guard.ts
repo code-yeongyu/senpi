@@ -1,14 +1,14 @@
 import { appendFileSync } from "node:fs";
 import chalk from "chalk";
 import { isBunRuntime } from "../../config.ts";
+import { NODE_HOST_REFUSAL_LOG_ENV, NODE_HOST_REFUSED } from "./node-refusal.ts";
+
+export { NODE_HOST_REFUSAL_LOG_ENV, NODE_HOST_REFUSED };
 
 /** The one steering message a Node process gets when it would open session state (K9.a, senpi#5822). */
 export const NODE_REQUIRES_BUN_MESSAGE =
 	"senpi stores sessions in a durable store that runs on Bun, and this process is running on Node.js. " +
 	"Install the senpi binary (recommended), or install Bun 1.4 or newer and run senpi with it.";
-
-/** The stable code every Node refusal carries: the SDK's typed error, and the test run's refusal log. */
-export const NODE_HOST_REFUSED = "NODE_HOST_REFUSED";
 
 /** The SDK's refusal on Node: the steering message, typed so a caller can tell it from any other open failure. */
 export class NodeHostRefusedError extends Error {
@@ -19,13 +19,6 @@ export class NodeHostRefusedError extends Error {
 		this.name = "NodeHostRefusedError";
 	}
 }
-
-/**
- * Test seam (senpi#6036): only the coding-agent Node test run (test/setup.ts) sets this, to a per-test-file log, so a file
- * that reaches session state on Node is named, including through a CLI or host child that inherits it. Unset (every real
- * run), a refusal writes nothing and behaves exactly as without the seam.
- */
-export const NODE_HOST_REFUSAL_LOG_ENV = "SENPI_TEST_NODE_HOST_REFUSAL_LOG";
 
 function recordRefusal(): void {
 	const log = process.env[NODE_HOST_REFUSAL_LOG_ENV];

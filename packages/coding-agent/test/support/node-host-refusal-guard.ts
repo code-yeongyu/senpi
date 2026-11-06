@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 import { afterAll, expect } from "vitest";
-import { NODE_HOST_REFUSAL_LOG_ENV, NODE_HOST_REFUSED } from "../../src/core/session-store/node-guard.ts";
+import { NODE_HOST_REFUSAL_LOG_ENV, NODE_HOST_REFUSED } from "../../src/core/session-store/node-refusal.ts";
 import { NODE_HOST_REFUSAL_TEST_FILES } from "../bun-hosted-tests.ts";
 
 const PACKAGE_ROOT = join(import.meta.dirname, "..", "..");
