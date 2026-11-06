@@ -170,6 +170,28 @@ describe("installWindowsPowerThrottlingOptOut", () => {
 		expect(calls.length).toBe(before);
 	});
 
+	it("never fails a launch when kernel32 throws for the child, and optOutChild covers non-wrapped launchers", () => {
+		const { kernel, calls } = fakeKernel();
+		let throwing = false;
+		const flaky: Kernel32PowerThrottling = {
+			...kernel,
+			OpenProcess: (access, inherit, pid) => {
+				if (throwing) throw new Error("kernel32 has no OpenProcess");
+				return kernel.OpenProcess(access, inherit, pid);
+			},
+		};
+		const surfaces = fakeSurfaces();
+		const install = installWindowsPowerThrottlingOptOut({ platform: "win32", env: {}, load: () => flaky, surfaces });
+		if (install.status !== "installed") throw new Error(`not installed: ${install.reason}`);
+		install.optOutChild(4242);
+		expect(readPowerThrottlingState(kernel, 4242)).toEqual({ controlMask: 1, stateMask: 0 });
+		throwing = true;
+		expect(surfaces.childProcessPrototype.spawn.call({})).toBe("node-spawn-result");
+		expect(surfaces.bun?.spawn().pid).toBeGreaterThan(0);
+		expect(() => install.optOutChild(4243)).not.toThrow();
+		expect(calls.some((call) => call.args[2] === 4243)).toBe(false);
+	});
+
 	it("never fails a launch whose child cannot be opened", () => {
 		const surfaces = fakeSurfaces();
 		const install = installWindowsPowerThrottlingOptOut({

@@ -132,7 +132,7 @@ export interface SpawnSurfaces {
 
 export type PowerThrottlingInstall =
 	| { status: "skipped"; reason: "not-windows" | "opted-out" | "no-ffi" }
-	| { status: "installed"; self: PowerThrottlingResult; restore(): void };
+	| { status: "installed"; self: PowerThrottlingResult; optOutChild(pid: number): void; restore(): void };
 
 export interface InstallOptions {
 	platform?: NodeJS.Platform;
@@ -165,7 +165,12 @@ export function installWindowsPowerThrottlingOptOut(options: InstallOptions = {}
 	const self = disableExecutionSpeedThrottling(kernel, options.pid ?? process.pid);
 	const surfaces = options.surfaces ?? defaultSurfaces();
 	const optOut = (pid: number | undefined): void => {
-		if (typeof pid === "number" && pid > 0) disableExecutionSpeedThrottling(kernel, pid);
+		if (typeof pid !== "number" || pid <= 0) return;
+		try {
+			disableExecutionSpeedThrottling(kernel, pid);
+		} catch {
+			// The child is already running: an FFI failure must never turn its launch into an exception.
+		}
 	};
 
 	const proto = surfaces.childProcessPrototype;
@@ -189,6 +194,7 @@ export function installWindowsPowerThrottlingOptOut(options: InstallOptions = {}
 	return {
 		status: "installed",
 		self,
+		optOutChild: optOut,
 		restore: () => {
 			proto.spawn = originalSpawn;
 			if (bun !== undefined && originalBunSpawn !== undefined) bun.spawn = originalBunSpawn;
@@ -202,4 +208,10 @@ let installed: PowerThrottlingInstall | undefined;
 export function ensureWindowsPowerThrottlingOptOut(): PowerThrottlingInstall {
 	installed ??= installWindowsPowerThrottlingOptOut();
 	return installed;
+}
+
+/** For a launcher that starts processes outside `node:child_process` and `Bun.spawn` (the Windows breakaway shim). */
+export function optOutChildPowerThrottling(pid: number): void {
+	const install = ensureWindowsPowerThrottlingOptOut();
+	if (install.status === "installed") install.optOutChild(pid);
 }
