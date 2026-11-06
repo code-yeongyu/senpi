@@ -128,7 +128,7 @@ import {
 	createCompactionSummaryMessage,
 	createCustomMessage,
 } from "./messages.ts";
-import { replyLanguageOf } from "./user-language.ts";
+import { annotateCompactionUserLanguage, compactionReplyLanguageFields } from "./compaction-reply-language.ts";
 
 /**
  * Whether `value` is plain JSON: null, booleans, finite numbers, strings, arrays of those, and objects
@@ -333,6 +333,10 @@ export interface CompactionEntry<T = unknown> extends SessionEntryBase {
 	fromHook?: boolean;
 	/** Complete prompt and tool state at this compaction boundary. */
 	systemMessage?: SystemMessage;
+	/** The reply language of the context this compaction replaced (omo#11527, omo#12625). */
+	userLanguage?: string;
+	/** Whether the user explicitly asked for userLanguage, rather than writing in it. */
+	userLanguageRequested?: boolean;
 }
 
 export interface BranchSummaryEntry<T = unknown> extends SessionEntryBase {
@@ -869,25 +873,6 @@ function contextEntriesOfPath(path: SessionEntry[]): SessionEntry[] {
 	}
 	contextEntries.push(...path.slice(compactionIdx + 1));
 	return contextEntries;
-}
-
-/**
- * The summary replaces the user's own turns, so it carries the reply language they established:
- * the one the user asked for, else the one they wrote in (omo#11527).
- */
-function annotateCompactionUserLanguage(head: ProjectedSessionEntry | undefined, path: SessionEntry[]): void {
-	if (head?.sourceEntry.type !== "compaction") return;
-	const end = path.indexOf(head.sourceEntry);
-	const userMessages = path
-		.slice(0, Math.max(end, 0))
-		.flatMap((entry) => (entry.type === "message" && entry.message.role === "user" ? [entry.message] : []));
-	const replyLanguage = replyLanguageOf(userMessages);
-	if (replyLanguage === undefined) return;
-	for (const message of head.messages) {
-		if (message.role !== "compactionSummary") continue;
-		message.userLanguage = replyLanguage.language;
-		message.userLanguageRequested = replyLanguage.requested;
-	}
 }
 
 function projectContextEntry(entry: SessionEntry, edit: ContextEditEntry | undefined): AgentMessage[] {
@@ -2290,6 +2275,7 @@ export class SessionManager {
 			usage,
 			fromHook,
 			...(systemMessage ? { systemMessage: { ...systemMessage, timestamp: new Date(timestamp).getTime() } } : {}),
+			...compactionReplyLanguageFields(from.messages),
 		};
 		this._appendEntry(entry, undefined, undefined, () =>
 			compactionFlow(from.entries, this.buildSessionProjection().entries),

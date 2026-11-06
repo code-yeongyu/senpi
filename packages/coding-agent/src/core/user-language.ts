@@ -119,16 +119,34 @@ function advance(state: ReplyLanguageState, message: { readonly content: unknown
 	return { requested: request ?? state.requested, written };
 }
 
+function summaryState(summary: { readonly userLanguage?: string; readonly userLanguageRequested?: boolean }) {
+	const language = summary.userLanguage;
+	if (language === undefined) return {};
+	return summary.userLanguageRequested ? { requested: language } : { written: language };
+}
+
+/** A reply language read back from a session file; only one of the fixed names is ever accepted. */
+export function recordedReplyLanguage(language: unknown, requested: unknown): ReplyLanguage | undefined {
+	if (typeof language !== "string" || !REPLY_LANGUAGE_NAMES.includes(language)) return undefined;
+	return { language, requested: requested === true };
+}
+
 function current(state: ReplyLanguageState): ReplyLanguage | undefined {
 	if (state.requested !== undefined) return { language: state.requested, requested: true };
 	if (state.written !== undefined) return { language: state.written, requested: false };
 	return undefined;
 }
 
-/** The reply language the user's messages establish, oldest to newest (a compaction's summary). */
+/**
+ * The reply language a context establishes, oldest to newest: a compaction summary carries the
+ * language of the turns it replaced, and each later user message advances it.
+ */
 export function replyLanguageOf(messages: readonly AgentMessage[]): ReplyLanguage | undefined {
 	let state: ReplyLanguageState = {};
-	for (const message of messages) if (message.role === "user") state = advance(state, message);
+	for (const message of messages) {
+		if (message.role === "user") state = advance(state, message);
+		else if (message.role === "compactionSummary") state = summaryState(message);
+	}
 	return current(state);
 }
 
@@ -168,13 +186,7 @@ export function insertReplyLanguageNotes(messages: AgentMessage[]): AgentMessage
 			continue;
 		}
 		if (message.role === "compactionSummary") {
-			const language = message.userLanguage;
-			state =
-				language === undefined
-					? {}
-					: message.userLanguageRequested
-						? { requested: language }
-						: { written: language };
+			state = summaryState(message);
 			pending = 0;
 			continue;
 		}
