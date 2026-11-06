@@ -42,8 +42,9 @@ jobs:
         with:
           bun-version: "1.4.4"
 
-      # `npm run check` is read-only (#1443): its `oxfmt --check` step reports format
-      # drift instead of silently rewriting it, so the gate can fail here.
+      # `npm run check` is read-only (#1443): its `fmt:check` step
+      # (`node scripts/bun-fmt.mjs --check`) reports format drift instead of
+      # silently rewriting it, so the gate can fail here.
       - name: Check
         run: npm run check
 

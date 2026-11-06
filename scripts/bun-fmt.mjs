@@ -6,6 +6,8 @@
 // would recurse forever, so such a Bun is refused before it runs.
 
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { posix, win32 } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const MINIMUM = [1, 4, 4];
@@ -20,8 +22,34 @@ export function supportsFmt(version) {
 	return true;
 }
 
+// Resolve the bun executable to an absolute path so it can be spawned
+// without a shell (senpi#5599). Spawning bare `bun` through `shell: true` on
+// win32 sends the whole command line through cmd.exe, which splits an
+// argument containing spaces (`npm run fmt -- "path with spaces"`) into
+// several. A resolved path needs no shell on any platform: Node quotes
+// spaced arguments itself when it builds the child command line. On win32
+// `.exe` wins over the PATHEXT shims so a `bun.cmd` wrapper can never
+// shadow the real binary.
+export function resolveBunExecutable(options = {}) {
+	const platform = options.platform ?? process.platform;
+	const pathEnv = options.pathEnv ?? process.env.PATH ?? "";
+	const exists = options.exists ?? existsSync;
+	const joinPath = platform === "win32" ? win32.join : posix.join;
+	const delimiter = platform === "win32" ? ";" : ":";
+	const extensions = platform === "win32" ? [".exe", ".cmd", ".bat", ".com"] : [""];
+	for (const dir of pathEnv.split(delimiter)) {
+		if (!dir) continue;
+		for (const extension of extensions) {
+			const candidate = joinPath(dir, `bun${extension}`);
+			if (exists(candidate)) return candidate;
+		}
+	}
+	return null;
+}
+
 function main() {
-	const probe = spawnSync("bun", ["--version"], { encoding: "utf8", shell: process.platform === "win32" });
+	const bun = resolveBunExecutable() ?? "bun";
+	const probe = spawnSync(bun, ["--version"], { encoding: "utf8" });
 	if (probe.error || probe.status !== 0) {
 		console.error(`bun fmt: cannot run bun (${probe.error?.message ?? `exit ${probe.status}`}); install Bun >= ${MINIMUM.join(".")}`);
 		return 1;
@@ -30,9 +58,8 @@ function main() {
 		console.error(`bun fmt needs Bun >= ${MINIMUM.join(".")}, found ${probe.stdout.trim()}`);
 		return 1;
 	}
-	const result = spawnSync("bun", ["fmt", "--no-script", ...process.argv.slice(2)], {
+	const result = spawnSync(bun, ["fmt", "--no-script", ...process.argv.slice(2)], {
 		stdio: "inherit",
-		shell: process.platform === "win32",
 	});
 	if (result.error) {
 		console.error(`bun fmt: ${result.error.message}`);
