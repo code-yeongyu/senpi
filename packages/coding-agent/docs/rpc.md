@@ -876,7 +876,7 @@ reader (which stops near 4,000 levels on Node) never drops it.
 #### get_recovery_page
 
 Behind the same flag, one bounded page of a frozen checkpoint component, through the recovery-token owner
-(senpi#4272, R4.B3). The command is additive: with the flag off it answers exactly as any unknown session command.
+(senpi#4272, R4.B3). The command is additive: with the flag off it answers the typed refusal `{"success": false, "error": "feature_disabled", "errorCode": "feature_disabled", "errorData": {"feature": "compact_updates"}}` (plus `sessionId` when the request named one), as does the classic single-session handler, which has no compact transport; with `SENPI_RPC_REQUIRE_ATTACH=1`, an unattached caller of a session-addressed request gets the attachment gate's `session_not_attached` first.
 
 Compact generations are allocated per durable session, not per socket or accepted-state epoch (RULING-99).
 A reconnect receives a higher generation; a host restart resumes above the persisted reservation ceiling in
@@ -1134,7 +1134,7 @@ reference was the last (`remaining: 0`, the content goes once reads in flight un
 admission still references it, and `duplicate` for a receipt this admission already gave, which changes nothing, so
 a consumer may retry a receipt after a rollback. A lease of another connection or session, or an unknown one, is
 `recovery_repair_needed` with `reason: "unknown_token"`; a malformed request is `recovery_malformed_request`.
-With the flag off it answers as any unknown session command.
+With the flag off it answers the typed refusal `{"success": false, "error": "feature_disabled", "errorCode": "feature_disabled", "errorData": {"feature": "compact_updates"}}` (plus `sessionId` when the request named one), as does the classic single-session handler, which has no compact transport; with `SENPI_RPC_REQUIRE_ATTACH=1`, an unattached caller of a session-addressed request gets the attachment gate's `session_not_attached` first.
 
 #### cancel_attempt
 
@@ -1152,7 +1152,7 @@ admission this connection currently holds (never used, already cancelled, or com
 `unknown_admission`. Otherwise the answer's `data` is `{outcome}`: `cancelled` for a pending attempt (its late result
 is never applied) and `already_complete` for an admission this connection holds (cancel does not undo it). Only a
 socket connection has admissions, so on any other transport the id is unknown. A malformed `admissionId` is refused
-with `admission_malformed_request`. With the flag off it answers as any unknown command.
+with `admission_malformed_request`. With the flag off it answers the typed refusal `{"success": false, "error": "feature_disabled", "errorCode": "feature_disabled", "errorData": {"feature": "compact_updates"}}` (plus `sessionId` when the request named one), as does the classic single-session handler, which has no compact transport; with `SENPI_RPC_REQUIRE_ATTACH=1`, an unattached caller of a session-addressed request gets the attachment gate's `session_not_attached` first.
 
 #### reset_stream
 
@@ -1171,7 +1171,7 @@ admission. Read the checkpoint with `get_recovery_page`. An `admissionId` this c
 `unknown_admission` before the command runs. A held admission that is not
 complete, not for `sessionId` or no longer on the session's stream is refused with `recovery_unknown_token` and
 `errorData: {kind: "repair_needed", reason: "unknown_token"}`; a checkpoint that cannot be frozen is refused with
-`recovery_<kind>` and that failure as `errorData`. With the flag off it answers as any unknown command.
+`recovery_<kind>` and that failure as `errorData`. With the flag off it answers the typed refusal `{"success": false, "error": "feature_disabled", "errorCode": "feature_disabled", "errorData": {"feature": "compact_updates"}}` (plus `sessionId` when the request named one), as does the classic single-session handler, which has no compact transport; with `SENPI_RPC_REQUIRE_ATTACH=1`, an unattached caller of a session-addressed request gets the attachment gate's `session_not_attached` first.
 
 **Admission IDs per socket (senpi#5274, RULING-113, RULING-117 and RULING-118).** A socket's admissions are capped by what is
 live, never by how many IDs it has used. At most 16 attempts run at once (`admission_admission_busy` past that). Running
