@@ -1,6 +1,4 @@
-import { randomUUID } from "node:crypto";
-import { open, rename, rm, stat } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { resolve } from "node:path";
 import {
 	createAdmissionLine,
 	openSessionStore,
@@ -11,14 +9,11 @@ import {
 	type SyncSessionHandle,
 } from "@earendil-works/pi-agent-core";
 import type { StoreValue } from "@earendil-works/pi-agent-core/conformance";
-import { captureFileIdentity } from "../session-file-identity.ts";
-import { createJsonlImporter, type JsonlFileStamp } from "../session-import/jsonl-import.ts";
+import { createJsonlImporter, jsonlFiles } from "../session-import/jsonl-import.ts";
 import type { FileIdentity } from "../session-transcript-journal.ts";
+import { codeOf, type ProjectionFiles, projectionImage, replaceWith, stampOf } from "./projection-file.ts";
 
-/** The binding's asynchronous whole-file projection writes; the default is the atomic replace below. A test seam for win32. */
-export interface ProjectionFiles {
-	replace(path: string, contents: string): Promise<void>;
-}
+export type { ProjectionFiles } from "./projection-file.ts";
 
 export interface DurableStoreBinding {
 	readonly store: SyncCommitStore;
@@ -32,6 +27,8 @@ export interface ProjectionHooks {
 	beforeWrite(path: string): void;
 	/** The file was replaced: its identity changed. */
 	afterReplace(path: string, identity: FileIdentity | undefined): void;
+	/** Before the store opens the file or rewrites it: fences a live Node developer-hatch writer (K9-F2, DRIFT A). */
+	fenceHatchWriters(path: string): Promise<void>;
 }
 
 export interface ProjectionWarning {
@@ -46,54 +43,7 @@ export const storeKeyOf = (entryId: string): string => (entryId.startsWith("~") 
 const STALE = "session-store/projection-stale/";
 const staleKey = (path: string): string => STALE + encodeURIComponent(path);
 
-const codeOf = (error: unknown): string =>
-	error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : "unknown";
 const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));
-
-function projectionImage(header: SessionHeader, entries: readonly StoredEntry[]): string {
-	return [JSON.stringify(header), ...entries.map((entry) => entry.line)].map((line) => `${line}\n`).join("");
-}
-
-async function stampOf(path: string): Promise<JsonlFileStamp | undefined> {
-	try {
-		const value = await stat(path);
-		return { size: value.size, mtimeMs: value.mtimeMs, ctimeMs: value.ctimeMs };
-	} catch (error) {
-		if (codeOf(error) === "ENOENT") return undefined;
-		throw error;
-	}
-}
-
-/** Today's atomic replace, asynchronous: a temp file written and synced beside the target, then renamed over it. */
-async function replaceAtomically(path: string, contents: string): Promise<FileIdentity | undefined> {
-	const mode = (await modeOf(path)) ?? 0o600;
-	const temp = join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`);
-	const handle = await open(temp, "wx", mode);
-	let identity: FileIdentity | undefined;
-	try {
-		await handle.writeFile(contents);
-		await handle.sync();
-		identity = await captureFileIdentity(handle.fd, path);
-	} finally {
-		await handle.close();
-	}
-	try {
-		await rename(temp, path);
-	} catch (error) {
-		await rm(temp, { force: true });
-		throw error;
-	}
-	return identity;
-}
-
-async function modeOf(path: string): Promise<number | undefined> {
-	try {
-		return (await stat(path)).mode & 0o777;
-	} catch (error) {
-		if (codeOf(error) === "ENOENT") return undefined;
-		throw error;
-	}
-}
 
 const isRecord = (value: StoreValue | undefined): value is { readonly [key: string]: StoreValue } =>
 	typeof value === "object" && value !== null && !Array.isArray(value);
@@ -101,15 +51,10 @@ const isRecord = (value: StoreValue | undefined): value is { readonly [key: stri
 const staleSessionIdOf = (mark: StoreValue | undefined): string | undefined =>
 	isRecord(mark) && typeof mark.sessionId === "string" ? mark.sessionId : undefined;
 
-/** A provided ProjectionFiles is called as a method, so a class implementing it keeps its `this`; its identity is unknown. */
-async function replaceWith(
-	files: ProjectionFiles | undefined,
-	path: string,
-	contents: string,
-): Promise<FileIdentity | undefined> {
-	if (files === undefined) return replaceAtomically(path, contents);
-	await files.replace(path, contents);
-	return undefined;
+/** Whether a Node developer-hatch write is the file's last change: its K9-F2 marker matches the file's stamp. */
+async function hatchWroteLast(path: string): Promise<boolean> {
+	const [stamp, marker] = await Promise.all([stampOf(path), jsonlFiles.marker(path)]);
+	return stamp !== undefined && marker?.size === stamp.size && marker.mtimeMs === stamp.mtimeMs;
 }
 
 type Importer = ReturnType<typeof createJsonlImporter>;
@@ -170,13 +115,16 @@ export class DurableSessionBinding {
 		const { store, epoch } = binding;
 		const path = resolve(sessionFile);
 		const admission = createAdmissionLine();
-		const importer = createJsonlImporter({ store, epoch, admission });
+		// The importer runs on this binding's admission line: each call is admitted by its caller, once, never nested.
+		const importer = createJsonlImporter({ store, epoch, admission: { admit: (mutation) => mutation() } });
 		let id = sessionId;
 		let reprojected = false;
+		await hooks.fenceHatchWriters(path);
 		if ((await stampOf(path)) !== undefined) {
 			const mark = await store.getDocument(staleKey(path));
 			const markedId = staleSessionIdOf(mark);
 			if (markedId !== undefined) {
+				if (await hatchWroteLast(path)) await admission.admit(() => importer.importFile(path));
 				const stored = await openSessionStore(store, epoch).load(markedId);
 				if (stored === undefined) throw new Error(`the store marks ${path} stale but holds no session ${markedId}`);
 				await reprojectFile(
@@ -190,7 +138,7 @@ export class DurableSessionBinding {
 				id = markedId;
 				reprojected = true;
 			} else {
-				id = (await importer.importFile(path)).sessionId;
+				id = (await admission.admit(() => importer.importFile(path))).sessionId;
 			}
 		}
 		const handle = await openSyncSessionStore(store, epoch).open(id, JSON.parse(headerLine) as SessionHeader);
@@ -290,8 +238,12 @@ export class DurableSessionBinding {
 		void this.admission
 			.admit(async () => {
 				if (!this.stale) return;
+				// S07's check first, on a file a hatch writer changed last: what it wrote joins the store, so the rewrite below
+				// keeps it. A file that is only behind the store (its projection failed) is not imported: the store's copy wins.
+				await this.hooks.fenceHatchWriters(path);
+				if (await hatchWroteLast(path)) await this.importer.importFile(path);
 				const generation = this.generation;
-				const contents = projectionImage(this.handle.header(), this.handle.entries());
+				const contents = await this.storeImage();
 				this.hooks.beforeWrite(path);
 				this.hooks.afterReplace(path, await replaceWith(this.binding.files, path, contents));
 				if (generation !== this.generation) return this.scheduleRepair(path);
@@ -306,6 +258,13 @@ export class DurableSessionBinding {
 				}
 			})
 			.catch((error: unknown) => this.projectionFailed(path, error));
+	}
+
+	private async storeImage(): Promise<string> {
+		const id = String(this.handle.header().id);
+		const stored = await openSessionStore(this.binding.store, this.binding.epoch).load(id);
+		if (stored === undefined) throw new Error(`the store holds no session ${id} to project`);
+		return projectionImage(stored.header, stored.entries);
 	}
 
 	// A ledger record a later write superseded (it committed while this one awaited) is dropped, not reported: the later

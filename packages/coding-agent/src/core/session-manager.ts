@@ -84,6 +84,9 @@ import {
 	type ProjectionWarning,
 	storeKeyOf,
 } from "./session-store/durable-binding.ts";
+import { fenceHatchWriters } from "./session-store/hatch-fence.ts";
+import { markHatchWrite } from "./session-store/hatch-marker.ts";
+import { nodeJsonlHatchEnabled } from "./session-store/node-guard.ts";
 import type { StoredEntry } from "@earendil-works/pi-agent-core";
 import {
 	discardFailedFirstFlush,
@@ -1196,7 +1199,7 @@ export class SessionManager {
 	private cwd: string;
 	private persist: boolean;
 	private readonly writeGuard = new SessionWriteGuard();
-	private readonly writeFence = new SessionWriteFence();
+	private readonly writeFence = new SessionWriteFence(nodeJsonlHatchEnabled);
 	// S20b: set by bindDurableStore; every write then commits to the store before its JSONL projection.
 	private durable: DurableSessionBinding | undefined;
 	private bindPending = false;
@@ -1676,6 +1679,7 @@ export class SessionManager {
 			durable.projectionFailed(this.sessionFile, error);
 			return;
 		}
+		markHatchWrite(this.sessionFile);
 		durable?.recordWhole(this.sessionFile);
 	}
 
@@ -1886,6 +1890,7 @@ export class SessionManager {
 			// EEXIST while the entries it was carrying stayed in memory only. Nothing counts as flushed yet.
 			return discardFailedFirstFlushAsync(sessionFile, handle, error);
 		}
+		markHatchWrite(sessionFile);
 		// Synchronous with the last check above: no entry can land between it and the flag.
 		if (this.sessionFile === sessionFile && this.fileEntries === entries && written === entries.length) {
 			this.flushed = true;
@@ -1976,6 +1981,7 @@ export class SessionManager {
 				durable.projectionFailed(this.sessionFile, error);
 				return bytes;
 			}
+			markHatchWrite(this.sessionFile);
 			if (durable && bound) durable.projected(this.sessionFile, bound);
 			return bytes;
 		}
@@ -2029,6 +2035,7 @@ export class SessionManager {
 		}
 		if (this.capturesTranscriptBase) this._captureTranscriptBase(captureAndCloseFileIdentity(fd, this.sessionFile));
 		else closeSync(fd);
+		markHatchWrite(this.sessionFile);
 		this.flushed = true;
 		if (!this.capturesTranscriptBase) this.transcriptBytes = new WeakMap();
 		// Lifecycle bookkeeping created this file before any conversation, so an empty session can still discard it.
@@ -2052,6 +2059,7 @@ export class SessionManager {
 		if (!this.persist || sessionFile === undefined) {
 			throw new Error("only a persisted session with a file path can be bound to the durable store");
 		}
+		const sessionId = this.sessionId;
 		this.bindPending = true;
 		this.bindRaced = false;
 		let opened: Awaited<ReturnType<typeof DurableSessionBinding.open>>;
@@ -2059,7 +2067,7 @@ export class SessionManager {
 			opened = await DurableSessionBinding.open(
 				binding,
 				sessionFile,
-				this.sessionId,
+				sessionId,
 				this._headerLine(),
 				(warning) => {
 					for (const listener of this.projectionWarningListeners) listener(warning);
@@ -2071,6 +2079,10 @@ export class SessionManager {
 					},
 					afterReplace: (_path, identity) => {
 						if (this.capturesTranscriptBase) this._captureTranscriptBase(Promise.resolve(identity), this.fileEntries);
+					},
+					// The fence this manager moves is its own from here: it keeps writing, the hatch writer is refused.
+					fenceHatchWriters: async () => {
+						if (await fenceHatchWriters(sessionFile, sessionId)) this.writeFence.opened(sessionFile);
 					},
 				},
 			);
@@ -3508,6 +3520,7 @@ export class SessionManager {
 				appendFileSync(newSessionFile, `${JSON.stringify(entry)}\n`);
 			}
 		}
+		markHatchWrite(newSessionFile);
 
 		return new SessionManager(resolvedTargetCwd, dir, newSessionFile, true);
 	}
