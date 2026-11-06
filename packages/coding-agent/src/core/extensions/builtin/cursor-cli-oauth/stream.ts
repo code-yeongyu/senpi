@@ -29,6 +29,7 @@ import {
 	resolveCursorCliExecutionPolicy,
 } from "./guardrails.ts";
 import { runInCursorAccountHome } from "./home-store.ts";
+import { cursorCliDiagnostic } from "./provider-diagnostic.ts";
 import {
 	CURSOR_CLI_OAUTH_PROVIDER_ID,
 	type CursorCliOauthConfig,
@@ -677,6 +678,8 @@ export function streamCursorCliOauth(
 			const aborted = wasAborted || signal?.aborted === true;
 			mapper.output.stopReason = aborted ? "aborted" : "error";
 			mapper.output.errorMessage = turnErrorMessage(error);
+			const diagnostic = mapper.output.stopReason === "error" ? cursorCliDiagnostic(error) : undefined;
+			if (diagnostic !== undefined) mapper.output.providerDiagnostic = diagnostic;
 			stream.push({ type: "error", reason: mapper.output.stopReason, error: mapper.output });
 		} finally {
 			signal?.removeEventListener("abort", onAbort);
