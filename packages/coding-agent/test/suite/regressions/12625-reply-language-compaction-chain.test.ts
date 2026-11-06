@@ -79,7 +79,9 @@ function deterministicCheckpoint(session: SessionManager): CompactionEntry {
 	);
 	if (!result) throw new Error(`expected a deterministic checkpoint: ${JSON.stringify(diagnostics)}`);
 	session.appendCompaction(result.summary, result.firstKeptEntryId, result.tokensBefore, result.details, true);
-	return session.getBranch().findLast((entry): entry is CompactionEntry => entry.type === "compaction")!;
+	const checkpoint = session.getBranch().findLast((entry): entry is CompactionEntry => entry.type === "compaction");
+	if (!checkpoint) throw new Error("expected the checkpoint on the branch");
+	return checkpoint;
 }
 
 function texts(messages: Message[]): string[] {
@@ -188,7 +190,9 @@ describe("omo#12625 reply language across compactions of a persisted session", (
 		];
 
 		// when
-		const rendered = texts(convertToLlm(SessionManager.inMemory(process.cwd(), undefined, entries).buildSessionContext().messages));
+		const rendered = texts(
+			convertToLlm(SessionManager.inMemory(process.cwd(), undefined, entries).buildSessionContext().messages),
+		);
 
 		// then
 		expect(rendered.some((text) => text.includes("Reply language:"))).toBe(false);
