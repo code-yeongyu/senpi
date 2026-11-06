@@ -32,7 +32,7 @@ import { refreshFailure } from "./refresh-failure.ts";
 import type { AnthropicSubscriptionAuthLane } from "./options.ts";
 import type { Options, SDKMessage, SdkQuery } from "./sdk-boundary.ts";
 import type { AnthropicSubscriptionProviderSettings, AnthropicSubscriptionTokenInjection } from "./settings.ts";
-import { ClaudeSignInRequiredError, signInRequiredAccounts } from "./sign-in-again.ts";
+import { ClaudeSignInRequiredError, isServableAccountSlot, signInRequiredAccounts } from "./sign-in-again.ts";
 
 export { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./account-management.ts";
 export { overrideAuthLaneBoundary, resetAuthLaneBoundary } from "./auth-lane-boundary.ts";
@@ -309,9 +309,11 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 			},
 		});
 	}
-	// A slot that must sign in again is never selected, like a removed one; with none left the turn names them.
+	// A slot that must sign in again is never selected, like a removed one, and neither is a stored CLI slot whose
+	// account dir id is unusable: that slot carries no readable login and preparing it would fail with an internal
+	// error before the first model call (omo#12228). With none left the turn names them.
 	const signedOut = signInRequiredAccounts(pool.accounts);
-	pool.accounts = pool.accounts.filter((account) => account.store !== "claude-cli" || !account.signInRequired);
+	pool.accounts = pool.accounts.filter(isServableAccountSlot);
 	if (pool.accounts.length === 0) throw new ClaudeSignInRequiredError(signedOut);
 	let askedLegacyLongContext = false;
 	yield* runFailover({
