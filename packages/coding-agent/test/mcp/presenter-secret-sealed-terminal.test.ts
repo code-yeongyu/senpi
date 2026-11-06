@@ -132,6 +132,23 @@ it("without a sealed holder the terminal's input runs alone with its own options
 	expect(plain.desktop.records.some((record) => record.type === "mcp_presenter_secret_request")).toBe(false);
 });
 
+// senpi#6062: the local input can fail after the holder has received the offer.
+it("a rejecting local input cancels the sealed race immediately and dismisses the input", async () => {
+	const { t, secret } = await sealedTerminal();
+	const { desktop } = await holder(t, secret);
+	const sealed = await hostTokenReady(t);
+	const local = localInput();
+	const result = raceTerminalSecretInput(sealed, local.input, "API key", undefined, { secret: true });
+	await desktop.waitFor((record) => record.type === "mcp_presenter_secret_request");
+	local.answer.reject(new Error("injected local input failure"));
+	expect(await result).toBeUndefined();
+	expect(local.seen.signal?.aborted).toBe(true);
+	expect(await desktop.waitFor((record) => record.type === "mcp_presenter_secret_settled")).toMatchObject({
+		outcome: "cancelled",
+		elsewhere: true,
+	});
+});
+
 it("a sealed answer from a connection that is not a holder is refused, and the reply reaches that connection only", async () => {
 	const { t, secret } = await sealedTerminal();
 	const { desktop, enrolled } = await holder(t, secret);
