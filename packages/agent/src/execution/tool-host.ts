@@ -12,6 +12,11 @@ export interface ToolHostCall {
 	readonly scope: ExecutionScope;
 	readonly calls: readonly AgentToolCall[];
 	readonly mode: ToolExecutionMode;
+	/**
+	 * The durable identity of the assistant message that issued the calls, the same for every loop that resumes the turn
+	 * (senpi#5867). A remote host derives each call's execution id from it, so a re-dispatch reaches the hand's record.
+	 */
+	readonly turn?: string;
 }
 
 export interface ExecutionPipelineWitness {

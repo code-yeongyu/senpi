@@ -173,8 +173,10 @@ export {
 } from "./execution/plane.ts";
 export {
 	createLoopHookHost,
+	loopHookCallKey,
 	type LoopHookHost,
 	type LoopHookHostOptions,
+	LoopHookClosedError,
 	LoopHookFailedError,
 	LoopHookRestartedError,
 } from "./execution/loop-hook-host.ts";
@@ -185,7 +187,12 @@ export {
 	type LoopHookRunner,
 	serveLoopHooks,
 } from "./execution/loop-hook-host-hand.ts";
-export { createRemoteToolHost, type HandPlacement, type RemoteToolHostOptions } from "./execution/remote-tool-host.ts";
+export {
+	createRemoteToolHost,
+	type HandPlacement,
+	type RemoteToolHostOptions,
+	remoteExecutionId,
+} from "./execution/remote-tool-host.ts";
 export { canonicalJson } from "./execution/canonical-digest.ts";
 export { toStoreValue } from "./execution/prepared/executor-freeze.ts";
 export type { ConsentClassifier } from "./execution/prepared/executor-types.ts";

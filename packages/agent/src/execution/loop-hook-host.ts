@@ -1,4 +1,5 @@
 import type { JsonValue } from "@earendil-works/pi-ai";
+import { canonicalJson } from "./canonical-digest.ts";
 import type { Transport, TransportFrame } from "../transport/transport.ts";
 import { decodeLoopHookMessage, encodeLoopHookMessage, type LoopHookCall } from "./loop-hook-host-protocol.ts";
 
@@ -17,7 +18,11 @@ import { decodeLoopHookMessage, encodeLoopHookMessage, type LoopHookCall } from 
  */
 export interface LoopHookHost {
 	/** Runs the user's hooks for `event` on the user's machine. Rejects with the hook's failure, a restart or an abort. */
-	run(event: string, payload: JsonValue, signal?: AbortSignal): Promise<JsonValue>;
+	/**
+	 * `callKey`: a durable key for this hook call (`loopHookCallKey`), so a resumed or moved loop that issues the same call
+	 * again reaches the user's machine's answer to it instead of running the hooks twice (senpi#5867). Absent: a new id.
+	 */
+	run(event: string, payload: JsonValue, signal?: AbortSignal, callKey?: string): Promise<JsonValue>;
 	/** IDs of the calls still waiting for the user's machine. */
 	waiting(): readonly string[];
 	close(): void;
@@ -48,11 +53,24 @@ export class LoopHookRestartedError extends Error {
 	}
 }
 
+/** The loop host closed its link on purpose: a deliberate close, never a dead link (senpi#5867). */
+export class LoopHookClosedError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "LoopHookClosedError";
+	}
+}
+
 interface Pending {
 	readonly call: LoopHookCall;
 	startedBy?: string;
 	readonly resolve: (result: JsonValue) => void;
 	readonly reject: (error: Error) => void;
+}
+
+/** A hook call's durable key: the same for every loop that issues this hook of this turn in this session (senpi#5867). */
+export function loopHookCallKey(session: string, turn: string, event: string, ordinal: number): string {
+	return canonicalJson({ session, turn, event, ordinal });
 }
 
 export function createLoopHookHost(options: LoopHookHostOptions): LoopHookHost {
@@ -100,10 +118,10 @@ export function createLoopHookHost(options: LoopHookHostOptions): LoopHookHost {
 	});
 
 	return {
-		run(event, payload, signal) {
-			if (closed) return Promise.reject(new Error("The loop-hook link is closed"));
+		run(event, payload, signal, callKey) {
+			if (closed) return Promise.reject(new LoopHookClosedError("The loop-hook link is closed"));
 			if (signal?.aborted) return Promise.reject(new Error("Operation aborted"));
-			const call: LoopHookCall = { kind: "hook.call", callId: mintId(), event, payload };
+			const call: LoopHookCall = { kind: "hook.call", callId: callKey ?? mintId(), event, payload };
 			const result = new Promise<JsonValue>((resolve, reject) => {
 				pending.set(call.callId, { call, resolve, reject });
 			});
@@ -120,7 +138,9 @@ export function createLoopHookHost(options: LoopHookHostOptions): LoopHookHost {
 		close() {
 			closed = true;
 			for (const callId of [...pending.keys()])
-				settle(callId, (waiter) => waiter.reject(new Error("The loop-hook link was closed before the hooks ran")));
+				settle(callId, (waiter) =>
+					waiter.reject(new LoopHookClosedError("The loop-hook link was closed before the hooks ran")),
+				);
 			transport.close();
 		},
 	};
