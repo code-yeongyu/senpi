@@ -1,3 +1,252 @@
+## 2026-11-05 - CI runs the coding-agent tests on ten shards with a 15-minute per-shard budget (senpi#5910, senpi#5855)
+
+### What changed
+
+- `.github/workflows/ci.yml`: `test-coding-agent` runs ten shards (`N/10`) instead of four. Each shard records the time right before its tests (`Start the shard budget clock`, the step before `Test shard`, so a slow apt mirror or download cannot spend the budget). After `Test shard`, a new `Shard time budget` step runs `scripts/ci-shard-budget.mjs`, which fails the job once its tests ran past 900 s, naming the measured time. The `Test shard` step keeps its 25-minute timeout and the job keeps 30 minutes.
+
+### Why
+
+- Four shards ran 15-25 min on hosted main and reached the 25-minute step timeout with no failing test (senpi#5855). Main run 41947601029 spent 4905 s in its four test steps, the slowest 1.22x the mean, so ten shards project the slowest test step near 600 s (an estimate from the four-shard ratio; the budget step measures every run). The budget step turns future suite growth into a named red with a number, instead of a silent kill at the timeout.
+
+### Why an extension could not handle it
+
+- This is GitHub Actions workflow wiring; it has no runtime surface an extension could reach.
+
+### Expected merge conflict zones
+
+- LOW: `.github/workflows/ci.yml` around the `test-coding-agent` job's matrix, its first step and the step after `Test shard`.
+
+## 2026-11-04 - The Fused EQ job runs the mutation library's tests (senpi#5772)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the Fused equivalence job's "senpi-qa harness unit tests" step also runs `equivalence-mutations.test.mjs`.
+
+### Why
+
+- Its "every shipped patch applies to this tree" test went red on main unnoticed when #5648 and #5665 moved the code three mutation patches target: no CI job ran it.
+
+### Why an extension could not handle it
+
+- CI test selection is repository configuration.
+
+### Expected merge conflict zones
+
+- LOW: the Fused equivalence job's "senpi-qa harness unit tests" command line.
+
+## 2026-11-04 - The Fused EQ job compares the one pipeline (senpi#5728)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the Fused equivalence job's EQ compare no longer passes `--pipeline legacy`.
+
+### Why
+
+- S36 removes the agent loop's own scheduler and EQ's `--pipeline` option, so the harness refuses the flag and every run's witness must show the prepared pipeline.
+
+### Why an extension could not handle it
+
+- CI test selection is repository configuration.
+
+### Expected merge conflict zones
+
+- LOW: the Fused equivalence job's `EQ compare against the B0 goldens` command line.
+
+## 2026-11-03 - CI runs the machine-ops workspace tests (senpi#5592)
+
+### What changed
+
+- `.github/workflows/ci.yml`: `--workspace packages/machine-ops` in the workspace test step, which runs the package's conformance suite (50 cases), its dependency-boundary test and its scope-registry tests.
+
+### Why
+
+- A remote machine executor and the agent's own tools must share one implementation of file and process operations, their limits and their permission checks. The shared layer is the new engine-free workspace package `packages/machine-ops` (`@code-yeongyu/senpi-machine-ops`), which imports nothing from `packages/agent` or `packages/coding-agent`.
+
+### Why an extension could not handle it
+
+- CI configuration is repository infrastructure.
+
+### Expected merge conflict zones
+
+- LOW: the workspace list of the "Workspace tests (all but coding-agent)" step.
+
+## 2026-10-26 - Native prebuilds and the npm publish carry the socket-secret bridge (senpi#4312)
+
+### What changed
+
+- `.github/workflows/native-prebuilds.yml`: Windows rows build `crates/senpi-socket-secret`, the win32-x64 row loads it and checks its ABI sentinel, and "Stage artifact" stages it at `native/socket-secret/prebuilds/<host>/` (three addons expected on Windows).
+- `.github/workflows/publish-npm.yml`: a publish-only step stages both Windows bridges into `packages/coding-agent` and fails when one is missing; the publish passes `--require-socket-secret-bridge=win32-x64,win32-arm64`.
+
+### Why
+
+- sisyphuslabs/omo-desktop-app#4199 section 7: native packaging failure of the bridge is a release blocker.
+
+### Why an extension could not handle it
+
+- CI and release workflows run outside the agent runtime.
+
+### Expected merge conflict zones
+
+- MEDIUM: the "Stage artifact" step of `native-prebuilds.yml` and the publish command line in `publish-npm.yml`.
+
+## 2026-11-01 - Provision QEMU and a gondolin image store so EQ E29 runs in the Fused EQ job (senpi#5265)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the Fused equivalence job enables KVM when the runner exposes `/dev/kvm`, installs QEMU, caches a gondolin image store, pulls `alpine-base:latest` into it with the repository's gondolin CLI, smoke-tests one micro-VM, and exports `EQ_GONDOLIN_IMAGE_STORE` before the EQ compare.
+
+### Why
+
+- E29 starts the unmodified gondolin example's micro-VM offline from a pre-pulled image store; without QEMU and the store the case could not run on CI, so main's Fused EQ job stayed red and the steps after it never ran.
+
+### Why an extension could not handle it
+
+- The runner's system packages and job environment are set up by the workflow before any senpi process or extension starts.
+
+### Expected merge conflict zones
+
+- LOW: the Fused equivalence job's steps before `EQ compare against the B0 goldens`.
+
+## 2026-11-01 - Run the Windows pair inheritance proof (#5267)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the Windows RPC job's pair-proof step also runs `host-private-fds-pair-inherit.test.ts`, which proves from inside an ordinary child that adopted pair handles are absent while an inheritable control is visible.
+
+### Why
+
+- The effect of clearing the inherit flag on adopted pipe-pair handles needs a real windows-latest kernel to observe.
+
+### Why an extension could not handle it
+
+- CI test selection is repository configuration.
+
+### Expected merge conflict zones
+
+- The Windows RPC job's test steps.
+
+## 2026-10-31 - WebView suite skips are allowed by test name per platform (senpi#4917)
+
+### What changed
+
+- `.github/workflows/ci.yml`: both "Require the WebView suites to have executed" steps (the `webview-kernel` matrix and `macos-combined`) replace the numeric skip budget (`win32 ? 1 : 0`) with an allowlist of full test names per platform: off macOS, the two macOS-only WebKit backend tests; on Windows, also the hung-Chrome resilience test. Any skip not on the list fails the step and is printed as an error; `passed < 10` and `failed !== 0` still fail it.
+
+### Why
+
+- senpi#4917: main added a macOS-only `describe.skipIf` block with two tests to `js-kernel-webview.test.ts`, so the Linux job reported `passed=18 failed=0 skipped=2` and Windows `passed=17 failed=0 skipped=3` and both failed on the budget although every test passed. A count cannot tell an expected platform skip from a new one; names can.
+
+### Why an extension could not handle it
+
+- The check is a CI workflow step; no extension runs in it.
+
+### Expected merge conflict zones
+
+- LOW: the two "Require the WebView suites to have executed" steps in `.github/workflows/ci.yml`.
+
+## 2026-10-31 - List stream-keepalive.ts in the loop-core closure (senpi#5259)
+
+### What changed
+
+- `packages/agent/src/conformance/loop-core-manifest.ts`: `stream-keepalive.ts` is listed in `LOOP_CORE_MODULES`.
+
+### Why
+
+- `agent-loop.ts` imports it (senpi#4608), and the S06 boundary test (senpi#5002) refuses an unlisted local dependency, so main was red. The module is portable, so it belongs inside the closure.
+
+### Why an extension could not handle it
+
+- The loop-core boundary is a build-time conformance check on the agent package, not runtime behavior.
+
+## 2026-10-31 - The fused-equivalence job also runs the EQ.tui comparator unit test (senpi#5180)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `fused-equivalence` job's unit-test step (renamed `Normalizer and TUI comparator unit tests`) also runs `.agents/skills/senpi-qa/scripts/lib/equivalence-tui-compare.test.mjs`, the contract that the EQ.tui comparator masks only the TUI header's release version.
+
+### Why
+
+- EQ.tui failed 0/7 on darwin-arm64 at every release because the header version was compared verbatim, and no CI job ran anything on the TUI surface. The comparator now masks that one token. The unit test runs on every PR, so the mask cannot widen or disappear unnoticed.
+
+### Why an extension could not handle it
+
+- CI workflow configuration, not runtime behaviour.
+
+### Expected merge conflict zones
+
+- LOW: the `fused-equivalence` job in `.github/workflows/ci.yml` is fork-only; upstream has no such job.
+
+## 2026-10-31 - Run the Windows pair release-proof cases (#4898)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the Windows RPC job's pair-proof step also runs `host-private-fds-proof-gate.test.ts`, including the compiled-runtime stale-table case.
+
+### Why
+
+- The stale-table and release-gate cases must run on windows-latest under the pinned Bun.
+
+### Why an extension could not handle it
+
+- CI test selection is repository configuration.
+
+### Expected merge conflict zones
+
+- The Windows RPC job's test steps.
+
+## 2026-10-30 - Include every Python startup sidecar asset (senpi#5048)
+
+### What changed
+
+- `.github/workflows/ci.yml`: copy all `src/kernels/py/*.py` siblings into the isolated Windows Python host.
+
+### Why
+
+- Copying only `prelude.py` omitted the permission bridge and its identity dependencies, failing the compiled host at startup.
+
+### Why an extension could not handle it
+
+- CI constructs the isolated runtime before any extension can execute.
+
+### Expected merge conflict zones
+
+- LOW: the Python cold-start job's sidecar copy command.
+
+## 2026-10-30 - Run the TUI smoke regression test in CI (senpi#4989)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `fused-equivalence` job's normalizer step becomes `senpi-qa harness unit tests`. It installs tmux when the runner lacks it and runs `tui-smoke.test.mjs` next to `equivalence-normalize.test.mjs`.
+
+### Why
+
+- senpi#4986: the regression test proving the TUI smoke waits for a real render ran nowhere in CI.
+
+### Why an extension could not handle it
+
+- CI workflows run outside the agent runtime.
+
+### Expected merge conflict zones
+
+- LOW: the normalizer test step of `fused-equivalence` in `ci.yml`.
+
+## 2026-10-29 - Run the compiled Windows pair and old-parser controls (#4859)
+
+### What changed
+
+- `.github/workflows/ci.yml`: runs `host-private-fds-pair.test.ts` and `host-private-fd-inherit.test.ts` in the existing Windows RPC job, including the compiled Bun round-trip, native failure guards and frozen old-parser compatibility control on the workflow's pinned runtime.
+
+### Why
+
+- A Bun bump invalidates the release proof and must re-run both controls before the proof can be re-enabled.
+
+### Why an extension could not handle it
+
+- CI test selection is repository configuration.
+
+### Expected merge conflict zones
+
+- The Windows RPC job's test steps.
+
 ## 2026-10-30 - Pull-request CI runs only for PRs labelled run-full-ci (senpi#4968)
 
 ### What changed

@@ -28,6 +28,12 @@ export const RPC_ERROR_INVALID_ARGUMENT = "invalid_argument";
 /** An answer would pass the per-response byte budget; read the history in pages (`get_entries` `limit`/`maxBytes`). */
 export const RPC_ERROR_RESPONSE_TOO_LARGE = "response_too_large";
 
+/**
+ * The answer to this request was built but could not be written (its value cannot be serialized: a BigInt, a cycle, a
+ * throwing `toJSON`); `error` names the cause. Sent in place of the reply so the caller is never left waiting (senpi#5702).
+ */
+export const RPC_ERROR_RESPONSE_UNWRITABLE = "response_unwritable";
+
 export const RPC_ERROR_OPEN_FAILED = "open_failed";
 
 export const RPC_ERROR_OWNER_CHANGED = "owner_changed";
@@ -53,6 +59,12 @@ export const RPC_ERROR_SUBSCRIPTION_LIMIT = "subscription_limit";
 
 /** `subscribe_sessions`/`unsubscribe_sessions` on a transport with no per-connection identity (stdio). */
 export const RPC_ERROR_UNSUPPORTED_TRANSPORT = "unsupported_transport";
+
+/**
+ * A public method whose host feature is off. `errorData.feature` names it, e.g. `compact_updates` for `reset_stream`,
+ * `cancel_attempt`, `get_recovery_page` and `release_recovery` while engine-socket compact updates are off (senpi#5748).
+ */
+export const RPC_ERROR_FEATURE_DISABLED = "feature_disabled";
 
 /** `open_session.kind` was neither `interactive` nor `worker`; an unknown kind is never downgraded. */
 export const RPC_ERROR_INVALID_SESSION_KIND = "invalid_session_kind";
@@ -105,6 +117,8 @@ export const RPC_ERROR_PROVIDER_UNAVAILABLE = "provider_unavailable";
 export const RPC_ERROR_PROVIDER_CREDENTIALS_MISSING = "provider_credentials_missing";
 export const RPC_ERROR_PROVIDER_CREDENTIALS_EXPIRED = "provider_credentials_expired";
 export const RPC_ERROR_NO_MODEL_SELECTED = "no_model_selected";
+/** A `prompt` steer/follow-up, `steer` or `follow_up` named an `expectedTurnId` that is not running (`errorData { currentTurnId? }`). */
+export const RPC_ERROR_TURN_CONFLICT = "turn_conflict";
 
 /** `set_model { effectId }` was refused because the target cannot hold the session context. */
 export const RPC_ERROR_CONTEXT_BUDGET = "context_budget";
@@ -196,6 +210,7 @@ export type RpcErrorCode =
 	| typeof RPC_ERROR_PROVIDER_CREDENTIALS_MISSING
 	| typeof RPC_ERROR_PROVIDER_CREDENTIALS_EXPIRED
 	| typeof RPC_ERROR_NO_MODEL_SELECTED
+	| typeof RPC_ERROR_TURN_CONFLICT
 	| typeof RPC_ERROR_CONTEXT_BUDGET
 	| typeof RPC_ERROR_EVAL_CELL_NOT_FOUND
 	| typeof RPC_ERROR_INVALID_EVAL_CELL_REQUEST
@@ -211,4 +226,5 @@ export type RpcErrorCode =
 	| typeof RPC_ERROR_INVALID_RELEASE_REASON
 	| typeof RPC_ERROR_RELEASE_UNSUPPORTED
 	| typeof RPC_ERROR_RELEASE_FAILED
-	| typeof RPC_ERROR_HOST_DRAINING;
+	| typeof RPC_ERROR_HOST_DRAINING
+	| typeof RPC_ERROR_RESPONSE_UNWRITABLE;

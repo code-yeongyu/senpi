@@ -9,6 +9,8 @@ import type { ClientMessageIdentity } from "../../core/client-message-identity.t
 import type { SessionEntry } from "../../core/session-manager.ts";
 import type { ToolBarrierSpec } from "../../core/tool-barrier.ts";
 
+import type { RpcRecoveryCommand } from "./rpc-recovery-command-types.ts";
+import type { RpcRemoteOrigin } from "./remote-origin.ts";
 import type { RpcSessionModelEntry } from "./rpc-session-state-types.ts";
 
 // ============================================================================
@@ -29,8 +31,15 @@ export type RpcSessionCommand =
 			unknownCommandAsText?: boolean;
 			clientMessageId?: string;
 			clientTurnId?: string;
+			/**
+			 * With `streamingBehavior` set: the turn the caller means to reach, as `get_state.currentTurnId` reports it. An input
+			 * that names a turn which is not running is refused `turn_conflict` (senpi#5776).
+			 */
+			expectedTurnId?: string;
 			/** Arm the tool barrier for the turn this prompt starts (capability `tool_barrier`, senpi#3717). */
 			toolBarrier?: ToolBarrierSpec;
+			/** A thread call from another session: the hop count of its chain (decision K8); refused `chain_count_limit` past the user's `threads.chainCountLimit`. */
+			chainCount?: number;
 	  }
 	/** Open the tool barrier armed under `barrierId`; an unknown or cleared id is a successful no-op. */
 	| { id?: string; type: "release_tool_barrier"; barrierId: string }
@@ -62,8 +71,12 @@ export type RpcSessionCommand =
 			message: string;
 			images?: ImageContent[];
 			enqueueOrder?: number;
+			/** A thread call from another session: the hop count of its chain (decision K8); refused `chain_count_limit` past the user's `threads.chainCountLimit`. */
+			chainCount?: number;
 			/** `"start"` starts a turn with this message when the session is idle (capability `steer_when_idle`). */
 			whenIdle?: RpcWhenIdle;
+			/** The turn (`get_state.currentTurnId`) this input is for; any other turn refuses it `turn_conflict` (senpi#5776). */
+			expectedTurnId?: string;
 	  } & ClientMessageIdentity)
 	| ({
 			id?: string;
@@ -71,8 +84,12 @@ export type RpcSessionCommand =
 			message: string;
 			images?: ImageContent[];
 			enqueueOrder?: number;
+			/** A thread call from another session: the hop count of its chain (decision K8); refused `chain_count_limit` past the user's `threads.chainCountLimit`. */
+			chainCount?: number;
 			/** `"start"` starts a turn with this message when the session is idle (capability `steer_when_idle`). */
 			whenIdle?: RpcWhenIdle;
+			/** The turn (`get_state.currentTurnId`) this input is for; any other turn refuses it `turn_conflict` (senpi#5776). */
+			expectedTurnId?: string;
 	  } & ClientMessageIdentity)
 	/**
 	 * `effectId` (1-256 chars, capability `effect_ledger`) records the abort as a durable effect BEFORE it is
@@ -164,7 +181,8 @@ export type RpcSessionCommand =
 	| { id?: string; type: "get_pending_inputs"; knownClientMessageIds?: string[] }
 
 	// Model
-	| { id?: string; type: "set_model"; provider: string; modelId: string; effectId?: string }
+	/** `scope: "session"` switches only this session's model; without it the device's default model follows. */
+	| { id?: string; type: "set_model"; provider: string; modelId: string; scope?: "session"; effectId?: string }
 	| { id?: string; type: "set_favorite_models"; models: RpcSessionModelEntry[] }
 	| { id?: string; type: "set_scoped_models"; models: RpcSessionModelEntry[] }
 	| { id?: string; type: "cycle_model"; direction?: "forward" | "backward" }
@@ -287,6 +305,7 @@ export type RpcSessionCommand =
 			maxBytes?: number;
 	  }
 	| { id?: string; type: "get_tree" }
+	| RpcRecoveryCommand
 	| { id?: string; type: "get_last_assistant_text" }
 	| { id?: string; type: "set_session_name"; name: string }
 	/** The user started typing a draft in this session's composer (senpi#3859). Only `draft` is accepted. */
@@ -315,10 +334,10 @@ export type RpcSessionCommand =
 	// completion is delivered via auth_login_url / auth_login_end EVENTS, because
 	// an interactive OAuth round-trip cannot fit the 30s request timeout.
 	| { id?: string; type: "get_auth_providers" }
-	| { id?: string; type: "login_start"; provider: string }
+	| { id?: string; type: "login_start"; provider: string; slotId?: string }
 	| { id?: string; type: "login_cancel"; provider: string }
-	| { id?: string; type: "login_api_key"; provider: string; key: string }
-	| { id?: string; type: "logout"; provider: string }
+	| { id?: string; type: "login_api_key"; provider: string; key: string; region?: string }
+	| { id?: string; type: "logout"; provider: string; slotId?: string }
 	// Checks a key with the provider's model list without storing it (desktop #2510).
 	| { id?: string; type: "verify_api_key"; provider: string; key: string }
 
@@ -327,9 +346,17 @@ export type RpcSessionCommand =
 	| { id?: string; type: "get_provider_accounts"; provider: string }
 	| { id?: string; type: "account_pin"; provider: string; name: string | null }
 	| { id?: string; type: "account_remove"; provider: string; name: string }
+	| { id?: string; type: "account_reset"; provider: string; name: string }
 	| { id?: string; type: "account_order"; provider: string; names: string[] | null }
 	| { id?: string; type: "test_provider_account"; provider: string; name: string }
-	| { id?: string; type: "set_client_info"; width: number; capabilities?: string[] };
+	| {
+			id?: string;
+			type: "set_client_info";
+			width: number;
+			capabilities?: string[];
+			/** Declared by a relay forwarder for the remote device this connection speaks for (senpi#5475). */
+			remoteOrigin?: RpcRemoteOrigin;
+	  };
 
 /** What `steer`/`follow_up` do on an idle session: queue (default) or start a turn. */
 export type RpcWhenIdle = "queue" | "start";
@@ -339,3 +366,6 @@ export const STEER_WHEN_IDLE_CAPABILITY = "steer_when_idle";
 
 /** Capability: `record_user_activity` reports composer draft activity (senpi#3859). */
 export const USER_ACTIVITY_CAPABILITY = "user_activity";
+
+/** Capability: `set_model` honours `scope: "session"` and leaves the default model alone (senpi#5933). */
+export const SESSION_MODEL_SCOPE_CAPABILITY = "session_model_scope";

@@ -1,23 +1,27 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { parentPort, workerData } from "node:worker_threads";
+import { captureAdmissionReply } from "./compact-admission-reply.ts";
+import { workerAdmissionCommand } from "./worker-admission-command.ts";
 import { runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import { isBunBinary } from "../../config.ts";
 import { WAKE_SOURCE_STATE_EVENT } from "../../core/extensions/builtin/monitor-state-event.ts";
 import type { ExtensionUIContext } from "../../core/extensions/types.ts";
 import { attachMcpGrantPresentation } from "../../core/mcp-grant-presentations.ts";
+import { startOpenTimer } from "../../core/open-timing.ts";
 import { takeOverStdout } from "../../core/output-guard.ts";
 import type { SecurityNoticeSnapshot } from "../../core/security-notices.ts";
+import { executionCallKey } from "../../core/session-call-keys.ts";
 import { recoveryCarrier, setSessionRecoveryEpoch } from "../../core/session-recovery-identity.ts";
 import { getDefaultSessionDir, type SessionManager } from "../../core/session-manager.ts";
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
-import { liveSessionWritePaths } from "../../core/session-write-reservation.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
 import { registerWebViewBroker } from "../../core/webview/webview-broker.ts";
 import { createCliRuntimeFactory } from "../../main.ts";
 import { initTheme } from "../interactive/theme/theme.ts";
-import { buildRpcSessionState } from "./connection-handler.ts";
+import { CommandAuthority, commandAuthority, withReceipt } from "./command-authority.ts";
 import { ConnectionRoles, roleConnection } from "./connection-roles.ts";
+import { authorityConflict, DELEGATION_AUTHORITY_CONFLICT } from "./delegation-resolve.ts";
 import { isHandoffBusy } from "./handoff-activity.ts";
 import { createRpcSessionBinding, type RpcSessionBinding } from "./session-binding.ts";
 import { SessionEventWriter } from "./session-event-writer.ts";
@@ -25,19 +29,24 @@ import { canonicalSessionPath } from "./session-path-key.ts";
 import type { RpcSessionEntry, RpcSessionRegistry } from "./session-registry.ts";
 import { resolveMovedProfile } from "./session-registry-moved-path.ts";
 import { createWorkerCredit } from "./session-worker-credit.ts";
+import { workerSnapshot } from "./session-worker-snapshot.ts";
+import { WorkerTransfer } from "./session-worker-transfer.ts";
 import { type CanonicalControl, carriedCanonical, carriedRefusal } from "./compact-canonical-pairing.ts";
-import { protocolDepthLimitOf } from "./compact-protocol-depth.ts";
+import { COMPACT_PROTOCOL_MAX_DEPTH, protocolDepthLimitOf } from "./compact-protocol-depth.ts";
+import { legacyJsonText } from "./jsonl.ts";
+import { jsonTextDeeperThan } from "./legacy-record-depth.ts";
 import { CompactProducerStamp } from "./compact-producer-stamp.ts";
 import {
 	type HostToSessionWorker,
 	SESSION_WORKER_LIMITS,
 	type SessionWorkerToHost,
-	type WorkerSnapshot,
 	withinFrameLimit,
 } from "./session-worker-protocol.ts";
 import { createSessionWorkerRegistry } from "./session-worker-registry.ts";
 import { IssuedWorkerOwners } from "./session-worker-owners.ts";
 import { McpFormWorker } from "./mcp-form-worker.ts";
+import type { SecretInputRoute } from "./secret-input-requests.ts";
+import { WorkerSecretRoutes } from "./session-worker-secret-route.ts";
 
 if (isBunBinary) {
 	const { registerBunRuntimeModules } = await import("../../bun/runtime-modules.ts");
@@ -47,6 +56,7 @@ if (isBunBinary) {
 takeOverStdout();
 registerWebViewBroker(Reflect.get(Object(workerData), "webviewBroker"));
 const port = parentPort;
+// Reply identity follows the command across the isolate without a per-request lookup table.
 if (!port) throw new Error("Session worker requires a parent port");
 const send = (message: SessionWorkerToHost): void => port.postMessage(message);
 const privateForms = new McpFormWorker(send);
@@ -57,11 +67,18 @@ function failWorker(error: string): never {
 	process.exit(1);
 }
 
-const { exchange, installWriteReservation } = createWorkerCredit(send, failWorker);
+const { exchange, transfer, post, installTransport, installWriteReservation, declareOnHost } = createWorkerCredit(
+	send,
+	failWorker,
+);
 // The host's key for the same file, so a deleted directory neither throws here nor misses (senpi#2285).
 installWriteReservation(canonicalSessionPath);
 
 class WorkerEventWriter extends SessionEventWriter {
+	readonly secrets = new WorkerSecretRoutes(exchange, () => this.currentConnection());
+	override secretInputRoute(_sessionId: string): SecretInputRoute {
+		return this.secrets.route();
+	}
 	override bindMcpForms(_sessionId: string, durableId: string, ui: object, admit: () => void) {
 		return privateFormsEnforced ? privateForms.bind(durableId, ui, admit) : undefined;
 	}
@@ -98,75 +115,87 @@ class WorkerEventWriter extends SessionEventWriter {
 			signal,
 		}));
 	}
-	override enqueue(_sessionId: string, record: object): boolean {
-		const line = JSON.stringify(record);
-		if (Buffer.byteLength(line) > SESSION_WORKER_LIMITS.outputBytes) failWorker("session_worker_output_limit");
-		const session = entry?.runtime?.session;
-		if (!session) throw new Error("Session output preceded runtime creation");
-		const activity = {
-			busy: session.isSessionBusy,
-			handoffBusy: isHandoffBusy(session.activitySnapshot),
-			streaming: session.isStreaming,
-		};
-		const replacement =
-			"type" in record &&
-			(record.type === "session_replaced" ||
-				record.type === "question_resolved" ||
-				record.type === "question_updated" ||
-				(record.type === "extension_ui_request" && "method" in record && record.method === "question"))
-				? snapshot()
-				: undefined;
-		if (replacement && Buffer.byteLength(JSON.stringify(replacement)) > SESSION_WORKER_LIMITS.outputBytes)
-			failWorker("session_worker_snapshot_limit");
-		const replaced = "type" in record && record.type === "session_replaced";
-		const issued = this.connectionContext.owner?.wire;
-		const owner = issued && { ownerId: issued.ownerId, bindingGeneration: issued.bindingGeneration };
-		if (ordered && replaced) {
-			journaled = session.sessionManager;
-			stamp.forget();
-			canonicalLost = false;
-		}
-		const transitions = ordered && !replaced ? (journaled?.drainTranscript() ?? []) : [];
-		const epochSignal = ordered && replaced ? new SharedArrayBuffer(36) : undefined;
-		const recovery = recoveryCarrier(record);
-		const canonical = carriedCanonical(record);
-		const order = ordered
-			? {
-					...stamp.stamp(recovery, canonical, record),
-					recovery,
-					...(canonical ? { canonical } : {}),
-					...(carriedRefusal(record) ? { canonicalRefused: true as const } : {}),
-					...(replaced
-						? {
-								bootstrap: {
-									transcript: withinFrameLimit(session.sessionManager.beginTranscriptJournal()),
-									epochSignal,
-								},
-							}
-						: {}),
-					...(transitions.length > 0 ? { transitions: withinFrameLimit(transitions) } : {}),
-				}
-			: {};
-		exchange((signal) => ({
-			...order,
-			type: "output",
-			// Keep one JSON-normal transfer format, including toJSON and non-cloneable fields.
-			// S12 replaces this whole-record serialization with compact records and permits.
-			record: JSON.parse(line) as object,
-			connection: this.currentConnection(),
-			...(owner === undefined ? {} : { owner }),
-			signal,
-			activity,
-			snapshot: replacement,
-		}));
-		if (epochSignal) setSessionRecoveryEpoch(session, Buffer.from(epochSignal).toString("ascii"));
+	override enqueue(_sessionId: string, value: object): boolean {
+		// The command's receipt is stamped where the command ran (omo-relay-daemon#307); the host never overwrites it.
+		const record = withReceipt(value, this.currentConnection());
+		let epochSignal: SharedArrayBuffer | undefined;
+		// Built under the host's payload permit (S12b): no line, snapshot or transcript exists before it is held.
+		transfer((signal) => {
+			const line = legacyJsonText(record);
+			if (Buffer.byteLength(line) > SESSION_WORKER_LIMITS.outputBytes) failWorker("session_worker_output_limit");
+			const session = entry?.runtime?.session;
+			if (!session) throw new Error("Session output preceded runtime creation");
+			const activity = {
+				busy: session.isSessionBusy,
+				handoffBusy: isHandoffBusy(session.activitySnapshot),
+				streaming: session.isStreaming,
+			};
+			const replacement =
+				"type" in record &&
+				(record.type === "session_replaced" ||
+					record.type === "question_resolved" ||
+					record.type === "question_updated" ||
+					(record.type === "extension_ui_request" && "method" in record && record.method === "question"))
+					? workerSnapshot(entry)
+					: undefined;
+			if (replacement && Buffer.byteLength(JSON.stringify(replacement)) > SESSION_WORKER_LIMITS.outputBytes)
+				failWorker("session_worker_snapshot_limit");
+			const replaced = "type" in record && record.type === "session_replaced";
+			const issued = this.connectionContext.owner?.wire;
+			const owner = issued && { ownerId: issued.ownerId, bindingGeneration: issued.bindingGeneration };
+			if (ordered && replaced) {
+				journaled = session.sessionManager;
+				stamp.forget();
+				canonicalLost = false;
+			}
+			const transitions = ordered && !replaced ? (journaled?.drainTranscript() ?? []) : [];
+			epochSignal = ordered && replaced ? new SharedArrayBuffer(36) : undefined;
+			const recovery = recoveryCarrier(record);
+			const callKey = executionCallKey(record);
+			const canonical = carriedCanonical(record);
+			const order = ordered
+				? {
+						...stamp.stamp(recovery, canonical, record),
+						recovery,
+						...(callKey ? { callKey } : {}),
+						...(canonical ? { canonical } : {}),
+						...(carriedRefusal(record) ? { canonicalRefused: true as const } : {}),
+						...(replaced
+							? {
+									bootstrap: {
+										transcript: withinFrameLimit(session.sessionManager.beginTranscriptJournal()),
+										epochSignal,
+									},
+								}
+							: {}),
+						...(transitions.length > 0 ? { transitions: withinFrameLimit(transitions) } : {}),
+					}
+				: {};
+			return {
+				...order,
+				type: "output",
+				admissionReply: captureAdmissionReply(),
+				// Keep one JSON-normal transfer format, including toJSON and non-cloneable fields; with the flag ON a record
+				// over one fragment then travels as bounded fragments of this message's JSON (S12b).
+				...(jsonTextDeeperThan(line, COMPACT_PROTOCOL_MAX_DEPTH)
+					? { record: {}, recordText: line }
+					: { record: JSON.parse(line) as object }),
+				connection: this.currentConnection(),
+				...(owner === undefined ? {} : { owner }),
+				signal,
+				activity,
+				snapshot: replacement,
+			};
+		});
+		if (epochSignal && entry?.runtime)
+			setSessionRecoveryEpoch(entry.runtime.session, Buffer.from(epochSignal).toString("ascii"));
 		return true;
 	}
 	override enqueueCanonical(_sessionId: string, control: CanonicalControl): void {
 		if (!ordered) return;
 		const { ordinal, firstOrdinal = ordinal } = stamp.stamp(control.carrier, control.record);
 		const { record, carrier: recovery } = control;
-		exchange((signal) => ({ type: "canonical", ordinal, firstOrdinal, recovery, record, signal }));
+		transfer((signal) => ({ type: "canonical", ordinal, firstOrdinal, recovery, record, signal }));
 	}
 	override canonicalUnavailable(_sessionId: string, cause: unknown): void {
 		// The host's compact state for this epoch is already gone after the first real loss; later losses would only cost
@@ -176,7 +205,7 @@ class WorkerEventWriter extends SessionEventWriter {
 		canonicalLost ||= limit === undefined;
 		const { ordinal } = stamp.stamp(undefined, undefined);
 		const reason = cause instanceof Error ? cause.message : String(cause);
-		exchange((signal) => ({ type: "canonical_unavailable", ordinal, reason, limit, signal }));
+		transfer((signal) => ({ type: "canonical_unavailable", ordinal, reason, limit, signal }));
 	}
 }
 
@@ -201,10 +230,12 @@ let unsubscribe: (() => void) | undefined;
 let unsubscribeWake: (() => void) | undefined;
 
 function publishSnapshot(settled = false): void {
-	const value = snapshot();
-	if (Buffer.byteLength(JSON.stringify(value)) > SESSION_WORKER_LIMITS.outputBytes)
-		failWorker("session_worker_snapshot_limit");
-	exchange((signal) => ({ type: "snapshot", snapshot: value, signal, settled }));
+	transfer((signal) => {
+		const value = workerSnapshot(entry);
+		if (Buffer.byteLength(JSON.stringify(value)) > SESSION_WORKER_LIMITS.outputBytes)
+			failWorker("session_worker_snapshot_limit");
+		return { type: "snapshot", snapshot: value, signal, settled };
+	});
 }
 
 function subscribeSession(): void {
@@ -215,24 +246,6 @@ function subscribeSession(): void {
 	);
 	// Settled for the host's drain only at agent_idle: agent_settled can precede its extension handlers (omo#11419).
 	unsubscribe = entry?.runtime?.session.subscribe((event) => publishSnapshot(event.type === "agent_idle"));
-}
-
-function snapshot(): WorkerSnapshot {
-	if (!entry?.runtime) throw new Error("Session runtime is not ready");
-	const session = entry.runtime.session;
-	const sessionPath = session.sessionFile ? canonicalSessionPath(session.sessionFile) : undefined;
-	// The host releases every granted path this list omits, so it must name each writer
-	// still alive in this isolate, plus the session the runtime currently writes.
-	const live = new Set(liveSessionWritePaths().map(canonicalSessionPath));
-	if (sessionPath) live.add(sessionPath);
-	return {
-		state: buildRpcSessionState(session),
-		sessionPath,
-		liveSessionPaths: [...live],
-		busy: session.isSessionBusy,
-		handoffBusy: isHandoffBusy(session.activitySnapshot),
-		streaming: session.isStreaming,
-	};
 }
 
 async function handle(message: HostToSessionWorker): Promise<void> {
@@ -254,32 +267,43 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 		}
 		case "commit": {
 			if (!prepared || registry) throw new Error("Invalid session commit");
+			const timer = startOpenTimer(`worker-commit:${message.request}`);
 			const startupSettingsManager = SettingsManager.create(
 				prepared.configuration.cwd,
 				prepared.configuration.agentDir,
 			);
+			timer.mark("settings");
 			const factory = createCliRuntimeFactory(prepared.configuration, { startupSettingsManager });
 			initTheme(startupSettingsManager.getTheme(), false);
 			registry = createSessionWorkerRegistry(prepared.configuration.agentDir, factory);
+			timer.mark("factory");
 			const opened = await registry.openSession(prepared.profile);
+			timer.mark("registry_open");
 			entry = registry.getForCommand(opened.sessionId, "open_session");
-			ordered = message.acceptance === true;
+			// The host offers acceptance only with the flag on (RULING-112); a session without the structured lane declines
+			// it with a `ready` lacking a bootstrap, which the host refuses (RULING-106).
+			ordered = message.acceptance === true && entry.runtime?.session.hasStructuredLane === true;
 			if (message.recoveryEpoch && entry.runtime)
 				setSessionRecoveryEpoch(entry.runtime.session, message.recoveryEpoch);
 			journaled = ordered ? entry.runtime?.session.sessionManager : undefined;
-			send({
+			if (ordered && message.permits) installTransport(new WorkerTransfer(send, message.permits, stamp, failWorker));
+			// The bootstrap answer is built only once the initial permit is held (S12b X03).
+			post(() => ({
 				type: "ready",
 				request: message.request,
-				snapshot: snapshot(),
+				snapshot: workerSnapshot(entry),
 				...(ordered
 					? { bootstrap: { transcript: withinFrameLimit(journaled?.beginTranscriptJournal() ?? []) } }
 					: {}),
-			});
+			}));
 			return;
 		}
 		case "bind": {
 			if (!entry || binding) throw new Error("Invalid session binding");
-			if (message.roles !== undefined) connectionRoles.adopt(roleConnection(message.connection), message.roles);
+			const bound = roleConnection(message.connection);
+			if (message.delegation !== undefined && connectionRoles.retain(bound, message.delegation).kind === "conflict")
+				throw new Error(DELEGATION_AUTHORITY_CONFLICT);
+			if (message.roles !== undefined) connectionRoles.adopt(bound, message.roles, message.delegation?.incarnation);
 			const bindingEntry = entry;
 			privateFormsEnforced = message.mcpFormsEnforced === true;
 			const createBinding = () =>
@@ -288,11 +312,17 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 					connectionRoles,
 					clientInfo: {
 						connectionId: () => writer.currentConnection(),
-						setCapabilities: (connection, capabilities) =>
-							exchange(
-								(signal) => ({ type: "capabilities", connection, capabilities, signal }),
-								"session_worker_capabilities_denied",
-							),
+						// The incarnation is the declaring command's own, passed in, never read here (#307).
+						setCapabilities: (connection, capabilities, incarnation) =>
+							declareOnHost((signal) => ({
+								type: "capabilities",
+								connection,
+								capabilities,
+								...(incarnation === undefined ? {} : { incarnation }),
+								signal,
+							})) === "stale"
+								? "stale"
+								: undefined,
 					},
 				});
 			binding = await (message.connection === undefined
@@ -313,6 +343,16 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			await binding?.handle({ type: "extension_ui_response", id: message.id, cancelled: true });
 			return;
 		}
+		case "cancel_secret":
+			writer.secrets.cancels.get(message.id)?.();
+			return;
+		case "secret_sealed_answer":
+			send({
+				type: "secret_sealed_result",
+				request: message.request,
+				reply: await writer.secrets.answer(message.answer),
+			});
+			return;
 		case "command": {
 			const privileged =
 				"type" in message.command &&
@@ -320,15 +360,24 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 					String(message.command.type),
 				);
 			if (!binding || (closing && !privileged)) throw new Error("session_closing");
-			if (message.roles !== undefined) connectionRoles.adopt(roleConnection(message.connection), message.roles);
+			const connection = roleConnection(message.connection);
+			const resolved =
+				message.delegation === undefined ? undefined : connectionRoles.retain(connection, message.delegation);
+			if (resolved?.kind !== "conflict" && message.roles !== undefined)
+				connectionRoles.adopt(connection, message.roles, message.delegation?.incarnation);
+			if (message.origin !== undefined) connectionRoles.declareOrigin(connection, message.origin);
 			const activeBinding = binding;
-			const run = () => activeBinding.handle(message.command);
-			const connection = message.connection;
-			await (connection === undefined
-				? run()
-				: message.owner === undefined
-					? writer.withConnection(connection, run)
-					: writer.connectionContext.runIssued(connection, issuedOwners.adopt(message.owner), run));
+			const run =
+				resolved?.kind === "conflict"
+					? async () => void writer.enqueue("", authorityConflict(message.command))
+					: () => activeBinding.handle(message.command);
+			const authority = new CommandAuthority(
+				message.connection,
+				resolved === undefined || resolved.kind === "conflict" ? message.delegation : resolved.descriptor,
+				message.exec,
+				resolved?.kind === "stale",
+			);
+			await commandAuthority.run(authority, () => workerAdmissionCommand(message, writer, issuedOwners, run));
 			publishSnapshot();
 			send({ type: "result", request: message.request });
 			return;

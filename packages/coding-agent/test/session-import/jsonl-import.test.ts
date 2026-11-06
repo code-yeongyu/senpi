@@ -21,7 +21,8 @@ const entry = (id: string, parentId: string | null = null, data = id) => ({
 	customType: "fixture",
 	data,
 });
-const text = (id: string, entries: ReturnType<typeof entry>[]) =>
+type Entry = ReturnType<typeof entry>;
+const text = (id: string, entries: Entry[]) =>
 	[header(id), ...entries].map((value) => JSON.stringify(value)).join("\n") + "\n";
 
 async function fixture(options: DurableStoreOptions = {}) {
@@ -69,6 +70,29 @@ async function fixture(options: DurableStoreOptions = {}) {
 
 // R1.f / S07, #4995: the durable documents and actual file bytes are the assertion boundary.
 describe("JSONL import", () => {
+	it("does not record a projected append when the file grew past it (another writer's bytes)", async () => {
+		const f = await fixture();
+		const path = await f.put("s", text("s", [entry("a")]));
+		await f.reopen().open([path]);
+		const before = await f.reopen().getLedger(path);
+		const line = JSON.stringify(entry("b", "a"));
+		const offset = (await stat(path)).size;
+		await writeFile(path, `${text("s", [entry("a")])}${line}\n${JSON.stringify(entry("x", "a"))}\n`);
+		const written = await stat(path);
+
+		await expect(
+			f
+				.reopen()
+				.recordProjectedTail(
+					path,
+					"s",
+					{ key: "b", line, offset },
+					{ size: written.size, mtimeMs: written.mtimeMs, ctimeMs: written.ctimeMs },
+				),
+		).rejects.toThrow("Projection size does not match its written image");
+		expect(await f.reopen().getLedger(path)).toEqual(before);
+	});
+
 	it("imports a new session and later tails exactly once across reopen, preserving interleaved parent links", async () => {
 		const f = await fixture();
 		const a = entry("a");
@@ -97,7 +121,12 @@ describe("JSONL import", () => {
 		await f.reopen().importFile(path);
 		const other = await f.put("renamed", text("s", [a, entry("x", "a"), b, entry("c", "b")]));
 		expect(await f.reopen().importFile(other)).toMatchObject({ outcome: "extended", imported: 2 });
-		expect((await f.reopen().getSession("s"))?.entries.map((value) => value.id)).toEqual(["a", "x", "b", "c"]);
+		expect((await f.reopen().getSession("s"))?.entries.map((value) => (value as Entry).id)).toEqual([
+			"a",
+			"x",
+			"b",
+			"c",
+		]);
 	});
 
 	it.each(["hatch", "other", "stale-marker"] as const)(
@@ -204,7 +233,9 @@ describe("JSONL import", () => {
 		expect((await stat(path)).size).toBe(original.size);
 		expect((await f.files.stat(path)).mtimeMs).toBe(stamp.mtimeMs);
 		expect(await importer.importFile(path)).toMatchObject({ outcome: "adopted" });
-		expect((await importer.getSession("s"))?.entries.find((value) => value.id === edited)?.data).toBe("z");
+		expect((await importer.getSession("s"))?.entries.find((value) => (value as Entry).id === edited)).toMatchObject({
+			data: "z",
+		});
 	});
 
 	it("probes only the HWM bytes for an unchanged same-tick file and reads zero settled files", async () => {
@@ -306,9 +337,19 @@ describe("JSONL import", () => {
 				},
 			});
 			const path = await f.put("session", text("s", [entry("a")]));
+			// #5191: the same-size hatch rewrite below can share the import's coarse mtime/ctime tick (Linux); pin that case.
+			const stamp = await jsonlFiles.stat(path);
+			f.files.stat = async (file) => ({
+				...(await jsonlFiles.stat(file)),
+				mtimeMs: stamp.mtimeMs,
+				ctimeMs: stamp.ctimeMs,
+			});
+			// The import really runs inside that tick. The fixture's default clock (10 s ahead) tells the importer it
+			// checked long after the mtime, which licenses its stat-equality fast path and skips the rewrite.
+			f.setClock(stamp.mtimeMs);
 			await f.reopen().importFile(path);
 			await writeFile(path, text("s", [entry("b")]));
-			await writeHatchMarker(path, await jsonlFiles.stat(path));
+			await writeHatchMarker(path, await f.files.stat(path));
 			armed = true;
 			const error = await f
 				.reopen()

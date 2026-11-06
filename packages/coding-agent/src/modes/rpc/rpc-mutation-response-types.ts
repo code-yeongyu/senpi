@@ -1,5 +1,5 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { Model } from "@earendil-works/pi-ai";
+import type { Model, OAuthRevocationResult } from "@earendil-works/pi-ai";
 
 import type { PromptDisposition, QueuedInput, QueuedInputDisposition } from "../../core/agent-session.ts";
 
@@ -215,7 +215,13 @@ export type RpcMutationResponse =
 			/** Present when the key replaced a login of the other kind; `backupPath` holds the previous file (senpi#3448). */
 			data?: { replaced: "oauth" | "api_key"; backupPath?: string };
 	  }
-	| { id?: string; type: "response"; command: "logout"; success: true; data?: { notices: string[] } }
+	| {
+			id?: string;
+			type: "response";
+			command: "logout";
+			success: true;
+			data?: { notices?: string[]; status?: OAuthRevocationResult["status"] };
+	  }
 	| {
 			id?: string;
 			type: "response";
@@ -226,6 +232,7 @@ export type RpcMutationResponse =
 	| RpcMoveSessionResponse
 	| { id?: string; type: "response"; command: "account_pin"; success: true }
 	| { id?: string; type: "response"; command: "account_remove"; success: true; data?: { notice: string } }
+	| { id?: string; type: "response"; command: "account_reset"; success: true }
 	| { id?: string; type: "response"; command: "account_order"; success: true }
 	| {
 			id?: string;

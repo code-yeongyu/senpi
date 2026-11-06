@@ -1,3 +1,76 @@
+## 2026-10-27 - The MCP sign-in callback page carries the host brand (senpi#4434, closes #4432)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/callback.ts`: the loopback callback no longer answers with hard-coded `<title>senpi</title>` pages ("Return to senpi and retry"); its success and failure pages come from `oauthSuccessHtml` / `oauthErrorHtml` in `@earendil-works/pi-ai/utils/oauth-page`, so they show the host brand set with `setOAuthPageBrand` (name, and logo when the brand carries one) like the provider sign-in pages.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-provider.ts`: the dynamic client registration's `client_name` (shown on the MCP authorization server's consent screen) is `oauthBrandName()` instead of a hard-coded `senpi`; existing registrations are reused as before.
+
+### Why
+
+- Branded hosts (OmO, the desktop) showed "senpi" after an MCP server sign-in (#4432 review).
+
+### Why an extension could not handle it
+
+- This is the builtin MCP extension's own callback listener; the fix is inside it.
+
+### Expected merge conflict zones
+
+- LOW: the response lines in `LoopbackCallbackServer.#handle` (fork-native module).
+
+## 2026-11-01 - Resource utility tools keep their place ahead of the per-server MCP tools (senpi#5289)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/expose/tier-b.ts`: `registerMcpTierBTools` sorts by name only the per-server tool definitions and per-server proxy gateways; the fixed utility tools (`mcp_list_resources`, `mcp_read_resource`) keep their reference order ahead of them.
+
+### Why
+
+- #5290 sorted every MCP-managed name, which also moved the utility tools behind the per-server tools; only the per-server names ever followed server connect order.
+
+### Why an extension could not handle it
+
+- The order is decided inside the builtin MCP extension's own registration.
+
+### Expected merge conflict zones
+
+- LOW: the `catalogNames` and gateway loop in `registerMcpTierBTools`.
+
+## 2026-11-01 - Direct-mode MCP tools keep one order whichever server connects first (senpi#5289)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/expose/tier-b.ts`: `registerMcpTierBTools` passes its managed names (full definitions, proxy gateways, utility tools) to `orderActiveSet` together with the tool-search catalog names, so MCP tools sort by name in direct mode too. Base tools keep their reference order.
+
+### Why
+
+- In direct mode MCP tools are not in the tool-search catalog, so `orderActiveSet` kept them in reference order, which was the order their servers finished connecting. The tool list a model received, and its prompt-cache prefix, could change between runs, and the fused equivalence scenario E11 failed on a loaded host with two tool names swapped.
+
+### Why an extension could not handle it
+
+- The order is decided inside the builtin MCP extension's own registration.
+
+### Expected merge conflict zones
+
+- LOW: the `catalogNames` line in `registerMcpTierBTools`.
+
+## 2026-10-27 - MCP instructions are a volatile system-prompt addition (senpi#4447)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: the `before_agent_start` result sets `systemPromptCache: "volatile"`.
+
+### Why
+
+- MCP instructions follow the connected server set, so they belong behind the cross-session cache boundary.
+
+### Why an extension could not handle it
+
+- This is the MCP builtin's own handler.
+
+### Expected merge conflict zones
+
+- LOW: the `before_agent_start` return in `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`.
+
 ## 2026-10-29 - An unanchored discovery record never steers OAuth traffic (senpi#4924)
 
 ### What changed

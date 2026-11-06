@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import type { DurableStore, DurableStoreOptions } from "@earendil-works/pi-agent-core/conformance";
+import type { DurableStoreOptions, SyncCommitStore } from "@earendil-works/pi-agent-core/conformance";
 import { openSqliteStore } from "./store.ts";
 
 /** An open file as the OS counts it: until `close()`, the OS may refuse to delete or rename it. */
@@ -33,7 +33,7 @@ const NATIVE_FILE_SYSTEM: MediaFileSystem = {
 export interface BunSqliteMedia {
 	createMedium(): Promise<string>;
 	/** A store instance on `medium`. Instances on one medium share its durable state. */
-	open(medium: string, options?: DurableStoreOptions): Promise<DurableStore>;
+	open(medium: string, options?: DurableStoreOptions): Promise<SyncCommitStore>;
 	/** Closes every store opened on `medium` (an abandoned or killed instance included), then removes it. */
 	deleteMedium(medium: string): Promise<void>;
 	close(): Promise<void>;

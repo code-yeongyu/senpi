@@ -1,3 +1,21 @@
+## 2026-10-31 - ANTHROPIC_OAUTH_TOKEN help text (senpi#5131)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: the `ANTHROPIC_OAUTH_TOKEN` line of `--help` says the variable is read like `ANTHROPIC_API_KEY` and that Claude OAuth tokens are refused in favour of `anthropic-subscription`.
+
+### Why
+
+- senpi#5131: the old text advertised the removed OAuth path.
+
+### Why an extension could not handle it
+
+- The help text is the CLI's own.
+
+### Expected merge conflict zones
+
+- LOW: one line of the environment-variable list.
+
 ## 2026-10-30 - Check CLI choices without type assertions (senpi#4971)
 
 ### What changed

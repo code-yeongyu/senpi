@@ -2,7 +2,7 @@ import { createServer, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { type AssistantMessage, type Message, type Model, streamSimple } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { agentLoop } from "../src/agent-loop.ts";
+import { agentLoop } from "../src/index.ts";
 import type { AgentContext, AgentEvent, AgentLoopConfig, AgentMessage } from "../src/types.ts";
 
 /**

@@ -1,7 +1,8 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, expect, it, vi } from "vitest";
-import { RpcSessionRegistry, type RpcSessionEntry } from "../../../src/modes/rpc/session-registry.ts";
 import { dataOf, statusHost } from "../rpc-session-status-support.ts";
+import { EVENT_SAFETY_MS } from "./4272-worker-acceptance-support.ts";
+import { observeInProcessOpens } from "../rpc-in-process-entry-support.ts";
 
 afterEach(() => {
 	vi.unstubAllEnvs();
@@ -13,12 +14,10 @@ afterEach(() => {
 it("the real transcript join moves compact persistence from pending to appended or failed", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
 	await using host = await statusHost();
-	const admissions = vi.spyOn(RpcSessionRegistry.prototype, "getForCommand");
+	const admissions = observeInProcessOpens(host);
 	const client = host.client("persistence");
 	const sessionId = String(dataOf(await client.request({ type: "open_session", cwd: host.cwd })).sessionId);
-	const entry = admissions.mock.results.findLast((result) => result.type === "return")?.value as
-		| RpcSessionEntry
-		| undefined;
+	const entry = admissions.entryFor(sessionId);
 	const lane = entry?.acceptance;
 	const session = entry?.runtime?.session;
 	if (!lane || !session) throw new Error("no real lane");
@@ -26,7 +25,7 @@ it("the real transcript join moves compact persistence from pending to appended 
 		host.faux.setResponses([fauxAssistantMessage(answer, { timestamp: 1 })]);
 		const idle = (record: { type?: unknown }) => record.type === "agent_idle";
 		const seen = client.inbox.filter(idle).length;
-		const done = client.waitFor((record) => idle(record) && client.inbox.filter(idle).length > seen, 15_000);
+		const done = client.waitFor((record) => idle(record) && client.inbox.filter(idle).length > seen, EVENT_SAFETY_MS);
 		dataOf(await client.request({ type: "prompt", sessionId, message }));
 		await done;
 		await host.writer.flush();
@@ -58,4 +57,4 @@ it("the real transcript join moves compact persistence from pending to appended 
 	} finally {
 		lane.release(root);
 	}
-}, 90_000);
+}, 600_000);

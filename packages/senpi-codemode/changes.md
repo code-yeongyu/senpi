@@ -1,3 +1,106 @@
+## 2026-11-03 - Full eval guidelines for the Opus and Fable presets (senpi#5665)
+
+### What changed
+
+- `packages/senpi-codemode/src/prompt/eval-prompt.ts`: `buildEvalPrompt` also returns `fullPromptGuidelines`, the pre-#5342 per-dialect batching line and reset line.
+- `packages/senpi-codemode/src/tool/eval-tool.ts`: passes them as the eval tool's `fullPromptGuidelines`.
+
+### Why
+
+- A beta tester reported that Opus 5.5 got slower and less capable after the senpi#5335 diet (#5342) shipped. Q's order: revert the diet only for the Fable and Opus presets; every other model keeps it.
+
+### Why an extension could not handle it
+
+- The text lives in builtin prompt generators, builtin tool definitions, and builtin extension prompt hooks, and the preset that selects the wording is a builtin extension.
+
+### Expected merge conflict zones
+
+- LOW: the eval prompt parts and the tool definition.
+
+## 2026-11-01 - System prompt diet, shared modules (senpi#5335)
+
+### What changed
+
+- `packages/senpi-codemode/src/prompt/eval-prompt.ts`: the per-dialect batching guideline is removed (each dialect's description already carries it) and the remaining guideline keeps only the kernel memory notice rule.
+- Terse pass: the kernel memory notice guideline in `packages/senpi-codemode/src/prompt/eval-prompt.ts` is shortened.
+
+### Why
+
+- senpi#5335: the batching guideline and the reset rule restated the eval description.
+
+### Why an extension could not handle it
+
+- The eval tool definition owns its guidelines.
+
+### Expected merge conflict zones
+
+- LOW: `promptGuidelines` in `buildEvalPrompt`.
+
+## 2026-10-31 - eval infers an omitted run language when it is unambiguous (senpi#5154)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/eval-language-inference.ts` (new): `inferEvalLanguage` fills an omitted run language with the only enabled kernel, or, when exactly js and py are enabled, with `classifyEvalCode`: a strong marker of one language (py: `def name(`, a plain `import x` / `from x import y` line; js: `await` on a call, a template literal, `JSON.`/`Object.`/`Array.`, `const`/`let`, `=>`, `console.log(`, ESM imports) and no strong or weak signal of the other. `print(` is no signal, since the prelude gives both runtimes `print`. Any conflict fills nothing.
+- `packages/senpi-codemode/src/tool/eval-argument-validator.ts`: the eval validator fills the language before its missing-field check, records the fill as `language_inferred`, and drops a caller-sent `language_inferred`. An explicit language is never changed. A filled call that still fails validation reports the caller's own arguments.
+- `packages/senpi-codemode/src/tool/eval-request.ts`: `parseEvalRequest` applies the same inference for direct callers and carries `language_inferred` on the run request; a `language_inferred` argument counts only on an object the validator filled.
+- `packages/senpi-codemode/src/tool/eval-tool.ts`: a run whose language was inferred leads its result with `language_inferred: <lang> (<basis>)`.
+
+### Why
+
+- senpi#5154: a run call that omitted language always failed with the teaching error, even when the kernel could not be anything else, and a weaker tool-calling model could repeat that omission many times.
+
+### Expected merge conflict zones
+
+- LOW: the language checks in `parseEvalRequest`, the validator closure from senpi#5150, and `execute` in `createEvalTool`.
+
+## 2026-10-30 - Restore Windows Python startup assets and builtin helpers (senpi#4955, senpi#5048)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/py/path_identity_windows.py`: rebuild only Python lexical functions with private globals, retaining native builtin helpers directly and preserving function defaults.
+- `.github/workflows/ci.yml`: copy every Python runtime sibling into the isolated compiled Python host, rather than copying only `prelude.py`.
+- `packages/senpi-codemode/test/py-canonical-parity.test.ts`: simulate a builtin `ntpath.normpath` and poison module attributes after capture.
+- `packages/senpi-codemode/test/py-packaged-assets.test.ts`: compare the actual CI sidecar copy selection with the runtime Python asset set.
+
+### Why
+
+- CPython's builtin `ntpath.normpath` has no `__code__`. The isolated CI host also omitted the permission bridge and path-identity siblings required by the prelude.
+
+### Why an extension could not handle it
+
+- Permission identity capture runs before user cells, and the isolated host's runtime files are selected by CI before startup.
+
+### Expected merge conflict zones
+
+- LOW: Windows lexical-helper capture and the isolated Python host copy step.
+
+## 2026-10-31 - A mistyped detached cell id names the one close known id (senpi#5153)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/detached-cell-manager.ts`: `EvalCellNotFoundError` takes an optional suggestion; the unknown-id lookup behind `peek`, `stop` and `waitForTerminal` compares the requested id with every live, interrupting and retained settled id and appends `did you mean "<id>"?` when exactly one is within a quarter of the id's length in edit distance (at least one edit). No close id or a tie leaves the message byte-identical; `errorCode` stays `eval_cell_not_found`.
+- `packages/senpi-codemode/test/eval-cell-id-suggestion.test.ts`: match on a settled cell (peek), match on a live cell (stop), no match, and an ambiguous tie.
+
+### Why
+
+- Cell ids are long opaque strings; a weaker tool-calling model often drops or swaps a character when copying one and then repeats the same wrong id.
+
+## 2026-10-31 - eval validates a run call's missing fields first (senpi#5138)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/eval-argument-validator.ts` (new): `registerEvalArgumentValidator` registers the eval schema's argument validator. A run call (`action` omitted or `"run"`) missing `language`, `code` or `summary` (absent, null, or a blank summary) fails with one `required` error per missing field, in that order, carrying the eval teaching text (`language` names the enabled languages). Every other call goes through the generic `validateToolArguments` path and its coercion unchanged; when that fails, the generic path's own error is rethrown, so the message (including its `Received arguments` block) is exactly what the schema gets without a registered validator.
+- `packages/senpi-codemode/src/tool/eval-request.ts`: `evalRunFieldRequiredMessage` is the single source of the three run-field teaching errors, shared by validation and `parseEvalRequest`.
+- `packages/senpi-codemode/src/tool/eval-tool.ts`: `createEvalTool` registers the validator for its schema.
+
+### Why
+
+- senpi#5138: a run call missing `language` got the generic anyOf dump (every branch's failure), and the eval-specific error in `parseEvalRequest` was never reached because validation failed first.
+
+### Expected merge conflict zones
+
+- LOW: one import and one call in `createEvalTool`.
+
 ## 2026-10-29 - Preserve executable group-signal detection while ignoring inert shell text (senpi#3019)
 
 ### What changed

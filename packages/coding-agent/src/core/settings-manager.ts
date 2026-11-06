@@ -99,7 +99,6 @@ import {
 	readSettingsState,
 	STATE_KEYS,
 } from "./settings-state.ts";
-import { MAX_SKILL_EXPANSIONS_PER_PROMPT } from "./skill-invocation.ts";
 import {
 	type BranchSummarySettings,
 	isTerminalMouseMode,
@@ -252,7 +251,6 @@ export interface Settings {
 	themes?: string[]; // Array of local theme file paths or directories
 	hooks?: string[];
 	enableSkillCommands?: boolean; // default: true - register skills as /skill:name commands
-	maxSkillExpansionsPerPrompt?: number; // default: 5 - distinct skills one prompt may expand
 	terminal?: TerminalSettings;
 	promptCache?: PromptCacheSettings;
 	handoffHint?: HandoffHintSettings;
@@ -264,6 +262,8 @@ export interface Settings {
 	engineTurns?: { maxPerUserInput?: number; maxToolFreePerMinute?: number; maxPerResumeWindow?: number };
 	turn_inactivity_ms?: number; // default: 3_600_000, min 60_000, 0 disables; see core/turn-deadline.ts
 	turn_max_runtime_ms?: number; // default: 21_600_000, 0 disables
+	/** A thread chain (A→B→A…) is refused past `chainCountLimit` hops; unset (the default) means unlimited. No cost limit. */
+	threads?: { chainCountLimit?: number };
 	todo?: TodoSettings;
 	recommendedModels?: string[]; // Preferred default model ids, in priority order
 	favoriteModels?: string[]; // Model patterns for Ctrl+P cycling (same format as --models CLI flag)
@@ -1111,6 +1111,10 @@ export class SettingsManager {
 		);
 	}
 
+	getPromptCacheSessionAffinity(): boolean {
+		return this.settings.promptCache?.sessionAffinity ?? true;
+	}
+
 	getPromptCacheKeepAliveSettings(): Required<PromptCacheKeepAliveSettings> {
 		const configured = this.settings.promptCache?.keepAlive;
 		return {
@@ -1161,6 +1165,14 @@ export class SettingsManager {
 
 	getTurnMaxRuntimeMs(): number | undefined {
 		return this.settings.turn_max_runtime_ms;
+	}
+
+	/** The user's thread chain count limit (`threads.chainCountLimit`, K8): a non-negative integer, else unlimited. */
+	getThreadChainCountLimit(): number | undefined {
+		const configured = this.settings.threads?.chainCountLimit;
+		return typeof configured === "number" && Number.isSafeInteger(configured) && configured >= 0
+			? configured
+			: undefined;
 	}
 
 	getTodoFirstTurnPlan(): TodoFirstTurnPlan {
@@ -1802,7 +1814,10 @@ export class SettingsManager {
 	}
 
 	getRetryFallbackSettings(): ResolvedRetryFallbackSettings {
-		return resolveRetryFallbackSettings(this.settings.retry);
+		// Chains in the session-only override layer (applyRetryFallbackProfile, or an SDK applyOverrides call) are the session's whole policy.
+		return resolveRetryFallbackSettings(this.settings.retry, {
+			sessionPolicy: this.runtimeOverrides.retry?.fallbackChains !== undefined,
+		});
 	}
 
 	getFallbackCircuitSettings(): ResolvedFallbackCircuitSettings {
@@ -2399,13 +2414,6 @@ export class SettingsManager {
 
 	getEnableSkillCommands(): boolean {
 		return this.settings.enableSkillCommands ?? true;
-	}
-
-	getMaxSkillExpansionsPerPrompt(): number {
-		const value = this.settings.maxSkillExpansionsPerPrompt;
-		return typeof value === "number" && Number.isInteger(value) && value > 0
-			? value
-			: MAX_SKILL_EXPANSIONS_PER_PROMPT;
 	}
 
 	setEnableSkillCommands(enabled: boolean): void {

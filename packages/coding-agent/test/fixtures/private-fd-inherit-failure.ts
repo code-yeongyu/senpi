@@ -1,4 +1,4 @@
-import { closeSync, openSync } from "node:fs";
+import { closeSync, fstatSync, openSync } from "node:fs";
 
 const opened: number[] = [];
 let fd: number | undefined;
@@ -11,6 +11,16 @@ for (let attempt = 0; attempt < 5; attempt++) {
 	}
 }
 if (fd === undefined) throw new Error("no in-range fixture descriptor");
+const fixtureFd = fd;
+const fixtureIno = fstatSync(fixtureFd).ino;
+// POSIX reuses a freed descriptor number for the next open, so "still open" must also mean "still this file".
+const stillFixture = (): boolean => {
+	try {
+		return fstatSync(fixtureFd).ino === fixtureIno;
+	} catch {
+		return false;
+	}
+};
 let dlopenCalls = 0;
 const builtin = process.getBuiltinModule;
 process.getBuiltinModule = (name: string) =>
@@ -36,10 +46,12 @@ try {
 			declared: captured.privateChannelDeclared("a"),
 			entry: forward.kind === "entries" ? forward.entries.get("a") : "unparseable",
 			dlopenCalls,
+			discarded: !stillFixture(),
 		}),
 	);
 } catch {
 	process.stdout.write(JSON.stringify({ imported: false, dlopenCalls }));
 } finally {
-	for (const descriptor of opened) closeSync(descriptor);
+	// Capture closes a handle whose inherit flag could not be cleared; close only what is still ours.
+	for (const descriptor of opened) if (descriptor !== fixtureFd || stillFixture()) closeSync(descriptor);
 }

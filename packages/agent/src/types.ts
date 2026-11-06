@@ -18,6 +18,23 @@ import type {
 	Usage,
 } from "@earendil-works/pi-ai";
 import type { Static, TSchema } from "typebox";
+import type { DurableStore } from "./durable/store.ts";
+import type { ExecutionPipelineWitness, ExecutionScope, ToolHost } from "./execution/tool-host.ts";
+
+/**
+ * Opens a new, empty store for one tool batch, which the batch claims at epoch 1. A batch never reuses another's
+ * store: a call's command ID is the model's call ID, and providers reuse those across turns.
+ */
+export type BatchStoreFactory = () => DurableStore;
+
+export type {
+	ExecutionPipelineWitness,
+	ExecutionScope,
+	ToolHost,
+	ToolHostCall,
+	ToolHostOptions,
+	ToolHostResult,
+} from "./execution/tool-host.ts";
 
 /**
  * Stream function used by the agent loop. `Models.streamSimple` satisfies
@@ -163,6 +180,18 @@ export type FinishTurn = (
 	turn: AgentTurnContext,
 	signal?: AbortSignal,
 ) => AgentTurnDecision | void | Promise<AgentTurnDecision | undefined> | Promise<void>;
+
+/** One model step as the loop finished it: its terminal assistant message and the provider tool results emitted for it. */
+export interface StepCommit {
+	readonly message: AssistantMessage;
+	readonly providerToolResults: readonly ToolResultMessage[];
+}
+
+/**
+ * Makes one finished model step durable before the loop acts on it. A rejection leaves the loop with no further
+ * events and no tool dispatch for that step.
+ */
+export type StepCommitFn = (step: StepCommit) => Promise<void>;
 
 /** Replacement runtime state used by the agent loop before starting another provider request. */
 export interface AgentLoopTurnUpdate {
@@ -310,6 +339,13 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	finishTurn?: FinishTurn;
 
 	/**
+	 * Called once per model step, after the step's provider tool results are emitted and before the loop decides
+	 * whether the turn ends or dispatches tools; it covers success and terminal-failure messages alike. Unset on
+	 * every local assembly; a hosted brain host sets it to commit the step durably.
+	 */
+	commitStep?: StepCommitFn;
+
+	/**
 	 * Called immediately before every conversational provider request, including the first.
 	 * Pending messages have already been appended. The returned context, model, and thinking level
 	 * replace the runtime values for this and later requests in the run. This hook does not poll queues.
@@ -378,6 +414,24 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 * Default: "parallel"
 	 */
 	toolExecution?: ToolExecutionMode;
+	/** Unprepared batch boundary. Omitted selects the prepared pipeline (batch coordinator + prepared executor) in this process. */
+	toolHost?: ToolHost;
+	/**
+	 * Opens each batch's execution ledger for the default (prepared) pipeline. The loop builds no store itself: with no
+	 * `toolHost` and no factory, a tool batch fails closed with `BatchStoreMissingError`. The package entry's `Agent` and
+	 * `agentLoop` default it to `openMemoryBatchStore`.
+	 */
+	batchStoreFactory?: BatchStoreFactory;
+	/**
+	 * Runs once per call on the prepared pipeline, after the call is frozen and before it executes, with the arguments
+	 * object `beforeToolCall` saw and the frozen copy the tool will receive. A host whose `beforeToolCall` binds facts to
+	 * that object (an approval, a symbol property) moves them here. Synchronous and must not throw. With no `toolHost`
+	 * and no hook, a tool batch fails closed with `PreflightCarryMissingError`; the package entry's `Agent` and
+	 * `agentLoop` default it to `noPreflightCarry` (senpi#5795).
+	 */
+	afterToolFreeze?: (prepared: unknown, frozen: unknown) => void;
+	executionScope?: ExecutionScope;
+	onExecutionPipeline?: (witness: ExecutionPipelineWitness) => Promise<void> | void;
 
 	/**
 	 * Optional migration guidance for tool names intentionally removed by an extension.
@@ -466,6 +520,11 @@ export interface AgentState {
 	 * `content` or `sections` still apply on top of it.
 	 */
 	systemPrompt: string;
+	/**
+	 * Leading part of `systemPrompt` that is the same across sessions; see
+	 * {@link AgentContext.systemPromptStablePrefix} (senpi#4447).
+	 */
+	systemPromptStablePrefix?: string;
 	/** Active model used for future turns. */
 	model: Model<any>;
 	/** Requested reasoning level for future turns. */
@@ -598,6 +657,13 @@ export interface AgentContext {
 	 * `normalizeContext()`. Upstream-built contexts carry the prompt in transcript system messages.
 	 */
 	systemPrompt?: string;
+	/**
+	 * Leading part of `systemPrompt` that is the same across sessions, followed by content that is not
+	 * (memory, MCP instructions). Providers with block-level prompt caching put the system breakpoint at
+	 * its end so another session can read it from cache. Ignored unless `systemPrompt` starts with it
+	 * (senpi#4447).
+	 */
+	systemPromptStablePrefix?: string;
 	/** Transcript visible to the model. */
 	messages: AgentMessage[];
 	/** Tools available for execution in this run. */
