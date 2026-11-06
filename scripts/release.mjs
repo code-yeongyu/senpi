@@ -48,6 +48,7 @@ import { captureOutput } from "./release-capture.mjs";
 import { CHANGELOGS, reAddUnreleasedSections, stampChangelogs } from "./release-changelog.mjs";
 import { syncRemoteMainBeforePush } from "./release-git.mjs";
 import { applyWorkspaceVersions, runSyncVersions } from "./release-packages.mjs";
+import { planTestEvidence } from "./release-evidence.mjs";
 import { preparePinnedRelease, syncPinnedReleaseIntoMain } from "./release-pin.mjs";
 import {
 	awaitCiEvidence,
@@ -81,6 +82,9 @@ function printUsage() {
 		"                  instead of main's tip; later main merges stay out of the tag.",
 		"  --force-tests   Run the CI=1 npm test suite in this job instead of",
 		'                  reusing the release commit\'s green "Check and test" CI run.',
+		"  --local-receipt-sha <sha> --local-receipt <label>",
+		"                  Use a green local whole-suite receipt as the test evidence. <sha> must equal --sha.",
+		"                  No CI wait and no npm test: this job runs clean, build and check only.",
 		"  --help, -h      Show this help and exit.",
 		"",
 		"Default flow: compute next version via scripts/calver.mjs, then release.",
@@ -89,7 +93,7 @@ function printUsage() {
 }
 
 function parseArgs(argv) {
-	const args = { dryRun: false, version: null, help: false, forceTests: false, sha: null };
+	const args = { dryRun: false, version: null, help: false, forceTests: false, sha: null, localReceiptSha: null, localReceipt: null };
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
 		if (arg === "--help" || arg === "-h") {
@@ -105,6 +109,13 @@ function parseArgs(argv) {
 				process.exit(1);
 			}
 			args.sha = argv[i];
+		} else if (arg === "--local-receipt-sha" || arg === "--local-receipt") {
+			i += 1;
+			if (i >= argv.length) {
+				process.stderr.write(`[release] error: ${arg} requires an argument\n`);
+				process.exit(1);
+			}
+			args[arg === "--local-receipt" ? "localReceipt" : "localReceiptSha"] = argv[i];
 		} else if (arg === "--version") {
 			i += 1;
 			if (i >= argv.length) {
@@ -351,7 +362,8 @@ function remoteMain() {
  * A regenerated model catalog is committed on the release only and requires --force-tests (never pushed untested); the
  * release ships (the gap behind senpi#2645); then the release waits for that commit's green "Check and test".
  */
-function secureCiEvidence(version, dryRun, forceTests, pinnedSha) {
+function secureCiEvidence(version, dryRun, evidence, pinnedSha) {
+	const forceTests = evidence.mode === "force-tests";
 	runGenerateModels(dryRun, runCommand, log, dryRunLog);
 	runProviderDefaultsCheck(dryRun, runCommand, log, dryRunLog);
 	if (dryRun) {
@@ -362,9 +374,11 @@ function secureCiEvidence(version, dryRun, forceTests, pinnedSha) {
 		const plan = planCiEvidence({ sha, checkRuns: lookupCiCheckRuns(sha) });
 		dryRunLog(`test gate (preview, ${pinnedSha ? "pinned commit" : "HEAD"}): ${plan.reason}`);
 		dryRunLog(
-			forceTests
-				? "no CI wait (--force-tests runs the suite in this job)"
-				: 'wait for the release commit\'s green "Check and test"',
+			evidence.mode === "local-receipt"
+				? `no CI wait (local receipt ${evidence.receipt} at ${evidence.sha}; this job runs check and build only)`
+				: forceTests
+					? "no CI wait (--force-tests runs the suite in this job)"
+					: 'wait for the release commit\'s green "Check and test"',
 		);
 		return;
 	}
@@ -377,7 +391,9 @@ function secureCiEvidence(version, dryRun, forceTests, pinnedSha) {
 		// only, and the forced suite plus `npm run check` run on it before anything is pushed.
 		if (!forceTests) {
 			throw new Error(
-				"the regeneration changed the model catalog; dispatch with force_tests so this job tests that tree before anything reaches main",
+				evidence.mode === "local-receipt"
+					? `the regeneration changed the model catalog, a tree the local receipt ${evidence.receipt} never tested; dispatch with force_tests`
+					: "the regeneration changed the model catalog; dispatch with force_tests so this job tests that tree before anything reaches main",
 			);
 		}
 		log(
@@ -390,6 +406,10 @@ function secureCiEvidence(version, dryRun, forceTests, pinnedSha) {
 		log(
 			"test gate: --force-tests given; the suite runs in this job on the release code, before version and changelog stamping",
 		);
+		return;
+	}
+	if (evidence.mode === "local-receipt") {
+		log(`test gate: green local whole-suite receipt ${evidence.receipt} at ${evidence.sha}; no CI wait, no npm test (senpi#4981)`);
 		return;
 	}
 	awaitCiEvidence(
@@ -413,8 +433,18 @@ function secureCiEvidence(version, dryRun, forceTests, pinnedSha) {
  * run 38824836070 failed when the suite ran on stamped changelogs). It cleans and builds first; the release cleans and
  * builds again after stamping.
  */
-function runForcedTests(dryRun, forceTests) {
-	if (!forceTests) return;
+function runForcedTests(dryRun, evidence) {
+	if (evidence.mode === "local-receipt") {
+		if (dryRun) {
+			dryRunLog("npm run clean, npm run build, then npm run check (local receipt: no npm test), before stamping");
+			return;
+		}
+		runClean(false);
+		runBuild(false);
+		runCheck(false);
+		return;
+	}
+	if (evidence.mode !== "force-tests") return;
 	if (dryRun) {
 		dryRunLog("npm run clean, npm run build, then CI=1 npm test (--force-tests), before stamping");
 		return;
@@ -449,6 +479,12 @@ function main() {
 		process.exit(0);
 	}
 
+	const evidence = planTestEvidence({
+		forceTests: args.forceTests,
+		pinnedSha: args.sha,
+		localReceiptSha: args.localReceiptSha,
+		localReceipt: args.localReceipt,
+	});
 	const capture = (bin, cmdArgs) => captureCommand(bin, cmdArgs);
 	if (args.sha !== null) {
 		const driftPaths = ["packages/ai/src/models.generated.ts", "package-lock.json"];
@@ -474,8 +510,8 @@ function main() {
 		dryRunLog("preview mode; no files, commits, tags, or npm state will be modified");
 	}
 
-	secureCiEvidence(version, args.dryRun, args.forceTests, args.sha);
-	runForcedTests(args.dryRun, args.forceTests);
+	secureCiEvidence(version, args.dryRun, evidence, args.sha);
+	runForcedTests(args.dryRun, evidence);
 	applyWorkspaceVersions(version, args.dryRun, log, dryRunLog);
 	runSyncVersions(args.dryRun, runCommand, log, dryRunLog);
 	runPackageLockRefresh(args.dryRun, runCommand, log, dryRunLog);
