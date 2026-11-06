@@ -578,8 +578,11 @@ only when its `set_client_info` declared `raiser_notice_v1`:
 never carries a value, draft, `answerId` or receipt, it is not replayed, and it
 grants no answering authority: an answer from that connection is still
 `secret_answer_refused`. A connection without `raiser_notice_v1` receives
-nothing, as before. The owner can query its bounded, value-free
-`get_state.answeredUiRequests` receipts after acknowledgement loss. Discard the
+nothing, as before. The connection that raised the request is never a
+recipient, including when its own lane was refused (`client_unsupported`,
+`no_presenter`) and the request proceeds on the sealed route. The owner can
+query its bounded, value-free `get_state.answeredUiRequests` receipts after
+acknowledgement loss. Discard the
 value instead of resending or saving it in a reconnect queue. A missing receipt
 after eviction/restart means unknown outcome, not proof the callback did not run.
 
@@ -2813,6 +2816,49 @@ every form. Otherwise the reply is `{ "type": "mcp_form_reply", "id": "...", "er
 
 A private reply bypasses the connection's event queue, snapshots, mirrors and replay. These records are not in the
 method-class table, so `classify_record` answers `class: null` for them and the digest is unchanged.
+
+#### Connection roles on a delegated connection (`delegation_roles_v1`)
+
+A host that advertises `delegation_roles_v1` also takes `roles` on `declare_delegation`: the connection roles
+(`interactive_user`, `task_parent`) the forwarder lets the principal hold. Each appears at most once; anything else is
+`delegation_malformed`. The roles themselves are still claimed by the viewer's own `set_client_info`; `roles` is the
+ceiling, and a role counts only while both the claim and the ceiling hold it.
+
+```json
+{ "id": "d1", "type": "declare_delegation", "principal": { "deviceId": "laptop-7" }, "granted": ["observe", "drive", "thread"], "roles": ["interactive_user", "task_parent"] }
+{ "id": "d1", "type": "response", "command": "declare_delegation", "success": true, "data": { "granted": ["observe", "drive", "thread"], "digest": "71d68465…", "roles": ["interactive_user", "task_parent"] } }
+```
+
+- The first declaration decides the mode for the connection's life: with `roles` it is role-bound, without them the
+  roles are the client's own claims as before. `roles` on a later declaration of a connection that started without
+  them is `delegation_fixed`.
+- A later declaration may only narrow `roles` too (else `delegation_fixed`); omitting `roles` keeps the current set.
+  Every successful reply on a role-bound connection echoes the set in force after it as `data.roles`, in the order
+  `interactive_user`, `task_parent`.
+- A narrowing takes effect for every record the engine reads after it, including a record that was admitted earlier
+  and reaches its role check later in a session worker. Work already admitted (a held input, a turn that started)
+  stays.
+- `detach_connection` on a role-bound connection starts a new incarnation of the connection with the same roles
+  ceiling: a role claimed before the detach no longer counts, so the client claims again with `set_client_info`. A
+  `set_client_info` written before the detach and decided after it is refused alone with
+  `errorCode: "delegation_incarnation_stale"`; it changes nothing, and the connection stays open.
+- The `remoteOrigin` of any delegated connection is its principal (`deviceId`, `deviceName`): a `set_client_info`
+  carrying another valid `remoteOrigin` succeeds and the value is ignored; a malformed one is still
+  `remote_origin_invalid`.
+
+A forwarder may number each record it forwards on a role-bound connection with a top-level `relayExec` (a positive
+safe integer). The host removes it before anything else reads the record, refuses any other value as
+`delegation_malformed`, and adds an `authority` receipt to every response to that record:
+
+```json
+{ "id": "h1", "type": "hold_input", "sessionId": "s1", "inputId": "i1", "revision": 0, "text": "…", "relayExec": 41 }
+{ "id": "h1", "type": "response", "command": "hold_input", "success": true, "data": { "entryId": "…" }, "authority": { "exec": 41, "incarnation": 1, "epoch": 1, "roles": ["interactive_user"] } }
+```
+
+`roles` is the set of roles the record's role checks granted, or `null` when it consulted none. `incarnation` starts at
+1 and grows by one per `detach_connection`; `epoch` starts at 1 in each incarnation and grows only when a narrowing
+removed a role or the incarnation ended. Order receipts of one connection by `(incarnation, epoch)`. Connections that
+are not role-bound never get `authority`, and `relayExec` is an ignored member there.
 
 `classify_record` answers the class of one record without running it, on any connection:
 

@@ -1,3 +1,4 @@
+import { withReceipt } from "./command-authority.ts";
 import { normalizeJsonValue } from "./json-normal-value.ts";
 import { serializeJsonLine } from "./jsonl.ts";
 import { observeLifecycleDelivery } from "./lifecycle-delivery.ts";
@@ -30,6 +31,7 @@ export class SessionEventWriter extends SessionEventWriterDestinations {
 	}
 	/** Queue a session record. Content events target connections attached to the session. */
 	enqueue(sessionId: string, value: object): boolean {
+		value = withReceipt(value, this.connectionContext.getStore());
 		if (declarationReply(value, undefined) === undefined) return true;
 		if (this.sealedSessions.has(sessionId)) return false;
 		const targetId = this.connectionContext.getStore();
@@ -105,6 +107,7 @@ export class SessionEventWriter extends SessionEventWriterDestinations {
 	/** Queue one untagged host-control response for the given connection (defaults to the current one). */
 	enqueueControl(value: object, targetOverride?: string): Promise<void> {
 		const peer = targetOverride ?? this.currentConnection();
+		value = withReceipt(value, peer);
 		const reply = declarationReply(value, peer === undefined ? undefined : this.compactSelection(peer));
 		if (reply === undefined) return Promise.resolve();
 		value = reply;

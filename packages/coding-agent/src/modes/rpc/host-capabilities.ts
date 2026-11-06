@@ -18,6 +18,7 @@ import {
 	BROWSER_ENGINE_CAPABILITY,
 	CONTINUE_FROM_LEAF_CAPABILITY,
 	DELEGATED_CONNECTION_CAPABILITY,
+	DELEGATION_ROLES_CAPABILITY,
 	DETACH_CONNECTION_CAPABILITY,
 	DURABLE_SESSION_ID_CAPABILITY,
 	ENTRIES_TAIL_CAPABILITY,
@@ -116,6 +117,8 @@ export function multiSessionHostCapabilities(options: {
 			DETACH_CONNECTION_CAPABILITY,
 			// Its host core decides every inbound line of a delegated connection before dispatch (senpi#5632).
 			DELEGATED_CONNECTION_CAPABILITY,
+			// ...and decides a host-mode connection's roles per incarnation, with receipts (omo-relay-daemon#307).
+			DELEGATION_ROLES_CAPABILITY,
 			// Only a multi-session host keeps sessions loaded that a client can ask it to free.
 			UNLOAD_SESSION_CAPABILITY,
 			// Only a multi-session host owns a move ledger and the hosted-session list export checks against.

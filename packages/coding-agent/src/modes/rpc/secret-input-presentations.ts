@@ -7,6 +7,9 @@ import type { SealedAnswerReply, SealedLatch } from "./secret-input-requests.ts"
 import { answerSealedFrame } from "./secret-sealed-answer-route.ts";
 import type { SealedHolder, SealedSecretSource } from "./secret-sealed-holders.ts";
 
+/** `raisedBy`'s documented value when no connection's command raised the prompt (docs/rpc.md). */
+const NO_RAISING_CONNECTION = "agent";
+
 interface SecretOwner {
 	readonly session: string;
 	/** The raiser route's connection; `undefined` is the sole stdio client only while `raiser` holds. */
@@ -90,7 +93,7 @@ export class SecretInputPresentations {
 					raiser: refused === undefined,
 					sealed: holders ?? new Set(),
 					background: preferred === undefined,
-					raisedBy: preferred ?? "agent",
+					raisedBy: preferred ?? NO_RAISING_CONNECTION,
 					...(origin === undefined ? {} : { origin }),
 				});
 				return undefined;
@@ -197,18 +200,27 @@ export class SecretInputPresentations {
 	private notify(id: string, owner: SecretOwner, record: object): void {
 		const type = Reflect.get(record, "type");
 		if (type === "extension_ui_request" && this.available(owner))
-			this.notices.raised(owner.session, id, [owner.connection, ...this.holderConnections(owner)], {
-				type: "secret_input_notice",
-				title: Reflect.get(record, "title"),
-				deadlineAtMs: Reflect.get(record, "deadlineAtMs"),
-				raisedBy: owner.raisedBy,
-				...remoteOriginField(owner.origin),
-			});
+			this.notices.raised(
+				owner.session,
+				id,
+				[owner.connection, this.raisingConnection(owner), ...this.holderConnections(owner)],
+				{
+					type: "secret_input_notice",
+					title: Reflect.get(record, "title"),
+					deadlineAtMs: Reflect.get(record, "deadlineAtMs"),
+					raisedBy: owner.raisedBy,
+					...remoteOriginField(owner.origin),
+				},
+			);
 		else if (type === "secret_input_settled")
 			this.notices.settled(owner.session, id, {
 				type: "secret_input_notice_settled",
 				outcome: Reflect.get(record, "outcome"),
 			});
+	}
+	/** The connection whose command raised the prompt, refused into the sealed route or not (design 5.2). */
+	private raisingConnection(owner: SecretOwner): string | undefined {
+		return owner.raisedBy === NO_RAISING_CONNECTION ? undefined : owner.raisedBy;
 	}
 	private available(owner: SecretOwner): boolean {
 		return (
