@@ -6,17 +6,10 @@
  * so a method added to the engine is covered here the moment it is classified.
  *
  * Records travel over a real Unix socket through the bare host's public-key filter (`PublicRpcConnection`) into the
- * per-connection dispatch `runSocketHost` builds, on the in-process registry, with a faux provider.
+ * per-connection dispatch `createHostCore` builds, on the in-process registry, with a faux provider
+ * (`rpc-delegated-host-support.ts`).
  */
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { connect, createServer, type Server, type Socket } from "node:net";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { fauxProvider } from "@earendil-works/pi-ai/compat";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { parseArgs } from "../../src/cli/args.ts";
-import { createCliRuntimeFactory } from "../../src/main.ts";
-import { attachJsonlLineReader } from "../../src/modes/rpc/jsonl.ts";
 import {
 	classifyRpcMethod,
 	describeRpcMethodClasses,
@@ -26,16 +19,17 @@ import {
 	type RpcMethodType,
 } from "../../src/modes/rpc/method-classes.ts";
 import { validateRpcInboundRecord } from "../../src/modes/rpc/method-classes-schema.ts";
-import { createHostCore } from "../../src/modes/rpc/multi-session-host.ts";
-import { connectAuthenticatedRpcSocket } from "../../src/modes/rpc/rpc-auth-client.ts";
-import { PublicRpcConnection } from "../../src/modes/rpc/rpc-public-auth.ts";
-import { RpcPublicEndpoint } from "../../src/modes/rpc/rpc-public-key.ts";
 import type { RpcCommand } from "../../src/modes/rpc/rpc-types.ts";
-import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
-import { socketSink } from "../../src/modes/rpc/socket-sink.ts";
 import { corpusRequest, NO_ID, type Opened, TODAY } from "../characterization/rpc-method-surface-corpus.ts";
-
-type WireRecord = Record<string, unknown>;
+import {
+	type DelegatedHost,
+	declare,
+	type Peer,
+	PRINCIPAL,
+	SECRET_COMMAND,
+	startHost,
+	type WireRecord,
+} from "./rpc-delegated-host-support.ts";
 
 /**
  * `RPC_METHOD_CLASSES_DIGEST` at the base this test runs on: main (with `list_hands` (observe) and `select_hand`
@@ -60,11 +54,7 @@ const CONNECTION_LOCAL_NEEDS: Partial<Record<RpcMethodType, RpcMethodClass>> = {
 	reclaim_session: "device_admin",
 	move_session: "device_admin",
 };
-const PRINCIPAL = { deviceId: "x5632-device" };
-const LEAN_ARGS = ["--mode", "rpc", "--multi-session", "--no-extensions", "--no-skills", "--no-context-files"];
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
-const SECRET_COMMAND = "x5632-secret";
-const ANSWER_DEADLINE_MS = 20_000;
 
 /**
  * The three inbound types that are not `RpcCommand`s answer a request by its `id`; each gets a record here, typed so a
@@ -75,184 +65,6 @@ const NON_COMMAND: { readonly [K in Exclude<RpcMethodType, RpcCommand["type"]>]:
 	extension_ui_progress: (sessionId) => ({ sessionId, answers: {} }),
 	host_response: (sessionId) => ({ sessionId, data: {} }),
 };
-
-class Peer {
-	private readonly answers = new Map<string, (record: WireRecord) => void>();
-	private readonly frames: WireRecord[] = [];
-	private readonly watchers = new Set<(record: WireRecord) => void>();
-	private serial = 0;
-	readonly socket: Socket;
-	readonly name: string;
-
-	constructor(socket: Socket, name: string) {
-		this.socket = socket;
-		this.name = name;
-		attachJsonlLineReader(socket, (line) => {
-			const record = JSON.parse(line) as WireRecord;
-			if (record.type === "response" && typeof record.id === "string") this.answers.get(record.id)?.(record);
-			this.frames.push(record);
-			for (const watch of this.watchers) watch(record);
-		});
-	}
-
-	nextId(): string {
-		return `${this.name}-${++this.serial}`;
-	}
-
-	send(record: WireRecord): Promise<WireRecord> {
-		const id = typeof record.id === "string" ? record.id : this.nextId();
-		const answered = this.answer(id, String(record.type));
-		this.socket.write(`${JSON.stringify({ ...record, id })}\n`);
-		return answered;
-	}
-
-	/**
-	 * For a record the host may answer with nothing (an answer to a dialog nobody raised): resolves with its response if
-	 * one precedes the answer to a `get_protocol_info` sent right behind it on this connection, else `undefined`.
-	 */
-	async sendSettled(record: WireRecord): Promise<WireRecord | undefined> {
-		const id = this.nextId();
-		let answer: WireRecord | undefined;
-		this.answers.set(id, (response) => {
-			answer = response;
-		});
-		this.socket.write(`${JSON.stringify({ ...record, id })}\n`);
-		const sentinel = this.send({ type: "get_protocol_info", observe: true });
-		await sentinel;
-		this.answers.delete(id);
-		return answer;
-	}
-
-	answer(id: string, type = "record"): Promise<WireRecord> {
-		return new Promise<WireRecord>((resolve, reject) => {
-			const timer = setTimeout(
-				() => reject(new Error(`${this.name}: no answer to ${type} ${id}`)),
-				ANSWER_DEADLINE_MS,
-			);
-			this.answers.set(id, (record) => {
-				clearTimeout(timer);
-				this.answers.delete(id);
-				resolve(record);
-			});
-		});
-	}
-
-	frame(predicate: (record: WireRecord) => boolean): Promise<WireRecord> {
-		const seen = this.frames.find(predicate);
-		if (seen) return Promise.resolve(seen);
-		return new Promise<WireRecord>((resolve, reject) => {
-			const timer = setTimeout(() => {
-				this.watchers.delete(watch);
-				reject(new Error(`${this.name}: no matching frame`));
-			}, ANSWER_DEADLINE_MS);
-			const watch = (record: WireRecord) => {
-				if (!predicate(record)) return;
-				clearTimeout(timer);
-				this.watchers.delete(watch);
-				resolve(record);
-			};
-			this.watchers.add(watch);
-		});
-	}
-}
-
-async function startHost() {
-	const scratch = await mkdtemp(join(tmpdir(), "x5632-"));
-	const cwd = join(scratch, "cwd");
-	const agentDir = join(scratch, "agent");
-	await mkdir(cwd);
-	await mkdir(agentDir, { mode: 0o700 });
-	for (const name of ["SENPI_CODING_AGENT_DIR", "OMO_CODING_AGENT_DIR"]) vi.stubEnv(name, agentDir);
-	vi.stubEnv("SENPI_RPC_KEY_ROOT", agentDir);
-	const faux = fauxProvider({ models: [{ id: "faux-1", reasoning: false, contextWindow: 128_000 }] });
-	const writer = new SessionEventWriter(() => {});
-	const core = createHostCore(
-		{
-			agentDir,
-			cwd,
-			permissionPreset: "full-access",
-			createRuntime: createCliRuntimeFactory(
-				{ parsed: parseArgs(LEAN_ARGS), cwd, agentDir, appMode: "rpc" },
-				{
-					extensionFactories: [
-						(pi) => {
-							pi.registerProvider(faux.provider);
-							pi.registerCommand(SECRET_COMMAND, {
-								description: "asks for a secret",
-								handler: async (_args, ctx) => {
-									await ctx.ui.input("Key", undefined, { secret: true });
-								},
-							});
-						},
-					],
-				},
-			),
-			creationModel: { provider: faux.getModel().provider, modelId: "faux-1" },
-		},
-		writer,
-		[],
-	);
-	const socketPath = join(scratch, "s");
-	const endpoint = new RpcPublicEndpoint(agentDir, socketPath);
-	await endpoint.publish();
-	const sockets = new Set<Socket>();
-	const releases = new Set<() => void>();
-	let connections = 0;
-	// The bare host's wiring: the public-key filter in front of the per-connection dispatch, the connection
-	// registered with the proof the filter delivers in band.
-	const server: Server = createServer((raw) => {
-		sockets.add(raw);
-		const id = `socket-${++connections}`;
-		const stream = new PublicRpcConnection(raw, endpoint, false).stream;
-		stream.on("error", () => {});
-		writer.registerConnection(id, socketSink(stream), { launchProof: "in_band" });
-		raw.once("close", () => {
-			sockets.delete(raw);
-			writer.unregisterConnection(id);
-			// What `runSocketHost` does for a dropped socket: release every attachment the connection still holds.
-			void core.router
-				.releaseConnection(id)
-				.catch(() => [])
-				.then(() => {
-					for (const released of releases) released();
-					releases.clear();
-				});
-		});
-		attachJsonlLineReader(stream, (line) => void writer.withConnection(id, () => core.handle(line)));
-	});
-	await new Promise<void>((resolve) => server.listen(socketPath, resolve));
-	let peers = 0;
-	return {
-		scratch,
-		core,
-		writer,
-		async proven(): Promise<Peer> {
-			const { socket } = await connectAuthenticatedRpcSocket(socketPath, undefined, { keyRoot: agentDir });
-			return new Peer(socket, `p${++peers}`);
-		},
-		/** Ends `peer`'s socket and resolves once the host has released what that connection held. */
-		async drop(peer: Peer): Promise<void> {
-			const released = new Promise<void>((resolve) => releases.add(resolve));
-			peer.socket.destroy();
-			await released;
-		},
-		async keyless(): Promise<Peer> {
-			const socket = connect(socketPath);
-			await new Promise<void>((resolve) => socket.once("connect", resolve));
-			const peer = new Peer(socket, `k${++peers}`);
-			expect(await peer.send({ type: "get_protocol_info" })).toMatchObject({ success: true });
-			return peer;
-		},
-		async dispose(): Promise<void> {
-			await core.router.dispose();
-			for (const socket of sockets) socket.destroy();
-			await new Promise<void>((resolve) => server.close(() => resolve()));
-			await endpoint.dispose();
-			await rm(scratch, { recursive: true, force: true });
-			vi.unstubAllEnvs();
-		},
-	};
-}
 
 /** Acceptance and reply shape, as X14 compares them: `ok{sorted data keys}` or `no:<errorCode>:<error>`. */
 function signature(record: WireRecord | undefined, method: string, scratch: string): string {
@@ -296,7 +108,7 @@ const VALIDATOR_REFUSED: ReadonlySet<RpcMethodType> = new Set<RpcMethodType>([
 	"set_retry_fallback",
 ]);
 
-let host: Awaited<ReturnType<typeof startHost>>;
+let host: DelegatedHost;
 
 function sendFor(peer: Peer, type: RpcMethodType, record: WireRecord): Promise<WireRecord | undefined> {
 	return Object.hasOwn(NON_COMMAND, type) ? peer.sendSettled(record) : peer.send(record);
@@ -308,10 +120,6 @@ async function recordFor(type: RpcMethodType): Promise<WireRecord> {
 	return Object.hasOwn(TODAY, type)
 		? corpusRequest(type, TODAY[type as RpcCommand["type"]], opened, host.scratch).record
 		: { type, ...NON_COMMAND[type as keyof typeof NON_COMMAND](opened.sessionId) };
-}
-
-async function declare(peer: Peer, granted: readonly string[], principal: object = PRINCIPAL) {
-	return peer.send({ type: "declare_delegation", principal, granted });
 }
 
 // vitest restores stubbed env before every test (`unstubEnvs`), so the host behaviour this suite compares against X14
