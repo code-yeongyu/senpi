@@ -14,6 +14,8 @@ import {
 import { cleanupHands, handDirs, openLink, startHand, toolCall } from "../hand/remote-hand-fixture.ts";
 import type { CreateAgentSessionRuntimeFactory } from "../../src/core/agent-session-runtime.ts";
 import { headlessHostOptions } from "../../src/modes/headless/headless-host.ts";
+import { answerSelectHand } from "../../src/modes/rpc/hand-selection-commands.ts";
+import { RpcSessionRegistryError } from "../../src/modes/rpc/session-registry.ts";
 import { type HostRig, startHostRig } from "./headless-host-support.ts";
 
 const rigs: HostRig[] = [];
@@ -161,6 +163,38 @@ describe("hand selection on a headless engine (DK2a engine half, R4)", () => {
 		});
 		expect(session?.agent.toolHost).toBe(fused);
 		expect(await call(rig, { type: "list_hands", sessionId })).toMatchObject({ data: { selected: null } });
+	});
+
+	it("refuses a choice for a session that is already closing, and opens no link", () => {
+		// The close window is what peek cannot see: the registry keeps a closing entry (and its runtime) until
+		// teardown deletes it, so a select answered from peek installed a hand link on a session nothing was
+		// left to close (senpi#5949 review MEDIUM). Every other session command asks the command gate.
+		const closing = {
+			agent: { toolHost: undefined },
+			isStreaming: false,
+			sessionManager: { getEntries: () => [], appendCustomEntry: () => "unused" },
+			sessionId: "s-closing",
+		};
+		const registry = {
+			peek: () => ({ runtime: { session: closing } }),
+			getForCommand: () => {
+				throw new RpcSessionRegistryError("session_closing");
+			},
+		};
+		const selection = createHandSelection({
+			list: () => [ROW],
+			link: () => {
+				throw new Error("a closing session is never linked");
+			},
+		});
+
+		const answer = answerSelectHand(
+			{ registry, defaults: { handSelection: selection } },
+			{ id: "cmd-closing", type: "select_hand", sessionId: "s-closing", device: "dev-b" },
+		);
+
+		expect(answer).toMatchObject({ success: false, error: "session_closing" });
+		expect(selection.selected("s-closing")).toBeNull();
 	});
 
 	it("a recorded hand that is gone when the session reopens fails its calls; nothing runs in this process", async () => {
