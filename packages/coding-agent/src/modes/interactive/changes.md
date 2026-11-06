@@ -3999,24 +3999,6 @@ The shared markdown theme and the tool card's renderer are interactive-mode inte
 
 - MEDIUM: `footer.ts` cost-segment block (`totalCost || usingSubscription`).
 - LOW: `interactive-mode.ts` extension UI context object next to `setStatus`.
-## 2026-11-06 - Cancel sealed input when local input rejects (senpi#6062)
-
-### What changed
-
-- `packages/coding-agent/src/modes/interactive/terminal-sealed-secrets.ts`: the local input and sealed latch share a cancellation signal. A local rejection cancels that request immediately and emits the existing typed `cancelled` outcome.
-
-### Why
-
-- An unhandled local rejection previously left the sealed request open until its deadline.
-
-### Why an extension could not handle it
-
-- The terminal adapter owns the local promise and sealed latch race.
-
-### Expected merge conflict zones
-
-- LOW: `raceTerminalSecretInput`.
-
 ## 2026-10-21 - Admit synchronous human replies before resuming work (senpi#3864)
 
 ### What changed
