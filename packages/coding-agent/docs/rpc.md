@@ -4781,7 +4781,9 @@ Without a scope, the switch also becomes the device's default model (written to 
 sessions open on it. `"scope": "session"` switches only this session: the switch is recorded in its history and
 restored on resume, extensions see the same `model_select`, and the default model and every other session are left
 as they were. The engine's method-class table classes the scoped form as `drive` and the unscoped form as
-`device_admin`.
+`device_admin`. An engine that honours the scope advertises `session_model_scope` in
+`get_protocol_info.capabilities` (host and classic connection alike); an older engine ignores the field and also moves
+the default model, so send the scope only when that capability is listed.
 
 ```json
 {"type": "set_model", "provider": "anthropic", "modelId": "claude-sonnet-4-20250514", "scope": "session"}

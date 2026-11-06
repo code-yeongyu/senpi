@@ -164,6 +164,7 @@ import {
 	STEER_WHEN_IDLE_CAPABILITY,
 	USER_ACTIVITY_CAPABILITY,
 } from "./rpc-types.ts";
+import { SESSION_MODEL_SCOPE_CAPABILITY } from "./rpc-session-command-types.ts";
 import { runPauseForRun, runResumeForRun } from "./run-hold-commands.ts";
 import { interruptRunningTurn } from "./session-control-actions-data.ts";
 import { SessionExtensionUiRequests, sessionDialogRequests } from "./session-extension-ui-requests.ts";
@@ -1343,6 +1344,7 @@ export function createRpcConnectionHandler(
 								QUEUED_MESSAGE_REVISION_CAPABILITY,
 								TOOL_BARRIER_CAPABILITY,
 								USER_ACTIVITY_CAPABILITY,
+								SESSION_MODEL_SCOPE_CAPABILITY,
 								RESUME_SESSION_CAPABILITY,
 								ENTRIES_TAIL_CAPABILITY,
 								...(options.retryFallbackCommand ? [RETRY_FALLBACK_COMMAND_CAPABILITY] : []),

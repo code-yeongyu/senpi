@@ -366,3 +366,6 @@ export const STEER_WHEN_IDLE_CAPABILITY = "steer_when_idle";
 
 /** Capability: `record_user_activity` reports composer draft activity (senpi#3859). */
 export const USER_ACTIVITY_CAPABILITY = "user_activity";
+
+/** Capability: `set_model` honours `scope: "session"` and leaves the default model alone (senpi#5933). */
+export const SESSION_MODEL_SCOPE_CAPABILITY = "session_model_scope";
