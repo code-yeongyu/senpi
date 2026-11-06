@@ -100,23 +100,28 @@ function parseSessionFileName(value: string): string {
 	return value;
 }
 
-/** Payload kinds this version imports; any other kind refuses the bundle. */
-export const KNOWN_PAYLOAD_KINDS: ReadonlySet<string> = new Set(["extension-state"]);
-
 /** Where `extension-state` payload files sit inside the bundle. */
 export const EXTENSION_STATE_PREFIX = "state/";
+/** Where `working-tree` payload files sit inside the bundle. */
+export const WORKING_TREE_PREFIX = "tree/";
+
+/** Payload kinds this version imports, each with the only folder its files may sit in; any other kind refuses. */
+const PAYLOAD_PREFIXES: ReadonlyMap<string, string> = new Map([
+	["extension-state", EXTENSION_STATE_PREFIX],
+	["working-tree", WORKING_TREE_PREFIX],
+]);
 
 function parsePayload(value: unknown): MovePayload {
 	const payload = value as Partial<MovePayload> | null;
 	if (typeof payload !== "object" || payload === null || !isString(payload.kind) || !Array.isArray(payload.files))
 		throw new MoveBundleInvalidError("a payload is malformed");
-	if (!KNOWN_PAYLOAD_KINDS.has(payload.kind))
-		throw new MoveBundleInvalidError("it carries a payload this version cannot import");
+	const prefix = PAYLOAD_PREFIXES.get(payload.kind);
+	if (prefix === undefined) throw new MoveBundleInvalidError("it carries a payload this version cannot import");
 	const files = payload.files.map(parseFile);
-	// The importer unpacks extension state by stripping this prefix; a file anywhere else is not extension state.
-	const outside = files.find((file) => !file.path.startsWith(EXTENSION_STATE_PREFIX));
+	// The importer unpacks a payload by stripping its kind's prefix; a file anywhere else is not that payload.
+	const outside = files.find((file) => !file.path.startsWith(prefix));
 	if (outside !== undefined)
-		throw new MoveBundleInvalidError(`an extension-state file is listed outside state/: ${outside.path}`);
+		throw new MoveBundleInvalidError(`a ${payload.kind} file is listed outside ${prefix}: ${outside.path}`);
 	return { kind: payload.kind, files };
 }
 

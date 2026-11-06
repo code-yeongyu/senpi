@@ -959,8 +959,6 @@
       "packages/coding-agent/src/core/retry-fallback/request-shape.ts": ["isAnthropicRequestShapeRejection", "stripProviderNativeReplay"],
       // pre-existing at origin main aceb1cc1d9: unused exports CURRENT_SESSION_LIST_PUBLISH_INTERVAL, listSessionInfos
       "packages/coding-agent/src/core/session-discovery.ts": ["CURRENT_SESSION_LIST_PUBLISH_INTERVAL", "listSessionInfos"],
-      // pre-existing at origin main aceb1cc1d9: unused exports KNOWN_PAYLOAD_KINDS
-      "packages/coding-agent/src/core/session-move/bundle.ts": ["KNOWN_PAYLOAD_KINDS"],
       // pre-existing at origin main aceb1cc1d9: unused exports MovedStateMissingError
       "packages/coding-agent/src/core/session-move/export.ts": ["MovedStateMissingError"],
       // pre-existing at origin main aceb1cc1d9: unused exports MoveMismatchError, MoveAlreadyMovedError, requeueDroppedInput
