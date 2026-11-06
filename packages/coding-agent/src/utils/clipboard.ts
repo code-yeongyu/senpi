@@ -9,7 +9,7 @@ import { isWSL } from "./wsl.ts";
 const MAX_OSC52_ENCODED_LENGTH = 100_000;
 
 function isRemoteSession(env: NodeJS.ProcessEnv): boolean {
-	return Boolean(env.SSH_CONNECTION || env.SSH_CLIENT || env.MOSH_CONNECTION);
+	return Boolean(env.SSH_CONNECTION || env.SSH_CLIENT || env.SSH_TTY || env.MOSH_CONNECTION);
 }
 
 function emitOsc52(text: string): boolean {
@@ -121,9 +121,13 @@ export async function copyToClipboard(text: string): Promise<void> {
 	// OSC 52 cannot be verified, so a desktop session with a display reports the failure
 	// instead (#9618). Without a display the terminal is the only clipboard route (containers,
 	// WSL without WSLg), and remote sessions always emit it to reach the client clipboard.
+	// After a verified local write, a terminal on stdout gets it too: a persistent session
+	// viewed from another machine carries no SSH/Mosh markers, and the host clipboard is not
+	// the viewer's (#6108). Success still rests on the verified write.
 	const headless = p === "linux" && !env.DISPLAY && !env.WAYLAND_DISPLAY && !env.TERMUX_VERSION;
+	const terminalViewer = copied && process.stdout.isTTY === true;
 	let oversized = false;
-	if (!osc52Emitted && (isRemoteSession(env) || (!copied && headless))) {
+	if (!osc52Emitted && (isRemoteSession(env) || terminalViewer || (!copied && headless))) {
 		if (emitOsc52(text)) copied = true;
 		else oversized = true;
 	}

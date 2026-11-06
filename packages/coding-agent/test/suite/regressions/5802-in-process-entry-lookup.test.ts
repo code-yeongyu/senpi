@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { observeInProcessOpens } from "./rpc-in-process-entry-support.ts";
-import { dataOf, statusHost } from "./rpc-session-status-support.ts";
+import { observeInProcessOpens } from "../rpc-in-process-entry-support.ts";
+import { dataOf, statusHost } from "../rpc-session-status-support.ts";
 
 // senpi#5802: an in-process entry is found by its session id, not by whichever registry lookup ran last. Forcing a
 // later lookup of another session is the interleaving that made the old last-return lookup answer the wrong session.

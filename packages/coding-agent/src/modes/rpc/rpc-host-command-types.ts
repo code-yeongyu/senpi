@@ -193,6 +193,20 @@ type RpcCommandBody =
 	  }
 	| {
 			id?: string;
+			/** The hands a headless engine can run a session's tools on (R4); capability `hand_selection`. */
+			type: "list_hands";
+			/** Also answer this session's recorded hand as `selected` (`null` = local). */
+			sessionId?: string;
+	  }
+	| {
+			id?: string;
+			/** Records which hand runs this session's tools; `null` returns them to this process (R4). */
+			type: "select_hand";
+			sessionId: string;
+			device: string | null;
+	  }
+	| {
+			id?: string;
 			/**
 			 * Subscribe this connection to `session_status` records (docs/rpc.md, "Session status stream"). The
 			 * answer carries a snapshot at `seq: 0`; every later record of the subscription is strictly +1.
