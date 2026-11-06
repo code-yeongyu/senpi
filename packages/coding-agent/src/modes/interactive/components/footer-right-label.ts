@@ -42,6 +42,8 @@ export interface RightLabelInput {
 	readonly modelName: string;
 	readonly fastIndicator: string;
 	readonly routed: { readonly modelId: string; readonly thinkingLevel: string | undefined } | undefined;
+	/** A switch held until the next message compacts for it (senpi#1873): shown beside the running model (senpi#6092). */
+	readonly pending: { readonly modelId: string } | undefined;
 	readonly reasoning: boolean;
 	readonly thinkingLevel: string;
 	readonly providerPrefix: string;
@@ -67,6 +69,10 @@ function segmentFromRuns(runs: readonly RightSideRun[]): FooterSegment {
  * prefix while middle stats may still elide, then alone with pwd elision, down to
  * the same floor as before. The key hint therefore drops first, then the readable
  * label, then the provider; the model id and its level stay as long as they ever did.
+ *
+ * A held switch rides in every form as `→ <target> (after compact)`, right after
+ * the running model (and its level in the compact forms): the pick the user just
+ * made must be visible at once, so it is never the first thing the ladder drops.
  */
 export function buildRightLabel(input: RightLabelInput): RightLabel {
 	const modelRuns: RightSideRun[] = [
@@ -78,13 +84,21 @@ export function buildRightLabel(input: RightLabelInput): RightLabel {
 		routedRuns.push({ text: ` \u2192 ${input.routed.modelId}`, color: "accent" });
 		if (input.routed.thinkingLevel) routedRuns.push({ text: `:${input.routed.thinkingLevel}`, color: "dim" });
 	}
+	const pendingRuns: RightSideRun[] = input.pending
+		? [
+				{ text: " \u2192 ", color: "warning" },
+				{ text: input.pending.modelId, color: "warning" },
+				{ text: " (after compact)", color: "muted" },
+			]
+		: [];
 	const level = input.thinkingLevel || "off";
 	const compactRuns: RightSideRun[] = input.reasoning
-		? [...modelRuns, { text: `:${level}`, color: "dim" }, ...routedRuns]
-		: [...modelRuns, ...routedRuns];
+		? [...modelRuns, { text: `:${level}`, color: "dim" }, ...routedRuns, ...pendingRuns]
+		: [...modelRuns, ...routedRuns, ...pendingRuns];
 	const labelRuns: RightSideRun[] = [
 		...modelRuns,
 		...routedRuns,
+		...pendingRuns,
 		{ text: input.separator, color: "borderMuted" },
 		{ text: `effort ${level}`, color: "muted" },
 	];
