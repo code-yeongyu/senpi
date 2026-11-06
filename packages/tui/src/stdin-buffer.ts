@@ -36,6 +36,12 @@ function countLineBreaks(text: string): number {
 	return matches === null ? 0 : matches.length;
 }
 
+/**
+ * How a held trailing line break is released. `paste` closes the burst paste it landed in; `enter` is a
+ * submit, so only the LF half of a split CRLF pair may still join it; `keystroke` is a plain line break.
+ */
+type HeldLineBreakKind = "keystroke" | "paste" | "enter";
+
 type StatefulStringDecoder = StringDecoder & {
 	readonly lastNeed?: number;
 };
@@ -319,7 +325,7 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 	private readonly clock: () => number;
 	private lastInputAt: number | undefined;
 	private heldNewline: string = "";
-	private heldNewlineEndsPaste = false;
+	private heldNewlineKind: HeldLineBreakKind = "keystroke";
 	private lastBurstPasteAt: number | undefined;
 	private burstTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -391,10 +397,14 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 			// break was an Enter, even when its release timer has not fired yet (a stalled loop).
 			if (burstGap !== undefined && burstGap >= this.burstWindowMs) {
 				this.releaseHeldNewline();
+			} else if (this.heldNewlineKind === "enter" && !this.buffer.startsWith("\n")) {
+				// A held Enter only continues into the LF half of a CRLF pair; any other read means the submit
+				// stands, so the Enter lands before that read is framed.
+				this.releaseHeldNewline();
 			} else {
 				this.buffer = this.heldNewline + this.buffer;
 				this.heldNewline = "";
-				this.heldNewlineEndsPaste = false;
+				this.heldNewlineKind = "keystroke";
 			}
 		}
 
@@ -495,15 +505,27 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 		if (breaks === 0) {
 			return false;
 		}
+		const trailing = text.match(TRAILING_LINE_BREAK_RUN)?.[0];
+		// Raw mode separates a key from a paste: an Enter key is a bare CR, while a paste carries LF or CRLF.
+		// A sender that writes its text and then presses Enter (send-text, then send-keys Enter) is writing
+		// two independent reads, so the CR ending one of them is a submit rather than the end of a paste.
+		const endsWithEnter = trailing !== undefined && trailing.endsWith("\r");
 		// Typing delivers one key per read, so a single read that holds two line breaks, or text after a
 		// line break, is pasted. Both carry text: a run of bare Enters stays keystrokes.
 		if ((breaks >= 2 || LINE_BREAK_BEFORE_TEXT.test(text)) && /[^\r\n]/.test(text)) {
 			this.buffer = "";
-			this.lastBurstPasteAt = this.lastInputAt;
-			this.emit("paste", text);
+			const body = endsWithEnter ? text.slice(0, -1) : text;
+			if (body.length > 0) {
+				this.lastBurstPasteAt = this.lastInputAt;
+				this.emit("paste", body);
+			}
+			if (endsWithEnter) {
+				// The paste is committed first, so the Enter that trails it submits the whole block. It waits out
+				// the window only because a CRLF split across reads still belongs to its paste.
+				this.holdTrailingNewline("\r", "enter");
+			}
 			return true;
 		}
-		const trailing = text.match(TRAILING_LINE_BREAK_RUN)?.[0];
 		if (trailing === undefined || burstGap === undefined || burstGap >= this.burstWindowMs) {
 			return false;
 		}
@@ -514,21 +536,22 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 			this.lastBurstPasteAt !== undefined &&
 			this.lastInputAt !== undefined &&
 			this.lastInputAt - this.lastBurstPasteAt < this.burstWindowMs;
-		// A read of bare line breaks is a keystroke unless it closes a paste, so it is forwarded at once.
-		if (head.length === 0 && !endsPaste) {
+		// A read of bare line breaks is a keystroke unless it closes a paste, and a trailing CR is always the
+		// Enter key, so both are forwarded at once instead of waiting out the window.
+		if (endsWithEnter || (head.length === 0 && !endsPaste)) {
 			return false;
 		}
 		for (const chunk of head) {
 			this.emitDataSequence(chunk);
 		}
 		this.buffer = "";
-		this.holdTrailingNewline(trailing, endsPaste);
+		this.holdTrailingNewline(trailing, endsPaste ? "paste" : "keystroke");
 		return true;
 	}
 
-	private holdTrailingNewline(run: string, endsPaste: boolean): void {
+	private holdTrailingNewline(run: string, kind: HeldLineBreakKind): void {
 		this.heldNewline = run;
-		this.heldNewlineEndsPaste = endsPaste;
+		this.heldNewlineKind = kind;
 		if (this.burstTimer) {
 			clearTimeout(this.burstTimer);
 		}
@@ -543,10 +566,10 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 			return;
 		}
 		const held = this.heldNewline;
-		const endsPaste = this.heldNewlineEndsPaste;
+		const kind = this.heldNewlineKind;
 		this.heldNewline = "";
-		this.heldNewlineEndsPaste = false;
-		if (endsPaste) {
+		this.heldNewlineKind = "keystroke";
+		if (kind === "paste") {
 			this.emit("paste", held);
 			return;
 		}
@@ -609,7 +632,7 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 			this.burstTimer = null;
 		}
 		this.heldNewline = "";
-		this.heldNewlineEndsPaste = false;
+		this.heldNewlineKind = "keystroke";
 		this.lastBurstPasteAt = undefined;
 		this.buffer = "";
 		this.pasteMode = false;

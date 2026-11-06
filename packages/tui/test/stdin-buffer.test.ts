@@ -858,10 +858,40 @@ describe("StdinBuffer unbracketed paste bursts", () => {
 		);
 	});
 
-	it("treats CRLF and CR-only bursts like LF bursts", () => {
+	it("keeps a CRLF burst wholly inside the paste", () => {
 		burst.process("l1\r\nl2\r\n");
 		assert.deepStrictEqual(burstPastes, ["l1\r\nl2\r\n"]);
+		assert.deepStrictEqual(burstData, []);
+	});
+
+	it("takes the CR ending a one-read burst as the Enter that submits it (senpi#3076)", () => {
 		burst.process("m1\rm2\r");
-		assert.deepStrictEqual(burstPastes, ["l1\r\nl2\r\n", "m1\rm2\r"]);
+		assert.deepStrictEqual(burstPastes, ["m1\rm2"]);
+		assert.deepStrictEqual(burstData, []);
+		burst.flush();
+		assert.deepStrictEqual(burstPastes, ["m1\rm2"]);
+		assert.deepStrictEqual(burstData, ["\r"]);
+	});
+
+	it("submits a CR that follows a burst paste inside the window instead of pasting it (senpi#3076)", () => {
+		burst.process("line1\nline2\nline3");
+		burst.process("\r");
+		assert.deepStrictEqual(burstPastes, ["line1\nline2\nline3"]);
+		assert.deepStrictEqual(burstData, ["\r"]);
+	});
+
+	it("keeps a CRLF pair split across reads inside the paste", () => {
+		burst.process("line1\nline2\r");
+		assert.deepStrictEqual(burstPastes, ["line1\nline2"]);
+		burst.process("\n");
+		burst.flush();
+		assert.deepStrictEqual(burstPastes, ["line1\nline2", "\r\n"]);
+		assert.deepStrictEqual(burstData, []);
+	});
+
+	it("releases a held submit before a read that is not a CRLF continuation", () => {
+		burst.process("line1\nline2\r");
+		burst.process("next");
+		assert.deepStrictEqual(burstData, ["\r", "n", "e", "x", "t"]);
 	});
 });
