@@ -49,7 +49,7 @@ export const TODAY: { readonly [M in RpcCommand["type"]]: string } = {
 	reclaim_session:
 		'{"sessionPath":"$PATH","durableSessionId":"$NO","expectedHostInstance":"$NO"} => no:session_identity_mismatch:session_identity_mismatch',
 	move_session: '{"op":"status","moveId":"$NO"} => ok{reason,state}',
-	prompt: '{"message":"Hello."} => ok{disposition}',
+	prompt: '{"message":"Hello."} => ok{disposition,turnId}',
 	release_tool_barrier: '{"barrierId":"$NO"} => ok{released}',
 	send_custom_message: '{"customType":"x14","content":"note","display":false} => ok',
 	continue_from_leaf: "no:nothing_to_continue:There is nothing to continue: the session has no messages yet.",
