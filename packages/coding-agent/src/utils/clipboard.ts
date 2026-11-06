@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { unlinkSync, writeFileSync } from "node:fs";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
-import { getNativeClipboard } from "@earendil-works/pi-tui";
+import { getNativeClipboard, writeClipboardOsc52 } from "@earendil-works/pi-tui";
 import { runClipboardCommand } from "./clipboard-command.ts";
 import { isWSL } from "./wsl.ts";
 
@@ -17,7 +17,7 @@ function emitOsc52(text: string): boolean {
 	if (encoded.length > MAX_OSC52_ENCODED_LENGTH) {
 		return false;
 	}
-	process.stdout.write(`\x1b]52;c;${encoded}\x07`);
+	writeClipboardOsc52(text);
 	return true;
 }
 

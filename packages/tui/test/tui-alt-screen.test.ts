@@ -1,5 +1,6 @@
 import assert from "node:assert";
-import { describe, it } from "node:test";
+import fs from "node:fs";
+import { after, before, describe, it, mock } from "node:test";
 import {
 	AltScreenSearchComponent,
 	AltScreenSearchIndex,
@@ -26,6 +27,16 @@ import { stripTerminalSequences, visibleWidth } from "../src/utils.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
+
+// Virtual terminals must not emit clipboard bytes to the test runner's real tty.
+const openSync = fs.openSync;
+before(() => {
+	mock.method(fs, "openSync", (...args: Parameters<typeof fs.openSync>) => {
+		if (args[0] === "/dev/tty") throw new Error("virtual terminal has no controlling tty");
+		return openSync(...args);
+	});
+});
+after(() => mock.restoreAll());
 
 class InputOverlay {
 	focused = false;
@@ -1277,6 +1288,32 @@ describe("TuiAltScreen", () => {
 		assert.deepStrictEqual(openedUrls, [url, belUrl, emojiUrl]);
 
 		tui.stop();
+	});
+
+	// #4263: the standalone TUI fallback must use the same tmux transport as /copy.
+	it("passes fullscreen selection copy through tmux", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const tui = new TuiAltScreen(terminal);
+		const tmux = process.env.TMUX;
+		try {
+			tui.addChild(new Text("alpha", 0, 0));
+			tui.start();
+			await terminal.waitForRender();
+			process.env.TMUX = "/tmux,1,0";
+			terminal.sendInput("\x1b[<0;1;1M");
+			terminal.sendInput("\x1b[<32;3;1M");
+			terminal.sendInput("\x1b[<3;3;1m");
+			await terminal.waitForRender();
+			assert.ok(
+				terminal.events.some(
+					(event) => event.type === "write" && event.data === "\x1bPtmux;\x1b\x1b]52;c;YWxw\x07\x1b\\",
+				),
+			);
+		} finally {
+			if (tmux === undefined) delete process.env.TMUX;
+			else process.env.TMUX = tmux;
+			tui.stop();
+		}
 	});
 
 	it("selects visible text with the mouse and copies it with OSC 52 after a generic release", async () => {

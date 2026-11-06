@@ -4,6 +4,7 @@ import type { CellDimensions, ImageDimensions } from "./terminal-image.ts";
 import { calculateImageCellSize } from "./terminal-image.ts";
 
 export { Marked, type Token, type Tokens } from "marked";
+export { writeClipboardOsc52 } from "./clipboard.ts";
 // Fullscreen transcript search
 export {
 	AltScreenSearchComponent,
