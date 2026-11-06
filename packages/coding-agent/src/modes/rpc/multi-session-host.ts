@@ -18,6 +18,8 @@ import type { CliRuntimeConfiguration } from "../../main.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { startHostChildReaper } from "./child-reaper.ts";
 import type { RpcConnectionSink } from "./connection-handler.ts";
+import { CommandAuthority, commandAuthority, takeRelayExec } from "./command-authority.ts";
+import { answerDelegation, relayExecRefusal } from "./delegated-answer.ts";
 import type { LaunchProofSource } from "./delegated-connection.ts";
 import { parseClientCapabilities } from "./custom-capability.ts";
 import { ClientOccupancy } from "./host-client-occupancy.ts";
@@ -62,8 +64,10 @@ import { ensureSocketSecret, SOCKET_SECRET_FILE_ENV, socketSecretPath } from "./
 import { WorkerSessionRegistry } from "./worker-session-registry.ts";
 import type { PresenterAccountAuthority } from "./mcp-presenter-account.ts";
 import { presenterBootstrapStream } from "./mcp-presenter-bootstrap.ts";
+import type { AttachLedger } from "./attach-ledger.ts";
 import { startMcpPresenterControl } from "./mcp-presenter-control-start.ts";
 import type { HeadlessPresence } from "../headless/presence.ts";
+import type { HandSelection } from "../headless/hand-selection.ts";
 
 export { presenterPipePath } from "./mcp-presenter-control-start.ts";
 
@@ -93,8 +97,15 @@ export interface MultiSessionHostOptions {
 	 * an explicit `false` is honored) and never exits for being empty.
 	 */
 	sessionOwner?: "client" | "machine";
+	/**
+	 * The durable takeover ledger (R21; S37). Honored only with `sessionOwner: "machine"`: `attach_session { takeover,
+	 * holder }` then takes a session over and lets its other clients go quietly. Absent, a takeover is refused.
+	 */
+	sessionTakeover?: AttachLedger;
 	/** Set only by a headless host with a presence binding (`modes/headless`): rows and opens carry presence. */
 	sessionPresence?: HeadlessPresence;
+	/** Set only by a headless host with a hand directory (`modes/headless`): `list_hands` and `select_hand`. */
+	handSelection?: HandSelection;
 }
 
 export {
@@ -228,13 +239,30 @@ export function createHostCore(
 			);
 			return;
 		}
-		// Before any await: a declaration takes effect for the very next line of its connection (senpi#5632).
-		const delegation = writer.delegations.inspect(connection, parsed);
-		if (delegation.kind === "consumed") return;
-		if (delegation.kind === "reply") {
-			await writer.enqueueControl(delegation.response);
+		// omo-relay-daemon#307: a host-mode delegated line runs under one authority snapshot, its forwarder's `relayExec`
+		// taken out of the record before anything else reads it.
+		const delegation = writer.connectionContext.delegation;
+		if (delegation?.mode !== "host") return handleParsed(connection, parsed);
+		const exec = takeRelayExec(parsed);
+		if (exec === "malformed") {
+			await writer.enqueueControl(relayExecRefusal(parsed));
 			return;
 		}
+		return commandAuthority.run(new CommandAuthority(connection, delegation, exec), () =>
+			handleParsed(connection, parsed),
+		);
+	};
+	const handleParsed = async (connection: string | undefined, parsed: unknown): Promise<void> => {
+		// Before any await: a declaration takes effect for the very next line of its connection (senpi#5632).
+		const delegation = writer.delegations.inspect(connection, parsed);
+		if (delegation.kind !== "pass") {
+			await answerDelegation(writer, delegation, parsed);
+			return;
+		}
+		// A delegated connection ends with the viewer it forwards for, while the forwarder keeps serving what it opened to
+		// the next one: every open on it is retained, whatever it asks, so its end detaches and never closes (senpi#5808).
+		// Read at line receipt, so a connection that ends before the open is dispatched still counts as delegated.
+		const delegated = writer.delegations.isDelegated(connection);
 		if (writer.handleMcpForm(parsed)) return;
 		if (await gate.intercept(parsed, (answer) => writer.enqueueControl(answer))) return;
 		const shapeError = rpcCommandShapeError(parsed);
@@ -244,18 +272,25 @@ export function createHostCore(
 		}
 		const command = parsed as RpcCommand;
 		const response = await gate.dispatch(
-			machineOwned && command.type === "open_session" && command.retain_on_disconnect === undefined
+			command.type === "open_session" &&
+				(delegated
+					? command.retain_on_disconnect !== true
+					: machineOwned && command.retain_on_disconnect === undefined)
 				? { ...command, retain_on_disconnect: true }
 				: command,
 		);
 		if (response) await writer.enqueueControl(response);
+		writer.delegations.lineAnswered(connection);
 	};
 	return {
 		router,
 		handle,
 		handover: gate.handover,
 		handoverAnswered: () => gate.answered(),
-		/** A session's live registry entry by its routing id, for an embedder that holds the core in process. */
+		/**
+		 * A session's live registry entry by its routing id. Only in-process test fixtures read it today, in place of
+		 * spying on the registry prototype (senpi#5802); the host itself never calls it.
+		 */
 		peekSession: (sessionId: string) => registry.peek(sessionId),
 	};
 }
@@ -417,6 +452,8 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	});
 	let nextConnection = 0;
 	let shuttingDown = false;
+	// omo-relay-daemon#307: a socket whose incarnations ran out is ended once its detach answer is flushed (engine_closed).
+	writer.endExhaustedConnections((id) => connections.get(id)?.sink);
 	const secret =
 		process.platform === "win32"
 			? await ensureSocketSecret(process.env[SOCKET_SECRET_FILE_ENV] ?? socketSecretPath(socketPath))

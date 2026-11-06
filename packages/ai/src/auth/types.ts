@@ -289,6 +289,11 @@ export interface LoginOptions {
 	 */
 	reauthorize?: OAuthCredential;
 	/**
+	 * The saved account name of `reauthorize`. The login then restores that account in place, signed-out ones
+	 * included, instead of matching by token or appending another `login-N` copy of it.
+	 */
+	reauthorizeSlot?: string;
+	/**
 	 * Returns the stable ID of this app installation, e.g. sent to OpenAI as its
 	 * agent host ID. Called only by login flows that need it, so apps can create
 	 * the ID on first use and must return the same ID on every later call.

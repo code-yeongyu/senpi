@@ -46,6 +46,8 @@ export interface HandRig {
 	/** Advances transport time until `promise` settles; fails past the budget. */
 	settle<T>(promise: Promise<T>, what: string, budgetMs?: number): Promise<T>;
 	runUntil(done: () => boolean, what: string, budgetMs?: number): Promise<void>;
+	/** As `runUntil`, for a condition that needs an asynchronous read (the hand's durable rows). */
+	waitFor(done: () => Promise<boolean>, what: string, budgetMs?: number): Promise<void>;
 	/** Drops the carrier between session and hand (the hand becomes unreachable) and attaches it again. */
 	disconnect(): void;
 	reconnect(): void;
@@ -54,15 +56,35 @@ export interface HandRig {
 
 const TICK_MS = 5;
 const LEASE_MS = 3_600_000;
+// A store may confirm a write only after I/O (a Durable Object commit awaits `storage.sync()`; the async-store
+// conformance run takes three `setTimeout(0)` hops per write), and microtasks alone never let that write land
+// between two clock steps. One event-loop turn per step is not enough either: a write that needs several hops
+// lands one hop per 5 ms tick while a fault profile's own timers keep re-arming ahead of it, and `settle` burns
+// its whole transport budget (senpi#6114). A step therefore takes a fixed number of event-loop turns. The count
+// is measured, not derived (an immediate turn and a timer hop are not one-to-one): on the FAULT-HAND cases over
+// the async store, 2 turns per step still fails, 4 passes every run, and 8 is 4 with the same margin again.
+// `setImmediate` is the turn: each one runs after the loop's timers and I/O phases, so a pending `setTimeout(0)`
+// hop lands between two of them, and it costs microseconds where `setTimeout(0)` costs its 1 ms clamp, which over
+// the 120,000 ticks of a 600 s transport budget is the difference between a 0.3 s and a 150 s case. Where the
+// host has no `setImmediate`, each turn is a timer turn. An adapter whose write takes more hops than this must
+// raise the count here; the rig cannot observe a quiet loop from inside it.
+const IO_TURNS_PER_STEP = 8;
+const ioTurn = (): Promise<void> =>
+	new Promise<void>((resolve) =>
+		typeof setImmediate === "function" ? void setImmediate(resolve) : void setTimeout(resolve, 0),
+	);
 const drain = async (): Promise<void> => {
-	for (let turn = 0; turn < 32; turn++) await Promise.resolve();
+	for (let io = 0; io < IO_TURNS_PER_STEP; io++) {
+		await ioTurn();
+		for (let turn = 0; turn < 32; turn++) await Promise.resolve();
+	}
 };
 
 export function call(id: string): AgentToolCall {
 	return { type: "toolCall", id, name: "probe", arguments: { id } };
 }
 
-export type TransportPump = Pick<HandRig, "advance" | "settle" | "runUntil">;
+export type TransportPump = Pick<HandRig, "advance" | "settle" | "runUntil" | "waitFor">;
 
 /** Steps transport time on `timers` the way every hand rig waits (see {@link HandRig.advance}). */
 export function transportPump(timers: ManualTimers): TransportPump {
@@ -88,7 +110,16 @@ export function transportPump(timers: ManualTimers): TransportPump {
 		if (outcome === undefined || "error" in outcome) throw outcome?.error;
 		return outcome.value;
 	};
-	return { advance: (ms) => pump(() => false, ms), settle, runUntil };
+	const waitFor = async (done: () => Promise<boolean>, what: string, budgetMs = 600_000): Promise<void> => {
+		const end = timers.now() + budgetMs;
+		await drain();
+		while (!(await done())) {
+			if (timers.now() >= end) throw new Error(`${what}: not reached within ${budgetMs} ms of transport time`);
+			await timers.advanceTo(Math.min(end, timers.now() + TICK_MS));
+			await drain();
+		}
+	};
+	return { advance: (ms) => pump(() => false, ms), settle, runUntil, waitFor };
 }
 
 export async function openHandRig(
@@ -163,7 +194,7 @@ export async function openHandRig(
 	let current = await adapters.store.open(medium, { onWritePoint: killing });
 	await startHand(current).ready;
 	const host = createRemoteToolHost({ transport: sessionSide, placement: options.placement });
-	const { advance, settle, runUntil } = transportPump(timers);
+	const { advance, settle, runUntil, waitFor } = transportPump(timers);
 	return {
 		advance,
 		bodies,
@@ -185,6 +216,7 @@ export async function openHandRig(
 		},
 		settle,
 		runUntil,
+		waitFor,
 		disconnect: () => link.drop(),
 		reconnect: () => link.connect(),
 		rows: async () =>

@@ -1,7 +1,7 @@
-import { type SessionWriteGrant, WORKER_CREDIT_CODES } from "./session-worker-protocol.ts";
+import { type WorkerCreditAnswer, WORKER_CREDIT_CODES } from "./session-worker-protocol.ts";
 
 /** Releases a worker blocked in Atomics.wait with the host's decision. */
-export function acknowledgeGrant(signal: SharedArrayBuffer, grant: SessionWriteGrant): void {
+export function acknowledgeGrant(signal: SharedArrayBuffer, grant: WorkerCreditAnswer): void {
 	const state = new Int32Array(signal);
 	Atomics.store(state, 0, WORKER_CREDIT_CODES[grant]);
 	Atomics.notify(state, 0);
