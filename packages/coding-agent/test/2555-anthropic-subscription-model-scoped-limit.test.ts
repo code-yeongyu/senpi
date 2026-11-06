@@ -7,6 +7,7 @@ import {
 	resetAuthLaneBoundary,
 } from "../src/core/extensions/builtin/anthropic-subscription/auth-lane.ts";
 import type { SDKMessage, SdkQuery } from "../src/core/extensions/builtin/anthropic-subscription/sdk-boundary.ts";
+import { cliLaneEnv, cliSlot } from "./support/claude-cli-test-slots.ts";
 
 // Regression for senpi#2555 / oh-my-openagent#9421: a one-model quota limit on an
 // Anthropic subscription account must block only that model on that account.
@@ -25,15 +26,7 @@ let clock = START;
 
 async function soloAccountStore(): Promise<CredentialStore> {
 	const store = new InMemoryCredentialStore();
-	await store.modify("anthropic-subscription", async () =>
-		addAccount(emptyCredential(), {
-			name: "solo",
-			access: "solo-access",
-			refresh: "solo-refresh",
-			expires: START + 30 * 24 * HOUR,
-			source: "login",
-		}),
-	);
+	await store.modify("anthropic-subscription", async () => addAccount(emptyCredential(), cliSlot("solo")));
 	return store;
 }
 
@@ -74,7 +67,7 @@ async function request(model: string, query: SdkQuery): Promise<"served" | strin
 }
 
 function configure(store: CredentialStore): void {
-	overrideAuthLaneBoundary({ createStore: () => store, env: () => ({}), now: () => clock });
+	overrideAuthLaneBoundary({ createStore: () => store, env: () => cliLaneEnv(), now: () => clock });
 }
 
 afterEach(() => {

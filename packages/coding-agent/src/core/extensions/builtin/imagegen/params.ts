@@ -1,11 +1,28 @@
 import { Type } from "typebox";
 
-export const DEFAULT_IMAGE_MODEL = "gpt-image-2.5-sunburst";
+export const DEFAULT_IMAGE_MODEL = "gpt-image-2.6-sunburst";
+/**
+ * The native Responses `image_generation` tool has no client-side retry, so it stays on the newest model
+ * verified end to end through the ChatGPT subscription backend until 2.6 is proven there (senpi#5820).
+ */
+export const NATIVE_IMAGE_MODEL = "gpt-image-2.5-sunburst";
 export const IMAGE_MODEL_NAMES = {
+	"gpt-image-2.6-sunburst": "GPT Image 2.6 Sunburst",
+	"gpt-image-2.6-flare": "GPT Image 2.6 Flare",
 	"gpt-image-2.5-sunburst": "GPT Image 2.5 Sunburst",
 	"gpt-image-2.5-flare": "GPT Image 2.5 Flare",
 	"gpt-image-2": "GPT Image 2",
 } as const;
+export type ImageModelId = keyof typeof IMAGE_MODEL_NAMES;
+/** Gateway allowlists lag OpenAI releases: a 2.6 id the endpoint does not serve retries once on its 2.5 counterpart. */
+export const IMAGE_MODEL_FALLBACKS: Readonly<Partial<Record<ImageModelId, ImageModelId>>> = {
+	"gpt-image-2.6-sunburst": "gpt-image-2.5-sunburst",
+	"gpt-image-2.6-flare": "gpt-image-2.5-flare",
+};
+/** Only GPT Image 2.6 accepts the `complexity` request field. */
+export function supportsComplexity(model: ImageModelId): boolean {
+	return model === "gpt-image-2.6-sunburst" || model === "gpt-image-2.6-flare";
+}
 
 export const Params = Type.Object(
 	{
@@ -16,11 +33,17 @@ export const Params = Type.Object(
 		}),
 		model: Type.Optional(
 			Type.Union(
-				[Type.Literal("gpt-image-2.5-sunburst"), Type.Literal("gpt-image-2.5-flare"), Type.Literal("gpt-image-2")],
+				[
+					Type.Literal("gpt-image-2.6-sunburst"),
+					Type.Literal("gpt-image-2.6-flare"),
+					Type.Literal("gpt-image-2.5-sunburst"),
+					Type.Literal("gpt-image-2.5-flare"),
+					Type.Literal("gpt-image-2"),
+				],
 				{
 					default: DEFAULT_IMAGE_MODEL,
 					description:
-						"Sunburst (default) is the most capable: highest quality, precise edits, reference fidelity, best for final assets; Flare is the small model optimized for speed, with quality comparable to gpt-image-2; gpt-image-2 is the previous generation.",
+						"gpt-image-2.6-sunburst (default) is the most capable: highest quality, dense text, and the most consistent details across repeated edits; gpt-image-2.6-flare is the fast model for iteration and layouts. An endpoint that does not serve a 2.6 model yet is retried once on its 2.5 counterpart. The 2.5 pair and gpt-image-2 are previous generations.",
 				},
 			),
 		),
@@ -44,9 +67,15 @@ export const Params = Type.Object(
 				{
 					default: "auto",
 					description:
-						"Rendering quality. Defaults to auto. xhigh/max are gpt-image-2.5 only, slower and costlier.",
+						"Rendering quality. Defaults to auto. xhigh/max need gpt-image-2.5 or 2.6 and are slower and costlier.",
 				},
 			),
+		),
+		complexity: Type.Optional(
+			Type.Union([Type.Literal("low"), Type.Literal("medium"), Type.Literal("high")], {
+				description:
+					"GPT Image 2.6 only: how much the model plans before rendering, at no extra cost. Omitted means high. low suits focused edits; medium/high help dense text and complex layouts but are slower and may change more.",
+			}),
 		),
 		reference_image_paths: Type.Optional(
 			Type.Array(Type.String({ minLength: 1 }), {
@@ -111,7 +140,10 @@ export const Params = Type.Object(
 
 export interface GenerateImageDetails {
 	paths: string[];
+	/** The model that produced the images; differs from the request when `fallbackFrom` is set. */
 	model: string;
+	/** The requested 2.6 model the endpoint did not serve, when the 2.5 counterpart answered instead. */
+	fallbackFrom?: string;
 	source: string;
 	size: string;
 	quality: string;
@@ -123,7 +155,15 @@ export interface GenerateImageDetails {
 	/** Provider-reported transparency of the saved images, when it reports one. */
 	transparentBackground?: boolean;
 	error?: string;
-	reason?: "missing_config" | "provider_native_bypass" | "invalid_params" | "write_failed" | "provider_error";
+	/** Logged-in providers passed over because their API serves no OpenAI Images endpoint (senpi#5674). */
+	unsupportedProviders?: string[];
+	reason?:
+		| "missing_config"
+		| "credential_unavailable"
+		| "provider_native_bypass"
+		| "invalid_params"
+		| "write_failed"
+		| "provider_error";
 }
 
 export function failure(

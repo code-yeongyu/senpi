@@ -71,7 +71,7 @@ it.each([
 		input,
 	});
 	expect(direct?.block === true).toBe(denied);
-	expect(decideCellOperation(fx.session, call).action === "deny").toBe(denied);
+	expect((await decideCellOperation(fx.session, call)).action === "deny").toBe(denied);
 });
 
 it.each([
@@ -97,13 +97,15 @@ it.each([
 			input: call.input,
 		});
 		expect(direct?.block === true).toBe(denied);
-		expect(decideCellOperation(fx.session, call).action === "deny").toBe(denied);
+		expect((await decideCellOperation(fx.session, call)).action === "deny").toBe(denied);
 	},
 );
 
 it("returns the deciding rule and its layer", async () => {
 	const fx = await fixture("read:secret.txt=deny");
-	expect(decideCellOperation(fx.session, { tool: "read", input: { path: "secret.txt" }, cwd: fx.ctx.cwd })).toEqual({
+	expect(
+		await decideCellOperation(fx.session, { tool: "read", input: { path: "secret.txt" }, cwd: fx.ctx.cwd }),
+	).toEqual({
 		action: "deny",
 		rule: { permission: "read", pattern: "secret.txt", layer: "cli" },
 	});
@@ -135,23 +137,25 @@ it("publishes epochs for ordered user rule changes only while a deny applies", a
 
 it.each(["full-access", "ask"])("never asks for cell operations under %s", async (preset) => {
 	const fx = await fixture("read:secret.txt=deny", preset);
-	expect(decideCellOperation(fx.session, { tool: "bash", input: { command: "uname" }, cwd: fx.ctx.cwd })).toEqual({
+	expect(
+		await decideCellOperation(fx.session, { tool: "bash", input: { command: "uname" }, cwd: fx.ctx.cwd }),
+	).toEqual({
 		action: "pass",
 	});
 	expect(
-		decideCellOperation(fx.session, { tool: "read", input: { path: "secret.txt" }, cwd: fx.ctx.cwd }).action,
+		(await decideCellOperation(fx.session, { tool: "read", input: { path: "secret.txt" }, cwd: fx.ctx.cwd })).action,
 	).toBe("deny");
 	expect(fx.asked).not.toHaveBeenCalled();
 });
 
 it("fails closed without registration and after shutdown", async () => {
-	expect(decideCellOperation({}, { tool: "ls", input: { path: "." }, cwd: "/project" })).toMatchObject({
+	expect(await decideCellOperation({}, { tool: "ls", input: { path: "." }, cwd: "/project" })).toMatchObject({
 		action: "deny",
 		rule: { permission: "permission_authority", pattern: "unavailable", layer: "system" },
 	});
 	const fx = await fixture();
 	await fx.runner.emit({ type: "session_shutdown", reason: "quit" });
-	expect(decideCellOperation(fx.session, { tool: "ls", input: {}, cwd: fx.ctx.cwd }).action).toBe("deny");
+	expect((await decideCellOperation(fx.session, { tool: "ls", input: {}, cwd: fx.ctx.cwd })).action).toBe("deny");
 });
 
 it.each(
@@ -173,7 +177,7 @@ it.each(
 	}
 	fx.runner.setFlagValue("permission", `${rules},bash:git *=allow`);
 	if (entry === "state") cellEnforcementState(fx.session);
-	else if (entry === "cell") decideCellOperation(fx.session, call);
+	else if (entry === "cell") await decideCellOperation(fx.session, call);
 	else if (entry === "tool") {
 		expect(
 			await fx.runner.emitToolCall({
@@ -201,7 +205,7 @@ it.each(
 	const failed = { alive: true, active: true, epoch: initial.epoch + 1 };
 	expect(changed).toHaveBeenCalledExactlyOnceWith(failed);
 	expect(cellEnforcementState(fx.session)).toEqual(failed);
-	expect(decideCellOperation(fx.session, call)).toEqual({
+	expect(await decideCellOperation(fx.session, call)).toEqual({
 		action: "deny",
 		rule: { permission: "permission_authority", pattern: "setup_failed", layer: "system" },
 	});
@@ -210,7 +214,7 @@ it.each(
 	writeFileSync(join(fx.ctx.agentDir, "settings.json"), "{}");
 	fx.runner.setFlagValue("permission-preset", "full-access");
 	fx.runner.setFlagValue("permission", rules);
-	expect(decideCellOperation(fx.session, call)).toEqual({ action: "pass" });
+	expect(await decideCellOperation(fx.session, call)).toEqual({ action: "pass" });
 	expect(cellEnforcementState(fx.session)).toEqual({ ...initial, epoch: initial.epoch + 2 });
 	expect(changed).toHaveBeenCalledTimes(2);
 	expect(changed).toHaveBeenLastCalledWith({ ...initial, epoch: initial.epoch + 2 });
@@ -224,7 +228,7 @@ it.each(["preset", "rules"])("activates enforcement for failed initial %s setup"
 		failure === "rules" ? JSON.stringify({ permission: { read: null } }) : undefined,
 	);
 	expect(cellEnforcementState(fx.session)).toEqual({ alive: true, active: true, epoch: 1 });
-	expect(decideCellOperation(fx.session, { tool: "ls", input: {}, cwd: fx.ctx.cwd })).toMatchObject({
+	expect(await decideCellOperation(fx.session, { tool: "ls", input: {}, cwd: fx.ctx.cwd })).toMatchObject({
 		action: "deny",
 		rule: { pattern: "setup_failed" },
 	});
@@ -254,7 +258,7 @@ it.each([
 	});
 	expect(cellEnforcementState(fx.session)).toEqual(retired);
 	expect(changed).toHaveBeenCalledTimes(1);
-	expect(decideCellOperation(fx.session, { tool: "read", input: {}, cwd: fx.ctx.cwd })).toMatchObject({
+	expect(await decideCellOperation(fx.session, { tool: "read", input: {}, cwd: fx.ctx.cwd })).toMatchObject({
 		action: "deny",
 		rule: { pattern: "unavailable" },
 	});

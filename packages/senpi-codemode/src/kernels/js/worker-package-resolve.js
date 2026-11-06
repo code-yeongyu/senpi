@@ -9,6 +9,14 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 // conditions), so ESM-only packages load and the first root that has the package wins.
 const RESOLVE_PACKAGE = Symbol.for("senpi.kernel.resolvePackage");
 const CONDITIONS = typeof globalThis.Bun === "object" ? ["bun", "node", "import", "default"] : ["node", "import", "default"];
+let resolverIO = { readFileSync, realpathSync };
+let initializedIO = false;
+
+export function initializeResolverIO(io) {
+	if (initializedIO) throw new Error("Resolver IO already initialized");
+	initializedIO = true;
+	resolverIO = { readFileSync: io.readFileSync, realpathSync: io.realpathSync };
+}
 
 function isFile(path) {
 	try {
@@ -93,7 +101,7 @@ function legacyFile(path) {
 function packageEntry(packageDir, subpath, specifier) {
 	let manifest;
 	try {
-		manifest = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8"));
+		manifest = JSON.parse(resolverIO.readFileSync(join(packageDir, "package.json"), "utf8"));
 	} catch {
 		return legacyFile(join(packageDir, subpath === "." ? "index.js" : subpath));
 	}
@@ -139,7 +147,7 @@ export function resolvePackage(specifier, rootUrls) {
 		if (entry === undefined) continue;
 		let real = entry;
 		try {
-			real = realpathSync(entry);
+			real = resolverIO.realpathSync(entry);
 		} catch {
 			// A missing target fails in the import itself, with the runtime's own error.
 		}

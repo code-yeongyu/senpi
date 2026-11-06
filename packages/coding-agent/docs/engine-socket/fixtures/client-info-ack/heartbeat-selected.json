@@ -1,0 +1,25 @@
+{
+	"contractIds": [
+		"T7",
+		"RULING-73"
+	],
+	"flag": true,
+	"id": "heartbeat-selected",
+	"selected": true,
+	"request": {
+		"id": "h",
+		"type": "set_client_info"
+	},
+	"expectedAck": {
+		"id": "h",
+		"type": "response",
+		"command": "set_client_info",
+		"success": true,
+		"data": {
+			"capabilities": [
+				"compact_message_updates_v1",
+				"event_resync"
+			]
+		}
+	}
+}
