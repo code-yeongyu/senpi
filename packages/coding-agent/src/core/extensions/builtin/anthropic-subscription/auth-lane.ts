@@ -11,6 +11,7 @@ import {
 	emptyCredential,
 	envSlotToken,
 	listAccounts,
+	unusableStoredSlotCount,
 } from "./accounts.ts";
 import { isBlockedFor, type PinSource, selectAccount } from "./affinity.ts";
 import { type AuthenticatedAttemptInput, createAttemptMessages, type RetainableAttempt } from "./auth-attempt.ts";
@@ -43,6 +44,15 @@ const MIN_FALLBACK_OUTPUT_TOKENS = 8_192;
 const NO_MANAGED_ACCOUNTS_ERROR =
 	"authentication_failed: No Anthropic Subscription accounts configured for the managed lane; " +
 	"run /login anthropic-subscription or set CLAUDE_CODE_OAUTH_TOKEN";
+
+/**
+ * A stored account that names no account cannot be selected, signed into, or affinity-routed, and its seat digest would
+ * hash an undefined name. Refusing here keeps the turn from silently falling back to ambient host credentials
+ * (oh-my-openagent#12228).
+ */
+const UNUSABLE_STORED_ACCOUNT_ERROR =
+	"claude_account_unusable: a stored Claude account has no name, so no turn can use it; " +
+	"run /login anthropic-subscription to add a named account";
 
 export type { AuthenticatedAttemptInput } from "./auth-attempt.ts";
 
@@ -117,6 +127,7 @@ async function managedPool(
 	const configuredLane = resolveEffectiveLane(settings, accounts);
 	const lane =
 		configuredLane === "config-dir" && hasRequestOauthToken(requestEnvironment) ? "oauth-slots" : configuredLane;
+	if (accounts.length === 0 && unusableStoredSlotCount(credential) > 0) throw new Error(UNUSABLE_STORED_ACCOUNT_ERROR);
 	if (lane === "ambient") return undefined;
 	if (accounts.length === 0) throw new Error(NO_MANAGED_ACCOUNTS_ERROR);
 	const stored = credential?.type === "oauth" ? (credential as AnthropicSubscriptionCredential) : undefined;

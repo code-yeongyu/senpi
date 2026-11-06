@@ -143,11 +143,24 @@ function storedSlots(credential: AnthropicSubscriptionCredential): AccountSlot[]
  * shows or counts an account the others hide. Takes `object`: the generic listing passes raw pool slots.
  */
 export function isListedStoredSlot(slot: object): boolean {
-	return "store" in slot && slot.store === "claude-cli";
+	const candidate = slot as { name?: unknown; store?: unknown };
+	const name = candidate.name;
+	return candidate.store === "claude-cli" && typeof name === "string" && name.trim() !== "";
 }
 
-/** The listed accounts: every stored claude CLI account (`isListedStoredSlot`), then the env token accounts. */
-export function listAccounts(
+/**
+ * Stored accounts the listing rule drops, so a lane can refuse a turn instead of silently falling back to ambient host
+ * credentials when every stored account is unusable (oh-my-openagent#12228).
+ */
+export function unusableStoredSlotCount(credential: unknown): number {
+	if (credential === null || typeof credential !== "object" || !("accounts" in credential)) return 0;
+	const stored = (credential as { accounts?: unknown }).accounts;
+	return Array.isArray(stored)
+		? stored.filter((slot) => slot === null || typeof slot !== "object" || !isListedStoredSlot(slot)).length
+		: 0;
+}
+
+/** The listed accounts: every stored claude CLI account (`isListedStoredSlot`), then the env token accounts. */ export function listAccounts(
 	credential: AnthropicSubscriptionCredential,
 	env?: (name: string) => string | undefined,
 ): AccountSlot[] {
