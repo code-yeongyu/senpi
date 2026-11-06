@@ -32,12 +32,11 @@ class AtomicPublicationNodeExecutionEnv extends NodeExecutionEnv {
 /** Deletes one session file the first time the repo reads it, the window between listDir and read. */
 class VanishingSessionFileEnv extends NodeExecutionEnv {
 	private removed = false;
+	private readonly target: string;
 
-	constructor(
-		options: ConstructorParameters<typeof NodeExecutionEnv>[0],
-		private readonly target: string,
-	) {
+	constructor(options: ConstructorParameters<typeof NodeExecutionEnv>[0], target: string) {
 		super(options);
+		this.target = target;
 	}
 
 	override async readTextLines(
@@ -55,11 +54,11 @@ class VanishingSessionFileEnv extends NodeExecutionEnv {
 
 /** Fails the read of one session file with a non-ENOENT error. */
 class FailingSessionReadEnv extends NodeExecutionEnv {
-	constructor(
-		options: ConstructorParameters<typeof NodeExecutionEnv>[0],
-		private readonly target: string,
-	) {
+	private readonly target: string;
+
+	constructor(options: ConstructorParameters<typeof NodeExecutionEnv>[0], target: string) {
 		super(options);
+		this.target = target;
 	}
 
 	override async readTextLines(
