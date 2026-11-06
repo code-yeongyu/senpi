@@ -196,7 +196,7 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 				baseUrl: "https://my-proxy.example.com/v1",
 				compat: { supportsLongCacheRetention: true },
 			};
-			let capturedPayload: AnthropicCachePayload | null = null;
+			const capturedPayloads: AnthropicCachePayload[] = [];
 
 			const { streamAnthropic } = await import("../src/providers/anthropic.ts");
 
@@ -205,7 +205,7 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 					apiKey: "fake-key",
 					cacheRetention: "long",
 					onPayload: (payload) => {
-						capturedPayload = payload as AnthropicCachePayload;
+						capturedPayloads.push(payload as AnthropicCachePayload);
 					},
 				});
 
@@ -216,7 +216,8 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 				// Expected to fail: the proxy host does not exist.
 			}
 
-			expect(capturedPayload).not.toBeNull();
+			const capturedPayload = capturedPayloads[0];
+			expect(capturedPayload).toBeDefined();
 			expect(capturedPayload?.system?.[0]?.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
 		});
 
