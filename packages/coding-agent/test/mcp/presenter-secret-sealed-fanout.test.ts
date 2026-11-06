@@ -229,6 +229,18 @@ it("attached devices that are not sealed holders keep the value-free notice; the
 	expect(sealedTypes(phone.lines)).toEqual(["mcp_presenter_secret_request"]);
 });
 
+// senpi#5934 item 2: a raiser refused into the sealed route is a non-recipient, not a notice target (design 5.2).
+it("a raiser whose own lane was refused never receives the notice for its own request", async () => {
+	const { host, secret, requests } = await sealedHost();
+	const phone = await holder(host, secret, "phone");
+	host.writer.setConnectionCapabilities("human", ["interactive_user", "mcp_form_presenter_v1", "raiser_notice_v1"]);
+	const pending = host.writer.withConnection("human", () => requests.input("API key", undefined));
+	await phone.recorded("mcp_presenter_secret_request");
+	expect(records(host.lines, "secret_input_notice")).toEqual([]);
+	expect(sealedTypes(phone.lines)).toEqual(["mcp_presenter_secret_request"]);
+	void pending.catch(() => {});
+});
+
 it("a route without the sealed flag (a worker isolate's, until S5-4) never adds sealed holders", async () => {
 	const { host, secret } = await sealedHost();
 	const phone = await holder(host, secret, "phone");
