@@ -8,6 +8,7 @@ import {
 	type ExecutionCommand,
 	type ExecutionEntry,
 	type ExecutionKey,
+	type LedgerRefusal,
 	type LedgerReply,
 	MAX_EXECUTION_LIFETIME_MS,
 	refused,
@@ -17,9 +18,16 @@ import {
 const PREFIX = "execution.ledger:";
 const keyOf = ({ issuer, commandId }: ExecutionKey): string => `${PREFIX}${JSON.stringify([issuer, commandId])}`;
 
+/**
+ * A precondition checked inside a mutation's admission slot, before anything is read or written: a refusal it names is
+ * the reply and nothing changes. A hand's epoch floor (S35) uses it so a floor raised between two steps of a call's
+ * walk refuses the next step.
+ */
+export type LedgerGuard = () => LedgerRefusal | undefined;
+
 export interface ExecutionLedger {
-	admit(input: ExecutionAdmission): Promise<LedgerReply>;
-	apply(command: ExecutionCommand): Promise<LedgerReply>;
+	admit(input: ExecutionAdmission, guard?: LedgerGuard): Promise<LedgerReply>;
+	apply(command: ExecutionCommand, guard?: LedgerGuard): Promise<LedgerReply>;
 	read(key: ExecutionKey): Promise<ExecutionEntry | undefined>;
 	/** Called once on endpoint restart; also expires overdue leases and reconciliation deadlines. */
 	recover(now: number): Promise<void>;
@@ -56,8 +64,10 @@ export function createExecutionLedger(options: {
 		if (!audit) writes.push({ op: "put", key: keyOf(entry), data: entry });
 		await store.commit(epoch, writes, () => {});
 	};
-	const apply = (command: ExecutionCommand): Promise<LedgerReply> =>
+	const apply = (command: ExecutionCommand, guard?: LedgerGuard): Promise<LedgerReply> =>
 		admission.admit(async () => {
+			const refusal = guard?.();
+			if (refusal !== undefined) return refused(refusal);
 			const entry = await read(command.key);
 			if (entry === undefined) return refused("not_found");
 			const reply = transitionExecution(entry, command);
@@ -73,8 +83,10 @@ export function createExecutionLedger(options: {
 	return {
 		read,
 		apply,
-		admit: (input) =>
+		admit: (input, guard) =>
 			admission.admit(async () => {
+				const refusal = guard?.();
+				if (refusal !== undefined) return refused(refusal);
 				const prior = await read(input);
 				if (prior !== undefined) {
 					const same =

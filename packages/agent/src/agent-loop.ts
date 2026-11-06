@@ -348,6 +348,7 @@ async function runLoop(
 				newMessages.push(result);
 				toolResults.push(result);
 			}
+			if (config.commitStep) await config.commitStep({ message, providerToolResults });
 
 			if (shouldTerminateAssistantTurn(message)) {
 				// Hard exit: the decision is ignored, but the hook still sees the finished turn before turn_end.

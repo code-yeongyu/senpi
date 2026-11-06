@@ -1,3 +1,102 @@
+## 2026-11-05 - Retryable gateway failures collapse into one retry status per turn (senpi#6012)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/provider-error-presentation.ts`: `isRetryableProviderMessage` replaces `isNetworkProviderMessage` as the row-ownership test. It requires the retry engine's own decision (`isTurnRetryableFailure`, so a suppressed replay, a local failure, a model-config failure or a context overflow always keeps its row) together with transient wording, and a failure a classifier already describes in plain language keeps its row. The episode's reason resets when a retry recovers. `episodeOwnsFailure` tells `agent_end` when the quiet episode owes the turn's one final notice. The episode keeps the last short reason, and `finish()` puts it in the final notice.
+- `packages/coding-agent/src/modes/interactive/provider-error-reason.ts` (new): `providerErrorReason` reads a short cause (`429 rate limited`, `502 bad gateway`, `network error`) from a raw gateway body, whether JSON or an HTML error page. It strips the turn-retry suppression prefix first, and reads a leading number only in an HTTP-status shape.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `message_end`, `syncTrailingAssistantText` and session replay decide row ownership with `isRetryableProviderMessage`. `agent_end` skips the turn-end failure line when the quiet episode owns the failure. The retry indicator receives the short reason.
+- `packages/coding-agent/src/modes/interactive/components/status-indicator.ts`: `RetryStatusIndicator` takes an optional reason and shows it in the full and compact retry text.
+
+### Why
+
+- Behind a gateway, a retryable failure arrives as a verbose body: a litellm 429 JSON envelope or an nginx 502 HTML page. Row ownership used a network-only classifier, so each attempt was recorded in the retry episode and also painted as a raw row, up to `retry.maxRetries` rows per turn, with two final lines on exhaustion (senpi#6012).
+
+### Why an extension could not handle it
+
+- Transcript row ownership and the retry status are decided inside `InteractiveMode.handleEvent` and its components; no extension hook reaches them.
+
+### Expected merge conflict zones
+
+- LOW: the `message_end`, `agent_end` and replay branches of `interactive-mode.ts` that call `isRetryableProviderMessage`, and the `RetryStatusIndicator` constructor signature.
+
+## 2026-11-04 - /resume of a session a live process holds asks to cancel or take over (senpi#5750, fixes #5744)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `handleResumeSession` checks live foreign holders (`checkSessionHolders`) before `runtimeHost.switchSession`. With a holder, a selector names it (`pid N in "<folder>"`) and offers `Cancel` or `Take over (stop it there)`. Cancel returns `{ cancelled: true }` and switches nothing. Take over is offered only when every holder is verified and single-session (`takeOverRefusal`): a holder inside a multi-session host, or one whose identity is unverified, gets Cancel only, with the reason. `stopSessionHolders` re-reads the holder set right before signalling, signals only the confirmed pids still holding it, and waits until the session is free. A holder that does not exit in time, or a stop error (shown as a warning), leaves the resume refused. A failed lookup stays advisory: the pre-switch result drives the same `Unable to inspect session holders` warning after the switch.
+- `packages/coding-agent/test/suite/regressions/5744-resume-refuses-held-session.test.ts` (new): a real holder process plus a real `InteractiveMode` resume, with both choices.
+- `packages/coding-agent/test/suite/regressions/issue-2951-resume-warning.test.ts`: keeps only the lookup-error case. The live-holder case moved to the 5744 test because the warn-and-switch it pinned is replaced.
+
+### Why
+
+- The TUI switched onto a session a live process was running and only warned. The restored lifecycle then read that process's live run as `interrupted_run`, so the next input started a second run of the same session, re-sending the in-flight prompt while the other process was still running it. The RPC host already refused this (#2951).
+
+### Why an extension could not handle it
+
+- `/resume` and extension `ctx.switchSession` both go through the interactive controller's `handleResumeSession`. An extension cannot gate the built-in picker's switch.
+
+### Expected merge conflict zones
+
+- LOW: the head of `handleResumeSession` and its two post-switch warning sites; the `foreign-session-holders` import block.
+
+## 2026-11-04 - A submit parked during startup runs once startup finishes (senpi#5737, fixes #5731)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `handleStartupSubmit` records the text it parks (`startupParkedSubmission`). `init()` calls the new `replayStartupSubmission()` after `setupEditorSubmitHandler()`, `attachEditor()` and `adoptDefaultEditorActions()`. When the editor still holds exactly the parked text, the editor is cleared and the text goes through `defaultEditor.onSubmit` with the parked `EditorSubmitDetails` (so a leading-space ` /foo` stays text), the real submit path with its session-control submission edge. An edited draft is left in the editor, and the parked text is consumed once.
+- `packages/coding-agent/test/suite/regressions/5731-startup-submit-replays.test.ts` (new): a parked `/resume` is submitted exactly once; an edited draft stays; the raw text is carried; nothing parked submits nothing.
+- `packages/coding-agent/test/suite/regressions/issue-4826-startup-history-before-submit.test.ts`: the parked submit now replays during `init()`, so the test asserts it landed once after the restored history instead of submitting it again by hand.
+
+### Why
+
+- Startup parks a submit until the restored transcript renders (#4826), but nothing ran it afterwards, so an early `/resume` sat typed in the editor behind `Startup is still in progress` until a second Enter. On a loaded machine the window lasts seconds.
+
+### Why an extension could not handle it
+
+- The startup submit path and its handoff to the real submit handler live inside `InteractiveMode.init()`; an extension cannot see or resubmit a parked editor submission.
+
+### Expected merge conflict zones
+
+- LOW: the `adoptDefaultEditorActions(...)` line at the end of `init()`, `handleStartupSubmit`, and the private field block near `preResolvedSubmissionImages`.
+
+## 2026-11-04 - /resume never offers the live session while it holds no conversation (senpi#5730, fixes #5727)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/session-selector.ts`: `SessionList.filterSessions()` drops the current session while it has no message and no name (`isLiveSessionWithoutConversation`), in both scopes and on every partial list published while the picker loads. A current session that has a conversation, and every other session, are listed as before.
+- `packages/coding-agent/test/suite/regressions/5727-resume-hides-live-empty-session.test.ts` (new): the picker fed by `SessionManager.list()` over real files, with the live session started the way OmO starts it (`persistHeaderNow()` plus `startupBookkeeping` entries), hides that row and Enter selects the newest real session; a live session with a conversation stays listed.
+
+### Why
+
+- The session-control extension writes the live session's header at startup, so a fresh TUI's own empty session had a file and sorted as the newest row, `(no messages)  0 now`. The untouched selection sat on row 0, and Enter switched onto the session already open and printed `Resumed session` over an empty screen. With a large folder the cursor also jumped onto that row once it loaded.
+
+### Why an extension could not handle it
+
+- The session list and its default selection belong to the built-in interactive picker; extensions cannot filter the rows `/resume` shows.
+
+### Expected merge conflict zones
+
+- LOW: the start of `SessionList.filterSessions()` and the private helpers next to `isCurrentSessionPath()` in `session-selector.ts`.
+
+## 2026-10-30 - Fallback exhaustion shows each refused rung (senpi#3447)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: a `retry_fallback_exhausted` event that carries
+  `refusals` shows each refused rung with its usable window and the context it would need.
+
+### Why
+
+- Fallback that stopped because every smaller rung was refused ended with no visible reason.
+
+### Why an extension could not handle it
+
+- The exhaustion notice is rendered by the interactive mode from a core event; extensions cannot change that line.
+
+### Expected merge conflict zones
+
+- LOW: the `retry_fallback_exhausted` branch of `handleEvent`.
+
 ## 2026-11-02 - IME composition on the question list shows on the own-answer row, not the footer (senpi#4400)
 
 ### What changed

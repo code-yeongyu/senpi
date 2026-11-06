@@ -1,3 +1,40 @@
+## 2026-10-30 - Replace a returning SIWC registration instead of appending (part of senpi#5003)
+
+### What changed
+
+- `packages/ai/src/auth/pool/slots.ts`: match SIWC logins by their verified issuer, subject and issued client ID; replace the existing slot while keeping its immutable name, display name, pin, order and sibling material; an SIWC login that matches no tuple is appended and never falls back to token-identity replacement.
+
+### Why
+
+- `packages/ai/src/auth/pool/slots.ts`: fresh tokens for the same registration otherwise allocate another login-N slot. Email is not identity.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/auth/pool/slots.ts`: the common login commit path owns the serialized update against current stored credentials.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/auth/pool/slots.ts`: `appendLoginSlot`.
+
+## 2026-10-30 - Preserve per-account ChatGPT routes and identity (part of senpi#5003)
+
+### What changed
+
+- `packages/ai/src/auth/types.ts`: credentials may select a chat API and record their ChatGPT route. Absent routes remain legacy.
+- `packages/ai/src/auth/pool/slots.ts`: keep route, identity, issued client ID, scopes, retained ID token and permission state through slot promotion, projection and refresh; a same-account re-login replaces only a slot on its own route (legacy Codex vs Sign in with ChatGPT), never one on the other route.
+
+### Why
+
+- `packages/ai/src/auth/types.ts` and `packages/ai/src/auth/pool/slots.ts`: mixed SIWC and legacy accounts need account-specific transport and metadata without inheriting a sibling's registration.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/auth/types.ts` and `packages/ai/src/auth/pool/slots.ts`: the shared auth and storage contracts precede provider dispatch.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/auth/types.ts`: auth contracts. `packages/ai/src/auth/pool/slots.ts`: projection and refresh merge helpers.
+
 ## 2026-10-30 - Pass an explicitly selected account to OAuth login (senpi#5046)
 
 ### What changed
