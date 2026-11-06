@@ -9,6 +9,7 @@ import type { CliRuntimeConfiguration } from "../../main.ts";
 import type { CanonicalRecord } from "./compact-lane-transitions.ts";
 import type { ExtensionOwnerIdentity, ExtensionOwnerWire } from "./extension-owner.ts";
 import type { RpcSessionState } from "./rpc-types.ts";
+import type { SealedAnswer, SealedAnswerReply, SecretInputOutcome } from "./secret-input-requests.ts";
 import type { SessionBootstrap } from "./session-acceptance-lane.ts";
 import type { RpcSessionLaunchProfile } from "./session-registry.ts";
 import { RpcSessionRegistryError } from "./session-registry-types.ts";
@@ -118,6 +119,8 @@ export type HostToSessionWorker =
 	| { type: "cancel_ui" }
 	| { type: "cancel_grant"; id: string }
 	| { type: "cancel_secret"; id: string }
+	/** A sealed answer the host authenticated (D11 secret phase 5.5); the isolate runs 7.1 steps 3 and 6 on it. */
+	| { type: "secret_sealed_answer"; request: number; answer: SealedAnswer }
 	/** A change to the host's subscription limit records after `prepare`, mirrored into the isolate (senpi#3695). */
 	| { type: "subscription_limits"; accounts: readonly MirroredLimits[] }
 	| { type: "close" };
@@ -125,7 +128,16 @@ export type HostToSessionWorker =
 export type SessionWorkerToHost =
 	| { type: "secret_select"; id: string; connection?: string; decision: SharedArrayBuffer; signal: SharedArrayBuffer }
 	| { type: "secret_frame"; id: string; record: object; signal: SharedArrayBuffer }
-	| { type: "secret_settled" | "secret_forget"; id: string; signal: SharedArrayBuffer }
+	| {
+			type: "secret_settled";
+			id: string;
+			signal: SharedArrayBuffer;
+			/** The outcome and winning grant, so the host settles the request's sealed holders (5.5). */
+			outcome?: SecretInputOutcome;
+			winnerGrant?: string;
+	  }
+	| { type: "secret_forget"; id: string; signal: SharedArrayBuffer }
+	| { type: "secret_sealed_result"; request: number; reply: SealedAnswerReply }
 	| { type: "secret_handshake"; capabilities: readonly string[]; signal: SharedArrayBuffer }
 	| { type: "mcp_form_bind"; id: string; durableId: string }
 	| { type: "mcp_form_ready"; id: string; epoch: string }

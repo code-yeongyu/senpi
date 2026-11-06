@@ -29,7 +29,7 @@ import { ExtensionOwnerLifetime } from "./extension-owner-lifetime.ts";
 
 import * as crypto from "node:crypto";
 import { basename, dirname, extname } from "node:path";
-import type { ImageContent } from "@earendil-works/pi-ai";
+import type { ImageContent, OAuthLoginCallbacks } from "@earendil-works/pi-ai";
 import type { OAuthProviderId } from "@earendil-works/pi-ai/compat";
 import { VERSION } from "../../config.ts";
 import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
@@ -39,7 +39,7 @@ import { authMethodStatus, buildLoginProviderInfos } from "../../core/auth-provi
 import { ContinueFromLeafError } from "../../core/continue-from-leaf.ts";
 import { listCredentialAccounts, orderCredentialAccounts } from "../../core/credential-account-order.ts";
 import { CredentialAccountNotFoundError, resetCredentialAccount } from "../../core/credential-account-reset.ts";
-import { pinCredentialAccount, removeCredentialAccount } from "../../core/credential-accounts.ts";
+import { pinCredentialAccount, removeCredentialAccount, selectedOAuthAccount } from "../../core/credential-accounts.ts";
 import { AssistantEditError, SessionStreamingError } from "../../core/edited-assistant-message.ts";
 import { UserEditError } from "../../core/edited-user-message.ts";
 import {
@@ -79,6 +79,7 @@ import { type Theme, theme } from "../interactive/theme/theme.ts";
 import { holdAutomaticInput } from "./automatic-input-gate.ts";
 import { DURABLE_CLIENT_MESSAGE_ID_CAPABILITY } from "./client-admission-record.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
+import { admitInputChain } from "./chain-admission.ts";
 import { handleClientInput } from "./client-input-handler.ts";
 import { ConnectionQuestionBridge, degradeQuestion, sessionQuestionBridges } from "./connection-question-bridge.ts";
 import { remoteOriginDeclaration, remoteOriginField } from "./remote-origin.ts";
@@ -223,6 +224,8 @@ export interface RpcConnectionOptions {
 	workerSecurityBridge?: boolean;
 	secretInputRoute?: SecretInputRoute;
 	grantDialogSettled?: (id: string) => void;
+	/** A grant select was emitted on the connection in context; its non-presenters get a value-free notice (D11 S3-5). */
+	grantDialogRaised?: (id: string, title: string) => void;
 	/** Shared hosts dedupe `loaded_surfaces_changed` per connection by inventory digest; absent emits inline. */
 	publishLoadedSurfacesChanged?: (previous: string | undefined, digest: string) => void;
 }
@@ -660,6 +663,8 @@ export function createRpcConnectionHandler(
 			});
 			if (request.grantSelect === true) grantRequests.set(id, options.clientInfo?.connectionId());
 			output({ type: "extension_ui_request", id, ...raised } as RpcExtensionUIRequest);
+			if (request.grantSelect === true && typeof request.title === "string")
+				options.grantDialogRaised?.(id, request.title);
 		});
 	}
 	const selectGrantDialog: ExtensionUIContext["select"] = (title, choices, opts) =>
@@ -1197,7 +1202,7 @@ export function createRpcConnectionHandler(
 	 * text/option labels, and a success flag (plus a non-secret error message)
 	 * cross the wire; a client's answer is consumed in-process.
 	 */
-	const startLogin = async (provider: string): Promise<void> => {
+	const startLogin = async (provider: string, slotId?: string): Promise<void> => {
 		// A second login_start for the same provider aborts the prior attempt.
 		activeLogins.get(provider)?.abort();
 		const controller = new AbortController();
@@ -1209,7 +1214,7 @@ export function createRpcConnectionHandler(
 		authStorage.takeReplacement(provider);
 
 		try {
-			await authStorage.login(provider as OAuthProviderId, {
+			const callbacks: OAuthLoginCallbacks = {
 				onAuth: (info) => {
 					outputEvent({ type: "auth_login_url", provider, url: info.url });
 				},
@@ -1221,7 +1226,47 @@ export function createRpcConnectionHandler(
 					outputEvent({ type: "auth_login_progress", provider, text: message });
 				},
 				signal: controller.signal,
-			});
+			};
+			if (slotId !== undefined) {
+				const reauthorize = selectedOAuthAccount(authStorage, provider, slotId);
+				await session.modelRuntime.login(
+					provider,
+					"oauth",
+					{
+						signal: controller.signal,
+						prompt: async (prompt) => {
+							const answer =
+								prompt.type === "select"
+									? await callbacks.onSelect?.(prompt)
+									: await callbacks.onPrompt?.(prompt);
+							if (answer === undefined) throw new Error("Login cancelled");
+							return answer;
+						},
+						notify: (event) => {
+							switch (event.type) {
+								case "auth_url":
+									callbacks.onAuth(event);
+									break;
+								case "device_code":
+									callbacks.onDeviceCode(event);
+									break;
+								case "progress":
+									callbacks.onProgress?.(event.message);
+									break;
+								case "info":
+									callbacks.onProgress?.(
+										[event.message, ...(event.links ?? []).map((link) => link.url)].join("\n"),
+									);
+									break;
+							}
+						},
+					},
+					{ reauthorize, reauthorizeSlot: slotId },
+				);
+				emitProviderAccountsChanged(provider);
+			} else {
+				await authStorage.login(provider as OAuthProviderId, callbacks);
+			}
 			session.modelRegistry.refresh();
 			emitProviderAccountsChanged(provider, "login");
 			// The client shows what this login replaced and where the previous credential is (senpi#3486).
@@ -1322,6 +1367,9 @@ export function createRpcConnectionHandler(
 			// =================================================================
 
 			case "prompt": {
+				const chain = admitInputChain(command.chainCount, session.settingsManager);
+				if (chain.kind === "refused")
+					return error(id, "prompt", chain.refusal.message, chain.refusal.errorCode, chain.refusal.errorData);
 				if (holdAutomaticInput(session, command, hasRole(INTERACTIVE_USER_CAPABILITY)))
 					return success(id, "prompt", { disposition: "handled", heldAsNotice: true });
 				turnRequested = true;
@@ -1404,6 +1452,9 @@ export function createRpcConnectionHandler(
 
 			case "steer":
 			case "follow_up": {
+				const chain = admitInputChain(command.chainCount, session.settingsManager);
+				if (chain.kind === "refused")
+					return error(id, command.type, chain.refusal.message, chain.refusal.errorCode, chain.refusal.errorData);
 				if (holdAutomaticInput(session, command, hasRole(INTERACTIVE_USER_CAPABILITY)))
 					return success(id, command.type, { disposition: "handled", heldAsNotice: true });
 				turnRequested = true;
@@ -2198,7 +2249,7 @@ export function createRpcConnectionHandler(
 				// URL and terminal result are delivered via auth_login_url /
 				// auth_login_end events, because an interactive OAuth round-trip
 				// cannot fit within the request timeout.
-				void startLogin(command.provider);
+				void startLogin(command.provider, command.slotId);
 				return success(id, "login_start");
 			}
 
@@ -2236,15 +2287,35 @@ export function createRpcConnectionHandler(
 
 			case "logout": {
 				// The runtime's logout signs every Claude CLI account out of the CLI before deleting the credential
-				// (senpi#4436); the runtime key is dropped too, as `AuthStorage.logout` did.
-				const { notices } = await session.modelRuntime.logoutProvider(command.provider);
-				session.modelRegistry.authStorage.removeRuntimeApiKey(command.provider);
+				// (senpi#4436); a provider-wide logout drops the runtime key too, as `AuthStorage.logout` did. `slotId`
+				// signs out one ChatGPT account and keeps its registration.
+				if (command.slotId !== undefined)
+					selectedOAuthAccount(session.modelRegistry.authStorage, command.provider, command.slotId);
+				const { notices, revocation } = await session.modelRuntime.logoutProvider(command.provider, {
+					slotId: command.slotId,
+				});
+				if (command.slotId === undefined) session.modelRegistry.authStorage.removeRuntimeApiKey(command.provider);
 				await session.modelRegistry.refresh();
-				return success(id, "logout", notices.length === 0 ? undefined : { notices });
+				emitProviderAccountsChanged(command.provider);
+				const data = {
+					...(notices.length === 0 ? {} : { notices: [...notices] }),
+					...(revocation === undefined ? {} : { status: revocation.status }),
+				};
+				return success(id, "logout", Object.keys(data).length === 0 ? undefined : data);
 			}
 
 			case "get_provider_accounts": {
-				const listing = await listCredentialAccounts(session.modelRegistry.authStorage, command.provider);
+				const activeName = session.modelRuntime.getActiveCredentialAccount(
+					command.provider,
+					session.sessionManager.getSessionId(),
+				);
+				const listing = await listCredentialAccounts(
+					session.modelRegistry.authStorage,
+					command.provider,
+					process.env,
+					undefined,
+					activeName,
+				);
 				return success(id, "get_provider_accounts", { accounts: listing.accounts, ordered: listing.ordered });
 			}
 
@@ -2445,7 +2516,7 @@ export function createRpcConnectionHandler(
 		const relocationSettled = relocation?.dispose();
 		relocation = undefined;
 		questions.cancelAll();
-		secretInputs.close();
+		secretInputs.dispose();
 		pendingExtensionRequests.close();
 		unsubscribeProviderAccountEvents();
 		unsubscribe?.();

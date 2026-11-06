@@ -18,22 +18,22 @@ export class SessionWriteGuard {
 	private verdict: SessionOwnership = { writable: true };
 
 	assertWritable(entries: readonly EntryLike[], entry: EntryLike, sessionFile: string): void {
-		const ownership = this.current(entries);
+		const ownership = this.ownership(entries);
 		if (ownership.writable) return;
 		if (ownershipStep(ownership, entry, this.sessionId).kind !== "apply")
 			throw new SessionMovedAwayError(sessionFile, ownership);
 	}
 
 	assertRewritable(entries: readonly EntryLike[], sessionFile: string): void {
-		const ownership = this.current(entries);
+		const ownership = this.ownership(entries);
 		if (!ownership.writable) throw new SessionMovedAwayError(sessionFile, ownership);
 	}
 
 	isWritable(entries: readonly EntryLike[]): boolean {
-		return this.current(entries).writable;
+		return this.ownership(entries).writable;
 	}
 
-	private current(entries: readonly EntryLike[]): SessionOwnership {
+	ownership(entries: readonly EntryLike[]): SessionOwnership {
 		if (entries !== this.source || entries.length < this.seen) {
 			this.source = entries;
 			this.seen = 0;
