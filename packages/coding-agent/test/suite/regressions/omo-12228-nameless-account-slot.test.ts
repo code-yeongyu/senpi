@@ -148,6 +148,33 @@ describe("oh-my-openagent#12228 a stored Claude account with no name", () => {
 		expect(final.errorMessage ?? "").not.toContain("claude_account_unusable");
 	});
 
+	it("never refuses when the ambient lane comes from the environment", async () => {
+		const seen: Options[] = [];
+		configure(await storeWithRawSlots([namelessStoredSlot]), seen);
+		process.env.SENPI_CLAUDE_SDK_OAUTH_TOKEN_INJECTION = "ambient";
+		try {
+			const final = await streamAnthropicSubscription(model, context, { cwd: process.cwd() }).result();
+
+			expect(seen).toHaveLength(1);
+			expect(final.errorMessage ?? "").not.toContain("claude_account_unusable");
+		} finally {
+			delete process.env.SENPI_CLAUDE_SDK_OAUTH_TOKEN_INJECTION;
+		}
+	});
+
+	it("names the missing accounts for an explicitly managed lane instead of throwing", async () => {
+		const seen: Options[] = [];
+		configure(await storeWithRawSlots([namelessStoredSlot]), seen, {
+			anthropicSubscriptionProvider: { tokenInjection: "config-dir" },
+		});
+
+		const final = await streamAnthropicSubscription(model, context, { cwd: process.cwd() }).result();
+
+		expect(seen).toHaveLength(0);
+		expect(final.errorMessage ?? "").not.toContain("Received undefined");
+		expect(final.errorMessage ?? "").toContain("No Anthropic Subscription accounts configured");
+	});
+
 	it("keeps a credential whose only stored entries are legacy token slots on the ambient path", async () => {
 		const seen: Options[] = [];
 		configure(
