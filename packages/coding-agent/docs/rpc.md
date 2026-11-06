@@ -393,6 +393,8 @@ model context or history.
 
 `get_provider_accounts` returns secret-free descriptors containing `name`, `source`, `blocked`, `pinned`, and optional `displayName`. Render a named account as `displayName (name)`; keep using the immutable `name` for `account_pin`, `account_remove`, and comparisons. Legacy accounts omit `displayName`.
 
+ChatGPT Subscription OAuth accounts also report `route: "siwc" | "legacy"`, optional `planUsageEnabled`, and `signedOut: true` when the registration is retained without session tokens. These are the same fields `/gpt-account` renders. An explicit `planUsageEnabled: false` means "plan usage not enabled: enable it or use an API key"; an absent flag is not an assertion that permission is enabled. Link usage and limit information to [ChatGPT Settings > Usage](https://chatgpt.com/settings/usage). The shared provider login prompt offers **Continue with ChatGPT** first and keeps **Legacy sign-in (existing users)** available.
+
 `logout` deletes the provider's stored credential. For Anthropic Subscription it first signs every Claude CLI account out of the Claude CLI by its config dir (the same removal as `account_remove`), and its `data` is absent unless one could not be signed out cleanly, in which case it is `{ "notices": string[] }`, one user-facing sentence per account, as for `account_remove`.
 
 `account_remove` answers `success: true` once the account is gone. Its `data` is absent unless something could not be cleaned up, in which case it is `{ "notice": string }`, a user-facing sentence a client should show: a Claude CLI account whose `claude auth logout` could not run or failed (the account and its config dir are removed anyway, but the CLI's stored sign-in may remain), or whose stored account dir is missing, malformed, or a link or file (removed without a sign-out, and a link or file is left untouched).
@@ -402,6 +404,10 @@ A blocked account also says why: `blockedReason` is `auth_error` (the provider r
 Use `/account <provider> rename <id> <display name...>` or the corresponding `/gpt-account` and `/claude-account` commands to name saved accounts; `clear-name <id>` removes only the label. `/gpt-account add` offers optional naming after login is saved, and only when Senpi generated the account ID itself; the Claude lane names accounts through its own login prompt and never asks twice. Blank input or cancellation keeps that login usable. Environment accounts cannot be renamed.
 
 A label is stored NFC-normalized with internal whitespace collapsed, must contain at least one visible character, and may not exceed 32 terminal columns (measured in grapheme clusters, so CJK and emoji count two columns each). Uniqueness within a provider folds case, Unicode compatibility forms, invisible code points, and Cyrillic lookalikes, so two labels that render identically are refused.
+
+`active: true` identifies the account actually selected for this session's last stored-account attempt, including failover. Before an attempt there is no active account to report; neither list position nor a pin proves activity. Signed-out, paused, blocked and unused accounts never report active.
+
+A structured SIWC subscription usage limit reports `paused: true` and `usageUrl: "https://chatgpt.com/settings/usage"` for the originating account. Its internal retry probe deadline is not a provider reset time, so `blockedUntil` is omitted for this pause, even after a probe becomes due. A successful probe or changed credentials clears the pause. `/gpt-account` renders the same paused state and Usage link.
 
 ## Account order
 
@@ -543,14 +549,36 @@ refused. The pending host record determines sensitivity even if the incoming
 
 Requests belong to one immutable presenter and live session incarnation. The
 initiating attached client must itself be eligible; it cannot borrow another
-client's declaration. Background calls choose an eligible attached presenter in
-registration order. Unsupported presentation raises `secret_input_unavailable`
-before emission. Worker isolates negotiate accepted/refused-with-reason with the
-parent before registering a request; a refusal is not user cancellation.
+client's declaration. Background calls (no connection's command raised them)
+choose an eligible attached presenter in registration order, but only a local
+one: a connection that declared a delegation (`declare_delegation`) or a
+`remoteOrigin` is never chosen, whatever it declares, and with no local
+eligible presenter the call ends `secret_input_unavailable` (`no_presenter`). A
+background request whose presenter later declares a `remoteOrigin` ends
+`unavailable`. Unsupported presentation raises `secret_input_unavailable`
+before emission. A secret raised by a remote device's own turn is presented only
+on that device's connection; a relay forwarder never declares `secret_input_v1`
+for it, so that secret ends `secret_input_unavailable` (`client_unsupported`)
+with no prompt and no notice anywhere. Worker isolates negotiate
+accepted/refused-with-reason with the parent before registering a request; a
+refusal is not user cancellation.
 
 The private transport bypasses replay, observer, transcript and trace-record
-publication. Generic `get_state`/`get_snapshot` and non-owner views contain no
-secret prompt or receipt. The owner can query its bounded, value-free
+publication. Generic `get_state`/`get_snapshot` contain no secret prompt or
+receipt. Another attached connection sees only that a secret is pending, and
+only when its `set_client_info` declared `raiser_notice_v1`:
+
+```json
+{"type":"secret_input_notice","sessionId":"session-id","uiRequestId":"request-id","title":"Credential","deadlineAtMs":1900000000000,"raisedBy":"socket-1"}
+{"type":"secret_input_notice_settled","sessionId":"session-id","uiRequestId":"request-id","outcome":"answered"}
+```
+
+`raisedBy` is the raising connection, or `"agent"` for a background call;
+`remoteOrigin` is present when the raising connection declared one. A notice
+never carries a value, draft, `answerId` or receipt, it is not replayed, and it
+grants no answering authority: an answer from that connection is still
+`secret_answer_refused`. A connection without `raiser_notice_v1` receives
+nothing, as before. The owner can query its bounded, value-free
 `get_state.answeredUiRequests` receipts after acknowledgement loss. Discard the
 value instead of resending or saving it in a reconnect queue. A missing receipt
 after eviction/restart means unknown outcome, not proof the callback did not run.
@@ -570,6 +598,81 @@ causes. A desktop integration needs its own authenticated, untraced transient
 response route; ordinary persisted question-answer commands are not suitable.
 Advertise the capability only after that route and the renderer support it.
 Role-carrying automated/control connections must omit `secret_input_v1`.
+
+#### Sealed holders (same-account presenters)
+
+On an in-process host whose embedding distribution injected an account authority that can mint host tokens, a
+secret prompt can also be answered by a same-account presenter, sealed end to end (D11 secret phase). A sealed
+holder is a current MCP presenter grant whose principal enrolled by same-account attestation (never the inherited
+launch principal), whose signed `mcp_presenter_acquire` listed `secret_input_v1` in `features`, whose
+attestation has not lapsed, and whose session has a valid host token. Holders are snapshotted when the prompt is
+created; a grant acquired later is not offered it.
+
+- A prompt whose raiser route refuses (for example `no_presenter` for a background call) proceeds when it has at
+  least one sealed holder; with none, the refusal is unchanged.
+- Each holder receives one private `mcp_presenter_secret_request` on its presenter connection, never on an event,
+  snapshot, mirror or replay lane: `{type, v: 1, sessionId, durableSessionId, uiRequestId, title, placeholder?,
+  deadlineAtMs, hostInstance, hpkePk, hostPk, hostToken, sig}`. `hpkePk` is the prompt's own X25519 key and
+  `hostPk` the host instance's Ed25519 key (both raw 32 bytes, unpadded base64url). `sig` is 128 lowercase hex
+  characters: the host key's Ed25519 signature over `"omo-secret-request-v1\n" + JSON.stringify(B)`, with
+  `B = ["omo-secret-binding-v1", hostInstance, hostJkt, durableSessionId, uiRequestId, deadlineAtMs, hpkePk,
+  displayHash]`, `hostJkt` the RFC 7638 thumbprint of `hostPk` (equal to the host token's `cnf.jkt`), and
+  `displayHash = b64url(SHA-256(JSON.stringify([title, placeholder ?? null])))`. These byte formats follow
+  omo-relay-spec decision 0022.
+- When the host token is re-minted, every holder of a pending prompt receives
+  `{type: "mcp_presenter_secret_token", v: 1, hostInstance, durableSessionId, hostToken}`. `B` names the host
+  key, not a token, so the prompt stays verifiable under the new token.
+- These records reach only grants that negotiated `secret_input_v1`; any other client sees today's bytes.
+- A prompt with sealed holders but no raiser route never writes a raiser lane, the sole stdio lane included, and
+  never accepts an `extension_ui_response`. It stays pending while any holder's grant is current, through a raiser
+  disconnect or capability change, and ends `unavailable` when the last holder's grant goes.
+- An attached connection that declared `raiser_notice_v1` and is not a sealed holder keeps receiving
+  `secret_input_notice`; a holder receives the request instead.
+- A holder answers on its presenter connection with `mcp_presenter_secret_answer`. A value answer is
+  `{type, id, v: 1, grantId, uiRequestId, answerId, stepup, enc, ct, sig}`; a cancel is
+  `{type, id, v: 1, grantId, uiRequestId, answerId, cancelled: true, sig}`. `id` is 1-128 characters and
+  `answerId` 1-256. `enc` (32 bytes) and `ct` (HPKE base mode, DHKEM(X25519, HKDF-SHA256) / HKDF-SHA256 /
+  AES-256-GCM, at most 64 KiB + 16 bytes) are unpadded base64url. `sig` is the installation key's Ed25519 signature,
+  verified strictly (canonical points, no small-order or non-prime-order key, `S < L`).
+- The host checks, in order:
+  1. the exact shape;
+  2. that the sender holds a grant in the prompt's sealed snapshot that is still eligible;
+  3. for a prompt that has already settled, the receipt: `replay` for the same `answerId` and principal, else
+     `already_answered`;
+  4. the envelope signature;
+  5. for a value, the issuer step-up token through the injected authority (its account, device, host device, request
+     binding and expiry no later than the deadline);
+  6. at the latch, synchronously and in this order: the prompt is still pending; the step-up `jti` is unused in this
+     host incarnation, and it is spent here; the prompt is before its deadline; the grant is current; the
+     ciphertext opens to a canonical padded value. A claim refused after the `jti` check has used up that token.
+
+  A value answer that loses the race is never decrypted, and a ciphertext that does not open leaves the prompt open.
+- The answer is acknowledged on the sender's connection only:
+  `{type: "mcp_presenter_secret_reply", id, disposition: "applied" | "replay"}` or
+  `{type: "mcp_presenter_secret_reply", id, error}`, where `error` is `invalid_secret_response`,
+  `secret_answer_refused`, `secret_stepup_refused`, `already_answered` or `unknown_extension_ui_request`.
+- When the prompt ends, every holder receives the value-free
+  `{type: "mcp_presenter_secret_settled", v: 1, uiRequestId, outcome, elsewhere}`, with `elsewhere: false` only for
+  the holder whose answer won. A raiser connection still receives `secret_input_settled` with unchanged bytes, and
+  `answeredUiRequests` lists raiser-route receipts only.
+- Worker sessions (the worker runtime) behave the same for clients.
+  - The host selects holders, signs the request and authenticates an answer: shape, sender, envelope signature and
+    step-up token.
+  - The session's isolate keeps the per-request key, the receipts and the step-up `jti` cache. It answers `replay`
+    or `already_answered` for a settled request, then claims, opens and settles.
+  - Answers for one request are forwarded one at a time with at most four queued; a further answer is
+    `secret_answer_refused`.
+  - For a settled request, the host's token checks run before the isolate's receipt lookup. A replayed answer whose
+    step-up token has since expired is therefore `secret_stepup_refused` on a worker session, where an in-process
+    session answers `replay`.
+- A terminal (TUI) session that runs a control endpoint with an account authority offers its own secret prompts to its
+  sealed holders, the same-account presenters attached over the control socket:
+  - they receive `mcp_presenter_secret_request` on their control connection and answer there with
+    `mcp_presenter_secret_answer`;
+  - the terminal's own input and the sealed answers race one latch, the first answer wins, and the losing side is
+    dismissed;
+  - holders receive `mcp_presenter_secret_settled` as above, `elsewhere: true` when the terminal answered;
+  - without a sealed holder the terminal's prompt is unchanged.
 
 ### RPC client lifecycle
 
@@ -628,6 +731,16 @@ may answer. Only **Grant and save permanently** persists the names for that
 declaration; **Start without them**, cancellation, disconnect and timeout save
 nothing. A client that never answers reaches the deadline and the server starts
 filtered. A headless or question-only client receives no grant dialog.
+
+Without a raising connection that declares `grant_select`, the dialog goes to the
+first attached local connection that does; a connection that declared a
+delegation or a `remoteOrigin` is never that fallback, and is never registered as
+an in-process grant presentation. With no local candidate the decision ends at
+once with nothing saved. The other attached connections that declared
+`raiser_notice_v1` receive
+`{type:"grant_select_notice", sessionId, uiRequestId, title}` and, when the
+dialog ends, `{type:"grant_select_notice_settled", sessionId, uiRequestId}`;
+an answer from them is still `grant_answer_refused`.
 
 Sessions retain skill-link and withheld-environment warnings. Every attached
 RPC connection receives the current snapshot as warning `notify` requests on
@@ -2803,6 +2916,14 @@ works against every generation. A watcher can therefore read a session's state a
 `get_entries` with `observe: true`) as often as it likes: the host's attached count stays at 0 and its idle window
 keeps running.
 
+An observer can HOLD the host (senpi#5626): an observing read that also carries `"hold_host": true` makes its
+connection a holder, which counts as an attached connection (it resets the idle window and keeps the host open) until
+an observing read on the same connection carries `"hold_host": false` or the connection closes. Only the literal
+booleans on a read marked `observe: true` count; a `warm` or an unmarked read never holds. A remote-control daemon
+holds the host this way while at least one remote viewer is attached, and releases it when the last one leaves. A
+held observer is occupancy everywhere occupancy is read: the idle-exit window, the empty-host exit, and the
+owner-death quiescence check. Hosts that predate the field ignore it and treat the read as a plain observing read.
+
 A connection from one of the host's OWN sessions is DEPENDENT and never counts either. A host exports its generation
 id (`SENPI_RPC_HOST_INSTANCE_ID`) to the sessions it runs, and `RpcClient` sends that id as `"origin_host_instance"`
 on every socket request. When a connection's first non-observing request names the host's own generation, the
@@ -3074,7 +3195,8 @@ What the host does enforce are lifecycle windows, and they only ever return memo
   `SENPI_RPC_HOST_EMPTY_EXIT_MS` (default 15 minutes), the host exits through its clean shutdown path (flush, socket
   removal), for stdio and `--listen` hosts alike. A connected client counts as occupancy even with no session open,
   so the host never drops a live socket under itself - except a connection whose every request so far was an
-  observing read (`"observe": true`, the same rule as the idle-exit window above) or a `warm`, which never holds the host open.
+  observing read (`"observe": true`, the same rule as the idle-exit window above) or a `warm`, which never holds the host open,
+  unless the observing connection holds the host (`"hold_host": true`, see the idle-exit window above).
   A connection that has not sent its first request yet still counts. Supervised hosts stay clean either way: a supervisor reads a
   child exit of 0 without a signal as an intentional idle stop and exits 0 with the same cleanup, not as a crash.
 
@@ -4022,6 +4144,12 @@ cannot run one. The `error` text is the same guidance the TUI shows; the `errorC
 
 ```json
 {"type": "response", "command": "prompt", "success": false, "error": "No API key found for openai. ...", "errorCode": "provider_credentials_missing", "errorData": {"provider": "openai"}}
+```
+
+**Sealed session**: A `prompt`, `steer` or `follow_up` into a session file that is read-only because it was moved away or revoked (see [Moving a session to another device](#moving-a-session-to-another-device-move_session)) is refused with `errorCode: "session_moved_away"` and `errorData.state`: `moving` while the move is still in flight, `moved` once it finished or the copy was revoked. Nothing is written; the session stays readable, and a copy under a new session id is writable.
+
+```json
+{"type": "response", "command": "prompt", "success": false, "error": "This session was moved to another device; it is read-only here. ...", "errorCode": "session_moved_away", "errorData": {"state": "moved"}}
 ```
 
 **Extension commands**: If the message is an extension command (e.g., `/mycommand`), it executes immediately even during streaming. Extension commands manage their own LLM interaction via `pi.sendMessage()`.
@@ -6504,11 +6632,13 @@ Emitted when an extension throws an error.
 
 Logins are fire-command-then-subscribe: the command answers as soon as the flow has started, and the URL plus the terminal result arrive as events.
 
-- `login_start` `{provider}`: responds immediately with `success: true` (flow started). A second `login_start` for the same provider aborts the earlier attempt.
+- `login_start` `{provider, slotId?}`: responds immediately with `success: true` (flow started). A second `login_start` for the same provider aborts the earlier attempt. With `slotId`, reauthorizes that immutable OAuth account through the shared runtime, preserving its registration and siblings. A selected SIWC account uses its saved client ID and identity rather than offering a legacy route switch. Omit `slotId` to add an account.
 - `auth_login_url` `{provider, url}`: the URL (or device-code verification URL) the user must open.
 - `auth_login_progress` `{provider, text}`: a status line while the login prepares or runs, for example an extension's `provider_login_start` handler reporting `Downloading Claude Code 2.1.306: 10% of 200 MB`. Zero or more per login, always before `auth_login_end`. Every provider progress and info line is forwarded as written, so `text` may name the local callback address a login listens on (for example `Listening for OpenRouter OAuth callback on http://<host>:<port>/<path>`), the same redirect address the `auth_login_url` already carries; the URL the user must open arrives only in `auth_login_url`. Built-in providers put no authorization code or token in these lines.
 - `auth_login_end` `{provider, success, error?, replaced?, backupPath?}`: exactly one per login; `error` is a non-secret message. When a successful login replaced the provider's credential of the other kind (an OAuth login over a stored API key), `replaced` names that kind (`"api_key"` or `"oauth"`) and `backupPath` is the copy of `auth.json` taken before it (absent when the credential store is not a file). A login of the same kind adds an account and carries neither field. A successful `anthropic-subscription` sign-in through the Claude CLI also carries `account` `{name}` (the account it signed in) and `check` `{model, outcome: "ok"|"failed", reason?, at}`, the one-turn connection test run right after sign-in; a failed test keeps the account.
 - `login_cancel` `{provider}`: aborts the in-flight login; the client then sees `auth_login_end` with `success: false`.
+
+`logout` `{provider, slotId?}` invokes the shared runtime revocation path. With `slotId`, only that account is signed out. A provider with remote revocation (ChatGPT Subscription) keeps the signed-out registration for later reauthorization. A provider without it (such as Anthropic Subscription, whose Claude CLI accounts hold no tokens to clear) signs the account out by removing it. For SIWC, the response carries `data: {status: "revoked" | "remote_revocation_unconfirmed"}`. The latter must be shown as "remote revocation not confirmed; disconnect the app in ChatGPT Settings". For ChatGPT Subscription, tokens are cleared locally while the registration remains available for later reauthorization. `account_remove` remains explicit registration deletion. Terminal equivalents are `/gpt-account reauthorize <id>` and `/gpt-account signout <id>`.
 
 Some providers need input mid-flow (a pasted authorization code, a text or secret value, a choice between accounts). Those prompts reuse the extension UI dialog channel described in the next section:
 
@@ -6663,7 +6793,15 @@ context. These identifiers confer no authority.
 
 An embedding distribution may inject a `PresenterAccountAuthority` at host start
 (`presenterAccountAuthority` in the host options); no RPC command, argument,
-environment variable, settings file, or session state can supply one. An enforced host
+environment variable, settings file, or session state can supply one. The CLI's
+only way in is code the distribution runs before the CLI loads: it calls
+`registerPresenterAccountAuthority(authority)` from the side-effect-free
+`@code-yeongyu/senpi/presenter-authority` entry, then imports the CLI. `main()`
+takes the registration as its first statement and seals it, so a second
+registration throws `presenter_authority_already_registered` and any later one
+(an extension, a session, a later import) throws `presenter_authority_sealed`. A
+process the CLI or a host supervisor starts on senpi's own entry has no
+registration and behaves as a host without an authority. An enforced host
 with such an authority has the management endpoint even without the descriptor-4
 bootstrap. A caller discovers it only by asking explicitly:
 `{"type":"mcp_presenter_context","sessionId":"...","discover":true}`. The reply's
@@ -6676,6 +6814,18 @@ working. The endpoint path confers no authority; only the exchange below does.
 An engine that predates `discover` ignores the key and answers with the five context
 fields. A client must treat a missing `controlEndpoint` as "account enrollment
 unavailable on this host": not an error, and not a reason to retry the request.
+
+An enforced interactive terminal serves the same private surface on its control endpoint. A control
+connection that declared `interactive_user` and `mcp_form_presenter_v1` with `set_client_info` and holds a
+live attachment (`attach_session` or `open_session`) answers `mcp_presenter_context`, and sends
+`mcp_form_presented`, `mcp_form_response` and `mcp_form_sync` like an RPC connection. Each is answered on
+that connection only, as `mcp_form_reply`. Private frames never reach the terminal's `subscribe` feed, a
+`subscribe_sessions` observer, another control connection, or a session entry. Releasing the attachment,
+closing the connection, or declaring without a role revokes what it holds. When the distribution injects a
+`PresenterAccountAuthority` into the terminal (`presenterAccountAuthority` in the interactive options), the
+terminal also has the management endpoint and answers `discover`. A terminal has no descriptor-4 bootstrap,
+so every other presenter on it is a same-account principal. The terminal itself stays one `local_tui`
+holder: a form reaches the terminal and every enrolled holder, and the first human answer wins.
 
 A same-account presenter enrolls on a fresh connection to that endpoint, with no owner
 prompt, in one attempt within the connection's 30 s window:

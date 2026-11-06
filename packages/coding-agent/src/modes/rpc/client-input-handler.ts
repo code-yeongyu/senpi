@@ -2,6 +2,7 @@ import { AgentBusyError } from "../../core/agent-busy-error.ts";
 import type { AgentSession, PromptDisposition, PromptOptions } from "../../core/agent-session.ts";
 import { clientMessageIdentity } from "../../core/client-message-identity.ts";
 import { type ModelNotReadyCode, ModelNotReadyError } from "../../core/model-not-ready-error.ts";
+import { SessionMovedAwayError } from "../../core/session-move/ownership.ts";
 import { TurnConflictError } from "../../core/turn-conflict.ts";
 import { UNKNOWN_COMMAND_CONFIRM_HINT, UnknownCommandError } from "../../core/unknown-command.ts";
 import {
@@ -91,6 +92,10 @@ export async function handleClientInput(
 		};
 		const admission = await clientInputContext.run(clientMessageIdentity(command), () =>
 			admissions.admit(command, async (hooks) => {
+				// A sealed file would refuse this input only when the turn writes it, after `prompt` was accepted (senpi#5889).
+				const ownership = session.sessionManager.getOwnership();
+				if (!ownership.writable)
+					throw new SessionMovedAwayError(session.sessionManager.getSessionFile() ?? "", ownership);
 				// `prompt` and `steer`/`follow_up { whenIdle: "start" }` share one path: the session decides
 				// atomically whether the input starts a turn or joins the running one.
 				const promptPath = (options: PromptPathOptions): Promise<PromptDisposition> => {
@@ -196,6 +201,9 @@ export async function handleClientInput(
 						errorCode: MODEL_NOT_READY_ERROR_CODES[error.code],
 						...(error.provider === undefined ? {} : { errorData: { provider: error.provider } }),
 					}
+				: {}),
+			...(error instanceof SessionMovedAwayError
+				? { errorCode: error.code, errorData: { state: error.ownership.state } }
 				: {}),
 			...(error instanceof TurnConflictError
 				? {

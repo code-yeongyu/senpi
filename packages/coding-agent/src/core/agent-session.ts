@@ -79,7 +79,6 @@ import {
 	isProviderStreamStallError,
 	isProviderTimeoutError,
 	isRecoverableLength,
-	isRetryableAssistantError,
 	modelsAreEqual,
 	type RetryCallbacks,
 	resetApiProviders,
@@ -116,6 +115,7 @@ import type { CredentialReplacement } from "./auth-storage.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import { envValue } from "./brand.ts";
 import { QueuedInputDispositions } from "./queued-input-dispositions.ts";
+import { isTurnRetryableFailure, TURN_RETRY_SUPPRESSION_PREFIX } from "./turn-retry-eligibility.ts";
 import { BridgedCallKeys } from "./session-call-keys.ts";
 import { carryRecovery, recoveryCarrier, SessionRecoveryIdentity } from "./session-recovery-identity.ts";
 import type { BrowserEngine } from "./browser-engine.ts";
@@ -506,7 +506,6 @@ function evalHelperCall(name: string): string {
 	if (name === "monitor") return `tool.monitor({ description: "...", command: "...", filter: "..." })`;
 	return `tool.${name}({ ... })`;
 }
-const TURN_RETRY_SUPPRESSION_PREFIX = "senpi:no-turn-retry:";
 /**
  * Compact-and-retry rungs one overflow may climb before the turn gives up: the first
  * keeps the configured recent tail, the second keeps only the summary and the turn
@@ -12843,23 +12842,7 @@ export class AgentSession {
 	 * Context overflow errors are NOT retryable (handled by compaction instead).
 	 */
 	private _isRetryableError(message: AssistantMessage): boolean {
-		// Providers mark post-delta failures to prevent replaying visible text/tool calls.
-		if (message.errorMessage?.startsWith(TURN_RETRY_SUPPRESSION_PREFIX)) return false;
-		if (this._isLocalFailure(message)) return false;
-		// A route that does not serve the model fails the same way on every attempt, whatever status wraps it.
-		if (isModelConfigFailure(message)) return false;
-
-		// Context overflow is handled by compaction, not retry.
-		if (isContextOverflow(message, (this._modelForMessage(message) ?? this.model)?.contextWindow ?? 0)) return false;
-
-		if (isClassifierRefusal(message)) return true;
-		if (!message.errorMessage) return false;
-
-		if (message.stopReason === "aborted") {
-			return isProviderTimeoutError(message);
-		}
-
-		return isRetryableAssistantError(message);
+		return isTurnRetryableFailure(message, (this._modelForMessage(message) ?? this.model)?.contextWindow ?? 0);
 	}
 
 	/**
