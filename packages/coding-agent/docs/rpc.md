@@ -2779,6 +2779,21 @@ would refuse is not refused by the delegation check, it gets the same response a
 (`success: false`, `error`, `errorCode`). Secret and grant-select dialogs stay answerable only from the connection
 that raised them, delegated or not.
 
+A delegated connection ends whenever the viewer it forwards for leaves, while the forwarder keeps serving what that
+viewer opened to the next one (senpi#5808). So every `open_session` on a delegated connection is retained, whatever
+`retain_on_disconnect` it carries (an explicit `false` included): the connection's end detaches the session, which
+stays `open` with `attachments: 0` and attachable from any connection, exactly like a retained session (see "Retained
+sessions"). The host decides this when it reads the line, so a connection that ends while its open is still running
+leaves that session retained too. Like any retained session it is still closed by an explicit `close_session`, parked
+by the idle-eviction window, and recorded at park for the next host generation, which reopens it on startup, so a
+parked session survives into the next generation. `attach_session` never turns retention on: attaching over a delegated
+connection to a session that is not retained leaves it closing with its last attachment. One consequence to know: a
+delegated `open_session` by `sessionPath` (which needs `device_admin`) that lands on a session already live and opened by
+someone else joins it as an attach that asks for retention, so it turns retention on for that live session and every
+client of it, the same as a local `open_session` that passed `retain_on_disconnect: true` would. A connection that never
+declares keeps the ordinary rule: closed with its last connection unless `open_session` asked for
+`retain_on_disconnect: true`.
+
 Private MCP presenter records are the exception: on a delegated connection, every record whose `type` starts with
 `mcp_form_` or `mcp_presenter_` is answered in the private reply shape `{ "type": "mcp_form_reply", "id"?, ... }`,
 never with `type: "response"`, so a forwarder can route the answer by its type alone. The four presenter client
@@ -3268,7 +3283,8 @@ What the host does enforce are lifecycle windows, and they only ever return memo
   client reopening the session right after `session_parked` is the only open of that path (senpi#3485). It is also bounded by the empty-host exit
   and the supervisor's idle-exit window below: retention survives a client, not the host. Any attach may turn retention
   on for a live session; no attach turns it off for clients that already rely on it. Omitting the flag is byte-identical
-  to the previous behavior — the session is closed with its last connection. Probe `retain_on_disconnect` in
+  to the previous behavior — the session is closed with its last connection — except on a delegated connection
+  (`declare_delegation`), where every `open_session` is retained (see "Delegated connections"; senpi#5808). Probe `retain_on_disconnect` in
   `get_protocol_info` capabilities before relying on it: an older host silently ignores the field.
 - **Empty-host exit**: when the registry holds zero sessions AND no client is connected, continuously for
   `SENPI_RPC_HOST_EMPTY_EXIT_MS` (default 15 minutes), the host exits through its clean shutdown path (flush, socket
