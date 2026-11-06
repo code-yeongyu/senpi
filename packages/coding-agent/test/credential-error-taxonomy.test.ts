@@ -307,10 +307,7 @@ describe("transient failures never classify as a permanent credential verdict (s
 	// the request (the model fallback chain above owns the next attempt)
 	// instead of persisting an auth_error block against the slot.
 	test.each([
-		[
-			"subscription does not include the model",
-			status(403, "Your subscription does not include access to model-a"),
-		],
+		["subscription does not include the model", status(403, "Your subscription does not include access to model-a")],
 		["model not available on the plan", status(403, "Model GLM-5.3 is not available on your plan")],
 		["plan does not cover the model", status(403, "Your plan does not cover model glm-5.3")],
 		["model not found on a 403", status(403, "Model glm-5.3 not found")],
