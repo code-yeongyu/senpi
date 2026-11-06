@@ -63,6 +63,21 @@ export function defineFileCases(runner: ConformanceRunner, target: ConformanceTa
 
 	describe("files.write", () => {
 		it(
+			"an already-cancelled request does not change the target",
+			withFixture(target, async ({ ops, ctx, root }) => {
+				const controller = new AbortController();
+				controller.abort();
+				await rejectsWith(
+					ops.files.write(
+						{ path: "inside.txt", bytes: Buffer.from("overwrite") },
+						ctx({ signal: controller.signal }),
+					),
+					"aborted",
+				);
+				assert.equal(await readFile(join(root, "inside.txt"), "utf8"), INSIDE_TEXT);
+			}),
+		);
+		it(
 			"inside root writes the bytes",
 			withFixture(target, async ({ ops, ctx, root }) => {
 				const result = await ops.files.write({ path: "new.txt", bytes: Buffer.from("written") }, ctx());
