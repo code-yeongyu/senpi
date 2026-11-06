@@ -17,6 +17,7 @@ export type {
 	RelocationTarget,
 	RelocationTargetsResult,
 } from "../session-relocation.ts";
+export { RELOCATION_TOOL_NAMES } from "../session-relocation.ts";
 
 /** Why a `session_control_wake` fired. */
 export type SessionControlWakeReason =

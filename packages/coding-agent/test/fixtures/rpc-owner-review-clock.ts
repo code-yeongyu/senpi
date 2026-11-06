@@ -7,6 +7,7 @@ import { mock } from "node:test";
 import { callerHostOwner } from "../../src/modes/rpc/host-daemon-state.ts";
 import { runHostSupervisor } from "../../src/modes/rpc/host-lifecycle.ts";
 import { type SupervisorActivity, SupervisorOwner } from "../../src/modes/rpc/host-lifecycle-activity.ts";
+import { signalEndpointReady } from "../helpers/rpc-endpoint-ready.ts";
 
 const [mode, socket, agentDir, generationDir, ownerPid, watchMode] = process.argv.slice(2);
 if (mode === "owner") {
@@ -46,12 +47,13 @@ if (mode === "owner") {
 		return child;
 	});
 	const createServer = net.createServer;
+	const onServer = signalEndpointReady(socket, () => process.send?.({ type: "ready" }));
 	mock.method(net, "createServer", (accept: (peer: net.Socket) => void) => {
 		const server = createServer((peer) => {
 			accept(peer);
 			peer.once("close", () => process.send?.({ type: "detached" }));
 		});
-		server.once("listening", () => process.send?.({ type: "ready" }));
+		onServer(server);
 		return server;
 	});
 	syncBuiltinESMExports();
