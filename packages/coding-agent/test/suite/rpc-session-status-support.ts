@@ -10,29 +10,55 @@ import { join } from "node:path";
 import { fauxProvider } from "@earendil-works/pi-ai/providers/faux";
 import { parseArgs } from "../../src/cli/args.ts";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
+import { ModelRuntime } from "../../src/core/model-runtime.ts";
 import { createCliRuntimeFactory } from "../../src/main.ts";
 import { createHostCore } from "../../src/modes/rpc/multi-session-host.ts";
 import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
+import { EVENT_SAFETY_MS } from "./event-safety-bound.ts";
 
 export type WireRecord = Record<string, unknown> & { id?: string; type?: string; sessionId?: string };
 
 export interface RawClient {
 	readonly name: string;
 	readonly inbox: readonly WireRecord[];
+	readonly sent: readonly string[];
+	readonly received: readonly string[];
 	request(command: Record<string, unknown>): Promise<WireRecord>;
 	waitFor(predicate: (record: WireRecord) => boolean, ms?: number): Promise<WireRecord>;
 }
 
-const DEADLINE_MS = 30_000;
+const DEADLINE_MS = EVENT_SAFETY_MS;
 
-export async function statusHost() {
+export async function statusHost(
+	options: {
+		supportsCompact?: (profile?: { cwd: string }) => boolean;
+		capabilities?: string[];
+		/**
+		 * The default bound of every waitFor/request on this host. A suite whose tests run under a shorter budget than
+		 * EVENT_SAFETY_MS passes one below that budget, so a hang fails by naming its predicate, not as a test timeout.
+		 */
+		deadlineMs?: number;
+		/** The faux stream's chunk size in tokens (default 3-5): a large one streams a call's arguments in few deltas. */
+		tokenSize?: { readonly min: number; readonly max: number };
+	} = {},
+) {
 	const scratch = await mkdtemp(join(tmpdir(), "senpi-session-status-"));
 	const cwd = join(scratch, "cwd");
 	const agentDir = join(scratch, "agent");
 	await mkdir(cwd);
 	await mkdir(agentDir);
-	const faux = fauxProvider({ models: [{ id: "faux-a" }, { id: "faux-b" }] });
+	const faux = fauxProvider({
+		models: [{ id: "faux-a" }, { id: "faux-b" }],
+		...(options.tokenSize ? { tokenSize: options.tokenSize } : {}),
+	});
 	const model = faux.getModel();
+	// Provider discovery belongs to fixture setup, not a protocol response deadline.
+	const modelRuntime = await ModelRuntime.create({
+		authPath: join(agentDir, "auth.json"),
+		modelsPath: null,
+		allowModelNetwork: false,
+	});
+	await modelRuntime.registerNativeProvider(faux.provider);
 	/** Each session's extension API, by durable session id: how a test reaches a session's own event bus. */
 	const extensionApis = new Map<string, ExtensionAPI>();
 	const parsed = parseArgs([
@@ -52,6 +78,7 @@ export async function statusHost() {
 	const createRuntime = createCliRuntimeFactory(
 		{ parsed, cwd, agentDir, appMode: "rpc" },
 		{
+			modelRuntime,
 			extensionFactories: [
 				(pi) => {
 					pi.registerProvider(faux.provider);
@@ -63,21 +90,32 @@ export async function statusHost() {
 		},
 	);
 	const clock = { now: 1_000_000 };
+	if (options.supportsCompact) Object.assign(createRuntime, { supportsCompact: options.supportsCompact });
 	const writer = new SessionEventWriter(() => {});
-	const core = createHostCore({ agentDir, createRuntime, cwd }, writer, [], {
+	const core = createHostCore({ agentDir, createRuntime, cwd }, writer, options.capabilities ?? [], {
 		now: () => clock.now,
 		idleEvictionMs: 1e12,
 		emptyExitMs: 1e12,
 		closeGraceMs: 1_000,
 	});
+	// Use the host's real warm barrier before starting any wire-response deadline.
+	const warmed = await core.router.handle({ type: "warm", cwd });
+	if (warmed?.success !== true) throw new Error(`fixture warm failed: ${JSON.stringify(warmed)}`);
 	const listeners = new Set<(record: WireRecord) => void>();
 	const clients: RawClient[] = [];
 	let serial = 0;
 
-	const client = (name: string): RawClient => {
+	/** `transport` overrides the fixture socket's own teardown and drain wait (an engine-initiated close, a stalled peer). */
+	const client = (
+		name: string,
+		transport: { close?: () => void; waitForBackpressure?: () => Promise<void> } = {},
+	): RawClient => {
 		const inbox: WireRecord[] = [];
+		const sent: string[] = [];
+		const received: string[] = [];
 		writer.registerConnection(name, {
 			writeRaw: (line) => {
+				received.push(line);
 				for (const text of line.split("\n")) {
 					if (text === "") continue;
 					const record = JSON.parse(text) as WireRecord;
@@ -85,9 +123,13 @@ export async function statusHost() {
 					for (const listener of [...listeners]) listener(record);
 				}
 			},
-			waitForBackpressure: async () => {},
+			waitForBackpressure: transport.waitForBackpressure ?? (async () => {}),
+			...(transport.close && { close: transport.close }),
 		});
-		const waitFor = (predicate: (record: WireRecord) => boolean, ms = DEADLINE_MS): Promise<WireRecord> => {
+		const waitFor = (
+			predicate: (record: WireRecord) => boolean,
+			ms = options.deadlineMs ?? DEADLINE_MS,
+		): Promise<WireRecord> => {
 			const seen = inbox.find(predicate);
 			if (seen) return Promise.resolve(seen);
 			return new Promise((resolve, reject) => {
@@ -109,12 +151,37 @@ export async function statusHost() {
 		const created: RawClient = {
 			name,
 			inbox,
+			sent,
+			received,
 			waitFor,
 			async request(command) {
+				// Admission fixtures select first; C8.3 forbids upgrading an admitted legacy peer for a token request.
+				if (
+					command.admissionId !== undefined &&
+					process.env.SENPI_ENGINE_SOCKET_COMPACT_UPDATES === "1" &&
+					!writer.compactSelection(name)?.admitted &&
+					!writer.compactSelection(name)?.selected
+				) {
+					const selected = await writer.withConnection(name, () =>
+						core.router.handle({
+							type: "set_client_info",
+							width: 100,
+							capabilities: ["compact_message_updates_v1", "event_resync"],
+							id: "compact-prelude",
+						}),
+					);
+					if (!selected?.success) throw new Error("compact fixture prelude refused: " + JSON.stringify(selected));
+					if (!writer.getConnectionCapabilities(name)?.includes("compact_events"))
+						throw new Error(
+							"missing compact transport: " + JSON.stringify(writer.getConnectionCapabilities(name)),
+						);
+				}
 				const id = `${name}-${++serial}`;
 				const answered = waitFor((record) => record.type === "response" && record.id === id);
-				await writer.withConnection(name, () => core.handle(JSON.stringify({ ...command, id })));
-				return answered;
+				const line = JSON.stringify({ ...command, id });
+				sent.push(`${line}\n`);
+				const [, response] = await Promise.all([writer.withConnection(name, () => core.handle(line)), answered]);
+				return response;
 			},
 		};
 		clients.push(created);
@@ -151,4 +218,23 @@ export function dataOf(record: WireRecord): Record<string, unknown> {
 
 export function statusRecords(client: RawClient, subscriptionId: string): WireRecord[] {
 	return client.inbox.filter((record) => record.type === "session_status" && record.subscriptionId === subscriptionId);
+}
+
+/**
+ * Receipts every event lease `peer` was handed for `sessionId` since inbox index `from`, as a compact consumer does (S13).
+ * A peer that never receipts reaches its lease bound and is closed with `socket_closing` (RULING-124, #5322).
+ */
+export async function receiptLeases(peer: RawClient, sessionId: string, from: number): Promise<void> {
+	for (const frame of peer.inbox.slice(from)) {
+		const lease = frame.eventLease as { readonly id: string; readonly admissionId: string } | undefined;
+		if (lease === undefined || frame.sessionId !== sessionId) continue;
+		const receipt = { kind: "event", id: lease.id };
+		const released = await peer.request({
+			type: "release_recovery",
+			sessionId,
+			lease: receipt,
+			admissionId: lease.admissionId,
+		});
+		if (released.success !== true) throw new Error(`lease receipt refused: ${JSON.stringify(released)}`);
+	}
 }

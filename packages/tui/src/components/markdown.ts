@@ -401,6 +401,12 @@ export interface MarkdownTheme {
 	italic: (text: string) => string;
 	strikethrough: (text: string) => string;
 	underline: (text: string) => string;
+	/** Inline `**strong**` text (default: `bold`). */
+	strong?: (text: string) => string;
+	/** Inline `*emphasis*` text (default: `italic`). */
+	emphasis?: (text: string) => string;
+	/** Inline `~~deleted~~` text (default: `strikethrough`). */
+	deleted?: (text: string) => string;
 	highlightCode?: (code: string, lang?: string) => string[];
 	/** Prefix applied to each rendered code block line (default: "  ") */
 	codeBlockIndent?: string;
@@ -889,6 +895,22 @@ export class Markdown implements Component {
 		return lines;
 	}
 
+	/**
+	 * Render inline `strong`/`em`/`del` through a theme hook. The hook is applied inside the surrounding style context,
+	 * so a color it sets wins over the heading or default text color instead of being overridden by it.
+	 */
+	private renderEmphasisHook(
+		tokens: Token[],
+		styleContext: InlineStyleContext,
+		styleFn: (text: string) => string,
+	): string {
+		const innerStyleContext: InlineStyleContext = {
+			applyText: (text: string) => styleContext.applyText(styleFn(text)),
+			stylePrefix: styleContext.stylePrefix + this.getStylePrefix(styleFn),
+		};
+		return styleFn(this.renderInlineTokens(tokens, innerStyleContext)) + styleContext.stylePrefix;
+	}
+
 	private renderInlineTokens(tokens: Token[], styleContext?: InlineStyleContext): string {
 		let result = "";
 		const resolvedStyleContext = styleContext ?? this.getDefaultInlineStyleContext();
@@ -919,12 +941,20 @@ export class Markdown implements Component {
 					break;
 
 				case "strong": {
+					if (this.theme.strong) {
+						result += this.renderEmphasisHook(token.tokens || [], resolvedStyleContext, this.theme.strong);
+						break;
+					}
 					const boldContent = this.renderInlineTokens(token.tokens || [], resolvedStyleContext);
 					result += this.theme.bold(boldContent) + stylePrefix;
 					break;
 				}
 
 				case "em": {
+					if (this.theme.emphasis) {
+						result += this.renderEmphasisHook(token.tokens || [], resolvedStyleContext, this.theme.emphasis);
+						break;
+					}
 					const italicContent = this.renderInlineTokens(token.tokens || [], resolvedStyleContext);
 					result += this.theme.italic(italicContent) + stylePrefix;
 					break;
@@ -975,6 +1005,10 @@ export class Markdown implements Component {
 					break;
 
 				case "del": {
+					if (this.theme.deleted) {
+						result += this.renderEmphasisHook(token.tokens || [], resolvedStyleContext, this.theme.deleted);
+						break;
+					}
 					const delContent = this.renderInlineTokens(token.tokens || [], resolvedStyleContext);
 					result += this.theme.strikethrough(delContent) + stylePrefix;
 					break;

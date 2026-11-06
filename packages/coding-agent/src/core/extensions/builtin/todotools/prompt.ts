@@ -12,7 +12,7 @@ Completing tasks out of phase order can move this pointer **back** to an earlier
 
 | op | Required fields | Effect |
 |---|---|---|
-| init | list: [{phase, items: string[]}] | Initialize full list (replaces existing) |
+| init | list: [{phase, items: string[]}] | Initialize full list (replaces existing). Each list entry is exactly one phase; items holds only task strings |
 | init | items: string[] | Flattened single-phase init |
 | start | task | Mark in progress |
 | done | task or phase | Mark completed |
@@ -45,6 +45,20 @@ User hands you a multi-step plan (phased todo, numbered/bulleted checklist, or "
 </critical>`;
 
 export const TASK_MANAGEMENT_SECTION = `
+<Task_Management>
+## Todo Management
+
+Request with 3+ distinct steps -> phased todo in the todo tool before first edit: investigation, implementation, verification, final report.
+
+## Evidence
+- File edit: inspect changed files + diagnostics.
+- Build: exit code 0.
+- Test run: passing output, or state the pre-existing failure.
+</Task_Management>
+`;
+
+/** `TASK_MANAGEMENT_SECTION` as worded before the senpi#5335 diet, for presets that render full shared sections (senpi#5665). */
+export const FULL_TASK_MANAGEMENT_SECTION = `
 <Task_Management>
 ## Todo Management
 

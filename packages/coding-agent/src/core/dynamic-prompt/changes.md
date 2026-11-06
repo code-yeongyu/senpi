@@ -1,5 +1,67 @@
 # changes.md — dynamic-prompt
 
+## 2026-11-03 - Full shared sections for the Opus and Fable presets (senpi#5665)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/types.ts`: new `SharedSections` type (`"full" | "diet"`).
+- `packages/coding-agent/src/core/dynamic-prompt/build.ts`: `BuildDynamicSystemPromptOptions` gains `sharedSections` and `fullToolPrompt` (every tool snippet plus each tool's full guidelines); `DynamicPromptCoreContext` gains `sharedSections`, and every default section builder receives it.
+- `packages/coding-agent/src/core/dynamic-prompt/identity.ts`, `intent-gate.ts`, `working-task.ts`, `verification.ts`, `policies.ts`, `handoff.ts`, `style.ts`, `tool-section.ts`: each keeps its pre-#5342 wording beside the diet wording and renders it for `sharedSections: "full"`; `TEST_DISCIPLINE_RULES` carries a `fullDirective` per rule and `handoff.ts` exports `FULL_HANDOFF_LANGUAGE_RULE`. `diet` output is byte-identical to main 836fe1c75.
+
+### Why
+
+- A beta tester reported that Opus 5.5 got slower and less capable after the senpi#5335 diet (#5342) shipped. Q's order: revert the diet only for the Fable and Opus presets; every other model keeps it.
+
+### Why an extension could not handle it
+
+- The text lives in builtin prompt generators, builtin tool definitions, and builtin extension prompt hooks, and the preset that selects the wording is a builtin extension.
+
+### Expected merge conflict zones
+
+- LOW: the section builders' option objects and any later wording edit to the same lines.
+
+## 2026-11-01 - System prompt diet, shared modules (senpi#5335)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/intent-gate.ts`: the anti-leakage rule no longer lists its examples ("Step 0", "Thinking level", XML tool-call examples) on terminal or app, and the closing "Inspect the code ... do not keep browsing" sentence (a restatement of Working the Task's stop-searching rule) is gone.
+- `packages/coding-agent/src/core/dynamic-prompt/working-task.ts`: `DEFAULT_WORKING_TASK_OPENING` drops the "Wasted reads cost almost nothing; stale assumptions cost the turn" rationale.
+- `packages/coding-agent/src/core/dynamic-prompt/verification.ts`: the claim audit drops the '"Should pass" is not verification - run the validator' lead-in the audit already owns.
+- `packages/coding-agent/src/core/dynamic-prompt/policies.ts`: `## Policies` / `### Hard Blocks` collapse into one `## Hard Limits` heading; the unread-code bullet (the claim audit's rule) and the "say what is done..." tail (Style's blocked-part rule) are dropped.
+- `packages/coding-agent/src/core/dynamic-prompt/tool-section.ts`: `## Available Tools` renders only when a selected tool still carries a snippet, and the `(none)` placeholder is gone; with no listed tool and no guideline the section is empty.
+- `packages/coding-agent/src/core/dynamic-prompt/build.ts`: the fallback core skips an empty tool section; `toolSnippets` and `DynamicPromptCoreContext.toolSection` document the new contract.
+- Terse pass (second commit): `packages/coding-agent/src/core/dynamic-prompt/identity.ts`, `packages/coding-agent/src/core/dynamic-prompt/intent-gate.ts`, `packages/coding-agent/src/core/dynamic-prompt/working-task.ts`, `packages/coding-agent/src/core/dynamic-prompt/verification.ts`, `packages/coding-agent/src/core/dynamic-prompt/policies.ts`, `packages/coding-agent/src/core/dynamic-prompt/handoff.ts`, `packages/coding-agent/src/core/dynamic-prompt/style.ts`, and the default dialect in `packages/coding-agent/src/core/dynamic-prompt/workstation.ts` render the plan's terse wording; the routing line, the Handoff template line and its parsed labels, and every tool name stay verbatim.
+
+### Why
+
+- The first-turn prompt restated what each tool's schema description already says and repeated several rules in two homes (senpi#5335, section-by-section diet of the captured default/GLM 5.3 prompts).
+
+### Why an extension could not handle it
+
+- The fallback core and the shared section builders are rendered by this module; every preset that reuses them has to see the same text.
+
+### Expected merge conflict zones
+
+- LOW: the touched sentences in `intent-gate.ts`, `working-task.ts`, `verification.ts`, `policies.ts`, and the heading logic in `tool-section.ts`.
+
+## 2026-10-28 - Test-only host pin for the workstation facts (senpi#4662, fixes #4660)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/workstation.ts`: the uncached `readWorkstationFacts(env = process.env)` (new export) reads the facts; `collectWorkstationFacts()` caches its result as before. With `SENPI_TEST_WORKSTATION={"cpuModel":string,"cores":int,"kernel":string}` (exactly those keys, non-empty strings, a positive integer) the CPU model, core count and kernel identity come from the pin, and the Apple-Silicon GPU line follows the pinned CPU model; any other non-empty value throws an error naming the variable. Unset or empty, every fact is computed exactly as before. `terminalName` reads the given `env` (the default is `process.env`).
+
+### Why
+
+- `packages/coding-agent/src/core/dynamic-prompt/workstation.ts`: the `<workstation>` block renders the host's CPU model, core count and kernel release into the system prompt, so a harness driving the real CLI (#4639) gets different prompt bytes and different Cursor root-prompt blob ids on every host; it can only pass inputs through the child's environment.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/dynamic-prompt/workstation.ts`: the facts are collected inside the system-prompt assembler; presets choose the dialect, not the facts.
+
+### Expected merge conflict zones
+
+- LOW: the block between `terminalName` and `collectWorkstationFacts` in `workstation.ts`.
+
 ## 2026-10-27 - Instruction files outrank the default asking style (senpi#4453)
 
 ### What changed

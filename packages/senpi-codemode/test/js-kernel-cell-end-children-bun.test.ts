@@ -22,28 +22,30 @@ type DriverReport = {
 
 // The cell returns without awaiting the child, so at settle nothing else holds
 // it: no later await, no interrupt, no timeout. This is the shape that left
-// dev servers and watchers reparented to init.
-const ABANDONED_CHILD_CELL = 'const child = Bun.spawn(["sleep", "30"]); print("MARK=" + child.pid); return "done"';
+// dev servers and watchers reparented to init. Every child here runs until it is killed (`tail -f /dev/null`):
+// one that ended by itself (a `sleep 30`) would read as gone once a loaded host spent that long in the exit poll.
+const ABANDONED_CHILD_CELL =
+	'const child = Bun.spawn(["tail", "-f", "/dev/null"]); print("MARK=" + child.pid); return "done"';
 const DETACHED_CHILD_CELL =
-	'const child = Bun.spawn(["sleep", "30"], { detached: true }); print("MARK=" + child.pid); return "done"';
+	'const child = Bun.spawn(["tail", "-f", "/dev/null"], { detached: true }); print("MARK=" + child.pid); return "done"';
 const AWAITED_CHILD_CELL =
 	'const child = Bun.spawn(["true"]); print("MARK=" + child.pid); await child.exited; return "done"';
 // SIGTERM is ignored (the disposition survives `exec`), so only the SIGKILL
 // escalation can end it. The cell returns only after the shell reports that the
 // trap is installed, and keeps the handle so a later cell can read how it died.
 const TERM_IGNORING_CHILD_CELL = [
-	'const child = Bun.spawn(["sh", "-c", "trap \'\' TERM; echo ready; exec sleep 30"], { stdout: "pipe" });',
+	'const child = Bun.spawn(["sh", "-c", "trap \'\' TERM; echo ready; exec tail -f /dev/null"], { stdout: "pipe" });',
 	"globalThis.termIgnoringChild = child;",
 	"await child.stdout.getReader().read();",
 	'print("MARK=" + child.pid); return "done"',
 ].join(" ");
 const TERM_IGNORING_EXIT_SIGNAL_PROBE =
 	"await globalThis.termIgnoringChild.exited; return globalThis.termIgnoringChild.signalCode";
-// The shell forks `sleep` and reports its pid before the cell returns. Killing
-// only the tracked shell would reparent the sleep to init: the grandchild is
+// The shell forks `tail` and reports its pid before the cell returns. Killing
+// only the tracked shell would reparent the tail to init: the grandchild is
 // the process a cell leaves behind when it spawns through a shell.
 const GRANDCHILD_CELL = [
-	'const child = Bun.spawn(["sh", "-c", "sleep 30 & echo $!; wait"], { stdout: "pipe" });',
+	'const child = Bun.spawn(["sh", "-c", "tail -f /dev/null & echo $!; wait"], { stdout: "pipe" });',
 	"const { value } = await child.stdout.getReader().read();",
 	'print("MARK=" + child.pid + " GRAND=" + new TextDecoder().decode(value).trim());',
 	'return "done"',
@@ -51,9 +53,9 @@ const GRANDCHILD_CELL = [
 // node:child_process is the other spawn surface a cell can reach; its children
 // must follow the same settle rule as Bun.spawn, including the detached opt-out.
 const NODE_CHILD_PROCESS_CELL =
-	'import { spawn } from "node:child_process"; const child = spawn("sleep", ["30"]); print("MARK=" + child.pid); return "done"';
+	'import { spawn } from "node:child_process"; const child = spawn("tail", ["-f", "/dev/null"]); print("MARK=" + child.pid); return "done"';
 const NODE_CHILD_PROCESS_DETACHED_CELL =
-	'import { spawn } from "node:child_process"; const child = spawn("sleep", ["30"], { detached: true, stdio: "ignore" }); child.unref(); print("MARK=" + child.pid); return "done"';
+	'import { spawn } from "node:child_process"; const child = spawn("tail", ["-f", "/dev/null"], { detached: true, stdio: "ignore" }); child.unref(); print("MARK=" + child.pid); return "done"';
 
 // The exit poll waits on process state and ends as soon as the tree is gone; its bound is only a circuit breaker.
 const CHILD_EXIT_POLL_MS = 25;

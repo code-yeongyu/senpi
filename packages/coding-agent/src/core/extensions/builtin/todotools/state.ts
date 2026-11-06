@@ -41,6 +41,7 @@ export {
 	getLatestPhasesFromBranchEntries,
 	getLatestTodoStateFromBranchEntries,
 	getLatestTodosFromBranchEntries,
+	getTodoStateFromToolResult,
 	isTodoAsk,
 	isTodoItem,
 	isTodoItemArray,

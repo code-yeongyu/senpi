@@ -36,7 +36,8 @@ function evaluate(value, run) {
 }
 
 const mainPush = (sha) => ({ event: "push", ref: "refs/heads/main", sha });
-const pullRequest = (sha, workflow = "CI") => ({ event: "pull_request", ref: "refs/pull/7/merge", sha, workflow });
+const LABEL_WORKFLOW = "CI full set (run-full-ci label)";
+const pullRequest = (sha, workflow = LABEL_WORKFLOW) => ({ event: "pull_request", ref: "refs/pull/7/merge", sha, workflow });
 
 describe("CI concurrency (senpi#2960)", () => {
 	it("gives each main commit its own run group, so a later merge never cancels, queues or replaces its run", () => {
@@ -46,15 +47,18 @@ describe("CI concurrency (senpi#2960)", () => {
 		assert.equal(evaluate(cancel, mainPush("c1")), false);
 	});
 
-	it("keeps one group per pull request, so a newer push or restack still cancels the superseded run", () => {
-		assert.ok("pull_request" in workflow.on);
+	it("runs on a pull request only when the run-full-ci label workflow calls it (senpi#4968)", () => {
+		assert.deepEqual(Object.keys(workflow.on).sort(), ["push", "workflow_call"]);
+	});
+
+	it("keeps one group per labelled pull request, so a newer push or restack still cancels the superseded run", () => {
 		const { group, "cancel-in-progress": cancel } = workflow.concurrency;
 		assert.equal(evaluate(group, pullRequest("p1")), evaluate(group, pullRequest("p2")));
 		assert.equal(evaluate(cancel, pullRequest("p1")), true);
 	});
 
-	it("keeps a run-full-ci label run out of the PR's own group, so neither cancels the other (senpi#3957)", () => {
+	it("never shares a group between a labelled pull request run and a main push run", () => {
 		const { group } = workflow.concurrency;
-		assert.notEqual(evaluate(group, pullRequest("p1")), evaluate(group, pullRequest("p1", "CI full set (run-full-ci label)")));
+		assert.notEqual(evaluate(group, pullRequest("c1")), evaluate(group, mainPush("c1")));
 	});
 });

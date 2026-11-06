@@ -2,6 +2,60 @@
 
 Vendored from [`code-yeongyu/pi-webfetch`](https://github.com/code-yeongyu/pi-webfetch) (see `external-versions.json`).
 
+## 2026-11-05 - webfetch runs loop-side on a split session (senpi#5882)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/webfetch/webfetch/tool.ts`: the tool declares `runs: "brain"`.
+
+### Why
+
+On a split session (brain/hand, S32) webfetch runs where the agent loop runs, never on the hand: under the 2026-11-03 split, web search and fetch run loop-side, and senpi#5641 names `ask_user` a session tool. Fused sessions are unchanged.
+
+### Why an extension could not handle it
+
+The declaration belongs to the tool's own definition.
+
+### Expected merge conflict zones
+
+- LOW: the tool definition's field list.
+
+## 2026-11-03 - Full webfetch guidelines for the Opus and Fable presets (senpi#5665)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/webfetch/webfetch/tool.ts`: the three pre-#5342 guidelines as `fullPromptGuidelines`.
+
+### Why
+
+- A beta tester reported that Opus 5.5 got slower and less capable after the senpi#5335 diet (#5342) shipped. Q's order: revert the diet only for the Fable and Opus presets; every other model keeps it.
+
+### Why an extension could not handle it
+
+- The text lives in builtin prompt generators, builtin tool definitions, and builtin extension prompt hooks, and the preset that selects the wording is a builtin extension.
+
+### Expected merge conflict zones
+
+- LOW: the tool definition's prompt fields.
+
+## 2026-11-01 - System prompt diet, shared modules (senpi#5335)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/webfetch/webfetch/tool.ts`: the three `promptGuidelines` (restating the description and schema) are removed.
+
+### Why
+
+- senpi#5335.
+
+### Why an extension could not handle it
+
+- The guidelines are part of this tool's definition.
+
+### Expected merge conflict zones
+
+- LOW: the tool definition.
+
 ## 2026-09-24 - Pin pi-webfetch 0.1.3, no port needed (senpi#2079)
 
 The only runtime change between 0.1.2 and 0.1.3 is pi-webfetch#8 (`fetcher.ts` `discardBody`: optional `dump()`, abort-aware bounded drain, quiet `destroy()`). senpi already carries it in `webfetch/response-body.ts` (see the 2026-08 entries below). The sync report's other hunks are whole-file differences against senpi's linkedom parser, lazy content loading and multi-phase progress, which stay senpi-owned. Only `external-versions.json` changes.

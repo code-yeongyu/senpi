@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { hermeticProviderEnv } from "../../helpers/rpc-hermetic.ts";
 import { assertWorkspaceBuildPrerequisite } from "../../support/workspace-build-prerequisite.ts";
+import { hostSpawnEnv } from "../../helpers/rpc-host-spawn-env.ts";
 
 assertWorkspaceBuildPrerequisite(import.meta.url);
 
@@ -44,7 +45,7 @@ function quitRpcWithHungHandler(): Promise<QuitRun> {
 	const child = spawn("node", [cliPath, "--mode", "rpc", "--no-session", "-e", extensionPath], {
 		cwd: root,
 		env: {
-			...process.env,
+			...hostSpawnEnv(),
 			...hermeticProviderEnv(),
 			PI_OFFLINE: "1",
 			SENPI_RUNTIME: "node",

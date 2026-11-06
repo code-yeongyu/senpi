@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 import "./valid-cwd.ts";
-// Second, and before anything that can touch process.stdin: the guard above only changes directory.
+// Then report a coordinated host or supervisor start and release its filler pipes before the private
+// descriptor table is adopted, so no filler release can close an adopted channel (senpi#4602).
+import "./modes/rpc/host-startup-beacon.ts";
+// Then: capture the private descriptor table before anything can spawn (senpi#4749).
+import "./private-fds.ts";
+// Third, and before anything that can touch process.stdin: the guards above only change directory and read env.
 import "./modes/rpc/internal-bootstrap.ts";
 import "./internal-role.ts";
 import { enableStartupCompileCache } from "./compile-cache.ts";

@@ -70,14 +70,13 @@ export const showHtmlPageTool = defineTool<typeof Params, ShowHtmlPageDetails>({
 		"No network: inline every script, style and image (data: URIs). A <script src>, stylesheet link, font, image " +
 		"or fetch that points at a URL (a CDN included) is refused, and the page comes out blank or broken. " +
 		"Local images written as absolute file paths " +
-		"are inlined automatically after a byte check. In the desktop thread this renders inline above your " +
+		"are inlined automatically after a magic-byte check (a renamed non-image is refused); pass screenshots " +
+		"that way, never as base64 data: URIs, since the page is limited to 512000 characters before images are " +
+		"inlined. In the desktop thread this renders inline above your " +
 		"reply; elsewhere it is written to a file you can open in the desktop.",
-	promptSnippet: "show_html_page: show a self-contained HTML page (chart/table/diagram) to the reader",
-	promptGuidelines: [
-		"No network: inline every script, style and image (data: URIs); a CDN <script src> or remote font is refused and leaves the page blank.",
-		"Absolute-path local images are inlined after a magic-byte check; a renamed non-image is refused.",
-		"Pass screenshots and other images as absolute file paths, never as base64 data: URIs: the page is limited to 512000 characters before images are inlined.",
-	],
+	exposure: "search",
+	allowLazyActivation: true,
+	searchKeywords: ["html", "chart", "table", "diagram", "visualize", "render page", "mockup"],
 	parameters: Params,
 	async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionToolContext) {
 		assertWithinInputLimit(params.html);

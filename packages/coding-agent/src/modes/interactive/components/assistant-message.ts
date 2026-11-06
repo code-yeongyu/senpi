@@ -56,6 +56,7 @@ export class AssistantMessageComponent extends Container {
 	private hasToolCalls = false;
 	private expanded = false;
 	private providerErrorOwned = false;
+	private ownsTurnNotice = false;
 	private isStreaming = false;
 	private thinkingVisibilityOverrides = new Map<number, boolean>();
 	private handoffOpenOverrides = new Map<number, boolean>();
@@ -110,6 +111,13 @@ export class AssistantMessageComponent extends Container {
 		if (this.expanded === expanded) return;
 		this.expanded = expanded;
 		this.handoffOpenOverrides.clear();
+		this.refreshContent();
+	}
+
+	/** A replayed turn draws in one component, so it shows its own turn-ending notice (senpi#4958). */
+	setOwnsTurnNotice(owned: boolean): void {
+		if (this.ownsTurnNotice === owned) return;
+		this.ownsTurnNotice = owned;
 		this.refreshContent();
 	}
 
@@ -174,6 +182,7 @@ export class AssistantMessageComponent extends Container {
 			thinkingVisibilityOverrides: this.thinkingVisibilityOverrides,
 			handoffOpenOverrides: this.handoffOpenOverrides,
 			hasToolCalls: this.hasToolCalls,
+			ownsTurnNotice: this.ownsTurnNotice,
 		});
 		this.reconcileRenderDescriptors(descriptors);
 	}

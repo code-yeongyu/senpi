@@ -11,6 +11,8 @@ import type { ExtensionFlag } from "../core/extensions/types.ts";
 import type { SpawnedBy } from "../core/session-lifecycle-types.ts";
 import { isSpawnedBy } from "../core/session-spawned-by.ts";
 import type { TuiMode } from "../core/settings-manager.ts";
+import { applyAttachArgs } from "./attach-args.ts";
+import { applyEngineModeArgs } from "./engine-mode-args.ts";
 import { isGrokNeoEnabled } from "./grok-neo-gate.ts";
 import { isToolRuntimeKind, type ToolRuntimeKind } from "./tool-runtime.ts";
 
@@ -31,6 +33,7 @@ export interface Args {
 	name?: string;
 	noSession?: boolean;
 	session?: string;
+	attach?: string;
 	sessionId?: string;
 	spawnedBy?: SpawnedBy;
 	fork?: string;
@@ -64,6 +67,10 @@ export interface Args {
 	grokNeo?: boolean;
 	/** Serve independently routed plain-RPC sessions over one host. */
 	multiSession?: boolean;
+	/** Start the engine as a hand: loopless tool execution for a remote loop on `<agentDir>/rpc/hand.sock`. */
+	hand?: boolean;
+	/** Start the headless engine: the machine-owned multi-session host on `<agentDir>/rpc/headless.sock`. */
+	headless?: boolean;
 	presenterBootstrapFd?: number;
 	mcpPresenterEnforcement?: boolean;
 	/**
@@ -92,7 +99,7 @@ const SESSION_RUNTIMES = ["in-process", "worker"] as const;
 export type SessionRuntimeKind = (typeof SESSION_RUNTIMES)[number];
 
 export function isSessionRuntimeKind(value: string): value is SessionRuntimeKind {
-	return SESSION_RUNTIMES.includes(value as SessionRuntimeKind);
+	return SESSION_RUNTIMES.some((runtime) => runtime === value);
 }
 
 /**
@@ -102,15 +109,18 @@ export function isSessionRuntimeKind(value: string): value is SessionRuntimeKind
  * hosts and embedders keep the worker runtime unchanged. An explicit
  * `--session-runtime` always wins over both defaults.
  */
-export function resolveSessionRuntime(parsed: Pick<Args, "sessionRuntime" | "listen">): SessionRuntimeKind {
+export function resolveSessionRuntime(
+	parsed: Pick<Args, "sessionRuntime" | "listen" | "headless">,
+): SessionRuntimeKind {
 	if (parsed.sessionRuntime) return parsed.sessionRuntime;
+	if (parsed.headless && parsed.listen === undefined) return "in-process";
 	return parsed.listen !== undefined && parsed.listen !== "stdio://" ? "in-process" : "worker";
 }
 
 const VALID_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 export function isValidThinkingLevel(level: string): level is ThinkingLevel {
-	return VALID_THINKING_LEVELS.includes(level as ThinkingLevel);
+	return VALID_THINKING_LEVELS.some((candidate) => candidate === level);
 }
 
 export function normalizeSessionName(value: string): string | undefined {
@@ -327,6 +337,10 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 			result.grokNeo = true;
 		} else if (arg === "--multi-session") {
 			result.multiSession = true;
+		} else if (arg === "--hand") {
+			result.hand = true;
+		} else if (arg === "--headless") {
+			result.headless = true;
 		} else if (arg === "--mcp-presenter-fd") {
 			if (args[++i] === "4") result.presenterBootstrapFd = 4;
 			else result.diagnostics.push({ type: "error", message: "Invalid presenter bootstrap descriptor" });
@@ -344,7 +358,7 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 			if (value !== undefined && !value.startsWith("--")) i++;
 			if (value !== undefined && isToolRuntimeKind(value)) result.toolRuntime = value;
 			else result.diagnostics.push({ type: "error", message: "--tool-runtime must be in-process or child" });
-		} else if (arg === "--listen" && result.mode === "rpc") {
+		} else if (arg === "--listen" && (result.mode === "rpc" || result.hand || result.headless)) {
 			const value = args[i + 1];
 			if (value === undefined || value.startsWith("--")) {
 				result.diagnostics.push({ type: "error", message: "--listen requires a value" });
@@ -387,6 +401,8 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 		});
 	}
 
+	applyAttachArgs(result);
+	applyEngineModeArgs(result);
 	return result;
 }
 
@@ -439,6 +455,7 @@ ${chalk.bold("Options:")}
   --continue, -c                 Continue previous session
   --resume, -r                   Select a session to resume
   --session <path|id>            Use specific session file or partial UUID
+  --attach <address>             Attach the TUI to an RPC endpoint (requires --session <ref>)
   --session-id <id>              Use exact project session ID, creating it if missing
   --spawned-by <json>            Fresh session ancestry: parentSessionId, rootSessionId, taskId
                                  Ignored with a warning when resuming or forking
@@ -480,6 +497,8 @@ ${grokNeoOptionsText}  --multi-session               Serve multiple routed RPC s
   --listen <address>            RPC listener: stdio://, unix://, unix:///path, or a socket path
   --session-runtime <kind>      Multi-session host runtime: in-process (socket default) or worker
   --tool-runtime <kind>         Where heavy tool work runs: in-process (default) or child
+  --hand                        Start as a hand: run tool calls for a remote loop on <agent dir>/rpc/hand.sock
+  --headless                    Start the headless engine: a machine-owned session host on <agent dir>/rpc/headless.sock
   --auto-title-sessions         Auto-generate session titles outside interactive mode (deprecated for hosts; prefer open_session.auto_title)
   --help, -h                     Show this help
   --version, -v                  Show version number
@@ -551,7 +570,7 @@ ${chalk.bold("Examples:")}
 ${chalk.bold("Environment Variables:")}
   ANTHROPIC_AUTH_TOKEN             - Anthropic bearer auth token
   ANTHROPIC_API_KEY                - Anthropic Claude API key
-  ANTHROPIC_OAUTH_TOKEN            - Anthropic OAuth token (alternative to API key)
+  ANTHROPIC_OAUTH_TOKEN            - Anthropic token read like ANTHROPIC_API_KEY (Claude OAuth tokens are refused; use anthropic-subscription)
   ANT_LING_API_KEY                 - Ant Ling API key
   OPENAI_API_KEY                   - OpenAI GPT API key
   OLLAMA_API_KEY                   - Ollama Cloud API key

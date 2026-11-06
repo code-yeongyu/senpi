@@ -18,6 +18,7 @@ import type { HostProtocolInfo } from "./host-decision.ts";
 import { type HostGenerationRow, pruneDeadGenerations, readGenerationRows } from "./host-generations.ts";
 import { OBSERVE_REQUEST_FIELD } from "./host-observe-request.ts";
 import { electPointer, type HostPointerState } from "./host-pointer-election.ts";
+import type { PathIdentityResolverStatus } from "./path-identity-status.ts";
 import { observeProtocolInfo, requestOnSocket } from "./host-probe.ts";
 import { type HostProcessMetrics, readHostProcessMetrics } from "./host-process-metrics.ts";
 import { type HostPathClaimRow, type HostSessionRow, parseSessionRows, readClaimRows } from "./host-status-rows.ts";
@@ -71,6 +72,8 @@ export interface HostStatusReport {
 	 * `SENPI_RPC_HOST_RSS_WARN_MB`); `null` when nothing answers or the host predates the field.
 	 */
 	readonly memory_pressure: boolean | null;
+	/** The answering host's path identity resolver (`not_started`, `ready`, or `unavailable` naming why its worker could not start); `null` when nothing answers or the host predates the field. */
+	readonly path_identity_resolver: PathIdentityResolverStatus | null;
 	/** Environment NAMES the daemon was granted, never values. */
 	readonly env_keys: readonly string[];
 	readonly generations: readonly HostGenerationRow[];
@@ -187,6 +190,7 @@ async function probeHostStatusInKeyRoot(
 		host_footprint_mb: metrics.host_footprint_mb,
 		open_fds: metrics.open_fds,
 		memory_pressure: host?.memory_pressure ?? null,
+		path_identity_resolver: host?.path_identity_resolver ?? null,
 		env_keys: await readDaemonEnvKeys(paths),
 		generations,
 		pointer,
@@ -245,6 +249,7 @@ export function hostSummary(host: HostProtocolInfo | undefined): Record<string, 
 		generation: host.generation ?? null,
 		engineVersion: host.engineVersion ?? null,
 		launchProfileId: host.launch_profile?.profile_id ?? null,
+		pathIdentityResolver: host.path_identity_resolver ?? null,
 	};
 }
 

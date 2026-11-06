@@ -3,6 +3,7 @@ import {
 	type AssistantMessage,
 	type AssistantMessageEventStream,
 	type Context,
+	dropFailedAssistantTurns,
 	type Message,
 	type Model,
 	type ProviderHeaders,
@@ -11,13 +12,14 @@ import {
 	type TextContent,
 } from "@earendil-works/pi-ai";
 import { stream } from "@earendil-works/pi-ai/compat";
-import { estimateTokens } from "../../../compaction/compaction.ts";
+import { estimateContextTokens, estimateTokens } from "../../../compaction/compaction.ts";
 import {
 	consumeStreamWithIdleTimeout,
 	DEFAULT_SUMMARIZATION_IDLE_TIMEOUT_MS,
 	summarizationMaxDurationMs,
 } from "../../../compaction/stream-watchdog.ts";
 import { convertToLlm } from "../../../messages.ts";
+import { getSessionContextEntryId } from "../../../session-manager.ts";
 import type { buildPrompt } from "./prompts.ts";
 import { repairOrphanedToolResults } from "./repair-tool-pairs.ts";
 import type { SpeculativeCompactionContext, SpeculativeCompactionSnapshot } from "./speculative.ts";
@@ -69,6 +71,86 @@ function summarizationReasoningOptions(model: Model<any>): Record<string, unknow
  */
 export function hasSummarizationReasoningOverride(model: Model<any>): boolean {
 	return Object.keys(summarizationReasoningOptions(model)).length > 0;
+}
+
+/**
+ * Estimated input of the request {@link generateSummaryMessage} sends for `messages`, which sizes its
+ * wall-clock budget. The request carries the agent's system prompt, its tool schemas and the transcript as
+ * native messages with their replayed reasoning, so the transcript's own chars/4 estimate sees only part of
+ * it: on large OpenAI sessions it measured a third of the provider-reported context, which kept the
+ * size-adaptive budget on its 120s floor. The last provider-reported usage inside the transcript already
+ * counts that whole prefix (system prompt, tools and opaque reasoning included); what follows it is
+ * estimated, plus the schemas of tools a later tool result activated (`addedToolNames`), which that usage
+ * never billed. `sourceMessages` is the transcript before pruning, input bounding or an overflow shrink cut
+ * it: the usage measured that transcript, so the estimated size of what was cut before it is subtracted.
+ * Without usage, or when the usage predates the branch's latest compaction or context edit (a message kept
+ * through an earlier compaction), the request is estimated whole, system prompt and tools included.
+ */
+export function estimateSummaryRequestTokens(
+	snapshot: Pick<SpeculativeCompactionSnapshot, "systemPrompt" | "tools" | "branchEntries">,
+	messages: AgentMessage[],
+	prompt: ReturnType<typeof buildPrompt>,
+	sourceMessages: readonly AgentMessage[] = messages,
+): number {
+	const instruction: AgentMessage = { role: "user", content: [{ type: "text", text: prompt.user }], timestamp: 0 };
+	const request = [...messages, instruction];
+	const estimate = estimateContextTokens(request);
+	const usageIndex = estimate.lastUsageIndex;
+	const usageMessage = usageIndex === null ? undefined : request[usageIndex];
+	const sourceUsageIndex = usageMessage ? sourceMessages.indexOf(usageMessage) : -1;
+	if (
+		usageIndex !== null &&
+		usageMessage &&
+		sourceUsageIndex >= 0 &&
+		isUsageCurrent(usageMessage, snapshot.branchEntries)
+	) {
+		const cutTokens =
+			sumEstimatedTokens(sourceMessages.slice(0, sourceUsageIndex + 1)) -
+			sumEstimatedTokens(request.slice(0, usageIndex + 1));
+		return (
+			Math.max(0, estimate.usageTokens - Math.max(0, cutTokens)) +
+			estimate.trailingTokens +
+			estimateActivatedToolsTokens(snapshot.tools, request.slice(usageIndex + 1))
+		);
+	}
+	const systemPrompt = snapshot.systemPrompt ?? prompt.system;
+	const tools = snapshot.tools && snapshot.tools.length > 0 ? JSON.stringify(snapshot.tools) : "";
+	return sumEstimatedTokens(dropFailedAssistantTurns(request)) + Math.ceil((systemPrompt.length + tools.length) / 4);
+}
+
+/**
+ * Usage captured before the branch's latest compaction or context edit measured a context that no longer
+ * exists (the same provenance rule as the session's pre-prompt estimate). Without branch entries there is
+ * nothing that could have invalidated it.
+ */
+function isUsageCurrent(
+	usageMessage: AgentMessage,
+	branchEntries: SpeculativeCompactionSnapshot["branchEntries"],
+): boolean {
+	if (!branchEntries) return true;
+	const usageEntryId = getSessionContextEntryId(usageMessage);
+	for (let i = branchEntries.length - 1; i >= 0; i--) {
+		const entry = branchEntries[i];
+		if (usageEntryId !== undefined && entry.id === usageEntryId) return true;
+		if (entry.type === "compaction" || entry.type === "context_edit") return false;
+	}
+	return true;
+}
+
+function sumEstimatedTokens(messages: readonly AgentMessage[]): number {
+	return messages.reduce((total, message) => total + estimateTokens(message), 0);
+}
+
+/** Schemas of tools first activated by a tool result after the usage (`addedToolNames`), as pi-ai counts them. */
+function estimateActivatedToolsTokens(
+	tools: SpeculativeCompactionSnapshot["tools"],
+	afterUsage: readonly AgentMessage[],
+): number {
+	const added = new Set(
+		afterUsage.flatMap((message) => (message.role === "toolResult" ? (message.addedToolNames ?? []) : [])),
+	);
+	const activated = added.size > 0 ? (tools ?? []).filter((tool) => added.has(tool.name)) : [];
+	return activated.length > 0 ? Math.ceil(JSON.stringify(activated).length / 4) : 0;
 }
 
 export function getSummaryText(message: Message): string {
@@ -146,10 +228,13 @@ export async function generateSummaryMessage(options: {
 		];
 		const maxDurationMs =
 			options.maxDurationMs ??
-			summarizationMaxDurationMs(requestMessages.reduce((total, message) => total + estimateTokens(message), 0));
+			summarizationMaxDurationMs(estimateSummaryRequestTokens(options.snapshot, options.messages, options.prompt));
 		const providerRequest = await options.context.prepareProviderRequest?.(requestMessages);
 		const requestContext = {
 			systemPrompt: options.snapshot.systemPrompt ?? options.prompt.system,
+			...(options.snapshot.systemPrompt !== undefined && options.snapshot.systemPromptStablePrefix !== undefined
+				? { systemPromptStablePrefix: options.snapshot.systemPromptStablePrefix }
+				: {}),
 			messages: repairOrphanedToolResults(
 				normalizeSummarizationTurnOrder(convertToLlm(providerRequest?.messages ?? requestMessages)),
 			),

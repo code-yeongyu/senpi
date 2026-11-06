@@ -122,6 +122,15 @@
 			"@earendil-works/pi-pty/*": [
 				"./packages/pty/src/*"
 			],
+			"@code-yeongyu/senpi-machine-ops": [
+				"./packages/machine-ops/src/index.ts"
+			],
+			"@code-yeongyu/senpi-machine-ops/in-process-holder": [
+				"./packages/machine-ops/src/process/in-process-holder.ts"
+			],
+			"@code-yeongyu/senpi-machine-ops/conformance": [
+				"./packages/machine-ops/test/conformance/index.ts"
+			],
 			"@earendil-works/pi-agent-old": [
 				"./packages/agent-old/src/index.ts"
 			],
