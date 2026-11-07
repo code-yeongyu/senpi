@@ -62,7 +62,9 @@ Resuming with 8+ trailing continuation entries suppresses session-start auto-res
 a `"user"` mutation. `active`/`complete` never prompt, except an `active` goal reopened over an
 interrupted run (its process died mid-turn): it is first stopped as interrupted, as a quit
 would have, so it prompts too, on `resume` and on a `startup` that opens it (`--continue`,
-`--session`) alike (senpi#5755).
+`--session`) alike (senpi#5755). RPC binds a UI context, so the same stop applies there, but
+RPC never prompts: the goal stays `blocked` (resuming the interrupted run answers one turn, no
+continuation) until the client resumes the goal explicitly.
 
 ## CONVENTIONS
 

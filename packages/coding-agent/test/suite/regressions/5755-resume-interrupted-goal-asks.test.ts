@@ -22,13 +22,21 @@ afterEach(async () => {
 
 const OBJECTIVE = "Finish the original request";
 
-async function resumeKilledGoalSession(choice: "Resume goal" | "Leave stopped", open: "resume" | "startup" = "resume") {
+async function resumeKilledGoalSession(
+	choice: "Resume goal" | "Leave stopped",
+	open: "resume" | "startup" = "resume",
+	mode: "tui" | "rpc" = "tui",
+) {
 	const prompts: Array<{ title: string; options: string[] }> = [];
+	const notices: string[] = [];
 	let providerCalls = 0;
 	const uiContext = createTestUiContext({
 		select: async (title, options) => {
 			prompts.push({ title, options });
 			return choice;
+		},
+		notify: (message) => {
+			notices.push(message);
 		},
 	});
 	const h = await createHarness({ extensionFactories: [goalExtension] });
@@ -66,7 +74,7 @@ async function resumeKilledGoalSession(choice: "Resume goal" | "Leave stopped", 
 	const runtime = new AgentSessionRuntime(h.session, servicesFor(h), factory);
 	cleanups.push(() => runtime.dispose());
 	runtime.setRebindSession(async (session) => {
-		await session.bindExtensions({ mode: "tui", uiContext });
+		await session.bindExtensions({ mode, uiContext });
 	});
 
 	// The saved session of a process killed mid-turn: its last run is still `running` and its goal is still active.
@@ -121,7 +129,7 @@ async function resumeKilledGoalSession(choice: "Resume goal" | "Leave stopped", 
 	const continuations = () =>
 		session.messages.filter((message) => message.role === "custom" && message.customType === "goal-continuation")
 			.length;
-	return { session, prompts, goal, continuations, providerCalls: () => providerCalls };
+	return { session, prompts, notices, goal, continuations, providerCalls: () => providerCalls };
 }
 
 it("asks before continuing an active goal whose run was interrupted, and Leave stopped keeps it stopped", async () => {
@@ -154,6 +162,27 @@ it("continues the goal when the person chooses Resume goal", async () => {
 
 	expect(fixture.continuations()).toBeGreaterThan(0);
 	expect(fixture.providerCalls()).toBeGreaterThan(0);
+});
+
+it("over RPC, keeps the crashed session's goal blocked: the client's resume runs one turn and no goal continuation", async () => {
+	// An RPC client binds a UI context, so the goal is stopped the same way, but switch_session cannot answer a nested
+	// select while it binds: the goal stays blocked until the client resumes the goal itself.
+	const fixture = await resumeKilledGoalSession("Resume goal", "resume", "rpc");
+	expect(fixture.prompts).toEqual([]);
+	expect(fixture.notices).toContain(
+		"Goal remains blocked after session resume. Resume it explicitly after the session finishes loading.",
+	);
+	expect(fixture.providerCalls()).toBe(0);
+	expect(await fixture.goal()).toMatchObject({ status: "blocked" });
+
+	await fixture.session.resumeSession();
+	await fixture.session.waitForIdle();
+
+	expect({ providerCalls: fixture.providerCalls(), continuations: fixture.continuations() }).toEqual({
+		providerCalls: 1,
+		continuations: 0,
+	});
+	expect(await fixture.goal()).toMatchObject({ status: "blocked" });
 });
 
 it("asks the same way when the killed session is opened at launch instead of through /resume", async () => {
