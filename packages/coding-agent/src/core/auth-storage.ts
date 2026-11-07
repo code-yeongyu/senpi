@@ -40,6 +40,10 @@ import { getFileContentRevision, normalizePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { signOutLegacyClaudeLogins } from "./anthropic-legacy-sign-out.ts";
 import {
+	backfillAccountLinks,
+	relinkAfterStaleWrite,
+} from "./extensions/builtin/anthropic-subscription/claude-cli-account-link.ts";
+import {
 	resolveReadOnlyCredential,
 	resolveStoredCredential,
 	resolveStoredSlot,
@@ -107,6 +111,19 @@ export type AuthNotice = {
  * Nothing is changed: which credential pays stays the user's choice, so the notice names the
  * unused login, where it still is, and the action that switches to it.
  */
+/** The identity of a failed load, so one failure both a sync and an async read hit is recorded once (senpi#5594). */
+function loadFailureKey(error: unknown): string | undefined {
+	if (error instanceof CredentialStoreBusyError) return "busy";
+	const loadError = describeAuthStoreLoadFailure(error);
+	return loadError === undefined ? undefined : `${loadError.kind}:${loadError.reason}`;
+}
+
+/** A store whose Claude CLI account records the next async load settles (senpi#5594). */
+function hasClaudeCliAccounts(data: AuthStorageData): boolean {
+	const subscription = data[ANTHROPIC_SUBSCRIPTION_PROVIDER_ID] as AnthropicSubscriptionCredential | undefined;
+	return subscription?.accounts?.some((slot) => slot.store === "claude-cli") === true;
+}
+
 function unusedLoginNotices(data: AuthStorageData): AuthNotice[] {
 	const notices: AuthNotice[] = [];
 	for (const [provider, credential] of Object.entries(data)) {
@@ -541,6 +558,7 @@ export class AuthStorage implements CredentialStore {
 	private dataLoaded = false;
 	private dataFromBusyRead = false;
 	private loadError: AuthStoreLoadError | undefined;
+	private recordedLoadFailure: string | undefined;
 
 	private constructor(storage: AuthStorageBackend, authPath?: string) {
 		this.storage = storage;
@@ -639,6 +657,32 @@ export class AuthStorage implements CredentialStore {
 		};
 	}
 
+	/**
+	 * The Claude CLI account dir records (senpi#5594), read and written asynchronously inside the held store lock of an
+	 * async load: accounts a stale writer dropped take their recorded dirs back, and every signed-in account without a
+	 * record gets one. Returns `data` itself when no slot changed, so the load writes nothing.
+	 */
+	private async settleAccountLinks(data: AuthStorageData): Promise<AuthStorageData> {
+		const subscription = data[ANTHROPIC_SUBSCRIPTION_PROVIDER_ID] as AnthropicSubscriptionCredential | undefined;
+		if (!this.authPath || subscription?.accounts === undefined) return data;
+		const agentDir = dirname(this.authPath);
+		const accounts = await relinkAfterStaleWrite(agentDir, subscription.accounts);
+		const unrecorded = await backfillAccountLinks(agentDir, accounts);
+		const unrecordedReason = `Claude account dir records could not be written for: ${unrecorded.join(", ")}`;
+		if (unrecorded.length > 0 && !this.reportedMigrationSkips.has(unrecordedReason)) {
+			this.reportedMigrationSkips.add(unrecordedReason);
+			this.recordError(
+				new Error(
+					`${unrecordedReason}. If another OmO session running an older version rewrites auth.json, these accounts may need to sign in again; check that their account dirs under anthropic-subscription-claude are writable.`,
+				),
+			);
+		}
+		if (accounts === subscription.accounts) return data;
+		const next: AuthStorageData = { ...data, [ANTHROPIC_SUBSCRIPTION_PROVIDER_ID]: { ...subscription, accounts } };
+		this.notices = [...unusedLoginNotices(next), ...signInRequiredNotices(next)];
+		return next;
+	}
+
 	private recordError(error: unknown): void {
 		this.errors.push(error instanceof Error ? error : new Error(String(error)));
 	}
@@ -702,14 +746,18 @@ export class AuthStorage implements CredentialStore {
 				// A written repair or migration invalidates the revision read before
 				// it; leaving it unset makes the next reader re-read instead of
 				// trusting a stale stamp.
+				// Claude CLI account records are settled by the next async load (senpi#5594): leave the revision unset for it.
 				revision =
-					parsed.repaired || parsed.migrated || !this.authPath ? undefined : getFileContentRevision(this.authPath);
+					parsed.repaired || parsed.migrated || !this.authPath || hasClaudeCliAccounts(parsed.data)
+						? undefined
+						: getFileContentRevision(this.authPath);
 				if (parsed.migrated) this.backupAuthFile(current);
 				return parsed.repaired || parsed.migrated
 					? { result: undefined, next: JSON.stringify(parsed.data, null, 2) }
 					: { result: undefined };
 			});
 			this.updateReadState(data, revision);
+			this.recordedLoadFailure = undefined;
 			return "loaded";
 		} catch (rawError) {
 			const error = failureAfterRead(rawError, load);
@@ -761,7 +809,16 @@ export class AuthStorage implements CredentialStore {
 		if (loadError) this.loadError = loadError;
 		if (repeated) return false;
 		this.recordError(error);
+		this.recordedLoadFailure = loadFailureKey(error);
 		return true;
+	}
+
+	/** An async read's failure, unless the same failure is already recorded since the store last loaded. */
+	private recordAsyncLoadFailure(error: unknown): void {
+		const key = loadFailureKey(error);
+		if (key !== undefined && key === this.recordedLoadFailure) return;
+		this.recordedLoadFailure = key;
+		this.recordError(error);
 	}
 
 	/**
@@ -833,6 +890,17 @@ export class AuthStorage implements CredentialStore {
 	 * points shows it once (senpi#3486). With `persistSeen`, the notices are also recorded as seen, so
 	 * the next launch stays quiet until the problem changes; a run nobody reads (RPC) leaves them pending.
 	 */
+	/**
+	 * Finishes what only an async load can do before the notices are read: the first load is synchronous, and the
+	 * Claude CLI account records it cannot touch are settled by the next async read (senpi#5594), which may re-link an
+	 * account the synchronous load still lists as signed out. A read that fails is recorded as on every other read.
+	 */
+	async settleLoad(): Promise<void> {
+		// A store that never loaded has nothing to settle, and waiting out a held lock would stall startup.
+		if (this.loadError !== undefined || this.dataFromBusyRead) return;
+		await this.readLatestData();
+	}
+
 	takePendingNotices(options: { persistSeen: boolean }): ReadonlyArray<AuthNotice> {
 		const taken = this.pendingNotices().filter((notice) => !this.takenNotices.has(notice.id));
 		for (const notice of taken) this.takenNotices.add(notice.id);
@@ -963,7 +1031,9 @@ export class AuthStorage implements CredentialStore {
 
 	private async reloadFromStorageAsync(options?: AuthOperationOptions): Promise<AuthStorageData> {
 		try {
-			return await this.reloadLockedAsync(options);
+			const data = await this.reloadLockedAsync(options);
+			this.recordedLoadFailure = undefined;
+			return data;
 		} catch (error) {
 			if (!options?.signal?.aborted) this.loadError = describeAuthStoreLoadFailure(error) ?? this.loadError;
 			throw error;
@@ -976,14 +1046,16 @@ export class AuthStorage implements CredentialStore {
 			return await this.storage.withLockAsync(async (content) => {
 				const parsed = this.parseStorageContent(content);
 				load.parsed = true;
-				load.writeBack = parsed.repaired || parsed.migrated;
+				const data = await this.settleAccountLinks(parsed.data);
+				const migrated = parsed.migrated || data !== parsed.data;
+				load.writeBack = parsed.repaired || migrated;
 				const revision =
-					parsed.repaired || parsed.migrated || !this.authPath ? undefined : getFileContentRevision(this.authPath);
-				this.updateReadState(parsed.data, revision);
-				if (parsed.migrated) this.backupAuthFile(content);
-				return parsed.repaired || parsed.migrated
-					? { result: parsed.data, next: JSON.stringify(parsed.data, null, 2) }
-					: { result: parsed.data };
+					parsed.repaired || migrated || !this.authPath ? undefined : getFileContentRevision(this.authPath);
+				this.updateReadState(data, revision);
+				if (migrated) this.backupAuthFile(content);
+				return parsed.repaired || migrated
+					? { result: data, next: JSON.stringify(data, null, 2) }
+					: { result: data };
 			}, options);
 		} catch (error) {
 			throw failureAfterRead(error, load);
@@ -997,7 +1069,7 @@ export class AuthStorage implements CredentialStore {
 				return await this.reloadFromStorageAsync(options);
 			} catch (error) {
 				options?.signal?.throwIfAborted();
-				this.recordError(error);
+				this.recordAsyncLoadFailure(error);
 				this.noteBusyFallback(error);
 				return this.readState.data;
 			}
@@ -1018,7 +1090,7 @@ export class AuthStorage implements CredentialStore {
 					if (this.readState.reload === reload) this.readState.reload = undefined;
 				},
 				(error: unknown) => {
-					if (!controller.signal.aborted) this.recordError(error);
+					if (!controller.signal.aborted) this.recordAsyncLoadFailure(error);
 					if (this.readState.reload === reload) this.readState.reload = undefined;
 				},
 			);
