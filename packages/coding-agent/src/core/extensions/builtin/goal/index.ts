@@ -331,6 +331,10 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		}
 		if (event.aborted === true && event.abortSource === "user" && goal?.status === "active") {
 			goal = await pauseOrBlockOnUserAbort(ctx, goal.id);
+		} else if (goal?.status === "active" && goal.continuationStoppedAt === undefined && stopHoldLive(ctx)) {
+			// A Stop that joined this turn's agent_end boundary leaves the turn un-aborted; the goal still pauses with it.
+			markStopPaused(pi, goal.id);
+			goal = await updateGoal(goalStoreRef(ctx), { status: "paused" }, "user");
 		}
 		if (goal?.status === "active") {
 			beginAgentGoalAccounting(goal);

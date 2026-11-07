@@ -31,10 +31,7 @@ afterEach(async () => {
 	await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-async function heldGoalSession(
-	threadId: string,
-	options: { initialHolds?: SessionHoldRecord[]; dir?: string } = {},
-) {
+async function heldGoalSession(threadId: string, options: { initialHolds?: SessionHoldRecord[]; dir?: string } = {}) {
 	const dir = options.dir ?? (await mkdtemp(join(tmpdir(), "senpi-goal-paused-elapsed-")));
 	if (options.dir === undefined) dirs.push(dir);
 	const tools = new Map<string, AnyTool>();
@@ -87,7 +84,9 @@ async function heldGoalSession(
 	};
 	const storeRef = { baseDir: join(dir, "extensions", "goal"), threadId };
 	const createGoal = () =>
-		tools.get("create_goal")?.execute("c1", { objective: "Ship it" }, undefined, undefined, ctx as ExtensionToolContext);
+		tools
+			.get("create_goal")
+			?.execute("c1", { objective: "Ship it" }, undefined, undefined, ctx as ExtensionToolContext);
 	const pauseWith = async (next: SessionHoldRecord[]) => {
 		holds = next;
 		await fire("session_hold_changed", { type: "session_hold_changed", change: "paused", pauseSeq: 1, holds });
@@ -129,6 +128,20 @@ describe("a paused goal's elapsed counter freezes (Q 2026-11-06: 'paused, yet th
 		await session.fire("agent_end", settledTurn);
 		// Only active time counts: 120 s before the Stop plus 60 s after the resume, never the 600 s held.
 		expect(await readGoal(session.storeRef)).toMatchObject({ status: "active", timeUsedSeconds: 180 });
+		await session.fire("session_shutdown", { type: "session_shutdown" });
+	});
+
+	it("a Stop that lands during a turn the turn does not abort pauses the goal at agent_end", async () => {
+		const session = await heldGoalSession("thread-boundary-stop");
+		await session.createGoal();
+		await session.fire("agent_start", { type: "agent_start" });
+		vi.advanceTimersByTime(20_000);
+		await session.pauseWith([stopHold]);
+		await session.fire("agent_end", settledTurn);
+		vi.advanceTimersByTime(600_000);
+
+		expect(session.lastStatus()).toBe("Goal paused (/goal resume)");
+		expect(await readGoal(session.storeRef)).toMatchObject({ status: "paused", timeUsedSeconds: 20 });
 		await session.fire("session_shutdown", { type: "session_shutdown" });
 	});
 
