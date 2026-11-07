@@ -1000,6 +1000,8 @@ pi.on("context", async (event, ctx) => {
 
 `context` handlers see conversation messages without the prompt and tool system messages; senpi restores that state after they run, so filtering or slicing messages no longer drops the system prompt or tool declarations.
 
+What a `context` handler returns is exactly what the provider is sent, so keep a message the same once a request has sent it. A handler that changes an earlier message between requests (for example, appending a reminder to whichever user message is newest, which leaves the previous one bare on the next request) makes every later request differ from the one before at that message. Provider prompt caches then read only up to that message, and the Claude subscription lane cannot continue its native session, so it re-sends the conversation (`sent_stream_diverged`). Make a per-request addition a pure function of the message it decorates (add it to every matching message, or keep it on the message that first carried it), or persist it as a real message from `before_agent_start`. Removing or pruning older messages is a real change and is re-sent the same way.
+
 By default `event.messages` is a deep copy of the live transcript, so in-place edits never reach the session. A handler that never mutates message objects in place can declare it and skip that copy:
 
 ```typescript
