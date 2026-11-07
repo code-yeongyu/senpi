@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { wrapStreamWithInvokeRecovery } from "../../src/index.ts";
+import { isToolCallRecoveryStreamFailure, wrapStreamWithInvokeRecovery } from "../../src/index.ts";
 import type { AssistantMessage, AssistantMessageEvent, Tool, ToolCall } from "../../src/types.ts";
 import { AssistantMessageEventStream } from "../../src/utils/event-stream.ts";
 import { collectEvents, createAssistantMessage, NativeStreamHarness } from "./invoke-recovery-stream-fixtures.ts";
@@ -121,6 +121,7 @@ function expectInvalidTerminal(events: readonly AssistantMessageEvent[], result:
 			details: { protocol: "antml", status: "invalid_native_event_order" },
 		},
 	]);
+	expect(isToolCallRecoveryStreamFailure(result)).toBe(true);
 	const diagnostic = JSON.stringify(result.diagnostics);
 	expect(diagnostic).not.toContain("toolu-invalid");
 	expect(diagnostic).not.toContain("echo invalid");

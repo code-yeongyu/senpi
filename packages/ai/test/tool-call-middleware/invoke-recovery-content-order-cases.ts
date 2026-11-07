@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { wrapStreamWithInvokeRecovery } from "../../src/index.ts";
+import { isToolCallRecoveryStreamFailure, wrapStreamWithInvokeRecovery } from "../../src/index.ts";
 import type { AssistantMessageEvent, Tool } from "../../src/types.ts";
 import { AssistantMessageEventStream } from "../../src/utils/event-stream.ts";
 import { collectEvents, createAssistantMessage } from "./invoke-recovery-stream-fixtures.ts";
@@ -49,6 +49,7 @@ export function registerInvokeRecoveryContentOrderCases(tool: Tool): void {
 		const result = await wrapped.result();
 		expectInvalidContentOrder(events);
 		expect(result.content).toEqual([{ type: "text", text: "<inv", textSignature: "overlap-signature" }]);
+		expect(isToolCallRecoveryStreamFailure(result)).toBe(true);
 		expect(result.content.map((block) => (block.type === "text" ? block.text : "")).join("")).toBe("<inv");
 	});
 

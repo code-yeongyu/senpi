@@ -47,6 +47,7 @@ import { localDeviceFiles } from "@earendil-works/pi-agent-core/node";
 import {
 	type AssistantMessageEvent,
 	contentText,
+	isToolCallRecoveryStreamFailure,
 	type JsonObject,
 	providerNotConfiguredMessage,
 	SERVER_FALLBACK_ABORTED_DIAGNOSTIC,
@@ -12926,10 +12927,17 @@ export class AgentSession {
 		);
 	}
 
+	/**
+	 * A tool-call recovery stream failure (content/native event order, tool call id collision) is a defect in
+	 * our own stream recovery, not in the model: another model hits the same recovery, so it never walks the
+	 * fallback chain and the turn ends with the error (senpi#5723). It is not a transient error either, so no
+	 * same-model retry replays the text the stream already showed.
+	 */
 	private _isHardErrorFallbackEligible(message: AssistantMessage): boolean {
 		return (
 			!message.errorMessage?.startsWith(TURN_RETRY_SUPPRESSION_PREFIX) &&
 			!this._isLocalFailure(message) &&
+			!isToolCallRecoveryStreamFailure(message) &&
 			!isModelConfigFailure(message) &&
 			!this._isClaudeSdkAuthMissError(message) &&
 			!this._isClaudeSdkSameModelRemintError(message) &&

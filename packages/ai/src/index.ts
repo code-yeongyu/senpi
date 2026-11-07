@@ -125,6 +125,7 @@ export {
 	wrapStreamWithToolCallMiddleware,
 } from "./tool-call-middleware/index.ts";
 export { createXtmlRecoveryStreamParser } from "./tool-call-middleware/protocols/kimi-xtml/recovery-stream.ts";
+export { isToolCallRecoveryStreamFailure } from "./tool-call-middleware/recovery-stream-failure.ts";
 export { wrapStreamWithInvokeRecovery } from "./tool-call-middleware/recovery-stream-wrapper.ts";
 export * from "./types.ts";
 export * from "./utils/assistant-message-frame.ts";
