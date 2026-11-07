@@ -319,6 +319,13 @@ describe("terminal control endpoint: observe and drive parity (senpi#4267)", () 
 
 		const mismatch = await client.request({ type: "attach_session", sessionId, durableSessionId: "other" });
 		const unknown = await client.request({ type: "attach_session", sessionId: "other", durableSessionId: sessionId });
+		const takeover = await client.request({
+			type: "attach_session",
+			sessionId,
+			durableSessionId: sessionId,
+			takeover: true,
+			holder: "device-b",
+		});
 		const attached = await client.request({ type: "attach_session", sessionId, durableSessionId: sessionId });
 		harness.setResponses([fauxAssistantMessage("for the attached client")]);
 		await harness.session.prompt("go");
@@ -328,6 +335,7 @@ describe("terminal control endpoint: observe and drive parity (senpi#4267)", () 
 
 		expect(mismatch).toMatchObject({ success: false, errorCode: "session_identity_mismatch" });
 		expect(unknown).toMatchObject({ success: false, errorCode: "unknown_session" });
+		expect(takeover).toMatchObject({ success: false, errorCode: "takeover_unsupported" });
 		expect(attached).toMatchObject({ success: true, data: { sessionId, attached: true } });
 		expect(released).toMatchObject({ success: true, data: { deferred: false } });
 		expect(again).toMatchObject({ success: false, errorCode: "session_not_attached" });

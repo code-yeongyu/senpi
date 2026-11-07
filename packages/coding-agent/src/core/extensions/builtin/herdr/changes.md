@@ -1,5 +1,23 @@
 # Herdr builtin reporter changes
 
+## 2026-11-04 - Name the product command in an app pane token (omo#12395, senpi#5817)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/herdr/index.ts` adds `tokens: { app: APP_COMMAND }` to its title metadata report. On quit it clears the token with `tokens: { app: null }` before `pane.release_agent`. Every lifecycle, session and release report still sends `agent: "pi"`.
+
+### Why
+
+- Tools built on herdr's API could not tell an OmO pane from a Pi pane. herdr 0.9.5 bases prompt delivery and restore on agent labels it knows. With an `omo` label, `agent prompt` and `agent send-keys` are refused with `agent_not_ready`, and the reported `resume_argv` is dropped when detection says `pi`. Pane tokens are display-only, and herdr's pane and agent APIs expose them. herdr keeps tokens after release and process exit, so quit clears the token.
+
+### Why an extension could not handle it
+
+- This is the builtin reporter that owns the pane's herdr metadata.
+
+### Expected merge conflict zones
+
+- LOW: the `reportTitle` params and the `session_shutdown` quit branch in `index.ts`.
+
 ## 2026-11-01 - Program status binds in every TUI session (senpi#5323)
 
 ### What changed

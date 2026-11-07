@@ -56,7 +56,8 @@ describe.skipIf(process.platform !== "win32")("compiled Bun Windows stale table 
 			expect((await closed)[0], errors).toBe(0);
 			expect(JSON.parse(report)).toEqual({ pair: null, bare: null });
 		} finally {
-			await rm(root, { recursive: true, force: true });
+			// #6142: Windows can keep a just-exited compiled .exe locked briefly; retry instead of failing a passing test.
+			await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 		}
 	});
 });

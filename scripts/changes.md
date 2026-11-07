@@ -1,3 +1,22 @@
+## 2026-11-05 - Standalone compiles keep linkedom's optional canvas external (senpi#6045)
+
+### What changed
+
+- `scripts/build-binaries.sh`: both release `bun build --compile` commands pass `--external canvas`; the "Building trusted native dependencies" step (`npm rebuild canvas --foreground-scripts`) is removed.
+- `scripts/bun-release-externals.mjs` (new): `bunReleaseExternalFlags`, the one externals list every JS/TS Bun build of the release entry graph spreads (`compiled-extension-load.test.ts`, `bun-bundle-provider-coverage.test.ts`, both `release-graph-*.test.ts`, the QA `compiled-generations.mjs`). `build-binaries-flags.test.mjs` pins the shell and `build:binary` commands to it and fails any script that builds the release graph without spreading it.
+
+### Why
+
+- `bun build --compile` resolved canvas's `require('../build/Release/canvas.node')` even behind linkedom's optional `try/catch`, so the build rebuilt canvas first. On Windows a failed prebuilt download fell back to a node-gyp build that cannot find `cairo.h`, failing `Compiled extensions (Windows)` (senpi#6045). senpi never needs canvas: linkedom falls back to its JS shim, as the Node bundle already does.
+
+### Why an extension could not handle it
+
+- The release compile recipe is build tooling, outside any extension.
+
+### Expected merge conflict zones
+
+- LOW: one flag on each of the two compile lines, the removed two-line rebuild step, and one new module.
+
 ## 2026-11-04 - senpi vendors machine-ops instead of publishing it (senpi#5784)
 
 ### What changed

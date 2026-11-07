@@ -1,8 +1,9 @@
 import { Type } from "typebox";
-import type {
-	RelocationRequestResult,
-	RelocationTarget,
-	RelocationTargetsResult,
+import {
+	RELOCATION_TOOL_NAMES,
+	type RelocationRequestResult,
+	type RelocationTarget,
+	type RelocationTargetsResult,
 } from "../../session-control-types.ts";
 import type { AgentToolResult, ExtensionAPI } from "../../types.ts";
 
@@ -42,8 +43,6 @@ export function requestText(result: RelocationRequestResult): string {
 	}
 }
 
-const RELOCATION_TOOLS = ["list_relocation_targets", "relocate_session"];
-
 /**
  * The tools are registered search-exposed with lazy activation off, so a session no host offers relocation for (a
  * plain CLI) never sees them. They are activated at the start of each run while the host offers it, and retired again
@@ -52,8 +51,8 @@ const RELOCATION_TOOLS = ["list_relocation_targets", "relocate_session"];
 function syncActivation(pi: ExtensionAPI): void {
 	const wanted = pi.session.relocationOffered();
 	const active = pi.getActiveTools();
-	const others = active.filter((name) => !RELOCATION_TOOLS.includes(name));
-	const next = wanted ? [...others, ...RELOCATION_TOOLS] : others;
+	const others = active.filter((name) => !RELOCATION_TOOL_NAMES.includes(name));
+	const next = wanted ? [...others, ...RELOCATION_TOOL_NAMES] : others;
 	if (next.length === active.length && next.every((name) => active.includes(name))) return;
 	pi.setActiveTools(next);
 }

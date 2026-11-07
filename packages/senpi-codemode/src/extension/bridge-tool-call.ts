@@ -1,7 +1,8 @@
-import type { EvalHandleHost } from "@code-yeongyu/senpi";
+import type { AgentToolResult, EvalHandleHost } from "@code-yeongyu/senpi";
 import { isReservedToolName, runReservedTool } from "../bridges/reserved-dispatch.ts";
 import { defaultCodemodeSettings } from "../config/settings.ts";
 import { marshalToolResult } from "../tool/image.ts";
+import type { CellToolUpdateSink } from "../tool/nested-tool-output.ts";
 import type { CreateCodemodeSessionManagerOptions } from "./session-manager-contract.ts";
 
 export interface BridgeToolCallRequest {
@@ -25,9 +26,23 @@ export async function routeBridgeToolCall(
 	>,
 	request: BridgeToolCallRequest,
 	evalHandleHost?: EvalHandleHost,
+	toolUpdates?: CellToolUpdateSink,
 ): Promise<unknown> {
 	if (!isReservedToolName(request.toolName)) {
-		return marshalToolResult(await options.executeTool(request.toolName, request.args, { signal: request.signal }));
+		const live =
+			toolUpdates === undefined
+				? {}
+				: {
+						onUpdate: (partial: AgentToolResult<unknown>) =>
+							toolUpdates.nestedToolUpdate(request.callId, partial),
+					};
+		try {
+			return marshalToolResult(
+				await options.executeTool(request.toolName, request.args, { signal: request.signal, ...live }),
+			);
+		} finally {
+			toolUpdates?.nestedToolSettled(request.callId);
+		}
 	}
 	const taskTools = options.settings.taskTools ?? defaultCodemodeSettings.taskTools;
 	return await runReservedTool(request.toolName, {

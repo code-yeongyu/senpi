@@ -11,5 +11,10 @@ const SALT_FILE = join("anthropic-subscription", "seat-digest-salt");
  * address) cannot be confirmed without this install's salt (oh-my-openagent#10304).
  */
 export function seatDigest(accountName: string, agentDir: string = getAgentDir()): string {
+	if (typeof accountName !== "string" || accountName.trim() === "") {
+		throw new Error(
+			"claude_account_unusable: a Claude account slot has no name; run /login anthropic-subscription to add a named account",
+		);
+	}
 	return createHmac("sha256", installSalt(agentDir, SALT_FILE)).update(accountName).digest("hex").slice(0, 8);
 }

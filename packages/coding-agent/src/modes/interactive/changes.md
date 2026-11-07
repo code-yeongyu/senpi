@@ -1,3 +1,243 @@
+## 2026-11-06 - The footer names a held model switch (senpi#6097, fixes #6092)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/footer.ts`: the right label reads `session.pendingModelSwitch` next to `state.model` and hands the held target to `buildRightLabel` as `pending`.
+- `packages/coding-agent/src/modes/interactive/components/footer-right-label.ts`: `RightLabelInput.pending` renders ` → <target> (after compact)` after the running model in every form of the ladder (after the `:level` run in the compact forms), the target in the warning colour and the marker muted, so the pick survives width elision as long as the model id does. Below the compact form with the full target id sits one more rung, the floor, where the target id is head-elided to `HELD_TARGET_FLOOR_COLUMNS` (14, e.g. `…ash-ultrafast`) and ` (after compact)` is kept whole, so an 80-column terminal keeps its whole context meter and a 60-column one never shows a mid-id fragment (review LOW at e55328ce17, ruled binding by the LEAD; #6120 folded here).
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `model_change_pending` requests a render after invalidating the footer; a new `model_change_cancelled` case does the same so a hold that ends without landing takes the marker back off; `applyModelSelection` appends ` · after the next compaction` to the `Model: <id>` status when the session holds the pick instead of applying it (and says "then the default model for new sessions" rather than "now" for a held `--default` pick).
+
+### Why
+
+- #1876 holds a switch onto a model that one compaction would admit (senpi#1873) and announces it with a warning only; the footer kept naming the model still running until the next message compacted and the switch landed, so the one place the user watches for the current model disagreed with what they had just selected (#6092).
+
+### Why an extension could not handle it
+
+- The footer component and the interactive event switch are core TUI surfaces; no extension hook renders the footer's model label or receives `model_change_pending`/`model_change_cancelled`.
+
+### Expected merge conflict zones
+
+- LOW: the right-label construction in `footer.ts` `render()`, the `model_change_pending` case and the `applyModelSelection` status line in `interactive-mode.ts`; `footer-right-label.ts` is fork-only.
+
+## 2026-11-06 - Cancel sealed input when local input rejects (senpi#6062)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/terminal-sealed-secrets.ts`: the local input and sealed latch share a cancellation signal. A local rejection cancels that request immediately and emits the existing typed `cancelled` outcome.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/terminal-sealed-secrets.ts`: an unhandled local rejection previously left the sealed request open until its deadline.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/terminal-sealed-secrets.ts`: the terminal adapter owns the local promise and sealed latch race.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/interactive/terminal-sealed-secrets.ts`, `raceTerminalSecretInput`.
+
+## 2026-11-05 - Provider logout reports unconfirmed ChatGPT revocation (part of #5003)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the provider-wide `/logout` adds the "Remote revocation was not confirmed; disconnect the app in ChatGPT Settings." warning when the runtime reports `remote_revocation_unconfirmed`.
+
+### Why
+
+- ChatGPT Subscription now revokes on logout, and `docs/rpc.md` says an unconfirmed revocation must be shown; `/gpt-account signout` already did.
+
+### Why an extension could not handle it
+
+- The builtin `/logout` selector lives in interactive mode.
+
+### Expected merge conflict zones
+
+- The `/logout` provider selector's success status.
+
+## 2026-11-05 - Terminal secret prompts race sealed holders (senpi#4249)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/terminal-sealed-secrets.ts` is new:
+  - `TerminalSealedSecrets`, the terminal session's sealed route over its presenter control;
+  - `raceTerminalSecretInput`, which races the terminal's own input against sealed answers on one latch. The first answer wins, the losing side is dismissed, and without a sealed route the input runs alone, unchanged.
+- `packages/coding-agent/src/modes/interactive/terminal-presenter-surface.ts`:
+  - `attachSealedSecrets` attaches the route;
+  - `mcp_presenter_secret_answer` is answered with `mcp_presenter_secret_reply` on the sender's connection only.
+- `packages/coding-agent/src/modes/interactive/mcp-local-presenter.ts`: the local presenter carries `admit` and the attached `sealed` route.
+- `packages/coding-agent/src/modes/interactive/session-control-rpc-commands.ts`: `mcp_presenter_secret_answer` is a terminal control command.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the extension UI `input` callback goes through `raceTerminalSecretInput`.
+
+### Why
+
+- D11 secret phase (senpi#4249), row S5-5: on a terminal session an enrolled same-account desktop may answer a secret prompt, sealed, and the first answer wins (compatibility table, TUI own session).
+
+### Why an extension could not handle it
+
+- The TUI's secret input, its control endpoint and the presenter surface are host internals of the interactive mode.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: one call site in `createExtensionUIContext`'s `input`.
+
+## 2026-11-05 - A terminal refuses a thread call's `chainCount` (senpi#5923)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-control-input-commands.ts`: `chainCount` is in `UNSERVED_INPUT_FIELDS`, so a terminal's session-control endpoint refuses a thread call carrying it with `unsupported_field` instead of admitting it.
+
+### Why
+
+A terminal admits input as text through its external admission, which cannot carry a hop count; admitting the call would restart its chain there and bypass the user's `threads.chainCountLimit` (decision K8).
+
+### Why an extension could not handle it
+
+The terminal's input admission is the session-control endpoint itself.
+
+### Expected merge conflict zones
+
+- LOW: `UNSERVED_INPUT_FIELDS`.
+
+## 2026-11-04 - Terminal control connections present MCP forms on the TUI's own authority (senpi#4249)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/terminal-presenter-surface.ts` is new: `TerminalPresenterSurface` implements `PresenterHostSurface` over the TUI's existing `McpPresenterAuthority`. A control connection that declared `interactive_user` + `mcp_form_presenter_v1` with `set_client_info` becomes a presenter connection, is attached while it holds a live attachment, and is withdrawn when it loses a role. Its private frames are answered on its own socket as `mcp_form_reply`. `startTerminalPresenters` also starts an `McpPresenterControl` over the surface when an account authority is injected.
+- `packages/coding-agent/src/modes/interactive/session-control-rpc-commands.ts`: `TUI_RPC_COMMANDS` gains `mcp_presenter_context`, `mcp_form_presented`, `mcp_form_response` and `mcp_form_sync`, which are routed to the presenter surface. `set_client_info` records the declared capabilities there. Input admission moved verbatim to the new `packages/coding-agent/src/modes/interactive/session-control-input-commands.ts`.
+- `packages/coding-agent/src/modes/interactive/session-control-attach.ts`: connection open, attach, detach and close reach the presenter surface.
+- `packages/coding-agent/src/modes/interactive/session-control-endpoint.ts`, `session-control-lifecycle.ts`: `TuiControlContext.mcpPresenter` carries the TUI's local presenter and the injected account authority. The endpoint starts the presenter surface and stops its control when the endpoint is disposed.
+- `packages/coding-agent/src/modes/interactive/mcp-local-presenter.ts`: `registerLocalMcpPresenter` returns a `LocalMcpPresenter` that also exposes its authority, binding and session id.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `InteractiveModeOptions.presenterAccountAuthority`, plus the control context's `mcpPresenter` when enforcement created the local presenter.
+
+### Why
+
+- D11 S3-6b (senpi#4249, design 2.9): a terminal session had no presenter connections, attachment, capabilities or private-frame route, so no same-account device could answer an MCP form on it. The terminal stays one `local_tui` holder, and the first answer wins.
+
+### Why an extension could not handle it
+
+- The MCP form authority and the terminal control endpoint are host internals. No extension can add a holder to the TUI's private form binding.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `InteractiveModeOptions`, the `mcpLocalPresenter` field, and `sessionControlContext()`.
+
+## 2026-11-04 - The terminal endpoint refuses a takeover (S37, senpi#5732)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-control-rpc-commands.ts`: `attach_session { takeover: true }` on a terminal's control endpoint answers `takeover_unsupported` instead of a plain attach; without `takeover` it is unchanged.
+
+### Why
+
+- Only a headless engine takes sessions over; a terminal that silently attached would let a client believe it holds the session alone (senpi#5732).
+
+### Why an extension could not handle it
+
+- The control endpoint's command set is interactive-mode internals.
+
+### Expected merge conflict zones
+
+- LOW: one early return in `attachSession`.
+
+## 2026-11-05 - Retryable gateway failures collapse into one retry status per turn (senpi#6012)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/provider-error-presentation.ts`: `isRetryableProviderMessage` replaces `isNetworkProviderMessage` as the row-ownership test. It requires the retry engine's own decision (`isTurnRetryableFailure`, so a suppressed replay, a local failure, a model-config failure or a context overflow always keeps its row) together with transient wording, and a failure a classifier already describes in plain language keeps its row. The episode's reason resets when a retry recovers. `episodeOwnsFailure` tells `agent_end` when the quiet episode owes the turn's one final notice. The episode keeps the last short reason, and `finish()` puts it in the final notice.
+- `packages/coding-agent/src/modes/interactive/provider-error-reason.ts` (new): `providerErrorReason` reads a short cause (`429 rate limited`, `502 bad gateway`, `network error`) from a raw gateway body, whether JSON or an HTML error page. It strips the turn-retry suppression prefix first, and reads a leading number only in an HTTP-status shape.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `message_end`, `syncTrailingAssistantText` and session replay decide row ownership with `isRetryableProviderMessage`. `agent_end` skips the turn-end failure line when the quiet episode owns the failure. The retry indicator receives the short reason.
+- `packages/coding-agent/src/modes/interactive/components/status-indicator.ts`: `RetryStatusIndicator` takes an optional reason and shows it in the full and compact retry text.
+
+### Why
+
+- Behind a gateway, a retryable failure arrives as a verbose body: a litellm 429 JSON envelope or an nginx 502 HTML page. Row ownership used a network-only classifier, so each attempt was recorded in the retry episode and also painted as a raw row, up to `retry.maxRetries` rows per turn, with two final lines on exhaustion (senpi#6012).
+
+### Why an extension could not handle it
+
+- Transcript row ownership and the retry status are decided inside `InteractiveMode.handleEvent` and its components; no extension hook reaches them.
+
+### Expected merge conflict zones
+
+- LOW: the `message_end`, `agent_end` and replay branches of `interactive-mode.ts` that call `isRetryableProviderMessage`, and the `RetryStatusIndicator` constructor signature.
+
+## 2026-11-04 - /resume of a session a live process holds asks to cancel or take over (senpi#5750, fixes #5744)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `handleResumeSession` checks live foreign holders (`checkSessionHolders`) before `runtimeHost.switchSession`. With a holder, a selector names it (`pid N in "<folder>"`) and offers `Cancel` or `Take over (stop it there)`. Cancel returns `{ cancelled: true }` and switches nothing. Take over is offered only when every holder is verified and single-session (`takeOverRefusal`): a holder inside a multi-session host, or one whose identity is unverified, gets Cancel only, with the reason. `stopSessionHolders` re-reads the holder set right before signalling, signals only the confirmed pids still holding it, and waits until the session is free. A holder that does not exit in time, or a stop error (shown as a warning), leaves the resume refused. A failed lookup stays advisory: the pre-switch result drives the same `Unable to inspect session holders` warning after the switch.
+- `packages/coding-agent/test/suite/regressions/5744-resume-refuses-held-session.test.ts` (new): a real holder process plus a real `InteractiveMode` resume, with both choices.
+- `packages/coding-agent/test/suite/regressions/issue-2951-resume-warning.test.ts`: keeps only the lookup-error case. The live-holder case moved to the 5744 test because the warn-and-switch it pinned is replaced.
+
+### Why
+
+- The TUI switched onto a session a live process was running and only warned. The restored lifecycle then read that process's live run as `interrupted_run`, so the next input started a second run of the same session, re-sending the in-flight prompt while the other process was still running it. The RPC host already refused this (#2951).
+
+### Why an extension could not handle it
+
+- `/resume` and extension `ctx.switchSession` both go through the interactive controller's `handleResumeSession`. An extension cannot gate the built-in picker's switch.
+
+### Expected merge conflict zones
+
+- LOW: the head of `handleResumeSession` and its two post-switch warning sites; the `foreign-session-holders` import block.
+
+## 2026-11-04 - A submit parked during startup runs once startup finishes (senpi#5737, fixes #5731)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `handleStartupSubmit` records the text it parks (`startupParkedSubmission`). `init()` calls the new `replayStartupSubmission()` after `setupEditorSubmitHandler()`, `attachEditor()` and `adoptDefaultEditorActions()`. When the editor still holds exactly the parked text, the editor is cleared and the text goes through `defaultEditor.onSubmit` with the parked `EditorSubmitDetails` (so a leading-space ` /foo` stays text), the real submit path with its session-control submission edge. An edited draft is left in the editor, and the parked text is consumed once.
+- `packages/coding-agent/test/suite/regressions/5731-startup-submit-replays.test.ts` (new): a parked `/resume` is submitted exactly once; an edited draft stays; the raw text is carried; nothing parked submits nothing.
+- `packages/coding-agent/test/suite/regressions/issue-4826-startup-history-before-submit.test.ts`: the parked submit now replays during `init()`, so the test asserts it landed once after the restored history instead of submitting it again by hand.
+
+### Why
+
+- Startup parks a submit until the restored transcript renders (#4826), but nothing ran it afterwards, so an early `/resume` sat typed in the editor behind `Startup is still in progress` until a second Enter. On a loaded machine the window lasts seconds.
+
+### Why an extension could not handle it
+
+- The startup submit path and its handoff to the real submit handler live inside `InteractiveMode.init()`; an extension cannot see or resubmit a parked editor submission.
+
+### Expected merge conflict zones
+
+- LOW: the `adoptDefaultEditorActions(...)` line at the end of `init()`, `handleStartupSubmit`, and the private field block near `preResolvedSubmissionImages`.
+
+## 2026-11-04 - /resume never offers the live session while it holds no conversation (senpi#5730, fixes #5727)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/session-selector.ts`: `SessionList.filterSessions()` drops the current session while it has no message and no name (`isLiveSessionWithoutConversation`), in both scopes and on every partial list published while the picker loads. A current session that has a conversation, and every other session, are listed as before.
+- `packages/coding-agent/test/suite/regressions/5727-resume-hides-live-empty-session.test.ts` (new): the picker fed by `SessionManager.list()` over real files, with the live session started the way OmO starts it (`persistHeaderNow()` plus `startupBookkeeping` entries), hides that row and Enter selects the newest real session; a live session with a conversation stays listed.
+
+### Why
+
+- The session-control extension writes the live session's header at startup, so a fresh TUI's own empty session had a file and sorted as the newest row, `(no messages)  0 now`. The untouched selection sat on row 0, and Enter switched onto the session already open and printed `Resumed session` over an empty screen. With a large folder the cursor also jumped onto that row once it loaded.
+
+### Why an extension could not handle it
+
+- The session list and its default selection belong to the built-in interactive picker; extensions cannot filter the rows `/resume` shows.
+
+### Expected merge conflict zones
+
+- LOW: the start of `SessionList.filterSessions()` and the private helpers next to `isCurrentSessionPath()` in `session-selector.ts`.
+
+## 2026-10-30 - Fallback exhaustion shows each refused rung (senpi#3447)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: a `retry_fallback_exhausted` event that carries
+  `refusals` shows each refused rung with its usable window and the context it would need.
+
+### Why
+
+- Fallback that stopped because every smaller rung was refused ended with no visible reason.
+
+### Why an extension could not handle it
+
+- The exhaustion notice is rendered by the interactive mode from a core event; extensions cannot change that line.
+
+### Expected merge conflict zones
+
+- LOW: the `retry_fallback_exhausted` branch of `handleEvent`.
+
 ## 2026-11-02 - IME composition on the question list shows on the own-answer row, not the footer (senpi#4400)
 
 ### What changed

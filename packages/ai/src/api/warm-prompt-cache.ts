@@ -1,7 +1,7 @@
 import type { Context, Model, ProviderHeaders, SimpleStreamOptions, Usage } from "../types.ts";
 import { withGzipRequestBodies } from "../utils/gzip-request-body.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
-import { getAnthropicCompat, isAnthropicApiBaseUrl } from "../utils/prompt-cache-ttl.ts";
+import { getAnthropicCompat, supportsAnthropicCacheWarming } from "../utils/prompt-cache-ttl.ts";
 import type { AnthropicOptions } from "./anthropic-messages.ts";
 import { isOpenAIResponsesPromptCacheModel } from "./openai-responses-prompt-cache.ts";
 import { getPromptCacheWarmer } from "./prompt-cache-warmers.ts";
@@ -60,11 +60,10 @@ export async function warmPromptCache(
 			usageRaw,
 		};
 	}
-	if (model.api !== "anthropic-messages" || !isAnthropicApiBaseUrl(model.baseUrl)) {
-		return { supported: false };
-	}
+	if (model.api !== "anthropic-messages") return { supported: false };
 
 	const anthropicModel = model as Model<"anthropic-messages">;
+	if (!supportsAnthropicCacheWarming(anthropicModel)) return { supported: false };
 	// Loaded lazily: a static import would pull the Anthropic SDK into the root
 	// barrel and break the lazy provider-loading contract (lazy-module-load.test.ts).
 	const [{ default: Anthropic }, { buildAnthropicWarmPromptCacheParams }] = await Promise.all([

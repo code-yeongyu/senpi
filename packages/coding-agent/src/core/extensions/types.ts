@@ -23,6 +23,7 @@ import type {
 	AgentToolCallOutcome,
 	AgentToolResult,
 	AgentToolUpdateCallback,
+	DeviceFiles,
 	ThinkingLevel,
 	ToolExecutionMode,
 } from "@earendil-works/pi-agent-core";
@@ -121,6 +122,7 @@ import type {
 import type { ReadClassifier } from "../tools/read-classifiers.ts";
 import type { ModelRoute, ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
 import type { McpServerDeclaration } from "./builtin/mcp/config-schema.ts";
+import type { RpcRemoteSource } from "./builtin/terminal/rpc-remote-source.ts";
 import type { McpServerRegistry } from "./mcp-server-registry.ts";
 import type { PermissionPresetName } from "./builtin/permission-system/types.ts";
 import type { EvalHandleHost } from "./eval-handle-host.ts";
@@ -560,6 +562,12 @@ export interface ExtensionContext {
 	readonly browserEngine?: BrowserEngine;
 	/** Caller env the opener gave THIS session (`open_session.env`, senpi#4381); absent when it gave none. */
 	readonly sessionEnv?: Readonly<Record<string, string>>;
+	/**
+	 * The files of the device this session's tools run on (senpi#5839): the local filesystem on a fused session and on a
+	 * hand, the hand's file channel on the loop side of a split session. Data that must stay on the device goes through
+	 * it. Optional for contexts built outside a runner; every runner-built context has it.
+	 */
+	readonly deviceFiles?: DeviceFiles;
 	/** Model registry for API key resolution */
 	modelRegistry: ModelRegistry;
 	/** Current model (may be undefined) */
@@ -2069,6 +2077,11 @@ export interface InputEvent {
 	attribution: InputAttribution;
 	/** How the input will be delivered during streaming, or undefined when idle */
 	streamingBehavior?: "steer" | "followUp";
+	/**
+	 * Set when the input is a thread call from another session: its chain hop count (decision K8). A thread call this
+	 * session sends next carries one more.
+	 */
+	chainCount?: number;
 }
 
 /** Fired after interception and admission determine ownership of an input. */
@@ -3010,6 +3023,12 @@ export interface ExtensionAPI {
 	/** Register a compact read classifier; removed on unregister, failed load, or runtime invalidation. */
 	registerReadClassifier(classifier: ReadClassifier): () => void;
 
+	/**
+	 * Serve `monitor` rpc targets on another device (`<device>/<session>`, `<device>/*`). The latest registration
+	 * wins; removed on unregister, failed load, or runtime invalidation. Without one, such a target is refused.
+	 */
+	registerRpcRemoteSource(source: RpcRemoteSource): () => void;
+
 	// =========================================================================
 	// Actions
 	// =========================================================================
@@ -3791,6 +3810,7 @@ export interface ExtensionContextActions {
 	getAskUserSettings?: () => { enabled: boolean; timeoutMinutes: number };
 	getBrowserEngine?: () => BrowserEngine | undefined;
 	getSessionEnv?: () => Readonly<Record<string, string>> | undefined;
+	getDeviceFiles?: () => DeviceFiles;
 	getImageSettings: () => { autoResize: boolean; blockImages: boolean };
 	sessionSettings: ExtensionSessionSettings;
 	compact: (options?: CompactOptions) => void;
