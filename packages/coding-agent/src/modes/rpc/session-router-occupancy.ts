@@ -141,7 +141,7 @@ export async function evictIdleSession(
 		retained?.retainOnDisconnect === true &&
 		retained.sessionPath !== undefined
 	) {
-		await recordRetainedSession(host, retained, retained.sessionPath).catch((cause: unknown) => {
+		await recordRetainedSession(host, retained, retained.sessionPath, false).catch((cause: unknown) => {
 			process.stderr.write(`senpi rpc handover park record ${sessionId} failed: ${String(cause)}\n`);
 		});
 	}

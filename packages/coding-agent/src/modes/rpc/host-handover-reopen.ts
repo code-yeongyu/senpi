@@ -7,6 +7,7 @@ import {
 	type HandoverParkedEntry,
 	readHandoverParkedSessions,
 } from "./host-handover-parked.ts";
+import { type ResidentWriter, residentWriterProbe } from "./host-handover-resident-writer.ts";
 import { RpcSessionRegistryError } from "./session-registry.ts";
 
 /**
@@ -67,6 +68,7 @@ export async function reopenHandoverParkedSessions(
 	const deadline = Date.now() + HANDOVER_PARKED_REOPEN_BUDGET_MS;
 	const reopenAttempts = new Map<string, number>();
 	const heldPolls = new Map<string, number>();
+	const writerAlive = residentWriterProbe();
 	let emptyStreak = 0;
 	let sawAnyPark = false;
 	for (;;) {
@@ -75,12 +77,12 @@ export async function reopenHandoverParkedSessions(
 		// (senpi#3282). The watch returns, the record persists, and the successor's own watch reopens
 		// it by path with the same durable id.
 		if (holder?.shouldReopen !== undefined && !holder.shouldReopen()) return;
-		const parked = await inheritedParks(daemonDir, holder);
+		const parked = await inheritedParks(daemonDir, holder, writerAlive);
 		for (const entry of parked) {
 			sawAnyPark = true;
 			await reopenOne(daemonDir, open, entry, reopenAttempts, heldPolls, holder);
 		}
-		const remaining = (await inheritedParks(daemonDir, holder)).length;
+		const remaining = (await inheritedParks(daemonDir, holder, writerAlive)).length;
 		if (holder?.shouldReopen !== undefined && !holder.shouldReopen()) return;
 		emptyStreak = remaining === 0 ? emptyStreak + 1 : 0;
 		if (sawAnyPark && emptyStreak >= HANDOVER_PARKED_REOPEN_QUIET_STREAK) return;
@@ -97,9 +99,18 @@ export async function reopenHandoverParkedSessions(
 async function inheritedParks(
 	daemonDir: string,
 	holder: ReopenHolder | undefined,
+	writerAlive: (writer: ResidentWriter) => Promise<boolean>,
 ): Promise<readonly HandoverParkedEntry[]> {
 	const parked = await readHandoverParkedSessions(daemonDir);
-	return parked.filter((entry) => entry.parkedBy === undefined || entry.parkedBy !== holder?.hostInstance);
+	const inherited: HandoverParkedEntry[] = [];
+	for (const entry of parked) {
+		if (entry.parkedBy !== undefined && entry.parkedBy === holder?.hostInstance) continue;
+		// A session still resident in its live writer (a handoff's draining predecessor) is that process's to park,
+		// and its unstamped park is what this host reopens; only a writer that is gone leaves it here to restore.
+		if (entry.residentWriter !== undefined && (await writerAlive(entry.residentWriter))) continue;
+		inherited.push(entry);
+	}
+	return inherited;
 }
 
 async function reopenOne(

@@ -32,6 +32,7 @@ import {
 } from "./rpc-input-validation.ts";
 import { type SessionEnv, sessionEnvShapeError } from "./session-caller-env.ts";
 import { applyContextPatch, type SessionContextOverlay } from "./session-context-patch.ts";
+import { isResidentWriter, type ResidentWriter } from "./host-handover-resident-writer.ts";
 
 export interface HandoverParkedEntry {
 	readonly sessionPath: string;
@@ -67,6 +68,11 @@ export interface HandoverParkedEntry {
 	 * Absent on entries an older generation wrote, which every reader treats as a predecessor's park.
 	 */
 	readonly parkedBy?: string;
+	/**
+	 * Present while the session is open on its host (senpi#6190); a park drops it. A successor reopens a stamped
+	 * entry only once that writer process is gone, so it never opens a session its live predecessor still holds.
+	 */
+	readonly residentWriter?: ResidentWriter;
 }
 
 const recordDir = (daemonDir: string): string => join(daemonDir, "handover-parked");
@@ -91,6 +97,7 @@ function isEntry(value: unknown): value is HandoverParkedEntry {
 		(record.durableSessionId === undefined || typeof record.durableSessionId === "string") &&
 		(record.cwd === undefined || typeof record.cwd === "string") &&
 		(record.parkedBy === undefined || typeof record.parkedBy === "string") &&
+		(record.residentWriter === undefined || isResidentWriter(record.residentWriter)) &&
 		(record.thinkingLevel === undefined || typeof record.thinkingLevel === "string") &&
 		(record.permissionPreset === undefined ||
 			(typeof record.permissionPreset === "string" &&
