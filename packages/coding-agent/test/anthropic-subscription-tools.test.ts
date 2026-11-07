@@ -103,6 +103,16 @@ describe("Claude SDK OAuth tool integration", () => {
 		],
 		["Bash", { command: "npm test", timeout: 30_000 }, { command: "npm test", timeout: 30 }],
 		[
+			"Bash",
+			{ command: "npm run dev", run_in_background: true },
+			{ command: "npm run dev", timeout: undefined, run_in_background: true },
+		],
+		[
+			"Bash",
+			{ command: "npm test", timeout: 5_000, run_in_background: false },
+			{ command: "npm test", timeout: 5, run_in_background: false },
+		],
+		[
 			"Grep",
 			{ pattern: "needle", path: "src", glob: "*.ts", "-i": true, context: 2, head_limit: 5 },
 			{ pattern: "needle", path: "src", glob: "*.ts", ignoreCase: true, context: 2, limit: 5 },
