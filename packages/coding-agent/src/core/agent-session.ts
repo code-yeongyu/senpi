@@ -2197,8 +2197,11 @@ export class AgentSession {
 		}
 
 		try {
-			const storedResult = await this._modelRuntime.getAuth(model, { signal });
 			const activeApiKey = await this.agent.getApiKey?.(model.provider);
+			// A pooled provider selects its account per request, as the main turn does; an explicit key
+			// resolved here would pin the request to the stored top-level slot (senpi#1814, senpi#1556).
+			if (activeApiKey === undefined && this._modelRuntime.rotatesCredentials(model)) return { model, thinkingLevel };
+			const storedResult = await this._modelRuntime.getAuth(model, { signal });
 			const result =
 				activeApiKey !== undefined && storedResult?.source !== "OAuth"
 					? await this._modelRuntime.getAuth(model, { apiKey: activeApiKey, signal })
