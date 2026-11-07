@@ -39,7 +39,9 @@ describe("TUI multiplexer scrollback preservation", () => {
 			await terminal.waitForRender();
 
 			const writes = terminal.getWrites();
-			assert.ok(writes.includes(SCREEN_CLEAR + HOME), "width change should clear and home the visible screen");
+			// senpi#3405: the width change repaints the viewport in place instead of clearing the screen and
+			// re-emitting the whole transcript into the scrollback.
+			assert.strictEqual(countOccurrences(writes, SCREEN_CLEAR), 0, "width change should not clear the screen");
 			assert.strictEqual(
 				countOccurrences(writes, SCROLLBACK_CLEAR),
 				0,
