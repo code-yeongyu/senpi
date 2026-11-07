@@ -32,16 +32,12 @@ import {
 } from "@earendil-works/pi-ai";
 import { classifierErrorResult, imageErrorResult } from "@earendil-works/pi-ai/utils/model-operations";
 import type { RetryPolicyProfile } from "@earendil-works/pi-ai/utils/retry-profile/types";
+import { composeRequestAuth, configValueFieldResolver, requestAuthDefinition } from "./egress/compose-request-auth.ts";
 import type { ModelConfig, ModelsJsonModel, ModelsJsonModelOverride, ModelsJsonProvider } from "./model-config.ts";
 import { applyUserBaseUrl } from "./provider-base-url-override.ts";
-import {
-	composeApiKeyAuth,
-	configuredHeaders,
-	type StoredProviderEnvReader,
-	withConfiguredAuth,
-} from "./provider-api-key-auth.ts";
+import { composeApiKeyAuth, configuredHeaders, type StoredProviderEnvReader } from "./provider-api-key-auth.ts";
 import type { HeaderAuthStatusSource } from "./provider-header-auth.ts";
-import { clearConfigValueCache, resolveHeadersOrThrow } from "./resolve-config-value.ts";
+import { clearConfigValueCache } from "./resolve-config-value.ts";
 
 export interface ExtensionOAuthConfig {
 	name: string;
@@ -527,12 +523,15 @@ function composeOAuthAuth(
 		toAuth: async (credential) => {
 			const auth = await oauth.toAuth(credential);
 			const env = credential.env;
-			const headers = await resolveHeadersOrThrow(
-				rawHeaders,
-				`provider "${providerId}"`,
-				typeof env === "object" && env !== null ? (env as Record<string, string>) : undefined,
+			return composeRequestAuth(
+				auth,
+				requestAuthDefinition(rawHeaders, authHeader),
+				configValueFieldResolver(
+					rawHeaders,
+					`provider "${providerId}"`,
+					typeof env === "object" && env !== null ? (env as Record<string, string>) : undefined,
+				),
 			);
-			return withConfiguredAuth(auth, headers, authHeader);
 		},
 	};
 }

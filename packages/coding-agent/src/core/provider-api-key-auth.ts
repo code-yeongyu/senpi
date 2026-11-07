@@ -3,21 +3,14 @@ import {
 	type AuthContext,
 	type AuthInteraction,
 	type AuthResult,
-	hasCredentialHeaders,
-	type ModelAuth,
 	type Provider,
-	type ProviderHeaders,
 } from "@earendil-works/pi-ai";
 import type { ConfigValue } from "@earendil-works/pi-ai/utils/config-reference";
 import { assertConfigReferenceAuthority } from "./config-reference-resolver.ts";
+import { composeRequestAuth, configValueFieldResolver, requestAuthDefinition } from "./egress/compose-request-auth.ts";
 import type { ModelsJsonProvider } from "./model-config.ts";
 import { checkConfiguredHeaderAuth, headerAuthResolutionSource } from "./provider-header-auth.ts";
-import {
-	getConfigValueEnvVarNames,
-	isCommandConfigValue,
-	resolveConfigValueOrThrow,
-	resolveHeadersOrThrow,
-} from "./resolve-config-value.ts";
+import { getConfigValueEnvVarNames, isCommandConfigValue, resolveConfigValueOrThrow } from "./resolve-config-value.ts";
 
 /** Reads another provider's stored credential env: routing metadata only, never keys. */
 export type StoredProviderEnvReader = (providerId: string) => Promise<Record<string, string> | undefined>;
@@ -102,11 +95,15 @@ export function composeApiKeyAuth(
 			const result = await resolveBaseAuth(providerId, inherited, rawKey, input);
 			const explicitEnv = { ...(input.credential?.env ?? {}), ...(result?.env ?? {}) };
 			const headerEnv = await configContextEnv(Object.values(rawHeaders ?? {}), input.ctx, explicitEnv);
-			const headers = await resolveHeadersOrThrow(rawHeaders, `provider "${providerId}"`, headerEnv);
-			if (!result && !hasCredentialHeaders(headers)) return undefined;
+			const auth = await composeRequestAuth(
+				result?.auth,
+				requestAuthDefinition(rawHeaders, authHeader),
+				configValueFieldResolver(rawHeaders, `provider "${providerId}"`, headerEnv),
+			);
+			if (!auth) return undefined;
 			return {
 				...result,
-				auth: withConfiguredAuth(result?.auth ?? {}, headers, authHeader),
+				auth,
 				source: result?.source ?? headerSource,
 			};
 		},
@@ -146,10 +143,13 @@ function ambientOnlyAuth(
 		if (!result || (input.credential?.key && input.credential.key !== result.auth.apiKey)) return undefined;
 		const explicitEnv = { ...(input.credential?.env ?? {}), ...(result.env ?? {}) };
 		const headerEnv = await configContextEnv(Object.values(rawHeaders ?? {}), input.ctx, explicitEnv);
-		const headers = await resolveHeadersOrThrow(rawHeaders, `provider "${providerId}"`, headerEnv);
 		return {
 			...result,
-			auth: withConfiguredAuth(result.auth, headers, authHeader),
+			auth: await composeRequestAuth(
+				result.auth,
+				requestAuthDefinition(rawHeaders, authHeader),
+				configValueFieldResolver(rawHeaders, `provider "${providerId}"`, headerEnv),
+			),
 			source: result.source ?? headerSource,
 		};
 	};
@@ -187,14 +187,18 @@ function ambientApiKeyAuth(
 		if (!result) return undefined;
 		const explicitEnv = { ...(input.credential?.env ?? {}), ...(result.env ?? {}) };
 		const headerEnv = await configContextEnv(Object.values(rawHeaders ?? {}), input.ctx, explicitEnv);
-		const headers = await resolveHeadersOrThrow(rawHeaders, `provider "${providerId}"`, headerEnv);
+		const auth = await composeRequestAuth(
+			result.auth,
+			requestAuthDefinition(rawHeaders, authHeader),
+			configValueFieldResolver(rawHeaders, `provider "${providerId}"`, headerEnv),
+		);
 		// Stored-then-env (helpers.ts invariant): the provider's own stored env wins over ambient-resolved env.
 		const env =
 			result.env || input.credential?.env ? { ...(result.env ?? {}), ...(input.credential?.env ?? {}) } : undefined;
 		return {
 			...result,
 			...(env ? { env } : {}),
-			auth: withConfiguredAuth(result.auth, headers, authHeader),
+			auth,
 			source: result.source ?? headerSource,
 		};
 	};
@@ -243,20 +247,6 @@ export function configuredHeaders(
 	for (const value of Object.values(config?.headers ?? {})) assertConfigReferenceAuthority(value);
 	if (!config?.headers && !extension?.headers) return undefined;
 	return { ...config?.headers, ...extension?.headers };
-}
-
-export function withConfiguredAuth(
-	auth: ModelAuth,
-	headers: ProviderHeaders | undefined,
-	authHeader: boolean,
-): ModelAuth {
-	let mergedHeaders: ProviderHeaders | undefined =
-		auth.headers || headers ? { ...auth.headers, ...headers } : undefined;
-	if (authHeader) {
-		if (!auth.apiKey) throw new Error("authHeader requires a resolved API key");
-		mergedHeaders = { ...mergedHeaders, Authorization: `Bearer ${auth.apiKey}` };
-	}
-	return { ...auth, headers: mergedHeaders };
 }
 
 async function resolveBaseAuth(
