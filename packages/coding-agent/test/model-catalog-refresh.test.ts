@@ -1,6 +1,10 @@
 import type { ModelsRefreshOptions, ModelsRefreshResult } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
-import { refreshModelCatalogs } from "../src/modes/interactive/model-catalog-refresh.ts";
+import {
+	describeModelRefreshErrors,
+	refreshModelCatalogs,
+	refreshModelCatalogsOnRequest,
+} from "../src/modes/interactive/model-catalog-refresh.ts";
 
 interface Deferred<T> {
 	promise: Promise<T>;
@@ -77,5 +81,47 @@ describe("interactive model catalog refresh", () => {
 		expect(runtime.refresh).toHaveBeenCalledTimes(2);
 		secondController.abort();
 		await expect(second).rejects.toMatchObject({ name: "AbortError" });
+	});
+
+	// senpi#839: a credentialed provider with an empty stored catalog (Ollama with only an env key)
+	// listed no model because every interactive refresh ran offline.
+	it("fetches catalogs over the network when the user asks for a refresh", async () => {
+		const runtime = { refresh: vi.fn((_options?: ModelsRefreshOptions) => Promise.resolve(successfulRefresh())) };
+
+		await refreshModelCatalogsOnRequest(runtime, new AbortController().signal, {});
+
+		expect(runtime.refresh).toHaveBeenCalledOnce();
+		expect(runtime.refresh.mock.calls[0]?.[0]?.allowNetwork).toBe(true);
+	});
+
+	it("keeps a user-requested refresh offline when OFFLINE is set", async () => {
+		const runtime = { refresh: vi.fn((_options?: ModelsRefreshOptions) => Promise.resolve(successfulRefresh())) };
+
+		await refreshModelCatalogsOnRequest(runtime, new AbortController().signal, { PI_OFFLINE: "1" });
+
+		expect(runtime.refresh.mock.calls[0]?.[0]?.allowNetwork).toBeUndefined();
+	});
+
+	it("leaves the background refresh under the runtime's own network policy", async () => {
+		const runtime = { refresh: vi.fn((_options?: ModelsRefreshOptions) => Promise.resolve(successfulRefresh())) };
+
+		await refreshModelCatalogs(runtime, new AbortController().signal);
+
+		expect(runtime.refresh.mock.calls[0]?.[0]?.allowNetwork).toBeUndefined();
+	});
+
+	it("names each failed provider together with its last fetch error", () => {
+		const one = describeModelRefreshErrors(new Map([["ollama", new Error("401 Unauthorized")]]));
+		const two = describeModelRefreshErrors(
+			new Map([
+				["openai", new Error("timeout")],
+				["ollama", new Error("401 Unauthorized")],
+			]),
+		);
+
+		expect(describeModelRefreshErrors(new Map())).toBeUndefined();
+		expect(one).toContain("ollama: 401 Unauthorized");
+		expect(two).toContain("openai: timeout");
+		expect(two).toContain("ollama: 401 Unauthorized");
 	});
 });
