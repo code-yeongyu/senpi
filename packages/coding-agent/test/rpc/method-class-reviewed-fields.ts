@@ -25,6 +25,7 @@ export const REVIEWED_FIELDS = {
 	get_steering_messages: { fields: ["admissionId", "id", "sessionId", "type"] },
 	get_commands: { fields: ["admissionId", "id", "sessionId", "type"] },
 	get_loaded_surfaces: { fields: ["admissionId", "id", "sessionId", "type"] },
+	get_project_trust: { fields: ["admissionId", "id", "sessionId", "type"] },
 	get_available_models: { fields: ["admissionId", "id", "sessionId", "type"] },
 	get_available_thinking_levels: { fields: ["admissionId", "id", "sessionId", "type"] },
 	get_model_thinking_level: { fields: ["admissionId", "id", "modelId", "provider", "sessionId", "type"] },

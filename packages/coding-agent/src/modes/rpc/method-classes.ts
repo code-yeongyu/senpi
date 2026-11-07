@@ -181,6 +181,8 @@ export const RPC_METHOD_CLASS = {
 	get_steering_messages: "observe",
 	get_commands: "observe",
 	get_loaded_surfaces: "observe",
+	// the session's own effective trust and saved decision, as get_state already shows projectTrusted
+	get_project_trust: "observe",
 	get_available_models: "observe",
 	get_available_thinking_levels: "observe",
 	get_model_thinking_level: "observe",
@@ -276,6 +278,11 @@ export const RPC_METHOD_CLASS = {
 	set_steering_mode: "device_admin",
 	set_follow_up_mode: "device_admin",
 	set_auto_retry: "device_admin",
+	// a consent decision saved in the device's trust store: it decides whether project code runs on the device
+	set_project_trust: "device_admin",
+	// reads a file from the session's cwd; writes one into it
+	get_project_settings: "device_admin",
+	set_project_setting: "device_admin",
 	// switch_session opens (and appends to) the named session file; import_jsonl reads any host file into a session
 	// both write what the model reads as engine work: an assistant reply it never gave, a custom context message
 	// (append_session_entry classes the same entries appended directly as device_admin)

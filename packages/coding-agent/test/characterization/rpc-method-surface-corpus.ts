@@ -132,6 +132,11 @@ export const TODAY: { readonly [M in RpcCommand["type"]]: string } = {
 	get_media: '{"toolCallId":"$NO","contentIndex":0} => no:media_not_found:media_not_found',
 	get_commands: "ok{commands}",
 	get_loaded_surfaces: "ok{extensions,mcpServers}",
+	get_project_trust: "ok{choices,cwd,locked,projectTrusted,requiresTrust,saved}",
+	set_project_trust: '{"choice":"trust"} => ok{choices,cwd,locked,projectTrusted,requiresTrust,saved}',
+	get_project_settings: "ok{cwd,error,exists,path,projectTrusted,settings}",
+	set_project_setting:
+		'{"key":"1x14","value":true} => no:invalid_argument:set_project_setting requires an identifier \'key\' and a JSON \'value\' (null removes the key).',
 	extension_request: '{"name":"x14-none"} => no::Unknown extension RPC request: x14-none',
 	"eval_cells.list": "ok:object",
 	"eval_cells.peek": '{"cellId":"$NO"} => no:eval_cell_not_found:Unknown detached eval cell "<uuid>"',
