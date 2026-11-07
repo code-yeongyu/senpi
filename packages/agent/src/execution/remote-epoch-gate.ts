@@ -2,8 +2,9 @@ import type { RemoteFloor, RemoteFloorAck, RemoteFloorRefused } from "./remote-p
 
 /**
  * A session's side of the epoch floor (brain/hand S35): an owner at `epoch` dispatches a scope lane's calls only after
- * the hand acked exactly that epoch on the lane. An ack above it means a newer owner holds the session, and a refusal
- * means this sender may not own it; either way the lane never dispatches again.
+ * the hand acked exactly that epoch on the lane. An ack above it means a newer owner holds the session, an ack below it
+ * means the owner record names a later epoch than this owner's (senpi#5860), and a refusal means this sender may not own
+ * it; in each case the lane never dispatches again (`epoch_superseded`, or the refusal).
  */
 export interface EpochGate {
 	/** Resolves `undefined` once `lane` may dispatch, or the reason it never will. The first ask sends the floor. */
@@ -54,7 +55,8 @@ export function createEpochGate(epoch: number, send: (lane: string, floor: Remot
 			if (state === undefined || state.verdict !== undefined) return;
 			if (message.kind === "floor_refused") return decide(state, message.reason);
 			if (message.floor === epoch) return decide(state, undefined);
-			decide(state, message.floor > epoch ? "epoch_superseded" : "epoch_floor_mismatch");
+			// Above: a newer owner holds the session. Below: the record names a later epoch than this owner's (senpi#5860).
+			decide(state, "epoch_superseded");
 		},
 		resend() {
 			for (const [lane, state] of lanes) if (state.verdict?.refusal === undefined) ask(lane, state);

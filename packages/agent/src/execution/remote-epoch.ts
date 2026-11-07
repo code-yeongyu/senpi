@@ -25,12 +25,27 @@ export interface HandEpochFence {
 	admits(scope: string, epoch: number | undefined, sender: string): boolean;
 }
 
+/**
+ * The owner of a scope's session: the brain principal, and, when the placement is claimed by CAS, the epoch its claim
+ * recorded (SP6 `PlacementOwner`). A claim winner that died before raising its floor leaves the next owner more than one
+ * epoch above the floor; that owner may raise to exactly its recorded epoch, and never above it (senpi#5860).
+ */
+export type ScopeOwner = string | { readonly principal: string; readonly epoch: number };
+
 export interface HandEpochFenceOptions {
 	/**
-	 * The brain principal that owns each scope's session now: the embedder's placement record, which changes when the
-	 * session moves. Only that owner raises the scope's floor; any other sender is refused, whatever grant it holds.
+	 * The hand's copy of the record of the brain principal that owns each scope's session now: the embedder's placement
+	 * record, which changes when the session moves. Only that owner raises the scope's floor; any other sender is refused,
+	 * whatever grant it holds.
 	 */
-	readonly ownerOf: (scope: string) => string | undefined;
+	readonly ownerOf: (scope: string) => ScopeOwner | undefined;
+	/**
+	 * Reads the record itself (record freshness, senpi#5860): called once before a raise whose epoch is above the copy's
+	 * epoch is decided, never for a raise at or below it, and coalesced per scope. It runs before the raise joins the
+	 * ledger's admission line, so a slow read never holds a ledger step. A copy that names a bare principal is never
+	 * refreshed; a missing copy is. Without it, the copy decides.
+	 */
+	readonly refreshOwner?: (scope: string) => Promise<ScopeOwner | undefined>;
 	/**
 	 * Where floors persist: the hand's store, under its owner epoch, on the execution ledger's admission line, so a floor
 	 * and every ledger step are ordered and a restarted hand keeps the floors it acked. Without it, floors live as long
@@ -63,7 +78,7 @@ function decodeFloor(data: StoreValue): Floor {
  * rival at the new owner's epoch is fenced.
  */
 export function createHandEpochFence(options: HandEpochFenceOptions): HandEpochFence {
-	const { durable, ownerOf } = options;
+	const { durable, ownerOf, refreshOwner } = options;
 	const floors = new Map<string, Floor>();
 	const ready = (async () => {
 		if (durable === undefined) return;
@@ -71,28 +86,85 @@ export function createHandEpochFence(options: HandEpochFenceOptions): HandEpochF
 			floors.set(document.key.slice(EPOCH_FLOOR_PREFIX.length), decodeFloor(document.data));
 	})();
 
-	const raiseNow = async (scope: string, epoch: number, sender: string): Promise<FloorRaise> => {
-		if (ownerOf(scope) !== sender) return { kind: "refused", reason: "peer_unauthorized" };
+	const reading = new Map<string, Promise<ScopeOwner | undefined>>();
+	/** The latest record a read returned, per scope: a copy older than it never decides again. */
+	const lastRead = new Map<string, ScopeOwner | undefined>();
+	const refreshed = (scope: string, read: NonNullable<typeof refreshOwner>): Promise<ScopeOwner | undefined> => {
+		const inFlight = reading.get(scope);
+		if (inFlight !== undefined) return inFlight;
+		const next = read(scope)
+			.then((owner) => {
+				lastRead.set(scope, owner);
+				return owner;
+			})
+			.finally(() => reading.delete(scope));
+		reading.set(scope, next);
+		return next;
+	};
+	const copyOf = (scope: string): ScopeOwner | undefined => {
+		const copy = ownerOf(scope);
+		const read = lastRead.get(scope);
+		if (typeof read !== "object" || typeof copy === "string") return copy;
+		return copy !== undefined && copy.epoch >= read.epoch ? copy : read;
+	};
+	/** The record read a raise needs (`undefined`: none; the copy decides at the raise's turn on the admission line). */
+	const readFor = async (
+		scope: string,
+		epoch: number,
+	): Promise<{ readonly owner: ScopeOwner | undefined } | undefined> => {
+		const ahead = (owner: ScopeOwner | undefined): boolean =>
+			typeof owner !== "string" && epoch > (owner?.epoch ?? 0);
+		if (!ahead(copyOf(scope)) || refreshOwner === undefined) return undefined;
+		// A read already in flight may have started before this raiser's claim landed; if it still leaves the raise ahead,
+		// read once more (that read starts after this raise arrived, so after its claim).
+		const joined = reading.has(scope);
+		const owner = await refreshed(scope, refreshOwner);
+		return { owner: joined && ahead(owner) ? await refreshed(scope, refreshOwner) : owner };
+	};
+	/** The owner a raise is decided on, at its turn: the copy then, or the read when the copy is not newer than it. */
+	const ownerAtTurn = (scope: string, read: { readonly owner: ScopeOwner | undefined } | undefined) => {
+		const copy = copyOf(scope);
+		if (read === undefined) return copy;
+		return typeof copy === "object" && typeof read.owner === "object" && copy.epoch > read.owner.epoch
+			? copy
+			: read.owner;
+	};
+
+	const raiseNow = async (
+		scope: string,
+		epoch: number,
+		sender: string,
+		owner: ScopeOwner | undefined,
+	): Promise<FloorRaise> => {
+		const principal = typeof owner === "string" ? owner : owner?.principal;
+		if (principal !== sender) return { kind: "refused", reason: "peer_unauthorized" };
+		const recorded = typeof owner === "string" ? undefined : owner?.epoch;
 		const current = floors.get(scope);
 		const floor = current?.epoch ?? 0;
 		if (epoch < floor) return { kind: "acked", floor };
 		if (current !== undefined && epoch === floor)
 			return current.owner === sender ? { kind: "acked", floor } : { kind: "refused", reason: "epoch_fenced" };
-		if (epoch - floor > EPOCH_FLOOR_MAX_STEP) return { kind: "refused", reason: "epoch_step_exceeded" };
-		const next: Floor = { epoch, owner: sender };
+		// The record's owner below its recorded epoch (an instance that claimed twice): the floor in force, nothing moves.
+		if (current !== undefined && recorded !== undefined && epoch < recorded) return { kind: "acked", floor };
+		const reachable = recorded ?? floor + EPOCH_FLOOR_MAX_STEP;
+		if (epoch > reachable) return { kind: "refused", reason: "epoch_step_exceeded" };
+		// With no floor yet, an earlier instance of the record's owner opens it at the recorded epoch, never its own lower one:
+		// its gate reads the higher ack as superseded, and the instance at the recorded epoch is acked when it raises.
+		const next: Floor = { epoch: recorded ?? epoch, owner: sender };
 		if (durable === undefined) floors.set(scope, next);
 		else {
 			const write = { op: "put" as const, key: `${EPOCH_FLOOR_PREFIX}${scope}`, data: { ...next } };
 			await durable.store.commit(durable.epoch, [write], () => floors.set(scope, next));
 		}
-		return { kind: "acked", floor: epoch };
+		return { kind: "acked", floor: next.epoch };
 	};
 
 	return {
 		ready,
 		async raise(scope, epoch, sender) {
 			await ready;
-			const run = () => raiseNow(scope, epoch, sender);
+			const read = await readFor(scope, epoch);
+			const run = (): Promise<FloorRaise> => raiseNow(scope, epoch, sender, ownerAtTurn(scope, read));
 			return durable === undefined ? run() : durable.admission.admit(run);
 		},
 		admits(scope, epoch, sender) {
