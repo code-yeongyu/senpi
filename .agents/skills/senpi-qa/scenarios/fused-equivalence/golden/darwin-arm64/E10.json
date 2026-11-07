@@ -4874,8 +4874,7 @@
      },
      {
       "type": "agent_start",
-      "runId": "<uuid:17>",
-      "turnId": "1"
+      "runId": "<uuid:17>"
      },
      {
       "type": "turn_start"
@@ -6289,8 +6288,7 @@
       "willRetry": false
      },
      {
-      "type": "agent_settled",
-      "turnId": "1"
+      "type": "agent_settled"
      },
      {
       "type": "agent_idle"
@@ -6462,8 +6460,7 @@
      },
      {
       "type": "agent_start",
-      "runId": "<uuid:23>",
-      "turnId": "2"
+      "runId": "<uuid:23>"
      },
      {
       "type": "turn_start"
@@ -7802,8 +7799,7 @@
       "willRetry": false
      },
      {
-      "type": "agent_settled",
-      "turnId": "2"
+      "type": "agent_settled"
      },
      {
       "type": "agent_idle"
