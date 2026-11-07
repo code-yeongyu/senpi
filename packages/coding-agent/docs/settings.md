@@ -165,7 +165,7 @@ When this value is anything other than `"auto"`, it overrides any model-level `p
 | `tuiMode` | string | `"regular"` | Interactive TUI mode: `"regular"` or experimental `"fullscreen"`. Changes from `/settings` apply immediately; `--tui-mode` overrides this setting at startup |
 | `fullscreenExitOutput` | string | `"transcript"` | Fullscreen exit output: `"transcript"` prints the final transcript and resume hint, while `"resume-hint"` restores the previous screen and prints only the resume hint. Has no effect in regular TUI mode |
 | `fullscreenScrollbar` | string | `"auto"` | Fullscreen transcript scrollbar: `"auto"` shows it temporarily while scrolling or while the pointer is over its rightmost-column track, `"always"` reserves that column and keeps it visible, and `"hidden"` hides it. Has no effect in regular TUI mode |
-| `fullscreenCopyOnSelect` | boolean | `true` | Automatically copy selected text in fullscreen mode. When disabled, selections stay highlighted and `Ctrl+X` copies the active selection |
+| `fullscreenCopyOnSelect` | boolean | `true` | Automatically copy selected text in fullscreen mode, preserving original Markdown syntax for Markdown content. When disabled, selections stay highlighted and `Ctrl+X` copies the active selection |
 | `fullscreenWheelScrollLines` | `"auto"` or number | `"auto"` | Lines per mouse-wheel event in fullscreen mode, from 1 to 100. `"auto"` moves one line per event in local macOS terminals, which already accelerate wheel and trackpad input; elsewhere, and over SSH, it speeds up fast wheel spins to at most 6 lines per event. Alt+wheel moves five times as far |
 
 For VS Code, include `--wait` so senpi resumes after the editor exits:
