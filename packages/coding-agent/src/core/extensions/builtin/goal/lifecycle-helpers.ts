@@ -190,7 +190,8 @@ async function handleDeniedContinuation(
 	input: Omit<GoalContinuationInput, "goal">,
 	reason: Extract<GoalContinuationVerdict, { kind: "deny" }>["reason"],
 ): Promise<Goal | null> {
-	if (goal.status !== "active" || reason === "not-eligible" || reason === "single-flight") return goal;
+	if (goal.status !== "active" || reason === "not-eligible" || reason === "single-flight" || reason === "live-wait")
+		return goal;
 	const logger = createSessionLogger(ctx.agentDir);
 	const at = Date.now();
 	const blockedReason = blockedReasonForContinuationGuard(reason);
@@ -265,6 +266,7 @@ function blockedReasonForContinuationGuard(
 			return CONTEXT_OVERFLOW_BLOCKED_REASON;
 		case "not-eligible":
 		case "single-flight":
+		case "live-wait":
 		case "stale":
 			return undefined;
 	}

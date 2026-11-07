@@ -34,6 +34,9 @@ suppresses continuations.
 
 ## CONTINUATION POLICY
 
+A backstop re-check (`monitorDelayed`) that fires while a wake source is still live never blocks: when it
+would trip the cap or the repetition guard it is refused as `live-wait`, re-checks stop, and the goal stays
+active on the channel; the channel's drain fire then runs the normal guards (#5325).
 Admission guards: consecutive-continuation cap of 8 (persisted), stale-signature check on
 immediate re-entry, single-flight latch, and the no-progress guard (60 counted continuations
 without a new successful tool effect (a call/result fingerprint unlike the last 256; results mask timestamps/durations/ids, non-mutating calls mask argument numbers), a todo change, or human input — typed or from a `human_input`
