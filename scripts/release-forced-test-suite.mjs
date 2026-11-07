@@ -22,7 +22,7 @@ import { resolveWorkspaceDirectories } from "./run-workspaces.mjs";
  */
 export const FORCED_TEST_SUITE_TIMEOUT_MS = 110 * 60_000;
 
-export const CODING_AGENT_WORKSPACE = "packages/coding-agent";
+const CODING_AGENT_WORKSPACE = "packages/coding-agent";
 
 /**
  * With `CI` set, every coding-agent vitest run is capped at two fork workers (packages/coding-agent/vitest.config.ts),
