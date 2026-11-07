@@ -70,7 +70,8 @@ export class SessionEventWriter extends SessionEventWriterDestinations {
 			);
 			return false;
 		}
-		this.openTurns.note(sessionId, record.type, (record as { reason?: unknown }).reason);
+		const { reason, turnId } = record as { reason?: unknown; turnId?: unknown };
+		this.openTurns.note(sessionId, record.type, reason, turnId);
 		const attached = this.fanout.targets(sessionId, targetId, isTargeted, record.type);
 		// Mirroring is an explicit per-subscription opt-in; it adds destinations, never an attachment.
 		const mirrors = isTargeted ? [] : this.status.mirrorTargets(sessionId, String(record.type));
@@ -263,8 +264,13 @@ export class SessionEventWriter extends SessionEventWriterDestinations {
 	 */
 	protected settleBeforeSeal(sessionId: string): boolean {
 		if (this.sealedSessions.has(sessionId)) return false;
+		const turnId = this.openTurns.turnOf(sessionId);
 		for (let owed = this.openTurns.take(sessionId); owed > 0; owed -= 1) {
-			this.enqueue(sessionId, { type: "agent_settled", reason: "session_closed" });
+			this.enqueue(sessionId, {
+				type: "agent_settled",
+				reason: "session_closed",
+				...(turnId === undefined ? {} : { turnId }),
+			});
 		}
 		return !this.sealedSessions.has(sessionId);
 	}

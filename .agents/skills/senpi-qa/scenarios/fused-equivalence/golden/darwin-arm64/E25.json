@@ -10024,7 +10024,8 @@
      },
      {
       "type": "agent_start",
-      "runId": "<uuid:17>"
+      "runId": "<uuid:17>",
+      "turnId": "1"
      },
      {
       "type": "turn_start"
@@ -11130,7 +11131,8 @@
      },
      {
       "type": "agent_start",
-      "runId": "<uuid:36>"
+      "runId": "<uuid:36>",
+      "turnId": "1"
      },
      {
       "type": "turn_start"
@@ -11574,7 +11576,8 @@
       "willRetry": false
      },
      {
-      "type": "agent_settled"
+      "type": "agent_settled",
+      "turnId": "1"
      },
      {
       "type": "agent_idle"
@@ -11746,7 +11749,8 @@
      },
      {
       "type": "agent_start",
-      "runId": "<uuid:41>"
+      "runId": "<uuid:41>",
+      "turnId": "2"
      },
      {
       "type": "turn_start"
@@ -13340,7 +13344,8 @@
      },
      {
       "type": "agent_start",
-      "runId": "<uuid:59>"
+      "runId": "<uuid:59>",
+      "turnId": "1"
      },
      {
       "type": "turn_start"
@@ -13784,7 +13789,8 @@
       "willRetry": false
      },
      {
-      "type": "agent_settled"
+      "type": "agent_settled",
+      "turnId": "1"
      },
      {
       "type": "agent_idle"
@@ -13956,7 +13962,8 @@
      },
      {
       "type": "agent_start",
-      "runId": "<uuid:64>"
+      "runId": "<uuid:64>",
+      "turnId": "2"
      },
      {
       "type": "turn_start"
@@ -15266,7 +15273,8 @@
      },
      {
       "type": "agent_start",
-      "runId": "<uuid:106>"
+      "runId": "<uuid:106>",
+      "turnId": "1"
      },
      {
       "type": "turn_start"
@@ -15710,7 +15718,8 @@
       "willRetry": false
      },
      {
-      "type": "agent_settled"
+      "type": "agent_settled",
+      "turnId": "1"
      },
      {
       "type": "agent_idle"
@@ -16087,7 +16096,8 @@
      },
      {
       "type": "agent_start",
-      "runId": "<uuid:135>"
+      "runId": "<uuid:135>",
+      "turnId": "1"
      },
      {
       "type": "turn_start"
@@ -17269,7 +17279,8 @@
      },
      {
       "type": "agent_start",
-      "runId": "<uuid:180>"
+      "runId": "<uuid:180>",
+      "turnId": "1"
      },
      {
       "type": "turn_start"
@@ -17749,7 +17760,8 @@
       "willRetry": false
      },
      {
-      "type": "agent_settled"
+      "type": "agent_settled",
+      "turnId": "1"
      },
      {
       "type": "agent_idle"

@@ -2744,6 +2744,15 @@ context - inside a provider scope of their own, then drops them.
 - A host whose sessions run in worker isolates (`--session-runtime worker`) has nothing it can warm from the host
   process: it answers `state: "unsupported"` and does not advertise the capability. A draining generation refuses with
   `host_draining`.
+- A host whose launch carried a private descriptor table (`SENPI_PRIVATE_FDS`) runs this warm itself once at boot,
+  for its default profile (the host's cwd and context, no `kind`), right after it starts listening, so an extension
+  can claim its private channel before any client connects. A `warm` of that profile then joins it, or answers
+  `already_warm` once it is done, and never loads again; a boot load that fails is logged to stderr and the host
+  keeps serving. Without a table nothing loads before an `open_session` or `warm`.
+  The boot warm's factory call is what claims the channel: its services are then dropped and its provider scope is
+  closed, so every later session's `takeInheritedPrivateChannel` returns `undefined`. An extension must keep its
+  channel handling host-global, never tied to that factory call's `pi`. This applies only to in-process hosts: a
+  `--session-runtime worker` host has no `warm`, so one handed a table loads nothing at boot.
 
 Probe `warm` in `get_protocol_info` capabilities before sending it: an older host answers an unknown command with an
 error.
@@ -6331,6 +6340,9 @@ Emitted when the agent begins processing a prompt.
 state readback. It is captured at run start, before asynchronous delivery; a later run
 cannot replace the ID on a queued start event. Older engines omit this additive field.
 
+`turnId` (additive) is the session's `currentTurnId` for the run that started: the `expectedTurnId` a steer
+names, and the `turnId` its `agent_settled` carries.
+
 ### agent_end
 
 Emitted when one low-level agent run completes. Contains all messages generated during this run. If `willRetry` is true, an automatic retry will follow. A run stopped because its session was replaced also carries `abortCause: { kind: "session_replaced", reason, targetSessionFile?, targetSessionId? }` (see `session_replaced`); extensions' own `agent_end` does not carry it, they learn of the replacement from `session_shutdown`.
@@ -6412,6 +6424,9 @@ Emitted after the full session-level run settles. At this point senpi will not c
 A multi-session host that closes, parks or releases a session mid-turn first publishes the settle that turn will now
 never write, with `"reason": "session_closed"`, on the same broadcast as every `agent_settled`: whoever counted the
 `agent_start` (the supervisor's idle-exit observer included) sees it end. Older hosts never send `reason`.
+
+`turnId` (additive) names the turn that settled: the `turnId` its `agent_start` carried, on an ordinary settle
+and on a `session_closed` one alike, so a consumer can report each turn end once. Older engines omit it.
 
 ### entry_appended: goal and engine stops
 
