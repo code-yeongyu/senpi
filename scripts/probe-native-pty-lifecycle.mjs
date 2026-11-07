@@ -54,6 +54,41 @@ const exit = await session.waitExit();
 if (!exit || typeof exit !== "object") throw new Error("native PtySession waitExit returned no exit object");
 if (exit.cancelled !== true) throw new Error(`native PtySession exit was not cancelled: ${JSON.stringify(exit)}`);
 
+// senpi#5519: the TS layer passes the whole child environment (process.env overlaid by the overrides, undefined =
+// deleted), and the addon clears its own. The child must still get a complete environment and the platform's
+// default shell must still run, while a variable deleted for it never comes back from the OS environment.
+const PROBE = "SENPI_PTY_ENV_PROBE";
+process.env[PROBE] = "/closure/empty.pem";
+const windows = process.platform === "win32";
+const envChunks = [];
+const envSession = createSession(
+	{
+		command: windows ? (process.env.ComSpec ?? "cmd.exe") : "/bin/sh",
+		args: windows ? ["/d", "/s", "/c", "set"] : ["-c", "env"],
+		env: { ...process.env, [PROBE]: undefined },
+		cols: 200,
+		rows: 24,
+		timeoutMs: 10000,
+	},
+	(chunk) => {
+		envChunks.push(Buffer.from(chunk));
+	},
+);
+const envExit = await envSession.waitExit();
+const envOutput = Buffer.concat(envChunks).toString("utf8");
+const childNames = new Set(
+	envOutput
+		.split(/\r?\n/)
+		.map((line) => line.replace(/\u001b\[[0-9;?]*[A-Za-z]/g, "").split("=")[0]?.trim().toUpperCase())
+		.filter(Boolean),
+);
+const required = windows ? ["PATH", "SYSTEMROOT", "COMSPEC", "USERPROFILE", "TEMP"] : ["PATH", "HOME"];
+const missing = required.filter((name) => !childNames.has(name));
+if (envExit?.exitCode !== 0) throw new Error(`default shell env probe exited ${JSON.stringify(envExit)}`);
+if (missing.length > 0) throw new Error(`native PtySession child environment is missing ${missing.join(", ")}`);
+// Absence is checked on the raw output: a ConPTY escape sequence before the name cannot hide a leak.
+if (envOutput.toUpperCase().includes(`${PROBE}=`)) throw new Error(`native PtySession child inherited the deleted ${PROBE}`);
+
 process.stdout.write(
 	JSON.stringify(
 		{
@@ -62,6 +97,7 @@ process.stdout.write(
 			methods: ["write", "resize", "kill", "waitExit"],
 			output,
 			exit,
+			childEnvironment: { required, missing, deletedAbsent: !envOutput.toUpperCase().includes(`${PROBE}=`), exit: envExit },
 		},
 		null,
 		2,
