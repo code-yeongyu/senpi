@@ -141,6 +141,33 @@ export function isQuotaExhaustionMessage(errorMessage: string | undefined): bool
 	return true;
 }
 
+/**
+ * Account entitlement and account-state refusals (senpi#3350): the provider refuses the account
+ * itself, not the request's timing, so waiting cannot lift them and a same-model retry fails the
+ * same way. Their wrappers often carry transient-looking tokens (`"type":"server_error"`, a `429`
+ * status), which is why they are listed explicitly and outrank the retryable patterns.
+ */
+const ENTITLEMENT_REFUSAL_PATTERNS = [
+	// OpenCode Go, 403 wrapped as `{"type":"server_error","message":"Upstream request failed: An
+	// active OpenCode Go subscription is required to use Go models."}`.
+	"an active [^\\n]{0,40}subscription is required",
+	// Kimi Code, 403: "Your current subscription does not have access to Kimi Code right now."
+	"subscription does not have access",
+	// Antigravity, 400 FAILED_PRECONDITION: "User location is not supported for the API use."
+	"user location is not supported",
+	// Antigravity, 403: "Verify your account to continue".
+	"verify your account to continue",
+	// Z.ai, 429 code 1313: "Your request frequency has been limited due to abnormal usage. To restore
+	// access, please submit a request." Access returns only after the user files that request.
+	"request frequency has been limited due to abnormal usage",
+] as const;
+
+const ENTITLEMENT_REFUSAL_PATTERN = buildProviderErrorPattern(ENTITLEMENT_REFUSAL_PATTERNS);
+
+export function isEntitlementRefusalMessage(errorMessage: string | undefined): boolean {
+	return errorMessage !== undefined && ENTITLEMENT_REFUSAL_PATTERN.test(errorMessage);
+}
+
 const NON_QUOTA_NON_RETRYABLE_PATTERNS = [
 	// Request-shape rejections: the provider refused the payload we built, not the
 	// work it describes. Gateways wrap these in whatever status they like — the
@@ -159,6 +186,8 @@ const NON_QUOTA_NON_RETRYABLE_PATTERNS = [
 	// Legacy text-only SIWC failures. Structured diagnostics take precedence below;
 	// this code alone proves no reset time.
 	"subscription_sharing_usage_limit_exceeded",
+
+	...ENTITLEMENT_REFUSAL_PATTERNS,
 ] as const;
 
 const NON_QUOTA_NON_RETRYABLE_PATTERN = buildProviderErrorPattern(NON_QUOTA_NON_RETRYABLE_PATTERNS);
