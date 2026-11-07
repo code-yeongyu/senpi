@@ -185,6 +185,65 @@ describe("NestedToolCallRunner", () => {
 
 		expect(maxActive).toEqual({ sequential: 1, parallel: 3 });
 	});
+
+	it("does not reuse ids after the caller's record is taken", async () => {
+		const echo: AgentTool = {
+			name: "echo",
+			label: "Echo",
+			description: "Echo",
+			parameters: Type.Object({}),
+			async execute() {
+				return { content: [], details: {} };
+			},
+		};
+		const { runner } = createRunner([echo]);
+
+		const first = await runner.execute("call", "echo", {});
+		expect(first.toolCall.id).toBe("call/1");
+		expect(runner.takeRecord("call")?.calls?.calls.map((call) => call.id)).toEqual(["call/1"]);
+
+		// Work that outlives the result message: the caller's scope is gone, but its next id must not repeat.
+		const late = await runner.execute("call", "echo", {});
+		expect(late.toolCall.id).toBe("call/2");
+
+		// The ids only start over with the runner itself.
+		runner.clear();
+		const next = await runner.execute("call", "echo", {});
+		expect(next.toolCall.id).toBe("call/1");
+	});
+
+	it("does not reuse ids for a nested caller that ended", async () => {
+		const leaf: AgentTool = {
+			name: "leaf",
+			label: "Leaf",
+			description: "Leaf",
+			parameters: Type.Object({}),
+			async execute() {
+				return { content: [], details: {} };
+			},
+		};
+		const tools: AgentTool[] = [leaf];
+		const { runner } = createRunner(tools);
+		let middleId: string | undefined;
+		tools.push({
+			name: "middle",
+			label: "Middle",
+			description: "Calls leaf",
+			parameters: Type.Object({}),
+			async execute(toolCallId) {
+				middleId = toolCallId;
+				await runner.execute(toolCallId, "leaf", {});
+				return { content: [], details: {} };
+			},
+		});
+
+		await runner.execute("call", "middle", {});
+		expect(middleId).toBe("call/1");
+
+		// The nested caller's own scope is deleted when it ends; a late child below it must not repeat call/1/1.
+		const late = await runner.execute(middleId ?? "", "leaf", {});
+		expect(late.toolCall.id).toBe("call/1/2");
+	});
 });
 
 describe("NestedCallRecorder", () => {
