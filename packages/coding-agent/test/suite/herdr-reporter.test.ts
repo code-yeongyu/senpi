@@ -188,7 +188,7 @@ describe("herdr lifecycle reporter (senpi#1645)", () => {
 		expect(interval.mock.results[0]?.value.hasRef()).toBe(false);
 		await f.bus("terminal_monitor_state", { activeCount: 2 });
 		expect(f.requests.at(-1)?.params).toMatchObject({
-			state: "idle",
+			state: "working",
 			message: "1 subagent running + 2 monitors live",
 		});
 		f.setIdle(false);

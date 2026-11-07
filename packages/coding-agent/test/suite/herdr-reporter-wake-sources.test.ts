@@ -15,8 +15,8 @@ afterEach(async () => {
 	vi.unstubAllEnvs();
 });
 
-describe("herdr lifecycle reporter: working is the turn, and live wake sources are named", () => {
-	it("keeps the pane working through a turn with a DAG run live, then idles naming it until it clears", async () => {
+describe("herdr lifecycle reporter: a turn and bounded work are working, open-ended sources are named on idle", () => {
+	it("keeps the pane working through settlement while a DAG run is live, and idles when it clears", async () => {
 		// Given
 		const f = await herdrReporterFixture();
 		await f.start();
@@ -32,7 +32,7 @@ describe("herdr lifecycle reporter: working is the turn, and live wake sources a
 		await f.emit("agent_settled");
 
 		// Then
-		expect(f.requests.at(-1)?.params).toMatchObject({ state: "idle", message: "1 DAG run" });
+		expect(f.requests.at(-1)?.params).toMatchObject({ state: "working", message: "1 DAG run" });
 
 		// When
 		await f.bus(WAKE, { source: "omo-dag", activeCount: 0 });
@@ -63,7 +63,7 @@ describe("herdr lifecycle reporter: working is the turn, and live wake sources a
 
 		// Then
 		expect(f.requests.at(-1)?.params).toMatchObject({
-			state: "idle",
+			state: "working",
 			message:
 				"3 subagents running + 2 monitors live + 1 custom-source + 2 detached eval cells + 1 background session",
 		});
@@ -77,8 +77,6 @@ describe("herdr lifecycle reporter: working is the turn, and live wake sources a
 			{ source: "terminal-background-sessions", activeCount: 1 },
 			"1 background session",
 		],
-		["a subagent", WAKE, { source: "senpi-task", activeCount: 1 }, "1 subagent running"],
-		["a detached eval cell", WAKE, { source: "senpi-codemode", activeCount: 1 }, "1 detached eval cell"],
 	])("idles the pane once the turn ends while only %s is live, and names it", async (_what, event, data, message) => {
 		// Given
 		const f = await herdrReporterFixture();
@@ -93,6 +91,25 @@ describe("herdr lifecycle reporter: working is the turn, and live wake sources a
 
 		// Then
 		expect(f.requests.at(-1)?.params).toMatchObject({ state: "idle", message });
+	});
+
+	it.each([
+		["a subagent", { source: "senpi-task", activeCount: 1 }, "1 subagent running"],
+		["a detached eval cell", { source: "senpi-codemode", activeCount: 1 }, "1 detached eval cell"],
+	])("keeps the pane working after the turn while %s will start the next one", async (_what, data, message) => {
+		// Given
+		const f = await herdrReporterFixture();
+		await f.start();
+		f.setIdle(false);
+		await f.emit("agent_start");
+		await f.bus(WAKE, data);
+
+		// When
+		f.setIdle(true);
+		await f.emit("agent_settled");
+
+		// Then
+		expect(f.requests.at(-1)?.params).toMatchObject({ state: "working", message });
 	});
 
 	it("leaves a pending question to the blocked state instead of counting ask-user as work", async () => {
