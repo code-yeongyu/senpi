@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
+import { dotReporters } from "../../scripts/vitest-dot-reporters.mjs";
 
 const telemetrySrcIndex = fileURLToPath(new URL("../telemetry/src/index.ts", import.meta.url));
 
@@ -8,7 +9,7 @@ export default defineConfig({
 		globals: true,
 		environment: "node",
 		testTimeout: 30000, // 30 seconds for API calls
-		reporters: process.env.GITHUB_ACTIONS ? ["dot", "github-actions"] : ["dot"],
+		reporters: dotReporters(),
 		silent: "passed-only",
 		setupFiles: [
 			fileURLToPath(new URL("../../scripts/vitest-temp-setup.ts", import.meta.url)),

@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
+import { dotReporters } from "../../scripts/vitest-dot-reporters.mjs";
 
 const src = (path: string): string => fileURLToPath(new URL(path, import.meta.url));
 
@@ -11,7 +12,7 @@ export default defineConfig({
 	test: {
 		globals: true,
 		environment: "node",
-		reporters: process.env.GITHUB_ACTIONS ? ["dot", "github-actions"] : ["dot"],
+		reporters: dotReporters(),
 	},
 	resolve: {
 		conditions: ["source"],
