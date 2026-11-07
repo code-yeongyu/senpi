@@ -21,6 +21,7 @@ const ERRNO_CODES: Readonly<Record<string, OpErrorCode>> = {
 /** Classify any error an operation rejected with, so a wire answer can carry one code. */
 export function opErrorCode(error: unknown): OpErrorCode {
 	if (error instanceof MachineOpError) return error.code;
+	if (error instanceof Error && error.name === "AbortError") return "aborted";
 	if (typeof error === "object" && error !== null && "code" in error && typeof error.code === "string") {
 		return ERRNO_CODES[error.code] ?? "io_error";
 	}
