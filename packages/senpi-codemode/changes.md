@@ -1,3 +1,27 @@
+## 2026-11-06 - JavaScript kernel defaults to process isolation on bun hosts (senpi#6095)
+
+### What changed
+
+- `packages/senpi-codemode/src/config/feature-settings.ts`: `resolveJsIsolation` takes the host (`currentJsIsolationHost`: the runtime name of `process.execPath` and `process.platform`) and, with no file or environment value, returns `defaultJsIsolation(host)`: `process` when the host's executable is `bun` on a non-Windows platform, else `worker`. The environment still wins over the file and the file over the host default.
+- `packages/senpi-codemode/src/kernels/js/runtime-name.ts` (new): `runtimeNameOf` moved out of `process-worker.ts`, which re-exports it, so the settings module does not import the kernel graph.
+- `packages/senpi-codemode/README.md`: the isolation section and the settings table describe the host-dependent default.
+- `.agents/skills/senpi-qa/scenarios/fused-equivalence/golden/{linux-x64,darwin-arm64}/E{08,16,20}.json`: the B0 goldens of the three cases that run eval cells, recorded with a bun child runtime, now carry the new default's shape: every eval `runtime` block gains `isolation: "process"` (124 blocks) and E16's memory readings report `measure: "footprint"` instead of `"heap"` (7 per platform). No other golden field changes.
+- `packages/senpi-codemode/test/gate/allowlist.json`: a `senpi#6095` node records the fourteen new gate keys as reviewed additions (twelve contract titles, the new `runtime-name.ts` module in the extension and firstKernel import maps); the frozen baseline is unchanged.
+
+### Why
+
+- senpi#6094: a bun-hosted TUI session dies with `SIGBUS`/`SIGTRAP`/`SIGSEGV`/`SIGABRT` on its `WebWorker::create` thread, the codemode JavaScript kernel's `Worker`, several times a day; one frame is the cross-thread stack-sanitizer class of code-yeongyu/oh-my-openagent#12369. The class is open upstream (oven-sh/bun#41857, oven-sh/bun#43663) and Bun 1.4.4 is the newest release. A kernel in its own process cannot take the session down, and the opt-in process mode already settles the crashed cell with the signal and restarts the kernel for the next one.
+- A Node.js host keeps the worker thread (its `worker_threads` are not the faulting runtime). A compiled binary keeps it too: its executable cannot run `process-entry.js`, so process mode there needs a `bun` or `node` on `PATH`, which only an explicit setting should ask for. A Windows bun host keeps it as well: the crash evidence is macOS, and the process kernel's Windows channel (no libc; cell output shares the frame channel) has no CI coverage, so the mode stays opt-in there (review finding on this PR).
+- This reverses the 2026-09-30 codemode plan call that kept the worker default with process isolation opt-in; that call predates the production crashes.
+
+### Why an extension could not handle it
+
+- The default is read by the builtin codemode session manager and runtime factory before any session kernel starts; an extension cannot choose the mode a session's `eval` kernel is created with.
+
+### Expected merge conflict zones
+
+- LOW: the `resolveJsIsolation` signature in `feature-settings.ts`; the import block of `process-worker.ts`; the README isolation section and settings table.
+
 ## 2026-11-03 - Full eval guidelines for the Opus and Fable presets (senpi#5665)
 
 ### What changed

@@ -24,6 +24,9 @@ import {
 	ThinkingLevel,
 } from "./method-classes-schema-fields.ts";
 
+/** A thread call's hop count: 1 for the first call of a chain, one more per hop. */
+const ChainCount = Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER });
+
 const steerOrFollowUp = <const T extends "steer" | "follow_up">(type: T) =>
 	session(type, {
 		message: Str,
@@ -33,6 +36,7 @@ const steerOrFollowUp = <const T extends "steer" | "follow_up">(type: T) =>
 		clientMessageId: OptId,
 		clientTurnId: OptId,
 		expectedTurnId: OptId,
+		chainCount: Opt(ChainCount),
 	});
 
 const editMessage = <const T extends "edit_assistant_message" | "edit_user_message">(type: T) =>
@@ -60,6 +64,7 @@ const PROMPTING_SCHEMAS = {
 		clientTurnId: OptId,
 		expectedTurnId: OptId,
 		toolBarrier: Opt(Type.Object({ id: Id, deadlineMs: Num })),
+		chainCount: Opt(ChainCount),
 	}),
 	release_tool_barrier: session("release_tool_barrier", { barrierId: Id }),
 	send_custom_message: session("send_custom_message", {
@@ -132,7 +137,12 @@ const STATE_AND_MODEL_SCHEMAS = {
 	request_self_settle: session("request_self_settle", {}),
 	get_effect_status: session("get_effect_status", { effectId: Id, sessionPath: OptPath }),
 	get_pending_inputs: session("get_pending_inputs", { knownClientMessageIds: Opt(Strings) }),
-	set_model: session("set_model", { provider: Id, modelId: Id, effectId: OptId }),
+	set_model: session("set_model", {
+		provider: Id,
+		modelId: Id,
+		scope: Opt(Type.Literal("session")),
+		effectId: OptId,
+	}),
 	set_favorite_models: session("set_favorite_models", { models: ModelEntries }),
 	set_scoped_models: session("set_scoped_models", { models: ModelEntries }),
 	cycle_model: session("cycle_model", { direction: Opt(literals("forward", "backward")) }),
@@ -218,10 +228,10 @@ const SURFACE_AND_ACCOUNT_SCHEMAS = {
 	"eval_cells.peek": session("eval_cells.peek", { cellId: Id, tailBytes: OptNum }),
 	"eval_cells.stop": session("eval_cells.stop", { cellId: Id }),
 	get_auth_providers: session("get_auth_providers", {}),
-	login_start: session("login_start", { provider: Id }),
+	login_start: session("login_start", { provider: Id, slotId: OptId }),
 	login_cancel: session("login_cancel", { provider: Id }),
 	login_api_key: session("login_api_key", { provider: Id, key: Secret, region: OptId }),
-	logout: session("logout", { provider: Id }),
+	logout: session("logout", { provider: Id, slotId: OptId }),
 	verify_api_key: session("verify_api_key", { provider: Id, key: Secret }),
 	get_provider_accounts: session("get_provider_accounts", { provider: Id }),
 	account_pin: session("account_pin", { provider: Id, name: Type.Union([Id, Type.Null()]) }),

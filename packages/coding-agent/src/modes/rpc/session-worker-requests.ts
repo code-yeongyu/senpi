@@ -51,11 +51,13 @@ export class SessionWorkerRequests {
 
 	request(message: WorkerRequestInput): Promise<Reply> {
 		if (this.closed) return Promise.reject(new Error("session_closing"));
+		// A sealed secret answer is a human answer like a forwarded `extension_ui_response` (D11 secret phase 5.5).
 		const control =
-			message.type === "command" &&
-			"type" in message.command &&
-			typeof message.command.type === "string" &&
-			["abort", "abort_bash", "extension_ui_response", "extension_ui_progress"].includes(message.command.type);
+			message.type === "secret_sealed_answer" ||
+			(message.type === "command" &&
+				"type" in message.command &&
+				typeof message.command.type === "string" &&
+				["abort", "abort_bash", "extension_ui_response", "extension_ui_progress"].includes(message.command.type));
 		const bytes = Buffer.byteLength(JSON.stringify(message));
 		let count = 0;
 		let pendingBytes = 0;
