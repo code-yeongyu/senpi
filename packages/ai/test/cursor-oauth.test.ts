@@ -2,11 +2,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cursorOAuth } from "../src/auth/oauth/cursor.ts";
 import type { AuthEvent, OAuthCredential } from "../src/auth/types.ts";
 import { builtinProviders } from "../src/providers/all.ts";
+import { classifyOAuthRefreshFailure, OAuthReauthorizationRequiredError } from "../src/utils/oauth-refresh-error.ts";
 
 const neverAbortedSignal = new AbortController().signal;
 
 const POLL_URL = "https://api2.cursor.sh/auth/poll";
+const TOKEN_URL = "https://api2.cursor.sh/oauth/token";
 const REFRESH_URL = "https://api2.cursor.sh/auth/exchange_user_api_key";
+/** OAuth client the Cursor IDE renews its login session with (upstream oh-my-pi#14753). */
+const CURSOR_CLIENT_ID = "KbZUR41cY7W6zRSdpSUJ7I7mLYBKOCmB";
 
 function jsonResponse(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), {
@@ -338,23 +342,29 @@ describe("Cursor OAuth refresh", () => {
 		vi.useRealTimers();
 	});
 
-	it("exchanges the refresh token as a bearer and applies the rotated pair", async () => {
+	it("renews the session with the refresh grant and applies the rotated pair (senpi#2919)", async () => {
 		const now = Date.now();
 		const accessJwt = fakeJwt({ exp: Math.floor(now / 1000) + 7200 });
 		let capturedInit: RequestInit | undefined;
+		let capturedUrl: string | undefined;
 		vi.stubGlobal(
 			"fetch",
 			vi.fn(async (input: unknown, init?: RequestInit) => {
-				expect(requestUrl(input)).toBe(REFRESH_URL);
+				capturedUrl = requestUrl(input);
 				capturedInit = init;
-				return jsonResponse({ accessToken: accessJwt, refreshToken: "rotated-refresh" });
+				return jsonResponse({ access_token: accessJwt, refresh_token: "rotated-refresh" });
 			}),
 		);
 
 		const credential = await refreshCursorForTest("old-refresh");
+		expect(capturedUrl).toBe(TOKEN_URL);
 		expect(capturedInit?.method).toBe("POST");
-		expect(capturedInit?.body).toBe("{}");
-		expect(new Headers(capturedInit?.headers).get("authorization")).toBe("Bearer old-refresh");
+		expect(JSON.parse(String(capturedInit?.body))).toEqual({
+			grant_type: "refresh_token",
+			client_id: CURSOR_CLIENT_ID,
+			refresh_token: "old-refresh",
+		});
+		expect(new Headers(capturedInit?.headers).get("authorization")).toBeNull();
 		expect(credential.access).toBe(accessJwt);
 		expect(credential.refresh).toBe("rotated-refresh");
 		expect(credential.expires).toBeGreaterThan(now);
@@ -365,7 +375,7 @@ describe("Cursor OAuth refresh", () => {
 		for (const refreshField of [undefined, ""]) {
 			vi.stubGlobal(
 				"fetch",
-				vi.fn(async () => jsonResponse({ accessToken: accessJwt, refreshToken: refreshField })),
+				vi.fn(async () => jsonResponse({ access_token: accessJwt, refresh_token: refreshField })),
 			);
 			const credential = await refreshCursorForTest("old-refresh");
 			expect(credential.refresh).toBe("old-refresh");
@@ -405,12 +415,67 @@ describe("Cursor OAuth refresh", () => {
 	it("rejects a refresh response with a missing access token", async () => {
 		vi.stubGlobal(
 			"fetch",
-			vi.fn(async () => jsonResponse({ refreshToken: "rotated" })),
+			vi.fn(async () => jsonResponse({ refresh_token: "rotated" })),
 		);
 
 		await expect(refreshCursorForTest("old-refresh")).rejects.toThrow(
-			"Invalid Cursor OAuth response field: accessToken",
+			"Invalid Cursor OAuth response field: access_token",
 		);
+	});
+
+	it("maps shouldLogout to a permanent re-login failure (senpi#2919)", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => jsonResponse({ access_token: "", shouldLogout: true })),
+		);
+
+		let caught: unknown;
+		try {
+			await refreshCursorForTest("old-refresh");
+		} catch (error) {
+			caught = error;
+		}
+		expect(caught).toBeInstanceOf(OAuthReauthorizationRequiredError);
+		expect((caught as OAuthReauthorizationRequiredError).code).toBe("invalid_grant");
+		expect(classifyOAuthRefreshFailure(caught)).toBe("permanent");
+	});
+
+	it("treats a 5xx refresh failure as transient (senpi#2919)", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => jsonResponse({ error: "internal" }, 500)),
+		);
+
+		let caught: unknown;
+		try {
+			await refreshCursorForTest("old-refresh");
+		} catch (error) {
+			caught = error;
+		}
+		expect(caught).toBeDefined();
+		expect(classifyOAuthRefreshFailure(caught)).toBe("transient");
+	});
+
+	it("still exchanges a dashboard API key at the key exchange (senpi#2919)", async () => {
+		const now = Date.now();
+		const accessJwt = fakeJwt({ exp: Math.floor(now / 1000) + 7200 });
+		let capturedInit: RequestInit | undefined;
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: unknown, init?: RequestInit) => {
+				expect(requestUrl(input)).toBe(REFRESH_URL);
+				capturedInit = init;
+				return jsonResponse({ accessToken: accessJwt, refreshToken: "rotated-refresh" });
+			}),
+		);
+
+		const credential = await refreshCursorForTest("crsr_dashboard_key");
+		expect(capturedInit?.method).toBe("POST");
+		expect(capturedInit?.body).toBe("{}");
+		expect(new Headers(capturedInit?.headers).get("authorization")).toBe("Bearer crsr_dashboard_key");
+		expect(credential.access).toBe(accessJwt);
+		expect(credential.refresh).toBe("rotated-refresh");
+		expect(credential.expires).toBeGreaterThan(now);
 	});
 });
 
