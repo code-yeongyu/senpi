@@ -19,6 +19,15 @@ export class RecoveryContentLifecycle {
 		return this.active?.innerIndex === innerIndex && this.active.kind === kind;
 	}
 
+	/** The validator's state, for the diagnostic of an event it refused. */
+	snapshot(): { activeIndex: number | null; activeKind: RecoveryContentKind | null; lastEndedIndex: number } {
+		return {
+			activeIndex: this.active?.innerIndex ?? null,
+			activeKind: this.active?.kind ?? null,
+			lastEndedIndex: this.lastEndedInnerIndex,
+		};
+	}
+
 	end(innerIndex: number, kind: RecoveryContentKind): boolean {
 		if (!this.isActive(innerIndex, kind)) return false;
 		this.active = null;

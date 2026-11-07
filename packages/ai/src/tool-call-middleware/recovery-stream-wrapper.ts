@@ -1,11 +1,23 @@
-import type { AssistantMessage, AssistantMessageEvent, AssistantMessageEventStream, Tool } from "../types.ts";
+import type {
+	AssistantMessage,
+	AssistantMessageEvent,
+	AssistantMessageEventStream,
+	Tool,
+} from "../types.ts";
 import { assistantEvents } from "../utils/assistant-capture.ts";
 import type { RecoveryStreamParser } from "./protocols/anthropic-xml/recovery-stream.ts";
 import { createAntmlInvokeRecoveryStreamParser } from "./protocols/antml/recovery-stream.ts";
-import { type RecoveryContentKind, RecoveryContentLifecycle } from "./recovery-content-lifecycle.ts";
+import {
+	type RecoveryContentKind,
+	RecoveryContentLifecycle,
+} from "./recovery-content-lifecycle.ts";
 import { RecoveryAssistantMessageEventStream } from "./recovery-event-stream.ts";
 import { RecoveryNativeProjection } from "./recovery-native-projection.ts";
-import { type RecoveryStreamFailure, terminateRecoveryStreamForFailure } from "./recovery-stream-failure.ts";
+import {
+	type RecoveryFailureEvent,
+	type RecoveryStreamFailure,
+	terminateRecoveryStreamForFailure,
+} from "./recovery-stream-failure.ts";
 import { RecoveryStreamTerminal } from "./recovery-stream-terminal.ts";
 import { RecoveryTextProjection } from "./recovery-text-projection.ts";
 import { StreamMessageProjection } from "./stream-wrapper-shared.ts";
@@ -19,11 +31,15 @@ export interface InvokeRecoveryOptions {
 export function wrapStreamWithInvokeRecovery(
 	innerStream: AssistantMessageEventStream,
 	tools: readonly Tool[],
-	options: InvokeRecoveryOptions | ((tools: readonly Tool[]) => RecoveryStreamParser) = {},
+	options:
+		| InvokeRecoveryOptions
+		| ((tools: readonly Tool[]) => RecoveryStreamParser) = {},
 ): AssistantMessageEventStream {
 	const outerStream = new RecoveryAssistantMessageEventStream();
-	const resolvedOptions = typeof options === "function" ? { createParser: options } : options;
-	const createParser = resolvedOptions.createParser ?? createAntmlInvokeRecoveryStreamParser;
+	const resolvedOptions =
+		typeof options === "function" ? { createParser: options } : options;
+	const createParser =
+		resolvedOptions.createParser ?? createAntmlInvokeRecoveryStreamParser;
 	const protocol = resolvedOptions.protocol ?? "antml";
 
 	void (async (): Promise<void> => {
@@ -35,7 +51,9 @@ export function wrapStreamWithInvokeRecovery(
 		const innerIterator = assistantEvents(innerStream, (progress) => {
 			if (!cancellationRequested) nativeProjection?.relayProgress(progress);
 		})[Symbol.asyncIterator]();
-		const innerEvents: AsyncIterable<AssistantMessageEvent> = { [Symbol.asyncIterator]: () => innerIterator };
+		const innerEvents: AsyncIterable<AssistantMessageEvent> = {
+			[Symbol.asyncIterator]: () => innerIterator,
+		};
 		const contentLifecycle = new RecoveryContentLifecycle();
 		const terminal = new RecoveryStreamTerminal(outerStream);
 
@@ -58,15 +76,44 @@ export function wrapStreamWithInvokeRecovery(
 			}
 		});
 
-		const terminateForFailure = (source: AssistantMessage, failure: RecoveryStreamFailure): void => {
+		const terminateForFailure = (
+			source: AssistantMessage,
+			failure: RecoveryStreamFailure,
+			event?: RecoveryFailureEvent,
+		): void => {
 			if (!projection || !outerStream.markSourceClosed()) return;
 			finishText();
-			terminateRecoveryStreamForFailure(outerStream, projection, { source, failure, protocol });
+			terminateRecoveryStreamForFailure(outerStream, projection, {
+				source,
+				failure,
+				protocol,
+				event,
+			});
 		};
 
-		const prepareContentEvent = (source: AssistantMessage, contentIndex: number): boolean => {
+		// The refused event with the validator's state: a provider that breaks the sequential protocol (a block
+		// started while another is open, an index that does not grow) is diagnosed from the message, not guessed.
+		const refusedEvent = (
+			type: string,
+			source: AssistantMessage,
+			index: number,
+		): RecoveryFailureEvent => ({
+			type,
+			index,
+			blocks: source.content.length,
+			...contentLifecycle.snapshot(),
+		});
+
+		const prepareContentEvent = (
+			source: AssistantMessage,
+			contentIndex: number,
+		): boolean => {
 			if (!projection || !nativeProjection) return false;
-			if (!Number.isSafeInteger(contentIndex) || contentIndex < 0 || contentIndex >= source.content.length) {
+			if (
+				!Number.isSafeInteger(contentIndex) ||
+				contentIndex < 0 ||
+				contentIndex >= source.content.length
+			) {
 				terminateForFailure(source, "invalid_native_event_order");
 				return false;
 			}
@@ -78,13 +125,22 @@ export function wrapStreamWithInvokeRecovery(
 		};
 
 		const canStart = (
+			eventType: string,
 			source: AssistantMessage,
 			contentIndex: number,
 			kind: RecoveryContentKind,
 			failure: RecoveryStreamFailure = "invalid_content_event_order",
 		): boolean => {
-			if (!Number.isSafeInteger(contentIndex) || contentIndex < 0 || contentIndex >= source.content.length) {
-				terminateForFailure(source, failure);
+			if (
+				!Number.isSafeInteger(contentIndex) ||
+				contentIndex < 0 ||
+				contentIndex >= source.content.length
+			) {
+				terminateForFailure(
+					source,
+					failure,
+					refusedEvent(eventType, source, contentIndex),
+				);
 				return false;
 			}
 			const block = source.content[contentIndex];
@@ -93,24 +149,39 @@ export function wrapStreamWithInvokeRecovery(
 				(kind === "thinking" && block?.type === "thinking") ||
 				(kind === "toolCall" && block?.type === "toolCall");
 			if (blockMatches && contentLifecycle.canStart(contentIndex)) return true;
-			terminateForFailure(source, failure);
+			terminateForFailure(
+				source,
+				failure,
+				refusedEvent(eventType, source, contentIndex),
+			);
 			return false;
 		};
 
 		const isActive = (
+			eventType: string,
 			source: AssistantMessage,
 			contentIndex: number,
 			kind: RecoveryContentKind,
 			failure: RecoveryStreamFailure = "invalid_content_event_order",
 		): boolean => {
 			if (contentLifecycle.isActive(contentIndex, kind)) return true;
-			terminateForFailure(source, failure);
+			terminateForFailure(
+				source,
+				failure,
+				refusedEvent(eventType, source, contentIndex),
+			);
 			return false;
 		};
 
 		const synchronizeTerminal = (source: AssistantMessage): boolean => {
-			projection ??= new StreamMessageProjection(outerStream, source, { preserveSourceMetadata: true });
-			nativeProjection ??= new RecoveryNativeProjection(outerStream, projection.message, protocol);
+			projection ??= new StreamMessageProjection(outerStream, source, {
+				preserveSourceMetadata: true,
+			});
+			nativeProjection ??= new RecoveryNativeProjection(
+				outerStream,
+				projection.message,
+				protocol,
+			);
 			projection.sync(source);
 			nativeProjection.reserveVisibleIds(source);
 			finishText();
@@ -124,21 +195,42 @@ export function wrapStreamWithInvokeRecovery(
 				if (cancellationRequested) continue;
 				switch (event.type) {
 					case "start":
-						projection = new StreamMessageProjection(outerStream, event.partial, {
-							preserveSourceMetadata: true,
-						});
-						nativeProjection = new RecoveryNativeProjection(outerStream, projection.message, protocol);
+						projection = new StreamMessageProjection(
+							outerStream,
+							event.partial,
+							{
+								preserveSourceMetadata: true,
+							},
+						);
+						nativeProjection = new RecoveryNativeProjection(
+							outerStream,
+							projection.message,
+							protocol,
+						);
 						nativeProjection.reserveVisibleIds(event.partial);
 						outerStream.push({ type: "start", partial: projection.message });
 						break;
 					case "text_start": {
-						if (!canStart(event.partial, event.contentIndex, "text")) return;
-						if (!prepareContentEvent(event.partial, event.contentIndex) || !projection || !nativeProjection)
+						if (
+							!canStart(event.type, event.partial, event.contentIndex, "text")
+						)
 							return;
-						const nextText = new RecoveryTextProjection(tools, projection, nativeProjection, event.contentIndex, {
-							createParser,
-							protocol,
-						});
+						if (
+							!prepareContentEvent(event.partial, event.contentIndex) ||
+							!projection ||
+							!nativeProjection
+						)
+							return;
+						const nextText = new RecoveryTextProjection(
+							tools,
+							projection,
+							nativeProjection,
+							event.contentIndex,
+							{
+								createParser,
+								protocol,
+							},
+						);
 						if (!nextText.start(event.partial)) {
 							terminateForFailure(event.partial, "invalid_native_event_order");
 							return;
@@ -148,12 +240,22 @@ export function wrapStreamWithInvokeRecovery(
 						break;
 					}
 					case "text_delta":
-						if (!isActive(event.partial, event.contentIndex, "text")) return;
-						if (!prepareContentEvent(event.partial, event.contentIndex) || !textProjection) return;
+						if (
+							!isActive(event.type, event.partial, event.contentIndex, "text")
+						)
+							return;
+						if (
+							!prepareContentEvent(event.partial, event.contentIndex) ||
+							!textProjection
+						)
+							return;
 						sawToolCall = textProjection.feed(event.delta) || sawToolCall;
 						break;
 					case "text_end":
-						if (!isActive(event.partial, event.contentIndex, "text")) return;
+						if (
+							!isActive(event.type, event.partial, event.contentIndex, "text")
+						)
+							return;
 						if (!prepareContentEvent(event.partial, event.contentIndex)) return;
 						finishText();
 						contentLifecycle.end(event.contentIndex, "text");
@@ -177,11 +279,29 @@ export function wrapStreamWithInvokeRecovery(
 						}
 						if (!synchronizeTerminal(event.error)) return;
 						if (!outerStream.markSourceClosed()) return;
-						terminal.sourceError(projection, event.error, sawToolCall, event.reason);
+						terminal.sourceError(
+							projection,
+							event.error,
+							sawToolCall,
+							event.reason,
+						);
 						return;
 					case "toolcall_start": {
-						if (!canStart(event.partial, event.contentIndex, "toolCall", "invalid_native_event_order")) return;
-						if (!prepareContentEvent(event.partial, event.contentIndex) || !nativeProjection) return;
+						if (
+							!canStart(
+								event.type,
+								event.partial,
+								event.contentIndex,
+								"toolCall",
+								"invalid_native_event_order",
+							)
+						)
+							return;
+						if (
+							!prepareContentEvent(event.partial, event.contentIndex) ||
+							!nativeProjection
+						)
+							return;
 						const native = nativeProjection;
 						const status = outerStream.relaying(event, () =>
 							native.projectNativeStart(event.partial, event.contentIndex),
@@ -189,7 +309,9 @@ export function wrapStreamWithInvokeRecovery(
 						if (status !== "projected") {
 							terminateForFailure(
 								event.partial,
-								status === "collision" ? "collision" : "invalid_native_event_order",
+								status === "collision"
+									? "collision"
+									: "invalid_native_event_order",
 							);
 							return;
 						}
@@ -198,12 +320,29 @@ export function wrapStreamWithInvokeRecovery(
 						break;
 					}
 					case "toolcall_delta": {
-						if (!isActive(event.partial, event.contentIndex, "toolCall", "invalid_native_event_order")) return;
-						if (!prepareContentEvent(event.partial, event.contentIndex) || !nativeProjection) return;
+						if (
+							!isActive(
+								event.type,
+								event.partial,
+								event.contentIndex,
+								"toolCall",
+								"invalid_native_event_order",
+							)
+						)
+							return;
+						if (
+							!prepareContentEvent(event.partial, event.contentIndex) ||
+							!nativeProjection
+						)
+							return;
 						const native = nativeProjection;
 						if (
 							!outerStream.relaying(event, () =>
-								native.projectNativeDelta(event.partial, event.contentIndex, event.delta),
+								native.projectNativeDelta(
+									event.partial,
+									event.contentIndex,
+									event.delta,
+								),
 							)
 						) {
 							terminateForFailure(event.partial, "invalid_native_event_order");
@@ -212,10 +351,27 @@ export function wrapStreamWithInvokeRecovery(
 						break;
 					}
 					case "toolcall_end": {
-						if (!isActive(event.partial, event.contentIndex, "toolCall", "invalid_native_event_order")) return;
-						if (!prepareContentEvent(event.partial, event.contentIndex) || !nativeProjection) return;
+						if (
+							!isActive(
+								event.type,
+								event.partial,
+								event.contentIndex,
+								"toolCall",
+								"invalid_native_event_order",
+							)
+						)
+							return;
+						if (
+							!prepareContentEvent(event.partial, event.contentIndex) ||
+							!nativeProjection
+						)
+							return;
 						const native = nativeProjection;
-						if (!outerStream.relaying(event, () => native.projectNativeEnd(event.contentIndex, event.toolCall))) {
+						if (
+							!outerStream.relaying(event, () =>
+								native.projectNativeEnd(event.contentIndex, event.toolCall),
+							)
+						) {
 							terminateForFailure(event.partial, "invalid_native_event_order");
 							return;
 						}
@@ -224,14 +380,31 @@ export function wrapStreamWithInvokeRecovery(
 						break;
 					}
 					case "thinking_start": {
-						if (!canStart(event.partial, event.contentIndex, "thinking")) return;
-						if (!prepareContentEvent(event.partial, event.contentIndex) || !projection || !nativeProjection)
+						if (
+							!canStart(
+								event.type,
+								event.partial,
+								event.contentIndex,
+								"thinking",
+							)
+						)
+							return;
+						if (
+							!prepareContentEvent(event.partial, event.contentIndex) ||
+							!projection ||
+							!nativeProjection
+						)
 							return;
 						const thinking = projection;
 						const outerIndex = outerStream.relaying(event, () =>
 							thinking.startThinking(event.contentIndex, event.partial),
 						);
-						if (!nativeProjection.recordProjectedBlock(event.contentIndex, outerIndex)) {
+						if (
+							!nativeProjection.recordProjectedBlock(
+								event.contentIndex,
+								outerIndex,
+							)
+						) {
 							terminateForFailure(event.partial, "invalid_native_event_order");
 							return;
 						}
@@ -239,20 +412,52 @@ export function wrapStreamWithInvokeRecovery(
 						break;
 					}
 					case "thinking_delta": {
-						if (!isActive(event.partial, event.contentIndex, "thinking")) return;
-						if (!prepareContentEvent(event.partial, event.contentIndex) || !projection) return;
+						if (
+							!isActive(
+								event.type,
+								event.partial,
+								event.contentIndex,
+								"thinking",
+							)
+						)
+							return;
+						if (
+							!prepareContentEvent(event.partial, event.contentIndex) ||
+							!projection
+						)
+							return;
 						const thinking = projection;
 						outerStream.relaying(event, () =>
-							thinking.projectThinkingDelta(event.contentIndex, event.delta, event.partial),
+							thinking.projectThinkingDelta(
+								event.contentIndex,
+								event.delta,
+								event.partial,
+							),
 						);
 						break;
 					}
 					case "thinking_end": {
-						if (!isActive(event.partial, event.contentIndex, "thinking")) return;
-						if (!prepareContentEvent(event.partial, event.contentIndex) || !projection) return;
+						if (
+							!isActive(
+								event.type,
+								event.partial,
+								event.contentIndex,
+								"thinking",
+							)
+						)
+							return;
+						if (
+							!prepareContentEvent(event.partial, event.contentIndex) ||
+							!projection
+						)
+							return;
 						const thinking = projection;
 						outerStream.relaying(event, () =>
-							thinking.finishThinking(event.contentIndex, event.content, event.partial),
+							thinking.finishThinking(
+								event.contentIndex,
+								event.content,
+								event.partial,
+							),
 						);
 						contentLifecycle.end(event.contentIndex, "thinking");
 						break;
