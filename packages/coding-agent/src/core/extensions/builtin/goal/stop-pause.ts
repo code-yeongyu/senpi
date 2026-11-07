@@ -18,6 +18,14 @@ export function stopHoldLive(ctx: ExtensionContext): boolean {
 	);
 }
 
+/** The session reopened over a run that never finished: its process died mid-turn (senpi#4683, senpi#5755). */
+export function interruptedRunHeld(ctx: ExtensionContext): boolean {
+	return (
+		ctx.getPauseState?.().holds.some((hold) => hold.kind === "session_hold" && hold.key === "interrupted-run") ===
+		true
+	);
+}
+
 export function markStopPaused(pi: Pick<ExtensionAPI, "appendEntry">, goalId: string): void {
 	pi.appendEntry<Marker>(GOAL_STOP_PAUSED_ENTRY, { goalId });
 }
