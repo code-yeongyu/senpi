@@ -587,10 +587,11 @@ function withProviderFailure(
 export type AgentSessionEvent =
 	| WithParentToolCallId<Exclude<AgentEvent, { type: "agent_start" | "agent_end" | "message_update" }>>
 	/** The lifecycle run identity, bound before asynchronous event delivery; older engines omit it. */
-	| { type: "agent_start"; runId?: string }
+	| { type: "agent_start"; runId?: string; turnId?: string }
 	| AgentSessionAgentEndEvent
 	| SessionMessageUpdateEvent
-	| { type: "agent_settled" }
+	/** `turnId` names the turn that settled: the `currentTurnId` its `agent_start` carried. */
+	| { type: "agent_settled"; turnId?: string }
 	| { type: "agent_idle" }
 	/** The session's tool child changed state (senpi#3566; the minimal record todo 14 extends). */
 	| { type: "session_tool_child"; state: "spawned" | "exited" | "respawned"; generation: number; pid: number }
@@ -3390,6 +3391,8 @@ export class AgentSession {
 			this._resolveIdleWaitIfIdle();
 			return;
 		}
+		// Read before the run goes inactive: currentTurnId is undefined once it has.
+		const turnId = String(this.externalAdmission.turnEpoch);
 		this._isAgentRunActive = false;
 		// The run is over, so the turn a barrier was armed for is too. agent_end keeps it across an
 		// expected retry; a retry that is cancelled or declined settles here without another agent_end.
@@ -3408,7 +3411,7 @@ export class AgentSession {
 			// the handlers still run inside the deferral window, under the host budget that reports their stalls.
 			const settleYield = Promise.withResolvers<void>();
 			this._settledHandlersYield = settleYield;
-			this._emit({ type: "agent_settled" });
+			this._emit({ type: "agent_settled", turnId });
 			const handlers = this._extensionRunner.emit({
 				type: "agent_settled",
 				...(fallbackExhausted === undefined ? {} : { fallbackExhausted }),
@@ -3637,7 +3640,13 @@ export class AgentSession {
 			}
 			// Bind now: the core can start another run before this event's asynchronous delivery.
 			const bound =
-				event.type === "agent_start" ? { ...event, runId: this._lifecycleBinding.controller.ledger.runId } : event;
+				event.type === "agent_start"
+					? {
+							...event,
+							runId: this._lifecycleBinding.controller.ledger.runId,
+							...(this.currentTurnId === undefined ? {} : { turnId: this.currentTurnId }),
+						}
+					: event;
 			queuedEvent = bound;
 			// Bound at emission: the core can start the next run before the queue reaches this end (senpi#3864).
 			if (event.type === "agent_end") {

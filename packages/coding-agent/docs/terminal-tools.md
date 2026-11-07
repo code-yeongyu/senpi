@@ -165,6 +165,13 @@ with streaming collapsed to `rpc <label> streaming +<n> deltas (last: "...")` pe
 `attachments` count does not change. `persistent: true` survives a restart and reports what moved while
 detached (`changed while detached`, `closed (gone while detached)`, `host ... restarted (generation a -> b)`).
 
+A session on another device is `<device>/<session>` (or `<device>/*` for every session there) when an
+extension registered a remote source with `pi.registerRpcRemoteSource`; without one such a target is
+refused. Its lines read exactly like local ones. A lost device is said once
+(`rpc device <device> unreachable (<reason>); re-watching`), the resync after the gap reports each change
+once, a turn end is reported once per `turnId` (`rpc <label> turn <id> settled while detached`), and an
+access that ended for good settles the watch (`rpc <device>/<session> access ended (<reason>)`).
+
 ### Anti-patterns
 
 | Anti-pattern | Do instead |
