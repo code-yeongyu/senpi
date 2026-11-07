@@ -202,6 +202,12 @@ export function rpcCommandPayloadError(command: unknown): string | undefined {
 	if (value.type === "append_session_entry" && !validSessionEntry(value.entry)) {
 		return "append_session_entry entry is malformed.";
 	}
+	if (
+		(value.type === "prompt" || value.type === "steer" || value.type === "follow_up") &&
+		typeof value.message !== "string"
+	) {
+		return "message must be a string.";
+	}
 	return undefined;
 }
 

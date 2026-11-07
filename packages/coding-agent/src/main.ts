@@ -929,10 +929,12 @@ export function createCliRuntimeFactory(
 	}) => {
 		const timer = startOpenTimer("runtime-services");
 		const projectTrustDiagnostics: AgentSessionRuntimeDiagnostic[] = [];
-		const cachedProjectTrust = projectTrustByCwd.get(cwd);
 		const hasTrustRequiringResources = hasTrustRequiringProjectResources(cwd);
 		// The saved decision, including the one a linked git worktree inherits from its main checkout (senpi#4388).
 		const savedProjectTrust = await getSavedProjectTrust(trustStore, cwd);
+		// The memo stands in for an unsaved answer only: a decision saved since (an RPC `set_project_trust`, senpi#6176)
+		// is what a fresh process would read, so it outranks what an earlier session of this process resolved.
+		const cachedProjectTrust = savedProjectTrust === null ? projectTrustByCwd.get(cwd) : undefined;
 		timer.mark("project_trust");
 		// A full-access session trusts its project without asking, for that session only: nothing is
 		// cached here or saved to the trust store, and a saved "do not trust" still wins (#2465).
@@ -959,7 +961,11 @@ export function createCliRuntimeFactory(
 			cachedProjectTrust === undefined &&
 			parsed.projectTrustOverride === undefined &&
 			savedProjectTrust !== true;
-		const runtimeSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted, trustFromFullAccess });
+		const runtimeSettingsManager = SettingsManager.create(cwd, agentDir, {
+			projectTrusted,
+			trustFromFullAccess,
+			projectTrustLocked: parsed.projectTrustOverride !== undefined,
+		});
 		// The opener's per-session fallback policy is an in-memory override: never saved, never shared.
 		if (launchProfile?.retryFallback) applyRetryFallbackProfile(runtimeSettingsManager, launchProfile.retryFallback);
 		const services = await createAgentSessionServices({
