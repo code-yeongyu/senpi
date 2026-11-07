@@ -72,7 +72,8 @@ const values = {
 			"baseUrl": "https://api.kimi.com/coding",
 			"compat": {
 				"allowEmptySignature": true,
-				"forceAdaptiveThinking": true
+				"forceAdaptiveThinking": true,
+				"supportsDisabledThinking": false
 			},
 			"reasoning": true,
 			"thinkingLevelMap": {
@@ -112,7 +113,8 @@ const values = {
 			"baseUrl": "https://api.kimi.com/coding",
 			"compat": {
 				"allowEmptySignature": true,
-				"forceAdaptiveThinking": true
+				"forceAdaptiveThinking": true,
+				"supportsDisabledThinking": false
 			},
 			"reasoning": true,
 			"thinkingLevelMap": {
