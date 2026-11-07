@@ -300,4 +300,25 @@ describe("transient failures never classify as a permanent credential verdict (s
 	] as const)("a genuine %s still blocks the slot as auth_error", (_label, error) => {
 		expect(classifyCredentialFailure(error)).toEqual({ kind: "failover", block: { reason: "auth_error" } });
 	});
+
+	// senpi#3972: a 403 that refuses one model the plan does not cover is a
+	// verdict on that model, not on the credential. The slot must stay
+	// selectable for other models on the same provider, so the refusal fails
+	// the request (the model fallback chain above owns the next attempt)
+	// instead of persisting an auth_error block against the slot.
+	test.each([
+		["subscription does not include the model", status(403, "Your subscription does not include access to model-a")],
+		["model not available on the plan", status(403, "Model GLM-5.3 is not available on your plan")],
+		["plan does not cover the model", status(403, "Your plan does not cover model glm-5.3")],
+		["model not found on a 403", status(403, "Model glm-5.3 not found")],
+	] as const)("a 403 that refuses one model (%s) fails the request without blocking the slot", (_label, error) => {
+		expect(classifyCredentialFailure(error)).toEqual({ kind: "fail_request" });
+	});
+
+	test("a 403 that suspends the subscription still blocks the slot as auth_error", () => {
+		expect(classifyCredentialFailure(status(403, "Your subscription has been suspended"))).toEqual({
+			kind: "failover",
+			block: { reason: "auth_error" },
+		});
+	});
 });

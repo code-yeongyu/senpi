@@ -146,6 +146,18 @@ const AUTH_ERROR_CODES: ReadonlySet<string> = new Set([
 ]);
 const MAX_CAUSE_LINKS = 16;
 const ACCOUNT_SCOPED_403_TEXT = /account|credential|token|api[ _-]?key|organization|subscription/i;
+// A 403 that refuses one model the account's plan does not cover is a verdict
+// on that model, not on the credential: "Your subscription does not include
+// access to model-a" names the plan's scope, not a suspended or revoked
+// credential, so the slot must stay selectable for other models (senpi#3972).
+// Checked before the account-scoped 403 below, whose `subscription` wording
+// would otherwise block the slot for every model on the provider. A body that
+// also suspends the account ("has been suspended") matches neither pattern
+// and still blocks the slot.
+const MODEL_NOT_IN_PLAN_TEXT =
+	/(?:subscription|plan|account|organization)[^.;\n]{0,120}?(?:does not include|doesn't include|not (?:included|covered)|does not (?:cover|grant|allow)|not entitled)/i;
+const MODEL_UNAVAILABLE_TEXT =
+	/\bmodel\b[^.;\n]{0,80}?(?:is not (?:available|included|supported|found)|not (?:available|included|found)|no access)\b/i;
 const RATE_LIMIT_TEXT = /rate[ _-]?limit|too many requests|resource_exhausted/i;
 const BILLING_TEXT =
 	/billing|credits?[ _-]?(?:required|exhausted|balance)|insufficient[ _-]?(?:funds|quota|credit)|payment[ _-]?required|quota[ _-]?exhausted/i;
@@ -365,6 +377,14 @@ export function classifyCredentialFailure(
 		return { kind: "failover", block: { reason: "auth_error" } };
 	}
 	if (status === 403 && !limitText) {
+		// A 403 that refuses one model the plan does not cover is a verdict on
+		// that model, not on the credential: the slot stays selectable for
+		// other models and the model fallback chain above owns the next
+		// attempt, so it fails the request instead of persisting an auth_error
+		// block (senpi#3972).
+		if (MODEL_NOT_IN_PLAN_TEXT.test(text) || MODEL_UNAVAILABLE_TEXT.test(text)) {
+			return { kind: "fail_request" };
+		}
 		return ACCOUNT_SCOPED_403_TEXT.test(text)
 			? { kind: "failover", block: { reason: "auth_error" } }
 			: { kind: "fail_request" };
