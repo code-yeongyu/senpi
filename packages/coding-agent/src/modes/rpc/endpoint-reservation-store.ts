@@ -16,6 +16,8 @@ export const ENDPOINT_RESERVATION_SCHEMA = 2;
 
 export type ReservationRole = "supervisor" | "host";
 export type ReservationState = "pending" | "cancelling" | "serving";
+/** The states this schema writes; a census lists exactly these. */
+const RESERVATION_STATES: ReadonlySet<string> = new Set<ReservationState>(["pending", "cancelling", "serving"]);
 export type RoleStatus = "offered" | "claimed" | "granted" | "released" | "revoked";
 
 export type ReservationRejection =
@@ -36,7 +38,8 @@ export type ReservationRejection =
 	| "participant_mismatch"
 	| "issuer_mismatch"
 	| "commitment_invalid"
-	| "roles_not_granted";
+	| "roles_not_granted"
+	| "row_malformed";
 
 /** A typed refusal; `reason` is machine-readable and the message never carries a nonce. */
 export class EndpointReservationError extends Error {
@@ -70,6 +73,14 @@ export interface RoleRow {
 	readonly status: RoleStatus;
 	readonly issuer: string;
 	readonly participant: string | null;
+}
+
+/** One reservation in a state this schema writes, with every recorded authority entry, as an admission census reads it. */
+export interface ReservationCensusRow {
+	readonly generation: string;
+	readonly state: ReservationState;
+	readonly owner: string;
+	readonly roles: readonly Pick<RoleRow, "role" | "status" | "participant">[];
 }
 
 interface Statement {
@@ -382,6 +393,41 @@ export class EndpointReservationStore {
 	roleRow(locator: ReservationLocator): RoleRow | undefined {
 		const row = this.#role(locator.generation, locator.role);
 		return row && { role: locator.role, status: row.status, issuer: row.issuer, participant: row.participant };
+	}
+
+	/**
+	 * Every reservation of this store, with its role rows, for the owner census an admission takes before public-secret
+	 * recovery (design 4.2a "Admission BEFORE mutation"). Every state this schema writes (`RESERVATION_STATES`) is listed;
+	 * a row in a state this build does not know is unreadable evidence and refuses with `row_malformed`, never listed as
+	 * one of them and never dropped. The store is keyed by the physical endpoint, so no endpoint filter is applied: a
+	 * spelling the reserving writer chose must not hide its generation. Read-only.
+	 */
+	census(): readonly ReservationCensusRow[] {
+		return this.#read(() => {
+			const rows = this.#database
+				.prepare("SELECT generation, state, owner FROM reservations ORDER BY rowid")
+				.all() as { generation: string; state: string; owner: string }[];
+			const reservations = rows.map((row) => {
+				if (!RESERVATION_STATES.has(row.state)) {
+					throw new EndpointReservationError(
+						"row_malformed",
+						`state ${JSON.stringify(row.state)} in ${row.generation}`,
+					);
+				}
+				return { ...row, state: row.state as ReservationState };
+			});
+			const roles = this.#database.prepare(
+				"SELECT role, status, participant FROM roles WHERE generation = ? ORDER BY role",
+			);
+			return reservations.map((reservation) => ({
+				...reservation,
+				roles: roles.all(reservation.generation) as {
+					role: ReservationRole;
+					status: RoleStatus;
+					participant: string | null;
+				}[],
+			}));
+		});
 	}
 
 	/** The recorded expected roles, or `undefined` when the record is absent, empty or names a role this build does not know. */
