@@ -3391,8 +3391,9 @@ registrant opens no socket and writes no registry directory.
   user's draft still holds it.
   - `get_protocol_info`: `mode: "tui"`, `endpoint_kind: "tui"`, `capabilities: ["tui_control", "session_status",
     "tui_observer", "observe_reads", "entries_tail"]` (`tui_observer`: the observe-and-drive set below), `generation: 0`, the endpoint's
-    `instanceId`, and `commands`: every command this endpoint accepts. A terminal from before the session
-    controls below lists no `commands`.
+    `instanceId`, `commands`: every command this endpoint accepts, and `method_classes`: the same table and digest a
+    host's answer carries (one builder serves both). A terminal from before the session controls below lists no
+    `commands`; one from before senpi#6158 carries no `method_classes`.
   - `list_sessions`: exactly one row, `kind: "interactive"`, `surface: "tui"`, `attachments: 1`.
   - `get_state`: the RPC session state plus `turn_epoch`, `blocking_question`, `compacting`,
     `editor_has_draft` and `state_version`.
@@ -6340,9 +6341,6 @@ Emitted when the agent begins processing a prompt.
 state readback. It is captured at run start, before asynchronous delivery; a later run
 cannot replace the ID on a queued start event. Older engines omit this additive field.
 
-`turnId` (additive) is the session's `currentTurnId` for the run that started: the `expectedTurnId` a steer
-names, and the `turnId` its `agent_settled` carries.
-
 ### agent_end
 
 Emitted when one low-level agent run completes. Contains all messages generated during this run. If `willRetry` is true, an automatic retry will follow. A run stopped because its session was replaced also carries `abortCause: { kind: "session_replaced", reason, targetSessionFile?, targetSessionId? }` (see `session_replaced`); extensions' own `agent_end` does not carry it, they learn of the replacement from `session_shutdown`.
@@ -6424,9 +6422,6 @@ Emitted after the full session-level run settles. At this point senpi will not c
 A multi-session host that closes, parks or releases a session mid-turn first publishes the settle that turn will now
 never write, with `"reason": "session_closed"`, on the same broadcast as every `agent_settled`: whoever counted the
 `agent_start` (the supervisor's idle-exit observer included) sees it end. Older hosts never send `reason`.
-
-`turnId` (additive) names the turn that settled: the `turnId` its `agent_start` carried, on an ordinary settle
-and on a `session_closed` one alike, so a consumer can report each turn end once. Older engines omit it.
 
 ### entry_appended: goal and engine stops
 
