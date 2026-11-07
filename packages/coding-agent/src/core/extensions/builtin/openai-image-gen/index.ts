@@ -58,7 +58,7 @@ export default function openaiImageGenExtension(pi: ExtensionAPI): void {
 		// Cross-builtin wiring: the client tool defers only while this builtin will
 		// actually inject the server tool for this exact model. Both flip directions
 		// run through here, so a switch back to a proxied endpoint re-arms the tool.
-		setNativeBypass(state.kind === "native");
+		setNativeBypass(ctx.sessionManager, state.kind === "native");
 	}
 
 	/**
@@ -115,7 +115,7 @@ export default function openaiImageGenExtension(pi: ExtensionAPI): void {
 		return message === undefined ? undefined : { message };
 	});
 
-	pi.on("session_shutdown", async () => {
-		setNativeBypass(false);
+	pi.on("session_shutdown", async (_event, ctx) => {
+		setNativeBypass(ctx.sessionManager, false);
 	});
 }

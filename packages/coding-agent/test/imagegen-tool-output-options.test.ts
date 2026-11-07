@@ -9,7 +9,7 @@ import type {
 } from "@earendil-works/pi-ai/compat";
 import { registerImagesApiProvider, unregisterImagesApiProviders } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { setImageGenRegistry, setNativeBypass } from "../src/core/extensions/builtin/imagegen/state.ts";
+import { setImageGenRegistry } from "../src/core/extensions/builtin/imagegen/state.ts";
 import { type GenerateImageDetails, generateImageTool } from "../src/core/extensions/builtin/imagegen/tool.ts";
 import { createHarness, type Harness } from "./suite/harness.ts";
 
@@ -47,7 +47,6 @@ let harness: Harness;
 beforeEach(async () => {
 	vi.stubEnv("OPENAI_API_KEY", "");
 	vi.stubEnv("PI_IMAGE_GEN_PROVIDER", "");
-	setNativeBypass(false);
 	setImageGenRegistry({
 		authStorage: { get: () => ({ type: "api_key", key: "imagegen-test-key" }) },
 		getAll: () => [],
@@ -68,7 +67,6 @@ beforeEach(async () => {
 afterEach(() => {
 	harness?.cleanup();
 	setImageGenRegistry(undefined);
-	setNativeBypass(false);
 	unregisterImagesApiProviders(STUB_SOURCE_ID);
 	vi.unstubAllEnvs();
 });
