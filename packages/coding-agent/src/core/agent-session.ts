@@ -455,6 +455,14 @@ import {
 } from "./runtime/bootstrap.ts";
 import type { SourceInfo } from "./source-info.ts";
 import { toolInfoOf } from "./tool-info.ts";
+import {
+	PendingQueueLedger,
+	type PendingQueueSnapshot,
+	queueEntryLabel,
+	stallThresholdMs,
+	toolCallTimeout,
+	watchForStall,
+} from "./stall-warning.ts";
 import { stopResumeDirective } from "./stop-resume-directive.ts";
 import { type AgentSessionStructuredRecord, StructuredSessionLane } from "./structured-session-lane.ts";
 import {
@@ -1457,6 +1465,8 @@ export class AgentSession {
 	private _eventListeners: AgentSessionEventListener[] = [];
 	private readonly _structuredLane: StructuredSessionLane;
 	private _agentEventQueue: Promise<void> = Promise.resolve();
+	/** What `_agentEventQueue` still holds, so a tool call stalled behind it can say what it waits on (senpi#6189). */
+	private readonly _agentEventQueueLedger = new PendingQueueLedger();
 	private readonly _lifecycleEvents = new LifecycleEventSequencer<AgentSessionEvent>();
 	/**
 	 * Exact message objects whose message_end persistence is still queued.
@@ -1860,6 +1870,7 @@ export class AgentSession {
 			(deliver) => {
 				if (!this._unsubscribeAgent) return;
 				this._agentEventQueue = this._agentEventQueue.then(deliver, deliver);
+				this._agentEventQueueLedger.track("structured_record", this._agentEventQueue);
 			},
 			(control) => this._recoveryIdentity?.own(control),
 		);
@@ -2445,34 +2456,59 @@ export class AgentSession {
 		args: unknown,
 		options: { waitForEventQueue?: boolean; parentToolCallId?: string; signal?: AbortSignal } = {},
 	) {
-		if (options.waitForEventQueue !== false) {
-			await this._agentEventQueue;
-		}
-		const signal = options.signal ?? this.agent.signal;
-		// A call released by Stop never runs: block it without asking its hooks (a permission prompt) about it.
-		// Callers such as executeTool only honor an explicit block, so returning nothing here would let it run.
-		if ((await this._waitForToolBarrier(toolCall, signal)) && signal?.aborted) {
-			return { block: true, reason: "Operation aborted" };
-		}
-
-		const runner = this._extensionRunner;
-		if (!runner.hasHandlers("tool_call")) {
-			return undefined;
-		}
-
-		try {
-			return await runner.emitToolCall({
-				type: "tool_call",
-				toolName: toolCall.name,
+		// Neither wait below has a deadline of its own: one that never settles is logged once, never cut short (senpi#6189).
+		const thresholdMs = stallThresholdMs(toolCallTimeout(args));
+		const warnStalled = (event: string, elapsedMs: number, queue?: PendingQueueSnapshot) =>
+			this._sessionLogger.warn(event, {
 				toolCallId: toolCall.id,
+				toolName: toolCall.name,
 				...(options.parentToolCallId ? { parentToolCallId: options.parentToolCallId } : {}),
-				input: args as Record<string, unknown>,
+				thresholdMs,
+				elapsedMs,
+				...queue,
 			});
-		} catch (err) {
-			if (err instanceof Error) {
-				throw err;
+		if (options.waitForEventQueue !== false) {
+			const queueWatch = watchForStall(thresholdMs, (elapsedMs) =>
+				warnStalled("tool_call_event_queue_stalled", elapsedMs, this._agentEventQueueLedger.snapshot()),
+			);
+			try {
+				await this._agentEventQueue;
+			} finally {
+				queueWatch.stop();
 			}
-			throw new Error(`Extension failed, blocking execution: ${String(err)}`);
+		}
+		const preflightWatch = watchForStall(thresholdMs, (elapsedMs) =>
+			warnStalled("tool_call_preflight_stalled", elapsedMs),
+		);
+		try {
+			const signal = options.signal ?? this.agent.signal;
+			// A call released by Stop never runs: block it without asking its hooks (a permission prompt) about it.
+			// Callers such as executeTool only honor an explicit block, so returning nothing here would let it run.
+			if ((await this._waitForToolBarrier(toolCall, signal)) && signal?.aborted) {
+				return { block: true, reason: "Operation aborted" };
+			}
+
+			const runner = this._extensionRunner;
+			if (!runner.hasHandlers("tool_call")) {
+				return undefined;
+			}
+
+			try {
+				return await runner.emitToolCall({
+					type: "tool_call",
+					toolName: toolCall.name,
+					toolCallId: toolCall.id,
+					...(options.parentToolCallId ? { parentToolCallId: options.parentToolCallId } : {}),
+					input: args as Record<string, unknown>,
+				});
+			} catch (err) {
+				if (err instanceof Error) {
+					throw err;
+				}
+				throw new Error(`Extension failed, blocking execution: ${String(err)}`);
+			}
+		} finally {
+			preflightWatch.stop();
 		}
 	}
 
@@ -3724,6 +3760,7 @@ export class AgentSession {
 			return this._processAgentEvent(queuedEvent, signal);
 		};
 		const processing = this._agentEventQueue.then(deliverThenProcess, deliverThenProcess);
+		this._agentEventQueueLedger.track(queueEntryLabel(queuedEvent), processing);
 		this._agentEventQueue =
 			pendingEnd !== undefined
 				? processing.finally(() => {
@@ -8213,6 +8250,7 @@ export class AgentSession {
 					(lifecycle) => this._emit(lifecycle),
 					(run) => {
 						this._agentEventQueue = this._agentEventQueue.then(run, run);
+						this._agentEventQueueLedger.track(queueEntryLabel(event), this._agentEventQueue);
 						void this._agentEventQueue.catch(() => {});
 					},
 				),
