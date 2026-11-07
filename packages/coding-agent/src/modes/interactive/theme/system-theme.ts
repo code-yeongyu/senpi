@@ -347,8 +347,59 @@ const FOREGROUND_LEVEL: Level = "emphasis";
 /** Text-level tokens that take the terminal's foreground. */
 const FOREGROUND_TOKENS: ThemeColor[] = ["text", "userMessageText", "toolTitle"];
 
+/**
+ * Secondary text (tool output, thinking, quotes, hints) keeps a WCAG ratio above dim text, which keeps the
+ * body text minimum: every text role stays readable and muted stays visibly stronger than dim.
+ */
+const SECONDARY_TEXT_WCAG_CONTRAST = 5.5;
+/** Hue-carrying text (accents, status, markdown, syntax) keeps the body text minimum on the surfaces it is drawn on. */
+const COLORED_TEXT_TOKENS: ThemeColor[] = [
+	"accent",
+	"success",
+	"error",
+	"warning",
+	"customMessageLabel",
+	"mdHeading",
+	"mdLink",
+	"mdCode",
+	"mdCodeBlock",
+	"mdListBullet",
+	"skillMention",
+	"toolDiffAdded",
+	"toolDiffRemoved",
+	"syntaxKeyword",
+	"syntaxFunction",
+	"syntaxVariable",
+	"syntaxString",
+	"syntaxNumber",
+	"syntaxType",
+	"syntaxOperator",
+	"syntaxPunctuation",
+];
+const SECONDARY_TEXT_TOKENS: ThemeColor[] = [
+	"muted",
+	"thinkingText",
+	"customMessageText",
+	"toolOutput",
+	"toolDiffContext",
+	"mdQuote",
+	"mdLinkUrl",
+	"syntaxComment",
+	"searchMatchText",
+];
+
 /** WCAG 2 contrast ratio that body text must reach on the surfaces it is drawn on. */
 const TEXT_MINIMUM_WCAG_CONTRAST = 4.5;
+
+/** Message and tool panels take the terminal background's own hue at low saturation and at a fraction of the panel step, so they read as a faint shade of the background rather than a colored card. */
+const UNFILLED_PANELS: ThemeBg[] = [
+	"userMessageBg",
+	"customMessageBg",
+	"toolPendingBg",
+	"toolSuccessBg",
+	"toolErrorBg",
+];
+const PANEL_STEP = 0.5;
 
 /** Tokens in dependency order: every surface before the tokens drawn on it. */
 const SOLVE_ORDER: ThemeToken[] = (() => {
@@ -533,7 +584,17 @@ export function generateSystemThemeColors(input: SystemThemeInput): SystemThemeC
 				}
 			}
 			const l = lighter ? Math.max(...targets) : Math.min(...targets);
-			colors.set(token, PANELS.includes(token as ThemeBg) ? limitPanel(token, l) : paint(token, l));
+			if (UNFILLED_PANELS.includes(token as ThemeBg))
+				colors.set(
+					token,
+					anchored(
+						sourceOf(background),
+						FAMILIES.neutral,
+						oklabToOkhslLightness(backgroundL + (l - backgroundL) * PANEL_STEP),
+						saturation,
+					),
+				);
+			else colors.set(token, PANELS.includes(token as ThemeBg) ? limitPanel(token, l) : paint(token, l));
 		}
 		return colors;
 	};
@@ -584,6 +645,17 @@ export function generateSystemThemeColors(input: SystemThemeInput): SystemThemeC
 		// Body text keeps at least 4.5:1 on the surfaces it is drawn on, even on relaxed mid-gray backgrounds.
 		if (text) result[token] = hexOf(withTextContrast(text, surfaces, lighter));
 	}
+	for (const token of SECONDARY_TEXT_TOKENS) {
+		const color = solved.get(token);
+		if (color)
+			result[token] = hexOf(withTextContrast(color, surfacesOf(token), lighter, SECONDARY_TEXT_WCAG_CONTRAST));
+	}
+	for (const token of COLORED_TEXT_TOKENS) {
+		const color = solved.get(token);
+		if (color) result[token] = hexOf(withTextContrast(color, surfacesOf(token), lighter));
+	}
+	const dim = solved.get("dim");
+	if (dim) result.dim = hexOf(withTextContrast(dim, surfacesOf("dim"), lighter));
 	return { colors: result, dim: [], appearance };
 }
 
@@ -618,9 +690,15 @@ function anchored(source: SourceColor, family: Family, lightness: number, satura
 }
 
 /** Move a text color toward white or black until it reaches the WCAG minimum on every surface. */
-function withTextContrast(color: RgbColor, surfaces: RgbColor[], lighter: boolean): RgbColor {
+function withTextContrast(
+	color: RgbColor,
+	surfaces: RgbColor[],
+	lighter: boolean,
+	minimum = TEXT_MINIMUM_WCAG_CONTRAST,
+): RgbColor {
+	const rendered = ({ r, g, b }: RgbColor): RgbColor => ({ r: Math.round(r), g: Math.round(g), b: Math.round(b) });
 	const meets = (candidate: RgbColor) =>
-		surfaces.every((surface) => wcagContrast(candidate, surface) >= TEXT_MINIMUM_WCAG_CONTRAST);
+		surfaces.every((surface) => wcagContrast(rendered(candidate), surface) >= minimum);
 	if (meets(color)) return color;
 	const { h, s, l } = okhslOf(color);
 	const at = (lightness: number) => okhslColor(h, s, lightness);
