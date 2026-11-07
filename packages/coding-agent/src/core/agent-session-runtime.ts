@@ -299,6 +299,19 @@ export class AgentSessionRuntime {
 		return this._projectTrustChange;
 	}
 
+	/**
+	 * Runs `task` after every trust change already started here and before any started later (senpi#6176), so an
+	 * explicit trust decision and a Full access sync never read each other's saved value mid-change.
+	 */
+	runInProjectTrustChangeOrder<T>(task: () => Promise<T>): Promise<T> {
+		const run = this._projectTrustChange.then(task);
+		this._projectTrustChange = run.then(
+			() => undefined,
+			() => undefined,
+		);
+		return run;
+	}
+
 	private _projectTrustChange: Promise<void> = Promise.resolve();
 	/** Failed trust rebuilds; kept across session replacement so the error stays visible. */
 	private _trustChangeDiagnostics: AgentSessionRuntimeDiagnostic[] = [];

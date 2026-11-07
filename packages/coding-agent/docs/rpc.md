@@ -3968,8 +3968,8 @@ On a socket host, session-scoped commands require the current connection to be a
 in the following effect-based read allow-list:
 
 `get_state`, `get_messages`, `get_entries`, `get_tree`, `get_fork_messages`,
-`get_last_assistant_text`, `get_media`, `get_commands`, `get_loaded_surfaces`,
-`get_available_models`, `get_available_thinking_levels`, `get_fast_mode`, `get_session_stats`,
+`get_last_assistant_text`, `get_media`, `get_commands`, `get_loaded_surfaces`, `get_project_trust`,
+`get_project_settings`, `get_available_models`, `get_available_thinking_levels`, `get_fast_mode`, `get_session_stats`,
 `get_pending_inputs`, `get_steering_messages`, `get_follow_up_messages`, `get_auth_providers`,
 `get_provider_accounts`, `resolve_path`, `memory_report`, `eval_cells.list`, `eval_cells.peek`,
 and `check_reload_veto`.
@@ -6040,6 +6040,113 @@ Response:
 Extension rows come directly from the session's loaded resource inventory, not from registered slash commands. A commandless extension therefore appears once, and an extension registering several commands is not duplicated. MCP rows come from the live session-owned MCP service and expose its current server state, listed tool count, and non-secret auth status.
 
 In multi-session mode this is a session-scoped command and requires the routing `sessionId`.
+
+### Workspace trust and project settings
+
+A project folder's settings file, skills, prompt templates, extensions, themes and MCP servers load only when the
+project is trusted. The terminal asks when a session opens; an RPC session is never asked, so it stays untrusted
+until a client saves a decision with `set_project_trust`. These four commands act on the routed session's working
+directory (in multi-session mode each requires the routing `sessionId`) and use the same storage and rules as
+the terminal: the device's `trust.json` and the project's own settings file.
+
+#### get_project_trust
+
+```json
+{"type": "get_project_trust"}
+```
+
+```json
+{
+  "type": "response",
+  "command": "get_project_trust",
+  "success": true,
+  "data": {
+    "cwd": "/home/user/project",
+    "projectTrusted": false,
+    "requiresTrust": true,
+    "saved": null,
+    "locked": false,
+    "choices": [
+      { "choice": "trust", "label": "Trust", "trusted": true, "path": "/home/user/project" },
+      { "choice": "trust_parent", "label": "Trust parent folder (/home/user)", "trusted": true, "path": "/home/user" },
+      { "choice": "do_not_trust", "label": "Do not trust", "trusted": false, "path": "/home/user/project" }
+    ]
+  }
+}
+```
+
+- `projectTrusted`: whether this session runs with the project trusted now. (`get_state.projectTrusted` reports
+  only a decision saved for the folder itself.)
+- `requiresTrust`: whether the folder has anything trust gates; a folder without such files counts as trusted.
+- `saved`: the nearest decision saved at or above the folder, or `null`.
+- `locked`: the engine was launched with `--approve` or `--no-approve`; that flag outranks every saved decision,
+  so `set_project_trust` is refused.
+- `choices`: exactly the choices the terminal's `/trust` command offers.
+
+#### set_project_trust
+
+Saves one of the `/trust` choices and applies it to the session at once: project resources load (or unload)
+as they would on `reload`, and the next session opened in the folder gets the same decision. It is never
+implied by `open_session` or by a permission preset; only this explicit request saves a decision.
+
+```json
+{"type": "set_project_trust", "choice": "trust"}
+```
+
+`choice` is `trust` (this folder), `trust_parent` (the parent folder; clears this folder's own entry, as `/trust`
+does) or `do_not_trust`. The response carries the same `data` as `get_project_trust`, read after the change.
+Errors: `invalid_argument` for an unknown choice, `project_trust_locked` when the launch named the trust, and
+`project_trust_extension_decided` when a `project_trust` handler of an extension loaded before trust (never a
+project extension) decides the other way: such a handler decides before any saved choice when a session opens, so
+the request is refused and nothing is saved or applied. A folder with nothing trust gates stays trusted whatever is
+chosen.
+
+#### get_project_settings
+
+Reads the project settings file as stored. Reading runs nothing, so it works while the project is untrusted.
+
+```json
+{"type": "get_project_settings"}
+```
+
+```json
+{
+  "type": "response",
+  "command": "get_project_settings",
+  "success": true,
+  "data": {
+    "cwd": "/home/user/project",
+    "path": "/home/user/project/.senpi/settings.json",
+    "exists": true,
+    "projectTrusted": true,
+    "settings": { "defaultThinkingLevel": "high" },
+    "error": null
+  }
+}
+```
+
+`settings` is `null` when the file does not exist or does not parse; `error` then names the parse failure.
+
+#### set_project_setting
+
+Writes one top-level key of the project settings file through the same locked, merge-on-write path the
+terminal's project setters use; `"value": null` removes the key. The value is stored as given, like an edit to
+the file: values the session reads when it starts (default model and thinking level, steering and follow-up
+modes) apply after `reload` or in the next session.
+
+```json
+{"type": "set_project_setting", "key": "defaultThinkingLevel", "value": "high"}
+```
+
+The response carries the same `data` as `get_project_settings`, read after the write. Errors:
+`invalid_argument` when `key` is not an identifier (`[A-Za-z][A-Za-z0-9_]*`) or `value` is missing,
+`project_not_trusted` while the project is untrusted (trust it first), `project_settings_unreadable` when the
+existing file does not parse (nothing is written), and `project_settings_write_failed` when writing the file fails
+(permissions, a held lock).
+
+`get_project_trust` is an `observe` read; `set_project_trust`, `get_project_settings` and `set_project_setting`
+are `device_admin` (a saved trust decision decides whether project code runs on the device, and the settings
+commands read and write a file in the session's folder).
 
 ### extension_request
 

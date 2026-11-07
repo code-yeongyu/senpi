@@ -14,6 +14,7 @@ import type { SessionControlAdmission } from "../../core/extensions/types.ts";
 import type { ApiKeyVerification } from "../../core/verify-api-key.ts";
 
 import type { ClientMessageAdmission } from "./client-admission-record.ts";
+import type { RpcProjectSettings, RpcProjectTrust } from "./project-workspace-commands.ts";
 import type { RpcAbortQuiesce, RpcEffectAnswer, RpcQueuedInputChange } from "./rpc-effect-answer-types.ts";
 import type { EditAssistantMessageResult, EditUserMessageResult, NavigateTreeResult } from "./rpc-result-types.ts";
 import type { RpcProviderAccount } from "./rpc-session-state-types.ts";
@@ -152,6 +153,8 @@ export type RpcMutationResponse =
 			data: { enabled: boolean; serviceTier: ServiceTier; provider: string; modelId: string };
 	  }
 	| { id?: string; type: "response"; command: "set_steering_mode"; success: true }
+	| { id?: string; type: "response"; command: "set_project_trust"; success: true; data: RpcProjectTrust }
+	| { id?: string; type: "response"; command: "set_project_setting"; success: true; data: RpcProjectSettings }
 	| { id?: string; type: "response"; command: "set_follow_up_mode"; success: true }
 	| { id?: string; type: "response"; command: "compact"; success: true; data: CompactionResult }
 	| { id?: string; type: "response"; command: "set_auto_compaction"; success: true }
