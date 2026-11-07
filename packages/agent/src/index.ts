@@ -40,6 +40,8 @@ export {
 } from "@earendil-works/pi-telemetry";
 export * from "./agent.ts";
 export * from "./agent-loop.ts";
+export * from "./egress/types.ts";
+export { isStepCommitError, StepCommitError, type StepCommitFailure } from "./step-commit.ts";
 export { Agent, agentLoop, agentLoopContinue, runAgentLoop, runAgentLoopContinue } from "./public-entry.ts";
 export { createInternalAgentChannel, type InternalAgentChannel, type OrderedAgentRecord } from "./internal-events.ts";
 export { EMPTY_TOOL_USE_DEMOTION_DIAGNOSTIC, ProviderRetryWatchdogAbortError } from "./assistant-terminal-state.ts";
@@ -62,11 +64,15 @@ export {
 	encodeRemoteMessage,
 	HAND_CONTROL_LANE,
 	type RemoteAbort,
+	type EpochRefusal,
 	type RemoteAck,
 	type RemoteHandMessage,
 	type RemoteFile,
 	type RemoteHello,
 	type RemoteInvoke,
+	type RemoteFloor,
+	type RemoteFloorAck,
+	type RemoteFloorRefused,
 	type RemoteRefused,
 	type RemoteSettled,
 	RemoteProtocolError,
@@ -121,6 +127,14 @@ export {
 	type WorkspaceRoot,
 } from "./execution/grant-verify.ts";
 export {
+	createHandEpochFence,
+	EPOCH_FLOOR_MAX_STEP,
+	type FloorRaise,
+	HAND_SELF_SENDER,
+	type HandEpochFence,
+	type HandEpochFenceOptions,
+} from "./execution/remote-epoch.ts";
+export {
 	base64Length,
 	DEVICE_FILE_OPS,
 	type DeviceFileArgs,
@@ -138,6 +152,8 @@ export {
 	encodeBase64,
 	FILE_CHANNEL,
 	FILE_CHANNEL_MAX_BYTES,
+	isLocalDeviceFiles,
+	LOCAL_DEVICE_FILES,
 	RUN_CHANNEL,
 	fileOutcomeOf,
 } from "./execution/device-files.ts";
@@ -150,6 +166,24 @@ export {
 	type ModelPlaneRequest,
 	serveModelPlane,
 } from "./execution/plane-model.ts";
+export {
+	createLoopToolHost,
+	createSessionPlaneClient,
+	createSplitToolHost,
+	decodeSessionPlaneRequest,
+	loopSideToolNames,
+	SESSION_PLANE,
+	type SessionPlaneRequest,
+	serveSessionPlane,
+} from "./execution/plane-session.ts";
+export {
+	admitChainCall,
+	CHAIN_COUNT_LIMIT,
+	CHAIN_ORIGIN,
+	ChainCountLimitError,
+	decodeChainCount,
+	nextChainCount,
+} from "./execution/chain-count.ts";
 export {
 	decodePlaneMessage,
 	encodePlaneMessage,

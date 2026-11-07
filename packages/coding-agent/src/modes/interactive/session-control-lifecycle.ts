@@ -23,6 +23,7 @@ import type { TuiControlSurface } from "./session-control-commands.ts";
 import type { ControlFeed } from "./session-control-feed.ts";
 import { type TuiRegistryEntry, unregisterTuiEndpoint, unregisterTuiEndpointSync } from "./session-control-registry.ts";
 import type { ControlServer } from "./session-control-server.ts";
+import type { TerminalMcpPresenter } from "./terminal-presenter-surface.ts";
 import { onProcessContinue, type WakeScheduler } from "./session-control-wake.ts";
 
 export interface TuiControlContext {
@@ -30,6 +31,8 @@ export interface TuiControlContext {
 	readonly agentDir: string;
 	readonly surface: TuiControlSurface;
 	readonly editorRevision: () => number;
+	/** The terminal's own MCP form presenter, present only when enforcement is on (D11 S3-6b). */
+	readonly mcpPresenter?: TerminalMcpPresenter;
 }
 
 export interface ActiveControlEndpoint {

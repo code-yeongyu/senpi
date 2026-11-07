@@ -4,6 +4,7 @@ pub mod answers;
 pub mod classify;
 mod owner_dacl;
 pub mod presence;
+pub mod presence_binding;
 #[cfg(windows)]
 pub mod presence_windows;
 pub mod process_handle;

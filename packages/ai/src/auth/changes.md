@@ -1,3 +1,60 @@
+## 2026-11-05 - Reauthorizing a signed-out ChatGPT account restores it in place (part of #5003)
+
+### What changed
+
+- `packages/ai/src/auth/types.ts`: `LoginOptions.reauthorizeSlot` names the saved account that `reauthorize` selects.
+- `packages/ai/src/auth/pool/slots.ts`: `appendLoginSlot` takes `reauthorizeSlot` and rewrites exactly that account. It keeps the name, label and source, clears `signedOut`, and moves the flat projection to it when it carried that account or when the whole credential was signed out.
+- `packages/ai/src/auth/pool/slots.ts`: before it rewrites the account, the sign-in must be the same ChatGPT account. The route must match; SIWC must match issuer, subject and client ID; legacy must match the token identity, or the workspace once signed out. Otherwise `ReauthorizeAccountMismatchError` is thrown and nothing is written.
+
+### Why
+
+- A signed-out account holds blank tokens. Neither the token-identity match nor the sign-in takeover could find it, so reauthorizing it appended a duplicate `login-N`.
+
+### Why an extension could not handle it
+
+- The credential pool's login merge is shared by every login entry point.
+
+### Expected merge conflict zones
+
+- `appendLoginSlot` and its options type.
+
+## 2026-10-30 - Replace a returning SIWC registration instead of appending (part of senpi#5003)
+
+### What changed
+
+- `packages/ai/src/auth/pool/slots.ts`: match SIWC logins by their verified issuer, subject and issued client ID; replace the existing slot while keeping its immutable name, display name, pin, order and sibling material; an SIWC login that matches no tuple is appended and never falls back to token-identity replacement.
+
+### Why
+
+- `packages/ai/src/auth/pool/slots.ts`: fresh tokens for the same registration otherwise allocate another login-N slot. Email is not identity.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/auth/pool/slots.ts`: the common login commit path owns the serialized update against current stored credentials.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/auth/pool/slots.ts`: `appendLoginSlot`.
+
+## 2026-10-30 - Preserve per-account ChatGPT routes and identity (part of senpi#5003)
+
+### What changed
+
+- `packages/ai/src/auth/types.ts`: credentials may select a chat API and record their ChatGPT route. Absent routes remain legacy.
+- `packages/ai/src/auth/pool/slots.ts`: keep route, identity, issued client ID, scopes, retained ID token and permission state through slot promotion, projection and refresh; a same-account re-login replaces only a slot on its own route (legacy Codex vs Sign in with ChatGPT), never one on the other route.
+
+### Why
+
+- `packages/ai/src/auth/types.ts` and `packages/ai/src/auth/pool/slots.ts`: mixed SIWC and legacy accounts need account-specific transport and metadata without inheriting a sibling's registration.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/auth/types.ts` and `packages/ai/src/auth/pool/slots.ts`: the shared auth and storage contracts precede provider dispatch.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/auth/types.ts`: auth contracts. `packages/ai/src/auth/pool/slots.ts`: projection and refresh merge helpers.
+
 ## 2026-10-30 - Pass an explicitly selected account to OAuth login (senpi#5046)
 
 ### What changed

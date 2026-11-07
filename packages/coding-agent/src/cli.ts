@@ -4,6 +4,7 @@ import "./valid-cwd.ts";
 import "./private-fd-startup-release.ts";
 // Then: capture the private descriptor table before anything can spawn (senpi#4749).
 import "./private-fds.ts";
+import "./windows-power-throttling-startup.ts";
 import "./internal-role.ts";
 import { spawn, spawnSync, type StdioOptions } from "node:child_process";
 import { existsSync, fstatSync, realpathSync } from "node:fs";

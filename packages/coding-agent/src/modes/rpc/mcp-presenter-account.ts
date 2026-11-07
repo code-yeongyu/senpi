@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID, type KeyObject } from "node:crypto";
 import type { Duplex } from "node:stream";
-import type { McpFormBinding } from "../../core/mcp-form-types.ts";
+import type { McpFormBinding, McpPresenterIdentity } from "../../core/mcp-form-types.ts";
 import {
 	accountEnrollmentTranscript,
 	parseAccountEnrollment,
@@ -39,6 +39,51 @@ export type PresenterAttestationResult =
 	| { readonly ok: true; readonly attestation: PresenterAttestation }
 	| { readonly ok: false; readonly reason: PresenterAttestationRefusal };
 
+/** The issuer's half of the host-key proof (D11 secret phase 3.1); the engine builds the rest of the transcript. */
+export interface SecretHostProof {
+	readonly issuer: string;
+	readonly nonce: string;
+}
+
+/** One host token mint for a session (D11 secret phase 3.1). */
+export interface SecretHostTokenRequest {
+	readonly hostInstance: string;
+	readonly durableSessionId: string;
+	/** This host instance's in-memory Ed25519 key as a 44-byte SPKI DER; the wire form is the raw 32 bytes after it. */
+	readonly hostKeySpki: Uint8Array;
+	/**
+	 * The host key's base64url Ed25519 signature over
+	 * `["omo-secret-host-proof/v1", issuer, "omo-secret-host", jkt, nonce, hostInstance, durableSessionId].join("\n")`.
+	 * It throws for an `issuer` or `nonce` outside the claim bounds, and once the mint has settled. The private key
+	 * never crosses the seam.
+	 */
+	readonly sign: (proof: SecretHostProof) => string;
+}
+
+/** Why a step-up token was refused (D11 secret phase 6.5). */
+export type SecretAnswerRefusal =
+	| "stepup_malformed"
+	| "stepup_signature"
+	| "stepup_audience"
+	| "stepup_expired"
+	| "stepup_key_mismatch"
+	| "stepup_binding";
+
+/** The verified claims of an `aud: "omo-secret-answer"`, `typ: "secret_answer"` step-up token. */
+export interface SecretAnswerStepUp {
+	readonly acc: string;
+	readonly dev: string;
+	readonly jti: string;
+	/** JWT `exp`, in seconds since the epoch. */
+	readonly exp: number;
+	/** The host token's `dev` the step-up was minted for. */
+	readonly hdev: string;
+}
+
+export type SecretAnswerVerification =
+	| { readonly ok: true; readonly stepUp: SecretAnswerStepUp }
+	| { readonly ok: false; readonly reason: SecretAnswerRefusal };
+
 export interface PresenterAccountAuthority {
 	/** The account this host's installation is signed in as, re-read on every call; `undefined` when signed out. */
 	hostAccount(): string | undefined;
@@ -49,6 +94,24 @@ export interface PresenterAccountAuthority {
 	verify(token: string, publicKeySpkiDer: Uint8Array, nowS: number): Promise<PresenterAttestationResult>;
 	/** Fires on sign-out or an account switch; returns the unsubscribe function. */
 	onAccountChange(listener: () => void): () => void;
+	/**
+	 * D11 secret phase (3.1): mints an `aud: "omo-secret-host"` token that binds the host key to the signed-in account
+	 * and device, the host instance and the session, with the device access token used in process and dropped.
+	 * Resolves to the compact JWT. The sealed secret route needs this and `verifySecretAnswer`: an authority without
+	 * both gets no host key and no call, and its host is byte-identical to one without them.
+	 */
+	mintSecretHostToken?(request: SecretHostTokenRequest): Promise<string>;
+	/**
+	 * D11 secret phase (6.5): checks a step-up token's issuer signature against the pinned JWKS, `iss`, the
+	 * `aud`/`typ` code constants, the lifetime (`exp - iat <= 120`, 60 s skew), `uv === true`, that `cnf.jkt` is
+	 * `presenterKeyThumbprint(presenterSpki)`, and that `req` equals the passed binding hash.
+	 */
+	verifySecretAnswer?(
+		token: string,
+		presenterSpki: Uint8Array,
+		req: string,
+		nowS: number,
+	): Promise<SecretAnswerVerification>;
 }
 
 export type PresenterAccountRefusal =
@@ -73,6 +136,11 @@ export interface AccountPrincipal {
 	/** The control stream it enrolled on: its only management stream. */
 	readonly stream: Duplex;
 	readonly sessions: WeakSet<McpFormBinding>;
+}
+
+/** How the settle audit names an account principal: by its verified attestation, never by `remoteOrigin` (D11 2.5). */
+export function accountIdentity(principal: AccountPrincipal): McpPresenterIdentity {
+	return { principalKind: "account", dev: principal.dev, dname: principal.dname };
 }
 
 interface Attempt {

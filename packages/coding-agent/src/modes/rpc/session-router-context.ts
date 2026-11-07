@@ -44,7 +44,16 @@ export class RouterContext {
 
 	readonly registry: Pick<
 		RpcSessionRegistry,
-		"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size" | "warm"
+		| "openSession"
+		| "peek"
+		| "getForCommand"
+		| "beginClose"
+		| "close"
+		| "closeMarked"
+		| "list"
+		| "size"
+		| "warm"
+		| "closeGraceMs"
 	> &
 		Partial<Pick<RpcSessionRegistry, "supportsCompact" | "holderPids" | "attachSession" | "agentDir">>;
 
@@ -115,7 +124,16 @@ export class RouterContext {
 	constructor(
 		registry: Pick<
 			RpcSessionRegistry,
-			"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size" | "warm"
+			| "openSession"
+			| "peek"
+			| "getForCommand"
+			| "beginClose"
+			| "close"
+			| "closeMarked"
+			| "list"
+			| "size"
+			| "warm"
+			| "closeGraceMs"
 		> &
 			Partial<Pick<RpcSessionRegistry, "supportsCompact" | "holderPids" | "attachSession" | "agentDir">>,
 		writer: SessionEventWriter,
@@ -130,6 +148,10 @@ export class RouterContext {
 		);
 		this.registry = registry;
 		this.writer = writer;
+		// The writer's background routes stay local (D11 S3-5): it reads each connection's declared origin from here.
+		writer.originOf = (connection) => this.connectionRoles.originOf(connection);
+		// omo-relay-daemon#307: roles read each delegated socket's live record, the same object the writer keeps.
+		this.connectionRoles.useDelegations((connection) => writer.delegations.viewOf(connection));
 		this.defaults = defaults;
 		this.createBinding = createBinding;
 		this.connectionOptions = {

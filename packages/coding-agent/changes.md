@@ -1,3 +1,57 @@
+## 2026-11-06 - The runtime inventory snapshot hook is bounded by copy progress (senpi#6091, fixes #5816)
+
+### What changed
+
+- `packages/coding-agent/test/runtime-snapshot/inventory.test.ts`: the `beforeAll` that materializes the snapshot has no wall-clock deadline. It copies through a counting copier, and a watchdog fails the hook when no copy finishes for 30 s. The `afterAll` removal has no deadline either. Assertions and the per-runtime budget are unchanged. Tests only.
+
+### Why
+
+- The snapshot is the whole dependency closure (14,676 files in 286 packages), and its wall time follows host load: 3-4 s idle, 26 s under a 4% CPU quota. The fixed 60 s hook budget failed whole-suite receipts on loaded hosts with no failing assertion. Its planning and removal are synchronous, so a vitest deadline on them could never catch a hang.
+
+### Why an extension could not handle it
+
+- This is the package's own test.
+
+### Expected merge conflict zones
+
+- LOW: the constants and hooks at the top of `inventory.test.ts`.
+
+## 2026-11-05 - build:binary keeps linkedom's optional canvas external (senpi#6045)
+
+### What changed
+
+- `packages/coding-agent/package.json`: the `build:binary` `bun build --compile` passes `--external canvas`.
+
+### Why
+
+- Matches the release compile in `scripts/build-binaries.sh` (senpi#6045): the compile must not need canvas's native binding, and linkedom falls back to its JS canvas shim.
+
+### Why an extension could not handle it
+
+- Package build script, outside any extension.
+
+### Expected merge conflict zones
+
+- LOW: one flag in the `build:binary` script string.
+
+## 2026-11-05 - The `./presenter-authority` package entry (D11 M-1, senpi#4249)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `exports["./presenter-authority"]` -> `dist/presenter-authority-slot.js`, a side-effect-free entry, so a distribution registers its authority without evaluating the engine before cli.js's pre-main phase.
+
+### Why
+
+- Importing the package index would evaluate the engine graph before the CLI's own startup ordering (cli.ts keeps cli-main a dynamic import for this reason).
+
+### Why an extension could not handle it
+
+- Package exports are not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: one new key in `exports`.
+
 ## 2026-10-30 - Experimental subscription egress SDK entry (senpi#5039)
 
 ### What changed
