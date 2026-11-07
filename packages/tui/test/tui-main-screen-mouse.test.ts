@@ -293,6 +293,36 @@ it("enables Windows Terminal but rejects legacy Windows and Termux", () => {
 		else process.env.TERMUX_VERSION = termux;
 	}
 });
+it("enables a herdr pane on Windows without WT_SESSION (senpi#3353)", () => {
+	const platform = Object.getOwnPropertyDescriptor(process, "platform");
+	const herdr = process.env.HERDR_ENV;
+	const windowsTerminal = process.env.WT_SESSION;
+	try {
+		Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+		delete process.env.WT_SESSION;
+		for (const [herdrEnv, enabled] of [
+			["1", true],
+			["0", false],
+			[undefined, false],
+		] as const) {
+			if (herdrEnv === undefined) delete process.env.HERDR_ENV;
+			else process.env.HERDR_ENV = herdrEnv;
+			const { terminal, tui } = setup();
+			try {
+				tui.acquireMouseCapture("pending-question");
+				assert.equal(terminal.writes.includes(MOUSE_TRACKING.inline), enabled, `HERDR_ENV=${herdrEnv}`);
+			} finally {
+				tui.stop();
+			}
+		}
+	} finally {
+		if (platform) Object.defineProperty(process, "platform", platform);
+		if (herdr === undefined) delete process.env.HERDR_ENV;
+		else process.env.HERDR_ENV = herdr;
+		if (windowsTerminal === undefined) delete process.env.WT_SESSION;
+		else process.env.WT_SESSION = windowsTerminal;
+	}
+});
 it("does not enable tracking on a non-TTY", () => {
 	Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: false });
 	const { terminal, tui, events } = setup();
