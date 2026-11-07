@@ -1,11 +1,28 @@
+import { spawnSync } from "node:child_process";
 import { Type } from "typebox";
 import { describe, expect, it, vi } from "vitest";
 import { normalizeToolExposure } from "../../src/core/extensions/types.ts";
 import type { ExtensionFactory } from "../../src/core/sdk.ts";
 import { createBashToolDefinition } from "../../src/core/tools/bash.ts";
 import { createGrepToolDefinition } from "../../src/core/tools/grep.ts";
+import { loadNativeGrep } from "../../src/core/tools/grep/native-loader.ts";
 import { createPowerShellToolDefinition } from "../../src/core/tools/powershell.ts";
 import { createHarness } from "./harness.ts";
+
+// senpi#5384: the builtin grep needs an engine to run a search. A host with
+// neither a native grep prebuild nor rg on PATH has none, so the search step
+// of the two default-surface tests below is skipped with this reason instead
+// of failing the whole suite for an environment reason. The listing and
+// activation assertions run first and are unaffected by the skip.
+function grepEngineAvailable(): boolean {
+	try {
+		if (loadNativeGrep().native) return true;
+	} catch {
+		// A loader failure is just another unavailable signal, not a test failure.
+	}
+	const probe = spawnSync("rg", ["--version"]);
+	return probe.error === undefined && probe.status === 0;
+}
 
 vi.mock("@code-yeongyu/senpi", async () => await import("../../src/index.ts"));
 
@@ -73,11 +90,12 @@ async function createProbeHarness(options: ProbeHarnessOptions = {}) {
 }
 
 describe("default grep surface (#1678)", () => {
-	it("lists builtin grep for codemode without exposing it directly when eval is registered", async () => {
+	it("lists builtin grep for codemode without exposing it directly when eval is registered", async ({ skip }) => {
 		const { harness } = await createProbeHarness();
 		try {
 			expect(harness.session.getAllTools().map(({ name }) => name)).toContain("grep");
 			expect(harness.session.getActiveToolNames()).not.toContain("grep");
+			if (!grepEngineAvailable()) skip("no grep engine available: no native prebuild and rg not on PATH");
 			const result = await harness.session.executeTool("grep", { pattern: "x" });
 			expect(textOf(result)).toMatch(NO_MATCH_TEXT);
 			expect(harness.session.getActiveToolNames()).not.toContain("grep");
@@ -86,10 +104,11 @@ describe("default grep surface (#1678)", () => {
 		}
 	});
 
-	it("activates builtin grep by default without eval", async () => {
+	it("activates builtin grep by default without eval", async ({ skip }) => {
 		const { harness } = await createProbeHarness({ withEval: false });
 		try {
 			expect(harness.session.getActiveToolNames()).toContain("grep");
+			if (!grepEngineAvailable()) skip("no grep engine available: no native prebuild and rg not on PATH");
 			expect(textOf(await harness.session.executeTool("grep", { pattern: "x" }))).toMatch(NO_MATCH_TEXT);
 		} finally {
 			harness.cleanup();
