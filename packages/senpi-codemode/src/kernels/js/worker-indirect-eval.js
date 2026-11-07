@@ -72,6 +72,7 @@ const EXPRESSION_PREFIX_KEYWORDS = new Set(["await", "delete", "new", "throw", "
 
 function persistTopLevelDeclarations(code) {
 	const edits = [];
+	const functionNames = [];
 	let round = 0;
 	let square = 0;
 	let curly = 0;
@@ -110,7 +111,10 @@ function persistTopLevelDeclarations(code) {
 		if (isIdentifierStart(char)) {
 			const end = readIdentifier(code, index);
 			const token = code.slice(index, end);
-			if (round === 0 && square === 0 && curly === 0 && statementStart && DECLARATION_KEYWORDS.has(token)) {
+			const atTopLevelStatement = round === 0 && square === 0 && curly === 0 && statementStart;
+			const functionName = atTopLevelStatement ? readFunctionDeclarationName(code, token, end) : undefined;
+			if (functionName !== undefined) functionNames.push(functionName);
+			if (atTopLevelStatement && DECLARATION_KEYWORDS.has(token)) {
 				const declarationEnd = findDeclarationEnd(code, end);
 				const replacement = rewriteDeclaration(code, index, end, declarationEnd, token);
 				if (replacement !== undefined) edits.push({ start: index, end: declarationEnd, text: replacement });
@@ -178,7 +182,53 @@ function persistTopLevelDeclarations(code) {
 		}
 	}
 
-	return applyTextEdits(code, edits);
+	return persistFunctionDeclarations(applyTextEdits(code, edits), functionNames);
+}
+
+// A top-level function declaration is hoisted inside the cell's wrapper function, so it vanished with the cell
+// (senpi#3127). Its binding exists from the first statement, so one assignment placed right after the directive
+// prologue persists it like a `var`, even when the cell returns early or throws later. The assignment shares the
+// first line so error positions in the cell do not move.
+function persistFunctionDeclarations(code, names) {
+	if (names.length === 0) return code;
+	const assignments = [...new Set(names)].map((name) => `${persistTarget(name)} = ${name};`).join(" ");
+	const at = directivePrologueEnd(code);
+	return `${code.slice(0, at)};${assignments}${code.slice(at)}`;
+}
+
+/** The declared name when `token` (ending at `end`) starts `function`, `function*` or `async function`. */
+function readFunctionDeclarationName(code, token, end) {
+	let cursor = end;
+	if (token === "async") {
+		cursor = nextSignificantIndex(code, end);
+		const sameLine = !/[\n\r\u2028\u2029]/u.test(code.slice(end, cursor));
+		if (!sameLine || !code.startsWith("function", cursor) || IDENTIFIER_CONTINUE_RE.test(code[cursor + 8] ?? "")) return undefined;
+		cursor += 8;
+	} else if (token !== "function") {
+		return undefined;
+	}
+	cursor = nextSignificantIndex(code, cursor);
+	if (code[cursor] === "*") cursor = nextSignificantIndex(code, cursor + 1);
+	if (!isIdentifierStart(code[cursor])) return undefined;
+	return code.slice(cursor, readIdentifier(code, cursor));
+}
+
+/** End of the cell's directive prologue (`"use strict";` and friends); 0 when it has none. */
+function directivePrologueEnd(code) {
+	let end = 0;
+	for (;;) {
+		const start = nextSignificantIndex(code, end);
+		if (code[start] !== "'" && code[start] !== '"') return end;
+		const literalEnd = skipQuotedLiteral(code, start);
+		const after = nextSignificantIndex(code, literalEnd);
+		if (code[after] === ";") {
+			end = after + 1;
+			continue;
+		}
+		const lineBreak = /[\n\r\u2028\u2029]/u.test(code.slice(literalEnd, after));
+		if (after < code.length && (!lineBreak || /[.([`+\-*/%,?=<>&|^]/u.test(code[after]))) return end;
+		end = literalEnd;
+	}
 }
 
 function findDeclarationEnd(code, start) {
@@ -750,7 +800,7 @@ const LABEL_PREFIX_RE = /^[\p{ID_Start}$_][\p{ID_Continue}\u200c\u200d$]*\s*:/u;
 
 function isStatementOnly(source) {
 	if (
-		/^(?:const|let|var|if|for|while|switch|try|catch|finally|class|function|import|export|throw|return|do|break|continue|debugger)\b/u.test(
+		/^(?:async[^\S\n\r\u2028\u2029]+function|const|let|var|if|for|while|switch|try|catch|finally|class|function|import|export|throw|return|do|break|continue|debugger)\b/u.test(
 			source,
 		)
 	)
