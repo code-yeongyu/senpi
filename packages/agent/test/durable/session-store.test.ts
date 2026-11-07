@@ -4,12 +4,19 @@ import { createMemoryStoreMedium, openMemoryStore } from "../../src/durable/stor
 import {
 	openSessionStore,
 	openSyncSessionStore,
+	divergenceWrite,
+	readSessionState,
 	SessionStoreError,
 	type StoredEntry,
 } from "../../src/durable/session-store.ts";
 
 const HEADER = { type: "session", id: "s1", version: 3 };
 const entry = (key: string): StoredEntry => ({ key, line: JSON.stringify({ type: "message", id: key }) });
+
+// The divergence writer (the S07 importer's fork) goes through the shared layout.
+async function recordDivergence(store: DurableStore, id: string, divergence: { [key: string]: string }) {
+	await store.commit(1, [divergenceWrite(id, divergence)], () => {});
+}
 
 async function claimedMedium() {
 	const medium = createMemoryStoreMedium();
@@ -41,9 +48,61 @@ describe("the session store over a DurableStore", () => {
 			header: { ...HEADER, version: 4 },
 			entries: [entry("a"), entry("d")],
 		});
-		expect((await openMemoryStore(medium).scanDocuments("")).map((document) => document.key)).not.toContain(
-			"session-import/entry/s1/b",
+	});
+
+	it("accepts again a key a rewrite dropped (#5955 review)", async () => {
+		const medium = await claimedMedium();
+		const session = await openSyncSessionStore(openMemoryStore(medium), 1).open("s1", HEADER);
+		session.appendSync([entry("a"), entry("b")]);
+		session.rewriteSync(HEADER, [entry("a")]);
+
+		session.appendSync([entry("b")]);
+
+		expect((await openSessionStore(openMemoryStore(medium), 1).load("s1"))?.entries).toEqual([
+			entry("a"),
+			entry("b"),
+		]);
+	});
+
+	it("refuses a key another process appended to the session first, on the same call (#5955 review)", async () => {
+		const medium = await claimedMedium();
+		const first = await openSyncSessionStore(openMemoryStore(medium), 1).open("s1", HEADER);
+		const second = await openSyncSessionStore(openMemoryStore(medium), 1).open("s1", HEADER);
+		first.appendSync([entry("a")]);
+
+		expect(() => second.appendSync([entry("a")])).toThrow(SessionStoreError);
+		expect((await openSessionStore(openMemoryStore(medium), 1).load("s1"))?.entries).toEqual([entry("a")]);
+	});
+
+	it("keeps a divergence recorded after a handle opened when that handle rewrites (#5955 review)", async () => {
+		const medium = await claimedMedium();
+		const session = await openSyncSessionStore(openMemoryStore(medium), 1).open("s1", HEADER);
+		session.appendSync([entry("a")]);
+		const divergence = { kind: "k9f2", parentSessionId: "p", note: "diverged" };
+		await recordDivergence(openMemoryStore(medium), "s1", divergence);
+
+		session.rewriteSync(HEADER, [entry("a"), entry("b")]);
+
+		expect((await readSessionState(openMemoryStore(medium), "s1"))?.divergence).toEqual(divergence);
+	});
+
+	it("refuses a session stored in the layout before the record log instead of reading it back empty (#5955 review)", async () => {
+		const medium = await claimedMedium();
+		const store = openMemoryStore(medium);
+		await store.commit(
+			1,
+			[
+				{
+					op: "put",
+					key: "session-import/session/s1",
+					data: { id: "s1", header: HEADER, entryIds: ["a"], divergence: null },
+				},
+				{ op: "put", key: "session-import/entry/s1/a", data: entry("a").line },
+			],
+			() => {},
 		);
+
+		await expect(openSessionStore(openMemoryStore(medium), 1).load("s1")).rejects.toThrow(SessionStoreError);
 	});
 
 	it("throws a refused append on the same call and keeps the session and the store unchanged", async () => {

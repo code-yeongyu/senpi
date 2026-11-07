@@ -96,7 +96,17 @@ export type {
 	StoredSession,
 	SyncSessionHandle,
 } from "./durable/session-store.ts";
-export { openSessionStore, openSyncSessionStore, SessionStoreError } from "./durable/session-store.ts";
+export {
+	appendRecordWrites,
+	divergenceWrite,
+	manifestWrite,
+	openSessionStore,
+	openSyncSessionStore,
+	readSessionState,
+	rewriteRecordWrite,
+	SessionStoreError,
+	type SessionState,
+} from "./durable/session-store.ts";
 export type { SyncCommit, SyncCommitStore } from "./durable/store.ts";
 export { createMemoryStoreMedium, openMemoryStore } from "./durable/store-memory.ts";
 export { createBatchCoordinator } from "./execution/coordinator.ts";
