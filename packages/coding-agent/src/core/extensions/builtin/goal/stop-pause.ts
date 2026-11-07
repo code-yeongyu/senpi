@@ -6,10 +6,15 @@ export const GOAL_STOP_RESUMED_ENTRY = "goal-stop-resumed";
 
 type Marker = { goalId: string };
 
+/** A user Stop, or a parent's Stop inherited by this child, holds the session paused; an interrupted run does not. */
 export function stopHoldLive(ctx: ExtensionContext): boolean {
 	return (
-		ctx.getPauseState?.().holds.some((hold) => hold.kind === "session_hold" && hold.key !== "interrupted-run") ===
-		true
+		ctx
+			.getPauseState?.()
+			.holds.some(
+				(hold) =>
+					(hold.kind === "session_hold" && hold.key !== "interrupted-run") || hold.kind === "inherited_hold",
+			) === true
 	);
 }
 
