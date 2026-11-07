@@ -178,7 +178,18 @@ async function stopChild(context: SupervisorShutdown, reason: string): Promise<v
 	} catch (cause) {
 		// Metadata/watch failures must not leave a child behind. A fired exit breaker is already
 		// the final bound: never restart it or enlarge the normal caller's shutdown budget.
-		if (!killAttempted) await reapChildAfterFailure(child, termAttempted);
+		if (!killAttempted) {
+			try {
+				await reapChildAfterFailure(child, termAttempted);
+			} catch (reapCause) {
+				// The recovery error must not replace the failure that triggered it: log the
+				// original first, then the recovery error, and rethrow the original (#3067 L4).
+				supervisorLog(`shutdown failed for host child pid ${pid ?? "unknown"}: ${errorMessage(cause)}`);
+				supervisorLog(
+					`shutdown recovery failed for host child pid ${pid ?? "unknown"}: ${errorMessage(reapCause)}`,
+				);
+			}
+		}
 		throw cause;
 	}
 }
