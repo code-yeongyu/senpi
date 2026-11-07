@@ -36,6 +36,10 @@ it("exempts exactly the reviewed commands from the attach gate", () => {
 			"get_media",
 			"get_messages",
 			"get_pending_inputs",
+			// senpi#6176/#6185: the workspace's saved trust and project settings file, read without effect like
+			// get_loaded_surfaces and resolve_path; set_project_trust and set_project_setting stay gated.
+			"get_project_settings",
+			"get_project_trust",
 			"get_protocol_info",
 			"get_provider_accounts",
 			"get_session_stats",
@@ -99,6 +103,8 @@ it("refuses an unattached record_user_activity under enforcement, like every oth
 		{ type: "extension_ui_response", confirmed: true },
 		{ type: "export_jsonl" },
 		{ type: "select_hand", device: null },
+		{ type: "set_project_trust", choice: "trust" },
+		{ type: "set_project_setting", key: "theme", value: "dark" },
 	];
 	for (const [index, mutation] of mutations.entries()) {
 		const command = { ...mutation, id: `m-${index}`, sessionId: ref.sessionId };
