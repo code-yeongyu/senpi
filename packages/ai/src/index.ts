@@ -151,6 +151,7 @@ export {
 	type PromptCacheLifetime,
 	resolvePromptCacheLifetime,
 	resolvePromptCacheTtlSeconds,
+	supportsAnthropicCacheWarming,
 } from "./utils/prompt-cache-ttl.ts";
 export * from "./utils/provider-failure-description.ts";
 export * from "./utils/retry.ts";

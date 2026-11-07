@@ -1,5 +1,24 @@
 # core/tools changes
 
+## 2026-11-05 - `read` and `grep` descriptions state folding and page caps (senpi#5998)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/read.ts`: the description adds that a `.js` or `.json` file of 100+ lines read without offset/limit may come back folded, with markers that are not source and a footer of ranges to reread.
+- `packages/coding-agent/src/core/tools/grep/index.ts`: the description adds the defaults (limit 100 matches per page, timeoutMs 30000), the min(20, limit) files-per-page and 20-matches-per-file (200 for one file) caps, and that skip is ignored for a single file.
+
+### Why
+
+- The default read folder and the grep page caps already ran; the descriptions left them out, so an agent took a folded view for the whole file and expected `limit` to raise the per-file cap (senpi#5995).
+
+### Why an extension could not handle it
+
+- The descriptions live on the built-in tool definitions in this directory.
+
+### Expected merge conflict zones
+
+- LOW: the `description` strings in `read.ts` and `grep/index.ts`.
+
 ## 2026-11-03 - Multi-file mutation slots are taken once per file and in one order (senpi#5691)
 
 ### What changed

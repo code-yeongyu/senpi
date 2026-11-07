@@ -9,6 +9,7 @@ import type {
 	RpcOpenQueuedEvent,
 	RpcSecretInputSettledEvent,
 	RpcSessionParkedEvent,
+	RpcSessionReleasedEvent,
 	RpcSessionReplacedEvent,
 } from "./rpc-types.ts";
 import type { RpcSocketClosingEvent } from "./socket-closing.ts";
@@ -31,6 +32,8 @@ export type RpcClientEvent =
 	// because it REPLACES `session_closed` for that handle: a client that treats it as
 	// a close loses the session it was told to reopen by path.
 	| RpcSessionParkedEvent
+	// A quiet takeover let this connection go (senpi#5732); the session runs on for its new holder.
+	| RpcSessionReleasedEvent
 	// The host accepted an open_session and says where it is queued; the client also uses it to
 	// switch that open to its post-acknowledgement deadline (senpi#2209).
 	| RpcOpenQueuedEvent

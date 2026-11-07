@@ -16,6 +16,7 @@ include("prelude.jl")
 const senpi_connection = Dict{String, Any}()
 const senpi_write_lock = ReentrantLock()
 global senpi_current_cell = nothing
+global senpi_cell_token = nothing
 global senpi_memory_cell = nothing
 
 function senpi_escape(text::AbstractString)
@@ -237,6 +238,10 @@ function senpi_bridge_request(path::String, payload; read_timeout=nothing)
     port = get(senpi_connection, "port", nothing)
     token = get(senpi_connection, "token", nothing)
     port isa Integer && token isa AbstractString || error("Julia tool bridge is not initialized")
+    # The run's secret routes the host's kernel tools and the tool's live output to this cell (#6167).
+    if path == "/call" && senpi_cell_token isa String && payload isa AbstractDict && !haskey(payload, "cellToken")
+        payload = merge(payload, Dict{String, Any}("cellToken" => senpi_cell_token))
+    end
     body = senpi_json(payload)
     socket = connect(ip"127.0.0.1", port)
     timed_out = Ref(false)
@@ -330,6 +335,8 @@ function senpi_run_cell(message)
     code = string(get(message, "code", ""))
     started = time()
     global senpi_current_cell = cell_id
+    cell_token = get(message, "bridgeCellToken", nothing)
+    global senpi_cell_token = cell_token isa AbstractString ? String(cell_token) : nothing
     try
         parsed = Meta.parse("begin\n" * code * "\nend")
         if parsed isa Expr && parsed.head === :error
@@ -351,6 +358,7 @@ function senpi_run_cell(message)
         senpi_emit(Dict("type" => "result", "cellId" => cell_id, "ok" => false, "error" => senpi_error(error), "durationMs" => round(Int, (time() - started) * 1000)))
     finally
         global senpi_current_cell = nothing
+        global senpi_cell_token = nothing
         global senpi_memory_cell = cell_id
     end
 end

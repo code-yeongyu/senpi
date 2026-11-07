@@ -143,6 +143,24 @@ Docs: <https://bun.com/docs/runtime/utils>
 Bun.stringWidth("\x1b[32mgreen\x1b[0m e\u0301"); // terminal columns, ANSI + grapheme aware
 Bun.sliceAnsi(str, 0, 20);        // slice by columns, preserving ANSI codes
 Bun.wrapAnsi(str, 80);            // wrap by columns
+Bun.stripANSI("\x1b[31mred\x1b[0m"); // "red"
+Bun.inspect.table([{ a: 1, b: 2 }]); // box-drawn table string, like console.table
+```
+
+## Hashing, ids, versions, equality, compression, PATH lookup
+
+Docs: <https://bun.com/docs/runtime/utils>, <https://bun.com/docs/runtime/hashing>
+
+```ts
+Bun.hash("data");                                   // fast non-crypto hash (wyhash), returns a bigint
+new Bun.CryptoHasher("sha256").update(buf).digest("hex");
+await Bun.password.hash(pw); await Bun.password.verify(pw, hash); // argon2id by default
+Bun.randomUUIDv7();                                 // time-ordered UUID string
+Bun.semver.satisfies("1.4.4", "^1.4.0"); Bun.semver.order("1.4.3", "1.4.4"); // true; -1
+Bun.deepEquals(a, b);                               // structural equality (third arg true = strict)
+Bun.gzipSync(bytes); Bun.gunzipSync(gz);
+Bun.zstdCompressSync(bytes); Bun.zstdDecompressSync(z);
+Bun.which("gh");                                    // absolute path or null
 ```
 
 ## Databases and object storage

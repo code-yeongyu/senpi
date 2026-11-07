@@ -1296,6 +1296,7 @@ pi.on("input", async (event, ctx) => {
   // event.source - "interactive" (typed), "rpc" (API), or "extension" (via sendUserMessage)
   // event.attribution - "user" (a person sent it) or "agent" (an extension, tool, subagent, another agent's RPC client, or the session)
   // event.streamingBehavior - "steer" | "followUp" | undefined
+  // event.chainCount - the hop count of a thread call from another session (RPC `chainCount`), else undefined
   //   undefined when idle, "steer" for mid-stream interrupts,
   //   "followUp" for messages queued until the agent finishes
 
@@ -2488,6 +2489,22 @@ pi.registerMemoryReporter("myCache", () => ({ entries: cache.size, approxBytes: 
 ```
 
 Names the report owns (`sessionId`, `takenAt`, `pid`, `main`, `kernels`, `residentStore`, `tuiRenderCache`, `heapSnapshot`, `reporterErrors`) throw at registration. When two extensions register the same name, the first loaded wins.
+
+### pi.registerRpcRemoteSource(source)
+
+Serve `monitor` rpc targets that name a session on another device: `<device>/<session>` or `<device>/*` (see [terminal tools](terminal-tools.md#session-status-rpc-branch)). senpi knows no transport; the source does. `open(target, { events, exclude, resumeFrom? }, handlers)` resolves to `{ initial, stop }`, where `initial` is `{ rows, settledTurns?, generation?, cursor? }` and its `rows` are snapshot-shaped (`sessionId`, `status`, ...). Through `handlers` the source reports `record(record)` for each live record, `resynced(state)` after a gap, `cursor(cursor)` when its resume position moves, `lost(reason)` when the device stops answering, and `ended(reason)` when the watch can never continue. senpi renders every record with the local renderer, reports each settled turn a resync names in `settledTurns` once and each live `agent_settled` as it arrives, and saves the cursor in a persistent monitor's checkpoint, so a restore passes it back as `resumeFrom`. Reject `open` with a typed reason when the target cannot be watched.
+
+```typescript
+const unregister = pi.registerRpcRemoteSource({
+  async open(target, options, handlers) {
+    const stream = await myTransport.watch(target.device, target.session, options.resumeFrom);
+    stream.on("record", handlers.record);
+    return { initial: stream.state, stop: () => stream.close() };
+  },
+});
+```
+
+The latest registration wins; it is removed on unregister, a failed load or runtime invalidation. Without one, a remote target is refused.
 
 ### pi.registerEntryRenderer(customType, renderer)
 

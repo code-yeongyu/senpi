@@ -45,6 +45,9 @@ it("exempts exactly the reviewed commands from the attach gate", () => {
 			"get_steering_messages",
 			"get_subscription_limits",
 			"get_tree",
+			// senpi#5938: lists the engine's hands and a session's recorded hand; an observing read like list_sessions.
+			// select_hand, which changes where the session's tools run, stays gated.
+			"list_hands",
 			"list_sessions",
 			"memory_report",
 			"open_session",
@@ -95,6 +98,7 @@ it("refuses an unattached record_user_activity under enforcement, like every oth
 		{ type: "wake" },
 		{ type: "extension_ui_response", confirmed: true },
 		{ type: "export_jsonl" },
+		{ type: "select_hand", device: null },
 	];
 	for (const [index, mutation] of mutations.entries()) {
 		const command = { ...mutation, id: `m-${index}`, sessionId: ref.sessionId };
