@@ -12,6 +12,7 @@ import "./valid-cwd.js";
 import "./private-fd-startup-release.js";
 // Then: capture the private descriptor table before anything can spawn (senpi#4749).
 import "./private-fds.js";
+import "./windows-power-throttling-startup.js";
 import "./internal-role.js";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, fstatSync, realpathSync } from "node:fs";

@@ -1,9 +1,9 @@
 {
 	"methodClassesVersion": 1,
-	"methodClassesDigest": "4df5316e9c2712173b8338fdeb1bb1a78ae1f2c3da8b8ac694e1f3cc7c8382ed",
+	"methodClassesDigest": "56c692be165af1736661e24017ebd1526ae2e7aed1beb726abd2c3691bca9f43",
 	"sampleId": "00000000-0000-7000-8000-000000000000",
 	"samplePathRoot": "/nonexistent/senpi-rpc-inbound-sample",
-	"methodCount": 116,
+	"methodCount": 118,
 	"methods": [
 		{
 			"method": "abort",
@@ -664,6 +664,15 @@
 			}
 		},
 		{
+			"method": "list_hands",
+			"class": "observe",
+			"sampleClass": "observe",
+			"connectionLocal": false,
+			"sample": {
+				"type": "list_hands"
+			}
+		},
+		{
 			"method": "list_sessions",
 			"class": "observe",
 			"sampleClass": "observe",
@@ -933,6 +942,17 @@
 			}
 		},
 		{
+			"method": "select_hand",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "select_hand",
+				"sessionId": "00000000-0000-7000-8000-000000000000",
+				"device": null
+			}
+		},
+		{
 			"method": "send_custom_message",
 			"class": "device_admin",
 			"sampleClass": "device_admin",
@@ -1017,7 +1037,8 @@
 		},
 		{
 			"method": "set_model",
-			"class": "device_admin",
+			"class": "dynamic",
+			"dynamicVersion": 1,
 			"sampleClass": "device_admin",
 			"connectionLocal": false,
 			"sample": {

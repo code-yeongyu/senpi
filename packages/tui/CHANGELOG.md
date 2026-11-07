@@ -12,6 +12,32 @@
 
 ### Removed
 
+## [2026.11.6-1] - 2026-11-06
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- An Enter written right after the text it submits is no longer swallowed as part of that paste: a CR that follows a paste with LF or CRLF line breaks submits the request, while an unbracketed paste whose own line breaks are bare CR keeps its trailing CR in the paste ([#3076](https://github.com/code-yeongyu/senpi/issues/3076), [#6102](https://github.com/code-yeongyu/senpi/pull/6102)).
+
+### Removed
+
+## [2026.11.5-1] - 2026-11-05
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.11.4-2] - 2026-11-04
 
 ### Breaking Changes

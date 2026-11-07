@@ -1,6 +1,6 @@
 ---
 name: gpt-image-gen
-description: MUST read before generating images. Prompt-crafting guide for gpt-image-2.5 covering tool routing (native image_generation server tool vs the generate_image tool), model and quality selection, prompt structure, exact text rendering, reference-image editing, transparent assets, output formats, and multi-turn refinement.
+description: MUST read before generating images. Prompt-crafting guide for gpt-image-2.6 covering tool routing (native image_generation server tool vs the generate_image tool), model and quality selection, prompt structure, exact text rendering, reference-image editing, transparent assets, output formats, and multi-turn refinement.
 ---
 
 # GPT Image Generation
@@ -18,11 +18,18 @@ Check your current tool set before choosing. Tool state can change mid-session (
 
 ## Model selection
 
-- `gpt-image-2.5-sunburst` (default): the base model, optimized for quality, above gpt-image-2. Use it for precise edits, fidelity to reference subjects and products, dense text or diagrams, and final production assets.
-- `gpt-image-2.5-flare`: the small model, optimized for speed, with quality comparable to gpt-image-2. Reach for it when latency or volume matters more than the last increment of quality.
-- `gpt-image-2`: previous generation; quality tiers stop at `high`, transparency is preview-level.
+- `gpt-image-2.6-sunburst` (default): the most capable model. Use it for precise edits, fidelity to reference subjects and products, dense text or diagrams, and final production assets; at `medium` or `high` quality it keeps details the most consistent across repeated edits.
+- `gpt-image-2.6-flare`: the fast model, as quick as about six seconds at `low` quality, with stronger poster and product layouts than earlier Flare. Reach for it when latency or volume matters more than the last increment of quality.
+- `gpt-image-2.5-sunburst`, `gpt-image-2.5-flare`: the previous pair. `generate_image` falls back to them on its own (below); request them directly only to pin 2.5 output.
+- `gpt-image-2`: older generation; quality tiers stop at `high`, transparency is preview-level.
 
 The default is the better model on purpose. When a workflow turns out to be latency-sensitive, run the same prompt and inputs on Flare and switch only if the result still meets the bar.
+
+Some OpenAI-compatible endpoints do not serve the 2.6 ids yet. When the endpoint answers that it does not know the requested 2.6 model, `generate_image` retries once on the 2.5 counterpart (Sunburst for Sunburst, Flare for Flare) without `complexity`, and the result says so: `details.model` names the model that drew the image and `details.fallbackFrom` the one requested. Any other failure is reported as is.
+
+### Complexity (2.6 only)
+
+`complexity` (`low`, `medium`, `high`) sets how much the model plans before rendering; omitted means `high`, and it costs nothing extra. Use `low` for focused edits such as changing a background or a sign; keep `medium` or `high` for dense text, complex layouts, and many interacting objects, accepting more latency and a higher chance of unrequested changes. `quality` stays the separate control for rendering detail. The tool rejects `complexity` on models older than 2.6.
 
 ## Prompt crafting
 
@@ -48,7 +55,7 @@ Put the exact string in double quotes, say how many times it appears, and descri
 
 ## Quality, size, and format
 
-`quality` accepts `low`, `medium`, `high`, `xhigh`, `max`, or `auto` (default). Explore with `auto` or a lower tier; raise it for the final image only while it fixes an unmet requirement, since a higher tier does not guarantee a better image and costs more latency. `xhigh` and `max` exist only on GPT Image 2.5; the API rejects them on `gpt-image-2`.
+`quality` accepts `low`, `medium`, `high`, `xhigh`, `max`, or `auto` (default). Explore with `auto` or a lower tier; raise it for the final image only while it fixes an unmet requirement, since a higher tier does not guarantee a better image and costs more latency. `xhigh` and `max` exist only on GPT Image 2.5 and 2.6; the API rejects them on `gpt-image-2`.
 
 `size` defaults to `auto`. Presets: `1024x1024`, `1536x1024` (landscape), `1024x1536` (portrait). Custom `WIDTHxHEIGHT` works when both edges are multiples of 16, the aspect ratio stays within 1:3 to 3:1, neither edge exceeds 3840, and the total pixel count is between 655,360 and 8,294,400 (4K is `3840x2160` or `2160x3840`, not `3840x3840`). Outputs above `2560x1440` are experimental; square images are usually fastest.
 
@@ -56,7 +63,7 @@ Put the exact string in double quotes, say how many times it appears, and descri
 
 ### Transparent assets
 
-For logos, stickers, cutouts, and UI icons set `background: "transparent"` with `output_format` `png` or `webp`, and also ask for an isolated subject in the prompt ("isolated on a transparent background, no drop shadow"). A drawn checkerboard is not transparency: after saving, confirm the file has an alpha channel (the result reports `Background: transparent` when the provider confirms it) and inspect edges, hair, glass, and shadows. Repeat the transparent requirement on every later edit of that asset. On `gpt-image-2` transparency is a preview feature; prefer a 2.5 model and verify the alpha channel either way.
+For logos, stickers, cutouts, and UI icons set `background: "transparent"` with `output_format` `png` or `webp`, and also ask for an isolated subject in the prompt ("isolated on a transparent background, no drop shadow"). A drawn checkerboard is not transparency: after saving, confirm the file has an alpha channel (the result reports `Background: transparent` when the provider confirms it) and inspect edges, hair, glass, and shadows. Repeat the transparent requirement on every later edit of that asset. On `gpt-image-2` transparency is a preview feature; prefer a 2.6 or 2.5 model and verify the alpha channel either way.
 
 ## Editing with reference images
 
@@ -69,9 +76,10 @@ For a local repaint, add `mask_image_path`: a png with an alpha channel the same
 ```json
 {
   "prompt": "The same red fox from image 1, now wearing a knitted blue scarf, in an eye-level wildlife photograph. Change only the scarf. Preserve its face, fur markings, pose, and forest background; soft overcast light, muted woodland colors, shallow depth of field.",
-  "model": "gpt-image-2.5-sunburst",
+  "model": "gpt-image-2.6-sunburst",
   "reference_image_paths": ["art/fox.png"],
   "quality": "high",
+  "complexity": "low",
   "size": "2048x1152",
   "output_path": "art/fox-with-scarf.png"
 }

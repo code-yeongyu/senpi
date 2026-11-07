@@ -1,6 +1,7 @@
 import { VERSION } from "../../config.ts";
 import { sharedPathIdentityResolver } from "../../core/extensions/builtin/permission-system/path-identity-host.ts";
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
+import { HAND_SELECTION_CAPABILITY } from "./custom-capability.ts";
 import { multiSessionHostCapabilities } from "./host-capabilities.ts";
 import { advertisedCompactCapabilities } from "./compact-negotiation.ts";
 import { pathIdentityResolverStatus } from "./path-identity-status.ts";
@@ -17,12 +18,14 @@ export function answerProtocolInfo(
 	host: RouterContext,
 	command: Extract<RpcCommand, { type: "get_protocol_info" }>,
 ): RpcResponse {
-	const capabilities = multiSessionHostCapabilities({
+	const hostCapabilities = multiSessionHostCapabilities({
 		warm: host.registry.warm !== undefined,
 		toolRuntime: host.defaults.toolRuntime ?? "in-process",
 		negotiated: host.connectionOptions?.capabilities ?? [],
 		mcpPresenters: host.writer.mcpPresenters !== undefined,
 	});
+	const capabilities =
+		host.defaults.handSelection === undefined ? hostCapabilities : [...hostCapabilities, HAND_SELECTION_CAPABILITY];
 	return {
 		id: command.id,
 		type: "response",

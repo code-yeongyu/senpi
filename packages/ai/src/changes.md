@@ -1,3 +1,76 @@
+## 2026-11-05 - Login forwards the reauthorized account name (part of #5003)
+
+### What changed
+
+- `packages/ai/src/models.ts`: `Models.login` passes `LoginOptions.reauthorizeSlot` to `appendLoginSlot`.
+- `Models.login` rethrows `ReauthorizeAccountMismatchError` unwrapped, so the user sees why nothing changed.
+
+### Why
+
+- So a reauthorization restores the selected account instead of adding a copy.
+
+### Why an extension could not handle it
+
+- `Models.login` owns the credential write for every provider.
+
+### Expected merge conflict zones
+
+- The `appendLoginSlot` call inside `Models.login`.
+
+## 2026-11-06 - The warming-eligibility helper is exported from the package root (senpi#1248)
+
+### What changed
+
+- `packages/ai/src/index.ts`: re-exports `supportsAnthropicCacheWarming` from `./utils/prompt-cache-ttl.ts`, so the builtin keep-alive in `packages/coding-agent` decides warmth eligibility with the same helper its warm request uses.
+
+### Why
+
+- Two independent host checks let the keep-alive pre-flight disagree with `warmPromptCache`: one warmed a host the other refused, which is how an Anthropic-compatible gateway stayed cold while its requests carried `cache_control` (senpi#1248).
+
+### Why an extension could not handle it
+
+- A root barrel export is package surface, outside any extension.
+
+### Expected merge conflict zones
+
+- LOW: one name in the `prompt-cache-ttl` export list.
+
+## 2026-10-30 - Carry credential-selected chat transport into dispatch (part of senpi#5003)
+
+### What changed
+
+- `packages/ai/src/models.ts`: apply an optional credential-selected chat API alongside its base URL.
+
+### Why
+
+- `packages/ai/src/models.ts`: a model's catalog API cannot choose the route of the selected account.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/models.ts`: auth resolution and provider dispatch are shared core operations.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/models.ts`: `applyAuth`.
+
+## 2026-10-30 - Add an explicit credential-route switch for SIWC (senpi#5003 W8)
+
+### What changed
+
+- `packages/ai/src/types.ts`: add optional `OpenAIResponsesCompat.siwc`. The provider integration sets it on the model for a selected SIWC credential route; it defaults to false.
+
+### Why
+
+- `packages/ai/src/types.ts`: SIWC placement is still separate work. Provider IDs and token prefixes cannot identify the selected route without guessing.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/types.ts`: the exported compatibility contract must carry the route to the Responses adapter.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/types.ts`: the fork's `OpenAIResponsesCompat` extension.
+
 ## 2026-10-30 - Keep retained SIWC hints out of CLI output (senpi#5046)
 
 ### What changed

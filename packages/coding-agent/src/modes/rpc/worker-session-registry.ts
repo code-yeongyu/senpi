@@ -1,4 +1,5 @@
 import type { CliRuntimeConfiguration } from "../../main.ts";
+import { outsideCommand } from "./command-authority.ts";
 import type { SessionPathReservations as DaemonPathReservations } from "./host-reservations.ts";
 import { refreshesSessionActivity } from "./session-command-activity.ts";
 import { publishedSessionContext } from "./session-context-patch.ts";
@@ -49,8 +50,10 @@ export class WorkerSessionRegistry {
 		this.options = options;
 		this.closeGraceMs = options.closeGraceMs;
 		this.now = options.now;
-		this.createWorker =
+		const createWorker =
 			options.createWorker ?? ((callbacks) => new SessionWorkerClient(callbacks, options.configuration.agentDir));
+		// The opening command may be role-bound: its worker must never keep that command's authority (omo-relay-daemon#307).
+		this.createWorker = (callbacks) => outsideCommand(() => createWorker(callbacks));
 		options.capacity?.track(() => this.entries.size);
 	}
 

@@ -1,3 +1,21 @@
+## 2026-11-05 - --hand and --headless engine flags (senpi#5840)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: parses `--hand` and `--headless` (validated by the new `engine-mode-args.ts`: both run in RPC mode, `--headless` as a multi-session host; a prompt, `--print`, stdin, @files, `--mode text|json`, both flags together, and `--listen`/`--multi-session` with `--hand` are refused), documents both in `--help`, accepts `--listen` after either flag, and runs a headless host's sessions in process by default.
+
+### Why
+
+- senpi#5840: the headless host (#5423) and the hand runtime (#5424, #5483) existed only as libraries; nothing in the CLI started either, so a launcher or device service had no engine to start.
+
+### Why an extension could not handle it
+
+- Mode selection happens in the CLI's own argument parser before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the `Args` interface, the `--multi-session` branch of `parseArgs`, `resolveSessionRuntime` and the multi-session lines of `--help`.
+
 ## 2026-10-31 - ANTHROPIC_OAUTH_TOKEN help text (senpi#5131)
 
 ### What changed
