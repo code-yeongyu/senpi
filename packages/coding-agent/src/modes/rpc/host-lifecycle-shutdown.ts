@@ -182,9 +182,9 @@ async function stopChild(context: SupervisorShutdown, reason: string): Promise<v
 			try {
 				await reapChildAfterFailure(child, termAttempted);
 			} catch (reapCause) {
-				// The recovery error must not replace the failure that triggered it: log the
-				// original first, then the recovery error, and rethrow the original (#3067 L4).
-				supervisorLog(`shutdown failed for host child pid ${pid ?? "unknown"}: ${errorMessage(cause)}`);
+				// Log only the recovery error here: performShutdown logs the original
+				// failure once when this rethrow reaches it, so logging it here too
+				// would print the same line twice (#6144 review).
 				supervisorLog(
 					`shutdown recovery failed for host child pid ${pid ?? "unknown"}: ${errorMessage(reapCause)}`,
 				);

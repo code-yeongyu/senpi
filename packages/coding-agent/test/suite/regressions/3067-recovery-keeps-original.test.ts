@@ -33,7 +33,7 @@ vi.mock("../../../src/modes/rpc/host-supervisor-log.ts", async (importOriginal) 
 	};
 });
 
-/** A pid that belonged to a reaped child: signalling it fails, so the child never exits. */
+/** A pid that belonged to a reaped child: the child never exits. Signalling it is stubbed out below. */
 async function deadPid(): Promise<number> {
 	const probe = spawn(process.execPath, ["-e", ""]);
 	const pid = probe.pid;
@@ -45,8 +45,9 @@ async function deadPid(): Promise<number> {
 }
 
 // #3067 L4: when the recovery after a pre-signal failure throws, only the recovery error
-// is logged and the original error is lost. The recovery must log both, the original first,
-// and the original must still be the error shutdown reports.
+// is logged and the original error is lost. The recovery must log both — the recovery error
+// in stopChild, the original once in performShutdown — and the original must still be the
+// error shutdown reports.
 it("keeps the pre-signal error when the shutdown recovery itself throws", async () => {
 	const root = await mkdtemp(join(tmpdir(), "shutdown-recovery-"));
 	const pid = await deadPid();
@@ -80,6 +81,12 @@ it("keeps the pre-signal error when the shutdown recovery itself throws", async 
 	const exit = new Error("observed supervisor exit");
 	const exitProcess = vi.spyOn(process, "exit").mockImplementation(() => {
 		throw exit;
+	});
+	// The child is already reaped, so the recovery's SIGTERM/SIGKILL would go to a pid
+	// the OS may have reused: stub process.kill so no real signal is ever sent, while
+	// the recovery still walks its signal-then-wait path (#6144 review).
+	const killProcess = vi.spyOn(process, "kill").mockImplementation(() => {
+		throw new Error("kill ESRCH: no such process");
 	});
 	vi.useFakeTimers();
 	// Same injection as the supervisor fixture's "inject-stop-error": stopChild reads the
@@ -118,23 +125,47 @@ it("keeps the pre-signal error when the shutdown recovery itself throws", async 
 	try {
 		// The recovery reaps the never-exiting child: 5 s after SIGTERM, 30 s after SIGKILL.
 		// The waits are created lazily as the recovery reaches them, so advance in slices
-		// until shutdown settles instead of assuming both timers exist up front.
-		for (let step = 0; step < 40; step++) {
-			if (await Promise.race([stopped.then(() => true), Promise.resolve(false)])) break;
+		// until shutdown settles instead of assuming both timers exist up front. Keep
+		// advancing until it settles, with a time bound, rather than a fixed turn
+		// count: the real fs read before the injection can consume turns before those
+		// timers exist, which a fixed 40-turn loop cannot absorb (#6144 review).
+		// Track settlement with a flag, not a Promise.race against an already-resolved
+		// promise: the resolved side always wins the race, so that form can never
+		// observe the shutdown settling (verified: it returns false even for an
+		// already-resolved promise).
+		let settled = false;
+		stopped.then(
+			() => {
+				settled = true;
+			},
+			() => {
+				settled = true;
+			},
+		);
+		for (let advancedMs = 0; advancedMs < 120_000 && !settled; advancedMs += 1_000) {
 			await vi.advanceTimersByTimeAsync(1_000);
 		}
+		expect(settled, "shutdown did not settle within 120 s of fake time").toBe(true);
 		await expect(stopped).resolves.toBe("exited");
 		expect(exitProcess).toHaveBeenCalledWith(1);
-		const original = logged.findIndex((line) => line.includes("injected before child SIGTERM"));
-		const recovery = logged.findIndex((line) => line.includes("exit unobserved 30000ms after recovery SIGKILL"));
-		expect(original, "the original error must be logged").not.toBe(-1);
-		expect(recovery, "the recovery error must be logged").not.toBe(-1);
-		expect(original, "the original error must be logged before the recovery error").toBeLessThan(recovery);
+		expect(killProcess).toHaveBeenCalledWith(pid, "SIGTERM");
+		expect(killProcess).toHaveBeenCalledWith(pid, "SIGKILL");
+		const originals = logged.filter((line) => line.includes("injected before child SIGTERM"));
+		const recoveries = logged.filter((line) => line.includes("exit unobserved 30000ms after recovery SIGKILL"));
+		expect(originals, "the original error must be logged exactly once").toHaveLength(1);
+		expect(recoveries, "the recovery error must be logged exactly once").toHaveLength(1);
+		// stopChild logs only the recovery error; performShutdown logs the original once
+		// when the rethrow reaches it, so the recovery line now precedes it (#6144 review).
+		expect(
+			logged.findIndex((line) => line.includes("exit unobserved 30000ms after recovery SIGKILL")),
+			"the recovery error is logged in stopChild, before performShutdown logs the original",
+		).toBeLessThan(logged.findIndex((line) => line.includes("injected before child SIGTERM")));
 	} finally {
 		await stopped.catch(() => {});
 		vi.useRealTimers();
 		clock.mockRestore();
 		exitProcess.mockRestore();
+		killProcess.mockRestore();
 		activity.stopObserver();
 		await rm(root, { recursive: true, force: true });
 	}
