@@ -15,7 +15,7 @@ import type {
 import type { HistoryReducer } from "../../../src/core/session-history-reduce.ts";
 import type { SessionEntry } from "../../../src/core/session-manager.ts";
 
-type AnyTool = ToolDefinition<any, any, any>;
+type GoalTool = Pick<ToolDefinition, "name" | "execute">;
 type Handler = (event: unknown, ctx: ExtensionContext) => Promise<unknown> | unknown;
 
 const T0 = Date.UTC(2026, 10, 6, 3, 0, 0);
@@ -34,13 +34,13 @@ afterEach(async () => {
 async function heldGoalSession(threadId: string, options: { initialHolds?: SessionHoldRecord[]; dir?: string } = {}) {
 	const dir = options.dir ?? (await mkdtemp(join(tmpdir(), "senpi-goal-paused-elapsed-")));
 	if (options.dir === undefined) dirs.push(dir);
-	const tools = new Map<string, AnyTool>();
+	const tools = new Map<string, GoalTool>();
 	const handlers = new Map<string, Handler[]>();
 	const entries: SessionEntry[] = [];
 	const statuses: Array<string | undefined> = [];
 	let holds = options.initialHolds ?? [];
 	const pi = {
-		registerTool: (tool: AnyTool) => tools.set(tool.name, tool),
+		registerTool: (tool: GoalTool) => tools.set(tool.name, tool),
 		registerCommand: () => {},
 		on: (event: string, handler: Handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler]),
 		sendMessage: () => {},
