@@ -9,6 +9,7 @@ import { forgetSessionOwnership, releaseOwnerAttachment } from "./session-router
 import type { RouterContext } from "./session-router-context.ts";
 import { code, error } from "./session-router-errors.ts";
 import { stopSweep } from "./session-router-occupancy.ts";
+import { recordRetainedSession } from "./session-router-residency.ts";
 import type { CloseClaimOptions } from "./session-router-types.ts";
 
 /**
@@ -208,15 +209,32 @@ export async function dispose(host: RouterContext): Promise<void> {
 	if (host.admissions) await host.admissions.dispose();
 	await Promise.all(
 		[...host.bindings.entries()].map(async ([sessionId, binding]) => {
+			const entry = host.registry.peek(sessionId);
+			// A turn the host's own stop cuts short ends as a host shutdown, never as a user abort (senpi#6190).
+			try {
+				await entry?.runtime?.session.abortForHostShutdown();
+			} catch (cause) {
+				process.stderr.write(`senpi rpc host shutdown abort ${sessionId} failed: ${String(cause)}\n`);
+			}
+			// A retained session outlives this process: it parks (its record stays for the next host on the
+			// endpoint, which reopens it) instead of closing, so attached clients do not read it as ended.
+			const parkedPath =
+				host.handoverParkedDir !== undefined && entry?.retainOnDisconnect === true ? entry.sessionPath : undefined;
 			const claim = tryClaimClose(host, sessionId, { drainAttachments: true });
 			if (!claim) return;
 			if (claim.finalizer) {
+				if (entry !== undefined && parkedPath !== undefined)
+					await recordRetainedSession(host, entry, parkedPath).catch((cause: unknown) => {
+						process.stderr.write(`senpi rpc host shutdown park record ${sessionId} failed: ${String(cause)}\n`);
+					});
 				await finalizeClose(host, sessionId, binding, () =>
-					host.writer.closeSession(
-						sessionId,
-						{ type: "response", command: "close_session", success: true, data: {} },
-						"host_shutdown",
-					),
+					parkedPath !== undefined
+						? host.writer.parkSession(sessionId, parkedPath, "host_shutdown")
+						: host.writer.closeSession(
+								sessionId,
+								{ type: "response", command: "close_session", success: true, data: {} },
+								"host_shutdown",
+							),
 				);
 			} else await host.finalizations.get(sessionId)?.promise;
 			host.writer.forgetSession(sessionId);

@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { createHostDaemonPaths } from "./host-daemon-paths.ts";
 import {
 	clearHandoverParkedSession,
+	clearInheritedParkedSession,
 	dropHandoverParkedSessionIfFileGone,
 	type HandoverParkedEntry,
 	readHandoverParkedSessions,
@@ -134,7 +135,7 @@ async function reopenOne(
 		// that is handing off, and the drain parks it again. Keep the record so the successor still
 		// reopens it; clearing it here would lose the session when the drain closes it (senpi#3282).
 		if (holder?.shouldReopen !== undefined && !holder.shouldReopen()) return;
-		await clearHandoverParkedSession(daemonDir, entry.sessionPath);
+		await clearInheritedParkedSession(daemonDir, entry.sessionPath, holder?.hostInstance);
 	} catch (cause) {
 		// A `session_path_in_use` refusal means the predecessor still holds the path's cross-generation
 		// claim (its drain has not released it yet): the holder is alive, so the park is not failing -

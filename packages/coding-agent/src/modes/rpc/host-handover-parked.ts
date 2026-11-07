@@ -156,6 +156,28 @@ export function clearHandoverParkedSession(daemonDir: string, sessionPath: strin
 	return enqueueMutation(() => rm(entryFile(daemonDir, sessionPath), { force: true }));
 }
 
+/**
+ * Clears an inherited entry after its reopen, unless the reopen re-recorded it as resident on
+ * `holder` (a retained session is recorded by the host it is open on, so the next start reopens it).
+ */
+export function clearInheritedParkedSession(
+	daemonDir: string,
+	sessionPath: string,
+	holder: string | undefined,
+): Promise<void> {
+	return enqueueMutation(async () => {
+		const file = entryFile(daemonDir, sessionPath);
+		if (holder !== undefined) {
+			const recorded: unknown = await readFile(file, "utf8").then(
+				(text) => JSON.parse(text),
+				() => undefined,
+			);
+			if (isEntry(recorded) && recorded.parkedBy === holder) return;
+		}
+		await rm(file, { force: true });
+	});
+}
+
 export function dropHandoverParkedSessionIfFileGone(daemonDir: string, sessionPath: string): Promise<void> {
 	if (existsSync(sessionPath)) return Promise.resolve();
 	return clearHandoverParkedSession(daemonDir, sessionPath);

@@ -1,8 +1,3 @@
-import { recordHandoverParkedSession } from "./host-handover-parked.ts";
-import { parkedEntryFromProfile } from "./host-handover-parked-open.ts";
-
-import { hostInstanceId } from "./protocol-identity.ts";
-
 import type { RpcSessionClosedReason } from "./rpc-types.ts";
 
 import { readDrainVerdicts } from "./session-drain.ts";
@@ -10,6 +5,7 @@ import { holdUnattendedTurns } from "./session-drain-hold.ts";
 import { forgetSessionOwnership } from "./session-router-attachments.ts";
 import { finalizeClose, tryClaimClose } from "./session-router-close.ts";
 import type { RouterContext } from "./session-router-context.ts";
+import { recordRetainedSession } from "./session-router-residency.ts";
 import { selectSweepEvictions } from "./session-sweep.ts";
 
 const DRAIN_SWEEP_MS = 50;
@@ -145,18 +141,7 @@ export async function evictIdleSession(
 		retained?.retainOnDisconnect === true &&
 		retained.sessionPath !== undefined
 	) {
-		await recordHandoverParkedSession(host.handoverParkedDir, {
-			...parkedEntryFromProfile(
-				{
-					sessionPath: retained.sessionPath,
-					contextOverlay: retained.contextOverlay,
-					...(retained.durableSessionId !== undefined ? { durableSessionId: retained.durableSessionId } : {}),
-				},
-				retained.profile,
-				Object.keys(host.defaults.hostContext ?? {}),
-			),
-			parkedBy: host.defaults.hostContext?.host_instance ?? hostInstanceId(),
-		}).catch((cause: unknown) => {
+		await recordRetainedSession(host, retained, retained.sessionPath).catch((cause: unknown) => {
 			process.stderr.write(`senpi rpc handover park record ${sessionId} failed: ${String(cause)}\n`);
 		});
 	}
