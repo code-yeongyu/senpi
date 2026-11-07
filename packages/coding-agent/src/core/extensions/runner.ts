@@ -1445,12 +1445,15 @@ export class ExtensionRunner {
 	}
 
 	private reportHandlerFailure(extensionPath: string, event: string, err: unknown): void {
-		this.emitError({
-			extensionPath,
-			event,
-			error: err instanceof Error ? err.message : String(err),
-			stack: err instanceof Error ? err.stack : undefined,
-		});
+		this.reportDispatchError(
+			{
+				extensionPath,
+				event,
+				error: err instanceof Error ? err.message : String(err),
+				stack: err instanceof Error ? err.stack : undefined,
+			},
+			err,
+		);
 	}
 
 	/** Agent lifecycle events: every handler runs, serially, under the host budget (senpi#3650). */
@@ -1477,6 +1480,18 @@ export class ExtensionRunner {
 		for (const listener of this.errorListeners) {
 			listener(error);
 		}
+	}
+
+	/**
+	 * Reports a failure from event dispatch. Once the runner is retired (session replaced, reloaded
+	 * or disposed), a handler that fails on its stale context leaves a leftover, not an extension
+	 * failure, so that report is dropped. Every other failure is reported, including a cleanup
+	 * handler that a session replacement dispatches on the retired runner on purpose
+	 * (session_extensions_removed). Direct reports, such as a command's failure, go through emitError.
+	 */
+	private reportDispatchError(error: ExtensionError, cause?: unknown): void {
+		if (this.staleMessage !== undefined && cause instanceof StaleExtensionContextError) return;
+		this.emitError(error);
 	}
 
 	hasHandlers(eventType: string): boolean {
@@ -2331,14 +2346,7 @@ export class ExtensionRunner {
 						}
 					}
 				} catch (err) {
-					const message = err instanceof Error ? err.message : String(err);
-					const stack = err instanceof Error ? err.stack : undefined;
-					this.emitError({
-						extensionPath: ext.path,
-						event: event.type,
-						error: message,
-						stack,
-					});
+					this.reportHandlerFailure(ext.path, event.type, err);
 				}
 			}
 		}
@@ -2379,14 +2387,7 @@ export class ExtensionRunner {
 						}
 					}
 				} catch (err) {
-					const message = err instanceof Error ? err.message : String(err);
-					const stack = err instanceof Error ? err.stack : undefined;
-					this.emitError({
-						extensionPath: ext.path,
-						event: "model_select",
-						error: message,
-						stack,
-					});
+					this.reportHandlerFailure(ext.path, "model_select", err);
 				}
 			}
 		}
@@ -2486,15 +2487,9 @@ export class ExtensionRunner {
 					}
 				} catch (err) {
 					const message = err instanceof Error ? err.message : String(err);
-					const stack = err instanceof Error ? err.stack : undefined;
 					endStatus = "failed";
 					errorMessage = message;
-					this.emitError({
-						extensionPath: ext.path,
-						event: "tool_result",
-						error: message,
-						stack,
-					});
+					this.reportHandlerFailure(ext.path, "tool_result", err);
 				} finally {
 					hookRun.end(endStatus, errorMessage);
 				}
@@ -2573,14 +2568,7 @@ export class ExtensionRunner {
 					}
 					return handlerResult;
 				} catch (err) {
-					const message = err instanceof Error ? err.message : String(err);
-					const stack = err instanceof Error ? err.stack : undefined;
-					this.emitError({
-						extensionPath: ext.path,
-						event: "user_bash",
-						error: message,
-						stack,
-					});
+					this.reportHandlerFailure(ext.path, "user_bash", err);
 					throw err;
 				}
 			}
@@ -2605,7 +2593,7 @@ export class ExtensionRunner {
 				? []
 				: snapshotEventHandlers(this.extensions, "context_with_system"),
 			createContext: (path) => this.createContext(path),
-			emitError: (error) => this.emitError(error),
+			emitError: (error, cause) => this.reportDispatchError(error, cause),
 			excludeExtensionPath,
 			source,
 		});
@@ -2652,14 +2640,7 @@ export class ExtensionRunner {
 						currentPayload = handlerResult;
 					}
 				} catch (err) {
-					const message = err instanceof Error ? err.message : String(err);
-					const stack = err instanceof Error ? err.stack : undefined;
-					this.emitError({
-						extensionPath: ext.path,
-						event: "before_provider_request",
-						error: message,
-						stack,
-					});
+					this.reportHandlerFailure(ext.path, "before_provider_request", err);
 				}
 			}
 		}
@@ -2681,14 +2662,7 @@ export class ExtensionRunner {
 					};
 					await handler(event, this.createContext(ext.path));
 				} catch (err) {
-					const message = err instanceof Error ? err.message : String(err);
-					const stack = err instanceof Error ? err.stack : undefined;
-					this.emitError({
-						extensionPath: ext.path,
-						event: "before_provider_headers",
-						error: message,
-						stack,
-					});
+					this.reportHandlerFailure(ext.path, "before_provider_headers", err);
 				}
 			}
 		}
@@ -2800,14 +2774,7 @@ export class ExtensionRunner {
 						});
 					}
 				} catch (err) {
-					const message = err instanceof Error ? err.message : String(err);
-					const stack = err instanceof Error ? err.stack : undefined;
-					this.emitError({
-						extensionPath: ext.path,
-						event: "before_agent_start",
-						error: message,
-						stack,
-					});
+					this.reportHandlerFailure(ext.path, "before_agent_start", err);
 				}
 			}
 		}
@@ -2865,14 +2832,7 @@ export class ExtensionRunner {
 						hookPaths.push(...result.hookPaths.map((entry) => toEntry(entry, ext.path)));
 					}
 				} catch (err) {
-					const message = err instanceof Error ? err.message : String(err);
-					const stack = err instanceof Error ? err.stack : undefined;
-					this.emitError({
-						extensionPath: ext.path,
-						event: "resources_discover",
-						error: message,
-						stack,
-					});
+					this.reportHandlerFailure(ext.path, "resources_discover", err);
 				}
 			}
 		}
@@ -2931,12 +2891,7 @@ export class ExtensionRunner {
 						currentImages = result.images ?? currentImages;
 					}
 				} catch (err) {
-					this.emitError({
-						extensionPath: ext.path,
-						event: "input",
-						error: err instanceof Error ? err.message : String(err),
-						stack: err instanceof Error ? err.stack : undefined,
-					});
+					this.reportHandlerFailure(ext.path, "input", err);
 				}
 			}
 		}
