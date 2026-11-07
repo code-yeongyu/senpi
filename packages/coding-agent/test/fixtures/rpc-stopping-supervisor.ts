@@ -6,6 +6,7 @@ import net from "node:net";
 import { mock } from "node:test";
 import { runHostSupervisor } from "../../src/modes/rpc/host-lifecycle.ts";
 import { attachJsonlLineReader } from "../../src/modes/rpc/jsonl.ts";
+import { signalEndpointReady } from "../helpers/rpc-endpoint-ready.ts";
 import { admitInternalConnection } from "../helpers/sealed-internal-admit.ts";
 
 const [mode, socket, agentDir] = process.argv.slice(2);
@@ -96,6 +97,7 @@ if (mode === "host" || mode === "successor-host") {
 		}
 		return rename(...args);
 	});
+	const onServer = signalEndpointReady(socket, () => process.send?.({ type: "ready" }));
 	mock.method(net, "createServer", (accept: (peer: net.Socket) => void) => {
 		const server = createServer((peer) => {
 			accept(peer);
@@ -104,13 +106,8 @@ if (mode === "host" || mode === "successor-host") {
 				if (request.type === "get_protocol_info") process.send?.({ type: "public-probe" });
 			});
 		});
+		onServer(server);
 		return server;
-	});
-	const link = fs.link;
-	// The endpoint exists once the supervisor links its bound socket into place, not at "listening" (#5319).
-	mock.method(fs, "link", async (...args: Parameters<typeof link>) => {
-		await link(...args);
-		if (args[1] === socket) process.send?.({ type: "ready" });
 	});
 	syncBuiltinESMExports();
 	process.on("message", (message) => {

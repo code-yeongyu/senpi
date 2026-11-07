@@ -1,3 +1,59 @@
+## 2026-11-05 - Summary request estimate: stale usage, cut input and activated tools (senpi#5905, PR #5948)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative-summary.ts`: `estimateSummaryRequestTokens` no longer trusts provider usage from a message that predates the branch's latest compaction or context edit (a message kept through an earlier compaction); that request is estimated whole, system prompt and tools included, like a transcript without usage. When pruning, input bounding or an overflow shrink cut messages before the usage message, their estimated size is taken off the usage figure. Tool schemas a later tool result activated (`addedToolNames`) are counted on top of the usage, as pi-ai's estimator does.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative.ts`: `runExtensionCompaction` passes the uncut summarization input so the estimate can measure what was cut.
+
+### Why
+
+- The usage figure measured the transcript before it was cut, or a context an earlier compaction replaced, so the attempt budget could be sized for a much larger request than the one sent. Tools activated after the last usage were never billed in it, so they were missing from the estimate.
+
+### Why an extension could not handle it
+
+- This is the compaction builtin's own summary route.
+
+### Expected merge conflict zones
+
+- LOW: `estimateSummaryRequestTokens` in `speculative-summary.ts`; the `sourceMessages` setup before `boundSummarizationInput` in `runExtensionCompaction`.
+
+## 2026-11-05 - Summary budget sized to the request it sends (senpi#5905, PR #5909)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative-summary.ts`: new `estimateSummaryRequestTokens` sizes a summary request from the last provider-reported usage inside the summarized transcript plus an estimate of what follows it; with no usage it estimates the whole request, system prompt and tools included. `generateSummaryMessage` uses it for its default budget.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative.ts`: `runExtensionCompaction` sizes each attempt budget with it instead of the transcript's chars/4 estimate.
+
+### Why
+
+- The request carries the agent system prompt, the tool schemas and replayed reasoning, which the transcript estimate never saw: on large OpenAI sessions it measured a third of the provider-reported context, so a ~145k-token compaction stayed on the 120s floor and failed with "Summarization stream exceeded its 120000ms wall-clock budget" (senpi#5905).
+
+### Why an extension could not handle it
+
+- This is the compaction builtin's own summary route.
+
+### Expected merge conflict zones
+
+- LOW: the `attemptBudgetMs` computation in `runExtensionCompaction`; the default budget in `generateSummaryMessage`.
+
+## 2026-10-30 - SIWC remote compaction never falls through to the compact endpoint (senpi#5101)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote.ts`: retains the Responses v2 stream route for SIWC, then returns to local summarization if v2 is disabled or produces no checkpoint; timeout metadata names that same next step.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote.ts`: SIWC plan usage supports streaming POST `/v1/responses`, not `/v1/responses/compact` or a WebSocket fallback.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote.ts`: the builtin remote-compaction runner owns the transport fallback chain.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote.ts` v2 timeout next-step selection and fallback boundary.
+
 ## 2026-11-02 - Speculative warm summaries are kept across turns (senpi#5481, PR #5504)
 
 ### What changed

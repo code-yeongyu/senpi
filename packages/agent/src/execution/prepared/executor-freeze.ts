@@ -2,7 +2,7 @@ import type { StoreValue } from "../../durable/store.ts";
 import type { AgentToolResult } from "../../types.ts";
 import { canonicalDigest } from "../canonical-digest.ts";
 import type { FrozenCall } from "../ledger-types.ts";
-import { errorResult } from "./executor-body.ts";
+import { type BodyOutcome, errorResult, messageOf } from "./executor-body.ts";
 import type { PrepareReply } from "./executor-types.ts";
 
 /** Tool arguments and results are JSON on every model and wire path; a round trip drops what JSON cannot carry. */
@@ -18,8 +18,24 @@ export async function freezeCall(name: string, args: unknown): Promise<FrozenCal
 }
 
 /** The durable record of a settled body: what the issuer commits before ACK. Details stay in the in-process reply. */
-export function resultValue(result: AgentToolResult<unknown>, isError: boolean, requestedName?: string): StoreValue {
+function resultValue(result: AgentToolResult<unknown>, isError: boolean, requestedName?: string): StoreValue {
 	return toStoreValue({ content: result.content ?? [], isError, requestedName });
+}
+
+/**
+ * A settled body and its durable record. Content JSON cannot carry (an untyped tool breaking the content contract) settles
+ * the call as a tool error naming the problem, never as a rejection of the whole release (senpi#5864).
+ */
+export function recordedResult(
+	outcome: BodyOutcome,
+	requestedName: string | undefined,
+): BodyOutcome & { readonly value: StoreValue } {
+	try {
+		return { ...outcome, value: resultValue(outcome.result, outcome.isError, requestedName) };
+	} catch (error) {
+		const result = errorResult(`Tool result content is not JSON: ${messageOf(error)}`);
+		return { result, isError: true, value: resultValue(result, true, requestedName) };
+	}
 }
 
 export type StoppedReply = Extract<PrepareReply, { readonly kind: "blocked" | "batch_abort" }>;
