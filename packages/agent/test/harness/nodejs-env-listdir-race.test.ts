@@ -24,6 +24,16 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 	};
 });
 
+/** Removes `target` (with the real fs) the first time `listDir` stats any entry inside it. */
+function removeDirBeforeFirstStat(target: string): { readonly removed: () => boolean } {
+	let removed = false;
+	lstatHook.before = async (path) => {
+		if (removed || !path.startsWith(`${target}/`)) return;
+		removed = true;
+		await rm(target, { recursive: true, force: true });
+	};
+	return { removed: () => removed };
+}
 /** Removes `target` (with the real fs) the first time `listDir` is about to stat it. */
 function removeBeforeFirstStat(target: string): { readonly removed: () => boolean } {
 	let removed = false;
@@ -68,5 +78,22 @@ describe("NodeExecutionEnv.listDir with entries removed while it lists", () => {
 
 		expect(hook.removed()).toBe(true);
 		expect(listed.map((entry) => entry.id)).toEqual(["demo-1"]);
+	});
+
+	// senpi#5621: when the listed directory itself disappears mid-call, every remaining
+	// lstat reports ENOENT; the call must fail with not_found instead of silently
+	// returning the partial list a readdir after the removal would never produce.
+	it("fails with not_found when the listed directory itself disappears mid-call", async () => {
+		const root = createTempDir();
+		await writeFile(join(root, "kept.txt"), "kept");
+		await writeFile(join(root, "gone.txt"), "gone");
+		const env = new NodeExecutionEnv({ cwd: root });
+		const hook = removeDirBeforeFirstStat(root);
+
+		const result = await env.listDir(".", BACKGROUND_CONTEXT);
+
+		expect(hook.removed()).toBe(true);
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.error.code).toBe("not_found");
 	});
 });

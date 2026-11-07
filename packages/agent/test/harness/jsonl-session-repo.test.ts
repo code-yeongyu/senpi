@@ -1,9 +1,10 @@
+import { rm } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT, type Context } from "../../src/harness/context.ts";
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
 import { JSONL_STORAGE_VERSION, JsonlSessionRepo } from "../../src/harness/session/jsonl/index.ts";
 import { sessionName, setValue } from "../../src/harness/session/values.ts";
-import { getOrThrow } from "../../src/harness/types.ts";
+import { err, FileError, getOrThrow, type Result } from "../../src/harness/types.ts";
 import { createTempDir } from "./session-test-utils.ts";
 
 const NOW = 1_700_000_000_000;
@@ -25,6 +26,48 @@ class AtomicPublicationNodeExecutionEnv extends NodeExecutionEnv {
 			};
 		}
 		return super.renameFile(sourcePath, destinationPath, context);
+	}
+}
+
+/** Deletes one session file the first time the repo reads it, the window between listDir and read. */
+class VanishingSessionFileEnv extends NodeExecutionEnv {
+	private removed = false;
+	private readonly target: string;
+
+	constructor(options: ConstructorParameters<typeof NodeExecutionEnv>[0], target: string) {
+		super(options);
+		this.target = target;
+	}
+
+	override async readTextLines(
+		path: string,
+		options: { maxLines?: number } | undefined,
+		context: Context,
+	): Promise<Result<string[], FileError>> {
+		if (!this.removed && path === this.target) {
+			this.removed = true;
+			await rm(path, { force: true });
+		}
+		return super.readTextLines(path, options, context);
+	}
+}
+
+/** Fails the read of one session file with a non-ENOENT error. */
+class FailingSessionReadEnv extends NodeExecutionEnv {
+	private readonly target: string;
+
+	constructor(options: ConstructorParameters<typeof NodeExecutionEnv>[0], target: string) {
+		super(options);
+		this.target = target;
+	}
+
+	override async readTextLines(
+		path: string,
+		options: { maxLines?: number } | undefined,
+		context: Context,
+	): Promise<Result<string[], FileError>> {
+		if (path === this.target) return err(new FileError("permission_denied", "denied", path));
+		return super.readTextLines(path, options, context);
 	}
 }
 
@@ -195,5 +238,40 @@ describe("JsonlSessionRepo cwd-scoped lifecycle", () => {
 		]);
 		await Promise.all(reopened.map((session) => session.close(BACKGROUND_CONTEXT)));
 		await repo.close(BACKGROUND_CONTEXT);
+	});
+
+	// senpi#5621: a session file deleted after listDir returned it must be skipped,
+	// not fail the whole listing; any other read error still fails it.
+	it("skips a session file that vanishes before its header is read", async () => {
+		const root = createTempDir();
+		const fileSystem = new NodeExecutionEnv({ cwd: root });
+		const repo = new JsonlSessionRepo({ fileSystem, sessionsRoot: "sessions", now: () => NOW });
+		const kept = await repo.create({ id: "kept", cwd: "/workspace" }, BACKGROUND_CONTEXT);
+		const gone = await repo.create({ id: "gone", cwd: "/workspace" }, BACKGROUND_CONTEXT);
+		await kept.close(BACKGROUND_CONTEXT);
+		await gone.close(BACKGROUND_CONTEXT);
+		await repo.close(BACKGROUND_CONTEXT);
+
+		const vanishing = new VanishingSessionFileEnv({ cwd: root }, gone.metadata.path);
+		const relisting = new JsonlSessionRepo({ fileSystem: vanishing, sessionsRoot: "sessions", now: () => NOW });
+		const listed = await relisting.list({ cwd: "/workspace" }, BACKGROUND_CONTEXT);
+		expect(listed.map((entry) => entry.id)).toEqual(["kept"]);
+		await relisting.close(BACKGROUND_CONTEXT);
+	});
+
+	it("still fails the listing when a session header read fails for another reason", async () => {
+		const root = createTempDir();
+		const fileSystem = new NodeExecutionEnv({ cwd: root });
+		const repo = new JsonlSessionRepo({ fileSystem, sessionsRoot: "sessions", now: () => NOW });
+		const session = await repo.create({ id: "session", cwd: "/workspace" }, BACKGROUND_CONTEXT);
+		await session.close(BACKGROUND_CONTEXT);
+		await repo.close(BACKGROUND_CONTEXT);
+
+		const failing = new FailingSessionReadEnv({ cwd: root }, session.metadata.path);
+		const relisting = new JsonlSessionRepo({ fileSystem: failing, sessionsRoot: "sessions", now: () => NOW });
+		await expect(relisting.list({ cwd: "/workspace" }, BACKGROUND_CONTEXT)).rejects.toThrow(
+			"Failed to read session header",
+		);
+		await relisting.close(BACKGROUND_CONTEXT);
 	});
 });
