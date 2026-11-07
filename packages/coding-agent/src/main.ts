@@ -231,7 +231,7 @@ function isPlainRuntimeMetadataCommand(parsed: Args): boolean {
 	);
 }
 
-async function runAuthCommand(args: string[]): Promise<boolean> {
+async function runAuthCommand(args: string[], extensionFactories: InlineExtension[]): Promise<boolean> {
 	if (isAuthCommandHelp(args)) {
 		printAuthCommandHelp();
 		return true;
@@ -279,7 +279,14 @@ async function runAuthCommand(args: string[]): Promise<boolean> {
 		let credential: string | undefined;
 		try {
 			const credentials = command.noRefresh ? new ReadOnlyAuthStorage() : AuthStorage.create();
-			const modelRuntime = await createAuthCheckModelRuntime(credentials);
+			const modelRuntime = await createAuthCheckModelRuntime(credentials, {
+				cwd: process.cwd(),
+				resourceLoaderOptions: {
+					additionalExtensionPaths: resolveCliPaths(process.cwd(), parsed.extensions),
+					extensionFactories,
+					noExtensions: parsed.noExtensions,
+				},
+			});
 			result = await checkProviderAuth(parsed, modelRuntime, { refresh: !command.noRefresh });
 			if (command.credentials && result.status === "ready") {
 				credential = await getProviderCredential(result.provider, modelRuntime, credentials, {
@@ -1142,7 +1149,7 @@ export async function main(args: string[], options?: MainOptions) {
 		process.env.PI_SKIP_VERSION_CHECK = "1";
 	}
 
-	if (await runAuthCommand(args)) {
+	if (await runAuthCommand(args, extensionFactories)) {
 		return;
 	}
 
