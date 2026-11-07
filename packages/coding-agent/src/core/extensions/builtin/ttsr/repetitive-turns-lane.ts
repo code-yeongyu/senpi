@@ -1,11 +1,8 @@
 import {
-	createRepetitiveTurnsState,
 	isNearDuplicateOfPreviousTurn,
 	normalizeTurnText,
 	REPETITIVE_TURNS_MIN_NORMALIZED_CHARS,
 	REPETITIVE_TURNS_RULE_NAME,
-	type RepetitiveTurnsState,
-	recordTurnText,
 } from "./detectors/repetitive-turns.ts";
 
 export function collectAssistantText(message: { readonly content: unknown }): string | null {
@@ -20,32 +17,48 @@ export function collectAssistantText(message: { readonly content: unknown }): st
 	return combined.length > 0 ? combined : null;
 }
 
+/** Whether an assistant message called a tool: the agent acted instead of only reporting (senpi#4537). */
+export function hasToolCall(message: { readonly content: unknown }): boolean {
+	if (!Array.isArray(message.content)) return false;
+	return message.content.some(
+		(block: unknown) => typeof block === "object" && block !== null && "type" in block && block.type === "toolCall",
+	);
+}
+
 const RESTORED_TURN_LIMIT = 8;
 
 interface SessionEntrySource {
 	readonly sessionManager: { getEntries(): readonly unknown[] };
 }
 
+/** The text-only replies since the agent last called a tool, the window the lane compares within. */
 export function readPersistedAssistantTexts(ctx: SessionEntrySource): string[] {
-	const texts: string[] = [];
+	let texts: string[] = [];
 	for (const entry of ctx.sessionManager.getEntries()) {
 		if (typeof entry !== "object" || entry === null) continue;
 		if (!("type" in entry) || entry.type !== "message") continue;
 		const message: unknown = Reflect.get(entry, "message");
 		if (typeof message !== "object" || message === null) continue;
 		if (Reflect.get(message, "role") !== "assistant") continue;
-		const text = collectAssistantText({ content: Reflect.get(message, "content") });
+		const content: unknown = Reflect.get(message, "content");
+		if (hasToolCall({ content })) {
+			texts = [];
+			continue;
+		}
+		const text = collectAssistantText({ content });
 		if (text !== null) texts.push(text);
 	}
 	return texts.slice(-RESTORED_TURN_LIMIT);
 }
 
+/**
+ * Compares each completed text-only reply with the previous one. The rule is for a model that repeats its status
+ * instead of acting, so a reply that calls a tool resets the comparison: summaries separated by real work are
+ * progress reports, however similar their format (senpi#4537). The verdict comes after the reply has completed;
+ * the lane never cuts a reply off mid-stream.
+ */
 export class RepetitiveTurnsLane {
-	#state: RepetitiveTurnsState = createRepetitiveTurnsState();
-	#armed = false;
-	#recovering = false;
-	#currentTurnText = "";
-	#lastCompletedTurnText: string | null = null;
+	#previous: string | null = null;
 	#enabled = true;
 
 	configure(disabledRules: ReadonlySet<string>): void {
@@ -53,64 +66,27 @@ export class RepetitiveTurnsLane {
 	}
 
 	resetSession(): void {
-		this.#state = createRepetitiveTurnsState();
-		this.#armed = false;
-		this.#recovering = false;
-		this.#currentTurnText = "";
-		this.#lastCompletedTurnText = null;
+		this.#previous = null;
 	}
 
 	restoreFromHistory(assistantTexts: readonly string[]): void {
 		for (const text of assistantTexts) {
-			this.recordCompletedTurn(text);
-		}
-		this.#armed = false;
-	}
-
-	resetTurn(): void {
-		this.#armed = false;
-		this.#currentTurnText = "";
-	}
-
-	disarm(): void {
-		this.#armed = false;
-	}
-
-	get armed(): boolean {
-		return this.#armed;
-	}
-
-	observeTextDelta(delta: string, canArm: boolean): boolean {
-		if (this.#enabled && !this.#armed && !this.#recovering && canArm && this.#lastCompletedTurnText !== null) {
-			const candidate = normalizeTurnText(this.#currentTurnText + delta);
-			if (
-				candidate.length >= REPETITIVE_TURNS_MIN_NORMALIZED_CHARS &&
-				isNearDuplicateOfPreviousTurn(candidate, this.#lastCompletedTurnText)
-			) {
-				this.#armed = true;
-			}
-		}
-		this.#currentTurnText += delta;
-		return this.#armed;
-	}
-
-	commitArmedTurn(turnText: string | null): void {
-		this.#armed = false;
-		this.#recovering = true;
-		if (turnText !== null) {
-			this.#lastCompletedTurnText = normalizeTurnText(turnText);
+			this.#previous = normalizeTurnText(text);
 		}
 	}
 
-	recordCompletedTurn(turnText: string): void {
-		const normalized = normalizeTurnText(turnText);
-		this.#lastCompletedTurnText = normalized;
-		if (!this.#enabled) return;
-		const match = recordTurnText(this.#state, turnText);
-		if (match === null) {
-			if (this.#recovering) this.#recovering = false;
-			return;
-		}
-		this.#armed = true;
+	noteToolWork(): void {
+		this.#previous = null;
+	}
+
+	/** Records a completed text-only reply; true when it near-duplicates the previous one with no tool work between. */
+	completeTurn(turnText: string): boolean {
+		const candidate = normalizeTurnText(turnText);
+		const previous = this.#previous;
+		this.#previous = candidate;
+		if (!this.#enabled || previous === null) return false;
+		return (
+			candidate.length >= REPETITIVE_TURNS_MIN_NORMALIZED_CHARS && isNearDuplicateOfPreviousTurn(candidate, previous)
+		);
 	}
 }
