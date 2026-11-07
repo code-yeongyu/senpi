@@ -1,5 +1,5 @@
-import { accessSync, constants } from "node:fs";
-import { access } from "node:fs/promises";
+import { accessSync, constants, type Stats } from "node:fs";
+import { access, stat } from "node:fs/promises";
 import { normalizePath, resolvePath } from "../../utils/paths.ts";
 
 const NARROW_NO_BREAK_SPACE = "\u202F";
@@ -41,6 +41,29 @@ export async function pathExists(filePath: string): Promise<boolean> {
 	} catch {
 		return false;
 	}
+}
+
+function specialFileKind(stats: Stats): string | undefined {
+	if (stats.isFile() || stats.isDirectory()) return undefined;
+	if (stats.isFIFO()) return "FIFO";
+	if (stats.isCharacterDevice()) return "character device";
+	if (stats.isBlockDevice()) return "block device";
+	if (stats.isSocket()) return "socket";
+	return "special file";
+}
+
+/**
+ * Refuses an existing target that is neither a regular file nor a directory, before anything opens it: opening a
+ * FIFO waits for a peer that may never come, and a device may never reach end of file. A target that cannot be
+ * stat'ed passes, so the caller's own access or open reports it as before.
+ */
+export async function assertNotSpecialFile(
+	absolutePath: string,
+	displayPath: string,
+	verb: "edit" | "write" | "read",
+): Promise<void> {
+	const kind = await stat(absolutePath).then(specialFileKind, () => undefined);
+	if (kind) throw new Error(`Could not ${verb} file: ${displayPath}. It is a ${kind}, not a regular file.`);
 }
 
 export function expandPath(filePath: string): string {
