@@ -39,6 +39,9 @@ export type TodoOwedSuppression =
 	| "question"
 	| "cap";
 
+/** What the backstop did at a turn end: delivered a nudge, hit the chain cap, or stood down for a reason. */
+export type TodoOwedOutcome = "delivered" | "capped" | TodoOwedSuppression;
+
 export type TodoOwedReminderEvent = {
 	sessionId: string;
 	chainCount: number;
@@ -102,7 +105,7 @@ function assistantText(message: Extract<AgentMessage, { role: "assistant" }> | u
 		.join("\n");
 }
 
-function calledAskUser(messages: readonly AgentMessage[]): boolean {
+export function calledAskUser(messages: readonly AgentMessage[]): boolean {
 	return messages.some(
 		(message) =>
 			message.role === "assistant" &&
@@ -166,7 +169,7 @@ export class TodoOwedBackstop {
 		this.#openTasksAtLastNudge = undefined;
 	}
 
-	afterAgentEnd(input: TodoOwedInput): void {
+	afterAgentEnd(input: TodoOwedInput): TodoOwedOutcome {
 		const suppression = firstTodoOwedSuppression(input);
 		if (suppression !== undefined) {
 			const sources = suppression === "waiting" ? collectOnDutySources(input) : undefined;
@@ -186,7 +189,7 @@ export class TodoOwedBackstop {
 					sources,
 				});
 			}
-			return;
+			return suppression;
 		}
 		const { ctx } = input;
 		const branch = ctx.sessionManager.getBranch();
@@ -200,7 +203,7 @@ export class TodoOwedBackstop {
 		if (this.#remindersThisChain >= TODO_OWED_CHAIN_LIMIT) {
 			if (this.#notifiedThisChain) {
 				this.#logSuppression(ctx, "cap");
-				return;
+				return "cap";
 			}
 			this.#notifiedThisChain = true;
 			ctx.ui.notify(buildTodoOwedStopNotice(openTasks, anchors.now, this.#remindersThisChain), "warning");
@@ -212,7 +215,7 @@ export class TodoOwedBackstop {
 				next: anchors.next,
 				reason: "capped",
 			});
-			return;
+			return "capped";
 		}
 		this.#remindersThisChain += 1;
 		this.#openTasksAtLastNudge = stillOpen;
@@ -229,6 +232,7 @@ export class TodoOwedBackstop {
 			next: anchors.next,
 			reason: "delivered",
 		});
+		return "delivered";
 	}
 
 	#emit(event: TodoOwedReminderEvent): void {

@@ -2,7 +2,7 @@ import { Agent } from "@earendil-works/pi-agent-core";
 import { AgentSession } from "../../src/core/agent-session.ts";
 import { AgentSessionRuntime } from "../../src/core/agent-session-runtime.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
-import { createRpcConnectionHandler } from "../../src/modes/rpc/connection-handler.ts";
+import { createRpcConnectionHandler, type RpcConnectionOptions } from "../../src/modes/rpc/connection-handler.ts";
 import { createHarness, type HarnessOptions } from "./harness.ts";
 import { makeSink } from "./rpc-connection-harness.ts";
 
@@ -14,7 +14,7 @@ export async function createIdentityHarness(options: HarnessOptions = {}) {
 	let request = 0;
 	const connections: ReturnType<typeof createRpcConnectionHandler>[] = [];
 	const runtimes: AgentSessionRuntime[] = [];
-	const bind = () => {
+	const bind = (options: RpcConnectionOptions = {}) => {
 		const collected = makeSink();
 		const runtime = new AgentSessionRuntime(
 			session,
@@ -36,6 +36,7 @@ export async function createIdentityHarness(options: HarnessOptions = {}) {
 		const handler = createRpcConnectionHandler(runtime, collected.sink, {
 			disposeRuntime: false,
 			eventFlushScheduler: (flush) => flush(),
+			...options,
 		});
 		connections.push(handler);
 		return {

@@ -159,5 +159,6 @@ function toUsage(model: Model<any>, usage: WarmPromptCacheUsage): Usage {
 		cacheWrite: usage.cacheWrite,
 		totalTokens: usage.input + usage.output + usage.cacheRead + usage.cacheWrite,
 		cost: { ...cost, total: cost.input + cost.output + cost.cacheRead + cost.cacheWrite },
+		...(usage.cost === undefined && model.cost.unknown ? { costUnknown: true as const } : {}),
 	};
 }

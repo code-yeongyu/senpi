@@ -1,3 +1,51 @@
+## 2026-10-22 — Markup that spells a special token is not a leak (senpi#3880)
+
+### What changed
+- `detectors/control-leak.ts`: `s` and `mask` are both tokenizer special tokens and markup elements (HTML strikethrough, SVG mask). For these two names an opening tag is markup, a closing tag that closes an earlier opening in the same stream is markup, and a closing tag in quotation context (fence, inline code, quote) is a documented example. All three are fed to the context tracker as text and never start or extend a run. Only an unmatched, unquoted closing tag (a leaked `</s>` EOS run) stays a candidate.
+
+### Why
+- Nested `<s>` or `<mask>` markup and a fenced SVG example of `</mask>` closers aborted text and thinking as control-token leakage after the omo#10789 allowlist (senpi#3880).
+
+### Tests
+- `test/ttsr/detector-control-leak-markup-collisions.test.ts` (RED 3 failed before the change): nested strikethrough, nested mask and the fenced mask example stay silent across every split; closers beyond the opened markup still fire.
+- Contract change: `detector-control-leak.test.ts` B-P9 used an opening `<s>` run as its start-context positive; it now uses `<bos>`.
+
+### Review follow-up (senpi#3973)
+- A repeated closer is never exempt: only a quoted `</mask>` is a documented example, so a fenced `</s>` loop fires at the quotation threshold (8).
+- Opener credit is bounded. It expires after `EVIDENCE_TTL_CHARS`, it is not granted to openers inside quotation, and a whitespace-only run of openers grants one credit, not one per opener.
+- Tests (RED 4 failed on the previous head): a fenced `</s>` loop fires; a single fenced `</s>` stays silent; an unclosed strikethrough, a fenced opener, and a run of leaked openers do not hide a later `</s>` run.
+
+### Paths
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/detectors/control-leak.ts`
+
+## 2026-10-21 — Angle-bracket leak candidates are tokenizer special tokens only (omo#10789)
+
+### What changed
+- `detectors/token-grammar.ts`: an angle-bracket (`sgml` family) candidate is emitted only when its name is a known tokenizer special token (`SGML_CONTROL_TOKEN_NAMES`: `s`, `pad`, `unk`, `mask`, `bos`, `eos`, `sep`, `cls`, `eot`, `eom`, `endoftext`, `think`, `start_of_turn`, `end_of_turn`, `start_of_image`, `end_of_image`, `im_start`, `im_end`, `tool_call`, `tool_response`; case-insensitive, with or without the closing slash). Any other `<name>`/`</name>` is markup: the parser rejects it as text, which also breaks a run.
+- The `ctrl` (`<|...|>`) and `bracket` (`[UPPER]`) families are unchanged.
+
+### Why
+- Runs of HTML/XML closing tags (`</div>` four times in a row) in assistant prose, thinking, code samples and tool arguments latched the guard. It surfaced "Degeneration guard: control-token leakage" and resampled the turn. That happened even to this PR's own automated reviewer while it was discussing the diff (omo#10789).
+
+### Tests
+- `test/ttsr/detector-control-leak-tool-source.test.ts`: closing-tag runs in prose and thinking stay silent (RED 2 failed before), while leaked `</s>` and `<END_OF_TURN>` runs still fire.
+- Contract change in two existing tests that pinned the old behavior: `detector-control-leak-negatives.test.ts` B-N10 (`<div>` x8 now stays silent; a `</s>` x8 case was added and fires) and `detector-control-leak-grammar.test.ts` (an arbitrary 16-character name is silent; the longest known name fires).
+
+## 2026-10-21 — The control-token-leak guard no longer watches tool arguments (omo#10789)
+
+### What changed
+- For `source: "tool"` deltas, the control-token-leak detector (`detectors/control-leak.ts` `checkDelta`) treats angle-bracket (`sgml`) candidates as text. `<|...|>` (`ctrl`) and `[UPPER]` (`bracket`) leaks in tool arguments still fire, because the tool would write them to disk (#3875 review). Assistant text and thinking are watched exactly as before. The collapse detector and TTSR rules are unchanged for every source.
+
+### Why
+- A tool call's arguments are structured data the tool validates, not model prose where a leaked chat-control token means anything. `show_html_page`'s `html` argument streams as tool deltas, and four or more consecutive closing tags (`</div></div></div></div>`, the `sgml` family at `RUN_THRESHOLD_NORMAL = 4`) latched the guard. It surfaced "Degeneration guard: control-token leakage" and resampled the turn, so large pages could not be shown (omo#10789).
+
+### Test
+- `test/ttsr/detector-control-leak-tool-source.test.ts`: an HTML tool argument with four consecutive closing tags does not fire (RED before the change); a tool argument spelling `<s>` markup does not fire; a run of `<|im_end|>` in a tool argument still fires. A genuine `</s>` run in assistant text still fires.
+
+### Paths
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/watch.ts`
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/detectors/control-leak.ts`
+
 # TTSR Fork Tracker
 
 ## 2026-10-09 - A failed engine pause write preserves the TTSR stop announcement (senpi#3014)

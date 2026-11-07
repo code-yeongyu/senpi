@@ -258,3 +258,53 @@ describe("Google Generative AI user agent", () => {
 		expect((await captureGoogleHeaders({ "User-Agent": "custom-agent" }))["User-Agent"]).toBe("custom-agent");
 	});
 });
+
+describe("Google usage reasoning count (senpi#3879)", () => {
+	const reasoningAdapters = [
+		{
+			name: "Google Generative AI",
+			createStream: () =>
+				streamGoogleGenerativeAi(getModel("google", "gemini-2.5-flash"), context, { apiKey: "test-api-key" }),
+		},
+		{
+			name: "Google Vertex",
+			createStream: () =>
+				streamGoogleVertex(getModel("google-vertex", "gemini-3-flash-preview"), context, {
+					project: "test-project",
+					location: "us-central1",
+				}),
+		},
+	];
+	const counts: ReadonlyArray<{
+		readonly label: string;
+		readonly thoughts: unknown;
+		readonly expected: number | undefined;
+	}> = [
+		{ label: "absent", thoughts: undefined, expected: undefined },
+		{ label: "null", thoughts: null, expected: undefined },
+		{ label: "NaN", thoughts: Number.NaN, expected: undefined },
+		{ label: "0", thoughts: 0, expected: 0 },
+		{ label: "42", thoughts: 42, expected: 42 },
+	];
+
+	for (const adapter of reasoningAdapters) {
+		it.each(counts)(`${adapter.name}: thoughtsTokenCount $label`, async ({ thoughts, expected }) => {
+			googleGenAiMock.streamChunks = [
+				{
+					candidates: [{ finishReason: "STOP", content: { parts: [{ text: "hi" }] } }],
+					usageMetadata: {
+						promptTokenCount: 5,
+						candidatesTokenCount: 2,
+						totalTokenCount: 7,
+						...(thoughts === undefined ? {} : { thoughtsTokenCount: thoughts }),
+					},
+				},
+			];
+
+			const message = await adapter.createStream().result();
+
+			if (expected === undefined) expect(message.usage).not.toHaveProperty("reasoning");
+			else expect(message.usage.reasoning).toBe(expected);
+		});
+	}
+});

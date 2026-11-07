@@ -39,6 +39,18 @@ describe.skipIf(!hasDarwinArm64Prebuild)("native callback lifecycle", () => {
 		});
 	}, 15_000);
 
+	it("keeps output flowing while the child is not reading a large write", () => {
+		const result = spawnSync(process.execPath, [fixture("native-input-backpressure.mjs").pathname], {
+			encoding: "utf8",
+			killSignal: "SIGKILL",
+			timeout: 12_000,
+		});
+
+		expect(result.signal).toBeNull();
+		expect(result.status).toBe(0);
+		expect(JSON.parse(result.stdout)).toEqual({ outputFlowedAfterWrite: true });
+	}, 15_000);
+
 	it("surfaces a JavaScript data callback failure", () => {
 		const result = spawnSync(process.execPath, [fixture("native-callback-throws.mjs").pathname], {
 			encoding: "utf8",

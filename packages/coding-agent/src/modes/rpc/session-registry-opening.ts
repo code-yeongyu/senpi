@@ -44,9 +44,14 @@ export function buildOpeningEntry(input: {
 	// starts with reason "startup" and every extension that only rebuilds state
 	// on a resume - the ask-user dangling-question hook - stays unreachable from
 	// the RPC restart path. A session created by this open stays "startup".
-	const sessionStartEvent: SessionStartEvent | undefined = isResume
-		? { type: "session_start", reason: "resume" }
-		: undefined;
+	const sessionStartEvent: SessionStartEvent | undefined =
+		isResume || profile.attended === false
+			? {
+					type: "session_start",
+					reason: isResume ? "resume" : "startup",
+					...(profile.attended === false ? { attended: false } : {}),
+				}
+			: undefined;
 	const storedProfile = frozenProfile({ ...profile, ...(sessionPath ? { sessionPath } : {}) });
 	const runtimeProfile = isResume
 		? frozenProfile({ ...storedProfile, creationModel: undefined, initialThinkingLevel: undefined })

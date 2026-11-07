@@ -1,3 +1,401 @@
+## 2026-11-05 - Standalone compiles keep linkedom's optional canvas external (senpi#6045)
+
+### What changed
+
+- `scripts/build-binaries.sh`: both release `bun build --compile` commands pass `--external canvas`; the "Building trusted native dependencies" step (`npm rebuild canvas --foreground-scripts`) is removed.
+- `scripts/bun-release-externals.mjs` (new): `bunReleaseExternalFlags`, the one externals list every JS/TS Bun build of the release entry graph spreads (`compiled-extension-load.test.ts`, `bun-bundle-provider-coverage.test.ts`, both `release-graph-*.test.ts`, the QA `compiled-generations.mjs`). `build-binaries-flags.test.mjs` pins the shell and `build:binary` commands to it and fails any script that builds the release graph without spreading it.
+
+### Why
+
+- `bun build --compile` resolved canvas's `require('../build/Release/canvas.node')` even behind linkedom's optional `try/catch`, so the build rebuilt canvas first. On Windows a failed prebuilt download fell back to a node-gyp build that cannot find `cairo.h`, failing `Compiled extensions (Windows)` (senpi#6045). senpi never needs canvas: linkedom falls back to its JS shim, as the Node bundle already does.
+
+### Why an extension could not handle it
+
+- The release compile recipe is build tooling, outside any extension.
+
+### Expected merge conflict zones
+
+- LOW: one flag on each of the two compile lines, the removed two-line rebuild step, and one new module.
+
+## 2026-11-04 - senpi vendors machine-ops instead of publishing it (senpi#5784)
+
+### What changed
+
+- `scripts/registry-packages.mjs`: `@code-yeongyu/senpi-machine-ops` leaves the npm publish set.
+- `scripts/prepare-senpi-bundled-workspaces.mjs`: vendors `packages/machine-ops/dist/src` under `vendor/senpi-machine-ops/` in the senpi tarball and rewrites the emitted root and `/in-process-holder` imports to relative paths, the same way it already handles client/protocol. Each vendored workspace now names its manifest and its entry files, and the leak check matches only quoted specifiers, so a comment that names a vendored package no longer fails staging.
+- `scripts/prepare-senpi-publish-manifest.mjs`: the staged senpi manifest drops the machine-ops dependency with client/protocol, so it no longer pins machine-ops to an exact version.
+- `scripts/senpi-publish-pack-checks.mjs`: the senpi tarball must carry the vendored machine-ops entries, and the published-package file check no longer lists machine-ops.
+- `scripts/publish-registry-dependencies.test.mjs`: every registry package source must have a `CHANGELOG.md` next to its `package.json`.
+
+### Why
+
+- #5603 added machine-ops to the publish set without `packages/machine-ops/CHANGELOG.md`, so the v2026.11.4-1 Build Binaries run failed at "Prepare GitHub release payload" (`release-notes.mjs extract --published`). The package was also never on npm, and npm trusted publishing cannot do a first publish. senpi's tools import it at runtime (`packages/coding-agent/src/core/tools/machine.ts`), so it ships inside the senpi tarball instead.
+
+### Why an extension could not handle it
+
+- Release and publish tooling is repository infrastructure.
+
+### Expected merge conflict zones
+
+- LOW: the package lists in `registry-packages.mjs`, `prepare-senpi-publish-manifest.mjs` and `senpi-publish-pack-checks.mjs`.
+
+## 2026-11-03 - Release scripts carry the machine-ops workspace (senpi#5592)
+
+### What changed
+
+- `scripts/release-packages.mjs`: `packages/machine-ops/package.json` joins the lockstep CalVer set.
+- `scripts/local-release.mjs`: local release builds and packs `@code-yeongyu/senpi-machine-ops`.
+- `scripts/registry-packages.mjs`, `scripts/prepare-senpi-publish-manifest.mjs`, `scripts/senpi-publish-pack-checks.mjs`, `scripts/build-all.mjs`: the package is published under its own name with an exact version in the senpi manifest, its tarball must carry `dist/src/index.js` and the conformance entry, and it builds after pty.
+
+### Why
+
+- A remote machine executor and the agent's own tools must share one implementation of file and process operations, their limits and their permission checks. The shared layer is the new engine-free workspace package `packages/machine-ops` (`@code-yeongyu/senpi-machine-ops`), which imports nothing from `packages/agent` or `packages/coding-agent`.
+
+### Why an extension could not handle it
+
+- Release and build tooling is repository infrastructure.
+
+### Expected merge conflict zones
+
+- LOW: the package lists in `release-packages.mjs`, `local-release.mjs`, `registry-packages.mjs` and `build-all.mjs`.
+
+## 2026-10-26 - publish.mjs requires the socket-secret bridge it is told to (senpi#4312)
+
+### What changed
+
+- `scripts/publish.mjs`: new `--require-socket-secret-bridge=win32-<arch>[,...]` flag, passed to `assertSenpiPackedWorkspaceFiles` for the senpi tarball.
+- `scripts/senpi-publish-pack-checks.mjs`: `SOCKET_SECRET_BRIDGE_TARGETS`, `socketSecretBridgeFile(target)`, and an `options.requiredSocketSecretTargets` check that rejects a senpi tarball missing a named bridge.
+
+### Why
+
+- The bridge has no runtime fallback (sisyphuslabs/omo-desktop-app#4199), so unlike the PTY prebuild a missing target must block the publish, the best-effort arm64 build included.
+
+### Why an extension could not handle it
+
+- Publishing runs in the release tooling, outside the agent runtime.
+
+### Expected merge conflict zones
+
+- LOW: argument parsing at the top of `publish.mjs` and `validatePack`.
+
+## 2026-11-03 - Loopless worker entry in the release binaries (senpi#5438)
+
+### What changed
+
+- `scripts/build-binaries.sh`: both `bun build --compile` lines (Windows and the other platforms) add `./src/modes/rpc/loopless-worker.ts` after `./src/modes/rpc/session-worker.ts`.
+
+### Why
+
+- Release binaries must contain every worker entry the runtime can start; the loopless worker isolate is new (senpi#5413).
+
+### Why an extension could not handle it
+
+- This is the release binary build itself.
+
+### Expected merge conflict zones
+
+- LOW: the two compile lines, which other worker entries also extend.
+
+## 2026-10-30 - pi-ai ./models entry budget +3 (senpi#3975)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs`: `./models` budget 33 -> 36 for `provider-diagnostic.ts`, `utils/provider-diagnostic-vocabulary.ts` and `utils/provider-diagnostic-carrier.ts`, reached from `api/lazy.ts`.
+
+### Why
+
+- senpi#3975: `lazyStream` must keep a validated attached diagnostic.
+
+### Why an extension could not handle it
+
+- Repository tooling.
+
+### Expected merge conflict zones
+
+- LOW: the `./models` budget comment.
+
+## 2026-10-27 - pi-ai models entry budget covers the login-id leaf (senpi#4099)
+
+### What changed
+
+- `check-entry-graphs.mjs`: the `@earendil-works/pi-ai/models` entry budget is 32 files: `auth/pool/login-id.ts`, the one-function leaf `models.ts` now imports so `Models.login` stamps a fresh `loginId` on the credential it commits.
+
+### Why
+
+- The lightweight models entry owns the login write path, so it carries the stamp a sign-in writes.
+
+### Why an extension could not handle it
+
+- The entry-graph budget is repository tooling.
+
+### Expected merge conflict zones
+
+- LOW: the `./models` budget comment and its `maxFiles` line.
+
+## 2026-11-01 - Kill guard judge entry shipped in the npm bundle (senpi#5349, PR #5358)
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs`: a `kill-guard-check` lazy entry (in `scripts/bundle-entry-points.mjs`) emits `core/kill-guard/check-entry.js` as `kill-guard-check.js`. The build fails when `core/kill-guard/runtime.js` lands in a different directory, because that module resolves the entry by URL.
+
+### Why
+
+- On an npm install the runtime shims run the judge as the host's runtime plus this entry script.
+
+### Why an extension could not handle it
+
+- This is the release bundle build itself.
+
+### Expected merge conflict zones
+
+- LOW: `lazyEntryPoints` in `scripts/bundle-entry-points.mjs` next to the `kill-guard` entry, and the directory checks in `buildBundle`.
+
+## 2026-11-01 - Kill guard judge shipped as its own module in every layout (senpi#5349, PR #5354)
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs`: the build fails when the judge (`kill-guard.js`, emitted by a new `kill-guard` lazy entry in `scripts/bundle-entry-points.mjs`) and the chunk `core/kill-guard/host.js` lands in are in different directories.
+- `scripts/build-binaries.sh`: both release `bun build --compile` commands embed `./src/core/kill-guard/index.ts`.
+- `scripts/create-source-archive.sh`: the source archive requires `packages/coding-agent/src/core/kill-guard/index.ts`.
+
+### Why
+
+- A codemode worker cannot resolve the `@code-yeongyu/senpi` peer specifier in every layout, so the host hands it a URL to the judge's own file, which must exist in the npm bundle, the compiled binary and the source archive.
+
+### Why an extension could not handle it
+
+- These are the release build scripts themselves.
+
+### Expected merge conflict zones
+
+- LOW: `lazyEntryPoints` in `scripts/bundle-entry-points.mjs`, the path-identity directory check in `buildBundle`, the two compile lines and the required-path list.
+
+## 2026-11-02 - Refuse a release version the shipped update checker cannot order (#5406, PR #5411)
+
+### What changed
+
+- `scripts/release-version-guard.mjs`: new guard. It imports `comparePackageVersions` from the tree's own `packages/coding-agent/src/utils/version-check.ts` and refuses a version unless that checker orders it equal to itself and never before the bare release of its date. `node scripts/release-version-guard.mjs <version>` exits 1 with the reason.
+- `scripts/release.mjs`: `main()` runs the guard as a subprocess right after the version is resolved, explicit or auto-computed, so a pinned `--sha` cut checks the pinned tree's checker.
+- `.github/workflows/publish-npm.yml`: the release job runs the guard on an explicit version after installing dependencies, before any release or publish step; in publish-only that is the tag's tree.
+
+### Why
+
+- `2026.11.02-1` was cut while its own update checker could not parse it, so installs of that release never saw a newer version. The cut now asks the checker it ships instead of trusting a separate pattern.
+
+### Why an extension could not handle it
+
+- The release script and workflow are repository tooling outside the extension runtime.
+
+### Expected merge conflict zones
+
+- LOW: the imports and `main()` of `scripts/release.mjs`; the release job's steps after `Install dependencies` in `publish-npm.yml`.
+
+## 2026-10-29 - Static check that every bundle and binary entry has a source file (senpi#4892)
+
+### What changed
+
+- `scripts/bundle-entry-points.mjs` (new): owns the bundle's required-inputs list (`bundleRequiredInputs`) and `lazyEntryPoints`, both moved unchanged out of `scripts/build-coding-agent-bundle.mjs`.
+- `scripts/build-coding-agent-bundle.mjs`: `buildBundle()` reads its required inputs from `bundleRequiredInputs()` and its lazy entries from `lazyEntryPoints()` in the new module. Build output is unchanged.
+- `scripts/bundle-entry-paths.test.mjs` (new): maps every required input, lazy entry, `packages/*/dist/*.js` output lookup in the bundle script, and every `bun build --compile` entrypoint in `scripts/build-binaries.sh` and the `build:binary` script back to its source file, and names each one that has none.
+
+### Why
+
+- A PR that deleted or renamed a listed module passed its focused tests and review, and only the full build failed (`Bundle input is missing: ...`). The static check fails at the PR's own script tests in milliseconds.
+
+### Why an extension could not handle it
+
+- The bundle and binary builds are repository build tooling.
+
+### Expected merge conflict zones
+
+- LOW: the required-inputs loop in `buildBundle()`; new lazy entries now go in `scripts/bundle-entry-points.mjs`.
+
+## 2026-10-29 - Ratchet client response dispatch after removing its unchecked assertion (S15a-2, part of #4272)
+
+### What changed
+
+- `scripts/lint-ratchet.baseline.json`: Lower rpc-client.ts's non-null-assertion count from 2 to 1 after extracting checked response dispatch.
+
+### Why
+
+- `scripts/lint-ratchet.baseline.json`: The removed pending-request assertion must not be reintroduced.
+
+### Why an extension could not handle it
+
+- `scripts/lint-ratchet.baseline.json`: This is the repository's static lint budget.
+
+### Expected merge conflict zones
+
+- `scripts/lint-ratchet.baseline.json`: Preserve the lower rpc-client.ts assertion count when merging client changes.
+
+## 2026-10-30 - The coding-agent bundle no longer requires the removed Anthropic OAuth flow (senpi#4436, S7)
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs`: `packages/ai/dist/auth/oauth/anthropic.js` is gone from the required bundle inputs and from `lazyEntryPoints`.
+
+### Why
+
+- senpi#4436 (R7) deleted `packages/ai/src/auth/oauth/anthropic.ts`, so `npm run build` failed with `Bundle input is missing: packages/ai/dist/auth/oauth/anthropic.js` and emitted no `dist/bundle`. `load.ts` no longer lazily imports `./anthropic.ts`, so the load.ts cross-check needs no lazy entry for it.
+
+### Why an extension could not handle it
+
+- The release bundle's input list is build tooling, not runtime behavior.
+
+### Expected merge conflict zones
+
+- LOW: the required-inputs list in `buildBundle` and the `lazyEntryPoints` map; an upstream re-add of an `anthropic` lazy entry lands on deleted source and must stay removed.
+
+## 2026-10-28 - Ship the path identity worker in the bundle, the binaries and the source archive (senpi#4391)
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs` emits `path-identity-worker` as a lazy entry beside the permission host's chunk, checks that the two share a directory (as it does for the image-resize worker), and lists the built worker in its input check.
+- `scripts/build-binaries.sh` (both platform branches) and `scripts/create-source-archive.sh` pass `src/core/extensions/builtin/permission-system/path-identity-worker.ts` as an explicit compile entry, mirroring `image-resize-worker`.
+
+### Why
+
+- The permission system resolves path identity in a worker started from a file beside its host module; without these entries the npm bundle and the compiled binaries would not contain the worker.
+
+### Why an extension could not handle it
+
+- The bundle, binary and source-archive builds are repository build tooling.
+
+### Expected merge conflict zones
+
+- LOW: the `lazyEntryPoints` list and the compile entry lists next to `image-resize-worker`.
+
+## 2026-10-27 - Account for the capture responsibility split (part of #4272)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs` accounts for the two browser-safe capture leaves: `./models` reaches 33 files and `./utils/event-stream` reaches 8.
+
+### Why
+
+- `scripts/check-entry-graphs.mjs` measures module count; the mandatory 250-code-line split moves existing capture construction to one leaf and shares the frontier contract in another. No new external dependency, barrel reachability, wildcard budget increase, or forbid-rule change.
+
+### Why an extension could not handle it
+
+- `scripts/check-entry-graphs.mjs` is repository validation tooling.
+
+### Expected merge conflict zones
+
+- The two named budgets in `scripts/check-entry-graphs.mjs`.
+
+## 2026-10-26 - pi-ai models entry budget covers the provider-error boundary (senpi#4282)
+
+### What changed
+
+- `check-entry-graphs.mjs`: the `@earendil-works/pi-ai/models` entry budget is 31 files: `utils/provider-error.ts`, which `event-stream.ts` now imports to redact every provider error at the stream boundary, and the token-wise redactor it runs, split by responsibility into `utils/secret-redaction.ts`, `utils/secret-classifier.ts` and `utils/secret-lexer.ts`, alongside main's `utils/assistant-capture.ts`. A wildcard budget may name one expanded export in `overrides`: `./utils/event-stream` reaches 6 files and `./utils/provider-error` 4, while every other `./utils/*` entry stays at 3.
+
+### Why
+
+- The lightweight models entry runs provider streams, so it carries the redaction those streams apply.
+
+### Why an extension could not handle it
+
+- The entry-graph budget is repository tooling.
+
+### Expected merge conflict zones
+
+- LOW: the `./models` and `./utils/*` budget blocks, and the two lines that read a budget's `maxFiles`.
+
+## 2026-10-25 - The ./models entry budget admits the capture leaf (senpi#4277, part of #4272)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs`: the `packages/ai` `./models` budget rises from 26 to 27 files for
+  `utils/assistant-capture.ts`, reached through `api/lazy.ts` -> `utils/event-stream.ts`.
+
+### Why
+
+- `utils/event-stream.ts` must import the capture module to freeze carriers at `push`; the module itself has only
+  type imports, so the graph grows by exactly that one leaf.
+
+### Why an extension could not handle it
+
+- The budget is a repository gate that runs in `bun run check`, before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the `./models` entry in `BUDGETS` (one comment line and `maxFiles`).
+
+## 2026-10-22 - The pi-ai `./models` entry graph admits two reference leaves (senpi#3858)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs`: the `@earendil-works/pi-ai` `./models` budget is 26 files (was 24 after senpi#3378). The added files are `auth/credential-read.ts`, the credential-store read that `auth/resolve.ts` wraps in `ModelsError`, and `utils/config-reference-error.ts`, the typebox-free error a slot read raises for an unresolved reference; the reasons are recorded beside the budget and the forbid rules are unchanged.
+
+### Why
+
+- `scripts/check-entry-graphs.mjs`: a slot-scoped request must refuse a projected key that is still an unresolved reference with a typed error, and `./models` reaches `auth/resolve.ts`, so both leaves join its graph. Both stay inside the forbid rules: neither reaches `providers/`, `models.generated.ts` or the typebox helpers.
+
+### Why an extension could not handle it
+
+- `scripts/check-entry-graphs.mjs`: entry-graph budgets are repository build tooling.
+
+### Expected merge conflict zones
+
+- `scripts/check-entry-graphs.mjs`: the `./models` row, which senpi#3292 and senpi#3378 also raised.
+
+## 2026-10-20 - Per-PR change fragments replace direct changes.md and [Unreleased] edits (senpi#3610)
+
+### What changed
+
+- `scripts/release.mjs`: calls `compileFragments` (from `scripts/sync-changes-fragments.mjs`) only at the release cut, right before `stampChangelogs`, on the pinned tree when `--sha` is set; `stageChangedFiles` already stages their deletion (`git ls-files -d`).
+- `scripts/changes-fragments.mjs`, `scripts/changes-fragments-gate.mjs`, `scripts/sync-changes-fragments.mjs`, `scripts/check-pr-changelog-facts.mjs` (new, fork-only): fragment parsing and compile planning, gate facts, the `compile` / `from-diff` CLI, and the PR fact collection moved out of `check-pr-changelog.mjs`. `check-pr-changelog.mjs` counts a fragment's CHANGELOG block as that package's entry and its tracker blocks as coverage; once the base carries `changes/unreleased/README.md`, a PR that adds to an existing tracker or an `[Unreleased]` section fails. `audit-changes-md.mjs` counts entries still waiting in fragments. There is no standalone compile workflow; `from-diff` preserves added lines, including repeated headings and blanks.
+- `scripts/upstream-release-worthy.mjs`: evaluates a read-only compile preview so pending package fragments can trigger a release without first being written into `[Unreleased]`.
+
+### Why
+
+- Every PR wrote to the same top lines of the same trackers and `[Unreleased]` sections, so each merge into `main` made the other open PRs conflict there, and a release cut could strand a bullet in a released section (senpi#3123).
+
+### Why an extension could not handle it
+
+- The release script and the PR gate are repository tooling, not runtime behavior.
+
+### Expected merge conflict zones
+
+- LOW: the `stampChangelogs` call site in `scripts/release.mjs`.
+
+## 2026-10-23 - Windows signal forwarding does not block on CIM (senpi#4057)
+
+### What changed
+
+- `scripts/package-manager.mjs`, `scripts/windows-process-tree.mjs`: signal forwarding asynchronously queries CIM with a one-second timeout, then feeds the result through the existing creation-time-checked explicit-PID planner; failures still permit only the root.
+- `scripts/run-tests.mjs`, `scripts/run-workspaces.mjs`: drain pending forwarding before re-raising a signal so early child exit cannot abandon cleanup.
+
+### Why
+
+- `scripts/package-manager.mjs`: synchronous five-second CIM probes serialized across children inside Ctrl-C handlers.
+
+### Why an extension could not handle it
+
+- `scripts/package-manager.mjs`: repository package-manager and test-runner signal handling.
+
+### Expected merge conflict zones
+
+- `scripts/package-manager.mjs`: signal forwarding and child close handling.
+
+## 2026-10-23 - Local release regeneration keeps the last good OpenGateway catalog (senpi#4067)
+
+### What changed
+
+- `scripts/local-release.mjs`: its `generate-models` run passes `-- --keep-last-good-opengateway`, the same opt-in as the release's `runGenerateModels`.
+
+### Why
+
+- `scripts/local-release.mjs`: an OpenGateway feed break must not stop a release; the dedicated OpenGateway refresh workflow is what fails on it.
+
+### Why an extension could not handle it
+
+- `scripts/local-release.mjs`: release tooling runs outside the runtime.
+
+### Expected merge conflict zones
+
+- `scripts/local-release.mjs`: the `generate-models` call before `check:provider-defaults`.
+
 ## 2026-10-19 - The bundle ships the RPC host supervisor as its own program (senpi#3743)
 
 ### What changed
@@ -15,6 +413,44 @@
 ### Expected merge conflict zones
 
 - `scripts/build-coding-agent-bundle.mjs`: the input check list and the end of `buildBundle`.
+
+## 2026-10-22 - Replace Biome with oxlint and oxfmt (senpi#3976)
+
+### What changed
+
+- `scripts/biome/model-type-comparison.grit`: removed. The same check runs as the oxlint JS plugin `scripts/oxlint/model-type-comparison.ts` (`senpi/model-type-comparison`); it reports exactly the shapes the Grit pattern reports. The pattern itself moves to `scripts/oxlint/parity/model-type-comparison.grit`, kept only so `node scripts/oxlint-biome-parity.mjs --update` can regenerate Biome's verdicts; `scripts/oxlint-biome-parity.test.mjs` fails when any ported rule (this one, `biome-port/no-implicit-any-let` or `biome-port/no-string-case-mismatch`) flags different corpus lines than Biome 2.5.14.
+
+### Why
+
+- Biome is no longer installed (senpi#3976), so the Grit plugin cannot run.
+
+### Why an extension could not handle it
+
+- Lint configuration and source comments are read by the linter before any agent code runs.
+
+### Expected merge conflict zones
+
+- None expected: the Grit file is fork-only and upstream does not carry it.
+
+
+## 2026-10-22 - The native grep probe tests never build the addon inside a CI test hook (senpi#3978)
+
+### What changed
+
+- `scripts/native-grep-addon.mjs`: `resolveNativeGrepAddon` picks the exported path, then a local addon, and otherwise builds locally, but refuses in CI with a message naming the missing "Build native grep addon" step. `scripts/native-grep-addon.test.mjs` covers the four cases.
+- `scripts/probe-native-grep.test.mjs`: the `before()` hook uses the resolver. A failed local build now reports how to build the addon or set `SENPI_GREP_NATIVE_PATH`.
+
+### Why
+
+- `scripts/probe-native-grep.test.mjs`: in CI the hook ran a cold release build with a 300 s timeout, so a slow runner failed all six tests with a bare `spawnSync npm ETIMEDOUT` that named no cause.
+
+### Why an extension could not handle it
+
+- `scripts/probe-native-grep.test.mjs`: repository test scripts.
+
+### Expected merge conflict zones
+
+- None expected: the change is local to this repository's CI and test scripts.
 
 ## 2026-10-19 - Release commands that read large output no longer fail with ENOBUFS
 

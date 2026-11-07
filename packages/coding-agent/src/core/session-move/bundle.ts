@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { createReadStream } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join, posix, win32 } from "node:path";
 import { parseRepositoryIdentity, type RepositoryIdentity } from "../repository-identity.ts";
 import type { MoveId } from "./ownership.ts";
@@ -14,8 +15,8 @@ export interface BundleFile {
 }
 
 /**
- * Optional extra payloads travel next to the session without changing its shape. Phase 1 defines none; a later
- * whole-folder transfer adds its own kind here, and an importer that does not know a kind refuses the bundle.
+ * Optional extra payloads travel next to the session without changing its shape: `extension-state` carries what
+ * extensions wrote at the move release (senpi#3676). An importer that does not know a kind refuses the bundle.
  */
 export interface MovePayload {
 	readonly kind: string;
@@ -44,8 +45,11 @@ export class MoveBundleInvalidError extends Error {
 	}
 }
 
-export function sha256File(path: string): string {
-	return createHash("sha256").update(readFileSync(path)).digest("hex");
+/** Streams the file through the hash, so a large blob never blocks the host's event loop. */
+export async function sha256File(path: string): Promise<string> {
+	const hash = createHash("sha256");
+	for await (const chunk of createReadStream(path)) hash.update(chunk);
+	return hash.digest("hex");
 }
 
 const isString = (value: unknown): value is string => typeof value === "string";
@@ -96,10 +100,30 @@ function parseSessionFileName(value: string): string {
 	return value;
 }
 
-export function readManifest(bundleDir: string): MoveManifest {
+/** Payload kinds this version imports; any other kind refuses the bundle. */
+export const KNOWN_PAYLOAD_KINDS: ReadonlySet<string> = new Set(["extension-state"]);
+
+/** Where `extension-state` payload files sit inside the bundle. */
+export const EXTENSION_STATE_PREFIX = "state/";
+
+function parsePayload(value: unknown): MovePayload {
+	const payload = value as Partial<MovePayload> | null;
+	if (typeof payload !== "object" || payload === null || !isString(payload.kind) || !Array.isArray(payload.files))
+		throw new MoveBundleInvalidError("a payload is malformed");
+	if (!KNOWN_PAYLOAD_KINDS.has(payload.kind))
+		throw new MoveBundleInvalidError("it carries a payload this version cannot import");
+	const files = payload.files.map(parseFile);
+	// The importer unpacks extension state by stripping this prefix; a file anywhere else is not extension state.
+	const outside = files.find((file) => !file.path.startsWith(EXTENSION_STATE_PREFIX));
+	if (outside !== undefined)
+		throw new MoveBundleInvalidError(`an extension-state file is listed outside state/: ${outside.path}`);
+	return { kind: payload.kind, files };
+}
+
+export async function readManifest(bundleDir: string): Promise<MoveManifest> {
 	let raw: unknown;
 	try {
-		raw = JSON.parse(readFileSync(join(bundleDir, MANIFEST_FILE), "utf8"));
+		raw = JSON.parse(await readFile(join(bundleDir, MANIFEST_FILE), "utf8"));
 	} catch (error) {
 		throw new MoveBundleInvalidError(
 			`manifest unreadable: ${error instanceof Error ? error.message : String(error)}`,
@@ -110,8 +134,7 @@ export function readManifest(bundleDir: string): MoveManifest {
 	for (const key of ["moveId", "sessionId", "sessionFileName", "sourceCwd"] as const) {
 		if (!isString(m[key])) throw new MoveBundleInvalidError(`missing ${key}`);
 	}
-	const payloads = Array.isArray(m.payloads) ? m.payloads : [];
-	if (payloads.length > 0) throw new MoveBundleInvalidError("it carries a payload this version cannot import");
+	const payloads = (Array.isArray(m.payloads) ? m.payloads : []).map(parsePayload);
 	const dropped = Array.isArray(m.droppedUserMessages) ? m.droppedUserMessages : [];
 	if (!dropped.every(isString)) throw new MoveBundleInvalidError("malformed queued input");
 	return {
@@ -124,21 +147,21 @@ export function readManifest(bundleDir: string): MoveManifest {
 		session: parseFile(m.session),
 		sidecars: (Array.isArray(m.sidecars) ? m.sidecars : []).map(parseFile),
 		droppedUserMessages: dropped,
-		payloads: [],
+		payloads,
 	};
 }
 
-export function verifyBundle(bundleDir: string, manifest: MoveManifest): void {
-	for (const file of [manifest.session, ...manifest.sidecars]) {
+export async function verifyBundle(bundleDir: string, manifest: MoveManifest): Promise<void> {
+	for (const file of [manifest.session, ...manifest.sidecars, ...manifest.payloads.flatMap((p) => p.files)]) {
 		let actual: string;
 		try {
-			actual = sha256File(join(bundleDir, file.path));
+			actual = await sha256File(join(bundleDir, file.path));
 		} catch {
 			throw new MoveBundleInvalidError(`missing ${file.path}`);
 		}
 		if (actual !== file.sha256) throw new MoveBundleInvalidError(`${file.path} changed in transit`);
 	}
-	const header = readFileSync(join(bundleDir, manifest.session.path), "utf8").split("\n", 1)[0] ?? "";
+	const header = (await readFile(join(bundleDir, manifest.session.path), "utf8")).split("\n", 1)[0] ?? "";
 	let id: unknown;
 	try {
 		id = (JSON.parse(header) as { readonly id?: unknown }).id;

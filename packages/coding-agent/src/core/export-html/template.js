@@ -1193,7 +1193,7 @@
             await navigator.clipboard.writeText(text);
             success = true;
           }
-        } catch (err) {
+        } catch {
           // Clipboard API failed, try fallback
         }
 

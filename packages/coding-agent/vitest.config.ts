@@ -1,9 +1,12 @@
 import { fileURLToPath } from "node:url";
 import { configDefaults, defineConfig, mergeConfig } from "vitest/config";
+import { quarantineVitestAgentDir } from "../../scripts/vitest-agent-dir-quarantine.mjs";
 import baseConfig, { workspaceSourcePaths } from "../../vitest.base.ts";
 
 const aiSrcProviderScope = fileURLToPath(new URL("../ai/src/node/provider-scope.ts", import.meta.url));
 const ptySrcIndex = fileURLToPath(new URL("../pty/src/index.ts", import.meta.url));
+
+quarantineVitestAgentDir();
 
 export default mergeConfig(
 	baseConfig,
@@ -12,6 +15,7 @@ export default mergeConfig(
 			globals: true,
 			environment: "node",
 			testTimeout: 30000,
+			globalSetup: ["./test/helpers/source-compile-cache-global-setup.ts"],
 			setupFiles: [
 				fileURLToPath(new URL("../../scripts/vitest-temp-setup.ts", import.meta.url)),
 				"./test/setup.ts",

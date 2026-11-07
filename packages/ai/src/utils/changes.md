@@ -1,3 +1,550 @@
+## 2026-11-02 - Shared tri-state Anthropic long-cache retention decision (senpi#1248)
+
+### What changed
+
+- `packages/ai/src/utils/prompt-cache-ttl.ts`: adds the exported `allowsAnthropicLongCacheRetention(model)` helper. An explicit `compat.supportsLongCacheRetention` of `true` or `false` wins on any host; only an unset flag falls back to `isAnthropicApiBaseUrl(model.baseUrl) && getAnthropicCompat(model).supportsLongCacheRetention` (which keeps the Fireworks carve-out). The `anthropic-messages` branch of `resolvePromptCacheLifetime()` uses it to pick the 3600 s vs 300 s TTL. `getAnthropicCompat` is unchanged.
+
+### Why
+
+- `compat.supportsLongCacheRetention` is a documented models.json field, but for `anthropic-messages` the one-hour TTL was additionally gated on the native hostname, so an explicit proxy opt-in did nothing. Only the `foreign host + true` case changes behavior.
+
+### Why an extension could not handle it
+
+- Extensions sit above the provider request and cache-accounting boundary; they cannot change the wire `cache_control.ttl` and the core `resolvePromptCacheLifetime()` result together.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `anthropic-messages` branch of `resolvePromptCacheLifetime()`, now a helper call instead of an inline conjunction.
+- LOW: the helper inserted just above `getAnthropicCompat`.
+
+## 2026-11-06 - Shared tri-state warming eligibility for Anthropic hosts (senpi#1248)
+
+### What changed
+
+- `packages/ai/src/utils/prompt-cache-ttl.ts`: adds `supportsAnthropicCacheWarming(model)`. The native host always qualifies; a proxy qualifies only when its model entry asserts `compat.supportsLongCacheRetention: true`. It sits beside `allowsAnthropicLongCacheRetention` and neither reads the other's state.
+
+### Why
+
+- Warming a host that ignores `cache_control` sends a request for no benefit, while refusing a host that honours it leaves a real prompt cache cold (senpi#1248). An unset flag cannot tell a host that caches for five minutes without the one-hour option apart from one that ignores `cache_control`, so only an explicit assertion widens eligibility.
+
+### Why an extension could not handle it
+
+- Provider-host cache capability belongs to the shared cache matrix; extensions consume it.
+
+### Expected merge conflict zones
+
+- LOW: a helper inserted below `allowsAnthropicLongCacheRetention`.
+
+## 2026-10-30 - Typed OAuth reauthorization and client configuration errors (senpi#5003)
+
+### What changed
+
+- `packages/ai/src/utils/oauth-refresh-error.ts` adds `OAuthReauthorizationRequiredError` with a closed refresh-code union and `OAuthClientConfigurationError`. Both extend the existing status-bearing token endpoint error and set its facts: the reauthorization error carries its code as `oauthError` with `credentialRefused: true`, and the configuration error carries `oauthError: "invalid_client"` (not a refused credential, so the credential pool never blocks the account for it).
+
+### Why
+
+- `packages/ai/src/utils/oauth-refresh-error.ts` must preserve HTTP status and existing transient/permanent behavior while letting callers distinguish terminal recovery actions.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/utils/oauth-refresh-error.ts` defines the shared refresh error contract below provider extensions.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/utils/oauth-refresh-error.ts`: declarations beside `OAuthTokenEndpointError`.
+
+## 2026-10-30 - Credential-pool-blocked diagnostic token (senpi#3975)
+
+### What changed
+
+- `packages/ai/src/utils/provider-diagnostic-vocabulary.ts`: `CREDENTIAL_POOL_BLOCKED_CODE` (`credential_pool_blocked`, category `rate_limit`) and `credentialPoolBlockedDiagnostic(resetsAt)`.
+
+### Why
+
+- senpi#3975: a pool whose every account is limited needs a structured rate limit with its reset, not an unclassified failure.
+
+### Why an extension could not handle it
+
+- The diagnostic vocabulary is a closed allowlist validated by `sanitizeProviderDiagnostic`.
+
+### Expected merge conflict zones
+
+- LOW: the head of the file and the `rate_limit` cases of `categoryForProviderCode` / `isProviderCodeStatusCompatible`.
+
+## 2026-10-28 - Account-pool refusal tokens in the provider diagnostic vocabulary (#4676)
+
+### What changed
+
+- `packages/ai/src/utils/provider-diagnostic-vocabulary.ts`: `categoryForProviderCode` accepts `account_pool_auth_blocked` (`auth`) and `account_pool_blocked` (`rate_limit`). Neither is compatible with any HTTP status, since the refusal is local.
+
+### Why
+
+- A subscription extension that refuses a request from its own account pool needs a code that survives `sanitizeProviderDiagnostic`; an opaque code may only name an `unknown` failure, and one code maps to one category, hence two tokens (#4676).
+
+### Why an extension could not handle it
+
+- The vocabulary is the closed allowlist every diagnostic is revalidated against.
+
+### Expected merge conflict zones
+
+- LOW: the `auth` and `rate_limit` arms of `categoryForProviderCode`.
+
+## 2026-10-27 - OAuth result pages show the host's brand, not the pi logo (senpi#4434, closes #4432)
+
+### What changed
+
+- `packages/ai/src/utils/oauth-page.ts`: the hard-coded upstream pi `LOGO_SVG` is gone. `setOAuthPageBrand({ name, logo? })` sets the product shown on the sign-in success and error pages; it is kept in a `processSingleton` slot. The page renders the name as text and the logo as an `<img src>` only when it is a base64 image data URI (svg+xml, png, webp, jpeg); any other logo is dropped. Without a brand the page carries no product mark. `oauthBrandName()` returns the brand name for sign-in surfaces outside our pages (consent screens), or `senpi` when no brand is set.
+
+### Why
+
+- A desktop beta user saw the inherited pi mark on OmO's sign-in page (#4432). The page has to show the product that runs the engine.
+
+### Why an extension could not handle it
+
+- The callback servers render these pages inside the `ai` package's OAuth flows; no extension hook reaches them.
+
+### Expected merge conflict zones
+
+- MEDIUM: the top of `oauth-page.ts` and the logo markup in `renderPage`, if upstream restyles its OAuth page.
+
+## 2026-10-31 - TLS chain-verification codes are structured transport codes (senpi#5253, closes #5244)
+
+### What changed
+
+- `packages/ai/src/utils/provider-diagnostic-vocabulary.ts` (fork-only): `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`, `UNABLE_TO_GET_ISSUER_CERT`, `UNABLE_TO_VERIFY_LEAF_SIGNATURE`, `SELF_SIGNED_CERT_IN_CHAIN`, `DEPTH_ZERO_SELF_SIGNED_CERT` and `CERT_UNTRUSTED` join the closed transport allowlist as `network`; `isTlsChainVerificationCode` names them.
+- `packages/ai/src/provider-diagnostic.ts` (fork-only): re-exports `isTlsChainVerificationCode` from the package root.
+
+### Why
+
+- omo#10762, design r13 6.6: the native handshake code must reach the provider failure so coding-agent can recognise a verification failure without reading message text. Hostname mismatch and expiry stay unclassified.
+
+### Why an extension could not handle it
+
+- The transport classifier runs inside the provider adapters' catch paths, below any extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the `default` branch of `categoryForTransportCode`.
+
+## 2026-11-01 - A 503 whose body says "Billing Scope" is not a quota exhaustion (senpi#4632)
+
+### What changed
+
+- `packages/ai/src/utils/retry.ts`: `isQuotaExhaustionMessage()` and `classifyErrorMessage()` split the quota patterns into a strong set (explicit codes such as `insufficient_quota`, `usage_limit_reached`, `credits_required`) and the bare `billing` word. Bare billing prose is ignored only when a transient server signal is present (a 5xx status token or the OpenAI-envelope `server_error` type) and no strong marker is present, so the 503/timeout in the same message can classify as retryable.
+
+### Why
+
+- A gateway 503 whose body merely mentions a billing lookup ("resolve Billing Scope: ... dial tcp: i/o timeout") was classified as a spent account, so the turn never retried even though the account served neighbouring requests. The status, not the prose, should gate a bare billing mention.
+
+### Why an extension could not handle it
+
+- Retry classification is a core choke point in `packages/ai/src/utils/retry.ts`; no extension hook reorders the non-retryable-before-retryable pattern test.
+
+### Expected merge conflict zones
+
+- LOW: the quota-pattern lists are edited by neighbouring billing/quota work (e.g. senpi#4097, #5040), but those touch different markers; the new gating helpers are additive.
+
+## 2026-10-30 - Share exact SIWC recovery decisions (part of #5003)
+
+### What changed
+
+- `packages/ai/src/utils/provider-diagnostic-carrier.ts` owns the shared exact-code recovery table and direct-admission status policy; `packages/ai/src/utils/siwc-errors.ts` re-exports them.
+- `packages/ai/src/utils/empty-response-errors.ts` re-exports the forwarded-empty terminal texts from their classifier in `packages/ai/src/utils/retry.ts`.
+- `packages/ai/src/utils/provider-diagnostic-vocabulary.ts` recognizes the SIWC code/status pairs.
+- `packages/ai/src/utils/provider-diagnostic-sources.ts` marks diagnostics from the SIWC adapter.
+- `packages/ai/src/utils/provider-retry.ts` and `packages/ai/src/utils/retry.ts` use structured SIWC recovery before retry headers or prose.
+
+### Why
+
+- `packages/ai/src/utils/siwc-errors.ts` keeps HTTP, assistant, and pool recovery on one classification path.
+- `packages/ai/src/utils/provider-diagnostic-carrier.ts` keeps recovery in the existing transport leaf; `packages/ai/src/utils/empty-response-errors.ts` preserves the shared texts without adding files to retry's graph.
+- `packages/ai/src/utils/provider-diagnostic-vocabulary.ts` must preserve exact provider codes rather than guessing from prose.
+- `packages/ai/src/utils/provider-diagnostic-sources.ts` distinguishes code-less SIWC admission failures from generic provider statuses.
+- `packages/ai/src/utils/provider-retry.ts` and `packages/ai/src/utils/retry.ts` must not replay usage limits, eligibility restrictions, or invalid requests.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/utils/siwc-errors.ts`, `packages/ai/src/utils/provider-diagnostic-vocabulary.ts`, and `packages/ai/src/utils/provider-diagnostic-sources.ts` are shared transport and classification contracts.
+- `packages/ai/src/utils/provider-diagnostic-carrier.ts` and `packages/ai/src/utils/empty-response-errors.ts` define the shared runtime leaves that determine entry-point import costs.
+- `packages/ai/src/utils/provider-retry.ts` and `packages/ai/src/utils/retry.ts` decide retries before extension recovery.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/utils/siwc-errors.ts`: new file.
+- `packages/ai/src/utils/provider-diagnostic-carrier.ts`: shared SIWC recovery mapping.
+- `packages/ai/src/utils/empty-response-errors.ts`: forwarded-empty exports.
+- `packages/ai/src/utils/provider-diagnostic-vocabulary.ts`: code/status mappings.
+- `packages/ai/src/utils/provider-diagnostic-sources.ts`: diagnostic adapters.
+- `packages/ai/src/utils/provider-retry.ts` and `packages/ai/src/utils/retry.ts`: retry classification.
+
+## 2026-10-31 - Token endpoint errors carry their OAuth code and refusal decision (senpi#5010)
+
+### What changed
+
+- `packages/ai/src/utils/oauth-refresh-error.ts`: `OAuthTokenEndpointError` takes an optional third argument and exposes `oauthError` (the body's OAuth `error` code) and `credentialRefused` (default `false`).
+
+### Why
+
+- The credential pool must tell a refused credential from a client fault or an unreadable page without reading adapter prose; an adapter that already decided the refusal had no way to say so.
+
+### Why an extension could not handle it
+
+- The error type is constructed inside the bundled OAuth adapters; an extension cannot attach facts to an error it does not throw.
+
+### Expected merge conflict zones
+
+- LOW: the `OAuthTokenEndpointError` class in `oauth-refresh-error.ts`.
+
+## 2026-10-31 - Merged root unions keep branch-only required fields as a hint (senpi#5138)
+
+### What changed
+
+- `packages/ai/src/utils/tool-schema-compat.ts`: `mergeRootObjectUnion` appends one `REQUIRED for <branch>: <fields>.` sentence per anyOf/oneOf branch to the merged root's `description`, listing that branch's required names that the merged `required` (branch-common names only) dropped. A branch is named by its first literal-valued property (`action=run`, `action=peek|stop`), else `option <n>`. allOf merges are unchanged, since they already require every branch's names.
+
+### Why
+
+- senpi#5138: object-only OpenAI-compatible routes saw the eval tool with no required fields at all, so a weaker tool-calling model had no wire signal that a run needs `language`, `code` and `summary`.
+
+### Why an extension could not handle it
+
+- The root-union merge is the shared provider wire adaptation every OpenAI-compatible, Moonshot and Bedrock request goes through.
+
+### Expected merge conflict zones
+
+- LOW: the return block of `mergeRootObjectUnion` and the two helpers added after it.
+
+## 2026-10-31 - Tool argument validation reports only the addressed branch of a discriminated union (senpi#5141)
+
+### What changed
+
+- `packages/ai/src/utils/validation.ts`: when a tool's parameters are an `anyOf`/`oneOf` of object branches that all carry a const-valued property with disjoint values (a discriminator such as `action`), a failed validation picks the branch by that property (the argument's value; when omitted, the property's `default` or the single branch where it is optional) and reports that branch's errors plus root property errors as one line, e.g. `for action "run" (default when action is omitted): language: must have required properties language`. An unknown discriminator value yields one line naming the allowed values and the received one. Unions without such a property keep the full error list; validators registered through `registerToolArgumentValidator` still run first.
+
+### Why
+
+- The validator listed every branch's mismatch (`action: must be equal to constant`, `cell_id: must have required properties cell_id`, `root: must match a schema in anyOf`) next to the one line that mattered, so a model could not tell which field to fix and repeated the failing call.
+
+### Why an extension could not handle it
+
+- Argument validation runs inside `pi-ai` before any tool or extension code sees the call.
+
+### Expected merge conflict zones
+
+- LOW: the `JsonSchemaObject` interface, the new helpers above `validateToolCall`, and the `errors` expression at the end of `validateToolArguments` in `validation.ts`.
+
+## 2026-10-31 - The Claude Code version fingerprint resolver is removed (senpi#5131)
+
+### What changed
+
+- `packages/ai/src/utils/claude-code-version.ts`, `packages/ai/src/utils/claude-code-version-cache.ts`: deleted (`getClaudeCodeVersion`, `recoverClaudeCodeVersion`, `createClaudeCodeVersionResolver`, `fetchLatestClaudeCodeVersion`, `installClaudeCodeVersionStore`, `installClaudeCodeVersionFileStore`, `PI_CLAUDE_CODE_VERSION`, the six-hour release lookup and the `<agent dir>/claude-code-version.json` cache).
+
+### Why
+
+- senpi#5131: the resolver existed only to keep the `claude-cli/<version>` fingerprint of the removed impersonation path current.
+
+### Why an extension could not handle it
+
+- These were pi-ai's own utility modules and its `./utils/*` public subpath.
+
+### Expected merge conflict zones
+
+- LOW: fork-only files; an upstream change that lands on them stays deleted.
+
+## 2026-10-30 - extractChatGptSubscriptionIdentity (senpi#5009)
+
+### What changed
+
+- `packages/ai/src/utils/chatgpt-subscription-auth.ts`: `extractChatGptSubscriptionIdentity(token)` returns the per-member `chatgpt_account_user_id`, or `chatgpt_user_id`/`user_id` scoped to `chatgpt_account_id`; `chatgpt_account_id` alone is never an identity (Team members share it). `extractChatGptSubscriptionAccountId` shares the same claim reader. The claim reading follows senpi#2048.
+
+### Why
+
+- oh-my-openagent#9633: tell one saved ChatGPT account from another, including slots stored by older builds.
+
+### Why an extension could not handle it
+
+- Shared, browser-safe token helper used by the provider definition.
+
+### Expected merge conflict zones
+
+- LOW: the body of `extractChatGptSubscriptionAccountId`.
+
+## 2026-10-30 - The retry-hint extractor reads a zoned wall-clock reset (senpi#1771)
+
+### What changed
+
+- `packages/ai/src/utils/retry-hint.ts`: exports `clockResetMs(text, nowMs)`, the wall-clock reset reader moved from the credential pool ("resets 12am (Asia/Seoul)", "resets Oct 2, 9am", "try again at 12:00 AM"; a time with no zone reads in the host's zone). Body prose tries it last, after the markers, relative prose and ISO timestamps; the 429 / rate-limit eligibility gate is unchanged.
+
+### Why
+
+- Claude Code writes its reset as a zoned wall clock, so `extract429RetryAfterMs` returned no hint and every caller treated the limit as having no reset.
+
+### Why an extension could not handle it
+
+- The extractor is shared by provider retry, the session retry delay and the failure profiles inside `pi-ai`.
+
+### Expected merge conflict zones
+
+- LOW: the end of `fromBodyProse` and the new wall-clock section at the end of `retry-hint.ts`.
+
+## 2026-10-27 - The leading system message records the stable prefix length (senpi#4447)
+
+### What changed
+
+- `packages/ai/src/utils/transcript.ts`: `createInitialSystemMessage` takes the stable prefix and sets `stablePrefix` when the prompt starts with it; `normalizeContext` passes `Context.systemPromptStablePrefix`; `getCurrentSystemMessage` keeps the leading message's `stablePrefix`.
+
+### Why
+
+- The provider adapters read the boundary from the leading system message; the rendered text is unchanged.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/utils/transcript.ts` builds the transcript every provider consumes.
+
+### Expected merge conflict zones
+
+- LOW: `createInitialSystemMessage`, `normalizeContext` and `getCurrentSystemMessage` in `packages/ai/src/utils/transcript.ts`.
+
+## 2026-10-30 - Keep-alive timeout is a provider stream stall (senpi#4608)
+
+### What changed
+
+- `packages/ai/src/utils/retry.ts`: `PROVIDER_STREAM_STALL_ERROR_PATTERN` and `PROVIDER_STALL_PHASES` recognize `Provider stream sent only keep-alives and timed out after <n>ms (...)`; users read "kept the connection alive but sent no response", with `retry.provider.keepAliveTimeoutMs` as the setting to raise.
+
+### Why
+
+- The new bound must take the same same-model retry and fallback path as the other stream bounds, and explain itself in plain words.
+
+### Why an extension could not handle it
+
+- The stall classifier is the shared retry gate.
+
+### Expected merge conflict zones
+
+- LOW: the stall pattern alternation and the phase table.
+
+## 2026-10-27 - Explicit producer-time seed frontier (part of #4272)
+
+### What changed
+
+- `packages/ai/src/utils/assistant-capture.ts` carries `nextOffset` on block starts; frozen-value construction moves to `packages/ai/src/utils/assistant-capture-record.ts`.
+- `packages/ai/src/utils/assistant-seed-frontier.ts` accepts only zero or full UTF-16 seed length and supplies typed missing/invalid frontier errors.
+
+### Why
+
+- Identical nonempty seeds previously hid whether subsequent deltas replayed from zero or continued at the seed length.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/utils/assistant-capture.ts`, `packages/ai/src/utils/assistant-capture-record.ts`, and `packages/ai/src/utils/assistant-seed-frontier.ts` own producer-time capture and its internal consumer contract, before extension delivery.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/utils/assistant-capture.ts`, `packages/ai/src/utils/assistant-capture-record.ts`, and `packages/ai/src/utils/assistant-seed-frontier.ts`.
+
+## 2026-10-26 - Provider error bodies are classified raw and kept redacted at the stream boundary (senpi#4282)
+
+### What changed
+
+- `provider-error.ts` (new): `isModelConfigError` (every quantifier bounded) and `sanitizeProviderErrorMessage`, which classifies the raw `errorMessage` of an error message (`stopReason: "error"`) first, sets `errorCause: { type: "model_config", model }` when it names a model the route does not serve, then keeps only the redacted text of every provider error.
+- `secret-redaction.ts` (new): `redactSecrets` and `redactCredentialShapes`, the one-pass state machine. One left-to-right pass reads the text as alternating tokens and delimiters; each token is classified from its own characters and the delimiters beside it, with index arithmetic only and no regular expression. The whole value of a strict name (password, secret, authorization, bearer) is read forward to its closing quote (at the opening quote's escaping depth) or, when bare, to whitespace, `,`, `;`, `&`, a quote or `<`, and the scan resumes after it.
+- `secret-lexer.ts` (new): character classes, percent escapes and HTML entities read as what they encode, the token and delimiter units, and the forward scans that find where a quoted or bare value ends. The shared logical-unit reader collapses canonical percent layers in one forward walk, then repeatedly percent-decodes a 64-character window to a fixpoint, retaining source offsets. Independently encoded percent signs and hex digits, mixed depths and either hex case use the same semantics; an unresolved window returns a typed refusal and the scanner redacts the remaining suffix conservatively. Work is linear: canonical prefixes are consumed once and every remaining window has constant work and storage. Both exported redactors use the same scanner and shape classifier; shapes mode deliberately interprets neither credential names nor URL passwords. JWT segment dots and URL authority slashes use logical units too. Scaling tests count scanner character reads through both exports instead of load-sensitive wall time.
+- `secret-classifier.ts` (new): credential words (a name is normalized: lowercase, camelCase split, trailing digits and `value`/`val`/`id` qualifiers stripped), known key prefixes and JWTs. A prefix or JWT is recognized wherever a word starts inside a token (after `/`, `+`, `~`, `-`, `.`, `%`, including percent-encoded token punctuation), never inside a word; each prefix check is bounded work, and a failed JWT candidate skips to its first `.`, so every segment is walked at most three times.
+- `event-stream.ts`: `AssistantMessageEventStream.push` and `end` run `sanitizeProviderErrorMessage` on every partial, error and final message, so no consumer of any provider stream sees a raw provider error body.
+- `retry.ts`: `isRetryableAssistantError` returns false for a `model_config` cause.
+- `secret-lexer.ts`: a percent-window refusal requires an unresolved percent/hex run contiguous to the window edge; a space or non-hex literal ends that dependency, so printf and SQL percent text stays readable. Windows without a percent followed by a hex digit skip fixpoint-buffer allocation and decoding passes.
+- `secret-classifier.ts` and `secret-redaction.ts`: a single known key's redacted span ends at its credential alphabet boundary, preserving a following path separator or filename suffix. If another credential starts anywhere after the first start, even inside its alphabet or behind a word character, the whole remaining token is conservatively redacted. Hook diagnostics retain the source filename around a single PAT. The suffix matrix covers every prefix alias and JWT, slash, dot, colon, query/form separators, underscore, hyphen, end of string, a word character and three joined credential families in EN/KO prose, paths, URLs and userinfo through both public redactors.
+
+### Why
+
+- A redaction applied at `message_end` left the raw body in `message_start`/`message_update` events published before it; every provider builds its error through this stream, so it is the one place where the body enters our objects.
+- Regex redaction was quadratic on shaped input twice in review (a keyword repeated over one name run, then the JWT rule on `eyJ-` runs: 1 MB took about 52 s), synchronously inside `push`; it also mangled names that only contain a credential word, missed numbered or qualified names, and missed cookie pairs after a short first value. A token-wise pass is linear by construction.
+
+### Why an extension could not handle it
+
+- The provider stream class and the retry classifier are core pi-ai code that every provider and the agent loop share.
+
+### Expected merge conflict zones
+
+- LOW: the `AssistantMessageEventStream` class body in `event-stream.ts`; the top of `isRetryableAssistantError`.
+
+## 2026-10-26 - Relay hints and consistent replaced terminals (senpi#4307, part of #4272)
+
+### What changed
+
+- `assistant-capture.ts` (fork-only): `CaptureHint.carried` makes a push relay a source capture's block facts, with
+  usage and metadata from the relaying stream; `null` records nothing. A start whose block is not appended yet records
+  nothing. `carryAssistantCapture` with a replaced terminal takes the new terminal's usage and message and adds every
+  scalar that differs from the source terminal to its metadata. `AssistantCapture.rewrittenFrom` (set through
+  `CaptureHint.rewrittenFrom` on a terminal and kept when the terminal is re-carried) names the first index from which
+  earlier block records no longer name the terminal's blocks (block index/identity only). The terminal message always
+  wins for content: readers replace each block's content from the terminal (or the block's end event), never
+  append-only from live records.
+
+### Expected merge conflict zones
+
+- None upstream: the file is fork-only.
+
+## 2026-10-26 - Capture vocabulary for replaced signatures, redaction and late names (senpi#4285, part of #4272)
+
+### What changed
+
+- `packages/ai/src/utils/assistant-capture.ts` (fork-only): `message_block_metadata` gains `thinkingSignature` and
+  `textSignature` (replacements, beside the appending `thinkingSignatureDelta`), `redacted` and `name`;
+  `pushAssistantSignature` records a changed text/thinking signature and `pushAssistantCompleteBlock` records a block
+  appended complete with no event as an insert and an end sharing one frozen copy.
+
+### Why
+
+- Google and Devin replace signatures rather than append them, Bedrock redacts a block mid-stream and Devin can name
+  a tool after its start; the S02a-1 vocabulary only appended signatures.
+
+### Why an extension could not handle it
+
+- The progress records are internal to the provider stream's ordered queue.
+
+### Expected merge conflict zones
+
+- None upstream: the file is fork-only.
+
+## 2026-10-25 - Assistant streams capture block seeds at emission and keep one ordered progress lane (senpi#4277, part of #4272)
+
+### What changed
+
+- `packages/ai/src/utils/event-stream.ts`: `EventStream` keeps one ordered queue whose entries are public events or
+  internal progress records. Ordinary iteration yields only public events with the same microtask timing as before:
+  a queued progress record is skipped in the same `next()` call, and a waiting reader that receives one keeps
+  waiting. `AssistantMessageEventStream` takes `{ captureBlocks }`; with it, `push(event, hint?)` freezes the event's
+  capture carrier before queuing. Every instance registers a progress writer; a records reader is registered only
+  when the class does not replace `[Symbol.asyncIterator]`. Ordinary iteration drops each event's carrier as it is
+  dequeued, so a wrapper that reads that way can only lose controls, never forward wrong ones. `done` is now
+  `protected`; `mapIterator` and `enqueueProgress` are new protected members.
+- `packages/ai/src/utils/assistant-capture.ts` (fork-only, new): the carrier and record vocabulary. Carriers live in
+  a `WeakMap` keyed by the event object (never enumerable, never serialized) and hold frozen copies: usage, changed
+  message metadata, the public block at start/end (provider scratch and symbols removed), the exact raw argument
+  prefix the adapter emitted, UTF-16 coverage and delta offsets, and the parse frontier `parsedThrough`.
+  Progress records are `message_block_state` (native insert/end), `message_block_metadata` (changed fields only) and
+  `message_tool_arguments_reset` (authoritative raw replacement). `assistantRecords` reads records;
+  `assistantEvents` reads events and hands each record to a callback as it is read.
+
+### Why
+
+- Provider events carry the shared live partial and the queue held references, so a seed read when a consumer
+  resumed could already contain later bytes, and native insertions/ends happened with no event at all. The facts
+  have to be frozen when the producer emits them, and native-only transitions need their own ordered lane
+  (R3.C6.2; contract ruling 05, decisions D1-D5).
+
+### Why an extension could not handle it
+
+- Capture has to run inside the producer's `push`, before the event is queued; extensions only see events after
+  the consumer resumes, when the live partial may already be ahead.
+
+### Expected merge conflict zones
+
+- MEDIUM: `EventStream` queue and iterator internals (`#queue` entry type, `push`/`deliver`, `mapIterator`,
+  `FifoQueue.prepend`) and the `AssistantMessageEventStream` constructor, `push` and iterator overrides.
+
+## 2026-10-25 - Preserve protocol-owned tool arguments (senpi#4191)
+
+### What changed
+
+- `packages/ai/src/utils/validation.ts`: accepts a schema-bound protocol validator before the existing coercion path.
+- `packages/ai/src/utils/tool-argument-validator.ts`: stores protocol validators without serializing them into provider requests.
+- Protocol validation preserves AJV error paths, required-property names, messages, and keywords so the model can correct its call without echoing argument values.
+- `packages/ai/src/utils/tool-argument-coercion.ts`: owns the unchanged primitive coercion extracted from `packages/ai/src/utils/validation.ts`.
+- `packages/ai/src/utils/tool-schema-compat.ts`: documents provider adaptation as a separate, potentially lossy wire step.
+
+### Why
+
+- `packages/ai/src/utils/validation.ts`: modern MCP must validate and send the arguments the model produced, rather than repair them through legacy coercion.
+- `packages/ai/src/utils/tool-schema-compat.ts`: an object-only provider's schema restrictions must not weaken MCP's source schema or rewrite dispatched arguments.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/utils/validation.ts`: validation runs before an extension tool's execute callback.
+- `packages/ai/src/utils/tool-schema-compat.ts`: provider wire conversion occurs after extensions supply their tool definitions.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/utils/validation.ts`: the argument-validation entry and primitive-coercion import.
+- `packages/ai/src/utils/tool-schema-compat.ts`: the module-level documentation.
+
+## 2026-10-22 - Extract the configuration reference error without behavior changes (senpi#3858)
+
+### What changed
+
+- `packages/ai/src/utils/config-reference-error.ts`: holds the unchanged `ConfigReferenceError` and `ConfigReferenceReason`, moved from `config-reference.ts`.
+- `packages/ai/src/utils/config-reference.ts`: imports and re-exports them, so its public entry keeps the same API.
+
+### Why
+
+- Lets the auth resolution path raise the named error without loading the compiled reference schemas.
+
+### Why an extension could not handle it
+
+- The credential pool raises this error before extension processing.
+
+### Expected merge conflict zones
+
+- LOW: the import and re-export at the top of `packages/ai/src/utils/config-reference.ts`.
+
+## 2026-10-21 - Shared configuration reference object grammar (senpi#3858)
+
+### What changed
+
+- `packages/ai/src/utils/config-reference.ts`: exact single-key `$file`, `$env`, and flat `$concat` schemas and runtime unions; named `ConfigReferenceError` and a validator for explicitly declared string-value slots.
+
+### Why
+
+- Auth, model configuration, and MCP must agree on which objects are references without interpreting opaque JSON or changing legacy strings.
+
+### Why an extension could not handle it
+
+- The credential pool and configuration loaders validate these values before extension processing.
+
+### Expected merge conflict zones
+
+- LOW: new standalone shared contract.
+
+## 2026-10-20 - Keep Claude's spent-window reset in provider diagnostics (senpi#3825)
+
+`provider-diagnostic-sources.ts` adds `resetsAt` to a classified quota/rate-limit error from Claude's unified 5h/7d response headers. Only spent windows with future numeric resets contribute, and the latest spent window wins so a goal cannot wake while another cap still blocks it. Authentication and unknown errors do not read reset headers. `anthropic-provider-diagnostic.test.ts` exercises the real adapter against HTTP fixtures.
+
+## 2026-10-21 - reportedCount: absent, null or non-finite provider counts are not reported (senpi#3879)
+
+### What changed
+
+- `packages/ai/src/utils/reported-count.ts` (fork-only): `reportedCount(value)` returns a finite number or undefined; the four adapters that parse a reasoning count use it.
+
+### Why
+
+- Gateways can send `"reasoning_tokens": null`; a `=== undefined` check let that through as `reasoning: null`, which compaction's retained-message check treats as invalid usage (review of senpi#3884).
+
+### Why an extension could not handle it
+
+- Usage parsing happens inside each adapter's stream.
+
+### Expected merge conflict zones
+
+- None: new file.
+
+## 2026-10-21 - Context readers prefer request measurements (omo#10792)
+
+### What changed
+
+- `packages/ai/src/utils/estimate.ts`: `calculateContextTokens` prefers `Usage.contextUsage`; an explicit unknown measurement returns zero so transcript estimation supplies context.
+- `packages/ai/src/utils/overflow.ts`: token-based overflow detection uses request context when present rather than cumulative billed tokens. Error-message classification remains independent. `isRecoverableLength` reads request output when it is measured and falls back to the message output when request context is absent or unknown (`null`), so result-only length stops keep their previous recovery.
+
+### Why
+
+- `packages/ai/src/utils/estimate.ts` and `packages/ai/src/utils/overflow.ts`: the SDK's terminal usage can sum two overlapping full-context requests, exhausting output room or triggering overflow on a conversation that fits.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/utils/estimate.ts` and `packages/ai/src/utils/overflow.ts`: these shared readers run beneath extensions and must understand the additive usage contract for all callers.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/utils/estimate.ts`, `calculateContextTokens`; `packages/ai/src/utils/overflow.ts`, numeric overflow checks.
+
 ## 2026-10-18 - Anthropic compat gains supportsGzipRequestBody (senpi#3643)
 
 ### What changed

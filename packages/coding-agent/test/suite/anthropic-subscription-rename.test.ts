@@ -25,6 +25,7 @@ type ProviderRegistration = {
 function captureRegisterProviderCall(): { args: [string, ProviderRegistration] } {
 	const calls: Array<{ args: [string, ProviderRegistration] }> = [];
 	const pi = {
+		cwd: process.cwd(),
 		registerProvider: (name: string, config: ProviderRegistration) => {
 			calls.push({ args: [name, config] });
 		},

@@ -2,7 +2,8 @@ import { closeSync, openSync, readdirSync, readFileSync, readSync } from "node:f
 import { createConnection, type Socket } from "node:net";
 import { join, win32 } from "node:path";
 import { debuglog } from "node:util";
-import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
+import { APP_COMMAND } from "../../../../config.ts";
+import type { ExtensionAPI, ExtensionContext, ProgramStatus } from "../../types.ts";
 import {
 	isTerminalMonitorStateEvent,
 	isWakeSourceStateEvent,
@@ -10,7 +11,19 @@ import {
 	WAKE_SOURCE_STATE_EVENT,
 } from "../monitor-state-event.ts";
 import { HerdrClient, type HerdrMethod } from "./herdr-client.ts";
-import { initialHerdrState, isHerdrBlockedEvent, reduceHerdrState, selectHerdrReport } from "./herdr-state.ts";
+import {
+	initialHerdrState,
+	isHerdrBlockedEvent,
+	reduceHerdrState,
+	selectHerdrBlockedKind,
+	selectHerdrReport,
+} from "./herdr-state.ts";
+
+/**
+ * Herdr keys prompt delivery and session restore on agent labels it knows, so the protocol agent stays `pi`.
+ * The product command (`omo`, `senpi`, `pi`) travels in this display-only pane token instead (omo#12395).
+ */
+const APP_TOKEN = "app";
 
 export interface HerdrDependencies {
 	getLoadedExtensionPaths: (ctx: ExtensionContext) => readonly string[];
@@ -44,6 +57,8 @@ export function createHerdrExtension(deps: HerdrDependencies) {
 		const debug = deps.debug ?? debuglog("senpi:herdr");
 		let client: HerdrClient | undefined;
 		let bound: ExtensionContext["sessionManager"] | undefined;
+		let boundCtx: ExtensionContext | undefined;
+		let lastProgramStatus: string | undefined;
 		let state = initialHerdrState();
 		let stopped = false;
 		let deferred = false;
@@ -70,9 +85,24 @@ export function createHerdrExtension(deps: HerdrDependencies) {
 			void work.then(() => pending.delete(work));
 			return work;
 		}
+		function reportProgramStatus(report: ReturnType<typeof selectHerdrReport>): void {
+			const kind = report.state === "blocked" ? selectHerdrBlockedKind(state) : undefined;
+			const status: ProgramStatus = {
+				state: report.state,
+				...(kind === undefined ? {} : { kind }),
+				...(report.message === undefined ? {} : { message: report.message }),
+			};
+			const key = JSON.stringify(status);
+			if (lastProgramStatus === key) return;
+			lastProgramStatus = key;
+			// An outside SDK host's UI context may predate setProgramStatus (senpi#5344); the herdr socket must not depend on it.
+			boundCtx?.ui.setProgramStatus?.(status);
+		}
 		async function publish(): Promise<void> {
 			if (!bound || stopped) return;
 			const report = selectHerdrReport(state);
+			reportProgramStatus(report);
+			if (!client) return;
 			const key = JSON.stringify(report);
 			if (lastReport === key) return;
 			lastReport = key;
@@ -84,25 +114,27 @@ export function createHerdrExtension(deps: HerdrDependencies) {
 			const next = ctx.sessionManager.getSessionName() ?? "";
 			if (title === next) return;
 			title = next;
-			if (!(await send("pane.report_metadata", { title: next, display_agent: next })) && title === next)
-				title = undefined;
+			const params = { title: next, display_agent: next, tokens: { [APP_TOKEN]: APP_COMMAND } };
+			if (!(await send("pane.report_metadata", params)) && title === next) title = undefined;
 		}
 		function refreshChildren(ctx: ExtensionContext): void {
 			state = reduceHerdrState(state, { type: "children", count: countRunningChildTasks(ctx, debug) });
 		}
 
 		pi.on("session_start", async (_event, ctx) => {
-			if (stopped || deferred || bound || ctx.mode !== "tui") return;
+			if (stopped || bound || ctx.mode !== "tui") return;
+			// Program status (OSC 7501) reaches any terminal that reads it, such as herdr-core panes that set no
+			// HERDR_* variables (senpi#5321); the herdr socket client below keeps its own preconditions.
+			bound = ctx.sessionManager;
+			boundCtx = ctx;
 			const socketPath = process.env.HERDR_SOCKET_PATH;
 			const paneId = process.env.HERDR_PANE_ID;
-			if (process.env.HERDR_ENV !== "1" || !socketPath || !paneId) return;
-			if (hasUserReporter(deps, ctx, debug)) {
-				deferred = true;
-				debug("Herdr builtin deferred to a loaded user reporter");
-				return;
+			if (!deferred && process.env.HERDR_ENV === "1" && socketPath && paneId) {
+				if (hasUserReporter(deps, ctx, debug)) {
+					deferred = true;
+					debug("Herdr builtin deferred to a loaded user reporter");
+				} else client = new HerdrClient(socketPath, paneId, deps);
 			}
-			bound = ctx.sessionManager;
-			client = new HerdrClient(socketPath, paneId, deps);
 			state = reduceHerdrState(state, { type: "turn", active: !ctx.isIdle() });
 			refreshChildren(ctx);
 			subscriptions.push(
@@ -131,11 +163,15 @@ export function createHerdrExtension(deps: HerdrDependencies) {
 				void publish();
 			}, 4000);
 			poll.unref();
-			await Promise.all([
-				reportTitle(ctx),
-				send("pane.report_agent_session", { agent: "pi", ...sessionRef(), session_start_source: _event.reason }),
-				publish(),
-			]);
+			if (!client) return publish();
+			// Herdr accepts a resume command only after this reporter holds the pane.
+			await Promise.all([reportTitle(ctx), publish()]);
+			await send("pane.report_agent_session", {
+				agent: "pi",
+				...sessionRef(),
+				resume_argv: [APP_COMMAND, "--session", bound.getSessionFile() ?? bound.getSessionId()],
+				session_start_source: _event.reason,
+			});
 		});
 		pi.on("session_info_changed", (_event, ctx) => {
 			if (owns(ctx)) return reportTitle(ctx);
@@ -156,9 +192,13 @@ export function createHerdrExtension(deps: HerdrDependencies) {
 			stopped = true;
 			if (poll) clearInterval(poll);
 			for (const unsubscribe of subscriptions) unsubscribe();
+			if (event.reason === "quit") ctx.ui.setProgramStatus?.(undefined);
 			// Drain before the host builds the successor runtime, or releases the pane.
 			await Promise.all(pending);
-			if (event.reason === "quit") await send("pane.release_agent", { agent: "pi" });
+			if (event.reason !== "quit") return;
+			// Herdr keeps pane tokens after release and after the process exits, so the brand is cleared explicitly.
+			await send("pane.report_metadata", { tokens: { [APP_TOKEN]: null } });
+			await send("pane.release_agent", { agent: "pi" });
 		});
 	};
 }

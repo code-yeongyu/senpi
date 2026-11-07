@@ -27,7 +27,11 @@ export interface TerminalSettings {
 	monitorMaxLinesPerInjection?: number; // default: 50 (bounded monitor event batch)
 	monitorMaxCharsPerInjection?: number; // default: 4096 (bounded monitor event batch)
 	monitorWakeBudget?: number; // default: 5 (consecutive monitor-only wake limit)
-	maxDurableMonitors?: number | "unlimited"; // default: "unlimited" (persistent monitors per session; invalid values mean unlimited)
+	monitorWakesPerHour?: number; // default: 12 (average wakes an hour of a persistent command monitor; extra lines batch into the next wake, max 3600)
+	monitorRunawayLinesPerMinute?: number; // default: 120 (runaway guard: matched lines a minute that count as a flood)
+	monitorRunawayMinutes?: number; // default: 5 (runaway guard: consecutive flood minutes before a persistent command monitor is paused, max 1440)
+	maxDurableMonitors?: number | "unlimited";
+	killGuard?: "on" | "off"; // default: "on" (refuse agent signals that match everything or hit protected processes); read from user settings only // default: "unlimited" (persistent monitors per session; invalid values mean unlimited)
 }
 
 export interface BranchSummarySettings {

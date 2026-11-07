@@ -65,6 +65,7 @@ import {
 } from "../utils/provider-diagnostic-sources.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderStreamRequest } from "../utils/provider-retry.ts";
+import { reportedCount } from "../utils/reported-count.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { getSystemMessageText, renderSystemMessageUpdate } from "../utils/text.ts";
 import { primeStreamUntilContent, sendWithForcedToolChoiceFallback } from "../utils/tool-choice-fallback.ts";
@@ -421,6 +422,20 @@ function parseLegacyEncryptedReasoningDetail(
 	}
 }
 
+/**
+ * Replays a thought signature that an OpenAI-compatible proxy returned in a tool call's
+ * `provider_specific_fields` (LiteLLM serving Gemini) on the same field, so the replayed call
+ * keeps it even though its id is normalized. A legacy encrypted reasoning detail sharing the
+ * `thoughtSignature` slot travels through `reasoning_details` instead.
+ */
+function withProviderThoughtSignature<TCall extends ChatCompletionMessageToolCall>(
+	call: TCall,
+	thoughtSignature: string | undefined,
+): TCall {
+	if (!thoughtSignature || parseLegacyEncryptedReasoningDetail(thoughtSignature) !== undefined) return call;
+	return { ...call, provider_specific_fields: { thought_signature: thoughtSignature } };
+}
+
 function fillMissingCommonReasoningDetailFields(
 	target: OpenAIReasoningDetailBase,
 	source: OpenAIReasoningDetail,
@@ -526,7 +541,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 	context: TranscriptContext,
 	options?: OpenAICompletionsOptions,
 ): AssistantMessageEventStream => {
-	const stream = new AssistantMessageEventStream();
+	const stream = new AssistantMessageEventStream({ captureBlocks: true });
 	const normalizedContext = resolveTranscript(context, getCompat(model).supportsMidConvoSystemMessages);
 
 	(async () => {
@@ -550,6 +565,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 
 		// `reasoning_details` are replay metadata, not user-visible stream deltas.
 		// Keep them in memory during streaming and serialize once when the block is finalized.
+		// oxlint-disable-next-line eslint/no-unassigned-vars -- dead since #8671's serialize-once was lost in an upstream sync merge; fixed in senpi#3934
 		let streamedReasoningDetails: OpenAIReasoningDetail[] | undefined;
 		const applyStreamedReasoningDetails = (block: ThinkingContent): void => {
 			if (streamedReasoningDetails !== undefined) {
@@ -654,6 +670,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				type?: string;
 				function?: { name?: string; arguments?: string };
 				custom?: { name?: string; input?: string };
+				provider_specific_fields?: { thought_signature?: unknown };
 			};
 
 			let textBlock: TextContent | null = null;
@@ -850,17 +867,25 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				for (const block of blocks) {
 					const contentIndex = getContentIndex(block);
 					if (block.type === "text") {
-						stream.push({ type: "text_start", contentIndex, partial: output });
+						stream.push({ type: "text_start", contentIndex, partial: output }, { offset: 0 });
 						for (const delta of deferredTextDeltas) {
 							stream.push({ type: "text_delta", contentIndex, delta, partial: output });
 						}
 					} else if (block.type === "thinking") {
-						stream.push({ type: "thinking_start", contentIndex, partial: output });
+						stream.push({ type: "thinking_start", contentIndex, partial: output }, { offset: 0 });
 						for (const delta of deferredThinkingDeltas) {
 							stream.push({ type: "thinking_delta", contentIndex, delta, partial: output });
 						}
 					} else {
-						stream.push({ type: "toolcall_start", contentIndex, partial: output });
+						const rawArgumentPrefix = (deferredToolCallDeltas.get(block) ?? []).join("");
+						stream.push(
+							{ type: "toolcall_start", contentIndex, partial: output },
+							{
+								rawArgumentPrefix,
+								parsedThrough: rawArgumentPrefix.length,
+								offset: 0,
+							},
+						);
 						for (const delta of deferredToolCallDeltas.get(block) ?? []) {
 							stream.push({ type: "toolcall_delta", contentIndex, delta, partial: output });
 						}
@@ -973,6 +998,10 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 							const name = toolCall.function?.name ?? toolCall.custom?.name;
 							if (!block.name && name) {
 								block.name = name;
+							}
+							const thoughtSignature = toolCall.provider_specific_fields?.thought_signature;
+							if (typeof thoughtSignature === "string" && thoughtSignature.length > 0) {
+								block.thoughtSignature = thoughtSignature;
 							}
 
 							let delta = "";
@@ -1793,23 +1822,29 @@ export function convertMessages(
 				assistantMsg.tool_calls = toolCalls.map((tc): ChatCompletionMessageToolCall => {
 					const customInputProperty = options?.grammarToolInputProperties?.get(tc.name);
 					if (customInputProperty !== undefined) {
-						return {
-							id: tc.id,
-							type: "custom",
-							custom: {
-								name: tc.name,
-								input: sanitizeSurrogates(getGrammarToolInput(tc.name, tc.arguments, customInputProperty)),
+						return withProviderThoughtSignature(
+							{
+								id: tc.id,
+								type: "custom",
+								custom: {
+									name: tc.name,
+									input: sanitizeSurrogates(getGrammarToolInput(tc.name, tc.arguments, customInputProperty)),
+								},
 							},
-						};
+							tc.thoughtSignature,
+						);
 					}
-					return {
-						id: tc.id,
-						type: "function",
-						function: {
-							name: tc.name,
-							arguments: JSON.stringify(tc.arguments),
+					return withProviderThoughtSignature(
+						{
+							id: tc.id,
+							type: "function",
+							function: {
+								name: tc.name,
+								arguments: JSON.stringify(tc.arguments),
+							},
 						},
-					};
+						tc.thoughtSignature,
+					);
 				});
 			}
 			if (preservedReasoningDetails) {
@@ -1931,7 +1966,34 @@ function convertTools(
 	tools: Tool[],
 	compat: ResolvedOpenAICompletionsCompat,
 ): OpenAI.Chat.Completions.ChatCompletionTool[] {
-	return tools.map((tool) => {
+	const strictByTool = tools.map((tool) =>
+		tool.freeform || resolveGrammarConstrainedSampling(tool, compat.supportsOpenAIGrammarTools)
+			? undefined
+			: resolveJsonSchemaStrictSampling(tool, compat.supportsStrictMode !== false),
+	);
+	if (compat.mixedStrictTools === false) {
+		const nonStrictTool = tools.find(
+			(tool, index) =>
+				!tool.freeform &&
+				!resolveGrammarConstrainedSampling(tool, compat.supportsOpenAIGrammarTools) &&
+				strictByTool[index] !== true,
+		);
+		if (nonStrictTool) {
+			const requiredTool = tools.find(
+				(tool) =>
+					tool.constrainedSampling &&
+					tool.constrainedSampling.type === "json_schema" &&
+					tool.constrainedSampling.strict === "require",
+			);
+			if (requiredTool) {
+				throw new Error(
+					`Tool "${requiredTool.name}" requires JSON-schema constrained sampling, but tool "${nonStrictTool.name}" cannot be strict and this provider rejects mixed strict and non-strict tools.`,
+				);
+			}
+			strictByTool.fill(undefined);
+		}
+	}
+	return tools.map((tool, index) => {
 		const grammar = resolveGrammarConstrainedSampling(tool, compat.supportsOpenAIGrammarTools);
 		if (grammar) {
 			return {
@@ -1953,7 +2015,7 @@ function convertTools(
 			throw new Error("Freeform tools cannot be sent to OpenAI Chat Completions; use Responses API");
 		}
 
-		const strict = resolveJsonSchemaStrictSampling(tool, compat.supportsStrictMode !== false);
+		const strict = strictByTool[index];
 		const schemaParameters = getJsonSchemaToolParameters(tool, strict) as Record<string, unknown>;
 		const normalizedParameters =
 			compat.toolSchemaFlavor === "moonshot-mfjs"
@@ -2032,12 +2094,13 @@ function parseChunkUsage(
 	const input = Math.max(0, promptTokens - cacheReadTokens - cacheWriteTokens);
 	// OpenAI completion_tokens already includes reasoning_tokens.
 	const outputTokens = rawUsage.completion_tokens || 0;
+	const reasoning = reportedCount(rawUsage.completion_tokens_details?.reasoning_tokens);
 	const usage: AssistantMessage["usage"] = {
 		input,
 		output: outputTokens,
 		cacheRead: cacheReadTokens,
 		cacheWrite: cacheWriteTokens,
-		reasoning: rawUsage.completion_tokens_details?.reasoning_tokens || 0,
+		...(reasoning === undefined ? {} : { reasoning }),
 		totalTokens: input + outputTokens + cacheReadTokens + cacheWriteTokens,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 	};

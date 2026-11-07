@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { isOpenAIResponsesPromptCacheModel } from "../src/api/openai-responses-prompt-cache.ts";
 import { warmPromptCache } from "../src/api/warm-prompt-cache.ts";
 import { getModel, streamSimple } from "../src/compat.ts";
 import type { Context, Model } from "../src/types.ts";
@@ -50,6 +51,22 @@ function captureFetch(serviceTier?: string) {
 describe("warmPromptCache for OpenAI Responses GPT-5.6+", () => {
 	afterEach(() => vi.restoreAllMocks());
 
+	// senpi#5101: SIWC plan usage cannot prewarm even when the catalog enables explicit caching.
+	it("reports SIWC prewarm ineligible without making a request", async () => {
+		const base = getModel("openai", "gpt-6-luna");
+		const model: Model<"openai-responses"> = {
+			...base,
+			compat: { ...base.compat, siwc: true, supportsExplicitPromptCacheMode: true },
+		};
+		const { fetch } = captureFetch();
+
+		expect(isOpenAIResponsesPromptCacheModel(model)).toBe(false);
+		await expect(warmPromptCache(model, context, { apiKey: "test-key", fetch })).resolves.toEqual({
+			supported: false,
+		});
+		expect(fetch).not.toHaveBeenCalled();
+	});
+
 	it("sends only the stable prefix with prompt_cache_options.prewarm and parses cache-write usage", async () => {
 		const model = getModel("openai", "gpt-6-luna");
 		const { fetch, bodies } = captureFetch();
@@ -59,7 +76,7 @@ describe("warmPromptCache for OpenAI Responses GPT-5.6+", () => {
 		const body = bodies[0];
 		expect(body).toMatchObject({ model: "gpt-6-luna", stream: false, store: false });
 		expect(body?.prompt_cache_options).toEqual({ prewarm: true });
-		expect(body).not.toHaveProperty("prompt_cache_key");
+		expect(body).toHaveProperty("prompt_cache_key", expect.stringMatching(/^.{1,64}$/));
 		expect(body?.reasoning).toMatchObject({ effort: "high" });
 		const input = body?.input as Array<{ role?: string }>;
 		expect(input).toHaveLength(1);

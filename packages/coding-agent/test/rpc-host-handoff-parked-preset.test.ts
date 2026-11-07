@@ -33,6 +33,7 @@ afterEach(async () => {
 		await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
 	}
 });
+// oxlint-disable-next-line jest/no-duplicate-hooks -- a second top-level hook kept separate; merging them would change the hook order
 afterEach(sweepEndpointScratches, 180_000);
 
 function writeSse(res: ServerResponse, events: ReadonlyArray<readonly [string, Record<string, unknown>]>): void {

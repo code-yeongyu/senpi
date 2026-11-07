@@ -10,20 +10,39 @@
  */
 export class SessionOpenTurns {
 	private readonly open = new Map<string, number>();
+	/** Sessions whose last run settled but has not reached agent_idle yet. */
+	private readonly settling = new Set<string>();
+	/** The turn each session's last `agent_start` named, so an owed settle names it too. */
+	private readonly turnIds = new Map<string, string>();
 
-	note(sessionId: string, type: unknown): void {
-		if (type === "agent_start") this.open.set(sessionId, (this.open.get(sessionId) ?? 0) + 1);
-		else if (type === "agent_settled") {
+	note(sessionId: string, type: unknown, reason?: unknown, turnId?: unknown): void {
+		if (type === "agent_start") {
+			if (typeof turnId === "string") this.turnIds.set(sessionId, turnId);
+			else this.turnIds.delete(sessionId);
+			this.open.set(sessionId, (this.open.get(sessionId) ?? 0) + 1);
+			this.settling.delete(sessionId);
+		} else if (type === "agent_settled" && reason !== "session_closed") {
 			const left = (this.open.get(sessionId) ?? 0) - 1;
 			if (left > 0) this.open.set(sessionId, left);
-			else this.open.delete(sessionId);
-		}
+			else {
+				this.open.delete(sessionId);
+				// Its agent_settled handlers may still run: the observer counts it busy until agent_idle (omo#11419).
+				this.settling.add(sessionId);
+			}
+		} else if (type === "agent_idle") this.settling.delete(sessionId);
+	}
+
+	/** The turn the session's owed settles close: what its last `agent_start` named. */
+	turnOf(sessionId: string): string | undefined {
+		return this.turnIds.get(sessionId);
 	}
 
 	/** The settles a seal is about to strand; the session's count is forgotten either way. */
 	take(sessionId: string): number {
-		const owed = this.open.get(sessionId) ?? 0;
+		const owed = (this.open.get(sessionId) ?? 0) + (this.settling.has(sessionId) ? 1 : 0);
 		this.open.delete(sessionId);
+		this.settling.delete(sessionId);
+		this.turnIds.delete(sessionId);
 		return owed;
 	}
 }

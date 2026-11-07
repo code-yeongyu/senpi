@@ -9,7 +9,9 @@ import type { AgentSession } from "../../core/agent-session.ts";
 import { ProjectTrustStore } from "../../core/trust-manager.ts";
 import { clientFacingIdentity } from "./client-admission-record.ts";
 import { sessionQuestionBridges } from "./connection-question-bridge.ts";
+import { observeLifecycle } from "./lifecycle-delivery.ts";
 import type { RpcSessionState } from "./rpc-types.ts";
+import { sessionUiAnswerLedger } from "./ui-answer-ledger.ts";
 import { sessionDialogRequests } from "./session-extension-ui-requests.ts";
 
 /**
@@ -33,6 +35,11 @@ export function buildRpcSessionState(session: AgentSession, lastAbortSource?: Ag
 	const projectTrusted = new ProjectTrustStore(session.agentDir).get(cwd) === true;
 	const lastProviderDiagnostic = sanitizeProviderDiagnostic(session.agent.state.providerDiagnostic);
 	return {
+		answeredUiRequests: sessionUiAnswerLedger(session).snapshot(),
+		paused: session.paused ?? false,
+		pausedNoticeCount: session.pausedNoticeCount ?? 0,
+		holds: session.holds ?? [],
+		lifecycle: observeLifecycle(session.lifecycle),
 		pendingQuestions: sessionQuestionBridges.get(session)?.pendingQuestions(),
 		pendingDialogs: sessionDialogRequests.get(session)?.snapshot() ?? [],
 		model: session.model,
@@ -44,11 +51,19 @@ export function buildRpcSessionState(session: AgentSession, lastAbortSource?: Ag
 			: null,
 		thinkingLevel: session.thinkingLevel,
 		...(session.thinkingSelection ? { thinkingSelection: session.thinkingSelection } : {}),
+		...(session.thinkingLevelSource === undefined ? {} : { thinkingLevelSource: session.thinkingLevelSource }),
+		...(typeof session.getSessionModelThinkingLevels === "function"
+			? { sessionModelThinkingLevels: session.getSessionModelThinkingLevels() }
+			: {}),
+		...(session.currentTurnId === undefined ? {} : { currentTurnId: session.currentTurnId }),
 		...(lastAbortSource ? { lastAbortSource } : {}),
 		...(lastProviderDiagnostic ? { lastProviderDiagnostic } : {}),
 		serviceTier: session.effectiveServiceTier,
 		fastMode: session.isFastModeActive(),
 		isStreaming: session.isStreaming,
+		pausedHeldInputCount: session.pausedHeldInputCount,
+		runPaused: session.runPaused,
+		pause: session.pauseView,
 		isCompacting: session.isCompacting,
 		retryAttempt: session.retryAttempt,
 		isBashRunning: session.isBashRunning,

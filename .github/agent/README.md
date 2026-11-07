@@ -39,4 +39,4 @@ Conflicts, missing changelog or lock coverage, and failed QA stay on the task br
 ## Release Rule
 
 Release runs only after the upstream PR has been merge-committed into `main`, a fresh `/cl` audit completes on
-that tip, and `scripts/upstream-release-worthy.mjs` finds package changelog entries under `## [Unreleased]`.
+that tip, and `scripts/upstream-release-worthy.mjs` finds package entries in `[Unreleased]` or pending fragments without writing the compiled preview.

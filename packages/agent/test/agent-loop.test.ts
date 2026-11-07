@@ -8,7 +8,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it, vi } from "vitest";
-import { agentLoop, agentLoopContinue, runAgentLoop, runToolCall } from "../src/agent-loop.ts";
+import { agentLoop, agentLoopContinue, runAgentLoop, runToolCall } from "../src/index.ts";
 import type { CustomMessage } from "../src/harness/messages.ts";
 import { setDefaultStreamFn } from "../src/index.ts";
 import type {
@@ -1609,7 +1609,6 @@ describe("agentLoop with AgentMessage", () => {
 						"toolUse",
 					);
 					mockStream.push({ type: "done", reason: "toolUse", message });
-					setTimeout(() => releaseFirst?.(), 20);
 				} else {
 					const message = createAssistantMessage([{ type: "text", text: "done" }]);
 					mockStream.push({ type: "done", reason: "stop", message });
@@ -1622,6 +1621,9 @@ describe("agentLoop with AgentMessage", () => {
 		const events: AgentEvent[] = [];
 		for await (const event of stream) {
 			events.push(event);
+			// Barrier (plan P0-01b, G3): "first" finishes only once "second" has ended, so the
+			// batch completes only if both bodies run in one wave; no timer decides the order.
+			if (event.type === "tool_execution_end" && event.toolCallId === "tool-2") releaseFirst?.();
 		}
 
 		const toolExecutionEndIds = events.flatMap((event) => {
@@ -1845,10 +1847,6 @@ describe("agentLoop with AgentMessage", () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		let firstResolved = false;
 		let parallelObserved = false;
-		let releaseFirst: (() => void) | undefined;
-		const firstDone = new Promise<void>((resolve) => {
-			releaseFirst = resolve;
-		});
 
 		const slowTool: AgentTool<typeof toolSchema, { value: string }> = {
 			name: "slow",
@@ -1858,7 +1856,10 @@ describe("agentLoop with AgentMessage", () => {
 			executionMode: "sequential",
 			async execute(_toolCallId, params) {
 				if (params.value === "first") {
-					await firstDone;
+					// Barrier (plan P0-01b, G3): the executor dispatches a batch through microtasks
+					// only, so once the microtask queue drains, any body dispatched alongside this
+					// one has already started. No timer decides whether "second" overlaps.
+					await new Promise<void>((resolve) => setImmediate(resolve));
 					firstResolved = true;
 				}
 				if (params.value === "second" && !firstResolved) {
@@ -1896,7 +1897,6 @@ describe("agentLoop with AgentMessage", () => {
 						"toolUse",
 					);
 					mockStream.push({ type: "done", reason: "toolUse", message });
-					setTimeout(() => releaseFirst?.(), 20);
 				} else {
 					const message = createAssistantMessage([{ type: "text", text: "done" }]);
 					mockStream.push({ type: "done", reason: "stop", message });
@@ -1972,9 +1972,11 @@ describe("agentLoop with AgentMessage", () => {
 					parallelFastObserved = true;
 				}
 				executionOrder.push(`fast:${params.value}`);
-				if (params.value === "b") {
-					await fastDone;
-				}
+				if (params.value === "c") releaseFast?.();
+				// b runs until c has started, so the overlap is observed without a timer; a scheduler that ran the two
+				// one after the other reaches the bound with c not yet started and fails the parallel assertion.
+				if (params.value === "b")
+					await Promise.race([fastDone, new Promise<void>((resolve) => setTimeout(resolve, 5_000))]);
 				activeFastTools--;
 				return {
 					content: [{ type: "text", text: `fast: ${params.value}` }],
@@ -2010,7 +2012,6 @@ describe("agentLoop with AgentMessage", () => {
 					);
 					mockStream.push({ type: "done", reason: "toolUse", message });
 					setTimeout(() => releaseSlow?.(), 20);
-					setTimeout(() => releaseFast?.(), 40);
 				} else {
 					const message = createAssistantMessage([{ type: "text", text: "done" }]);
 					mockStream.push({ type: "done", reason: "stop", message });
@@ -2043,10 +2044,13 @@ describe("agentLoop with AgentMessage", () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		let firstResolved = false;
 		let parallelObserved = false;
-		let releaseFirst: (() => void) | undefined;
-		const firstDone = new Promise<void>((resolve) => {
-			releaseFirst = resolve;
+		let secondStarted: (() => void) | undefined;
+		const second = new Promise<void>((resolve) => {
+			secondStarted = resolve;
 		});
+		// The first call runs until the second has started, so the test sees overlap without depending on a timer; a
+		// scheduler that ran them one after the other would reach the bound with the second call not yet started.
+		const overlapBound = new Promise<void>((resolve) => setTimeout(resolve, 5_000));
 
 		const tool: AgentTool<typeof toolSchema, { value: string }> = {
 			name: "echo",
@@ -2056,11 +2060,12 @@ describe("agentLoop with AgentMessage", () => {
 			executionMode: "parallel",
 			async execute(_toolCallId, params) {
 				if (params.value === "first") {
-					await firstDone;
+					await Promise.race([second, overlapBound]);
 					firstResolved = true;
 				}
-				if (params.value === "second" && !firstResolved) {
-					parallelObserved = true;
+				if (params.value === "second") {
+					if (!firstResolved) parallelObserved = true;
+					secondStarted?.();
 				}
 				return {
 					content: [{ type: "text", text: `echoed: ${params.value}` }],
@@ -2093,7 +2098,6 @@ describe("agentLoop with AgentMessage", () => {
 						"toolUse",
 					);
 					mockStream.push({ type: "done", reason: "toolUse", message });
-					setTimeout(() => releaseFirst?.(), 20);
 				} else {
 					const message = createAssistantMessage([{ type: "text", text: "done" }]);
 					mockStream.push({ type: "done", reason: "stop", message });
@@ -2110,6 +2114,133 @@ describe("agentLoop with AgentMessage", () => {
 
 		// With executionMode=parallel, second tool should start before first finishes
 		expect(parallelObserved).toBe(true);
+	});
+
+	describe("tool batch interleave (characterization, plan P0-01a G2)", () => {
+		const interleaveSchema = Type.Object({});
+		const interleaveBatch: AgentToolCall[] = [
+			{ type: "toolCall", id: "a", name: "par", arguments: {} },
+			{ type: "toolCall", id: "b", name: "par", arguments: {} },
+			{ type: "toolCall", id: "s", name: "seq", arguments: {} },
+			{ type: "toolCall", id: "c", name: "par", arguments: {} },
+			{ type: "toolCall", id: "d", name: "par", arguments: {} },
+		];
+
+		// Runs one batch [a, b, s, c, d] (s is executionMode "sequential") and records
+		// tool bodies and tool events in the order the loop produces them. Gated bodies
+		// wait until the emit sink opens their gate on a named event, so the order is
+		// decided by the executor alone, never by timers.
+		async function runInterleave(
+			toolExecution: AgentLoopConfig["toolExecution"],
+			openGateOn: Record<string, string> = {},
+		): Promise<string[]> {
+			const trace: string[] = [];
+			const gates = new Map<string, () => void>();
+			const gated = new Map<string, Promise<void>>();
+			for (const id of Object.values(openGateOn)) {
+				gated.set(id, new Promise<void>((resolve) => gates.set(id, resolve)));
+			}
+			const execute: AgentTool<typeof interleaveSchema>["execute"] = async (toolCallId) => {
+				trace.push(`run:${toolCallId}`);
+				await gated.get(toolCallId);
+				trace.push(`done:${toolCallId}`);
+				return { content: [{ type: "text", text: toolCallId }], details: undefined };
+			};
+			const tool = (
+				name: string,
+				executionMode?: AgentTool["executionMode"],
+			): AgentTool<typeof interleaveSchema> => ({
+				name,
+				label: name,
+				description: name,
+				parameters: interleaveSchema,
+				...(executionMode ? { executionMode } : {}),
+				execute,
+			});
+			const context: AgentContext = { messages: [], tools: [tool("par"), tool("seq", "sequential")] };
+			const config: AgentLoopConfig = {
+				model: createModel(),
+				convertToLlm: identityConverter,
+				...(toolExecution ? { toolExecution } : {}),
+			};
+			let callIndex = 0;
+			await runAgentLoop(
+				[createUserMessage("run the batch")],
+				context,
+				config,
+				(event) => {
+					let label: string | undefined;
+					if (event.type === "tool_execution_start") label = `start:${event.toolCallId}`;
+					if (event.type === "tool_execution_end") label = `end:${event.toolCallId}`;
+					if (event.type === "message_end" && event.message.role === "toolResult") {
+						label = `result:${event.message.toolCallId}`;
+					}
+					if (!label) return;
+					trace.push(label);
+					const opens = openGateOn[label];
+					if (opens) gates.get(opens)?.();
+				},
+				undefined,
+				() => {
+					const mockStream = new MockAssistantStream();
+					const reason = callIndex === 0 ? "toolUse" : "stop";
+					const message =
+						reason === "toolUse"
+							? createAssistantMessage(interleaveBatch, reason)
+							: createAssistantMessage([{ type: "text", text: "done" }], reason);
+					callIndex++;
+					queueMicrotask(() => mockStream.push({ type: "done", reason, message }));
+					return mockStream;
+				},
+			);
+			return trace;
+		}
+
+		it("toolExecution sequential finishes each call, result message included, before the next starts", async () => {
+			const trace = await runInterleave("sequential");
+			expect(trace).toEqual(
+				["a", "b", "s", "c", "d"].flatMap((id) => [
+					`start:${id}`,
+					`run:${id}`,
+					`done:${id}`,
+					`end:${id}`,
+					`result:${id}`,
+				]),
+			);
+		});
+
+		it("default parallel config runs waves around the sequential call and emits results in source order", async () => {
+			// a waits until b has ended, and c waits until d has ended: both leading and
+			// trailing waves must be running concurrently for the batch to finish at all.
+			const trace = await runInterleave(undefined, { "end:b": "a", "end:d": "c" });
+			expect(trace).toEqual([
+				"start:a",
+				"start:b",
+				"start:s",
+				"start:c",
+				"start:d",
+				"run:a",
+				"run:b",
+				"done:b",
+				"end:b",
+				"done:a",
+				"end:a",
+				"run:s",
+				"done:s",
+				"end:s",
+				"run:c",
+				"run:d",
+				"done:d",
+				"end:d",
+				"done:c",
+				"end:c",
+				"result:a",
+				"result:b",
+				"result:s",
+				"result:c",
+				"result:d",
+			]);
+		});
 	});
 
 	it("runs finishTurn after tool-result messages and before turn_end", async () => {
@@ -2165,6 +2296,67 @@ describe("agentLoop with AgentMessage", () => {
 
 		expect(ordering.slice(-3)).toEqual(["message_end:toolResult", "finishTurn", "turn_end"]);
 	});
+
+	// senpi#3029: consumers key persisted entries by the message_end object, so a normalized copy loses its entry.
+	it.each([
+		{
+			label: "a stop response with a pending tool call",
+			response: () =>
+				createAssistantMessage([{ type: "toolCall", id: "tool-1", name: "echo", arguments: {} }], "stop"),
+			normalized: "toolUse",
+		},
+		{
+			label: "a toolUse response without a tool call",
+			response: () => createAssistantMessage([{ type: "text", text: "done" }], "toolUse"),
+			normalized: "stop",
+		},
+	] as const)(
+		"emits $label on message_end already normalized and hands that object to finishTurn and turn_end",
+		async ({ response, normalized }) => {
+			const tool: AgentTool = {
+				name: "echo",
+				label: "Echo",
+				description: "Echo tool",
+				parameters: Type.Object({}),
+				async execute() {
+					return { content: [{ type: "text", text: "ok" }], details: {} };
+				},
+			};
+			const ended: AssistantMessage[] = [];
+			const finished: AssistantMessage[] = [];
+			const turnEnded: AgentMessage[] = [];
+			let providerCalls = 0;
+			await runAgentLoop(
+				[createUserMessage("run")],
+				{ messages: [], tools: [tool] },
+				{
+					model: createModel(),
+					convertToLlm: identityConverter,
+					finishTurn: ({ message }) => {
+						finished.push(message);
+					},
+				},
+				(event) => {
+					if (event.type === "message_end" && event.message.role === "assistant") ended.push(event.message);
+					if (event.type === "turn_end") turnEnded.push(event.message);
+				},
+				undefined,
+				() => {
+					const message =
+						providerCalls++ === 0 ? response() : createAssistantMessage([{ type: "text", text: "end" }]);
+					const stream = new MockAssistantStream();
+					queueMicrotask(() =>
+						stream.push({ type: "done", reason: message.stopReason, message } as AssistantMessageEvent),
+					);
+					return stream;
+				},
+			);
+
+			expect(ended[0]?.stopReason).toBe(normalized);
+			expect(finished[0]).toBe(ended[0]);
+			expect(turnEnded[0]).toBe(ended[0]);
+		},
+	);
 
 	it.each(["error", "aborted"] as const)(
 		"runs finishTurn for a %s assistant before turn_end without changing the hard exit",

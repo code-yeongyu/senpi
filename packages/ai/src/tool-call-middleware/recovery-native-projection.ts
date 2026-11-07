@@ -1,4 +1,5 @@
 import type { AssistantMessage, AssistantMessageEventStream, ToolCall } from "../types.ts";
+import { type AssistantProgress, pushAssistantProgress } from "../utils/assistant-capture.ts";
 import type { StreamParserEvent, ToolCallFormat } from "./types.ts";
 
 type ContentBlock = AssistantMessage["content"][number];
@@ -19,6 +20,8 @@ export class RecoveryNativeProjection {
 	private readonly stream: AssistantMessageEventStream;
 	private readonly message: AssistantMessage;
 	private readonly rangesByInnerIndex = new Map<number, ContentRange>();
+	private readonly copiedInnerIndexes = new Set<number>();
+	private readonly pendingProgress = new Map<number, AssistantProgress[]>();
 	private readonly nativeLifecycleByInnerIndex = new Map<number, NativeLifecycle>();
 	private readonly reservedIds = new Set<string>();
 	private readonly recoveredIds = new Set<string>();
@@ -56,12 +59,32 @@ export class RecoveryNativeProjection {
 	}
 
 	startText(innerIndex: number, outerIndex: number): boolean {
-		if (!this.recordRange(innerIndex, { start: outerIndex, end: this.message.content.length })) return false;
+		if (!this.recordRange(innerIndex, { start: outerIndex, end: this.message.content.length }, false)) return false;
 		return true;
 	}
 
 	recordProjectedBlock(innerIndex: number, outerIndex: number): boolean {
-		return this.recordRange(innerIndex, { start: outerIndex, end: outerIndex + 1 });
+		return this.recordRange(innerIndex, { start: outerIndex, end: outerIndex + 1 }, true);
+	}
+
+	/**
+	 * Relays a source control to the outer block that copies its source block. Controls of a block the projection
+	 * rebuilds (prose split into text and recovered calls) describe no outer block and are dropped; controls of a
+	 * block not projected yet wait for it.
+	 */
+	relayProgress(progress: AssistantProgress): void {
+		const range = this.rangesByInnerIndex.get(progress.contentIndex);
+		if (!range) {
+			const pending = this.pendingProgress.get(progress.contentIndex);
+			if (pending) pending.push(progress);
+			else this.pendingProgress.set(progress.contentIndex, [progress]);
+			return;
+		}
+		if (!this.copiedInnerIndexes.has(progress.contentIndex)) return;
+		pushAssistantProgress(
+			this.stream,
+			range.start === progress.contentIndex ? progress : Object.freeze({ ...progress, contentIndex: range.start }),
+		);
 	}
 
 	extendText(innerIndex: number): void {
@@ -77,10 +100,11 @@ export class RecoveryNativeProjection {
 		this.reservedIds.add(block.id);
 		const outerIndex = this.message.content.length;
 		this.message.content.push(cloneContentBlock(block));
-		if (!this.recordRange(innerIndex, { start: outerIndex, end: outerIndex + 1 })) return "invalid";
 		this.nativeLifecycleByInnerIndex.set(innerIndex, "started");
 		this.stream.push({ type: "toolcall_start", contentIndex: outerIndex, partial: this.message });
-		return "projected";
+		// Recorded after the start, as a thinking copy is, so controls held for the call follow its start event. The
+		// guards above already rule out both reasons recordRange refuses.
+		return this.recordRange(innerIndex, { start: outerIndex, end: outerIndex + 1 }, true) ? "projected" : "invalid";
 	}
 
 	projectNativeDelta(source: AssistantMessage, innerIndex: number, delta: string): boolean {
@@ -131,13 +155,18 @@ export class RecoveryNativeProjection {
 		if (block.type === "toolCall" && this.recoveredIds.has(block.id)) return false;
 		const outerIndex = this.message.content.length;
 		this.message.content.push(cloneContentBlock(block));
-		return this.recordRange(innerIndex, { start: outerIndex, end: outerIndex + 1 });
+		return this.recordRange(innerIndex, { start: outerIndex, end: outerIndex + 1 }, true);
 	}
 
-	private recordRange(innerIndex: number, range: ContentRange): boolean {
+	/** Flushes the controls held for `innerIndex`; a copied block with a start event records its range after that start. */
+	private recordRange(innerIndex: number, range: ContentRange, copiesSource: boolean): boolean {
 		if (this.rangesByInnerIndex.has(innerIndex) || innerIndex <= this.highestProjectedInnerIndex) return false;
 		this.rangesByInnerIndex.set(innerIndex, range);
 		this.highestProjectedInnerIndex = innerIndex;
+		if (copiesSource) this.copiedInnerIndexes.add(innerIndex);
+		const pending = this.pendingProgress.get(innerIndex) ?? [];
+		this.pendingProgress.delete(innerIndex);
+		for (const progress of pending) this.relayProgress(progress);
 		return true;
 	}
 

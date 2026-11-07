@@ -2,9 +2,9 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
 	type Context,
 	costCardAt,
-	isAnthropicApiBaseUrl,
 	type Model,
 	resolvePromptCacheTtlSeconds,
+	supportsAnthropicCacheWarming,
 	type Tool,
 	type WarmPromptCacheOptions,
 	type WarmPromptCacheResult,
@@ -186,7 +186,9 @@ export function createCacheKeepAliveExtension(
 								.getAllTools()
 								.filter((tool) => activeToolNames.has(tool.name))
 								.map(({ name, description, parameters }) => ({ name, description, parameters }));
-				const auth = await current.modelRegistry.getApiKeyAndHeaders(current.model);
+				const auth = await current.modelRegistry.getApiKeyAndHeaders(current.model, {
+					sessionId: current.sessionManager.getSessionId(),
+				});
 				if (pingGeneration !== generation) {
 					inFlight = false;
 					arm();
@@ -195,10 +197,16 @@ export function createCacheKeepAliveExtension(
 				if (!auth.ok) throw new Error(auth.error);
 				const authHeaders = auth.headers ?? {};
 				const headers = preparation ? await preparation.transformHeaders(authHeaders) : authHeaders;
+				const systemPrompt = current.getSystemPrompt();
+				// The ping splits the system prompt where the real request does (senpi#4447, senpi#2389).
+				const stablePrefix = current.getSystemPromptStablePrefix?.();
 				const result = await warm(
 					current.model,
 					{
-						systemPrompt: current.getSystemPrompt(),
+						systemPrompt,
+						...(stablePrefix !== undefined && systemPrompt.startsWith(stablePrefix)
+							? { systemPromptStablePrefix: stablePrefix }
+							: {}),
 						messages: convertToLlm(filterContextExcludedMessages(preparedMessages)),
 						...(tools.length > 0 ? { tools } : {}),
 					},
@@ -243,7 +251,8 @@ export function createCacheKeepAliveExtension(
 			}
 		}
 
-		pi.on("session_start", (_event, nextCtx) => {
+		pi.on("session_start", (event, nextCtx) => {
+			if (event.sizesOnly) return;
 			prewarm.start(nextCtx);
 			stop("session-restart");
 			ctx = nextCtx;
@@ -305,7 +314,7 @@ export function createCacheKeepAliveExtension(
 }
 
 function isWarmSupportedModel(model: Model<any>): model is Model<"anthropic-messages"> {
-	return model.api === "anthropic-messages" && isAnthropicApiBaseUrl(model.baseUrl);
+	return model.api === "anthropic-messages" && supportsAnthropicCacheWarming(model);
 }
 
 function lastAssistantUsage(

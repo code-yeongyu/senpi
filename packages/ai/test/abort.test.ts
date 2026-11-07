@@ -10,7 +10,7 @@ import { BASETEN_LIVE_TEST_FLAG, getLiveEnvApiKey, QWEN_TOKEN_PLAN_LIVE_TEST_FLA
 import { resolveApiKey } from "./oauth.ts";
 
 // Resolve OAuth tokens at module level (async, runs before tests)
-const [chatgptSubscriptionToken] = await Promise.all([resolveApiKey("chatgpt-subscription")]);
+const chatgptSubscriptionToken = await resolveApiKey("chatgpt-subscription");
 const anthropicOAuthToken = getLiveEnvApiKey("ANTHROPIC_OAUTH_TOKEN", "PI_ENABLE_ANTHROPIC_OAUTH_LIVE");
 const basetenApiKey = getLiveEnvApiKey("BASETEN_API_KEY", BASETEN_LIVE_TEST_FLAG);
 const qwenTokenPlanApiKey = getLiveEnvApiKey("QWEN_TOKEN_PLAN_API_KEY", QWEN_TOKEN_PLAN_LIVE_TEST_FLAG);

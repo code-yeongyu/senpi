@@ -5,6 +5,7 @@ import { authorizeToolDispatch, type DispatchIdentity, hasDispatchAuthorizer } f
 import { getDispatchIdentity } from "../permission-system/dispatch-metadata.ts";
 import type { McpToolCatalogEntry } from "./catalog.ts";
 import { TimeoutError } from "./errors.ts";
+import { compileModernSchema, McpToolSchemaError } from "./modern/tool-schema.ts";
 import { type McpAsyncErrorSink, safeTimer } from "./wrap.ts";
 
 export interface McpInvocation {
@@ -42,6 +43,8 @@ interface InvocationScope {
 	readonly configuration: string;
 	readonly contextRequired: boolean;
 	readonly sessionManager?: object;
+	/** Another session this binding serves as one of its execution scopes (brain/hand S16c). */
+	readonly servesSession?: (sessionManager: object | undefined) => boolean;
 	readonly isCurrent: () => boolean;
 	readonly ready: () => Promise<void>;
 	readonly current: (tool: string) => McpToolCatalogEntry | undefined;
@@ -56,6 +59,8 @@ export function createMcpInvocationResolver(scope: InvocationScope): McpInvocati
 			entry.server,
 			entry.tool,
 			entry.schema,
+			entry.outputSchema,
+			entry.modern,
 			entry.description,
 			entry.annotations,
 		]),
@@ -78,7 +83,10 @@ export function createMcpInvocationResolver(scope: InvocationScope): McpInvocati
 			const ctx = invocation?.context;
 			if (
 				scope.contextRequired &&
-				(ctx === undefined || (scope.sessionManager !== undefined && ctx.sessionManager !== scope.sessionManager))
+				(ctx === undefined ||
+					(scope.sessionManager !== undefined &&
+						ctx.sessionManager !== scope.sessionManager &&
+						scope.servesSession?.(ctx.sessionManager) !== true))
 			) {
 				return refuse("unavailable", "MCP invocation does not belong to this session.");
 			}
@@ -114,7 +122,16 @@ export function createMcpInvocationResolver(scope: InvocationScope): McpInvocati
 			const current = scope.current(offered.tool);
 			if (current === undefined) return refuse("unavailable", "MCP tool is no longer available.");
 			// Validate the current raw schema, never the coercing preflight schema.
-			if (!Check(Type.Unsafe(current.schema), args)) {
+			let validate: (value: unknown) => boolean;
+			try {
+				validate = current.modern
+					? compileModernSchema(current.schema)
+					: (value: unknown) => Check(Type.Unsafe(current.schema), value);
+			} catch (error) {
+				if (!(error instanceof McpToolSchemaError)) throw error;
+				return refuse("schema_changed", `${error.code}: ${error.message}`, current);
+			}
+			if (!validate(args)) {
 				return refuse("schema_changed", "Arguments do not match the current MCP tool schema.", current);
 			}
 			const preparedIdentity = identity(current);
@@ -165,7 +182,7 @@ export function createMcpInvocationResolver(scope: InvocationScope): McpInvocati
 					return (
 						latest !== undefined &&
 						identity(latest).metadata === preparedIdentity.metadata &&
-						Check(Type.Unsafe(latest.schema), args) &&
+						validate(args) &&
 						(operationFence === undefined || operationFence()) &&
 						(permissionFence === undefined || permissionFence())
 					);

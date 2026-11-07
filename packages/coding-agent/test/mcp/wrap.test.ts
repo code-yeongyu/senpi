@@ -75,7 +75,10 @@ describe("mcp async source guard", () => {
 		const offenders: string[] = [];
 		for (const file of await collectSourceFiles(mcpSourceRoot)) {
 			const relative = path.relative(mcpSourceRoot, file);
-			if (relative === "wrap.ts") continue;
+			// env-grants-store.ts is vendored byte-for-byte into oh-my-openagent and may not import
+			// senpi internals; its watcher error handler only closes the watcher and its poll only
+			// enqueues reconciliation of a state read that never throws (senpi#3796).
+			if (relative === "wrap.ts" || relative === "env-grants-store.ts") continue;
 			const source = await readFile(file, "utf8");
 			const lines = source.split("\n");
 			lines.forEach((line, index) => {

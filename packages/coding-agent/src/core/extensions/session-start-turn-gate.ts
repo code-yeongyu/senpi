@@ -15,6 +15,11 @@ export class SessionStartTurnGate {
 		this.onStartError = onStartError;
 	}
 
+	/** True while `session_start` handlers run: turns they trigger start once dispatch ends. */
+	get holding(): boolean {
+		return this.held !== undefined;
+	}
+
 	admit(start: () => void): void {
 		if (this.held) this.held.push(start);
 		else start();

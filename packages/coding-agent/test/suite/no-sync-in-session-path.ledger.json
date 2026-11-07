@@ -40,13 +40,6 @@
 	"syncFs": [
 		{
 			"file": "src/core/agent-session.ts",
-			"api": "readFileSync",
-			"symbol": "_expandSkillCommand",
-			"count": 1,
-			"note": "one skill markdown file per explicit $skill token (KB-scale, read once per expansion)"
-		},
-		{
-			"file": "src/core/agent-session.ts",
 			"api": "writeFileSync",
 			"symbol": "exportToJsonl",
 			"count": 1,
@@ -310,6 +303,20 @@
 			"symbol": "getFileContentRevision",
 			"count": 1,
 			"note": "whole file hashed for a content revision (file-scale)"
+		},
+		{
+			"file": "src/core/auth-storage.ts",
+			"api": "readFileSync",
+			"symbol": "seenNoticeIds",
+			"count": 1,
+			"note": "auth-notices-seen.json beside auth.json, read when credential notices are listed at startup (senpi#3486; a few hundred bytes)"
+		},
+		{
+			"file": "src/core/auth-storage.ts",
+			"api": "writeFileSync",
+			"symbol": "markNoticesSeen",
+			"count": 1,
+			"note": "auth-notices-seen.json, written once when a credential notice is first shown at startup (senpi#3486; a few hundred bytes, 0600)"
 		}
 	]
 }

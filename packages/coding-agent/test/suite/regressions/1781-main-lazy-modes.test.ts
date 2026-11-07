@@ -78,7 +78,7 @@ describe("main() lazy command and mode graphs", () => {
 		const appServer = result.entries.filter((entry) => APP_SERVER_SUBGRAPH.test(entry.url)).map((entry) => entry.url);
 		expect
 			.soft(
-				[...new Set(appServer)].length,
+				new Set(appServer).size,
 				`the retired app-server tree is reachable from dist/main.js: ${[...new Set(appServer)].slice(0, 3).join(", ")}`,
 			)
 			.toBe(0);

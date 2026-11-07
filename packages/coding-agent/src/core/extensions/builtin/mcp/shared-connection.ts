@@ -1,5 +1,7 @@
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { collectServerCatalogForCache, type McpCachedServerCatalog, writeMcpCachedServer } from "./catalog-cache.ts";
+import { McpConfigGenerationChangedError } from "./config-generation.ts";
+import type { McpServerConfig } from "./config-schema.ts";
 import { ServerConnection } from "./connection.ts";
 import type { ServerConnectionOptions } from "./connection-types.ts";
 import { MCP_KEEP_ALIVE_INTERVAL_MS } from "./idle.ts";
@@ -19,6 +21,8 @@ export class SharedMcpConnection {
 	readonly connection: ServerConnection;
 	readonly leases = new Set<SharedMcpLease>();
 	readonly #calls = new Map<SharedMcpLease, number>();
+	readonly #readinessListeners = new Set<() => void>();
+	readonly #readinessSubscriptions = new Map<SharedMcpLease, () => void>();
 	readonly #options: SharedMcpOptions;
 	readonly #onDispose: () => void;
 	#idleTimeoutMin: number;
@@ -49,16 +53,55 @@ export class SharedMcpConnection {
 			},
 			getRingBuffer: () => options.logger.getRingBuffer(),
 		};
+		const resolveConfig = options.resolveConfig;
 		this.connection = new ServerConnection({
 			...options,
+			...(resolveConfig === undefined ? {} : { resolveConfig: () => this.#renewedConfig(resolveConfig) }),
+			projectPolicy:
+				options.projectPolicy === undefined
+					? undefined
+					: {
+							...options.projectPolicy,
+							resolve: (signal, allowDecision) => {
+								// Pool identity guarantees equal authority, but the original
+								// presentation may have closed while another lease remains.
+								const active = [...this.#calls.keys(), ...this.leases].find(
+									(lease) => lease.options.projectPolicy !== undefined,
+								);
+								const policy = active?.options.projectPolicy ?? options.projectPolicy;
+								if (policy === undefined) throw new Error("Project MCP policy unavailable");
+								return policy.resolve(signal, allowDecision);
+							},
+						},
 			logger,
-			elicitationUiProvider: () => {
-				// SDK server requests carry no originating tool-call id.
-				const owners = [...this.#calls.keys()];
-				return owners.length === 1 && this.leases.has(owners[0])
-					? owners[0].options.elicitationUiProvider?.()
-					: undefined;
-			},
+			elicitationUiProvider: Object.assign(
+				() => {
+					// SDK server requests carry no originating tool-call id.
+					const owners = [...this.#calls.keys()];
+					return owners.length === 1 && this.leases.has(owners[0])
+						? owners[0].options.elicitationUiProvider?.()
+						: undefined;
+				},
+				{
+					enforced: () => [...this.leases].some((lease) => lease.options.elicitationUiProvider?.enforced?.()),
+					subscribe: (listener: () => void) => {
+						this.#readinessListeners.add(listener);
+						return () => {
+							this.#readinessListeners.delete(listener);
+						};
+					},
+					eligible: () => {
+						const leases = [...this.leases];
+						const eligible = (lease: SharedMcpLease) =>
+							lease.options.elicitationEnabled !== false &&
+							lease.options.elicitationUiProvider?.eligible?.() !== false;
+						// Any ready owner permits negotiation; per-operation authority still selects the holder.
+						if (leases.some((lease) => lease.options.elicitationUiProvider?.enforced?.()))
+							return leases.some(eligible);
+						return leases.length > 0 && leases.every(eligible);
+					},
+				},
+			),
 		});
 		this.connection.onToolsChanged(() => {
 			this.#catalog = undefined;
@@ -103,6 +146,11 @@ export class SharedMcpConnection {
 		this.#clearIdle();
 		const lease = new SharedMcpLease(this, options, owner, key);
 		this.leases.add(lease);
+		const unsubscribe = options.elicitationUiProvider?.subscribe?.(() => {
+			for (const listener of this.#readinessListeners) listener();
+		});
+		if (unsubscribe) this.#readinessSubscriptions.set(lease, unsubscribe);
+		for (const listener of this.#readinessListeners) listener();
 		this.#idleTimeoutMin = Math.max(...[...this.leases].map((item) => item.options.config.idleTimeoutMin));
 		this.#refreshKeepAlive();
 		return lease;
@@ -144,6 +192,9 @@ export class SharedMcpConnection {
 		// Capture the last attached policy before removing the final owner.
 		this.#idleTimeoutMin = Math.max(...[...this.leases].map((item) => item.options.config.idleTimeoutMin));
 		this.leases.delete(lease);
+		this.#readinessSubscriptions.get(lease)?.();
+		this.#readinessSubscriptions.delete(lease);
+		if (this.leases.size > 0) for (const listener of this.#readinessListeners) listener();
 		this.#refreshKeepAlive();
 		this.#armIdle();
 	}
@@ -193,6 +244,23 @@ export class SharedMcpConnection {
 		for (const lease of [...this.leases]) await lease.dispose();
 		this.#onDispose();
 		await this.connection.dispose();
+	}
+	async invalidate(): Promise<void> {
+		this.#catalog = undefined;
+		this.#cacheGeneration = -1;
+		await this.connection.bumpGeneration();
+	}
+
+	/** A changed snapshot re-keys every lease of the shared connection, not only the one that admitted it. */
+	async #renewedConfig(resolveConfig: () => Promise<McpServerConfig>): Promise<McpServerConfig> {
+		try {
+			return await resolveConfig();
+		} catch (error) {
+			if (error instanceof McpConfigGenerationChangedError) {
+				for (const lease of this.leases) lease.options.onGenerationChanged?.();
+			}
+			throw error;
+		}
 	}
 
 	#renew(): Promise<Client> {

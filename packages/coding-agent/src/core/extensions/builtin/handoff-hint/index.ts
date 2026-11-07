@@ -52,7 +52,10 @@ function promptTokensOfFirstReply(entries: readonly SessionEntry[]): number | un
 	for (const entry of entries) {
 		if (entry.type !== "message" || entry.message.role !== "assistant") continue;
 		const usage = entry.message.usage;
-		const tokens = usage.input + usage.cacheRead + usage.cacheWrite;
+		const tokens =
+			usage.contextUsage === undefined
+				? usage.input + usage.cacheRead + usage.cacheWrite
+				: (usage.contextUsage?.input ?? 0);
 		if (tokens > 0) return tokens;
 	}
 	return undefined;

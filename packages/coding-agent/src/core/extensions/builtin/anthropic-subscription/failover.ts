@@ -9,7 +9,8 @@ import {
 } from "../../../credential-pool/model-scope.ts";
 import { usageLimitResetMs } from "../../../credential-pool/reset-time.ts";
 import type { AccountSlot, AnthropicSubscriptionCredential } from "./accounts.ts";
-import { clearExpiredBlocks, AllAccountsBlockedError, soonestUnblockAt } from "./affinity.ts";
+import { logAccountBlocked } from "./account-block-log.ts";
+import { AllAccountsBlockedError, clearExpiredBlocks } from "./affinity.ts";
 import type { SdkErrorClassification } from "./errors.ts";
 import { isConfirmedAccountUsageLimit, usageLimitBlockMs } from "./usage-limit-block.ts";
 
@@ -52,9 +53,14 @@ export type FailoverOptions<TEvent> = {
 	sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
 	signal?: AbortSignal;
 	/** Records a refused 1M window so the retry, built by `runAttempt`, requests the standard one. */
-	onLongContextRefused?: () => void;
+	onLongContextRefused?: (error: unknown) => void;
 	/** The session this turn belongs to: blocks that bind only this session are remembered under it. */
 	sessionKey?: string;
+	/**
+	 * False for a probe (the account connection test): its outcome is reported to the caller and never written as
+	 * account state, so it neither stores nor clears a block (senpi#4436).
+	 */
+	persistBlocks?: boolean;
 };
 
 type BlockFields = Pick<AccountSlot, "blockedUntil" | "blockReason" | "blockedAt" | "modelBlocks">;
@@ -151,14 +157,28 @@ export class ClassifiedSdkError extends Error {
 	readonly classification: SdkErrorClassification;
 	readonly original: unknown;
 	readonly suppressTurnRetry: boolean;
+	/**
+	 * The pool's state when this failure left no other account to try (senpi#4671). The failure stays the
+	 * error; the pool refusal is context, so a refresh failure or a 401 is never hidden behind "all blocked".
+	 */
+	readonly poolState: AllAccountsBlockedError | undefined;
 
-	constructor(classification: SdkErrorClassification, original: unknown, suppressTurnRetry: boolean) {
+	constructor(
+		classification: SdkErrorClassification,
+		original: unknown,
+		suppressTurnRetry: boolean,
+		poolState?: AllAccountsBlockedError,
+	) {
 		const detail = original instanceof Error ? original.message : String(original);
-		super(`${suppressTurnRetry ? TURN_RETRY_SUPPRESSION_PREFIX : ""}${detail}`);
+		super(
+			`${suppressTurnRetry ? TURN_RETRY_SUPPRESSION_PREFIX : ""}${detail}`,
+			poolState === undefined ? undefined : { cause: poolState },
+		);
 		this.name = "ClassifiedSdkError";
 		this.classification = classification;
 		this.original = original;
 		this.suppressTurnRetry = suppressTurnRetry;
+		this.poolState = poolState;
 	}
 }
 
@@ -205,7 +225,18 @@ function blockedAccount(
 	model: string | undefined,
 ): AccountSlot {
 	if (classification.kind === "auth_error") {
-		return { ...account, blockedUntil: now + AUTH_BLOCK_REPROBE_MS, blockReason: "auth_error", blockedAt: now };
+		const blocked = {
+			...account,
+			blockedUntil: now + AUTH_BLOCK_REPROBE_MS,
+			blockReason: "auth_error" as const,
+			blockedAt: now,
+			// Only a claude CLI login can be marked for a new sign-in; an env token account has no login to expire (senpi#5350).
+			...(classification.signInRequired !== undefined && account.store === "claude-cli"
+				? { signInRequired: classification.signInRequired }
+				: {}),
+		};
+		// The verdict names the sign-in it is about, so a block another engine writes is told apart (senpi#5623).
+		return blocked.store === "claude-cli" ? { ...blocked, authVerdict: { dirId: blocked.dirId, at: now } } : blocked;
 	}
 	const fallback = Math.min(MAX_RATE_LIMIT_BLOCK_MS, baseBlockMs * 2 ** attempt);
 	if (classification.modelFamily !== undefined && model !== undefined) {
@@ -248,7 +279,10 @@ async function clearBlockAfterSuccess(
 		const slotState =
 			state === undefined || !clearable(state)
 				? credential.slotState
-				: { ...credential.slotState, [name]: { ...(state.modelBlocks ? { modelBlocks: state.modelBlocks } : {}) } };
+				: {
+						...credential.slotState,
+						[name]: { ...(state.modelBlocks ? { modelBlocks: state.modelBlocks } : {}) },
+					};
 		return {
 			...credential,
 			...(slotState === undefined ? {} : { slotState }),
@@ -289,10 +323,10 @@ function replaceAccount(accounts: readonly AccountSlot[], replacement: AccountSl
 
 /**
  * Persists a block onto the stored slot. An `auth_error` is a verdict on the
- * token that failed, so it is written only while the stored slot still holds
- * that token. When another writer replaced the material meanwhile (a refresh in
- * this or another process, or a re-login), nothing is written and the stored
- * slot is returned: locking it "until re-login" would strand a valid token.
+ * sign-in that failed, so it is written only while the stored slot still names
+ * that sign-in's account dir. When a re-login replaced it meanwhile, nothing is
+ * written and the stored slot is returned: locking it "until re-login" would
+ * strand a valid sign-in.
  */
 async function persistBlock(
 	store: CredentialStore,
@@ -300,6 +334,7 @@ async function persistBlock(
 	account: AccountSlot,
 	now: number,
 ): Promise<AccountSlot | undefined> {
+	const signInMaterial = (slot: AccountSlot): string | undefined => slot.dirId;
 	let superseded: AccountSlot | undefined;
 	await store.modify(providerId, async (current) => {
 		if (current?.type !== "oauth") return current;
@@ -327,7 +362,7 @@ async function persistBlock(
 		if (
 			account.blockReason === "auth_error" &&
 			stored !== undefined &&
-			(stored.access !== account.access || stored.refresh !== account.refresh)
+			signInMaterial(stored) !== signInMaterial(account)
 		) {
 			superseded = stored;
 			return current;
@@ -339,6 +374,11 @@ async function persistBlock(
 						blockedUntil: account.blockedUntil,
 						blockReason: account.blockReason,
 						...(account.blockedAt === undefined ? {} : { blockedAt: account.blockedAt }),
+						...(account.store === "claude-cli" && account.signInRequired !== undefined
+							? { signInRequired: account.signInRequired }
+							: {}),
+						// Only this write's own auth verdict stays with the block (senpi#5623).
+						authVerdict: existing.store === "claude-cli" ? account.authVerdict : undefined,
 						modelBlocks: mergeModelBlocks(existing.modelBlocks, account.modelBlocks, now),
 					}
 				: existing,
@@ -374,16 +414,32 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 	let retryAccountName: string | undefined;
 	let limitResetWaited = false;
 
-	outer: while (true) {
-		const attemptLimit =
-			options.accountFallback === false ? Math.min(accounts.length, 1) : accounts.length;
+	async function waitForLimitReset(pool: AllAccountsBlockedError): Promise<boolean> {
+		if (limitResetWaited || options.persistBlocks === false || pool.limitedModel !== undefined) return false;
+		const resetWaitMs = pool.rateLimitedUntil === undefined ? undefined : pool.rateLimitedUntil - now();
+		if (resetWaitMs === undefined || resetWaitMs <= 0 || resetWaitMs > MAX_LIMIT_RESET_WAIT_MS) return false;
+		try {
+			await (options.sleep ?? abortableSleep)(resetWaitMs, options.signal);
+		} catch {
+			if (lastError === undefined) throw pool;
+			throw new ClassifiedSdkError(lastError.classification, lastError.original, lastError.suppressTurnRetry, pool);
+		}
+		accounts = clearExpiredBlocks(withSessionBlocks(accounts, options.sessionKey, now()), now());
+		transientRetriesUsed = 0;
+		longContextRetried = false;
+		retryAccountName = undefined;
+		retriedOnStoredMaterial.clear();
+		lastError = undefined;
+		limitResetWaited = true;
+		return true;
+	}
 
-		let brokeForWait = false;
+	outer: while (true) {
+		const attemptLimit = options.accountFallback === false ? Math.min(accounts.length, 1) : accounts.length;
 
 		for (let attempt = 0; attempt < attemptLimit; attempt++) {
-			brokeForWait = false;
-			// Each attempt gets its own copy: prepareSlot refreshes the slot in place, and a concurrent
-			// attempt holding the same stored object must still report the token it actually sent.
+			// Each attempt gets its own copy: an attempt may record a profile on its slot, and a concurrent
+			// attempt holding the same stored object must still report the account it actually ran on.
 			const retrySlot =
 				retryAccountName === undefined ? undefined : accounts.find((slot) => slot.name === retryAccountName);
 			retryAccountName = undefined;
@@ -391,38 +447,9 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 			try {
 				account = { ...(retrySlot ?? options.selectFn(accounts)) };
 			} catch (error) {
-				if (error instanceof AllAccountsBlockedError) {
-					if (limitResetWaited) {
-						throw new Error("Anthropic Subscription failover exhausted after waiting for limit reset");
-					}
-					const soonest = error.soonestUnblockAt ?? soonestUnblockAt(accounts, now(), options.model);
-					const resetWaitMs = soonest === undefined ? undefined : soonest - now();
-					if (
-						error.blockReason !== "auth_error" &&
-						resetWaitMs !== undefined &&
-						resetWaitMs > 0 &&
-						resetWaitMs <= MAX_LIMIT_RESET_WAIT_MS
-					) {
-						try {
-							await (options.sleep ?? abortableSleep)(resetWaitMs, options.signal);
-						} catch {
-							throw new Error("Anthropic Subscription failover exhausted after waiting for limit reset");
-						}
-						accounts = clearExpiredBlocks(
-							withSessionBlocks(options.accounts, options.sessionKey, now()),
-							now(),
-						);
-						transientRetriesUsed = 0;
-						longContextRetried = false;
-						retryAccountName = undefined;
-						retriedOnStoredMaterial.clear();
-						lastError = undefined;
-						limitResetWaited = true;
-						continue outer;
-					}
-					throw new Error("Anthropic Subscription failover exhausted without an attempt");
-				}
-				throw error;
+				if (!(error instanceof AllAccountsBlockedError)) throw error;
+				if (!(await waitForLimitReset(error))) throw error;
+				continue outer;
 			}
 			let visibleDeltaEmitted = false;
 			let completed = false;
@@ -447,7 +474,7 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 				if (classification.kind === "long_context_unavailable") {
 					if (visibleDeltaEmitted || longContextRetried) throw classified;
 					longContextRetried = true;
-					options.onLongContextRefused?.();
+					options.onLongContextRefused?.(error);
 					retryAccountName = account.name;
 					attempt--;
 					continue;
@@ -472,12 +499,42 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 					continue;
 				}
 
+				// A login this process could not read (senpi#5630) moves this turn to another account and is stored nowhere:
+				// other sessions may read it fine, and an unlocked keychain must work on the very next turn.
+				if (classification.kind === "login_unreadable") {
+					if (visibleDeltaEmitted || attempt + 1 >= attemptLimit) throw classified;
+					const unreadable: AccountSlot = {
+						...account,
+						blockedUntil: now() + AUTH_BLOCK_REPROBE_MS,
+						blockReason: "login_unreadable",
+						blockedAt: now(),
+					};
+					accounts = replaceAccount(accounts, unreadable);
+					let nextAccount: AccountSlot;
+					try {
+						nextAccount = options.selectFn(accounts);
+					} catch (selectError) {
+						if (selectError instanceof AllAccountsBlockedError) throw classified;
+						throw selectError;
+					}
+					await options.onFailover?.({
+						account: unreadable,
+						classification,
+						attempt: attempt + 1,
+						visibleDeltaEmitted,
+						nextAccount,
+					});
+					continue;
+				}
+
 				const blocked = blockedAccount(account, classification, now(), attempt, baseBlockMs, error, options.model);
 				// With no session to hold it, a block is shared as before: dropping it would re-send every
 				// sessionless request to the spent account until its window resets.
+				const persists = options.persistBlocks !== false;
 				const shared = isSharedVerdict(classification, error) || options.sessionKey === undefined;
-				if (!shared) rememberSessionBlock(options.sessionKey, blocked);
-				const superseded = shared ? await persistBlock(options.store, options.providerId, blocked, now()) : undefined;
+				if (persists && !shared) rememberSessionBlock(options.sessionKey, blocked);
+				const superseded =
+					persists && shared ? await persistBlock(options.store, options.providerId, blocked, now()) : undefined;
 				if (
 					superseded &&
 					!visibleDeltaEmitted &&
@@ -491,6 +548,13 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 					attempt--;
 					continue;
 				}
+				logAccountBlocked({
+					account: blocked.name,
+					reason: blocked.blockReason ?? "model_limit",
+					until: blocked.blockedUntil ?? activeModelBlockUntil(blocked.modelBlocks, options.model, now()),
+					shared,
+					detail: errorText(error),
+				});
 				accounts = replaceAccount(accounts, blocked);
 				const event: FailoverEvent = {
 					account: blocked,
@@ -498,54 +562,30 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 					attempt: attempt + 1,
 					visibleDeltaEmitted,
 				};
+				let poolState: AllAccountsBlockedError | undefined;
 				try {
 					if (!visibleDeltaEmitted && attempt + 1 < attemptLimit) {
-						try {
-							event.nextAccount = options.selectFn(accounts);
-						} catch (selErr) {
-							if (selErr instanceof AllAccountsBlockedError) {
-								if (limitResetWaited) {
-									throw new Error("Anthropic Subscription failover exhausted after waiting for limit reset");
-								}
-								const soonest = selErr.soonestUnblockAt ?? soonestUnblockAt(accounts, now(), options.model);
-								const resetWaitMs = soonest === undefined ? undefined : soonest - now();
-								if (
-									selErr.blockReason !== "auth_error" &&
-									resetWaitMs !== undefined &&
-									resetWaitMs > 0 &&
-									resetWaitMs <= MAX_LIMIT_RESET_WAIT_MS
-								) {
-									try {
-										await (options.sleep ?? abortableSleep)(resetWaitMs, options.signal);
-									} catch {
-										throw new Error("Anthropic Subscription failover exhausted after waiting for limit reset");
-									}
-									accounts = clearExpiredBlocks(
-										withSessionBlocks(options.accounts, options.sessionKey, now()),
-										now(),
-									);
-									transientRetriesUsed = 0;
-									longContextRetried = false;
-									retryAccountName = undefined;
-									retriedOnStoredMaterial.clear();
-									lastError = undefined;
-									limitResetWaited = true;
-									brokeForWait = true;
-								} else {
-									throw new Error("Anthropic Subscription failover exhausted without an attempt");
-								}
-							} else {
-								throw selErr;
-							}
-						}
+						event.nextAccount = options.selectFn(accounts);
 					}
+				} catch (selectError) {
+					if (!(selectError instanceof AllAccountsBlockedError)) throw selectError;
+					poolState = selectError;
 				} finally {
 					await options.onFailover?.(event);
 				}
-				if (brokeForWait) break;
+				if (poolState !== undefined) {
+					if (
+						classification.kind === "rate_limit" &&
+						isConfirmedAccountUsageLimit(errorText(error)) &&
+						(await waitForLimitReset(poolState))
+					)
+						continue outer;
+					throw new ClassifiedSdkError(classification, error, visibleDeltaEmitted, poolState);
+				}
 				if (visibleDeltaEmitted) throw classified;
 			}
 			if (completed) {
+				if (options.persistBlocks === false) return;
 				forgetSessionBlock(options.sessionKey, account.name);
 				// Outside the attempt's try: clearing is best-effort hygiene after a finished turn, so a store
 				// failure is logged and the block stays for the next success; it never fails or replays the turn.
@@ -559,29 +599,23 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 				return;
 			}
 		}
-
-		if (brokeForWait) continue outer;
-
-		if (!limitResetWaited && !accounts.some((a) => a.blockReason === "auth_error")) {
-			const soonest = soonestUnblockAt(accounts, now(), options.model);
-			const resetWaitMs = soonest === undefined ? undefined : soonest - now();
-			if (resetWaitMs !== undefined && resetWaitMs > 0 && resetWaitMs <= MAX_LIMIT_RESET_WAIT_MS) {
-				try {
-					await (options.sleep ?? abortableSleep)(resetWaitMs, options.signal);
-				} catch {
-					throw lastError ?? new Error("Anthropic Subscription failover exhausted after waiting for limit reset");
+		// The last account's own text speaks for that account only: when another account is out for this
+		// model alone, the pool's refusal (a model-scoped limit) is what the fallback chain must read (senpi#5007).
+		if (lastError !== undefined && lastError.classification.modelFamily === undefined) {
+			try {
+				options.selectFn(accounts);
+			} catch (refusal) {
+				if (refusal instanceof AllAccountsBlockedError) {
+					if (refusal.limitedModel !== undefined && options.model !== undefined) throw refusal;
+					if (
+						lastError.classification.kind === "rate_limit" &&
+						isConfirmedAccountUsageLimit(errorText(lastError.original)) &&
+						(await waitForLimitReset(refusal))
+					)
+						continue;
 				}
-				accounts = clearExpiredBlocks(withSessionBlocks(options.accounts, options.sessionKey, now()), now());
-				transientRetriesUsed = 0;
-				longContextRetried = false;
-				retryAccountName = undefined;
-				retriedOnStoredMaterial.clear();
-				lastError = undefined;
-				limitResetWaited = true;
-				continue outer;
 			}
 		}
-
 		throw lastError ?? new Error("Anthropic Subscription failover exhausted without an attempt");
 	}
 }

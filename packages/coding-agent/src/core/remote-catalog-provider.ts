@@ -7,6 +7,7 @@ import {
 	type ModelsStoreEntry,
 	type ModelType,
 	type Provider,
+	upstreamProviderIdFor,
 } from "@earendil-works/pi-ai";
 import { VERSION } from "../config.ts";
 import { fetchWithRetry } from "../utils/management-http.ts";
@@ -148,7 +149,9 @@ export function withRemoteCatalog(
 			// Only revalidate when a cached body backs the validator, so a 304 can never
 			// leave the overlay empty.
 			const validator = stored && stored.models.length > 0 ? stored.etag : undefined;
-			const url = new URL(`/api/models/providers/${encodeURIComponent(provider.id)}`, catalogBaseUrl);
+			// The catalog knows renamed providers by their upstream id; parseCatalog files the answer under provider.id.
+			const catalogProviderId = upstreamProviderIdFor(provider.id);
+			const url = new URL(`/api/models/providers/${encodeURIComponent(catalogProviderId)}`, catalogBaseUrl);
 			url.searchParams.set("types", REMOTE_CATALOG_MODEL_TYPES.join(","));
 			const response = await fetchWithRetry(
 				url,

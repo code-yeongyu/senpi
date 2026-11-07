@@ -1,4 +1,5 @@
-import type { PinSource, UnavailableAccount } from "./affinity.ts";
+import { ACCOUNT_POOL_REFUSAL_NOTE } from "../../../credential-pool/classify.ts";
+import type { BlockedAccountState, PinSource, UnavailableAccount } from "./affinity.ts";
 import type { SdkErrorKind } from "./errors.ts";
 import type { ClaudeCodeRun } from "./executable.ts";
 
@@ -19,11 +20,43 @@ export function noAccountGuidance(hasAnthropicCredential: boolean): string {
 	return lines.join("\n");
 }
 
-export function allAccountsBlockedGuidance(soonestUnblockAt: number | undefined, blockReason?: "auth_error"): string {
+/** One line per pool member, naming the account that needs /login (senpi#4671). */
+function accountStateLines(accounts: readonly BlockedAccountState[]): string[] {
+	return accounts.map((account) => {
+		const until = account.until === undefined ? "re-login" : new Date(account.until).toISOString();
+		const login = account.reason === "auth_error" ? ` - run /login ${PROVIDER} for this account` : "";
+		return `  ${account.name}: ${account.reason} until ${until}${login}`;
+	});
+}
+
+/**
+ * The pool context of a failure that left no other account (senpi#4671): the failure stays the error, and this
+ * names the soonest retry (which goal mode reads) and every account's state. No refusal note: the pool did not
+ * refuse the request, the account failed it.
+ */
+export function exhaustedPoolGuidance(
+	soonestUnblockAt: number | undefined,
+	accounts: readonly BlockedAccountState[],
+): string {
+	const eta =
+		soonestUnblockAt !== undefined && Number.isFinite(soonestUnblockAt)
+			? new Date(soonestUnblockAt).toISOString()
+			: "after re-login";
+	return [
+		`  No other Claude account is available. Soonest automatic retry: ${eta}.`,
+		...accountStateLines(accounts),
+	].join("\n");
+}
+
+export function allAccountsBlockedGuidance(
+	soonestUnblockAt: number | undefined,
+	blockReason?: "auth_error",
+	accounts: readonly BlockedAccountState[] = [],
+): string {
 	if (blockReason === "auth_error") {
-		// omo#8383: name the authentication failure. The recovery is a re-login,
-		// and the outer credential-pool classifier maps "authentication error" to
-		// auth_error instead of laundering the block into a rate-limit cooldown.
+		// omo#8383: name the authentication failure; the recovery is a re-login. Only a pool whose every
+		// account is auth-blocked says so (senpi#2081), and the outer credential pool reads the refusal note
+		// instead of these words, so the verdict is never pinned on whichever outer slot ran the attempt.
 		const recheck =
 			soonestUnblockAt !== undefined && Number.isFinite(soonestUnblockAt)
 				? [`  Next automatic re-check: ${new Date(soonestUnblockAt).toISOString()}.`]
@@ -31,8 +64,10 @@ export function allAccountsBlockedGuidance(soonestUnblockAt: number | undefined,
 		return [
 			`All Claude accounts for ${PROVIDER} are currently blocked (authentication error).`,
 			...recheck,
+			...accountStateLines(accounts),
 			`  /login ${PROVIDER}  - re-authenticate to refresh the blocked account`,
 			`  /claude-account list  - inspect account states`,
+			ACCOUNT_POOL_REFUSAL_NOTE,
 		].join("\n");
 	}
 	const eta =
@@ -42,8 +77,10 @@ export function allAccountsBlockedGuidance(soonestUnblockAt: number | undefined,
 	return [
 		`All Claude accounts for ${PROVIDER} are currently blocked (rate limit or auth errors).`,
 		`  Soonest automatic retry: ${eta}.`,
+		...accountStateLines(accounts),
 		`  /claude-account list  - inspect account states`,
 		`  /login ${PROVIDER}  - add another account`,
+		ACCOUNT_POOL_REFUSAL_NOTE,
 	].join("\n");
 }
 
@@ -54,7 +91,7 @@ const ENABLE_ACCOUNT_FALLBACK =
  * How to move off a pinned account. `/claude-account pin` only writes the stored pin, which a CLI or a
  * settings pin outranks (`resolveClaudeAccountPin`), so for those it would change nothing (senpi#3672).
  */
-function switchAccountLine(pinnedBy: PinSource | undefined): string {
+export function switchAccountLine(pinnedBy: PinSource | undefined): string {
 	switch (pinnedBy) {
 		case "cli":
 			return "  This session was started with --claude-account; start a new session with another --claude-account to switch.";
@@ -69,10 +106,8 @@ function switchAccountLine(pinnedBy: PinSource | undefined): string {
 /**
  * With account fallback off, only one account may serve (senpi#3465), so the pool-wide advice is wrong:
  * other accounts may be healthy, and adding one does not help because it is never used. Name the account
- * and the remedies that do work. For a blocked account the cause words ("authentication error", "rate
- * limit") stay, so the outer credential-pool classifier reads the same verdict as for the pool-wide
- * guidance. An account that is not configured carries neither on purpose: no cooldown brings it back, so
- * the classifier fails the request instead of rotating (senpi#3672).
+ * and the remedies that do work. Every variant carries the refusal note, so the outer credential pool
+ * fails the request instead of blocking the outer slot it ran on (senpi#2081, senpi#3672).
  */
 export function singleAccountUnavailableGuidance(
 	account: UnavailableAccount,
@@ -88,6 +123,7 @@ export function singleAccountUnavailableGuidance(
 				: `  /claude-account pin <name>  - pin a configured account (or /claude-account unpin)`,
 			"  Start a new session if this session's account was removed.",
 			ENABLE_ACCOUNT_FALLBACK,
+			ACCOUNT_POOL_REFUSAL_NOTE,
 		].join("\n");
 	}
 	const until =
@@ -102,6 +138,7 @@ export function singleAccountUnavailableGuidance(
 			...(until === undefined ? [] : [`  Next automatic re-check: ${until}.`]),
 			switchAccountLine(account.pinnedBy),
 			ENABLE_ACCOUNT_FALLBACK,
+			ACCOUNT_POOL_REFUSAL_NOTE,
 		].join("\n");
 	}
 	return [
@@ -109,6 +146,7 @@ export function singleAccountUnavailableGuidance(
 		...(until === undefined ? [] : [`  Wait until ${until}, when this account can serve again.`]),
 		switchAccountLine(account.pinnedBy),
 		ENABLE_ACCOUNT_FALLBACK,
+		ACCOUNT_POOL_REFUSAL_NOTE,
 	].join("\n");
 }
 
@@ -150,6 +188,8 @@ export function sdkErrorGuidance(kind: SdkErrorKind): string | undefined {
 			return "This organization's policy disallows subscription OAuth use here. Use an API key (ANTHROPIC_API_KEY) or an account from an allowed organization.";
 		case "billing":
 			return "The selected Claude account has a billing problem. Check the plan at claude.com or switch accounts with /claude-account pin <name>.";
+		case "login_unreadable":
+			return `Claude Code could not read this account's login. If your Mac's keychain is locked, unlock it (security unlock-keychain) and retry; otherwise run /login ${PROVIDER}.`;
 		case "auth_error":
 			return `The account's OAuth token was rejected. Re-run /login ${PROVIDER} to refresh it, or remove the account with /claude-account remove <name>.`;
 		case "entitlement":

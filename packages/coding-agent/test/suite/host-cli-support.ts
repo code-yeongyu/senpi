@@ -12,6 +12,7 @@ import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { Socket } from "node:net";
 import { join } from "node:path";
 import { probeHost } from "../../src/modes/rpc/host-probe.ts";
 import { stopHost } from "../../src/modes/rpc/host-stop.ts";
@@ -112,6 +113,7 @@ export function runHostCli(
 	sandbox: HostCliSandbox,
 	args: readonly string[],
 	extraEnv: Readonly<Record<string, string>> = {},
+	presenter?: (socket: Socket) => Promise<void>,
 ): Promise<HostCliResult> {
 	const child = spawn(process.execPath, [cliEntry, "host", ...args, "--socket", sandbox.socket], {
 		env: {
@@ -125,17 +127,19 @@ export function runHostCli(
 			PI_TELEMETRY: "0",
 			...extraEnv,
 		},
-		stdio: ["ignore", "pipe", "pipe"],
+		stdio: presenter ? ["ignore", "pipe", "pipe", "ignore", "pipe"] : ["ignore", "pipe", "pipe"],
 	});
+	const bootstrap = child.stdio[4];
+	const enrollment = presenter && bootstrap instanceof Socket ? presenter(bootstrap) : Promise.resolve();
 	let stdout = "";
 	let stderr = "";
-	child.stdout.on("data", (chunk: Buffer) => {
+	child.stdout?.on("data", (chunk: Buffer) => {
 		stdout += chunk.toString("utf8");
 	});
-	child.stderr.on("data", (chunk: Buffer) => {
+	child.stderr?.on("data", (chunk: Buffer) => {
 		stderr += chunk.toString("utf8");
 	});
-	return new Promise((resolve, reject) => {
+	const exited = new Promise<HostCliResult>((resolve, reject) => {
 		child.once("error", reject);
 		child.once("close", (code) => {
 			const result = { exitCode: code ?? -1, stdout, stderr };
@@ -154,6 +158,14 @@ export function runHostCli(
 			}
 		});
 	});
+	return Promise.all([exited, enrollment.catch((error: unknown) => error)])
+		.then(([result, error]) => {
+			if (error !== undefined) throw new Error(`${String(error)}\n${result.stderr}`);
+			return result;
+		})
+		.finally(() => {
+			if (bootstrap instanceof Socket) bootstrap.destroy();
+		});
 }
 
 /**

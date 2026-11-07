@@ -99,9 +99,9 @@ When the same logic or markup starts appearing in a second place, break it into 
 
 Tier the scope, never the rigor.
 
-- V1 — single-file non-behavioral edits: diagnostics on that file. Done.
-- V2 — single-domain behavioral edits: diagnostics on changed files in parallel, related tests, one execution of the affected runnable entry point when one exists.
-- V3 — multi-file or cross-cutting work: diagnostics on every changed file, related tests, build, manual exercise of user-visible behavior through its real surface.
+- V1 (single-file non-behavioral edits): diagnostics on that file. Done.
+- V2 (single-domain behavioral edits): diagnostics on changed files in parallel, related tests, one execution of the affected runnable entry point when one exists.
+- V3 (multi-file or cross-cutting work): diagnostics on every changed file, related tests, build, manual exercise of user-visible behavior through its real surface.
 
 Verify through the real surface, not the summary: run the app or command and walk the user paths your change touches, comparing what you observe against the intent, and fix what that exposes before reporting. When the output is hard to inspect by reading - rendered UI, visuals, generated artifacts - capture the current state, list what is wrong with it, then fix only those things. "Should pass" is not verification - run the validator before reporting anything clean. Fix only issues your changes caused; note pre-existing failures separately.${context.surface !== "terminal" ? ` ${APP_UNRUN_CHECK_RULE}` : ""}
 

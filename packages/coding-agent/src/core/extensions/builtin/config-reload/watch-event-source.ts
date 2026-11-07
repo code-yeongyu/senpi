@@ -17,8 +17,11 @@ export type FsWatchEventSourceOptions = {
 	readonly createRecursiveWorker?: RecursiveWatchWorkerFactory;
 };
 
+type RecursiveWatchEvent = { readonly eventType: string; readonly filename: string | null };
+
 type RecursiveWatchMessage =
-	| { readonly kind: "event"; readonly id: number; readonly eventType: string; readonly filename: string | null }
+	| ({ readonly kind: "event"; readonly id: number } & RecursiveWatchEvent)
+	| { readonly kind: "events"; readonly id: number; readonly events: readonly RecursiveWatchEvent[] }
 	| { readonly kind: "error"; readonly id: number; readonly message: string };
 
 const RECURSIVE_WATCH_WORKER_SOURCE = `
@@ -31,9 +34,52 @@ const watchers = new Map();
 const cancelled = new Set();
 const isCancelled = (message) =>
 	cancelled.has(message.id) || (message.active !== undefined && Atomics.load(message.active, 0) === 0);
+// senpi#4999: one batch per subscription is in flight until the main thread acks it; events
+// arriving meanwhile are deduplicated here, so a busy main thread never builds a backlog.
+const MAX_PENDING_EVENTS = 256;
+const outboxes = new Map();
+const deliver = (id, eventType, filename) => {
+	let outbox = outboxes.get(id);
+	if (!outbox) {
+		outbox = { inFlight: false, overflow: false, pending: new Map() };
+		outboxes.set(id, outbox);
+	}
+	if (!outbox.inFlight) {
+		outbox.inFlight = true;
+		parentPort.postMessage({ kind: "events", id, events: [{ eventType, filename }] });
+		return;
+	}
+	if (outbox.overflow) return;
+	outbox.pending.set(JSON.stringify([eventType, filename]), { eventType, filename });
+	if (outbox.pending.size > MAX_PENDING_EVENTS) {
+		outbox.overflow = true;
+		outbox.pending.clear();
+	}
+};
+const flush = (id) => {
+	const outbox = outboxes.get(id);
+	if (!outbox) return;
+	if (outbox.overflow) {
+		outbox.overflow = false;
+		parentPort.postMessage({ kind: "events", id, events: [{ eventType: "rename", filename: null }] });
+		return;
+	}
+	if (outbox.pending.size === 0) {
+		outbox.inFlight = false;
+		return;
+	}
+	const events = [...outbox.pending.values()];
+	outbox.pending.clear();
+	parentPort.postMessage({ kind: "events", id, events });
+};
 parentPort.on("message", (message) => {
+	if (message.kind === "ack") {
+		flush(message.id);
+		return;
+	}
 	if (message.kind === "unwatch") {
 		cancelled.add(message.id);
+		outboxes.delete(message.id);
 		watchers.get(message.id)?.close();
 		watchers.delete(message.id);
 		return;
@@ -46,12 +92,7 @@ parentPort.on("message", (message) => {
 			{ recursive: message.recursive !== false, encoding: "utf8" },
 			(eventType, filename) => {
 				if (isCancelled(message)) return;
-				parentPort.postMessage({
-					kind: "event",
-					id: message.id,
-					eventType,
-					filename: typeof filename === "string" ? filename : null,
-				});
+				deliver(message.id, eventType, typeof filename === "string" ? filename : null);
 			},
 		);
 		if (isCancelled(message)) {
@@ -127,6 +168,7 @@ function isRecursiveWatchMessage(message: unknown): message is RecursiveWatchMes
 	if (typeof message !== "object" || message === null || !("kind" in message)) return false;
 	if (!("id" in message) || typeof message.id !== "number") return false;
 	if (message.kind === "error") return "message" in message && typeof message.message === "string";
+	if (message.kind === "events") return "events" in message && Array.isArray(message.events);
 	return (
 		message.kind === "event" &&
 		"eventType" in message &&
@@ -163,6 +205,17 @@ export function createFsWatchEventSource(
 		const worker = createWorker();
 		worker.on("message", (message) => {
 			if (!isRecursiveWatchMessage(message)) return;
+			if (message.kind === "events") {
+				try {
+					const subscription = recursiveSubscriptions.get(message.id);
+					if (subscription)
+						for (const event of message.events) subscription.listener(event.eventType, event.filename);
+				} finally {
+					// A retired worker (last unsubscribe, or replaced after a crash) takes no more commands.
+					if (state.worker === worker) worker.postMessage({ kind: "ack", id: message.id });
+				}
+				return;
+			}
 			const subscription = recursiveSubscriptions.get(message.id);
 			if (!subscription) return;
 			if (message.kind === "event") {

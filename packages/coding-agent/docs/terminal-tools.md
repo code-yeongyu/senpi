@@ -13,8 +13,8 @@ platform/runtime).
 | `bash` | Run a command in a PTY. `run_in_background: true` starts a persistent session and returns a `bash_id` immediately. Foreground `timeout` (seconds) is a kill deadline. |
 | `bash_output` | Peek at a session without blocking: new output since the last read, or the status line. `filter` regex-filters lines; `view: "screen"` returns the rendered xterm grid. |
 | `monitor` | Watch a change and inject it as coalesced events, passing exactly one source - `command`, `path` or `target`: a long-running command (`description`, `command`, `filter?`, `timeout_ms?`, `persistent?`) injects matching PTY output lines, a file (`description`, `path`, `event?`, `persistent?`) fires once natively, and sessions (`type: "rpc"`, `target`, `events?`, `exclude?`, `filter?`, `persistent?`) report status changes, effect receipts and, opted in, content from every RPC host and terminal. Every call returns a stable `mon_` id (with the runtime `bash_N` handle as `details.bash_id`); either id addresses the watch. While watches are live, the interactive footer shows a brief `watching …` status (descriptions, count, paused markers). |
-| `bash_input` | Send stdin (`input`) or named keys (`keys: ["ctrl+c"]`, `["enter"]`, `["up"]`) to steer a REPL or interrupt a process. |
-| `bash_resize` | Resize a session's PTY (`cols`, `rows`) so full-screen TUIs reflow. |
+| `bash_input` | Search-exposed: activates on its first call. Send stdin (`input`) or named keys (`keys: ["ctrl+c"]`, `["enter"]`, `["up"]`) to steer a REPL or interrupt a process. |
+| `bash_resize` | Search-exposed: activates on its first call. Resize a session's PTY (`cols`, `rows`) so full-screen TUIs reflow. |
 | `kill_bash` | Tree-kill one session (`bash_id`) or all (`all: true`), leaving no orphans. |
 
 Background sessions are NEVER killed by `timeout` (they live until they exit or you
@@ -165,6 +165,13 @@ with streaming collapsed to `rpc <label> streaming +<n> deltas (last: "...")` pe
 `attachments` count does not change. `persistent: true` survives a restart and reports what moved while
 detached (`changed while detached`, `closed (gone while detached)`, `host ... restarted (generation a -> b)`).
 
+A session on another device is `<device>/<session>` (or `<device>/*` for every session there) when an
+extension registered a remote source with `pi.registerRpcRemoteSource`; without one such a target is
+refused. Its lines read exactly like local ones. A lost device is said once
+(`rpc device <device> unreachable (<reason>); re-watching`), the resync after the gap reports each change
+once, a turn end is reported once per `turnId` (`rpc <label> turn <id> settled while detached`), and an
+access that ended for good settles the watch (`rpc <device>/<session> access ended (<reason>)`).
+
 ### Anti-patterns
 
 | Anti-pattern | Do instead |
@@ -216,6 +223,7 @@ Configure the suite under `terminal` in `settings.json` (global
 - `maxSessions` — concurrent sessions before least-recently-used exited sessions are pruned (default 32).
 - `timeoutAction` — fate of a foreground timeout (default `background`).
 - `notify` — async completion behavior: `wake` (wake an idle interactive agent once), `next-turn`, or `off` (default `wake`). Non-interactive `-p` / `--print` / `--mode json` runs never wake.
+- `killGuard` — `on` (default) or `off`, read from the global settings file only (a project value is ignored). While on, an agent command or eval cell that would signal every process (`kill -1`, a `pkill` pattern such as `a||b`, `.*` or one letter), a protected process (pid 1, the agent, its ancestors, the user's service manager) or a process group holding one is refused before it runs with a `[senpi:kill-guard]` message naming the rule and a narrow alternative. Narrow kills by pid, exact name (`pkill -x`) or anchored pattern run as before. Values only known when a command runs (`pkill -f "$P"`, `xargs kill`, a script's `kill $PID`) are judged then: on macOS and Linux every agent shell, monitor and eval kernel gets `kill`, `pkill` and `killall` shims first on `PATH` (in `<agent dir>/kill-guard/<version>/`) and a `BASH_ENV` that wraps bash's builtin `kill`, chaining any `BASH_ENV` you already set; an interactive bash the agent starts gets the same wrapper from a `PROMPT_COMMAND` hook before its first prompt, after your startup files, and your own `PROMPT_COMMAND` still runs after it; a refused command exits 126 with the same message. This also judges what the agent types into a running shell with `bash_input` (edited, recalled or history-expanded lines included), because the shell judges the line it actually runs. Builtin `kill` in dash or zsh, in `bash --posix -c` and in `bash -i -c`, in an interactive bash whose startup files replace `PROMPT_COMMAND`, and a `kill` named by absolute path, are judged only from the command text. A command you type yourself with `!` is never judged and gets no shims. `off` restores the unguarded behavior (no shims, no `BASH_ENV`, `PROMPT_COMMAND` left as you set it) and shows one notice per session.
 
 ## Windows
 

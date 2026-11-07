@@ -75,6 +75,24 @@ function defaultSupportsToolReferences(model: Model<"anthropic-messages">): bool
 	return major > 4 || (major === 4 && minor >= 5);
 }
 
+export function allowsAnthropicLongCacheRetention(model: Model<"anthropic-messages">): boolean {
+	return (
+		model.compat?.supportsLongCacheRetention ??
+		(isAnthropicApiBaseUrl(model.baseUrl) && getAnthropicCompat(model).supportsLongCacheRetention)
+	);
+}
+
+/**
+ * Whether this Anthropic-messages host applies `cache_control` at all, and therefore whether warming its
+ * prompt cache can achieve anything. The native host always does. A proxy does only when its model entry
+ * asserts cache support with `compat.supportsLongCacheRetention: true` — the documented assertion for a
+ * gateway that honours `cache_control` — because an unset or `false` flag cannot tell a host that caches
+ * for five minutes without the one-hour option apart from one that ignores `cache_control`.
+ */
+export function supportsAnthropicCacheWarming(model: Model<"anthropic-messages">): boolean {
+	return isAnthropicApiBaseUrl(model.baseUrl) || model.compat?.supportsLongCacheRetention === true;
+}
+
 export function getAnthropicCompat(
 	model: Model<"anthropic-messages">,
 ): Required<
@@ -133,7 +151,9 @@ export type ResolvedOpenAICompletionsCompat = Omit<
 	| "veniceParameters"
 	| "supportsForcedToolChoice"
 	| "supportsWebSearch"
+	| "mixedStrictTools"
 > & {
+	mixedStrictTools?: OpenAICompletionsCompat["mixedStrictTools"];
 	supportsWebSearch?: OpenAICompletionsCompat["supportsWebSearch"];
 	/** Declared forced tool_choice support; absent means supported. */
 	supportsForcedToolChoice?: OpenAICompletionsCompat["supportsForcedToolChoice"];
@@ -241,6 +261,7 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Reso
 		zaiToolStream: false,
 		// OpenAI compatibility alone does not imply strict JSON-schema tool support.
 		supportsStrictMode: false,
+		mixedStrictTools: true,
 		toolSchemaFlavor: isMoonshot ? "moonshot-mfjs" : undefined,
 		supportsDisabledThinking: true,
 		toolCallFormat: undefined,
@@ -296,6 +317,7 @@ export function getOpenAICompletionsCompat(model: Model<"openai-completions">): 
 		supportsThinkingTokenBudget: model.compat.supportsThinkingTokenBudget ?? detected.supportsThinkingTokenBudget,
 		thinkingTokenBudgetField: model.compat.thinkingTokenBudgetField ?? detected.thinkingTokenBudgetField,
 		supportsStrictMode: model.compat.supportsStrictMode ?? detected.supportsStrictMode,
+		mixedStrictTools: model.compat.mixedStrictTools ?? detected.mixedStrictTools,
 		toolSchemaFlavor: model.compat.toolSchemaFlavor ?? detected.toolSchemaFlavor,
 		toolCallFormat: model.compat.toolCallFormat ?? detected.toolCallFormat,
 		supportsOpenAIGrammarTools: model.compat.supportsOpenAIGrammarTools ?? detected.supportsOpenAIGrammarTools,
@@ -475,9 +497,7 @@ export function resolvePromptCacheLifetime(model: Model<Api>, env?: ProviderEnv)
 			const anthropicModel = model as Model<"anthropic-messages">;
 			const retention = resolveAnthropicCacheRetention(anthropicModel.cacheRetention, env, "short");
 			if (retention === "none") return NO_PROMPT_CACHE;
-			return retention === "long" &&
-				isAnthropicApiBaseUrl(anthropicModel.baseUrl) &&
-				getAnthropicCompat(anthropicModel).supportsLongCacheRetention
+			return retention === "long" && allowsAnthropicLongCacheRetention(anthropicModel)
 				? ttl(PROMPT_CACHE_TTL_LONG_SECONDS)
 				: ttl(PROMPT_CACHE_TTL_SHORT_SECONDS);
 		}

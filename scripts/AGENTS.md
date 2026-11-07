@@ -55,8 +55,8 @@ cell grid. Prefixes encode role:
 
 ## Release entry graph validation
 
-After a lifecycle-disabled install, run `npm rebuild canvas --foreground-scripts`
-(as the release builder does) to provide its native binding. Then run
+No native build is needed: every Bun build of the release entry graph keeps linkedom's optional
+`canvas` external (`bun-release-externals.mjs`, senpi#6045), so a lifecycle-disabled install is enough. Run
 `bun test scripts/release-graph-codemode.test.ts` followed by
 `bun test scripts/release-graph-exclusions.test.ts`. The codemode suite rebuilds
 all workspace entries and prepares compile assets before measuring real Bun output
@@ -72,6 +72,7 @@ you can rebuild; no source or package manifest is rewritten by this gate.
 `scripts/changes.md` is the hand-written change tracker feeding CHANGELOG gates.
 `changes-md-policy.mjs` owns policy: canonical sections, path classification, coverage audit,
 and the added-line restrictor — a PR only gets credit for tracker bullets its diff added.
+`changes-fragments.mjs` parses per-PR fragments (`changes/unreleased/<pr>.md`) and plans the release-cut compile; `changes-fragments-gate.mjs` turns them into gate facts; `sync-changes-fragments.mjs` runs `compile` / `from-diff`; `check-pr-changelog-facts.mjs` collects the PR facts the gate judges. Only `release.mjs` compiles and deletes fragments before stamping; `main` keeps pending fragments between cuts.
 `changes-md-git.mjs` owns git/filesystem collection (skips symlinked trackers, rejects option-like
 `--base` revisions). `audit-changes-md.mjs` audits coverage; `check-pr-changelog.mjs` gates PRs
 via `CHANGELOG_GATE_LABELS` / `CHANGELOG_GATE_BASE` env vars, never shell interpolation; entries
@@ -79,7 +80,7 @@ parse `## YYYY-MM-DD` and `## Title (YYYY-MM-DD)` dialects.
 
 ## prepare-senpi-bundled-workspaces.mjs
 
-Vendors the never-published `pi-client`/`pi-protocol` build output under `vendor/` in the
+Vendors the never-published `pi-client`/`pi-protocol`/`senpi-machine-ops` build output under `vendor/` in the
 `@code-yeongyu/senpi` tarball (emitted imports rewritten to relative paths), then
 `stagePublishManifest` (`prepare-senpi-publish-manifest.mjs`) writes the real publish manifest:
 the source dependency list minus the vendored packages, with every fork workspace reached through

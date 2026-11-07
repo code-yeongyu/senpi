@@ -170,7 +170,7 @@ describe("NoticeGate escalation", () => {
 
 	it("prefers the identical detector over similar and cycle", () => {
 		const gate = new NoticeGate();
-		const records = recs(...Array.from({ length: 5 }, () => ["read", { path: "a.ts" }] as [string, unknown]));
+		const records = recs(...Array.from({ length: 5 }, (): [string, unknown] => ["read", { path: "a.ts" }]));
 		expect(detectLoop(records, gate)?.kind).toBe("identical");
 	});
 });

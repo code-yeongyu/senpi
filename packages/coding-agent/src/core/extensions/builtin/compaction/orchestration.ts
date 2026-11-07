@@ -69,27 +69,47 @@ export function resolveBeforeAgentStartMessage(input: {
 	message?: BeforeAgentStartEventResult["message"];
 	reminder?: string;
 	reminderEnabled?: boolean;
+	reminderEpoch?: string;
 }): BeforeAgentStartEventResult["message"] | undefined {
 	if (!input.reminder || input.reminderEnabled === false) return input.message;
-	if (!input.message) return undefined;
-	return { ...input.message, content: `${input.message.content}\n\n${input.reminder}` };
+	const details = input.message?.details;
+	return {
+		...(input.message ?? { customType: "compaction-token-budget", display: false }),
+		content: input.message ? `${input.message.content}\n\n${input.reminder}` : input.reminder,
+		placement: "before-prompt",
+		details: {
+			...(typeof details === "object" && details !== null ? details : {}),
+			tokenBudgetReminderEpoch: input.reminderEpoch,
+		},
+	};
 }
 
-export function resolveReminderSystemPrompt(input: {
-	systemPrompt: string;
-	reminder?: string;
-	reminderEnabled?: boolean;
-}): string | undefined {
-	if (!input.reminder || input.reminderEnabled === false) return undefined;
-	return `${input.systemPrompt}\n\n${input.reminder}`;
-}
+export type IdleWarmAction = "none" | "start" | "replace" | "reuse" | "regenerate";
 
+/**
+ * What the sub-threshold idle warm-up does with the current job (senpi#5481). A job whose
+ * summarized prefix was rewritten is replaced; otherwise a running generation is never replaced
+ * for growth after its anchor, a finished summary is kept while it fits (`reuse`) and is
+ * regenerated once the cooldown has passed (`regenerate`). Only a failed job falls back to
+ * replacing on growth.
+ */
 export function resolveIdleWarmAction(
 	decision: IdleCompactionDecision,
-	job: { armedAtTokens: number } | undefined,
-): "none" | "start" | "replace" {
+	job:
+		| { armedAtTokens: number; completed: boolean; completedAt?: number; hasResult: boolean; anchorValid: boolean }
+		| undefined,
+	candidate: { fits: boolean } | undefined,
+	now: number,
+): IdleWarmAction {
 	if (!shouldWarmAtIdle(decision)) return "none";
 	if (!job) return "start";
+	if (!job.anchorValid) return "replace";
+	if (!job.completed) return "none";
+	if (job.hasResult) {
+		if (candidate?.fits) return "reuse";
+		const cooldownMs = decision.settings.speculativeCooldownMs ?? 0;
+		return now - (job.completedAt ?? 0) < cooldownMs ? "none" : "regenerate";
+	}
 	const currentTokens = decision.usage?.tokens ?? 0;
 	return isWarmResultStale(job.armedAtTokens, currentTokens, decision.settings.keepRecentTokens) ? "replace" : "none";
 }

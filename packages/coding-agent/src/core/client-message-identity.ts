@@ -1,5 +1,6 @@
 import type { ImageContent } from "@earendil-works/pi-ai";
 import { z } from "zod";
+import type { InputSource } from "./extensions/types.ts";
 
 export const clientMessageIdentitySchema = z.object({
 	clientMessageId: z.string().min(1).max(256).optional(),
@@ -13,6 +14,8 @@ export type PreparedClientInput = ClientMessageIdentity & {
 	readonly images?: ImageContent[];
 	readonly mode: "steer" | "followUp";
 	readonly enqueueOrder: number;
+	/** The input's `input` event source, kept so restored input is re-stamped with it. Absent: unknown origin. */
+	readonly source?: InputSource;
 };
 
 /** Copy only correlation metadata, never the rest of a prompt's options. */

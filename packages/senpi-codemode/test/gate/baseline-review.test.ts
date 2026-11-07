@@ -3,7 +3,12 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { baselineApprovals, readBaseBaseline, reviewBaselineChanges } from "../../scripts/gate-baseline-review.ts";
+import {
+	baselineApprovals,
+	baselineHostRefusal,
+	readBaseBaseline,
+	reviewBaselineChanges,
+} from "../../scripts/gate-baseline-review.ts";
 import type { GateReport } from "../../scripts/gate-report.ts";
 
 const base: GateReport = {
@@ -270,5 +275,19 @@ describe("Given where the base baseline comes from", () => {
 		await expect(
 			readBaseBaseline({ baselinePath: join(root, "gate", "baseline.json"), env: {} }),
 		).resolves.toBeUndefined();
+	});
+});
+
+describe("Given a request to record the committed baseline", () => {
+	it("When the host is Linux (the CI image), then recording is allowed", () => {
+		expect(baselineHostRefusal("linux")).toBeUndefined();
+	});
+
+	it("When the host is macOS or Windows, then recording is refused with the reason", () => {
+		for (const platform of ["darwin", "win32"]) {
+			expect(baselineHostRefusal(platform)).toBe(
+				`refusing to write the baseline on ${platform}: record it on Linux (the CI image) only`,
+			);
+		}
 	});
 });

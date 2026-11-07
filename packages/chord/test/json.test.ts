@@ -43,7 +43,7 @@ describe("copyJson", () => {
 		const copied = copyJson(input) as Record<string, unknown>;
 		expect(Object.getPrototypeOf(copied)).toBeNull();
 		expect(Object.hasOwn(copied, "__proto__")).toBe(true);
-		// biome-ignore lint/suspicious/noProto: the test deliberately reaches the __proto__ accessor to prove own reserved keys are data, not the prototype
+		// oxlint-disable-next-line eslint/no-proto -- the test deliberately reaches the __proto__ accessor to prove own reserved keys are data, not the prototype
 		expect(copied.__proto__).toEqual({ safe: true });
 	});
 

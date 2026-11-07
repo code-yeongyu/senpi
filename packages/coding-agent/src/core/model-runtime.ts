@@ -33,6 +33,8 @@ import {
 	type ImagesOptions,
 	isModelType,
 	type LoginOptions,
+	type LogoutOptions,
+	type OAuthRevocationResult,
 	lazyStream,
 	type Message,
 	type Model,
@@ -64,8 +66,9 @@ import {
 	type TranscriptContext,
 	wrapStreamWithModelRecovery,
 } from "@earendil-works/pi-ai";
+import type { PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
 import * as builtinProviderCatalog from "@earendil-works/pi-ai/providers/all";
-import { installClaudeCodeVersionFileStore } from "@earendil-works/pi-ai/utils/claude-code-version-cache";
+import { setOAuthPageBrand } from "@earendil-works/pi-ai/utils/oauth-page";
 import {
 	assertChatModel,
 	assertClassifierModel,
@@ -77,11 +80,14 @@ import { APP_NAME, BRAND, getAgentDir } from "../config.ts";
 import { operationSignal, raceWithAbortSignal } from "../utils/abort.ts";
 import { AuthStorage as DefaultAuthStorage } from "./auth-storage.ts";
 import { envValue } from "./brand.ts";
+import { signOutClaudeCliSlotsForLogout } from "./credential-accounts-logout.lazy.ts";
 import { discoverEnvSlots } from "./credential-pool/env-slots.ts";
+import { emitProviderAccountsChanged } from "./extensions/builtin/anthropic-subscription/account-events.ts";
 import { retryOnceOnRejectedToken } from "./credential-pool/rejected-token-retry.ts";
 import type { RotationSources } from "./credential-pool/rotation-stream.ts";
 import { ModelConfig } from "./model-config.ts";
 import { FileModelsStore, InMemoryCodingAgentModelsStore } from "./models-store.ts";
+import type { StoredProviderEnvReader } from "./provider-api-key-auth.ts";
 import {
 	type AuthStatus,
 	type CompatibilityRequestConfig,
@@ -94,10 +100,13 @@ import {
 	validateExtensionProvider,
 } from "./provider-composer.ts";
 import { createProviderSemaphores } from "./provider-concurrency.ts";
+import { configuredAuthIsHeaderOnly } from "./provider-request-auth.ts";
+import { type ProviderOrigin, providerOriginOf } from "./provider-origin.ts";
 import { remoteCatalogServesProvider, withRemoteCatalog } from "./remote-catalog-provider.ts";
 import { RuntimeCredentials } from "./runtime-credentials.ts";
+import { ServedCredentials } from "./served-credentials.ts";
 import type { SettingsManager } from "./settings-manager.ts";
-import { limitAccountOf, withLimitCapture } from "./subscription-limits/limit-store.ts";
+import { limitAccountOf, subscriptionLimits, withLimitCapture } from "./subscription-limits/limit-store.ts";
 import {
 	createVirtualModel,
 	findLatestResponse,
@@ -108,9 +117,17 @@ import {
 	withVirtualModels,
 } from "./virtual-models.ts";
 
+/** Sessions whose active ChatGPT account is remembered; older entries are dropped first. */
+const MAX_ACTIVE_CREDENTIAL_SESSIONS = 256;
+
 // The product's identity must ride outgoing requests. This lives here because the AI package
 // is already part of this module's graph; the CLI bootstrap deliberately does not import it.
 setWireIdentity(BRAND?.userAgent ?? APP_NAME);
+setOAuthPageBrand({ name: APP_NAME, ...(BRAND?.logo ? { logo: BRAND.logo } : {}) });
+
+/** Availability re-reads after a busy credential store: 250, 500, 1000, 2000, 4000 ms. */
+const BUSY_AVAILABILITY_RETRY_LIMIT = 5;
+const BUSY_AVAILABILITY_RETRY_BASE_MS = 250;
 
 interface RegisteredVirtualModel {
 	model: Model<Api>;
@@ -134,17 +151,10 @@ interface ModelRuntimeSnapshot {
 	auth: ReadonlyMap<string, AuthCheck | undefined>;
 }
 
-/**
- * The Claude Code version the Anthropic OAuth fingerprint advertises is cached beside
- * models.json, so every runtime on this agent directory shares one background lookup per
- * six hours. An in-memory runtime (`modelsPath: null`) keeps pi-ai's bundled floor.
- */
-function installClaudeCodeVersionCache(modelsPath: string | undefined): void {
-	if (modelsPath === undefined) return;
-	installClaudeCodeVersionFileStore({
-		path: join(dirname(modelsPath), "claude-code-version.json"),
-		offline: envValue("OFFLINE") !== undefined,
-	});
+export interface ProviderRegistrationOptions {
+	refresh?: boolean;
+	/** The registering extension, reported as the provider's origin (senpi#4328). */
+	extensionPath?: string | undefined;
 }
 
 export interface CreateModelRuntimeOptions {
@@ -190,10 +200,11 @@ function mightHoldCredentialPool(
 	providerId: string,
 	credential: Credential | undefined,
 	env: (name: string) => string | undefined,
-	policySlots?: Record<string, { env?: string; value?: string }>,
+	policySlots?: NonNullable<RotationSources["policy"]>["slots"],
 ): boolean {
 	if (credential) {
 		const accounts = Object.entries(credential).find(([key]) => key === "accounts")?.[1];
+		if (providerId === "chatgpt-subscription" && credential.type === "oauth") return true;
 		return (Array.isArray(accounts) && accounts.length > 1) || Object.keys(policySlots ?? {}).length > 0;
 	}
 	return discoverEnvSlots(providerId, env).length + Object.keys(policySlots ?? {}).length > 1;
@@ -277,6 +288,8 @@ export class ModelRuntime implements Models {
 	private readonly builtins = new Map<string, Provider>();
 	private readonly nativeExtensionProviders = new Map<string, Provider>();
 	private readonly extensionProviders = new Map<string, ProviderConfigInput>();
+	/** The extension behind each registration that named one (senpi#4328). */
+	private readonly providerExtensionPaths = new Map<string, string>();
 	/** Virtual models by provider id, then model id. */
 	private readonly virtualModels = new Map<string, Map<string, RegisteredVirtualModel>>();
 	private readonly compositionErrors = new Map<string, string>();
@@ -295,15 +308,29 @@ export class ModelRuntime implements Models {
 	private availabilityRefreshSeq = 0;
 	private availabilityErrorSeq = 0;
 	private readonly providerAvailabilitySeq = new Map<string, number>();
+	private busyAvailabilityRetries = 0;
+	private busyAvailabilityRetryTimer: ReturnType<typeof setTimeout> | undefined;
 	private availabilityError: string | undefined;
 	private readonly credentialOperations = new Map<string, Promise<unknown>>();
+	private readonly servedCredentials = new ServedCredentials();
 	/**
-	 * The credential pool is loaded lazily and only for a provider that actually
-	 * has more than one slot. Importing it eagerly would pull the pool's schema
+	 * Actual stored-slot attempts, scoped to the session rather than a predicted list winner. Bounded by recency:
+	 * sessions are never released to the runtime, and an evicted session is re-recorded on its next request.
+	 */
+	private readonly activeCredentialAccounts = new Map<string, string>();
+
+	getActiveCredentialAccount(providerId: string, sessionId: string): string | undefined {
+		return this.activeCredentialAccounts.get(`${providerId}\0${sessionId}`);
+	}
+	/**
+	 * The credential pool is loaded lazily for pooled providers and ChatGPT
+	 * registrations whose health must be tracked even alone. Importing it eagerly would pull the pool's schema
 	 * validator - and its module-level global registry - into every consumer of
 	 * ModelRuntime, which the import-graph guard forbids.
 	 */
 	private readonly poolStatePath: string | undefined;
+	/** Providers whose stale generic-pool health was already retired in this process (senpi#2081). */
+	private readonly outerSlotStateRetired = new Set<string>();
 	private credentialPoolModules:
 		| Promise<{
 				rotation: typeof import("./credential-pool/rotation-stream.ts");
@@ -346,7 +373,6 @@ export class ModelRuntime implements Models {
 		const credentials = new RuntimeCredentials(options.credentials ?? DefaultAuthStorage.create(options.authPath));
 		const modelsPath =
 			options.modelsPath === null ? undefined : (options.modelsPath ?? join(getAgentDir(), "models.json"));
-		installClaudeCodeVersionCache(modelsPath);
 		const config = await ModelConfig.load(modelsPath);
 		const modelsStore =
 			options.modelsStore ??
@@ -401,7 +427,6 @@ export class ModelRuntime implements Models {
 		const credentials = new RuntimeCredentials(options.credentials ?? DefaultAuthStorage.create(options.authPath));
 		const modelsPath =
 			options.modelsPath === null ? undefined : (options.modelsPath ?? join(getAgentDir(), "models.json"));
-		installClaudeCodeVersionCache(modelsPath);
 		const config = ModelConfig.loadSync(modelsPath);
 		const modelsStore =
 			options.modelsStore ??
@@ -473,7 +498,12 @@ export class ModelRuntime implements Models {
 			return base;
 		}
 		try {
-			const provider = composeModelProvider(providerId, base, this.config, extension);
+			// The reader runs only inside ambient auth resolution; composition itself stays credential-free.
+			const storedProviderEnv: StoredProviderEnvReader = async (sourceId) => {
+				const credential = await this.credentials.read(sourceId);
+				return credential?.type === "api_key" && credential.env ? { ...credential.env } : undefined;
+			};
+			const provider = composeModelProvider(providerId, base, this.config, extension, { storedProviderEnv });
 			this.compositionErrors.delete(providerId);
 			return provider;
 		} catch (error) {
@@ -529,6 +559,7 @@ export class ModelRuntime implements Models {
 			auth,
 		};
 		this.availabilityInitialized = true;
+		this.busyAvailabilityRetries = 0;
 		if (errorSeq === this.availabilityErrorSeq) this.availabilityError = undefined;
 	}
 
@@ -612,7 +643,28 @@ export class ModelRuntime implements Models {
 		if (errorSeq === this.availabilityErrorSeq) {
 			this.availabilityError = "Credential store was busy; availability will be re-read on the next refresh";
 		}
+		this.scheduleBusyAvailabilityRetry();
 		return true;
+	}
+
+	/**
+	 * Re-read availability after a busy store, so a lock held during startup does not leave
+	 * every provider unconfigured until some later caller happens to refresh. Bounded: at most
+	 * {@link BUSY_AVAILABILITY_RETRY_LIMIT} attempts with doubling delays, reset by a published
+	 * pass; the timer never keeps the process alive.
+	 */
+	private scheduleBusyAvailabilityRetry(): void {
+		if (this.busyAvailabilityRetryTimer !== undefined) return;
+		if (this.busyAvailabilityRetries >= BUSY_AVAILABILITY_RETRY_LIMIT) return;
+		const delayMs = BUSY_AVAILABILITY_RETRY_BASE_MS * 2 ** this.busyAvailabilityRetries;
+		this.busyAvailabilityRetries += 1;
+		this.busyAvailabilityRetryTimer = setTimeout(() => {
+			this.busyAvailabilityRetryTimer = undefined;
+			this.queueAvailabilityRefresh().catch(() => {
+				// The pass records its own availability error; a later busy read schedules the next attempt.
+			});
+		}, delayMs);
+		this.busyAvailabilityRetryTimer.unref?.();
 	}
 
 	getProviders(): readonly Provider[] {
@@ -719,6 +771,21 @@ export class ModelRuntime implements Models {
 		return this.nativeExtensionProviders.get(providerId);
 	}
 
+	getProviderOrigin(providerId: string): ProviderOrigin | undefined {
+		return providerOriginOf({
+			builtin: this.builtins.has(providerId),
+			nativeExtension: this.nativeExtensionProviders.has(providerId),
+			extension: this.extensionProviders.has(providerId) || this.virtualModels.has(providerId),
+			extensionPath: this.providerExtensionPaths.get(providerId),
+			modelsJsonPath: this.config.getProvider(providerId) === undefined ? undefined : this.modelsPath,
+		});
+	}
+
+	private noteExtensionPath(providerId: string, extensionPath: string | undefined): void {
+		if (extensionPath === undefined) this.providerExtensionPaths.delete(providerId);
+		else this.providerExtensionPaths.set(providerId, extensionPath);
+	}
+
 	/** @internal Compatibility fallback for ModelRegistry when provider auth is unconfigured. */
 	getCompatibilityRequestConfig(model: Model<Api>): CompatibilityRequestConfig {
 		return resolveCompatibilityRequestConfig(
@@ -791,6 +858,67 @@ export class ModelRuntime implements Models {
 				headers: mergeHeaders(resolution.auth.headers, configuredHeaders),
 			},
 		};
+	}
+
+	/**
+	 * Auth for a request a session sends outside the rotation stream (compaction, /btw, look-at,
+	 * cache keepalive). The key must belong to the account the session's own turns use, so a pooled
+	 * provider resolves the slot the stream would pick for this session; without a pool, or when
+	 * the stream would not rotate either, it is `getAuth(model)`.
+	 */
+	async getSessionAuth(model: Model<Api>, sessionId: string): Promise<AuthResult | undefined> {
+		return this.getAuth(model, (await this.sessionSlotAuth(model, sessionId)) ?? {});
+	}
+
+	private async sessionSlotAuth(
+		model: Model<Api>,
+		sessionId: string,
+	): Promise<{ apiKey?: string; slotName?: string } | undefined> {
+		// The stream's own synchronous admission check, so a provider the stream would not rotate costs
+		// nothing beyond getAuth. Remote compaction's before_provider_request hook calls this on every
+		// request to such a model; there a pooled provider pays one extra credential read and two slot
+		// listings (each reads the pool's health state) before getAuth.
+		if (!this.couldRotateCredentials(model, undefined)) return undefined;
+		const sources = await this.credentialRotationSources(model, undefined);
+		if (!sources) return undefined;
+		const { rotation } = await this.loadCredentialPool();
+		const { rememberedHeadroomAccount, selectSessionSlot } = await import("./credential-pool/session-slot.ts");
+		const slots = await rotation.listRotationSlots(sources, {
+			acquireLeases: false,
+			modelId: this.getCompatibilityRequestConfig(model).upstreamModelId ?? model.id,
+		});
+		const pooled: PooledCredential | undefined = sources.credential;
+		const strategy = sources.policy?.accountStrategy;
+		const useAffinity = strategy !== undefined || sources.policy?.affinity !== false;
+		const now = Date.now();
+		// The stream prefers an account with headroom and remembers that move per session (omo#9234), and
+		// under round-robin holds this session's turn (omo#10146); reading the same limits, memory and turn
+		// keeps this the stream's own first pick.
+		const { roundRobinState } = await import("./credential-pool/round-robin-state.ts");
+		const roundRobin = strategy === "round-robin" ? roundRobinState.session(sources.providerId, sessionId) : undefined;
+		const remembered =
+			roundRobin?.account ??
+			(useAffinity ? rememberedHeadroomAccount(sources.repository, sources.providerId, sessionId) : undefined);
+		const slot = selectSessionSlot(
+			slots,
+			{
+				affinityKey: sessionId,
+				useAffinity,
+				hasher: rotation.sha256SlotHasher,
+				...(pooled?.order === undefined ? {} : { order: pooled.order }),
+				...(strategy === undefined ? {} : { strategy }),
+				...(roundRobin === undefined ? {} : { roundRobinOffset: roundRobin.offset }),
+				headroom: {
+					providerId: sources.providerId,
+					limits: subscriptionLimits.snapshot(),
+					now,
+					...(remembered === undefined ? {} : { remembered }),
+				},
+			},
+			now,
+		);
+		if (!slot) return undefined;
+		return slot.lane === "env" ? { apiKey: slot.envKey } : { slotName: slot.name };
 	}
 
 	private enqueueCredentialOperation<T>(providerId: string, signal: AbortSignal, task: () => Promise<T>): Promise<T> {
@@ -868,6 +996,15 @@ export class ModelRuntime implements Models {
 		return this.resolveProviderAuth(providerId).status;
 	}
 
+	/** Whether the provider's only credential is a configured header: no configured key, and no key of its own. */
+	providerAuthIsHeaderOnly(providerId: string): boolean {
+		return configuredAuthIsHeaderOnly(
+			this.config.getProvider(providerId),
+			this.extensionProviders.get(providerId),
+			this.snapshot.auth.get(providerId),
+		);
+	}
+
 	/**
 	 * The provider's auth status plus whether it is a non-stored sign-in (#3537). `signIn` is set
 	 * only by the last branch, the provider's own check resolving `type: "oauth"`, so a runtime key,
@@ -936,11 +1073,15 @@ export class ModelRuntime implements Models {
 				: undefined;
 		const upstreamModelId = compatibility.upstreamModelId;
 		const requestModel: TModel =
-			resolution.auth.baseUrl || upstreamModelId
+			resolution.auth.baseUrl || upstreamModelId || ((resolution.auth.api || resolution.auth.compat) && isModelType(model, "chat"))
 				? {
 						...model,
 						...(upstreamModelId ? { id: upstreamModelId } : {}),
 						...(resolution.auth.baseUrl ? { baseUrl: resolution.auth.baseUrl } : {}),
+						...(resolution.auth.api && isModelType(model, "chat") ? { api: resolution.auth.api } : {}),
+						...(resolution.auth.compat && isModelType(model, "chat")
+							? { compat: { ...model.compat, ...resolution.auth.compat } }
+							: {}),
 					}
 				: model;
 		const rejectedTokenStatuses = provider.auth.oauth?.rejectedTokenStatuses;
@@ -994,10 +1135,34 @@ export class ModelRuntime implements Models {
 		if (options?.apiKey !== undefined) return false;
 		if (this.credentials.hasRuntimeApiKey(model.provider)) return false;
 		if (this.config.getProvider(model.provider)?.credentials?.rotation === false) return false;
+		// A provider whose lane picks its own accounts has one owner of account selection: that lane (senpi#2081).
+		if (this.ownsAccountSelection(model.provider)) return false;
 		const env = (name: string) => options?.env?.[name] ?? process.env[name];
 		if (this.snapshot.storedProviders.has(model.provider)) return true;
 		const policySlots = this.config.getProvider(model.provider)?.credentials?.slots;
 		return discoverEnvSlots(model.provider, env).length + Object.keys(policySlots ?? {}).length > 1;
+	}
+
+	private ownsAccountSelection(providerId: string): boolean {
+		return this.extensionProviders.get(providerId)?.ownsAccountSelection === true;
+	}
+
+	/**
+	 * Health the generic pool recorded for a provider before its lane became the only owner of account
+	 * selection is retired before that provider's first request in this process. Older builds pinned the
+	 * lane's verdicts on these slots and left them blocked; an upgrade must heal them with no re-login
+	 * (senpi#2081). A busy state file is retried on the next request.
+	 */
+	private async retireOuterSlotState(providerId: string): Promise<void> {
+		if (this.outerSlotStateRetired.has(providerId)) return;
+		const [{ repository }, { STORE_BUSY, writeHealthUnlessStoreBusy }] = await Promise.all([
+			this.loadCredentialPool(),
+			import("./credential-pool/health-write.ts"),
+		]);
+		const outcome = await writeHealthUnlessStoreBusy(`retire generic-pool health for ${providerId}`, () =>
+			repository.clearProvider(providerId),
+		);
+		if (outcome !== STORE_BUSY) this.outerSlotStateRetired.add(providerId);
 	}
 
 	private async credentialRotationSources(
@@ -1019,7 +1184,9 @@ export class ModelRuntime implements Models {
 			policy,
 		};
 		const slots = await pool.rotation.listRotationSlots(sources, { acquireLeases: false });
-		return slots.length > 1 ? sources : undefined;
+		return slots.length > 1 || (model.provider === "chatgpt-subscription" && credential?.type === "oauth")
+			? sources
+			: undefined;
 	}
 
 	stream<TApi extends Api>(
@@ -1031,6 +1198,7 @@ export class ModelRuntime implements Models {
 		return lazyStream(model, async () => {
 			assertChatModel(model);
 			const streamOptions = options as CredentialRotationStreamOptions | undefined;
+			if (this.ownsAccountSelection(model.provider)) await this.retireOuterSlotState(model.provider);
 			const sources = this.couldRotateCredentials(model, streamOptions)
 				? await this.credentialRotationSources(model, streamOptions)
 				: undefined;
@@ -1082,7 +1250,7 @@ export class ModelRuntime implements Models {
 	 * One provider request with the #2297 recovery: a stored OAuth token the provider
 	 * refuses before any output is re-exchanged once and the request re-sent.
 	 */
-	private attemptWithTokenRecovery<TOptions extends ProviderRequestOptions & ModelsRequestTransforms>(
+	private attemptWithTokenRecovery<TOptions extends StreamOptions & ModelsRequestTransforms & { affinityKey?: string }>(
 		model: Model<Api>,
 		options: TOptions | undefined,
 		slotAuth: { apiKey?: string; slotName?: string } | undefined,
@@ -1095,6 +1263,19 @@ export class ModelRuntime implements Models {
 				options,
 				rejectedAccess === undefined ? slotAuth : { ...slotAuth, rejectedAccess },
 			);
+			const sessionId = options?.affinityKey ?? options?.sessionId;
+			if (model.provider === "chatgpt-subscription" && slotAuth?.slotName !== undefined && sessionId !== undefined) {
+				const key = `${model.provider}\0${sessionId}`;
+				if (this.activeCredentialAccounts.get(key) !== slotAuth.slotName) {
+					this.activeCredentialAccounts.delete(key);
+					this.activeCredentialAccounts.set(key, slotAuth.slotName);
+					for (const oldest of this.activeCredentialAccounts.keys()) {
+						if (this.activeCredentialAccounts.size <= MAX_ACTIVE_CREDENTIAL_SESSIONS) break;
+						this.activeCredentialAccounts.delete(oldest);
+					}
+					emitProviderAccountsChanged(model.provider);
+				}
+			}
 			const capturing = {
 				...prepared,
 				options: withLimitCapture(prepared.options, prepared.model.provider, limitAccountOf(slotAuth)),
@@ -1102,8 +1283,14 @@ export class ModelRuntime implements Models {
 			const inner = await this.providerSemaphores.bracket(prepared.model.provider, prepared.options.signal, () =>
 				send(capturing),
 			);
+			const stream = wrapStreamWithModelRecovery(inner, model, getCurrentTools(transcript.messages));
+			this.servedCredentials.observe(stream.result(), {
+				provider: prepared.model.provider,
+				baseUrl: prepared.model.baseUrl,
+				apiKey: prepared.options.apiKey,
+			});
 			return {
-				stream: wrapStreamWithModelRecovery(inner, model, getCurrentTools(transcript.messages)),
+				stream,
 				...(prepared.rejectableAccess === undefined ? {} : { rejectableAccess: prepared.rejectableAccess }),
 				...(prepared.rejectedTokenStatuses === undefined
 					? {}
@@ -1142,6 +1329,7 @@ export class ModelRuntime implements Models {
 		return lazyStream(model, async () => {
 			assertChatModel(model);
 			const streamOptions = options as CredentialRotationStreamOptions | undefined;
+			if (this.ownsAccountSelection(model.provider)) await this.retireOuterSlotState(model.provider);
 			const sources = this.couldRotateCredentials(model, streamOptions)
 				? await this.credentialRotationSources(model, streamOptions)
 				: undefined;
@@ -1278,17 +1466,57 @@ export class ModelRuntime implements Models {
 	): Promise<Credential> {
 		const signal = operationSignal(interaction.signal);
 		return this.enqueueCredentialOperation(providerId, signal, async () => {
-			const credential = await this.models.login(providerId, type, { ...interaction, signal }, options);
+			const store = this.credentials.backingStore;
+			const before = await store.read(providerId, { signal });
+			const credential = await this.models.login(
+				providerId,
+				type,
+				{ ...interaction, signal },
+				{ ...options, appName: APP_NAME },
+			);
+			if (this.poolStatePath !== undefined) {
+				const { retireLoginSlotHealth } = await import("./credential-pool/login-health.ts");
+				await retireLoginSlotHealth(this.poolStatePath, providerId, before, await store.read(providerId, { signal }));
+			}
 			await this.synchronizeCredentialState(providerId, "login", credential, signal);
+			// A fresh login is the remedy a usage-limit refusal names: holds sessions keep on this provider are stale.
+			emitProviderAccountsChanged(providerId, "login");
+			for (const key of this.activeCredentialAccounts.keys()) {
+				if (key.startsWith(`${providerId}\0`)) this.activeCredentialAccounts.delete(key);
+			}
 			return credential;
 		});
 	}
 
-	logout(providerId: string, options: AuthOperationOptions = {}): Promise<void> {
+	async logout(providerId: string, options: LogoutOptions = {}): Promise<OAuthRevocationResult | void> {
+		return (await this.logoutProvider(providerId, options)).revocation;
+	}
+
+	/**
+	 * {@link logout}, answering what the user should know: an Anthropic Subscription `claude-cli` account is signed out
+	 * of the Claude CLI's own store before the credential is deleted (senpi#4436), and `notices` names any account that
+	 * could not be signed out cleanly. `revocation` reports a ChatGPT OAuth remote revocation; `slotId` signs out one
+	 * stored account and keeps its registration and signed-in siblings.
+	 */
+	logoutProvider(
+		providerId: string,
+		options: LogoutOptions = {},
+	): Promise<{ readonly notices: readonly string[]; readonly revocation?: OAuthRevocationResult }> {
 		const signal = operationSignal(options.signal);
 		return this.enqueueCredentialOperation(providerId, signal, async () => {
-			await this.models.logout(providerId, { signal });
-			await this.synchronizeCredentialState(providerId, "logout", undefined, signal);
+			const storage = this.authStorage;
+			// With `slotId` only that account leaves the Claude CLI store; its signed-in siblings stay.
+			const notices =
+				storage === undefined
+					? []
+					: await signOutClaudeCliSlotsForLogout(storage, providerId, process.env, signal, options.slotId);
+			const result = await this.models.logout(providerId, { ...options, signal });
+			const surviving = await this.credentials.read(providerId, { signal });
+			await this.synchronizeCredentialState(providerId, "logout", surviving, signal);
+			for (const key of this.activeCredentialAccounts.keys()) {
+				if (key.startsWith(`${providerId}\0`)) this.activeCredentialAccounts.delete(key);
+			}
+			return result === undefined ? { notices } : { notices, revocation: result };
 		});
 	}
 
@@ -1364,11 +1592,12 @@ export class ModelRuntime implements Models {
 		}).finally(() => clearTimeout(timeout));
 	}
 
-	registerNativeProvider(provider: Provider, options?: { refresh?: boolean }): Promise<ModelsRefreshResult> {
+	registerNativeProvider(provider: Provider, options?: ProviderRegistrationOptions): Promise<ModelsRefreshResult> {
 		if (!provider.id.trim()) throw new Error("Provider id must not be empty.");
 		const alreadyFresh = this.shouldSkipRegistrationRefresh(provider.id);
 		this.extensionProviders.delete(provider.id);
 		this.nativeExtensionProviders.set(provider.id, provider);
+		this.noteExtensionPath(provider.id, options?.extensionPath);
 		this.recomposeProvider(provider.id);
 		const composedOAuth = this.models.getProvider(provider.id)?.auth.oauth;
 		if (composedOAuth) this.credentials.registerOAuthProvider(provider.id, composedOAuth);
@@ -1411,7 +1640,7 @@ export class ModelRuntime implements Models {
 	registerProvider(
 		providerId: string,
 		config: ProviderConfigInput,
-		options?: { refresh?: boolean },
+		options?: ProviderRegistrationOptions,
 	): Promise<ModelsRefreshResult> {
 		// Validate the incoming registration on its own, like the legacy registry:
 		// a broken re-registration must throw without touching the stored config.
@@ -1426,6 +1655,7 @@ export class ModelRuntime implements Models {
 			if (value !== undefined) (effective as Record<string, unknown>)[key] = value;
 		}
 		this.extensionProviders.set(providerId, effective);
+		this.noteExtensionPath(providerId, options?.extensionPath);
 		this.recomposeProvider(providerId);
 		const composedOAuth = this.models.getProvider(providerId)?.auth.oauth;
 		if (composedOAuth) this.credentials.registerOAuthProvider(providerId, composedOAuth);
@@ -1445,6 +1675,7 @@ export class ModelRuntime implements Models {
 	unregisterProvider(providerId: string): void {
 		this.extensionProviders.delete(providerId);
 		this.nativeExtensionProviders.delete(providerId);
+		this.providerExtensionPaths.delete(providerId);
 		this.recomposeProvider(providerId);
 		this.credentials.unregisterOAuthProvider(providerId);
 		this.updateModelSnapshot();

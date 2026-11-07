@@ -85,4 +85,23 @@ describe("a parked session's reopen does not take the successor's defaults", () 
 		expect(profile?.permissionPreset).toBe("ask");
 		expect(profile?.initialThinkingLevel).toBe("low");
 	});
+
+	// senpi#3853: the mutable context patch survives without replacing the frozen extension context.
+	test("restores a nonterminal context overlay before publishing the reopened session", async () => {
+		const { dir, registry, router } = await routerWithDefaults();
+		try {
+			await router.reopenParked({
+				sessionPath: join(dir, "parked-context.jsonl"),
+				retainOnDisconnect: true,
+				sessionContext: { task_status: "queued", stale: "remove" },
+				contextOverlay: { task_status: "running", progress: 3, stale: null },
+			});
+			const [row] = registry.list();
+			if (!row) throw new Error("session was not reopened");
+			expect(registry.peek(row.sessionId)?.context).toMatchObject({ task_status: "queued", stale: "remove" });
+			expect(row.context).toEqual({ task_status: "running", progress: 3 });
+		} finally {
+			await router.dispose();
+		}
+	});
 });

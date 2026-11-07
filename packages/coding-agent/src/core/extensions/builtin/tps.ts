@@ -1,3 +1,4 @@
+import { reasonedBeforeFirstDelta, STREAMED_DELTA_TYPES } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI } from "../types.ts";
 
 type AssistantMessageLike = {
@@ -18,14 +19,6 @@ function isAssistantMessage(message: unknown): message is AssistantMessageLike {
 	const role = (message as { role?: unknown }).role;
 	return role === "assistant";
 }
-
-function reasonedBeforeFirstDelta(message: AssistantMessageLike, thinkingStreamed: boolean): boolean {
-	if ((message.usage?.reasoning ?? 0) > 0) return true;
-	if (thinkingStreamed) return false;
-	return message.content?.some((block) => block.type === "thinking") ?? false;
-}
-
-const STREAMED_DELTA_TYPES = new Set(["text_delta", "thinking_delta", "toolcall_delta"]);
 
 /** Below this much streamed generation time a rate is mostly timer noise, so none is shown (senpi#3393). */
 const MIN_GENERATION_MS = 500;

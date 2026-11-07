@@ -18,6 +18,8 @@ import type {
 } from "./monitor-types.ts";
 import { loadRpcMonitorSource } from "./rpc-monitor.lazy.ts";
 import type { RegisterRpcMonitorOptions, RpcMonitorSource } from "./rpc-monitor-source.ts";
+import type { MonitorRunawayGuard } from "./settings.ts";
+import { DEFAULT_MONITOR_RUNAWAY_LINES_PER_MINUTE, DEFAULT_MONITOR_RUNAWAY_MINUTES } from "./shared.ts";
 
 export type { RegisterMonitorOptions } from "./command-monitor-source.ts";
 export type { RegisterFileMonitorOptions } from "./file-monitor-source.ts";
@@ -55,6 +57,10 @@ export class MonitorRegistry {
 	readonly #host: MonitorSourceHost;
 	#rpc: RpcMonitorSource | undefined;
 	#parked = false;
+	#runawayGuard: MonitorRunawayGuard = {
+		linesPerMinute: DEFAULT_MONITOR_RUNAWAY_LINES_PER_MINUTE,
+		minutes: DEFAULT_MONITOR_RUNAWAY_MINUTES,
+	};
 
 	constructor(emit: (event: MonitorEvent) => void, options?: MonitorRegistryOptions) {
 		this.#emit = emit;
@@ -66,10 +72,26 @@ export class MonitorRegistry {
 			emitRaw: (event) => this.#emit(event),
 			ended: (record, reason, exitCode) => this.#emitEnded(record, reason, exitCode),
 			changed: () => this.#notifyChange(),
+			runawayGuard: () => this.#runawayGuard,
 		};
 		this.#host = host;
 		this.#commands = new CommandMonitorSource(host);
 		this.#files = new FileMonitorSource(host, options?.reserve);
+	}
+
+	/** Apply the resolved runaway-guard settings; the registry outlives a reload, the settings do not. */
+	setRunawayGuard(guard: MonitorRunawayGuard): void {
+		this.#runawayGuard = guard;
+	}
+
+	/**
+	 * Wake pacing of a live watch: only persistent command watches are paced. Returns the watch's
+	 * own wake-rate override (undefined = the setting) or undefined when the watch is not paced.
+	 */
+	wakePacing(id: string): { readonly wakesPerHour: number | undefined } | undefined {
+		const record = this.#commands.get(id);
+		if (record === undefined || !record.persistent) return undefined;
+		return { wakesPerHour: record.wakesPerHour };
 	}
 
 	/** Attachment parking is independent of persisted monitor mute and wake budgets. */
@@ -174,8 +196,10 @@ export class MonitorRegistry {
 			record.paused = false;
 			const mutedDropped = "mutedDropped" in record ? record.mutedDropped : 0;
 			if ("mutedDropped" in record) record.mutedDropped = 0;
-			// A rearm (or any resume) restarts the rolling fire budget while keeping its window start.
+			// A rearm (or any resume) restarts the rolling fire count while keeping its window start,
+			// and gives the runaway guard a clean minute history.
 			if ("fireWindow" in record && record.fireWindow !== undefined) record.fireWindow.count = 0;
+			if ("runaway" in record) record.runaway = undefined;
 			resumed.push({ id: record.id, mutedDropped });
 			if ("watch" in record && !this.#files.parked) record.watch.resume();
 		}

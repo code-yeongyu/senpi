@@ -48,6 +48,7 @@ export function normalizeWebUrls(root: HTMLElement, document: Document): void {
 		const attribute = element.localName === "a" ? "href" : "src";
 		const value = element.getAttribute(attribute) ?? "";
 		const destination = resolveWebUrl(value, document.baseURI);
+		// oxlint-disable-next-line eslint/no-script-url -- a javascript: URL literal the code checks for, never navigated to
 		if (element.localName === "a" && destination?.protocol === "javascript:") {
 			element.replaceWith(...element.childNodes);
 			continue;

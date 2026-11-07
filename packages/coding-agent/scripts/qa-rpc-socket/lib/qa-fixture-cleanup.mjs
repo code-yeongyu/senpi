@@ -2,12 +2,13 @@
  * The fixture-cleanup helper for a DETACHED fixture that by contract survived the tool child: the
  * test's own fixture removes it. It must find the fixture alive (a fixture already gone means it was
  * wrongly swept, `fixture_already_gone`), kills it by process group on POSIX (`TERM`, then `KILL`) or
- * with `taskkill /F /T` on Windows, confirms it is gone within a bounded budget, and records
+ * with a creation-time-checked explicit PID list on Windows, confirms it is gone within a bounded budget, and records
  * `fixture_cleanup{launchId, pid, method, gone:true}`.
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { QaFailure } from "./qa-failure.mjs";
+import { windowsTreeKillArgs } from "../../../../../scripts/windows-process-tree.mjs";
 
 const run = promisify(execFile);
 
@@ -47,8 +48,9 @@ export async function cleanupDetachedFixture(
 	}
 	let method;
 	if (platform === "win32") {
-		method = "taskkill /F /T";
-		await run("taskkill", ["/F", "/T", "/PID", String(pid)]);
+		method = "taskkill /F explicit PIDs";
+		const args = windowsTreeKillArgs(pid);
+		if (args.length > 0) await run("taskkill", args, { windowsHide: true });
 	} else {
 		method = "kill -TERM -pgid";
 		signalGroup(pgid ?? pid, "SIGTERM");

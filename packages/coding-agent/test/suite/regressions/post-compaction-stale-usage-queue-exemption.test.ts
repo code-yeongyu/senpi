@@ -271,6 +271,11 @@ describe("post-compaction queued continuation exemption", () => {
 			await prompt;
 		}
 		await harness.session.waitForSettledSessionWork();
+		// Esc stops the session (senpi#3811): the prompt still in its startup phase is held, not sent.
+		expect(harness.faux.state.callCount).toBe(1);
+		expect(harness.session.pausedHeldInputCount).toBe(1);
+		await harness.session.resumeSession();
+		await harness.session.waitForSettledSessionWork();
 		expect(harness.faux.state.callCount).toBe(2);
 		expect(getAssistantTexts(harness)).not.toContain("aborted deferred steer must not reach provider");
 		expect(getAssistantTexts(harness)).not.toContain("aborted deferred follow-up must not reach provider");

@@ -1,12 +1,12 @@
-import { readdir as fsReaddir, stat as fsStat } from "node:fs/promises";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { TextContent } from "@earendil-works/pi-ai";
 import nodePath from "path";
 import { type Static, Type } from "typebox";
 import type { ExtensionContext, FilesystemPolicyChecker, ToolDefinition } from "../extensions/types.ts";
 import { canonicalizeFilesystemPath } from "./filesystem-policy.ts";
+import { defaultToolMachine, type ToolMachine } from "./machine.ts";
 import { modelOnlyText } from "./model-only-text.ts";
-import { pathExists, resolveToCwd } from "./path-utils.ts";
+import { resolveToCwd } from "./path-utils.ts";
 import { lsRenderers } from "./renderers/ls.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import { DEFAULT_MAX_BYTES, formatSize, type TruncationResult, truncateHead } from "./truncate.ts";
@@ -43,28 +43,45 @@ export interface LsOperations {
 	readdir: (absolutePath: string) => Promise<string[]> | string[];
 }
 
-const defaultLsOperations: LsOperations = {
-	exists: pathExists,
-	stat: fsStat,
-	readdir: fsReaddir,
-};
+/** The default ls operations over the shared operation layer. */
+function machineLsOperations(machine: ToolMachine, signal: AbortSignal | undefined): LsOperations {
+	const ctx = machine.context(signal);
+	return {
+		exists: async (path) => {
+			try {
+				await machine.ops.files.stat({ path }, ctx);
+				return true;
+			} catch {
+				return false;
+			}
+		},
+		stat: async (path) => {
+			const info = await machine.ops.files.stat({ path }, ctx);
+			return { isDirectory: () => info.type === "directory" };
+		},
+		readdir: async (path) => (await machine.ops.files.list({ path }, ctx)).entries.map((entry) => entry.name),
+	};
+}
 
 export interface LsToolOptions {
 	/** Custom operations for directory listing. Default: local filesystem */
 	operations?: LsOperations;
 	/** Extension-registered filesystem policy checker. */
 	filesystemPolicy?: FilesystemPolicyChecker;
+	/** Operation layer and policy gate. Default: the process-wide local machine. */
+	machine?: ToolMachine;
 }
 
 export function createLsToolDefinition(
 	cwd: string,
 	options?: LsToolOptions,
 ): ToolDefinition<typeof lsSchema, LsToolDetails | undefined> {
-	const ops = options?.operations ?? defaultLsOperations;
+	const machine = options?.machine ?? defaultToolMachine();
 	const filesystemPolicy = options?.filesystemPolicy;
 	return {
 		...(options?.operations !== undefined || filesystemPolicy !== undefined ? { serverPinned: true } : {}),
 		name: "ls",
+		workspaceEffect: "read",
 		label: "ls",
 		description: `List directory contents. Returns entries sorted alphabetically, with '/' suffix for directories. Includes dotfiles. Output is truncated to ${DEFAULT_LIMIT} entries or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first).`,
 		promptSnippet: lsToolSystemPromptContribution.snippet,
@@ -87,6 +104,9 @@ export function createLsToolDefinition(
 
 				(async () => {
 					try {
+						const admitted = machine.begin("files.list", { path, limit }, signal);
+						if (admitted !== undefined) await admitted;
+						const ops = options?.operations ?? machineLsOperations(machine, signal);
 						const dirPath = resolveToCwd(path || ".", ctx?.cwd || cwd);
 						const effectiveLimit = limit ?? DEFAULT_LIMIT;
 						if (filesystemPolicy) {

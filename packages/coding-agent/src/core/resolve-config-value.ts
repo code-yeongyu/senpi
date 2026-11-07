@@ -3,6 +3,13 @@
  * Used by auth-storage.ts and model-registry.ts.
  */
 
+import type { ConfigValue } from "@earendil-works/pi-ai/utils/config-reference";
+import { warnMissingConfigEnvironment, warnOpaqueConfigEnvironment } from "./config-reference-env.ts";
+import {
+	assertConfigReferenceAuthority,
+	type ConfigReferenceContext,
+	resolveConfigReference,
+} from "./config-reference-resolver.ts";
 import { runConfigCommand } from "./resolve-config-command.ts";
 
 // Cache for shell command results (persists for process lifetime). The in-flight
@@ -88,7 +95,9 @@ function parseConfigValueReference(config: string): ConfigValueReference {
 }
 
 function resolveEnvConfigValue(name: string, env?: Record<string, string>): string | undefined {
-	return env?.[name] || process.env[name] || undefined;
+	const value = env?.[name] || process.env[name] || undefined;
+	warnOpaqueConfigEnvironment(name, value);
+	return value;
 }
 
 function getTemplateEnvVarNames(parts: TemplatePart[]): string[] {
@@ -108,33 +117,47 @@ function resolveTemplate(parts: TemplatePart[], env?: Record<string, string>): s
 			continue;
 		}
 		const envValue = resolveEnvConfigValue(part.name, env);
-		if (envValue === undefined) return undefined;
+		if (envValue === undefined) {
+			warnMissingConfigEnvironment(part.name);
+			return undefined;
+		}
 		resolved += envValue;
 	}
 	return resolved;
 }
 
-export function getConfigValueEnvVarName(config: string): string | undefined {
+export function getConfigValueEnvVarName(config: ConfigValue): string | undefined {
+	if (typeof config !== "string") return "$env" in config ? config.$env : undefined;
 	const reference = parseConfigValueReference(config);
 	if (reference.type !== "template") return undefined;
 	return reference.parts.length === 1 && reference.parts[0]?.type === "env" ? reference.parts[0].name : undefined;
 }
 
-export function getConfigValueEnvVarNames(config: string): string[] {
+export function getConfigValueEnvVarNames(config: ConfigValue): string[] {
+	if (typeof config !== "string") {
+		if ("$env" in config) return [config.$env];
+		return "$concat" in config
+			? [
+					...new Set(
+						config.$concat.flatMap((part) => (typeof part !== "string" && "$env" in part ? [part.$env] : [])),
+					),
+				]
+			: [];
+	}
 	const reference = parseConfigValueReference(config);
 	return reference.type === "template" ? getTemplateEnvVarNames(reference.parts) : [];
 }
 
-export function getMissingConfigValueEnvVarNames(config: string, env?: Record<string, string>): string[] {
+export function getMissingConfigValueEnvVarNames(config: ConfigValue, env?: Record<string, string>): string[] {
 	return getConfigValueEnvVarNames(config).filter((name) => resolveEnvConfigValue(name, env) === undefined);
 }
 
-export function isCommandConfigValue(config: string): boolean {
-	return parseConfigValueReference(config).type === "command";
+export function isCommandConfigValue(config: ConfigValue): boolean {
+	return typeof config === "string" && parseConfigValueReference(config).type === "command";
 }
 
-export function isConfigValueConfigured(config: string, env?: Record<string, string>): boolean {
-	return getMissingConfigValueEnvVarNames(config, env).length === 0;
+export function isConfigValueConfigured(config: ConfigValue, env?: Record<string, string>): boolean {
+	return typeof config !== "string" || getMissingConfigValueEnvVarNames(config, env).length === 0;
 }
 
 /**
@@ -144,7 +167,12 @@ export function isConfigValueConfigured(config: string, env?: Record<string, str
  * - In non-command values, "$$" escapes a literal "$" and "$!" escapes a literal "!"
  * - Otherwise treats the value as a literal
  */
-export function resolveConfigValue(config: string, env?: Record<string, string>): Promise<string | undefined> {
+export function resolveConfigValue(
+	config: ConfigValue,
+	env?: Record<string, string>,
+	context?: ConfigReferenceContext,
+): Promise<string | undefined> {
+	if (typeof config !== "string") return resolveConfigReference(config, context, env);
 	const reference = parseConfigValueReference(config);
 	if (reference.type === "command") {
 		// Credentials can carry a per-session environment. Those commands must not
@@ -166,7 +194,12 @@ function executeCommand(commandConfig: string): Promise<string | undefined> {
 /**
  * Resolve all header values using the same resolution logic as API keys.
  */
-export function resolveConfigValueUncached(config: string, env?: Record<string, string>): Promise<string | undefined> {
+export function resolveConfigValueUncached(
+	config: ConfigValue,
+	env?: Record<string, string>,
+	context?: ConfigReferenceContext,
+): Promise<string | undefined> {
+	if (typeof config !== "string") return resolveConfigReference(config, context, env);
 	const reference = parseConfigValueReference(config);
 	if (reference.type === "command") {
 		return runConfigCommand(reference.config, env);
@@ -175,11 +208,13 @@ export function resolveConfigValueUncached(config: string, env?: Record<string, 
 }
 
 export async function resolveConfigValueOrThrow(
-	config: string,
+	config: ConfigValue,
 	description: string,
 	env?: Record<string, string>,
+	context?: ConfigReferenceContext,
 ): Promise<string> {
-	const resolvedValue = await resolveConfigValueUncached(config, env);
+	if (typeof config !== "string") return resolveConfigReference(config, context, env);
+	const resolvedValue = await resolveConfigValueUncached(config, env, context);
 	if (resolvedValue !== undefined) {
 		return resolvedValue;
 	}
@@ -203,11 +238,12 @@ export async function resolveConfigValueOrThrow(
 }
 
 export async function resolveHeadersOrThrow(
-	headers: Record<string, string> | undefined,
+	headers: Record<string, ConfigValue> | undefined,
 	description: string,
 	env?: Record<string, string>,
 ): Promise<Record<string, string> | undefined> {
 	if (!headers) return undefined;
+	for (const value of Object.values(headers)) assertConfigReferenceAuthority(value);
 	const resolved: Record<string, string> = {};
 	for (const [key, value] of Object.entries(headers)) {
 		resolved[key] = await resolveConfigValueOrThrow(value, `${description} header "${key}"`, env);

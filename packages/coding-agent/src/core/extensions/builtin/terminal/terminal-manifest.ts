@@ -270,6 +270,7 @@ export class TerminalManifestWriter {
 			event: spec.kind === "file" ? spec.event : undefined,
 			filter: spec.kind === "file" ? undefined : spec.filter,
 			humanInput: spec.kind === "command" && spec.humanInput === true ? true : undefined,
+			...(spec.kind === "command" && spec.wakesPerHour !== undefined ? { wakesPerHour: spec.wakesPerHour } : {}),
 			cwd: spec.kind === "rpc" ? undefined : spec.cwd,
 			...(spec.kind === "rpc"
 				? {

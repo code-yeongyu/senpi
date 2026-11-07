@@ -14,7 +14,7 @@ type AbortAndFireQueuedMessagesThis = {
 		setText: (text: string) => void;
 	};
 	session: {
-		abort: () => Promise<void>;
+		stop: () => Promise<void>;
 		prompt: (text: string) => Promise<void>;
 	};
 	showError: (message: string) => void;
@@ -34,7 +34,7 @@ function abortAndFireQueuedMessages(fakeThis: AbortAndFireQueuedMessagesThis): P
 describe("InteractiveMode.abortAndFireQueuedMessages", () => {
 	test("aborts and restores queued messages without auto-firing a fresh prompt", async () => {
 		// given
-		const abort = vi.fn<() => Promise<void>>(async () => {});
+		const stop = vi.fn<() => Promise<void>>(async () => {});
 		const prompt = vi.fn<(text: string) => Promise<void>>(async () => {});
 		const setText = vi.fn<(text: string) => void>();
 		const updatePendingMessagesDisplay = vi.fn<() => void>();
@@ -49,7 +49,7 @@ describe("InteractiveMode.abortAndFireQueuedMessages", () => {
 				getText: () => "current draft",
 				setText,
 			},
-			session: { abort, prompt },
+			session: { stop, prompt },
 			showError,
 		};
 
@@ -60,14 +60,14 @@ describe("InteractiveMode.abortAndFireQueuedMessages", () => {
 		expect(restored).toBe(2);
 		expect(setText).toHaveBeenCalledWith("retry-time steering\n\nretry-time follow-up\n\ncurrent draft");
 		expect(updatePendingMessagesDisplay).toHaveBeenCalledTimes(1);
-		expect(abort).toHaveBeenCalledTimes(1);
+		expect(stop).toHaveBeenCalledTimes(1);
 		expect(prompt).not.toHaveBeenCalled();
 		expect(showError).not.toHaveBeenCalled();
 	});
 
 	test("aborts without changing the editor when no messages are queued", async () => {
 		// given
-		const abort = vi.fn<() => Promise<void>>(async () => {});
+		const stop = vi.fn<() => Promise<void>>(async () => {});
 		const prompt = vi.fn<(text: string) => Promise<void>>(async () => {});
 		const setText = vi.fn<(text: string) => void>();
 		const updatePendingMessagesDisplay = vi.fn<() => void>();
@@ -79,7 +79,7 @@ describe("InteractiveMode.abortAndFireQueuedMessages", () => {
 				getText: () => "",
 				setText,
 			},
-			session: { abort, prompt },
+			session: { stop, prompt },
 			showError,
 		};
 
@@ -88,7 +88,7 @@ describe("InteractiveMode.abortAndFireQueuedMessages", () => {
 
 		// then
 		expect(restored).toBe(0);
-		expect(abort).toHaveBeenCalledTimes(1);
+		expect(stop).toHaveBeenCalledTimes(1);
 		expect(setText).not.toHaveBeenCalled();
 		expect(prompt).not.toHaveBeenCalled();
 		expect(showError).not.toHaveBeenCalled();
@@ -100,7 +100,7 @@ describe("InteractiveMode.abortAndFireQueuedMessages", () => {
 		const abortSettled = new Promise<void>((resolve) => {
 			resolveAbort = resolve;
 		});
-		const abort = vi.fn<() => Promise<void>>(() => abortSettled);
+		const stop = vi.fn<() => Promise<void>>(() => abortSettled);
 		const prompt = vi.fn<(text: string) => Promise<void>>(async () => {});
 		const setText = vi.fn<(text: string) => void>();
 		const updatePendingMessagesDisplay = vi.fn<() => void>();
@@ -112,7 +112,7 @@ describe("InteractiveMode.abortAndFireQueuedMessages", () => {
 				getText: () => "",
 				setText,
 			},
-			session: { abort, prompt },
+			session: { stop, prompt },
 			showError,
 		};
 

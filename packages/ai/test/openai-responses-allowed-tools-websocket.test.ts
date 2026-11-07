@@ -110,7 +110,7 @@ describe("openai-responses allowed_tools refusal over the WebSocket", () => {
 		expect((sentFrames[0]?.tool_choice as { type?: string } | undefined)?.type).toBe("allowed_tools");
 		expect(httpBodies).toHaveLength(1);
 		expect(httpBodies[0]?.tool_choice).toBeUndefined();
-		expect(httpBodies[0]?.tools?.map((tool) => tool.name)).toEqual(["read", "bash"]);
+		expect(httpBodies[0]?.tools?.map((tool) => tool.name)).toEqual(["bash", "read"]);
 		expect(events.filter((event) => event.type === "start")).toHaveLength(1);
 	});
 });

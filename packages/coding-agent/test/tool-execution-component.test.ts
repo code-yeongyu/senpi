@@ -118,6 +118,8 @@ type InteractiveModeStopThis = {
 	disposeActiveSelector(): void;
 	settingsManager: { getShowTerminalProgress(): boolean };
 	ui: { terminal: { setProgress(value: boolean): void }; stop(): void };
+	setProgramStatus(status: undefined): void;
+	programStatusClosed: boolean;
 	clearStatusIndicator(): void;
 	clearPendingTools(): void;
 	stopChatToolAnimations(): void;
@@ -126,7 +128,8 @@ type InteractiveModeStopThis = {
 	themeController: { disableAutoSync(): void };
 	clearExtensionTerminalInputListeners(): void;
 	footer: { dispose(): void };
-	footerDataProvider: { dispose(): void };
+	footerDataProvider: { dispose(): void; setExtensionStatus(key: string, text: string | undefined): void };
+	agentSubscriptionGeneration: number;
 	unsubscribe: (() => void) | undefined;
 	isInitialized: boolean;
 	unregisterSignalHandlers(): void;
@@ -1285,6 +1288,8 @@ describe("ToolExecutionComponent parity", () => {
 			disposeActiveSelector: vi.fn(),
 			settingsManager: { getShowTerminalProgress: () => false },
 			ui: { terminal: { setProgress: vi.fn() }, stop: vi.fn() },
+			setProgramStatus: vi.fn(),
+			programStatusClosed: false,
 			clearStatusIndicator: vi.fn(),
 			clearPendingTools,
 			stopChatToolAnimations,
@@ -1293,13 +1298,16 @@ describe("ToolExecutionComponent parity", () => {
 			themeController: { disableAutoSync: vi.fn() },
 			clearExtensionTerminalInputListeners: vi.fn(),
 			footer: { dispose: vi.fn() },
-			footerDataProvider: { dispose: vi.fn() },
+			footerDataProvider: { dispose: vi.fn(), setExtensionStatus: vi.fn() },
+			agentSubscriptionGeneration: 0,
 			unsubscribe: undefined,
 			isInitialized: false,
 			unregisterSignalHandlers: vi.fn(),
 		};
 		const prototype = InteractiveMode.prototype as unknown as InteractiveModeStopPrototype;
 		prototype.stop.call(fakeThis);
+		expect(fakeThis.setProgramStatus).toHaveBeenCalledExactlyOnceWith(undefined);
+		expect(fakeThis.programStatusClosed).toBe(true);
 		expect(stopChatToolAnimations).toHaveBeenCalledTimes(1);
 		expect(stopChatToolAnimations.mock.invocationCallOrder[0]).toBeGreaterThan(
 			clearPendingTools.mock.invocationCallOrder[0]!,

@@ -13,7 +13,7 @@ export const MAX_MONITOR_TIMEOUT_MS = 3_600_000;
 export const monitorSchema = Type.Object({
 	action: Type.Optional(
 		StringEnum(["create", "rearm"] as const, {
-			description: "Defaults to create. rearm resumes a monitor paused by the wake budget.",
+			description: "Defaults to create. rearm resumes a monitor paused by the wake budget or the runaway guard.",
 		}),
 	),
 	type: Type.Optional(
@@ -83,6 +83,14 @@ export const monitorSchema = Type.Object({
 	),
 	bash_id: Type.Optional(
 		Type.String({ description: "Rearm: paused monitor id (mon_ or bash_id) to resume; omit for all paused." }),
+	),
+	wakes_per_hour: Type.Optional(
+		Type.Integer({
+			minimum: 1,
+			maximum: 3600,
+			description:
+				"Persistent command branch only: average wakes an hour for this watch (default: terminal.monitorWakesPerHour, 12). Lines matched between wakes are batched into the next one, never dropped; raise it for a chat bridge that needs quicker replies.",
+		}),
 	),
 	human_input: Type.Optional(
 		Type.Boolean({

@@ -327,6 +327,7 @@ describe("durable monitor admission control", () => {
 				maxLinesPerInjection: 50,
 				maxCharsPerInjection: 4096,
 				wakeBudget: 1,
+				wakesPerHour: 12,
 			}),
 			pauseMonitors: (ids) => first.registry.pause(ids),
 			scheduler,

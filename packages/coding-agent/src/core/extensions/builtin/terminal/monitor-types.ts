@@ -98,4 +98,6 @@ export interface MonitorSourceHost {
 	emitRaw(event: MonitorEvent): void;
 	ended(record: MonitorRecordBase, reason: MonitorEndedReason, exitCode: number | null): void;
 	changed(): void;
+	/** The current runaway-guard thresholds (settings can change across a reload). */
+	runawayGuard(): { readonly linesPerMinute: number; readonly minutes: number };
 }

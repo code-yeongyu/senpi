@@ -7,6 +7,7 @@ import { ABORT_DEFAULT_GRACE_MS, ABORT_MAX_GRACE_MS } from "../../../src/modes/r
 import { attachJsonlLineReader, serializeJsonLine } from "../../../src/modes/rpc/jsonl.ts";
 import { RpcClient } from "../../../src/modes/rpc/rpc-client.ts";
 import { REQUEST_DEADLINE_MS, requestDeadlineMs } from "../../../src/modes/rpc/rpc-request-deadline.ts";
+import { answerProtocolInfo } from "../../helpers/rpc-legacy-protocol.ts";
 
 async function abortHost() {
 	const directory = await mkdtemp(join(tmpdir(), "rpc-abort-deadline-"));
@@ -17,6 +18,7 @@ async function abortHost() {
 		connected.resolve(socket);
 		attachJsonlLineReader(socket, (line) => {
 			const command = JSON.parse(line) as { id: string; type: string };
+			if (answerProtocolInfo(socket, command)) return;
 			if (command.type === "abort") abort.resolve({ id: command.id });
 		});
 	});

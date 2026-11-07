@@ -38,7 +38,12 @@ import {
 } from "./compaction-settings-access.ts";
 import { type ResolvedCompactionSettings, resolveCompactionSettings } from "./compaction-settings-resolver.ts";
 import type { ContextFileLimits } from "./context-files.ts";
-import { MAX_ENGINE_TURNS_PER_USER_INPUT, MAX_TOOL_FREE_ENGINE_TURNS_PER_WINDOW } from "./engine-turn-limit.ts";
+import {
+	MAX_ENGINE_TURNS_PER_RESUME_WINDOW,
+	MAX_ENGINE_TURNS_PER_USER_INPUT,
+	MAX_TOOL_FREE_ENGINE_TURNS_PER_WINDOW,
+} from "./engine-turn-limit.ts";
+import { type HeldFileLock, lockWithLossHandling } from "./file-lock.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
 import {
 	CredentialStoreBusyError,
@@ -74,6 +79,8 @@ import {
 	type AskUserSettings,
 	type HandoffHintSettings,
 	type ImageSettings,
+	JOB_WIDGETS_DEFAULT_AUTHOR_AFTER_MS,
+	type JobWidgetsSettings,
 	type LookAtSettings,
 	type MarkdownSettings,
 	type MermaidRenderingMode,
@@ -92,7 +99,6 @@ import {
 	readSettingsState,
 	STATE_KEYS,
 } from "./settings-state.ts";
-import { MAX_SKILL_EXPANSIONS_PER_PROMPT } from "./skill-invocation.ts";
 import {
 	type BranchSummarySettings,
 	isTerminalMouseMode,
@@ -107,6 +113,12 @@ export type * from "./settings-public-types.ts";
 
 export const DEFAULT_STREAM_START_TIMEOUT_MS = 300_000;
 export const DEFAULT_PROVIDER_STREAM_RETRY_TIMEOUT_MS = 30_000;
+/**
+ * How long keep-alive bytes alone may hold a provider request without content (senpi#4608). Longer than any
+ * first-token latency observed through relays (a few minutes) and than Anthropic's 10-minute ceiling for a
+ * non-streaming request, well short of the 60-minute turn inactivity lease.
+ */
+const DEFAULT_STREAM_KEEP_ALIVE_TIMEOUT_MS = 900_000;
 
 /** Warn threshold for a single `session_shutdown` extension handler. */
 export const DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS = 2_000;
@@ -218,9 +230,11 @@ export interface Settings {
 	shellPath?: string; // Custom shell path (e.g., for Cygwin users on Windows); supports leading ~ expansion
 	quietStartup?: QuietStartup; // default: false
 	tips?: boolean; // default: true
+	reducedMotion?: boolean; // default: false - keep decorative TUI indicators static
 	tipsHistory?: Record<string, number>; // tipId -> epoch ms last shown
 	defaultProjectTrust?: DefaultProjectTrust; // default: "ask"; global setting only
 	shellCommandPrefix?: string; // Prefix prepended to every bash command (e.g., "shopt -s expand_aliases" for alias support)
+	tools?: { bash?: { redactSecretsInOutput?: boolean } }; // default: false; output only
 	npmCommand?: string[]; // Command used for npm package lookup/install operations, argv-style (e.g., ["mise", "exec", "node@20", "--", "npm"])
 	collapseChangelog?: boolean; // Show condensed changelog after update (use /changelog for full)
 	enableInstallTelemetry?: boolean; // default: true - anonymous version/update ping after changelog-detected updates
@@ -237,17 +251,19 @@ export interface Settings {
 	themes?: string[]; // Array of local theme file paths or directories
 	hooks?: string[];
 	enableSkillCommands?: boolean; // default: true - register skills as /skill:name commands
-	maxSkillExpansionsPerPrompt?: number; // default: 5 - distinct skills one prompt may expand
 	terminal?: TerminalSettings;
 	promptCache?: PromptCacheSettings;
 	handoffHint?: HandoffHintSettings;
 	images?: ImageSettings;
 	lookAt?: LookAtSettings;
 	askUser?: AskUserSettings;
+	jobWidgets?: JobWidgetsSettings;
 	/** Bounds on turns the engine starts without a user message (senpi#2967). */
-	engineTurns?: { maxPerUserInput?: number; maxToolFreePerMinute?: number };
+	engineTurns?: { maxPerUserInput?: number; maxToolFreePerMinute?: number; maxPerResumeWindow?: number };
 	turn_inactivity_ms?: number; // default: 3_600_000, min 60_000, 0 disables; see core/turn-deadline.ts
 	turn_max_runtime_ms?: number; // default: 21_600_000, 0 disables
+	/** A thread chain (A→B→A…) is refused past `chainCountLimit` hops; unset (the default) means unlimited. No cost limit. */
+	threads?: { chainCountLimit?: number };
 	todo?: TodoSettings;
 	recommendedModels?: string[]; // Preferred default model ids, in priority order
 	favoriteModels?: string[]; // Model patterns for Ctrl+P cycling (same format as --models CLI flag)
@@ -599,12 +615,12 @@ export class FileSettingsStorage implements SettingsStorage {
 		}
 	}
 
-	private async acquireLockWithRetry(path: string): Promise<() => Promise<void>> {
+	private async acquireLockWithRetry(path: string): Promise<HeldFileLock> {
 		const startedAt = Date.now();
 		let attempt = 0;
 		while (true) {
 			try {
-				return await lockfile.lock(path, { ...FILE_STORAGE_LOCK_OPTIONS, retries: 0 });
+				return await lockWithLossHandling(path, { ...FILE_STORAGE_LOCK_OPTIONS, retries: 0 });
 			} catch (error) {
 				if (!isLockError(error)) throw error;
 				const waitedMs = Date.now() - startedAt;
@@ -658,7 +674,7 @@ export class FileSettingsStorage implements SettingsStorage {
 		let next = fn(current);
 		if (next === undefined) return;
 		await mkdir(dirname(path), { recursive: true });
-		const release = await this.acquireLockWithRetry(path);
+		const lock = await this.acquireLockWithRetry(path);
 		try {
 			// The wait may have outlived the caller's permission to write (e.g. project trust revoked).
 			underLock?.();
@@ -668,6 +684,7 @@ export class FileSettingsStorage implements SettingsStorage {
 				const tempPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
 				try {
 					await writeFile(tempPath, next, "utf-8");
+					lock.assertHeld();
 					await rename(tempPath, path);
 					// After the rename: a failed publish must not mark identical content as our own write.
 					recordSelfWrite(path, next);
@@ -677,7 +694,7 @@ export class FileSettingsStorage implements SettingsStorage {
 				}
 			}
 		} finally {
-			await release();
+			await lock.release();
 		}
 	}
 
@@ -1094,6 +1111,10 @@ export class SettingsManager {
 		);
 	}
 
+	getPromptCacheSessionAffinity(): boolean {
+		return this.settings.promptCache?.sessionAffinity ?? true;
+	}
+
 	getPromptCacheKeepAliveSettings(): Required<PromptCacheKeepAliveSettings> {
 		const configured = this.settings.promptCache?.keepAlive;
 		return {
@@ -1113,12 +1134,27 @@ export class SettingsManager {
 		};
 	}
 
-	getEngineTurnSettings(): { maxPerUserInput: number; maxToolFreePerMinute: number } {
+	getJobWidgetsSettings(): { enabled: boolean; model: string | undefined; authorAfterMs: number } {
+		const configured = this.settings.jobWidgets;
+		const model = typeof configured?.model === "string" ? configured.model.trim() : "";
+		const after = configured?.authorAfterMs;
+		return {
+			enabled: typeof configured?.enabled === "boolean" ? configured.enabled : true,
+			model: model.length > 0 ? model : undefined,
+			authorAfterMs:
+				typeof after === "number" && Number.isFinite(after) && after >= 0
+					? Math.trunc(after)
+					: JOB_WIDGETS_DEFAULT_AUTHOR_AFTER_MS,
+		};
+	}
+
+	getEngineTurnSettings(): { maxPerUserInput: number; maxToolFreePerMinute: number; maxPerResumeWindow: number } {
 		const configured = this.settings.engineTurns;
 		const limit = (value: unknown, fallback: number): number =>
 			typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : fallback;
 		return {
 			maxPerUserInput: limit(configured?.maxPerUserInput, MAX_ENGINE_TURNS_PER_USER_INPUT),
+			maxPerResumeWindow: limit(configured?.maxPerResumeWindow, MAX_ENGINE_TURNS_PER_RESUME_WINDOW),
 			maxToolFreePerMinute: limit(configured?.maxToolFreePerMinute, MAX_TOOL_FREE_ENGINE_TURNS_PER_WINDOW),
 		};
 	}
@@ -1129,6 +1165,14 @@ export class SettingsManager {
 
 	getTurnMaxRuntimeMs(): number | undefined {
 		return this.settings.turn_max_runtime_ms;
+	}
+
+	/** The user's thread chain count limit (`threads.chainCountLimit`, K8): a non-negative integer, else unlimited. */
+	getThreadChainCountLimit(): number | undefined {
+		const configured = this.settings.threads?.chainCountLimit;
+		return typeof configured === "number" && Number.isSafeInteger(configured) && configured >= 0
+			? configured
+			: undefined;
 	}
 
 	getTodoFirstTurnPlan(): TodoFirstTurnPlan {
@@ -1770,7 +1814,10 @@ export class SettingsManager {
 	}
 
 	getRetryFallbackSettings(): ResolvedRetryFallbackSettings {
-		return resolveRetryFallbackSettings(this.settings.retry);
+		// Chains in the session-only override layer (applyRetryFallbackProfile, or an SDK applyOverrides call) are the session's whole policy.
+		return resolveRetryFallbackSettings(this.settings.retry, {
+			sessionPolicy: this.runtimeOverrides.retry?.fallbackChains !== undefined,
+		});
 	}
 
 	getFallbackCircuitSettings(): ResolvedFallbackCircuitSettings {
@@ -2060,6 +2107,19 @@ export class SettingsManager {
 		return Math.min(DEFAULT_STREAM_START_TIMEOUT_MS, idleTimeoutMs);
 	}
 
+	/**
+	 * Cap on keep-alive-only silence. While a provider keeps sending bytes (SSE pings, comment keep-alives) the
+	 * start and idle bounds do not end the request; this bounds how long that may last without any assistant
+	 * event. `retry.provider.keepAliveTimeoutMs` overrides the 15-minute default; 0 disables the cap.
+	 */
+	getAgentStreamKeepAliveTimeoutMs(): number | undefined {
+		const explicit = this.settings.retry?.provider?.keepAliveTimeoutMs;
+		if (explicit !== undefined) {
+			return explicit > 0 ? explicit : undefined;
+		}
+		return DEFAULT_STREAM_KEEP_ALIVE_TIMEOUT_MS;
+	}
+
 	getWebSocketConnectTimeoutMs(): number | undefined {
 		return parseTimeoutSetting(this.settings.websocketConnectTimeoutMs, "websocketConnectTimeoutMs");
 	}
@@ -2146,6 +2206,10 @@ export class SettingsManager {
 		return this.settings.tips ?? true;
 	}
 
+	getReducedMotion(): boolean {
+		return this.settings.reducedMotion ?? false;
+	}
+
 	getTipsHistory(): Record<string, number> {
 		const history = this.settings.tipsHistory;
 		if (typeof history !== "object" || history === null || Array.isArray(history)) {
@@ -2181,6 +2245,10 @@ export class SettingsManager {
 
 	getShellCommandPrefix(): string | undefined {
 		return this.settings.shellCommandPrefix;
+	}
+
+	getBashRedactSecretsInOutput(): boolean {
+		return this.settings.tools?.bash?.redactSecretsInOutput === true;
 	}
 
 	setShellCommandPrefix(prefix: string | undefined): void {
@@ -2346,13 +2414,6 @@ export class SettingsManager {
 
 	getEnableSkillCommands(): boolean {
 		return this.settings.enableSkillCommands ?? true;
-	}
-
-	getMaxSkillExpansionsPerPrompt(): number {
-		const value = this.settings.maxSkillExpansionsPerPrompt;
-		return typeof value === "number" && Number.isInteger(value) && value > 0
-			? value
-			: MAX_SKILL_EXPANSIONS_PER_PROMPT;
 	}
 
 	setEnableSkillCommands(enabled: boolean): void {

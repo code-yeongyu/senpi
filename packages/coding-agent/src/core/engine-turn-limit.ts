@@ -2,8 +2,10 @@ import { CONTINUE_FROM_LEAF_CUSTOM_TYPE } from "./continue-from-leaf.ts";
 import { MANUAL_CONTINUE_CUSTOM_TYPE } from "./manual-continue.ts";
 import type { HistoryReducer } from "./session-history-reduce.ts";
 import type { SessionEntry } from "./session-manager.ts";
+import { STOP_RESUME_CUSTOM_TYPE } from "./stop-resume-directive.ts";
 
-export const MAX_ENGINE_TURNS_PER_USER_INPUT = 150;
+export const MAX_ENGINE_TURNS_PER_USER_INPUT = 0;
+export const MAX_ENGINE_TURNS_PER_RESUME_WINDOW = 8;
 export const MAX_TOOL_FREE_ENGINE_TURNS_PER_WINDOW = 12;
 export const ENGINE_TURN_WINDOW_MS = 60_000;
 
@@ -12,12 +14,13 @@ export const ENGINE_TURN_START_ENTRY_TYPE = "engine-turn-start";
 export const ENGINE_TURN_LIMIT_ENTRY_TYPE = "engine-turn-limit";
 export const ENGINE_TURN_LIMIT_EVENT = "engine:turn-limit";
 
-export type EngineTurnStopReason = "per-user-input" | "tool-free-rate";
+export type EngineTurnStopReason = "per-user-input" | "tool-free-rate" | "resume-window";
 
 /** A limit of 0 turns that limit off. */
 export interface EngineTurnLimits {
 	readonly maxPerUserInput: number;
 	readonly maxToolFreePerMinute: number;
+	readonly maxPerResumeWindow?: number;
 }
 
 /** An engine turn this process started since the user's last message, kept even when the session file refuses writes. */
@@ -33,6 +36,9 @@ export interface EngineTurnStop {
 }
 
 export function engineTurnLimitNotice(stop: EngineTurnStop): string {
+	if (stop.reason === "resume-window") {
+		return `Paused: the agent started ${stop.sinceUserInput} turns on its own in this resume window. Send any message to continue.`;
+	}
 	return stop.reason === "per-user-input"
 		? `Paused: the agent started ${stop.sinceUserInput} turns on its own since your last message. Send any message to continue.`
 		: `Paused: the agent started ${stop.toolFreeInWindow} turns on its own in the last minute without doing any work. Send any message to continue.`;
@@ -40,11 +46,26 @@ export function engineTurnLimitNotice(stop: EngineTurnStop): string {
 
 /** A `.` manual continue or a continue-from-leaf is the user's own request, not an automatic turn. */
 export function isUserDirectedTurn(customType: string): boolean {
-	return customType === MANUAL_CONTINUE_CUSTOM_TYPE || customType === CONTINUE_FROM_LEAF_CUSTOM_TYPE;
+	return (
+		customType === MANUAL_CONTINUE_CUSTOM_TYPE ||
+		customType === CONTINUE_FROM_LEAF_CUSTOM_TYPE ||
+		customType === STOP_RESUME_CUSTOM_TYPE
+	);
+}
+
+/** Recovering an interrupted run is not a new message that resets the unattended turn budget. */
+export function resetsEngineTurnHistory(customType: string, details?: unknown): boolean {
+	return (
+		isUserDirectedTurn(customType) &&
+		!(
+			customType === STOP_RESUME_CUSTOM_TYPE &&
+			(details as { resumeCause?: unknown } | undefined)?.resumeCause === "interrupted"
+		)
+	);
 }
 
 function isUserMessage(entry: SessionEntry): boolean {
-	if (entry.type === "custom_message") return isUserDirectedTurn(entry.customType);
+	if (entry.type === "custom_message") return resetsEngineTurnHistory(entry.customType, entry.details);
 	return entry.type === "message" && entry.message.role === "user";
 }
 
@@ -108,6 +129,10 @@ export function engineTurnStop(
 		toolFreeInWindow,
 		inProcess.filter((record) => !record.toolUsed && now - record.at < ENGINE_TURN_WINDOW_MS).length,
 	);
+	const resumeLimit = limits.maxPerResumeWindow ?? 0;
+	if (resumeLimit > 0 && sinceUserInput >= resumeLimit) {
+		return { reason: "resume-window", sinceUserInput, toolFreeInWindow };
+	}
 	if (limits.maxPerUserInput > 0 && sinceUserInput >= limits.maxPerUserInput) {
 		return { reason: "per-user-input", sinceUserInput, toolFreeInWindow };
 	}

@@ -1,5 +1,7 @@
 import { isBrowserEngine } from "../../core/browser-engine.ts";
 import { clientMessageIdentitySchema } from "../../core/client-message-identity.ts";
+import { MAX_TOOL_BARRIER_ID_LENGTH, toolBarrierSpecError } from "../../core/tool-barrier.ts";
+import { validatePauseCommand } from "./pause-command-validation.ts";
 
 export const MAX_RPC_MESSAGE_CHARACTERS = 1_000_000;
 
@@ -95,6 +97,35 @@ export function rpcCommandPayloadError(command: unknown): string | undefined {
 		return "clientMessageId and clientTurnId must be non-empty strings of at most 256 characters.";
 	}
 	if (
+		(value.type === "prompt" || value.type === "steer" || value.type === "follow_up") &&
+		value.expectedTurnId !== undefined
+	) {
+		if (
+			!(
+				typeof value.expectedTurnId === "string" &&
+				value.expectedTurnId.length > 0 &&
+				value.expectedTurnId.length <= 256
+			)
+		)
+			return "expectedTurnId must be a non-empty string of at most 256 characters; read it from get_state.currentTurnId.";
+		if (value.type === "prompt" && value.streamingBehavior === undefined)
+			return 'expectedTurnId on a prompt needs streamingBehavior "steer" or "followUp".';
+	}
+	if (value.type === "prompt" && value.toolBarrier !== undefined) {
+		const barrierError = toolBarrierSpecError(value.toolBarrier);
+		if (barrierError !== undefined) return barrierError;
+	}
+	if (
+		value.type === "release_tool_barrier" &&
+		!(
+			typeof value.barrierId === "string" &&
+			value.barrierId.length > 0 &&
+			value.barrierId.length <= MAX_TOOL_BARRIER_ID_LENGTH
+		)
+	) {
+		return `barrierId must be a non-empty string of at most ${MAX_TOOL_BARRIER_ID_LENGTH} characters.`;
+	}
+	if (
 		(value.type === "dequeue_message" || value.type === "edit_queued_message") &&
 		!(typeof value.queuedId === "string" && value.queuedId.length > 0 && value.queuedId.length <= 256)
 	) {
@@ -150,6 +181,8 @@ export function rpcCommandPayloadError(command: unknown): string | undefined {
 	) {
 		return "effectId must be a non-empty string of at most 256 characters.";
 	}
+	const pauseFieldError = validatePauseCommand(value);
+	if (pauseFieldError !== undefined) return pauseFieldError;
 	if (value.type === "get_pending_inputs" && value.knownClientMessageIds !== undefined) {
 		const ids: unknown = value.knownClientMessageIds;
 		if (

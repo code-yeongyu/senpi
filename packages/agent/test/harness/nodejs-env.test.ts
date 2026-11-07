@@ -11,6 +11,7 @@ import { FileError, getOrThrow, type ShellExecOptions, type ShellOutputView } fr
 import { applyShellOutputUpdate } from "../../src/harness/utils/output-capture.ts";
 import { executeShellWithCapture } from "../../src/harness/utils/shell-output.ts";
 import { createTempDir } from "./session-test-utils.ts";
+import { windowsTreeKillArgs } from "../../../../scripts/windows-process-tree.mjs";
 
 const chmodRestorePaths: string[] = [];
 
@@ -76,7 +77,8 @@ function cleanupDetachedChild(pidFile: string): void {
 	const pid = Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10);
 	if (!Number.isFinite(pid) || pid <= 0) return;
 	try {
-		execFileSync("taskkill", ["/F", "/T", "/PID", String(pid)], { stdio: "ignore" });
+		const args = windowsTreeKillArgs(pid);
+		if (args.length > 0) execFileSync("taskkill", args, { stdio: "ignore", windowsHide: true });
 	} catch {}
 }
 

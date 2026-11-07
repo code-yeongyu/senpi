@@ -1,5 +1,63 @@
 # Herdr builtin reporter changes
 
+## 2026-11-04 - Name the product command in an app pane token (omo#12395, senpi#5817)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/herdr/index.ts` adds `tokens: { app: APP_COMMAND }` to its title metadata report. On quit it clears the token with `tokens: { app: null }` before `pane.release_agent`. Every lifecycle, session and release report still sends `agent: "pi"`.
+
+### Why
+
+- Tools built on herdr's API could not tell an OmO pane from a Pi pane. herdr 0.9.5 bases prompt delivery and restore on agent labels it knows. With an `omo` label, `agent prompt` and `agent send-keys` are refused with `agent_not_ready`, and the reported `resume_argv` is dropped when detection says `pi`. Pane tokens are display-only, and herdr's pane and agent APIs expose them. herdr keeps tokens after release and process exit, so quit clears the token.
+
+### Why an extension could not handle it
+
+- This is the builtin reporter that owns the pane's herdr metadata.
+
+### Expected merge conflict zones
+
+- LOW: the `reportTitle` params and the `session_shutdown` quit branch in `index.ts`.
+
+## 2026-11-01 - Program status binds in every TUI session (senpi#5323)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/herdr/index.ts` binds state tracking to the first top-level TUI session whatever the `HERDR_*` environment and user-reporter deferral, and reports each `selectHerdrReport` result through `ctx.ui.setProgramStatus` (deduplicated). The herdr socket client keeps its preconditions (`HERDR_ENV=1`, socket path, pane id, no user reporter) and its exact request transcript. A blocked report carries the `kind` of the oldest open block (`selectHerdrBlockedKind`), which `herdr:blocked` now carries: `question` from ask-user, `permission` from a host dialog about a tool call; other dialogs carry none. Quit clears the status; reload and session navigation leave it for the successor runtime.
+- The reporter calls `ctx.ui.setProgramStatus` optionally, so an outside SDK host whose UI context predates the method keeps its herdr socket reporting (senpi#5344).
+- `herdr-state.ts` keeps `{ label, kind }` per open block instead of the label alone; `isHerdrBlockedEvent` accepts the optional `kind`.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts` emits `kind: "question"` on its active `herdr:blocked` event.
+
+### Why
+
+- herdr-core panes set only `HC_TERMINAL_ID`/`HC_TERMINAL_SOCKET`, so the reporter never bound there and omo panes showed as a plain shell. They read OSC 7501 instead.
+
+### Why an extension could not handle it
+
+- This is the builtin reporter; it uses the public `ctx.ui.setProgramStatus` API.
+
+### Expected merge conflict zones
+
+- LOW: `session_start` binding order and `publish` in `index.ts`; the `blocked` case of `reduceHerdrState`.
+
+## 2026-10-21 - Restore the branded launcher after Herdr restart (senpi#3849)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/herdr/index.ts` sends `resume_argv` with the existing `APP_COMMAND` brand command and the exact reported session path, falling back to the reported session ID when no path exists.
+- `packages/coding-agent/src/core/extensions/builtin/herdr/index.ts` waits for the initial state report before sending the session report: Herdr rejects resume commands from reporters that do not yet hold the pane.
+
+### Why
+
+- Without an explicit command Herdr restores every `pi`-kind pane through the ambiguous `pi` executable. OmO already supplies its `omo` command in the brand profile; standalone Senpi resolves to `senpi`. The protocol agent remains `pi` so detection, lifecycle reporting, and managed integration compatibility stay intact.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/herdr/index.ts` is the builtin reporter that owns the session report.
+
+### Expected merge conflict zones
+
+- LOW: the `pane.report_agent_session` payload and one config import.
+
 ## 2026-09-24 - Every wake source keeps the pane working (senpi#2077)
 
 ### What changed

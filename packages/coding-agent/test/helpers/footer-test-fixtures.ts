@@ -7,6 +7,7 @@ type AssistantUsage = {
 	cacheRead: number;
 	cacheWrite: number;
 	cost: { total: number };
+	costUnknown?: true;
 };
 
 type FooterUsageEntry =
@@ -29,6 +30,8 @@ export type FooterSessionOptions = {
 	/** Credential the footer's account segment reads; defaults to none. */
 	credential?: { type: "oauth"; access: string; refresh: string; expires: number } & Record<string, unknown>;
 	sessionId?: string;
+	/** A switch held until the next message compacts for it (senpi#1873); defaults to none. */
+	pendingModelSwitch?: { id: string; provider?: string };
 };
 
 export function createFooterSession(options: FooterSessionOptions): AgentSession {
@@ -65,6 +68,7 @@ export function createFooterSession(options: FooterSessionOptions): AgentSession
 					cacheRead: 0,
 					cacheWrite: 0,
 					cost: 0,
+					costUnknown: undefined as true | undefined,
 					latestCacheHitRate: undefined as number | undefined,
 				};
 				for (const entry of entries) {
@@ -74,6 +78,7 @@ export function createFooterSession(options: FooterSessionOptions): AgentSession
 					totals.cacheRead += usage.cacheRead;
 					totals.cacheWrite += usage.cacheWrite;
 					totals.cost += usage.cost.total;
+					if (usage.costUnknown) totals.costUnknown = true;
 					if (entry.type === "message" && entry.message.role === "assistant") {
 						const latestPromptTokens = usage.input + usage.cacheRead + usage.cacheWrite;
 						totals.latestCacheHitRate =
@@ -88,6 +93,16 @@ export function createFooterSession(options: FooterSessionOptions): AgentSession
 		},
 		getContextUsage: () => ({ contextWindow: 200_000, percent: 12.3 }),
 		isFastModeActive: () => options.fastModeActive ?? false,
+		pendingModelSwitch: options.pendingModelSwitch
+			? {
+					model: {
+						id: options.pendingModelSwitch.id,
+						provider: options.pendingModelSwitch.provider ?? "test",
+						contextWindow: 128_000,
+						reasoning: false,
+					},
+				}
+			: undefined,
 		modelRuntime: {
 			isUsingOAuth: () => false,
 			isUsingSubscription: () => false,

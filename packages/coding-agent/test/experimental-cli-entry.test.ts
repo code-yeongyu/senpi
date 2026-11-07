@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { VERSION } from "../src/config.ts";
+import { hostSpawnEnv } from "./helpers/rpc-host-spawn-env.ts";
 
 // --import takes a module specifier, not a filesystem path.
 const sourceResolverUrl = pathToFileURL(resolve(__dirname, "../src/experimental/source-resolver.ts")).href;
@@ -33,7 +34,7 @@ function runEntry(entry: string, experimental: boolean) {
 			encoding: "utf8",
 			timeout: 15_000,
 			env: {
-				...process.env,
+				...hostSpawnEnv(),
 				HOME: directory,
 				USERPROFILE: directory,
 				PI_CODING_AGENT_DIR: join(directory, "agent"),

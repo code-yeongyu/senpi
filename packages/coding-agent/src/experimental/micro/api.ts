@@ -49,6 +49,8 @@ export interface MicroUsageView {
 	cacheRead: number;
 	cacheWrite: number;
 	totalCost: number;
+	/** Some turn had no known price, so `totalCost` is a lower bound (senpi#3844). */
+	totalCostUnknown?: true;
 	lastCacheHitRate?: number;
 	contextTokens: number | null;
 	contextWindow: number;

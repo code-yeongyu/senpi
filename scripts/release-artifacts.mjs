@@ -21,13 +21,16 @@ export function runPackageLockRefresh(dryRun, runCommand, log, dryRunLog) {
 	runCommand("node", ["scripts/regenerate-bun-lock-isolated.mjs"]);
 }
 
+// senpi#4067: an OpenGateway feed break must not stop a release, so the release keeps the committed
+// OpenGateway catalog (with a warning annotation). The dedicated `--strict --providers opengateway`
+// refresh workflow still fails on the same break.
 export function runGenerateModels(dryRun, runCommand, log, dryRunLog) {
 	if (dryRun) {
-		dryRunLog("npm --prefix packages/ai run generate-models");
+		dryRunLog("npm --prefix packages/ai run generate-models -- --keep-last-good-opengateway");
 		return;
 	}
-	log("npm --prefix packages/ai run generate-models");
-	runCommand("npm", ["--prefix", "packages/ai", "run", "generate-models"]);
+	log("npm --prefix packages/ai run generate-models -- --keep-last-good-opengateway");
+	runCommand("npm", ["--prefix", "packages/ai", "run", "generate-models", "--", "--keep-last-good-opengateway"]);
 }
 
 // senpi#2645: a regeneration can drop the model a bundled provider names as its default (#2175, #2295, #926).

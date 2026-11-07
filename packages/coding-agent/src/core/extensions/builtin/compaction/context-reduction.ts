@@ -49,7 +49,7 @@ const DEFAULT_MAX_ASSISTANT_TEXT_TOKENS = 500;
 const DEFAULT_MIN_SAVINGS_TOKENS = 100;
 const DEFAULT_KEEP_RECENT_TOOL_RESULTS = 3;
 const DEFAULT_CLEARED_PLACEHOLDER = "[tool result cleared]";
-const DEFAULT_REPLACEMENT_TEMPLATE = "[response shrunk — {original_tokens} → {shrunk_tokens} tokens]";
+const DEFAULT_REPLACEMENT_TEMPLATE = "[response shrunk - {original_tokens} → {shrunk_tokens} tokens]";
 
 const MAX_HINTS_IN_LABEL = 5;
 const MAX_HINT_LENGTH = 80;

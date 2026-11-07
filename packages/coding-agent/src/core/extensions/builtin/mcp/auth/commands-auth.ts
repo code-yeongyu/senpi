@@ -1,4 +1,4 @@
-import type { McpServerConfig } from "../config-schema.ts";
+import type { McpServerDeclaredConfig } from "../config-schema.ts";
 import type { McpLogger } from "../log.ts";
 import { openCallbackChannel } from "./callback.ts";
 import { resolveServerAuth } from "./context.ts";
@@ -15,9 +15,9 @@ import type { McpOAuthProvider } from "./oauth-provider.ts";
 
 type Notify = (message: string, type?: "info" | "warning" | "error") => void;
 
-export interface AuthCommandDeps {
+export interface AuthCommandDeps<Config extends McpServerDeclaredConfig = McpServerDeclaredConfig> {
 	serverName: string;
-	config: McpServerConfig;
+	config: Config;
 	agentDir?: string;
 	env?: Record<string, string | undefined>;
 	logger?: McpLogger;

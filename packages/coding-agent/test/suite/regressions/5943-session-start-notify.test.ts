@@ -418,6 +418,7 @@ describe("regression #5943: session_start transient UI", () => {
 	it("refreshes hideThinkingBlock before rebuilding chat during reload", async () => {
 		initTheme("dark", false);
 		const events: string[] = [];
+		// oxlint-disable-next-line eslint/prefer-const -- a closure reads it; const would throw in the TDZ if that closure ran before the assignment, so the rewrite is reviewed separately
 		let context: ReloadCommandContext;
 		context = createReloadCommandContext({
 			settingsManager: { getHideThinkingBlock: () => true },

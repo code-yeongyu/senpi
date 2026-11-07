@@ -7,12 +7,21 @@
  * itself with `observe: true`; the supervisor classifies a connection by the requests it sends, and
  * only a connection that sends something other than an observing read becomes an attachment.
  *
- * Only the side-effect-free reads can observe (`get_effect_status` answers a receipt and changes nothing): `observe: true` on any other command is ignored
+ * Only the side-effect-free reads can observe (`get_effect_status` answers a receipt and changes nothing; `get_state` and
+ * `get_entries` read a session's state and history, senpi#4267): `observe: true` on any other command is ignored
  * and the connection attaches, so a client cannot hold a session while its host idles out under it.
  * `warm` never attaches, marked or not: it opens nothing, so a host that only received it idles out
  * on its normal deadline (senpi#2314).
  * Hosts that predate the field ignore it (commands are parsed by `type`), so a marked read works
  * against every generation.
+ *
+ * An observer may HOLD the host (senpi#5626): a remote-control daemon reads a host only through observing requests,
+ * yet while a remote viewer is attached the host must not idle out under it. An observing read carrying
+ * `hold_host: true` makes its connection a holder, which counts as occupancy until a later observing read carries
+ * `hold_host: false` or the connection closes (a lease on the connection). Only the literal booleans on a read marked
+ * `observe: true` count (`warm` and `authenticate` never hold); plain observing reads hold nothing, so looking at a
+ * host still never keeps it alive. A held observer is occupancy everywhere occupancy is read: the supervisor's idle
+ * exit, a socket host's empty-exit window, and the owner-death quiescence check.
  *
  * A request may also name the host generation its client runs INSIDE (`origin_host_instance`). A host's
  * sessions reach other sessions on the same endpoint through its public socket - an omo task tree keys
@@ -24,18 +33,23 @@
  */
 
 import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
+import { RPC_LAUNCH_PROOF_RECORD } from "./rpc-auth-proof.ts";
 
 export const OBSERVE_REQUEST_FIELD = "observe";
 export const ORIGIN_HOST_INSTANCE_FIELD = "origin_host_instance";
+const HOLD_HOST_FIELD = "hold_host";
 
 const OBSERVING_COMMANDS: ReadonlySet<unknown> = new Set([
 	"get_protocol_info",
+	"get_snapshot",
 	"list_sessions",
 	"subscribe_sessions",
 	"unsubscribe_sessions",
 	"get_effect_status",
 	"get_pending_inputs",
 	"get_subscription_limits",
+	"get_state",
+	"get_entries",
 ]);
 
 export function isObservingRequest(line: string): boolean {
@@ -47,8 +61,26 @@ export function isObservingRequest(line: string): boolean {
 	}
 	if (typeof request !== "object" || request === null || Array.isArray(request)) return false;
 	const record = request as Readonly<Record<string, unknown>>;
-	if (record.type === "warm") return true;
+	if (record.type === "warm" || record.type === "authenticate" || record.type === RPC_LAUNCH_PROOF_RECORD) return true;
 	return record[OBSERVE_REQUEST_FIELD] === true && OBSERVING_COMMANDS.has(record.type);
+}
+
+/**
+ * A marked observing read's hold change: true takes the hold, false releases it, undefined leaves it as it is. Only a
+ * read carrying `observe: true` on one of the observing commands can change it; `warm` and `authenticate` never do.
+ */
+export function observingHoldChange(line: string): boolean | undefined {
+	let request: unknown;
+	try {
+		request = JSON.parse(line);
+	} catch {
+		return undefined;
+	}
+	if (typeof request !== "object" || request === null || Array.isArray(request)) return undefined;
+	const record = request as Readonly<Record<string, unknown>>;
+	if (record[OBSERVE_REQUEST_FIELD] !== true || !OBSERVING_COMMANDS.has(record.type)) return undefined;
+	const hold = record[HOLD_HOST_FIELD];
+	return typeof hold === "boolean" ? hold : undefined;
 }
 
 /** The host generation this process runs in, or undefined outside any host. */

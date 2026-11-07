@@ -65,6 +65,7 @@ function buildParameters(
 			}
 			case "effort":
 			case "reasoning":
+			case "reasoning_effort":
 				out.push({ id, value });
 				break;
 			case "fast":

@@ -38,10 +38,50 @@ export type {
 export class EvalCellNotFoundError extends Error {
 	readonly code = "eval_cell_not_found";
 
-	constructor(cellId: string) {
-		super(`Unknown detached eval cell "${cellId}"`);
+	constructor(cellId: string, suggestion?: string) {
+		super(
+			suggestion === undefined
+				? `Unknown detached eval cell "${cellId}"`
+				: `Unknown detached eval cell "${cellId}"; did you mean "${suggestion}"?`,
+		);
 		this.name = "EvalCellNotFoundError";
 	}
+}
+
+function editDistance(a: string, b: string): number {
+	let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+	for (let i = 1; i <= a.length; i++) {
+		const current = [i];
+		for (let j = 1; j <= b.length; j++) {
+			const substitution = (previous[j - 1] ?? 0) + (a[i - 1] === b[j - 1] ? 0 : 1);
+			current.push(Math.min((previous[j] ?? 0) + 1, (current[j - 1] ?? 0) + 1, substitution));
+		}
+		previous = current;
+	}
+	return previous[b.length] ?? 0;
+}
+
+/**
+ * The one known id within a quarter of the mistyped id's length (at least 1 edit), or undefined when
+ * none is that close or two or more tie for closest, so a suggestion never picks between candidates.
+ */
+function closestCellId(cellId: string, known: Iterable<string>): string | undefined {
+	const limit = Math.max(1, Math.floor(cellId.length / 4));
+	let best: string | undefined;
+	let bestDistance = Number.POSITIVE_INFINITY;
+	let tied = false;
+	for (const candidate of known) {
+		const distance = editDistance(cellId, candidate);
+		if (distance > limit) continue;
+		if (distance < bestDistance) {
+			best = candidate;
+			bestDistance = distance;
+			tied = false;
+		} else if (distance === bestDistance) {
+			tied = true;
+		}
+	}
+	return tied ? undefined : best;
 }
 
 export class EvalDetachedCellManager {
@@ -317,7 +357,14 @@ export class EvalDetachedCellManager {
 
 	#terminal(cellId: string): EvalDetachedCellSnapshot {
 		const snapshot = this.#terminalSnapshots.get(cellId);
-		if (snapshot === undefined) throw new EvalCellNotFoundError(cellId);
+		if (snapshot === undefined) {
+			const known = new Set([
+				...this.#cells.keys(),
+				...this.#interrupting.keys(),
+				...this.#terminalSnapshots.list().map((entry) => entry.cellId),
+			]);
+			throw new EvalCellNotFoundError(cellId, closestCellId(cellId, known));
+		}
 		return snapshot;
 	}
 }

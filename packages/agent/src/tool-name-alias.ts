@@ -1,5 +1,5 @@
 import { resolveToolNameMatch } from "@earendil-works/pi-ai/utils/tool-name-match";
-import type { AgentContext, AgentLoopConfig, AgentTool, AgentToolCall, AgentToolResult } from "./types.ts";
+import type { AgentToolResult } from "./types.ts";
 
 /**
  * A model can call a tool by a name it was never registered under: recased,
@@ -13,28 +13,6 @@ export function resolveToolNameAlias(requested: string, available: Iterable<stri
 
 export function toolNameCorrectionNotice(requested: string, resolved: string): string {
 	return `[auto-corrected] no tool is named "${requested}"; ran "${resolved}". Call tools by their exact listed name.`;
-}
-
-/**
- * Find the tool a call will run, resolving an unknown name through the host
- * resolver and then the alias rule. Runs before `tool_execution_start` so every
- * event names the tool that executes, never the name the model mistyped.
- */
-export async function resolveCallTool(
-	currentContext: AgentContext,
-	toolCall: AgentToolCall,
-	config: AgentLoopConfig,
-): Promise<AgentTool | undefined> {
-	if (toolCall.incomplete === true) return undefined;
-	const exact = currentContext.tools?.find((candidate) => candidate.name === toolCall.name);
-	if (exact) return exact;
-	const resolved = await config.resolveUnknownToolCall?.(toolCall.name, currentContext);
-	if (resolved) return resolved;
-	const aliasedName = resolveToolNameAlias(
-		toolCall.name,
-		(currentContext.tools ?? []).map((candidate) => candidate.name),
-	);
-	return currentContext.tools?.find((candidate) => candidate.name === aliasedName);
 }
 
 export function withToolNameCorrection(

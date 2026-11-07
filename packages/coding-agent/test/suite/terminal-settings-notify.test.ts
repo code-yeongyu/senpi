@@ -50,7 +50,9 @@ describe("terminal settings resolver", () => {
 				maxLinesPerInjection: 50,
 				maxCharsPerInjection: 4096,
 				wakeBudget: 5,
+				wakesPerHour: 12,
 			},
+			monitorRunaway: { linesPerMinute: 120, minutes: 5 },
 		});
 	});
 
@@ -81,8 +83,26 @@ describe("terminal settings resolver", () => {
 			maxLinesPerInjection: 75,
 			maxCharsPerInjection: 8000,
 			wakeBudget: 9,
+			wakesPerHour: 12,
 		});
 		expect(resolveTerminalSettings({ monitorMaxLinesPerInjection: 0 }).monitor.maxLinesPerInjection).toBe(50);
+	});
+
+	it("resolves the wake pacing and runaway-guard settings with their bounds", () => {
+		const resolved = resolveTerminalSettings({
+			monitorWakesPerHour: 60,
+			monitorRunawayLinesPerMinute: 500,
+			monitorRunawayMinutes: 10,
+		});
+		expect(resolved.monitor.wakesPerHour).toBe(60);
+		expect(resolved.monitorRunaway).toEqual({ linesPerMinute: 500, minutes: 10 });
+		const clamped = resolveTerminalSettings({
+			monitorWakesPerHour: 99_999,
+			monitorRunawayLinesPerMinute: 0,
+			monitorRunawayMinutes: 99_999,
+		});
+		expect(clamped.monitor.wakesPerHour).toBe(3600);
+		expect(clamped.monitorRunaway).toEqual({ linesPerMinute: 120, minutes: 1440 });
 	});
 });
 

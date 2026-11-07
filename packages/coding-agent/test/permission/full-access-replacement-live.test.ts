@@ -11,7 +11,7 @@ afterEach(closeLiveHosts);
 async function reseed(host: LivePermissionHost): Promise<string> {
 	// Give the replacement a real persisted session file to resume: one answered turn.
 	const turn = host.runProbe("shell_fixture", SHELL_FIXTURE_INPUT, "seed");
-	const prompt = await Promise.race([host.waitForPrompt().catch(() => undefined)]);
+	const prompt = await host.waitForPrompt().catch(() => undefined);
 	prompt?.resolve("Allow once");
 	await turn;
 	const file = host.runtimeHost.session.sessionManager.getSessionFile();

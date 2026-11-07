@@ -2,23 +2,24 @@
 import { constants } from "node:fs";
 import { access as fsAccess } from "node:fs/promises";
 import { constants as osConstants } from "node:os";
+import type { ExecShell } from "@code-yeongyu/senpi-machine-ops";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { TextContent } from "@earendil-works/pi-ai";
-import { spawn } from "child_process";
 import { type Static, Type } from "typebox";
-import { waitForChildProcess } from "../../utils/child-process.ts";
+import { annotateShellTrust, type ShellTrust } from "../../engine-trust/shell-trust.ts";
 import {
 	getShellConfig,
 	getShellEnv,
-	killProcessTree,
 	noteDetachedChildExited,
 	pruneTrackedDetachedChildren,
 	type ShellConfig,
 	trackDetachedChildPid,
 } from "../../utils/shell.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
+import { defaultToolMachine, type ToolMachine } from "./machine.ts";
 import { modelOnlyText } from "./model-only-text.ts";
 import { OutputAccumulator } from "./output-accumulator.ts";
+import { SecretOutputRedactor } from "./secret-output-redactor.ts";
 import { BASH_UPDATE_THROTTLE_MS, createShellRenderers } from "./renderers/bash.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult } from "./truncate.ts";
@@ -48,7 +49,8 @@ const bashSchema = Type.Object({
 
 export const bashToolSystemPromptContribution = {
 	snippet: "Execute bash commands (ls, rg, find, etc.)",
-	guidelines: ["You can inspect PI_* environment variables for current model and session details."],
+	guidelines: ["PI_* env vars = current model + session details."],
+	fullGuidelines: ["You can inspect PI_* environment variables for current model and session details."],
 } as const;
 
 export type BashToolInput = Static<typeof bashSchema>;
@@ -73,6 +75,7 @@ export type BashToolOutput = Static<typeof bashOutputSchema>;
 export interface BashToolDetails {
 	truncation?: TruncationResult;
 	fullOutputPath?: string;
+	trust?: ShellTrust;
 }
 
 /**
@@ -92,16 +95,24 @@ export interface BashOperations {
 		command: string,
 		cwd: string,
 		options: {
-			onData: (data: Buffer) => void;
+			onData: (data: Buffer, stream?: "stdout" | "stderr") => void;
 			signal?: AbortSignal;
 			timeout?: number;
 			env?: NodeJS.ProcessEnv;
+			redactSecretsInOutput?: boolean;
 		},
 	) => Promise<{ exitCode: number | null }>;
 }
 
-/** Shared process execution used by the built-in shell tools. */
-export function createLocalShellOperations(shellName: string, resolveShellConfig: () => ShellConfig): BashOperations {
+/**
+ * Shared process execution used by the built-in shell tools: one `process.exec` of the operation layer (own
+ * process group, scope token, abort/timeout kill the group). The tool keeps its own output handling.
+ */
+export function createLocalShellOperations(
+	shellName: string,
+	resolveShellConfig: () => ShellConfig,
+	machine: ToolMachine = defaultToolMachine(),
+): BashOperations {
 	return {
 		exec: async (command, cwd, { onData, signal, timeout, env }) => {
 			const timeoutMs = resolveTimeoutMs(timeout);
@@ -115,104 +126,75 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
 				throw new Error(`Working directory does not exist: ${cwd}\nCannot execute ${shellName} commands.`);
 			}
 
-			const commandFromStdin = shellConfig.commandTransport === "stdin";
-			const child = spawn(shellConfig.shell, commandFromStdin ? shellConfig.args : [...shellConfig.args, command], {
-				cwd,
-				detached: process.platform !== "win32",
-				env: env ?? getShellEnv(),
-				stdio: [commandFromStdin ? "pipe" : "ignore", "pipe", "pipe"],
-				windowsHide: true,
-			});
-			if (commandFromStdin) {
-				child.stdin?.on("error", () => {});
-				child.stdin?.end(command);
-			}
-			if (child.pid) trackDetachedChildPid(child.pid);
-			let timedOut = false;
-			let timeoutHandle: NodeJS.Timeout | undefined;
 			let streamCallbackError: unknown;
 			let hasStreamCallbackError = false;
-			// Fires once the process tree has been killed so waitForChildProcess
-			// stops preserving output tails; descendants that survive the group
-			// kill must not keep the aborted command running forever.
-			const killedController = new AbortController();
-			const onAbort = () => {
-				if (child.pid) killProcessTree(child.pid);
-				killedController.abort();
+			// A failing output callback stops the command the same way an abort does.
+			const callbackAbort = new AbortController();
+			const failStream = (error: unknown) => {
+				if (hasStreamCallbackError) return;
+				streamCallbackError = error;
+				hasStreamCallbackError = true;
+				callbackAbort.abort();
 			};
-
+			const handleData = (data: Buffer, stream: "stdout" | "stderr") => {
+				if (hasStreamCallbackError) return;
+				try {
+					const callbackResult = (onData as (data: Buffer, stream: "stdout" | "stderr") => unknown)(data, stream);
+					if (callbackResult && typeof (callbackResult as { then?: unknown }).then === "function") {
+						void Promise.resolve(callbackResult).catch(failStream);
+					}
+				} catch (error) {
+					failStream(error);
+				}
+			};
+			const shell: ExecShell = {
+				path: shellConfig.shell,
+				args: shellConfig.args,
+				commandTransport: shellConfig.commandTransport === "stdin" ? "stdin" : "argv",
+			};
+			const execSignal = signal ? AbortSignal.any([signal, callbackAbort.signal]) : callbackAbort.signal;
+			let result: Awaited<ReturnType<typeof machine.ops.process.exec>>;
 			try {
-				const handleData = (data: Buffer) => {
-					if (hasStreamCallbackError) return;
-					try {
-						const callbackResult = (onData as (data: Buffer) => unknown)(data);
-						if (callbackResult && typeof (callbackResult as { then?: unknown }).then === "function") {
-							void Promise.resolve(callbackResult).catch((error) => {
-								if (!hasStreamCallbackError) {
-									streamCallbackError = error;
-									hasStreamCallbackError = true;
-								}
-								onAbort();
-							});
-						}
-					} catch (error) {
-						streamCallbackError = error;
-						hasStreamCallbackError = true;
-						onAbort();
-					}
-				};
-				// Set timeout if provided.
-				if (timeoutMs !== undefined) {
-					timeoutHandle = setTimeout(() => {
-						timedOut = true;
-						onAbort();
-					}, timeoutMs);
-				}
-				// Stream stdout and stderr.
-				child.stdout?.on("data", handleData);
-				child.stderr?.on("data", handleData);
-				// Handle abort signal by killing the entire process tree.
-				if (signal) {
-					if (signal.aborted) onAbort();
-					else signal.addEventListener("abort", onAbort, { once: true });
-				}
-				// Handle shell spawn errors and wait for the process to terminate without hanging
-				// on inherited stdio handles held by detached descendants.
-				const exitCode = await waitForChildProcess(child, { signal: killedController.signal });
-				if (hasStreamCallbackError) {
-					throw streamCallbackError;
-				}
-				if (signal?.aborted) {
-					throw new Error("aborted");
-				}
-				if (timedOut) {
-					throw new Error(`timeout:${timeout}`);
-				}
-				// A signal-killed shell has no exit code. Use the standard shell convention so
-				// callers do not mistake the termination for a successful command.
-				const signalCode = child.signalCode;
-				return { exitCode: exitCode ?? (signalCode ? 128 + (osConstants.signals[signalCode] ?? 0) : 1) };
+				result = await machine.ops.process.exec(
+					{
+						command,
+						cwd,
+						env: env ?? getShellEnv(),
+						envMode: "exact",
+						shell,
+						timeoutMs: timeoutMs ?? Number.POSITIVE_INFINITY,
+						onOutput: handleData,
+						// Tracked as a process group: whatever the shell backgrounds keeps running in it, and ownership
+						// is released only once that group is empty (senpi#1697).
+						onSpawn: trackDetachedChildPid,
+						onExit: noteDetachedChildExited,
+					},
+					machine.context(execSignal),
+				);
+			} catch (error) {
+				if (hasStreamCallbackError) throw streamCallbackError;
+				if (signal?.aborted) throw new Error("aborted");
+				throw error;
 			} finally {
-				const pid = child.pid;
-				if (pid !== undefined) {
-					if (child.exitCode !== null || child.signalCode !== null) {
-						// The shell exited, but whatever it backgrounded (`sleep 30 &`,
-						// `nohup server &`) still runs in its process group: ownership is
-						// released only once that group is empty (senpi#1697).
-						noteDetachedChildExited(pid);
-					} else {
-						// The kill grace released the wait while the child is still
-						// alive (kill pending): keep it tracked so shutdown cleanup
-						// retries, and unref it so it cannot pin the event loop.
-						child.unref();
-						child.once("exit", () => noteDetachedChildExited(pid));
-					}
-				}
 				// Groups kept past their shell's exit must not accumulate across a session.
 				pruneTrackedDetachedChildren();
-				if (timeoutHandle) clearTimeout(timeoutHandle);
-				if (signal) signal.removeEventListener("abort", onAbort);
 			}
+			if (hasStreamCallbackError) {
+				throw streamCallbackError;
+			}
+			if (signal?.aborted) {
+				throw new Error("aborted");
+			}
+			if (result.timedOut) {
+				throw new Error(`timeout:${timeout}`);
+			}
+			// A signal-killed shell has no exit code. Use the standard shell convention so
+			// callers do not mistake the termination for a successful command.
+			return {
+				exitCode:
+					result.exitCode ??
+					(result.signal ? 128 + (osConstants.signals[result.signal as NodeJS.Signals] ?? 0) : 1),
+			};
 		},
 	};
 }
@@ -223,8 +205,8 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
  * This is useful for extensions that intercept user_bash and still want pi's
  * standard local shell behavior while wrapping or rewriting commands.
  */
-export function createLocalBashOperations(options?: { shellPath?: string }): BashOperations {
-	return createLocalShellOperations("bash", () => getShellConfig(options?.shellPath));
+export function createLocalBashOperations(options?: { shellPath?: string; machine?: ToolMachine }): BashOperations {
+	return createLocalShellOperations("bash", () => getShellConfig(options?.shellPath), options?.machine);
 }
 
 export interface BashSpawnContext {
@@ -264,12 +246,15 @@ function resolveSpawnContext(
 		}
 		if (ctx.thinkingLevel) env.PI_REASONING_LEVEL = ctx.thinkingLevel;
 		if (ctx.browserEngine) env.OMO_BROWSER_ENGINE = ctx.browserEngine;
+		Object.assign(env, ctx.sessionEnv);
 	}
 	const baseContext: BashSpawnContext = { command, cwd, env };
 	return spawnHook ? spawnHook(baseContext) : baseContext;
 }
 
 export interface BashToolOptions {
+	/** Redact credential-shaped output before streaming or spilling. Default: false. */
+	redactSecretsInOutput?: boolean;
 	/** Custom operations for command execution. Default: local shell */
 	operations?: BashOperations;
 	/** Command prefix prepended to every command (for example shell setup commands) */
@@ -280,6 +265,8 @@ export interface BashToolOptions {
 	exposeSessionEnvironment?: boolean;
 	/** Hook to adjust command, cwd, or env before execution */
 	spawnHook?: BashSpawnHook;
+	/** Operation layer and policy gate. Default: the process-wide local machine. */
+	machine?: ToolMachine;
 }
 
 export type BashRenderState = {
@@ -295,6 +282,7 @@ export interface ShellToolConfig {
 	prompt: string;
 	promptSnippet: string;
 	promptGuidelines?: readonly string[];
+	fullPromptGuidelines?: readonly string[];
 	tempFilePrefix: string;
 }
 
@@ -303,7 +291,8 @@ export function createShellToolDefinition(
 	config: ShellToolConfig,
 	options?: BashToolOptions,
 ): ToolDefinition<typeof bashSchema, BashToolDetails | undefined, BashRenderState> {
-	const ops = options?.operations ?? createLocalBashOperations({ shellPath: options?.shellPath });
+	const machine = options?.machine ?? defaultToolMachine();
+	const ops = options?.operations ?? createLocalBashOperations({ shellPath: options?.shellPath, machine });
 	const commandPrefix = options?.commandPrefix;
 	const exposeSessionEnvironment = options?.exposeSessionEnvironment ?? true;
 	const spawnHook = options?.spawnHook;
@@ -314,6 +303,8 @@ export function createShellToolDefinition(
 		description: `Execute a ${config.shellName} command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`,
 		promptSnippet: config.promptSnippet,
 		promptGuidelines: exposeSessionEnvironment && config.promptGuidelines ? [...config.promptGuidelines] : undefined,
+		fullPromptGuidelines:
+			exposeSessionEnvironment && config.fullPromptGuidelines ? [...config.fullPromptGuidelines] : undefined,
 		parameters: bashSchema,
 		outputSchema: bashOutputSchema,
 		constrainedSampling: { type: "json_schema", strict: "prefer" },
@@ -324,6 +315,8 @@ export function createShellToolDefinition(
 			onUpdate?,
 			ctx?: ExtensionContext,
 		) {
+			const admitted = machine.begin("process.exec", { command, timeout }, signal);
+			if (admitted !== undefined) await admitted;
 			const resolvedCommand = commandPrefix ? `${commandPrefix}\n${command}` : command;
 			const spawnContext = resolveSpawnContext(
 				resolvedCommand,
@@ -333,6 +326,10 @@ export function createShellToolDefinition(
 				ctx,
 			);
 			const output = new OutputAccumulator({ tempFilePrefix: config.tempFilePrefix });
+			const streams =
+				options?.redactSecretsInOutput === true
+					? new Map<string, { redactor: SecretOutputRedactor; decoder: TextDecoder }>()
+					: undefined;
 			let acceptingOutput = true;
 			let updateTimer: NodeJS.Timeout | undefined;
 			let updateDirty = false;
@@ -385,9 +382,16 @@ export function createShellToolDefinition(
 				onUpdate({ content: [], details: undefined });
 			}
 
-			const handleData = (data: Buffer) => {
+			const handleData = (data: Buffer, stream = "stdout") => {
 				if (!acceptingOutput) return;
-				output.append(data);
+				if (streams) {
+					let state = streams.get(stream);
+					if (!state) {
+						state = { redactor: new SecretOutputRedactor(), decoder: new TextDecoder() };
+						streams.set(stream, state);
+					}
+					output.appendText(state.redactor.push(state.decoder.decode(data, { stream: true })));
+				} else output.append(data);
 				scheduleOutputUpdate();
 			};
 
@@ -398,6 +402,12 @@ export function createShellToolDefinition(
 				let hasPrimaryError = false;
 				let snapshot: Awaited<ReturnType<OutputAccumulator["snapshot"]>> | undefined;
 				try {
+					if (streams) {
+						for (const { redactor, decoder } of streams.values()) {
+							output.appendText(redactor.push(decoder.decode()) + redactor.finish());
+						}
+						updateDirty = true;
+					}
 					output.finish();
 					emitOutputUpdate();
 					snapshot = output.snapshot({ persistIfTruncated: true });
@@ -469,6 +479,7 @@ export function createShellToolDefinition(
 				try {
 					const result = await ops.exec(spawnContext.command, spawnContext.cwd, {
 						onData: handleData,
+						redactSecretsInOutput: options?.redactSecretsInOutput === true,
 						signal,
 						timeout,
 						env: spawnContext.env,
@@ -514,10 +525,19 @@ export function createShellToolDefinition(
 					wall_time_seconds: wallTimeSeconds,
 				};
 				if (exitCode !== 0) {
+					const text = appendStatus(outputText, `Command exited with code ${exitCode}`);
+					// The engine trust annotation (omo#10762) rides only on error results, so the success
+					// `outputSchema` (and the prompt bytes it costs) stays unchanged.
+					const annotation = annotateShellTrust({ exitCode, output: fullOutput.content });
+					if (annotation === undefined) {
+						return { content: [{ type: "text", text }], details, structuredContent, isError: true };
+					}
 					return {
-						content: [{ type: "text", text: appendStatus(outputText, `Command exited with code ${exitCode}`) }],
-						details,
-						structuredContent,
+						content: [
+							{ type: "text", text: annotation.text === undefined ? text : `${text}\n\n${annotation.text}` },
+						],
+						details: { ...details, trust: annotation.trust },
+						structuredContent: { ...structuredContent, trust: annotation.trust },
 						isError: true,
 					};
 				}
@@ -538,6 +558,7 @@ const bashToolConfig: ShellToolConfig = {
 	prompt: "$",
 	promptSnippet: bashToolSystemPromptContribution.snippet,
 	promptGuidelines: bashToolSystemPromptContribution.guidelines,
+	fullPromptGuidelines: bashToolSystemPromptContribution.fullGuidelines,
 	tempFilePrefix: "pi-bash",
 };
 

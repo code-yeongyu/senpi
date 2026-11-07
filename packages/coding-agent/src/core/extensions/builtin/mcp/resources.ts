@@ -14,6 +14,7 @@
 import { Text } from "@earendil-works/pi-tui";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { type Static, Type } from "typebox";
+import { redactResolvedReferenceData, redactResolvedReferenceValues } from "../../../config-reference-redaction.ts";
 import type { ToolDefinition } from "../../types.ts";
 import type { McpCachedServerCatalog } from "./catalog-cache.ts";
 import type { ServerConnection } from "./connection.ts";
@@ -22,8 +23,14 @@ import type { McpToolDetails } from "./expose/register.ts";
 import type { McpOutputArtifacts } from "./guard/output-guard.ts";
 import { applyMcpOutputGuard } from "./guard/output-guard.ts";
 import { ResourceUpdatedNotificationSchema, registerMcpNotificationHandler } from "./notification-schemas.ts";
+import { type McpRequestOrigin, mcpRequestOptions } from "./request-origin.ts";
+import { McpMrtrError } from "./modern/errors.ts";
+import { ensureMcpToolCallConnection } from "./health.ts";
+import { isModernMcpClient } from "./modern/request.ts";
 
 export interface McpResourceServer {
+	readonly ensureFresh?: () => Promise<void>;
+	readonly requestOrigin?: () => McpRequestOrigin | undefined;
 	readonly server: string;
 	readonly connection: ServerConnection;
 	readonly agentDir?: string;
@@ -45,6 +52,8 @@ export async function ensureMcpResourceSubscriptions(
 	client: Client,
 	resources: ReadonlyArray<{ uri: string }>,
 ): Promise<void> {
+	// Modern streams derive their resource URI filter from resources/list results.
+	if (isModernMcpClient(client)) return;
 	if (client.getServerCapabilities()?.resources?.subscribe !== true) return;
 	await Promise.all(
 		resources.map((resource) => client.subscribeResource({ uri: resource.uri }).catch(() => undefined)),
@@ -52,14 +61,28 @@ export async function ensureMcpResourceSubscriptions(
 }
 
 /** Read one resource and flatten its contents to guarded text. */
-export async function readMcpResourceAsText(server: McpResourceServer, uri: string): Promise<string> {
+export async function readMcpResourceAsText(
+	server: McpResourceServer,
+	uri: string,
+	signal?: AbortSignal,
+): Promise<string> {
 	let contents: Awaited<ReturnType<Client["readResource"]>>["contents"];
 	try {
-		const result = await server.connection.client.readResource({ uri }, { timeout: server.requestTimeoutMs });
+		if (server.requestOrigin) await ensureMcpToolCallConnection(server.connection, server.ensureFresh);
+		const result = await server.connection.client.readResource(
+			{ uri },
+			mcpRequestOptions(server.requestOrigin?.(), {
+				timeout: server.requestTimeoutMs,
+				...(signal === undefined ? {} : { signal }),
+			}),
+		);
 		contents = result.contents;
 	} catch (error) {
+		if (error instanceof McpMrtrError) throw error;
 		throw new ToolExecError(
-			`Failed to read MCP resource ${uri}: ${error instanceof Error ? error.message : String(error)}`,
+			redactResolvedReferenceValues(
+				`Failed to read MCP resource ${uri}: ${error instanceof Error ? error.message : String(error)}`,
+			),
 			{
 				phase: "call",
 				serverName: server.server,
@@ -103,12 +126,12 @@ export function createMcpResourceTools(servers: () => readonly McpResourceServer
 			const lines = scoped.flatMap((entry) =>
 				entry.resources.map(
 					(resource) =>
-						`- @mcp:${entry.server}/${resource.uri} — ${resource.name ?? resource.uri}${resource.mimeType ? ` (${resource.mimeType})` : ""}`,
+						`- @mcp:${entry.server}/${resource.uri} - ${resource.name ?? resource.uri}${resource.mimeType ? ` (${resource.mimeType})` : ""}`,
 				),
 			);
 			const text = lines.length === 0 ? "No MCP resources available." : lines.join("\n");
 			return {
-				content: [{ type: "text", text }],
+				content: [{ type: "text", text: redactResolvedReferenceValues(text) }],
 				details: {
 					preview: `${lines.length} resource(s)`,
 					server: params.server ?? "*",
@@ -126,18 +149,25 @@ export function createMcpResourceTools(servers: () => readonly McpResourceServer
 		description: "Read one MCP resource by server name and URI; returns its (guarded) content.",
 		parameters: ReadParams,
 		executionMode: "parallel",
-		async execute(_id, params: Static<typeof ReadParams>) {
+		async execute(_id, params: Static<typeof ReadParams>, signal) {
 			const entry = servers().find((candidate) => candidate.server === params.server);
 			if (entry === undefined) {
-				throw new ToolExecError(`Unknown MCP server '${params.server}' for resource ${params.uri}.`, {
-					phase: "call",
-					serverName: params.server,
-				});
+				throw new ToolExecError(
+					redactResolvedReferenceValues(`Unknown MCP server '${params.server}' for resource ${params.uri}.`),
+					{
+						phase: "call",
+						serverName: params.server,
+					},
+				);
 			}
-			const text = await readMcpResourceAsText(entry, params.uri);
+			const text = await readMcpResourceAsText(entry, params.uri, signal);
 			return {
 				content: [{ type: "text", text }],
-				details: { preview: params.uri, server: params.server, tool: "mcp_read_resource" },
+				details: redactResolvedReferenceData({
+					preview: params.uri,
+					server: params.server,
+					tool: "mcp_read_resource",
+				}),
 			};
 		},
 		renderCall(args, theme) {
@@ -178,8 +208,16 @@ export async function expandMcpResourceMentions(
 				`<mcp-resource server="${serverName}" uri="${uri}">\n${body}\n</mcp-resource>`,
 			);
 		} catch (error) {
+			if (
+				error instanceof McpMrtrError &&
+				["MCP_MRTR_CANCELLED", "MCP_MRTR_CONTEXT_CHANGED", "MCP_MRTR_TIMEOUT"].includes(error.code)
+			) {
+				notices.push("MCP resource request canceled; mention left unchanged.");
+				continue;
+			}
 			notices.push(`@mcp mention left as-is: ${error instanceof Error ? error.message : String(error)}`);
 		}
 	}
-	return { changed: expanded !== text, notices, text: expanded };
+	const redacted = redactResolvedReferenceValues(expanded);
+	return { changed: redacted !== text, notices: redactResolvedReferenceData(notices), text: redacted };
 }

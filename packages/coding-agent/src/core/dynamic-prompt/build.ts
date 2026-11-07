@@ -7,12 +7,12 @@ import { buildPoliciesSection } from "./policies.ts";
 import { buildStyleSection } from "./style.ts";
 import { categorizeTools } from "./tool-categorization.ts";
 import { buildToolSection } from "./tool-section.ts";
-import type { AvailableTool, PromptSurface } from "./types.ts";
+import type { AvailableTool, PromptSurface, SharedSections } from "./types.ts";
 import { buildVerificationSection } from "./verification.ts";
 import { buildWorkingTaskSection } from "./working-task.ts";
 import { buildWorkstationSection, type WorkstationDialect } from "./workstation.ts";
 
-export { type PromptSurface, type TerminalOrApp, terminalOrApp } from "./types.ts";
+export { type PromptSurface, type SharedSections, type TerminalOrApp, terminalOrApp } from "./types.ts";
 
 export const PROMPT_SURFACE_ENV_VAR = "SENPI_PROMPT_SURFACE";
 
@@ -27,11 +27,26 @@ export interface DynamicPromptCoreContext {
 	tools: AvailableTool[];
 	surface: PromptSurface;
 	appName?: string;
-	/** Rendered "## Available Tools" (+ "## Tool Guidelines") section. */
+	/** Rendered "## Available Tools" (+ "## Tool Guidelines") section; empty when it has nothing to list. */
 	toolSection: string;
+	/** The wording the shared section builders render for this prompt (senpi#5665). */
+	sharedSections: SharedSections;
+}
+
+/** Tool snippets and guidelines as the pre-diet prompt listed them, rendered for `sharedSections: "full"`. */
+export interface FullToolPrompt {
+	/** Every contributing tool's snippet, including tools whose schema description the model already reads. */
+	toolSnippets: Record<string, string>;
+	/** Each tool's `fullPromptGuidelines`, else its `promptGuidelines`. */
+	promptGuidelines: string[];
 }
 
 export interface BuildDynamicSystemPromptOptions {
+	/** Observe the parts from this exact render without composing the prompt again. */
+	onParts?: (parts: readonly DynamicSystemPromptPart[]) => void;
+	/** Loader replacement and additions, assembled here with the same separators as the session. */
+	customPrompt?: string;
+	appendSystemPrompt?: string;
 	/** Host identity; omitted preserves the Native runtime's configured brand. */
 	appName?: string;
 	/**
@@ -41,9 +56,17 @@ export interface BuildDynamicSystemPromptOptions {
 	 */
 	cwd: string;
 	selectedTools: string[];
+	/** One-line snippets, listed under "## Available Tools" for selected tools; pass none for a tool whose schema description the model already sees. */
 	toolSnippets: Record<string, string>;
 	promptGuidelines: string[];
-	contextFiles: Array<{ path: string; content: string }>;
+	/** Tool contributions for `sharedSections: "full"`; without it the full render uses `toolSnippets`/`promptGuidelines`. */
+	fullToolPrompt?: FullToolPrompt;
+	/**
+	 * Wording of the shared section builders: `full` renders their text from before the senpi#5335 diet,
+	 * `diet` (the default) the slimmed text. A prompt preset declares it (senpi#5665).
+	 */
+	sharedSections?: SharedSections;
+	contextFiles: Array<{ path: string; content: string; scope?: "user" }>;
 	skills: Skill[];
 	tuningSection?: string;
 	/**
@@ -66,75 +89,105 @@ export interface BuildDynamicSystemPromptOptions {
 	surface?: PromptSurface;
 }
 
-function buildContextFilesSection(contextFiles: Array<{ path: string; content: string }>): string {
-	if (contextFiles.length === 0) {
-		return "";
-	}
-
-	const lines = [
-		"## Project Context",
-		"",
-		"Project instruction files (below, and in [Directory Context: ...] blocks injected during reads) bind files under their directory; deeper files win on conflict; explicit user instructions override.",
-		"",
-	];
-	for (const contextFile of contextFiles) {
-		lines.push(`### ${contextFile.path}`, "", contextFile.content.trimEnd(), "");
-	}
-	return lines.join("\n").trimEnd();
+export interface DynamicSystemPromptPart {
+	readonly name: string;
+	readonly source?: string;
+	/** Includes its separators: joining every text with "" is the exact provider prompt. */
+	readonly text: string;
 }
 
-export function buildDynamicSystemPrompt(options: BuildDynamicSystemPromptOptions): string {
+const USER_INSTRUCTIONS_HEADER =
+	"\n\n## User Instructions\n\nThe user's own instruction files (below) are standing instructions from the user. They override the default working style above, including whether, when, and how to ask the user questions; only an explicit instruction in the current conversation outranks them.\n\n";
+
+const PROJECT_CONTEXT_HEADER =
+	"\n\n## Project Context\n\nProject instruction files (below, and in [Directory Context: ...] blocks injected during reads) apply to work under their directory and override the default working style above, including whether, when, and how to ask the user questions; deeper files win on conflict; explicit user instructions override.\n\n";
+
+export function buildDynamicSystemPromptParts(options: BuildDynamicSystemPromptOptions): DynamicSystemPromptPart[] {
+	if (options.customPrompt !== undefined) {
+		return [
+			{ name: "custom_prompt", source: "loader", text: options.customPrompt },
+			...(options.appendSystemPrompt === undefined
+				? []
+				: [{ name: "append_system_prompt", source: "loader", text: `\n\n${options.appendSystemPrompt}` }]),
+		];
+	}
 	const tools = categorizeTools(options.selectedTools);
+	const sharedSections = options.sharedSections ?? "diet";
+	const toolPrompt = sharedSections === "full" ? options.fullToolPrompt : undefined;
 
 	const toolSection = buildToolSection({
 		tools,
-		toolSnippets: options.toolSnippets,
-		promptGuidelines: options.promptGuidelines,
+		toolSnippets: toolPrompt?.toolSnippets ?? options.toolSnippets,
+		promptGuidelines: toolPrompt?.promptGuidelines ?? options.promptGuidelines,
+		sharedSections,
 	});
 
 	const surface = options.surface ?? "terminal";
 	const sections = options.corePrompt
-		? [options.corePrompt({ tools, toolSection, surface, appName: options.appName })]
+		? [options.corePrompt({ tools, toolSection, surface, appName: options.appName, sharedSections })]
 		: [
-				buildIdentitySection(options.appName),
+				buildIdentitySection(options.appName, sharedSections),
 				"",
-				buildIntentGate({ tools, surface }),
+				buildIntentGate({ tools, surface, sharedSections }),
 				"",
-				buildWorkingTaskSection(),
+				buildWorkingTaskSection({ sharedSections }),
 				"",
-				buildVerificationSection({ surface }),
+				buildVerificationSection({ surface, sharedSections }),
 				"",
-				toolSection,
+				...(toolSection ? [toolSection, ""] : []),
+				buildPoliciesSection({ sharedSections }),
 				"",
-				buildPoliciesSection(),
+				buildHandoffSection({ surface, sharedSections }),
 				"",
-				buildHandoffSection({ surface }),
-				"",
-				buildStyleSection({ surface }),
+				buildStyleSection({ surface, sharedSections }),
 			];
 
+	const parts: DynamicSystemPromptPart[] = [{ name: "core", source: "dynamic-prompt", text: sections.join("\n") }];
 	const tuning = options.tuningSection?.trim();
 	if (tuning) {
-		sections.push("", tuning);
+		parts.push({ name: "tuning", source: "prompt-preset", text: `\n\n${tuning}` });
 	}
 
-	const contextFilesSection = buildContextFilesSection(options.contextFiles);
-	if (contextFilesSection) {
-		sections.push("", contextFilesSection);
+	// Instruction files outrank the core's and presets' default working style, asking included.
+	const userFiles = options.contextFiles.filter((file) => file.scope === "user");
+	const projectFiles = options.contextFiles.filter((file) => file.scope !== "user");
+	const contextGroups = [
+		{ files: userFiles, header: USER_INSTRUCTIONS_HEADER },
+		{ files: projectFiles, header: PROJECT_CONTEXT_HEADER },
+	].filter((group) => group.files.length > 0);
+	for (const group of contextGroups) {
+		parts.push({ name: "project_context", source: "dynamic-prompt", text: group.header });
+		for (const [index, file] of group.files.entries()) {
+			const text = `### ${file.path}\n\n${file.content.trimEnd()}`;
+			parts.push({
+				name: "project_context",
+				source: file.path,
+				text: index === group.files.length - 1 ? text.trimEnd() : `${text}\n\n`,
+			});
+		}
 	}
 
 	const skillsSection = formatSkillsForPrompt(options.skills);
 	if (skillsSection) {
-		sections.push(skillsSection);
+		parts.push({ name: "skills", source: "skills", text: `\n${skillsSection}` });
 	}
 
-	sections.push(
-		"",
-		buildWorkstationSection({
+	parts.push({
+		name: "workstation",
+		source: "dynamic-prompt",
+		text: `\n\n${buildWorkstationSection({
 			selectedTools: options.selectedTools,
 			dialect: options.workstationDialect ?? "default",
-		}),
-	);
+		})}`,
+	});
+	if (options.appendSystemPrompt !== undefined) {
+		parts.push({ name: "append_system_prompt", source: "loader", text: `\n\n${options.appendSystemPrompt}` });
+	}
+	return parts;
+}
 
-	return sections.join("\n");
+export function buildDynamicSystemPrompt(options: BuildDynamicSystemPromptOptions): string {
+	const parts = buildDynamicSystemPromptParts(options);
+	options.onParts?.(parts);
+	return parts.map((part) => part.text).join("");
 }

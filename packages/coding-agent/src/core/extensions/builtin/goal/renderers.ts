@@ -30,7 +30,7 @@ export function renderGoalToolCall(toolName: string, args: unknown, theme: Theme
 		const statusColor: ThemeColor = params.status === "complete" ? "success" : "error";
 		let line = `${title} ${theme.fg("muted", "→")} ${theme.fg(statusColor, params.status)}`;
 		if (typeof params.reason === "string" && params.reason.trim().length > 0) {
-			line += ` ${theme.fg("muted", `— ${shorten(params.reason.trim(), CALL_REASON_BUDGET)}`)}`;
+			line += theme.fg("muted", ` - ${shorten(params.reason.trim(), CALL_REASON_BUDGET)}`);
 		}
 		return new Text(line, 0, 0);
 	}

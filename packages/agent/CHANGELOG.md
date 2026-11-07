@@ -6,7 +6,449 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.6-1] - 2026-11-06
+
+### Breaking Changes
+
+### Added
+
+- The conformance entry exports the `AdmissionLine` type, so a writer outside the package can take a store's single admission line ([#5732](https://github.com/code-yeongyu/senpi/issues/5732))
+- `SyncCommit` / `SyncCommitStore`: the memory and Bun SQLite durable stores now offer `commitSync`, a commit that is durable when it returns and throws a refusal on the same call ([#5866](https://github.com/code-yeongyu/senpi/pull/5866)).
+- A session store over `DurableStore` (`openSessionStore`, `openSyncSessionStore`, `SessionStoreError`, exported from `@earendil-works/pi-agent-core/conformance`): a session's header and entries with atomic append and rewrite, async on every backend and synchronous on a `SyncCommitStore` ([#5866](https://github.com/code-yeongyu/senpi/pull/5866)).
+- `ToolHost` may serve the files of the device it runs calls on: an optional `deviceFiles(scope)`, which the remote ToolHost already provides ([#5869](https://github.com/code-yeongyu/senpi/pull/5869)).
+- `isLocalDeviceFiles(files)` and the `LOCAL_DEVICE_FILES` registry symbol: `localDeviceFiles()` objects carry the brand, so an extension can tell a fused session's local filesystem from a split session's file channel ([#6054](https://github.com/code-yeongyu/senpi/pull/6054)).
+
+### Changed
+
+### Fixed
+
+- A tool result whose content JSON cannot carry (for example a BigInt inside a content part) now settles that call as an `isError` tool result naming the problem on the prepared executor, instead of rejecting the whole call with an untyped `TypeError`. Model-issued calls, `pi.executeTool()` and the agent harness all reach it ([#5878](https://github.com/code-yeongyu/senpi/pull/5878)).
+- Agent harness tool bodies run on the cleared arguments object again, not the prepared ToolHost's JSON copy of it: a value `prepareArguments` added that JSON would change (a `Date`) reaches the body unchanged, and the body's in-place edits reach `after_tool`'s `args`. Arguments JSON cannot carry (a BigInt, a cycle) now settle as a tool error before the body runs, instead of an untyped `TypeError` ([#5883](https://github.com/code-yeongyu/senpi/pull/5883)).
+- Hand conformance cases (KILL-HAND, MULTI-HAND, FAULT-HAND) now pass on a store whose writes confirm only after I/O, such as Durable Object SQLite: the hand rig takes an event-loop turn between transport clock steps, and MULTI-KILL-01 waits for every record to be acknowledged instead of a fixed 200 ms ([#6053](https://github.com/code-yeongyu/senpi/pull/6053))
+- Hand conformance cases on a store whose writes confirm after I/O no longer time out: each rig step now takes eight event-loop turns instead of one, enough for a write that confirms after several I/O hops to land before the clock moves ([#6114](https://github.com/code-yeongyu/senpi/issues/6114), [#6115](https://github.com/code-yeongyu/senpi/pull/6115))
+
+### Removed
+
+## [2026.11.5-1] - 2026-11-05
+
+### Breaking Changes
+
+### Added
+
+- The conformance entry exports the `AdmissionLine` type, so a writer outside the package can take a store's single admission line ([#5652](https://github.com/code-yeongyu/senpi/issues/5652))
+- `createRemoteToolHost({ filePlanes })`: the planes a pending device file operation may host on its own lane, so a split session can serve a two-sided extension's forwarded tool events for a file operation. Absent, the default, a file operation hosts no nested request, as before. A hand passes each file operation its own nested requester (`HandScope.file` takes it) ([#5664](https://github.com/code-yeongyu/senpi/pull/5664)).
+- `DeviceFiles.run`: the memory component's `git` and `lsof` calls run on the device through an allowlisted operation, with no shell, a bounded environment, the hand's `tool_call` handlers, and the git-activity lock held as fd 3 ([#5696](https://github.com/code-yeongyu/senpi/pull/5696))
+- Main-entry exports of `createPreparedToolHost` (the prepared pipeline as an in-process ToolHost), `canonicalJson` and `toStoreValue` ([#5738](https://github.com/code-yeongyu/senpi/pull/5738)).
+- `AgentLoopConfig.batchStoreFactory` / `AgentOptions.batchStoreFactory`, `openMemoryBatchStore` (a fresh in-memory store per tool batch) and `BatchStoreMissingError` ([#5738](https://github.com/code-yeongyu/senpi/pull/5738)).
+- `AgentLoopConfig.afterToolFreeze` / `AgentOptions.afterToolFreeze` (runs once per call after it is frozen, with the arguments object `beforeToolCall` saw and the frozen copy the tool receives), `noPreflightCarry` and `PreflightCarryMissingError` ([#5795](https://github.com/code-yeongyu/senpi/issues/5795)).
+- A hand fences a moved session's old owner with an epoch floor (`src/execution/remote-epoch.ts`, brain/hand S35, relay design 4.4): `createHandEpochFence({ ownerOf, durable? })` keeps one floor per execution scope that only the scope's owner raises, one epoch at a time, that never lowers and remembers its owner; with `durable` it persists on the hand's store on the ledger's admission line. `createRemoteExecutor({ fence })` answers `floor` frames and refuses an invoke below the floor (`epoch_fenced`) before anything of it is recorded, opened or run, also inside each step of a call's walk. `createRemoteToolHost({ epoch })` dispatches a scope lane's calls only after the hand acked exactly its epoch; a late or duplicate floor answer cannot change a decided lane, and after a hand restart a pending call is re-sent only once the re-sent floor is acked. Without a ledger the hand re-checks the epoch right before the tool runs, and an acknowledgement is fenced inside its admission slot. A second link's executor on a live hand no longer re-runs restart recovery. Adds the EPOCH, MULTI-EPOCH and KILL-EPOCH conformance cases ([#5739](https://github.com/code-yeongyu/senpi/pull/5739)).
+- Loop-hook link for a loop that runs away from the user's machine: `createLoopHookHost` sends each hooked loop event to the user's machine (`serveLoopHooks`) and resolves with its result before the provider request. While that machine is offline the call waits and resumes exactly once. A call the previous process never started is sent again with the same ID; one it started is never re-run and ends `LoopHookRestartedError`. KILL-HOOK-01..05 conformance cases are registered and exported from `./conformance` ([#5741](https://github.com/code-yeongyu/senpi/pull/5741)).
+- `AgentLoopConfig.commitStep` (optional): called once per model step after its provider tool results are emitted and before the loop ends the turn or dispatches tools; a rejection ends the run with that error. Plus the `ModelEgress` route types, `StepCommitError` and `isStepCommitError` ([#5857](https://github.com/code-yeongyu/senpi/pull/5857))
+- `AgentHarnessOptions.onExecutionPipeline`: every harness tool body now runs on the in-process prepared ToolHost, and this sink receives one `{ pipeline: "prepared", toolCallId }` receipt per call, as `Agent.onExecutionPipeline` does ([#5859](https://github.com/code-yeongyu/senpi/pull/5859)).
+- Added the session plane (`src/execution/plane-session.ts`): `createSplitToolHost()` runs each call to a tool declared `runs: "brain"` on the loop's own pipeline (`createLoopToolHost()`) and every other call on the hand, keeping the batch's mode and the model's source order; `serveSessionPlane()` / `createSessionPlaneClient()` let a hand-run tool ask the brain that owns its call for a loop-side tool call, and refuse any tool that is not loop-side. Added the thread chain count (`src/execution/chain-count.ts`): a chain call carries its hop count and is refused with `chain_count_limit` only past a count the user set; unset means unlimited, and there is no cost limit ([#5882](https://github.com/code-yeongyu/senpi/pull/5882)).
+
+### Changed
+
+- An agent loop with no `toolHost` runs model-issued tool batches on the prepared pipeline (batch coordinator + prepared executor) instead of its own scheduler. The package entry's `Agent`, `agentLoop`, `agentLoopContinue`, `runAgentLoop` and `runAgentLoopContinue` supply `openMemoryBatchStore` unless a factory is passed, so existing callers change nothing. A batch that repeats a tool call ID runs each block as its own call, as the removed scheduler did ([#5796](https://github.com/code-yeongyu/senpi/issues/5796)). The package entry also supplies `noPreflightCarry` unless an `afterToolFreeze` is passed. The loop core alone refuses a tool batch with `BatchStoreMissingError` when no factory is configured and with `PreflightCarryMissingError` when no `afterToolFreeze` is configured ([#5738](https://github.com/code-yeongyu/senpi/pull/5738), [#5795](https://github.com/code-yeongyu/senpi/issues/5795)).
+
+### Fixed
+
+### Removed
+
+- The agent loop's own tool scheduler; every tool batch without a `toolHost` runs on the prepared pipeline ([#5738](https://github.com/code-yeongyu/senpi/pull/5738)).
+
+## [2026.11.4-2] - 2026-11-04
+
+### Breaking Changes
+
+### Added
+
+- `ToolHostOptions.local` (the loop's context and assistant message, for a ToolHost running in the loop's process) and main-entry exports of `createBatchCoordinator`, `createExecutionLedger`, `createMemoryStoreMedium`, `openMemoryStore`, `createAdmissionLine` and `withToolNameCorrection` ([#5657](https://github.com/code-yeongyu/senpi/pull/5657)).
+- `DeviceFiles`: extension code reaches the device's files through one channel, the local filesystem on a fused session and the hand's disk, through its grant, `tool_call` handlers and filesystem policy, on a split session ([#5691](https://github.com/code-yeongyu/senpi/pull/5691))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.4-1] - 2026-11-04
+
+### Breaking Changes
+
+### Added
+
+- Added the model plane (`src/execution/plane.ts`, `src/execution/plane-model.ts`): a call running on a hand can ask the brain that owns it for a model completion over the call's own scope lane. The brain admits a nested request only while its parent call is live on that lane, serves each request once (a replay gets the same answer), aborts it with its parent, and keeps only a model's provider and ID, context and sampling options from the hand's request. `createRemoteToolHost()` takes optional `planes`; `HandCall.nested` carries the call's nested requests. Nothing serves or calls a plane yet ([#5640](https://github.com/code-yeongyu/senpi/pull/5640)).
+- Exported the helpers that turn a finished tool call into its `tool_execution_update` / `tool_execution_end` events and its result message (`src/execution/tool-outcome-events.ts`): `createErrorToolResult`, `emitToolExecutionUpdate`, `emitToolExecutionEnd`, `createToolResultMessage`, `emitToolResultMessage`, `shouldTerminateToolBatch`. The agent loop uses the same functions, unchanged ([#5648](https://github.com/code-yeongyu/senpi/pull/5648)).
+- A sequential mode for the durable batch coordinator (`createSequentialCoordinator`), with the SEQ-01 and MULTI-FAIR-02 conformance cases; nothing selects it yet ([#5661](https://github.com/code-yeongyu/senpi/issues/5661))
+- Consent mechanics for cross-machine executions on the durable batch coordinator: Gate A on the raw call, Gate B on the frozen call, durable answers, and the CONSENT-01/02 conformance cases. Nothing configures consent yet ([#5663](https://github.com/code-yeongyu/senpi/issues/5663))
+- Nested admission on the brain that owns a parent execution (`createNestedAdmission`), with the NEST-01..09, CANCEL-01..02 and KILL-NEST-01..03 conformance cases. Nothing routes nested requests to it yet ([#5669](https://github.com/code-yeongyu/senpi/issues/5669))
+- Durable wakes from a hand to the brain that owns its scope (`createWakeOutbox`, `createWakeInbox`: commit before send, dedup by event id, ack after commit, re-offer, 7-day retention), with the WAKEX-01..07 and KILL-WAKEX-01..06 conformance cases. Nothing configures it yet ([#5675](https://github.com/code-yeongyu/senpi/issues/5675))
+- A durable scope lifecycle for split endpoints (`createScopeLifecycle`: commit-before-next-call, issuer-only close, forced close writes outcomes first, the idle TTL spares live scopes), with the LIFECYCLE-01..03, SCOPE-01..02 and MULTI-LIFE-01 conformance cases. Nothing routes lifecycle to it yet ([#5681](https://github.com/code-yeongyu/senpi/issues/5681))
+
+### Changed
+
+- The conformance case that resends a lost transport frame on its own lane's deadline is now `MULTI-FAIR-03` (was `MULTI-FAIR-02`, now the sequential fairness case); its behavior is unchanged ([#5661](https://github.com/code-yeongyu/senpi/issues/5661))
+
+### Fixed
+
+- A sequential run whose call ABORTs on a blocked preparation outcome now replays the later calls as an interrupted preparation, as one batch does ([#5663](https://github.com/code-yeongyu/senpi/issues/5663))
+
+### Removed
+
+## [2026.11.3-3] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+- Added a batch coordinator that runs a tool batch as a durable two-step decision across executors (manifest, source-ordered prepare, one decision, release by dependencies) with brain-crash recovery, plus portable BATCH, REPLAY and KILL-BATCH conformance cases and a reference batch executor ([#5429](https://github.com/code-yeongyu/senpi/pull/5429)).
+- Added `createRemoteToolHost()` and `createRemoteExecutor()` (`src/execution/remote-tool-host.ts`, `src/execution/remote-executor.ts`): a `ToolHost` that runs a session's tool calls on a hand over the durable-core `Transport`, one lane per execution scope, and the hand's side that runs them, each execution ID at most once and each scope bound to its root. The reference transport (`createReliableTransport`, `createInProcessNetwork`, `localEndpoint`) and the `Transport` types are exported from the package root. Nothing selects the remote ToolHost yet ([#5483](https://github.com/code-yeongyu/senpi/pull/5483)).
+- Added `createHandLedger()` (`src/execution/remote-hand-ledger.ts`): a hand's durable record of its calls on the execution ledger, so a hand killed mid-call never runs the call again and the session always gets an outcome. `createRemoteToolHost()` takes a required `placement` (`"split-local"`: an interrupted call gets today's placeholder result; `"cross-machine"`: a `hand_restarted` outcome, uncertain once effects were possible). Adds the KILL-HAND, MULTI-HAND/MULTI-KILL and FAULT-HAND conformance cases, exported from `./conformance`. Nothing creates a hand yet ([#5513](https://github.com/code-yeongyu/senpi/pull/5513)).
+- A hand checks the sender's capability grant offline before running a call (`src/execution/grant-verify.ts`): `createGrantVerifier()` requires the exact 0009 row `(peer, this hand, workspace, execute)` from an installed snapshot of the verified roster, places the call's canonical root in a configured workspace by whole path components (default label `omo`), refuses an expired or missing snapshot, ignores a rolled-back one and re-checks running calls on replacement. `createRemoteExecutor()` takes a required `authority` (`{ kind: "self" }` or a peer with its verifier); a refused call is never recorded, opened or run ([#5659](https://github.com/code-yeongyu/senpi/pull/5659)).
+
+### Changed
+
+### Fixed
+
+- Fixed `NodeExecutionEnv.listDir` failing the whole listing when another process removed an entry after it was read, so listing sessions no longer fails with `ENOENT` while a Session worker releases its session lock ([#5615](https://github.com/code-yeongyu/senpi/pull/5615)).
+
+### Removed
+
+## [2026.11.3-2] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+- Added a `block` event to the execution ledger: an executor records a preparation that ended without a frozen call as a durable `blocked` outcome, so a re-sent prepare after a restart gets the stored reply ([#5428](https://github.com/code-yeongyu/senpi/pull/5428)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.3-1] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.2-3] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+- Produce conformance candidate archives containing a packed agent export and its same-commit implementation sources ([#5059](https://github.com/code-yeongyu/senpi/pull/5059)).
+
+### Changed
+
+### Fixed
+
+- Harness compaction, branch-summary and turn requests now carry the session working directory, so providers that require it (such as Anthropic Subscription) no longer reject them ([#5257](https://github.com/code-yeongyu/senpi/pull/5257))
+- `streamProxy` accepts `message_tool_arguments_reset`: it replaces the tool call's raw arguments, so a delta at offset 0 carrying the whole prefix no longer doubles them ([#5300](https://github.com/code-yeongyu/senpi/issues/5300))
+
+### Removed
+
+## [2026.11.2-2] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.02-1] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+- Added an unprepared, scoped ToolHost batch boundary with the existing in-process scheduler as its default ([#5030](https://github.com/code-yeongyu/senpi/pull/5030)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.31-2] - 2026-10-31
+
+### Breaking Changes
+
+### Added
+
+- Added an execution ledger with durable endpoint transitions, lease and restart recovery, and portable ledger conformance cases ([#5004](https://github.com/code-yeongyu/senpi/pull/5004)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.31-1] - 2026-10-31
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.30-2] - 2026-10-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Compaction relies on declared message and tool-call argument types instead of redundant assertions; runtime behavior is unchanged ([#4979](https://github.com/code-yeongyu/senpi/pull/4979)).
+
+### Fixed
+
+### Removed
+
+## [2026.10.30-1] - 2026-10-30
+
+### Breaking Changes
+
+### Added
+
+- `@earendil-works/pi-agent-core/testing/win32-sim`: a win32 simulation profile for code-level Windows tests ([#4510](https://github.com/code-yeongyu/senpi/pull/4510))
+- `@earendil-works/pi-agent-core/conformance`: the durable-core conformance case registry, a suite hash over case IDs and implementation hashes, a manifest export, and a suite runner that reports pass or fail per case and never skips ([#4727](https://github.com/code-yeongyu/senpi/pull/4727), fixes [#4726](https://github.com/code-yeongyu/senpi/issues/4726)).
+- Durable core: the DurableStore contract (atomic commit with adopt-on-durable, owner-epoch claim that raises the epoch by exactly one, ID minting, record and document scans, claim + import between hosts), an in-memory backend, the single admission line above the store, and the STORE-01..07 and KILL-STORE-01..06 conformance cases, registered in the `@earendil-works/pi-agent-core/conformance` registry and exported from it with the store contract and the host adapter interface, so other packages' host adapters run the same cases ([#4730](https://github.com/code-yeongyu/senpi/pull/4730), fixes [#4729](https://github.com/code-yeongyu/senpi/issues/4729)).
+- Durable core: the WakeHost contract (a recovery alarm armed before admitted work and kept armed while any admission is in flight, so a concurrent update or fire cannot clear it before the work commits, updated from the loop's wake after each commit, re-armed before resume on fire, and a fallback on every new instance), a Bun timer host serving many sessions with alarms persisted in each session's DurableStore under the owner epoch and re-checked across machine sleep, and the WAKE-01..03, WAKE-RET-01, KILL-WAKE-01..08 and MULTI-HOST-01 conformance cases, registered in the `@earendil-works/pi-agent-core/conformance` registry and exported from it together with the WakeHost contract, the Bun timer host, the store-backed alarm persistence, the wake conformance adapter types and manual timers, so other hosts run the same cases ([#4735](https://github.com/code-yeongyu/senpi/pull/4735), fixes [#4733](https://github.com/code-yeongyu/senpi/issues/4733)).
+- Durable core: the Transport contract (opaque frames on named lanes with per-lane order, exactly-once delivery, resume from each lane's last ACK after the carrier re-attaches, per-lane backpressure, and a per-lane retransmit deadline, so ACK progress on one lane never postpones a lost frame's resend on another) with a carrier seam, a reference transport over an in-process carrier addressed by local endpoints (owner-only Unix sockets on POSIX, named pipes on Windows), and the TRANSPORT-01..03, MULTI-LANE-01, MULTI-FAIR-01..02 and FAULT-TRANSPORT-01..05 conformance cases with five deterministic fault profiles, exported with the adapter types from `@earendil-works/pi-agent-core/conformance` ([#4741](https://github.com/code-yeongyu/senpi/pull/4741), fixes [#4738](https://github.com/code-yeongyu/senpi/issues/4738)).
+
+### Changed
+
+### Fixed
+
+- Share tree-sitter runtime initialization across concurrent grammar loads, including uncached parsers, and serialize different runtime paths through pending grammar loads. Retain missing-grammar cache entries and allow later loads after failures without evicting newer cache entries ([#4752](https://github.com/code-yeongyu/senpi/pull/4752)).
+
+### Removed
+
+## [2026.10.27-2] - 2026-10-27
+
+### Breaking Changes
+
+### Added
+
+- Assistant stream-start events carry an optional `streaming` marker so consumers can distinguish live model streams from prepared and synthetic messages ([#4231](https://github.com/code-yeongyu/senpi/pull/4231)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.27-1] - 2026-10-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.26-2] - 2026-10-26
+
+### Breaking Changes
+
+### Added
+
+- Empty-assistant recovery forwards captured records for the kept attempt only, so recovered streams (including Claude models) reach the internal agent channel ([#4307](https://github.com/code-yeongyu/senpi/pull/4307))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.26-1] - 2026-10-26
+
+### Breaking Changes
+
+### Added
+
+- An internal-only, ordered agent channel carries captured stream records; public listeners and extensions do not see it and their events are unchanged ([#4277](https://github.com/code-yeongyu/senpi/pull/4277))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.25-4] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.25-3] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.25-2] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.25-1] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-4] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Settle response stop reasons before `message_end` so `turn_end` handlers resolve the persisted assistant entry when a provider ends with `stop` and pending tool calls or `toolUse` without tool calls ([#3029](https://github.com/code-yeongyu/senpi/issues/3029)).
+
+### Removed
+
+## [2026.10.24-3] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-2] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-1] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.23-1] - 2026-10-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.21-3] - 2026-10-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Harness compaction uses request-level context when a provider reports cumulative billing for multiple internal requests ([omo#10792](https://github.com/code-yeongyu/oh-my-openagent/issues/10792)).
+
+### Removed
+
+## [2026.10.21-2] - 2026-10-22
+
+### Breaking Changes
+
+### Added
+
+- Every assistant response the agent loop streams carries `timing`: when the request was issued, its first and last streamed token, when it ended, and its streamed generation time. It is saved with the session, so time to first token and a reply's generation rate can be shown after a reload and by RPC clients ([#3879](https://github.com/code-yeongyu/senpi/issues/3879)).
+
 - A run that fails on an error from the `queuedInputPort` (`claim`, `release`, `commitConsumption`) ends with a failure message marked `failureSource: "local"`, so callers can tell a local failure from a provider one ([#3866](https://github.com/code-yeongyu/senpi/issues/3866)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.21-1] - 2026-10-21
+
+### Breaking Changes
+
+### Added
 
 ### Changed
 

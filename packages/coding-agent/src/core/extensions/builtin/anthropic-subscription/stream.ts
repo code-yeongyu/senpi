@@ -7,12 +7,15 @@ import {
 	type Model,
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
+import { LONG_CONTEXT_FALLBACK_DIAGNOSTIC, LONG_CONTEXT_FALLBACK_NOTICE } from "../../../provider-notices.ts";
 import { getSessionClaudeAccountPin } from "./account-command.ts";
 import { queryWithAuthLane } from "./auth-lane.ts";
 import { markColdSeedOverflow } from "./cold-seed-budget.ts";
+import { CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW } from "./context-window.ts";
 import { buildCustomToolServers } from "./custom-tools.ts";
 import { sdkAssistantFailure, sdkResultFailure, sdkResultFailureUsage } from "./errors.ts";
 import { type ClaudeCodeRun, defaultExecutableDeps, resolveClaudeCodeRun } from "./executable.ts";
+import { estimateLongContextFallbackTokens } from "./long-context-budget.ts";
 import { buildAnthropicSubscriptionQueryOptions } from "./options.ts";
 import { buildDeferredPromptStream, buildPromptBlocks } from "./prompt-bridge.ts";
 import { type PromptCacheTtl, pinOneShotPromptCacheTtl } from "./prompt-cache-ttl.ts";
@@ -21,6 +24,8 @@ import { refusalError } from "./refusal.ts";
 import { getSdkBoundary, loadClaudeAgentSdk, type SdkQueryHandle } from "./sdk-boundary.ts";
 import { type ContinuityObservation, emitContinuityObservation } from "./session-observability.ts";
 import { forgetBinding } from "./session-reattach.ts";
+import { anthropicSubscriptionDiagnostic } from "./provider-diagnostic.ts";
+import { requireAnthropicSubscriptionCwd } from "./session-cwd.ts";
 import { residentSessionMessages } from "./session-stream.ts";
 import {
 	loadAnthropicSubscriptionProviderSettingsFromDisk,
@@ -50,6 +55,11 @@ export function streamAnthropicSubscription(
 		let wasAborted = false;
 		let started = false;
 		let sawStreamEvent = false;
+		const onAttemptStart = (): void => {
+			delete output.responseId;
+			output.usage = emptyOutput(model).usage;
+			sawStreamEvent = false;
+		};
 		const closeQuery = (): void => {
 			if (closed || !sdkQuery) return;
 			closed = true;
@@ -74,6 +84,7 @@ export function streamAnthropicSubscription(
 		let nativeCompactionStopped = false;
 
 		try {
+			const cwd = requireAnthropicSubscriptionCwd(options?.cwd);
 			// Resident before the synchronous SDK member below (getSdkBoundary().query)
 			// reads it - see sdk-boundary.lazy.ts.
 			await loadClaudeAgentSdk();
@@ -82,7 +93,7 @@ export function streamAnthropicSubscription(
 			const sessionKey = options?.sessionId ? toolWatch.sessionKey(options.sessionId) : undefined;
 			if (sessionKey) toolWatch.reconcileWithContext(sessionKey, context);
 			const toolWatchNote = toolWatch.buildPromptNote(sessionKey, context, resolvedTools.customToolNameToSdk);
-			const providerSettings = loadAnthropicSubscriptionProviderSettingsFromDisk(process.cwd());
+			const providerSettings = loadAnthropicSubscriptionProviderSettingsFromDisk(cwd);
 			const senpiOwnsCompaction = resolveCompactionOwner(providerSettings) === "senpi";
 			const toolLessRequest = options?.toolChoice === "none";
 			const mcpServers = toolLessRequest ? undefined : await buildCustomToolServers(resolvedTools.customTools);
@@ -94,6 +105,7 @@ export function streamAnthropicSubscription(
 					model,
 					context,
 					streamOptions: options,
+					cwd,
 					providerSettings,
 					authLane,
 					tools: resolvedTools.sdkTools,
@@ -128,8 +140,29 @@ export function streamAnthropicSubscription(
 					},
 				];
 			};
+			// The request keeps its model; only its window fell back, and the turn says so (senpi#4065).
+			const recordLongContextFallback = (): void => {
+				output.diagnostics = [
+					...(output.diagnostics ?? []),
+					{
+						type: LONG_CONTEXT_FALLBACK_DIAGNOSTIC,
+						timestamp: Date.now(),
+						details: {
+							contextWindow: CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW,
+							message: LONG_CONTEXT_FALLBACK_NOTICE,
+						},
+					},
+				];
+			};
 			const useResidentSession =
 				options?.streamKind === "main" && providerSettings.resumeMode !== "off" && options.sessionId !== undefined;
+			const contextTokens = () =>
+				estimateLongContextFallbackTokens(
+					context,
+					buildPromptBlocks(context, resolvedTools.customToolNameToSdk, toolWatchNote),
+					options?.sessionId,
+				);
+			const outputReserveTokens = options?.maxTokens;
 			if (options?.streamKind === "main" && !useResidentSession) {
 				// The reason must reflect the ACTUAL cause: resume mode "off"
 				// disables the lane by setting, while any other mode simply has no
@@ -157,6 +190,10 @@ export function streamAnthropicSubscription(
 						customToolNameToSdk: resolvedTools.customToolNameToSdk,
 						toolWatchNote,
 						onContinuityDecision: recordContinuity,
+						onLongContextFallback: recordLongContextFallback,
+						contextTokens,
+						outputReserveTokens,
+						onAttemptStart,
 						onDispatchShape: (coldSeed, estimatedTokens) => {
 							coldSeedAttempt = coldSeed;
 							coldSeedEstimate = estimatedTokens;
@@ -181,6 +218,7 @@ export function streamAnthropicSubscription(
 								).blocks,
 						),
 						query: getSdkBoundary().query,
+						onAttemptStart,
 						providerSettings,
 						env: options?.env,
 						signal: options?.signal,
@@ -192,6 +230,9 @@ export function streamAnthropicSubscription(
 							if (wasAborted) requestAbort();
 						},
 						buildOptions,
+						onLongContextFallback: recordLongContextFallback,
+						contextTokens,
+						outputReserveTokens,
 					});
 
 			for await (const message of messages) {
@@ -217,6 +258,10 @@ export function streamAnthropicSubscription(
 				} else if (message.type === "assistant") {
 					// Same first-id-wins turn identity as applyStreamEvent's message_start (oh-my-openagent#10547).
 					output.responseId ??= message.message.id || undefined;
+					// SDK assistant snapshots have placeholder output counts. Never replace streamed usage with them.
+					if (!sawStreamEvent && message.message.usage) {
+						updateUsage(model, output, message.message.usage, "request-start");
+					}
 				} else if (message.type === "system" && message.subtype === "compact_boundary") {
 					// The query was started with native auto-compact off: a boundary here means Claude
 					// Code compacted anyway. Fail the turn loudly instead of letting a second owner
@@ -249,7 +294,7 @@ export function streamAnthropicSubscription(
 					// A terminal result must never downgrade a toolUse turn that the stream
 					// already established, or the agent loop would stop instead of running
 					// the tool call sitting in `output.content`.
-					if (message.usage) updateUsage(model, output, message.usage);
+					if (message.usage) updateUsage(model, output, message.usage, "query");
 					if (message.stop_reason != null && output.stopReason !== "toolUse") {
 						output.stopReason = mapStopReason(message.stop_reason);
 					}
@@ -279,8 +324,10 @@ export function streamAnthropicSubscription(
 			// A failed result still bills its tokens; managed and resident lanes
 			// throw before the result reaches this loop, so account for it here.
 			const billed = sdkResultFailureUsage(error);
-			if (billed) updateUsage(model, output, billed);
+			if (billed) updateUsage(model, output, billed, "query");
 			output.errorMessage = withAuthGuidance(error, errorMessage(error), claudeCodeRun);
+			const diagnostic = output.stopReason === "error" ? anthropicSubscriptionDiagnostic(error) : undefined;
+			if (diagnostic !== undefined) output.providerDiagnostic = diagnostic;
 			markColdSeedOverflow(output, model, coldSeedAttempt, coldSeedEstimate, options?.sessionId);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 		} finally {

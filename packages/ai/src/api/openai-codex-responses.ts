@@ -71,7 +71,11 @@ import {
 	codexHttpProviderDiagnostic,
 } from "./openai-codex-responses/provider-diagnostic.ts";
 import { buildCodexReasoning, type CodexReasoningSummaryInput } from "./openai-codex-responses/reasoning.ts";
-import { applyChatGptSubscriptionCacheAffinityHeaders, clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
+import {
+	applyChatGptSubscriptionCacheAffinityHeaders,
+	clampOpenAIPromptCacheKey,
+	deriveOpenAIPromptCacheKey,
+} from "./openai-prompt-cache.ts";
 import {
 	convertResponsesMessages,
 	convertResponsesTools,
@@ -260,7 +264,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 	context: TranscriptContext,
 	options?: OpenAICodexResponsesOptions,
 ): AssistantMessageEventStream => {
-	const stream = new AssistantMessageEventStream();
+	const stream = new AssistantMessageEventStream({ captureBlocks: true });
 	const normalizedContext = resolveTranscript(context, model.compat?.supportsMidConvoSystemMessages);
 
 	(async () => {
@@ -295,7 +299,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			);
 			const cacheSessionId = options?.cacheRetention === "none" ? undefined : options?.sessionId;
 			const codexSessionId = clampOpenAIPromptCacheKey(cacheSessionId);
-			let body = buildRequestBody(model, normalizedContext, options, codexSessionId, grammarToolInputProperties);
+			let body = buildRequestBody(model, normalizedContext, options, grammarToolInputProperties);
 			const nextBody = await options?.onPayload?.(body, model);
 			if (nextBody !== undefined) {
 				body = nextBody as RequestBody;
@@ -592,7 +596,6 @@ function buildRequestBody(
 	model: Model<"openai-codex-responses">,
 	context: TranscriptContext,
 	options: OpenAICodexResponsesOptions | undefined,
-	cacheSessionId: string | undefined,
 	grammarToolInputProperties: ReadonlyMap<string, string> = createGrammarToolInputProperties(
 		getDeclaredTools(context.messages),
 		model.compat?.supportsOpenAIGrammarTools ?? false,
@@ -637,7 +640,7 @@ function buildRequestBody(
 		input: messages,
 		text: { verbosity: options?.textVerbosity || "low" },
 		include: ["reasoning.encrypted_content"],
-		prompt_cache_key: cacheSessionId,
+		prompt_cache_key: options?.cacheRetention === "none" ? undefined : deriveOpenAIPromptCacheKey(model.id, context),
 		tool_choice: options?.toolChoice ?? "auto",
 		parallel_tool_calls: true,
 	};

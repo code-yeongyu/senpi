@@ -3,7 +3,12 @@
  */
 
 import { basename } from "node:path";
+import { openTimingEnabled, startOpenTimer } from "../open-timing.ts";
+import { SecretInputUnavailableError } from "./secret-input.ts";
+import type { ExtensionRpcRequestContext } from "./rpc-context.ts";
+import { requestExtensionRpc } from "./rpc-request.ts";
 import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
+import { localDeviceFiles } from "@earendil-works/pi-agent-core/node";
 import type { Api, ImageContent, Model, Provider, ProviderHeaders } from "@earendil-works/pi-ai";
 import type { KeyId } from "@earendil-works/pi-tui";
 import { getAgentDir } from "../../config.ts";
@@ -11,12 +16,22 @@ import { type Theme, theme } from "../../modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../../utils/ansi.ts";
 import type { ResourceDiagnostic } from "../diagnostics.ts";
 import type { DiscoveredResourceEntry } from "../discovered-resource-scope.ts";
-import { createEventBus, type EventBus, EXTENSION_RPC_EVENT_CHANNEL, type ExtensionRpcEvent } from "../event-bus.ts";
+import type { DynamicSystemPromptPart } from "../dynamic-prompt/build.ts";
+import {
+	createEventBus,
+	type EventBus,
+	EXTENSION_RPC_EVENT_CHANNEL,
+	EXTENSION_RPC_SUBSCRIBED_CHANNEL,
+	type ExtensionRpcEvent,
+} from "../event-bus.ts";
+import { type InputOrigin, inputAttributionOf, inputOriginOf } from "../input-origin.ts";
 import type { KeybindingsConfig } from "../keybindings.ts";
+import { inheritMcpMrtrPresentation } from "../mcp-mrtr-presentations.ts";
 import type { NamedMemoryReporter } from "../memory-report/memory-report-registry.ts";
 import type { ModelRegistry } from "../model-registry.ts";
 import type { ScopedModel } from "../model-resolver.ts";
-import type { SessionManager } from "../session-manager.ts";
+import { bindQuestionInput } from "../question-input.ts";
+import type { ReadonlySessionManager, SessionManager } from "../session-manager.ts";
 import {
 	DEFAULT_EXTENSION_EVENT_HANDLER_TIMEOUT_MS,
 	DEFAULT_EXTENSION_EVENT_HANDLER_WARN_MS,
@@ -31,6 +46,7 @@ import { goalFilePath } from "./builtin/goal/persistence.ts";
 import { goalStoreRef } from "./builtin/goal/store-ref.ts";
 import { disableServerSearch } from "./builtin/server-search-fallback.ts";
 import { dispatchContextMessages } from "./context-dispatch.ts";
+import { EXTENSION_EVENT_PLACEMENT } from "./event-placement.ts";
 import { reclaimRunnerHandles, registerRunnerExtensions } from "./extension-handle-ledger.ts";
 import {
 	type BudgetedSequence,
@@ -41,8 +57,11 @@ import {
 	runBudgetedHandler,
 	runBudgetedSequence,
 } from "./handler-budget.ts";
-import { kernelToolsStorage } from "./kernel-tools-context.ts";
+import { type ExtensionKernelTools, kernelToolInvokerStorage, kernelToolsStorage } from "./kernel-tools-context.ts";
 import { drainPendingProviderRegistrations } from "./loader.ts";
+import { runSessionMoveHandlers, type SessionMoveEmission, type SessionMoveFailure } from "./session-move-emit.ts";
+import type { RuntimeUiBroker } from "../runtime/ui-broker.ts";
+import { isPresentationOnly } from "./ui-presentation.ts";
 import { SessionStartTurnGate } from "./session-start-turn-gate.ts";
 import { QuitDeadline, type QuitHandlerBudget, type SessionShutdownBudget } from "./shutdown-quit-budget.ts";
 import { StaleExtensionContextError } from "./stale-context-error.ts";
@@ -67,6 +86,7 @@ import type {
 	ExtensionCommandContextActions,
 	ExtensionContext,
 	ExtensionContextActions,
+	GetAllToolsHandler,
 	ExtensionError,
 	ExtensionEvent,
 	ExtensionFlag,
@@ -75,6 +95,7 @@ import type {
 	ExtensionShortcut,
 	ExtensionToolContext,
 	ExtensionUIContext,
+	InputAttribution,
 	InputEvent,
 	InputEventResult,
 	InputSource,
@@ -88,6 +109,7 @@ import type {
 	OffloadOptions,
 	ProjectTrustContext,
 	ProjectTrustEvent,
+	ProviderLoginStartEvent,
 	ProjectTrustEventResult,
 	ProviderConfig,
 	ProviderRequestPreparation,
@@ -100,6 +122,7 @@ import type {
 	ResourceDiscoverEntry,
 	ResourcesDiscoverEvent,
 	ResourcesDiscoverResult,
+	SendMessageReceipt,
 	ServiceTier,
 	SessionBeforeCompactResult,
 	SessionBeforeForkResult,
@@ -117,14 +140,85 @@ import type {
 	UserBashEvent,
 	UserBashEventResult,
 } from "./types.ts";
-import { RUNTIME_EXTENSION_PATH } from "./types.ts";
+import { type ExtensionRuntimeContext, RUNTIME_EXTENSION_PATH } from "./types.ts";
+import {
+	servesForwardedHandler,
+	toolEventHandlers,
+	type ToolEventDispatchOptions,
+	twoSidedExtensions,
+} from "./two-sided-forwarding.ts";
 
-export class ExtensionRpcRequestNotFoundError extends Error {
-	constructor(name: string) {
-		super(`Unknown extension RPC request: ${name}`);
-		this.name = "ExtensionRpcRequestNotFoundError";
+const RUNTIME_CONTEXT_MEMBERS: ReadonlySet<string> = new Set<keyof ExtensionRuntimeContext>([
+	"offload",
+	"ui",
+	"mode",
+	"hasUI",
+	"cwd",
+	"agentDir",
+	"loadedExtensionPaths",
+	"modelRegistry",
+	"isProjectTrusted",
+	"kernelTools",
+	"evalHandleHost",
+	"shutdown",
+	"getLookAtSettings",
+	"getAskUserSettings",
+	"getImageSettings",
+	"getRegisteredMcpServers",
+	"extensionConnectsMcpServers",
+]);
+
+/** Session identity a context of a runner without a session does not have; dispatchers treat its absence as context-free. */
+const SESSION_IDENTITY_MEMBERS = new Set(["sessionManager", "goalStoreFile"]);
+
+/** What a runner without a session sees of the loop during one loop-hook call on a hand (S33); read-only. */
+export interface LoopHookCallFacts {
+	readonly sessionManager: ReadonlySessionManager;
+	readonly signal: AbortSignal;
+	isIdle(): boolean;
+	/** `pi.sendMessage` from the call's work: the hand carries the message back to the loop, which sends it there. */
+	sendMessage(...args: Parameters<ExtensionRuntime["sendMessage"]>): void;
+	/** `ctx.ui.notify` during the call: the hand carries the notice back to the loop, which shows it there. */
+	notify(...args: Parameters<ExtensionUIContext["notify"]>): void;
+}
+
+/** The hand's UI, except `notify`, which a loop-hook call carries back to the loop's UI. */
+function withLoopNotices(ui: ExtensionUIContext, notify: LoopHookCallFacts["notify"]): ExtensionUIContext {
+	return new Proxy(ui, {
+		get: (target, property) => {
+			if (property === "notify") return notify;
+			const value: unknown = Reflect.get(target, property, target);
+			return typeof value === "function" ? value.bind(target) : value;
+		},
+	});
+}
+
+function loopSideUnbound(member: string): Error {
+	return new Error(`${member} is loop-side and not bound: this extension runtime has no session`);
+}
+
+/**
+ * Narrow a context of a runner without a session to its runtime members (senpi#5223), plus `boundMembers`: runtime
+ * facts the runner's host bound itself (S27a), which a runner without a session would otherwise answer with defaults.
+ */
+function withoutSession(context: ExtensionContext, boundMembers: ReadonlySet<string>): void {
+	for (const key of Reflect.ownKeys(context)) {
+		if (typeof key !== "string" || RUNTIME_CONTEXT_MEMBERS.has(key) || boundMembers.has(key)) continue;
+		if (SESSION_IDENTITY_MEMBERS.has(key)) {
+			Reflect.deleteProperty(context, key);
+			continue;
+		}
+		Object.defineProperty(context, key, {
+			configurable: true,
+			enumerable: true,
+			get() {
+				throw loopSideUnbound(key);
+			},
+		});
 	}
 }
+
+export { ExtensionRpcRequestNotFoundError } from "./rpc-request.ts";
 
 // Extension shortcuts compete with canonical keybinding ids from keybindings.json.
 // Only editor-global shortcuts are reserved here. Picker-specific bindings are not.
@@ -202,6 +296,17 @@ function isUserBashEventResult(value: unknown): value is UserBashEventResult {
 interface BeforeAgentStartCombinedResult {
 	messages?: NonNullable<BeforeAgentStartEventResult["message"]>[];
 	systemPrompt?: string;
+	/** Leading part of `systemPrompt` no volatile handler changed; absent when every change was stable (senpi#4447). */
+	systemPromptStablePrefix?: string;
+}
+
+/** Characters at the start of `before` that `after` keeps. */
+function sharedPrefixLength(before: string, after: string): number {
+	if (after.startsWith(before)) return before.length;
+	const limit = Math.min(before.length, after.length);
+	let index = 0;
+	while (index < limit && before.charCodeAt(index) === after.charCodeAt(index)) index++;
+	return index;
 }
 
 /**
@@ -226,6 +331,8 @@ type RunnerEmitEvent = Exclude<
 	| TurnEndEvent
 	| AgentBeforeSettleEvent
 >;
+
+export { EXTENSION_EVENT_PLACEMENT, type ExtensionEventPlacement } from "./event-placement.ts";
 
 type SessionBeforeEvent = Extract<
 	RunnerEmitEvent,
@@ -389,6 +496,22 @@ function snapshotEventHandlers(extensions: Extension[], event: ExtensionEvent["t
 	return extensions.map((ext) => ({ ext, handlers: ext.handlers.get(event)?.slice() ?? [] }));
 }
 
+/** `before_agent_start` dispatch order: every handler in load order, then the `runLast` ones (senpi#4448). */
+function beforeAgentStartDispatchOrder(extensions: Extension[]) {
+	const snapshot = snapshotEventHandlers(extensions, "before_agent_start");
+	const runsLast = (ext: Extension, handler: EventHandlerFn) => ext.runLastHandlers?.has(handler) === true;
+	const isBuiltin = (ext: Extension) => ext.path.startsWith("<builtin:");
+	const phase = (keep: (ext: Extension, handler: EventHandlerFn) => boolean) =>
+		snapshot.map(({ ext, handlers }) => ({ ext, handlers: handlers.filter((handler) => keep(ext, handler)) }));
+	// Builtin run-last handlers close the phase order, so MCP instructions stay last even after another
+	// extension's run-last handler (senpi#4448).
+	return [
+		...phase((ext, handler) => !runsLast(ext, handler)),
+		...phase((ext, handler) => runsLast(ext, handler) && !isBuiltin(ext)),
+		...phase((ext, handler) => runsLast(ext, handler) && isBuiltin(ext)),
+	];
+}
+
 type EventHandlerFn = NonNullable<ReturnType<Extension["handlers"]["get"]>>[number];
 interface HandlerEntry {
 	readonly path: string;
@@ -462,13 +585,19 @@ function createNoOpSessionSettings(): ExtensionContextActions["sessionSettings"]
 	};
 }
 
-const noOpUIContext: ExtensionUIContext = {
+export const noOpUIContext: ExtensionUIContext = {
+	capabilities: { secretInput: true },
 	select: async () => undefined,
 	confirm: async () => false,
-	input: async () => undefined,
+	input: async (_title, _placeholder, opts) => {
+		if (opts?.signal?.aborted) return undefined;
+		if (opts?.secret) throw new SecretInputUnavailableError("headless");
+		return undefined;
+	},
 	notify: () => {},
 	onTerminalInput: () => () => {},
 	setStatus: () => {},
+	setSubagentCost: () => {},
 	setWorkingMessage: () => {},
 	setWorkingVisible: () => {},
 	setWorkingIndicator: () => {},
@@ -477,6 +606,7 @@ const noOpUIContext: ExtensionUIContext = {
 	setFooter: () => {},
 	setHeader: () => {},
 	setTitle: () => {},
+	setProgramStatus: () => {},
 	custom: async () => undefined as never,
 	pasteToEditor: () => {},
 	setEditorText: () => {},
@@ -499,9 +629,11 @@ export class ExtensionRunner {
 	private extensions: Extension[];
 	private runtime: ExtensionRuntime;
 	private uiContext: ExtensionUIContext;
+	private uiBroker: RuntimeUiBroker | undefined;
+	private readonly brokerUIContexts = new WeakMap<ExtensionUIContext, ExtensionUIContext>();
 	private mode: ExtensionMode = "print";
 	private cwd: string;
-	private sessionManager: SessionManager;
+	private sessionManager: SessionManager | undefined;
 	private modelRegistry: ModelRegistry;
 	private eventBus: EventBus;
 	private errorListeners: Set<ExtensionErrorListener> = new Set();
@@ -516,11 +648,17 @@ export class ExtensionRunner {
 	private getEffectiveServiceTier: () => ServiceTier | undefined = () => this.getServiceTier();
 	private getScopedModels: () => readonly ScopedModel[] = () => [];
 	private isIdleFn: () => boolean = () => true;
+	private engineTurnsHeldFn: () => boolean = () => false;
+	private noteHeldWakeFn: (source: string) => void = () => {};
+	private pauseActions: Pick<ExtensionContextActions, "getPauseState" | "fenceRun" | "releaseRunFence"> = {};
+	private questionInput: ExtensionContextActions["questionInput"];
+	private personAnswerPending = false;
 	private isProjectTrustedFn: () => boolean = () => true;
 	private getSignalFn: () => AbortSignal | undefined = () => undefined;
 	private waitForIdleFn: () => Promise<void> = async () => {};
 	private abortFn: ExtensionContextActions["abort"] = () => {};
 	private hasPendingMessagesFn: () => boolean = () => false;
+	private hasQueuedPersonInputFn: () => boolean = () => false;
 	private isCompactingFn: () => boolean = () => false;
 	private checkReloadVetoFn: ExtensionContextActions["checkReloadVeto"];
 	private getContextUsageFn: () => ContextUsage | undefined = () => undefined;
@@ -543,6 +681,9 @@ export class ExtensionRunner {
 		timeoutMinutes: 30,
 	});
 	private getBrowserEngineFn: NonNullable<ExtensionContextActions["getBrowserEngine"]> = () => undefined;
+	private getSessionEnvFn: NonNullable<ExtensionContextActions["getSessionEnv"]> = () => undefined;
+	// A runner with no session (a hand's runtime) runs its tools on this machine, so its device files are local.
+	private getDeviceFilesFn: NonNullable<ExtensionContextActions["getDeviceFiles"]> = localDeviceFiles;
 	private getImageSettingsFn: ExtensionContextActions["getImageSettings"] = () => ({
 		autoResize: true,
 		blockImages: false,
@@ -558,6 +699,8 @@ export class ExtensionRunner {
 		reason: "rejected",
 	});
 	private getSystemPromptFn: () => string = () => "";
+	private getSystemPromptStablePrefixFn: () => string | undefined = () => undefined;
+	private loopHookCallFn: (() => LoopHookCallFacts | undefined) | undefined;
 	private getLoadedHookSourcesFn: ExtensionContextActions["getLoadedHookSources"] = () => ({
 		agentDir: "",
 		cwd: this.cwd,
@@ -569,6 +712,7 @@ export class ExtensionRunner {
 		runtimeHookSourcePaths: [],
 	});
 	private getSystemPromptOptionsFn: () => BuildSystemPromptOptions = () => ({ cwd: this.cwd });
+	private readonly sessionlessBoundMembers = new Set<string>();
 	private getPromptCachePrefixRequestFn: ExtensionContextActions["getPromptCachePrefixRequest"] = undefined;
 	private onUserActivityFn: ExtensionContextActions["onUserActivity"];
 	private getAgentDirFn: () => string = () => getAgentDir();
@@ -597,19 +741,22 @@ export class ExtensionRunner {
 	private toolHookLifecycleObserver: ExtensionToolHookLifecycleObserver | undefined;
 	private nextToolHookRunIndex = 0;
 	private uiPromptDepth = 0;
-	private activeUIPrompt: { kind: UIPromptKind; title?: string } | undefined;
+	private activeUIPrompt: { kind: UIPromptKind; title?: string; requestId: string; since: string } | undefined;
+	private lifecycleAttentionObserver: (() => void) | undefined;
 
 	constructor(
 		extensions: Extension[],
 		runtime: ExtensionRuntime,
 		cwd: string,
-		sessionManager: SessionManager,
+		sessionManager: SessionManager | undefined,
 		modelRegistry: ModelRegistry,
 		eventBus: EventBus = createEventBus(),
 	) {
 		this.extensions = extensions;
 		registerRunnerExtensions(this, extensions);
 		this.runtime = runtime;
+		runtime.mcpServers.bind(extensions);
+		runtime.emitProviderLoginStart = (event) => this.emitProviderLoginStart(event);
 		this.uiContext = noOpUIContext;
 		this.cwd = cwd;
 		this.sessionManager = sessionManager;
@@ -617,24 +764,76 @@ export class ExtensionRunner {
 		this.eventBus = eventBus;
 	}
 
+	/**
+	 * Binds the runtime facts a runner without a session (a loopless runtime, S27a) can still answer: the registered
+	 * tools (`pi.getAllTools()`), the active set (`pi.getActiveTools()` is empty and `pi.setActiveTools()` changes nothing:
+	 * the active set belongs to a loop, as `getActiveTools()` answers) and, when given, where hook configuration is loaded from (its contexts then answer
+	 * `getLoadedHookSources()` instead of refusing it). A session binds them through `bindCore`.
+	 */
+	bindSessionlessFacts(facts: {
+		readonly getAllTools: GetAllToolsHandler;
+		readonly getLoadedHookSources?: ExtensionContextActions["getLoadedHookSources"];
+		/** The loop facts of the loop-hook call in progress on a hand (S33), if any. */
+		readonly loopHookCall?: () => LoopHookCallFacts | undefined;
+		/**
+		 * Where `pi.sendMessage` goes from work a loop-hook call started, also after the call ended (a session would
+		 * still deliver it): the call's sender, which carries it to the loop. None outside any call's work.
+		 */
+		readonly loopHookSend?: () => LoopHookCallFacts["sendMessage"] | undefined;
+	}): void {
+		this.runtime.getAllTools = facts.getAllTools;
+		this.loopHookCallFn = facts.loopHookCall;
+		const send = facts.loopHookSend;
+		if (send !== undefined)
+			this.runtime.sendMessage = (message, options) => {
+				const sendMessage = send();
+				if (sendMessage === undefined) throw loopSideUnbound("sendMessage");
+				sendMessage(message, options);
+			};
+		this.runtime.getActiveTools = () => this.getActiveTools();
+		this.runtime.setActiveTools = () => {};
+		if (facts.getLoadedHookSources === undefined) return;
+		this.getLoadedHookSourcesFn = facts.getLoadedHookSources;
+		this.sessionlessBoundMembers.add("getLoadedHookSources");
+	}
+
 	bindCore(
 		actions: ExtensionActions,
 		contextActions: ExtensionContextActions,
 		providerActions?: {
-			registerProvider?: (name: string, config: ProviderConfig) => void;
-			registerNativeProvider?: (provider: Provider) => void;
+			registerProvider?: (name: string, config: ProviderConfig, extensionPath?: string) => void;
+			registerNativeProvider?: (provider: Provider, extensionPath?: string) => void;
 			unregisterProvider?: (name: string) => void;
 			registerVirtualModel?: (definition: VirtualModelDefinition) => void;
 			unregisterVirtualModel?: (provider: string, id: string) => void;
 		},
 	): void {
 		// Copy actions into the shared runtime (all extension APIs reference this)
+		if (actions.lifecycle) this.runtime.lifecycle = actions.lifecycle;
 		this.runtime.sendMessage = (message, options) => {
 			if (options?.triggerTurn === true) this.sessionStartTurns.admit(() => actions.sendMessage(message, options));
 			else actions.sendMessage(message, options);
 		};
-		this.runtime.sendUserMessage = (content, options) =>
-			this.sessionStartTurns.admit(() => actions.sendUserMessage(content, options));
+		// An itemized send answers its receipts from wherever its admission ends up running (senpi#3811).
+		this.runtime.sendItemizedMessage = (message, options) => {
+			const receipts = Promise.withResolvers<readonly SendMessageReceipt[] | undefined>();
+			const send = () => {
+				const itemized = actions.sendItemizedMessage;
+				if (itemized === undefined) {
+					actions.sendMessage(message, options);
+					receipts.resolve(undefined);
+				} else itemized(message, options).then(receipts.resolve, receipts.reject);
+			};
+			if (options.triggerTurn === true) this.sessionStartTurns.admit(send);
+			else send();
+			return receipts.promise;
+		};
+		this.runtime.sendUserMessage = (content, options) => {
+			// Captured at admission: a deferred answer keeps the origin it was delivered with.
+			const inputOrigin: InputOrigin = this.personAnswerPending ? "person" : "extension";
+			this.personAnswerPending = false;
+			this.sessionStartTurns.admit(() => actions.sendUserMessage(content, options, inputOrigin));
+		};
 		this.runtime.appendEntry = actions.appendEntry;
 		this.runtime.setSessionName = actions.setSessionName;
 		this.runtime.getSessionName = actions.getSessionName;
@@ -655,6 +854,8 @@ export class ExtensionRunner {
 		this.runtime.setSessionThinkingLevel = actions.setSessionThinkingLevel;
 		this.runtime.setSessionFastMode = actions.setSessionFastMode;
 		if (actions.sessionControl) this.runtime.sessionControl = actions.sessionControl;
+		if (actions.armToolBarrier) this.runtime.armToolBarrier = actions.armToolBarrier;
+		if (actions.releaseToolBarrier) this.runtime.releaseToolBarrier = actions.releaseToolBarrier;
 		this.runtime.createContext = () => this.createContext();
 
 		this.offloadFn = contextActions.offload;
@@ -664,10 +865,19 @@ export class ExtensionRunner {
 		this.getEffectiveServiceTier = contextActions.getEffectiveServiceTier ?? contextActions.getServiceTier;
 		this.getScopedModels = contextActions.getScopedModels;
 		this.isIdleFn = contextActions.isIdle;
+		this.engineTurnsHeldFn = contextActions.engineTurnsHeld ?? (() => false);
+		this.noteHeldWakeFn = contextActions.noteHeldWake ?? (() => {});
+		this.pauseActions = {
+			getPauseState: contextActions.getPauseState,
+			fenceRun: contextActions.fenceRun,
+			releaseRunFence: contextActions.releaseRunFence,
+		};
+		this.questionInput = contextActions.questionInput;
 		this.isProjectTrustedFn = contextActions.isProjectTrusted;
 		this.getSignalFn = contextActions.getSignal;
 		this.abortFn = contextActions.abort;
 		this.hasPendingMessagesFn = contextActions.hasPendingMessages;
+		this.hasQueuedPersonInputFn = contextActions.hasQueuedPersonInput ?? (() => false);
 		this.isCompactingFn = contextActions.isCompacting;
 		this.checkReloadVetoFn = contextActions.checkReloadVeto;
 		this.shutdownHandler = contextActions.shutdown;
@@ -683,6 +893,8 @@ export class ExtensionRunner {
 		this.getLookAtSettingsFn = contextActions.getLookAtSettings;
 		if (contextActions.getAskUserSettings) this.getAskUserSettingsFn = contextActions.getAskUserSettings;
 		if (contextActions.getBrowserEngine) this.getBrowserEngineFn = contextActions.getBrowserEngine;
+		if (contextActions.getSessionEnv) this.getSessionEnvFn = contextActions.getSessionEnv;
+		if (contextActions.getDeviceFiles) this.getDeviceFilesFn = contextActions.getDeviceFiles;
 		this.getImageSettingsFn = contextActions.getImageSettings;
 		this.sessionSettingsFn = contextActions.sessionSettings;
 		this.compactFn = contextActions.compact;
@@ -692,6 +904,7 @@ export class ExtensionRunner {
 		this.getMessageRevisionFn = contextActions.getMessageRevision;
 		this.applyCompactionFn = contextActions.applyCompaction;
 		this.getSystemPromptFn = contextActions.getSystemPrompt;
+		this.getSystemPromptStablePrefixFn = contextActions.getSystemPromptStablePrefix ?? (() => undefined);
 		this.getLoadedHookSourcesFn = contextActions.getLoadedHookSources;
 		if (contextActions.getAgentDir) this.getAgentDirFn = contextActions.getAgentDir;
 		this.getSystemPromptOptionsFn = contextActions.getSystemPromptOptions ?? (() => ({ cwd: this.cwd }));
@@ -699,6 +912,11 @@ export class ExtensionRunner {
 		this.onUserActivityFn = contextActions.onUserActivity;
 		this.executeToolFn = contextActions.executeTool;
 		this.getCallableToolsFn = contextActions.getCallableTools ?? (() => []);
+		// Servers registered from now on reach the extension that connects them right away. Servers
+		// registered during loading are read on session_start.
+		this.runtime.mcpServers.setChangeListener(() => {
+			void this.emit({ type: "mcp_servers_change", servers: this.runtime.mcpServers.list() });
+		});
 
 		for (const extension of this.extensions) {
 			for (const [name, hint] of extension.removedToolHints ?? []) {
@@ -716,12 +934,12 @@ export class ExtensionRunner {
 			try {
 				if (registration.kind === "config") {
 					if (providerActions?.registerProvider) {
-						providerActions.registerProvider(registration.name, registration.config);
+						providerActions.registerProvider(registration.name, registration.config, registration.extensionPath);
 					} else {
 						this.modelRegistry.registerProvider(registration.name, registration.config);
 					}
 				} else if (providerActions?.registerNativeProvider) {
-					providerActions.registerNativeProvider(registration.provider);
+					providerActions.registerNativeProvider(registration.provider, registration.extensionPath);
 				} else {
 					this.modelRegistry.registerProvider(registration.provider);
 				}
@@ -754,16 +972,16 @@ export class ExtensionRunner {
 
 		// From this point on, provider registration/unregistration takes effect immediately
 		// without requiring a /reload.
-		this.runtime.registerProvider = (name, config) => {
+		this.runtime.registerProvider = (name, config, extensionPath) => {
 			if (providerActions?.registerProvider) {
-				providerActions.registerProvider(name, config);
+				providerActions.registerProvider(name, config, extensionPath);
 				return;
 			}
 			this.modelRegistry.registerProvider(name, config);
 		};
-		this.runtime.registerNativeProvider = (provider) => {
+		this.runtime.registerNativeProvider = (provider, extensionPath) => {
 			if (providerActions?.registerNativeProvider) {
-				providerActions.registerNativeProvider(provider);
+				providerActions.registerNativeProvider(provider, extensionPath);
 				return;
 			}
 			this.modelRegistry.registerProvider(provider);
@@ -820,33 +1038,79 @@ export class ExtensionRunner {
 		this.mode = mode;
 	}
 
+	/**
+	 * Route this runner's UI through a runtime's UI broker (senpi#5228): its attached presenter answers, and with
+	 * none attached the UI is unbound. A session binds its UI with `setUIContext` and never sets a broker.
+	 */
+	setUiBroker(broker: RuntimeUiBroker | undefined): void {
+		this.uiBroker = broker;
+	}
+
+	private currentUIContext(): ExtensionUIContext {
+		if (this.uiBroker === undefined) return this.uiContext;
+		const presenter = this.uiBroker.presenter;
+		if (presenter === undefined) return noOpUIContext;
+		let wrapped = this.brokerUIContexts.get(presenter);
+		if (wrapped === undefined) {
+			wrapped = this.wrapUIPromptContext(presenter);
+			this.brokerUIContexts.set(presenter, wrapped);
+		}
+		return wrapped;
+	}
+
 	setToolHookLifecycleObserver(observer?: ExtensionToolHookLifecycleObserver): void {
 		this.toolHookLifecycleObserver = observer;
 	}
 
+	setLifecycleAttentionObserver(observer: () => void): void {
+		this.lifecycleAttentionObserver = observer;
+	}
+
+	getLifecycleHumanWait(): Omit<import("../session-lifecycle-types.ts").HumanWait, "originSessionId"> | undefined {
+		const prompt = this.activeUIPrompt;
+		if (this.mode === "rpc" || !prompt) return undefined;
+		return {
+			kind: prompt.kind === "confirm" ? "approval" : "question",
+			requestId: prompt.requestId,
+			revision: 1,
+			since: prompt.since,
+		};
+	}
+
 	private wrapUIPromptContext(ui: ExtensionUIContext): ExtensionUIContext {
 		const questionFn = ui.question;
-		return {
+		return inheritMcpMrtrPresentation(ui, {
 			...ui,
 			select: (title, options, opts) => this.withUIPrompt("select", title, () => ui.select(title, options, opts)),
 			confirm: (title, message, opts) => this.withUIPrompt("confirm", title, () => ui.confirm(title, message, opts)),
 			input: (title, placeholder, opts) =>
-				this.withUIPrompt("input", title, () => ui.input(title, placeholder, opts)),
+				this.withUIPrompt("input", opts?.secret ? undefined : title, () => ui.input(title, placeholder, opts)),
 			editor: (title, prefill) => this.withUIPrompt("editor", title, () => ui.editor(title, prefill)),
 			custom: (factory, options) => this.withUIPrompt("custom", undefined, () => ui.custom(factory, options)),
 			...(questionFn
 				? {
 						question: (request, opts) =>
-							this.withUIPrompt("question", request.questions[0]?.header, () => questionFn(request, opts)),
+							this.withUIPrompt(
+								"question",
+								request.questions[0]?.header,
+								() => questionFn(request, opts),
+								request.requestId,
+							),
 					}
 				: {}),
-		};
+		});
 	}
 
-	private withUIPrompt<T>(kind: UIPromptKind, title: string | undefined, run: () => Promise<T>): Promise<T> {
+	private withUIPrompt<T>(
+		kind: UIPromptKind,
+		title: string | undefined,
+		run: () => Promise<T>,
+		requestId: string = crypto.randomUUID(),
+	): Promise<T> {
 		const outerPrompt = this.uiPromptDepth++ === 0;
 		if (outerPrompt) {
-			this.activeUIPrompt = { kind, title };
+			this.activeUIPrompt = { kind, title, requestId, since: new Date().toISOString() };
+			this.lifecycleAttentionObserver?.();
 			this.emitUIPromptEvent({ type: "ui_prompt_start", reason: "ui_prompt", kind, ...(title ? { title } : {}) });
 		}
 		const finish = () => {
@@ -854,6 +1118,7 @@ export class ExtensionRunner {
 			this.uiPromptDepth = 0;
 			const prompt = this.activeUIPrompt ?? { kind, title };
 			this.activeUIPrompt = undefined;
+			this.lifecycleAttentionObserver?.();
 			this.emitUIPromptEvent({
 				type: "ui_prompt_end",
 				reason: "ui_prompt",
@@ -876,11 +1141,26 @@ export class ExtensionRunner {
 	}
 
 	getUIContext(): ExtensionUIContext {
-		return this.uiContext;
+		return this.currentUIContext();
+	}
+
+	/** True while session_start handlers run and the turns they trigger are still held. */
+	sessionStartTurnsHeld(): boolean {
+		return this.sessionStartTurns.holding;
 	}
 
 	hasUI(): boolean {
-		return this.uiContext !== noOpUIContext;
+		return this.currentUIContext() !== noOpUIContext && !isPresentationOnly(this.uiBroker?.presenter);
+	}
+
+	/** Whether the extension loaded at `path` has that undeclared handler for `event` (a forwarded event's target, S29). */
+	servesForwardedHandler(path: string, event: "tool_call" | "tool_result", handler: number): boolean {
+		return servesForwardedHandler(this.extensions, path, event, handler);
+	}
+
+	/** The extensions whose undeclared registrations span loop events and tool events (S29). */
+	twoSidedExtensionPaths(): Set<string> {
+		return twoSidedExtensions(this.extensions);
 	}
 
 	getExtensionPaths(): string[] {
@@ -942,10 +1222,13 @@ export class ExtensionRunner {
 		);
 	}
 
+	/** Subscribes an RPC client to extension events, then tells extensions a client just subscribed. */
 	onRpcEvent(handler: (event: ExtensionRpcEvent) => void): () => void {
-		return this.eventBus.on(EXTENSION_RPC_EVENT_CHANNEL, (data) => {
+		const off = this.eventBus.on(EXTENSION_RPC_EVENT_CHANNEL, (data) => {
 			handler(data as ExtensionRpcEvent);
 		});
+		this.eventBus.emit(EXTENSION_RPC_SUBSCRIBED_CHANNEL, undefined);
+		return off;
 	}
 
 	/**
@@ -963,20 +1246,12 @@ export class ExtensionRunner {
 
 	/** Get extension-declared MCP servers (first declaration per name wins). */
 	getRegisteredMcpServers(): readonly RegisteredMcpServerDeclaration[] {
-		const serversByName = new Map<string, RegisteredMcpServerDeclaration>();
-		for (const ext of this.extensions) {
-			for (const decl of ext.mcpServers.values()) {
-				const existing = serversByName.get(decl.name);
-				if (existing === undefined) {
-					serversByName.set(decl.name, decl);
-				} else {
-					console.warn(
-						`MCP server '${decl.name}' declared by both ${existing.extensionPath} and ${ext.path}; keeping first declaration from ${existing.extensionPath}.`,
-					);
-				}
-			}
-		}
-		return Array.from(serversByName.values());
+		return this.runtime.mcpServers.declarations();
+	}
+
+	/** Whether a loaded extension handles `mcp_servers_change`, which makes it the one connecting registered servers. */
+	extensionConnectsMcpServers(): boolean {
+		return this.hasHandlers("mcp_servers_change");
 	}
 
 	/** Get a tool definition by name. Returns undefined if not found. */
@@ -1072,6 +1347,29 @@ export class ExtensionRunner {
 		return this.staleMessage === undefined;
 	}
 
+	/**
+	 * Deferred `ctx.afterSessionStart` work runs only while this generation still owns its session: a switch,
+	 * new session, reload or dispose during the `session_start` dispatch retires it, and its ctx would throw
+	 * `StaleExtensionContextError` on first use. A returned promise is observed here so its rejection is
+	 * reported, never unhandled; a stale error raised by a retirement mid-publish is dropped the same way.
+	 */
+	private runAfterSessionStart(publish: () => void | Promise<void>): void {
+		if (this.staleMessage) return;
+		const report = (error: unknown) => {
+			if (error instanceof StaleExtensionContextError) return;
+			this.emitError({
+				extensionPath: RUNTIME_EXTENSION_PATH,
+				event: "session_start",
+				error: error instanceof Error ? error.message : String(error),
+			});
+		};
+		try {
+			void Promise.resolve(publish()).catch(report);
+		} catch (error) {
+			report(error);
+		}
+	}
+
 	private assertActive(): void {
 		if (this.staleMessage) {
 			throw new StaleExtensionContextError(this.staleMessage);
@@ -1098,8 +1396,8 @@ export class ExtensionRunner {
 	}
 
 	/** Stops waiting on the given turn's handlers that are still running (the turn deadline's release). */
-	releaseHeldHandlers(turn: number): number {
-		return this.heldHandlerWaits.release(turn);
+	releaseHeldHandlers(turn: number, verdict: HandlerStopVerdict = "released"): number {
+		return this.heldHandlerWaits.release(turn, verdict);
 	}
 
 	/**
@@ -1137,10 +1435,12 @@ export class ExtensionRunner {
 		verdict: HandlerStopVerdict,
 		budget: ExtensionHandlerBudget,
 	): void {
+		// A person moving on from a settled run is not a failure: session.log records it (stage "released"), nothing else.
+		if (verdict === "yielded") return;
 		const error =
 			verdict === "timed_out"
 				? `handler timed out after ${budget.timeoutMs}ms`
-				: "handler released by the turn deadline";
+				: "handler released when the turn was stopped";
 		this.emitError({ extensionPath, event, error });
 	}
 
@@ -1356,25 +1656,8 @@ export class ExtensionRunner {
 		return this.resolveRegisteredCommands().find((command) => command.invocationName === name);
 	}
 
-	async requestRpc(name: string, data: unknown): Promise<unknown> {
-		this.assertActive();
-		const normalizedName = name.trim();
-		if (normalizedName.length === 0) {
-			throw new Error("Extension RPC request name must not be empty");
-		}
-		const matches = this.extensions.flatMap((extension) => {
-			const handler = extension.rpcHandlers?.get(normalizedName);
-			return handler === undefined ? [] : [handler];
-		});
-		if (matches.length === 0) {
-			throw new ExtensionRpcRequestNotFoundError(normalizedName);
-		}
-		if (matches.length > 1) {
-			throw new Error(`Multiple extension RPC request handlers registered: ${normalizedName}`);
-		}
-		const result = await matches[0]?.(data);
-		this.assertActive();
-		return result;
+	async requestRpc(name: string, data: unknown, context?: ExtensionRpcRequestContext): Promise<unknown> {
+		return requestExtensionRpc(this.extensions, name, data, context, () => this.assertActive());
 	}
 
 	/**
@@ -1387,7 +1670,14 @@ export class ExtensionRunner {
 
 	getActiveTools(): string[] {
 		this.assertActive();
+		// The active set belongs to the loop; a runner without a session has none to report.
+		if (this.sessionManager === undefined) return [];
 		return this.runtime.getActiveTools();
+	}
+
+	private boundSessionManager(): SessionManager {
+		if (this.sessionManager === undefined) throw loopSideUnbound("sessionManager");
+		return this.sessionManager;
 	}
 
 	/**
@@ -1401,7 +1691,7 @@ export class ExtensionRunner {
 		const getEffectiveServiceTier = this.getEffectiveServiceTier;
 		const getScopedModels = this.getScopedModels;
 		let compactionSignal: AbortSignal | undefined;
-		return {
+		const context: ExtensionContext = {
 			offload: (id: string, args: unknown, options?: OffloadOptions) => {
 				runner.assertActive();
 				if (runner.offloadFn === undefined)
@@ -1410,7 +1700,7 @@ export class ExtensionRunner {
 			},
 			get ui() {
 				runner.assertActive();
-				return runner.uiContext;
+				return runner.currentUIContext();
 			},
 			get mode() {
 				runner.assertActive();
@@ -1434,15 +1724,23 @@ export class ExtensionRunner {
 			},
 			get sessionManager() {
 				runner.assertActive();
-				return runner.sessionManager;
+				return runner.boundSessionManager();
 			},
 			get goalStoreFile() {
 				runner.assertActive();
-				return goalFilePath(goalStoreRef(runner.sessionManager, runner.cwd));
+				return goalFilePath(goalStoreRef(runner.boundSessionManager(), runner.cwd));
 			},
 			get browserEngine() {
 				runner.assertActive();
 				return runner.getBrowserEngineFn();
+			},
+			get sessionEnv() {
+				runner.assertActive();
+				return runner.getSessionEnvFn();
+			},
+			get deviceFiles() {
+				runner.assertActive();
+				return runner.getDeviceFilesFn();
 			},
 			get modelRegistry() {
 				runner.assertActive();
@@ -1472,6 +1770,26 @@ export class ExtensionRunner {
 				runner.assertActive();
 				return runner.isIdleFn();
 			},
+			engineTurnsHeld: () => {
+				runner.assertActive();
+				return runner.engineTurnsHeldFn();
+			},
+			noteHeldWake: (source) => {
+				runner.assertActive();
+				runner.noteHeldWakeFn(source);
+			},
+			getPauseState: () => {
+				runner.assertActive();
+				return runner.pauseActions.getPauseState?.() ?? { pauseSeq: 0, holds: [] };
+			},
+			fenceRun: (runRef) => {
+				runner.assertActive();
+				runner.pauseActions.fenceRun?.(runRef);
+			},
+			releaseRunFence: (runRef) => {
+				runner.assertActive();
+				runner.pauseActions.releaseRunFence?.(runRef);
+			},
 			isProjectTrusted: () => {
 				runner.assertActive();
 				return runner.isProjectTrustedFn();
@@ -1482,7 +1800,21 @@ export class ExtensionRunner {
 			},
 			get kernelTools() {
 				runner.assertActive();
-				return kernelToolsStorage.getStore();
+				const tools = kernelToolsStorage.getStore();
+				if (!tools) return undefined;
+				return {
+					capabilities: tools.capabilities,
+					describe: (names) => tools.describe(names),
+					invoke: (request, options) => {
+						runner.assertActive();
+						return tools.invoke(request, {
+							...(options && ("aborted" in options ? { signal: options } : options)),
+							invoker: kernelToolInvokerStorage.getStore() ?? {
+								sessionId: runner.boundSessionManager().getSessionId(),
+							},
+						});
+					},
+				} satisfies ExtensionKernelTools;
 			},
 			get evalHandleHost() {
 				runner.assertActive();
@@ -1495,6 +1827,10 @@ export class ExtensionRunner {
 			hasPendingMessages: () => {
 				runner.assertActive();
 				return runner.hasPendingMessagesFn();
+			},
+			hasQueuedPersonInput: () => {
+				runner.assertActive();
+				return runner.hasQueuedPersonInputFn();
 			},
 			get requestReload() {
 				runner.assertActive();
@@ -1565,6 +1901,10 @@ export class ExtensionRunner {
 				runner.assertActive();
 				return runner.getAskUserSettingsFn();
 			},
+			afterSessionStart: (publish) => {
+				runner.assertActive();
+				runner.sessionStartTurns.admit(() => runner.runAfterSessionStart(publish));
+			},
 			getImageSettings: () => {
 				runner.assertActive();
 				return runner.getImageSettingsFn();
@@ -1612,6 +1952,10 @@ export class ExtensionRunner {
 				runner.assertActive();
 				return runner.getSystemPromptFn();
 			},
+			getSystemPromptStablePrefix: () => {
+				runner.assertActive();
+				return runner.getSystemPromptStablePrefixFn();
+			},
 			getSystemPromptOptions: () => {
 				runner.assertActive();
 				return runner.getSystemPromptOptionsFn();
@@ -1624,7 +1968,34 @@ export class ExtensionRunner {
 				runner.assertActive();
 				return runner.getRegisteredMcpServers();
 			},
+			extensionConnectsMcpServers: () => {
+				runner.assertActive();
+				return runner.extensionConnectsMcpServers();
+			},
 		};
+		if (this.questionInput) {
+			bindQuestionInput(context, () => {
+				runner.assertActive();
+				// The answer's own sendUserMessage follows synchronously and takes this token at admission.
+				runner.personAnswerPending = true;
+				queueMicrotask(() => {
+					runner.personAnswerPending = false;
+				});
+				runner.questionInput?.();
+			});
+		}
+		if (this.sessionManager === undefined) {
+			withoutSession(context, this.sessionlessBoundMembers);
+			const call = this.loopHookCallFn?.();
+			if (call !== undefined)
+				Object.defineProperties(context, {
+					sessionManager: { configurable: true, enumerable: true, value: call.sessionManager },
+					signal: { configurable: true, enumerable: true, value: call.signal },
+					isIdle: { configurable: true, enumerable: true, value: call.isIdle },
+					ui: { configurable: true, enumerable: true, value: withLoopNotices(context.ui, call.notify) },
+				});
+		}
+		return context;
 	}
 
 	/**
@@ -1734,7 +2105,7 @@ export class ExtensionRunner {
 			throw err;
 		}
 		let valid = true;
-		const handlers = flattenHandlers(this.extensions, baseEvent.type);
+		const handlers = this.dropsLoopEvent(baseEvent.type) ? [] : flattenHandlers(this.extensions, baseEvent.type);
 
 		// Boundary handlers hold the agent loop's turn end and the run's settle, so they run under the same host budget
 		// as the lifecycle events and the turn deadline can release them (senpi#3650).
@@ -1876,7 +2247,17 @@ export class ExtensionRunner {
 		}
 	}
 
+	emitHeldWakesReleased(sources: Record<string, number>): Promise<void> {
+		return this.emit({ type: "held_wakes_released", sources });
+	}
+
+	/** A runner without a session manager has no loop, so it dispatches no `loop` event (senpi#5231). */
+	private dropsLoopEvent(type: ExtensionEvent["type"]): boolean {
+		return this.sessionManager === undefined && EXTENSION_EVENT_PLACEMENT[type] === "loop";
+	}
+
 	emit<TEvent extends RunnerEmitEvent>(event: TEvent): Promise<RunnerEmitResult<TEvent>> {
+		if (this.dropsLoopEvent(event.type)) return Promise.resolve(undefined as RunnerEmitResult<TEvent>);
 		// Not async: other events keep the exact microtask timing of a direct dispatch.
 		// Turns requested from any session_start handler start after the last one returns (senpi#1972).
 		if (event.type === "session_start") return this.sessionStartTurns.dispatch(() => this.dispatchEmit(event));
@@ -1884,6 +2265,23 @@ export class ExtensionRunner {
 			return this.dispatchLifecycle(event) as Promise<RunnerEmitResult<TEvent>>;
 		}
 		return this.dispatchEmit(event);
+	}
+
+	/**
+	 * Move handlers carry state that exists nowhere else, so every failure (a throw, or a handler still running at the
+	 * `session_shutdown` handler budget) is reported and returned: a `move` release refuses on an export failure, and
+	 * the import hand-over keeps the moved state for the next open on an import failure.
+	 */
+	async emitSessionMove(event: SessionMoveEmission): Promise<readonly SessionMoveFailure[]> {
+		const calls = (this.dropsLoopEvent(event.type) ? [] : flattenHandlers(this.extensions, event.type)).map(
+			({ path, handler }) => ({
+				extensionPath: path,
+				call: (signal: AbortSignal) => handler({ ...event, signal }, this.createContext(path)),
+			}),
+		);
+		const failures = await runSessionMoveHandlers(event.type, calls, this.resolveSessionShutdownBudget().handler);
+		for (const failure of failures) this.emitError({ ...failure, event: event.type });
+		return failures;
 	}
 
 	private async dispatchEmit<TEvent extends RunnerEmitEvent>(event: TEvent): Promise<RunnerEmitResult<TEvent>> {
@@ -1895,6 +2293,7 @@ export class ExtensionRunner {
 		const isSessionShutdown = event.type === "session_shutdown";
 		let shutdownBudget: SessionShutdownBudget | undefined;
 		let quitDeadline: QuitDeadline | undefined;
+		const timer = event.type === "session_start" && openTimingEnabled() ? startOpenTimer("session_start") : undefined;
 
 		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, event.type)) {
 			for (const handler of handlers) {
@@ -1923,6 +2322,7 @@ export class ExtensionRunner {
 						continue;
 					}
 					const handlerResult = await handler(event, this.createContext(ext.path));
+					timer?.mark(basename(ext.path));
 
 					if (this.isSessionBeforeEvent(event) && handlerResult) {
 						result = handlerResult as SessionBeforeEventResult;
@@ -1947,6 +2347,7 @@ export class ExtensionRunner {
 	}
 
 	async emitModelSelect(event: ModelSelectEvent): Promise<ModelSelectEventResult | undefined> {
+		if (this.dropsLoopEvent("model_select")) return undefined;
 		let result: ModelSelectEventResult | undefined;
 
 		for (const ext of this.extensions) {
@@ -2031,11 +2432,21 @@ export class ExtensionRunner {
 		});
 	}
 
-	async emitToolResult(event: ToolResultEvent): Promise<ToolResultEventResult | undefined> {
+	async emitToolResult(
+		event: ToolResultEvent,
+		options: ToolEventDispatchOptions = {},
+	): Promise<ToolResultEventResult | undefined> {
 		const currentEvent: ToolResultEvent = { ...event };
 		let modified = false;
 
-		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "tool_result")) {
+		for (const { ext, handlers: own } of snapshotEventHandlers(this.extensions, "tool_result")) {
+			const handlers = toolEventHandlers(
+				ext,
+				own,
+				"tool_result",
+				options,
+				(index) => async () => options.forward?.toolResult(ext.path, index, currentEvent),
+			);
 			for (const handler of handlers) {
 				const hookRun = this.beginToolHookRun(this.createContext(), {
 					hookName: "PostToolUse",
@@ -2103,10 +2514,20 @@ export class ExtensionRunner {
 		};
 	}
 
-	async emitToolCall(event: ToolCallEvent): Promise<ToolCallEventResult | undefined> {
+	async emitToolCall(
+		event: ToolCallEvent,
+		options: ToolEventDispatchOptions = {},
+	): Promise<ToolCallEventResult | undefined> {
 		let result: ToolCallEventResult | undefined;
 
-		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "tool_call")) {
+		for (const { ext, handlers: own } of snapshotEventHandlers(this.extensions, "tool_call")) {
+			const handlers = toolEventHandlers(
+				ext,
+				own,
+				"tool_call",
+				options,
+				(index) => async () => options.forward?.toolCall(ext.path, index, event),
+			);
 			for (const handler of handlers) {
 				const hookRun = this.beginToolHookRun(this.createContext(), {
 					hookName: "PreToolUse",
@@ -2179,8 +2600,10 @@ export class ExtensionRunner {
 		source: ContextEvent["source"] = "agent",
 	): Promise<AgentMessage[]> {
 		return dispatchContextMessages(messages, {
-			contextHandlers: snapshotEventHandlers(this.extensions, "context"),
-			contextWithSystemHandlers: snapshotEventHandlers(this.extensions, "context_with_system"),
+			contextHandlers: this.dropsLoopEvent("context") ? [] : snapshotEventHandlers(this.extensions, "context"),
+			contextWithSystemHandlers: this.dropsLoopEvent("context_with_system")
+				? []
+				: snapshotEventHandlers(this.extensions, "context_with_system"),
 			createContext: (path) => this.createContext(path),
 			emitError: (error) => this.emitError(error),
 			excludeExtensionPath,
@@ -2212,7 +2635,10 @@ export class ExtensionRunner {
 	): Promise<unknown> {
 		let currentPayload = payload;
 
-		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "before_provider_request")) {
+		const requestHandlers = this.dropsLoopEvent("before_provider_request")
+			? []
+			: snapshotEventHandlers(this.extensions, "before_provider_request");
+		for (const { ext, handlers } of requestHandlers) {
 			if (ext.path === excludeExtensionPath) continue;
 			for (const handler of handlers) {
 				try {
@@ -2242,7 +2668,10 @@ export class ExtensionRunner {
 	}
 
 	async emitBeforeProviderHeaders(headers: ProviderHeaders): Promise<ProviderHeaders> {
-		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "before_provider_headers")) {
+		const headerHandlers = this.dropsLoopEvent("before_provider_headers")
+			? []
+			: snapshotEventHandlers(this.extensions, "before_provider_headers");
+		for (const { ext, handlers } of headerHandlers) {
 			for (const handler of handlers) {
 				try {
 					// Handlers mutate `headers` in place; the return value is ignored.
@@ -2267,6 +2696,13 @@ export class ExtensionRunner {
 		return headers;
 	}
 
+	/** Use the loader's provenance, including bundled modules and generated global-default shims. */
+	getThirdPartySessionStartPaths(): string[] {
+		return this.extensions
+			.filter((ext) => ext.sourceInfo.source !== "builtin" && (ext.handlers.get("session_start")?.length ?? 0) > 0)
+			.map((ext) => ext.path);
+	}
+
 	/** Paths of extensions with a `before_agent_start` handler not registered `{ previewSafe: true }`. */
 	getPreviewUnsafeBeforeAgentStartPaths(): string[] {
 		const paths: string[] = [];
@@ -2286,13 +2722,24 @@ export class ExtensionRunner {
 			readonly preview?: boolean;
 			readonly signal?: AbortSignal;
 			readonly trigger?: BeforeAgentStartEvent["trigger"];
+			/** Dispatch only to these extensions (a hand running a hosted loop's user hooks, S33); absent: all. */
+			readonly only?: (extensionPath: string) => boolean;
+			/** Internal size accounting; observes only preview composition, never real turns. */
+			readonly observePrompt?: (contribution: {
+				readonly path: string;
+				readonly before: string;
+				readonly after: string;
+				readonly parts?: readonly DynamicSystemPromptPart[];
+			}) => void;
 		} = {},
 	): Promise<BeforeAgentStartCombinedResult | undefined> {
 		let currentSystemPrompt = systemPrompt;
 		const messages: NonNullable<BeforeAgentStartEventResult["message"]>[] = [];
 		let systemPromptModified = false;
+		let stableLength = systemPrompt.length;
 
-		dispatch: for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "before_agent_start")) {
+		dispatch: for (const { ext, handlers } of beforeAgentStartDispatchOrder(this.extensions)) {
+			if (options.only !== undefined && !options.only(ext.path)) continue;
 			for (const handler of handlers) {
 				if (options.signal?.aborted === true) break dispatch;
 				// A preview reaches only handlers that declared themselves side-effect free (senpi#2115).
@@ -2304,10 +2751,16 @@ export class ExtensionRunner {
 						{},
 						Object.getOwnPropertyDescriptors(this.createContext(ext.path)),
 					) as ExtensionContext;
-					ctx.getSystemPrompt = () => {
-						this.assertActive();
-						return currentSystemPrompt;
-					};
+					// Defined, not assigned: on a runner without a session the copied member is a loop-side getter.
+					Object.defineProperty(ctx, "getSystemPrompt", {
+						configurable: true,
+						enumerable: true,
+						writable: true,
+						value: () => {
+							this.assertActive();
+							return currentSystemPrompt;
+						},
+					});
 					const event: BeforeAgentStartEvent = {
 						type: "before_agent_start",
 						prompt,
@@ -2317,7 +2770,9 @@ export class ExtensionRunner {
 						systemPromptOptions,
 						...(options.preview === true ? { preview: true } : {}),
 					};
+					const promptBefore = currentSystemPrompt;
 					const handlerResult = await handler(event, ctx);
+					let parts: readonly DynamicSystemPromptPart[] | undefined;
 
 					if (handlerResult) {
 						const result = handlerResult as BeforeAgentStartEventResult;
@@ -2325,9 +2780,24 @@ export class ExtensionRunner {
 							messages.push(result.message);
 						}
 						if (result.systemPrompt !== undefined) {
+							const cache =
+								result.systemPromptCache ?? (ext.path.startsWith("<builtin:") ? "stable" : "volatile");
+							stableLength =
+								cache === "stable" && stableLength === currentSystemPrompt.length
+									? result.systemPrompt.length
+									: Math.min(stableLength, sharedPrefixLength(currentSystemPrompt, result.systemPrompt));
 							currentSystemPrompt = result.systemPrompt;
 							systemPromptModified = true;
+							parts = result.systemPromptParts;
 						}
+					}
+					if (options.preview === true) {
+						options.observePrompt?.({
+							path: ext.path,
+							before: promptBefore,
+							after: currentSystemPrompt,
+							...(parts === undefined ? {} : { parts }),
+						});
 					}
 				} catch (err) {
 					const message = err instanceof Error ? err.message : String(err);
@@ -2346,6 +2816,9 @@ export class ExtensionRunner {
 			return {
 				messages: messages.length > 0 ? messages : undefined,
 				systemPrompt: systemPromptModified ? currentSystemPrompt : undefined,
+				...(systemPromptModified && stableLength < currentSystemPrompt.length
+					? { systemPromptStablePrefix: currentSystemPrompt.slice(0, stableLength) }
+					: {}),
 			};
 		}
 
@@ -2407,18 +2880,38 @@ export class ExtensionRunner {
 		return { skillPaths, promptPaths, themePaths, hookPaths };
 	}
 
-	/** Emit input event. Transforms chain, "handled" short-circuits. */
+	/** Awaits every `provider_login_start` handler in order; a failing handler is reported and the login goes on. */
+	async emitProviderLoginStart(event: ProviderLoginStartEvent): Promise<void> {
+		for (const { path, handler } of flattenHandlers(this.extensions, event.type)) {
+			try {
+				await handler(event, this.createContext(path));
+			} catch (err) {
+				this.reportHandlerFailure(path, event.type, err);
+			}
+		}
+	}
+
+	/**
+	 * Emit input event. Transforms chain, "handled" short-circuits. `attribution` defaults to what `source` alone
+	 * implies (RPC input from a connection whose role is unknown is an agent's); the session passes the one it decides.
+	 */
 	async emitInput(
 		text: string,
 		images: ImageContent[] | undefined,
 		source: InputSource,
 		streamingBehavior?: "steer" | "followUp",
 		inputId = "input",
+		attribution: InputAttribution = inputAttributionOf({ origin: inputOriginOf(source), source }),
+		/** Dispatch only to these extensions (a hand running a hosted loop's user hooks, S33); absent: all. */
+		only?: (extensionPath: string) => boolean,
+		/** The hop count of a thread call this input arrived as (K8); absent for any other input. */
+		chainCount?: number,
 	): Promise<InputEventResult> {
 		let currentText = text;
 		let currentImages = images;
 
 		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "input")) {
+			if (only !== undefined && !only(ext.path)) continue;
 			for (const handler of handlers) {
 				try {
 					const event: InputEvent = {
@@ -2427,7 +2920,9 @@ export class ExtensionRunner {
 						text: currentText,
 						images: currentImages,
 						source,
+						attribution,
 						streamingBehavior,
+						...(chainCount === undefined ? {} : { chainCount }),
 					};
 					const result = (await handler(event, this.createContext(ext.path))) as InputEventResult | undefined;
 					if (result?.action === "handled") return result;

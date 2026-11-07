@@ -669,9 +669,10 @@ describe("openai-codex streaming", () => {
 				expect(headers?.has("session_id")).toBe(false);
 				expect(headers?.get("x-client-request-id")).toBe(sessionId);
 
-				// Verify sessionId is set in request body as prompt_cache_key
+				// Body cache affinity is prefix-scoped; transport affinity stays session-scoped.
 				const body = decodeCodexRequestBody(init?.body);
-				expect(body?.prompt_cache_key).toBe(sessionId);
+				expect(body?.prompt_cache_key).toEqual(expect.stringMatching(/^.{1,64}$/));
+				expect(body?.prompt_cache_key).not.toBe(sessionId);
 
 				return new Response(stream, {
 					status: 200,
@@ -760,7 +761,7 @@ describe("openai-codex streaming", () => {
 		expect(capturedBody).not.toHaveProperty("prompt_cache_key");
 	});
 
-	it("clamps prompt_cache_key to OpenAI's 64-character limit", async () => {
+	it("keeps prefix prompt_cache_key within OpenAI's 64-character limit", async () => {
 		const token = mockToken();
 		const sessionId = "x".repeat(67);
 		let capturedPayload: { prompt_cache_key?: string } | undefined;
@@ -807,7 +808,8 @@ describe("openai-codex streaming", () => {
 			},
 		}).result();
 
-		expect(capturedPayload?.prompt_cache_key).toBe("x".repeat(64));
+		expect(capturedPayload?.prompt_cache_key).toEqual(expect.stringMatching(/^.{1,64}$/));
+		expect(capturedPayload?.prompt_cache_key).not.toBe("x".repeat(64));
 	});
 
 	it("clamps Codex session-id header to 64 characters", async () => {

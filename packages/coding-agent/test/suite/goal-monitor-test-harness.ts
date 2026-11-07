@@ -194,6 +194,7 @@ export function waitForGoalStatus(
 	const waiters = harness[statusWaiters];
 	return new Promise((resolve, reject) => {
 		let completed = false;
+		// oxlint-disable-next-line eslint/prefer-const -- a closure reads it; const would throw in the TDZ if that closure ran before the assignment, so the rewrite is reviewed separately
 		let timeout: ReturnType<typeof setRealTimeout> | undefined;
 		const waiter: StatusWaiter = { matches, complete };
 		waiters.add(waiter);
@@ -223,6 +224,7 @@ export function waitForSentCount(
 
 	return new Promise((resolve, reject) => {
 		let completed = false;
+		// oxlint-disable-next-line eslint/prefer-const -- a closure reads it; const would throw in the TDZ if that closure ran before the assignment, so the rewrite is reviewed separately
 		let timeout: ReturnType<typeof setRealTimeout> | undefined;
 		const waiter: SentCountWaiter = { expectedCount, complete };
 		waiters.add(waiter);

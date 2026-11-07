@@ -1,3 +1,169 @@
+## 2026-10-30 - Selected SIWC account lifecycle (part of #5003)
+
+### What changed
+
+- `packages/ai/src/providers/chatgpt-subscription.ts` routes reauthorization directly by the selected credential and dispatches revocation to the matching OAuth flow.
+
+### Why
+
+- Returning SIWC accounts must reuse their issued registration and cannot switch to legacy during reauthorization. Sign-out must reach the SIWC revocation hook.
+
+### Why an extension could not handle it
+
+- Provider composition owns credential-route dispatch before terminal or RPC interaction.
+
+### Expected merge conflict zones
+
+- The ChatGPT subscription OAuth login, refresh and revoke object.
+
+## 2026-10-30 - Shared ChatGPT sign-in route choice (part of senpi#5003)
+
+### What changed
+
+- `packages/ai/src/providers/chatgpt-subscription.ts`: offers Continue with ChatGPT first and preserves a legacy sign-in choice through the existing OAuth interaction.
+
+### Why
+
+- Terminal and RPC login clients need the same SIWC-first route selection without removing sign-in for existing users.
+
+### Why an extension could not handle it
+
+- The existing provider owns the OAuth login implementation shared by those clients.
+
+### Expected merge conflict zones
+
+- The ChatGPT Subscription OAuth login function, alongside W3 reauthorization integration.
+
+## 2026-10-30 - Register SIWC on the existing ChatGPT provider (part of senpi#5003)
+
+### What changed
+
+- `packages/ai/src/providers/chatgpt-subscription.ts`: new sign-ins use the validated SIWC flow, receive a saved SIWC route and expose the Continue with ChatGPT label.
+
+### Why
+
+- `packages/ai/src/providers/chatgpt-subscription.ts`: option A keeps new and legacy ChatGPT accounts in one provider and one pool.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/providers/chatgpt-subscription.ts`: CLI/TUI auth enumeration uses this builtin provider.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/providers/chatgpt-subscription.ts`: OAuth login registration.
+
+## 2026-10-30 - Dispatch ChatGPT slots by their saved route (part of senpi#5003)
+
+### What changed
+
+- `packages/ai/src/providers/chatgpt-subscription.ts`: derive SIWC public Responses auth and dispatch with `compat.siwc`, preserving exact upstream model aliases and the unchanged legacy adapter. Select the permitted `web_search` tool type so the default search extension does not inject the unsupported preview variant.
+
+### Why
+
+- `packages/ai/src/providers/chatgpt-subscription.ts`: one provider must serve both existing Codex sessions and new public-API sessions.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/providers/chatgpt-subscription.ts`: the builtin provider owns OAuth derivation and adapter selection.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/providers/chatgpt-subscription.ts`: OAuth registration and API map.
+
+## 2026-10-31 - Fall back to env when stored google-vertex location is empty (senpi#5135)
+
+### What changed
+
+- `packages/ai/src/providers/google-vertex.ts`: use `||` instead of `??` when reading `credential?.env?.GOOGLE_CLOUD_LOCATION`, `GOOGLE_CLOUD_PROJECT`, and `GOOGLE_APPLICATION_CREDENTIALS` so an empty stored string falls back to ambient environment variables.
+
+### Why
+
+- senpi#2961: an empty stored location or project in user settings blocked env fallback, causing Vertex authentication to fail.
+
+### Why an extension could not handle it
+
+- Vertex provider authentication resolution is built into the core AI provider factory.
+
+### Expected merge conflict zones
+
+- LOW: `vertexAuth.resolve` in `packages/ai/src/providers/google-vertex.ts`.
+
+## 2026-10-30 - ChatGPT Subscription reports the signed-in account (senpi#5009)
+
+### What changed
+
+- `packages/ai/src/providers/chatgpt-subscription.ts`: the provider's lazy OAuth declares `accountIdentity` from the access token.
+
+### Why
+
+- oh-my-openagent#9633: login dedupe needs the identity without loading the Node-only flow module.
+
+### Why an extension could not handle it
+
+- The builtin provider definition owns its OAuth surface.
+
+### Expected merge conflict zones
+
+- LOW: the `lazyOAuth({...})` call in `chatgptSubscriptionProvider`.
+
+## 2026-10-27 - The Anthropic provider comment names the CLI sign-in (senpi#4436, S7)
+
+### What changed
+
+- `packages/ai/src/providers/anthropic.ts`: the comment on the absent subscription OAuth says the `anthropic-subscription` lane signs in through the bundled Claude Code CLI, not a shared OAuth flow.
+
+### Why
+
+- senpi#4436 (R7): the PKCE flow the comment pointed at is removed.
+
+### Why an extension could not handle it
+
+- Comment-only change in the builtin provider factory.
+
+### Expected merge conflict zones
+
+- LOW: the `auth` comment in `anthropicProvider`.
+
+## 2026-10-26 - The faux provider captures block seeds at emission (senpi#4285, part of #4272)
+
+### What changed
+
+- `packages/ai/src/providers/faux.ts`: both the streamed and the deferred-fetch stream enable capture; each tool
+  argument delta carries `parsedThrough: 0`, because faux never parses its generated chunks and only the end installs
+  the arguments.
+
+### Why
+
+- Faux backs the unit tests and real-CLI QA; its streams must carry the same capture facts as provider streams so
+  later stages can be exercised end to end (R3.C6.2).
+
+### Why an extension could not handle it
+
+- Capture has to run inside the stream's `push`, which only the provider controls.
+
+### Expected merge conflict zones
+
+- LOW: the two `createAssistantMessageEventStream()` sites in `createFauxCore` and the tool delta push in
+  `streamWithDeltas`.
+
+## 2026-10-24 - Kimi K3.1 Pro rows in the kimi-coding shard (senpi#4183)
+
+### What changed
+
+- `packages/ai/src/providers/kimi-coding.models.ts`: adds `chat:k3.1-pro` and `chat:k3.1-pro-highspeed` with the `k3` compat flags and image resize profile, the K3 thinking map, context 1048576, maxTokens 131072, text + image + video input, and the Moonshot API rates as implied cost (2 / 10 / 0.2 / 2 and 4 / 20 / 0.2 / 4 per MTok), like `k3`.
+
+### Why
+
+- Moonshot shipped K3.1 Pro on Kimi Code on 2026-10-23 under the ids `k3.1-pro` / `k3.1-pro-highspeed` (kimi.com/code/docs models page, checked 2026-10-24). Without a row the model could not be selected, and a mistyped id silently falls back to K2.8 Preview without thinking.
+
+### Why an extension could not handle it
+
+- The `kimi-coding` catalog is a hand-owned builtin shard; the builtin provider reads only this file.
+
+### Expected merge conflict zones
+
+- LOW: the `anthropic-messages` block of `packages/ai/src/providers/kimi-coding.models.ts`, between `chat:k3` and `chat:k3-256k`.
+
 ## 2026-10-16 - Xiaomi MiMo compat covers mimo-v2.6-pro (senpi v2026.10.16 release)
 
 ### What changed

@@ -54,7 +54,12 @@ import type {
 } from "./monitor-continuation-types.ts";
 import { findParkedGoalWait, type ParkedGoalWait } from "./parked-wait.ts";
 import { buildContinuationPrompt, buildGoalStallNotice, buildTruncationRecoveryPrompt } from "./prompt.ts";
-import { PROVIDER_RETRY_BASE_MS, providerRetryAt, providerRetryDelayMs } from "./provider-retry.ts";
+import {
+	exhaustedLadderResumeDelayMs,
+	PROVIDER_RETRY_BASE_MS,
+	providerRetryAt,
+	providerRetryDelayMs,
+} from "./provider-retry.ts";
 import { isStaleExtensionContextError } from "./stale-context.ts";
 import { resetContinuationStreak } from "./store.ts";
 import { goalStoreRef } from "./store-ref.ts";
@@ -71,6 +76,19 @@ export const GOAL_CONTINUATION_SCHEDULED_EVENT = "goal_continuation_scheduled";
 export const GOAL_CONTINUATION_RESUMED_EVENT = "goal_continuation_resumed";
 export const GOAL_CONTINUATION_TIMER_STATE_EVENT = "goal_continuation_timer_state";
 export const GOAL_MONITOR_STALL_EVENT = "goal_monitor_continuation_stall";
+
+/** The one notice a provider-limit park shows: when the goal resumes, in local time and as the exact instant. */
+function providerPauseNotice(retryAt: number): string {
+	const local = new Date(retryAt).toLocaleString("en-US", {
+		year: "numeric",
+		month: "short",
+		day: "numeric",
+		hour: "numeric",
+		minute: "2-digit",
+		timeZoneName: "short",
+	});
+	return `Goal paused until ${local} (${new Date(retryAt).toISOString()}): the provider cannot serve before then. It resumes once at that time.`;
+}
 
 export class MonitorAwareGoalContinuation {
 	readonly #pi: ExtensionAPI;
@@ -150,7 +168,11 @@ export class MonitorAwareGoalContinuation {
 			this.#resetContinuationState();
 			return options.goal;
 		}
-		this.#recordToollessContinuationTurn(options.goal, turnUsedTools || humanInput);
+		// A turn the provider refused (a blocked pool, an outage) was not the model choosing to skip tools:
+		// it neither counts toward nor clears the stall streak (senpi#3975).
+		if (lastAssistantMessage(options.messages)?.stopReason !== "error") {
+			this.#recordToollessContinuationTurn(options.goal, turnUsedTools || humanInput);
+		}
 		const immediateInput = this.#buildVerdictInput(options.ctx, options.goal, "immediate", options.messages);
 		const madeProgress =
 			this.#recordToolEffect(options.messages) || humanInput || hasGoalTodoProgress(immediateInput);
@@ -239,11 +261,12 @@ export class MonitorAwareGoalContinuation {
 		return options.goal;
 	}
 
-	async afterAgentSettled(): Promise<Goal | null | undefined> {
+	async afterAgentSettled(fallbackExhausted?: { resumeAt?: number }): Promise<Goal | null | undefined> {
 		const pendingSystem = this.#pendingSystemRecovery;
 		const pendingProvider = this.#pendingProviderRecovery;
 		this.#pendingSystemRecovery = undefined;
 		this.#pendingProviderRecovery = undefined;
+		if (fallbackExhausted !== undefined) return this.#parkUntilLadderReset(fallbackExhausted.resumeAt);
 		if (pendingSystem !== undefined && pendingSystem.goal !== null && pendingSystem.event.abortSource !== "user") {
 			return (
 				await this.#admitAndQueue(pendingSystem.ctx, pendingSystem.goal, "systemRecovery", pendingSystem.messages)
@@ -258,15 +281,15 @@ export class MonitorAwareGoalContinuation {
 		}
 		this.#providerRetryAttempts += 1;
 		const now = Date.now();
-		const delayMs = providerRetryDelayMs(
-			this.#providerRetryAttempts,
-			providerRetryAt(pendingProvider.messages, now),
-			now,
-		);
+		const retryAt = providerRetryAt(pendingProvider.messages, now);
+		const delayMs = providerRetryDelayMs(this.#providerRetryAttempts, retryAt, now);
 		if (delayMs > 0) {
 			this.#cancelTimer();
 			this.#providerRetryDelayMs = delayMs;
 			this.#schedule(pendingProvider.goal, "providerRetry");
+			if (retryAt !== undefined && this.#ctxHasUI(pendingProvider.ctx)) {
+				pendingProvider.ctx.ui.notify(providerPauseNotice(retryAt), "info");
+			}
 			return pendingProvider.goal;
 		}
 		return (
@@ -279,6 +302,20 @@ export class MonitorAwareGoalContinuation {
 		).goal;
 	}
 
+	/**
+	 * senpi#3709: every fallback rung failed, so a continuation now would hit the same limits. Park on
+	 * the soonest reset the run named and resume once; with no known reset, stay parked until input.
+	 */
+	#parkUntilLadderReset(resumeAt: number | undefined): Goal | undefined {
+		const goal = this.#goal;
+		if (goal?.status !== "active") return undefined;
+		this.#cancelTimer();
+		if (resumeAt === undefined) return goal;
+		this.#providerRetryDelayMs = exhaustedLadderResumeDelayMs(resumeAt, Date.now());
+		this.#schedule(goal, "providerRetry");
+		return goal;
+	}
+
 	syncGoal(goal: Goal | null): void {
 		if (goal?.id !== this.#goal?.id) this.#resetContinuationState();
 		this.#goal = goal;
@@ -286,6 +323,16 @@ export class MonitorAwareGoalContinuation {
 			this.#cancelTimer();
 			this.#resetContinuationState();
 		}
+	}
+
+	/** The continuation timer armed right now, if any (monitor backstop, user grace, provider retry). */
+	scheduledContinuation(): DelayedContinuationKind | undefined {
+		return this.#scheduledContinuationKind;
+	}
+
+	/** A system or provider recovery staged for `agent_settled`. */
+	hasStagedRecovery(): boolean {
+		return this.#pendingSystemRecovery !== undefined || this.#pendingProviderRecovery !== undefined;
 	}
 
 	/** Live resumption channels known to this generation (e.g. terminal snapshots replayed on reload). */

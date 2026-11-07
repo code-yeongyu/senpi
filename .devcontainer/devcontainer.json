@@ -38,9 +38,9 @@
 	},
 	"customizations": {
 		"vscode": {
-			"extensions": ["biomejs.biome"],
+			"extensions": ["oxc.oxc-vscode"],
 			"settings": {
-				"editor.defaultFormatter": "biomejs.biome",
+				"editor.defaultFormatter": "oxc.oxc-vscode",
 				"editor.formatOnSave": true
 			}
 		}

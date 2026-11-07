@@ -77,6 +77,10 @@ export async function admitAndQueueGoalContinuation(
 	goal: Goal,
 	options: GoalContinuationDeliveryOptions,
 ): Promise<Goal | null> {
+	if (goal.status === "active" && ctx.engineTurnsHeld?.()) {
+		ctx.noteHeldWake?.("goal");
+		return goal;
+	}
 	const verdict = evaluateGoalContinuation({ goal, ...options.input });
 	if (verdict.kind === "deny") return handleDeniedContinuation(pi, ctx, goal, options.input, verdict.reason);
 

@@ -80,6 +80,7 @@ export async function reopenHandoverParkedSessions(
 			await reopenOne(daemonDir, open, entry, reopenAttempts, heldPolls, holder);
 		}
 		const remaining = (await inheritedParks(daemonDir, holder)).length;
+		if (holder?.shouldReopen !== undefined && !holder.shouldReopen()) return;
 		emptyStreak = remaining === 0 ? emptyStreak + 1 : 0;
 		if (sawAnyPark && emptyStreak >= HANDOVER_PARKED_REOPEN_QUIET_STREAK) return;
 		if (Date.now() >= deadline) return;
@@ -108,6 +109,20 @@ async function reopenOne(
 	heldPolls?: Map<string, number>,
 	holder?: ReopenHolder,
 ): Promise<void> {
+	const taskStatus =
+		entry.contextOverlay && Object.hasOwn(entry.contextOverlay, "task_status")
+			? entry.contextOverlay.task_status
+			: entry.sessionContext?.task_status;
+	if (
+		typeof taskStatus === "string" &&
+		["completed", "cancelled", "error", "failed", "lost", "interrupted"].includes(taskStatus)
+	) {
+		await clearHandoverParkedSession(daemonDir, entry.sessionPath);
+		process.stderr.write(
+			`senpi rpc successor dropped a terminal parked session (${taskStatus}): ${entry.sessionPath}\n`,
+		);
+		return;
+	}
 	await dropHandoverParkedSessionIfFileGone(daemonDir, entry.sessionPath);
 	if (!existsSync(entry.sessionPath)) {
 		process.stderr.write(`senpi rpc successor dropped a parked session whose file is gone: ${entry.sessionPath}\n`);

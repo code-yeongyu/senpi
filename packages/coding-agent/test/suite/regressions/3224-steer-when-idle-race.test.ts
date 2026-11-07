@@ -55,7 +55,7 @@ describe("steer whenIdle start in the agent_end window (senpi#3224)", () => {
 		for (let round = 1; round <= ROUNDS; round++) {
 			pendingRace = round;
 			await handleClientInput(session, { id: `p${round}`, type: "prompt", message: `turn ${round}` }, io);
-			await await raceSent.promise;
+			await raceSent.promise;
 			raceSent = Promise.withResolvers<Promise<void>>();
 			await Promise.all([...io.promptCalls]);
 			await session.waitForIdle();

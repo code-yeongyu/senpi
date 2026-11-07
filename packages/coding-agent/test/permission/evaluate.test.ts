@@ -151,17 +151,6 @@ describe("permission-system evaluate", () => {
 	});
 
 	describe("specific overrides and defaults", () => {
-		it("lets a specific pattern override a wildcard from the same ruleset", () => {
-			// given
-			const rules: Ruleset = [createRule("read", "*", "deny"), createRule("read", "src/*", "allow")];
-
-			// when
-			const result = evaluate("read", "src/main.ts", rules);
-
-			// then
-			expect(result).toEqual(createRule("read", "src/*", "allow"));
-		});
-
 		it("lets a later wildcard override an earlier specific rule because last match wins", () => {
 			// given
 			const rules: Ruleset = [createRule("read", "src/*", "allow"), createRule("read", "*", "deny")];

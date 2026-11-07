@@ -11,9 +11,10 @@
  * unlink only while the path still stat-matches that identity.
  */
 import { execFile } from "node:child_process";
-import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { dirname } from "node:path";
+import { socketHoldersByIdentity } from "./socket-holders-by-identity.ts";
 import { resolveSocketTransportAddress } from "./socket-transport.ts";
 
 /** Filesystem identity of one bound socket path entry. */
@@ -45,11 +46,29 @@ export const SOCKET_IDENTITY_WAIT_MS = 30_000;
 export const MAX_SOCKET_PATH_BYTES = 103;
 
 /**
+ * `<socket>.bind-<hex>`: the private 0700 directory a host binds its socket in (as `BIND_SCRATCH_SOCKET`) before
+ * publishing it at `<socket>` with `link(2)` (#5319). Named after the socket so `host gc` can reclaim one a crash left.
+ */
+export const BIND_SCRATCH_INFIX = ".bind-";
+export const BIND_SCRATCH_SOCKET = "s";
+
+/** A bind directory's name, for any socket it was made beside (the public one, or a successor's `.next-<gen>`). */
+export function isBindScratchName(name: string): boolean {
+	return /\.bind-[0-9a-f]{12}$/.test(name);
+}
+
+/**
  * Where a successor generation binds before it owns the public name. It never binds the live
  * public path: that path belongs to the running host until the successor is proven to work.
  */
 export function generationBindPath(publicSocket: string, generation: number): string {
 	return `${publicSocket}.next-${generation}`;
+}
+
+/** `<dev>:<ino>` as the ensure captured it; anything else is no identity at all, never a guess. */
+export function parseSocketIdentity(value: string): SocketFileIdentity | undefined {
+	const match = /^(\d+):(\d+)$/.exec(value);
+	return match ? { dev: Number(match[1]), ino: Number(match[2]) } : undefined;
 }
 
 function sameSocketIdentity(a: SocketFileIdentity, b: SocketFileIdentity): boolean {
@@ -75,7 +94,18 @@ export type SocketHolders = (socketPath: string) => Promise<readonly number[] | 
 
 const HOLDER_PROBE_TIMEOUT_MS = 5_000;
 
-export const lsofSocketHolders: SocketHolders = (socketPath) =>
+/**
+ * `lsof -- <path>` matches a unix socket by the name it was bound at. An entry published with `link(2)` (nlink > 1)
+ * is bound elsewhere (#5319), so a path lookup that finds nobody falls back to matching by inode.
+ */
+export const lsofSocketHolders: SocketHolders = async (socketPath) => {
+	const byPath = await lsofHoldersByPath(socketPath);
+	if (byPath === undefined || byPath.length > 0) return byPath;
+	const entry = await lstat(socketPath).catch(() => undefined);
+	return entry !== undefined && entry.nlink > 1 ? socketHoldersByIdentity(entry) : byPath;
+};
+
+const lsofHoldersByPath: SocketHolders = (socketPath) =>
 	new Promise((resolve) => {
 		execFile("lsof", ["-t", "--", socketPath], { timeout: HOLDER_PROBE_TIMEOUT_MS }, (error, stdout) => {
 			const pids = String(stdout)
@@ -129,10 +159,14 @@ export async function socketEntryListenerState(
 	return { verdict: "dead", evidence: "connect ECONNREFUSED, held by nobody" };
 }
 
-/** Reads the current identity of a socket path entry; `undefined` once absent. */
+/**
+ * Reads the current identity of the entry AT a socket path; `undefined` once absent. Read with `lstat`: a symlink
+ * is never followed and answers with its own identity, which can never match a bound socket's, so every
+ * ownership check reads it as somebody else's entry rather than as the socket it names.
+ */
 export async function statSocketIdentity(socketPath: string): Promise<SocketFileIdentity | undefined> {
 	try {
-		const { dev, ino } = await stat(socketPath);
+		const { dev, ino } = await lstat(socketPath);
 		return { dev, ino };
 	} catch (cause) {
 		if (isNodeErrorCode(cause, "ENOENT")) return undefined;
@@ -326,4 +360,25 @@ function errorMessage(cause: unknown): string {
 
 function isNodeErrorCode(cause: unknown, code: string): boolean {
 	return cause instanceof Error && "code" in cause && cause.code === code;
+}
+
+/**
+ * Takes the public name over with a rename, once - and only while - that name still refers to the
+ * entry this handoff was decided against. A socket that changed underneath belongs to another
+ * process now: replacing it would unlink an endpoint this generation cannot prove it owns, so the
+ * successor aborts instead and leaves both the intruder's socket and its own bind entry alone.
+ */
+export async function adoptPublicSocket(
+	bindSocket: string,
+	publicSocket: string,
+	expected: SocketFileIdentity | undefined,
+): Promise<void> {
+	if (expected === undefined) throw new Error(`${publicSocket}: a generation launch must name the entry it replaces`);
+	const current = await statSocketIdentity(publicSocket);
+	if (current === undefined || current.dev !== expected.dev || current.ino !== expected.ino) {
+		throw new Error(`${publicSocket}: owned by another socket entry now; refusing to replace it`);
+	}
+	// rename(2) is atomic for readers of the path: every connect either reaches the old entry or
+	// this one, never nothing. The inode this supervisor bound simply answers to a second name.
+	await rename(bindSocket, publicSocket);
 }

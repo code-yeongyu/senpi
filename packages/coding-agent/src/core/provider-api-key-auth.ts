@@ -8,6 +8,8 @@ import {
 	type Provider,
 	type ProviderHeaders,
 } from "@earendil-works/pi-ai";
+import type { ConfigValue } from "@earendil-works/pi-ai/utils/config-reference";
+import { assertConfigReferenceAuthority } from "./config-reference-resolver.ts";
 import type { ModelsJsonProvider } from "./model-config.ts";
 import { checkConfiguredHeaderAuth, headerAuthResolutionSource } from "./provider-header-auth.ts";
 import {
@@ -17,14 +19,22 @@ import {
 	resolveHeadersOrThrow,
 } from "./resolve-config-value.ts";
 
+/** Reads another provider's stored credential env: routing metadata only, never keys. */
+export type StoredProviderEnvReader = (providerId: string) => Promise<Record<string, string> | undefined>;
+
 interface AmbientAuthExtensionInput {
 	name?: string;
-	resolve(input: { ctx: AuthContext; signal: AbortSignal }): Promise<AuthResult | undefined>;
+	resolve(input: {
+		ctx: AuthContext;
+		signal: AbortSignal;
+		storedProviderEnv?: StoredProviderEnvReader;
+	}): Promise<AuthResult | undefined>;
 }
 
 interface ProviderAuthExtensionInput {
 	apiKey?: string;
 	headers?: Record<string, string>;
+	models?: Array<{ id: string; headers?: Record<string, string> }>;
 	authHeader?: boolean;
 	oauth?: unknown;
 	ambientAuth?: AmbientAuthExtensionInput;
@@ -35,6 +45,7 @@ export function composeApiKeyAuth(
 	base: Provider | undefined,
 	config: ModelsJsonProvider | undefined,
 	extension: ProviderAuthExtensionInput | undefined,
+	options?: { storedProviderEnv?: StoredProviderEnvReader },
 ): ApiKeyAuth | undefined {
 	const inherited = base?.auth.apiKey;
 	const rawKey = configuredApiKey(config, extension);
@@ -48,7 +59,7 @@ export function composeApiKeyAuth(
 		// explicitly configured key, credential headers, or a base provider still
 		// win, and a resolution marked ambient never outranks a configured
 		// provider in automatic default selection (senpi#2327).
-		return ambientApiKeyAuth(providerId, ambient, rawHeaders, headerSource, authHeader);
+		return ambientApiKeyAuth(providerId, ambient, rawHeaders, headerSource, authHeader, options?.storedProviderEnv);
 	}
 	if (!inherited && rawKey === undefined && !headerSource && oauth) {
 		// An OAuth provider with no key, no credential headers and no base normally
@@ -58,6 +69,7 @@ export function composeApiKeyAuth(
 	}
 	return {
 		name: inherited?.name ?? "API key",
+		...(inherited?.keyOptional ? { keyOptional: true } : {}),
 		login:
 			inherited?.login ??
 			(headerSource && rawKey === undefined
@@ -73,6 +85,7 @@ export function composeApiKeyAuth(
 				return { type: "api_key", source: "stored credential" };
 			}
 			if (rawKey !== undefined) {
+				if (typeof rawKey !== "string") return { type: "api_key", source: "configured API key" };
 				if (isCommandConfigValue(rawKey)) return { type: "api_key", source: "configured API key" };
 				for (const name of getConfigValueEnvVarNames(rawKey)) {
 					if ((await input.ctx.env(name)) === undefined) return undefined;
@@ -115,7 +128,7 @@ function ambientResolverOf(oauth: unknown): AmbientResolver | undefined {
 function ambientOnlyAuth(
 	providerId: string,
 	oauth: unknown,
-	rawHeaders: Record<string, string> | undefined,
+	rawHeaders: Record<string, ConfigValue> | undefined,
 	headerSource: string | undefined,
 	authHeader: boolean,
 ): ApiKeyAuth | undefined {
@@ -160,18 +173,27 @@ function ambientOnlyAuth(
 function ambientApiKeyAuth(
 	providerId: string,
 	ambient: AmbientAuthExtensionInput,
-	rawHeaders: Record<string, string> | undefined,
+	rawHeaders: Record<string, ConfigValue> | undefined,
 	headerSource: string | undefined,
 	authHeader: boolean,
+	storedProviderEnv?: StoredProviderEnvReader,
 ): ApiKeyAuth {
 	const resolve = async (input: Parameters<ApiKeyAuth["resolve"]>[0]): Promise<AuthResult | undefined> => {
-		const result = await ambient.resolve({ ctx: input.ctx, signal: input.signal });
+		const result = await ambient.resolve({
+			ctx: input.ctx,
+			signal: input.signal,
+			...(storedProviderEnv ? { storedProviderEnv } : {}),
+		});
 		if (!result) return undefined;
 		const explicitEnv = { ...(input.credential?.env ?? {}), ...(result.env ?? {}) };
 		const headerEnv = await configContextEnv(Object.values(rawHeaders ?? {}), input.ctx, explicitEnv);
 		const headers = await resolveHeadersOrThrow(rawHeaders, `provider "${providerId}"`, headerEnv);
+		// Stored-then-env (helpers.ts invariant): the provider's own stored env wins over ambient-resolved env.
+		const env =
+			result.env || input.credential?.env ? { ...(result.env ?? {}), ...(input.credential?.env ?? {}) } : undefined;
 		return {
 			...result,
+			...(env ? { env } : {}),
 			auth: withConfiguredAuth(result.auth, headers, authHeader),
 			source: result.source ?? headerSource,
 		};
@@ -186,14 +208,39 @@ function ambientApiKeyAuth(
 export function configuredApiKey(
 	config: ModelsJsonProvider | undefined,
 	extension: ProviderAuthExtensionInput | undefined,
-): string | undefined {
+): ConfigValue | undefined {
+	if (extension?.apiKey !== undefined) {
+		assertConfigReferenceAuthority(extension.apiKey, {
+			origin: "provider extension",
+			field: "extension.apiKey",
+			authority: "extension",
+		});
+	}
+	if (config?.apiKey !== undefined) assertConfigReferenceAuthority(config.apiKey);
 	return extension?.apiKey ?? config?.apiKey;
 }
 
 export function configuredHeaders(
 	config: ModelsJsonProvider | undefined,
 	extension: ProviderAuthExtensionInput | undefined,
-): Record<string, string> | undefined {
+): Record<string, ConfigValue> | undefined {
+	for (const model of extension?.models ?? []) {
+		for (const [name, value] of Object.entries(model.headers ?? {})) {
+			assertConfigReferenceAuthority(value, {
+				origin: "provider extension",
+				field: `extension.models.${model.id}.headers.${name}`,
+				authority: "extension",
+			});
+		}
+	}
+	for (const [name, value] of Object.entries(extension?.headers ?? {})) {
+		assertConfigReferenceAuthority(value, {
+			origin: "provider extension",
+			field: `extension.headers.${name}`,
+			authority: "extension",
+		});
+	}
+	for (const value of Object.values(config?.headers ?? {})) assertConfigReferenceAuthority(value);
 	if (!config?.headers && !extension?.headers) return undefined;
 	return { ...config?.headers, ...extension?.headers };
 }
@@ -215,7 +262,7 @@ export function withConfiguredAuth(
 async function resolveBaseAuth(
 	providerId: string,
 	inherited: ApiKeyAuth | undefined,
-	rawKey: string | undefined,
+	rawKey: ConfigValue | undefined,
 	input: Parameters<ApiKeyAuth["resolve"]>[0],
 ): Promise<AuthResult | undefined> {
 	if (input.credential?.key) {
@@ -232,7 +279,7 @@ async function resolveBaseAuth(
 }
 
 async function configContextEnv(
-	values: readonly string[],
+	values: readonly ConfigValue[],
 	ctx: AuthContext,
 	explicit?: Record<string, string>,
 ): Promise<Record<string, string> | undefined> {
@@ -242,5 +289,5 @@ async function configContextEnv(
 		const value = await ctx.env(name);
 		if (value !== undefined) env[name] = value;
 	}
-	return Object.keys(env).length > 0 ? env : undefined;
+	return Object.keys(env).length > 0 || values.some((value) => typeof value !== "string") ? env : undefined;
 }

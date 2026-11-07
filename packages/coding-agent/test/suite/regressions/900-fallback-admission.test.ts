@@ -16,7 +16,7 @@ function lastUser(context: Context): string {
 }
 
 // #900: a tiny candidate prefix must not pre-empt the provider fallback.
-it("preserves fallback before engagement when the candidate prefix is below one ceiling block", async () => {
+it.each(["user", "custom"])("preserves %s fallback before engagement below one ceiling block", async (source) => {
 	harness = await createHarness({
 		models: [
 			{ id: "faux-1", contextWindow: 50_000, maxTokens: 2_048 },
@@ -52,7 +52,15 @@ it("preserves fallback before engagement when the candidate prefix is below one 
 		return fauxAssistantMessage("compacted on active fallback");
 	};
 	harness.setResponses([response, response, response, response]);
-	await harness.session.prompt("trigger fallback");
+	if (source === "custom") {
+		await harness.session.sendCustomMessage(
+			{ customType: "synthetic-prompt", content: "trigger fallback", display: false },
+			{ triggerTurn: true },
+		);
+		await harness.session.waitForIdle();
+	} else {
+		await harness.session.prompt("trigger fallback");
+	}
 	expect(harness.eventsOfType("retry_fallback_applied")).toMatchObject([{ from: "faux/faux-1", to: "faux/faux-2" }]);
 	const requests = harness.faux.getCallLog();
 	expect(requests.filter((call) => lastUser(call.context) === "trigger fallback").map((call) => call.modelId)).toEqual(

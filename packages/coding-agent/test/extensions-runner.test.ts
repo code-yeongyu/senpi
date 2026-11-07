@@ -1216,6 +1216,7 @@ describe("ExtensionRunner", () => {
 			expect(chained).toEqual({
 				messages: undefined,
 				systemPrompt: "base\nfirst\nsecond",
+				systemPromptStablePrefix: "base",
 			});
 		});
 	});

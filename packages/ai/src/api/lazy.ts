@@ -1,10 +1,13 @@
+import { readProviderDiagnostic } from "../provider-diagnostic.ts";
 import type { Api, AssistantMessage, AssistantMessageEvent, Model, ProviderStreams } from "../types.ts";
+import { assistantEvents, pushAssistantProgress, setAssistantReader } from "../utils/assistant-capture.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { isOAuthRefreshUnavailableError } from "../utils/oauth-refresh-error.ts";
 import { describeReplacedInstall } from "../utils/provider-failure-description.ts";
 import { OAUTH_REFRESH_UNAVAILABLE_DIAGNOSTIC } from "../utils/retry.ts";
 
 function createSetupErrorMessage(model: Model<Api>, error: unknown): AssistantMessage {
+	const providerDiagnostic = readProviderDiagnostic(error);
 	return {
 		role: "assistant",
 		content: [],
@@ -21,6 +24,7 @@ function createSetupErrorMessage(model: Model<Api>, error: unknown): AssistantMe
 		},
 		stopReason: "error",
 		errorMessage: describeReplacedInstall(error) ?? (error instanceof Error ? error.message : String(error)),
+		...(providerDiagnostic === undefined ? {} : { providerDiagnostic }),
 		...(isOAuthRefreshUnavailableError(error)
 			? {
 					diagnostics: [
@@ -47,10 +51,15 @@ class LazyAssistantMessageEventStream extends AssistantMessageEventStream {
 
 	setCancellationHandler(handler: () => Promise<void>): void {
 		this.cancellationHandler = handler;
+		// The forwarder carries records, so this wrapper is carrier-aware and keeps its cancellation for them.
+		setAssistantReader(this, (project) => this.withCancellation(this.mapIterator(project)));
 	}
 
 	override [Symbol.asyncIterator](): AsyncIterator<AssistantMessageEvent> {
-		const iterator = super[Symbol.asyncIterator]();
+		return this.withCancellation(super[Symbol.asyncIterator]());
+	}
+
+	private withCancellation<T>(iterator: AsyncIterator<T>): AsyncIterator<T> {
 		return {
 			next: () => iterator.next(),
 			return: async () => {
@@ -85,7 +94,10 @@ export function lazyStream(
 ): AssistantMessageEventStream {
 	const outer = new LazyAssistantMessageEventStream();
 	const inner = setup();
-	const iterator = inner.then((source) => source[Symbol.asyncIterator]());
+	// Progress crosses as it is read, so the forwarder loop runs exactly the turns it runs for events alone.
+	const iterator = inner.then((source) =>
+		assistantEvents(source, (progress) => pushAssistantProgress(outer, progress))[Symbol.asyncIterator](),
+	);
 	let cancellation: Promise<void> | undefined;
 	outer.setCancellationHandler(() => {
 		cancellation ??= iterator.then(async (sourceIterator) => {
