@@ -114,7 +114,8 @@ export function createHerdrExtension(deps: HerdrDependencies) {
 			const next = ctx.sessionManager.getSessionName() ?? "";
 			if (title === next) return;
 			title = next;
-			const params = { title: next, display_agent: next, tokens: { [APP_TOKEN]: APP_COMMAND } };
+			// The sidebar's agent label names the launcher; the session name belongs only in the title.
+			const params = { title: next, display_agent: APP_COMMAND, tokens: { [APP_TOKEN]: APP_COMMAND } };
 			if (!(await send("pane.report_metadata", params)) && title === next) title = undefined;
 		}
 		function refreshChildren(ctx: ExtensionContext): void {
