@@ -3391,8 +3391,9 @@ registrant opens no socket and writes no registry directory.
   user's draft still holds it.
   - `get_protocol_info`: `mode: "tui"`, `endpoint_kind: "tui"`, `capabilities: ["tui_control", "session_status",
     "tui_observer", "observe_reads", "entries_tail"]` (`tui_observer`: the observe-and-drive set below), `generation: 0`, the endpoint's
-    `instanceId`, and `commands`: every command this endpoint accepts. A terminal from before the session
-    controls below lists no `commands`.
+    `instanceId`, `commands`: every command this endpoint accepts, and `method_classes`: the same table and digest a
+    host's answer carries (one builder serves both). A terminal from before the session controls below lists no
+    `commands`; one from before senpi#6158 carries no `method_classes`.
   - `list_sessions`: exactly one row, `kind: "interactive"`, `surface: "tui"`, `attachments: 1`.
   - `get_state`: the RPC session state plus `turn_epoch`, `blocking_question`, `compacting`,
     `editor_has_draft` and `state_version`.
