@@ -5369,6 +5369,7 @@
      {
       "type": "agent_start",
       "runId": "<uuid:18>",
+      "turnId": "1",
       "sessionId": "<id:1>"
      },
      {
@@ -6256,6 +6257,7 @@
      {
       "type": "agent_start",
       "runId": "<uuid:22>",
+      "turnId": "1",
       "sessionId": "<id:4>"
      },
      {
@@ -6455,6 +6457,7 @@
      },
      {
       "type": "agent_settled",
+      "turnId": "1",
       "sessionId": "<id:4>"
      },
      {
@@ -7406,6 +7409,7 @@
      },
      {
       "type": "agent_settled",
+      "turnId": "1",
       "sessionId": "<id:1>"
      },
      {
@@ -7654,6 +7658,7 @@
      {
       "type": "agent_start",
       "runId": "<uuid:18>",
+      "turnId": "1",
       "sessionId": "<id:1>"
      },
      {
@@ -7855,6 +7860,7 @@
      {
       "type": "agent_start",
       "runId": "<uuid:22>",
+      "turnId": "1",
       "sessionId": "<id:4>"
      },
      {
@@ -9619,6 +9625,7 @@
      },
      {
       "type": "agent_settled",
+      "turnId": "1",
       "sessionId": "<id:4>"
      },
      {
@@ -9804,6 +9811,7 @@
      },
      {
       "type": "agent_settled",
+      "turnId": "1",
       "sessionId": "<id:1>"
      },
      {
