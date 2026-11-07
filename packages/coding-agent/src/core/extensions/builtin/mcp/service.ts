@@ -720,6 +720,10 @@ export class McpService {
 		await reconnectMcpNow(entry.connection);
 	}
 
+	getConfigDiagnostics(): readonly string[] {
+		return this.#config?.diagnostics ?? [];
+	}
+
 	getServerSnapshots(): McpServerSnapshot[] {
 		const names = new Set<string>(Object.keys(this.#config?.servers ?? {}));
 		for (const entry of this.#connections.values()) names.add(entry.name);

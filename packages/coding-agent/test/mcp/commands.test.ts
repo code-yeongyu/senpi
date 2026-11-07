@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall, getCurrentTools } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -353,6 +353,37 @@ describe("/mcp command suite", () => {
 		expect(message).toContain("FATAL: missing FOO_TOKEN=<redacted:");
 		expect(message).not.toContain("super-secret-token");
 	});
+
+	it("says no MCP servers are configured instead of printing a bare title (oh-my-openagent#7514)", async () => {
+		const root = makeCommandRoot("empty-status");
+		const { command, extension } = await loadCommand();
+		const ui = createUi();
+		await emitSessionStart(extension, root);
+
+		await command.handler("status", createCtx(root, ui));
+
+		expect(lastNotification(ui)?.message).toBe("MCP status\nNo MCP servers configured.");
+	});
+
+	it("renders config-load diagnostics in /mcp status, redacted (oh-my-openagent#7514)", async () => {
+		const root = makeCommandRoot("diagnostics-status");
+		writeFileSync(
+			join(root.cwd, ".senpi", "mcp.json"),
+			'{"mcpServers": {"x": {"headers": {"Authorization": "Bearer super-secret-token"',
+		);
+		const { command, extension } = await loadCommand();
+		const ui = createUi();
+		await emitSessionStart(extension, root, false);
+
+		await command.handler("status", createCtx(root, ui));
+
+		const lines = (lastNotification(ui)?.message ?? "").split("\n");
+		expect(lines[0]).toBe("MCP status");
+		expect(lines[1]).toMatch(/^config: Blocked untrusted MCP config at .*mcp\.json: invalid JSON/);
+		expect(lines[2]).toBe("No MCP servers configured.");
+		expect(lines).toHaveLength(3);
+		expect(lines.join("\n")).not.toContain("super-secret-token");
+	});
 });
 
 function makeCommandRoot(slug: string): TestRoot {
@@ -382,9 +413,9 @@ function loadMcpExtension(activeTools: string[] = []): Promise<Extension> {
 	return loadExtensionFromFactory(mcpExtension, process.cwd(), createEventBus(), runtime, "<mcp-command-test>");
 }
 
-async function emitSessionStart(extension: Extension, root: TestRoot): Promise<void> {
+async function emitSessionStart(extension: Extension, root: TestRoot, projectTrusted = true): Promise<void> {
 	const event: SessionStartEvent = { type: "session_start", reason: "startup" };
 	for (const handler of extension.handlers.get("session_start") ?? []) {
-		await handler(event, { cwd: root.cwd, isProjectTrusted: () => true });
+		await handler(event, { cwd: root.cwd, isProjectTrusted: () => projectTrusted });
 	}
 }

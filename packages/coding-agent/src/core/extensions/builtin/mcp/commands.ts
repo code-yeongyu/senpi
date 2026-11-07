@@ -115,7 +115,7 @@ async function notifyStatus(ctx: ExtensionCommandContext, service: McpCommandSer
 
 async function renderStatus(title: string, service: McpCommandService): Promise<string> {
 	const rows = await buildMcpStatusRows(service.getServerSnapshots(), (name) => service.getServerExposureStatus(name));
-	return formatMcpStatus(title, rows);
+	return formatMcpStatus(title, rows, service.getConfigDiagnostics());
 }
 
 async function addServer(
