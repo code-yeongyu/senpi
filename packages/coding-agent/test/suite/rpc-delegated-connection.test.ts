@@ -33,10 +33,12 @@ import {
 
 /**
  * `RPC_METHOD_CLASSES_DIGEST` at the base this test runs on: main (with `list_hands` (observe) and `select_hand`
- * (device_admin) in the table, senpi#5938) plus senpi#5379, which moves `set_model` from `device_admin` to `dynamic`.
+ * (device_admin) in the table, senpi#5938) plus senpi#5379, which moves `set_model` from `device_admin` to `dynamic`,
+ * and senpi#6177, which adds `get_project_trust` (observe) and `set_project_trust`, `get_project_settings`, `set_project_setting`
+ * (device_admin).
  * Delegated connections add methods outside the table, never a table entry.
  */
-const DIGEST_ON_BASE = "56c692be165af1736661e24017ebd1526ae2e7aed1beb726abd2c3691bca9f43";
+const DIGEST_ON_BASE = "3860136b2a1b07c20373ed361df07c045bd1e84fce001917e271ca0e4b903e63";
 const FORWARDABLE = [
 	"observe",
 	"drive",
