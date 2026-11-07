@@ -122,6 +122,7 @@ import type {
 import type { ReadClassifier } from "../tools/read-classifiers.ts";
 import type { ModelRoute, ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
 import type { McpServerDeclaration } from "./builtin/mcp/config-schema.ts";
+import type { RpcRemoteSource } from "./builtin/terminal/rpc-remote-source.ts";
 import type { McpServerRegistry } from "./mcp-server-registry.ts";
 import type { PermissionPresetName } from "./builtin/permission-system/types.ts";
 import type { EvalHandleHost } from "./eval-handle-host.ts";
@@ -3021,6 +3022,12 @@ export interface ExtensionAPI {
 
 	/** Register a compact read classifier; removed on unregister, failed load, or runtime invalidation. */
 	registerReadClassifier(classifier: ReadClassifier): () => void;
+
+	/**
+	 * Serve `monitor` rpc targets on another device (`<device>/<session>`, `<device>/*`). The latest registration
+	 * wins; removed on unregister, failed load, or runtime invalidation. Without one, such a target is refused.
+	 */
+	registerRpcRemoteSource(source: RpcRemoteSource): () => void;
 
 	// =========================================================================
 	// Actions
