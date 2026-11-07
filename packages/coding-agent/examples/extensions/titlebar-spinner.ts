@@ -13,6 +13,23 @@ import type { ExtensionAPI, ExtensionContext } from "@code-yeongyu/senpi";
 
 const BRAILLE_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
+/**
+ * The host retires an extension ctx once its session is replaced (new/fork/switch) or
+ * reloaded, and every later read of `ctx.ui` throws. A ticker that keeps its ctx across
+ * ticks has to recognize that error and stop: the tick runs in an interval callback with
+ * no catcher above it, so an escaping throw takes the process down (senpi#2549).
+ */
+const STALE_EXTENSION_CONTEXT_MESSAGES = [
+	"This extension ctx is stale after session replacement or reload.",
+	"stale extension generation after reload",
+];
+
+function isStaleExtensionContext(error: unknown): boolean {
+	return (
+		error instanceof Error && STALE_EXTENSION_CONTEXT_MESSAGES.some((message) => error.message.startsWith(message))
+	);
+}
+
 function getBaseTitle(pi: ExtensionAPI): string {
 	const cwd = path.basename(process.cwd());
 	const session = pi.getSessionName();
@@ -23,13 +40,28 @@ export default function (pi: ExtensionAPI) {
 	let timer: ReturnType<typeof setInterval> | null = null;
 	let frameIndex = 0;
 
-	function stopAnimation(ctx: ExtensionContext) {
+	function stopTimer() {
 		if (timer) {
 			clearInterval(timer);
 			timer = null;
 		}
 		frameIndex = 0;
-		ctx.ui.setTitle(getBaseTitle(pi));
+	}
+
+	/** Returns false when the ctx was retired, so the ticker stops instead of rearming. */
+	function setTitle(ctx: ExtensionContext, title: string): boolean {
+		try {
+			ctx.ui.setTitle(title);
+			return true;
+		} catch (error) {
+			if (!isStaleExtensionContext(error)) throw error;
+			return false;
+		}
+	}
+
+	function stopAnimation(ctx: ExtensionContext) {
+		stopTimer();
+		setTitle(ctx, getBaseTitle(pi));
 	}
 
 	function startAnimation(ctx: ExtensionContext) {
@@ -39,7 +71,10 @@ export default function (pi: ExtensionAPI) {
 			const cwd = path.basename(process.cwd());
 			const session = pi.getSessionName();
 			const title = session ? `${frame} π - ${session} - ${cwd}` : `${frame} π - ${cwd}`;
-			ctx.ui.setTitle(title);
+			if (!setTitle(ctx, title)) {
+				stopTimer();
+				return;
+			}
 			frameIndex++;
 		}, 80);
 	}
