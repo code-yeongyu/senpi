@@ -635,6 +635,9 @@ export class McpService {
 
 	/** Refresh and return the current session-owned MCP wire inventory. */
 	async refreshWireStatusSnapshot(sessionId?: string): Promise<McpWireStatusSnapshot> {
+		// A caller that passes no session id gets no peer data while more than one session is live (senpi#3001);
+		// capturing here would store the most recently attached session's status for it to read back.
+		if (sessionId === undefined && this.#liveBindings().length > 1) return { servers: [] };
 		return this.#refreshWireStatus(sessionId, () => this.#statusOwner(sessionId));
 	}
 
@@ -720,7 +723,23 @@ export class McpService {
 		await reconnectMcpNow(entry.connection);
 	}
 
-	getServerSnapshots(): McpServerSnapshot[] {
+	/**
+	 * The lifecycle-only server snapshots. Without a session id these still list the merged config of all live
+	 * sessions, as the /mcp command and the manager TUI expect. With one, only the servers that session declares
+	 * (senpi#3001): a caller that can name its session gets no peer data.
+	 */
+	getServerSnapshots(sessionId?: string): McpServerSnapshot[] {
+		if (sessionId !== undefined) {
+			const owner = this.#statusOwner(sessionId);
+			if (owner === undefined) return [];
+			const names = new Set<string>(Object.keys(owner.config.servers));
+			for (const entry of this.#connections.values()) {
+				if (owner.config.servers[entry.name] !== undefined) names.add(entry.name);
+			}
+			return [...names]
+				.sort()
+				.map((name) => this.#serverSnapshot(name, owner.config.servers[name], this.#entryForName(name)));
+		}
 		const names = new Set<string>(Object.keys(this.#config?.servers ?? {}));
 		for (const entry of this.#connections.values()) names.add(entry.name);
 		return [...names]
@@ -763,8 +782,12 @@ export class McpService {
 	 * Return the attach-time inventory captured for one session. This is the
 	 * handoff consumed by RPC's session-owned adapter; it deliberately
 	 * does not expose or derive from the lifecycle-only server snapshots.
+	 * A caller that passes no session id gets no peer data while more than
+	 * one session is live (senpi#3001): with a single live session the stored
+	 * snapshot is that session's own, so the id-less read keeps working.
 	 */
 	getWireStatusSnapshot(sessionId?: string): McpWireStatusSnapshot {
+		if (sessionId === undefined && this.#liveBindings().length > 1) return { servers: [] };
 		return sessionId === undefined
 			? this.#latestWireStatus
 			: (this.#wireStatusBySession.get(sessionId) ?? { servers: [] });
