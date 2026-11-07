@@ -44,6 +44,7 @@ type SyncContext = {
 	chatContainer: Container;
 	assistantTextSegments: Map<number, AssistantMessageComponent>;
 	detachAssistantTextSegments: () => void;
+	syncStreamingMessageTimestampEligibility: () => void;
 	hideThinkingBlock: boolean;
 	toolOutputExpanded: boolean;
 	hiddenThinkingLabel: string;
@@ -62,6 +63,10 @@ function createStreamContext(): SyncContext {
 		chatContainer,
 		assistantTextSegments: new Map<number, AssistantMessageComponent>(),
 		detachAssistantTextSegments: Reflect.get(InteractiveMode.prototype, "detachAssistantTextSegments"),
+		syncStreamingMessageTimestampEligibility: Reflect.get(
+			InteractiveMode.prototype,
+			"syncStreamingMessageTimestampEligibility",
+		),
 		hideThinkingBlock: false,
 		toolOutputExpanded: false,
 		hiddenThinkingLabel: "Thinking...",
