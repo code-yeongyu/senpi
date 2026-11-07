@@ -169,7 +169,7 @@ describe("remote catalog provider", () => {
 		const localGeneratedAt = Date.parse("2026-07-23T10:00:00.000Z");
 		const newerHeader = new Date(localGeneratedAt + 60_000).toUTCString();
 		const responses = [
-			new Response(JSON.stringify({ old: model("old") }), {
+			new Response(JSON.stringify({ static: { ...model("static"), name: "Static (older remote)" } }), {
 				headers: { "last-modified": new Date(localGeneratedAt - 60_000).toUTCString() },
 			}),
 			new Response(JSON.stringify({ newer: model("newer") }), {
@@ -181,7 +181,7 @@ describe("remote catalog provider", () => {
 		const store = new InMemoryModelsStore();
 
 		await refreshProvider(provider, store);
-		expect(provider.getModels().map((entry) => entry.id)).toEqual(["static"]);
+		expect(provider.getModels().map((entry) => [entry.id, entry.name])).toEqual([["static", "static"]]);
 
 		await refreshProvider(provider, store, { force: true });
 		expect(provider.getModels().map((entry) => entry.id)).toEqual(["static", "newer"]);
