@@ -4,14 +4,20 @@
  * Trust: the choices are exactly the ones `/trust` offers (`getProjectTrustOptions` without the session-only
  * entries), and choosing one saves exactly what that choice saves in `trust.json`. It is never implied: only an
  * explicit `set_project_trust` writes, and a launch that named the trust (`--approve`/`--no-approve`) refuses it, because
- * that flag outranks every saved decision. The session then takes the decision the way a Full access change does
- * (`applyProjectTrustChange`): project settings, skills, prompts, extensions and MCP servers load or unload at once.
+ * that flag outranks every saved decision. Then, in the order `resolveProjectTrusted` decides a session's trust, a folder
+ * with nothing trust gates stays trusted, and a `project_trust` handler of the extensions loaded before trust (never a
+ * project extension) decides before any saved choice: a choice it decides against is refused, with nothing saved and
+ * nothing applied. Otherwise the session takes the decision the way a Full access change does
+ * (`applyProjectTrustChange`), in line with the runtime's own trust changes: project settings, skills, prompts,
+ * extensions and MCP servers load or unload at once.
  *
  * Settings: the project settings file is read as stored (reading runs nothing, so trust does not gate it) and written
  * one top-level key at a time through `SettingsManager`'s own project write path, which refuses an untrusted project.
  */
 
+import { createProjectTrustContext } from "../../cli/project-trust.ts";
 import type { AgentSession } from "../../core/agent-session.ts";
+import { emitProjectTrustEvent } from "../../core/extensions/runner.ts";
 import { getSettingsPath, type ProjectSettingsFile } from "../../core/settings-manager.ts";
 import {
 	getProjectTrustOptions,
@@ -23,8 +29,13 @@ import {
 	RPC_ERROR_INVALID_ARGUMENT,
 	RPC_ERROR_PROJECT_NOT_TRUSTED,
 	RPC_ERROR_PROJECT_SETTINGS_UNREADABLE,
+	RPC_ERROR_PROJECT_SETTINGS_WRITE_FAILED,
+	RPC_ERROR_PROJECT_TRUST_EXTENSION_DECIDED,
 	RPC_ERROR_PROJECT_TRUST_LOCKED,
 } from "./rpc-error-types.ts";
+
+/** Runs a trust change after every trust change the session's runtime already started (Full access syncs). */
+export type InTrustChangeOrder = <T>(task: () => Promise<T>) => Promise<T>;
 
 export type ProjectTrustChoice = "trust" | "trust_parent" | "do_not_trust";
 
@@ -81,9 +92,29 @@ export function readProjectTrust(session: AgentSession): RpcProjectTrust {
 	};
 }
 
+/**
+ * What a `project_trust` handler decides for `cwd`, asked as a session open asks it: the handlers of the extensions
+ * loaded before trust (`loadProjectTrustExtensions` leaves project extensions out), first decided answer wins, no UI.
+ * A handler that throws falls through, as in `resolveProjectTrusted`, and is reported on stderr like its warning.
+ */
+async function extensionTrustDecision(session: AgentSession, cwd: string): Promise<boolean | undefined> {
+	const loaded = session.resourceLoader.getExtensions();
+	const preTrust = { ...loaded, extensions: loaded.extensions.filter((ext) => ext.sourceInfo.scope !== "project") };
+	const { result, errors } = await emitProjectTrustEvent(
+		preTrust,
+		{ type: "project_trust", cwd },
+		createProjectTrustContext({ cwd, mode: "rpc", settingsManager: session.settingsManager, hasUI: false }),
+	);
+	for (const error of errors) {
+		process.stderr.write(`senpi rpc: Extension "${error.extensionPath}" project_trust error: ${error.error}\n`);
+	}
+	return result === undefined ? undefined : result.trusted === "yes";
+}
+
 export async function writeProjectTrust(
 	session: AgentSession,
 	choice: unknown,
+	inTrustChangeOrder: InTrustChangeOrder,
 ): Promise<ProjectCommandResult<RpcProjectTrust>> {
 	const cwd = session.sessionManager.getCwd();
 	const selected = trustChoices(cwd).find((entry) => entry.choice === choice);
@@ -104,14 +135,25 @@ export async function writeProjectTrust(
 			errorCode: RPC_ERROR_PROJECT_TRUST_LOCKED,
 		};
 	}
-	new ProjectTrustStore(session.agentDir).setMany(selected.option.updates);
-	// As resolveProjectTrusted: a folder with nothing trust gates is trusted whatever is saved.
-	const trusted = hasTrustRequiringProjectResources(cwd) ? selected.option.trusted : true;
-	if (settings.isProjectTrusted() !== trusted) {
-		settings.setProjectTrusted(trusted);
-		await session.applyProjectTrustChange();
-	}
-	return { ok: true, data: readProjectTrust(session) };
+	return inTrustChangeOrder(async (): Promise<ProjectCommandResult<RpcProjectTrust>> => {
+		// As resolveProjectTrusted: a folder with nothing trust gates is trusted whatever is saved or decided.
+		const requiresTrust = hasTrustRequiringProjectResources(cwd);
+		const decided = requiresTrust ? await extensionTrustDecision(session, cwd) : undefined;
+		if (decided !== undefined && decided !== selected.option.trusted) {
+			return {
+				ok: false,
+				message: `A project_trust extension handler decides this folder is ${decided ? "trusted" : "untrusted"}; nothing was saved.`,
+				errorCode: RPC_ERROR_PROJECT_TRUST_EXTENSION_DECIDED,
+			};
+		}
+		new ProjectTrustStore(session.agentDir).setMany(selected.option.updates);
+		const trusted = requiresTrust ? selected.option.trusted : true;
+		if (settings.isProjectTrusted() !== trusted) {
+			settings.setProjectTrusted(trusted);
+			await session.applyProjectTrustChange();
+		}
+		return { ok: true, data: readProjectTrust(session) };
+	});
 }
 
 export interface RpcProjectSettings extends ProjectSettingsFile {
@@ -153,6 +195,14 @@ export async function writeProjectSetting(
 	if (file.error !== null) {
 		return { ok: false, message: file.error, errorCode: RPC_ERROR_PROJECT_SETTINGS_UNREADABLE };
 	}
-	await settings.setProjectSetting(key, value);
+	try {
+		await settings.setProjectSetting(key, value);
+	} catch (error) {
+		return {
+			ok: false,
+			message: `Writing ${file.path} failed: ${error instanceof Error ? error.message : String(error)}`,
+			errorCode: RPC_ERROR_PROJECT_SETTINGS_WRITE_FAILED,
+		};
+	}
 	return { ok: true, data: readProjectSettings(session) };
 }

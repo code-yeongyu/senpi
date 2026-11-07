@@ -4,13 +4,23 @@
  * the in-process registry, with a faux provider and no network; the project folder carries a project skill and a
  * project settings file, both of which trust gates.
  */
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxProvider } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseArgs } from "../../src/cli/args.ts";
 import { CONFIG_DIR_NAME } from "../../src/config.ts";
+import type { ExtensionFactory } from "../../src/core/extensions/types.ts";
 import { createCliRuntimeFactory } from "../../src/main.ts";
 import { classifyRpcMethod } from "../../src/modes/rpc/method-classes.ts";
 import { createHostCore } from "../../src/modes/rpc/multi-session-host.ts";
@@ -27,7 +37,7 @@ afterEach(async () => {
 	vi.unstubAllEnvs();
 });
 
-async function startHost(extraArgs: string[] = []) {
+async function startHost(extraArgs: string[] = [], extensionFactories: ExtensionFactory[] = []) {
 	const scratch = realpathSync(mkdtempSync(join(tmpdir(), "senpi-6176-")));
 	const cwd = join(scratch, "project");
 	const agentDir = join(scratch, "agent");
@@ -60,7 +70,7 @@ async function startHost(extraArgs: string[] = []) {
 			cwd,
 			createRuntime: createCliRuntimeFactory(
 				{ parsed: parseArgs([...LEAN_ARGS, ...extraArgs]), cwd, agentDir, appMode: "rpc" },
-				{ extensionFactories: [(pi) => pi.registerProvider(faux.provider)] },
+				{ extensionFactories: [(pi) => pi.registerProvider(faux.provider), ...extensionFactories] },
 			),
 		},
 		writer,
@@ -88,6 +98,8 @@ async function startHost(extraArgs: string[] = []) {
 		((await send({ type: "get_state", sessionId })).data as { steeringMode: string }).steeringMode;
 	return {
 		cwd,
+		configDir,
+		trustFile: join(agentDir, "trust.json"),
 		send,
 		open,
 		commandNames,
@@ -163,6 +175,56 @@ describe("senpi#6176: project trust over RPC", () => {
 		expect((await host.send({ type: "get_project_trust", sessionId })).data).toMatchObject({ saved: null });
 	});
 
+	it("refuses a trust choice a project_trust extension handler decides against: nothing saved, nothing applied", async () => {
+		const host = await startHost(
+			[],
+			[
+				(pi) => {
+					pi.on("project_trust", () => ({ trusted: "no" }));
+				},
+			],
+		);
+		const sessionId = await host.open();
+		const answer = await host.send({ type: "set_project_trust", sessionId, choice: "trust" });
+		expect(answer).toMatchObject({ success: false, errorCode: "project_trust_extension_decided" });
+		expect(existsSync(host.trustFile)).toBe(false);
+		expect((await host.send({ type: "get_project_trust", sessionId })).data).toMatchObject({ projectTrusted: false });
+		expect(await host.commandNames(sessionId)).not.toContain(SKILL_COMMAND);
+		expect(await host.steeringMode(sessionId)).toBe("all");
+	});
+
+	it("refuses do_not_trust when a project_trust extension handler trusts the folder", async () => {
+		const host = await startHost(
+			[],
+			[
+				(pi) => {
+					pi.on("project_trust", () => ({ trusted: "yes" }));
+				},
+			],
+		);
+		const sessionId = await host.open();
+		expect(await host.commandNames(sessionId)).toContain(SKILL_COMMAND);
+		const answer = await host.send({ type: "set_project_trust", sessionId, choice: "do_not_trust" });
+		expect(answer).toMatchObject({ success: false, errorCode: "project_trust_extension_decided" });
+		expect(existsSync(host.trustFile)).toBe(false);
+		expect(await host.commandNames(sessionId)).toContain(SKILL_COMMAND);
+	});
+
+	it("applies the choice when the extension handler agrees or stays undecided", async () => {
+		const host = await startHost(
+			[],
+			[
+				(pi) => {
+					pi.on("project_trust", () => ({ trusted: "undecided" }));
+				},
+			],
+		);
+		const sessionId = await host.open();
+		const answer = await host.send({ type: "set_project_trust", sessionId, choice: "trust" });
+		expect(answer).toMatchObject({ success: true, data: { projectTrusted: true } });
+		expect(await host.commandNames(sessionId)).toContain(SKILL_COMMAND);
+	});
+
 	it("refuses when the launch named the trust, and saves nothing", async () => {
 		const host = await startHost(["--no-approve"]);
 		const sessionId = await host.open();
@@ -228,6 +290,23 @@ describe("senpi#6176: project settings over RPC", () => {
 		for (const key of ["__proto__x.y", "1st", "a/b"]) {
 			const answer = await host.send({ type: "set_project_setting", sessionId, key, value: true });
 			expect(answer).toMatchObject({ success: false, errorCode: "invalid_argument" });
+		}
+		expect(host.projectFile()).toEqual({ steeringMode: "one-at-a-time" });
+	});
+
+	// Root ignores directory permissions, so the failing write cannot be staged for it.
+	it.skipIf(process.getuid?.() === 0)("reports a write that fails instead of answering success", async () => {
+		const host = await startHost();
+		const sessionId = await host.open();
+		await host.send({ type: "set_project_trust", sessionId, choice: "trust" });
+		chmodSync(host.configDir, 0o555);
+		chmodSync(host.projectSettingsPath, 0o444);
+		try {
+			const answer = await host.send({ type: "set_project_setting", sessionId, key: "steeringMode", value: "all" });
+			expect(answer).toMatchObject({ success: false, errorCode: "project_settings_write_failed" });
+		} finally {
+			chmodSync(host.projectSettingsPath, 0o644);
+			chmodSync(host.configDir, 0o755);
 		}
 		expect(host.projectFile()).toEqual({ steeringMode: "one-at-a-time" });
 	});

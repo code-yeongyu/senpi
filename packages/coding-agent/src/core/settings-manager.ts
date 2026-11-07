@@ -1124,11 +1124,15 @@ export class SettingsManager {
 			);
 		}
 		const field = key as keyof Settings;
+		const recordedBefore = new Set(this.errors);
 		this.updateProjectSettings(field, (settings) => {
 			if (value === null) delete settings[field];
 			else (settings as Record<string, unknown>)[key] = value;
 		});
 		await this.flush();
+		// The queued write records its failure instead of throwing; an explicit caller is told.
+		const failure = this.errors.find((entry) => entry.scope === "project" && !recordedBefore.has(entry));
+		if (failure) throw failure.error;
 	}
 
 	getProviderSettings(): Record<string, ProviderConcurrencySettings> {

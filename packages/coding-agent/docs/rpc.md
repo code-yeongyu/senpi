@@ -6095,9 +6095,11 @@ implied by `open_session` or by a permission preset; only this explicit request 
 
 `choice` is `trust` (this folder), `trust_parent` (the parent folder; clears this folder's own entry, as `/trust`
 does) or `do_not_trust`. The response carries the same `data` as `get_project_trust`, read after the change.
-Errors: `invalid_argument` for an unknown choice, `project_trust_locked` when the launch named the trust. A
-`project_trust` extension handler still decides first, as it does in the terminal, so read `projectTrusted` from
-the response rather than assuming the choice.
+Errors: `invalid_argument` for an unknown choice, `project_trust_locked` when the launch named the trust, and
+`project_trust_extension_decided` when a `project_trust` handler of an extension loaded before trust (never a
+project extension) decides the other way: such a handler decides before any saved choice when a session opens, so
+the request is refused and nothing is saved or applied. A folder with nothing trust gates stays trusted whatever is
+chosen.
 
 #### get_project_settings
 
@@ -6138,8 +6140,9 @@ modes) apply after `reload` or in the next session.
 
 The response carries the same `data` as `get_project_settings`, read after the write. Errors:
 `invalid_argument` when `key` is not an identifier (`[A-Za-z][A-Za-z0-9_]*`) or `value` is missing,
-`project_not_trusted` while the project is untrusted (trust it first), and `project_settings_unreadable` when the
-existing file does not parse (nothing is written).
+`project_not_trusted` while the project is untrusted (trust it first), `project_settings_unreadable` when the
+existing file does not parse (nothing is written), and `project_settings_write_failed` when writing the file fails
+(permissions, a held lock).
 
 `get_project_trust` is an `observe` read; `set_project_trust`, `get_project_settings` and `set_project_setting`
 are `device_admin` (a saved trust decision decides whether project code runs on the device, and the settings

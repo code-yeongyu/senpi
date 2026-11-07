@@ -45,6 +45,12 @@ export const RPC_ERROR_MEDIA_NOT_FOUND = "media_not_found";
 /** `set_project_trust` on an engine launched with `--approve`/`--no-approve`: the flag outranks every saved decision. */
 export const RPC_ERROR_PROJECT_TRUST_LOCKED = "project_trust_locked";
 
+/** `set_project_trust` against what a `project_trust` extension handler decides; nothing is saved or applied. */
+export const RPC_ERROR_PROJECT_TRUST_EXTENSION_DECIDED = "project_trust_extension_decided";
+
+/** `set_project_setting` whose write to the project settings file failed (permissions, a held lock). */
+export const RPC_ERROR_PROJECT_SETTINGS_WRITE_FAILED = "project_settings_write_failed";
+
 /** `set_project_setting` while the session's project is untrusted; `set_project_trust` first. */
 export const RPC_ERROR_PROJECT_NOT_TRUSTED = "project_not_trusted";
 
@@ -200,6 +206,8 @@ export type RpcErrorCode =
 	| typeof RPC_ERROR_OPEN_FAILED
 	| typeof RPC_ERROR_MEDIA_NOT_FOUND
 	| typeof RPC_ERROR_PROJECT_TRUST_LOCKED
+	| typeof RPC_ERROR_PROJECT_TRUST_EXTENSION_DECIDED
+	| typeof RPC_ERROR_PROJECT_SETTINGS_WRITE_FAILED
 	| typeof RPC_ERROR_PROJECT_NOT_TRUSTED
 	| typeof RPC_ERROR_PROJECT_SETTINGS_UNREADABLE
 	| typeof RPC_ERROR_INVALID_SESSION_CONTEXT
