@@ -381,6 +381,14 @@ export class McpService {
 		const releasedId = released?.sessionId;
 		if (releasedId !== undefined && !live.some((binding) => binding.sessionId === releasedId)) {
 			this.#wireStatusBySession.delete(releasedId);
+			// The id-less read falls back to #latestWireStatus once a single session is live, so rebind it to the
+			// remaining session's own snapshot (senpi#3001): without this, the released session's status outlives
+			// it whenever the release carries no reason and no re-sync re-captures.
+			const remaining = live.at(-1);
+			this.#latestWireStatus =
+				remaining?.sessionId !== undefined
+					? (this.#wireStatusBySession.get(remaining.sessionId) ?? { servers: [] })
+					: { servers: [] };
 		}
 		const latest = live.at(-1);
 		if (latest !== undefined) {
@@ -733,9 +741,6 @@ export class McpService {
 			const owner = this.#statusOwner(sessionId);
 			if (owner === undefined) return [];
 			const names = new Set<string>(Object.keys(owner.config.servers));
-			for (const entry of this.#connections.values()) {
-				if (owner.config.servers[entry.name] !== undefined) names.add(entry.name);
-			}
 			return [...names]
 				.sort()
 				.map((name) => this.#serverSnapshot(name, owner.config.servers[name], this.#entryForName(name)));

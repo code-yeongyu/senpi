@@ -1082,6 +1082,30 @@ describe("senpi#2597: a session's MCP status and the service's teardown follow t
 		expect(service.getServerSnapshots().map((server) => server.name)).toEqual(["extra", "fx"]);
 	});
 
+	// senpi#3001 follow-up (review of #6169): releasing a session with no reason must not leave its status
+	// behind in the single-session fallback. The id-less read has to become the remaining session's own.
+	it("returns the remaining session's status, not a released peer's, after a release with no reason", async () => {
+		// Given: alpha declares `extra` beside the shared `fx`, bravo declares only `fx`; alpha captures last.
+		const peer = configureExtraForRootProject();
+		const service = getMcpService();
+		const alphaPi = capturingPi();
+		const bravoPi = capturingPi();
+		await attachInProject(alphaPi, root, "alpha");
+		await untilFakeRegistered(alphaPi, EXTRA_TOOL);
+		await attachInProject(bravoPi, peer, "bravo");
+		await untilFakeRegistered(bravoPi, TOOL);
+		await service.refreshWireStatusSnapshot("bravo");
+		await service.refreshWireStatusSnapshot("alpha");
+
+		// When: alpha is released with no reason (the reload/new/resume path), leaving bravo alone.
+		await service.releaseSession(alphaPi);
+
+		// Then: the id-less read is bravo's own status, not alpha's departed `extra`.
+		expect(service.getWireStatusSnapshot().servers.map((server) => server.name)).toEqual(["fx"]);
+		expect(service.getWireStatusSnapshot("bravo").servers.map((server) => server.name)).toEqual(["fx"]);
+		expect(service.getWireStatusSnapshot("alpha")).toEqual({ servers: [] });
+	});
+
 	// The FIFO holds the attach's catalog-cache read, after it bound, until the test writes it.
 	it.skipIf(process.platform === "win32")(
 		"stores no MCP status for a session that quits while its own attach is running",
