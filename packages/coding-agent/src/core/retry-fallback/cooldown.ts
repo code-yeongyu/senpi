@@ -88,7 +88,9 @@ export class SelectorCooldowns {
 	private defaultDurationMs(errorMessage: string | undefined): number {
 		const message = stripProviderRequestIds(errorMessage ?? "").toLowerCase();
 		const defaultMs =
-			/usage[- ]limit|quota|insufficient_quota|billing|credits[-_ ]required|credits are required/.test(message)
+			/usage[- ]limit|quota|insufficient_quota|billing|credits[-_ ]required|credits are required|insufficient balance|(?<!rate[ -]?)limit exhausted/.test(
+				message,
+			)
 				? 30 * 60_000
 				: /rate[ -]?limit|429|too many requests/.test(message)
 					? 30_000
