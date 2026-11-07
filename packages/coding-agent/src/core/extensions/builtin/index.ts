@@ -9,6 +9,7 @@ import btwExtension from "./btw/index.ts";
 import cacheKeepAliveExtension from "./cache-keepalive/index.ts";
 import chatReplyScrubExtension from "./chat-reply-scrub/index.ts";
 import compactionExtension from "./compaction/index.ts";
+import cmdCliExtension from "./cmd-cli/index.ts";
 import configReloadExtension from "./config-reload/index.ts";
 import cursorCliOauthExtension from "./cursor-cli-oauth/index.ts";
 import diffExtension from "./diff.ts";
@@ -141,6 +142,7 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "cursor-cli-oauth", factory: cursorCliOauthExtension },
 	// Provider-only lane beside the other provider registrations; no hooks, so order is not load-bearing.
 	{ id: "vertex-model-garden", factory: vertexModelGardenExtension },
+	{ id: "cmd-cli", factory: cmdCliExtension },
 	// Config reload follows settings-dependent builtins so reloads rebuild their resolved settings before catalog feeders observe them.
 	{ id: "config-reload", factory: configReloadExtension },
 	// Shared catalog wiring loads before MCP, which feeds its tools into the shared catalog as the final builtin.
