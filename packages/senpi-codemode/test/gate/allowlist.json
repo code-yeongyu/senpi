@@ -6045,6 +6045,24 @@
 			],
 			"reason": "senpi#6131 (Fixes #6125): the JavaScript kernel entries (worker-entry.js, inline-worker-entry.js, process-entry.js) import power-throttling-startup.js first, which opts the kernel realm's children out of Windows EcoQoS throttling. Reviewed additions only: the two new modules in the firstKernel import graph (off Windows they import nothing and patch nothing) and the three contract titles of test/power-throttling.test.ts.",
 			"changes": []
+		},
+		"senpi#6181": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/extension/cell-tool-updates.ts",
+				"imports/extension/packages/senpi-codemode/src/tool/bridge-cell-binding.ts",
+				"imports/extension/packages/senpi-codemode/src/tool/nested-tool-call.ts",
+				"imports/extension/packages/senpi-codemode/src/tool/nested-tool-output.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/extension/cell-tool-updates.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/bridge-cell-binding.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/nested-tool-call.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/nested-tool-output.ts",
+				"legacyContracts/test/eval-nested-tool-updates.test.ts/Given a cell that awaits a nested tool streaming partial results (#6167) When the jl cell runs it, then each partial reaches the cell's live update before the tool returns, and the result is unchanged",
+				"legacyContracts/test/eval-nested-tool-updates.test.ts/Given a cell that awaits a nested tool streaming partial results (#6167) When the js cell runs it, then each partial reaches the cell's live update before the tool returns, and the result is unchanged",
+				"legacyContracts/test/eval-nested-tool-updates.test.ts/Given a cell that awaits a nested tool streaming partial results (#6167) When the py cell runs it, then each partial reaches the cell's live update before the tool returns, and the result is unchanged",
+				"legacyContracts/test/eval-nested-tool-updates.test.ts/Given a cell that awaits a nested tool streaming partial results (#6167) When the rb cell runs it, then each partial reaches the cell's live update before the tool returns, and the result is unchanged"
+			],
+			"reason": "senpi#6181 (follow-up to #6168): #6168 streamed nested tool partial results into the eval cell's live update and added four modules (src/extension/cell-tool-updates.ts, src/tool/bridge-cell-binding.ts, src/tool/nested-tool-call.ts, src/tool/nested-tool-output.ts, measured in the extension and firstKernel import graphs) plus the js/py/rb/jl contract titles of test/eval-nested-tool-updates.test.ts, without an allowlist node, so codemode-gate failed on main. Reviewed additions only; no prompt cell, schema or existing measurement moves.",
+			"changes": []
 		}
 	}
 }
