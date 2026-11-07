@@ -65,6 +65,30 @@ describe("herdr lifecycle reporter folds every wake source into the working stat
 		});
 	});
 
+	it.each([
+		["a persistent monitor", "terminal_monitor_state", { activeCount: 1 }, "1 monitor live"],
+		[
+			"a background terminal session",
+			WAKE,
+			{ source: "terminal-background-sessions", activeCount: 1 },
+			"1 background session",
+		],
+	])("idles the pane once the turn ends while only %s is live, and names it", async (_what, event, data, message) => {
+		// Given
+		const f = await herdrReporterFixture();
+		await f.start();
+		f.setIdle(false);
+		await f.emit("agent_start");
+		await f.bus(event, data);
+
+		// When
+		f.setIdle(true);
+		await f.emit("agent_settled");
+
+		// Then
+		expect(f.requests.at(-1)?.params).toMatchObject({ state: "idle", message });
+	});
+
 	it("leaves a pending question to the blocked state instead of counting ask-user as work", async () => {
 		// Given
 		const f = await herdrReporterFixture();
