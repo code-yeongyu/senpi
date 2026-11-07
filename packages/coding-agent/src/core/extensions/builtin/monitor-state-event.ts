@@ -16,12 +16,17 @@ export interface MonitorNotificationDetail {
 	readonly humanInput?: true;
 }
 
+/** True for any delivered monitor notification, the input of a monitor-event turn. */
+export function isMonitorNotification(message: unknown): boolean {
+	if (typeof message !== "object" || message === null) return false;
+	const candidate = message as { role?: unknown; customType?: unknown };
+	return candidate.role === "custom" && candidate.customType === MONITOR_NOTIFICATION_CUSTOM_TYPE;
+}
+
 /** True for a delivered monitor notification that carries a person's words (omo#10280). */
 export function isHumanInputMonitorNotification(message: unknown): boolean {
-	if (typeof message !== "object" || message === null) return false;
-	const candidate = message as { role?: unknown; customType?: unknown; details?: { monitors?: unknown } };
-	if (candidate.role !== "custom" || candidate.customType !== MONITOR_NOTIFICATION_CUSTOM_TYPE) return false;
-	const monitors = candidate.details?.monitors;
+	if (!isMonitorNotification(message)) return false;
+	const monitors = (message as { details?: { monitors?: unknown } }).details?.monitors;
 	return (
 		Array.isArray(monitors) &&
 		monitors.some((monitor) => typeof monitor === "object" && monitor !== null && monitor.humanInput === true)

@@ -1,7 +1,10 @@
 import { join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { afterEach, describe, expect, it } from "vitest";
-import { GOAL_NO_PROGRESS_CONTINUATION_LIMIT } from "../../../src/core/extensions/builtin/goal/continuation.ts";
+import {
+	GOAL_IDLE_REPLY_STREAK,
+	GOAL_NO_PROGRESS_CONTINUATION_LIMIT,
+} from "../../../src/core/extensions/builtin/goal/continuation.ts";
 import { NO_PROGRESS_BLOCKED_REASON } from "../../../src/core/extensions/builtin/goal/continuation-recovery.ts";
 import { readGoal } from "../../../src/core/extensions/builtin/goal/store.ts";
 import {
@@ -202,23 +205,20 @@ describe("omo#10280: no fixed auto-continue cap, a no-progress guard instead", (
 		);
 	});
 
-	it("stops a varied-narration loop with no tool use at the guard, with a reason and a next step", {
+	it("stops a varied-narration loop with no tool use at the idle-reply guard, long before this one (#5160)", {
 		timeout: 60_000,
 	}, async () => {
-		const { harness, turn, ref, notices } = await startGoal("omo-10280-stall");
+		const { harness, turn, ref } = await startGoal("omo-10280-stall");
 		for (let index = 1; index <= GOAL_NO_PROGRESS_CONTINUATION_LIMIT + 1; index++) {
 			await turn([narration(`still thinking about it, take ${index}`)]);
 		}
 
-		expect(harness.sent).toHaveLength(GOAL_NO_PROGRESS_CONTINUATION_LIMIT);
-		expect(await readGoal(ref)).toMatchObject({ status: "blocked", blockedReason: NO_PROGRESS_BLOCKED_REASON });
-		expect(notices).toContainEqual(
-			`Goal continuation blocked: ${NO_PROGRESS_BLOCKED_REASON}. Send any message to resume.`,
-		);
+		expect(harness.sent).toHaveLength(GOAL_IDLE_REPLY_STREAK - 1);
+		expect(await readGoal(ref)).toMatchObject({ status: "active", continuationStoppedAt: expect.any(Number) });
 		expect(harness.events.emitted).toContainEqual(
 			expect.objectContaining({
 				channel: "goal_continuation_guard_tripped",
-				data: expect.objectContaining({ reason: "no-progress" }),
+				data: expect.objectContaining({ reason: "idle" }),
 			}),
 		);
 	});
@@ -288,8 +288,7 @@ describe("omo#10280: no fixed auto-continue cap, a no-progress guard instead", (
 		timeout: 60_000,
 	}, async () => {
 		const { harness, turn, ref } = await startGoal("omo-10280-human-monitor");
-		for (let index = 1; index < GOAL_NO_PROGRESS_CONTINUATION_LIMIT; index++)
-			await turn([narration(`waiting ${index}`)]);
+		for (let index = 1; index < GOAL_NO_PROGRESS_CONTINUATION_LIMIT; index++) await turn(sameStatusPeekTurn(index));
 		expect(await readGoal(ref)).toMatchObject({ noProgressContinuations: GOAL_NO_PROGRESS_CONTINUATION_LIMIT - 1 });
 
 		await turn([monitorNotification(true), narration("on it, checking the logs")]);
@@ -299,16 +298,14 @@ describe("omo#10280: no fixed auto-continue cap, a no-progress guard instead", (
 			unattendedContinuations: 1,
 		});
 
-		for (let index = 1; index < GOAL_NO_PROGRESS_CONTINUATION_LIMIT; index++)
-			await turn([narration(`after ${index}`)]);
+		for (let index = 1; index < GOAL_NO_PROGRESS_CONTINUATION_LIMIT; index++) await turn(sameStatusPeekTurn(index));
 		expect(await readGoal(ref)).toMatchObject({ status: "active" });
 		expect(harness.sent).toHaveLength(2 * GOAL_NO_PROGRESS_CONTINUATION_LIMIT - 1);
 	});
 
 	it("does not reset the guard for a machine-status monitor event", { timeout: 60_000 }, async () => {
 		const { turn, ref } = await startGoal("omo-10280-machine-monitor");
-		for (let index = 1; index < GOAL_NO_PROGRESS_CONTINUATION_LIMIT; index++)
-			await turn([narration(`waiting ${index}`)]);
+		for (let index = 1; index < GOAL_NO_PROGRESS_CONTINUATION_LIMIT; index++) await turn(sameStatusPeekTurn(index));
 
 		await turn([monitorNotification(false), narration("build is still running")]);
 		expect(await readGoal(ref)).toMatchObject({

@@ -9,6 +9,7 @@ import { getLatestPhasesFromBranchEntries } from "../todotools/state.ts";
 import {
 	buildGoalContinuationSignature,
 	evaluateGoalContinuation,
+	GOAL_IDLE_REPLY_STREAK,
 	type GoalContinuationInput,
 	type GoalContinuationVerdict,
 	hashAssistantText,
@@ -29,6 +30,8 @@ import type { Goal } from "./types.ts";
 
 type ContinuingGoalContinuationVerdict = Extract<GoalContinuationVerdict, { kind: "continue" }>;
 
+export const GOAL_IDLE_STOP_NOTICE = `Goal paused: ${GOAL_IDLE_REPLY_STREAK} replies in a row made no progress. Send a message or run /goal resume when ready.`;
+
 export const GOAL_STALE_STOP_NOTICE =
 	"Goal auto-continuation stopped because progress is stale. Send a message or run /goal resume to continue.";
 
@@ -41,6 +44,8 @@ type GoalContinuationDeliveryOptions = {
 export type SessionStartContinuationOptions = {
 	readonly continuationPending: boolean;
 	readonly markContinuationPending: () => void;
+	/** The monitor's live idle-reply count (#5160), so every admission path reads the same value. */
+	readonly idleReplyStreak: number;
 };
 
 /**
@@ -124,6 +129,7 @@ export async function queueGoalContinuation(
 			consecutiveLengthRecoveries: 0,
 			recentNormalizedOutputHashes: [],
 			toollessContinuationStreak: 0,
+			idleReplyStreak: options.idleReplyStreak,
 			continuationPending: options.continuationPending,
 			lastTurnStuckOnContextOverflow: isLastTurnStuckOnContextOverflow(
 				ctx,
@@ -203,8 +209,10 @@ async function handleDeniedContinuation(
 	if (!stopped.recorded) return stopped.goal;
 	// Preserve the guard's existing side effects even if publishing the additive entries fails.
 	if (reason === "stale" && ctx.hasUI) ctx.ui.notify(GOAL_STALE_STOP_NOTICE, "info");
-	if (blockedReason !== undefined) {
-		if (ctx.hasUI) ctx.ui.notify(continuationCapRecoveryHint(blockedReason), "warning");
+	if (reason === "idle" && ctx.hasUI) ctx.ui.notify(GOAL_IDLE_STOP_NOTICE, "info");
+	if (blockedReason !== undefined || reason === "idle") {
+		if (blockedReason !== undefined && ctx.hasUI)
+			ctx.ui.notify(continuationCapRecoveryHint(blockedReason), "warning");
 		pi.events?.emit("goal_continuation_guard_tripped", {
 			goalId: goal.id,
 			reason,
@@ -230,7 +238,7 @@ async function handleDeniedContinuation(
 	}
 	try {
 		if (
-			(reason === "stale" || reason === "repetition") &&
+			(reason === "stale" || reason === "repetition" || reason === "idle") &&
 			!enginePauseSinceLastTurn(ctx.sessionManager.getBranch())
 		) {
 			pi.appendEntry("engine-paused", {
@@ -266,6 +274,7 @@ function blockedReasonForContinuationGuard(
 		case "not-eligible":
 		case "single-flight":
 		case "stale":
+		case "idle":
 			return undefined;
 	}
 }

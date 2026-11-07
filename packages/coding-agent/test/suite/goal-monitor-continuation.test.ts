@@ -2,7 +2,10 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { GOAL_USER_GRACE_DELAY_MS } from "../../src/core/extensions/builtin/goal/continuation.ts";
+import {
+	GOAL_IDLE_REPLY_STREAK,
+	GOAL_USER_GRACE_DELAY_MS,
+} from "../../src/core/extensions/builtin/goal/continuation.ts";
 import { admitAndQueueGoalContinuation } from "../../src/core/extensions/builtin/goal/lifecycle-helpers.ts";
 import {
 	GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS,
@@ -1014,7 +1017,7 @@ describe("goal continuation while a monitor is active", () => {
 		);
 	});
 
-	it("keeps admitting distinct progress beyond the continuation cap", async () => {
+	it("stops distinct tool-less narration at the idle-reply guard, not the continuation cap (#5160)", async () => {
 		const notices: string[] = [];
 		const { tools, handlers, sent, events } = createGoalHarness();
 		const ctx = await makeGoalContext(notices, "thread-immediate-distinct-progress");
@@ -1023,7 +1026,7 @@ describe("goal continuation while a monitor is active", () => {
 			.get("create_goal")
 			?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx as ExtensionToolContext);
 
-		for (let turn = 1; turn <= 9; turn++) {
+		for (let turn = 1; turn <= GOAL_IDLE_REPLY_STREAK + 1; turn++) {
 			await runGoalHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
 			await runGoalHandlers(
 				handlers,
@@ -1033,10 +1036,10 @@ describe("goal continuation while a monitor is active", () => {
 			);
 		}
 
-		expect(sent).toHaveLength(9);
+		expect(sent).toHaveLength(GOAL_IDLE_REPLY_STREAK - 1);
 		expect(await readGoal(goalStoreRef(ctx))).toMatchObject({
 			status: "active",
-			consecutiveContinuations: 1,
+			continuationStoppedAt: expect.any(Number),
 		});
 		expect(events.emitted).not.toContainEqual(
 			expect.objectContaining({
@@ -1165,6 +1168,7 @@ describe("goal continuation while a monitor is active", () => {
 						lastTurnStuckOnContextOverflow: false,
 						recentNormalizedOutputHashes: [],
 						toollessContinuationStreak: 0,
+						idleReplyStreak: 0,
 						continuationPending: false,
 					},
 					content: () => "Continue",
