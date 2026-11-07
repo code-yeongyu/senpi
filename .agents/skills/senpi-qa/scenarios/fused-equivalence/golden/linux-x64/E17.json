@@ -4100,7 +4100,6 @@
      {
       "type": "agent_start",
       "runId": "<uuid:17>",
-      "turnId": "1",
       "sessionId": "<id:1>"
      },
      {
@@ -7499,7 +7498,6 @@
      },
      {
       "type": "agent_settled",
-      "turnId": "1",
       "sessionId": "<id:1>"
      },
      {
@@ -8882,7 +8880,6 @@
      },
      {
       "type": "agent_settled",
-      "turnId": "1",
       "sessionId": "<id:1>"
      },
      {

@@ -181,7 +181,9 @@ export class SubprocessKernel {
 		const timeoutMs = run.input.timeoutMs;
 		if (timeoutMs !== undefined) run.timer = setTimeout(() => this.handleTimeout(run, timeoutMs), timeoutMs);
 		try {
-			process.send(encodeBridgeFrame({ type: "run", cellId: run.input.cellId, code: run.input.code, timeoutMs }));
+			const { cellId, code, bridgeCellToken } = run.input;
+			const token = bridgeCellToken === undefined ? {} : { bridgeCellToken };
+			process.send(encodeBridgeFrame({ type: "run", cellId, code, timeoutMs, ...token }));
 		} catch (error) {
 			this.failClosed(new KernelProcessError(error instanceof Error ? error.message : String(error)));
 		}

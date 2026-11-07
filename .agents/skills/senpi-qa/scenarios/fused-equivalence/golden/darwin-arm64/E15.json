@@ -2763,8 +2763,7 @@
      },
      {
       "type": "agent_start",
-      "runId": "<uuid:17>",
-      "turnId": "1"
+      "runId": "<uuid:17>"
      },
      {
       "type": "turn_start"
@@ -4364,8 +4363,7 @@
       "willRetry": false
      },
      {
-      "type": "agent_settled",
-      "turnId": "1"
+      "type": "agent_settled"
      },
      {
       "type": "agent_idle"

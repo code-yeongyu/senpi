@@ -169,7 +169,8 @@ A session on another device is `<device>/<session>` (or `<device>/*` for every s
 extension registered a remote source with `pi.registerRpcRemoteSource`; without one such a target is
 refused. Its lines read exactly like local ones. A lost device is said once
 (`rpc device <device> unreachable (<reason>); re-watching`), the resync after the gap reports each change
-once, a turn end is reported once per `turnId` (`rpc <label> turn <id> settled while detached`), and an
+once, each settled turn the resync names is reported once (`rpc <label> turn <id> settled while detached`)
+while a live turn end is rendered as it arrives, and an
 access that ended for good settles the watch (`rpc <device>/<session> access ended (<reason>)`).
 
 ### Anti-patterns
