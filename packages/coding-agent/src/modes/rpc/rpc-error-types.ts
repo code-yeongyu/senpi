@@ -42,6 +42,15 @@ export const RPC_ERROR_SESSION_NOT_HELD = "session_not_held";
 
 export const RPC_ERROR_MEDIA_NOT_FOUND = "media_not_found";
 
+/** `set_project_trust` on an engine launched with `--approve`/`--no-approve`: the flag outranks every saved decision. */
+export const RPC_ERROR_PROJECT_TRUST_LOCKED = "project_trust_locked";
+
+/** `set_project_setting` while the session's project is untrusted; `set_project_trust` first. */
+export const RPC_ERROR_PROJECT_NOT_TRUSTED = "project_not_trusted";
+
+/** `set_project_setting` while the project settings file does not parse; fix the file first. */
+export const RPC_ERROR_PROJECT_SETTINGS_UNREADABLE = "project_settings_unreadable";
+
 /** `open_session.context` broke a documented cap (key count, key syntax, value or total bytes). */
 export const RPC_ERROR_INVALID_SESSION_CONTEXT = "invalid_session_context";
 
@@ -190,6 +199,9 @@ export type RpcErrorCode =
 	| typeof RPC_ERROR_INVALID_PATH
 	| typeof RPC_ERROR_OPEN_FAILED
 	| typeof RPC_ERROR_MEDIA_NOT_FOUND
+	| typeof RPC_ERROR_PROJECT_TRUST_LOCKED
+	| typeof RPC_ERROR_PROJECT_NOT_TRUSTED
+	| typeof RPC_ERROR_PROJECT_SETTINGS_UNREADABLE
 	| typeof RPC_ERROR_INVALID_SESSION_CONTEXT
 	| typeof RPC_ERROR_INVALID_SUBSCRIPTION
 	| typeof RPC_ERROR_UNKNOWN_SUBSCRIPTION

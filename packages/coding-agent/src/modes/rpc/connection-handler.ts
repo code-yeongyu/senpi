@@ -127,6 +127,12 @@ import { runHoldInput } from "./held-input-commands.ts";
 import { HostSessionControl } from "./host-session-control.ts";
 import { createRpcLoginPromptCallbacks } from "./login-prompts.ts";
 import { answerMemoryReport } from "./memory-report-command.ts";
+import {
+	readProjectSettings,
+	readProjectTrust,
+	writeProjectSetting,
+	writeProjectTrust,
+} from "./project-workspace-commands.ts";
 import { protocolIdentity } from "./protocol-identity.ts";
 import { buildRpcCommandsForSession, createCommandsChangedEvent, rpcCommandListDigest } from "./rpc-command-surface.ts";
 import {
@@ -2176,6 +2182,26 @@ export function createRpcConnectionHandler(
 				// A read answers with the inventory and never announces: changes are announced by their own notifications.
 				await requestMcpWireStatus();
 				return success(id, "get_loaded_surfaces", currentLoadedSurfaces().data);
+			}
+
+			case "get_project_trust":
+				return success(id, "get_project_trust", readProjectTrust(session));
+
+			case "set_project_trust": {
+				const result = await writeProjectTrust(session, command.choice);
+				return result.ok
+					? success(id, "set_project_trust", result.data)
+					: error(id, "set_project_trust", result.message, result.errorCode);
+			}
+
+			case "get_project_settings":
+				return success(id, "get_project_settings", readProjectSettings(session));
+
+			case "set_project_setting": {
+				const result = await writeProjectSetting(session, command.key, command.value);
+				return result.ok
+					? success(id, "set_project_setting", result.data)
+					: error(id, "set_project_setting", result.message, result.errorCode);
 			}
 
 			case "extension_request":
