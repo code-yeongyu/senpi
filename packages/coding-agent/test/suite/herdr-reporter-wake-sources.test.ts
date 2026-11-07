@@ -5,6 +5,14 @@ import { cleanupHerdrReporterFixtures, herdrReporterFixture } from "./herdr-repo
 
 const WAKE = "wake_source_state";
 
+/** One live watch as the terminal extension broadcasts it; only `persistent` and `deadlineMs` vary here. */
+function monitorState(watch: { persistent: boolean; deadlineMs: number | null }) {
+	return {
+		activeCount: 1,
+		monitors: [{ id: "bash_1", description: "watch", paused: false, startedAtMs: 0, ...watch }],
+	};
+}
+
 beforeEach(() => {
 	vi.useRealTimers();
 });
@@ -70,7 +78,12 @@ describe("herdr lifecycle reporter: a turn and bounded work are working, open-en
 	});
 
 	it.each([
-		["a persistent monitor", "terminal_monitor_state", { activeCount: 1 }, "1 monitor live"],
+		[
+			"a persistent monitor",
+			"terminal_monitor_state",
+			monitorState({ persistent: true, deadlineMs: null }),
+			"1 monitor live",
+		],
 		[
 			"a background terminal session",
 			WAKE,
@@ -110,6 +123,22 @@ describe("herdr lifecycle reporter: a turn and bounded work are working, open-en
 
 		// Then
 		expect(f.requests.at(-1)?.params).toMatchObject({ state: "working", message });
+	});
+
+	it("keeps the pane working after the turn while a one-shot monitor with a deadline is live", async () => {
+		// Given
+		const f = await herdrReporterFixture();
+		await f.start();
+		f.setIdle(false);
+		await f.emit("agent_start");
+		await f.bus("terminal_monitor_state", monitorState({ persistent: false, deadlineMs: 1_800_000 }));
+
+		// When
+		f.setIdle(true);
+		await f.emit("agent_settled");
+
+		// Then
+		expect(f.requests.at(-1)?.params).toMatchObject({ state: "working", message: "1 monitor live" });
 	});
 
 	it("leaves a pending question to the blocked state instead of counting ask-user as work", async () => {

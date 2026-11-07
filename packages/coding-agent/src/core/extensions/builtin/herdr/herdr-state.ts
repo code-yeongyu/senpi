@@ -1,3 +1,5 @@
+import type { TerminalMonitorStateEvent } from "../monitor-state-event.ts";
+
 /** How the user must act on a block, as OSC 7501 names it: a permission approval or a typed answer. */
 export type HerdrBlockedKind = "permission" | "question";
 
@@ -11,6 +13,8 @@ export interface HerdrState {
 	readonly turnActive: boolean;
 	readonly childCount: number;
 	readonly monitorCount: number;
+	/** Live monitors with no deadline (persistent watches, or watches without a timeout): they may never fire. */
+	readonly openEndedMonitorCount: number;
 	readonly wakeSources: ReadonlyMap<string, number>;
 }
 
@@ -18,7 +22,7 @@ export type HerdrStateEvent =
 	| { type: "blocked"; active: boolean; id: string; label?: string; kind?: HerdrBlockedKind }
 	| { type: "turn"; active: boolean }
 	| { type: "children"; count: number }
-	| { type: "monitors"; count: number }
+	| { type: "monitors"; count: number; openEnded: number }
 	| { type: "wake-source"; source: string; count: number };
 
 export interface HerdrReport {
@@ -30,11 +34,21 @@ export interface HerdrReport {
 const REPRESENTED_WAKE_SOURCES: ReadonlySet<string> = new Set(["terminal-monitors", "senpi-task", "ask-user"]);
 
 /**
- * Wake sources that may stay live with no end in sight (a monitor that never fires, a server left running). Once the
- * turn has ended they are named in the message of an idle report instead of keeping the pane working forever; every
- * other source is bounded work that will start a turn and keeps the pane working (#6150).
+ * Wake sources that may stay live with no end in sight (a server left running). Once the turn has ended they are named
+ * in the message of an idle report instead of keeping the pane working forever; every other source is bounded work
+ * that will start a turn and keeps the pane working (#6150). Monitors are split per watch by `openEndedMonitors`.
  */
-const OPEN_ENDED_WAKE_SOURCES: ReadonlySet<string> = new Set(["terminal-monitors", "terminal-background-sessions"]);
+const OPEN_ENDED_WAKE_SOURCES: ReadonlySet<string> = new Set(["terminal-background-sessions"]);
+
+/**
+ * How many of the broadcast watches have no deadline: a persistent watch, or one with no timeout. A one-shot watch
+ * with a deadline either fires or times out, and both wake the session, so it is bounded. A payload without per-watch
+ * detail counts none as open-ended, keeping the pane working as before the split.
+ */
+export function openEndedMonitors(event: TerminalMonitorStateEvent): number {
+	return (event.monitors ?? []).filter((watch) => watch.persistent === true || typeof watch.deadlineMs !== "number")
+		.length;
+}
 
 const WAKE_SOURCE_LABELS: Readonly<Record<string, readonly [singular: string, plural: string]>> = {
 	"terminal-background-sessions": ["background session", "background sessions"],
@@ -44,7 +58,14 @@ const WAKE_SOURCE_LABELS: Readonly<Record<string, readonly [singular: string, pl
 };
 
 export function initialHerdrState(): HerdrState {
-	return { blocked: new Map(), turnActive: false, childCount: 0, monitorCount: 0, wakeSources: new Map() };
+	return {
+		blocked: new Map(),
+		turnActive: false,
+		childCount: 0,
+		monitorCount: 0,
+		openEndedMonitorCount: 0,
+		wakeSources: new Map(),
+	};
 }
 
 export function reduceHerdrState(state: HerdrState, event: HerdrStateEvent): HerdrState {
@@ -54,7 +75,7 @@ export function reduceHerdrState(state: HerdrState, event: HerdrStateEvent): Her
 		case "children":
 			return { ...state, childCount: event.count };
 		case "monitors":
-			return { ...state, monitorCount: event.count };
+			return { ...state, monitorCount: event.count, openEndedMonitorCount: Math.min(event.openEnded, event.count) };
 		case "wake-source": {
 			if ((state.wakeSources.get(event.source) ?? 0) === event.count) return state;
 			const wakeSources = new Map(state.wakeSources);
@@ -82,6 +103,7 @@ export function selectHerdrReport(state: HerdrState): HerdrReport {
 		bounded = true;
 	}
 	if (state.monitorCount > 0) parts.push(`${state.monitorCount} monitor${state.monitorCount === 1 ? "" : "s"} live`);
+	if (state.monitorCount > state.openEndedMonitorCount) bounded = true;
 	for (const [source, count] of [...state.wakeSources].sort(([left], [right]) => left.localeCompare(right))) {
 		if (REPRESENTED_WAKE_SOURCES.has(source)) continue;
 		const label = WAKE_SOURCE_LABELS[source];
