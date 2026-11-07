@@ -63,19 +63,57 @@ function projectCodemodeNamesExecutable(configDir: string): boolean {
 }
 
 function codemodeExecutableSettings(): readonly string[] | undefined {
-	const codemode = bundledBuiltinExtensions.find((extension) => extension.id === "codemode");
 	try {
-		const packageJson = codemode?.resolvePackage();
-		if (packageJson === undefined) return undefined;
-		const list: unknown = JSON.parse(
-			readFileSync(join(dirname(packageJson), "src", "config", "executable-settings.json"), "utf8"),
-		);
-		if (typeof list !== "object" || list === null) return undefined;
-		const paths: unknown = Reflect.get(list, "projectExecutableSettings");
-		return Array.isArray(paths) && paths.every((entry) => typeof entry === "string") ? paths : undefined;
+		const path = codemodeExecutableSettingsPath();
+		return path === undefined ? undefined : parseExecutableSettings(readFileSync(path, "utf8"));
 	} catch {
 		return undefined;
 	}
+}
+
+function codemodeExecutableSettingsPath(): string | undefined {
+	const codemode = bundledBuiltinExtensions.find((extension) => extension.id === "codemode");
+	const packageJson = codemode?.resolvePackage();
+	return packageJson === undefined
+		? undefined
+		: join(dirname(packageJson), "src", "config", "executable-settings.json");
+}
+
+function parseExecutableSettings(text: string): readonly string[] | undefined {
+	const list: unknown = JSON.parse(text);
+	if (typeof list !== "object" || list === null) return undefined;
+	const paths: unknown = Reflect.get(list, "projectExecutableSettings");
+	return Array.isArray(paths) && paths.every((entry) => typeof entry === "string") ? paths : undefined;
+}
+
+async function pathExists(path: string): Promise<boolean> {
+	try {
+		await stat(path);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+async function projectCodemodeNamesExecutableAsync(configDir: string): Promise<boolean> {
+	const path = join(configDir, "codemode.json");
+	if (!(await pathExists(path))) return false;
+	let executableSettings: readonly string[] | undefined;
+	try {
+		const listPath = codemodeExecutableSettingsPath();
+		executableSettings =
+			listPath === undefined ? undefined : parseExecutableSettings(await readFile(listPath, "utf8"));
+	} catch {
+		executableSettings = undefined;
+	}
+	if (executableSettings === undefined) return true;
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(stripBom(await readFile(path, "utf8")));
+	} catch {
+		return true;
+	}
+	return executableSettings.some((settingPath) => valueAtPath(parsed, settingPath) !== undefined);
 }
 
 function valueAtPath(value: unknown, path: string): unknown {
@@ -300,6 +338,49 @@ export function hasTrustRequiringProjectResources(cwd: string): boolean {
 	}
 
 	return projectAgentsSkillDirs(cwd).some((dir) => existsSync(dir));
+}
+
+/** `hasTrustRequiringProjectResources` without blocking the event loop, for the RPC session path (senpi#6185). */
+export async function hasTrustRequiringProjectResourcesAsync(cwd: string): Promise<boolean> {
+	const homeDir = canonicalizePath(resolvePath(process.env.HOME || homedir()));
+	const currentDir = canonicalizePath(resolvePath(cwd));
+
+	if (!isHomeOrAboveDir(currentDir, homeDir)) {
+		for (const configDir of [join(currentDir, CONFIG_DIR_NAME), join(currentDir, LEGACY_PROJECT_CONFIG_DIR_NAME)]) {
+			for (const entry of TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES) {
+				if (await pathExists(join(configDir, entry))) return true;
+			}
+		}
+		if (await projectCodemodeNamesExecutableAsync(join(currentDir, CONFIG_DIR_NAME))) return true;
+	}
+
+	for (const dir of await projectAgentsSkillDirsAsync(cwd)) {
+		if (await pathExists(dir)) return true;
+	}
+	return false;
+}
+
+async function projectAgentsSkillDirsAsync(cwd: string): Promise<string[]> {
+	const homeDir = canonicalizePath(resolvePath(process.env.HOME || homedir()));
+	const startDir = resolvePath(cwd);
+	let gitRepoRoot: string | undefined;
+	for (let dir = startDir; ; dir = dirname(dir)) {
+		if (await pathExists(join(dir, ".git"))) {
+			gitRepoRoot = dir;
+			break;
+		}
+		if (dirname(dir) === dir) break;
+	}
+	const dirs: string[] = [];
+	let currentDir = startDir;
+	while (!isHomeOrAboveDir(canonicalizePath(currentDir), homeDir)) {
+		dirs.push(join(currentDir, ".agents", "skills"));
+		if (currentDir === gitRepoRoot) break;
+		const parentDir = dirname(currentDir);
+		if (parentDir === currentDir) break;
+		currentDir = parentDir;
+	}
+	return dirs;
 }
 
 export class ProjectTrustStore {

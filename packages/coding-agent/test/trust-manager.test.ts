@@ -5,9 +5,20 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CONFIG_DIR_NAME } from "../src/config.ts";
 import {
 	hasTrustRequiringProjectResources,
+	hasTrustRequiringProjectResourcesAsync,
 	ProjectTrustStore,
 	projectAgentsSkillDirs,
 } from "../src/core/trust-manager.ts";
+
+async function expectRequiresTrust(cwd: string, expected: boolean): Promise<void> {
+	expect({
+		sync: hasTrustRequiringProjectResources(cwd),
+		async: await hasTrustRequiringProjectResourcesAsync(cwd),
+	}).toEqual({
+		sync: expected,
+		async: expected,
+	});
+}
 
 describe("ProjectTrustStore", () => {
 	let tempDir: string;
@@ -41,36 +52,36 @@ describe("ProjectTrustStore", () => {
 		expect(store.get(childDir)).toBe(true);
 	});
 
-	it("detects trust-requiring project resources", () => {
+	it("detects trust-requiring project resources", async () => {
 		const originalHome = process.env.HOME;
 		process.env.HOME = tempDir;
 		try {
 			mkdirSync(join(tempDir, CONFIG_DIR_NAME, "agent"), { recursive: true });
 			mkdirSync(join(tempDir, ".agents", "skills"), { recursive: true });
-			expect(hasTrustRequiringProjectResources(tempDir)).toBe(false);
-			expect(hasTrustRequiringProjectResources(cwd)).toBe(false);
+			await expectRequiresTrust(tempDir, false);
+			await expectRequiresTrust(cwd, false);
 
 			// Home's config dir is the user's own global config, never a project (#2465).
 			writeFileSync(join(tempDir, CONFIG_DIR_NAME, "settings.json"), "{}");
-			expect(hasTrustRequiringProjectResources(tempDir)).toBe(false);
+			await expectRequiresTrust(tempDir, false);
 			rmSync(join(tempDir, CONFIG_DIR_NAME, "settings.json"), { force: true });
 
 			mkdirSync(join(cwd, CONFIG_DIR_NAME), { recursive: true });
-			expect(hasTrustRequiringProjectResources(cwd)).toBe(false);
+			await expectRequiresTrust(cwd, false);
 			writeFileSync(join(cwd, CONFIG_DIR_NAME, "settings.json"), "{}");
-			expect(hasTrustRequiringProjectResources(cwd)).toBe(true);
+			await expectRequiresTrust(cwd, true);
 			rmSync(join(cwd, CONFIG_DIR_NAME), { recursive: true, force: true });
 
 			writeFileSync(join(cwd, "AGENTS.md"), "Project instructions");
-			expect(hasTrustRequiringProjectResources(cwd)).toBe(false);
+			await expectRequiresTrust(cwd, false);
 			rmSync(join(cwd, "AGENTS.md"), { force: true });
 
 			writeFileSync(join(cwd, "CLAUDE.md"), "Legacy project instructions");
-			expect(hasTrustRequiringProjectResources(cwd)).toBe(false);
+			await expectRequiresTrust(cwd, false);
 			rmSync(join(cwd, "CLAUDE.md"), { force: true });
 
 			mkdirSync(join(cwd, ".agents", "skills"), { recursive: true });
-			expect(hasTrustRequiringProjectResources(cwd)).toBe(true);
+			await expectRequiresTrust(cwd, true);
 		} finally {
 			if (originalHome === undefined) {
 				delete process.env.HOME;
@@ -80,7 +91,7 @@ describe("ProjectTrustStore", () => {
 		}
 	});
 
-	it("asks for trust when a project codemode file sets an executable-naming setting, and only then", () => {
+	it("asks for trust when a project codemode file sets an executable-naming setting, and only then", async () => {
 		const originalHome = process.env.HOME;
 		process.env.HOME = tempDir;
 		try {
@@ -89,14 +100,14 @@ describe("ProjectTrustStore", () => {
 			const codemode = join(configDir, "codemode.json");
 
 			writeFileSync(codemode, JSON.stringify({ languages: { js: true, py: true } }));
-			expect(hasTrustRequiringProjectResources(cwd)).toBe(false);
+			await expectRequiresTrust(cwd, false);
 
 			writeFileSync(codemode, JSON.stringify({ languages: { py: true, pyInterpreter: "/opt/repo/python" } }));
-			expect(hasTrustRequiringProjectResources(cwd)).toBe(true);
+			await expectRequiresTrust(cwd, true);
 
 			// Unreadable, like a project mcp.json: its presence alone asks.
 			writeFileSync(codemode, "{ not json");
-			expect(hasTrustRequiringProjectResources(cwd)).toBe(true);
+			await expectRequiresTrust(cwd, true);
 		} finally {
 			if (originalHome === undefined) {
 				delete process.env.HOME;
@@ -160,20 +171,20 @@ describe("the trust walk stops below the user's home (sisyphuslabs/omo-desktop-a
 		rmSync(root, { recursive: true, force: true });
 	});
 
-	it("never counts home itself, even with project-shaped config and skills there", () => {
+	it("never counts home itself, even with project-shaped config and skills there", async () => {
 		mkdirSync(join(home, CONFIG_DIR_NAME, "extensions"), { recursive: true });
 		writeFileSync(join(home, CONFIG_DIR_NAME, "settings.json"), "{}");
 		mkdirSync(join(home, ".agents", "skills"), { recursive: true });
-		expect(hasTrustRequiringProjectResources(home)).toBe(false);
+		await expectRequiresTrust(home, false);
 		mkdirSync(join(home, "code", "app"), { recursive: true });
-		expect(hasTrustRequiringProjectResources(join(home, "code", "app"))).toBe(false);
+		await expectRequiresTrust(join(home, "code", "app"), false);
 	});
 
-	it("ignores .agents/skills above home", () => {
+	it("ignores .agents/skills above home", async () => {
 		mkdirSync(join(root, ".agents", "skills"), { recursive: true });
 		mkdirSync(join(root, "home", ".agents", "skills"), { recursive: true });
 		mkdirSync(join(home, "code", "app"), { recursive: true });
-		expect(hasTrustRequiringProjectResources(join(home, "code", "app"))).toBe(false);
+		await expectRequiresTrust(join(home, "code", "app"), false);
 	});
 
 	it("gives the loader and the trust check one walk: nothing at or above home", () => {
@@ -184,19 +195,19 @@ describe("the trust walk stops below the user's home (sisyphuslabs/omo-desktop-a
 		expect(projectAgentsSkillDirs(root)).toEqual([]);
 	});
 
-	it("walks the folder as spelled: a link from outside home into home still counts the folders around the link", () => {
+	it("walks the folder as spelled: a link from outside home into home still counts the folders around the link", async () => {
 		mkdirSync(join(home, "proj"), { recursive: true });
 		const shared = join(root, "shared");
 		mkdirSync(join(shared, ".agents", "skills"), { recursive: true });
 		symlinkSync(join(home, "proj"), join(shared, "link"));
 		const cwd = join(shared, "link");
 		expect(projectAgentsSkillDirs(cwd)).toContain(join(shared, ".agents", "skills"));
-		expect(hasTrustRequiringProjectResources(cwd)).toBe(true);
+		await expectRequiresTrust(cwd, true);
 	});
 
-	it("still asks for a project's own .agents/skills between the folder and home", () => {
+	it("still asks for a project's own .agents/skills between the folder and home", async () => {
 		mkdirSync(join(home, "code", "app", ".agents", "skills"), { recursive: true });
 		mkdirSync(join(home, "code", "app", "src"), { recursive: true });
-		expect(hasTrustRequiringProjectResources(join(home, "code", "app", "src"))).toBe(true);
+		await expectRequiresTrust(join(home, "code", "app", "src"), true);
 	});
 });

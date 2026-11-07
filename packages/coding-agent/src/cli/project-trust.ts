@@ -1,19 +1,8 @@
-import chalk from "chalk";
-import type { ExtensionMode, ProjectTrustContext } from "../core/extensions/types.ts";
+import type { ProjectTrustContext } from "../core/extensions/types.ts";
 import type { AppMode } from "../core/project-trust.ts";
 import type { SettingsManager } from "../core/settings-manager.ts";
+import { notifyProjectTrust, toExtensionMode } from "./project-trust-noninteractive.ts";
 import { showStartupInput, showStartupSelector } from "./startup-ui.ts";
-
-function toExtensionMode(mode: AppMode): ExtensionMode {
-	switch (mode) {
-		case "interactive":
-			return "tui";
-		case "print":
-		case "json":
-		case "rpc":
-			return mode;
-	}
-}
 
 export function createProjectTrustContext(options: {
 	cwd: string;
@@ -62,12 +51,7 @@ export function createProjectTrustContext(options: {
 				}
 				return showStartupInput(options.settingsManager, title, placeholder);
 			},
-			notify: (message, type = "info") => {
-				if (options.mode !== "interactive") {
-					const color = type === "error" ? chalk.red : type === "warning" ? chalk.yellow : chalk.cyan;
-					console.error(color(message));
-				}
-			},
+			notify: (message, type = "info") => notifyProjectTrust(options.mode, message, type),
 		},
 	};
 }

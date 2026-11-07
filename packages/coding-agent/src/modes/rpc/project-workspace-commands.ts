@@ -15,13 +15,13 @@
  * one top-level key at a time through `SettingsManager`'s own project write path, which refuses an untrusted project.
  */
 
-import { createProjectTrustContext } from "../../cli/project-trust.ts";
+import { createNonInteractiveProjectTrustContext } from "../../cli/project-trust-noninteractive.ts";
 import type { AgentSession } from "../../core/agent-session.ts";
 import { emitProjectTrustEvent } from "../../core/extensions/runner.ts";
 import { getSettingsPath, type ProjectSettingsFile } from "../../core/settings-manager.ts";
 import {
 	getProjectTrustOptions,
-	hasTrustRequiringProjectResources,
+	hasTrustRequiringProjectResourcesAsync,
 	type ProjectTrustOption,
 	ProjectTrustStore,
 } from "../../core/trust-manager.ts";
@@ -74,13 +74,13 @@ function trustChoices(cwd: string): Array<{ choice: ProjectTrustChoice; option: 
 	return getProjectTrustOptions(cwd).map((option) => ({ choice: choiceOf(option), option }));
 }
 
-export function readProjectTrust(session: AgentSession): RpcProjectTrust {
+export async function readProjectTrust(session: AgentSession): Promise<RpcProjectTrust> {
 	const cwd = session.sessionManager.getCwd();
 	const entry = new ProjectTrustStore(session.agentDir).getEntry(cwd);
 	return {
 		cwd,
 		projectTrusted: session.settingsManager.isProjectTrusted(),
-		requiresTrust: hasTrustRequiringProjectResources(cwd),
+		requiresTrust: await hasTrustRequiringProjectResourcesAsync(cwd),
 		saved: entry === null ? null : { path: entry.path, trusted: entry.decision },
 		locked: session.settingsManager.isProjectTrustLocked(),
 		choices: trustChoices(cwd).map(({ choice, option }) => ({
@@ -103,7 +103,7 @@ async function extensionTrustDecision(session: AgentSession, cwd: string): Promi
 	const { result, errors } = await emitProjectTrustEvent(
 		preTrust,
 		{ type: "project_trust", cwd },
-		createProjectTrustContext({ cwd, mode: "rpc", settingsManager: session.settingsManager, hasUI: false }),
+		createNonInteractiveProjectTrustContext({ cwd, mode: "rpc", hasUI: false }),
 	);
 	for (const error of errors) {
 		process.stderr.write(`senpi rpc: Extension "${error.extensionPath}" project_trust error: ${error.error}\n`);
@@ -137,7 +137,7 @@ export async function writeProjectTrust(
 	}
 	return inTrustChangeOrder(async (): Promise<ProjectCommandResult<RpcProjectTrust>> => {
 		// As resolveProjectTrusted: a folder with nothing trust gates is trusted whatever is saved or decided.
-		const requiresTrust = hasTrustRequiringProjectResources(cwd);
+		const requiresTrust = await hasTrustRequiringProjectResourcesAsync(cwd);
 		const decided = requiresTrust ? await extensionTrustDecision(session, cwd) : undefined;
 		if (decided !== undefined && decided !== selected.option.trusted) {
 			return {
@@ -152,7 +152,7 @@ export async function writeProjectTrust(
 			settings.setProjectTrusted(trusted);
 			await session.applyProjectTrustChange();
 		}
-		return { ok: true, data: readProjectTrust(session) };
+		return { ok: true, data: await readProjectTrust(session) };
 	});
 }
 
