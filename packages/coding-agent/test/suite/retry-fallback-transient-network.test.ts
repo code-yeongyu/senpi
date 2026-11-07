@@ -40,6 +40,19 @@ describe("senpi#3306 network blips never strand a session on a fallback", () => 
 		expect(harness.eventsOfType("retry_fallback_applied")).toEqual([]);
 	});
 
+	it("#given Bun's refused connect #when the model then answers #then the same model retries instead of hopping (senpi#3826)", async () => {
+		const harness = await flakyHarness(harnesses, 3);
+		harness.setResponses([
+			failure("ECONNREFUSED: Unable to connect. Is the computer able to access the url?"),
+			fauxAssistantMessage("recovered"),
+		]);
+
+		await harness.session.prompt("refused connect");
+
+		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-1"]);
+		expect(harness.eventsOfType("retry_fallback_applied")).toEqual([]);
+	});
+
 	it("#given network resets past the same-model budget #when the next turn starts #then the fallback served once and the primary is back", async () => {
 		const harness = await flakyHarness(harnesses, 1);
 		harness.setResponses([
@@ -106,6 +119,13 @@ describe("isPureNetworkTransient", () => {
 		"socket hang up",
 		"Client network socket disconnected before secure TLS connection was established",
 		"write EPIPE",
+		// senpi#3826: Bun's refused-connect wording and Node's bare connect errno codes.
+		"ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
+		"FailedToOpenSocket: Was there a typo in the url or port?",
+		"connect EHOSTUNREACH 203.0.113.7:443",
+		"connect ENETUNREACH 203.0.113.7:443",
+		// oh-my-openagent#10121: a Go-based gateway's peer reset, prose only.
+		"read tcp 192.0.2.10:52814->203.0.113.7:443: read: connection reset by peer",
 	])("#given %s #then it is a network blip", (message) => {
 		expect(isPureNetworkTransient(message)).toBe(true);
 	});
