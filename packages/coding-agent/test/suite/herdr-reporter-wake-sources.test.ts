@@ -109,6 +109,12 @@ describe("herdr lifecycle reporter: a turn and bounded work are working, open-en
 	it.each([
 		["a subagent", { source: "senpi-task", activeCount: 1 }, "1 subagent running"],
 		["a detached eval cell", { source: "senpi-codemode", activeCount: 1 }, "1 detached eval cell"],
+		[
+			"a pending loop-guard recovery",
+			{ source: "loop-guard-hard-stop", activeCount: 1 },
+			"1 loop-guard recovery pending",
+		],
+		["an unknown source", { source: "custom-source", activeCount: 1 }, "1 custom-source"],
 	])("keeps the pane working after the turn while %s will start the next one", async (_what, data, message) => {
 		// Given
 		const f = await herdrReporterFixture();
