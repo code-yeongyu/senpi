@@ -38,6 +38,7 @@ async function heldGoalSession(threadId: string, options: { initialHolds?: Sessi
 	const handlers = new Map<string, Handler[]>();
 	const entries: SessionEntry[] = [];
 	const statuses: Array<string | undefined> = [];
+	const prompts: string[] = [];
 	let holds = options.initialHolds ?? [];
 	const pi = {
 		registerTool: (tool: GoalTool) => tools.set(tool.name, tool),
@@ -64,7 +65,10 @@ async function heldGoalSession(threadId: string, options: { initialHolds?: Sessi
 		hasPendingMessages: () => false,
 		ui: {
 			notify: () => {},
-			select: async () => undefined,
+			select: async (title: string) => {
+				prompts.push(title);
+				return undefined;
+			},
 			setStatus: (key: string, text: string | undefined) => {
 				if (key === "goal") statuses.push(text);
 			},
@@ -95,7 +99,7 @@ async function heldGoalSession(threadId: string, options: { initialHolds?: Sessi
 		holds = [];
 		await fire("session_hold_changed", { type: "session_hold_changed", change: "resumed", pauseSeq: 1, holds });
 	};
-	return { dir, storeRef, fire, statuses, createGoal, pauseWith, resume, lastStatus: () => statuses.at(-1) };
+	return { dir, storeRef, fire, statuses, prompts, createGoal, pauseWith, resume, lastStatus: () => statuses.at(-1) };
 }
 
 const settledTurn = { type: "agent_end", messages: [fauxAssistantMessage("done")], willRetry: false };
@@ -169,6 +173,28 @@ describe("a paused goal's elapsed counter freezes (Q 2026-11-06: 'paused, yet th
 		expect(session.lastStatus()).toBe("Pursuing goal (1m)");
 		expect(await readGoal(session.storeRef)).toMatchObject({ status: "active" });
 		await session.fire("session_shutdown", { type: "session_shutdown" });
+	});
+
+	it("a crashed run reopened under a live Stop keeps the goal Stop-paused without a resume prompt, and resumes with the session", async () => {
+		const first = await heldGoalSession("thread-crash-stop");
+		await first.createGoal();
+		vi.advanceTimersByTime(40_000);
+		await first.fire("session_shutdown", { type: "session_shutdown" });
+
+		const reopened = await heldGoalSession("thread-crash-stop", {
+			initialHolds: [stopHold, { kind: "session_hold", key: "interrupted-run" }],
+			dir: first.dir,
+		});
+		await reopened.fire("session_start", { type: "session_start", reason: "resume" });
+		vi.advanceTimersByTime(600_000);
+
+		expect(reopened.prompts).toEqual([]);
+		expect(reopened.lastStatus()).toBe("Goal paused (/goal resume)");
+		expect(await readGoal(reopened.storeRef)).toMatchObject({ status: "paused", timeUsedSeconds: 40 });
+
+		await reopened.resume();
+		expect(await readGoal(reopened.storeRef)).toMatchObject({ status: "active", timeUsedSeconds: 40 });
+		await reopened.fire("session_shutdown", { type: "session_shutdown" });
 	});
 
 	it("a session reopened under a live Stop starts with the goal paused and its counter frozen", async () => {

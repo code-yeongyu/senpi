@@ -208,6 +208,9 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		refreshGoalUi(ctx, goal);
 		// A session reopened under a live Stop keeps its goal paused until the Stop is released.
 		if (await pauseGoalWithHeldSession(ctx)) return;
+		// A goal a live Stop paused (a crashed run included) resumes with the session once the Stop is released, so the
+		// resume prompt would only restart its counter under the hold.
+		if (goal?.status === "paused" && stopHoldLive(ctx) && pausedByStop(ctx, goal.id)) return;
 		// Opening the session earns one reminder; renders and extension reloads do not.
 		// Stale stops retain active status, unlike user-paused or blocking stops.
 		if (
