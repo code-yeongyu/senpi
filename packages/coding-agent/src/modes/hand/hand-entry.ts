@@ -109,7 +109,7 @@ export async function runHand(options: HandEntryOptions): Promise<never> {
 	await prepareSocketPath(socketPath);
 	const secret = await handEndpointSecret(socketPath);
 	const server = createServer();
-	serveSocketCarrier(server, transport, secret);
+	serveSocketCarrier(server, transport, secret, report);
 	const boundIdentity = await listen(server, socketPath, secret);
 	report(`listening on ${handEndpoint(agentDir, process.platform, secret)}`);
 

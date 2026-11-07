@@ -55,7 +55,9 @@ function parseCanonical(bytes: Uint8Array): StatementFields | undefined {
 	let text: string;
 	let value: unknown;
 	try {
-		text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+		// `ignoreBOM: true` keeps a leading byte-order mark in the text instead of stripping it, so signed bytes
+		// that are EF BB BF + canonical JSON fail the equality below: one encoding per byte string (senpi#5961).
+		text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
 		value = JSON.parse(text);
 	} catch {
 		return undefined;

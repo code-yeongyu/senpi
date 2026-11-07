@@ -101,10 +101,11 @@ it("--hand runs a tool call end to end over its socket and survives a re-attach 
 				first.destroy();
 				void dial(endpoint).then((second) => {
 					sockets.push(second);
-					attachSocketCarrier(second, brain);
+					attachSocketCarrier(second, brain, () => {});
 					reattached.resolve();
 				}, reattached.reject);
 			}),
+			() => {},
 		);
 
 		const { agent, events } = await runTurn({

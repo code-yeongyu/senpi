@@ -1,3 +1,59 @@
+## 2026-10-30 - Reauthorize and sign out selected ChatGPT accounts (part of #5003)
+
+### What changed
+
+- `builtin/gpt-account.ts` adds `reauthorize <id>` and `signout <id>` through the shared model runtime. Listing renders actual active and paused states and the Usage link.
+
+### Why
+
+- A user can reconnect or sign out one registration without deleting it, and sees an explicit warning when remote revocation is not confirmed.
+
+### Why an extension could not handle it
+
+- The terminal operations are implemented in the existing builtin extension; state and protocol changes remain in their shared owners.
+
+### Expected merge conflict zones
+
+- ChatGPT account command dispatch and account rendering.
+
+## 2026-11-05 - `InputEvent.chainCount` (senpi#5923)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `InputEvent.chainCount?: number`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitInput` takes an optional eighth argument `chainCount` and puts it on the event when set.
+
+### Why
+
+Extensions that send thread calls read the received hop count from the `input` event (decision K8).
+
+### Why an extension could not handle it
+
+The event shape and its emitter are owned by the runner.
+
+### Expected merge conflict zones
+
+- LOW: the `InputEvent` interface and the `emitInput` signature.
+
+## 2026-11-05 - ctx.deviceFiles (senpi#5839)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionContext.deviceFiles` and `ExtensionContextActions.getDeviceFiles`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: the context getter, bound from `getDeviceFiles`; a runner with no session (a hand's runtime) defaults to `localDeviceFiles()`.
+
+### Why
+
+Memory, task and mode data must stay on the device when the loop runs elsewhere (senpi#5839, S40 file channel).
+
+### Why an extension could not handle it
+
+Which device a session's tools run on is known only to the session and its tool host.
+
+### Expected merge conflict zones
+
+The `sessionEnv` neighbourhood of `ExtensionContext` and `createContext`; the contextActions binding block in `runner.ts`.
+
 ## 2026-11-04 - before_agent_start on a runner without a session; loop-hook call facts (S33, senpi#5741)
 
 ### What changed

@@ -12,6 +12,23 @@
 
 ### Removed
 
+## [2026.11.6-1] - 2026-11-06
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The JavaScript `eval` kernel runs in its own process by default when senpi's executable is `bun` on macOS or Linux, so a crash on the kernel (Bun 1.4.4 `Worker` threads can corrupt the JavaScriptCore heap and kill the host with `SIGBUS`/`SIGTRAP`) settles the cell with the signal and the session survives; a Node.js host, a compiled binary and a Windows bun host keep the worker thread, and `isolation.js` / `SENPI_CODEMODE_JS_ISOLATION` still win on every host ([#6094](https://github.com/code-yeongyu/senpi/issues/6094), [#6095](https://github.com/code-yeongyu/senpi/pull/6095))
+
+### Fixed
+
+- The bundled `bun` skill's capability map now gives `--retry=<N>` and `--compile --bytecode --bytecode-order=<profile>` in forms bun accepts, its shell-trap fix spawns with `env: process.env`, and the references it points to now cover IPC, `stripANSI`, `inspect.table`, hashing, UUID v7, semver, `deepEquals`, gzip/zstd and `which` ([#6008](https://github.com/code-yeongyu/senpi/issues/6008))
+- On Windows, the JavaScript eval kernels opt every process they start out of EcoQoS power throttling, as senpi does, so commands run from eval code are not held to a few percent of a core; `SENPI_KEEP_POWER_THROTTLING=1` keeps Windows' default ([#6131](https://github.com/code-yeongyu/senpi/pull/6131))
+
+### Removed
+
 ## [2026.11.5-1] - 2026-11-05
 
 ### Breaking Changes

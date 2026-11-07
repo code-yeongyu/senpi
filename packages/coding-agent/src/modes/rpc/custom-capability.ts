@@ -63,6 +63,11 @@ export const RETAIN_ON_DISCONNECT_CAPABILITY = "retain_on_disconnect";
  * method-class table on every record of that connection before dispatch; `classify_record` answers (senpi#5632).
  */
 export const DELEGATED_CONNECTION_CAPABILITY = "delegated_connection_v1";
+/**
+ * A host whose delegated connections take `declare_delegation.roles` (omo-relay-daemon#307): an authority word per
+ * incarnation, `relayExec` and the `authority` receipt.
+ */
+export const DELEGATION_ROLES_CAPABILITY = "delegation_roles_v1";
 
 /**
  * Client opt-in (D11 S3-5): the connection renders the value-free `secret_input_notice` and `grant_select_notice` of a
@@ -130,6 +135,8 @@ export const WARM_CAPABILITY = "warm";
  * header id stays authoritative.
  */
 export const DURABLE_SESSION_ID_CAPABILITY = "durable_session_id";
+/** A headless engine with a hand directory: `list_hands` and `select_hand` (R4). */
+export const HAND_SELECTION_CAPABILITY = "hand_selection";
 
 /**
  * HOST capability: this engine runs the builtin `moved-path-guard` and resolves paths the OmO desktop moved

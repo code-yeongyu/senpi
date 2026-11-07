@@ -3,6 +3,7 @@ import type { SecurityNoticeSnapshot, SecurityNoticeState } from "../../core/sec
 import type { CanonicalControl } from "./compact-canonical-pairing.ts";
 import { COMPACT_EVENTS_CAPABILITY } from "./custom-capability.ts";
 import { ConnectionDelegations, type LaunchProofSource } from "./delegated-connection.ts";
+import type { DelegationDescriptor } from "./delegation-record.ts";
 import { serializeJsonLine } from "./jsonl.ts";
 import type { MediaPersister } from "./media-placeholders.ts";
 import type { SessionAcceptanceLane } from "./session-acceptance-lane.ts";
@@ -16,6 +17,10 @@ import type { SocketEventSinkActor } from "./socket-event-fanout.ts";
 export abstract class SessionEventWriterConnections extends SessionEventWriterLanes {
 	/** Which connections act for someone else, and what they were granted (senpi#5632). */
 	readonly delegations = new ConnectionDelegations();
+
+	protected delegationDescriptorOf(id: string): DelegationDescriptor | undefined {
+		return this.delegations.descriptorOf(id);
+	}
 
 	protected isRemoteConnection(connection: string): boolean {
 		return this.delegations.isDelegated(connection) || this.originOf?.(connection) !== undefined;
@@ -68,7 +73,7 @@ export abstract class SessionEventWriterConnections extends SessionEventWriterLa
 	}
 
 	unregisterConnection(id: string): void {
-		this.delegations.drop(id);
+		this.delegations.close(id);
 		this.secretPresentations.detach(id);
 		const sender = this.presenterConnections.get(id);
 		if (sender) this.presenterAuthority?.detach(sender);
@@ -211,6 +216,18 @@ export abstract class SessionEventWriterConnections extends SessionEventWriterLa
 	async flushConnection(id: string): Promise<void> {
 		const target = this.fanout.get(id);
 		if (target) await settleActors([target.actor]);
+	}
+
+	/**
+	 * omo-relay-daemon#307: a socket whose incarnations ran out is ended once its `detach_connection` answer is flushed
+	 * (engine_closed). `sinkOf` is the sink the socket host registered under that connection id; its `close` half-closes,
+	 * so the answer still buffered in the transport reaches a peer that reads late, instead of a destroy discarding it.
+	 */
+	endExhaustedConnections(sinkOf: (id: string) => { close?(): void } | undefined): void {
+		this.delegations.endConnection = (id) => {
+			const sink = sinkOf(id);
+			if (sink) void this.flushConnection(id).finally(() => sink.close?.());
+		};
 	}
 
 	/** Execute a connection's command with its response destination in context. */

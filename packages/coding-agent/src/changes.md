@@ -1,3 +1,112 @@
+## 2026-11-06 - Opt senpi and its children out of Windows EcoQoS throttling (senpi#6125)
+
+### What changed
+
+- `packages/coding-agent/src/cli.ts`, `packages/coding-agent/src/cli-main.ts`, `packages/coding-agent/src/bun/cli.ts`, `packages/coding-agent/src/rpc-entry.ts`: each entry imports `./windows-power-throttling-startup.ts` (fork-only) after the private descriptor table is captured and before the internal role dispatch. On Windows under Bun the process opts itself out of `ProcessPowerThrottling` execution-speed throttling and wraps `ChildProcess.prototype.spawn` and `Bun.spawn`, so every child it starts gets the same call right after its pid is known. Off Windows, on Node, or with `SENPI_KEEP_POWER_THROTTLING=1` nothing is loaded or patched. The Windows breakaway shim (`modes/rpc/tool-child/launch-shim-role.ts`, fork-only) starts its command with `CreateProcessW`, so it opts that command out by pid, and the senpi-codemode JavaScript kernels install the same opt-out in their own realms.
+
+### Why
+
+- A launcher chain with no visible window makes Windows apply EcoQoS to senpi and every child, which then runs at 2-10% of a core. The policy is per process and not inherited, so both this process and each child need the call.
+
+### Why an extension could not handle it
+
+- Extensions load after the CLI has already started processes (the bun re-exec, workers), and the opt-out must also cover the tool child and RPC host processes, which never load extensions.
+
+### Expected merge conflict zones
+
+- LOW: the import block at the top of each entry file.
+
+## 2026-11-06 - A detached carrier connection still destroys its socket on an error (senpi#5993)
+
+### What changed
+
+- `packages/coding-agent/src/modes/hand/socket-carrier.ts`: `detach()` no longer removes the socket's `error` handler, so a connection detached while still open destroys its socket on a later error instead of letting it surface as an unhandled `error` event. The report stays once per connection: the handler's `live` guard drops any line after detach.
+
+### Why
+
+- The review of #6082 raised this LOW against that PR's own change: removing the listener left the exported helper's detached-but-open socket with no `error` listener. The hand never reaches it (`serveSocketCarrier` destroys the old socket right after detaching it), but `attachSocketCarrier` is documented for client use, and the removal was never needed because the `live` guard already suppresses reports after detach.
+
+### Why an extension could not handle it
+
+- The carrier is the hand's own endpoint transport, created in `runHand` before any scope, session or extension exists.
+
+### Expected merge conflict zones
+
+- LOW: the `detach` closure in `socket-carrier.ts` and the tail of `test/suite/regressions/5840-socket-carrier.test.ts`.
+
+## 2026-11-06 - A failing carrier socket is reported in the hand's stderr (senpi#5993)
+
+### What changed
+
+- `packages/coding-agent/src/modes/hand/socket-carrier.ts`: `attachSocketCarrier` takes the hand's reporter, and its `error` handler prints one line per connection (`carrier socket error <code>: <message>`, never a packet payload) before destroying the socket as before. The listener is removed with the connection, so a re-attach reports its own error. `serveSocketCarrier` and `packages/coding-agent/src/modes/hand/hand-entry.ts` pass the same `senpi hand:` reporter the rest of the entry uses.
+
+### Why
+
+- The carrier destroyed a failing socket and reported nothing, so a socket error left a stalled lane with no line in the hand's stderr (found in the CLEAR review of #5885, item 3 of #5993).
+
+### Why an extension could not handle it
+
+- The carrier is the hand's own endpoint transport, created in `runHand` before any scope, session or extension exists.
+
+### Expected merge conflict zones
+
+- LOW: the error handler and the detach listener in `socket-carrier.ts`, the `serveSocketCarrier` call in `hand-entry.ts`, and the three 5840 carrier/hand tests.
+
+## 2026-11-05 - a headless engine records which hand runs each session's tools (senpi#5938)
+
+### What changed
+
+- `packages/coding-agent/src/modes/headless/hand-selection.ts` (new): `createHandSelection(directory)`.
+  - A `HandDirectory` port: `list`, plus `link(device)` returning `{ transport, placement }`.
+  - A chosen hand replaces the session agent's `toolHost` with `createRemoteToolHost` on that hand's link. `null` gives back the ToolHost the session had.
+  - Each choice is appended to the session file as a `custom` entry `hand_selection { device }`.
+  - `restore` re-applies the last recorded choice when the session opens. A recorded hand that cannot be linked then gets a remote host on a closed transport, so its calls end as "The hand is unreachable" and never run in this process.
+- Review fold (round 1):
+  - `HandDirectory.link` returns a transport per session that the selection owns. Choosing the hand a session already has is a no-op, and a session leaving a hand never closes another session's link.
+  - Every host the selection installs goes through the `gate` hook (presence on a headless engine with presence), and `null` gives back the session's own gated host.
+  - `release` closes the link when a session ends, so `restore` keeps nothing from an earlier runtime of the same id.
+  - A `link` that throws becomes the unreachable host.
+  - The choice is recorded before it is installed.
+- Review fold (round 4):
+  - `select_hand` while the session is streaming is refused with `session_busy`. A running turn copies its ToolHost when it starts, so a choice made mid-run would leave that turn's later batches on the old host.
+  - A choice whose link cannot be made is refused with `hand_unreachable` and records nothing.
+  - Presence tracking state is dropped when a session is released.
+- Review fold (round 3):
+  - A recorded hand that was unreachable when the session reopened is linked again when it is chosen after it returns. The early return applies only to a live link.
+  - A tool batch after a choice waits for presence to track the chosen hand before it asks presence. A failed tracking update fails that batch instead of becoming an unhandled rejection.
+  - `list_hands` and `select_hand` change `RPC_METHOD_CLASSES_DIGEST` (to 85c74d833ae2…). The `h-legacy` admission golden and `DIGEST_ON_BASE` are re-pinned.
+- `packages/coding-agent/src/modes/headless/headless-host.ts`: `HeadlessHostOptions.hands` builds the selection and wraps `createRuntime`: presence gates the session first, then the selection restores the session's recorded hand, and each runtime's `dispose` releases it. No CLI flag sets it yet; without it, every host is unchanged.
+
+### Why
+
+- senpi#5938, R4: the user chooses which machine runs Dori's tools, and the choice must survive a restart without ever falling back to local.
+
+### Why an extension could not handle it
+
+- The session's ToolHost and the headless host's runtime factory are engine internals that no extension API reaches.
+
+### Expected merge conflict zones
+
+- LOW: `headlessHostOptions` and the `createRuntime` wrappers in `headless-host.ts`.
+
+## 2026-11-05 - main starts the hand and the headless engine (senpi#5840)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `--hand` starts `runHand` (`src/modes/hand/hand-entry.ts`: loopless runtimes per scope serving the remote executor, its file channel and the loop hooks over the reference transport on `<agentDir>/rpc/hand.sock`); `--headless` passes the multi-session host options through `headlessHostOptions` (machine-owned sessions on `<agentDir>/rpc/headless.sock`).
+
+### Why
+
+- senpi#5840: give both engine modes a CLI entry point.
+
+### Why an extension could not handle it
+
+- Which host the process runs is decided in `main` before sessions or extensions exist.
+
+### Expected merge conflict zones
+
+- LOW: the block before the multi-session host start in `main`.
+
 ## 2026-11-05 - An embedding distribution registers a presenter account authority before main() (D11 M-1, senpi#4249)
 
 ### What changed

@@ -1,3 +1,60 @@
+## 2026-11-06 - A stored Claude account with no name is a sign-in state, not a crypto TypeError (oh-my-openagent#12228)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/accounts.ts`: `isListedStoredSlot(slot)` also requires a non-empty string `name`, so the one listing rule shared by the lane, the RPC account list and the configured check never hands out an account it cannot name. New `unusableStoredSlotCount(credential)` counts the stored entries that rule drops.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-lane.ts`: `managedPool` refuses with `claude_account_unusable: a stored Claude account has no name, so no turn can use it; run /login anthropic-subscription to add a named account` when the lane defaulted to ambient only because every stored claude-cli account was unusable, instead of spawning the SDK against host credentials. A lane the user set to `ambient` explicitly (settings or `SENPI_CLAUDE_SDK_OAUTH_TOKEN_INJECTION`) is never refused.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/seat-digest.ts`: `seatDigest(accountName)` refuses a value that is not a non-empty string with that same named error rather than passing it to `createHmac(...).update(...)`.
+
+### Why
+
+- `auth.json` is read as JSON and cast, so a stored account entry with no `name` reached the lane as `accountName: undefined`, and the seat digest runs for every resident attempt: `createHmac(...).update(undefined)` threw `The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView. Received undefined` before any model call, on the main turn and on session-title generation alike, and model fallback repeated it at the same line on the next model. Signing in again could not clear it because the nameless entry stayed in the file and kept being selected (oh-my-openagent#12228).
+
+### Why an extension could not handle it
+
+- This builtin owns the managed account pool, its listing rule and the seat digest that identifies a seat in logs.
+
+### Expected merge conflict zones
+
+- LOW: `accounts.ts` (`isListedStoredSlot` and the new counter) and `seat-digest.ts`; `auth-lane.ts` only in the `managedPool` body, beside the ambient resolution.
+
+## 2026-11-06 - An unusable Claude account dir id is a sign-in state, not a turn failure (oh-my-openagent#12228)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/sign-in-again.ts`: new `isServableAccountSlot(slot)` - a stored CLI slot is servable only when no sign-in is required and its account dir id parses. `signInRequiredAccounts` now also reports a CLI slot whose `dirId` is unusable, as `login_expired`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-lane.ts`: the pre-failover filter drops every unservable slot through that predicate instead of only the `signInRequired` ones, so a pool that still has a readable account serves the turn and a pool with none fails with the sign-in prompt naming the unusable account.
+
+### Why
+
+- `accountDirFor` refuses an id of any other shape with `Invalid Claude account dir id`, and the lane selected such a slot first: the whole turn failed before the first model call, the error named no remedy, and model fallback repeated it on a sibling model (oh-my-openagent#12228). A stored slot with no usable dir holds no login this engine can read, which is what the sign-in prompt exists for.
+
+### Why an extension could not handle it
+
+- This builtin owns the managed account pool and its pre-failover selection filter.
+
+### Expected merge conflict zones
+
+- LOW: `sign-in-again.ts` (the predicate and `signInRequiredAccounts`) and the sign-in filter in `auth-lane.ts`.
+
+## 2026-11-06 - A rendered skill path names the copy the runtime loaded
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/options.ts`: `claudeSkillsPath` returns the Claude-form path only when it resolves to the same file as the skill path the runtime loaded (`realpathSync` on both sides, `~` expanded against home); otherwise the loaded absolute path is rendered unchanged.
+
+### Why
+
+- The rewrite was unconditional. Where `~/.claude/skills` is a symlink farm into a different install, the prompt named a skill file that install does not ship, so the model read another version's text or fell back to a same-named `SKILL.md` in the project.
+
+### Why an extension could not handle it
+
+- This file is the extension; the rewrite is part of its `preset-append` assembly.
+
+### Expected merge conflict zones
+
+- None upstream: the directory is fork-only. Inside the fork, `claudeSkillsPath` and its two call sites in `rewriteSkillsLocations`.
+
 ## 2026-11-01 - A signed-out Claude CLI login needs sign-in again and heals itself (part of senpi#5350)
 
 ### What changed

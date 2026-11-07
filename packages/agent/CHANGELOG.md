@@ -12,6 +12,29 @@
 
 ### Removed
 
+## [2026.11.6-1] - 2026-11-06
+
+### Breaking Changes
+
+### Added
+
+- The conformance entry exports the `AdmissionLine` type, so a writer outside the package can take a store's single admission line ([#5732](https://github.com/code-yeongyu/senpi/issues/5732))
+- `SyncCommit` / `SyncCommitStore`: the memory and Bun SQLite durable stores now offer `commitSync`, a commit that is durable when it returns and throws a refusal on the same call ([#5866](https://github.com/code-yeongyu/senpi/pull/5866)).
+- A session store over `DurableStore` (`openSessionStore`, `openSyncSessionStore`, `SessionStoreError`, exported from `@earendil-works/pi-agent-core/conformance`): a session's header and entries with atomic append and rewrite, async on every backend and synchronous on a `SyncCommitStore` ([#5866](https://github.com/code-yeongyu/senpi/pull/5866)).
+- `ToolHost` may serve the files of the device it runs calls on: an optional `deviceFiles(scope)`, which the remote ToolHost already provides ([#5869](https://github.com/code-yeongyu/senpi/pull/5869)).
+- `isLocalDeviceFiles(files)` and the `LOCAL_DEVICE_FILES` registry symbol: `localDeviceFiles()` objects carry the brand, so an extension can tell a fused session's local filesystem from a split session's file channel ([#6054](https://github.com/code-yeongyu/senpi/pull/6054)).
+
+### Changed
+
+### Fixed
+
+- A tool result whose content JSON cannot carry (for example a BigInt inside a content part) now settles that call as an `isError` tool result naming the problem on the prepared executor, instead of rejecting the whole call with an untyped `TypeError`. Model-issued calls, `pi.executeTool()` and the agent harness all reach it ([#5878](https://github.com/code-yeongyu/senpi/pull/5878)).
+- Agent harness tool bodies run on the cleared arguments object again, not the prepared ToolHost's JSON copy of it: a value `prepareArguments` added that JSON would change (a `Date`) reaches the body unchanged, and the body's in-place edits reach `after_tool`'s `args`. Arguments JSON cannot carry (a BigInt, a cycle) now settle as a tool error before the body runs, instead of an untyped `TypeError` ([#5883](https://github.com/code-yeongyu/senpi/pull/5883)).
+- Hand conformance cases (KILL-HAND, MULTI-HAND, FAULT-HAND) now pass on a store whose writes confirm only after I/O, such as Durable Object SQLite: the hand rig takes an event-loop turn between transport clock steps, and MULTI-KILL-01 waits for every record to be acknowledged instead of a fixed 200 ms ([#6053](https://github.com/code-yeongyu/senpi/pull/6053))
+- Hand conformance cases on a store whose writes confirm after I/O no longer time out: each rig step now takes eight event-loop turns instead of one, enough for a write that confirms after several I/O hops to land before the clock moves ([#6114](https://github.com/code-yeongyu/senpi/issues/6114), [#6115](https://github.com/code-yeongyu/senpi/pull/6115))
+
+### Removed
+
 ## [2026.11.5-1] - 2026-11-05
 
 ### Breaking Changes

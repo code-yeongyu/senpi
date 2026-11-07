@@ -167,7 +167,7 @@ function setClientInfo(context: RpcCommandContext, connection: ControlConnection
 	if (capabilities === undefined) return success(command.id, "set_client_info");
 	if (!Array.isArray(capabilities) || !capabilities.every((entry): entry is string => typeof entry === "string"))
 		return failure(command.id, "set_client_info", "capabilities must be an array of strings");
-	if (!context.attachments.roles.declare(keyOf(connection), capabilities))
+	if (context.attachments.roles.declare(keyOf(connection), capabilities) !== "declared")
 		return failure(command.id, "set_client_info", CONNECTION_ROLE_FIXED);
 	context.attachments.presenters?.declare(keyOf(connection), capabilities);
 	return success(command.id, "set_client_info");
@@ -196,6 +196,11 @@ function attachSession(
 		return refusal(id, "attach_session", "session_identity_mismatch", {
 			reason: "durableSessionId or expectedHostInstance does not name this terminal's session",
 			action: "read list_sessions and get_protocol_info again, then attach with their ids",
+		});
+	if (command.takeover === true)
+		return refusal(id, "attach_session", "takeover_unsupported", {
+			reason: "only a headless engine with a takeover ledger takes sessions over",
+			action: "attach without takeover",
 		});
 	attachments.run(connection, () => {
 		attachments.attach(connection);

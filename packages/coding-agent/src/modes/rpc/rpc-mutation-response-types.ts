@@ -34,6 +34,8 @@ export type RpcMutationResponse =
 			success: true;
 			data?: ClientMessageIdentity & {
 				disposition?: PromptDisposition;
+				/** Authoritative engine turn captured when this input starts it. */
+				turnId?: string;
 				admission?: ClientMessageAdmission;
 				/** Kept as a notice: automatic input while the user's Stop holds the session (senpi#3811). */
 				heldAsNotice?: boolean;
@@ -49,6 +51,7 @@ export type RpcMutationResponse =
 			success: true;
 			data?: ClientMessageIdentity & {
 				disposition?: QueuedInputDisposition;
+				turnId?: string;
 				admission?: ClientMessageAdmission;
 				heldAsNotice?: boolean;
 			};
@@ -60,6 +63,7 @@ export type RpcMutationResponse =
 			success: true;
 			data?: ClientMessageIdentity & {
 				disposition?: QueuedInputDisposition;
+				turnId?: string;
 				admission?: ClientMessageAdmission;
 				heldAsNotice?: boolean;
 			};

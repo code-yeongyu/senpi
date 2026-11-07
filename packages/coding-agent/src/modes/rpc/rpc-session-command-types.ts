@@ -38,6 +38,8 @@ export type RpcSessionCommand =
 			expectedTurnId?: string;
 			/** Arm the tool barrier for the turn this prompt starts (capability `tool_barrier`, senpi#3717). */
 			toolBarrier?: ToolBarrierSpec;
+			/** A thread call from another session: the hop count of its chain (decision K8); refused `chain_count_limit` past the user's `threads.chainCountLimit`. */
+			chainCount?: number;
 	  }
 	/** Open the tool barrier armed under `barrierId`; an unknown or cleared id is a successful no-op. */
 	| { id?: string; type: "release_tool_barrier"; barrierId: string }
@@ -69,6 +71,8 @@ export type RpcSessionCommand =
 			message: string;
 			images?: ImageContent[];
 			enqueueOrder?: number;
+			/** A thread call from another session: the hop count of its chain (decision K8); refused `chain_count_limit` past the user's `threads.chainCountLimit`. */
+			chainCount?: number;
 			/** `"start"` starts a turn with this message when the session is idle (capability `steer_when_idle`). */
 			whenIdle?: RpcWhenIdle;
 			/** The turn (`get_state.currentTurnId`) this input is for; any other turn refuses it `turn_conflict` (senpi#5776). */
@@ -80,6 +84,8 @@ export type RpcSessionCommand =
 			message: string;
 			images?: ImageContent[];
 			enqueueOrder?: number;
+			/** A thread call from another session: the hop count of its chain (decision K8); refused `chain_count_limit` past the user's `threads.chainCountLimit`. */
+			chainCount?: number;
 			/** `"start"` starts a turn with this message when the session is idle (capability `steer_when_idle`). */
 			whenIdle?: RpcWhenIdle;
 			/** The turn (`get_state.currentTurnId`) this input is for; any other turn refuses it `turn_conflict` (senpi#5776). */
@@ -175,7 +181,8 @@ export type RpcSessionCommand =
 	| { id?: string; type: "get_pending_inputs"; knownClientMessageIds?: string[] }
 
 	// Model
-	| { id?: string; type: "set_model"; provider: string; modelId: string; effectId?: string }
+	/** `scope: "session"` switches only this session's model; without it the device's default model follows. */
+	| { id?: string; type: "set_model"; provider: string; modelId: string; scope?: "session"; effectId?: string }
 	| { id?: string; type: "set_favorite_models"; models: RpcSessionModelEntry[] }
 	| { id?: string; type: "set_scoped_models"; models: RpcSessionModelEntry[] }
 	| { id?: string; type: "cycle_model"; direction?: "forward" | "backward" }
@@ -359,3 +366,6 @@ export const STEER_WHEN_IDLE_CAPABILITY = "steer_when_idle";
 
 /** Capability: `record_user_activity` reports composer draft activity (senpi#3859). */
 export const USER_ACTIVITY_CAPABILITY = "user_activity";
+
+/** Capability: `set_model` honours `scope: "session"` and leaves the default model alone (senpi#5933). */
+export const SESSION_MODEL_SCOPE_CAPABILITY = "session_model_scope";
