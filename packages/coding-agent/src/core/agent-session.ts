@@ -459,8 +459,7 @@ import {
 	PendingQueueLedger,
 	type PendingQueueSnapshot,
 	queueEntryLabel,
-	stallThresholdMs,
-	toolCallTimeout,
+	STALL_WARNING_MS,
 	watchForStall,
 } from "./stall-warning.ts";
 import { stopResumeDirective } from "./stop-resume-directive.ts";
@@ -1869,8 +1868,8 @@ export class AgentSession {
 			config.internalChannel,
 			(deliver) => {
 				if (!this._unsubscribeAgent) return;
-				this._agentEventQueue = this._agentEventQueue.then(deliver, deliver);
-				this._agentEventQueueLedger.track("structured_record", this._agentEventQueue);
+				const tracked = this._agentEventQueueLedger.track("structured_record", deliver);
+				this._agentEventQueue = this._agentEventQueue.then(tracked, tracked);
 			},
 			(control) => this._recoveryIdentity?.own(control),
 		);
@@ -2457,7 +2456,8 @@ export class AgentSession {
 		options: { waitForEventQueue?: boolean; parentToolCallId?: string; signal?: AbortSignal } = {},
 	) {
 		// Neither wait below has a deadline of its own: one that never settles is logged once, never cut short (senpi#6189).
-		const thresholdMs = stallThresholdMs(toolCallTimeout(args));
+		// The call's own `timeout` bounds its execution, not this phase, which includes a human permission decision.
+		const thresholdMs = STALL_WARNING_MS;
 		const warnStalled = (event: string, elapsedMs: number, queue?: PendingQueueSnapshot) =>
 			this._sessionLogger.warn(event, {
 				toolCallId: toolCall.id,
@@ -3759,8 +3759,8 @@ export class AgentSession {
 			this._lifecycleEvents.release(heldLifecycle, (held) => this._emit(held));
 			return this._processAgentEvent(queuedEvent, signal);
 		};
-		const processing = this._agentEventQueue.then(deliverThenProcess, deliverThenProcess);
-		this._agentEventQueueLedger.track(queueEntryLabel(queuedEvent), processing);
+		const tracked = this._agentEventQueueLedger.track(queueEntryLabel(queuedEvent), deliverThenProcess);
+		const processing = this._agentEventQueue.then(tracked, tracked);
 		this._agentEventQueue =
 			pendingEnd !== undefined
 				? processing.finally(() => {
@@ -8249,8 +8249,8 @@ export class AgentSession {
 					event,
 					(lifecycle) => this._emit(lifecycle),
 					(run) => {
-						this._agentEventQueue = this._agentEventQueue.then(run, run);
-						this._agentEventQueueLedger.track(queueEntryLabel(event), this._agentEventQueue);
+						const tracked = this._agentEventQueueLedger.track(queueEntryLabel(event), run);
+						this._agentEventQueue = this._agentEventQueue.then(tracked, tracked);
 						void this._agentEventQueue.catch(() => {});
 					},
 				),

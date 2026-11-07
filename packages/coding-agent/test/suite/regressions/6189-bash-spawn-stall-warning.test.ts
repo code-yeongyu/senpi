@@ -65,6 +65,23 @@ describe("#6189 bash reports a spawn that outlives its stall threshold", () => {
 		expect(warnings).toHaveLength(1);
 	});
 
+	it("lowers the threshold to the call's own shorter timeout", () => {
+		const warnings: Warning[] = [];
+		const tool = createPtyBashTool(contextWith(() => new Promise<never>(() => {}), warnings));
+
+		// given a bash call with a 5 s timeout whose spawn never settles
+		void tool.execute("call_short", { command: "true", timeout: 5 });
+
+		// when the clock reaches the call's own timeout
+		vi.advanceTimersByTime(4_999);
+		expect(warnings).toEqual([]);
+		vi.advanceTimersByTime(1);
+
+		// then one warning carries that timeout as its threshold
+		expect(warnings).toHaveLength(1);
+		expect(warnings[0]?.data).toMatchObject({ toolCallId: "call_short", thresholdMs: 5_000 });
+	});
+
 	it("logs nothing when the spawn returns", async () => {
 		const warnings: Warning[] = [];
 		const tool = createPtyBashTool(contextWith(() => Promise.resolve(exitedSession()), warnings));

@@ -43,12 +43,12 @@ function probeTool(pi: Parameters<ExtensionFactory>[0]): void {
 		name: "probe",
 		label: "Probe",
 		description: "Returns at once.",
-		parameters: Type.Object({}),
+		parameters: Type.Object({ timeout: Type.Optional(Type.Number()) }),
 		execute: async () => ({ content: [{ type: "text", text: "probe-ok" }], details: {} }),
 	});
 }
 
-async function startProbeTurn(extensionFactory: ExtensionFactory) {
+async function startProbeTurn(extensionFactory: ExtensionFactory, args: Parameters<typeof fauxToolCall>[1] = {}) {
 	const harness = await createHarness({ extensionFactories: [extensionFactory] });
 	const preflightEntered = deferred();
 	const preflight = harness.session.preflightToolCall.bind(harness.session);
@@ -60,7 +60,7 @@ async function startProbeTurn(extensionFactory: ExtensionFactory) {
 		},
 	);
 	harness.setResponses([
-		fauxAssistantMessage(fauxToolCall("probe", {}, { id: "call_probe" }), { stopReason: "toolUse" }),
+		fauxAssistantMessage(fauxToolCall("probe", args, { id: "call_probe" }), { stopReason: "toolUse" }),
 		fauxAssistantMessage("done", { stopReason: "stop" }),
 	]);
 	return { harness, preflightEntered, prompt: harness.session.prompt("go") };
@@ -144,6 +144,77 @@ describe("#6189 tool-call waits without a deadline are logged when they stall", 
 
 		releaseHook.resolve();
 		await prompt;
+	});
+
+	it("keeps the 30 s preflight threshold for a call with a shorter timeout", async () => {
+		const hookEntered = deferred();
+		const releaseHook = deferred();
+		const { harness, prompt } = await startProbeTurn(
+			(pi) => {
+				probeTool(pi);
+				pi.on("tool_call", async () => {
+					hookEntered.resolve();
+					await releaseHook.promise;
+					return undefined;
+				});
+			},
+			{ timeout: 5 },
+		);
+		cleanups.push(harness.cleanup);
+
+		// given a call with a 5 s timeout whose permission decision is still pending
+		await hookEntered.promise;
+
+		// when the decision outlasts the call's own timeout, then nothing is logged: that timeout bounds execution only
+		vi.advanceTimersByTime(STALL_THRESHOLD_MS - 1);
+		expect(stallWarnings(harness)).toEqual([]);
+
+		// when it reaches 30 s, then one warning carries the 30 s threshold
+		vi.advanceTimersByTime(1);
+		const warnings = stallWarnings(harness);
+		expect(warnings).toHaveLength(1);
+		expect(warnings[0]).toMatchObject({ event: "tool_call_preflight_stalled", thresholdMs: STALL_THRESHOLD_MS });
+
+		releaseHook.resolve();
+		await prompt;
+	});
+
+	it("names the parent call of an eval-cell tool call in its preflight warning", async () => {
+		const hookEntered = deferred();
+		const releaseHook = deferred();
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("tool_call", async () => {
+						hookEntered.resolve();
+						await releaseHook.promise;
+						return undefined;
+					});
+				},
+			],
+		});
+		cleanups.push(harness.cleanup);
+
+		// given a tool call issued from an eval cell, whose permission decision is pending
+		const toolCall: AgentToolCall = { type: "toolCall", id: "call_child", name: "bash", arguments: {} };
+		const preflight = harness.session.preflightToolCall(toolCall, {}, { parentToolCallId: "call_eval_cell" });
+		await hookEntered.promise;
+
+		// when the preflight reaches the stall threshold
+		vi.advanceTimersByTime(STALL_THRESHOLD_MS);
+
+		// then the warning names both the call and the eval cell's call
+		const warnings = stallWarnings(harness);
+		expect(warnings).toHaveLength(1);
+		expect(warnings[0]).toMatchObject({
+			event: "tool_call_preflight_stalled",
+			toolCallId: "call_child",
+			toolName: "bash",
+			parentToolCallId: "call_eval_cell",
+		});
+
+		releaseHook.resolve();
+		await preflight;
 	});
 
 	it("logs nothing when the call's waits settle", async () => {
