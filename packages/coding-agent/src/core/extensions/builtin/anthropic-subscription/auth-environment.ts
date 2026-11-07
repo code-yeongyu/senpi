@@ -2,6 +2,21 @@ function isClaudeOauthTokenName(name: string): boolean {
 	return name === "CLAUDE_CODE_OAUTH_TOKEN" || /^CLAUDE_CODE_OAUTH_TOKEN_\d+$/.test(name);
 }
 
+/**
+ * Claude Code's bare mode (`claude --bare` sets it): Claude Code then authenticates only with `ANTHROPIC_API_KEY` or an
+ * `apiKeyHelper` and never reads the OAuth login, so an inherited value silently takes the subscription away from every
+ * lane (senpi#5132). Matched case-insensitively, as Claude Code itself clears it for its own child sessions.
+ */
+export function withoutBareMode<Environment extends Record<string, string | undefined>>(
+	parent: Environment,
+): Environment {
+	const environment = { ...parent };
+	for (const name of Object.keys(environment)) {
+		if (name.toUpperCase() === "CLAUDE_CODE_SIMPLE") delete environment[name];
+	}
+	return environment;
+}
+
 export function hasRequestOauthToken(requestEnvironment: Record<string, string> | undefined): boolean {
 	return Object.entries(requestEnvironment ?? {}).some(
 		([name, value]) => isClaudeOauthTokenName(name) && Boolean(value),
@@ -39,5 +54,5 @@ export function stripManagedAuthEnvironment(parent: NodeJS.ProcessEnv): NodeJS.P
 		if (/^CLAUDE_CODE_OAUTH_TOKEN_\d+$/.test(name)) delete environment[name];
 		if (name.startsWith("SENPI_")) delete environment[name];
 	}
-	return environment;
+	return withoutBareMode(environment);
 }
