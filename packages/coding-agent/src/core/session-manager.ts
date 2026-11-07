@@ -65,6 +65,7 @@ import { type HistoryReducer, HistoryReductions } from "./session-history-reduce
 import type { SpawnedBy } from "./session-lifecycle-types.ts";
 import { compactUpdatesEnabled } from "./engine-socket-flag.ts";
 import { planLoadedTail } from "./session-loaded-tail.ts";
+import { indexPersistedEntries, type PersistedEntryIndex } from "./session-persisted-index.ts";
 import {
 	type FileIdentity,
 	snapshotTranscript,
@@ -1270,6 +1271,8 @@ export class SessionManager {
 		readonly result: ReturnType<typeof projectSession>;
 	} | null = null;
 	private historyView: MaterializedView | null = null;
+	/** One parse of the session file for ids the mirror trimmed, held until the idle drop (senpi#2596). */
+	private persistedIndex: PersistedEntryIndex | null = null;
 	/** Id -> entry of the compact view, extended with it, so the branch shares its materialized objects. */
 	private compactLookup: { entries: SessionEntry[]; length: number; map: Map<string, SessionEntry> } | null = null;
 	// Monotonic counter bumped by every mutator; memoized materialized views are
@@ -2647,11 +2650,22 @@ export class SessionManager {
 	getEntry(id: string): SessionEntry | undefined {
 		const entry = this.byId.get(id);
 		if (entry) return this._materializeEntry(entry);
-		if (this.mirrorTrimmed && this.sessionFile) {
-			const persisted = this._loadFullHistoryEntries().find((candidate) => candidate.id === id);
-			return persisted ? (this.residentStore.materialize(persisted) as SessionEntry) : undefined;
-		}
-		return undefined;
+		const persisted = this._persistedIndexFor(id)?.byId.get(id);
+		return persisted ? (this.residentStore.materialize(persisted) as SessionEntry) : undefined;
+	}
+
+	/**
+	 * The held parse of the session file when it can answer `id`, parsing again only when none is held or `id`
+	 * left the mirror after the held parse was taken (a later compaction); entries are append-only, so a held
+	 * parse never goes stale for the ids it already contains.
+	 */
+	private _persistedIndexFor(id: string): PersistedEntryIndex | undefined {
+		const sessionFile = this.sessionFile;
+		if (!this.mirrorTrimmed || !sessionFile) return undefined;
+		const held = this.persistedIndex?.sessionFile === sessionFile ? this.persistedIndex : null;
+		if (held !== null && (held.byId.has(id) || !this.trimmedIds.has(id))) return held;
+		this.persistedIndex = indexPersistedEntries(sessionFile, this._loadFullHistoryEntries());
+		return this.persistedIndex;
 	}
 
 	/**
@@ -2725,13 +2739,9 @@ export class SessionManager {
 		}
 		const path: SessionEntry[] = [];
 		const startId = fromId ?? this.leafId;
-		let entriesById = this.byId;
-		if (fromId !== undefined && !entriesById.has(fromId) && this.mirrorTrimmed && this.sessionFile) {
-			entriesById = new Map(
-				this._loadFullHistoryEntries()
-					.filter((entry): entry is SessionEntry => entry.type !== "session")
-					.map((entry) => [entry.id, this.residentStore.materialize(entry)]),
-			);
+		let entriesById: ReadonlyMap<string, SessionEntry> = this.byId;
+		if (fromId !== undefined && !entriesById.has(fromId)) {
+			entriesById = this._persistedIndexFor(fromId)?.byId ?? entriesById;
 		}
 		let current = startId ? entriesById.get(startId) : undefined;
 		const visited = new Set<SessionEntry>();
@@ -2742,7 +2752,9 @@ export class SessionManager {
 		}
 		path.reverse();
 		const materializedPath =
-			(entriesById === this.byId ? this._fromCompactView(path) : undefined) ?? this._materializeEntries(path);
+			entriesById === this.byId
+				? (this._fromCompactView(path) ?? this._materializeEntries(path))
+				: path.map((entry) => this.residentStore.materialize(entry) as SessionEntry);
 		if (fromId === undefined) {
 			this.branchCache = {
 				leafId: this.leafId,
@@ -2990,6 +3002,7 @@ export class SessionManager {
 		this.compactEntriesCache = null;
 		this.compactView = null;
 		this.historyView = null;
+		this.persistedIndex = null;
 		this.compactLookup = null;
 		this.projectionMemo = null;
 	}
