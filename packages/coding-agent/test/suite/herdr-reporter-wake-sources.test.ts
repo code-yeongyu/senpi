@@ -15,8 +15,8 @@ afterEach(async () => {
 	vi.unstubAllEnvs();
 });
 
-describe("herdr lifecycle reporter folds every wake source into the working state", () => {
-	it("keeps the pane working through settlement while a DAG run is live, and idles when it clears", async () => {
+describe("herdr lifecycle reporter: working is the turn, and live wake sources are named", () => {
+	it("keeps the pane working through a turn with a DAG run live, then idles naming it until it clears", async () => {
 		// Given
 		const f = await herdrReporterFixture();
 		await f.start();
@@ -24,17 +24,21 @@ describe("herdr lifecycle reporter folds every wake source into the working stat
 		await f.emit("agent_start");
 		await f.bus(WAKE, { source: "omo-dag", activeCount: 1 });
 
+		// Then
+		expect(f.requests.at(-1)?.params).toMatchObject({ state: "working", message: "1 DAG run" });
+
 		// When
 		f.setIdle(true);
 		await f.emit("agent_settled");
 
 		// Then
-		expect(f.requests.at(-1)?.params).toMatchObject({ state: "working", message: "1 DAG run" });
+		expect(f.requests.at(-1)?.params).toMatchObject({ state: "idle", message: "1 DAG run" });
 
 		// When
 		await f.bus(WAKE, { source: "omo-dag", activeCount: 0 });
 
 		// Then
+		expect(f.requests.at(-1)?.params).toEqual(expect.not.objectContaining({ message: expect.anything() }));
 		expect(f.requests.at(-1)?.params.state).toBe("idle");
 	});
 
@@ -59,7 +63,7 @@ describe("herdr lifecycle reporter folds every wake source into the working stat
 
 		// Then
 		expect(f.requests.at(-1)?.params).toMatchObject({
-			state: "working",
+			state: "idle",
 			message:
 				"3 subagents running + 2 monitors live + 1 custom-source + 2 detached eval cells + 1 background session",
 		});
@@ -73,6 +77,8 @@ describe("herdr lifecycle reporter folds every wake source into the working stat
 			{ source: "terminal-background-sessions", activeCount: 1 },
 			"1 background session",
 		],
+		["a subagent", WAKE, { source: "senpi-task", activeCount: 1 }, "1 subagent running"],
+		["a detached eval cell", WAKE, { source: "senpi-codemode", activeCount: 1 }, "1 detached eval cell"],
 	])("idles the pane once the turn ends while only %s is live, and names it", async (_what, event, data, message) => {
 		// Given
 		const f = await herdrReporterFixture();

@@ -29,13 +29,6 @@ export interface HerdrReport {
 /** Wake sources whose work is already reported through a dedicated field or the blocked state. */
 const REPRESENTED_WAKE_SOURCES: ReadonlySet<string> = new Set(["terminal-monitors", "senpi-task", "ask-user"]);
 
-/**
- * Wake sources that may stay live with no end in sight (a monitor that never fires, a server left running). Once the
- * turn has ended they are named in the message of an idle report instead of keeping the pane working forever; every
- * other source is bounded work that will start a turn and keeps the pane working (#6150).
- */
-const OPEN_ENDED_WAKE_SOURCES: ReadonlySet<string> = new Set(["terminal-monitors", "terminal-background-sessions"]);
-
 const WAKE_SOURCE_LABELS: Readonly<Record<string, readonly [singular: string, plural: string]>> = {
 	"terminal-background-sessions": ["background session", "background sessions"],
 	"senpi-codemode": ["detached eval cell", "detached eval cells"],
@@ -75,20 +68,17 @@ export function reduceHerdrState(state: HerdrState, event: HerdrStateEvent): Her
 export function selectHerdrReport(state: HerdrState): HerdrReport {
 	if (state.blocked.size > 0) return { state: "blocked", message: state.blocked.values().next().value?.label };
 	const parts: string[] = [];
-	let bounded = false;
 	const childCount = Math.max(state.childCount, state.wakeSources.get("senpi-task") ?? 0);
-	if (childCount > 0) {
-		parts.push(`${childCount} subagent${childCount === 1 ? "" : "s"} running`);
-		bounded = true;
-	}
+	if (childCount > 0) parts.push(`${childCount} subagent${childCount === 1 ? "" : "s"} running`);
 	if (state.monitorCount > 0) parts.push(`${state.monitorCount} monitor${state.monitorCount === 1 ? "" : "s"} live`);
 	for (const [source, count] of [...state.wakeSources].sort(([left], [right]) => left.localeCompare(right))) {
 		if (REPRESENTED_WAKE_SOURCES.has(source)) continue;
 		const label = WAKE_SOURCE_LABELS[source];
 		parts.push(label === undefined ? `${count} ${source}` : `${count} ${count === 1 ? label[0] : label[1]}`);
-		if (!OPEN_ENDED_WAKE_SOURCES.has(source)) bounded = true;
 	}
-	const reported = state.turnActive || bounded ? "working" : "idle";
+	// Herdr's own pi integration model: working is the turn, from agent_start to a settled idle session. Background work
+	// that may wake the session later is named in the message, never reported as working (#6150).
+	const reported = state.turnActive ? "working" : "idle";
 	return parts.length > 0 ? { state: reported, message: parts.join(" + ") } : { state: reported };
 }
 
