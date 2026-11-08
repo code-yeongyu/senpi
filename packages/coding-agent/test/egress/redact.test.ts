@@ -72,6 +72,18 @@ describe("redact: short secrets and token boundaries", () => {
 	});
 });
 
+describe("redact: periodic secrets", () => {
+	it.each([
+		["one repeated character", "A".repeat(4096)],
+		["a two-character period", "ab".repeat(2048)],
+		["a long run inside a varied secret", `x9${"A".repeat(4000)}Qz7`],
+	])("redacts a 4 KB secret with %s", (_label, secret) => {
+		const redactor = createRedactor({ secrets: [secret], publicPrefixes: [] });
+		expect(redactor.redact(`key=${secret};`)).toBe(`key=${REDACTED};`);
+		expect(redactor.redact(`echo ${secret.slice(0, 8)}!`)).toBe(`echo ${REDACTED}!`);
+	});
+});
+
 describe("redact: false-positive corpus", () => {
 	const redactor = createRedactor({ secrets: [SECRET, "q7Rz9a"], publicPrefixes: PUBLIC_PREFIXES });
 
