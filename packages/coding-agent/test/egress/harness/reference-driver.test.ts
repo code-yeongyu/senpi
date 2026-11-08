@@ -811,6 +811,7 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 				]);
 				if (fault === "already-committed")
 					driver.inject.nextCommit(fault, fauxAssistantMessage([fauxText("theirs")]));
+				// Narrows `fault` so TypeScript picks the matching `nextCommit` overload (TS2769); not a duplicate branch.
 				else if (fault === "reject") driver.inject.nextCommit(fault);
 				else driver.inject.nextCommit(fault);
 
