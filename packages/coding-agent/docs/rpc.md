@@ -4783,6 +4783,13 @@ Response:
 
 A preset a client named is recorded in the session file as a `permission_mode` entry. The entry is a record only: a later open that names no preset still uses the host's own default, and the launch flag always wins.
 
+Each gated decision picks its preset in this order:
+
+1. A preset a client named for the session (`open_session.permissionPreset`, an attach naming one, or `set_permission_preset`) wins.
+2. Work a remote device started asks: a turn started by a `prompt`, `follow_up` or `steer` (`whenIdle: "start"`) from a delegated connection, and engine-started work (extension messages, goal and loop turns, `continue_from_leaf`, `wake`, restored input) on a session a remote device has driven. A session counts as remote-driven once a delegated connection sends it any record whose method class is `drive` or `device_admin`; the engine's method-class table decides, so every run starter is covered. When the operator named no `--permission-preset`, it uses the preset a client recorded in the session file instead. An embedder's host-level preset is the host default, not a launch flag. This rule is decided before `spawnedBy`: a parent named in `open_session`, real or not, never takes a remote device's work off it.
+3. A child session (`spawnedBy`) follows its live parent's current mode, including later changes to it. A child whose parent is not live in this process asks, unless the operator named a preset for it with `--permission-preset`.
+4. Everything else uses the host's own default. A local connection's turn keeps the host default even on a session a remote device has driven, and a `steer` never changes the origin of the turn it joins.
+
 `currentTurnId` is the id of the running turn, present only while one runs; a steer or follow-up names it as `expectedTurnId` (on `prompt`, `steer` or `follow_up`).
 
 The `model` field is a full [Model](#model) object or `null`. `pendingModelSwitch` is always present: `null` means no held switch, while an object with `provider` and `id` identifies a switch that applies after the next compaction. The `sessionName` field is the display name set via `set_session_name`, or omitted if not set.

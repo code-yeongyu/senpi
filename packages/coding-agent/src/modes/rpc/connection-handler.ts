@@ -84,7 +84,9 @@ import { handleClientInput } from "./client-input-handler.ts";
 import { ConnectionQuestionBridge, degradeQuestion, sessionQuestionBridges } from "./connection-question-bridge.ts";
 import { remoteOriginDeclaration, remoteOriginField } from "./remote-origin.ts";
 import { advertisedCompactCapabilities, sessionDeclaration } from "./compact-negotiation.ts";
+import type { ConnectionOrigin } from "../../core/turn-origin.ts";
 import { commandAuthority } from "./command-authority.ts";
+import { noteDelegatedRecord } from "./delegated-drive-origin.ts";
 import { ConnectionRoles, DELEGATION_INCARNATION_STALE, roleConnection } from "./connection-roles.ts";
 import {
 	ACCOUNT_RESET_CAPABILITY,
@@ -420,6 +422,8 @@ export function createRpcConnectionHandler(
 	const connectionRoles = options.connectionRoles ?? new ConnectionRoles();
 	const currentConnectionId = (): string => roleConnection(options.clientInfo?.connectionId());
 	const hasRole = (role: string): boolean => connectionRoles.has(currentConnectionId(), role);
+	const connectionOrigin = (): ConnectionOrigin =>
+		connectionRoles.isDelegated(currentConnectionId()) ? "delegated" : "local";
 	const routingSessionId = options.sessionId;
 	// True only while THIS connection's own command drives a replacement; the issuer
 	// already learns the new identity from its command response.
@@ -1334,6 +1338,7 @@ export function createRpcConnectionHandler(
 		requestContext?: ExtensionRpcRequestContext,
 	): Promise<RpcResponse | undefined> => {
 		const id = command.id;
+		noteDelegatedRecord(command, connectionOrigin(), session.sessionManager);
 
 		switch (command.type) {
 			case "get_protocol_info":
@@ -1400,7 +1405,7 @@ export function createRpcConnectionHandler(
 					session,
 					command,
 					{ output, promptCalls },
-					{ interactiveUser: hasRole(INTERACTIVE_USER_CAPABILITY) },
+					{ interactiveUser: hasRole(INTERACTIVE_USER_CAPABILITY), connectionOrigin: connectionOrigin() },
 				);
 				promptCalls.add(admission);
 				void admission.finally(() => promptCalls.delete(admission));
@@ -1485,7 +1490,7 @@ export function createRpcConnectionHandler(
 					session,
 					command,
 					{ output, promptCalls },
-					{ interactiveUser: hasRole(INTERACTIVE_USER_CAPABILITY) },
+					{ interactiveUser: hasRole(INTERACTIVE_USER_CAPABILITY), connectionOrigin: connectionOrigin() },
 				);
 				return undefined;
 			}

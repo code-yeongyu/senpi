@@ -86,6 +86,12 @@ export class Peer {
 		});
 	}
 
+	/** Calls `watch` with every frame parsed from now on; returns the unsubscribe. */
+	subscribe(watch: (record: WireRecord) => void): () => void {
+		this.watchers.add(watch);
+		return () => this.watchers.delete(watch);
+	}
+
 	frame(predicate: (record: WireRecord) => boolean): Promise<WireRecord> {
 		const seen = this.frames.find(predicate);
 		if (seen) return Promise.resolve(seen);

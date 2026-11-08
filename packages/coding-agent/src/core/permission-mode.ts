@@ -2,6 +2,7 @@ import { parsePermissionPresetName } from "./extensions/builtin/permission-syste
 import { readPermissionPreset } from "./extensions/builtin/permission-system/preset-registry.ts";
 import { resolvePermissionPreset } from "./extensions/builtin/permission-system/settings.ts";
 import type { PermissionPresetName } from "./extensions/builtin/permission-system/types.ts";
+import { bindDecisionPreset } from "./permission-decision.ts";
 import type { SessionManager } from "./session-manager.ts";
 import type { SettingsManager } from "./settings-manager.ts";
 
@@ -30,11 +31,21 @@ const PERMISSION_PRESET_CHANGED_CHANNEL = "permission_preset_changed";
 const PERMISSION_MODE_ENTRY = "permission_mode";
 
 type ModeSession = Parameters<typeof permissionModeOf>[0] & {
-	readonly sessionManager: Pick<SessionManager, "getEntries" | "appendCustomEntry">;
+	readonly sessionManager: Pick<SessionManager, "getEntries" | "appendCustomEntry" | "getHeader" | "getSessionId">;
 	readonly extensionRunner: { emitBusEvent(channel: string, data: unknown): void };
 };
 
 const clientPresets = new WeakMap<object, string>();
+// Sessions whose `permission-preset` flag holds the host's own default (an embedder's host option), not an operator flag.
+const hostDefaultFlagSessions = new WeakSet<object>();
+
+export function markHostDefaultPresetFlag(
+	session: object,
+	profile: { readonly permissionPresetSource?: "host_default" } | undefined,
+): void {
+	if (profile?.permissionPresetSource === "host_default") hostDefaultFlagSessions.add(session);
+	else hostDefaultFlagSessions.delete(session);
+}
 
 function markClientPermissionPreset(session: object, preset: string | undefined): void {
 	if (preset === undefined) clientPresets.delete(session);
@@ -88,6 +99,21 @@ function invalidMode(preset: string): PermissionMode {
 	};
 }
 
+/** The preset a launch profile names as a client's choice; an embedder's host default is not one. */
+export function clientNamedPreset(
+	profile: { readonly permissionPreset?: string; readonly permissionPresetSource?: "host_default" } | undefined,
+): string | undefined {
+	return profile?.permissionPresetSource === "host_default" ? undefined : profile?.permissionPreset;
+}
+
+/** A profile whose preset a client just named: the host-default marker no longer applies. */
+export function withClientPreset<
+	P extends { readonly permissionPreset?: string; readonly permissionPresetSource?: "host_default" },
+>(profile: P, preset: string): Readonly<P> {
+	const { permissionPresetSource: _hostDefault, ...rest } = profile;
+	return Object.freeze({ ...rest, permissionPreset: preset } as P);
+}
+
 export function permissionModeReply(mode: PermissionMode): PermissionModeReply {
 	return {
 		permissionPreset: mode.permissionPreset,
@@ -119,6 +145,18 @@ export function openReplyPermissionMode(state: Partial<PermissionMode>): Partial
  * Binds the preset a client named to the live session: reported as `client`, persisted to its file, and, for a change
  * to a running session (`announce`), published on the session's `permission_preset_changed` bus channel.
  */
+/** Binds the per-decision approval-mode rule to a session, wherever it was created (runtime, SDK, in-process child). */
+export function bindPermissionDecision(session: ModeSession): void {
+	bindDecisionPreset({
+		sessionManager: session.sessionManager,
+		namedPreset: () => clientPresets.get(session),
+		launchFlagNamed: () =>
+			!hostDefaultFlagSessions.has(session) &&
+			typeof session.extensionRunner.getFlagValues().get(PERMISSION_PRESET_FLAG) === "string",
+		recordedPreset: () => persistedClientPreset(session.sessionManager),
+	});
+}
+
 export function applyClientPermissionMode(
 	session: ModeSession,
 	preset: string | undefined,
@@ -126,6 +164,7 @@ export function applyClientPermissionMode(
 ): void {
 	markClientPermissionPreset(session, preset);
 	persistClientPreset(session.sessionManager, preset);
+	bindPermissionDecision(session);
 	if (options.announce)
 		session.extensionRunner.emitBusEvent(PERMISSION_PRESET_CHANGED_CHANNEL, permissionModeOf(session));
 }
