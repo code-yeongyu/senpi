@@ -2,8 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { format } from "node:util";
 import type { Redactor } from "./redact.ts";
 
-const METHODS = ["log", "info", "warn", "error", "debug"] as const;
-type ConsoleMethod = (typeof METHODS)[number];
+type ConsoleMethod = "log" | "info" | "warn" | "error" | "debug";
 type ConsoleTarget = Partial<Record<ConsoleMethod, (...args: unknown[]) => void>>;
 
 const INSTALLED = Symbol.for("senpi.egress.consoleRedactorInstalled");
@@ -31,7 +30,8 @@ export function installConsoleRedactor(target: ConsoleTarget): void {
 	const marked = target as ConsoleTarget & { [INSTALLED]?: true };
 	if (marked[INSTALLED]) return;
 	marked[INSTALLED] = true;
-	for (const method of METHODS) {
+	const methods: readonly ConsoleMethod[] = ["log", "info", "warn", "error", "debug"];
+	for (const method of methods) {
 		const original = target[method];
 		if (original === undefined) continue;
 		target[method] = (...args: unknown[]) => {
