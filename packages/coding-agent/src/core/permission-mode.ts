@@ -25,8 +25,8 @@ export type PermissionModeReply = Pick<
 	"permissionPreset" | "permissionPresetSource" | "permissionPresetStatus"
 >;
 
-export const PERMISSION_PRESET_FLAG = "permission-preset";
-export const PERMISSION_PRESET_CHANGED_CHANNEL = "permission_preset_changed";
+const PERMISSION_PRESET_FLAG = "permission-preset";
+const PERMISSION_PRESET_CHANGED_CHANNEL = "permission_preset_changed";
 const PERMISSION_MODE_ENTRY = "permission_mode";
 
 type ModeSession = Parameters<typeof permissionModeOf>[0] & {
@@ -36,7 +36,7 @@ type ModeSession = Parameters<typeof permissionModeOf>[0] & {
 
 const clientPresets = new WeakMap<object, string>();
 
-export function markClientPermissionPreset(session: object, preset: string | undefined): void {
+function markClientPermissionPreset(session: object, preset: string | undefined): void {
 	if (preset === undefined) clientPresets.delete(session);
 	else clientPresets.set(session, preset);
 }
@@ -96,7 +96,7 @@ export function permissionModeReply(mode: PermissionMode): PermissionModeReply {
 	};
 }
 
-export function persistedClientPreset(sessionManager: Pick<SessionManager, "getEntries">): string | undefined {
+function persistedClientPreset(sessionManager: Pick<SessionManager, "getEntries">): string | undefined {
 	const entries = sessionManager.getEntries();
 	for (let index = entries.length - 1; index >= 0; index--) {
 		const entry = entries[index];
@@ -134,7 +134,7 @@ export function applyClientPermissionMode(
  * Records a valid client-named preset as a `permission_mode` custom entry (bookkeeping only: nothing restores it
  * on a later open). Writes only on a change; an invalid preset is never recorded.
  */
-export function persistClientPreset(
+function persistClientPreset(
 	sessionManager: Pick<SessionManager, "getEntries" | "appendCustomEntry">,
 	preset: string | undefined,
 ): void {
