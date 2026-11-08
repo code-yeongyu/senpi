@@ -36,6 +36,16 @@ type ModeSession = Parameters<typeof permissionModeOf>[0] & {
 };
 
 const clientPresets = new WeakMap<object, string>();
+// Sessions whose `permission-preset` flag holds the host's own default (an embedder's host option), not an operator flag.
+const hostDefaultFlagSessions = new WeakSet<object>();
+
+export function markHostDefaultPresetFlag(
+	session: object,
+	profile: { readonly permissionPresetSource?: "host_default" } | undefined,
+): void {
+	if (profile?.permissionPresetSource === "host_default") hostDefaultFlagSessions.add(session);
+	else hostDefaultFlagSessions.delete(session);
+}
 
 function markClientPermissionPreset(session: object, preset: string | undefined): void {
 	if (preset === undefined) clientPresets.delete(session);
@@ -140,7 +150,9 @@ export function bindPermissionDecision(session: ModeSession): void {
 	bindDecisionPreset({
 		sessionManager: session.sessionManager,
 		namedPreset: () => clientPresets.get(session),
-		launchFlagNamed: () => typeof session.extensionRunner.getFlagValues().get(PERMISSION_PRESET_FLAG) === "string",
+		launchFlagNamed: () =>
+			!hostDefaultFlagSessions.has(session) &&
+			typeof session.extensionRunner.getFlagValues().get(PERMISSION_PRESET_FLAG) === "string",
 		recordedPreset: () => persistedClientPreset(session.sessionManager),
 	});
 }

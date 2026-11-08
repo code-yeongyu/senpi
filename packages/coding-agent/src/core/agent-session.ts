@@ -304,6 +304,7 @@ import {
 	noteRunStart,
 	noteUserMessageStart,
 } from "./turn-origin.ts";
+import { releaseDecisionPreset } from "./permission-decision.ts";
 import { markInterrupted, type StopInterrupt } from "./interrupted-tool-result.ts";
 import {
 	deliveredReceipts,
@@ -4977,6 +4978,7 @@ export class AgentSession {
 	 */
 	dispose(): void {
 		this._disposed = true;
+		releaseDecisionPreset(this.sessionManager);
 		this._unsubscribeSecurityNotices?.();
 		this._unfollowProviderAccountChanges();
 		this.securityNotices.dispose();

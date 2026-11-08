@@ -7,7 +7,6 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import type { ExtensionFactory } from "../../src/core/extensions/types.ts";
-import { attachJsonlLineReader } from "../../src/modes/rpc/jsonl.ts";
 import { ANSWER_DEADLINE_MS, type DelegatedHost, declare, type Peer, startHost } from "./rpc-delegated-host-support.ts";
 import type { WireRecord } from "./rpc-delegated-peer.ts";
 
@@ -64,8 +63,8 @@ export class FrameLog {
 	private readonly watchers = new Set<(record: WireRecord) => void>();
 
 	constructor(peer: Peer) {
-		attachJsonlLineReader(peer.socket, (line) => {
-			const record = JSON.parse(line) as WireRecord;
+		// Frames come from the peer's own reader: a second line reader attached mid-stream could start mid-line.
+		peer.subscribe((record) => {
 			this.frames.push(record);
 			for (const watch of this.watchers) watch(record);
 		});

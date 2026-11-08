@@ -15,7 +15,12 @@ import type {
 	SessionStartEvent,
 } from "./extensions/index.ts";
 import { type ExtensionRunner, emitSessionShutdownEvent } from "./extensions/runner.ts";
-import { applyClientPermissionMode, clientNamedPreset, withClientPreset } from "./permission-mode.ts";
+import {
+	applyClientPermissionMode,
+	clientNamedPreset,
+	markHostDefaultPresetFlag,
+	withClientPreset,
+} from "./permission-mode.ts";
 import type { CreateAgentSessionResult } from "./sdk.ts";
 import { assertSessionCwdExists } from "./session-cwd.ts";
 import type { SessionHolderEndpoint } from "./session-hold-errors.ts";
@@ -180,6 +185,7 @@ export class AgentSessionRuntime {
 		this._diagnostics = _diagnostics;
 		this._modelFallbackMessage = _modelFallbackMessage;
 		this._launchProfile = launchProfile;
+		markHostDefaultPresetFlag(_session, launchProfile);
 		applyClientPermissionMode(_session, clientNamedPreset(launchProfile), { announce: false });
 		this._sessionHold = holdActiveSession(
 			_session.sessionManager,
@@ -497,6 +503,7 @@ export class AgentSessionRuntime {
 		this._session = result.session;
 		if (profile?.permissionPreset !== undefined)
 			this._session.extensionRunner.setFlagValue("permission-preset", profile.permissionPreset);
+		markHostDefaultPresetFlag(this._session, profile);
 		applyClientPermissionMode(this._session, clientNamedPreset(profile), { announce: false });
 		if (profile?.promptSurface !== undefined) this._session.setPromptSurface(profile.promptSurface);
 		if (profile?.browserEngine !== undefined) this._session.setBrowserEngine(profile.browserEngine);

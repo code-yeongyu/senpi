@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
+import { bindDecisionPreset, releaseDecisionPreset } from "../../../src/core/permission-decision.ts";
 import { readDecisionPresetOverride } from "../../../src/core/extensions/builtin/permission-system/preset-registry.ts";
 import type { ExtensionFactory } from "../../../src/core/extensions/types.ts";
 import { createAgentSession } from "../../../src/core/sdk.ts";
@@ -109,28 +110,34 @@ describe("#6189 delegated-origin turns on a session with no client-named mode", 
 		expect(call).toEqual({ asked: [], ran: true });
 	}, 120_000);
 
-	it("restores a recorded mode for a remote device's preset-less reopen", async () => {
-		host = await permissionHost();
-		const remote = await remotePeer(host);
-		const log = new FrameLog(remote);
-		const sessionPath = join(host.cwd, "recorded.jsonl");
-		const first = await open(remote, { sessionPath, permissionPreset: "read-only" });
-		const [named] = await probeCalls(log, { log, peer: remote }, first.sessionId, {
-			count: 1,
-			answer: "Deny",
-			start: () => remote.send({ type: "prompt", sessionId: first.sessionId, message: "go" }),
-		});
-		expect(named).toEqual({ asked: [], ran: true });
-		expect(await remote.send({ type: "close_session", sessionId: first.sessionId })).toMatchObject({ success: true });
+	it.each([false, true])(
+		"restores a recorded mode for a remote device's preset-less reopen (embedder preset: %s)",
+		async (embedderPreset) => {
+			host = await permissionHost([], { embedderPreset });
+			const remote = await remotePeer(host);
+			const log = new FrameLog(remote);
+			const sessionPath = join(host.cwd, "recorded.jsonl");
+			const first = await open(remote, { sessionPath, permissionPreset: "read-only" });
+			const [named] = await probeCalls(log, { log, peer: remote }, first.sessionId, {
+				count: 1,
+				answer: "Deny",
+				start: () => remote.send({ type: "prompt", sessionId: first.sessionId, message: "go" }),
+			});
+			expect(named).toEqual({ asked: [], ran: true });
+			expect(await remote.send({ type: "close_session", sessionId: first.sessionId })).toMatchObject({
+				success: true,
+			});
 
-		const { sessionId } = await open(remote, { sessionPath });
-		const [call] = await probeCalls(log, { log, peer: remote }, sessionId, {
-			count: 1,
-			answer: "Deny",
-			start: () => remote.send({ type: "prompt", sessionId, message: "go" }),
-		});
-		expect(call).toEqual({ asked: [], ran: true });
-	}, 120_000);
+			const { sessionId } = await open(remote, { sessionPath });
+			const [call] = await probeCalls(log, { log, peer: remote }, sessionId, {
+				count: 1,
+				answer: "Deny",
+				start: () => remote.send({ type: "prompt", sessionId, message: "go" }),
+			});
+			expect(call).toEqual({ asked: [], ran: true });
+		},
+		120_000,
+	);
 
 	it("makes a local child of a remote-driven parent turn ask too", async () => {
 		host = await permissionHost();
@@ -337,4 +344,63 @@ describe("#6189 delegated-origin turns on a session with no client-named mode", 
 		);
 		expect(JSON.stringify(await ended)).not.toContain(PROBE_TEXT);
 	}, 120_000);
+
+	it.each([
+		["a made-up parent on an embedder-preset host", { embedderPreset: true }, false],
+		["a real live parent the remote device does not own", { embedderPreset: false }, true],
+	] as const)(
+		"keeps a remote open that names spawnedBy on the delegated default: %s",
+		async (_label, options, realParent) => {
+			host = await permissionHost([], options);
+			let parentSessionId = "x6189-made-up-parent";
+			if (realParent) {
+				const local = await host.proven();
+				parentSessionId = (await open(local, { permissionPreset: "full-access" })).durableSessionId;
+			}
+			const remote = await remotePeer(host);
+			const log = new FrameLog(remote);
+			const spawnedBy = { parentSessionId, rootSessionId: parentSessionId, taskId: "x6189-forged" };
+			const { sessionId } = await open(remote, { spawnedBy });
+			const [call] = await probeCalls(log, { log, peer: remote }, sessionId, {
+				count: 1,
+				answer: "Deny",
+				start: () => remote.send({ type: "prompt", sessionId, message: "go" }),
+			});
+			expect(call).toEqual({ asked: ASKED, ran: false });
+		},
+		120_000,
+	);
+
+	it("asks on a spawnedBy loop instead of recursing, and stops following a released parent", () => {
+		const stub = (id: string, parentSessionId: string | undefined, named?: string) => {
+			const sessionManager = {
+				getSessionId: () => id,
+				getEntries: () => [],
+				getHeader: () => ({
+					type: "session" as const,
+					id,
+					timestamp: "",
+					cwd: "",
+					...(parentSessionId === undefined
+						? {}
+						: { spawnedBy: { parentSessionId, rootSessionId: parentSessionId, taskId: "x6189-loop" } }),
+				}),
+			};
+			bindDecisionPreset({
+				sessionManager,
+				namedPreset: () => named,
+				launchFlagNamed: () => false,
+				recordedPreset: () => undefined,
+			});
+			return sessionManager;
+		};
+		const looped = stub("x6189-self", "x6189-self");
+		expect(readDecisionPresetOverride(looped)).toBe("ask");
+
+		const parent = stub("x6189-parent", undefined, "full-access");
+		const child = stub("x6189-child", "x6189-parent");
+		expect(readDecisionPresetOverride(child)).toBe("full-access");
+		releaseDecisionPreset(parent);
+		expect(readDecisionPresetOverride(child)).toBe("ask");
+	});
 });
