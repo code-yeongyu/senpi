@@ -2,7 +2,8 @@
  * A hand double for the device route (CK9 tests): one device's `ProviderCallChannel`. It checks every `start` and
  * `result` claim with the real `verifyPlacementClaim`, runs the session's request hooks when `hooks: "enabled"`
  * (emitting `hooked` at seq 0 before any event), executes through a caller-supplied responder, keeps every call's
- * frames until `ack`, and answers `result` queries the way the hand executor does (4.3, 4.5).
+ * frames until `ack` (a refusal included: a duplicate `start{callId}` is a result query, 4.3), and answers `result`
+ * queries the way the hand executor does (4.3, 4.5).
  */
 import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
 import {
@@ -24,7 +25,7 @@ import type {
 	ProviderCallStart,
 } from "../../src/core/egress/wire.ts";
 import type { Registry } from "./claim-fixture.ts";
-import { createCallLog, createCounter, type Frame } from "./device-hand-calls.ts";
+import { createCallLog, createCounter, type Frame, type ReaderFault } from "./device-hand-calls.ts";
 
 export type Responder = (
 	start: ProviderCallStart,
@@ -36,7 +37,24 @@ export type StartFault =
 	| { readonly kind: "error"; readonly code: ProviderCallErrorCode; readonly retryable?: boolean }
 	| { readonly kind: "hang-after-hooks" }
 	| { readonly kind: "hang-after-hooked" }
-	| { readonly kind: "hang-after-events"; readonly events: number };
+	| { readonly kind: "hang-after-events"; readonly events: number }
+	/** A `hooked` frame (seq 0, request marked `[injected]`) although no hooks ran, then a hang until `finish`. */
+	| { readonly kind: "unsolicited-hooked" }
+	/** A `hooked` frame (request marked `[injected]`) after every event but the terminal one. */
+	| { readonly kind: "late-hooked" };
+
+export const INJECTED = "[injected]";
+
+const injected = (request: ProviderCallRequest): ProviderCallRequest =>
+	"context" in request
+		? {
+				...request,
+				context: {
+					...request.context,
+					messages: [...request.context.messages, { role: "user", content: INJECTED, timestamp: 3 }],
+				},
+			}
+		: request;
 
 export interface HandDouble extends ProviderCallChannel {
 	readonly deviceId: string;
@@ -51,9 +69,16 @@ export interface HandDouble extends ProviderCallChannel {
 	fault(next: StartFault): void;
 	/** The hand loses every record of `callId` (restart without retention): `result` answers `unknown`. */
 	forget(callId: string): void;
+	/** From now on every call is lost at once: `start` keeps nothing and `result` answers `unknown` (P3). */
+	amnesiac(): void;
 	/** Appends the rest of a hung call's answer, as a hand that recovers would. */
 	finish(callId: string): Promise<void>;
 	framesOf(callId: string): readonly Frame[];
+	/** Transport faults for `events` readers opened from now on (see `ReaderFault`). */
+	readerFault(fault: ReaderFault): void;
+	openReaders(): number;
+	/** `result` rejects once more than `count` queries arrived, so a query storm fails a case instead of hanging it. */
+	limitResultQueries(count: number): void;
 	/** Resolves once `count` starts have been fully handled (executed, hung or refused). */
 	started(count: number): Promise<void>;
 }
@@ -77,7 +102,8 @@ export function createHandDouble(options: HandDoubleOptions): HandDouble {
 	const acks: string[] = [];
 	const resultQueries: string[] = [];
 	const pendingFaults: StartFault[] = [];
-	const refusedOnly = new Set<string>();
+	let resultQueryLimit = Number.POSITIVE_INFINITY;
+	let forgetsEverything = false;
 	const resumable = new Map<
 		string,
 		{
@@ -92,10 +118,8 @@ export function createHandDouble(options: HandDoubleOptions): HandDouble {
 	let executions = 0;
 
 	const append = calls.append;
-	const refuse = (callId: string, code: ProviderCallErrorCode, retryable: boolean, message: string): void => {
-		refusedOnly.add(callId);
+	const refuse = (callId: string, code: ProviderCallErrorCode, retryable: boolean, message: string): void =>
 		append(callId, { t: "provider.call.error", callId, seq: 1, code, retryable, message });
-	};
 
 	const emitAnswer = (
 		start: ProviderCallStart,
@@ -128,6 +152,11 @@ export function createHandDouble(options: HandDoubleOptions): HandDouble {
 			return;
 		}
 		let request = start.request;
+		if (fault?.kind === "unsolicited-hooked") {
+			append(start.callId, { t: "provider.call.hooked", callId: start.callId, seq: 0, request: injected(request) });
+			resumable.set(start.callId, { start, request, executed: false });
+			return;
+		}
 		if (start.hooks === "enabled" && options.requestHook) {
 			hookRuns += 1;
 			request = options.requestHook(request);
@@ -140,6 +169,12 @@ export function createHandDouble(options: HandDoubleOptions): HandDouble {
 		}
 		executions += 1;
 		const events = await options.respond(start, request);
+		if (fault?.kind === "late-hooked") {
+			emitAnswer(start, events, 0, events.length - 1);
+			append(start.callId, { t: "provider.call.hooked", callId: start.callId, seq: 0, request: injected(request) });
+			emitAnswer(start, events, events.length - 1);
+			return;
+		}
 		const stopAfter = fault?.kind === "hang-after-events" ? fault.events : undefined;
 		if (stopAfter !== undefined) resumable.set(start.callId, { start, request, executed: true, events });
 		emitAnswer(start, events, 0, stopAfter);
@@ -147,15 +182,13 @@ export function createHandDouble(options: HandDoubleOptions): HandDouble {
 
 	const handleStart = async (msg: ProviderCallStart): Promise<void> => {
 		const verdict = await verifyPlacementClaim(msg.claim, options.trust, options.clock);
+		if (forgetsEverything || calls.has(msg.callId)) return;
+		calls.open(msg.callId);
 		if (verdict !== "valid") {
 			const { code, retryable } = CLAIM_VERDICT_ERRORS[verdict];
-			calls.drop(msg.callId);
 			refuse(msg.callId, code, retryable, `claim ${verdict}`);
 			return;
 		}
-		if (refusedOnly.delete(msg.callId)) calls.drop(msg.callId);
-		if (calls.has(msg.callId)) return;
-		calls.open(msg.callId);
 		await execute(msg);
 	};
 
@@ -175,6 +208,10 @@ export function createHandDouble(options: HandDoubleOptions): HandDouble {
 		fault: (next) => {
 			pendingFaults.push(next);
 		},
+		amnesiac: () => {
+			forgetsEverything = true;
+			calls.readerFault("cut");
+		},
 		forget: (callId) => {
 			calls.drop(callId);
 			resumable.delete(callId);
@@ -188,6 +225,11 @@ export function createHandDouble(options: HandDoubleOptions): HandDouble {
 			emitAnswer(hung.start, hung.events ?? (await options.respond(hung.start, hung.request)), done);
 		},
 		framesOf: calls.framesOf,
+		readerFault: calls.readerFault,
+		openReaders: calls.openReaders,
+		limitResultQueries: (count) => {
+			resultQueryLimit = count;
+		},
 		started: handled.reached,
 		async start(msg: ProviderCallStart) {
 			starts.push(msg);
@@ -200,8 +242,10 @@ export function createHandDouble(options: HandDoubleOptions): HandDouble {
 
 		async result(msg: ProviderCallResultQuery): Promise<ProviderCallResultReply> {
 			resultQueries.push(msg.callId);
+			if (resultQueries.length > resultQueryLimit) throw new Error(`result query storm: ${resultQueries.length}`);
 			const verdict = await verifyPlacementClaim(msg.claim, options.trust, options.clock);
-			if (verdict !== "valid") return { t: "provider.call.result.reply", callId: msg.callId, state: "unknown" };
+			if (verdict !== "valid" || forgetsEverything)
+				return { t: "provider.call.result.reply", callId: msg.callId, state: "unknown" };
 			return calls.reply(msg.callId);
 		},
 		async ack(msg: ProviderCallAck) {

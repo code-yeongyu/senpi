@@ -2,7 +2,9 @@
  * What the device route sends (row CK9; custody design 2.3 options hygiene, 4.5 hook rules). The admitted request is
  * built once from the loop's context and the wire allowlist of its options, stored as JSON text, and every attempt
  * sends the parse of that stored text, so a reissue is byte-for-byte the admitted request. Request hooks run once per
- * step: on the hand itself (`hooks: "enabled"`, reported back by `hooked`), or over V5 before a non-hand server.
+ * step: on the hand itself (`hooks: "enabled"`, reported back by `hooked`), or over V5 before a non-hand server. Hook
+ * output is filtered through the same allowlist before it is stored, and every parse filters again: a hook that adds
+ * `env` or `headers` must not reach another device, where `env` can move the dial under that device's credential.
  */
 import type { DeviceId, EgressRouteDecision } from "@earendil-works/pi-agent-core";
 import type {
@@ -23,7 +25,7 @@ function copyWireKey<K extends keyof WireStreamOptions>(from: WireStreamOptions,
 }
 
 /** Only allowlisted, serializable request shaping crosses to the hand: never `commitStep`, secrets, headers or callbacks. */
-function toWireOptions(options: SimpleStreamOptions | undefined): WireStreamOptions {
+function toWireOptions(options: WireStreamOptions | undefined): WireStreamOptions {
 	const wire: MutableWireOptions = {};
 	if (options) for (const key of WIRE_STREAM_OPTION_KEYS) copyWireKey(options, wire, key);
 	return wire;
@@ -37,10 +39,18 @@ const isRequest = (value: unknown): value is ProviderCallRequest =>
 	value !== null &&
 	(("context" in value && "options" in value) || "compactBody" in value);
 
+const toWireRequest = (request: ProviderCallRequest): ProviderCallRequest =>
+	"context" in request
+		? { context: request.context, options: toWireOptions(request.options) }
+		: { compactBody: request.compactBody };
+
+/** The JSON text the ledger stores for a request that came back from a hook (`hooked`, V5). */
+export const storedRequestJson = (request: ProviderCallRequest): string => JSON.stringify(toWireRequest(request));
+
 export function parseStoredRequest(json: string): ProviderCallRequest {
 	const parsed: unknown = JSON.parse(json);
 	if (!isRequest(parsed)) throw new Error("stored egress request is not a provider-call request");
-	return parsed;
+	return toWireRequest(parsed);
 }
 
 export interface StoredRequest {
@@ -67,26 +77,27 @@ export async function planDispatch(
 	if (decision.executorHooks === "enabled") return { ...stored, hooks: stored.hooksApplied ? "disabled" : "enabled" };
 	if (!stored.hooksApplied && decision.requestHooksOn !== undefined) {
 		const hooked = await runRequestHooks(decision.requestHooksOn, parseStoredRequest(stored.requestJson));
-		return { requestJson: JSON.stringify(hooked), hooksApplied: true, hooks: "disabled" };
+		return { requestJson: storedRequestJson(hooked), hooksApplied: true, hooks: "disabled" };
 	}
 	return { ...stored, hooks: "disabled" };
 }
 
-const NO_USAGE: Usage = {
+/** A fresh object per message: `Usage` is mutable and consumers update it in place. */
+const noUsage = (): Usage => ({
 	input: 0,
 	output: 0,
 	cacheRead: 0,
 	cacheWrite: 0,
 	totalTokens: 0,
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-};
+});
 
 /** The terminal message the loop receives when the hand refused or failed the call, or the step was aborted. */
 export function failureMessage(
 	model: Model<Api>,
 	stopReason: "error" | "aborted",
 	errorMessage: string,
-	usage: Usage = NO_USAGE,
+	usage: Usage = noUsage(),
 ): AssistantMessage {
 	return {
 		role: "assistant",

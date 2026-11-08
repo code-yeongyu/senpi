@@ -1,6 +1,7 @@
 import type { EgressRouteDecision } from "@earendil-works/pi-agent-core";
 import type { AssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
+import { requestPrefix } from "../../src/core/egress/ledger-schema.ts";
 import { storeFixture } from "./device-proxy-doubles.ts";
 import { fauxModel, handOf, handRoute, rig, transcript } from "./device-proxy-fixture.ts";
 
@@ -122,11 +123,12 @@ describe("device-proxy egress: waits, liveness and aborts (CK9; design 2.3, 4.4)
 		expect(hand.cancels).toEqual([]);
 	});
 
-	it("writes step.cancelled (W14) on a user abort, cancels{user} and fails with the abort text", async () => {
+	it("writes step.cancelled (W14) on a user abort, cancels{user}, drops the request and fails with the abort text", async () => {
 		const fixture = await storeFixture();
 		const faux = fauxModel();
 		faux.reply("aborted");
-		const r = await rig({ store: await fixture.open(), respond: faux.respond });
+		const store = await fixture.open();
+		const r = await rig({ store, respond: faux.respond });
 		const hand = handOf(r);
 		hand.fault({ kind: "hang-after-events", events: 0 });
 		const controller = new AbortController();
@@ -140,6 +142,7 @@ describe("device-proxy egress: waits, liveness and aborts (CK9; design 2.3, 4.4)
 		expect(await r.ledger.isCancelled("step-1")).toBe(true);
 		expect(row?.state).toBe("cancelled");
 		expect(hand.cancels).toEqual([{ t: "provider.call.cancel", callId: row?.callId, reason: "user" }]);
+		expect(await store.scanDocuments(requestPrefix(row?.callId ?? ""))).toEqual([]);
 
 		const again = await rig({ store: await fixture.open(), respond: faux.respond, hands: r.hands });
 		expect((await drain(await again.egress.stream(faux.model, transcript(), {}))).stopReason).toBe("aborted");
@@ -175,5 +178,34 @@ describe("device-proxy egress: waits, liveness and aborts (CK9; design 2.3, 4.4)
 			{ kind: "step", stepId: "step-1", attempt: 1 },
 			{ kind: "step", stepId: "step-1", attempt: 2 },
 		]);
+	});
+
+	it("leaves a superseded row superseded when the user aborts while the reissue waits", async () => {
+		const fixture = await storeFixture();
+		const faux = fauxModel();
+		faux.reply("lost with the device");
+		const first = await rig({ store: await fixture.open(), respond: faux.respond });
+		const hand = handOf(first);
+		hand.fault({ kind: "hang-after-events", events: 0 });
+		const written = first.commits.reached(1);
+		void first.egress.stream(faux.model, transcript(), {});
+		await written;
+		await hand.started(1);
+		const [row] = await first.ledger.rowsForStep("step-1");
+		if (!row) throw new Error("no row");
+		hand.forget(row.callId);
+
+		const again = await rig({ store: await fixture.open(), respond: faux.respond, hands: first.hands });
+		again.route.capability = "callback-stream";
+		const controller = new AbortController();
+		const waiting = again.conditions.nextWait();
+		const stream = await again.egress.stream(faux.model, transcript(), { signal: controller.signal });
+		await waiting;
+		controller.abort();
+		await expect(drain(stream)).rejects.toThrow("Request was aborted");
+		const rows = await again.ledger.rowsForStep("step-1");
+		expect(rows.map((entry) => entry.state)).toEqual(["superseded"]);
+		expect(await again.ledger.isCancelled("step-1")).toBe(true);
+		expect(hand.cancels.map((cancel) => cancel.reason)).toEqual(["superseded"]);
 	});
 });

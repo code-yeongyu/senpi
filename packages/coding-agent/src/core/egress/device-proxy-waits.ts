@@ -26,12 +26,20 @@ export interface WaitConditionSource {
 	until(waitFor: readonly WaitCondition[], signal: AbortSignal): Promise<void>;
 }
 
-/** A promise that rejects with the abort reason as soon as `signal` aborts; it never resolves. */
+const abortions = new WeakMap<AbortSignal, Promise<never>>();
+
+/**
+ * A promise that rejects with the abort reason as soon as `signal` aborts; it never resolves. One promise (and one
+ * listener) per signal, however many waits race it: an indefinite key backoff must not pile up abort listeners.
+ */
 export function abortion(signal: AbortSignal): Promise<never> {
+	const known = abortions.get(signal);
+	if (known) return known;
 	const { promise, reject } = Promise.withResolvers<never>();
 	if (signal.aborted) reject(signal.reason);
 	else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
 	promise.catch(() => {});
+	abortions.set(signal, promise);
 	return promise;
 }
 

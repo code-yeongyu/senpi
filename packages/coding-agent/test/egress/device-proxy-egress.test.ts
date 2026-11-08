@@ -38,6 +38,9 @@ describe("device-proxy egress: one admitted step on the device route (CK9; desig
 		expect(events.at(-1)?.type).toBe("done");
 		expect(start?.claim).toEqual(await r.claimSource());
 		expect(start?.request).toEqual({ context: transcript(), options: { sessionId: "affinity-1", maxTokens: 512 } });
+		const [row] = await r.ledger.rowsForStep("step-1");
+		if (!row) throw new Error("no row");
+		expect(JSON.parse(await r.ledger.readRequest(row)).options).toEqual({ sessionId: "affinity-1", maxTokens: 512 });
 		expect(start?.call).toEqual({ kind: "step", stepId: "step-1", attempt: 1 });
 		expect(start?.expectedSourceDigest).toBe("digest-head");
 		expect(start?.hooks).toBe("enabled");

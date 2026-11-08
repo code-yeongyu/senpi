@@ -11,7 +11,7 @@ async function drain(stream: AssistantMessageEventStream) {
 }
 
 describe("device-proxy egress: claims and definition variants (CK9; design 4.2, 4.6)", () => {
-	it("renews an expired placement claim and restarts the same call once the hand accepts it", async () => {
+	it("renews an expired placement claim and starts the step again under a new callId (a duplicate start is a result query)", async () => {
 		const store = await (await storeFixture()).open();
 		const faux = fauxModel();
 		faux.reply("after renewal");
@@ -20,9 +20,18 @@ describe("device-proxy egress: claims and definition variants (CK9; design 4.2, 
 		const message = await drain(await r.egress.stream(faux.model, transcript(), {}));
 		const hand = handOf(r);
 		expect(message.content).toEqual([{ type: "text", text: "after renewal" }]);
+		const [refused, served] = hand.starts.map((start) => start.callId);
+		const rows = await r.ledger.rowsForStep("step-1");
 		expect(r.claimRenewals).toEqual(["claim_expired"]);
-		expect(new Set(hand.starts.map((start) => start.callId)).size).toBe(1);
 		expect(hand.starts).toHaveLength(2);
+		expect(refused).not.toBe(served);
+		expect(hand.starts.map((start) => start.call)).toEqual([
+			{ kind: "step", stepId: "step-1", attempt: 1 },
+			{ kind: "step", stepId: "step-1", attempt: 1 },
+		]);
+		expect(rows.map((row) => [row.callId, row.state])).toEqual([[served, "ended"]]);
+		expect(hand.acks).toEqual([refused, served]);
+		expect(r.notices).toEqual([]);
 		expect(r.host.waits.map((wait) => wait.waitFor)).toEqual([[{ kind: "claim-renewed" }]]);
 	});
 
@@ -36,9 +45,15 @@ describe("device-proxy egress: claims and definition variants (CK9; design 4.2, 
 		const stream = await r.egress.stream(faux.model, transcript(), {});
 		expect(await sleeping).toBe(5_000);
 		expect(stream.hasPendingLocalWork()).toBe(true);
+		const retried = handOf(r).started(2);
 		r.clock.advance(5_000);
-		expect((await drain(stream)).content).toEqual([{ type: "text", text: "after the key check" }]);
-		expect(handOf(r).starts).toHaveLength(2);
+		await retried;
+		const second = r.clock.nextSleep(10_000);
+		const settled = drain(stream).then((message) => message.content);
+		const next = await Promise.race([settled, second.then(() => "backed off again on the stored refusal")]);
+		expect(next).toEqual([{ type: "text", text: "after the key check" }]);
+		const callIds = handOf(r).starts.map((start) => start.callId);
+		expect(new Set(callIds).size).toBe(2);
 	});
 
 	it("ends the step with an error row on a non-retryable refusal and does not retry", async () => {

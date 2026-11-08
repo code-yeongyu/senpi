@@ -1,6 +1,7 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
 import type { DeviceProxyEgress } from "../../src/core/egress/device-proxy-ports.ts";
+import { requestPrefix } from "../../src/core/egress/ledger-schema.ts";
 import { hostDouble, storeFixture } from "./device-proxy-doubles.ts";
 import { fauxModel, handOf, rig, serverRoute, tagRequest, transcript } from "./device-proxy-fixture.ts";
 
@@ -108,11 +109,12 @@ describe("device-proxy egress: re-admission replay rules (CK9; design 4.5)", () 
 		expect(handOf(r).starts).toEqual([]);
 	});
 
-	it("reissues the stored request byte-for-byte when the device lost the call", async () => {
+	it("reissues the stored request byte-for-byte when the device lost the call, and drops the lost row's request", async () => {
 		const { fixture, faux, hand, row } = await hungFirstAttempt("hang-after-events");
 		faux.reply("reissued");
+		const store = await fixture.open();
 		const again = await rig({
-			store: await fixture.open(),
+			store,
 			respond: faux.respond,
 			hands: new Map([["laptop", hand]]),
 		});
@@ -121,6 +123,7 @@ describe("device-proxy egress: re-admission replay rules (CK9; design 4.5)", () 
 		expect(hand.starts).toHaveLength(2);
 		expect(JSON.stringify(hand.starts[1]?.request)).toBe(JSON.stringify(hand.starts[0]?.request));
 		expect(hand.cancels).toEqual([{ t: "provider.call.cancel", callId: row.callId, reason: "superseded" }]);
+		expect(await store.scanDocuments(requestPrefix(row.callId))).toEqual([]);
 		expect(again.notices).toContainEqual({
 			t: "step.reset",
 			sessionId: "session-1",

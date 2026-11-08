@@ -7,6 +7,7 @@ import type { DurableStore } from "@earendil-works/pi-agent-core/conformance";
 import {
 	type AssistantMessage,
 	type AssistantMessageEvent,
+	type AssistantMessageEventStream,
 	type Model,
 	normalizeContext,
 	type TranscriptContext,
@@ -181,6 +182,7 @@ export async function rig(options: RigOptions): Promise<EgressRig> {
 			current: async () => claim,
 			renew: async (code) => {
 				claimRenewals.push(code);
+				if (claimRenewals.length > 3) throw new Error(`claim renewal storm: ${claimRenewals.length}`);
 				claim = await signClaim(claimFields(), reg);
 			},
 		},
@@ -214,4 +216,27 @@ export function handOf(r: EgressRig, deviceId = "laptop"): HandDouble {
 	const hand = r.hands.get(deviceId);
 	if (!hand) throw new Error(`no hand ${deviceId}`);
 	return hand;
+}
+
+/** Advances the manual clock one half idle window per probe sleep until the stream settles (at most ten probes). */
+export async function probeUntilSettled(
+	r: EgressRig,
+	stream: AssistantMessageEventStream,
+	firstSleep: Promise<number>,
+) {
+	const settled = (async () => {
+		for await (const _event of stream);
+		return stream.result();
+	})().then(
+		(message) => ({ message }),
+		(error: unknown) => ({ error: String(error) }),
+	);
+	let sleeping = firstSleep;
+	for (let probe = 0; probe < 10; probe++) {
+		const next = await Promise.race([sleeping, settled]);
+		if (typeof next !== "number") break;
+		sleeping = r.clock.nextSleep();
+		r.clock.advance(30_000);
+	}
+	return settled;
 }

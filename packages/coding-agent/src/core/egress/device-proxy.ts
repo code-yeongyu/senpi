@@ -3,18 +3,23 @@
  * admitted loop step it applies the re-admission replay rules of 4.5 before any route or hook, writes the W4 row with
  * the admitted request before any `start`, follows the call to a durable `ended` before the terminal event, and on a
  * lost or mismatched call supersedes the row and reissues the stored request byte-for-byte under the 4.5 hook rules.
+ * Lost-call reissues are paced (`device-proxy-lost-calls.ts`), and every reissue of a callback-stream step (after a
+ * lost call, a mismatch or an ended error) waits for the user's choice first, because its tools ran inside the stream.
  * The placement claim is carried opaquely: the hand verifies it (`verifyPlacementClaim`, CK7/CK8) and the brain reacts to
  * the refusal codes of 4.6. Every pause is tracked local work; a user abort writes `session/step.cancelled` (W14).
  */
 import type { DeviceId, EgressRouteDecision, StepRef, StreamFn } from "@earendil-works/pi-agent-core";
 import {
 	type Api,
+	type AssistantMessageEvent,
 	type AssistantMessageEventStream,
 	createAssistantMessageEventStream,
 	type Model,
 	type SimpleStreamOptions,
+	type StopReason,
 } from "@earendil-works/pi-ai";
 import { type CallOutcome, followCall } from "./device-proxy-call.ts";
+import { type LostCallPacer, lostCallPacer } from "./device-proxy-lost-calls.ts";
 import type { DeviceProxyEgress, DeviceProxyEgressDeps } from "./device-proxy-ports.ts";
 import {
 	ABORT_TEXT,
@@ -25,10 +30,13 @@ import {
 	type StoredRequest,
 } from "./device-proxy-request.ts";
 import { nextKeyBackoffMs, stepWaits } from "./device-proxy-waits.ts";
-import type { EgressCallResult, EgressCallRow } from "./ledger-schema.ts";
+import type { EgressCallRow } from "./ledger-schema.ts";
 
-const isSuccess = (result: EgressCallResult | undefined): result is Extract<EgressCallResult, { kind: "message" }> =>
-	result?.kind === "message" && result.events.at(-1)?.type === "done";
+type DoneReason = Extract<AssistantMessageEvent, { type: "done" }>["reason"];
+
+/** The `done` reason of a finished, successful stop; `undefined` (never replayed) for error, aborted or pending. */
+const doneReason = (stopReason: StopReason): DoneReason | undefined =>
+	stopReason === "error" || stopReason === "aborted" || stopReason === "pending" ? undefined : stopReason;
 
 interface StepRun {
 	readonly out: AssistantMessageEventStream;
@@ -73,10 +81,11 @@ export function createDeviceProxyEgress(deps: DeviceProxyEgressDeps): DeviceProx
 	/** 4.6: renew an expired or superseded claim, back off on an unknown registry key, and restart the same call. */
 	const startWithClaim = async (
 		run: StepRun,
-		row: EgressCallRow,
+		dispatched: EgressCallRow,
 		decision: EgressRouteDecision,
 		plan: { readonly requestJson: string; readonly hooks: "enabled" | "disabled" },
 	): Promise<CallOutcome> => {
+		let row = dispatched;
 		const deviceId = row.deviceId ?? "";
 		const expectedSourceDigest = decision.serveOwnDefinition ? undefined : route.headDigest(row.providerId);
 		const maxOutputTokens = run.options?.maxTokens;
@@ -101,6 +110,7 @@ export function createDeviceProxyEgress(deps: DeviceProxyEgressDeps): DeviceProx
 			};
 			const outcome = await followCall(callContext(run, deviceId), row, { start });
 			if (outcome.kind !== "refused") return outcome;
+			await deps.hands.channel(deviceId).ack({ t: "provider.call.ack", callId: row.callId });
 			const waitFor = [{ kind: "claim-renewed" }] as const;
 			const code = outcome.code;
 			if (code === "registry_key_unknown") {
@@ -111,6 +121,7 @@ export function createDeviceProxyEgress(deps: DeviceProxyEgressDeps): DeviceProx
 				const steer = "renewing this session's placement claim";
 				await waitsOf(run).hold({ reason: "claim-expired", steer, waitFor }, deps.claims.renew(code));
 			}
+			row = await ledger.replaceRefused(row, crypto.randomUUID());
 		}
 	};
 
@@ -134,17 +145,23 @@ export function createDeviceProxyEgress(deps: DeviceProxyEgressDeps): DeviceProx
 					}
 				: undefined;
 		const superseded = await ledger.supersede(row, variant);
+		run.live.row = superseded;
 		deps.notify({ t: "step.reset", sessionId: deps.sessionId, stepId: run.step.stepId, cause: "superseded" });
 		return superseded;
 	};
 
-	const serve = async (run: StepRun, firstRequest: StoredRequest, firstPrevious: EgressCallRow | undefined) => {
+	const serve = async (
+		run: StepRun,
+		pacer: LostCallPacer,
+		firstRequest: StoredRequest,
+		firstPrevious: EgressCallRow | undefined,
+	) => {
 		let stored = firstRequest;
 		let previous = firstPrevious;
 		let attempt = previous && previous.call.kind === "step" ? previous.call.attempt + 1 : run.step.attempt;
 		const providerId = run.model.provider;
 		for (;;) {
-			if (previous?.state === "superseded" && route.capability(providerId) === "callback-stream") {
+			if (previous !== undefined && route.capability(providerId) === "callback-stream") {
 				const waitFor = [{ kind: "user-choice", choiceId: `${run.step.stepId}:${attempt}` }] as const;
 				const steer = "re-run this step (tools may run again) or select another device";
 				await waitsOf(run).hold(
@@ -172,6 +189,7 @@ export function createDeviceProxyEgress(deps: DeviceProxyEgressDeps): DeviceProx
 			previous = await retire(run, outcome);
 			stored = { requestJson: await ledger.readRequest(previous), hooksApplied: previous.hooksApplied };
 			attempt += 1;
+			if (outcome.kind === "unknown") await pacer.beforeReissue(decision.deviceId, attempt);
 		}
 	};
 
@@ -185,13 +203,20 @@ export function createDeviceProxyEgress(deps: DeviceProxyEgressDeps): DeviceProx
 			return;
 		}
 		const latest = (await ledger.rowsForStep(stepId)).at(-1);
-		if (latest?.state === "ended" && isSuccess(latest.result)) {
-			for (const event of latest.result.events) run.out.push(event);
+		const reason = latest?.result?.kind === "message" ? doneReason(latest.result.stopReason) : undefined;
+		if (latest?.state === "ended" && reason !== undefined) {
+			const message = await ledger.readMessage(latest);
+			run.out.push({ type: "start", partial: { ...message } });
+			run.out.push({ type: "done", reason, message });
 			return;
 		}
+		const askUser = route.capability(run.model.provider) !== "callback-stream";
+		const pacer = lostCallPacer({ ...deps, stepId, waits: waitsOf(run), signal: run.signal, askUser });
 		const resumable = latest?.state === "dispatched" || latest?.state === "ended" || latest?.state === "superseded";
-		if (!latest || !resumable)
-			return serve(run, { requestJson: admittedRequestJson(context, run.options), hooksApplied: false }, undefined);
+		if (!latest || !resumable) {
+			const admitted = { requestJson: admittedRequestJson(context, run.options), hooksApplied: false };
+			return serve(run, pacer, admitted, undefined);
+		}
 		let previous = latest;
 		if (latest.state === "dispatched") {
 			const deviceId = latest.deviceId ?? "";
@@ -205,12 +230,11 @@ export function createDeviceProxyEgress(deps: DeviceProxyEgressDeps): DeviceProx
 			if (outcome.kind === "refused")
 				throw new Error(`device ${deviceId} refused the placement claim: ${outcome.message}`);
 			previous = await retire(run, outcome);
+			if (outcome.kind === "unknown" && latest.call.kind === "step")
+				await pacer.beforeReissue(deviceId, latest.call.attempt + 1);
 		}
-		return serve(
-			run,
-			{ requestJson: await ledger.readRequest(previous), hooksApplied: previous.hooksApplied },
-			previous,
-		);
+		const stored = { requestJson: await ledger.readRequest(previous), hooksApplied: previous.hooksApplied };
+		return serve(run, pacer, stored, previous);
 	};
 
 	const abortFailure = async (run: StepRun): Promise<Error> => {

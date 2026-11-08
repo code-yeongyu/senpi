@@ -1,7 +1,9 @@
 /**
  * The hand double's per-call frame log (CK9 tests): frames in seq order per `callId`, live readers that wait for new
  * frames, and the `provider.call.result` reply a hand executor gives for a call it holds (4.3: `running` with the last
- * seq, or `done` with every event and the terminal frame; `hooked` included when the hooks ran).
+ * seq, or `done` with every event and the terminal frame; `hooked` included when the hooks ran). Transport faults: a
+ * `cut` reader ends as soon as it has no frame to give (the stream closed while the call runs on), a `stall`ed reader
+ * never delivers again until `return()`; `openReaders` counts readers neither finished nor returned.
  */
 import type {
 	ProviderCallEnd,
@@ -18,6 +20,8 @@ interface CallRecord {
 	readonly wake: Set<() => void>;
 }
 
+export type ReaderFault = "none" | "cut" | "stall";
+
 const isTerminal = (frame: Frame | undefined): frame is ProviderCallEnd | ProviderCallError =>
 	frame?.t === "provider.call.end" || frame?.t === "provider.call.error";
 
@@ -27,8 +31,11 @@ export interface CallLog {
 	drop(callId: string): void;
 	append(callId: string, frame: Frame): void;
 	framesOf(callId: string): readonly Frame[];
-	read(callId: string, fromSeq: number): AsyncGenerator<Frame>;
+	read(callId: string, fromSeq: number): AsyncIterableIterator<Frame>;
 	reply(callId: string): ProviderCallResultReply;
+	/** Applies to readers opened from now on. */
+	readerFault(fault: ReaderFault): void;
+	openReaders(): number;
 }
 
 export function createCallLog(): CallLog {
@@ -40,20 +47,51 @@ export function createCallLog(): CallLog {
 		calls.set(callId, created);
 		return created;
 	};
-	async function* read(callId: string, fromSeq: number): AsyncGenerator<Frame> {
-		const call = record(callId);
+	let fault: ReaderFault = "none";
+	const open = new Set<object>();
+	function read(callId: string, fromSeq: number): AsyncIterableIterator<Frame> {
+		let call: CallRecord | undefined;
+		const mode = fault;
 		let index = 0;
-		for (;;) {
-			while (index < call.frames.length) {
-				const frame = call.frames[index++];
-				if (frame && frame.seq >= fromSeq) yield frame;
-				if (isTerminal(frame)) return;
-			}
-			const { promise, resolve } = Promise.withResolvers<void>();
-			call.wake.add(resolve);
-			await promise;
-			call.wake.delete(resolve);
-		}
+		let finished = false;
+		const closed = Promise.withResolvers<void>();
+		const finish = (): IteratorResult<Frame> => {
+			finished = true;
+			open.delete(reader);
+			closed.resolve();
+			return { done: true, value: undefined };
+		};
+		const reader: AsyncIterableIterator<Frame> = {
+			[Symbol.asyncIterator]: () => reader,
+			async next() {
+				const log = (call ??= record(callId));
+				for (;;) {
+					if (finished) return { done: true, value: undefined };
+					if (mode === "stall") {
+						await closed.promise;
+						continue;
+					}
+					const frame = log.frames[index];
+					if (frame) {
+						index += 1;
+						if (isTerminal(frame)) finished = true;
+						if (finished) open.delete(reader);
+						if (frame.seq >= fromSeq) return { done: false, value: frame };
+						continue;
+					}
+					if (mode === "cut") return finish();
+					const { promise, resolve } = Promise.withResolvers<void>();
+					log.wake.add(resolve);
+					await Promise.race([promise, closed.promise]);
+					log.wake.delete(resolve);
+				}
+			},
+			async return() {
+				return finish();
+			},
+		};
+		open.add(reader);
+		return reader;
 	}
 	return {
 		has: (callId) => calls.has(callId),
@@ -66,6 +104,10 @@ export function createCallLog(): CallLog {
 		},
 		framesOf: (callId) => calls.get(callId)?.frames ?? [],
 		read,
+		readerFault: (next) => {
+			fault = next;
+		},
+		openReaders: () => open.size,
 		reply(callId) {
 			const call = calls.get(callId);
 			if (!call) return { t: "provider.call.result.reply", callId, state: "unknown" };

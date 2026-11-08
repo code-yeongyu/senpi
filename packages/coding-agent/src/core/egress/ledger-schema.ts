@@ -1,12 +1,13 @@
 /**
  * Schema of the brain's `egress_call` ledger (row CK9; custody design 4.5, 2.3, 4.2, 15.7). One row per dialed model
- * call with its admitted request stored beside it in 96 KiB chunks, the step-cancelled marker (W14), and the
+ * call with its admitted request and, once `ended`, its assembled message stored beside it in 96 KiB chunks (never the
+ * event log: every streamed event carries the whole message so far), the step-cancelled marker (W14), and the
  * per-session device variants (`session/variants`, read by the route). Every value here is written by `ledger.ts`
  * through the host's admitted mutations; this module only names keys and converts rows to and from store values.
  */
 import type { DeviceId, ProviderId } from "@earendil-works/pi-agent-core";
 import type { StoreValue } from "@earendil-works/pi-agent-core/conformance";
-import type { AssistantMessageEvent, StopReason, Usage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, StopReason, Usage } from "@earendil-works/pi-ai";
 import { PROVIDER_CALL_ERROR_CODES, type ProviderCallErrorCode, type ProviderCallKind } from "./wire.ts";
 
 /** `dispatched` -> `ended` -> `closed` (by the step commit, W9); `superseded` and `cancelled` are final. */
@@ -14,12 +15,13 @@ export type EgressCallState = "dispatched" | "ended" | "superseded" | "cancelled
 /** `callback-stream` providers run tools inside the stream, so every reissue of their step needs a user choice. */
 export type EgressCallCapability = "callback-stream" | "stream";
 
+/** `message`: the assembled message lives in `chunks` result chunks; the row keeps only its stop reason and usage. */
 export type EgressCallResult =
 	| {
 			readonly kind: "message";
-			readonly events: readonly AssistantMessageEvent[];
-			readonly usage: Usage;
 			readonly stopReason: StopReason;
+			readonly usage: Usage;
+			readonly chunks: number;
 	  }
 	| {
 			readonly kind: "error";
@@ -28,6 +30,11 @@ export type EgressCallResult =
 			readonly retryable: boolean;
 			readonly usage?: Usage;
 	  };
+
+/** What `ended` records: the assembled message of a finished call, or the hand's refusal or failure. */
+export type EgressCallEnd =
+	| { readonly kind: "message"; readonly message: AssistantMessage }
+	| Extract<EgressCallResult, { readonly kind: "error" }>;
 
 export interface EgressCallRow {
 	readonly callId: string;
@@ -61,6 +68,8 @@ const pad = (index: number): string => String(index).padStart(6, "0");
 export const callKey = (callId: string): string => `egress_call/${enc(callId)}`;
 export const requestPrefix = (callId: string): string => `egress_call_request/${enc(callId)}/`;
 export const requestChunkKey = (callId: string, index: number): string => `${requestPrefix(callId)}${pad(index)}`;
+export const resultPrefix = (callId: string): string => `egress_call_result/${enc(callId)}/`;
+export const resultChunkKey = (callId: string, index: number): string => `${resultPrefix(callId)}${pad(index)}`;
 export const stepIndexPrefix = (stepId: string): string => `egress_step/${enc(stepId)}/`;
 export const stepIndexKey = (stepId: string, attempt: number): string => `${stepIndexPrefix(stepId)}${pad(attempt)}`;
 export const cancelledKey = (stepId: string): string => `session/step.cancelled/${enc(stepId)}`;
@@ -104,8 +113,14 @@ function decodeCall(value: StoreValue | undefined): ProviderCallKind | undefined
 function isCallResult(value: unknown): value is EgressCallResult {
 	if (typeof value !== "object" || value === null || !("kind" in value)) return false;
 	if (value.kind === "message")
-		return "events" in value && Array.isArray(value.events) && "stopReason" in value && "usage" in value;
+		return "chunks" in value && typeof value.chunks === "number" && "stopReason" in value && "usage" in value;
 	return value.kind === "error" && "code" in value && isErrorCode(value.code) && "message" in value;
+}
+
+/** The stored message text is the ledger's own JSON; the shape check guards against a truncated or foreign chunk set. */
+export function isStoredMessage(value: unknown): value is AssistantMessage {
+	if (typeof value !== "object" || value === null || !("role" in value) || value.role !== "assistant") return false;
+	return "content" in value && Array.isArray(value.content) && "stopReason" in value && "usage" in value;
 }
 
 export function encodeCallRow(row: EgressCallRow): StoreValue {

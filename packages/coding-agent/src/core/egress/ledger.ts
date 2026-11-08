@@ -2,21 +2,25 @@
  * The brain's `egress_call` ledger (row CK9; custody design 4.5). Every write is one admitted mutation supplied by the
  * host wrapper, which fences it (epoch, admission seq, instance generation) and commits it atomically; the ledger only
  * builds the writes. W4 (row + request chunks) precedes any dial, W4' (`hooked`) replaces the request and sets
- * `hooksApplied` in one mutation, `ended` is durable before the terminal event, and the step commit (W9) closes the row
- * and deletes its request chunks with `closeCallWrites` inside its own mutation.
+ * `hooksApplied` in one mutation, `ended` (row + the assembled message in result chunks) is durable before the terminal
+ * event, and the step commit (W9) closes the row and deletes its chunks with `closeCallWrites` inside its own mutation.
+ * A cancelled step (W14) is never dialed again, so W14 deletes the live row's chunks too: nothing else would.
  */
 import type { DeviceId, ProviderId } from "@earendil-works/pi-agent-core";
 import type { DurableStore, StoreWrite } from "@earendil-works/pi-agent-core/conformance";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import {
 	callKey,
 	cancelledKey,
 	decodeCallRow,
 	decodeVariant,
-	type EgressCallResult,
+	type EgressCallEnd,
 	type EgressCallRow,
 	encodeCallRow,
 	encodeVariant,
+	isStoredMessage,
 	requestChunkKey,
+	resultChunkKey,
 	splitUtf8,
 	stepIndexKey,
 	stepIndexPrefix,
@@ -42,11 +46,19 @@ export interface EgressLedger {
 	rowsForStep(stepId: string): Promise<EgressCallRow[]>;
 	/** The stored request text, byte-identical to what was admitted (or what `hooked` replaced it with). */
 	readRequest(row: EgressCallRow): Promise<string>;
+	/** The assembled message of an `ended` row whose result is a message. */
+	readMessage(row: EgressCallRow): Promise<AssistantMessage>;
 	/** W4. With `previous`, the previous row is retired (`ended` -> `closed`) and its request chunks deleted, atomically. */
 	dispatch(next: NewCallRow, requestJson: string, previous?: EgressCallRow): Promise<EgressCallRow>;
 	/** W4': the post-hook request replaces the stored one and `hooksApplied` becomes true, in one mutation. */
 	recordHooked(row: EgressCallRow, requestJson: string): Promise<EgressCallRow>;
-	end(row: EgressCallRow, result: EgressCallResult): Promise<EgressCallRow>;
+	end(row: EgressCallRow, result: EgressCallEnd): Promise<EgressCallRow>;
+	/**
+	 * The hand refused `row`'s start, so nothing ran: the row and its chunks are replaced by the same call under a new
+	 * `callId` (same attempt, same stored request) in one mutation. A duplicate `start{callId}` is a result query (4.3),
+	 * so the refused callId can never be started again.
+	 */
+	replaceRefused(row: EgressCallRow, callId: string): Promise<EgressCallRow>;
 	/** The row is superseded; a definition mismatch records the device variant in the same mutation. */
 	supersede(row: EgressCallRow, variant?: VariantMismatch): Promise<EgressCallRow>;
 	/** W14: the step is cancelled (and its live row with it); a cancelled step is never dialed again. */
@@ -58,8 +70,20 @@ export interface EgressLedger {
 
 const putRow = (row: EgressCallRow): StoreWrite => ({ op: "put", key: callKey(row.callId), data: encodeCallRow(row) });
 
-const chunkDeletes = (row: EgressCallRow): StoreWrite[] =>
-	Array.from({ length: row.requestChunks }, (_, index) => ({ op: "delete", key: requestChunkKey(row.callId, index) }));
+const deletes = (count: number, key: (index: number) => string): StoreWrite[] =>
+	Array.from({ length: count }, (_, index) => ({ op: "delete", key: key(index) }));
+
+/** Every stored chunk of `row`: its request and, once `ended` with a message, the assembled message. */
+const chunkDeletes = (row: EgressCallRow): StoreWrite[] => [
+	...deletes(row.requestChunks, (index) => requestChunkKey(row.callId, index)),
+	...deletes(row.result?.kind === "message" ? row.result.chunks : 0, (index) => resultChunkKey(row.callId, index)),
+];
+
+/** A cancelled row keeps its identity and an error result, never pointers to chunks W14 deleted. */
+function cancelledRow(row: EgressCallRow): EgressCallRow {
+	const { result, ...fields } = row;
+	return { ...fields, state: "cancelled", requestChunks: 0, ...(result?.kind === "error" ? { result } : {}) };
+}
 
 /** The W9 part the ledger owns: the step's row becomes `closed` and its request chunks are deleted (4.5 retention). */
 export function closeCallWrites(row: EgressCallRow): StoreWrite[] {
@@ -95,6 +119,12 @@ export function createEgressLedger(options: {
 	};
 	const readRow = async (callId: string): Promise<EgressCallRow | undefined> =>
 		decodeCallRow(await store.getDocument(callKey(callId)));
+	const readChunks = async (row: EgressCallRow, what: string, count: number, key: (index: number) => string) => {
+		const chunks = await Promise.all(Array.from({ length: count }, (_, index) => store.getDocument(key(index))));
+		if (!chunks.every((chunk): chunk is string => typeof chunk === "string"))
+			throw new Error(`egress_call ${row.callId}: stored ${what} is incomplete`);
+		return chunks.join("");
+	};
 
 	return {
 		async rowsForStep(stepId) {
@@ -104,12 +134,14 @@ export function createEgressLedger(options: {
 			);
 			return rows.filter((row): row is EgressCallRow => row !== undefined);
 		},
-		async readRequest(row) {
-			const keys = Array.from({ length: row.requestChunks }, (_, index) => requestChunkKey(row.callId, index));
-			const chunks = await Promise.all(keys.map((key) => store.getDocument(key)));
-			if (!chunks.every((chunk): chunk is string => typeof chunk === "string"))
-				throw new Error(`egress_call ${row.callId}: stored request is incomplete`);
-			return chunks.join("");
+		readRequest: (row) =>
+			readChunks(row, "request", row.requestChunks, (index) => requestChunkKey(row.callId, index)),
+		async readMessage(row) {
+			if (row.result?.kind !== "message") throw new Error(`egress_call ${row.callId} has no stored message`);
+			const key = (index: number) => resultChunkKey(row.callId, index);
+			const parsed: unknown = JSON.parse(await readChunks(row, "message", row.result.chunks, key));
+			if (!isStoredMessage(parsed)) throw new Error(`egress_call ${row.callId}: stored message is malformed`);
+			return parsed;
 		},
 		async dispatch(next, requestJson, previous) {
 			const { stepId, attempt } = stepOf(next);
@@ -130,9 +162,34 @@ export function createEgressLedger(options: {
 			return updated.row;
 		},
 		async end(row, result) {
-			const ended: EgressCallRow = { ...row, state: "ended", result };
-			await mutate(async () => [putRow(ended)]);
+			if (result.kind === "error") {
+				const failed: EgressCallRow = { ...row, state: "ended", result };
+				await mutate(async () => [putRow(failed)]);
+				return failed;
+			}
+			const chunks = splitUtf8(JSON.stringify(result.message));
+			const { stopReason, usage } = result.message;
+			const ended: EgressCallRow = {
+				...row,
+				state: "ended",
+				result: { kind: "message", stopReason, usage, chunks: chunks.length },
+			};
+			const writes: StoreWrite[] = chunks.map((data, index) => ({
+				op: "put",
+				key: resultChunkKey(row.callId, index),
+				data,
+			}));
+			await mutate(async () => [...writes, putRow(ended)]);
 			return ended;
+		},
+		async replaceRefused(row, callId) {
+			const { stepId, attempt } = stepOf(row);
+			const requestJson = await readChunks(row, "request", row.requestChunks, (i) => requestChunkKey(row.callId, i));
+			const created = withRequest({ ...row, callId, state: "dispatched", requestChunks: 0 }, requestJson);
+			const index: StoreWrite = { op: "put", key: stepIndexKey(stepId, attempt), data: callId };
+			const dropped: StoreWrite = { op: "delete", key: callKey(row.callId) };
+			await mutate(async () => [dropped, ...chunkDeletes(row), ...created.writes, index]);
+			return created.row;
 		},
 		async supersede(row, variant) {
 			const superseded: EgressCallRow = { ...row, state: "superseded" };
@@ -142,7 +199,7 @@ export function createEgressLedger(options: {
 		async cancelStep(stepId, row) {
 			const live =
 				row && (row.state === "dispatched" || row.state === "ended")
-					? [putRow({ ...row, state: "cancelled" })]
+					? [putRow(cancelledRow(row)), ...chunkDeletes(row)]
 					: [];
 			await mutate(async () => [{ op: "put", key: cancelledKey(stepId), data: stepId }, ...live]);
 		},
