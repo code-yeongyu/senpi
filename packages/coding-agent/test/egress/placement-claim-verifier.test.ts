@@ -19,11 +19,33 @@ import {
 	knownRoster,
 	MONO,
 	NOW,
+	type Registry,
 	registry,
 	signBytes,
 	signClaim,
 	trusted,
 } from "./claim-fixture.ts";
+import { p256Signer, signedEntry } from "./signed-entry.ts";
+
+async function custodyKey(): Promise<Registry> {
+	const signer = await p256Signer();
+	const kemPk = (await p256Signer()).spki;
+	const arn = (n: number) => `arn:aws:kms:us-east-1:111122223333:key/00000000-0000-4000-8000-00000000010${n}`;
+	const fields = {
+		kind: "custody",
+		accountId: ACCOUNT,
+		generation: 1,
+		kemKeyId: "kem-1",
+		kemPk,
+		sigKeyId: "cust-1",
+		kmsKeyArns: [arn(1), arn(2)],
+		templateVersion: 1,
+		role: "current",
+		createdAt: 1,
+	} as const;
+	const entry = await signedEntry({ ...fields, kmsKeyArns: [...fields.kmsKeyArns] }, signer);
+	return { entry, signer };
+}
 
 const floorAt =
 	(epoch: number): (() => EpochFloor) =>
@@ -181,6 +203,29 @@ describe("verifyPlacementClaim: single failures (custody design 4.6, 15.15, 15.1
 		expect(
 			await verifyPlacementClaim(sleeper, { ...trust, roster: longRoster }, { now: issuedAt, nowMono: MONO }),
 		).toBe("malformed");
+	});
+});
+
+describe("verifyPlacementClaim: key role and bad entries (custody design 3.1, 15.11, C.P1 stage 3)", () => {
+	it("only bad registry entries of the claim's generation make the claim invalid, not the retryable unknown", async () => {
+		const { reg, trust } = await trusted();
+		const broken = { ...reg.entry, createdAt: reg.entry.createdAt + 1 };
+		const signed = await signClaim(claimFields(), reg);
+		expect(await verifyPlacementClaim(signed, { ...trust, roster: knownRoster(broken) }, AT)).toBe("invalid");
+	});
+
+	it("a checked custody key of the same generation never verifies a placement claim", async () => {
+		const custody = await custodyKey();
+		const { reg, trust } = await trusted();
+		const signed = await signClaim(claimFields(), custody);
+		const custodyOnly = { ...trust, records: await checked(custody.entry), roster: knownRoster(custody.entry) };
+		const both = {
+			...trust,
+			records: await checked(reg.entry, custody.entry),
+			roster: knownRoster(reg.entry, custody.entry),
+		};
+		expect(await verifyPlacementClaim(signed, custodyOnly, AT)).toBe("unknown");
+		expect(await verifyPlacementClaim(signed, both, AT)).toBe("invalid");
 	});
 });
 

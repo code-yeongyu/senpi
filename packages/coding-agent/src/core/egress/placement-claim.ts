@@ -6,6 +6,10 @@
  * when `verifyPlacementClaim` answers `valid`. The verdict is total and ordered (C.P1): closed envelope, roster
  * freshness, key selection and local trust, signature/account/epoch/placement, lifetime bounds, expiry. Every input
  * is untrusted; nothing here throws on bad input, and the hand records a new epoch floor only after `valid`.
+ *
+ * C.P1 checks local supersession before the signature, so a forged claim under a superseded generation also answers
+ * `superseded`. The hand executor (CK8) must audit-log every `superseded` verdict with `sig.keyId` and
+ * `claim.placementId`, as it does for `malformed`, so such a probe stays visible.
  */
 import { canonicalJson } from "@earendil-works/pi-agent-core";
 import { verifyEcdsaP256Sha256 } from "./ecdsa-p256.ts";

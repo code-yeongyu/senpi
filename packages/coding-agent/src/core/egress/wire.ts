@@ -20,8 +20,10 @@ import type { ServiceKeyEntry } from "./roster-entries.ts";
 
 /**
  * The stream options a brain may send a hand: serializable request shaping only. Never secrets or headers, callbacks,
- * signals or live objects, host-local values (`env`, `cwd`; the start message carries the session cwd) or the
- * loop-only `commitStep` (4.3, 2.3 options hygiene).
+ * signals or live objects, or the loop-only `commitStep` (4.3, 2.3 options hygiene). `env` stays hand-local because
+ * provider adapters resolve the model `baseUrl` from it: a brain-supplied `env` could redirect the hand's dial, with
+ * the hand's own API key, to a gateway of the brain's choosing. `cwd` stays hand-local because the start message's
+ * `cwd` is the one source the hand interprets.
  */
 export const WIRE_STREAM_OPTION_KEYS = [
 	"abortServerSideFallback",
