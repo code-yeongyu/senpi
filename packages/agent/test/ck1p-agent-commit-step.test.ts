@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import { Agent, type StepCommit, type StreamFn } from "../src/index.ts";
 import { scripted, stopStep, type Step } from "./utils/scripted-step-loop.ts";
 
+// Microtask ticks from the assistant message_end to turn_end with commitStep unset (measured at CK1p).
+const AGENT_LAYER_TICKS = 5;
+
 const asStreamFn = (steps: readonly Step[]): StreamFn => scripted(steps) as unknown as StreamFn;
 
 function recordingAgent(steps: readonly Step[], commitStep?: (step: StepCommit) => Promise<void>) {
@@ -85,5 +88,26 @@ describe("CK1p: Agent forwards AgentOptions.commitStep to every loop run (custod
 
 		expect(commits).toBe(1);
 		expect(set.trace).toEqual(unset.trace);
+	});
+	it("adds no await at the Agent layer when commitStep is unset (z1 microtask pin, Agent level)", async () => {
+		const { agent } = recordingAgent([stopStep]);
+		let ticks = 0;
+		let running = false;
+		const tick = () => {
+			if (!running || ticks >= 10_000) return;
+			ticks++;
+			queueMicrotask(tick);
+		};
+		agent.subscribe((event) => {
+			if (event.type === "message_end" && event.message.role === "assistant") {
+				running = true;
+				queueMicrotask(tick);
+			}
+			if (event.type === "turn_end") running = false;
+		});
+
+		await agent.prompt("go");
+
+		expect(ticks).toBe(AGENT_LAYER_TICKS);
 	});
 });
