@@ -1,5 +1,6 @@
 import type { SessionEntry } from "../../../session-manager.ts";
 import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "../../types.ts";
+import { freshEscapeResidueRetry } from "./escape-residue.ts";
 import { TOOL_NAMES } from "./family.ts";
 import { parseAskUserAnswerFrame } from "./format.ts";
 import { ASK_USER_SETTLEMENT_ENTRY, emitAskUserClosed } from "./notify.ts";
@@ -169,7 +170,7 @@ export async function resumeDanglingQuestion(
 			ctx,
 			request,
 			ctx.signal,
-			{ timedOut: false, unavailable: false, escapeResidueRefused: false },
+			{ timedOut: false, unavailable: false, escapeResidue: freshEscapeResidueRetry() },
 			dangling.variant,
 			{
 				resuming: true,
