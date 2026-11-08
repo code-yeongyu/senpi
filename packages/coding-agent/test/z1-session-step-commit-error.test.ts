@@ -22,6 +22,8 @@ describe("CK1s hosted step-commit containment", () => {
 		const response = heldResponse(fauxAssistantMessage("uncommitted"));
 		driver.setResponses([response.response, fauxAssistantMessage("must not dial")]);
 		driver.inject.nextCommit("reject");
+		// C.P4 cond 6: the latch alone schedules the rebuild; holding its store read keeps the old run observable.
+		driver.inject.slowRebuildStoreRead(1);
 		const old = driver.session;
 		const observed: string[] = [];
 		let mirrorWritesAtLatch: number | undefined;
@@ -96,6 +98,8 @@ describe("CK1s hosted step-commit containment", () => {
 		drivers.push(driver);
 		driver.setResponses([fauxAssistantMessage("uncommitted"), fauxAssistantMessage("must not dial")]);
 		driver.inject.nextCommit("reject");
+		// C.P4 cond 6: the latch alone schedules the rebuild; holding its store read keeps the old run observable.
+		driver.inject.slowRebuildStoreRead(1);
 		await driver.session.prompt("input").then(() => {
 			settled = true;
 		});
@@ -144,6 +148,8 @@ describe("CK1s hosted step-commit containment", () => {
 		old.setAutoCompactionEnabled(true);
 		response.release();
 		await reached;
+		// C.P4 cond 6: the rebuild's store read starts at the latch, so let the old run (and its overflow compaction) finish.
+		await old.waitForIdle();
 		await driver.settleAux();
 		expect(driver.latched).toBe(true);
 		expect(driver.counters.admissions).toBe(3);
@@ -345,6 +351,8 @@ describe("CK1s hosted step-commit containment", () => {
 			drivers.push(driver);
 			driver.setResponses([fauxAssistantMessage("uncommitted"), fauxAssistantMessage("recovered")]);
 			driver.inject.nextCommit("reject");
+			// C.P4 cond 6: the latch alone schedules the rebuild; holding its store read keeps the latched window observable.
+			driver.inject.slowRebuildStoreRead(1);
 			const old = driver.session;
 			const rejected = Promise.withResolvers<void>();
 			const unsubscribe = old.agent.subscribe((event) => {
@@ -365,6 +373,7 @@ describe("CK1s hosted step-commit containment", () => {
 				expect(driver.counters.providerCalls).toBe(1);
 			} finally {
 				handler.release();
+				driver.clock.advance(1);
 				await prompt;
 				unsubscribe();
 			}
