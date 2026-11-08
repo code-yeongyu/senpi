@@ -36,7 +36,7 @@ export interface PinnedCustodyInfra {
 	readonly keyFactsVerifierKeys: readonly VerifierKeyPin[];
 }
 
-export const PINNED_CUSTODY_INFRA: PinnedCustodyInfra = {
+export const PINNED_CUSTODY_INFRA = {
 	custodyAccountIds: [],
 	arnNamespace: "arn:aws:kms:us-east-1:",
 	roleNames: {
@@ -49,7 +49,7 @@ export const PINNED_CUSTODY_INFRA: PinnedCustodyInfra = {
 	templates: { 1: KEY_POLICY_TEMPLATE_V1 },
 	keyFactsEndpoint: undefined,
 	keyFactsVerifierKeys: [],
-};
+} as const satisfies Readonly<PinnedCustodyInfra>;
 
 export type ServiceKeyCheckReason =
 	| "ok"
@@ -74,15 +74,21 @@ export interface ServiceKeyCheck {
 	readonly notice?: string;
 }
 
-const SERVICE_KEY_NOTICES: Partial<Record<ServiceKeyCheckReason, string>> = {
+const SERVICE_KEY_NOTICES = {
 	"template-unknown": "update omo to trust the new custody key",
 	"facts-stale": "the custody key facts are out of date; check this device's clock",
 	"principal-id": "the custody key's access policy no longer matches; cloud custody for this key is unavailable",
-};
+} as const satisfies Readonly<Partial<Record<ServiceKeyCheckReason, string>>>;
 
 const KMS_KEY_ARN =
 	/^(arn:[a-z0-9-]+:kms:[a-z0-9-]+:)(\d{12}):key\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const ROLE_ORDER: readonly CustodyRole[] = ["runtime", "registrySigner", "provisioning", "reader", "breakglass"];
+const ROLE_ORDER = [
+	"runtime",
+	"registrySigner",
+	"provisioning",
+	"reader",
+	"breakglass",
+] as const satisfies readonly CustodyRole[];
 
 export function roleArn(accountId: string, roleName: string): string {
 	return `arn:aws:iam::${accountId}:role/${roleName}`;
@@ -194,7 +200,8 @@ export interface ServiceKeyCheckOptions {
 }
 
 function outcome(result: ServiceKeyCheck["result"], reason: ServiceKeyCheckReason): ServiceKeyCheck {
-	const notice = SERVICE_KEY_NOTICES[reason];
+	const notices: Readonly<Partial<Record<ServiceKeyCheckReason, string>>> = SERVICE_KEY_NOTICES;
+	const notice = notices[reason];
 	return notice === undefined ? { result, reason } : { result, reason, notice };
 }
 
@@ -204,7 +211,7 @@ export function checkServiceKeyDetailed(
 	facts: ReadonlyMap<string, KeyFactsAnswer>,
 	options: ServiceKeyCheckOptions,
 ): ServiceKeyCheck {
-	const pinned = options.pinned ?? PINNED_CUSTODY_INFRA;
+	const pinned: PinnedCustodyInfra = options.pinned ?? PINNED_CUSTODY_INFRA;
 	const template = pinned.templates[entry.templateVersion];
 	if (!template) return outcome("unknown", "template-unknown");
 	const expected = expectedKeys(entry);
