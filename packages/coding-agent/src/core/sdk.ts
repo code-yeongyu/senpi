@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { bindPermissionDecision } from "./permission-mode.ts";
 import {
 	Agent,
+	type AgentOptions,
 	type AgentMessage,
 	createInternalAgentChannel,
 	setDefaultStreamFn,
@@ -76,6 +77,11 @@ import type { ToolRuntimeKind } from "../cli/tool-runtime.ts";
 import { type ExecutionPipelineWitnessSink, resolveWitnessSink } from "./execution/pipeline-witness-sink.ts";
 
 export interface CreateAgentSessionOptions {
+	/**
+	 * Makes each finished model step durable before the loop acts on it (hosted custody, C6 C.P3). Passed to the Agent
+	 * this function builds; fused and split-local sessions leave it unset.
+	 */
+	commitStep?: AgentOptions["commitStep"];
 	/**
 	 * Where this session's execution-pipeline receipts go (S18b part 3): a sink outside the session, never a session entry.
 	 * Unset: the file `SENPI_EXECUTION_PIPELINE_WITNESS` names (one JSON line per call), else no receipts.
@@ -505,6 +511,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	agent = new Agent({
 		internalChannel,
 		onExecutionPipeline: resolveWitnessSink(options.executionPipelineWitness),
+		...(options.commitStep ? { commitStep: options.commitStep } : {}),
 		initialState: {
 			systemPrompt: "",
 			model,
