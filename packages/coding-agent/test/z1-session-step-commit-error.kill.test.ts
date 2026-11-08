@@ -4,21 +4,8 @@ import { fauxAssistantMessage } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { isStepCommitError, StepCommitError } from "../../agent/src/step-commit.ts";
 import { createReferenceDriver, type ReferenceDriver } from "./egress/harness/reference-driver.ts";
-import { constructedSecondCopyErrors } from "./fixtures/step-commit-error-second-copy/index.ts";
+import { SecondCopyStepCommitError } from "./fixtures/step-commit-error-second-copy/index.ts";
 import { getMessageText } from "./suite/harness.ts";
-
-// Only the commit-error constructor comes from a second package copy. Agent,
-// AgentSession, agent-loop, the classifier, and the reference driver remain real.
-vi.mock("@earendil-works/pi-agent-core", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("@earendil-works/pi-agent-core")>();
-	const secondCopy = await import("./fixtures/step-commit-error-second-copy/index.ts");
-	// A constructor returning a foreign-copy object keeps instanceof false even
-	// for a caller holding this exported constructor, not just the direct import.
-	function CommitErrorFactory(...args: ConstructorParameters<typeof actual.StepCommitError>) {
-		return new secondCopy.SecondCopyStepCommitError(args[0], args[1]);
-	}
-	return { ...actual, StepCommitError: CommitErrorFactory };
-});
 
 // senpi#5841: these are commit/fence fault cases, not a claim of process-KILL coverage.
 // The CK22 API has no restart-from-store or generation-bearing ToolHost yet.
@@ -28,19 +15,20 @@ describe("CK1s commit fault recovery", () => {
 		for (const driver of drivers.splice(0).reverse()) driver.cleanup();
 		vi.useRealTimers();
 		vi.restoreAllMocks();
-		constructedSecondCopyErrors.length = 0;
 	});
 
-	it("S8d contains a second-copy commit error even though instanceof is false", async () => {
+	it("S8d classifies an injected second-copy commit error by brand and contains stale effects", async () => {
 		const driver = await createReferenceDriver();
 		drivers.push(driver);
 		driver.setResponses([fauxAssistantMessage("uncommitted"), fauxAssistantMessage("must not dial")]);
-		driver.inject.nextCommit("reject");
-		await driver.session.prompt("input");
-		const error = constructedSecondCopyErrors.find((candidate) => candidate.code === "storage_unavailable");
-		expect(error).toBeDefined();
+		const error = new SecondCopyStepCommitError("foreign-step", "fenced");
 		expect(error instanceof StepCommitError).toBe(false);
 		expect(isStepCommitError(error)).toBe(true);
+		driver.inject.nextCommitError(error);
+		await driver.session.prompt("input");
+		expect(driver.classifications).toEqual([{ stepId: "step-1", error, kind: "step-commit-error", code: "fenced" }]);
+		expect(driver.classifications[0]?.error).toBe(error);
+		expect(driver.latchHistory).toMatchObject([{ stepId: "step-1", code: "fenced", generationAfter: 2 }]);
 		await driver.session.prompt("stale retry");
 		// streamAssistantResponse synthesizes a terminal error after the refused
 		// admission; its commit is refused separately (decision C).
@@ -182,6 +170,15 @@ describe("CK1s commit fault recovery", () => {
 			expect(driver.rows.filter((row) => row.kind === "step").map((row) => getMessageText(row.message))).toEqual([
 				lost ? "redial" : "first",
 			]);
+			// LOW-2: the next real session request must use exactly the resolved
+			// answer, not the lost in-memory attempt or a duplicated durable answer.
+			driver.setResponses([fauxAssistantMessage("next answer")]);
+			await driver.prompt("next question");
+			expect(driver.callLog().at(-1)?.context.messages.map(getMessageText)).toEqual([
+				"input",
+				lost ? "redial" : "first",
+				"next question",
+			]);
 		},
 	);
 
@@ -194,21 +191,47 @@ describe("CK1s commit fault recovery", () => {
 		expect(driver.latchHistory.map((entry) => entry.code)).toEqual(["already_committed"]);
 		expect(driver.session.messages.map(getMessageText)).toEqual(["input", "other admission"]);
 		expect(driver.counters.providerCalls).toBe(1);
+		driver.setResponses([fauxAssistantMessage("next answer")]);
+		await driver.prompt("next question");
+		expect(driver.callLog().at(-1)?.context.messages.map(getMessageText)).toEqual([
+			"input",
+			"other admission",
+			"next question",
+		]);
 	});
 
-	it("S12 cancelled-step recovery commits one abort and never redials", async () => {
-		const driver = await createReferenceDriver();
-		drivers.push(driver);
-		driver.setResponses([fauxAssistantMessage("uncommitted"), fauxAssistantMessage("must not dial")]);
-		driver.inject.cancelNextStep();
-		driver.inject.nextCommit("reject");
-		await driver.prompt("input");
-		const steps = driver.rows.filter((row) => row.kind === "step");
-		expect(driver.rebuilds).toBe(1);
-		expect(driver.counters.providerCalls).toBe(1);
-		expect(steps).toHaveLength(1);
-		expect(steps[0]?.message).toMatchObject({ role: "assistant", stopReason: "aborted", content: [] });
-	});
+	it.each(["pre-cancelled", "stop-while-latched"] as const)(
+		"S12 %s commits one abort, never redials, and removes the failed answer from the next session request",
+		async (cancellation) => {
+			const driver = await createReferenceDriver();
+			drivers.push(driver);
+			driver.setResponses([fauxAssistantMessage("uncommitted"), fauxAssistantMessage("must not dial")]);
+			if (cancellation === "pre-cancelled") driver.inject.cancelNextStep();
+			driver.inject.nextCommit("reject");
+			driver.inject.slowRebuildStoreRead(1);
+			const reached = driver.rebuildStoreReadStarted();
+			const prompt = driver.prompt("input");
+			await reached;
+			expect(driver.latched).toBe(true);
+			expect(driver.counters.providerCalls).toBe(1);
+			if (cancellation === "stop-while-latched") {
+				expect(driver.stop()).toBe("cancelled-latched-step");
+				expect(driver.stops).toEqual([{ stepId: "step-1", while: "latched" }]);
+			}
+			driver.clock.advance(1);
+			await prompt;
+			const steps = driver.rows.filter((row) => row.kind === "step");
+			expect(driver.rebuilds).toBe(1);
+			expect(driver.counters.providerCalls).toBe(1);
+			expect(steps).toHaveLength(1);
+			expect(steps[0]?.message).toMatchObject({ role: "assistant", stopReason: "aborted", content: [] });
+			expect(driver.session.messages.map(getMessageText)).toEqual(["input", ""]);
+			expect(driver.stop()).toBe("nothing-latched");
+			driver.setResponses([fauxAssistantMessage("next answer")]);
+			await driver.prompt("next question");
+			expect(driver.callLog().at(-1)?.context.messages.map(getMessageText)).toEqual(["input", "next question"]);
+		},
+	);
 
 	it.each([HOSTED_REBUILD_DEADLINE_MS - 1, HOSTED_REBUILD_DEADLINE_MS + 1])(
 		"S11 store-read boundary at %i ms preserves containment until rebuild",
@@ -225,9 +248,9 @@ describe("CK1s commit fault recovery", () => {
 			const model = old.model;
 			if (!model) throw new Error("The faux session has no model");
 			expect(driver.latched).toBe(true);
-			expect(() =>
+			await expect(
 				old.agent.streamFunction(model, normalizeContext({ messages: [] }), { streamKind: "main" }),
-			).toThrowError(/generation/);
+			).rejects.toThrowError(/generation/);
 			expect(driver.counters.providerCalls).toBe(1);
 			driver.clock.advance(delay);
 			await prompt;

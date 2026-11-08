@@ -299,6 +299,8 @@ import { shouldWarnHighReasoning } from "./high-reasoning-warning.ts";
 import { customTurnOrigin, type InputOrigin, inputAttributionOf, inputOriginOf } from "./input-origin.ts";
 import {
 	type ConnectionOrigin,
+	copyInputTurnMark,
+	hasInputTurnMark,
 	inputTurnMark,
 	markInputTurnOrigin,
 	noteRunStart,
@@ -3695,7 +3697,7 @@ export class AgentSession {
 				this._requestSelectedModel = undefined;
 				noteRunStart(this.sessionManager);
 			}
-			if (event.type === "message_start" && event.message.role === "user")
+			if (event.type === "message_start" && (event.message.role === "user" || hasInputTurnMark(event.message)))
 				noteUserMessageStart(this.sessionManager, event.message);
 			// Bind now: the core can start another run before this event's asynchronous delivery.
 			const bound =
@@ -7436,6 +7438,7 @@ export class AgentSession {
 	): Promise<void> {
 		// Normalize the legacy untyped content boundary before persisting a retry payload.
 		const deliveryMessage = { ...message, content: message.content ?? [] };
+		copyInputTurnMark(message, deliveryMessage);
 		if (this._sizesOnlyStartup && options?.triggerTurn === true) {
 			// Size inspection makes no model call (#3483) and owes no work: no ticket, custody record or session file.
 			this._pendingNextTurnMessages.push({ role: "custom", ...deliveryMessage, timestamp: Date.now() } satisfies CustomMessage);
@@ -7661,6 +7664,8 @@ export class AgentSession {
 				: message.details,
 			timestamp: Date.now(),
 		} satisfies CustomMessage;
+		// A delivery that found a run already streaming becomes a steer or follow-up: it keeps the origin it was admitted with.
+		copyInputTurnMark(message, appMessage);
 		if (this._sizesOnlyStartup && options?.triggerTurn === true) {
 			// Size inspection makes no model call (#3483): keep the message for a turn that never starts.
 			this._pendingNextTurnMessages.push(appMessage);

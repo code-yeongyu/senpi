@@ -226,6 +226,8 @@ export const RPC_METHOD_CLASS = {
 	pause_for_run: "drive",
 	resume_for_run: "drive",
 	wake: "drive",
+	// the engine writes its own fixed delivery entry: no role=user, input event, command or template expansion (senpi#6233)
+	admit_external_message: "drive",
 	release_tool_barrier: "drive",
 	request_self_settle: "drive",
 	"eval_cells.stop": "drive",
