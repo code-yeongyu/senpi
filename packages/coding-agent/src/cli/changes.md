@@ -1,3 +1,42 @@
+## 2026-11-07 - The headless project_trust context lives apart from the startup UI (senpi#6185)
+
+### What changed
+
+- `packages/coding-agent/src/cli/project-trust-headless.ts`: new. `createHeadlessProjectTrustContext`: the `project_trust` handler context that never asks (no answer to select/confirm/input; notices to stderr outside the TUI), with no UI import.
+- `packages/coding-agent/src/cli/project-trust.ts`: `createProjectTrustContext` builds on it and adds the startup selectors only for an interactive run with a UI; behavior is unchanged.
+
+### Why
+
+- `modes/rpc/project-workspace-commands.ts` (#6177) imported `createProjectTrustContext`, and through it `cli/startup-ui.ts`, `core/keybindings.ts` and `core/package-manager.ts`, putting their synchronous fs calls and `spawnSync` on the RPC session path.
+
+### Why an extension could not handle it
+
+- The context is what the core hands every `project_trust` handler; the import graph of the RPC session path is core.
+
+### Expected merge conflict zones
+
+- LOW: `createProjectTrustContext` in `cli/project-trust.ts`.
+
+## 2026-11-05 - Startup admission for a held session; held deliveries defer (senpi#5756)
+
+### What changed
+
+- `packages/coding-agent/src/cli/session-opening.ts`: new `admitStartupSession(sessionFile, io)` returning `open`, `cancelled` or `refused`, and `SESSION_HELD_EXIT_CODE`. It reuses `checkSessionHolders`, `describeSessionHolders`, `takeOverRefusal` and `stopSessionHolders`. Without a person to ask, or for a holder that cannot be stopped safely, it refuses and names the holder; otherwise it asks, stops the holder on take-over, and refuses if the session is still (or newly) held. A failed lookup stays advisory. `prepareSessionOpening` is unchanged.
+- `packages/coding-agent/src/cli/schedule-delivery.ts`: `DeliveryResult` failures may carry `sessionHeld: true`; `runDeliveryProcess` reports it for the launch's `sessionHeldExitCode`, which only `sessionResumeDelivery` sets (`SESSION_HELD_EXIT_CODE`). `--exec` hooks are unchanged.
+- `packages/coding-agent/src/cli/schedule-runner.ts`: `deliverClaimed` treats a `sessionHeld` result as a deferral: it undoes a recurring job's re-arm, puts the claimed generation back in `pending/` and returns a `deferred` event, so no `failed/` record is written.
+
+### Why
+
+senpi#5756: opening a held session at startup must never start a second writer. A session opened between the runner's `deferWhileSessionOpen` check and the child's admission would otherwise fail that occurrence for good.
+
+### Why an extension could not handle it
+
+It runs before the runtime and its extensions exist, and the runner owns the occurrence records.
+
+### Expected merge conflict zones
+
+- LOW: the import block of `session-opening.ts`, `DeliveryResult`/`ProcessLaunch` and the `close` handler in `schedule-delivery.ts`, the result handling in `deliverClaimed`.
+
 ## 2026-11-05 - --hand and --headless engine flags (senpi#5840)
 
 ### What changed

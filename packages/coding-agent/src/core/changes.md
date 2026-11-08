@@ -1,3 +1,154 @@
+## 2026-11-07 - The trust-requiring resource scan answers asynchronously too (senpi#6185)
+
+### What changed
+
+- `packages/coding-agent/src/core/trust-requiring-resources.ts`: new. `hasTrustRequiringProjectResources` and `projectAgentsSkillDirs` move here from `trust-manager.ts` unchanged in behavior, written once as a probe generator with a synchronous driver (the existing exports) and an asynchronous one (`hasTrustRequiringProjectResourcesAsync`, `node:fs/promises`).
+- `packages/coding-agent/src/core/trust-manager.ts`: the scan and its helpers leave; both exports are re-exported from the new module, so every importer is unchanged.
+
+### Why
+
+- The RPC workspace verbs (#6177) called the synchronous scan on the RPC session path, which `test/suite/no-sync-in-session-path.test.ts` forbids (its baseline never grows); main was red on it.
+
+### Why an extension could not handle it
+
+- The scan decides whether a session asks for a trust decision at all, before any project extension may load.
+
+### Expected merge conflict zones
+
+- MEDIUM: the removed block of `trust-manager.ts` (constants after the `TrustFile` type, `isHomeOrAboveDir` through `hasTrustRequiringProjectResources`); upstream edits to those helpers now land in `trust-requiring-resources.ts`.
+
+## 2026-11-07 - SettingsManager reads the project file regardless of trust and writes one key (senpi#6176)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts`: `projectTrustLocked` create option + `isProjectTrustLocked()`; `readProjectSettingsFile(path)` (parsed and migrated, never trust-gated, no write); `setProjectSetting(key, value)` through `updateProjectSettings` (trusted-only, refuses a file that failed to load instead of skipping the write silently), awaiting the write queue and throwing the project-scope error that write recorded.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `runInProjectTrustChangeOrder(task)` runs a trust change on the same chain as the Full access syncs, so an RPC trust decision and a preset change never read each other's saved value mid-change.
+
+### Why
+
+- The RPC workspace verbs (senpi#6176) need the project file as stored and a single-key write on the same locked merge-on-write path the terminal uses.
+
+### Why an extension could not handle it
+
+- Project settings storage, its lock and its load-error state are private to `SettingsManager`.
+
+### Expected merge conflict zones
+
+- LOW: `SettingsManagerCreateOptions`, next to `getProjectSettings` and `isProjectTrusted`.
+
+## 2026-11-07 - agent_start and agent_settled carry no turnId again (senpi#6157)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the session's `agent_start` carries `runId` only and `agent_settled` carries no field of its own, as before senpi#6151; the two `AgentSessionEvent` variants drop `turnId`.
+
+### Why
+
+- senpi#6157: the stamped records reached the legacy wire and the structured lane, which #4272 T5 and T6 forbid. The one turn id a legacy client reads is the started prompt reply's (senpi#5999, senpi#6135). Main was red on both tests and on EQ E29.
+
+### Why an extension could not handle it
+
+- Both events are emitted by the session itself.
+
+### Expected merge conflict zones
+
+- LOW: the `agent_start` binding in `_handleAgentEvent`, the `_emit({ type: "agent_settled" })` line in `_emitAgentSettled`, the two event variants in `AgentSessionEvent`.
+
+## 2026-11-07 - agent_start and agent_settled carry turnId (senpi#6151)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the session's `agent_start` carries `turnId` (`currentTurnId`, the `expectedTurnId` a steer names) beside `runId`, and `agent_settled` carries the `turnId` of the turn that settled, read in `_emitAgentSettled` before the run goes inactive.
+
+### Why
+
+- oh-my-openagent#12719: a remote watch must report a turn end exactly once across reconnects and resnapshots, and the settle names no turn to deduplicate by.
+
+### Why an extension could not handle it
+
+- The turn id is the session's admission epoch, and both events are emitted by the session itself.
+
+### Expected merge conflict zones
+
+- LOW: the `agent_start` binding in `_handleAgentEvent`, the `_emit({ type: "agent_settled" })` line and the start of `_emitAgentSettled`; the two event variants in `AgentSessionEvent`.
+
+## 2026-11-05 - Held-session admission helpers (senpi#5756)
+
+### What changed
+
+- `packages/coding-agent/src/core/foreign-session-holders.ts`: `takeOverRefusal(holders, retry = "then /resume again")` takes the retry hint, so the startup refusal says to open the session again. `/resume` output is unchanged.
+- `packages/coding-agent/src/core/session-manager.ts`: new `SessionManager.recentSessionFile(cwd, sessionDir)`, the file `continueRecent` would open, found without loading it; `continueRecent` uses it.
+
+### Why
+
+The startup refusal reuses the `/resume` refusal reasons, and `--continue` must admit its file before loading it, since a load can migrate and rewrite the file.
+
+### Why an extension could not handle it
+
+Core helpers shared by `/resume`, startup and session loading.
+
+### Expected merge conflict zones
+
+- LOW: the `takeOverRefusal` signature; `SessionManager.continueRecent` and the new static next to it.
+
+## 2026-11-05 - The S07 importer writes the shared record-log layout (S21b-a, senpi#5955)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-import/jsonl-import.ts`: it reads sessions through `readSessionState` and writes through the shared layout. The ledger now carries `prefixDigest`, a hash chain over the file's lines through the high-water mark. A file whose lines through that mark are byte-for-byte unchanged and that only grew past it is appended as records beside whatever co-bound writers appended meanwhile, and the outcome is `extended` (where it used to be `adopted` or `forked`); any other change rewrites the session from the file, with S07's outcomes and divergence as before. A stored divergence is parsed into its typed shape.
+- `recordProjectedTail` takes every projected append not yet recorded, in file order, and extends the chain through all of them; `packages/coding-agent/src/core/session-store/durable-binding.ts` keeps those appends until a record that carries them lands, so a burst of appends (a message and its tool result) recorded at once keeps the chain instead of dropping the digest.
+
+### Why
+
+The importer wrote the same manifest layout directly and raced a co-bound appender the same way (an extending import dropped an entry appended meanwhile).
+
+### Why an extension could not handle it
+
+The importer is the durable store's own JSONL writer.
+
+### Expected merge conflict zones
+
+`importFile`'s write planning and `getSession`/`recordProjection`/`recordProjectedTail` in `jsonl-import.ts`; `projected`, `recordWhole` and the repair in `durable-binding.ts`.
+
+## 2026-11-05 - pi.executeTool() runs on the prepared ToolHost (senpi#5852)
+
+### What changed
+
+- `packages/coding-agent/src/core/execute-tool-on-host.ts` is new: `runExecuteToolOnHost()` runs one `executeTool()` call as a one-call sequential batch on `createPreparedToolHost`, with the agent's batch store, execution scope and `onExecutionPipeline` witness sink. The caller's signal and `onUpdate` reach the tool body unchanged, a thrown body keeps today's `{ details: { isError: true } }` result, and the call's arguments pass through the host unvalidated (the `tool_call` chain may rewrite them, and its contract is that they are not validated again). The host's `beforeToolCall` only carries the preflight facts to its copy of the arguments; the `tool_result` chain runs in its finalize step, and a hook failure is returned to the caller as before.
+- `packages/coding-agent/src/core/agent-session.ts`: `executeTool()` keeps its tool lookup and `invalid_params` check, then runs the call through `runExecuteToolOnHost()` instead of calling `tool.execute()` itself. Its lookup, `invalid_params` check and `tool_call` preflight stay where they were, in `executeTool()` itself.
+
+### Why
+
+Plan row S19a (senpi#5826): every tool body runs on the ToolHost, so no `executeTool()` call reaches a tool without the prepared executor's prepare, freeze and release.
+
+### Why an extension could not handle it
+
+`executeTool()` is the session's own extension API method; an extension cannot change how the session runs it.
+
+### Expected merge conflict zones
+
+`agent-session.ts` in `executeTool()` and its imports.
+
+## 2026-11-04 - Quit ends the active run before session_shutdown (senpi#5754, fixes #5753)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `dispose({ endActiveRun: true })` aborts the run before emitting `session_shutdown`, waiting at most the #3711 quit budget (armed first, so the wait counts against the same total; 0 keeps it unbounded), the order `teardownCurrent()` already uses for a replacement. Without the option `dispose()` is unchanged, so RPC host closes keep their bounded stuck-abort handling.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: both quit paths of `shutdown()` (signal and interactive) pass `endActiveRun: true`.
+- `packages/coding-agent/test/suite/regressions/issue-5753-quit-aborts-run-before-shutdown.test.ts` (new): a quit while a tool runs sends no further provider request; a quit during a goal's turn stops the goal as an interrupt (`blocked`), so the next resume asks before continuing; a turn an extension holds cannot delay quit past `sessionShutdownQuitBudgetMs`.
+
+### Why
+
+- A quit mid-turn disposed extension resources under the running tool. The tool failed and the dying process sent that failure to the model in one more request (and goal continuations kept firing), so a session closed mid-turn was reopened further along than where it was left.
+
+### Why an extension could not handle it
+
+- The order of the run's end and `session_shutdown` belongs to the runtime's own dispose.
+
+### Expected merge conflict zones
+
+- LOW: the head of `AgentSessionRuntime.dispose()` and its options type; the two `runtimeHost.dispose(...)` calls in `InteractiveMode.shutdown()`.
+
 ## 2026-11-06 - A started RPC input's run setup sits inside its settlement boundary (senpi#5999)
 
 ### What changed

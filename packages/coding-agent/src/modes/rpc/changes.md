@@ -1,3 +1,159 @@
+## 2026-11-07 - The RPC workspace verbs leave the synchronous trust path (senpi#6185)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/project-workspace-commands.ts`: uses `createHeadlessProjectTrustContext` and `hasTrustRequiringProjectResourcesAsync`; `readProjectTrust` is async.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: awaits `readProjectTrust`.
+
+### Why
+
+- The RPC session path must not block the shared host (`test/suite/no-sync-in-session-path.test.ts`); #6177 had reached synchronous fs from these verbs.
+
+### Why an extension could not handle it
+
+- The verbs and the session path's import graph are core RPC.
+
+### Expected merge conflict zones
+
+- LOW: the `get_project_trust` case in `connection-handler.ts`.
+
+## 2026-11-07 - RPC clients trust a workspace and read/write its project settings (senpi#6176)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/project-workspace-commands.ts`: new. `get_project_trust` / `set_project_trust` (the `/trust` choices, saved through `ProjectTrustStore.setMany`, applied with `AgentSession.applyProjectTrustChange` inside `AgentSessionRuntime.runInProjectTrustChangeOrder`; refused with `project_trust_locked` under `--approve`/`--no-approve`, and with `project_trust_extension_decided` when a pre-trust extension's `project_trust` handler decides the other way, saving and applying nothing) and `get_project_settings` / `set_project_setting` (the project settings file read as stored; one top-level key written through `SettingsManager.setProjectSetting`).
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the four cases.
+- `packages/coding-agent/src/modes/rpc/rpc-session-command-types.ts`, `rpc-read-response-types.ts`, `rpc-mutation-response-types.ts`: the wire types.
+- `packages/coding-agent/src/modes/rpc/rpc-error-types.ts`: `project_trust_locked`, `project_trust_extension_decided`, `project_not_trusted`, `project_settings_unreadable`, `project_settings_write_failed`.
+- `packages/coding-agent/src/modes/rpc/method-classes.ts`: `get_project_trust` observe; `set_project_trust`, `get_project_settings`, `set_project_setting` device_admin (the digest moves).
+- `packages/coding-agent/src/modes/rpc/method-classes-schema-session.ts`: their inbound schemas.
+- `packages/coding-agent/src/modes/rpc/session-attachment-gate.ts`, `session-command-activity.ts`: the two reads join the read allow-lists.
+- `packages/coding-agent/src/modes/rpc/loopless-runtime-settings.ts`: passes `projectTrustLocked` from the launch flag.
+
+### Why
+
+- An RPC session resolves trust without a UI, so a project is never trusted over RPC and its settings, skills, prompts, extensions and MCP servers never load for the desktop app, local or remote; no verb could save a decision or edit project settings.
+
+### Why an extension could not handle it
+
+- Trust decides which extensions load at all, and the session rebuild and the RPC method-class table are core; an extension cannot run before the trust decision it would be making.
+
+### Expected merge conflict zones
+
+- LOW: the `get_loaded_surfaces` neighbourhood in `connection-handler.ts`, `method-classes.ts` and the schema table.
+
+## 2026-11-07 - A prompt, steer or follow_up without a string message is refused at the boundary (senpi#6171)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`: `rpcCommandPayloadError` refuses `prompt`, `steer` and `follow_up` whose `message` is missing or not a string with `message must be a string.`, after every existing check, so a command that was already refused keeps its refusal text.
+
+### Why
+
+- senpi#6171: such a command passed validation and the session threw a raw `TypeError` (`text.startsWith` on a non-string) during prompt preprocessing; the client got that runtime error instead of the boundary's refusal, and the interactive control endpoint already refused the same input.
+
+### Why an extension could not handle it
+
+- Inbound RPC validation runs in the connection handler before any session or extension sees the command.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `rpcCommandPayloadError` in `rpc-input-validation.ts`.
+
+## 2026-11-07 - The settle a sealed session owes names no turn (senpi#6157)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-open-turns.ts`: the per-session turn ledger and `turnOf` are gone; `note` takes the record type and reason only.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: `settleBeforeSeal` writes each owed `agent_settled { reason: "session_closed" }` without `turnId`, the bytes it wrote before senpi#6151.
+
+### Why
+
+- senpi#6157: the owed settle is a legacy record too, so it stays off the legacy wire like the session's own settle (#4272 T5).
+
+### Why an extension could not handle it
+
+- The owed settle is written by the host's session writer as it seals the session.
+
+### Expected merge conflict zones
+
+- LOW: `SessionOpenTurns.note`/`take` and `settleBeforeSeal`.
+
+## 2026-11-07 - The settle a sealed session owes names its turn (senpi#6151)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-open-turns.ts`: `note` remembers the `turnId` each session's last `agent_start` carried; `turnOf(sessionId)` reads it, and `take` forgets it.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: `enqueue` passes the record's `turnId` to the ledger, and `settleBeforeSeal` stamps it on each owed `agent_settled { reason: "session_closed" }`.
+
+### Why
+
+- oh-my-openagent#12719: a turn a close, park or release cut short still ends once per `turnId` for a remote watcher.
+
+### Why an extension could not handle it
+
+- The owed settle is written by the host's session writer as it seals the session.
+
+### Expected merge conflict zones
+
+- LOW: `SessionOpenTurns.note`/`take` and `settleBeforeSeal`.
+
+## 2026-11-07 - A multi-session host handed a private-fd table loads its extensions at boot (senpi#6147)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-boot-extensions.ts` (new): `warmAtBootForPrivateFds` starts the registry's `warm` for the host's default profile (host cwd and context, no kind) when the launch carried a private descriptor table (`privateTablePresent()`). The call is fire-and-forget, and a failure is logged as one stderr line.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `createHostCore` also returns the registry's `warm`. The socket host starts the boot load right after it listens, and the stdio host starts it after it attaches its reader.
+
+### Why
+
+- A multi-session host loaded extensions only on `open_session` or `warm`, so an extension that claims its private channel during registration never ran before a session opened. The omo desktop waits for that channel's first frame before opening a session (oh-my-openagent#12702, #12705). The boot load is the default-profile warm, so a later `warm` of that profile joins it or answers `already_warm`. Without a table nothing changes.
+
+### Why an extension could not handle it
+
+- An extension cannot run before the host loads it, and when the host loads it is exactly what this changes.
+
+### Expected merge conflict zones
+
+- LOW: the `createHostCore` return object and the end of `runStdioHost` / `runSocketHost` in `multi-session-host.ts`.
+
+## 2026-11-07 - Shutdown recovery keeps the pre-signal error (senpi#3067 L4)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-shutdown.ts`: the `reapChildAfterFailure` call in `stopChild`'s catch logs only the recovery error; the original error is logged once by `performShutdown`'s catch when the rethrow reaches it, so the same line is no longer printed twice. The original is still rethrown and reported.
+- `packages/coding-agent/test/suite/regressions/3067-recovery-keeps-original.test.ts`: the recovery's signals go through a stubbed `process.kill` (no real signal to a reaped pid), and the timer loop advances until shutdown settles within a 120 s bound instead of a fixed 40 turns.
+
+### Why
+
+- senpi#3067 L4: when the shutdown fails before the child is signalled and the recovery itself throws, the recovery error replaced the original — `performShutdown` logged the recovery error as the shutdown failure and the original error never appeared anywhere, so the cause of the shutdown was lost.
+
+### Why an extension could not handle it
+
+- The supervisor teardown runs in core RPC plumbing before any extension loads, and no extension hook runs between the shutdown failure and its recovery.
+
+### Expected merge conflict zones
+
+- LOW: the `stopChild` catch in `host-lifecycle-shutdown.ts`.
+
+## 2026-11-06 - A claimed question refuses a late progress draft (senpi#5960)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: a question's `progress` path now honors the claim that `respond` already takes (the first answer wins). Once an answer has won, `extension_ui_progress` answers `question_already_resolved` instead of overwriting the selections that answer is settling with. Before a claim it applies as before: it copies the draft, rearms the idle timer and emits `question_updated`.
+
+### Why
+
+- `respond` already made the first answer win, but `extension_ui_progress` was outside that claim: a draft that arrived while the winner's `beforeAnswer` ran rewrote `answers`, so a winner answering A with a draft B landing during admission settled as `answered` with B's selections (item 3 of #5960).
+
+### Why an extension could not handle it
+
+- The claim and the draft both live in the RPC connection's question bridge; the extension raising the question sees neither.
+
+### Expected merge conflict zones
+
+- LOW: the `progress` closure inside `ask` and the `progress` method of `ConnectionQuestionBridge`.
+
 ## 2026-11-06 - Connection roles over a delegated connection: an authority word per incarnation (omo-relay-daemon#307)
 
 ### What changed

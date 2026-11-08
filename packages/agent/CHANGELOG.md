@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2026.11.6-2] - 2026-11-07
 
 ### Breaking Changes
 
@@ -9,6 +9,8 @@
 ### Changed
 
 ### Fixed
+
+- Two processes bound to one durable session (same store, same epoch) no longer lose each other's entries: session entries are records in the store's append-only log, so every append is kept in commit order ([#5955](https://github.com/code-yeongyu/senpi/pull/5955)).
 
 ### Removed
 

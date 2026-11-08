@@ -1,3 +1,21 @@
+## 2026-11-05 - Legacy ESC-prefixed Alt chords decode while the Kitty protocol is negotiated (senpi#6058)
+
+### What changed
+
+- `packages/tui/src/keys.ts`: `matchesKey` accepts the legacy alt+printable form (`ESC <key>` for a letter, digit or symbol) whether or not the Kitty protocol is active, and `parseKey`'s two-byte ESC branch returns `alt+<key>` in both modes. The legacy `ctrl+alt` form (`ESC <ctrl char>`), `ESC CR` (shift+enter in Kitty mode) and `ESC B`/`ESC F` (alt+left/right only outside Kitty mode) keep their Kitty-mode behavior.
+
+### Why
+
+- Under ConPTY (WSL in Windows Terminal 1.25+) the Kitty flags reply comes from the outer terminal, while the console host encodes the keys the WSL process reads in legacy form. The decoder marked Kitty active and then rejected every `ESC <key>` Alt chord, so the Windows/WSL defaults Alt+Q, Alt+V and Alt+Z did nothing. A conforming Kitty terminal sends Escape as `CSI 27 u`, so a raw ESC plus a printable key is unambiguous in both modes.
+
+### Why an extension could not handle it
+
+- Key decoding happens in the TUI input layer before any keybinding or extension sees the input.
+
+### Expected merge conflict zones
+
+- LOW: the legacy alt+printable branch of `matchesKey` and the two-byte ESC branch of `parseKey` in `keys.ts`.
+
 ## 2026-11-06 - A paste's own trailing CR stays in the paste; the next read's CR submits (senpi#3076)
 
 ### What changed

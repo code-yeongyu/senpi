@@ -1,3 +1,39 @@
+## 2026-11-07 - Presenter tests count EPIPE as the host closing the channel (senpi#6161)
+
+### What changed
+
+- `packages/coding-agent/test/suite/host-cli-presenter-support.ts`: `hostCloses` accepts `EPIPE` as well as `ECONNRESET` before the close event; `host-cli-presenter-waits.test.ts` covers both, and still rejects any other errno.
+
+### Why
+
+- A forced release run failed `immediate handoff preserves enforcement and requires fresh enrollment (explicit true)` with `the stale management channel failed before the host closed it: write EPIPE`. Under load the client's write raced the host's close, so the same close surfaced as `EPIPE`.
+
+### Why an extension could not handle it
+
+- It is a test helper in this repository.
+
+### Expected merge conflict zones
+
+- LOW: none.
+
+## 2026-11-07 - The Windows stale-table test retries removing its just-run executable (senpi#6142)
+
+### What changed
+
+- `packages/coding-agent/test/suite/host-private-fds-proof-gate.test.ts`: the test's `finally` cleanup removes its temporary directory with `maxRetries: 10, retryDelay: 100`, as the sibling pair test already does.
+
+### Why
+
+- On Windows, a compiled executable that has just exited can stay locked for a moment. A single `unlink` then threw `EBUSY` and failed a test whose assertions had all passed (main red at 3c237e1a48). The child is awaited before the cleanup, so the retry is a bounded backstop.
+
+### Why an extension could not handle it
+
+- It is a test cleanup in this repository.
+
+### Expected merge conflict zones
+
+- LOW: none.
+
 ## 2026-11-06 - The runtime inventory snapshot hook is bounded by copy progress (senpi#6091, fixes #5816)
 
 ### What changed

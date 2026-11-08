@@ -1,3 +1,39 @@
+## 2026-11-07 - The terminal control endpoint advertises the engine's method classes (senpi#6158)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-control-commands.ts`: `get_protocol_info` carries `method_classes: describeRpcMethodClasses()`, the same builder the rpc host's `protocolIdentity()` uses, so both endpoint kinds advertise one table and one digest. The table and `RPC_METHOD_CLASSES_DIGEST` are unchanged.
+
+### Why
+
+- senpi#6158: a remote forwarder classifies each command from the engine's advertised table. With no `method_classes` on the terminal endpoint it had no table for a TUI-held session and refused every command to it as unclassified (sisyphuslabs/omo-relay-daemon#745).
+
+### Why an extension could not handle it
+
+- The terminal control endpoint's `get_protocol_info` answer is built in core; an extension registers the endpoint but cannot add fields to its protocol answer.
+
+### Expected merge conflict zones
+
+- LOW: the `get_protocol_info` case of `runControlCommand` and the import block of `session-control-commands.ts`.
+
+## 2026-11-04 - Quit ends the active run before shutdown (senpi#5754, fixes #5753)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `shutdown()` disposes the runtime with `endActiveRun: true` on both the signal and the interactive quit path.
+
+### Why
+
+- A person quitting mid-turn must not leave the run going while extensions shut down.
+
+### Why an extension could not handle it
+
+- The quit sequence belongs to the interactive controller.
+
+### Expected merge conflict zones
+
+- LOW: the two `runtimeHost.dispose(...)` calls in `shutdown()`.
+
 ## 2026-11-06 - The footer names a held model switch (senpi#6097, fixes #6092)
 
 ### What changed

@@ -1,3 +1,57 @@
+## 2026-11-07 - A saved trust decision outranks the per-process trust memo (senpi#6176)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `createCliRuntimeFactory` uses `projectTrustByCwd` only while nothing is saved for the folder, and passes `projectTrustLocked` from `--approve`/`--no-approve`.
+
+### Why
+
+- The memo kept an RPC session's "untrusted" for the folder, so a decision saved later through `set_project_trust` never reached the next session the same engine opened.
+
+### Why an extension could not handle it
+
+- The memo and the runtime factory are core startup code.
+
+### Expected merge conflict zones
+
+- LOW: the project-trust block at the top of the runtime-services step.
+
+## 2026-11-07 - Public export of the rpc remote source seam (senpi#6151)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: exports `registerRpcRemoteSource` and the `RpcRemote*` types.
+
+### Why
+
+- oh-my-openagent#12719: omo implements the source against these types.
+
+### Why an extension could not handle it
+
+- The package's public surface is this file.
+
+### Expected merge conflict zones
+
+- LOW: the export block after `read-classifiers.ts`.
+
+## 2026-11-05 - Startup refuses or takes over a held session before touching its file (senpi#5756)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `createSessionManager` admits an existing session file on its resolved path before anything loads, migrates, settles, rebinds or runs it: `openSessionOrExit` and `rebindSessionOrExit` admit first, the `--resume` picker admits the picked file before `resolveResumeTarget` can rebind it, and `--continue` and `--session-id` admit before loading. Forking only reads its source and is not admitted. A refusal exits `SESSION_HELD_EXIT_CODE` (76), a declined take-over exits 0. Prompting is offered only in interactive mode with a TTY on stdin.
+
+### Why
+
+The startup path only warned (#2951/#2956) when another live process held the session, so a second run of the same session started (the startup path of #5744, which #5750 fixed for `/resume`). Loading a held file before refusing could also rewrite it (version migration) or truncate the tail the holder was still appending.
+
+### Why an extension could not handle it
+
+Session selection and opening happen in `main.ts` before any extension is loaded.
+
+### Expected merge conflict zones
+
+- LOW: `openSessionOrExit`, `rebindSessionOrExit`, the `--resume`, `--continue` and `--session-id` branches of `createSessionManager`, and the `session-opening.ts` import.
+
 ## 2026-11-06 - Opt senpi and its children out of Windows EcoQoS throttling (senpi#6125)
 
 ### What changed
