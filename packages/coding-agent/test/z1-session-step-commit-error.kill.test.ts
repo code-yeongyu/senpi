@@ -25,6 +25,8 @@ describe("CK1s commit fault recovery", () => {
 		expect(error instanceof StepCommitError).toBe(false);
 		expect(isStepCommitError(error)).toBe(true);
 		driver.inject.nextCommitError(error);
+		// C.P4 cond 6: the latch alone schedules the rebuild; holding its store read keeps the old run latched and observable.
+		driver.inject.slowRebuildStoreRead(1);
 		await driver.session.prompt("input");
 		expect(driver.classifications).toEqual([{ stepId: "step-1", error, kind: "step-commit-error", code: "fenced" }]);
 		expect(driver.classifications[0]?.error).toBe(error);
@@ -139,6 +141,8 @@ describe("CK1s commit fault recovery", () => {
 		await driver.prompt("input");
 		await driver.followUp("queued input");
 		driver.inject.nextCommit("reject");
+		// C.P4 cond 6: the latch alone schedules the rebuild; holding its store read keeps the old run latched and observable.
+		driver.inject.slowRebuildStoreRead(1);
 		const old = driver.session;
 		// The hosted caller schedules the public Agent continuation. This does not
 		// claim coverage of AgentSession's compaction-dependent scheduling path.
