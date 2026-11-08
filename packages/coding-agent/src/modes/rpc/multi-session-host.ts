@@ -17,6 +17,7 @@ import {
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { startHostChildReaper } from "./child-reaper.ts";
+import { warmAtBootForPrivateFds } from "./host-boot-extensions.ts";
 import type { RpcConnectionSink } from "./connection-handler.ts";
 import { CommandAuthority, commandAuthority, takeRelayExec } from "./command-authority.ts";
 import { answerDelegation, relayExecRefusal } from "./delegated-answer.ts";
@@ -24,6 +25,7 @@ import type { LaunchProofSource } from "./delegated-connection.ts";
 import { parseClientCapabilities } from "./custom-capability.ts";
 import { ClientOccupancy } from "./host-client-occupancy.ts";
 import { HostCoreGate, type HostCoreHooks } from "./host-core-gate.ts";
+import { bindRegisteredEndpoint } from "./host-bare-endpoint-registration.ts";
 import { createHostDaemonPaths } from "./host-daemon-paths.ts";
 import { ENDPOINT_OWNER_FENCE_CAPABILITY, GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
 import { HandoffAnnouncement } from "./host-handoff-announcement.ts";
@@ -287,6 +289,8 @@ export function createHostCore(
 		handle,
 		handover: gate.handover,
 		handoverAnswered: () => gate.answered(),
+		/** The in-process registry's `warm`; the worker registry has none. */
+		warm: "warm" in registry ? registry.warm : undefined,
 		/**
 		 * A session's live registry entry by its routing id. Only in-process test fixtures read it today, in place of
 		 * spying on the registry prototype (senpi#5802); the host itself never calls it.
@@ -304,7 +308,7 @@ async function runStdioHost(options: MultiSessionHostOptions): Promise<never> {
 	// forever: exit through the normal shutdown path once the window elapses.
 	const runtimeBuildId = await startupRuntimeBuildId();
 	const trim = createZeroSessionTrim(writer, () => router.sessionCount);
-	const { router, handle } = createHostCore(
+	const { router, handle, warm } = createHostCore(
 		options,
 		writer,
 		undefined,
@@ -341,6 +345,7 @@ async function runStdioHost(options: MultiSessionHostOptions): Promise<never> {
 		process.stdin.off("end", onEnd);
 	};
 	registerShutdownSignals(shutdown);
+	warmAtBootForPrivateFds(warm, { cwd: options.cwd }, hostLog);
 	return new Promise(() => {});
 }
 
@@ -365,7 +370,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	}
 	const canHandOver = runtimeBuildId !== undefined && process.platform !== "win32";
 	const trim = createZeroSessionTrim(writer, () => router.sessionCount);
-	const { router, handle, handover, handoverAnswered } = createHostCore(
+	const { router, handle, handover, handoverAnswered, warm } = createHostCore(
 		options,
 		writer,
 		[
@@ -662,7 +667,11 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	});
 	// Everything the internal listener needs is initialized: the runtime milestone of a coordinated start (senpi#4602).
 	reportStartupMilestone("host_runtime");
-	boundIdentity = await listen(server, socketPath, secret);
+	const bind = () => listen(server, socketPath, secret);
+	// A host binding its own public socket keeps its registry record; a supervised one's ensure keeps it.
+	boundIdentity = await (hostWatchdogBinding() === undefined
+		? bindRegisteredEndpoint({ agentDir: options.agentDir, socket: socketPath, log: hostLog }, bind)
+		: bind());
 	// A key record that cannot be published safely ends this host: held connections are refused, never served keyless.
 	await transport.publish(() => shutdown(1));
 	if (supervisorPublicOwnerFile) {
@@ -672,6 +681,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 		supervisorPublicIdentity = await waitForSocketIdentityFile(supervisorPublicOwnerFile);
 	}
 	process.stderr.write(`senpi rpc listening on ${formatSocketAddress(socketPath)}\n`);
+	warmAtBootForPrivateFds(warm, { cwd: options.cwd, sessionContext: hostContext }, hostLog);
 
 	// Opt-in only: set by the lifecycle supervisor so this host can never outlive
 	// it, including when the supervisor is SIGKILLed and runs no handler at all.

@@ -12,6 +12,20 @@
 
 ### Removed
 
+## [2026.11.6-2] - 2026-11-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Alt+letter, digit and symbol keys sent in the legacy ESC-prefixed form are recognized while the Kitty keyboard protocol is negotiated, so Alt+Q (restore queued messages) works again on WSL in Windows Terminal 1.25+ ([#6058](https://github.com/code-yeongyu/senpi/issues/6058)).
+
+### Removed
+
 ## [2026.11.6-1] - 2026-11-06
 
 ### Breaking Changes

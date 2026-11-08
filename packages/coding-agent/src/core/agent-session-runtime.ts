@@ -299,6 +299,19 @@ export class AgentSessionRuntime {
 		return this._projectTrustChange;
 	}
 
+	/**
+	 * Runs `task` after every trust change already started here and before any started later (senpi#6176), so an
+	 * explicit trust decision and a Full access sync never read each other's saved value mid-change.
+	 */
+	runInProjectTrustChangeOrder<T>(task: () => Promise<T>): Promise<T> {
+		const run = this._projectTrustChange.then(task);
+		this._projectTrustChange = run.then(
+			() => undefined,
+			() => undefined,
+		);
+		return run;
+	}
+
 	private _projectTrustChange: Promise<void> = Promise.resolve();
 	/** Failed trust rebuilds; kept across session replacement so the error stays visible. */
 	private _trustChangeDiagnostics: AgentSessionRuntimeDiagnostic[] = [];
@@ -725,10 +738,39 @@ export class AgentSessionRuntime {
 	}
 
 	/**
+	 * Abort the active run, waiting at most the #3711 quit budget. Arming the budget first makes this wait count
+	 * against the same total the `session_shutdown` handlers share, so a turn held by an extension cannot delay quit
+	 * past it.
+	 */
+	private async endActiveRunWithinQuitBudget(processExit: boolean): Promise<void> {
+		if (processExit) this.session.extensionRunner.armProcessExitBudget();
+		const budgetMs = this.services.settingsManager.getSessionShutdownQuitBudgetMs();
+		if (budgetMs === 0) {
+			await this.session.abort();
+			return;
+		}
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		try {
+			await Promise.race([
+				this.session.abort(),
+				new Promise<void>((resolve) => {
+					timer = setTimeout(resolve, budgetMs);
+				}),
+			]);
+		} finally {
+			if (timer !== undefined) clearTimeout(timer);
+		}
+	}
+
+	/**
 	 * `processExit`: the caller exits the process right after, so quit-time handlers share the total quit budget
 	 * (senpi#3711). An RPC host closing one session leaves it unset and keeps only the per-handler limits.
 	 */
-	async dispose(options: { readonly processExit?: boolean } = {}): Promise<void> {
+	async dispose(options: { readonly processExit?: boolean; readonly endActiveRun?: boolean } = {}): Promise<void> {
+		// A person quitting ends the active run first, as teardownCurrent() does (senpi#5753). Otherwise
+		// `session_shutdown` tears extension resources down under a running tool and the loop sends that failure
+		// to the model in one more request. Host closes keep their own bounded abort handling.
+		if (options.endActiveRun === true) await this.endActiveRunWithinQuitBudget(options.processExit === true);
 		await emitSessionShutdownEvent(
 			this.session.extensionRunner,
 			{ type: "session_shutdown", reason: "quit" },

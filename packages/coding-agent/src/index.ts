@@ -506,6 +506,16 @@ export {
 	registerReadClassifier,
 } from "./core/tools/read-classifiers.ts";
 export {
+	registerRpcRemoteSource,
+	type RpcRemoteHandlers,
+	type RpcRemoteOpenOptions,
+	type RpcRemoteSettledTurn,
+	type RpcRemoteSource,
+	type RpcRemoteState,
+	type RpcRemoteSubscription,
+	type RpcRemoteTarget,
+} from "./core/extensions/builtin/terminal/rpc-remote-source.ts";
+export {
 	hasTrustRequiringProjectResources,
 	type ProjectTrustDecision,
 	ProjectTrustStore,

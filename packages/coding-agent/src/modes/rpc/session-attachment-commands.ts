@@ -1,7 +1,7 @@
 import { takeOver } from "./attach-takeover.ts";
 import { compactOpen } from "./compact-open-admission.ts";
 import type { RpcAttachmentCommand } from "./attachment-types.ts";
-import { clearHandoverParkedSession } from "./host-handover-parked.ts";
+import { clearRetainedRecord } from "./session-router-residency.ts";
 import { hostInstanceId } from "./protocol-identity.ts";
 import type { RpcResponse } from "./rpc-types.ts";
 import { canonicalSessionPath } from "./session-path-key.ts";
@@ -137,8 +137,7 @@ export async function reclaimSession(
 	host.sessionsByConnection.get(owner)?.delete(row.sessionId);
 	if (host.sessionsByConnection.get(owner)?.size === 0) host.sessionsByConnection.delete(owner);
 	connectionLeft(host, row.sessionId, owner);
-	if (host.handoverParkedDir !== undefined && entry.sessionPath !== undefined)
-		await clearHandoverParkedSession(host.handoverParkedDir, entry.sessionPath).catch(() => {});
+	if (host.handoverParkedDir !== undefined) await clearRetainedRecord(host, entry);
 	if (claim.finalizer) {
 		const binding = host.bindings.get(row.sessionId);
 		binding?.cancelPendingExtensionUiRequests?.();

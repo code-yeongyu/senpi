@@ -1,5 +1,24 @@
 # Herdr builtin reporter changes
 
+## 2026-11-07 - A pane idles after its turn while only a monitor or background session is live (senpi#6150)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/herdr/herdr-state.ts`: `selectHerdrReport` keeps `working` for a running turn and for bounded wake sources (subagents, DAG runs, detached eval cells, loop-guard recovery, unknown sources, and one-shot monitors with a deadline), and reports `idle` when only open-ended sources are live: monitors with no deadline (persistent watches, or watches without a timeout, counted by the new `openEndedMonitors` from the `terminal_monitor_state` per-watch `persistent`/`deadlineMs`) and background terminal sessions. The message names the live sources in both states. This partly reverses the 2026-09-24 entry in this tracker (senpi#2077), which folded every wake source into `working`: bounded sources keep that behaviour, open-ended ones no longer do.
+- `packages/coding-agent/src/core/extensions/builtin/herdr/index.ts`: passes the open-ended watch count with each monitor snapshot.
+
+### Why
+
+- A persistent monitor or a background server kept the pane `working` forever after the turn ended, so front ends drawing the OSC 7501 state showed a spinner on an idle agent.
+
+### Why an extension could not handle it
+
+- The builtin herdr reporter is the extension that owns this report; the change is inside it.
+
+### Expected merge conflict zones
+
+- LOW: the `selectHerdrReport` body, the `monitors` reducer event and `OPEN_ENDED_WAKE_SOURCES`; the monitor subscription in `index.ts`.
+
 ## 2026-11-04 - Name the product command in an app pane token (omo#12395, senpi#5817)
 
 ### What changed

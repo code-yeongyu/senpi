@@ -1,3 +1,24 @@
+## 2026-11-06 - The forced release suite runs coding-agent as parallel shards (senpi#6139)
+
+### What changed
+
+- `scripts/release-forced-test-suite.mjs` (new): `planForcedTestSuite` and `runForcedTestSuite`. The forced suite runs `npm run test:scripts`, then each other workspace's `test` script one at a time (`run-workspaces.mjs --workspace <path> test`), then `packages/coding-agent` as `FORCED_CODING_AGENT_SHARDS` (2) parallel `test -- --shard=i/2` runs, so every test still runs once. Each step runs under `release-forced-test-supervisor.mjs` with one shared 110-minute budget. The log gets a wall line per step and a total wall line. A failed step fails the suite after every step ran. A timeout names each step still running and its elapsed minutes.
+- `scripts/release.mjs`: `runForcedTests` and `main` are async and await `runForcedTestSuite` from the new module.
+- `scripts/release-test-gate.mjs`: `runForcedTestSuite` and `FORCED_TEST_SUITE_TIMEOUT_MS` moved to `release-forced-test-suite.mjs`.
+- `scripts/release-forced-test-supervisor.mjs`: header comment names its new caller.
+
+### Why
+
+- `scripts/release-forced-test-suite.mjs`: a forced release on 2026-11-06 (run 42284532624) spent 98.8 min in coding-agent alone and was stopped by the 110-minute cap with "the in-job suite hung", though nothing hung. Every release that regenerates the model catalog needs `force_tests`. With `CI` set, each coding-agent vitest run uses two fork workers, so two shards fill the 4-vCPU release runner without oversubscribing it. That brings the suite to about 60 min.
+
+### Why an extension could not handle it
+
+- `scripts/release-forced-test-suite.mjs`: the release orchestration and its test gate are repository build tooling.
+
+### Expected merge conflict zones
+
+- LOW: `scripts/release.mjs` `runForcedTests`, `main` and the forced-suite import; `scripts/release-test-gate.mjs` imports.
+
 ## 2026-11-05 - Standalone compiles keep linkedom's optional canvas external (senpi#6045)
 
 ### What changed

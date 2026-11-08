@@ -457,6 +457,13 @@ import {
 } from "./runtime/bootstrap.ts";
 import type { SourceInfo } from "./source-info.ts";
 import { toolInfoOf } from "./tool-info.ts";
+import {
+	PendingQueueLedger,
+	type PendingQueueSnapshot,
+	queueEntryLabel,
+	STALL_WARNING_MS,
+	watchForStall,
+} from "./stall-warning.ts";
 import { stopResumeDirective } from "./stop-resume-directive.ts";
 import { type AgentSessionStructuredRecord, StructuredSessionLane } from "./structured-session-lane.ts";
 import {
@@ -555,15 +562,17 @@ type WithParentToolCallId<E> = E extends {
 	? E & { parentToolCallId?: string }
 	: E;
 
-/** Why a session-level abort happened, when the caller knows: today only a session replacement says so. */
-export interface AgentAbortCause {
-	readonly kind: "session_replaced";
-	/** What replaced the session: `new_session`, `fork` or a `switch_session`/resume. */
-	readonly reason: "new" | "fork" | "resume";
-	/** The replacement's transcript and durable session id, when they are known before the teardown. */
-	readonly targetSessionFile?: string;
-	readonly targetSessionId?: string;
-}
+/** Why a session-level abort happened, when the caller knows: a session replacement, or the host process stopping. */
+export type AgentAbortCause =
+	| {
+			readonly kind: "session_replaced";
+			/** What replaced the session: `new_session`, `fork` or a `switch_session`/resume. */
+			readonly reason: "new" | "fork" | "resume";
+			/** The replacement's transcript and durable session id, when they are known before the teardown. */
+			readonly targetSessionFile?: string;
+			readonly targetSessionId?: string;
+	  }
+	| { readonly kind: "host_shutdown" };
 
 type AgentSessionAgentEndEvent = Extract<AgentEvent, { type: "agent_end" }> & {
 	willRetry: boolean;
@@ -1459,6 +1468,8 @@ export class AgentSession {
 	private _eventListeners: AgentSessionEventListener[] = [];
 	private readonly _structuredLane: StructuredSessionLane;
 	private _agentEventQueue: Promise<void> = Promise.resolve();
+	/** What `_agentEventQueue` still holds, so a tool call stalled behind it can say what it waits on (senpi#6189). */
+	private readonly _agentEventQueueLedger = new PendingQueueLedger();
 	private readonly _lifecycleEvents = new LifecycleEventSequencer<AgentSessionEvent>();
 	/**
 	 * Exact message objects whose message_end persistence is still queued.
@@ -1861,7 +1872,8 @@ export class AgentSession {
 			config.internalChannel,
 			(deliver) => {
 				if (!this._unsubscribeAgent) return;
-				this._agentEventQueue = this._agentEventQueue.then(deliver, deliver);
+				const tracked = this._agentEventQueueLedger.track("structured_record", deliver);
+				this._agentEventQueue = this._agentEventQueue.then(tracked, tracked);
 			},
 			(control) => this._recoveryIdentity?.own(control),
 		);
@@ -2447,34 +2459,60 @@ export class AgentSession {
 		args: unknown,
 		options: { waitForEventQueue?: boolean; parentToolCallId?: string; signal?: AbortSignal } = {},
 	) {
-		if (options.waitForEventQueue !== false) {
-			await this._agentEventQueue;
-		}
-		const signal = options.signal ?? this.agent.signal;
-		// A call released by Stop never runs: block it without asking its hooks (a permission prompt) about it.
-		// Callers such as executeTool only honor an explicit block, so returning nothing here would let it run.
-		if ((await this._waitForToolBarrier(toolCall, signal)) && signal?.aborted) {
-			return { block: true, reason: "Operation aborted" };
-		}
-
-		const runner = this._extensionRunner;
-		if (!runner.hasHandlers("tool_call")) {
-			return undefined;
-		}
-
-		try {
-			return await runner.emitToolCall({
-				type: "tool_call",
-				toolName: toolCall.name,
+		// Neither wait below has a deadline of its own: one that never settles is logged once, never cut short (senpi#6189).
+		// The call's own `timeout` bounds its execution, not this phase, which includes a human permission decision.
+		const thresholdMs = STALL_WARNING_MS;
+		const warnStalled = (event: string, elapsedMs: number, queue?: PendingQueueSnapshot) =>
+			this._sessionLogger.warn(event, {
 				toolCallId: toolCall.id,
+				toolName: toolCall.name,
 				...(options.parentToolCallId ? { parentToolCallId: options.parentToolCallId } : {}),
-				input: args as Record<string, unknown>,
+				thresholdMs,
+				elapsedMs,
+				...queue,
 			});
-		} catch (err) {
-			if (err instanceof Error) {
-				throw err;
+		if (options.waitForEventQueue !== false) {
+			const queueWatch = watchForStall(thresholdMs, (elapsedMs) =>
+				warnStalled("tool_call_event_queue_stalled", elapsedMs, this._agentEventQueueLedger.snapshot()),
+			);
+			try {
+				await this._agentEventQueue;
+			} finally {
+				queueWatch.stop();
 			}
-			throw new Error(`Extension failed, blocking execution: ${String(err)}`);
+		}
+		const preflightWatch = watchForStall(thresholdMs, (elapsedMs) =>
+			warnStalled("tool_call_preflight_stalled", elapsedMs),
+		);
+		try {
+			const signal = options.signal ?? this.agent.signal;
+			// A call released by Stop never runs: block it without asking its hooks (a permission prompt) about it.
+			// Callers such as executeTool only honor an explicit block, so returning nothing here would let it run.
+			if ((await this._waitForToolBarrier(toolCall, signal)) && signal?.aborted) {
+				return { block: true, reason: "Operation aborted" };
+			}
+
+			const runner = this._extensionRunner;
+			if (!runner.hasHandlers("tool_call")) {
+				return undefined;
+			}
+
+			try {
+				return await runner.emitToolCall({
+					type: "tool_call",
+					toolName: toolCall.name,
+					toolCallId: toolCall.id,
+					...(options.parentToolCallId ? { parentToolCallId: options.parentToolCallId } : {}),
+					input: args as Record<string, unknown>,
+				});
+			} catch (err) {
+				if (err instanceof Error) {
+					throw err;
+				}
+				throw new Error(`Extension failed, blocking execution: ${String(err)}`);
+			}
+		} finally {
+			preflightWatch.stop();
 		}
 	}
 
@@ -3725,7 +3763,8 @@ export class AgentSession {
 			this._lifecycleEvents.release(heldLifecycle, (held) => this._emit(held));
 			return this._processAgentEvent(queuedEvent, signal);
 		};
-		const processing = this._agentEventQueue.then(deliverThenProcess, deliverThenProcess);
+		const tracked = this._agentEventQueueLedger.track(queueEntryLabel(queuedEvent), deliverThenProcess);
+		const processing = this._agentEventQueue.then(tracked, tracked);
 		this._agentEventQueue =
 			pendingEnd !== undefined
 				? processing.finally(() => {
@@ -5226,6 +5265,17 @@ export class AgentSession {
 	/** Adapter for the deadline owner interface: a deadline stop that could not complete. */
 	_warnDeadline(event: TurnDeadlineWarning, detail: string): void {
 		this._sessionLogger.warn(event, { detail });
+	}
+
+	/**
+	 * End the running turn because the process hosting this session is stopping (an RPC host shutting down or
+	 * restarting): a system abort whose `agent_end` carries `abortCause: { kind: "host_shutdown" }`, never a user abort.
+	 */
+	async abortForHostShutdown(): Promise<void> {
+		if (!this.isStreaming) return;
+		if (this._abortCause === undefined) this._abortCause = { kind: "host_shutdown" };
+		await this._abortActiveAgentAndRetry("system");
+		if (!this.isIdle) await this._waitForIdleAfterAbort();
 	}
 
 	/** Adapter for the deadline owner interface: end the turn through the normal system abort. */
@@ -8262,7 +8312,8 @@ export class AgentSession {
 					event,
 					(lifecycle) => this._emit(lifecycle),
 					(run) => {
-						this._agentEventQueue = this._agentEventQueue.then(run, run);
+						const tracked = this._agentEventQueueLedger.track(queueEntryLabel(event), run);
+						this._agentEventQueue = this._agentEventQueue.then(tracked, tracked);
 						void this._agentEventQueue.catch(() => {});
 					},
 				),

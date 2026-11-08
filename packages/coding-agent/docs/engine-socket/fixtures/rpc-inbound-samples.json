@@ -1,9 +1,9 @@
 {
 	"methodClassesVersion": 1,
-	"methodClassesDigest": "56c692be165af1736661e24017ebd1526ae2e7aed1beb726abd2c3691bca9f43",
+	"methodClassesDigest": "3860136b2a1b07c20373ed361df07c045bd1e84fce001917e271ca0e4b903e63",
 	"sampleId": "00000000-0000-7000-8000-000000000000",
 	"samplePathRoot": "/nonexistent/senpi-rpc-inbound-sample",
-	"methodCount": 118,
+	"methodCount": 122,
 	"methods": [
 		{
 			"method": "abort",
@@ -535,6 +535,24 @@
 			}
 		},
 		{
+			"method": "get_project_settings",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "get_project_settings"
+			}
+		},
+		{
+			"method": "get_project_trust",
+			"class": "observe",
+			"sampleClass": "observe",
+			"connectionLocal": false,
+			"sample": {
+				"type": "get_project_trust"
+			}
+		},
+		{
 			"method": "get_protocol_info",
 			"class": "observe",
 			"sampleClass": "observe",
@@ -1045,6 +1063,27 @@
 				"type": "set_model",
 				"provider": "rpc-sample-provider",
 				"modelId": "rpc-sample-model"
+			}
+		},
+		{
+			"method": "set_project_setting",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "set_project_setting",
+				"key": "defaultThinkingLevel",
+				"value": "minimal"
+			}
+		},
+		{
+			"method": "set_project_trust",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "set_project_trust",
+				"choice": "trust"
 			}
 		},
 		{

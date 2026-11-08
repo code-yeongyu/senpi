@@ -12,6 +12,41 @@
 
 ### Removed
 
+## [2026.11.6-2] - 2026-11-07
+
+### Breaking Changes
+
+### Added
+
+- Custody field classification for the provider surface (models.json, auth.json credentials, the credential pool), the URL secret marking rule with an `Endpoint` split, per-api custody facts, and a `custody.json` sidecar reader and atomic writer, for hosted brains; nothing is wired into a runtime path yet and existing configurations are unchanged ([#5893](https://github.com/code-yeongyu/senpi/pull/5893))
+- `monitor` rpc targets can name a session on another device (`<device>/<session>`, `<device>/*`) when an extension registers a source with `pi.registerRpcRemoteSource`; lines read like local ones, a turn end is reported once, and a persistent watch resumes from the source's cursor after a restart ([#6151](https://github.com/code-yeongyu/senpi/pull/6151))
+- `agent_start` and `agent_settled` carry `turnId`, including the settle a session closed mid-turn owes ([#6151](https://github.com/code-yeongyu/senpi/pull/6151))
+- RPC: `get_project_trust`, `set_project_trust`, `get_project_settings` and `set_project_setting` let a client trust the session's workspace with the same choices and storage as `/trust`, and read or write its project settings file, so per-workspace settings, skills, prompts, extensions and MCP servers work over RPC as in the terminal ([#6177](https://github.com/code-yeongyu/senpi/pull/6177), fixes #6176)
+
+### Changed
+
+- `pi.executeTool()` runs its call on the session's prepared pipeline, the same in-process executor model-issued calls run on, and the call produces an execution-pipeline receipt (`{ pipeline: "prepared", toolCallId }`) through the session's witness sink. Errors, blocks, updates, abort and the result are unchanged ([#5852](https://github.com/code-yeongyu/senpi/pull/5852)).
+
+### Fixed
+
+- Quitting the TUI in the middle of a turn ends that turn first. The closing process no longer sends another model request, and an active goal stops as interrupted, so reopening the session asks before it continues ([#5753](https://github.com/code-yeongyu/senpi/issues/5753))
+- A JSONL import that only extends a durable session appends the new entries instead of rewriting the session, so it keeps an entry another writer appended meanwhile, also after a burst of appends such as a message and its tool result ([#5955](https://github.com/code-yeongyu/senpi/pull/5955)).
+- `/resume` of a session whose process died mid-goal, or opening it at launch with `--continue`/`--session`, now asks "Resume blocked goal?" before any goal continuation runs, instead of continuing the goal behind the first message. Over RPC the goal stays blocked until the client resumes it (#5755).
+- `--session`, `--continue`, `--resume`, `--rebind` and `--session-id` no longer open a session another live process is running as a second writer, and a refused start leaves that session's file exactly as it was (no migration rewrite, no torn-tail truncation, no move). Without a terminal to ask (print, JSON, RPC, no TTY) startup exits 76 naming the holder; an interactive terminal asks whether to take over (the holder is stopped first, as `/resume` does) or cancel. A scheduled prompt whose session is opened just before delivery stays pending and is retried instead of being marked failed ([#5970](https://github.com/code-yeongyu/senpi/pull/5970), fixes #5756)
+- Alt+Q (restore queued messages), Alt+V and Alt+Z work again on WSL in Windows Terminal 1.25+, where the terminal negotiates the Kitty keyboard protocol but the keys still arrive in the legacy ESC-prefixed form ([#6058](https://github.com/code-yeongyu/senpi/issues/6058)).
+- A question that already has its winning answer refuses a late `extension_ui_progress` draft with `question_already_resolved` instead of overwriting the answer it is settling with (senpi#5960)
+- When shutdown recovery after a pre-signal failure throws, both errors are logged exactly once — the recovery error where it happens, the original by the shutdown handler — and the original is still reported instead of being replaced by the recovery error ([#3067](https://github.com/code-yeongyu/senpi/issues/3067), [#6144](https://github.com/code-yeongyu/senpi/pull/6144)).
+- A `--multi-session` RPC host whose launch carries a private descriptor table (`SENPI_PRIVATE_FDS`) now loads its extensions once at boot, so an extension can claim its private channel before any session opens ([#6148](https://github.com/code-yeongyu/senpi/pull/6148))
+- Deterministic compaction recovery keeps a valid reasoning-effort change (`configurationUpdate`) in the retained suffix instead of omitting it as not replay-safe ([#8566](https://github.com/code-yeongyu/senpi/issues/8566), [#6149](https://github.com/code-yeongyu/senpi/pull/6149)).
+- A herdr pane no longer stays `working` after its turn while only a persistent monitor or a background terminal session is live; it reports `idle` and names them (one-shot monitors with a deadline still read `working`). Partly reverses #2077 ([#6153](https://github.com/code-yeongyu/senpi/pull/6153))
+- The terminal (TUI) control endpoint's `get_protocol_info` now carries `method_classes`, the same table and digest as an rpc host, so a remote client can classify commands to a TUI-held session ([#6158](https://github.com/code-yeongyu/senpi/issues/6158))
+- `agent_start` and `agent_settled` no longer carry `turnId` on the RPC wire (it leaked past the legacy-wire contract); a remote `monitor` watch reports each `agent_settled` it receives, and its resync still reports each settled turn once ([#6166](https://github.com/code-yeongyu/senpi/pull/6166))
+- A caller that passes no session id no longer receives a peer session's MCP wire status while more than one session is live, and a release with no reason no longer leaves the released session's status in the single-session fallback; `getServerSnapshots` accepts an optional session id to scope to that session's servers (API-only for now: no production caller passes one yet) ([#3001](https://github.com/code-yeongyu/senpi/issues/3001), [#6169](https://github.com/code-yeongyu/senpi/pull/6169)).
+- RPC `prompt`, `steer` and `follow_up` with a missing or non-string `message` are refused with `message must be a string.` instead of failing with a raw `TypeError` ([#6171](https://github.com/code-yeongyu/senpi/issues/6171))
+- The RPC project trust commands no longer run synchronous filesystem probes on the shared host's session path ([#6187](https://github.com/code-yeongyu/senpi/pull/6187))
+
+### Removed
+
 ## [2026.11.6-1] - 2026-11-06
 
 ### Breaking Changes

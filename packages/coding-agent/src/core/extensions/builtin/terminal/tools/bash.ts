@@ -1,5 +1,8 @@
 import { type Static, Type } from "typebox";
+import { getAgentDir } from "../../../../../config.ts";
 import { annotateShellTrust } from "../../../../../engine-trust/shell-trust.ts";
+import { createSessionLogger, type SessionLogger } from "../../../../session-log.ts";
+import { stallThresholdMs, watchForStall } from "../../../../stall-warning.ts";
 import type { AgentToolUpdateCallback } from "../../../types.ts";
 import { formatTerminalToolOutput } from "../output-format.ts";
 import type { TerminalRuntimeSession } from "../runtime-session.ts";
@@ -21,7 +24,7 @@ import {
 import { createForegroundDetachGate } from "./foreground-detach.ts";
 import { resolveForegroundWindowSeconds, SLEEP_WAIT_WINDOW_SECONDS } from "./foreground-window.ts";
 import { classifySleepWait, type SleepWaitClassification } from "./sleep-wait.ts";
-import { describeExit, spawnCommandSession } from "./spawn.ts";
+import { describeExit, type SpawnRequest, spawnCommandSession } from "./spawn.ts";
 
 export const ptyBashSchema = Type.Object({
 	command: Type.String({ description: "Shell command to execute in a PTY-backed session." }),
@@ -112,6 +115,38 @@ export function createThrottledEmitter(emit: () => void, throttleMs = BASH_UPDAT
 }
 
 type ForegroundWaitOutcome = "exited" | "abort_grace" | "timeout_grace";
+
+let defaultSessionLogger: SessionLogger | undefined;
+
+/**
+ * Spawn, logging once if the spawn outlives the call's own timeout (capped at the stall threshold). The call's
+ * kill timer and detach gate are armed only after spawn returns, so a spawn that never returns is otherwise
+ * silent (senpi#6189). The spawn itself is awaited exactly as before.
+ */
+async function spawnReportingStall(
+	ctx: TerminalToolContext,
+	request: SpawnRequest,
+	toolCallId: string,
+	execCtx: SessionEnvSource | undefined,
+) {
+	const thresholdMs = stallThresholdMs(request.timeoutMs === undefined ? undefined : request.timeoutMs / 1000);
+	const watch = watchForStall(thresholdMs, (elapsedMs) => {
+		const logger = ctx.sessionLogger ?? (defaultSessionLogger ??= createSessionLogger(getAgentDir()));
+		const sessionId = (execCtx ?? ctx.getSessionContext?.())?.sessionManager?.getSessionId();
+		logger.warn("bash_spawn_stalled", {
+			toolCallId,
+			toolName: TERMINAL_BASH_TOOL,
+			...(sessionId === undefined ? {} : { sessionId }),
+			thresholdMs,
+			elapsedMs,
+		});
+	});
+	try {
+		return await spawnCommandSession(sessionSpawnContext(ctx), request);
+	} finally {
+		watch.stop();
+	}
+}
 
 type SessionEnvSource = {
 	sessionManager?: { getSessionId: () => string; getSessionFile: () => string | undefined };
@@ -258,18 +293,24 @@ async function runForeground(
 	signal: AbortSignal | undefined,
 	cwd: string | undefined,
 	onUpdate: AgentToolUpdateCallback | undefined,
+	toolCallId: string,
 	execCtx?: SessionEnvSource,
 ): Promise<TerminalToolResult> {
 	if (signal?.aborted) return errorResult("Command aborted");
 	const timeoutMs = input.timeout !== undefined ? Math.trunc(input.timeout * 1000) : undefined;
-	const { id, runtime } = await spawnCommandSession(sessionSpawnContext(ctx), {
-		command: input.command,
-		cols,
-		rows,
-		timeoutMs,
-		cwd,
-		envOverrides: { ...sessionEnvOverrides(ctx, execCtx), ...FOREGROUND_ENV_OVERRIDES },
-	});
+	const { id, runtime } = await spawnReportingStall(
+		ctx,
+		{
+			command: input.command,
+			cols,
+			rows,
+			timeoutMs,
+			cwd,
+			envOverrides: { ...sessionEnvOverrides(ctx, execCtx), ...FOREGROUND_ENV_OVERRIDES },
+		},
+		toolCallId,
+		execCtx,
+	);
 	const startedAt = Date.now();
 	const activity = `running ${input.command.slice(0, 80)}`;
 	const emitOutputUpdate = () => {
@@ -399,17 +440,23 @@ async function runBackground(
 	cols: number,
 	rows: number,
 	cwd: string | undefined,
+	toolCallId: string,
 	execCtx?: SessionEnvSource,
 ): Promise<TerminalToolResult> {
 	// Background sessions are NEVER killed by `timeout` (bash-timeout injects a default into
 	// every bash call); they live until exit or kill_bash, so no timeoutMs is passed.
-	const { id, runtime } = await spawnCommandSession(sessionSpawnContext(ctx), {
-		command: input.command,
-		cols,
-		rows,
-		cwd,
-		envOverrides: sessionEnvOverrides(ctx, execCtx),
-	});
+	const { id, runtime } = await spawnReportingStall(
+		ctx,
+		{
+			command: input.command,
+			cols,
+			rows,
+			cwd,
+			envOverrides: sessionEnvOverrides(ctx, execCtx),
+		},
+		toolCallId,
+		execCtx,
+	);
 	ctx.onBackgroundStart?.(id, input.description ?? input.command, Date.now(), input.command);
 	if (ctx.onBackgroundExit) runtime.session.onExit(() => ctx.onBackgroundExit?.(id, runtime));
 
@@ -438,7 +485,7 @@ export function createPtyBashTool(ctx: TerminalToolContext) {
 		fullPromptGuidelines: ["You can inspect PI_* environment variables for current model and session details."],
 		parameters: ptyBashSchema,
 		async execute(
-			_toolCallId: string,
+			toolCallId: string,
 			input: PtyBashInput,
 			signal?: AbortSignal,
 			onUpdate?: AgentToolUpdateCallback,
@@ -447,8 +494,8 @@ export function createPtyBashTool(ctx: TerminalToolContext) {
 			const cols = resolveDimension(input.cols, ctx.defaultCols || DEFAULT_COLS);
 			const rows = resolveDimension(input.rows, ctx.defaultRows || DEFAULT_ROWS);
 			const cwd = execCtx?.cwd;
-			if (input.run_in_background) return runBackground(ctx, input, cols, rows, cwd, execCtx);
-			return runForeground(ctx, input, cols, rows, signal, cwd, onUpdate, execCtx);
+			if (input.run_in_background) return runBackground(ctx, input, cols, rows, cwd, toolCallId, execCtx);
+			return runForeground(ctx, input, cols, rows, signal, cwd, onUpdate, toolCallId, execCtx);
 		},
 	};
 }

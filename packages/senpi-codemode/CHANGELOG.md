@@ -12,6 +12,20 @@
 
 ### Removed
 
+## [2026.11.6-2] - 2026-11-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- A tool called from an eval cell now streams its partial results into the cell's live update (in JavaScript cells and over the bridge for Python, Ruby and Julia cells), so `tool.bash(...)` output shows while the command runs instead of all at once when it ends; the value returned to the cell and the cell's result are unchanged ([#6167](https://github.com/code-yeongyu/senpi/issues/6167))
+
+### Removed
+
 ## [2026.11.6-1] - 2026-11-06
 
 ### Breaking Changes

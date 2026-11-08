@@ -18,6 +18,7 @@ import { SessionAttachOrder } from "./session-attach-order.ts";
 import { tearDownReleased } from "./session-router-close.ts";
 import { routingIdOf } from "./session-router-errors.ts";
 import { sweepIdleSessions } from "./session-router-occupancy.ts";
+import { followRetainedRecord } from "./session-router-residency.ts";
 import type { RpcHostSessionDefaults, RpcSessionIdlePolicy } from "./session-router-types.ts";
 import { registryStatusSource } from "./session-status-source.ts";
 export class RouterContext {
@@ -176,6 +177,7 @@ export class RouterContext {
 				: { effectId: latest.effectId, kind: latest.kind, state: latest.state };
 		});
 		writer.afterRecord = (sessionId) => {
+			followRetainedRecord(this, sessionId);
 			const session = this.registry.peek(sessionId)?.runtime?.session;
 			if (session === undefined) return;
 			for (const status of drainSessionEffects(session)) this.writer.status.publishEffect(sessionId, status);
