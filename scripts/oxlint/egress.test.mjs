@@ -61,6 +61,16 @@ const MUTANTS = [
 	["as const literal holding a mutable call result", "declare function make(): object;\nconst T = { inner: make() } as const;\nexport const read = () => T;\n"],
 	["new TextEncoder with arguments shape", "declare class TextEncoderStream {}\nconst S = new TextEncoderStream();\nexport const read = () => S;\n"],
 	["an as const table referencing a non-egress import", "import { TABLE } from '../other.ts';\nconst T = { inner: TABLE } as const;\nexport const read = () => T;\n"],
+	["export default new Map()", "export default new Map<string, string>();\n"],
+	["a cache assigned onto a function", "export function f() {\n\treturn 1;\n}\nf.cache = new Map<string, string>();\n"],
+	["a cache assigned onto an arrow", "export const helper = () => 1;\nObject.assign(helper, { cache: new Map<string, string>() });\n"],
+	["static accessor cache", "export class Holder {\n\tstatic accessor cache = new Map<string, string>();\n}\n"],
+	["a static block filling a declared static", "export class Holder {\n\tdeclare static cache: Map<string, string>;\n\tstatic {\n\t\tHolder.cache = new Map();\n\t}\n}\n"],
+	["as const under a writable annotation", "const T: { a: string } = { a: 'x' } as const;\nexport const read = () => T;\n"],
+	["a write through a cast to an as const table", "const T = ['a'] as const;\nexport const add = () => (T as unknown as string[]).push('b');\n"],
+	["a member write to an as const table under a readonly annotation", "const T: Readonly<{ inner: { a: string } }> = { inner: { a: 'x' } } as const;\nexport const set = (v: string) => {\n\t(T.inner as { a: string }).a = v;\n};\n"],
+	["Reflect.set on an as const table", "const T = { a: 'x' } as const;\nexport const set = (v: string) => Reflect.set(T, 'a', v);\n"],
+	["a marker reused on the wrong binding", "// no-module-state: sealed-window-counter\nconst cache = new Map<string, string>();\nexport const read = () => cache;\n"],
 	["Type.* from a non-TypeBox import", "import { Type } from './local-type.ts';\nconst Schema = Type.Object({});\nexport const read = () => Schema;\n"],
 ];
 
@@ -86,8 +96,9 @@ const PASSES = [
 	["a TypeBox schema and its compiled validator", "import { Type } from 'typebox';\nimport { Compile } from 'typebox/compile';\nconst Schema = Type.Object({ a: Type.String() });\nconst check = Compile(Schema);\nexport const read = () => [Schema, check];\n"],
 	["state inside a class instance", "export class Source {\n\tprivate readonly leases = new Map<string, string>();\n\tsize() {\n\t\treturn this.leases.size;\n\t}\n}\n"],
 	["state inside a function", "export function make() {\n\tconst seen = new Set<string>();\n\treturn () => seen.size;\n}\n"],
-	["the console-redactor-install marker", "import { AsyncLocalStorage } from 'node:async_hooks';\n// no-module-state: console-redactor-install\nconst context = new AsyncLocalStorage<string>();\nexport const store = () => context.getStore();\n"],
-	["the sealed-window-counter marker", "// no-module-state: sealed-window-counter\nlet windows = 0;\nexport const count = () => windows;\n"],
+	["a readonly-annotated as const table", "const T: Readonly<Record<string, string>> = { a: 'x' } as const;\nconst L: readonly string[] = ['a'] as const;\nexport const read = (k: string) => [T[k], L[0]];\n"],
+	["void of an identifier at module scope", "const read = () => 1;\nvoid read;\n"],
+	["export default of a function", "export default function run() {\n\treturn 1;\n}\n"],
 ];
 
 describe("senpi-egress/no-module-state (r11.1 R8)", () => {
@@ -114,6 +125,16 @@ describe("senpi-egress/no-module-state (r11.1 R8)", () => {
 			hits.map((hit) => hit.labels[0].span.line),
 			[2, 3],
 		);
+	});
+
+	it("allows each named marker only on its own file and binding", () => {
+		const file = "packages/coding-agent/src/core/egress/console-redactor.ts";
+		const ok = "import { AsyncLocalStorage } from 'node:async_hooks';\n// no-module-state: console-redactor-install\nconst sealedContext = new AsyncLocalStorage<string>();\n// no-module-state: sealed-window-counter\nlet sealedWindows = 0;\nexport const read = () => [sealedContext.getStore(), sealedWindows];\n";
+		assert.deepEqual(lint(file, ok), []);
+		const elsewhere = "// no-module-state: sealed-window-counter\nlet sealedWindows = 0;\nexport const read = () => sealedWindows;\n";
+		assert.equal(egress(elsewhere).length, 1);
+		const renamed = "// no-module-state: sealed-window-counter\nlet windows = 0;\nexport const read = () => windows;\n";
+		assert.equal(lint(file, renamed).length, 1);
 	});
 
 	it("applies only under src/core/egress", () => {

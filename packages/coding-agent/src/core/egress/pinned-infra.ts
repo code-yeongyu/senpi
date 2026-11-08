@@ -36,7 +36,7 @@ export interface PinnedCustodyInfra {
 	readonly keyFactsVerifierKeys: readonly VerifierKeyPin[];
 }
 
-export const PINNED_CUSTODY_INFRA: PinnedCustodyInfra = {
+export const PINNED_CUSTODY_INFRA: Readonly<PinnedCustodyInfra> = {
 	custodyAccountIds: [],
 	arnNamespace: "arn:aws:kms:us-east-1:",
 	roleNames: {
