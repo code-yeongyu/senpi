@@ -57,7 +57,11 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 
 	it("rebuilds from durable history: the rebuilt state equals the projected rows and lacks the uncommitted message", async () => {
 		driver = await createReferenceDriver();
-		driver.setResponses([fauxAssistantMessage([fauxText("kept")]), fauxAssistantMessage([fauxText("lost")])]);
+		driver.setResponses([
+			fauxAssistantMessage([fauxText("kept")]),
+			fauxAssistantMessage([fauxText("lost")]),
+			fauxAssistantMessage([fauxText("redialed")]),
+		]);
 		await driver.prompt("first");
 		driver.inject.nextCommit("reject");
 		const oldSession = driver.session;
@@ -67,7 +71,7 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 		expect(driver.rebuilds).toBe(1);
 		expect(driver.session).not.toBe(oldSession);
 		expect(driver.session.agent.state.messages).toEqual(projectHistoryRows(driver.rows));
-		expect(assistantTexts(driver.session.agent.state.messages)).toEqual(["kept"]);
+		expect(assistantTexts(driver.session.agent.state.messages)).toEqual(["kept", "redialed"]);
 		expect(assistantTexts(oldSession.agent.state.messages)).toContain("lost");
 	});
 
@@ -113,7 +117,11 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 
 	it("keeps the session's own writes in the adapter mirror and out of durable history (S10)", async () => {
 		driver = await createReferenceDriver();
-		driver.setResponses([fauxAssistantMessage([fauxText("kept")]), fauxAssistantMessage([fauxText("lost")])]);
+		driver.setResponses([
+			fauxAssistantMessage([fauxText("kept")]),
+			fauxAssistantMessage([fauxText("lost")]),
+			fauxAssistantMessage([fauxText("redialed")]),
+		]);
 		await driver.prompt("first");
 		driver.inject.nextCommit("reject");
 		const appendsBefore = driver.counters.adapterAppendAttempts;
@@ -121,8 +129,8 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 		await driver.prompt("second");
 
 		expect(driver.counters.adapterAppendAttempts).toBeGreaterThan(appendsBefore);
-		expect(driver.rows.map((row) => row.kind)).toEqual(["input", "step", "input"]);
-		expect(assistantTexts(projectHistoryRows(driver.rows))).toEqual(["kept"]);
+		expect(driver.rows.map((row) => row.kind)).toEqual(["input", "step", "input", "step"]);
+		expect(assistantTexts(projectHistoryRows(driver.rows))).toEqual(["kept", "redialed"]);
 	});
 
 	it("loads the rebuilt instance's adapter mirror from durable history (S15 precondition)", async () => {
@@ -135,6 +143,61 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 
 		expect(driver.rebuilds).toBe(1);
 		expect(driver.session.sessionManager.buildSessionContext().messages).toEqual(projectHistoryRows(driver.rows));
+	});
+
+	it("resolves an ambiguous write that landed by read-back: one row, no latch", async () => {
+		driver = await createReferenceDriver();
+		driver.setResponses([fauxAssistantMessage([fauxText("one")])]);
+		driver.inject.nextCommit("ambiguous-landed");
+
+		await driver.prompt("go");
+
+		expect(driver.latchHistory).toEqual([]);
+		expect(driver.rebuilds).toBe(0);
+		expect(assistantTexts(projectHistoryRows(driver.rows))).toEqual(["one"]);
+	});
+
+	it("advances the fence on a negative read-back, refuses the late landing and redials to one row", async () => {
+		driver = await createReferenceDriver();
+		driver.setResponses([
+			fauxAssistantMessage([fauxText("first try")]),
+			fauxAssistantMessage([fauxText("redialed")]),
+		]);
+		driver.inject.nextCommit("ambiguous-lost");
+
+		await driver.prompt("go");
+		const refusals = driver.counters.refusals;
+
+		expect(driver.latchHistory.map((latch) => latch.code)).toEqual(["ambiguous_unresolved"]);
+		expect(driver.deliverLateLanding()).toBe("refused");
+		expect(driver.counters.refusals).toBe(refusals + 1);
+		expect(assistantTexts(projectHistoryRows(driver.rows))).toEqual(["redialed"]);
+		expect(driver.counters.providerCalls).toBe(2);
+	});
+
+	it("takes the committed path on already_committed, never the in-memory message", async () => {
+		driver = await createReferenceDriver();
+		driver.setResponses([fauxAssistantMessage([fauxText("mine")])]);
+		driver.inject.nextCommit("already-committed", fauxAssistantMessage([fauxText("theirs")]));
+
+		await driver.prompt("go");
+
+		expect(driver.latchHistory.map((latch) => latch.code)).toEqual(["already_committed"]);
+		expect(assistantTexts(projectHistoryRows(driver.rows))).toEqual(["theirs"]);
+		expect(assistantTexts(driver.session.agent.state.messages)).toEqual(["theirs"]);
+		expect(driver.counters.providerCalls).toBe(1);
+	});
+
+	it("refuses a commit whose fence was advanced under it as fenced: no row, latch, rebuild", async () => {
+		driver = await createReferenceDriver();
+		driver.setResponses([fauxAssistantMessage([fauxText("stale")]), fauxAssistantMessage([fauxText("fresh")])]);
+		driver.inject.advanceFenceBeforeNextCommit();
+
+		await driver.prompt("go");
+
+		expect(driver.latchHistory.map((latch) => latch.code)).toEqual(["fenced"]);
+		expect(driver.rebuilds).toBe(1);
+		expect(assistantTexts(projectHistoryRows(driver.rows))).toEqual(["fresh"]);
 	});
 
 	it("never forwards an event the discarded instance emits after the latch", async () => {

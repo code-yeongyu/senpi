@@ -60,7 +60,13 @@ export interface ReferenceDriver {
 	readonly latchHistory: readonly LatchRecord[];
 	readonly counters: DriverCounters;
 	readonly rebuilds: number;
-	readonly inject: { nextCommit(kind: "reject", code?: StepCommitFailure): void };
+	readonly inject: {
+		nextCommit(kind: "reject", code?: StepCommitFailure): void;
+		nextCommit(kind: "already-committed", committedByAnother: AgentMessage): void;
+		nextCommit(kind: "ambiguous-landed" | "ambiguous-lost"): void;
+		advanceFenceBeforeNextCommit(): void;
+	};
+	deliverLateLanding(): "refused" | "landed" | "none";
 	setResponses: Harness["setResponses"];
 	appendResponses: Harness["appendResponses"];
 	prompt(text: string): Promise<void>;
@@ -88,6 +94,21 @@ interface AdapterMirror {
 	_appendEntry(...args: unknown[]): unknown;
 }
 
+interface Fence {
+	readonly epoch: number;
+	readonly admissionSeq: number;
+	readonly generation: number;
+}
+
+type PlannedFault =
+	| { readonly kind: "reject"; readonly code: StepCommitFailure }
+	| { readonly kind: "already-committed"; readonly committedByAnother: AgentMessage }
+	| { readonly kind: "ambiguous-landed" }
+	| { readonly kind: "ambiguous-lost" };
+
+const sameFence = (a: Fence, b: Fence): boolean =>
+	a.epoch === b.epoch && a.admissionSeq === b.admissionSeq && a.generation === b.generation;
+
 export async function createReferenceDriver(options: HarnessOptions = {}): Promise<ReferenceDriver> {
 	const rows: HistoryRow[] = [];
 	const forwarded: ForwardedEvent[] = [];
@@ -95,12 +116,14 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 	const drainedBy: number[] = [];
 	const rowMessages = new WeakSet<object>();
 	const latchHistory: LatchRecord[] = [];
-	const plannedRejections: StepCommitFailure[] = [];
+	const plannedFaults: PlannedFault[] = [];
+	let fence: Fence = { epoch: 1, admissionSeq: 0, generation: 1 };
+	let advanceFenceBeforeNextCommit = false;
+	let lateLanding: { readonly stepId: string; readonly fence: Fence; readonly message: AgentMessage } | undefined;
 	const instances: Harness[] = [];
 	let generation = 1;
 	let admissions = 0;
 	let refusals = 0;
-	let steps = 0;
 	let rebuilds = 0;
 	let adapterAppendAttempts = 0;
 
@@ -119,22 +142,47 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 		};
 		const owner = harness.agent as unknown as LoopConfigOwner;
 		const createLoopConfig = owner.createLoopConfig.bind(harness.agent);
+		let admitted: { readonly stepId: string; readonly fence: Fence } | undefined;
+
+		const latch = (stepId: string, code: StepCommitFailure): never => {
+			// Latch before the promise rejects: anything the session runs on its way out sees the new generation.
+			generation += 1;
+			latchHistory.push({ stepId, code, generationAfter: generation, forwardedBefore: forwarded.length });
+			throw new StepCommitError(stepId, code);
+		};
+		const writeStep = (stepId: string, step: StepCommit): void => {
+			rows.push({ kind: "step", stepId, message: step.message });
+			for (const result of step.providerToolResults) rows.push({ kind: "step", stepId, message: result });
+		};
+		const hasRow = (stepId: string): boolean => rows.some((row) => row.kind === "step" && row.stepId === stepId);
+
 		const commitStep = async (step: StepCommit): Promise<void> => {
-			if (instanceGeneration !== generation) {
+			if (instanceGeneration !== generation || admitted === undefined) {
 				refusals += 1;
 				throw new StepCommitError(`stale-${instanceGeneration}`, "generation");
 			}
-			steps += 1;
-			const stepId = `step-${steps}`;
-			const code = plannedRejections.shift();
-			if (code !== undefined) {
-				// Latch before the promise rejects: anything the session runs on its way out sees the new generation.
-				generation += 1;
-				latchHistory.push({ stepId, code, generationAfter: generation, forwardedBefore: forwarded.length });
-				throw new StepCommitError(stepId, code);
+			const { stepId } = admitted;
+			if (advanceFenceBeforeNextCommit) {
+				advanceFenceBeforeNextCommit = false;
+				fence = { ...fence, admissionSeq: fence.admissionSeq + 1 };
 			}
-			rows.push({ kind: "step", stepId, message: step.message });
-			for (const result of step.providerToolResults) rows.push({ kind: "step", stepId, message: result });
+			if (!sameFence(admitted.fence, fence)) latch(stepId, "fenced");
+			const fault = plannedFaults.shift();
+			if (fault?.kind === "reject") latch(stepId, fault.code);
+			if (fault?.kind === "already-committed") {
+				rows.push({ kind: "step", stepId, message: fault.committedByAnother });
+			}
+			if (fault?.kind === "ambiguous-lost") {
+				// The write did not apply and its reply was lost: a negative read-back advances the fence, so the first
+				// write landing late is refused.
+				lateLanding = { stepId, fence: admitted.fence, message: step.message };
+				fence = { ...fence, admissionSeq: fence.admissionSeq + 1 };
+				latch(stepId, "ambiguous_unresolved");
+			}
+			// The conditional write: a row for this step from any other admission is `already_committed`.
+			if (hasRow(stepId)) latch(stepId, "already_committed");
+			writeStep(stepId, step);
+			// `ambiguous-landed` applied the write and lost the reply; the read-back finds the row, so it is committed.
 		};
 		owner.createLoopConfig = (...args: unknown[]) => ({ ...createLoopConfig(...args), commitStep });
 
@@ -145,6 +193,8 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 				throw new StepCommitError(`stale-${instanceGeneration}`, "generation");
 			}
 			admissions += 1;
+			fence = { epoch: fence.epoch, admissionSeq: fence.admissionSeq + 1, generation };
+			admitted = { stepId: `step-${fence.admissionSeq}`, fence };
 			return dial(model, context, streamOptions);
 		};
 
@@ -191,9 +241,10 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 		current = next;
 		rebuilds += 1;
 		const pending = inbox.filter((entry) => entry.consumedBy === undefined);
-		if (pending.length > 0) {
-			for (const entry of pending) await next.session.followUp(entry.text);
-			if (!next.session.isStreaming) await next.agent.continue().catch(() => undefined);
+		for (const entry of pending) await next.session.followUp(entry.text);
+		// Re-admission: history ending in input the model has not answered (no committed row) dials again.
+		if (pending.length > 0 || rows.at(-1)?.kind === "input") {
+			await next.agent.continue().catch(() => undefined);
 		}
 	}
 
@@ -224,9 +275,31 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 			return rebuilds;
 		},
 		inject: {
-			nextCommit(_kind: "reject", code: StepCommitFailure = "storage_unavailable") {
-				plannedRejections.push(code);
+			nextCommit(kind: PlannedFault["kind"], arg?: StepCommitFailure | AgentMessage) {
+				if (kind === "reject") {
+					plannedFaults.push({ kind, code: typeof arg === "string" ? arg : "storage_unavailable" });
+				} else if (kind === "already-committed") {
+					if (arg === undefined || typeof arg === "string")
+						throw new Error("already-committed needs the other row");
+					plannedFaults.push({ kind, committedByAnother: arg });
+				} else {
+					plannedFaults.push({ kind });
+				}
 			},
+			advanceFenceBeforeNextCommit() {
+				advanceFenceBeforeNextCommit = true;
+			},
+		},
+		deliverLateLanding() {
+			const landing = lateLanding;
+			if (landing === undefined) return "none";
+			lateLanding = undefined;
+			if (!sameFence(landing.fence, fence)) {
+				refusals += 1;
+				return "refused";
+			}
+			rows.push({ kind: "step", stepId: landing.stepId, message: landing.message });
+			return "landed";
 		},
 		setResponses: first.setResponses,
 		appendResponses: first.appendResponses,
