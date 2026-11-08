@@ -1,6 +1,8 @@
 import type { AssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { createLiveDigestBoard } from "../../src/core/egress/device-proxy-waits.ts";
+import { requestPrefix } from "../../src/core/egress/ledger-schema.ts";
+import type { ProviderCallRequest } from "../../src/core/egress/wire.ts";
 import { HOUR, NOW } from "./claim-fixture.ts";
 import { ledgerOn, storeFixture } from "./device-proxy-doubles.ts";
 import { fauxModel, handOf, handRoute, rig, serverRoute, transcript } from "./device-proxy-fixture.ts";
@@ -33,6 +35,29 @@ describe("device-proxy egress: claims and definition variants (CK9; design 4.2, 
 		expect(hand.acks).toEqual([refused, served]);
 		expect(r.notices).toEqual([]);
 		expect(r.host.waits.map((wait) => wait.waitFor)).toEqual([[{ kind: "claim-renewed" }]]);
+	});
+
+	it("replaces a start refused after a protocol-breaking hooked from the hooked row: no orphan chunks, hooks applied", async () => {
+		const store = await (await storeFixture()).open();
+		const faux = fauxModel();
+		faux.reply("after renewal");
+		const bulky = { role: "user" as const, content: "x".repeat(100 * 1024), timestamp: 2 };
+		const requestHook = (request: ProviderCallRequest): ProviderCallRequest =>
+			"context" in request
+				? { ...request, context: { ...request.context, messages: [...request.context.messages, bulky] } }
+				: request;
+		const r = await rig({ store, respond: faux.respond, requestHook });
+		const hand = handOf(r);
+		hand.fault({ kind: "error", code: "claim_expired", retryable: true, afterHooked: true });
+		expect((await drain(await r.egress.stream(faux.model, transcript(), {}))).content).toEqual([
+			{ type: "text", text: "after renewal" },
+		]);
+		const [refused, served] = hand.starts.map((start) => start.callId);
+		expect(await store.scanDocuments(requestPrefix(refused ?? ""))).toEqual([]);
+		const rows = await r.ledger.rowsForStep("step-1");
+		expect(rows.map((row) => [row.callId, row.state, row.hooksApplied, row.requestChunks])).toEqual([
+			[served, "ended", true, 2],
+		]);
 	});
 
 	it("waits with a 5 s backoff while the hand cannot check the registry key, then retries", async () => {

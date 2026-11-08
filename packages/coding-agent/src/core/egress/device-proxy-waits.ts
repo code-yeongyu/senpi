@@ -26,24 +26,26 @@ export interface WaitConditionSource {
 	until(waitFor: readonly WaitCondition[], signal: AbortSignal): Promise<void>;
 }
 
-const abortions = new WeakMap<AbortSignal, Promise<never>>();
+/** A promise that rejects with the abort reason as soon as `signal` aborts; it never resolves. */
+export type Abortion = (signal: AbortSignal) => Promise<never>;
 
 /**
- * A promise that rejects with the abort reason as soon as `signal` aborts; it never resolves. One promise (and one
- * listener) per signal, however many waits race it: an indefinite key backoff must not pile up abort listeners.
+ * One promise (and one listener) per signal, however many waits race it: an indefinite key backoff must not pile up
+ * abort listeners. The registry belongs to its owner (one egress, one board), never to the module.
  */
-export function abortion(signal: AbortSignal): Promise<never> {
-	const known = abortions.get(signal);
-	if (known) return known;
-	const { promise, reject } = Promise.withResolvers<never>();
-	if (signal.aborted) reject(signal.reason);
-	else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
-	promise.catch(() => {});
-	abortions.set(signal, promise);
-	return promise;
+export function createAbortion(): Abortion {
+	const abortions = new WeakMap<AbortSignal, Promise<never>>();
+	return (signal) => {
+		const known = abortions.get(signal);
+		if (known) return known;
+		const { promise, reject } = Promise.withResolvers<never>();
+		if (signal.aborted) reject(signal.reason);
+		else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+		promise.catch(() => {});
+		abortions.set(signal, promise);
+		return promise;
+	};
 }
-
-const raceAbort = <T>(work: Promise<T>, signal: AbortSignal): Promise<T> => Promise.race([work, abortion(signal)]);
 
 export interface StepWaits {
 	/** Holds `work` as a tracked wait of the current step until it settles. */
@@ -55,12 +57,13 @@ export function stepWaits(
 	host: EgressHostHooks,
 	step: StepRef,
 	signal: AbortSignal,
+	abortion: Abortion,
 ): StepWaits {
 	return {
 		async hold(wait, work) {
 			await host.onWait({ ...wait, call: step });
 			try {
-				return await stream.trackLocalWork(raceAbort(work, signal));
+				return await stream.trackLocalWork(Promise.race([work, abortion(signal)]));
 			} finally {
 				await host.onWaitEnd(step.stepId);
 			}
@@ -80,6 +83,7 @@ export interface LiveDigestBoard {
 }
 
 export function createLiveDigestBoard(): LiveDigestBoard {
+	const abortion = createAbortion();
 	const digests = new Map<string, string>();
 	const waiters = new Map<string, Set<(digest: string) => void>>();
 	const keyOf = (deviceId: DeviceId, providerId: ProviderId): string => JSON.stringify([deviceId, providerId]);
@@ -103,7 +107,7 @@ export function createLiveDigestBoard(): LiveDigestBoard {
 			set.add(resolve);
 			waiters.set(key, set);
 			signal.addEventListener("abort", () => set.delete(resolve), { once: true });
-			return raceAbort(promise, signal);
+			return Promise.race([promise, abortion(signal)]);
 		},
 	};
 }

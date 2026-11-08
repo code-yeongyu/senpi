@@ -85,6 +85,17 @@ function cancelledRow(row: EgressCallRow): EgressCallRow {
 	return { ...fields, state: "cancelled", requestChunks: 0, ...(result?.kind === "error" ? { result } : {}) };
 }
 
+/**
+ * W14 on the step's live row. A dispatched or ended row becomes `cancelled`; a superseded row (the abort came while its
+ * reissue waited: the pacer backoff or the user's choice) stays superseded. Either way its chunks are deleted, because a
+ * cancelled step is never dialed again, so no later W4 retires them.
+ */
+function cancelWrites(row: EgressCallRow): StoreWrite[] {
+	if (row.state === "closed" || row.state === "cancelled") return [];
+	const kept = row.state === "superseded" ? { ...row, requestChunks: 0 } : cancelledRow(row);
+	return [putRow(kept), ...chunkDeletes(row)];
+}
+
 /** The W9 part the ledger owns: the step's row becomes `closed` and its request chunks are deleted (4.5 retention). */
 export function closeCallWrites(row: EgressCallRow): StoreWrite[] {
 	return [putRow({ ...row, state: "closed" }), ...chunkDeletes(row)];
@@ -197,10 +208,7 @@ export function createEgressLedger(options: {
 			return superseded;
 		},
 		async cancelStep(stepId, row) {
-			const live =
-				row && (row.state === "dispatched" || row.state === "ended")
-					? [putRow(cancelledRow(row)), ...chunkDeletes(row)]
-					: [];
+			const live = row ? cancelWrites(row) : [];
 			await mutate(async () => [{ op: "put", key: cancelledKey(stepId), data: stepId }, ...live]);
 		},
 		async isCancelled(stepId) {

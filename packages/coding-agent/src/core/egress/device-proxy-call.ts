@@ -14,7 +14,7 @@ import type { Api, AssistantMessageEvent, AssistantMessageEventStream, Model } f
 import type { EgressLedger } from "./ledger.ts";
 import type { EgressCallRow } from "./ledger-schema.ts";
 import { failureMessage, idleTimeoutText, storedRequestJson } from "./device-proxy-request.ts";
-import { abortion, type EgressClock, type StepWaits, type WaitConditionSource } from "./device-proxy-waits.ts";
+import type { Abortion, EgressClock, StepWaits, WaitConditionSource } from "./device-proxy-waits.ts";
 import type { SignedPlacementClaim } from "./placement-claim.ts";
 import type {
 	ProviderCallChannel,
@@ -50,6 +50,8 @@ export interface CallContext {
 	readonly clock: EgressClock;
 	readonly bounds: DeviceRouteBounds;
 	readonly signal: AbortSignal;
+	/** The egress's own abort registry (one listener per signal). */
+	readonly abortion: Abortion;
 	readonly claim: () => Promise<SignedPlacementClaim>;
 	/** The row a user abort must cancel; kept current as `hooked` and `ended` replace it. */
 	readonly live: { row: EgressCallRow | undefined };
@@ -66,7 +68,7 @@ export async function followCall(
 	const { channel, ledger, out, signal } = ctx;
 	const deviceId = initial.deviceId;
 	if (deviceId === undefined) throw new Error(`egress_call ${initial.callId} has no device`);
-	const aborted = abortion(signal);
+	const aborted = ctx.abortion(signal);
 	let row = initial;
 	ctx.live.row = row;
 	let lastSeq = 0;

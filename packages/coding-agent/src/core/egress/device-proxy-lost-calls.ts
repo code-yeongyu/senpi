@@ -4,8 +4,9 @@
  * otherwise drive an unbounded supersede/W4 cycle through the session's durable store. Per (step, device): the first
  * lost call is reissued at once, the next one only after the key backoff (5 s doubling to 5 min), and after
  * `MAX_AUTOMATIC_REISSUES` automatic reissues the step waits for the user's choice "re-run this step or select another
- * device" (the cap mirrors the two-mismatch cap of 4.2). Callback-stream steps already wait for that choice before
- * every reissue (4.5), so for them only the backoff applies.
+ * device" (the cap mirrors the two-mismatch cap of 4.2). The count and the backoff are kept per device, and the
+ * user's choice restarts both. Callback-stream steps already wait for that choice before every reissue (4.5), so for
+ * them only the backoff applies.
  */
 import type { DeviceId } from "@earendil-works/pi-agent-core";
 import { type EgressClock, nextKeyBackoffMs, type StepWaits, type WaitConditionSource } from "./device-proxy-waits.ts";
@@ -29,23 +30,26 @@ export interface LostCallPacing {
 
 export function lostCallPacer(pacing: LostCallPacing): LostCallPacer {
 	const { stepId, waits, conditions, clock, signal } = pacing;
-	const lost = new Map<DeviceId, number>();
-	let backoff: number | undefined;
+	/** Per device: automatic reissues since the last user choice, and the delay of the last paced one. */
+	const paced = new Map<DeviceId, { readonly reissues: number; readonly backoff?: number }>();
 	return {
 		async beforeReissue(deviceId, attempt) {
-			const reissues = lost.get(deviceId) ?? 0;
+			const { reissues, backoff } = paced.get(deviceId) ?? { reissues: 0 };
 			if (pacing.askUser && reissues >= MAX_AUTOMATIC_REISSUES) {
-				lost.set(deviceId, 0);
+				paced.delete(deviceId);
 				const waitFor = [{ kind: "user-choice", choiceId: `${stepId}:${attempt}` }] as const;
 				const steer = `${deviceId} lost this step ${reissues + 1} times: re-run it or select another device`;
 				await waits.hold({ reason: "result-pending", steer, waitFor }, conditions.until(waitFor, signal));
 				return;
 			}
-			lost.set(deviceId, reissues + 1);
-			if (reissues === 0) return;
-			backoff = nextKeyBackoffMs(backoff);
+			if (reissues === 0) {
+				paced.set(deviceId, { reissues: 1 });
+				return;
+			}
+			const delay = nextKeyBackoffMs(backoff);
+			paced.set(deviceId, { reissues: reissues + 1, backoff: delay });
 			const steer = `${deviceId} lost this step; reissuing it`;
-			await waits.hold({ reason: "result-pending", steer, waitFor: [] }, clock.sleep(backoff, signal));
+			await waits.hold({ reason: "result-pending", steer, waitFor: [] }, clock.sleep(delay, signal));
 		},
 	};
 }

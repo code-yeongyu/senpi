@@ -62,20 +62,19 @@ export interface VariantRecord {
 
 export const REQUEST_CHUNK_BYTES = 96 * 1024;
 
-const enc = encodeURIComponent;
 const pad = (index: number): string => String(index).padStart(6, "0");
 
-export const callKey = (callId: string): string => `egress_call/${enc(callId)}`;
-export const requestPrefix = (callId: string): string => `egress_call_request/${enc(callId)}/`;
+export const callKey = (callId: string): string => `egress_call/${encodeURIComponent(callId)}`;
+export const requestPrefix = (callId: string): string => `egress_call_request/${encodeURIComponent(callId)}/`;
 export const requestChunkKey = (callId: string, index: number): string => `${requestPrefix(callId)}${pad(index)}`;
-export const resultPrefix = (callId: string): string => `egress_call_result/${enc(callId)}/`;
+export const resultPrefix = (callId: string): string => `egress_call_result/${encodeURIComponent(callId)}/`;
 export const resultChunkKey = (callId: string, index: number): string => `${resultPrefix(callId)}${pad(index)}`;
-export const stepIndexPrefix = (stepId: string): string => `egress_step/${enc(stepId)}/`;
+export const stepIndexPrefix = (stepId: string): string => `egress_step/${encodeURIComponent(stepId)}/`;
 export const stepIndexKey = (stepId: string, attempt: number): string => `${stepIndexPrefix(stepId)}${pad(attempt)}`;
-export const cancelledKey = (stepId: string): string => `session/step.cancelled/${enc(stepId)}`;
-export const variantPrefix = (providerId: ProviderId): string => `session/variants/${enc(providerId)}/`;
+export const cancelledKey = (stepId: string): string => `session/step.cancelled/${encodeURIComponent(stepId)}`;
+export const variantPrefix = (providerId: ProviderId): string => `session/variants/${encodeURIComponent(providerId)}/`;
 export const variantKey = (providerId: ProviderId, deviceId: DeviceId): string =>
-	`${variantPrefix(providerId)}${enc(deviceId)}`;
+	`${variantPrefix(providerId)}${encodeURIComponent(deviceId)}`;
 
 /** Splits UTF-8 text into chunks of at most `REQUEST_CHUNK_BYTES` bytes, never inside a code point. */
 export function splitUtf8(text: string): string[] {

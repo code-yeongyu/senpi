@@ -1,7 +1,7 @@
 import { getEventListeners } from "node:events";
 import type { AssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
-import { abortion } from "../../src/core/egress/device-proxy-waits.ts";
+import { createAbortion } from "../../src/core/egress/device-proxy-waits.ts";
 import { storeFixture } from "./device-proxy-doubles.ts";
 import { fauxModel, handOf, probeUntilSettled, rig, transcript } from "./device-proxy-fixture.ts";
 
@@ -76,6 +76,7 @@ describe("device-proxy egress: liveness over an unreliable events stream (CK9; d
 
 	it("adds one abort listener per signal however many waits race it", () => {
 		const controller = new AbortController();
+		const abortion = createAbortion();
 		for (let wait = 0; wait < 50; wait++) void abortion(controller.signal);
 		expect(getEventListeners(controller.signal, "abort")).toHaveLength(1);
 	});

@@ -29,7 +29,7 @@ import {
 	planDispatch,
 	type StoredRequest,
 } from "./device-proxy-request.ts";
-import { nextKeyBackoffMs, stepWaits } from "./device-proxy-waits.ts";
+import { createAbortion, nextKeyBackoffMs, stepWaits } from "./device-proxy-waits.ts";
 import type { EgressCallRow } from "./ledger-schema.ts";
 
 type DoneReason = Extract<AssistantMessageEvent, { type: "done" }>["reason"];
@@ -49,7 +49,8 @@ interface StepRun {
 
 export function createDeviceProxyEgress(deps: DeviceProxyEgressDeps): DeviceProxyEgress {
 	const { ledger, route, host } = deps;
-	const waitsOf = (run: StepRun) => stepWaits(run.out, host, run.step, run.signal);
+	const abortion = createAbortion();
+	const waitsOf = (run: StepRun) => stepWaits(run.out, host, run.step, run.signal, abortion);
 	const callContext = (run: StepRun, deviceId: DeviceId) => ({
 		out: run.out,
 		model: run.model,
@@ -61,6 +62,7 @@ export function createDeviceProxyEgress(deps: DeviceProxyEgressDeps): DeviceProx
 		clock: deps.clock,
 		bounds: deps.bounds,
 		signal: run.signal,
+		abortion,
 		claim: deps.claims.current,
 		live: run.live,
 	});
@@ -121,7 +123,7 @@ export function createDeviceProxyEgress(deps: DeviceProxyEgressDeps): DeviceProx
 				const steer = "renewing this session's placement claim";
 				await waitsOf(run).hold({ reason: "claim-expired", steer, waitFor }, deps.claims.renew(code));
 			}
-			row = await ledger.replaceRefused(row, crypto.randomUUID());
+			row = await ledger.replaceRefused(outcome.row, crypto.randomUUID());
 		}
 	};
 
@@ -218,6 +220,8 @@ export function createDeviceProxyEgress(deps: DeviceProxyEgressDeps): DeviceProx
 			return serve(run, pacer, admitted, undefined);
 		}
 		let previous = latest;
+		// The resumed row is live until the next W4 retires it: an abort in the waits before that must delete its chunks.
+		run.live.row = latest;
 		if (latest.state === "dispatched") {
 			const deviceId = latest.deviceId ?? "";
 			if (deps.hands.offlineFor(deviceId) >= deps.bounds.resumeWindowMs) {

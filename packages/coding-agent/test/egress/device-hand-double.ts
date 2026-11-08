@@ -34,7 +34,13 @@ export type Responder = (
 
 /** What the next `start` does instead of answering normally. */
 export type StartFault =
-	| { readonly kind: "error"; readonly code: ProviderCallErrorCode; readonly retryable?: boolean }
+	/** With `afterHooked`, a hand that breaks the protocol: it runs the hooks and sends `hooked` before refusing. */
+	| {
+			readonly kind: "error";
+			readonly code: ProviderCallErrorCode;
+			readonly retryable?: boolean;
+			readonly afterHooked?: true;
+	  }
 	| { readonly kind: "hang-after-hooks" }
 	| { readonly kind: "hang-after-hooked" }
 	| { readonly kind: "hang-after-events"; readonly events: number }
@@ -148,6 +154,11 @@ export function createHandDouble(options: HandDoubleOptions): HandDouble {
 	const execute = async (start: ProviderCallStart): Promise<void> => {
 		const fault = pendingFaults.shift();
 		if (fault?.kind === "error") {
+			if (fault.afterHooked && options.requestHook) {
+				hookRuns += 1;
+				const request = options.requestHook(start.request);
+				append(start.callId, { t: "provider.call.hooked", callId: start.callId, seq: 0, request });
+			}
 			refuse(start.callId, fault.code, fault.retryable ?? false, `refused: ${fault.code}`);
 			return;
 		}

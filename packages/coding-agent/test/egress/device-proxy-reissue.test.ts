@@ -1,7 +1,10 @@
 import type { AssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { storeFixture } from "./device-proxy-doubles.ts";
-import { fauxModel, handOf, rig, transcript } from "./device-proxy-fixture.ts";
+import { fauxModel, handOf, handRoute, rig, transcript } from "./device-proxy-fixture.ts";
+
+/** A pacer delay, not the call's half-idle-window liveness probe. */
+const paced = (ms: number): boolean => ms !== 30_000;
 
 async function drain(stream: AssistantMessageEventStream) {
 	for await (const _event of stream);
@@ -9,7 +12,7 @@ async function drain(stream: AssistantMessageEventStream) {
 }
 
 describe("device-proxy egress: reissues are bounded and callback-stream reissues ask first (CK9; design 4.5)", () => {
-	it("bounds the lost-call cycle: one reissue at once, one after a 5 s backoff, then the user's choice", async () => {
+	it("bounds the lost-call cycle: one reissue at once, one after a 5 s backoff, then the user's choice, which restarts the pacing", async () => {
 		const store = await (await storeFixture()).open();
 		const faux = fauxModel();
 		const r = await rig({ store, respond: faux.respond });
@@ -31,6 +34,33 @@ describe("device-proxy egress: reissues are bounded and callback-stream reissues
 			const rows = await r.ledger.rowsForStep("step-1");
 			expect(rows.map((row) => row.state)).toEqual(["superseded", "superseded", "superseded"]);
 			expect(r.host.waits.map((wait) => wait.reason)).toEqual(["result-pending", "result-pending"]);
+			const afterChoice = r.clock.nextSleep(paced);
+			r.conditions.release();
+			expect(await Promise.race([afterChoice, runaway])).toBe(5_000);
+			expect(hand.starts).toHaveLength(5);
+		} finally {
+			controller.abort();
+		}
+		await expect(drain(stream)).rejects.toThrow("Request was aborted");
+	});
+
+	it("paces each device on its own: another device's first paced reissue waits 5 s, not the doubled delay", async () => {
+		const store = await (await storeFixture()).open();
+		const faux = fauxModel();
+		const r = await rig({ store, respond: faux.respond, devices: ["laptop", "desktop"] });
+		handOf(r, "laptop").amnesiac();
+		handOf(r, "desktop").amnesiac();
+		let decisions = 0;
+		r.route.decision = () => handRoute(++decisions <= 2 ? "laptop" : "desktop");
+		const controller = new AbortController();
+		const laptopBackoff = r.clock.nextSleep(paced);
+		const stream = await r.egress.stream(faux.model, transcript(), { signal: controller.signal });
+		try {
+			expect(await laptopBackoff).toBe(5_000);
+			const desktopBackoff = r.clock.nextSleep(paced);
+			r.clock.advance(5_000);
+			expect(await desktopBackoff).toBe(5_000);
+			expect(handOf(r, "desktop").starts).toHaveLength(2);
 		} finally {
 			controller.abort();
 		}

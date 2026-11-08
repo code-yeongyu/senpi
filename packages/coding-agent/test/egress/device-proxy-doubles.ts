@@ -154,14 +154,14 @@ export interface ManualClock {
 	now(): number;
 	sleep(ms: number, signal: AbortSignal): Promise<void>;
 	advance(ms: number): void;
-	/** Resolves when the egress next starts a sleep (of exactly `ms`, when given). */
-	nextSleep(ms?: number): Promise<number>;
+	/** Resolves when the egress next starts a sleep (of exactly `ms`, or one `ms` accepts, when given). */
+	nextSleep(ms?: number | ((ms: number) => boolean)): Promise<number>;
 }
 
 export function manualClock(): ManualClock {
 	let now = 0;
 	const sleepers = new Set<{ readonly until: number; readonly wake: () => void }>();
-	let watcher: { readonly ms: number | undefined; readonly wake: (ms: number) => void } | undefined;
+	let watcher: { readonly accepts: (ms: number) => boolean; readonly wake: (ms: number) => void } | undefined;
 	return {
 		now: () => now,
 		sleep(ms, signal) {
@@ -176,7 +176,7 @@ export function manualClock(): ManualClock {
 				},
 				{ once: true },
 			);
-			if (watcher && (watcher.ms === undefined || watcher.ms === ms)) {
+			if (watcher?.accepts(ms)) {
 				watcher.wake(ms);
 				watcher = undefined;
 			}
@@ -192,7 +192,8 @@ export function manualClock(): ManualClock {
 		},
 		nextSleep(ms) {
 			const { promise, resolve } = Promise.withResolvers<number>();
-			watcher = { ms, wake: resolve };
+			const accepts = typeof ms === "function" ? ms : (slept: number) => ms === undefined || ms === slept;
+			watcher = { accepts, wake: resolve };
 			return promise;
 		},
 	};

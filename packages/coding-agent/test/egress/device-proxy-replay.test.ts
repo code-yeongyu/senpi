@@ -88,6 +88,16 @@ describe("device-proxy egress: re-admission replay rules (CK9; design 4.5)", () 
 		expect(handOf(again).starts).toHaveLength(2);
 	});
 
+	it("never replays an ended row whose stop is still pending: re-admission dials again", async () => {
+		const { fixture, faux, first, row } = await hungFirstAttempt("hang-after-events");
+		const pending = fauxAssistantMessage("half an answer", { stopReason: "pending" });
+		await first.ledger.end(row, { kind: "message", message: pending });
+		faux.reply("finished");
+		const again = await rig({ store: await fixture.open(), respond: faux.respond, hands: first.hands });
+		expect((await settle(again.egress, faux.model)).content).toEqual([{ type: "text", text: "finished" }]);
+		expect(handOf(again).starts).toHaveLength(2);
+	});
+
 	it("dials nothing for a step whose history row exists", async () => {
 		const store = await (await storeFixture()).open();
 		const faux = fauxModel();
