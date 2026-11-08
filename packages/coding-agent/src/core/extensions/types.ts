@@ -128,6 +128,7 @@ import type { PermissionPresetName } from "./builtin/permission-system/types.ts"
 import type { EvalHandleHost } from "./eval-handle-host.ts";
 import type { ExtensionKernelTools } from "./kernel-tools-context.ts";
 import type { SessionControlActions, SessionControlWakeEvent } from "./session-control-types.ts";
+import type { SessionDialogApi } from "./session-dialog-api.ts";
 import type { UserActivityKind } from "./user-activity.ts";
 
 export type { ExecOptions, ExecResult } from "../exec.ts";
@@ -163,6 +164,11 @@ export interface ExtensionUIDialogOptions {
 	toolCallId?: string;
 	/** Set with `toolCallId` when another tool (for example a codemode script) issued that call. */
 	parentToolCallId?: string;
+	/**
+	 * `session`: address the dialog to every client attached to the session instead of the connection whose command
+	 * is running, so a prompt raised after that command returned still reaches someone who can answer. RPC field.
+	 */
+	audience?: "session";
 }
 
 /** A guarded private single-line input; callers on older hosts must check capabilities first. */
@@ -365,7 +371,7 @@ export interface ExtensionUIContext {
 	getEditorText(): string;
 
 	/** Show a multi-line editor for text editing. */
-	editor(title: string, prefill?: string): Promise<string | undefined>;
+	editor(title: string, prefill?: string, opts?: ExtensionUIDialogOptions): Promise<string | undefined>;
 
 	/** Stack additional autocomplete behavior on top of the built-in provider. */
 	addAutocompleteProvider(factory: AutocompleteProviderFactory): void;
@@ -2986,6 +2992,14 @@ export interface ExtensionAPI {
 	 * permission system is not running for the session, its setup failed, or the session is not bound yet.
 	 */
 	getPermissionPreset(): PermissionPresetName | undefined;
+
+	/**
+	 * Dialogs addressed to every client attached to this session, not only to the connection whose command is
+	 * running: a prompt raised after that command returned (a background child's permission request a task runner
+	 * forwards) still reaches someone who can answer. The first answer wins. Secret inputs stay with the raising
+	 * connection. In the terminal UI they show like any dialog.
+	 */
+	sessionDialog: SessionDialogApi;
 
 	/**
 	 * Every subscription account's latest limit windows: the records `get_subscription_limits` serves, fed by

@@ -19,7 +19,7 @@ import {
 	toolOwnedPermissionRequests,
 } from "./parsers.ts";
 import { sharedPathIdentityResolver } from "./path-identity-host.ts";
-import { registerPermissionPresetReader } from "./preset-registry.ts";
+import { readDecisionPresetOverride, registerPermissionPresetReader } from "./preset-registry.ts";
 import { showPermissionPrompt } from "./prompt.ts";
 import { PermissionService } from "./service.ts";
 import { loadPermissionSettings } from "./settings.ts";
@@ -236,7 +236,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		activeSettingsManager = settingsManager;
 		const permissionFlag = pi.getFlag("permission");
 		loadedPermissionFlag = permissionFlag;
-		const permissionPresetFlag = pi.getFlag("permission-preset");
+		const permissionPresetFlag = decisionPresetFlag();
 		loadedPresetFlag = { value: permissionPresetFlag };
 		cliRuleset = typeof permissionFlag === "string" ? parsePermissionFlag(permissionFlag) : [];
 		const cliPreset =
@@ -267,6 +267,13 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		if (cellSession) updateCellEnforcement(cellSession, staticRuleset, activePreset);
 	};
 
+	// The core's delegated-default override wins over a valid or absent preset flag; an invalid one keeps refusing.
+	const decisionPresetFlag = (): boolean | string | undefined => {
+		const configured = pi.getFlag("permission-preset");
+		if (typeof configured === "string" && !parsePermissionPresetFlag(configured)) return configured;
+		return (cellSession === undefined ? undefined : readDecisionPresetOverride(cellSession)) ?? configured;
+	};
+
 	const applyToolDenials = (onlyWhenNarrowed = false): void => {
 		const allTools = pi.getAllTools().map((tool) => tool.name);
 		const disabledTools = disabled(allTools, staticRuleset);
@@ -283,8 +290,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 	const followPresetFlag = (cwd: string, agentDir?: string): void => {
 		if (
 			loadedPresetFlag === undefined ||
-			(loadedPresetFlag.value === pi.getFlag("permission-preset") &&
-				loadedPermissionFlag === pi.getFlag("permission"))
+			(loadedPresetFlag.value === decisionPresetFlag() && loadedPermissionFlag === pi.getFlag("permission"))
 		) {
 			return;
 		}

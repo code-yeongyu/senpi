@@ -29,7 +29,7 @@ export const TODAY: { readonly [M in RpcCommand["type"]]: string } = {
 	reset_stream: "no:feature_disabled:feature_disabled",
 	get_protocol_info:
 		"ok{agentDir,capabilities,engineOrdinal,engineVersion,generation,instanceId,launch_profile,memory_pressure,method_classes,mode,path_identity_resolver,protocolVersion,serverVersion}",
-	open_session: "ok{sessionId,state}",
+	open_session: "ok{permissionPreset,permissionPresetSource,permissionPresetStatus,sessionId,state}",
 	close_session: '{"sessionId":"$SID"} => ok{}',
 	release_session: '{"sessionId":"$SID","reason":"takeover"} => ok{attachments,dropped,released,session_path}',
 	unload_session: '{"sessionId":"$SID"} => ok{outcome,sessionPath}',
@@ -77,8 +77,10 @@ export const TODAY: { readonly [M in RpcCommand["type"]]: string } = {
 	abort_branch_summary: "ok",
 	new_session: "ok{cancelled}",
 	wake: "ok{admitted}",
+	admit_external_message:
+		'{"deliveryId":"$NO","text":"X14 delivery.","deliverAs":"followUp","whenIdle":"queue"} => ok{kind,turnId}',
 	get_state:
-		"ok{answeredUiRequests,autoCompactionEnabled,contextUsage,cwd,entries,fastMode,favoriteModels,followUp,followUpMode,holds,isBashRunning,isCompacting,isStreaming,lifecycle,messageCount,model,ordered,pause,paused,pausedHeldInputCount,pausedNoticeCount,pendingDialogs,pendingMessageCount,pendingModelSwitch,pendingQuestions,projectTrusted,retryAttempt,runPaused,scopedModels,sessionFile,sessionId,sessionModelThinkingLevels,steering,steeringMode,thinkingLevel,thinkingLevelSource,usageTotals}",
+		"ok{answeredUiRequests,autoCompactionEnabled,contextUsage,cwd,effectivePermissionPreset,entries,fastMode,favoriteModels,followUp,followUpMode,holds,isBashRunning,isCompacting,isStreaming,lifecycle,messageCount,model,ordered,pause,paused,pausedHeldInputCount,pausedNoticeCount,pendingDialogs,pendingMessageCount,pendingModelSwitch,pendingQuestions,permissionPreset,permissionPresetSource,permissionPresetStatus,projectTrusted,retryAttempt,runPaused,scopedModels,sessionFile,sessionId,sessionModelThinkingLevels,steering,steeringMode,thinkingLevel,thinkingLevelSource,usageTotals}",
 	get_snapshot: '{"tail":0} => ok{entries,history_truncated,markerId,next_before,state}',
 	request_self_settle: "ok{epoch,humanInputRevision,reason,recorded}",
 	get_effect_status: '{"effectId":"$NO"} => ok{found,searched}',
@@ -99,6 +101,8 @@ export const TODAY: { readonly [M in RpcCommand["type"]]: string } = {
 	set_follow_up_mode: '{"mode":"all"} => ok',
 	compact: "no::Nothing to compact (session too small)",
 	set_auto_compaction: '{"enabled":false} => ok',
+	set_permission_preset:
+		'{"permissionPreset":"ask"} => ok{permissionPreset,permissionPresetSource,permissionPresetStatus}',
 	set_auto_retry: '{"enabled":false} => ok',
 	abort_retry: "ok",
 	set_retry_fallback:

@@ -4770,10 +4770,25 @@ Response:
     "autoCompactionEnabled": true,
     "messageCount": 5,
     "pendingMessageCount": 0,
-    "pendingDialogs": []
+    "pendingDialogs": [],
+    "permissionPreset": "ask",
+    "permissionPresetSource": "client",
+    "permissionPresetStatus": "applied",
+    "effectivePermissionPreset": "ask"
   }
 }
 ```
+
+`permissionPreset`, `permissionPresetSource`, `permissionPresetStatus` and `effectivePermissionPreset` report the approval mode the session enforces. `permissionPresetSource` is `client` when a client named a valid preset for this session (`open_session.permissionPreset`, an attach naming one, or `set_permission_preset`) and `host_default` when the host's own default applies (its `--permission-preset` flag, then project and global settings, then `full-access`). `permissionPresetStatus` is `invalid` when the named preset or the host's setting cannot be parsed: the open is still accepted, but every gated tool call is refused, and an invalid preset never counts as one the client set. `effectivePermissionPreset` is the preset the next permission decision uses, `null` while the status is `invalid`. A client confirms a mode it asked for only when `permissionPreset` equals it and `permissionPresetStatus` is `applied`. The `open_session` reply carries the first three fields in `data` as well as in `data.state`.
+
+A preset a client named is recorded in the session file as a `permission_mode` entry. The entry is a record only: a later open that names no preset still uses the host's own default, and the launch flag always wins.
+
+Each gated decision picks its preset in this order:
+
+1. A preset a client named for the session (`open_session.permissionPreset`, an attach naming one, or `set_permission_preset`) wins.
+2. Work a remote device started asks: a turn started by a `prompt`, `follow_up` or `steer` (`whenIdle: "start"`) from a delegated connection, and engine-started work (extension messages, goal and loop turns, `continue_from_leaf`, `wake`, restored input) on a session a remote device has driven. A session counts as remote-driven once a delegated connection sends it any record whose method class is `drive` or `device_admin`; the engine's method-class table decides, so every run starter is covered. That includes records that start no turn, such as `abort`, `set_session_name` or `clear_queue`, and the mark lasts for the session's lifetime on purpose: telling which drive records can shape later engine-started work would need a second hand-kept list beside the table, and a wrong guess there would run remote-influenced work without asking, so the engine errs toward asking. When the operator named no `--permission-preset`, it uses the preset a client recorded in the session file instead. An embedder's host-level preset is the host default, not a launch flag. This rule is decided before `spawnedBy`: a parent named in `open_session`, real or not, never takes a remote device's work off it.
+3. A child session (`spawnedBy`) follows its live parent's current mode, including later changes to it. A child whose parent is not live in this process asks, unless the operator named a preset for it with `--permission-preset`.
+4. Everything else uses the host's own default. A local connection's turn keeps the host default even on a session a remote device has driven, and a `steer` never changes the origin of the turn it joins.
 
 `currentTurnId` is the id of the running turn, present only while one runs; a steer or follow-up names it as `expectedTurnId` (on `prompt`, `steer` or `follow_up`).
 
@@ -5227,6 +5242,21 @@ Response:
 ```json
 {"type": "response", "command": "set_auto_compaction", "success": true}
 ```
+
+#### set_permission_preset
+
+Move this session to another approval mode. It works on a classic `--mode rpc` connection, which refuses `open_session`, and on a multi-session host with the `sessionId` envelope, so a client on another device can change a live session's mode without knowing its session file. It is classed `device_admin`: it changes what the agent may do without asking. Hosts that take it advertise `set_permission_preset_v1`.
+
+```json
+{"type": "set_permission_preset", "permissionPreset": "ask"}
+```
+
+Response:
+```json
+{"type": "response", "command": "set_permission_preset", "success": true, "data": {"permissionPreset": "ask", "permissionPresetSource": "client", "permissionPresetStatus": "applied"}}
+```
+
+The new preset applies from the next permission decision, and the session file records it like a preset named at open. An unknown preset is refused with `errorCode` `invalid_launch_profile` and changes nothing, so the session keeps the mode it had. Extensions hear a change on the `permission_preset_changed` event and read the enforced preset with `pi.getPermissionPreset()`.
 
 ### Retry
 
@@ -5923,6 +5953,32 @@ Response:
 
 `kind` is the admission outcome (`started`, `queued`, `steered`, `already_admitted`, `held_draft`, `turn_conflict`); `admitted` is `[]` when no drain is registered.
 
+#### admit_external_message
+
+Admits a message another agent sent this session (a relayed peer delivery) exactly as `pi.session.admitExternalMessage` does in process (multi-session hosts: session-scoped). The engine writes its own `session_control_delivery` custom entry, with `details.sender` and `details.display_text` for human surfaces: never a `role: "user"` message, never the extension `input` event, and a `/`-led `text` is not dispatched as a command or expanded as a template. Method class `drive`.
+
+```json
+{"type": "admit_external_message", "sessionId": "rpc-1", "deliveryId": "d7", "text": "[from peer] build is green", "sender": {"kind": "agent", "session_id": "s-42", "name": "reviewer"}, "displayText": "build is green", "deliverAs": "followUp"}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "admit_external_message",
+  "success": true,
+  "data": { "kind": "started", "turnId": "0" }
+}
+```
+
+- `deliveryId` (1-256 chars), `text` (non-empty) and `deliverAs` (`steer` | `followUp`) are required. `sender` is `{ kind: "agent", session_id, name? }`, `{ kind: "command_line", user? }` or `{ kind: "external", platform, author? }` with no other field.
+- `whenIdle`: `start` (default) starts a turn on an idle session; `queue` holds it for the next turn.
+- `expectedTurnId` is `get_state.currentTurnId` (a string). A steer whose `expectedTurnId` is not the current turn, or a mid-turn steer that names none, answers `kind: "turn_conflict"` and admits nothing. The reply's `turnId` is the session's turn at admission, in the same form.
+- `chainCount` is a thread call's hop count, checked against `threads.chainCountLimit` before anything is admitted (refused with `chain_count_limit` / `invalid_chain_count`, as on `prompt`/`steer`/`follow_up`); the admitted hop is written as `details.chain_count`.
+- `kind` is the same outcome `wake` reports (`held_draft`: retry; nothing was queued). The ledger keys a local connection's `deliveryId` as `rpc:local/<deliveryId>` and a remote device's as `device:<deviceId>/<deliveryId>`, so RPC ids never collide with in-process deliveries or with another device's. An id the runtime already holds, or that the transcript already holds an entry for (after a restart too), answers `already_admitted`.
+- On a connection that speaks for a remote device (a delegated connection, or one whose `set_client_info` declared `remoteOrigin`), the engine stamps that device as `details.remote_origin`, writes its own provenance line ahead of `text` in what the model reads (the claimed `sender` marked unverified), keeps `text` as `details.display_text` when no `displayText` is given, and refuses a `command_line` sender (`sender_not_allowed`). The device's `deviceName` and `deviceId` and the claimed `session_id` and `platform` appear JSON-quoted in that line. A delegated connection that names no remote device is refused (`delegated_origin_unknown`), never admitted as a local delivery. A record that names `remote_origin` is refused on every connection. The turn that consumes the delivery takes the connection's origin, so a remote device's follow-up runs under the delegated approval-mode rule even inside a local turn.
+- Once `release_session` has closed the session's admission, the record answers `success: false` with the release's message: the delivery stays with its sender.
+
 #### release_session
 
 Multi-session hosts only. Hands the session to a runtime outside the host; see "Handing a session over (`release_session`)".
@@ -6413,6 +6469,37 @@ capability:
         "startedAtMs": 1710000000000
       }
     ]
+  }
+}
+```
+
+#### Background session age
+
+The terminal builtin emits `terminal_background_age` on the same path, and on the in-process `pi.events`
+bus, when a background bash session is still running at 10 minutes and then every 30 minutes (10, 40,
+70, ...), and when the opt-in auto-reap (`terminal.backgroundAutoReapMinutes` or the `bash` parameter
+`auto_reap_minutes`) has stopped one, or once when its stop did not end the session. `data` has `kind`
+(`running`, `reaped`, or `reap_failed`), `id` (the `bash_id`), `description`, optional `command`,
+`startedAtMs`, `ageMs`, `ageMinutes`, `autoReapMinutes` (the age at which the session is stopped
+automatically, or `null` when nothing will stop it), `reason` (on `reap_failed` only: why the stop did not
+end it), and `stop`, the call that stops it. After `reap_failed` the session is still running, the
+`running` reports go on, and the auto-reap does not try again. Nothing is stopped by this event; a client that wants the session gone calls `kill_bash`
+with `stop.args`. A report that came due while the host slept arrives once, not once per missed interval.
+
+```json
+{
+  "type": "extension_event",
+  "name": "terminal_background_age",
+  "data": {
+    "kind": "running",
+    "id": "bash_3",
+    "description": "npm run dev",
+    "command": "npm run dev",
+    "startedAtMs": 1710000000000,
+    "ageMs": 600000,
+    "ageMinutes": 10,
+    "autoReapMinutes": null,
+    "stop": { "tool": "kill_bash", "args": { "bash_id": "bash_3" } }
   }
 }
 ```

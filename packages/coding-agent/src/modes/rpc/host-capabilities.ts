@@ -60,6 +60,9 @@ export const SUBSCRIPTION_LIMITS_CAPABILITY = "subscription_limits";
 /** `resolve_path`: which file a message's path means, the engine's one rule (senpi#3415). */
 export const RESOLVE_PATH_CAPABILITY = "resolve_path";
 
+/** `set_permission_preset`: a live session's approval mode can be set and is echoed back (classic and multi-session). */
+export const SET_PERMISSION_PRESET_CAPABILITY = "set_permission_preset_v1";
+
 /**
  * The capabilities a multi-session host advertises in `get_protocol_info`, in their wire order. `warm` is added only
  * when the runtime is in-process, `tool_runtime:<kind>` names where heavy tool work runs, and `negotiated` carries
@@ -108,6 +111,7 @@ export function multiSessionHostCapabilities(options: {
 			// `get_state`/`get_entries` marked `observe` never attach, and history reads page backward too (senpi#4267).
 			OBSERVE_READS_CAPABILITY,
 			ENTRIES_TAIL_CAPABILITY,
+			SET_PERMISSION_PRESET_CAPABILITY,
 			// Host capabilities, not client opt-ins: only a multi-session host owns the
 			// attachment refcount `open_session.retain_on_disconnect` detaches from, the
 			// per-session launch profile `context`/`auto_title` travel on, and the session

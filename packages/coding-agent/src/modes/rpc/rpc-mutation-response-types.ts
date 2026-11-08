@@ -10,6 +10,7 @@ import type { CompactionResult } from "../../core/compaction/index.ts";
 
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
 import type { SessionControlAdmission } from "../../core/extensions/types.ts";
+import type { PermissionModeReply } from "../../core/permission-mode.ts";
 
 import type { ApiKeyVerification } from "../../core/verify-api-key.ts";
 
@@ -158,6 +159,13 @@ export type RpcMutationResponse =
 	| { id?: string; type: "response"; command: "set_follow_up_mode"; success: true }
 	| { id?: string; type: "response"; command: "compact"; success: true; data: CompactionResult }
 	| { id?: string; type: "response"; command: "set_auto_compaction"; success: true }
+	| {
+			id?: string;
+			type: "response";
+			command: "set_permission_preset";
+			success: true;
+			data: PermissionModeReply;
+	  }
 	| { id?: string; type: "response"; command: "set_auto_retry"; success: true }
 	| { id?: string; type: "response"; command: "abort_retry"; success: true }
 	| { id?: string; type: "response"; command: "set_retry_fallback"; success: true }

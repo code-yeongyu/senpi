@@ -21,6 +21,7 @@ import {
 	type TerminalToolResult,
 	textResult,
 } from "./context.ts";
+import { backgroundStart, trackBackgroundSession } from "./background-auto-reap.ts";
 import { createForegroundDetachGate } from "./foreground-detach.ts";
 import { resolveForegroundWindowSeconds, SLEEP_WAIT_WINDOW_SECONDS } from "./foreground-window.ts";
 import { classifySleepWait, type SleepWaitClassification } from "./sleep-wait.ts";
@@ -39,6 +40,12 @@ export const ptyBashSchema = Type.Object({
 		Type.Boolean({
 			description:
 				"Run as a persistent background session: returns a bash_id immediately (read with bash_output, steer with bash_input, stop with kill_bash). A plain & job dies with the call's PTY hangup (native backend), and nohup at best leaves an untracked orphan (no bash_id, no log) that the call's timeout still group-kills. This flag is the only reliable way a job outlives the call.",
+		}),
+	),
+	auto_reap_minutes: Type.Optional(
+		Type.Number({
+			description:
+				"Background sessions only: stop this session (TERM, then KILL to its process group) once it has run this many minutes. Defaults to the terminal.backgroundAutoReapMinutes setting, which is off; 0 turns it off for this call.",
 		}),
 	),
 	cols: Type.Optional(Type.Number({ description: "PTY width in columns (default 120)." })),
@@ -373,8 +380,7 @@ async function runForeground(
 
 	if (outcome === "detached") {
 		scheduleDetachedSweep(ctx, id, runtime, timeoutMs, startedAt);
-		ctx.onBackgroundStart?.(id, input.description ?? input.command, startedAt, input.command);
-		if (ctx.onBackgroundExit) runtime.session.onExit(() => ctx.onBackgroundExit?.(id, runtime));
+		trackBackgroundSession(ctx, id, runtime, backgroundStart(input, ctx.backgroundAutoReapMinutes, startedAt));
 		const delta = runtime.readDelta();
 		const partialOutput = formatTerminalToolOutput(delta.text).text || "(no output yet)";
 		const timeoutNote =
@@ -457,8 +463,7 @@ async function runBackground(
 		toolCallId,
 		execCtx,
 	);
-	ctx.onBackgroundStart?.(id, input.description ?? input.command, Date.now(), input.command);
-	if (ctx.onBackgroundExit) runtime.session.onExit(() => ctx.onBackgroundExit?.(id, runtime));
+	trackBackgroundSession(ctx, id, runtime, backgroundStart(input, ctx.backgroundAutoReapMinutes, Date.now()));
 
 	// Capture any output the command emits within a short grace window (or its exit).
 	await Promise.race([delay(BACKGROUND_START_GRACE_MS), runtime.session.waitExit()]);
