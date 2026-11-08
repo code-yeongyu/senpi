@@ -43,23 +43,66 @@ export function formatTokens(count: number): string {
 /**
  * Mirrors the provider-shown-only-when->1 rule for accounts: the active account
  * name appears only when the provider actually pools more than one slot. The
- * pick shown is the pin when present, else the first account of the user order
- * (senpi#3591), else the session's HRW winner - the same ranking the rotation
- * engine uses, so the footer names the slot that will serve.
+ * pick shown is the effective pin (CLI > settings > stored, senpi#5983) when
+ * present, else the first account of the user order (senpi#3591), else the
+ * session's HRW winner - the same ranking the rotation engine uses, so the
+ * footer names the slot that will serve. A blocked pin (blockedUntil in the
+ * future) is skipped for the first usable slot in that ranking, and the
+ * suffix marks the blocked pin (`@B (A blocked until 14:00)`); when every
+ * slot is blocked it names the top-ranked slot and marks it blocked instead
+ * of silently naming a slot that cannot serve. Block state rides on the
+ * stored slots (SlotBlockState); slots without it are treated as usable.
  */
-export function accountFooterSuffix(credential: Credential | undefined, sessionId: string): string {
+export type AccountFooterOptions = {
+	/** Effective pin from CLI/settings, outranking the stored pin (senpi#5983). */
+	pinnedAccount?: string;
+	/** Override for "now" (tests); defaults to `Date.now()`. */
+	now?: number;
+};
+
+function formatBlockedUntil(until: number): string {
+	const date = new Date(until);
+	return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+export function accountFooterSuffix(
+	credential: Credential | undefined,
+	sessionId: string,
+	options: AccountFooterOptions = {},
+): string {
 	const pooled: PooledCredential | undefined = credential;
 	// Only slots the credential can serve with; a mixed pool's other-kind slot never does (senpi#3486).
 	const slots = credential ? slotsOfOwnKind(credential) : [];
 	if (slots.length < 2) return "";
-	const pinned = Object.entries(credential ?? {}).find(([key]) => key === "pinned")?.[1];
-	const pinnedSlot = slots.find((slot) => slot.name === pinned);
-	if (pinnedSlot) return `@${footerAccountLabel(pinnedSlot)}`;
-	const winner = applyAccountOrder(
+	const now = options.now ?? Date.now();
+	// Block state rides on the stored slots at runtime (SlotBlockState) but
+	// is not part of the CredentialSlot type, so read it through unknown.
+	const blockedUntilOf = (slot: object): number | undefined =>
+		(slot as unknown as { blockedUntil?: number }).blockedUntil;
+	const isBlocked = (slot: object): boolean => {
+		const until = blockedUntilOf(slot);
+		return until !== undefined && until > now;
+	};
+	const ranked = applyAccountOrder(
 		pooled?.order,
 		rendezvousOrder(sessionId, slots, (input) => createHash("sha256").update(input).digest().readBigUInt64BE(0)),
-	)[0];
-	return winner === undefined ? "" : `@${footerAccountLabel(winner)}`;
+	);
+	const storedPinned = Object.entries(credential ?? {}).find(([key]) => key === "pinned")?.[1];
+	const pinnedName = options.pinnedAccount ?? storedPinned;
+	const pinnedSlot = pinnedName === undefined ? undefined : slots.find((slot) => slot.name === pinnedName);
+	if (pinnedSlot) {
+		if (!isBlocked(pinnedSlot)) return `@${footerAccountLabel(pinnedSlot)}`;
+		const until = blockedUntilOf(pinnedSlot) as number;
+		const serving = ranked.find((slot) => slot !== pinnedSlot && !isBlocked(slot));
+		if (serving)
+			return `@${footerAccountLabel(serving)} (${footerAccountLabel(pinnedSlot)} blocked until ${formatBlockedUntil(until)})`;
+		return `@${footerAccountLabel(pinnedSlot)} (blocked until ${formatBlockedUntil(until)})`;
+	}
+	const winner = ranked.find((slot) => !isBlocked(slot)) ?? ranked[0];
+	if (winner === undefined) return "";
+	if (isBlocked(winner))
+		return `@${footerAccountLabel(winner)} (blocked until ${formatBlockedUntil(blockedUntilOf(winner) as number)})`;
+	return `@${footerAccountLabel(winner)}`;
 }
 
 /**
@@ -102,10 +145,16 @@ export class FooterComponent implements Component {
 	private footerData: ReadonlyFooterDataProvider;
 	private autoCompactEnabled = true;
 	private compactionDelegated = false;
+	private resolveAccountPin: ((sessionId: string) => string | undefined) | undefined;
 
-	constructor(session: AgentSession, footerData: ReadonlyFooterDataProvider) {
+	constructor(
+		session: AgentSession,
+		footerData: ReadonlyFooterDataProvider,
+		options: { resolveAccountPin?: (sessionId: string) => string | undefined } = {},
+	) {
 		this.session = session;
 		this.footerData = footerData;
+		this.resolveAccountPin = options.resolveAccountPin;
 	}
 
 	setSession(session: AgentSession): void {
@@ -230,9 +279,12 @@ export class FooterComponent implements Component {
 		let accountSuffix = "";
 		if (state.model) {
 			try {
+				const sessionId = this.session.sessionManager.getSessionId();
+				const pinnedAccount = this.resolveAccountPin?.(sessionId);
 				accountSuffix = accountFooterSuffix(
 					this.session.modelRegistry.authStorage.get(state.model.provider),
-					this.session.sessionManager.getSessionId(),
+					sessionId,
+					pinnedAccount === undefined ? undefined : { pinnedAccount },
 				);
 			} catch {
 				// The footer must render even when credential storage is unreadable.
