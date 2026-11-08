@@ -95,6 +95,15 @@ export class TerminalSessionBundle {
 		this.#sinks?.onBackgroundState(this.backgroundSnapshot());
 	}
 
+	/** The auto-reap's stop did not end a session still on the schedule: one notice; its age notices go on. */
+	notifyBackgroundReapFailed(id: string, autoReapMinutes: number, reason: string): void {
+		if (this.#torndown) return;
+		const subject = this.#ages.get(id);
+		if (!subject) return;
+		const event = backgroundAgeEvent("reap_failed", { ...subject, autoReapMinutes }, Date.now());
+		this.#dispatchAge({ ...event, reason });
+	}
+
 	notifyBackgroundExit(id: string, runtime: TerminalExitView): void {
 		if (this.#torndown) return;
 		const subject = this.#ages.remove(id);

@@ -72,6 +72,9 @@ export function describeBackgroundAge(event: TerminalBackgroundAgeEvent): string
 	if (event.kind === "reaped") {
 		return `${session} was stopped automatically after ${minutes(event.autoReapMinutes ?? event.ageMinutes)} (auto-reap).`;
 	}
+	if (event.kind === "reap_failed") {
+		return `${session} is still running: auto-reap at ${minutes(event.autoReapMinutes ?? event.ageMinutes)} failed (${event.reason ?? "unknown reason"}) and will not retry; stop it with ${killCall(event.id)} if it is no longer needed.`;
+	}
 	const reap =
 		event.autoReapMinutes === null
 			? "Nothing stops it automatically"

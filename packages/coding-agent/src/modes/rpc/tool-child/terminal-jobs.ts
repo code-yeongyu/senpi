@@ -162,6 +162,8 @@ export function createTerminalJobHandlers(injected?: TerminalManager): Readonly<
 				...(autoReapMinutes === undefined ? {} : { autoReapMinutes }),
 			}),
 		onBackgroundExit: (id, runtime) => tell(job, exitSummary(id, runtime)),
+		onBackgroundReapFailed: (id, autoReapMinutes, reason) =>
+			tell(job, { event: "background_reap_failed", id, autoReapMinutes, reason }),
 		cwd: args.cwd,
 		...(args.shellPath === undefined ? {} : { shellPath: args.shellPath }),
 		defaultCols: args.defaultCols,

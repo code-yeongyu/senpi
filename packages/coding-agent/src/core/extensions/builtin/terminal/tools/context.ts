@@ -43,6 +43,8 @@ export interface TerminalToolContext {
 	readonly onSessionInput?: (id: string) => void;
 	/** Notified when a background session exits, so the notify layer can wake the agent. */
 	readonly onBackgroundExit?: (id: string, runtime: TerminalExitView) => void;
+	/** The opt-in auto-reap's one stop at `autoReapMinutes` did not end the session, for `reason`; it keeps running. */
+	readonly onBackgroundReapFailed?: (id: string, autoReapMinutes: number, reason: string) => void;
 	/** Session-scoped monitor state, sharing the terminal manager's bash-id namespace. */
 	readonly monitorRegistry?: MonitorRegistry;
 	/** Receives filtered monitor line and terminal-summary events. */

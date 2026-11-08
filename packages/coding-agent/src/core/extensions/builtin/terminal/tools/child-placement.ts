@@ -57,6 +57,12 @@ export type TerminalBackgroundWake =
 			readonly exit: TerminalExitView["exitResult"];
 			readonly output: string;
 			readonly autoReapedAfterMinutes?: number;
+	  }
+	| {
+			readonly event: "background_reap_failed";
+			readonly id: string;
+			readonly autoReapMinutes: number;
+			readonly reason: string;
 	  };
 
 function optionalMinutes(value: unknown): number | undefined {
@@ -82,6 +88,12 @@ function parseBackgroundWake(value: unknown): TerminalBackgroundWake | undefined
 			...(typeof command === "string" ? { command } : {}),
 			...(autoReapMinutes === undefined ? {} : { autoReapMinutes }),
 		};
+	}
+	if (event === "background_reap_failed") {
+		const autoReapMinutes = optionalMinutes(Reflect.get(value, "autoReapMinutes"));
+		const reason: unknown = Reflect.get(value, "reason");
+		if (autoReapMinutes === undefined || typeof reason !== "string") return undefined;
+		return { event, id, autoReapMinutes, reason };
 	}
 	if (event === "background_exit") {
 		const output: unknown = Reflect.get(value, "output");
@@ -187,6 +199,10 @@ function backgroundRelay(ctx: TerminalToolContext): Pick<ToolChildJob, "wake" | 
 			if (wake.event === "background_start") {
 				running.set(wake.id, generation);
 				ctx.onBackgroundStart?.(wake.id, wake.description, wake.startedAtMs, wake.command, wake.autoReapMinutes);
+				return;
+			}
+			if (wake.event === "background_reap_failed") {
+				ctx.onBackgroundReapFailed?.(wake.id, wake.autoReapMinutes, wake.reason);
 				return;
 			}
 			running.delete(wake.id);

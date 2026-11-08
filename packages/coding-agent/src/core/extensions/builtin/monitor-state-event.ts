@@ -10,11 +10,12 @@ export const TERMINAL_BACKGROUND_AGE_EVENT = "terminal_background_age";
 
 /**
  * `running`: the session is still running at `ageMinutes` (first at 10 minutes, then every 30). `reaped`: the opt-in
- * auto-reap stopped it at `autoReapMinutes`. `stop` is the call that stops it; `autoReapMinutes` is null when nothing
- * will stop it automatically.
+ * auto-reap stopped it at `autoReapMinutes`. `reap_failed`: the auto-reap's one stop at `autoReapMinutes` did not end
+ * it, for `reason`; it keeps running and keeps reporting. `stop` is the call that stops it; `autoReapMinutes` is null
+ * when nothing will stop it automatically.
  */
 export interface TerminalBackgroundAgeEvent {
-	readonly kind: "running" | "reaped";
+	readonly kind: "running" | "reaped" | "reap_failed";
 	readonly id: string;
 	readonly description: string;
 	readonly command?: string;
@@ -22,6 +23,8 @@ export interface TerminalBackgroundAgeEvent {
 	readonly ageMs: number;
 	readonly ageMinutes: number;
 	readonly autoReapMinutes: number | null;
+	/** Why the auto-reap failed; set on `reap_failed` only. */
+	readonly reason?: string;
 	readonly stop: { readonly tool: "kill_bash"; readonly args: { readonly bash_id: string } };
 }
 

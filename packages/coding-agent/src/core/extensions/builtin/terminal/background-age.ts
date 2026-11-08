@@ -69,6 +69,10 @@ export class BackgroundAgeSchedule {
 		this.#arm(now);
 	}
 
+	get(id: string): BackgroundAgeSubject | undefined {
+		return this.#entries.get(id)?.subject;
+	}
+
 	remove(id: string): BackgroundAgeSubject | undefined {
 		const entry = this.#entries.get(id);
 		if (!entry) return undefined;

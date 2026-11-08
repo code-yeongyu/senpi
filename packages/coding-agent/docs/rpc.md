@@ -6422,10 +6422,12 @@ capability:
 The terminal builtin emits `terminal_background_age` on the same path, and on the in-process `pi.events`
 bus, when a background bash session is still running at 10 minutes and then every 30 minutes (10, 40,
 70, ...), and when the opt-in auto-reap (`terminal.backgroundAutoReapMinutes` or the `bash` parameter
-`auto_reap_minutes`) has stopped one. `data` has `kind` (`running` or `reaped`), `id` (the `bash_id`),
-`description`, optional `command`, `startedAtMs`, `ageMs`, `ageMinutes`, `autoReapMinutes` (the age at
-which the session is stopped automatically, or `null` when nothing will stop it), and `stop`, the call
-that stops it. Nothing is stopped by this event; a client that wants the session gone calls `kill_bash`
+`auto_reap_minutes`) has stopped one, or once when its stop did not end the session. `data` has `kind`
+(`running`, `reaped`, or `reap_failed`), `id` (the `bash_id`), `description`, optional `command`,
+`startedAtMs`, `ageMs`, `ageMinutes`, `autoReapMinutes` (the age at which the session is stopped
+automatically, or `null` when nothing will stop it), `reason` (on `reap_failed` only: why the stop did not
+end it), and `stop`, the call that stops it. After `reap_failed` the session is still running, the
+`running` reports go on, and the auto-reap does not try again. Nothing is stopped by this event; a client that wants the session gone calls `kill_bash`
 with `stop.args`. A report that came due while the host slept arrives once, not once per missed interval.
 
 ```json

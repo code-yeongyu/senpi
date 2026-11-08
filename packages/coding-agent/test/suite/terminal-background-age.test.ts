@@ -236,4 +236,34 @@ describe("background age delivery through the extension sinks", () => {
 		expect(messages[0]?.content).toContain("stopped automatically after 60 minutes");
 		expect(notices.map((notice) => notice.level)).toEqual(["warning"]);
 	});
+
+	it("says once that auto-reap failed and why, and the session keeps reporting its age", () => {
+		const { terminal, emitted, messages, notices, ageEvents } = harness();
+		terminal.notifyBackgroundStart("bash_9", "soak", Date.now(), { command: "./soak.sh", autoReapMinutes: 60 });
+		vi.advanceTimersByTime(60 * MINUTE);
+		messages.length = 0;
+		notices.length = 0;
+		emitted.length = 0;
+		terminal.notifyBackgroundReapFailed("bash_9", 60, "EPERM: operation not permitted");
+
+		expect(ageEvents()).toEqual(["events", "rpc"]);
+		const rpc = emitted.find((entry) => entry.via === "rpc" && entry.name === TERMINAL_BACKGROUND_AGE_EVENT);
+		expect(rpc?.data).toMatchObject({
+			kind: "reap_failed",
+			id: "bash_9",
+			autoReapMinutes: 60,
+			reason: "EPERM: operation not permitted",
+		});
+		expect(messages).toHaveLength(1);
+		expect(messages[0]?.content).toContain("bash_9");
+		expect(messages[0]?.content).toContain("EPERM: operation not permitted");
+		expect(messages[0]?.content).toContain('kill_bash({ bash_id: "bash_9" })');
+		expect(notices.map((notice) => notice.level)).toEqual(["warning"]);
+
+		vi.advanceTimersByTime(10 * MINUTE);
+		const rpcKinds = emitted
+			.filter((entry) => entry.via === "rpc" && entry.name === TERMINAL_BACKGROUND_AGE_EVENT)
+			.map((entry) => Reflect.get(Object(entry.data), "kind"));
+		expect(rpcKinds).toEqual(["reap_failed", "running"]);
+	});
 });

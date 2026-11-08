@@ -132,11 +132,11 @@ export function bundleSinks(pi: ExtensionAPI, state: TerminalExtensionState): Te
 			pi.events?.emit(TERMINAL_BACKGROUND_AGE_EVENT, event);
 			pi.rpc?.emit(TERMINAL_BACKGROUND_AGE_EVENT, event);
 			withTerminalContext(
-				() => state.ctx?.ui?.notify?.(describeBackgroundAge(event), event.kind === "reaped" ? "warning" : "info"),
+				() => state.ctx?.ui?.notify?.(describeBackgroundAge(event), event.kind === "running" ? "info" : "warning"),
 				retire,
 			);
 			// A reap reaches the model through the session's completion notice, which names the reap.
-			if (event.kind === "running") state.notifier?.notifyAge(event);
+			if (event.kind !== "reaped") state.notifier?.notifyAge(event);
 		},
 		onBackgroundExit: (id, runtime) => {
 			state.recordedBackgroundIds.delete(id);
@@ -219,6 +219,9 @@ export function buildToolContext(pi: ExtensionAPI, state: TerminalExtensionState
 		onSessionInput: (id: string) => untapBackgroundSession(state.bundle?.manager.get(id)),
 		onBackgroundExit: (id: string, runtime: TerminalExitView) => {
 			state.bundle?.notifyBackgroundExit(id, runtime);
+		},
+		onBackgroundReapFailed: (id: string, autoReapMinutes: number, reason: string) => {
+			state.bundle?.notifyBackgroundReapFailed(id, autoReapMinutes, reason);
 		},
 		onMonitorRearmed: (id: string) => state.monitorNotifier?.rearm(id),
 		onMonitorsResumed: (ids: readonly string[]) => state.monitorNotifier?.resume(ids),

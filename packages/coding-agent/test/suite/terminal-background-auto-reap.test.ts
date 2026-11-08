@@ -2,12 +2,14 @@
 // as it runs; with either one it is stopped through the manager's stop path (TERM, then KILL to the group) at that
 // age, and the exit it reports carries the reap. The clock is vitest's fake one and the PTY is a fake; nothing sleeps.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { TerminalBackgroundAgeEvent } from "../../src/core/extensions/builtin/monitor-state-event.ts";
 import {
 	buildToolContext,
 	type TerminalExtensionState,
 } from "../../src/core/extensions/builtin/terminal/extension-state.ts";
 import type { TerminalManager } from "../../src/core/extensions/builtin/terminal/manager.ts";
 import type { TerminalRuntimeSession } from "../../src/core/extensions/builtin/terminal/runtime-session.ts";
+import { TerminalSessionBundle } from "../../src/core/extensions/builtin/terminal/session-bundle.ts";
 import { resolveTerminalSettings } from "../../src/core/extensions/builtin/terminal/settings.ts";
 import { createPtyBashTool } from "../../src/core/extensions/builtin/terminal/tools/bash.ts";
 import type {
@@ -93,11 +95,48 @@ async function startBackground(bash: ReturnType<typeof setup>["bash"], extra: Re
 	return result;
 }
 
+/**
+ * The tool context the extension builds, wired to a real session bundle, with a stop that does what `stop` says: the
+ * age events the bundle emits (running, reaped, reap_failed) are what the TUI, the model and RPC drivers see.
+ */
+let bundles: TerminalSessionBundle[] = [];
+function wiredToBundle(stop: (runtime: FakeRuntime) => Promise<boolean>) {
+	const runtime = new FakeRuntime();
+	spawned.runtime = runtime;
+	const terminal = new TerminalSessionBundle({});
+	bundles.push(terminal);
+	const ages: TerminalBackgroundAgeEvent[] = [];
+	const exits: TerminalExitView[] = [];
+	terminal.bind({
+		onMonitorEvent: () => {},
+		onMonitorState: () => {},
+		onMonitorEnded: () => {},
+		onBackgroundState: () => {},
+		onBackgroundExit: (_id, view) => exits.push(view),
+		onBackgroundAge: (event) => ages.push(event),
+	});
+	const state = {
+		bundle: terminal,
+		settings: resolveTerminalSettings({ backgroundAutoReapMinutes: 60 }),
+		recordedBackgroundIds: new Set<string>(),
+	} as unknown as TerminalExtensionState;
+	const manager = { get: () => runtime as unknown as TerminalRuntimeSession, stop: vi.fn(() => stop(runtime)) };
+	const warn = vi.fn();
+	const ctx: TerminalToolContext = {
+		...buildToolContext({} as ExtensionAPI, state),
+		manager: manager as unknown as TerminalManager,
+		sessionLogger: { warn },
+	};
+	return { runtime, manager, warn, ages, exits, bash: createPtyBashTool(ctx) };
+}
+
 beforeEach(() => {
 	vi.useFakeTimers();
 });
 
-afterEach(() => {
+afterEach(async () => {
+	for (const terminal of bundles) await terminal.teardown();
+	bundles = [];
 	vi.clearAllTimers();
 	vi.useRealTimers();
 });
@@ -164,6 +203,65 @@ describe("background auto-reap (opt-in)", () => {
 		await vi.advanceTimersByTimeAsync(1);
 		expect(manager.stop).toHaveBeenCalledWith("bash_1");
 	});
+});
+
+describe("a reap counts only once the stop really ended the session", () => {
+	it("when the stop ends the session: one reaped event and an exit reported as reaped", async () => {
+		const { bash, ages, exits } = wiredToBundle(async (runtime) => {
+			runtime.exit({ exitCode: null, signal: "SIGTERM", cancelled: true });
+			return true;
+		});
+		await startBackground(bash);
+		await vi.advanceTimersByTimeAsync(60 * MINUTE);
+
+		expect(ages.filter((event) => event.kind !== "running")).toEqual([
+			expect.objectContaining({ kind: "reaped", id: "bash_1", autoReapMinutes: 60 }),
+		]);
+		expect(exits).toHaveLength(1);
+		expect(exits[0]?.autoReapedAfterMinutes).toBe(60);
+	});
+
+	it.each([
+		{
+			case: "rejects",
+			stop: async () => {
+				throw new Error("EPERM: operation not permitted");
+			},
+			reason: "EPERM: operation not permitted",
+		},
+		{ case: "resolves while the session keeps running", stop: async () => true, reason: expect.any(String) },
+		{ case: "finds no session to stop", stop: async () => false, reason: expect.any(String) },
+	])(
+		"when the stop $case: no reaped event, one reap_failed notice, the session keeps running and reporting, no retry",
+		async ({ stop, reason }) => {
+			const { bash, manager, runtime, warn, ages, exits } = wiredToBundle(stop);
+			await startBackground(bash);
+			await vi.advanceTimersByTimeAsync(60 * MINUTE);
+
+			expect(manager.stop).toHaveBeenCalledTimes(1);
+			expect(runtime.exited).toBe(false);
+			expect(ages.filter((event) => event.kind !== "running")).toEqual([
+				expect.objectContaining({ kind: "reap_failed", id: "bash_1", autoReapMinutes: 60, reason }),
+			]);
+			expect(warn).toHaveBeenCalledWith(
+				"bash_auto_reap_failed",
+				expect.objectContaining({ bash_id: "bash_1", autoReapMinutes: 60, error: reason }),
+			);
+
+			await vi.advanceTimersByTimeAsync(60 * MINUTE);
+			expect(manager.stop).toHaveBeenCalledTimes(1);
+			expect(ages.filter((event) => event.kind === "running").map((event) => event.ageMinutes)).toEqual([
+				10, 40, 70, 100,
+			]);
+
+			// It ends on its own later: that exit is not a reap.
+			runtime.exit();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(exits).toHaveLength(1);
+			expect(exits[0]?.autoReapedAfterMinutes).toBeUndefined();
+			expect(ages.filter((event) => event.kind !== "running").map((event) => event.kind)).toEqual(["reap_failed"]);
+		},
+	);
 });
 
 describe("terminal.backgroundAutoReapMinutes setting", () => {

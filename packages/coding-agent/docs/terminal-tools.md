@@ -38,6 +38,10 @@ parameter `auto_reap_minutes` (which wins over the setting; `0` turns it off for
 call). At that age the session is stopped the way `kill_bash` stops it (TERM to its
 process group, then KILL after a grace), its completion notice says it was stopped
 automatically, and a `terminal_background_age` event with `kind: "reaped"` is sent.
+It counts as reaped only once that stop has really ended the session. If the stop fails
+or the session survives it, one notice (and a `kind: "reap_failed"` event) says
+auto-reap failed and why; the session keeps running, its age reports go on, and the
+auto-reap does not retry.
 
 Background sessions and monitors also survive a session reload (`/reload`): existing
 `bash_N` ids stay addressable, watchers keep injecting events, and completion

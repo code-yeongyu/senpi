@@ -3,6 +3,8 @@
  * announced to the host and, only when opted into (senpi#6201), stopped at a configured age. The reap runs here, where
  * the session's process group lives (this process, or the tool child), through `manager.stop`: the same TERM-then-KILL
  * stop `kill_bash` uses. Its one timer is unref'd and cleared when the session exits; with no opt-in none is armed.
+ * A reap counts only when that stop resolved and the session really exited; a stop that rejects or leaves the session
+ * running is reported once (`onBackgroundReapFailed`) and never retried, and the session keeps running.
  */
 import { getAgentDir } from "../../../../../config.ts";
 import { createSessionLogger } from "../../../../session-log.ts";
@@ -60,7 +62,25 @@ export function trackBackgroundSession(
 	ctx.onBackgroundStart?.(id, start.description, start.startedAtMs, start.command, start.autoReapMinutes);
 	const minutes = start.autoReapMinutes;
 	let reapedAfterMinutes: number | undefined;
+	/** The one reap attempt; the session's exit report waits for it, since the stop's own exit fires before it resolves. */
+	let reaping: Promise<void> | undefined;
 	let timer: ReturnType<typeof setTimeout> | undefined;
+	const reap = async (age: number): Promise<void> => {
+		const failure = await ctx.manager.stop(id).then(
+			(stopped) => {
+				if (!stopped) return `the terminal manager has no session ${id} to stop`;
+				return runtime.exited ? undefined : "the session was still running after the stop (TERM, then KILL)";
+			},
+			(error: unknown) => (error instanceof Error ? error.message : String(error)),
+		);
+		if (failure === undefined) {
+			reapedAfterMinutes = age;
+			return;
+		}
+		const logger = ctx.sessionLogger ?? createSessionLogger(getAgentDir());
+		logger.warn("bash_auto_reap_failed", { bash_id: id, autoReapMinutes: age, error: failure });
+		if (!runtime.exited) ctx.onBackgroundReapFailed?.(id, age, failure);
+	};
 	const arm = (deadlineMs: number): void => {
 		timer = setTimeout(
 			() => {
@@ -70,15 +90,8 @@ export function trackBackgroundSession(
 					arm(deadlineMs);
 					return;
 				}
-				reapedAfterMinutes = minutes;
-				ctx.manager.stop(id).catch((error: unknown) => {
-					const logger = ctx.sessionLogger ?? createSessionLogger(getAgentDir());
-					logger.warn("bash_auto_reap_failed", {
-						bash_id: id,
-						autoReapMinutes: minutes,
-						error: error instanceof Error ? error.message : String(error),
-					});
-				});
+				// Recorded before the stop starts: the exit it causes can fire from inside `stop` itself.
+				reaping = Promise.resolve().then(() => reap(minutes));
 			},
 			Math.min(Math.max(0, deadlineMs - Date.now()), MAX_TIMER_MS),
 		);
@@ -89,6 +102,12 @@ export function trackBackgroundSession(
 	runtime.session.onExit(() => {
 		if (timer !== undefined) clearTimeout(timer);
 		timer = undefined;
-		ctx.onBackgroundExit?.(id, reapedAfterMinutes === undefined ? runtime : reapedView(runtime, reapedAfterMinutes));
+		const report = (): void =>
+			ctx.onBackgroundExit?.(
+				id,
+				reapedAfterMinutes === undefined ? runtime : reapedView(runtime, reapedAfterMinutes),
+			);
+		if (reaping === undefined) report();
+		else void reaping.then(report);
 	});
 }

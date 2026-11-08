@@ -83,6 +83,7 @@ describe("terminal child background relay", () => {
 	it("carries the auto-reap setting to the child and the reap back to the server hooks", () => {
 		const started: unknown[][] = [];
 		const reaped: Array<number | undefined> = [];
+		const failed: unknown[][] = [];
 		const hooks = {
 			cwd: "/w",
 			defaultCols: 80,
@@ -91,6 +92,7 @@ describe("terminal child background relay", () => {
 			getEnv: () => ({}),
 			onBackgroundStart: (...args: unknown[]) => started.push(args),
 			onBackgroundExit: (_id: string, runtime: TerminalExitView) => reaped.push(runtime.autoReapedAfterMinutes),
+			onBackgroundReapFailed: (...args: unknown[]) => failed.push(args),
 		} as Partial<TerminalToolContext> as TerminalToolContext;
 		const bash = terminalChildJob(hooks, TERMINAL_CHILD_JOB_KINDS.bash);
 		const args = bash.args?.({ command: "x" }, "call", { cwd: "/w" } as never);
@@ -108,6 +110,10 @@ describe("terminal child background relay", () => {
 			1,
 		);
 		expect(started).toEqual([["bash_c1_1", "soak", 5, "./soak.sh", 45]]);
+		bash.wake?.({ event: "background_reap_failed", id: "bash_c1_1", autoReapMinutes: 45, reason: "EPERM" }, 1);
+		bash.wake?.({ event: "background_reap_failed", id: "bash_c1_1", reason: "no age" }, 1);
+		expect(failed).toEqual([["bash_c1_1", 45, "EPERM"]]);
+		expect(reaped).toEqual([]);
 		bash.wake?.(
 			{
 				event: "background_exit",
