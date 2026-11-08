@@ -53,9 +53,9 @@ const KEYISH_QUERY_NAMES: readonly string[] = [
 	"access-token",
 	"subscription-key",
 	"x-api-key",
-];
+] as const;
 
-const SECRET: SecretUrlPart = { secret: true };
+const SECRET = { secret: true } as const satisfies SecretUrlPart;
 const URL_SHAPE = /^([a-z][a-z0-9+.-]*):\/\/([^/?#]*)(\/[^?#]*)?(?:\?([^#]*))?(#.*)?$/i;
 const HOST_PORT = /^([^@/?#:[\]]+|\[[^\]]+\])(?::(\d+))?$/;
 

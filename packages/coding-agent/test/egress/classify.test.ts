@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	classifyModelsJsonField,
-	MODELS_JSON_FIELD_CLASSES,
+	modelsJsonFieldClasses,
 	MODELS_JSON_TYPE_ONLY_FIELDS,
 } from "../../src/core/egress/classify.ts";
 import { validateModelsConfig } from "../../src/core/model-config-schema.ts";
@@ -23,7 +23,7 @@ describe("models.json field classification", () => {
 
 	it("has no entry for a field the schema no longer accepts", () => {
 		const accepted = new Set(modelsJsonPaths);
-		const stale = Object.keys(MODELS_JSON_FIELD_CLASSES).filter((path) => !accepted.has(path));
+		const stale = Object.keys(modelsJsonFieldClasses()).filter((path) => !accepted.has(path));
 		expect(stale).toEqual([]);
 		for (const path of Object.keys(MODELS_JSON_TYPE_ONLY_FIELDS)) expect(accepted.has(path)).toBe(false);
 	});

@@ -1,33 +1,19 @@
 #!/usr/bin/env node
-// Hosted-brain custody design 3.4: egress instances of different tenants can share one isolate, so module scope
-// in src/core/egress must hold no tenant state. Only the two named, data-free exceptions may opt out.
-// An object/array literal counts as a constant table only when EVERY reference to it sits in a position proven
-// not to mutate it (an allowlist): any other use, including an unknown callee, fails closed.
-const EXCEPTIONS = new Set(["console-redactor-install", "sealed-window-counter"]);
-const READ_METHODS = new Set([
-	"map",
-	"filter",
-	"some",
-	"every",
-	"find",
-	"findIndex",
-	"includes",
-	"indexOf",
-	"keys",
-	"values",
-	"entries",
-	"has",
-	"get",
-]);
-const PURE_STATICS = { Object: new Set(["freeze", "keys", "values", "entries"]) };
-const TRANSPARENT = new Set([
-	"TSAsExpression",
-	"TSSatisfiesExpression",
-	"TSNonNullExpression",
-	"ParenthesizedExpression",
-	"ChainExpression",
-]);
+// Custody design 3.4 as ruled in r11.1 R8: egress instances of different tenants can share one isolate, so every
+// module-level binding in src/core/egress (and every static class field) is an error unless its initializer is in
+// a closed exempt class. Literals are exempt only `as const`: tsc, not this rule, then proves no write reaches them.
+const MARKERS = new Set(["console-redactor-install", "sealed-window-counter"]);
 const MARKER = /^\s*no-module-state:\s*(\S+)\s*$/u;
+const STATELESS_CONSTRUCTORS = new Set(["TextEncoder", "TextDecoder"]);
+const PRIMITIVE_CALLS = new Set(["Symbol", "Number", "String", "Boolean", "BigInt", "parseInt", "parseFloat"]);
+// E5: construct-once descriptors, keyed by import source + export name. Extending this list is a reviewed change.
+const DESCRIPTOR_IMPORTS = {
+	"@sinclair/typebox": new Set(["Type"]),
+	typebox: new Set(["Type"]),
+	"@sinclair/typebox/compiler": new Set(["TypeCompiler", "Compile"]),
+	"typebox/compile": new Set(["Compile"]),
+};
+const TRANSPARENT = new Set(["TSNonNullExpression", "ParenthesizedExpression", "TSSatisfiesExpression"]);
 
 function unwrap(node) {
 	let current = node;
@@ -35,184 +21,228 @@ function unwrap(node) {
 	return current;
 }
 
-function staticName(property, computed) {
-	if (!computed && property.type === "Identifier") return property.name;
-	if (property.type === "Literal" && typeof property.value === "string") return property.value;
-	return undefined;
-}
-
-function isTypePosition(node) {
-	for (let current = node.parent; current; current = current.parent) {
-		if (current.type.startsWith("TS") && !TRANSPARENT.has(current.type)) return true;
-		if (current.type.endsWith("Statement") || current.type.endsWith("Declaration")) return false;
-	}
-	return false;
-}
-
-function isReference(node) {
-	const parent = node.parent;
-	if (!parent) return false;
-	if (parent.type === "MemberExpression" && parent.property === node && !parent.computed) return false;
-	if (parent.type === "Property" && parent.key === node && !parent.computed && !parent.shorthand) return false;
-	if (parent.type === "VariableDeclarator" && parent.id === node) return false;
-	if (parent.type === "ImportSpecifier" || parent.type === "ImportDefaultSpecifier") return false;
-	if (parent.type === "ExportSpecifier" && parent.exported === node && parent.local !== node) return false;
-	if (parent.type === "LabeledStatement" || parent.type === "BreakStatement" || parent.type === "ContinueStatement")
-		return false;
-	if (
-		(parent.type === "MethodDefinition" || parent.type === "PropertyDefinition") &&
-		parent.key === node &&
-		!parent.computed
-	)
-		return false;
-	return !isTypePosition(node);
-}
-
-function climb(node) {
+function isAsConst(node) {
 	let current = node;
-	while (current.parent && TRANSPARENT.has(current.parent.type)) current = current.parent;
-	return current;
-}
-
-/** True when this reference cannot change the table it names. */
-function isSafeUse(reference) {
-	let node = climb(reference);
-	let parent = node.parent;
-	if (parent?.type === "ExportSpecifier") return true;
-	if (parent?.type === "UnaryExpression" && parent.operator === "typeof") return true;
-	if (parent?.type === "BinaryExpression" && parent.operator === "in" && parent.right === node) return true;
-	if (parent?.type === "ForOfStatement" && parent.right === node) return true;
-	if (
-		parent?.type === "SpreadElement" &&
-		(parent.parent?.type === "ArrayExpression" || parent.parent?.type === "ObjectExpression")
-	)
-		return true;
-	if (parent?.type === "CallExpression" && parent.arguments.includes(node)) {
-		const callee = unwrap(parent.callee);
-		if (callee?.type !== "MemberExpression") return false;
-		const owner = unwrap(callee.object);
-		const method = staticName(callee.property, callee.computed);
-		return owner?.type === "Identifier" && PURE_STATICS[owner.name]?.has(method) === true;
+	while (current && (current.type === "ParenthesizedExpression" || current.type === "TSSatisfiesExpression")) {
+		current = current.expression;
 	}
-	if (parent?.type !== "MemberExpression" || parent.object !== node) return false;
-	while (true) {
-		node = climb(parent);
-		parent = node.parent;
-		if (parent?.type === "MemberExpression" && parent.object === node) continue;
-		break;
-	}
-	if (parent?.type === "AssignmentExpression" && parent.left === node) return false;
-	if (parent?.type === "UpdateExpression") return false;
-	if (parent?.type === "UnaryExpression" && parent.operator === "delete") return false;
-	if (parent?.type === "CallExpression" && unwrap(parent.callee) === unwrap(node)) {
-		const member = unwrap(node);
-		return READ_METHODS.has(staticName(member.property, member.computed));
-	}
-	return true;
-}
-
-function isPrimitive(node) {
-	const value = unwrap(node);
-	if (!value) return false;
-	if (value.type === "Literal") return !value.regex || !/[gy]/u.test(value.regex.flags);
-	if (value.type === "TemplateLiteral") return value.expressions.every(isPrimitive);
-	if (value.type === "UnaryExpression" || value.type === "BinaryExpression") return true;
-	if (value.type === "LogicalExpression") return isPrimitive(value.left) && isPrimitive(value.right);
-	if (value.type === "CallExpression") {
-		const callee = unwrap(value.callee);
-		if (callee?.type === "Identifier" && callee.name === "Symbol") return true;
-		return (
-			callee?.type === "MemberExpression" &&
-			unwrap(callee.object)?.type === "Identifier" &&
-			unwrap(callee.object).name === "Symbol" &&
-			staticName(callee.property, callee.computed) === "for"
-		);
-	}
-	return false;
-}
-
-function containsLiteral(node) {
-	const value = unwrap(node);
-	if (!value) return false;
-	if (value.type === "ObjectExpression") return value.properties.some((p) => p.type === "SpreadElement" || containsNested(p.value));
-	if (value.type === "ArrayExpression") return value.elements.some((e) => e && (e.type === "SpreadElement" || containsNested(e)));
-	return false;
-}
-
-function containsNested(node) {
-	const value = unwrap(node);
-	return value?.type === "ObjectExpression" || value?.type === "ArrayExpression" || containsLiteral(value);
-}
-
-function isShallowFrozenLiteral(node) {
-	const value = unwrap(node);
-	if (value?.type !== "CallExpression" || value.arguments.length !== 1) return false;
-	const callee = unwrap(value.callee);
-	const target = unwrap(value.arguments[0]);
 	return (
-		callee?.type === "MemberExpression" &&
-		unwrap(callee.object)?.type === "Identifier" &&
-		unwrap(callee.object).name === "Object" &&
-		staticName(callee.property, callee.computed) === "freeze" &&
-		(target?.type === "ObjectExpression" || target?.type === "ArrayExpression") &&
-		!containsLiteral(target)
+		current?.type === "TSAsExpression" &&
+		current.typeAnnotation.type === "TSTypeReference" &&
+		current.typeAnnotation.typeName.type === "Identifier" &&
+		current.typeAnnotation.typeName.name === "const"
 	);
 }
 
-/** Every module-level binding is a candidate (r11.1 A3); only proven-stateless initializers pass. */
-function classify(declaration) {
-	if (declaration.declare) return { state: false, literals: [] };
-	if (declaration.kind !== "const") return { state: true, literals: [] };
-	const literals = [];
-	for (const declarator of declaration.declarations) {
-		const init = unwrap(declarator.init);
-		if (!init) return { state: true, literals: [] };
-		if (isPrimitive(init) || isShallowFrozenLiteral(init)) continue;
-		if (
-			init.type === "ArrowFunctionExpression" ||
-			init.type === "FunctionExpression" ||
-			init.type === "ClassExpression"
-		)
-			continue;
-		if ((init.type === "ObjectExpression" || init.type === "ArrayExpression") && declarator.id.type === "Identifier") {
-			literals.push(declarator.id.name);
-			continue;
-		}
-		return { state: true, literals: [] };
+function stripAsConst(node) {
+	let current = node;
+	while (current && (current.type === "ParenthesizedExpression" || current.type === "TSSatisfiesExpression")) {
+		current = current.expression;
 	}
-	return { state: false, literals };
+	return current?.type === "TSAsExpression" ? current.expression : current;
+}
+
+function memberRootName(node) {
+	let current = unwrap(node);
+	while (current?.type === "MemberExpression") current = unwrap(current.object);
+	return current?.type === "Identifier" ? current.name : undefined;
+}
+
+function calleeIdentity(callee) {
+	const target = unwrap(callee);
+	if (target?.type === "Identifier") return { root: target.name, name: target.name };
+	if (target?.type === "MemberExpression" && !target.computed && target.property.type === "Identifier") {
+		return { root: memberRootName(target), name: target.property.name };
+	}
+	return undefined;
+}
+
+function createChecker(imports, exemptNames) {
+	const isExemptReference = (name) => exemptNames.has(name);
+
+	const isPrimitive = (raw) => {
+		const node = unwrap(raw);
+		if (!node) return false;
+		switch (node.type) {
+			case "Literal":
+				return !node.regex || !/[gy]/u.test(node.regex.flags);
+			case "TemplateLiteral":
+				return node.expressions.every(isPrimitive);
+			case "UnaryExpression":
+				return node.operator !== "delete" && isPrimitive(node.argument);
+			case "BinaryExpression":
+			case "LogicalExpression":
+				return isPrimitive(node.left) && isPrimitive(node.right);
+			case "ConditionalExpression":
+				return isPrimitive(node.test) && isPrimitive(node.consequent) && isPrimitive(node.alternate);
+			case "Identifier":
+				return node.name === "undefined" || isExemptReference(node.name);
+			case "MemberExpression":
+				return memberRootName(node) !== undefined && (isExemptReference(memberRootName(node)) || memberRootName(node) === "Math" || memberRootName(node) === "Number");
+			case "CallExpression": {
+				const callee = calleeIdentity(node.callee);
+				if (!callee) return false;
+				const primitiveCall =
+					(callee.root === callee.name && PRIMITIVE_CALLS.has(callee.name)) ||
+					(callee.root === "Symbol" && callee.name === "for") ||
+					callee.root === "Math";
+				return primitiveCall && node.arguments.every(isPrimitive);
+			}
+			default:
+				return false;
+		}
+	};
+
+	const isConstMember = (raw) => {
+		const node = unwrap(raw);
+		if (!node) return true;
+		if (node.type === "ArrowFunctionExpression" || node.type === "FunctionExpression") return true;
+		if (node.type === "SpreadElement") return isConstMember(node.argument);
+		if (node.type === "ObjectExpression" || node.type === "ArrayExpression") return isConstLiteral(node);
+		return isPrimitive(node);
+	};
+
+	const isConstLiteral = (node) => {
+		if (node.type === "ArrayExpression") return node.elements.every((element) => element === null || isConstMember(element));
+		if (node.type === "ObjectExpression") {
+			return node.properties.every((property) =>
+				property.type === "SpreadElement" ? isConstMember(property.argument) : property.method || isConstMember(property.value),
+			);
+		}
+		return false;
+	};
+
+	const isFlatLiteral = (node) => {
+		const literal = unwrap(node);
+		if (literal?.type === "ArrayExpression") return literal.elements.every((element) => element === null || isPrimitive(element));
+		if (literal?.type === "ObjectExpression") {
+			return literal.properties.every((property) => property.type === "Property" && (property.method || isPrimitive(property.value)));
+		}
+		return false;
+	};
+
+	const isDescriptorCall = (node) => {
+		const callee = calleeIdentity(node.callee);
+		if (!callee?.root) return false;
+		const source = imports.get(callee.root);
+		return source !== undefined && DESCRIPTOR_IMPORTS[source.module]?.has(source.imported) === true;
+	};
+
+	return (raw) => {
+		if (isAsConst(raw)) {
+			const literal = unwrap(stripAsConst(raw));
+			return (literal?.type === "ObjectExpression" || literal?.type === "ArrayExpression") && isConstLiteral(literal);
+		}
+		const node = unwrap(raw);
+		if (!node) return false;
+		if (isPrimitive(node)) return true;
+		if (node.type === "ArrowFunctionExpression" || node.type === "FunctionExpression" || node.type === "ClassExpression")
+			return true;
+		if (node.type === "NewExpression") {
+			return (
+				unwrap(node.callee)?.type === "Identifier" &&
+				STATELESS_CONSTRUCTORS.has(unwrap(node.callee).name) &&
+				node.arguments.length === 0
+			);
+		}
+		if (node.type === "CallExpression") {
+			const callee = calleeIdentity(node.callee);
+			if (callee?.root === "Object" && callee.name === "freeze" && node.arguments.length === 1) {
+				const target = node.arguments[0];
+				if (isAsConst(target)) {
+					const literal = unwrap(stripAsConst(target));
+					return (literal?.type === "ObjectExpression" || literal?.type === "ArrayExpression") && isConstLiteral(literal);
+				}
+				return isFlatLiteral(target);
+			}
+			return isDescriptorCall(node);
+		}
+		return false;
+	};
 }
 
 const noModuleState = {
 	meta: {
 		type: "problem",
-		docs: { description: "Forbid tenant-capable state at module scope in src/core/egress." },
+		docs: { description: "Forbid tenant-capable state at module scope in src/core/egress (custody design 3.4, r11.1 R8)." },
 	},
 	create(context) {
 		const { sourceCode } = context;
-		const unsafe = new Set();
-		const markerOnLineAbove = (node) => {
-			const comment = sourceCode
-				.getAllComments()
-				.find((candidate) => candidate.loc.end.line === node.loc.start.line - 1);
+		const markerAbove = (node) => {
+			const comment = sourceCode.getAllComments().find((candidate) => candidate.loc.end.line === node.loc.start.line - 1);
 			return comment ? MARKER.exec(comment.value)?.[1] : undefined;
 		};
+		const report = (node) =>
+			context.report({
+				node,
+				message:
+					"Module-scope state in src/core/egress is shared across tenants. Keep it on the egress instance, make the literal `as const`, or use a named exception (console-redactor-install, sealed-window-counter).",
+			});
+
 		return {
-			Identifier(node) {
-				if (isReference(node) && !isSafeUse(node)) unsafe.add(node.name);
-			},
-			"Program:exit"(program) {
+			Program(program) {
+				for (const comment of sourceCode.getAllComments()) {
+					const name = MARKER.exec(comment.value)?.[1];
+					if (name !== undefined && !MARKERS.has(name)) {
+						context.report({ loc: comment.loc, message: `Unknown no-module-state exception '${name}'. The named exceptions are closed.` });
+					}
+				}
+
+				const imports = new Map();
 				for (const statement of program.body) {
-					const declaration = statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
-					if (declaration?.type !== "VariableDeclaration") continue;
-					const { state, literals } = classify(declaration);
-					if (!state && !literals.some((name) => unsafe.has(name))) continue;
-					if (EXCEPTIONS.has(markerOnLineAbove(statement))) continue;
-					context.report({
-						node: statement,
-						message:
-							"Module-scope state in src/core/egress is shared across tenants. Keep it on the egress instance, or use a named exception (console-redactor-install, sealed-window-counter).",
-					});
+					if (statement.type !== "ImportDeclaration" || statement.importKind === "type") continue;
+					for (const specifier of statement.specifiers) {
+						const imported =
+							specifier.type === "ImportSpecifier"
+								? specifier.imported.name ?? specifier.imported.value
+								: specifier.type === "ImportNamespaceSpecifier"
+									? "*"
+									: "default";
+						imports.set(specifier.local.name, { module: statement.source.value, imported });
+					}
+				}
+
+				// A value imported from a sibling egress module was itself checked by this rule; anything else is unproven.
+				const exemptNames = new Set(
+					[...imports].filter(([, source]) => /^\.\/[^/]+\.ts$/u.test(source.module)).map(([local]) => local),
+				);
+				const isExempt = createChecker(imports, exemptNames);
+
+				const checkClass = (node) => {
+					for (const member of node.body.body) {
+						if (member.type !== "PropertyDefinition" || !member.static || member.declare) continue;
+						if (member.value && isExempt(member.value)) continue;
+						if (MARKERS.has(markerAbove(member))) continue;
+						report(member);
+					}
+				};
+
+				for (const statement of program.body) {
+					const declaration =
+						statement.type === "ExportNamedDeclaration" || statement.type === "ExportDefaultDeclaration"
+							? statement.declaration
+							: statement;
+					if (!declaration) continue;
+					if (declaration.type === "ClassDeclaration" || declaration.type === "ClassExpression") {
+						checkClass(declaration);
+						continue;
+					}
+					if (declaration.type !== "VariableDeclaration" || declaration.declare) continue;
+					const marked = MARKERS.has(markerAbove(statement));
+					const exempt =
+						declaration.kind === "const" &&
+						declaration.declarations.every((declarator) => {
+							if (declarator.init && unwrap(declarator.init)?.type === "ClassExpression") checkClass(unwrap(declarator.init));
+							if (declarator.id.type === "Identifier") return declarator.init !== null && isExempt(declarator.init);
+							return declarator.init !== null && unwrap(declarator.init)?.type === "Identifier" && exemptNames.has(unwrap(declarator.init).name);
+						});
+					if (exempt || marked) {
+						for (const declarator of declaration.declarations) {
+							if (declarator.id.type === "Identifier") exemptNames.add(declarator.id.name);
+						}
+						continue;
+					}
+					report(statement);
 				}
 			},
 		};
