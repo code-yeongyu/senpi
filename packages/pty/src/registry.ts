@@ -227,6 +227,7 @@ export class SessionRegistry<TSession extends SessionRegistrySession = SessionRe
 			if (await waitForTerminalSessionExit(entry.session, this.stopExitGraceMs)) this.markExited(entry);
 			else await this.forceKillEntry(entry);
 		}
+		await entry.session.stopLeftover?.();
 		return true;
 	}
 

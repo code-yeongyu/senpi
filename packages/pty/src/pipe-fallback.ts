@@ -1,5 +1,8 @@
 import { spawn } from "node:child_process";
 import type { NativePtyLoadResult } from "./native-loader.ts";
+import { LeftoverProcessGroup, terminateChildTree, terminateWindowsTree } from "./process-tree.ts";
+
+export { terminateChildTree } from "./process-tree.ts";
 
 export interface PipeFallbackSessionOptions {
 	readonly command: string;
@@ -58,34 +61,6 @@ export function shouldUsePipeFallback(
 	return isPipeFallbackForced(env) || nativeLoadResult.native === null;
 }
 
-/**
- * Terminate the child, preferring its whole process group on POSIX. The
- * detached child is its own group leader and grandchildren inherit the stdio
- * pipes, so leaving them alive keeps 'close' from ever firing (the POSIX twin
- * of the Windows taskkill /T branch below). Every path that stops a child must
- * go through here: when the group signal is unavailable (Windows, no pid) or
- * the group is already gone, it still falls back to a direct kill, so the
- * child is never left running.
- */
-export function terminateChildTree(
-	child: Pick<ChildProcessHandle, "pid" | "kill">,
-	signal: NodeJS.Signals,
-): "group" | "direct" | "none" {
-	const pid = child.pid;
-	// A child that never started has no pid; on Node < 24.22 / 26.10 its kill() signals our own process group.
-	if (pid === undefined) return "none";
-	if (process.platform !== "win32") {
-		try {
-			process.kill(-pid, signal);
-			return "group";
-		} catch {
-			// Group already gone — fall through to the direct kill.
-		}
-	}
-	child.kill(signal);
-	return "direct";
-}
-
 function normalizeSpawnError(command: string, error: Error): PipeFallbackSessionError {
 	return {
 		code: "spawn_error",
@@ -116,6 +91,7 @@ export class PipeFallbackSession {
 	private timedOut = false;
 	private timeoutHandle: NodeJS.Timeout | undefined;
 	private drainHandle: NodeJS.Timeout | undefined;
+	private readonly leftover = new LeftoverProcessGroup();
 	private readonly dataHandlers = new Set<DataHandler>();
 	private readonly exitHandlers = new Set<ExitHandler>();
 
@@ -254,6 +230,12 @@ export class PipeFallbackSession {
 
 	kill(signal: NodeJS.Signals = "SIGTERM"): PipeFallbackOperationResult {
 		if (this.exitResult !== null) {
+			const pgid = this.leftover.signal(signal);
+			if (pgid !== undefined)
+				return {
+					ok: true,
+					note: `Sent ${signal} to what the exited session left in its process group (pgid ${pgid}).`,
+				};
 			return { ok: false, code: "exited", note: "Cannot kill pipe fallback session: session has exited." };
 		}
 		if (this.child === null) {
@@ -261,25 +243,8 @@ export class PipeFallbackSession {
 		}
 		const child = this.child;
 		const pid = child.pid;
-		if (process.platform === "win32" && pid !== undefined) {
-			// On Windows child.kill() TerminateProcess-es only the direct child, leaving
-			// grandchildren (e.g. `sleep` under `bash.exe -c`) alive and holding the stdout
-			// pipe open — so 'close' never fires and waitExit() hangs teardown. taskkill /T /F
-			// terminates the whole tree so the pipe EOFs and the session settles.
-			try {
-				const killer = spawn("taskkill.exe", ["/pid", String(pid), "/T", "/F"], {
-					stdio: "ignore",
-					windowsHide: true,
-				});
-				killer.once("error", () => {
-					terminateChildTree(child, signal);
-				});
-				return { ok: true, note: `Terminated child_process pipe fallback process tree (pid ${pid}).` };
-			} catch {
-				terminateChildTree(child, signal);
-				return { ok: true, note: `Sent ${signal} to child_process pipe fallback session.` };
-			}
-		}
+		if (process.platform === "win32" && pid !== undefined)
+			return { ok: true, note: terminateWindowsTree(child, pid, signal) };
 		const route = terminateChildTree(this.child, signal);
 		if (route === "none") {
 			return {
@@ -298,6 +263,15 @@ export class PipeFallbackSession {
 		return this.exitPromise;
 	}
 
+	/** After the settle, whether processes the command started are still in its process group (senpi#6201). */
+	leftoverAlive(): boolean {
+		return this.exitResult !== null && this.leftover.alive();
+	}
+
+	waitLeftoverGone(graceMs: number): Promise<boolean> {
+		return this.leftover.waitGone(graceMs);
+	}
+
 	private emitData(chunk: Buffer): void {
 		for (const handler of this.dataHandlers) handler(chunk);
 	}
@@ -306,6 +280,7 @@ export class PipeFallbackSession {
 		if (this.exitResult !== null) return;
 		if (this.timeoutHandle) clearTimeout(this.timeoutHandle);
 		if (this.drainHandle) clearTimeout(this.drainHandle);
+		this.leftover.arm(this.processGroupId);
 		this.exitResult = exit;
 		this.resolveExit?.(exit);
 		for (const handler of this.exitHandlers) handler(exit);

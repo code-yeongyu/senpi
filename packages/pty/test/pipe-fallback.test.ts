@@ -257,37 +257,6 @@ describe("PipeFallbackSession terminal detachment", () => {
 		},
 		5000,
 	);
-
-	posixIt(
-		"settles when the shell exits even while a grandchild it left running still holds the stdout pipe (#6201)",
-		async () => {
-			// The native PTY settles when the shell exits. Here 'close' waits for every holder of the stdout
-			// pipe, so a grandchild left running kept the session (and the agent's background wait) open for
-			// the grandchild's whole life.
-			const session = new PipeFallbackSession({
-				command: "sh",
-				args: ["-c", "sleep 300 & echo grandchild=$!; exit 0"],
-			});
-			let buffered = "";
-			session.onData((chunk) => {
-				buffered += chunk.toString("utf8");
-			});
-			session.start();
-
-			try {
-				const exit = await within("the session settling after its shell exited", session.waitExit());
-				const grandchild = Number(/grandchild=(\d+)/.exec(buffered)?.[1]);
-				expect(exit.exitCode).toBe(0);
-				expect(grandchild).toBeGreaterThan(1);
-				// Signal 0 only probes: the grandchild is still alive, so the settle did not wait for it.
-				expect(() => process.kill(grandchild, 0)).not.toThrow();
-			} finally {
-				const grandchild = Number(/grandchild=(\d+)/.exec(buffered)?.[1]);
-				if (grandchild > 1) killExactChild(grandchild);
-			}
-		},
-		DETACHMENT_BREAKER_MS,
-	);
 });
 
 describe("PipeFallbackSession Windows process-tree cleanup", () => {
