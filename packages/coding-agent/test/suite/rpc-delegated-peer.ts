@@ -20,8 +20,20 @@ export class Peer {
 		this.socket = socket;
 		this.name = name;
 		this.connectionId = connectionId;
+		// A host that closes the socket mid-frame (its dispose while a turn still streams) leaves a truncated last line, which
+		// the reader flushes at end of stream. Only that tail may fail to parse; a malformed line mid-stream still throws.
+		let ended = false;
+		socket.prependListener("end", () => {
+			ended = true;
+		});
 		attachJsonlLineReader(socket, (line) => {
-			const record = JSON.parse(line) as WireRecord;
+			let record: WireRecord;
+			try {
+				record = JSON.parse(line) as WireRecord;
+			} catch (error) {
+				if (ended) return;
+				throw error;
+			}
 			if (record.type === "response" && typeof record.id === "string") this.answers.get(record.id)?.(record);
 			this.frames.push(record);
 			for (const watch of this.watchers) watch(record);
