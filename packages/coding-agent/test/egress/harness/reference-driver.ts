@@ -121,8 +121,8 @@ export interface ReferenceDriver {
 	}>;
 	readonly auxRows: readonly AuxRow[];
 	settleAux(): Promise<void>;
-	readonly stops: ReadonlyArray<{ readonly stepId: string; readonly while: "latched" }>;
-	stop(): "cancelled-latched-step" | "nothing-latched";
+	readonly stops: ReadonlyArray<{ readonly stepId: string; readonly while: "latched" | "active" }>;
+	stop(): "cancelled-latched-step" | "cancelled-active-step" | "nothing-latched";
 	readonly counters: DriverCounters;
 	readonly rebuilds: number;
 	readonly inject: {
@@ -234,7 +234,7 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 	let cancelledAbort: { readonly stepId: string; readonly message: AgentMessage } | undefined;
 	let latchedStep: { readonly stepId: string; readonly message: AgentMessage } | undefined;
 	let committingStep: { readonly stepId: string; readonly message: AgentMessage } | undefined;
-	const stops: Array<{ readonly stepId: string; readonly while: "latched" }> = [];
+	const stops: Array<{ readonly stepId: string; readonly while: "latched" | "active" }> = [];
 	const instances: Harness[] = [];
 	let generation = 1;
 	let admissions = 0;
@@ -266,6 +266,7 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 		[];
 	// A held dispatch (S13): the next tool call waits at dispatch until released or killed.
 	let pendingHold: { arrive: () => void; gate: Promise<"release" | "kill"> } | undefined;
+	let heldKill: (() => void) | undefined;
 	const ledgerTools = options.tools?.map((tool) => ({
 		...tool,
 		execute: async (toolCallId: string, params: unknown, signal?: AbortSignal, ...rest: unknown[]) => {
@@ -601,7 +602,15 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 		// commits its synthesized aborted message and never redials it.
 		stop() {
 			const step = latchedStep;
-			if (latchedAt === undefined || step === undefined) return "nothing-latched";
+			if (latchedAt === undefined || step === undefined) {
+				// An active step: kill any held tool call and abort the run (W14, active).
+				if (heldKill === undefined && !current.session.isStreaming) return "nothing-latched";
+				heldKill?.();
+				heldKill = undefined;
+				void current.session.abort();
+				stops.push({ stepId: committingStep?.stepId ?? "active", while: "active" });
+				return "cancelled-active-step";
+			}
 			cancelledSteps.add(step.stepId);
 			cancelledAbort = {
 				stepId: step.stepId,
@@ -677,7 +686,13 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 				const gate = new Promise<"release" | "kill">((resolve) => {
 					decide = resolve;
 				});
-				pendingHold = { arrive, gate };
+				pendingHold = {
+					arrive: () => {
+						heldKill = () => decide("kill");
+						arrive();
+					},
+					gate,
+				};
 				return { reached, release: () => decide("release"), kill: () => decide("kill") };
 			},
 			nextCommitError(error: unknown) {

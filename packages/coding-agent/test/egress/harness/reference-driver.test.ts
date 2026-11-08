@@ -631,6 +631,32 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 		expect(driver.toolLedger.map((entry) => entry.outcome)).toEqual(["killed"]);
 	});
 
+	it("stops an active step: the run is aborted and the stop is recorded (W14, active)", async () => {
+		const held: AgentTool = {
+			name: "held",
+			label: "Held",
+			description: "Runs while held.",
+			parameters: Type.Object({}),
+			execute: async () => ({ content: [{ type: "text", text: "ran" }], details: {} }),
+		};
+		driver = await createReferenceDriver({ tools: [held] });
+		driver.setResponses([
+			fauxAssistantMessage([fauxToolCall("held", {})], { stopReason: "toolUse" }),
+			fauxAssistantMessage([fauxText("never reached")]),
+		]);
+		const hold = driver.inject.pauseNextTool();
+
+		const run = driver.prompt("go");
+		await hold.reached;
+		expect(driver.stop()).toBe("cancelled-active-step");
+		await run;
+		await driver.settle();
+
+		expect(driver.stops.map((entry) => entry.while)).toEqual(["active"]);
+		expect(driver.toolLedger.map((entry) => entry.outcome)).toEqual(["killed"]);
+		expect(driver.counters.providerCalls).toBe(1);
+	});
+
 	it("never forwards an event the discarded instance emits after the latch", async () => {
 		driver = await createReferenceDriver();
 		driver.setResponses([fauxAssistantMessage([fauxText("lost")])]);
