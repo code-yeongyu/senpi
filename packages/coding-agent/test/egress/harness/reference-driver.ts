@@ -113,6 +113,7 @@ export interface ReferenceDriver {
 	readonly latchHistory: readonly LatchRecord[];
 	readonly classifications: readonly CommitClassification[];
 	readonly rebuildFailures: readonly unknown[];
+	readonly toolLedger: ReadonlyArray<{ toolName: string; toolCallId: string; generation: number }>;
 	readonly auxRows: readonly AuxRow[];
 	settleAux(): Promise<void>;
 	readonly stops: ReadonlyArray<{ readonly stepId: string; readonly while: "latched" }>;
@@ -254,6 +255,19 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 			});
 	}
 	let adapterAppendAttempts = 0;
+	// Dispatch ledger (S8a): every tool call the loop runs is recorded before the tool executes.
+	const toolLedger: Array<{ toolName: string; toolCallId: string; generation: number }> = [];
+	const ledgerTools = options.tools?.map((tool) => ({
+		...tool,
+		execute: (toolCallId: string, ...rest: unknown[]) => {
+			toolLedger.push({ toolName: tool.name, toolCallId, generation });
+			return (tool.execute as (id: string, ...args: unknown[]) => ReturnType<typeof tool.execute>)(
+				toolCallId,
+				...rest,
+			);
+		},
+	}));
+	options = ledgerTools ? { ...options, tools: ledgerTools } : options;
 
 	const first = await createHarness(options);
 	let current = first;
@@ -553,6 +567,7 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 		latchHistory,
 		classifications,
 		rebuildFailures,
+		toolLedger,
 		auxRows,
 		get stops() {
 			return stops;
