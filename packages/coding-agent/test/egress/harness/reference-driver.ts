@@ -29,7 +29,7 @@ import { createHarness, type Harness, type HarnessOptions } from "../../suite/ha
 export type HistoryRow =
 	| { readonly kind: "input"; readonly message: AgentMessage }
 	| { readonly kind: "step"; readonly stepId: string; readonly message: AgentMessage }
-	| { readonly kind: "tombstone"; readonly message: AgentMessage };
+	| { readonly kind: "tombstone"; readonly message: AgentMessage; readonly removes: number };
 
 export interface LatchRecord {
 	readonly stepId: string;
@@ -168,8 +168,9 @@ const userText = (message: AgentMessage): string | undefined => {
 };
 
 export function projectHistoryRows(rows: readonly HistoryRow[]): AgentMessage[] {
-	const removed = new Set(rows.flatMap((row) => (row.kind === "tombstone" ? [row.message] : [])));
-	return rows.flatMap((row) => (row.kind === "tombstone" || removed.has(row.message) ? [] : [row.message]));
+	// A tombstone names the removed row by its position in the append-only log, which survives a store round trip.
+	const removed = new Set(rows.flatMap((row) => (row.kind === "tombstone" ? [row.removes] : [])));
+	return rows.flatMap((row, index) => (row.kind === "tombstone" || removed.has(index) ? [] : [row.message]));
 }
 
 interface LoopConfigOwner {
@@ -493,9 +494,11 @@ export async function createReferenceDriver(
 			admissions += 1;
 			// W11: what the session removed from memory since the last admission becomes a tombstone row (2.7 (4)).
 			const live = new Set<unknown>(current.agent.state.messages);
-			for (const message of projectHistoryRows(rows)) {
-				if (!live.has(message)) appendRow({ kind: "tombstone", message });
-			}
+			const tombstoned = new Set(rows.flatMap((row) => (row.kind === "tombstone" ? [row.removes] : [])));
+			rows.forEach((row, index) => {
+				if (row.kind === "tombstone" || tombstoned.has(index) || live.has(row.message)) return;
+				appendRow({ kind: "tombstone", message: row.message, removes: index });
+			});
 			fence = { epoch: fence.epoch, admissionSeq: fence.admissionSeq + 1, generation };
 			admitted = { stepId: `step-${fence.admissionSeq}`, fence };
 			if (cancelNextStep) {
@@ -615,7 +618,7 @@ export async function createReferenceDriver(
 			else await next.session.followUp(entry.text);
 		}
 		// Re-admission: history ending in input the model has not answered (no committed row) dials again.
-		if (pending.length > 0 || rows.at(-1)?.kind === "input") {
+		if (pending.length > 0 || rows.findLast((row) => row.kind !== "tombstone")?.kind === "input") {
 			await next.agent.continue().catch(() => undefined);
 		}
 	}
@@ -797,7 +800,17 @@ export async function createReferenceDriver(
 					},
 					gate,
 				};
-				return { reached, release: () => decide("release"), kill: () => decide("kill") };
+				return {
+					reached,
+					release: () => {
+						heldKill = undefined;
+						decide("release");
+					},
+					kill: () => {
+						heldKill = undefined;
+						decide("kill");
+					},
+				};
 			},
 			nextCommitError(error: unknown) {
 				plannedFaults.push({ kind: "throw", error });

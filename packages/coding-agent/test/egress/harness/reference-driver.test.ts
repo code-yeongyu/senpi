@@ -797,9 +797,82 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 				expect(assistants).toHaveLength(1);
 				expect(driver.historyStoreKind).toBe(historyStore);
 				expect(driver.storedRowCount()).toBe(driver.rows.length);
+				const inputs = driver.rows.filter((row) => row.kind === "input").map((row) => JSON.stringify(row.message));
+				expect(inputs).toEqual([...new Set(inputs)]);
 			});
 		}
 	}
+
+	for (const historyStore of ["memory", "sqlite"] as const) {
+		it(`a W11 removal then a rejected commit still replays the input once, ${historyStore} store (review MEDIUM 1+2)`, async () => {
+			driver = await createReferenceDriver({ historyStore });
+			driver.setResponses([
+				fauxAssistantMessage([fauxText("one")]),
+				fauxAssistantMessage([fauxText("lost")]),
+				fauxAssistantMessage([fauxText("answer")]),
+			]);
+			const text = (message: AgentMessage): string =>
+				message.role === "user" || message.role === "assistant"
+					? typeof message.content === "string"
+						? message.content
+						: message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("")
+					: "";
+
+			await driver.prompt("first");
+			await driver.settle();
+			const agent = driver.session.agent;
+			agent.state.messages = agent.state.messages.slice(2);
+			driver.inject.nextCommit("reject");
+			await driver.prompt("second");
+			await driver.settle();
+
+			expect(projectHistoryRows(driver.rows).map(text)).toEqual(["second", "answer"]);
+			const inputs = driver.rows.flatMap((row) => (row.kind === "input" ? [text(row.message)] : []));
+			expect(inputs).toEqual([...new Set(inputs)]);
+		});
+	}
+
+	it("a sqlite rebuild restores rows the in-memory view lost: the store is the truth (review LOW)", async () => {
+		driver = await createReferenceDriver({ historyStore: "sqlite" });
+		driver.setResponses([
+			fauxAssistantMessage([fauxText("one")]),
+			fauxAssistantMessage([fauxText("lost")]),
+			fauxAssistantMessage([fauxText("two")]),
+		]);
+
+		await driver.prompt("first");
+		await driver.settle();
+		(driver.rows as unknown as unknown[]).length = 0;
+		driver.inject.nextCommit("reject");
+		await driver.prompt("second");
+		await driver.settle();
+
+		expect(assistantTexts(projectHistoryRows(driver.rows))).toEqual(["one", "two"]);
+	});
+
+	it("a released hold leaves nothing for stop() to cancel after the run (review LOW)", async () => {
+		const echo: AgentTool = {
+			name: "echo",
+			label: "Echo",
+			description: "Echoes.",
+			parameters: Type.Object({}),
+			execute: async () => ({ content: [{ type: "text", text: "echoed" }], details: {} }),
+		};
+		driver = await createReferenceDriver({ tools: [echo] });
+		driver.setResponses([
+			fauxAssistantMessage([fauxToolCall("echo", {})], { stopReason: "toolUse" }),
+			fauxAssistantMessage([fauxText("done")]),
+		]);
+		const hold = driver.inject.pauseNextTool();
+
+		const run = driver.prompt("go");
+		await hold.reached;
+		hold.release();
+		await run;
+		await driver.settle();
+
+		expect(driver.stop()).toBe("nothing-latched");
+	});
 
 	it("never forwards an event the discarded instance emits after the latch", async () => {
 		driver = await createReferenceDriver();
