@@ -78,9 +78,12 @@ export interface Unsealer {
 }
 
 export class SecretNotLeased extends Error {
-	constructor(readonly field: SecretField) {
+	readonly field: SecretField;
+
+	constructor(field: SecretField) {
 		super(`secret not leased: ${field}`);
 		this.name = "SecretNotLeased";
+		this.field = field;
 	}
 }
 
@@ -91,11 +94,13 @@ export type CredentialWaitReason = ReleaseFailure | "config-churn";
  * device or waits. `retryable` marks the refusals that clear on their own (custody design 3.3 and the L844 rule).
  */
 export class CredentialWait extends Error {
-	constructor(
-		readonly reason: CredentialWaitReason,
-		readonly retryable: boolean,
-	) {
+	readonly reason: CredentialWaitReason;
+	readonly retryable: boolean;
+
+	constructor(reason: CredentialWaitReason, retryable: boolean) {
 		super(`sealed credential unavailable: ${reason}`);
 		this.name = "CredentialWait";
+		this.reason = reason;
+		this.retryable = retryable;
 	}
 }

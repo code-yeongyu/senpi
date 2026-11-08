@@ -74,7 +74,7 @@ export type RosterView =
 			readonly receivedMono: number;
 	  };
 
-const UNKNOWN_ROSTER: RosterView = { state: "unknown" };
+const UNKNOWN_ROSTER = { state: "unknown" } as const satisfies RosterView;
 
 /**
  * The view as of wall-clock `now` and monotonic `nowMono`: `unknown` at the earlier of the roster's lifetime

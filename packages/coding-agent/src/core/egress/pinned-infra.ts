@@ -49,7 +49,7 @@ export const PINNED_CUSTODY_INFRA: PinnedCustodyInfra = {
 	templates: { 1: KEY_POLICY_TEMPLATE_V1 },
 	keyFactsEndpoint: undefined,
 	keyFactsVerifierKeys: [],
-};
+} as const;
 
 export type ServiceKeyCheckReason =
 	| "ok"
@@ -74,15 +74,21 @@ export interface ServiceKeyCheck {
 	readonly notice?: string;
 }
 
-const SERVICE_KEY_NOTICES: Partial<Record<ServiceKeyCheckReason, string>> = {
+const SERVICE_KEY_NOTICES: Readonly<Partial<Record<ServiceKeyCheckReason, string>>> = {
 	"template-unknown": "update omo to trust the new custody key",
 	"facts-stale": "the custody key facts are out of date; check this device's clock",
 	"principal-id": "the custody key's access policy no longer matches; cloud custody for this key is unavailable",
-};
+} as const;
 
 const KMS_KEY_ARN =
 	/^(arn:[a-z0-9-]+:kms:[a-z0-9-]+:)(\d{12}):key\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const ROLE_ORDER: readonly CustodyRole[] = ["runtime", "registrySigner", "provisioning", "reader", "breakglass"];
+const ROLE_ORDER: readonly CustodyRole[] = [
+	"runtime",
+	"registrySigner",
+	"provisioning",
+	"reader",
+	"breakglass",
+] as const;
 
 export function roleArn(accountId: string, roleName: string): string {
 	return `arn:aws:iam::${accountId}:role/${roleName}`;

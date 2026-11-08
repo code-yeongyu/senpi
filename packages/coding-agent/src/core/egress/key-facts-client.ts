@@ -90,8 +90,8 @@ const FACT_KEYS = [
 	"tags",
 	"policy",
 	"grantCount",
-];
-const STATEMENT_KEYS = ["v", "kind", "arn", "nonce", "readAt", "facts", "verifierKeyId"];
+] as const;
+const STATEMENT_KEYS = ["v", "kind", "arn", "nonce", "readAt", "facts", "verifierKeyId"] as const;
 
 const isCount = (value: unknown): value is number =>
 	typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
