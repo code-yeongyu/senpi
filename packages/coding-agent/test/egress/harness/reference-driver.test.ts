@@ -676,6 +676,28 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 		expect(driver.counters.providerCalls).toBe(1);
 	});
 
+	it("records a removal the session made in memory as a tombstone at the next admission (W11)", async () => {
+		driver = await createReferenceDriver();
+		driver.setResponses([fauxAssistantMessage([fauxText("one")]), fauxAssistantMessage([fauxText("two")])]);
+		const text = (message: AgentMessage): string =>
+			message.role === "user" || message.role === "assistant"
+				? typeof message.content === "string"
+					? message.content
+					: message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("")
+				: "";
+
+		await driver.prompt("first");
+		await driver.settle();
+		// The session drops the first exchange by plain reassignment, as compaction and edits do (no event).
+		const agent = driver.session.agent;
+		agent.state.messages = agent.state.messages.slice(2);
+		await driver.prompt("second");
+		await driver.settle();
+
+		expect(projectHistoryRows(driver.rows).map(text)).toEqual(agent.state.messages.map(text));
+		expect(driver.rows.some((row) => row.kind === "tombstone")).toBe(true);
+	});
+
 	it("never forwards an event the discarded instance emits after the latch", async () => {
 		driver = await createReferenceDriver();
 		driver.setResponses([fauxAssistantMessage([fauxText("lost")])]);

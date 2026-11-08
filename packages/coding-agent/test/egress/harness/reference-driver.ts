@@ -27,7 +27,8 @@ import { createHarness, type Harness, type HarnessOptions } from "../../suite/ha
 
 export type HistoryRow =
 	| { readonly kind: "input"; readonly message: AgentMessage }
-	| { readonly kind: "step"; readonly stepId: string; readonly message: AgentMessage };
+	| { readonly kind: "step"; readonly stepId: string; readonly message: AgentMessage }
+	| { readonly kind: "tombstone"; readonly message: AgentMessage };
 
 export interface LatchRecord {
 	readonly stepId: string;
@@ -162,7 +163,8 @@ const userText = (message: AgentMessage): string | undefined => {
 };
 
 export function projectHistoryRows(rows: readonly HistoryRow[]): AgentMessage[] {
-	return rows.map((row) => row.message);
+	const removed = new Set(rows.flatMap((row) => (row.kind === "tombstone" ? [row.message] : [])));
+	return rows.flatMap((row) => (row.kind === "tombstone" || removed.has(row.message) ? [] : [row.message]));
 }
 
 interface LoopConfigOwner {
@@ -449,6 +451,11 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 				throw new StepCommitError(`stale-${instanceGeneration}`, "generation");
 			}
 			admissions += 1;
+			// W11: what the session removed from memory since the last admission becomes a tombstone row (2.7 (4)).
+			const live = new Set<unknown>(current.agent.state.messages);
+			for (const message of projectHistoryRows(rows)) {
+				if (!live.has(message)) rows.push({ kind: "tombstone", message });
+			}
 			fence = { epoch: fence.epoch, admissionSeq: fence.admissionSeq + 1, generation };
 			admitted = { stepId: `step-${fence.admissionSeq}`, fence };
 			if (cancelNextStep) {
