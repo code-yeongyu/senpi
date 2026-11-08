@@ -181,4 +181,21 @@ describe("bun skill assets", () => {
 			expect(hangul.test(readFileSync(file, "utf8")), file).toBe(false);
 		}
 	});
+
+	it("qualifies process.execPath as a Bun launcher: standalone Bun only, PATH shim in a compiled host (omo#12569)", () => {
+		// The bundled Bun skill once told agents to re-spawn Bun as
+		// process.execPath unconditionally. Inside a compiled host (the OmO
+		// engine, any --compile binary) execPath is the host binary itself,
+		// so a script path passed to it starts another agent instead of
+		// running the script. Both the skill and its session recipes must
+		// carry the compiled-host qualification next to the advice.
+		const skill = readFileSync(bunSkillMd, "utf8");
+		const recipes = readFileSync(join(bunSkillRefs, "session-recipes.md"), "utf8");
+		for (const text of [skill, recipes]) {
+			expect(text).toContain("process.execPath");
+			expect(text).toContain("standalone Bun");
+			expect(text).toContain("omo#12569");
+			expect(text).toMatch(/compiled (host|binary)/);
+		}
+	});
 });
