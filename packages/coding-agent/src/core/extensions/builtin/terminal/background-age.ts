@@ -8,12 +8,12 @@
 import type { TerminalBackgroundAgeEvent } from "../monitor-state-event.ts";
 
 const MINUTE_MS = 60_000;
-export const BACKGROUND_AGE_FIRST_MS = 10 * MINUTE_MS;
-export const BACKGROUND_AGE_REPEAT_MS = 30 * MINUTE_MS;
+const BACKGROUND_AGE_FIRST_MS = 10 * MINUTE_MS;
+const BACKGROUND_AGE_REPEAT_MS = 30 * MINUTE_MS;
 const MAX_TIMER_MS = 2_147_483_647;
 
 /** The first age milestone strictly after `ageMs`. */
-export function nextAgeMilestoneMs(ageMs: number): number {
+function nextAgeMilestoneMs(ageMs: number): number {
 	if (ageMs < BACKGROUND_AGE_FIRST_MS) return BACKGROUND_AGE_FIRST_MS;
 	const repeats = Math.floor((ageMs - BACKGROUND_AGE_FIRST_MS) / BACKGROUND_AGE_REPEAT_MS) + 1;
 	return BACKGROUND_AGE_FIRST_MS + repeats * BACKGROUND_AGE_REPEAT_MS;

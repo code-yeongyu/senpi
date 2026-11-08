@@ -15,10 +15,7 @@ const MINUTE_MS = 60_000;
 const MAX_TIMER_MS = 2_147_483_647;
 
 /** The call's `auto_reap_minutes` wins over the setting; a whole number of minutes >= 1 reaps, 0 or less turns it off. */
-export function resolveAutoReapMinutes(
-	requested: number | undefined,
-	configured: number | undefined,
-): number | undefined {
+function resolveAutoReapMinutes(requested: number | undefined, configured: number | undefined): number | undefined {
 	const value = requested ?? configured;
 	if (value === undefined || !Number.isFinite(value)) return undefined;
 	const minutes = Math.trunc(value);
