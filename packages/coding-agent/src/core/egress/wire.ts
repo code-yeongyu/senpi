@@ -21,9 +21,11 @@ import type { ServiceKeyEntry } from "./roster-entries.ts";
 /**
  * The stream options a brain may send a hand: serializable request shaping only. Never secrets or headers, callbacks,
  * signals or live objects, or the loop-only `commitStep` (4.3, 2.3 options hygiene). `env` stays hand-local because
- * provider adapters resolve the model `baseUrl` from it: a brain-supplied `env` could redirect the hand's dial, with
- * the hand's own API key, to a gateway of the brain's choosing. `cwd` stays hand-local because the start message's
- * `cwd` is the one source the hand interprets.
+ * some adapters derive the dial target from it: the Cloudflare providers of `anthropic-messages` and `openai-responses`
+ * fill the account and gateway of the model `baseUrl` from it (`resolveCloudflareBaseUrl`), `azure-openai-responses`
+ * reads its base URL or resource name from it, and `bedrock-converse-stream` its HTTP proxy. A brain-supplied `env`
+ * could therefore redirect the hand's dial, with the hand's own credential, to a host of the brain's choosing. `cwd`
+ * stays hand-local because the start message's `cwd` is the one source the hand interprets.
  */
 export const WIRE_STREAM_OPTION_KEYS = [
 	"abortServerSideFallback",
