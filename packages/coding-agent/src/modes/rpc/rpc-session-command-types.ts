@@ -206,6 +206,9 @@ export type RpcSessionCommand =
 	| { id?: string; type: "compact"; customInstructions?: string }
 	| { id?: string; type: "set_auto_compaction"; enabled: boolean }
 
+	// Approval mode
+	| { id?: string; type: "set_permission_preset"; permissionPreset: string }
+
 	// Retry
 	| { id?: string; type: "set_auto_retry"; enabled: boolean }
 	| { id?: string; type: "abort_retry" }

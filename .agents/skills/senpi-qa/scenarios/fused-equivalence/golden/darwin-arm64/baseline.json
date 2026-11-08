@@ -1,11 +1,11 @@
 {
  "repo": {
-  "head": "f4631771dfddf89f2e0e1c2890f82dc1b8b3ad43",
+  "head": "01f347a76e310f5aff48b8f0d4a6a9731b762a4e",
   "dirty": false
  },
  "platform": "darwin-arm64",
  "runtimes": {
-  "harness": "node@24.22.0",
+  "harness": "node@24.22.1",
   "child": "bun@1.4.4"
  },
  "hashes": {
@@ -15,7 +15,7 @@
   "cases": "sha256:059b695a0e192da0400b8dca6f91acf90e525b0d74c1d132cc06f1aeb7240683",
   "fixtures": "sha256:406b03cc838ea251953667f945a0bc821242c6d378bfb290fbbf76402890fc7e"
  },
- "command": "node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --record --placement fused --evidence bw-6065-record",
+ "command": "node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --record --placement fused --cases E01,E04,E09,E12,E14,E17 --leave-unrecorded E02,E03,E05,E06,E07,E08,E10,E11,E13,E15,E16,E18,E19,E20,E25,E26,E27,E28,E29,E30 --evidence s6204-eq-rerecord-clean",
  "hostPin": {
   "cpuModel": "Apple EQ-Synthetic CPU",
   "cores": 997,

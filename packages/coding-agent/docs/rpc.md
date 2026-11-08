@@ -4770,10 +4770,25 @@ Response:
     "autoCompactionEnabled": true,
     "messageCount": 5,
     "pendingMessageCount": 0,
-    "pendingDialogs": []
+    "pendingDialogs": [],
+    "permissionPreset": "ask",
+    "permissionPresetSource": "client",
+    "permissionPresetStatus": "applied",
+    "effectivePermissionPreset": "ask"
   }
 }
 ```
+
+`permissionPreset`, `permissionPresetSource`, `permissionPresetStatus` and `effectivePermissionPreset` report the approval mode the session enforces. `permissionPresetSource` is `client` when a client named a valid preset for this session (`open_session.permissionPreset`, an attach naming one, or `set_permission_preset`) and `host_default` when the host's own default applies (its `--permission-preset` flag, then project and global settings, then `full-access`). `permissionPresetStatus` is `invalid` when the named preset or the host's setting cannot be parsed: the open is still accepted, but every gated tool call is refused, and an invalid preset never counts as one the client set. `effectivePermissionPreset` is the preset the next permission decision uses, `null` while the status is `invalid`. A client confirms a mode it asked for only when `permissionPreset` equals it and `permissionPresetStatus` is `applied`. The `open_session` reply carries the first three fields in `data` as well as in `data.state`.
+
+A preset a client named is recorded in the session file as a `permission_mode` entry. The entry is a record only: a later open that names no preset still uses the host's own default, and the launch flag always wins.
+
+Each gated decision picks its preset in this order:
+
+1. A preset a client named for the session (`open_session.permissionPreset`, an attach naming one, or `set_permission_preset`) wins.
+2. Work a remote device started asks: a turn started by a `prompt`, `follow_up` or `steer` (`whenIdle: "start"`) from a delegated connection, and engine-started work (extension messages, goal and loop turns, `continue_from_leaf`, `wake`, restored input) on a session a remote device has driven. A session counts as remote-driven once a delegated connection sends it any record whose method class is `drive` or `device_admin`; the engine's method-class table decides, so every run starter is covered. That includes records that start no turn, such as `abort`, `set_session_name` or `clear_queue`, and the mark lasts for the session's lifetime on purpose: telling which drive records can shape later engine-started work would need a second hand-kept list beside the table, and a wrong guess there would run remote-influenced work without asking, so the engine errs toward asking. When the operator named no `--permission-preset`, it uses the preset a client recorded in the session file instead. An embedder's host-level preset is the host default, not a launch flag. This rule is decided before `spawnedBy`: a parent named in `open_session`, real or not, never takes a remote device's work off it.
+3. A child session (`spawnedBy`) follows its live parent's current mode, including later changes to it. A child whose parent is not live in this process asks, unless the operator named a preset for it with `--permission-preset`.
+4. Everything else uses the host's own default. A local connection's turn keeps the host default even on a session a remote device has driven, and a `steer` never changes the origin of the turn it joins.
 
 `currentTurnId` is the id of the running turn, present only while one runs; a steer or follow-up names it as `expectedTurnId` (on `prompt`, `steer` or `follow_up`).
 
@@ -5227,6 +5242,21 @@ Response:
 ```json
 {"type": "response", "command": "set_auto_compaction", "success": true}
 ```
+
+#### set_permission_preset
+
+Move this session to another approval mode. It works on a classic `--mode rpc` connection, which refuses `open_session`, and on a multi-session host with the `sessionId` envelope, so a client on another device can change a live session's mode without knowing its session file. It is classed `device_admin`: it changes what the agent may do without asking. Hosts that take it advertise `set_permission_preset_v1`.
+
+```json
+{"type": "set_permission_preset", "permissionPreset": "ask"}
+```
+
+Response:
+```json
+{"type": "response", "command": "set_permission_preset", "success": true, "data": {"permissionPreset": "ask", "permissionPresetSource": "client", "permissionPresetStatus": "applied"}}
+```
+
+The new preset applies from the next permission decision, and the session file records it like a preset named at open. An unknown preset is refused with `errorCode` `invalid_launch_profile` and changes nothing, so the session keeps the mode it had. Extensions hear a change on the `permission_preset_changed` event and read the enforced preset with `pi.getPermissionPreset()`.
 
 ### Retry
 

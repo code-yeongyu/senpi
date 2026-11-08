@@ -885,6 +885,18 @@ pi.on("ui_prompt_end", async (event, ctx) => {
 });
 ```
 
+#### Permission mode and session-wide dialogs
+
+`pi.getPermissionPreset()` returns the preset the permission system enforces for this session right now, or `undefined` when no permission system runs for it or its setup failed.
+
+When a client moves a live session to another preset (`set_permission_preset`, or an attach naming one), the session announces it on the `pi.events` bus. A session's initial preset is not announced; read it with `pi.getPermissionPreset()`.
+
+| Channel | Payload | Meaning |
+|---------|---------|---------|
+| `permission_preset_changed` | `{ permissionPreset, permissionPresetSource, permissionPresetStatus, effectivePermissionPreset }` | The session's approval mode changed; the payload is the same mode `get_state` reports. |
+
+`pi.sessionDialog.select / confirm / input / editor` raise a dialog addressed to every client attached to the session, not only to the connection whose command is running. Use it for a prompt raised after that command returned, such as a background child's permission request a task runner forwards. The first answer wins; a later answer to the same dialog is refused with `already_answered`. In the terminal UI it shows like any other dialog. The same addressing is available on `ctx.ui` dialogs with the `audience: "session"` option.
+
 #### Pending-question bus events
 
 These additive events use `pi.events.on(...)`, not `pi.on(...)`:

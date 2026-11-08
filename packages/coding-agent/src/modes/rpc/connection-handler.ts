@@ -84,7 +84,9 @@ import { handleClientInput } from "./client-input-handler.ts";
 import { ConnectionQuestionBridge, degradeQuestion, sessionQuestionBridges } from "./connection-question-bridge.ts";
 import { remoteOriginDeclaration, remoteOriginField } from "./remote-origin.ts";
 import { advertisedCompactCapabilities, sessionDeclaration } from "./compact-negotiation.ts";
+import type { ConnectionOrigin } from "../../core/turn-origin.ts";
 import { commandAuthority } from "./command-authority.ts";
+import { noteDelegatedRecord } from "./delegated-drive-origin.ts";
 import { ConnectionRoles, DELEGATION_INCARNATION_STALE, roleConnection } from "./connection-roles.ts";
 import {
 	ACCOUNT_RESET_CAPABILITY,
@@ -117,6 +119,8 @@ import {
 import { EffectLedger } from "./effect-ledger.ts";
 import { EFFECT_LEDGER_CAPABILITY } from "./effect-record.ts";
 import { handleModelCommand } from "./handlers-model.ts";
+import { SET_PERMISSION_PRESET_CAPABILITY } from "./host-capabilities.ts";
+import { runSetPermissionPreset } from "./permission-preset-command.ts";
 import { createRpcEventOutputBuffer } from "./event-output-buffer.ts";
 import { extensionUiProgressReply, refusedExtensionUiResponse } from "./extension-ui-response.ts";
 import { answerExtensionUiResponse } from "./handlers-answer.ts";
@@ -287,11 +291,17 @@ export interface RpcConnectionHandler {
 }
 
 /** The tool call a dialog is about, as wire fields (absent when the dialog is not a permission request). */
-function dialogCall(opts: ExtensionUIDialogOptions | undefined): { toolCallId?: string; parentToolCallId?: string } {
-	if (opts?.toolCallId === undefined) return {};
+function dialogCall(opts: ExtensionUIDialogOptions | undefined): {
+	toolCallId?: string;
+	parentToolCallId?: string;
+	audience?: "session";
+} {
+	const audience = opts?.audience === "session" ? { audience: "session" as const } : {};
+	if (opts?.toolCallId === undefined) return audience;
 	return {
 		toolCallId: opts.toolCallId,
 		...(opts.parentToolCallId === undefined ? {} : { parentToolCallId: opts.parentToolCallId }),
+		...audience,
 	};
 }
 
@@ -412,6 +422,8 @@ export function createRpcConnectionHandler(
 	const connectionRoles = options.connectionRoles ?? new ConnectionRoles();
 	const currentConnectionId = (): string => roleConnection(options.clientInfo?.connectionId());
 	const hasRole = (role: string): boolean => connectionRoles.has(currentConnectionId(), role);
+	const connectionOrigin = (): ConnectionOrigin =>
+		connectionRoles.isDelegated(currentConnectionId()) ? "delegated" : "local";
 	const routingSessionId = options.sessionId;
 	// True only while THIS connection's own command drives a replacement; the issuer
 	// already learns the new identity from its command response.
@@ -713,8 +725,11 @@ export function createRpcConnectionHandler(
 			),
 
 		confirm: (title, message, opts) =>
-			createDialogPromise(opts, false, { method: "confirm", title, message, timeout: opts?.timeout }, (r) =>
-				"cancelled" in r && r.cancelled ? false : "confirmed" in r ? r.confirmed : false,
+			createDialogPromise(
+				opts,
+				false,
+				{ method: "confirm", title, message, timeout: opts?.timeout, ...dialogCall(opts) },
+				(r) => ("cancelled" in r && r.cancelled ? false : "confirmed" in r ? r.confirmed : false),
 			),
 
 		input: (title, placeholder, opts) =>
@@ -855,7 +870,7 @@ export function createRpcConnectionHandler(
 			return "";
 		},
 
-		async editor(title: string, prefill?: string): Promise<string | undefined> {
+		async editor(title: string, prefill?: string, opts?: ExtensionUIDialogOptions): Promise<string | undefined> {
 			const id = crypto.randomUUID();
 			const frame: RpcExtensionUIRequest = {
 				type: "extension_ui_request",
@@ -863,6 +878,7 @@ export function createRpcConnectionHandler(
 				method: "editor",
 				title,
 				prefill,
+				...dialogCall(opts),
 				...remoteOriginField(raiserOrigin()),
 			};
 			return new Promise((resolve, reject) => {
@@ -1322,6 +1338,7 @@ export function createRpcConnectionHandler(
 		requestContext?: ExtensionRpcRequestContext,
 	): Promise<RpcResponse | undefined> => {
 		const id = command.id;
+		noteDelegatedRecord(command, connectionOrigin(), session.sessionManager);
 
 		switch (command.type) {
 			case "get_protocol_info":
@@ -1356,6 +1373,7 @@ export function createRpcConnectionHandler(
 								SESSION_MODEL_SCOPE_CAPABILITY,
 								RESUME_SESSION_CAPABILITY,
 								ENTRIES_TAIL_CAPABILITY,
+								SET_PERMISSION_PRESET_CAPABILITY,
 								...(options.retryFallbackCommand ? [RETRY_FALLBACK_COMMAND_CAPABILITY] : []),
 								...(options.toolRuntime ? toolRuntimeCapabilities(options.toolRuntime) : []),
 								// Client flags cannot advertise a host guard this classic binding does not run, nor a tool runtime.
@@ -1387,7 +1405,7 @@ export function createRpcConnectionHandler(
 					session,
 					command,
 					{ output, promptCalls },
-					{ interactiveUser: hasRole(INTERACTIVE_USER_CAPABILITY) },
+					{ interactiveUser: hasRole(INTERACTIVE_USER_CAPABILITY), connectionOrigin: connectionOrigin() },
 				);
 				promptCalls.add(admission);
 				void admission.finally(() => promptCalls.delete(admission));
@@ -1472,7 +1490,7 @@ export function createRpcConnectionHandler(
 					session,
 					command,
 					{ output, promptCalls },
-					{ interactiveUser: hasRole(INTERACTIVE_USER_CAPABILITY) },
+					{ interactiveUser: hasRole(INTERACTIVE_USER_CAPABILITY), connectionOrigin: connectionOrigin() },
 				);
 				return undefined;
 			}
@@ -1686,6 +1704,9 @@ export function createRpcConnectionHandler(
 
 			case "set_thinking_level":
 				return runSetThinkingLevel(effectContext(), command);
+
+			case "set_permission_preset":
+				return runSetPermissionPreset(runtimeHost, command);
 
 			case "cycle_thinking_level": {
 				const level = session.cycleThinkingLevel();

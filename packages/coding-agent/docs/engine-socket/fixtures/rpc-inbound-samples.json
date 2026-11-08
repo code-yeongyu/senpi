@@ -1,9 +1,9 @@
 {
 	"methodClassesVersion": 1,
-	"methodClassesDigest": "3860136b2a1b07c20373ed361df07c045bd1e84fce001917e271ca0e4b903e63",
+	"methodClassesDigest": "67e7dac5622360f9e5fc471764f5a69c43c3abcc22bed55859761cbb53ede37c",
 	"sampleId": "00000000-0000-7000-8000-000000000000",
 	"samplePathRoot": "/nonexistent/senpi-rpc-inbound-sample",
-	"methodCount": 122,
+	"methodCount": 123,
 	"methods": [
 		{
 			"method": "abort",
@@ -1063,6 +1063,16 @@
 				"type": "set_model",
 				"provider": "rpc-sample-provider",
 				"modelId": "rpc-sample-model"
+			}
+		},
+		{
+			"method": "set_permission_preset",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "set_permission_preset",
+				"permissionPreset": "ask"
 			}
 		},
 		{

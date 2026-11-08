@@ -38,7 +38,7 @@ import {
  * (device_admin).
  * Delegated connections add methods outside the table, never a table entry.
  */
-const DIGEST_ON_BASE = "3860136b2a1b07c20373ed361df07c045bd1e84fce001917e271ca0e4b903e63";
+const DIGEST_ON_BASE = "67e7dac5622360f9e5fc471764f5a69c43c3abcc22bed55859761cbb53ede37c";
 const FORWARDABLE = [
 	"observe",
 	"drive",
