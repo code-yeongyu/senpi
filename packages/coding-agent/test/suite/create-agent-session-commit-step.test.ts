@@ -6,6 +6,7 @@ import { fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-a
 import { afterEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import { ModelRuntime } from "../../src/core/model-runtime.ts";
+import { createAgentSessionFromServices, createAgentSessionServices } from "../../src/core/agent-session-services.ts";
 import { createAgentSession } from "../../src/core/sdk.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
@@ -78,5 +79,27 @@ describe("C2: createAgentSession forwards commitStep to the Agent it builds (cus
 		expect(Object.hasOwn(loopOwner.createLoopConfig(), "commitStep")).toBe(false);
 		await session.prompt("go");
 		expect(session.agent.state.messages.at(-1)?.role).toBe("assistant");
+	});
+
+	it("forwards commitStep through createAgentSessionFromServices, and not when unset", async () => {
+		const loopKeys = async (commitStep?: (step: StepCommit) => Promise<void>) => {
+			const dir = mkdtempSync(join(tmpdir(), "c2-services-"));
+			const settingsManager = SettingsManager.inMemory();
+			const services = await createAgentSessionServices({ cwd: dir, agentDir: dir, settingsManager });
+			const { session } = await createAgentSessionFromServices({
+				services,
+				sessionManager: SessionManager.inMemory(dir),
+				...(commitStep ? { commitStep } : {}),
+			});
+			cleanups.push(() => {
+				session.dispose();
+				rmSync(dir, { recursive: true, force: true });
+			});
+			const loopOwner = session.agent as unknown as { createLoopConfig(): Record<string, unknown> };
+			return Object.hasOwn(loopOwner.createLoopConfig(), "commitStep");
+		};
+
+		expect(await loopKeys(async () => {})).toBe(true);
+		expect(await loopKeys()).toBe(false);
 	});
 });
