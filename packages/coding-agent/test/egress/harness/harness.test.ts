@@ -1,18 +1,18 @@
-import { isStepCommitError } from "@earendil-works/pi-agent-core";
+import { type AgentTool, isStepCommitError } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHostedHarness, type HostedHarness } from "./index.ts";
 
-const echoTool = {
+const echoTool: AgentTool = {
 	name: "echo",
 	label: "Echo",
 	description: "Returns its input.",
 	parameters: Type.Object({ text: Type.String() }),
-	execute: async (_id: string, params: { text: string }) => ({
-		content: [{ type: "text" as const, text: params.text }],
-		details: {},
-	}),
+	execute: async (_toolCallId, params) => {
+		const text = typeof params === "object" && params !== null && "text" in params ? String(params.text) : "";
+		return { content: [{ type: "text", text }], details: {} };
+	},
 };
 
 describe("CK22 hosted harness over a real AgentSession", () => {

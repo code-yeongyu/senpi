@@ -17,6 +17,7 @@ import {
 	type StepCommitFailure,
 	type StreamFn,
 } from "@earendil-works/pi-agent-core";
+import type { FauxCallLogEntry } from "@earendil-works/pi-ai/compat";
 import type { AgentSession, AgentSessionEvent } from "../../../src/core/agent-session.ts";
 import { createHarness, type Harness, type HarnessOptions } from "../../suite/harness.ts";
 
@@ -36,17 +37,24 @@ export interface ForwardedEvent {
 	readonly event: AgentSessionEvent;
 }
 
+export interface InboxEntry {
+	readonly text: string;
+	consumedBy?: number;
+}
+
 export interface DriverCounters {
 	readonly admissions: number;
 	readonly refusals: number;
 	readonly providerCalls: number;
 	readonly events: number;
+	readonly drainedBy: readonly number[];
 }
 
 export interface ReferenceDriver {
 	readonly session: AgentSession;
 	readonly generation: number;
 	readonly rows: readonly HistoryRow[];
+	readonly inbox: readonly InboxEntry[];
 	readonly forwarded: readonly ForwardedEvent[];
 	readonly latchHistory: readonly LatchRecord[];
 	readonly counters: DriverCounters;
@@ -55,8 +63,17 @@ export interface ReferenceDriver {
 	setResponses: Harness["setResponses"];
 	appendResponses: Harness["appendResponses"];
 	prompt(text: string): Promise<void>;
+	followUp(text: string): Promise<void>;
+	settle(): Promise<void>;
+	callLog(): FauxCallLogEntry[];
 	cleanup(): void;
 }
+
+const userText = (message: AgentMessage): string | undefined => {
+	if (message.role !== "user") return undefined;
+	if (typeof message.content === "string") return message.content;
+	return message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
+};
 
 export function projectHistoryRows(rows: readonly HistoryRow[]): AgentMessage[] {
 	return rows.map((row) => row.message);
@@ -69,6 +86,9 @@ interface LoopConfigOwner {
 export async function createReferenceDriver(options: HarnessOptions = {}): Promise<ReferenceDriver> {
 	const rows: HistoryRow[] = [];
 	const forwarded: ForwardedEvent[] = [];
+	const inbox: InboxEntry[] = [];
+	const drainedBy: number[] = [];
+	const rowMessages = new WeakSet<object>();
 	const latchHistory: LatchRecord[] = [];
 	const plannedRejections: StepCommitFailure[] = [];
 	const instances: Harness[] = [];
@@ -114,11 +134,35 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 			return dial(model, context, streamOptions);
 		};
 
+		// The always-on inbox owns queued input: a drain is consumed per message by the current generation only,
+		// and a refused consume leaves the message in the inbox for the rebuilt instance.
+		harness.agent.queuedInputPort = {
+			claim: async (_queue, drain) => drain(),
+			release: async (_queue, _messages, giveBack) => {
+				giveBack.restore();
+			},
+			commitConsumption: async (_queue, messages) => {
+				if (instanceGeneration !== generation) {
+					refusals += 1;
+					throw new StepCommitError(`stale-${instanceGeneration}`, "generation");
+				}
+				for (const message of messages) {
+					const text = userText(message);
+					const entry = inbox.find((candidate) => candidate.consumedBy === undefined && candidate.text === text);
+					if (entry) entry.consumedBy = instanceGeneration;
+					rows.push({ kind: "input", message });
+					rowMessages.add(message);
+				}
+				drainedBy.push(instanceGeneration);
+			},
+		};
+
 		harness.session.subscribe((event) => {
 			if (instanceGeneration !== generation) return;
 			forwarded.push({ generation: instanceGeneration, event });
-			if (event.type === "message_end" && event.message.role === "user") {
+			if (event.type === "message_end" && event.message.role === "user" && !rowMessages.has(event.message)) {
 				rows.push({ kind: "input", message: event.message });
+				rowMessages.add(event.message);
 			}
 		});
 	}
@@ -129,6 +173,11 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 		install(next, generation);
 		current = next;
 		rebuilds += 1;
+		const pending = inbox.filter((entry) => entry.consumedBy === undefined);
+		if (pending.length > 0) {
+			for (const entry of pending) await next.session.followUp(entry.text);
+			if (!next.session.isStreaming) await next.agent.continue().catch(() => undefined);
+		}
 	}
 
 	install(first, generation);
@@ -141,10 +190,17 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 			return generation;
 		},
 		rows,
+		inbox,
 		forwarded,
 		latchHistory,
 		get counters(): DriverCounters {
-			return { admissions, refusals, providerCalls: first.faux.getCallLog().length, events: forwarded.length };
+			return {
+				admissions,
+				refusals,
+				providerCalls: first.faux.getCallLog().length,
+				events: forwarded.length,
+				drainedBy,
+			};
 		},
 		get rebuilds() {
 			return rebuilds;
@@ -166,6 +222,16 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 			// Under decision C the old instance synthesizes its failure and `prompt` may resolve, so the rebuild keys on
 			// the latch, not on the rejection.
 			if (latchHistory.length > latchesBefore) await rebuild();
+		},
+		async followUp(text: string) {
+			inbox.push({ text });
+			await current.session.followUp(text);
+		},
+		async settle() {
+			await current.session.waitForIdle();
+		},
+		callLog() {
+			return first.faux.getCallLog();
 		},
 		cleanup() {
 			for (const instance of instances.reverse()) instance.cleanup();

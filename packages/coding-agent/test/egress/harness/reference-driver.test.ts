@@ -71,6 +71,46 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 		expect(assistantTexts(oldSession.agent.state.messages)).toContain("lost");
 	});
 
+	it("keeps queued input in the always-on inbox across a latch and delivers it once after the rebuild", async () => {
+		driver = await createReferenceDriver();
+		driver.setResponses([fauxAssistantMessage([fauxText("lost")]), fauxAssistantMessage([fauxText("answered")])]);
+		driver.inject.nextCommit("reject");
+
+		await driver.followUp("later");
+		expect(driver.inbox.map((entry) => ({ text: entry.text, consumedBy: entry.consumedBy }))).toEqual([
+			{ text: "later", consumedBy: undefined },
+		]);
+		const oldSession = driver.session;
+
+		await driver.prompt("go");
+		await driver.settle();
+		const refusals = driver.counters.refusals;
+		await oldSession.agent.continue().catch(() => undefined);
+
+		expect(driver.counters.refusals).toBeGreaterThan(refusals);
+		const laterRows = driver.rows.filter(
+			(row) => row.message.role === "user" && JSON.stringify(row.message.content).includes("later"),
+		);
+		expect(laterRows).toHaveLength(1);
+
+		expect(driver.rebuilds).toBe(1);
+		expect(driver.inbox.map((entry) => entry.consumedBy)).toEqual([2]);
+		expect(driver.counters.drainedBy).toEqual([2]);
+		const sawLater = driver
+			.callLog()
+			.filter((call) =>
+				call.context.messages.some(
+					(message) =>
+						message.role === "user" &&
+						(typeof message.content === "string"
+							? message.content === "later"
+							: message.content.some((part) => part.type === "text" && part.text === "later")),
+				),
+			);
+		expect(sawLater).toHaveLength(1);
+		expect(assistantTexts(projectHistoryRows(driver.rows))).toEqual(["answered"]);
+	});
+
 	it("never forwards an event the discarded instance emits after the latch", async () => {
 		driver = await createReferenceDriver();
 		driver.setResponses([fauxAssistantMessage([fauxText("lost")])]);
