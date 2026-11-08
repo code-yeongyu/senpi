@@ -5953,6 +5953,32 @@ Response:
 
 `kind` is the admission outcome (`started`, `queued`, `steered`, `already_admitted`, `held_draft`, `turn_conflict`); `admitted` is `[]` when no drain is registered.
 
+#### admit_external_message
+
+Admits a message another agent sent this session (a relayed peer delivery) exactly as `pi.session.admitExternalMessage` does in process (multi-session hosts: session-scoped). The engine writes its own `session_control_delivery` custom entry, with `details.sender` and `details.display_text` for human surfaces: never a `role: "user"` message, never the extension `input` event, and a `/`-led `text` is not dispatched as a command or expanded as a template. Method class `drive`.
+
+```json
+{"type": "admit_external_message", "sessionId": "rpc-1", "deliveryId": "d7", "text": "[from peer] build is green", "sender": {"kind": "agent", "session_id": "s-42", "name": "reviewer"}, "displayText": "build is green", "deliverAs": "followUp"}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "admit_external_message",
+  "success": true,
+  "data": { "kind": "started", "turnId": "0" }
+}
+```
+
+- `deliveryId` (1-256 chars), `text` (non-empty) and `deliverAs` (`steer` | `followUp`) are required. `sender` is `{ kind: "agent", session_id, name? }`, `{ kind: "command_line", user? }` or `{ kind: "external", platform, author? }` with no other field.
+- `whenIdle`: `start` (default) starts a turn on an idle session; `queue` holds it for the next turn.
+- `expectedTurnId` is `get_state.currentTurnId` (a string). A steer whose `expectedTurnId` is not the current turn, or a mid-turn steer that names none, answers `kind: "turn_conflict"` and admits nothing. The reply's `turnId` is the session's turn at admission, in the same form.
+- `chainCount` is a thread call's hop count, checked against `threads.chainCountLimit` before anything is admitted (refused with `chain_count_limit` / `invalid_chain_count`, as on `prompt`/`steer`/`follow_up`); the admitted hop is written as `details.chain_count`.
+- `kind` is the same outcome `wake` reports (`held_draft`: retry; nothing was queued). The ledger keys a local connection's `deliveryId` as `rpc:local/<deliveryId>` and a remote device's as `device:<deviceId>/<deliveryId>`, so RPC ids never collide with in-process deliveries or with another device's. An id the runtime already holds, or that the transcript already holds an entry for (after a restart too), answers `already_admitted`.
+- On a connection that speaks for a remote device (a delegated connection, or one whose `set_client_info` declared `remoteOrigin`), the engine stamps that device as `details.remote_origin`, writes its own provenance line ahead of `text` in what the model reads (the claimed `sender` marked unverified), keeps `text` as `details.display_text` when no `displayText` is given, and refuses a `command_line` sender (`sender_not_allowed`). The device's `deviceName` and `deviceId` and the claimed `session_id` and `platform` appear JSON-quoted in that line. A delegated connection that names no remote device is refused (`delegated_origin_unknown`), never admitted as a local delivery. A record that names `remote_origin` is refused on every connection. The turn that consumes the delivery takes the connection's origin, so a remote device's follow-up runs under the delegated approval-mode rule even inside a local turn.
+- Once `release_session` has closed the session's admission, the record answers `success: false` with the release's message: the delivery stays with its sender.
+
 #### release_session
 
 Multi-session hosts only. Hands the session to a runtime outside the host; see "Handing a session over (`release_session`)".
