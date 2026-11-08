@@ -79,6 +79,70 @@ describe("console redactor", () => {
 	});
 });
 
+describe("console redactor covers every console method", () => {
+	function fullConsole() {
+		const lines: string[] = [];
+		const conditions: unknown[] = [];
+		const sink = (...args: unknown[]) => {
+			lines.push(args.map(String).join(" "));
+		};
+		const target = {
+			log: sink,
+			dir: sink,
+			table: sink,
+			trace: sink,
+			group: sink,
+			timeLog: sink,
+			customPrint: sink,
+			assert: (condition: unknown, ...rest: unknown[]) => {
+				conditions.push(condition);
+				if (!condition) sink(...rest);
+			},
+		};
+		return { target, lines, conditions };
+	}
+
+	it.each(["dir", "table", "trace", "group", "timeLog", "customPrint"] as const)(
+		"redacts console.%s inside a sealed context",
+		async (method) => {
+			const { target, lines } = fullConsole();
+			installConsoleRedactor(target);
+			await runSealed(createRedactor({ secrets: [SECRET_A], publicPrefixes: [] }), async () => {
+				target[method](`value ${SECRET_A}`, { nested: SECRET_A });
+			});
+			expect(lines).toHaveLength(1);
+			expect(lines[0]).not.toContain(SECRET_A);
+			expect(lines[0]).toContain(REDACTED);
+		},
+	);
+
+	it("keeps console.assert's condition and redacts its message", async () => {
+		const { target, lines, conditions } = fullConsole();
+		installConsoleRedactor(target);
+		await runSealed(createRedactor({ secrets: [SECRET_A], publicPrefixes: [] }), async () => {
+			target.assert(true, `fine ${SECRET_A}`);
+			target.assert(false, `failed ${SECRET_A}`);
+		});
+		expect(conditions).toEqual([true, false]);
+		expect(lines).toEqual([`failed ${REDACTED}`]);
+	});
+
+	it("drops another tenant's console.dir while a sealed window is open", async () => {
+		const { target, lines } = fullConsole();
+		installConsoleRedactor(target);
+		let release: () => void = () => {};
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const sealed = runSealed(createRedactor({ secrets: [SECRET_A], publicPrefixes: [] }), () => held);
+		queueMicrotask(() => target.dir({ leaked: SECRET_A }));
+		await Promise.resolve();
+		release();
+		await sealed;
+		expect(lines).toEqual([]);
+	});
+});
+
 describe("sealed window counter (sealed-window-leak, sealed-window-no-finally)", () => {
 	it("returns to zero after the sealed work throws", async () => {
 		const failing = runSealed(createRedactor({ secrets: [SECRET_A], publicPrefixes: [] }), async () => {
