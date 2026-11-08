@@ -1,5 +1,6 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { HOSTED_REBUILD_DEADLINE_MS, isStepCommitError } from "@earendil-works/pi-agent-core";
+import { normalizeContext } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it } from "vitest";
 import { createReferenceDriver, projectHistoryRows, type ReferenceDriver } from "./reference-driver.ts";
@@ -377,7 +378,7 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 		const calls = driver.counters.providerCalls;
 		// What a compaction or title started by the old instance after the latch would send.
 		const outcome = await Promise.resolve(
-			oldAgent.streamFunction(driver.session.model ?? oldAgent.state.model, { systemPrompt: "", messages: [] }),
+			oldAgent.streamFunction(driver.session.model ?? oldAgent.state.model, normalizeContext({ messages: [] })),
 		).then(
 			() => "dialed",
 			() => "refused",
@@ -387,6 +388,26 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 		expect(driver.counters.auxRefusals).toBe(1);
 		expect(driver.counters.auxAdmissions).toBe(0);
 		expect(driver.counters.providerCalls).toBe(calls);
+	});
+
+	it("stop pressed while latched cancels the latched step: one synthesized abort, no redial (W14, S12)", async () => {
+		driver = await createReferenceDriver();
+		driver.setResponses([fauxAssistantMessage([fauxText("lost")]), fauxAssistantMessage([fauxText("never")])]);
+		driver.inject.nextCommit("reject");
+		driver.inject.slowRebuildStoreRead(1_000);
+
+		const prompt = driver.prompt("go");
+		await driver.rebuildStoreReadStarted();
+		expect(driver.stop()).toBe("cancelled-latched-step");
+		driver.clock.advance(1_000);
+		await prompt;
+
+		expect(driver.counters.providerCalls).toBe(1);
+		const steps = projectHistoryRows(driver.rows).filter((message) => message.role === "assistant");
+		expect(steps.map((message) => (message.role === "assistant" ? message.stopReason : undefined))).toEqual([
+			"aborted",
+		]);
+		expect(driver.stops).toEqual([{ stepId: "step-1", while: "latched" }]);
 	});
 
 	it("never forwards an event the discarded instance emits after the latch", async () => {

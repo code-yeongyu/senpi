@@ -112,6 +112,8 @@ export interface ReferenceDriver {
 	readonly classifications: readonly CommitClassification[];
 	readonly auxRows: readonly AuxRow[];
 	settleAux(): Promise<void>;
+	readonly stops: ReadonlyArray<{ readonly stepId: string; readonly while: "latched" }>;
+	stop(): "cancelled-latched-step" | "nothing-latched";
 	readonly counters: DriverCounters;
 	readonly rebuilds: number;
 	readonly inject: {
@@ -218,6 +220,9 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 	let lateLandingFloor = 0;
 	const cancelledSteps = new Set<string>();
 	let cancelledAbort: { readonly stepId: string; readonly message: AgentMessage } | undefined;
+	let latchedStep: { readonly stepId: string; readonly message: AgentMessage } | undefined;
+	let committingStep: { readonly stepId: string; readonly message: AgentMessage } | undefined;
+	const stops: Array<{ readonly stepId: string; readonly while: "latched" }> = [];
 	const instances: Harness[] = [];
 	let generation = 1;
 	let admissions = 0;
@@ -247,6 +252,7 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 			generation += 1;
 			latchedAt = clock.now();
 			latchHistory.push({ stepId, code, generationAfter: generation, forwardedBefore: forwarded.length });
+			latchedStep = committingStep?.stepId === stepId ? committingStep : undefined;
 			const error = new StepCommitError(stepId, code);
 			driverErrors.add(error);
 			throw error;
@@ -273,6 +279,7 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 		};
 
 		const hostedCommit = async (step: StepCommit): Promise<void> => {
+			if (admitted !== undefined) committingStep = { stepId: admitted.stepId, message: step.message };
 			if (instanceGeneration !== generation || admitted === undefined) {
 				refusals += 1;
 				const refusal = new StepCommitError(`stale-${instanceGeneration}`, "generation");
@@ -487,6 +494,25 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 		latchHistory,
 		classifications,
 		auxRows,
+		get stops() {
+			return stops;
+		},
+		// Stop while latched (W14, S12): the latched step becomes cancelled in the same step as the stop, so the rebuild
+		// commits its synthesized aborted message and never redials it.
+		stop() {
+			const step = latchedStep;
+			if (latchedAt === undefined || step === undefined) return "nothing-latched";
+			cancelledSteps.add(step.stepId);
+			cancelledAbort = {
+				stepId: step.stepId,
+				message:
+					step.message.role === "assistant"
+						? { ...step.message, content: [], stopReason: "aborted" }
+						: step.message,
+			};
+			stops.push({ stepId: step.stepId, while: "latched" });
+			return "cancelled-latched-step";
+		},
 		async settleAux() {
 			const titles = instances.map(
 				(instance) =>
