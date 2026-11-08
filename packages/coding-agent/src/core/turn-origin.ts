@@ -34,6 +34,11 @@ export function markInputTurnOrigin(message: object, mark: InputTurnMark): void 
 	inputMarks.set(message, mark);
 }
 
+/** Whether a message carries an origin mark: a user message always opens a turn's origin, any other only when marked. */
+export function hasInputTurnMark(message: object): boolean {
+	return inputMarks.has(message);
+}
+
 /** A run starts as engine work; the user message that opens a turn sets its origin, a steer keeps it. */
 export function noteRunStart(sessionManager: object): void {
 	currentOrigins.set(sessionManager, "engine");
