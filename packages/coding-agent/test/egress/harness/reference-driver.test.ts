@@ -698,6 +698,37 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 		expect(driver.rows.some((row) => row.kind === "tombstone")).toBe(true);
 	});
 
+	it("evicted after the step committed, before its tool ran: resume runs the tool exactly once, no redial (S8a)", async () => {
+		let runs = 0;
+		const echo: AgentTool = {
+			name: "echo",
+			label: "Echo",
+			description: "Echoes.",
+			parameters: Type.Object({}),
+			execute: async (_id, _params, signal) => {
+				if (!signal?.aborted) runs += 1;
+				return { content: [{ type: "text", text: "echoed" }], details: {} };
+			},
+		};
+		driver = await createReferenceDriver({ tools: [echo] });
+		driver.setResponses([
+			fauxAssistantMessage([fauxToolCall("echo", {})], { stopReason: "toolUse" }),
+			fauxAssistantMessage([fauxText("after")]),
+		]);
+		const hold = driver.inject.pauseNextTool();
+
+		const run = driver.prompt("go").catch(() => undefined);
+		await hold.reached;
+		await driver.evict();
+		await run;
+		await driver.resume();
+		await driver.settle();
+
+		expect(runs).toBe(1);
+		expect(driver.counters.providerCalls).toBe(2);
+		expect(driver.toolLedger.map((entry) => entry.outcome)).toEqual(["killed", "ran"]);
+	});
+
 	it("never forwards an event the discarded instance emits after the latch", async () => {
 		driver = await createReferenceDriver();
 		driver.setResponses([fauxAssistantMessage([fauxText("lost")])]);

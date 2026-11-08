@@ -124,6 +124,8 @@ export interface ReferenceDriver {
 	settleAux(): Promise<void>;
 	readonly stops: ReadonlyArray<{ readonly stepId: string; readonly while: "latched" | "active" }>;
 	stop(): "cancelled-latched-step" | "cancelled-active-step" | "nothing-latched";
+	evict(): Promise<void>;
+	resume(): Promise<void>;
 	readonly counters: DriverCounters;
 	readonly rebuilds: number;
 	readonly inject: {
@@ -615,6 +617,36 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 		},
 		// Stop while latched (W14, S12): the latched step becomes cancelled in the same step as the stop, so the rebuild
 		// commits its synthesized aborted message and never redials it.
+		// S8: the instance dies without a latch (process kill): a held call is killed, its late events are refused.
+		async evict() {
+			heldKill?.();
+			heldKill = undefined;
+			generation += 1;
+		},
+		// S8a: rebuild from durable rows, then run the committed step's tool calls that never ran, exactly once.
+		async resume() {
+			await rebuild();
+			const last = rows.at(-1);
+			if (last?.kind !== "step" || last.message.role !== "assistant") return;
+			const ran = new Set(toolLedger.filter((entry) => entry.outcome === "ran").map((entry) => entry.toolCallId));
+			for (const block of last.message.content) {
+				if (block.type !== "toolCall" || ran.has(block.id)) continue;
+				const tool = ledgerTools?.find((candidate) => candidate.name === block.name);
+				if (!tool) continue;
+				const output = await tool.execute(block.id, block.arguments, undefined);
+				const result = {
+					role: "toolResult" as const,
+					toolCallId: block.id,
+					toolName: block.name,
+					content: output.content,
+					isError: false,
+					timestamp: clock.now(),
+				};
+				rows.push({ kind: "step", stepId: last.stepId, message: result });
+				current.agent.state.messages = [...current.agent.state.messages, result];
+			}
+			await current.agent.continue();
+		},
 		stop() {
 			const step = latchedStep;
 			if (latchedAt === undefined || step === undefined) {
