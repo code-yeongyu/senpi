@@ -116,8 +116,9 @@ function parseSignedPlacementClaim(value: unknown): SignedPlacementClaim | undef
 type KeySelection = { readonly verdict: "superseded" | "unknown" | "invalid" } | { readonly entry: ServiceKeyEntry };
 
 /**
- * The one registry entry of the claim's generation this hand may verify under. A locally superseded generation is
- * `superseded`; a missing, unchecked or ambiguous key is `unknown`; only bad entries left is `invalid`.
+ * The one registry entry of the claim's generation this hand may verify under. A roster entry of that generation that
+ * this device's records supersede is `superseded`; a missing, unchecked or ambiguous key is `unknown` (also when a
+ * superseded generation's entry has left the roster); only bad entries left is `invalid`.
  */
 async function selectRegistryKey(
 	claim: PlacementClaim,
