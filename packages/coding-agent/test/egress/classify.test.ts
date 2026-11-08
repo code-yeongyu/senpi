@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
 	classifyModelsJsonField,
@@ -43,5 +44,24 @@ describe("models.json field classification", () => {
 		["providers.*.modelOverrides.*.extraBody.*", "forces-device"],
 	])("%s is %s", (path, expected) => {
 		expect(classifyModelsJsonField(path)).toBe(expected);
+	});
+});
+
+describe("models.json field classes built per call (r11.2 R8, option a)", () => {
+	const oracle = JSON.parse(
+		readFileSync(new URL("../fixtures/egress/models-json-field-classes-920a085089.json", import.meta.url), "utf8"),
+	) as { fieldClasses: Record<string, string>; typeOnlyFields: Record<string, string> };
+
+	it("equals the compact derivation shipped at 920a085089, entry for entry", () => {
+		expect(Object.keys(oracle.fieldClasses)).toHaveLength(340);
+		expect(Object.keys(oracle.typeOnlyFields)).toHaveLength(4);
+		expect(modelsJsonFieldClasses()).toEqual(oracle.fieldClasses);
+		expect(MODELS_JSON_TYPE_ONLY_FIELDS).toEqual(oracle.typeOnlyFields);
+	});
+
+	it("returns a fresh table on every call, so no caller can change another's", () => {
+		const first = modelsJsonFieldClasses();
+		expect(modelsJsonFieldClasses()).not.toBe(first);
+		expect(modelsJsonFieldClasses()).toEqual(first);
 	});
 });
