@@ -166,11 +166,17 @@ async function disposeWithinGrace(
 	sessionId: string,
 ): Promise<void> {
 	if (binding === undefined) return;
+	// Async wrapper: a dispose that throws synchronously becomes a rejection, so the race below
+	// still runs its finally and clears the timer instead of leaking it for up to `graceMs`.
+	// (Same shape as `abortForHostShutdownWithin` above.)
+	const disposed = (async () => {
+		await binding.dispose();
+		return "disposed" as const;
+	})();
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	const late = new Promise<"late">((resolve) => {
 		timer = setTimeout(() => resolve("late"), graceMs);
 	});
-	const disposed = binding.dispose().then(() => "disposed" as const);
 	try {
 		if ((await Promise.race([disposed, late])) === "disposed") return;
 	} finally {

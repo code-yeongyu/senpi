@@ -91,6 +91,7 @@ describe("manual open-by-path clears its handover-parked record entry (M-A)", ()
 
 		const entry = sessionEntry(sessionFile, agentDir);
 		const registry = {
+			closeGraceMs: 2_000,
 			openSession: async () => ({ sessionId: "rpc-manual-reopen" }),
 			getForCommand: () => entry,
 			list: () => [],

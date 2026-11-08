@@ -33,6 +33,7 @@ async function openWorkerSession() {
 		worker: { snapshot: { state: state(FIRST) }, bindingReady: false, exited: new Promise(() => {}) },
 	};
 	const registry = {
+		closeGraceMs: 2_000,
 		openSession: async () => ({ sessionId: "rpc-1" }),
 		getForCommand: () => entry,
 		list: () => [],
