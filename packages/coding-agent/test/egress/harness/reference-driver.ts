@@ -11,6 +11,7 @@
  * and `_sessionTitlePromise`; SessionManager `_appendEntry`.
  */
 import { AsyncLocalStorage } from "node:async_hooks";
+import { DatabaseSync } from "node:sqlite";
 import {
 	HOSTED_REBUILD_DEADLINE_MS,
 	type AgentLoopConfig,
@@ -114,6 +115,8 @@ export interface ReferenceDriver {
 	readonly latchHistory: readonly LatchRecord[];
 	readonly classifications: readonly CommitClassification[];
 	readonly rebuildFailures: readonly unknown[];
+	readonly historyStoreKind: HistoryStoreKind;
+	storedRowCount(): number;
 	readonly toolLedger: ReadonlyArray<{
 		toolName: string;
 		toolCallId: string;
@@ -201,8 +204,43 @@ type FaultKind = "reject" | "already-committed" | "ambiguous-landed" | "ambiguou
 const sameFence = (a: Fence, b: Fence): boolean =>
 	a.epoch === b.epoch && a.admissionSeq === b.admissionSeq && a.generation === b.generation;
 
-export async function createReferenceDriver(options: HarnessOptions = {}): Promise<ReferenceDriver> {
+/** Where durable history rows live (store matrix, 2.7 (4)); the DO-store rerun belongs to V7a2. */
+export type HistoryStoreKind = "memory" | "sqlite";
+
+interface HistoryStore {
+	append(row: HistoryRow): void;
+	readAll(): HistoryRow[];
+	count(): number;
+}
+
+function createHistoryStore(kind: HistoryStoreKind): HistoryStore {
+	if (kind === "memory") {
+		const all: HistoryRow[] = [];
+		return { append: (row) => void all.push(row), readAll: () => all, count: () => all.length };
+	}
+	const db = new DatabaseSync(":memory:");
+	db.exec("CREATE TABLE rows (seq INTEGER PRIMARY KEY AUTOINCREMENT, row TEXT NOT NULL)");
+	const insert = db.prepare("INSERT INTO rows (row) VALUES (?)");
+	const select = db.prepare("SELECT row FROM rows ORDER BY seq");
+	const total = db.prepare("SELECT COUNT(*) AS n FROM rows");
+	return {
+		append: (row) => void insert.run(JSON.stringify(row)),
+		readAll: () => select.all().map((record) => JSON.parse(String((record as { row: unknown }).row)) as HistoryRow),
+		count: () => Number((total.get() as { n: unknown }).n),
+	};
+}
+
+export async function createReferenceDriver(
+	options: HarnessOptions & { historyStore?: HistoryStoreKind } = {},
+): Promise<ReferenceDriver> {
+	const historyStoreKind = options.historyStore ?? "memory";
+	const historyStore = createHistoryStore(historyStoreKind);
 	const rows: HistoryRow[] = [];
+	// Every durable write goes through the store seam (store matrix).
+	const appendRow = (row: HistoryRow): void => {
+		rows.push(row);
+		historyStore.append(row);
+	};
 	const forwarded: ForwardedEvent[] = [];
 	const inbox: InboxEntry[] = [];
 	const consumeJournal: ConsumeRecord[] = [];
@@ -332,8 +370,8 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 			throw error;
 		};
 		const writeStep = (stepId: string, step: StepCommit): void => {
-			rows.push({ kind: "step", stepId, message: step.message });
-			for (const result of step.providerToolResults) rows.push({ kind: "step", stepId, message: result });
+			appendRow({ kind: "step", stepId, message: step.message });
+			for (const result of step.providerToolResults) appendRow({ kind: "step", stepId, message: result });
 		};
 		const hasRow = (stepId: string): boolean => rows.some((row) => row.kind === "step" && row.stepId === stepId);
 
@@ -386,7 +424,7 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 			if (fault?.kind === "throw") throw fault.error;
 			if (fault?.kind === "reject") latch(stepId, fault.code);
 			if (fault?.kind === "already-committed") {
-				rows.push({ kind: "step", stepId, message: fault.committedByAnother });
+				appendRow({ kind: "step", stepId, message: fault.committedByAnother });
 			}
 			// The conditional write: a row for this step from any other admission is `already_committed`.
 			if (hasRow(stepId)) latch(stepId, "already_committed");
@@ -456,7 +494,7 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 			// W11: what the session removed from memory since the last admission becomes a tombstone row (2.7 (4)).
 			const live = new Set<unknown>(current.agent.state.messages);
 			for (const message of projectHistoryRows(rows)) {
-				if (!live.has(message)) rows.push({ kind: "tombstone", message });
+				if (!live.has(message)) appendRow({ kind: "tombstone", message });
 			}
 			fence = { epoch: fence.epoch, admissionSeq: fence.admissionSeq + 1, generation };
 			admitted = { stepId: `step-${fence.admissionSeq}`, fence };
@@ -489,7 +527,7 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 						(candidate) =>
 							candidate.consumedBy === undefined && candidate.kind === kind && candidate.text === text,
 					);
-					rows.push({ kind: "input", message });
+					appendRow({ kind: "input", message });
 					rowMessages.add(message);
 					if (entry) {
 						entry.consumedBy = instanceGeneration;
@@ -509,7 +547,7 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 			if (event.type === "message_end" && event.message.role === "user") flushTranscriptInputs(harness);
 			forwarded.push({ generation: instanceGeneration, event });
 			if (event.type === "message_end" && event.message.role === "user" && !rowMessages.has(event.message)) {
-				rows.push({ kind: "input", message: event.message });
+				appendRow({ kind: "input", message: event.message });
 				rowMessages.add(event.message);
 			}
 		});
@@ -536,7 +574,7 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 	function flushTranscriptInputs(harness: Harness): void {
 		for (const message of harness.agent.state.messages) {
 			if (message.role !== "user" || rowMessages.has(message)) continue;
-			rows.push({ kind: "input", message });
+			appendRow({ kind: "input", message });
 			rowMessages.add(message);
 		}
 	}
@@ -547,6 +585,8 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 			throw new Error("injected rebuild failure");
 		}
 		await readDurableHistory();
+		// A persistent store is the source of truth on rebuild: the instance is rebuilt from what it returns.
+		if (historyStoreKind === "sqlite") rows.splice(0, rows.length, ...historyStore.readAll());
 		const hold = buildHold;
 		if (hold) {
 			buildHold = undefined;
@@ -559,7 +599,7 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 		const aborted = cancelledAbort;
 		cancelledAbort = undefined;
 		if (aborted !== undefined && !rows.some((row) => row.kind === "step" && row.stepId === aborted.stepId)) {
-			rows.push({ kind: "step", stepId: aborted.stepId, message: aborted.message });
+			appendRow({ kind: "step", stepId: aborted.stepId, message: aborted.message });
 		}
 		const history = projectHistoryRows(rows);
 		for (const message of history)
@@ -611,6 +651,8 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 		classifications,
 		rebuildFailures,
 		toolLedger,
+		historyStoreKind,
+		storedRowCount: () => historyStore.count(),
 		auxRows,
 		get stops() {
 			return stops;
@@ -643,7 +685,7 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 					isError: false,
 					timestamp: clock.now(),
 				};
-				rows.push({ kind: "step", stepId: last.stepId, message: result });
+				appendRow({ kind: "step", stepId: last.stepId, message: result });
 				current.agent.state.messages = [...current.agent.state.messages, result];
 				dispatched += 1;
 			}
@@ -784,7 +826,7 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 				refusals += 1;
 				return "refused";
 			}
-			rows.push({ kind: "step", stepId: landing.stepId, message: landing.message });
+			appendRow({ kind: "step", stepId: landing.stepId, message: landing.message });
 			return "landed";
 		},
 		setResponses: first.setResponses,

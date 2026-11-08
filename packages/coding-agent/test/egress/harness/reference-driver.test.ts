@@ -777,6 +777,29 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 		expect(seen).toHaveLength(1);
 	});
 
+	for (const historyStore of ["memory", "sqlite"] as const) {
+		for (const fault of ["reject", "already-committed", "ambiguous-landed", "ambiguous-lost"] as const) {
+			it(`commit fault ${fault} on the ${historyStore} store leaves exactly one durable step row (2.7 (4) store matrix)`, async () => {
+				driver = await createReferenceDriver({ historyStore });
+				driver.setResponses([
+					fauxAssistantMessage([fauxText("first")]),
+					fauxAssistantMessage([fauxText("second")]),
+				]);
+				if (fault === "already-committed")
+					driver.inject.nextCommit(fault, fauxAssistantMessage([fauxText("theirs")]));
+				else driver.inject.nextCommit(fault);
+
+				await driver.prompt("go");
+				await driver.settle();
+
+				const assistants = projectHistoryRows(driver.rows).filter((message) => message.role === "assistant");
+				expect(assistants).toHaveLength(1);
+				expect(driver.historyStoreKind).toBe(historyStore);
+				expect(driver.storedRowCount()).toBe(driver.rows.length);
+			});
+		}
+	}
+
 	it("never forwards an event the discarded instance emits after the latch", async () => {
 		driver = await createReferenceDriver();
 		driver.setResponses([fauxAssistantMessage([fauxText("lost")])]);
