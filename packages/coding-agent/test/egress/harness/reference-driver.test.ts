@@ -1,6 +1,6 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { HOSTED_REBUILD_DEADLINE_MS, isStepCommitError } from "@earendil-works/pi-agent-core";
-import { normalizeContext } from "@earendil-works/pi-ai";
+import { type Message, normalizeContext } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it } from "vitest";
 import { createReferenceDriver, projectHistoryRows, type ReferenceDriver } from "./reference-driver.ts";
@@ -418,14 +418,15 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 		await driver.prompt("go");
 		await driver.settle();
 
-		const text = (message: AgentMessage): string =>
-			typeof message.content === "string"
-				? message.content
-				: message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
+		const text = (message: AgentMessage | Message): string => {
+			if (message.role !== "user") return "";
+			const { content } = message;
+			return typeof content === "string"
+				? content
+				: content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
+		};
 		const lastCall = driver.callLog().at(-1);
-		const modelOrder = (lastCall?.context.messages ?? [])
-			.filter((message) => message.role === "user")
-			.map((message) => text(message as AgentMessage));
+		const modelOrder = (lastCall?.context.messages ?? []).filter((message) => message.role === "user").map(text);
 		const rowOrder = projectHistoryRows(driver.rows)
 			.filter((message) => message.role === "user")
 			.map(text);
