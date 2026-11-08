@@ -602,6 +602,35 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 		expect(driver.rows.filter((row) => row.kind === "step" && row.stepId === rejected)).toEqual([]);
 	});
 
+	it("pauses a tool call at dispatch and kills it through its signal (S13)", async () => {
+		let sawAbort = false;
+		const slow: AgentTool = {
+			name: "slow",
+			label: "Slow",
+			description: "Waits for its signal.",
+			parameters: Type.Object({}),
+			execute: async (_id, _params, signal) => {
+				sawAbort = signal?.aborted ?? false;
+				return { content: [{ type: "text", text: sawAbort ? "aborted" : "ran" }], details: {} };
+			},
+		};
+		driver = await createReferenceDriver({ tools: [slow] });
+		driver.setResponses([
+			fauxAssistantMessage([fauxToolCall("slow", {})], { stopReason: "toolUse" }),
+			fauxAssistantMessage([fauxText("done")]),
+		]);
+		const held = driver.inject.pauseNextTool();
+
+		const run = driver.prompt("go");
+		await held.reached;
+		held.kill();
+		await run;
+		await driver.settle();
+
+		expect(sawAbort).toBe(true);
+		expect(driver.toolLedger.map((entry) => entry.outcome)).toEqual(["killed"]);
+	});
+
 	it("never forwards an event the discarded instance emits after the latch", async () => {
 		driver = await createReferenceDriver();
 		driver.setResponses([fauxAssistantMessage([fauxText("lost")])]);

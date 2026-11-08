@@ -113,7 +113,12 @@ export interface ReferenceDriver {
 	readonly latchHistory: readonly LatchRecord[];
 	readonly classifications: readonly CommitClassification[];
 	readonly rebuildFailures: readonly unknown[];
-	readonly toolLedger: ReadonlyArray<{ toolName: string; toolCallId: string; generation: number }>;
+	readonly toolLedger: ReadonlyArray<{
+		toolName: string;
+		toolCallId: string;
+		generation: number;
+		outcome: "ran" | "killed";
+	}>;
 	readonly auxRows: readonly AuxRow[];
 	settleAux(): Promise<void>;
 	readonly stops: ReadonlyArray<{ readonly stepId: string; readonly while: "latched" }>;
@@ -129,6 +134,7 @@ export interface ReferenceDriver {
 		cancelNextStep(): void;
 		slowRebuildStoreRead(ms: number): void;
 		nextCommitError(error: unknown): void;
+		pauseNextTool(): { readonly reached: Promise<void>; release(): void; kill(): void };
 		failNextRebuild(): void;
 		holdAux(): void;
 		releaseAux(): void;
@@ -256,15 +262,34 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 	}
 	let adapterAppendAttempts = 0;
 	// Dispatch ledger (S8a): every tool call the loop runs is recorded before the tool executes.
-	const toolLedger: Array<{ toolName: string; toolCallId: string; generation: number }> = [];
+	const toolLedger: Array<{ toolName: string; toolCallId: string; generation: number; outcome: "ran" | "killed" }> =
+		[];
+	// A held dispatch (S13): the next tool call waits at dispatch until released or killed.
+	let pendingHold: { arrive: () => void; gate: Promise<"release" | "kill"> } | undefined;
 	const ledgerTools = options.tools?.map((tool) => ({
 		...tool,
-		execute: (toolCallId: string, ...rest: unknown[]) => {
-			toolLedger.push({ toolName: tool.name, toolCallId, generation });
-			return (tool.execute as (id: string, ...args: unknown[]) => ReturnType<typeof tool.execute>)(
-				toolCallId,
-				...rest,
-			);
+		execute: async (toolCallId: string, params: unknown, signal?: AbortSignal, ...rest: unknown[]) => {
+			const entry = { toolName: tool.name, toolCallId, generation, outcome: "ran" as "ran" | "killed" };
+			toolLedger.push(entry);
+			let callSignal = signal;
+			const hold = pendingHold;
+			if (hold) {
+				pendingHold = undefined;
+				hold.arrive();
+				if ((await hold.gate) === "kill") {
+					const controller = new AbortController();
+					controller.abort();
+					callSignal = controller.signal;
+					entry.outcome = "killed";
+				}
+			}
+			const run = tool.execute as (
+				id: string,
+				p: unknown,
+				s?: AbortSignal,
+				...args: unknown[]
+			) => ReturnType<typeof tool.execute>;
+			return run(toolCallId, params, callSignal, ...rest);
 		},
 	}));
 	options = ledgerTools ? { ...options, tools: ledgerTools } : options;
@@ -642,6 +667,18 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 			},
 			failNextRebuild() {
 				failNextRebuild = true;
+			},
+			pauseNextTool() {
+				let arrive = () => {};
+				const reached = new Promise<void>((resolve) => {
+					arrive = resolve;
+				});
+				let decide: (choice: "release" | "kill") => void = () => {};
+				const gate = new Promise<"release" | "kill">((resolve) => {
+					decide = resolve;
+				});
+				pendingHold = { arrive, gate };
+				return { reached, release: () => decide("release"), kill: () => decide("kill") };
 			},
 			nextCommitError(error: unknown) {
 				plannedFaults.push({ kind: "throw", error });
