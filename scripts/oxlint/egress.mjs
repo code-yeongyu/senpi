@@ -4,7 +4,6 @@
 // An object/array literal counts as a constant table only when EVERY reference to it sits in a position proven
 // not to mutate it (an allowlist): any other use, including an unknown callee, fails closed.
 const EXCEPTIONS = new Set(["console-redactor-install", "sealed-window-counter"]);
-const STATEFUL_CONSTRUCTORS = new Set(["Map", "Set", "WeakMap", "WeakRef"]);
 const READ_METHODS = new Set([
 	"map",
 	"filter",
@@ -112,22 +111,74 @@ function isSafeUse(reference) {
 	return true;
 }
 
+function isPrimitive(node) {
+	const value = unwrap(node);
+	if (!value) return false;
+	if (value.type === "Literal") return !value.regex || !/[gy]/u.test(value.regex.flags);
+	if (value.type === "TemplateLiteral") return value.expressions.every(isPrimitive);
+	if (value.type === "UnaryExpression" || value.type === "BinaryExpression") return true;
+	if (value.type === "LogicalExpression") return isPrimitive(value.left) && isPrimitive(value.right);
+	if (value.type === "CallExpression") {
+		const callee = unwrap(value.callee);
+		if (callee?.type === "Identifier" && callee.name === "Symbol") return true;
+		return (
+			callee?.type === "MemberExpression" &&
+			unwrap(callee.object)?.type === "Identifier" &&
+			unwrap(callee.object).name === "Symbol" &&
+			staticName(callee.property, callee.computed) === "for"
+		);
+	}
+	return false;
+}
+
+function containsLiteral(node) {
+	const value = unwrap(node);
+	if (!value) return false;
+	if (value.type === "ObjectExpression") return value.properties.some((p) => p.type === "SpreadElement" || containsNested(p.value));
+	if (value.type === "ArrayExpression") return value.elements.some((e) => e && (e.type === "SpreadElement" || containsNested(e)));
+	return false;
+}
+
+function containsNested(node) {
+	const value = unwrap(node);
+	return value?.type === "ObjectExpression" || value?.type === "ArrayExpression" || containsLiteral(value);
+}
+
+function isShallowFrozenLiteral(node) {
+	const value = unwrap(node);
+	if (value?.type !== "CallExpression" || value.arguments.length !== 1) return false;
+	const callee = unwrap(value.callee);
+	const target = unwrap(value.arguments[0]);
+	return (
+		callee?.type === "MemberExpression" &&
+		unwrap(callee.object)?.type === "Identifier" &&
+		unwrap(callee.object).name === "Object" &&
+		staticName(callee.property, callee.computed) === "freeze" &&
+		(target?.type === "ObjectExpression" || target?.type === "ArrayExpression") &&
+		!containsLiteral(target)
+	);
+}
+
+/** Every module-level binding is a candidate (r11.1 A3); only proven-stateless initializers pass. */
 function classify(declaration) {
+	if (declaration.declare) return { state: false, literals: [] };
 	if (declaration.kind !== "const") return { state: true, literals: [] };
 	const literals = [];
 	for (const declarator of declaration.declarations) {
 		const init = unwrap(declarator.init);
-		if (!init) continue;
+		if (!init) return { state: true, literals: [] };
+		if (isPrimitive(init) || isShallowFrozenLiteral(init)) continue;
 		if (
-			init.type === "NewExpression" &&
-			init.callee.type === "Identifier" &&
-			STATEFUL_CONSTRUCTORS.has(init.callee.name)
-		) {
-			return { state: true, literals: [] };
-		}
+			init.type === "ArrowFunctionExpression" ||
+			init.type === "FunctionExpression" ||
+			init.type === "ClassExpression"
+		)
+			continue;
 		if ((init.type === "ObjectExpression" || init.type === "ArrayExpression") && declarator.id.type === "Identifier") {
 			literals.push(declarator.id.name);
+			continue;
 		}
+		return { state: true, literals: [] };
 	}
 	return { state: false, literals };
 }
