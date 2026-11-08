@@ -411,6 +411,25 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 		expect(driver.stops).toEqual([{ stepId: "step-1", while: "latched" }]);
 	});
 
+	it("stop pressed while the rebuild builds its harness still cancels the latched step (W14, review LOW)", async () => {
+		driver = await createReferenceDriver();
+		driver.setResponses([fauxAssistantMessage([fauxText("lost")]), fauxAssistantMessage([fauxText("never")])]);
+		driver.inject.nextCommit("reject");
+		const build = driver.inject.holdNextHarnessBuild();
+
+		const prompt = driver.prompt("go");
+		await build.reached;
+		expect(driver.stop()).toBe("cancelled-latched-step");
+		build.release();
+		await prompt;
+
+		expect(driver.counters.providerCalls).toBe(1);
+		const steps = projectHistoryRows(driver.rows).filter((message) => message.role === "assistant");
+		expect(steps.map((message) => (message.role === "assistant" ? message.stopReason : undefined))).toEqual([
+			"aborted",
+		]);
+	});
+
 	it("records durable input rows in the order the model consumed them (S7 row order = call order)", async () => {
 		driver = await createReferenceDriver();
 		driver.setResponses([fauxAssistantMessage([fauxText("first")]), fauxAssistantMessage([fauxText("second")])]);

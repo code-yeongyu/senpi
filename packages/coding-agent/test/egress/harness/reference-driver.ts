@@ -135,6 +135,7 @@ export interface ReferenceDriver {
 		slowRebuildStoreRead(ms: number): void;
 		nextCommitError(error: unknown): void;
 		pauseNextTool(): { readonly reached: Promise<void>; release(): void; kill(): void };
+		holdNextHarnessBuild(): { readonly reached: Promise<void>; release(): void };
 		failNextRebuild(): void;
 		holdAux(): void;
 		releaseAux(): void;
@@ -267,6 +268,7 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 	// A held dispatch (S13): the next tool call waits at dispatch until released or killed.
 	let pendingHold: { arrive: () => void; gate: Promise<"release" | "kill"> } | undefined;
 	let heldKill: (() => void) | undefined;
+	let buildHold: { arrive: () => void; gate: Promise<void> } | undefined;
 	const ledgerTools = options.tools?.map((tool) => ({
 		...tool,
 		execute: async (toolCallId: string, params: unknown, signal?: AbortSignal, ...rest: unknown[]) => {
@@ -536,6 +538,12 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 			throw new Error("injected rebuild failure");
 		}
 		await readDurableHistory();
+		const hold = buildHold;
+		if (hold) {
+			buildHold = undefined;
+			hold.arrive();
+			await hold.gate;
+		}
 		const next = await createHarness({ ...options, siblingOf: first });
 		// Picked up after the last await, so a stop() that lands while the store reads or the harness builds is never lost.
 		// A cancelled step is never redialed: its synthesized aborted message is committed once (W14).
@@ -676,6 +684,18 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 			},
 			failNextRebuild() {
 				failNextRebuild = true;
+			},
+			holdNextHarnessBuild() {
+				let arrive = () => {};
+				const reached = new Promise<void>((resolve) => {
+					arrive = resolve;
+				});
+				let release = () => {};
+				const gate = new Promise<void>((resolve) => {
+					release = resolve;
+				});
+				buildHold = { arrive, gate };
+				return { reached, release: () => release() };
 			},
 			pauseNextTool() {
 				let arrive = () => {};
