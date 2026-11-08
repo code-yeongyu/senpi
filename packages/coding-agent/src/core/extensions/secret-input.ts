@@ -14,8 +14,11 @@ export class SecretInputUnavailableError extends Error {
 }
 
 export function resolveSecretInputTimeout(opts?: ExtensionUIDialogOptions): number {
-	const timeout = opts?.timeout ?? 30 * 60 * 1000;
-	if (!Number.isFinite(timeout) || timeout <= 0) throw new Error("Invalid secret input timeout");
+	const requested = opts?.timeout ?? 30 * 60 * 1000;
+	if (!Number.isFinite(requested) || requested <= 0) throw new Error("Invalid secret input timeout");
+	// Whole milliseconds, and a deadline that stays a safe integer: the sealed binding signs `deadlineAtMs` (D11 5.3).
+	const timeout = Math.ceil(requested);
+	if (!Number.isSafeInteger(Date.now() + timeout)) throw new Error("Invalid secret input timeout");
 	return timeout;
 }
 

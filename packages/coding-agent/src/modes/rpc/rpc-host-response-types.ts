@@ -21,6 +21,24 @@ export type RpcHostCommandResponse =
 	| {
 			id?: string;
 			type: "response";
+			command: "list_hands";
+			success: true;
+			data: {
+				hands: ReadonlyArray<{ device: string; label: string; platform: string; reachable: boolean }>;
+				/** Present when the command named a session: its recorded hand, `null` when local. */
+				selected?: string | null;
+			};
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "select_hand";
+			success: true;
+			data: { sessionId: string; selected: string | null };
+	  }
+	| {
+			id?: string;
+			type: "response";
 			command: "cancel_attempt";
 			success: true;
 			data: { outcome: "cancelled" | "already_complete" | "unknown" };

@@ -1,13 +1,14 @@
 import type { Database } from "bun:sqlite";
 import {
 	type CommitResult,
-	type DurableStore,
 	DurableStoreError,
 	type DurableStoreOptions,
 	type RecordScan,
 	type StoreRecord,
 	type StoreSnapshot,
+	type StoreWrite,
 	type StoreWritePoint,
+	type SyncCommitStore,
 } from "@earendil-works/pi-agent-core/conformance";
 import {
 	byKey,
@@ -71,7 +72,7 @@ function scanQuery(query: RecordScan): { readonly sql: string; readonly params: 
 export function openSqliteStore(
 	path: string,
 	options: DurableStoreOptions = {},
-): { readonly store: DurableStore; readonly db: Database } {
+): { readonly store: SyncCommitStore; readonly db: Database } {
 	const { db, statements: q } = openStoreFile(path);
 	const point = (at: StoreWritePoint): void => options.onWritePoint?.(at);
 	const epochNow = (s: StoreStatements): number => s.epoch.get()?.epoch ?? 0;
@@ -79,7 +80,48 @@ export function openSqliteStore(
 	const allRecords = (): StoreRecord[] => q.allRecords.all().map(decodeRecord);
 	const allDocuments = () => q.documentsWithPrefix.all("").map(decodeDocument).sort(byKey);
 
-	const store: DurableStore = {
+	const commitSync = (
+		epoch: number,
+		writes: readonly StoreWrite[],
+		adopt: (result: CommitResult) => void,
+	): CommitResult => {
+		point({ op: "commit", at: "before" });
+		const result = db
+			.transaction((): CommitResult => {
+				requireOwner(epochNow(q), epoch);
+				const batchIds = new Set<string>();
+				const seqs: number[] = [];
+				let head = headNow(q);
+				writes.forEach((write, index) => {
+					point({ op: "commit", at: "write", index });
+					switch (write.op) {
+						case "append": {
+							if (batchIds.has(write.id) || q.hasRecord.get(write.id) !== null) {
+								throw new DurableStoreError("duplicate-record-id", `record ${write.id} exists`);
+							}
+							batchIds.add(write.id);
+							head += 1;
+							q.insertRecord.run(head, write.id, write.kind, encodeValue(write.data));
+							seqs.push(head);
+							break;
+						}
+						case "put":
+							q.putDocument.run(write.key, encodeValue(write.data));
+							break;
+						case "delete":
+							q.deleteDocument.run(write.key);
+							break;
+					}
+				});
+				return { seqs, head };
+			})
+			.immediate();
+		point({ op: "commit", at: "durable" });
+		adopt(result);
+		return result;
+	};
+
+	const store: SyncCommitStore = {
 		readEpoch: async () => epochNow(q),
 		readHead: async () => headNow(q),
 
@@ -104,42 +146,8 @@ export function openSqliteStore(
 			point({ op: "claim", at: "durable" });
 		},
 
-		async commit(epoch, writes, adopt) {
-			point({ op: "commit", at: "before" });
-			const result = db
-				.transaction((): CommitResult => {
-					requireOwner(epochNow(q), epoch);
-					const batchIds = new Set<string>();
-					const seqs: number[] = [];
-					let head = headNow(q);
-					writes.forEach((write, index) => {
-						point({ op: "commit", at: "write", index });
-						switch (write.op) {
-							case "append": {
-								if (batchIds.has(write.id) || q.hasRecord.get(write.id) !== null) {
-									throw new DurableStoreError("duplicate-record-id", `record ${write.id} exists`);
-								}
-								batchIds.add(write.id);
-								head += 1;
-								q.insertRecord.run(head, write.id, write.kind, encodeValue(write.data));
-								seqs.push(head);
-								break;
-							}
-							case "put":
-								q.putDocument.run(write.key, encodeValue(write.data));
-								break;
-							case "delete":
-								q.deleteDocument.run(write.key);
-								break;
-						}
-					});
-					return { seqs, head };
-				})
-				.immediate();
-			point({ op: "commit", at: "durable" });
-			adopt(result);
-			return result;
-		},
+		commit: async (epoch, writes, adopt) => commitSync(epoch, writes, adopt),
+		commitSync,
 
 		mintId: () => crypto.randomUUID(),
 

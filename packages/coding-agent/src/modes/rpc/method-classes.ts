@@ -120,6 +120,11 @@ function thinkingLevelClass(record: object): RpcMethodClass {
 	return Reflect.get(record, "scope") === "turn" ? "drive" : "device_admin";
 }
 
+/** `scope: "session"` switches only this session's model; any other scope persists the device's default model. */
+function setModelClass(record: object): RpcMethodClass {
+	return Reflect.get(record, "scope") === "session" ? "drive" : "device_admin";
+}
+
 /** An effect looked up by session id is a read; one looked up in a named session file opens a host path. */
 function effectStatusClass(record: object): RpcMethodClass {
 	return namesAny(record, ["sessionPath"]) ? "device_admin" : "observe";
@@ -160,6 +165,7 @@ export const RPC_METHOD_CLASS = {
 	get_protocol_info: "observe",
 	get_subscription_limits: "observe",
 	list_sessions: "observe",
+	list_hands: "observe",
 	get_state: "observe",
 	get_snapshot: "observe",
 	get_entries: "observe",
@@ -175,6 +181,8 @@ export const RPC_METHOD_CLASS = {
 	get_steering_messages: "observe",
 	get_commands: "observe",
 	get_loaded_surfaces: "observe",
+	// the session's own effective trust and saved decision, as get_state already shows projectTrusted
+	get_project_trust: "observe",
 	get_available_models: "observe",
 	get_available_thinking_levels: "observe",
 	get_model_thinking_level: "observe",
@@ -208,8 +216,12 @@ export const RPC_METHOD_CLASS = {
 	set_session_name: "drive",
 	// drive only for this turn's level; otherwise it remembers the model's level in the device-wide settings
 	set_thinking_level: { classify: thinkingLevelClass, version: 1 },
+	// drive only for this session's model; otherwise it persists the default model in the device-wide settings
+	set_model: { classify: setModelClass, version: 1 },
 	// a session override; set_steering_mode, set_follow_up_mode and set_auto_retry write global settings (device_admin)
 	set_auto_compaction: "drive",
+	// like a preset-naming open_session: it changes what the agent may do without asking
+	set_permission_preset: "device_admin",
 	set_retry_fallback: "drive",
 	pause_for_run: "drive",
 	resume_for_run: "drive",
@@ -234,6 +246,8 @@ export const RPC_METHOD_CLASS = {
 	set_session_context: "thread",
 	attach_session: "thread",
 	// device_admin
+	// Moves where the session's tools run (onto another machine): it changes what the agent can reach.
+	select_hand: "device_admin",
 	bash: "device_admin",
 	abort_bash: "device_admin",
 	record_bash_result: "device_admin",
@@ -258,15 +272,19 @@ export const RPC_METHOD_CLASS = {
 	test_provider_account: "device_admin",
 	set_favorite_models: "device_admin",
 	set_scoped_models: "device_admin",
-	// each writes the device-wide settings file, not a session override (set_model and cycle_model persist the default
-	// model, set_fast_mode the service tier)
-	set_model: "device_admin",
+	// each writes the device-wide settings file, not a session override (cycle_model persists the default model,
+	// set_fast_mode the service tier)
 	cycle_model: "device_admin",
 	cycle_thinking_level: "device_admin",
 	set_fast_mode: "device_admin",
 	set_steering_mode: "device_admin",
 	set_follow_up_mode: "device_admin",
 	set_auto_retry: "device_admin",
+	// a consent decision saved in the device's trust store: it decides whether project code runs on the device
+	set_project_trust: "device_admin",
+	// reads a file from the session's cwd; writes one into it
+	get_project_settings: "device_admin",
+	set_project_setting: "device_admin",
 	// switch_session opens (and appends to) the named session file; import_jsonl reads any host file into a session
 	// both write what the model reads as engine work: an assistant reply it never gave, a custom context message
 	// (append_session_entry classes the same entries appended directly as device_admin)

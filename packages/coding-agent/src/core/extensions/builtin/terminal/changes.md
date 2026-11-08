@@ -1,3 +1,28 @@
+## 2026-11-07 - Monitor rpc targets on another device through an extension source (senpi#6151)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/rpc-remote-source.ts` (new): the `RpcRemoteSource` seam (`open(target, { events, exclude, resumeFrom? }, { record, resynced, cursor, lost, ended })` resolving to `{ initial, stop }`) and its registry (`registerRpcRemoteSource`, latest registration wins).
+- `packages/coding-agent/src/core/extensions/builtin/terminal/rpc-monitor-remote.ts` (new): `RpcRemoteFeed`, the remote half of a watch. Records go through the watch's own render path with the device in the socket's place; a lost device is said once; a resync reports each status change, gone session and settled turn once; `agent_settled` is reported once per `turnId`; an ended access settles the monitor.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/rpc-monitor-targets.ts`: `RpcTarget` gains `{ kind: "remote", device, session }`. `<device>/<session>` and `<device>/*` (one `/`, no leading `/`, no `.jsonl` suffix, no drive letter) parse as remote while a source is registered and are refused without one. Every other target parses as before.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/rpc-monitor-watch.ts`: a remote target starts an `RpcRemoteFeed` instead of endpoint observers; the checkpoint carries `remote: { cursor?, settled }`, `diffSince` adds the turns that settled while detached, and `stop` stops the source.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/rpc-monitor-render.ts`: `detachedLabel(key)`, the label `diffSince` already used, shared with the remote feed.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/rpc-monitor-source.ts`: passes the remote source, the restored checkpoint and an `ended` hook (settles with reason `exit`) to the watch; a remote open that rejects leaves no record behind.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/monitor-rpc.ts`: a remote open the source refuses answers the call as an error naming the reason.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/terminal-manifest-model.ts`, `terminal-manifest-parse.ts`: the rpc checkpoint's optional `remote` block, parsed strictly.
+
+### Why
+
+- oh-my-openagent#12719: a session on a daemon-only host can be driven over the relay, but nothing woke the calling agent when it finished. `monitor` rpc is the one wake surface, so a remote session is one more target, served by the omo extension that owns the relay; senpi itself knows no relay.
+
+### Why an extension could not handle it
+
+- The target grammar, the watch, its checkpoint and its restore live in this builtin; an extension can supply the source but not the monitor branch that renders and persists it.
+
+### Expected merge conflict zones
+
+- LOW: `parseRpcTarget`, `RpcMonitorWatch.start`/`checkpoint`/`diffSince`/`stop`, `RpcMonitorSource.register`/`settle`, `createRpcMonitor`, the rpc checkpoint type and its parse.
+
 ## 2026-11-03 - Full terminal section for the Opus and Fable presets (senpi#5665)
 
 ### What changed

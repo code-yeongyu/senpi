@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { McpFormRequest, McpFormResolved, McpFormSettled } from "../../src/core/mcp-form-types.ts";
+import type { McpPresenterSecretFrame } from "../../src/modes/rpc/secret-sealed.ts";
 import { McpPresenterAuthority, type McpPresenterConnection } from "../../src/modes/rpc/mcp-presenter-authority.ts";
 
-type Frame = McpFormRequest | McpFormResolved | McpFormSettled;
+type Frame = McpFormRequest | McpFormResolved | McpFormSettled | McpPresenterSecretFrame;
 interface Holder {
 	readonly sender: McpPresenterConnection;
 	readonly frames: Frame[];

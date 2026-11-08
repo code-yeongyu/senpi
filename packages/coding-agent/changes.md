@@ -1,3 +1,93 @@
+## 2026-11-07 - Presenter tests count EPIPE as the host closing the channel (senpi#6161)
+
+### What changed
+
+- `packages/coding-agent/test/suite/host-cli-presenter-support.ts`: `hostCloses` accepts `EPIPE` as well as `ECONNRESET` before the close event; `host-cli-presenter-waits.test.ts` covers both, and still rejects any other errno.
+
+### Why
+
+- A forced release run failed `immediate handoff preserves enforcement and requires fresh enrollment (explicit true)` with `the stale management channel failed before the host closed it: write EPIPE`. Under load the client's write raced the host's close, so the same close surfaced as `EPIPE`.
+
+### Why an extension could not handle it
+
+- It is a test helper in this repository.
+
+### Expected merge conflict zones
+
+- LOW: none.
+
+## 2026-11-07 - The Windows stale-table test retries removing its just-run executable (senpi#6142)
+
+### What changed
+
+- `packages/coding-agent/test/suite/host-private-fds-proof-gate.test.ts`: the test's `finally` cleanup removes its temporary directory with `maxRetries: 10, retryDelay: 100`, as the sibling pair test already does.
+
+### Why
+
+- On Windows, a compiled executable that has just exited can stay locked for a moment. A single `unlink` then threw `EBUSY` and failed a test whose assertions had all passed (main red at 3c237e1a48). The child is awaited before the cleanup, so the retry is a bounded backstop.
+
+### Why an extension could not handle it
+
+- It is a test cleanup in this repository.
+
+### Expected merge conflict zones
+
+- LOW: none.
+
+## 2026-11-06 - The runtime inventory snapshot hook is bounded by copy progress (senpi#6091, fixes #5816)
+
+### What changed
+
+- `packages/coding-agent/test/runtime-snapshot/inventory.test.ts`: the `beforeAll` that materializes the snapshot has no wall-clock deadline. It copies through a counting copier, and a watchdog fails the hook when no copy finishes for 30 s. The `afterAll` removal has no deadline either. Assertions and the per-runtime budget are unchanged. Tests only.
+
+### Why
+
+- The snapshot is the whole dependency closure (14,676 files in 286 packages), and its wall time follows host load: 3-4 s idle, 26 s under a 4% CPU quota. The fixed 60 s hook budget failed whole-suite receipts on loaded hosts with no failing assertion. Its planning and removal are synchronous, so a vitest deadline on them could never catch a hang.
+
+### Why an extension could not handle it
+
+- This is the package's own test.
+
+### Expected merge conflict zones
+
+- LOW: the constants and hooks at the top of `inventory.test.ts`.
+
+## 2026-11-05 - build:binary keeps linkedom's optional canvas external (senpi#6045)
+
+### What changed
+
+- `packages/coding-agent/package.json`: the `build:binary` `bun build --compile` passes `--external canvas`.
+
+### Why
+
+- Matches the release compile in `scripts/build-binaries.sh` (senpi#6045): the compile must not need canvas's native binding, and linkedom falls back to its JS canvas shim.
+
+### Why an extension could not handle it
+
+- Package build script, outside any extension.
+
+### Expected merge conflict zones
+
+- LOW: one flag in the `build:binary` script string.
+
+## 2026-11-05 - The `./presenter-authority` package entry (D11 M-1, senpi#4249)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `exports["./presenter-authority"]` -> `dist/presenter-authority-slot.js`, a side-effect-free entry, so a distribution registers its authority without evaluating the engine before cli.js's pre-main phase.
+
+### Why
+
+- Importing the package index would evaluate the engine graph before the CLI's own startup ordering (cli.ts keeps cli-main a dynamic import for this reason).
+
+### Why an extension could not handle it
+
+- Package exports are not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: one new key in `exports`.
+
 ## 2026-10-30 - Experimental subscription egress SDK entry (senpi#5039)
 
 ### What changed

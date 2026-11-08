@@ -1,5 +1,30 @@
 # cursor-cli-oauth extension changes
 
+## 2026-11-05 - A refused account pool carries a typed diagnostic (senpi#4092)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/cursor-cli-oauth/provider-diagnostic.ts` (new): `cursorCliDiagnostic`
+  maps an `AllCursorAccountsBlockedError` (itself or as a `cause`) to `account_pool_blocked` (`rate_limit`, `resetsAt`
+  = soonest expiry) or `account_pool_auth_blocked` (`auth`, no expiry); anything else maps to none.
+- `packages/coding-agent/src/core/extensions/builtin/cursor-cli-oauth/stream.ts`: the turn's error path attaches that
+  diagnostic to the failed message.
+
+### Why
+
+- The Cursor lane was the only multi-account lane whose pool refusal was English text only; the goal retry and RPC
+  clients had to parse it to learn why and until when.
+- User-visible effect: an `auth` diagnostic is what the goal's terminal auth check reads (`goal/terminal-provider-error.ts`),
+  so a goal on a Cursor pool where every account needs a new login stops as blocked on sign-in instead of retrying.
+
+### Why an extension could not handle it
+
+- This is the extension; the change stays inside it.
+
+### Expected merge conflict zones
+
+- LOW: the `catch` block of the turn loop in `stream.ts`.
+
 ## 2026-10-27 - Account imports and the native first-run copy stamp a login id (senpi#4099)
 
 ### What changed

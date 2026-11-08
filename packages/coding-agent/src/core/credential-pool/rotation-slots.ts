@@ -210,6 +210,7 @@ export async function listRotationSlots(
 		const slots: RotationSlot[] = [];
 		// A slot of the other kind cannot project, so a session must never be handed it (senpi#3486).
 		for (const slot of slotsOfOwnKind(credential)) {
+			if (slot.signedOut === true) continue;
 			const persisted = state[slot.name];
 			const revisions = await repository.storedSlotRevisions(providerId, slot.name, {
 				key: slot.key,

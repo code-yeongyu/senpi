@@ -10,6 +10,7 @@ export const REVIEWED_FIELDS = {
 	get_protocol_info: { fields: ["admissionId", "auth", "id", "observe", "type"] },
 	get_subscription_limits: { fields: ["admissionId", "id", "observe", "type"] },
 	list_sessions: { fields: ["admissionId", "id", "include_workers", "observe", "type"] },
+	list_hands: { fields: ["admissionId", "id", "sessionId", "type"] },
 	get_state: { fields: ["admissionId", "id", "sessionId", "type"] },
 	get_snapshot: { fields: ["admissionId", "id", "maxBytes", "observe", "sessionId", "tail", "type"] },
 	get_entries: { fields: ["admissionId", "before", "id", "limit", "maxBytes", "sessionId", "since", "tail", "type"] },
@@ -24,6 +25,7 @@ export const REVIEWED_FIELDS = {
 	get_steering_messages: { fields: ["admissionId", "id", "sessionId", "type"] },
 	get_commands: { fields: ["admissionId", "id", "sessionId", "type"] },
 	get_loaded_surfaces: { fields: ["admissionId", "id", "sessionId", "type"] },
+	get_project_trust: { fields: ["admissionId", "id", "sessionId", "type"] },
 	get_available_models: { fields: ["admissionId", "id", "sessionId", "type"] },
 	get_available_thinking_levels: { fields: ["admissionId", "id", "sessionId", "type"] },
 	get_model_thinking_level: { fields: ["admissionId", "id", "modelId", "provider", "sessionId", "type"] },
@@ -36,6 +38,7 @@ export const REVIEWED_FIELDS = {
 		version: 1,
 		fields: [
 			"admissionId",
+			"chainCount",
 			"clientMessageId",
 			"clientTurnId",
 			"expandPromptTemplates",
@@ -56,6 +59,7 @@ export const REVIEWED_FIELDS = {
 		version: 1,
 		fields: [
 			"admissionId",
+			"chainCount",
 			"clientMessageId",
 			"clientTurnId",
 			"enqueueOrder",
@@ -72,6 +76,7 @@ export const REVIEWED_FIELDS = {
 		version: 1,
 		fields: [
 			"admissionId",
+			"chainCount",
 			"clientMessageId",
 			"clientTurnId",
 			"enqueueOrder",
@@ -135,6 +140,10 @@ export const REVIEWED_FIELDS = {
 	set_label: { fields: ["admissionId", "entryId", "id", "label", "sessionId", "type"] },
 	set_session_name: { fields: ["admissionId", "id", "name", "sessionId", "type"] },
 	set_thinking_level: { version: 1, fields: ["admissionId", "effectId", "id", "level", "scope", "sessionId", "type"] },
+	set_model: {
+		version: 1,
+		fields: ["admissionId", "effectId", "id", "modelId", "provider", "scope", "sessionId", "type"],
+	},
 	set_auto_compaction: { fields: ["admissionId", "enabled", "id", "sessionId", "type"] },
 	set_retry_fallback: { fields: ["admissionId", "id", "retryFallback", "sessionId", "type"] },
 	pause_for_run: { fields: ["admissionId", "id", "parentPauseSeq", "parentSessionId", "runRef", "sessionId", "type"] },
@@ -207,6 +216,16 @@ export const REVIEWED_FIELDS = {
 	},
 	set_session_context: { fields: ["admissionId", "id", "patch", "sessionId", "type"] },
 	attach_session: {
-		fields: ["admissionId", "durableSessionId", "expectedHostInstance", "id", "retry", "sessionId", "type"],
+		fields: [
+			"admissionId",
+			"durableSessionId",
+			"expectedHostInstance",
+			"holder",
+			"id",
+			"retry",
+			"sessionId",
+			"takeover",
+			"type",
+		],
 	},
 } as const;

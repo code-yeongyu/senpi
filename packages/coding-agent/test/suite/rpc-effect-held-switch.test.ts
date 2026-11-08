@@ -1,9 +1,9 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SessionManager } from "../../src/core/session-manager.ts";
-import { runSetModel } from "../../src/modes/rpc/effect-commands.ts";
 import { EffectLedger } from "../../src/modes/rpc/effect-ledger.ts";
 import { lookupEffectInTranscript } from "../../src/modes/rpc/effect-transcript-lookup.ts";
+import { runSetModel } from "../../src/modes/rpc/handlers-model.ts";
 import { RpcSessionRegistry } from "../../src/modes/rpc/session-registry.ts";
 import { createHarness, type Harness } from "./harness.ts";
 

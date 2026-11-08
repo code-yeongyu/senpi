@@ -262,6 +262,8 @@ export interface Settings {
 	engineTurns?: { maxPerUserInput?: number; maxToolFreePerMinute?: number; maxPerResumeWindow?: number };
 	turn_inactivity_ms?: number; // default: 3_600_000, min 60_000, 0 disables; see core/turn-deadline.ts
 	turn_max_runtime_ms?: number; // default: 21_600_000, 0 disables
+	/** A thread chain (A→B→A…) is refused past `chainCountLimit` hops; unset (the default) means unlimited. No cost limit. */
+	threads?: { chainCountLimit?: number };
 	todo?: TodoSettings;
 	recommendedModels?: string[]; // Preferred default model ids, in priority order
 	favoriteModels?: string[]; // Model patterns for Ctrl+P cycling (same format as --models CLI flag)
@@ -516,6 +518,16 @@ export interface SettingsManagerCreateOptions {
 	projectTrusted?: boolean;
 	/** The project trust exists only because the session runs Full access (senpi#3414): leaving it withdraws the trust. */
 	trustFromFullAccess?: boolean;
+	/** The launch named the project trust explicitly (`--approve`/`--no-approve`): nothing in the session may change it. */
+	projectTrustLocked?: boolean;
+}
+
+/** The project settings file as stored, read whether or not the project is trusted (reading runs nothing). */
+export interface ProjectSettingsFile {
+	path: string;
+	exists: boolean;
+	settings: Settings | null;
+	error: string | null;
 }
 
 export interface SettingsStorage {
@@ -885,6 +897,7 @@ export class SettingsManager {
 			settingsPaths,
 		);
 		manager.trustFromFullAccess = options.trustFromFullAccess === true;
+		manager.projectTrustLocked = options.projectTrustLocked === true;
 		return manager;
 	}
 
@@ -1078,6 +1091,50 @@ export class SettingsManager {
 		return structuredClone(this.projectSettings);
 	}
 
+	/** The project settings file at `path` as stored: parsed and migrated like a load, but never gated by trust. */
+	readProjectSettingsFile(path: string): ProjectSettingsFile {
+		let content: string | undefined;
+		try {
+			this.storage.withLock("project", (current) => {
+				content = current;
+				return undefined;
+			});
+			if (content === undefined) return { path, exists: false, settings: null, error: null };
+			return {
+				path,
+				exists: true,
+				settings: SettingsManager.migrateSettings(parseSettingsJson(content)),
+				error: null,
+			};
+		} catch (error) {
+			return { path, exists: content !== undefined, settings: null, error: String(error) };
+		}
+	}
+
+	/**
+	 * Writes one top-level key of the project settings file (`null` removes it) through the same trusted-only,
+	 * locked, merge-on-write path every project setter uses. Refuses a file that failed to load: that path skips
+	 * the write silently, which an explicit caller must not mistake for success.
+	 */
+	async setProjectSetting(key: string, value: unknown): Promise<void> {
+		this.assertProjectTrustedForWrite();
+		if (this.projectSettingsLoadError) {
+			throw new Error(
+				`Project settings file could not be read; refusing to write: ${this.projectSettingsLoadError.message}`,
+			);
+		}
+		const field = key as keyof Settings;
+		const recordedBefore = new Set(this.errors);
+		this.updateProjectSettings(field, (settings) => {
+			if (value === null) delete settings[field];
+			else (settings as Record<string, unknown>)[key] = value;
+		});
+		await this.flush();
+		// The queued write records its failure instead of throwing; an explicit caller is told.
+		const failure = this.errors.find((entry) => entry.scope === "project" && !recordedBefore.has(entry));
+		if (failure) throw failure.error;
+	}
+
 	getProviderSettings(): Record<string, ProviderConcurrencySettings> {
 		return structuredClone(this.settings.providers ?? {});
 	}
@@ -1165,6 +1222,14 @@ export class SettingsManager {
 		return this.settings.turn_max_runtime_ms;
 	}
 
+	/** The user's thread chain count limit (`threads.chainCountLimit`, K8): a non-negative integer, else unlimited. */
+	getThreadChainCountLimit(): number | undefined {
+		const configured = this.settings.threads?.chainCountLimit;
+		return typeof configured === "number" && Number.isSafeInteger(configured) && configured >= 0
+			? configured
+			: undefined;
+	}
+
 	getTodoFirstTurnPlan(): TodoFirstTurnPlan {
 		const configured = this.settings.todo?.firstTurnPlan;
 		return configured === "remind" || configured === "off" ? configured : "force";
@@ -1177,6 +1242,13 @@ export class SettingsManager {
 
 	isProjectTrusted(): boolean {
 		return this.projectTrusted;
+	}
+
+	private projectTrustLocked = false;
+
+	/** True when the launch named the project trust explicitly; a trust decision saved in the session cannot apply. */
+	isProjectTrustLocked(): boolean {
+		return this.projectTrustLocked;
 	}
 
 	/**
