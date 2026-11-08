@@ -747,6 +747,36 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 		expect(assistantTexts(projectHistoryRows(driver.rows))).toEqual(["replayed"]);
 	});
 
+	it("eviction with queued steering and no latch: the steering is delivered exactly once after resume (S7 variant)", async () => {
+		const echo: AgentTool = {
+			name: "echo",
+			label: "Echo",
+			description: "Echoes.",
+			parameters: Type.Object({}),
+			execute: async () => ({ content: [{ type: "text", text: "echoed" }], details: {} }),
+		};
+		driver = await createReferenceDriver({ tools: [echo] });
+		driver.setResponses([
+			fauxAssistantMessage([fauxToolCall("echo", {})], { stopReason: "toolUse" }),
+			fauxAssistantMessage([fauxText("after")]),
+			fauxAssistantMessage([fauxText("spare")]),
+		]);
+		const hold = driver.inject.pauseNextTool();
+
+		const run = driver.prompt("go").catch(() => undefined);
+		await hold.reached;
+		await driver.enqueue({ id: "steer-1", kind: "steering", text: "turn left" });
+		await driver.evict();
+		await run;
+		await driver.resume();
+		await driver.settle();
+
+		const seen = (driver.callLog().at(-1)?.context.messages ?? []).filter((message) =>
+			JSON.stringify(message).includes("turn left"),
+		);
+		expect(seen).toHaveLength(1);
+	});
+
 	it("never forwards an event the discarded instance emits after the latch", async () => {
 		driver = await createReferenceDriver();
 		driver.setResponses([fauxAssistantMessage([fauxText("lost")])]);
