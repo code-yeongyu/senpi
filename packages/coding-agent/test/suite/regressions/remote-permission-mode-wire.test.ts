@@ -12,7 +12,7 @@ import {
 	stateOf,
 } from "../rpc-permission-mode-support.ts";
 
-// sisyphuslabs/omo-desktop-app#6189: a remote client could neither confirm which approval mode a session enforces nor move a live session to
+// Remote approval-mode work (tracked privately): a remote client could neither confirm which approval mode a session enforces nor move a live session to
 // another one without knowing its host path, and the mode a client named was gone after a preset-less reopen.
 
 describe("#6189 permission mode on the wire", () => {

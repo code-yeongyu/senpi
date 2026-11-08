@@ -15,7 +15,7 @@ import {
 	writeRpcModelsJson,
 } from "../../helpers/rpc-hermetic.ts";
 
-// sisyphuslabs/omo-desktop-app#6189: a task runner's spawned child is a classic `--mode rpc` process, which refuses
+// Remote approval-mode work (tracked privately): a task runner's spawned child is a classic `--mode rpc` process, which refuses
 // open_session; set_permission_preset is the only way to move its live mode, so it must work on the stdio wire.
 
 const reply = z.object({

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { rawClient } from "../rpc-raw-socket-client.ts";
 import { dataOf, notifiedAfter, openFauxSession, permissionModeHost, replyOf } from "../rpc-permission-mode-support.ts";
 
-// sisyphuslabs/omo-desktop-app#6189: a task runner forwarding a child's permission prompt needs the parent's effective
+// Remote approval-mode work (tracked privately): a task runner forwarding a child's permission prompt needs the parent's effective
 // mode and a way to ask every client attached to the parent session, not the connection whose command is running
 // (a background child raises its prompt after that command returned).
 
