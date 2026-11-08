@@ -71,11 +71,12 @@ describe("C2: createAgentSession forwards commitStep to the Agent it builds (cus
 		expect(commits).toEqual(["stop"]);
 	});
 
-	it("leaves a session built without commitStep uncommitted and unchanged", async () => {
+	it("passes no commitStep to the Agent of a session built without one", async () => {
 		const session = await sessionWith();
+		const loopOwner = session.agent as unknown as { createLoopConfig(): Record<string, unknown> };
 
+		expect(Object.hasOwn(loopOwner.createLoopConfig(), "commitStep")).toBe(false);
 		await session.prompt("go");
-
 		expect(session.agent.state.messages.at(-1)?.role).toBe("assistant");
 	});
 });
