@@ -412,6 +412,16 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 
 	install(first, generation);
 
+	async function enqueue(entry: {
+		readonly id: string;
+		readonly kind: InboxKind;
+		readonly text: string;
+	}): Promise<void> {
+		inbox.push({ ...entry });
+		if (entry.kind === "steering") await current.session.steer(entry.text);
+		else await current.session.followUp(entry.text);
+	}
+
 	return {
 		get session() {
 			return current.session;
@@ -510,13 +520,9 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 		},
 		async followUp(text: string) {
 			followUps += 1;
-			await this.enqueue({ id: `followUp-${followUps}`, kind: "followUp", text });
+			await enqueue({ id: `followUp-${followUps}`, kind: "followUp", text });
 		},
-		async enqueue(entry) {
-			inbox.push({ ...entry });
-			if (entry.kind === "steering") await current.session.steer(entry.text);
-			else await current.session.followUp(entry.text);
-		},
+		enqueue,
 		async settle() {
 			await current.session.waitForIdle();
 		},
