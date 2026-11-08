@@ -54,7 +54,8 @@ function claimedSender(sender: SessionControlSender | undefined): string {
 
 /** The line the engine writes ahead of a remote device's text, so the model reads provenance the caller cannot write. */
 function provenanceLine(origin: RpcRemoteOrigin, sender: SessionControlSender | undefined): string {
-	const device = origin.deviceName === undefined ? origin.deviceId : `${origin.deviceName} (${origin.deviceId})`;
+	const id = JSON.stringify(origin.deviceId);
+	const device = origin.deviceName === undefined ? id : `${JSON.stringify(origin.deviceName)} (${id})`;
 	return `[Relayed message from remote device ${device}. ${claimedSender(sender)}]`;
 }
 
