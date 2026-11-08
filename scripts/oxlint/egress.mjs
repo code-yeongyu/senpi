@@ -3,6 +3,31 @@
 // module-level binding in src/core/egress (and every static class field) is an error unless its initializer is in
 // a closed exempt class. Literals are exempt only `as const`: tsc, not this rule, then proves no write reaches them.
 const MARKERS = new Set(["console-redactor-install", "sealed-window-counter"]);
+// Each named exception is pinned to the one file and binding it was granted for (custody design 3.4).
+const MARKER_SITES = {
+	"console-redactor-install": { file: "/src/core/egress/console-redactor.ts", binding: "sealedContext" },
+	"sealed-window-counter": { file: "/src/core/egress/console-redactor.ts", binding: "sealedWindows" },
+};
+const READONLY_TYPES = new Set(["Readonly", "ReadonlyArray", "ReadonlySet", "ReadonlyMap"]);
+const MUTATING_METHODS = new Set([
+	"push",
+	"pop",
+	"shift",
+	"unshift",
+	"splice",
+	"sort",
+	"reverse",
+	"fill",
+	"copyWithin",
+	"set",
+	"add",
+	"delete",
+	"clear",
+]);
+const MUTATING_STATICS = {
+	Object: new Set(["assign", "defineProperty", "defineProperties", "setPrototypeOf"]),
+	Reflect: new Set(["set", "deleteProperty", "defineProperty", "setPrototypeOf"]),
+};
 const MARKER = /^\s*no-module-state:\s*(\S+)\s*$/u;
 const STATELESS_CONSTRUCTORS = new Set(["TextEncoder", "TextDecoder"]);
 const PRIMITIVE_CALLS = new Set(["Symbol", "Number", "String", "Boolean", "BigInt", "parseInt", "parseFloat"]);
@@ -42,9 +67,24 @@ function stripAsConst(node) {
 	return current?.type === "TSAsExpression" ? current.expression : current;
 }
 
+function staticName(property, computed) {
+	if (!computed && property.type === "Identifier") return property.name;
+	if (property.type === "Literal" && typeof property.value === "string") return property.value;
+	return undefined;
+}
+
+/** Like unwrap, but also sees through `as` and `<T>` casts: a write through a cast still lands on the binding. */
+function unwrapCasts(node) {
+	let current = node;
+	while (current && (TRANSPARENT.has(current.type) || current.type === "TSAsExpression" || current.type === "TSTypeAssertion")) {
+		current = current.expression;
+	}
+	return current;
+}
+
 function memberRootName(node) {
-	let current = unwrap(node);
-	while (current?.type === "MemberExpression") current = unwrap(current.object);
+	let current = unwrapCasts(node);
+	while (current?.type === "MemberExpression") current = unwrapCasts(current.object);
 	return current?.type === "Identifier" ? current.name : undefined;
 }
 
@@ -168,18 +208,71 @@ const noModuleState = {
 	},
 	create(context) {
 		const { sourceCode } = context;
+		const filename = String(context.filename ?? context.getFilename?.() ?? "").replaceAll("\\", "/");
 		const markerAbove = (node) => {
 			const comment = sourceCode.getAllComments().find((candidate) => candidate.loc.end.line === node.loc.start.line - 1);
 			return comment ? MARKER.exec(comment.value)?.[1] : undefined;
 		};
-		const report = (node) =>
+		const markerHolds = (node, bindings) => {
+			const site = MARKER_SITES[markerAbove(node)];
+			return site !== undefined && filename.endsWith(site.file) && bindings.length === 1 && bindings[0] === site.binding;
+		};
+		const reportedStatements = new Set();
+		const reportedBindings = new Set();
+		const moduleBindings = new Set();
+		const report = (node, statement = node) => {
+			reportedStatements.add(statement);
 			context.report({
 				node,
 				message:
 					"Module-scope state in src/core/egress is shared across tenants. Keep it on the egress instance, make the literal `as const`, or use a named exception (console-redactor-install, sealed-window-counter).",
 			});
+		};
+		const topStatement = (node) => {
+			let current = node;
+			while (current.parent && current.parent.type !== "Program") current = current.parent;
+			return current;
+		};
+		const rootedAtModule = (node) => {
+			const name = memberRootName(node);
+			return name !== undefined && moduleBindings.has(name) && !reportedBindings.has(name);
+		};
+		const reportWrite = (node, target) => {
+			if (!rootedAtModule(target)) return;
+			const statement = topStatement(node);
+			if (reportedStatements.has(statement)) return;
+			for (let current = node.parent; current; current = current.parent) if (current.type === "StaticBlock") return;
+			report(node, statement);
+		};
+		const memberTarget = (node) => {
+			const target = unwrapCasts(node);
+			return target?.type === "MemberExpression" ? target : undefined;
+		};
 
 		return {
+			AssignmentExpression(node) {
+				const target = memberTarget(node.left);
+				if (target) reportWrite(node, target);
+			},
+			UpdateExpression(node) {
+				const target = memberTarget(node.argument);
+				if (target) reportWrite(node, target);
+			},
+			UnaryExpression(node) {
+				const target = node.operator === "delete" ? memberTarget(node.argument) : undefined;
+				if (target) reportWrite(node, target);
+			},
+			CallExpression(node) {
+				const callee = unwrapCasts(node.callee);
+				if (callee?.type !== "MemberExpression") return;
+				const method = staticName(callee.property, callee.computed);
+				const owner = unwrapCasts(callee.object);
+				if (owner?.type === "Identifier" && MUTATING_STATICS[owner.name]?.has(method)) {
+					if (node.arguments[0]) reportWrite(node, node.arguments[0]);
+					return;
+				}
+				if (method !== undefined && MUTATING_METHODS.has(method)) reportWrite(node, callee.object);
+			},
 			Program(program) {
 				for (const comment of sourceCode.getAllComments()) {
 					const name = MARKER.exec(comment.value)?.[1];
@@ -208,13 +301,27 @@ const noModuleState = {
 				);
 				const isExempt = createChecker(imports, exemptNames);
 
-				const checkClass = (node) => {
+				const checkClass = (node, statement) => {
 					for (const member of node.body.body) {
-						if (member.type !== "PropertyDefinition" || !member.static || member.declare) continue;
+						if (member.type === "StaticBlock") {
+							report(member, statement);
+							continue;
+						}
+						const field = member.type === "PropertyDefinition" || member.type === "AccessorProperty";
+						if (!field || !member.static || member.declare) continue;
 						if (member.value && isExempt(member.value)) continue;
-						if (MARKERS.has(markerAbove(member))) continue;
-						report(member);
+						report(member, statement);
 					}
+				};
+				const readonlyAnnotation = (declarator) => {
+					const annotation = declarator.id.typeAnnotation?.typeAnnotation;
+					if (!annotation) return true;
+					if (annotation.type === "TSTypeOperator") return annotation.operator === "readonly";
+					return (
+						annotation.type === "TSTypeReference" &&
+						annotation.typeName.type === "Identifier" &&
+						READONLY_TYPES.has(annotation.typeName.name)
+					);
 				};
 
 				for (const statement of program.body) {
@@ -222,20 +329,56 @@ const noModuleState = {
 						statement.type === "ExportNamedDeclaration" || statement.type === "ExportDefaultDeclaration"
 							? statement.declaration
 							: statement;
+					if (declaration?.id?.type === "Identifier") moduleBindings.add(declaration.id.name);
+					if (declaration?.type === "VariableDeclaration") {
+						for (const declarator of declaration.declarations) {
+							if (declarator.id.type === "Identifier") moduleBindings.add(declarator.id.name);
+						}
+					}
+				}
+
+				for (const statement of program.body) {
+					if (statement.type === "ExpressionStatement") {
+						const expression = unwrap(statement.expression);
+						const voidOfName =
+							expression?.type === "UnaryExpression" &&
+							expression.operator === "void" &&
+							unwrap(expression.argument)?.type === "Identifier";
+						if (!statement.directive && !voidOfName) report(statement);
+						continue;
+					}
+					const declaration =
+						statement.type === "ExportNamedDeclaration" || statement.type === "ExportDefaultDeclaration"
+							? statement.declaration
+							: statement;
 					if (!declaration) continue;
 					if (declaration.type === "ClassDeclaration" || declaration.type === "ClassExpression") {
-						checkClass(declaration);
+						checkClass(declaration, statement);
+						continue;
+					}
+					if (statement.type === "ExportDefaultDeclaration") {
+						if (declaration.type !== "FunctionDeclaration" && !isExempt(declaration)) report(statement);
 						continue;
 					}
 					if (declaration.type !== "VariableDeclaration" || declaration.declare) continue;
-					const marked = MARKERS.has(markerAbove(statement));
+					const names = declaration.declarations.flatMap((declarator) =>
+						declarator.id.type === "Identifier" ? [declarator.id.name] : [],
+					);
+					const marked = markerHolds(statement, names);
 					const exempt =
 						declaration.kind === "const" &&
 						declaration.declarations.every((declarator) => {
-							if (declarator.init && unwrap(declarator.init)?.type === "ClassExpression") checkClass(unwrap(declarator.init));
+							if (declarator.init && unwrap(declarator.init)?.type === "ClassExpression")
+								checkClass(unwrap(declarator.init), statement);
+							if (isAsConst(declarator.init) && !readonlyAnnotation(declarator)) return false;
 							if (declarator.id.type === "Identifier") return declarator.init !== null && isExempt(declarator.init);
-							return declarator.init !== null && unwrap(declarator.init)?.type === "Identifier" && exemptNames.has(unwrap(declarator.init).name);
+							return (
+								declarator.init !== null &&
+								unwrap(declarator.init)?.type === "Identifier" &&
+								exemptNames.has(unwrap(declarator.init).name)
+							);
 						});
+					if (!exempt && !marked) for (const name of names) reportedBindings.add(name);
 					if (exempt || marked) {
 						for (const declarator of declaration.declarations) {
 							if (declarator.id.type === "Identifier") exemptNames.add(declarator.id.name);
