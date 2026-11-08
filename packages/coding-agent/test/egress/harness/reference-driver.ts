@@ -51,6 +51,7 @@ export interface DriverCounters {
 	readonly drainedBy: readonly number[];
 	readonly adapterAppendAttempts: number;
 	readonly rebuildDeadlineMisses: number;
+	readonly readBacks: number;
 }
 
 export interface FakeClock {
@@ -99,7 +100,7 @@ export interface ReferenceDriver {
 		cancelNextStep(): void;
 		slowRebuildStoreRead(ms: number): void;
 	};
-	rebuildStoreReadStarted(): Promise<void>;
+	rebuildStoreReadStarted(index?: number): Promise<void>;
 	deliverLateLanding(): "refused" | "landed" | "none";
 	epochWaitReached(): Promise<void>;
 	confirmEpoch(): void;
@@ -139,8 +140,9 @@ interface Fence {
 type PlannedFault =
 	| { readonly kind: "reject"; readonly code: StepCommitFailure }
 	| { readonly kind: "already-committed"; readonly committedByAnother: AgentMessage }
-	| { readonly kind: "ambiguous-landed" }
-	| { readonly kind: "ambiguous-lost" };
+	| { readonly kind: "ambiguous"; readonly landed: boolean };
+
+type FaultKind = "reject" | "already-committed" | "ambiguous-landed" | "ambiguous-lost";
 
 const sameFence = (a: Fence, b: Fence): boolean =>
 	a.epoch === b.epoch && a.admissionSeq === b.admissionSeq && a.generation === b.generation;
@@ -163,7 +165,10 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 	const clock = createFakeClock();
 	let latchedAt: number | undefined;
 	let rebuildDeadlineMisses = 0;
-	let slowRead: { readonly ms: number; readonly started: PromiseWithResolvers<void> } | undefined;
+	const slowReads: Array<{ readonly ms: number; readonly started: PromiseWithResolvers<void> }> = [];
+	let slowReadsTaken = 0;
+	let readBacks = 0;
+	let lateLandingFloor = 0;
 	const cancelledSteps = new Set<string>();
 	let cancelledAbort: { readonly stepId: string; readonly message: AgentMessage } | undefined;
 	const instances: Harness[] = [];
@@ -235,17 +240,21 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 			if (fault?.kind === "already-committed") {
 				rows.push({ kind: "step", stepId, message: fault.committedByAnother });
 			}
-			if (fault?.kind === "ambiguous-lost") {
-				// The write did not apply and its reply was lost: a negative read-back advances the fence, so the first
-				// write landing late is refused.
-				lateLanding = { stepId, fence: admitted.fence, message: step.message };
-				fence = { ...fence, admissionSeq: fence.admissionSeq + 1 };
-				latch(stepId, "ambiguous_unresolved");
-			}
 			// The conditional write: a row for this step from any other admission is `already_committed`.
 			if (hasRow(stepId)) latch(stepId, "already_committed");
-			writeStep(stepId, step);
-			// `ambiguous-landed` applied the write and lost the reply; the read-back finds the row, so it is committed.
+			if (fault?.kind !== "ambiguous") {
+				writeStep(stepId, step);
+				return;
+			}
+			// An ambiguous write: it may or may not have applied, and its reply is lost. The read-back decides.
+			if (fault.landed) writeStep(stepId, step);
+			readBacks += 1;
+			if (hasRow(stepId)) return;
+			// Negative read-back: advance the fence so the first write landing late is refused, then latch.
+			lateLanding = { stepId, fence: admitted.fence, message: step.message };
+			lateLandingFloor = fence.admissionSeq + 1;
+			fence = { ...fence, admissionSeq: lateLandingFloor };
+			latch(stepId, "ambiguous_unresolved");
 		};
 		owner.createLoopConfig = (...args: unknown[]) => ({ ...createLoopConfig(...args), commitStep });
 
@@ -302,9 +311,9 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 	// keeps the session latched and retries the rebuild; it never waits on the old instance.
 	async function readDurableHistory(): Promise<void> {
 		for (;;) {
-			const read = slowRead;
-			slowRead = undefined;
+			const read = slowReads[slowReadsTaken];
 			if (read !== undefined) {
+				slowReadsTaken += 1;
 				const done = clock.sleep(read.ms);
 				read.started.resolve();
 				await done;
@@ -367,13 +376,14 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 				drainedBy,
 				adapterAppendAttempts,
 				rebuildDeadlineMisses,
+				readBacks,
 			};
 		},
 		get rebuilds() {
 			return rebuilds;
 		},
 		inject: {
-			nextCommit(kind: PlannedFault["kind"], arg?: StepCommitFailure | AgentMessage) {
+			nextCommit(kind: FaultKind, arg?: StepCommitFailure | AgentMessage) {
 				if (kind === "reject") {
 					plannedFaults.push({ kind, code: typeof arg === "string" ? arg : "storage_unavailable" });
 				} else if (kind === "already-committed") {
@@ -381,7 +391,7 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 						throw new Error("already-committed needs the other row");
 					plannedFaults.push({ kind, committedByAnother: arg });
 				} else {
-					plannedFaults.push({ kind });
+					plannedFaults.push({ kind: "ambiguous", landed: kind === "ambiguous-landed" });
 				}
 			},
 			advanceFenceBeforeNextCommit() {
@@ -394,12 +404,13 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 				cancelNextStep = true;
 			},
 			slowRebuildStoreRead(ms: number) {
-				slowRead = { ms, started: Promise.withResolvers<void>() };
+				slowReads.push({ ms, started: Promise.withResolvers<void>() });
 			},
 		},
-		rebuildStoreReadStarted() {
-			if (slowRead === undefined) throw new Error("no slow rebuild read is armed");
-			return slowRead.started.promise;
+		rebuildStoreReadStarted(index = 0) {
+			const read = slowReads[index];
+			if (read === undefined) throw new Error(`no slow rebuild read ${index} is armed`);
+			return read.started.promise;
 		},
 		epochWaitReached() {
 			if (epochWait === undefined) throw new Error("no epoch wait is armed");
@@ -412,7 +423,7 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 			const landing = lateLanding;
 			if (landing === undefined) return "none";
 			lateLanding = undefined;
-			if (!sameFence(landing.fence, fence)) {
+			if (landing.fence.admissionSeq < lateLandingFloor) {
 				refusals += 1;
 				return "refused";
 			}

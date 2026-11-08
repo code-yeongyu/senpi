@@ -154,6 +154,7 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 
 		expect(driver.latchHistory).toEqual([]);
 		expect(driver.rebuilds).toBe(0);
+		expect(driver.counters.readBacks).toBe(1);
 		expect(assistantTexts(projectHistoryRows(driver.rows))).toEqual(["one"]);
 	});
 
@@ -169,6 +170,7 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 		const refusals = driver.counters.refusals;
 
 		expect(driver.latchHistory.map((latch) => latch.code)).toEqual(["ambiguous_unresolved"]);
+		expect(driver.counters.readBacks).toBe(1);
 		expect(driver.deliverLateLanding()).toBe("refused");
 		expect(driver.counters.refusals).toBe(refusals + 1);
 		expect(assistantTexts(projectHistoryRows(driver.rows))).toEqual(["redialed"]);
@@ -255,11 +257,20 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 		driver.setResponses([fauxAssistantMessage([fauxText("lost")]), fauxAssistantMessage([fauxText("redialed")])]);
 		driver.inject.nextCommit("reject");
 		driver.inject.slowRebuildStoreRead(HOSTED_REBUILD_DEADLINE_MS + 1);
+		driver.inject.slowRebuildStoreRead(1_000);
 
 		const prompt = driver.prompt("go");
-		await driver.rebuildStoreReadStarted();
-		expect(driver.latched).toBe(true);
+		await driver.rebuildStoreReadStarted(0);
 		driver.clock.advance(HOSTED_REBUILD_DEADLINE_MS + 1);
+		const first = await Promise.race([
+			driver.rebuildStoreReadStarted(1).then(() => "retry read started"),
+			prompt.then(() => "rebuilt without a retry read"),
+		]);
+		expect(first).toBe("retry read started");
+		expect(driver.latched).toBe(true);
+		expect(driver.counters.rebuildDeadlineMisses).toBe(1);
+		expect(driver.rebuilds).toBe(0);
+		driver.clock.advance(1_000);
 		await prompt;
 
 		expect(driver.counters.rebuildDeadlineMisses).toBe(1);
