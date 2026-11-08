@@ -1,6 +1,7 @@
 import { releaseQuestionInput } from "../../../question-input.ts";
 import type { ExtensionAPI, ExtensionContext, QuestionCancelOrigin, ToolDefinition } from "../../types.ts";
 import { WAKE_SOURCE_STATE_EVENT, type WakeSourceStateEvent } from "../monitor-state-event.ts";
+import { AskUserEscapeResidueError, escapeResidueNote, findEscapeResidue } from "./escape-residue.ts";
 import { TOOL_NAMES } from "./family.ts";
 import {
 	formatGatedCancellation,
@@ -39,6 +40,8 @@ import {
 export interface AskUserState {
 	timedOut: boolean;
 	unavailable: boolean;
+	/** The previous call was refused for escape residue; the next one opens as written (oh-my-openagent#12797). */
+	escapeResidueRefused: boolean;
 }
 const REASK = "The user did not answer the previous question this turn; continue without asking again.";
 const REASK_REQUIRED =
@@ -370,6 +373,14 @@ export function createAskUserTool(variant: AskUserVariant, pi: ExtensionAPI, sta
 				emitAskUserClosed(pi, request.requestId, unavailable);
 				return result(variant, unavailable, request);
 			}
+			const residue = findEscapeResidue(request.questions);
+			const refuse = residue.length > 0 && !state.escapeResidueRefused;
+			state.escapeResidueRefused = refuse;
+			if (refuse) {
+				emitAskUserClosed(pi, request.requestId, unavailable);
+				throw new AskUserEscapeResidueError(residue);
+			}
+			if (residue.length > 0) ctx.ui.notify(escapeResidueNote(residue), "warning");
 			const completion = startQuestion(pi, ctx, request, signal, state, variant);
 			if (!request.waitForAnswer)
 				return {

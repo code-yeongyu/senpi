@@ -24,7 +24,7 @@ export default function askUserExtension(pi: ExtensionAPI): void {
 			// In TUI mode interactive-mode's text dispatch handles /answer first.
 		},
 	});
-	const state: AskUserState = { timedOut: false, unavailable: false };
+	const state: AskUserState = { timedOut: false, unavailable: false, escapeResidueRefused: false };
 	let registered = false;
 	const cancelPending = (
 		ctx: ExtensionContext,
@@ -57,6 +57,7 @@ export default function askUserExtension(pi: ExtensionAPI): void {
 	pi.on("session_start", async (event, ctx) => {
 		state.timedOut = false;
 		state.unavailable = false;
+		state.escapeResidueRefused = false;
 		const sessionId = ctx.sessionManager.getSessionId();
 		for (const entry of getPendingQuestions(sessionId)) entry.rebind(pi, ctx, state);
 		deliverQueuedQuestionOutcomes(sessionId, pi, ctx);
@@ -74,6 +75,7 @@ export default function askUserExtension(pi: ExtensionAPI): void {
 	});
 	pi.on("agent_end", async () => {
 		state.timedOut = false;
+		state.escapeResidueRefused = false;
 	});
 	pi.on("session_shutdown", async (event, ctx) => {
 		if (event.reason === "reload") {

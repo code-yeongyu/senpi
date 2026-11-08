@@ -350,3 +350,93 @@ describe("ask-user builtin", () => {
 		expect(userWords.map((word) => word.text)).toContain("only after tests pass");
 	});
 });
+
+// oh-my-openagent#12797: models sometimes write question text as \uXXXX escapes and drop the backslash (or keep a
+// literal one), so the card showed `ub0b4 Tailscale 쓰기` instead of `내 Tailscale 쓰기`.
+describe("ask-user escape residue (oh-my-openagent#12797)", () => {
+	const korean = (label: string, question = "어떤 방식으로 연결할까요?") => ({
+		questions: [{ header: "Tailscale", question, options: [{ label }, { label: "새로 설치" }], multiSelect: false }],
+		waitForAnswer: true,
+	});
+
+	it("asks for one re-call on a bare escape, then shows an identical re-call as written with a note", async () => {
+		// given the captured payload: a label whose first syllable lost its backslash
+		const { tool, ctx, runner } = await setup();
+		const notify = vi.fn();
+		ctx.ui.notify = notify;
+		const payload = korean("ub0b4 Tailscale 쓰기");
+
+		// when the model calls the tool
+		const first = required(tool).execute("residue-1", payload, undefined, undefined, ctx as ExtensionToolContext);
+
+		// then it gets a typed error naming the residue, and no card opens
+		await expect(first).rejects.toMatchObject({
+			name: "AskUserEscapeResidueError",
+			message: expect.stringContaining('"ub0b4"'),
+		});
+		expect(ctx.ui.question).not.toHaveBeenCalled();
+
+		// when the re-call still carries the same residue
+		const second = await required(tool).execute("residue-2", payload, undefined, undefined, ctx as ExtensionToolContext);
+
+		// then the card opens with the text as written, and the user sees a short note instead of a second error
+		expect(second.details).toMatchObject({ status: "answered" });
+		expect(ctx.ui.question).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(required(ctx.ui.question)).mock.calls[0]?.[0].questions[0]?.options[0]?.label).toBe(
+			"ub0b4 Tailscale 쓰기",
+		);
+		expect(notify).toHaveBeenCalledWith(expect.stringContaining("ub0b4"), "warning");
+
+		// and a later question set, after the turn ended, gets its own single re-call
+		await runner.emit({ type: "agent_end", messages: [] });
+		await expect(
+			required(tool).execute("residue-3", payload, undefined, undefined, ctx as ExtensionToolContext),
+		).rejects.toMatchObject({ name: "AskUserEscapeResidueError" });
+	});
+
+	it("asks for a re-call when a literal backslash escape was left undecoded", async () => {
+		// given JSON that wrote `\\ub0b4`, so the decoded label still holds a backslash escape
+		const { tool, ctx } = await setup();
+		const payload = JSON.parse(String.raw`{"questions":[{"header":"Tailscale","question":"어떤 방식으로 연결할까요?","options":[{"label":"\\ub0b4 Tailscale 쓰기"},{"label":"새로 설치"}],"multiSelect":false}],"waitForAnswer":true}`);
+
+		// then the call is refused with the typed error and no card opens
+		await expect(
+			required(tool).execute("literal", payload, undefined, undefined, ctx as ExtensionToolContext),
+		).rejects.toMatchObject({ name: "AskUserEscapeResidueError", message: expect.stringContaining("\\ub0b4") });
+		expect(ctx.ui.question).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		["clean Hangul", korean("내 Tailscale 쓰기")],
+		[
+			"escaped JSON that decodes correctly",
+			JSON.parse(String.raw`{"questions":[{"header":"Tailscale","question":"\uc5b4\ub5a4 \ubc29\uc2dd\uc73c\ub85c \uc5f0\uacb0\ud560\uae4c\uc694?","options":[{"label":"\ub0b4 Tailscale \uc4f0\uae30"},{"label":"\uc0c8\ub85c \uc124\uce58"}],"multiSelect":false}],"waitForAnswer":true}`),
+		],
+		[
+			"English text with u-prefixed ids",
+			{
+				questions: [
+					{
+						header: "Cleanup",
+						question: "Delete user u1234 and the stale key uabcd from build u00ff?",
+						options: [{ label: "Delete u1234" }, { label: "Keep both" }],
+						multiSelect: false,
+					},
+				],
+				waitForAnswer: true,
+			},
+		],
+		["Korean text with an id outside its script", korean("u1234 계정 삭제", "사용자 u1234 를 삭제할까요?")],
+		["an escape quoted as code", korean("`\\u00e9` 유지", "정규식의 `\\uac00` 범위를 유지할까요?")],
+	])("opens the card without an error for %s", async (_label, payload) => {
+		// given text with no escape residue
+		const { tool, ctx } = await setup();
+
+		// when the model calls the tool
+		const result = await required(tool).execute("clean", payload, undefined, undefined, ctx as ExtensionToolContext);
+
+		// then the card opens on the first call
+		expect(result.details).toMatchObject({ status: "answered" });
+		expect(ctx.ui.question).toHaveBeenCalledTimes(1);
+	});
+});
