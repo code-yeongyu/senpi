@@ -4,6 +4,8 @@ import type { TerminalSessionHandle, TerminalSessionSignal } from "./session-typ
 
 /** How often a stop path re-checks whether a process group still has members; no event reports it. */
 const GROUP_POLL_MS = 25;
+/** How often an armed leftover record checks on its own whether its group is gone (see LeftoverProcessGroup). */
+const LEFTOVER_PROBE_MS = 1000;
 
 /**
  * Terminate the child, preferring its whole process group on POSIX. The
@@ -66,22 +68,51 @@ function processGroupHasMembers(pgid: number): boolean {
  * The process group of a session that settled while processes the command started were still in it
  * (`cmd &`, a daemon, the children of a shell killed from outside). Settling does not kill them
  * (senpi#6201); this keeps them reachable from kill(), terminate() and registry teardown. It is keyed on
- * the group, remembered only when the group still had members at the settle, and forgotten for good the
- * first time it is seen empty, so a later reuse of that id is never signalled.
+ * the group and remembered only when the group still had members at the settle.
+ *
+ * The id must never be signalled once it could name someone else's group. POSIX does not hand an id out as
+ * a pid while a process group with that id exists, so it can only be reused after the group empties. An
+ * armed record therefore probes on its own every `LEFTOVER_PROBE_MS` (unref'd: it never keeps the process
+ * alive) and disarms for good the first time the group is seen empty, from the probe or from any stop
+ * path, which also clears the probe. A stranger could only be hit if the pid space wrapped (99999 on macOS,
+ * pid_max on Linux) and handed out exactly this id as a new group leader within one probe interval after
+ * the last member exited: not a realistic window.
  */
 export class LeftoverProcessGroup {
 	#pgid: number | undefined;
+	#probe: ReturnType<typeof setInterval> | undefined;
+	readonly #hasMembers: (pgid: number) => boolean;
+	readonly #probeIntervalMs: number;
+
+	constructor(options: { readonly hasMembers?: (pgid: number) => boolean; readonly probeIntervalMs?: number } = {}) {
+		this.#hasMembers = options.hasMembers ?? processGroupHasMembers;
+		this.#probeIntervalMs = options.probeIntervalMs ?? LEFTOVER_PROBE_MS;
+	}
+
+	/** The group still remembered, without probing it; undefined once disarmed. */
+	get armedGroup(): number | undefined {
+		return this.#pgid;
+	}
 
 	/** Called once at the settle. */
 	arm(pgid: number | undefined): void {
-		this.#pgid = pgid !== undefined && processGroupHasMembers(pgid) ? pgid : undefined;
+		if (pgid === undefined || !this.#hasMembers(pgid)) return;
+		this.#pgid = pgid;
+		this.#probe = setInterval(() => this.alive(), this.#probeIntervalMs);
+		this.#probe.unref?.();
 	}
 
 	alive(): boolean {
 		if (this.#pgid === undefined) return false;
-		if (processGroupHasMembers(this.#pgid)) return true;
-		this.#pgid = undefined;
+		if (this.#hasMembers(this.#pgid)) return true;
+		this.#disarm();
 		return false;
+	}
+
+	#disarm(): void {
+		this.#pgid = undefined;
+		clearInterval(this.#probe);
+		this.#probe = undefined;
 	}
 
 	/** Signal the group while it has members; the pgid signalled, or undefined when nothing is left. */

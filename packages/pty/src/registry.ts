@@ -127,7 +127,10 @@ export class SessionRegistry<TSession extends SessionRegistrySession = SessionRe
 			if (entry.state !== "exited") continue;
 			await this.cleanupDetachedChildren(entry);
 			sweptIds.push(entry.id);
-			if (options.remove) this.removeEntry(entry.id);
+			if (!options.remove) continue;
+			// Forgetting the session must not strand what it left running in its process group (senpi#6201).
+			await entry.session.stopLeftover?.();
+			this.removeEntry(entry.id);
 		}
 		return sweptIds;
 	}
@@ -205,6 +208,7 @@ export class SessionRegistry<TSession extends SessionRegistrySession = SessionRe
 			const entry = this.findLeastRecentlyUsedExited();
 			if (!entry) return;
 			await this.cleanupDetachedChildren(entry);
+			await entry.session.stopLeftover?.();
 			this.removeEntry(entry.id);
 		}
 	}

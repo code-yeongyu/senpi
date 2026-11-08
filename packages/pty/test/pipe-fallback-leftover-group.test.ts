@@ -136,6 +136,48 @@ describe("pipe fallback: a process the command left running (#6201)", () => {
 	);
 
 	posixIt(
+		"sweepExited({ remove: true }) stops the leftover process before it forgets the session",
+		async () => {
+			const registry = new SessionRegistry<TerminalSession>({ stopExitGraceMs: 2000, forcedExitGraceMs: 2000 });
+			const { session, grandchild } = await settledWithLeftover();
+			try {
+				await registry.create({ command: "sh", session });
+				expect(isAlive(grandchild)).toBe(true);
+				await registry.sweepExited({ remove: true });
+				expect(registry.size).toBe(0);
+				expect(isAlive(grandchild)).toBe(false);
+			} finally {
+				killExactChild(grandchild);
+			}
+		},
+		BREAKER_MS,
+	);
+
+	posixIt(
+		"capacity pruning stops the leftover process of the settled session it evicts",
+		async () => {
+			const registry = new SessionRegistry<TerminalSession>({ maxSessions: 1 });
+			const { session, grandchild } = await settledWithLeftover();
+			const next = new TerminalSession(
+				{ command: "sh", args: ["-c", "exit 0"] },
+				{ env: { SENPI_PTY_FORCE_PIPE: "1" } },
+			);
+			try {
+				await registry.create({ command: "sh", session });
+				expect(isAlive(grandchild)).toBe(true);
+				next.start();
+				await registry.create({ command: "sh", session: next });
+				expect(registry.size).toBe(1);
+				expect(isAlive(grandchild)).toBe(false);
+			} finally {
+				killExactChild(grandchild);
+				await registry.teardown();
+			}
+		},
+		BREAKER_MS,
+	);
+
+	posixIt(
 		"kill() stays an idempotent 'already exited' once the process group is empty",
 		async () => {
 			const session = new TerminalSession(
