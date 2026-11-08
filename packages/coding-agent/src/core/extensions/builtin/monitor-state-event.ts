@@ -5,6 +5,25 @@ export const CONTINUATION_HOLD_STATE_EVENT = "continuation_hold_state";
 /** Live widgets of a session's long background jobs; payload `JobWidgetState` (job-widgets/view-types.ts). */
 export const JOB_WIDGET_STATE_EVENT = "job_widget_state";
 export const MONITOR_NOTIFICATION_CUSTOM_TYPE = "senpi-monitor:notification";
+/** A background terminal session's age notice or auto-reap; payload `TerminalBackgroundAgeEvent` (senpi#6201). */
+export const TERMINAL_BACKGROUND_AGE_EVENT = "terminal_background_age";
+
+/**
+ * `running`: the session is still running at `ageMinutes` (first at 10 minutes, then every 30). `reaped`: the opt-in
+ * auto-reap stopped it at `autoReapMinutes`. `stop` is the call that stops it; `autoReapMinutes` is null when nothing
+ * will stop it automatically.
+ */
+export interface TerminalBackgroundAgeEvent {
+	readonly kind: "running" | "reaped";
+	readonly id: string;
+	readonly description: string;
+	readonly command?: string;
+	readonly startedAtMs: number;
+	readonly ageMs: number;
+	readonly ageMinutes: number;
+	readonly autoReapMinutes: number | null;
+	readonly stop: { readonly tool: "kill_bash"; readonly args: { readonly bash_id: string } };
+}
 
 /** Per-monitor entry in a monitor notification's `details.monitors`. */
 export interface MonitorNotificationDetail {

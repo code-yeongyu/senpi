@@ -48,13 +48,20 @@ export type TerminalBackgroundWake =
 			readonly id: string;
 			readonly description: string;
 			readonly startedAtMs: number;
+			readonly command?: string;
+			readonly autoReapMinutes?: number;
 	  }
 	| {
 			readonly event: "background_exit";
 			readonly id: string;
 			readonly exit: TerminalExitView["exitResult"];
 			readonly output: string;
+			readonly autoReapedAfterMinutes?: number;
 	  };
+
+function optionalMinutes(value: unknown): number | undefined {
+	return typeof value === "number" && Number.isFinite(value) && value >= 1 ? Math.trunc(value) : undefined;
+}
 
 function parseBackgroundWake(value: unknown): TerminalBackgroundWake | undefined {
 	if (typeof value !== "object" || value === null) return undefined;
@@ -65,19 +72,43 @@ function parseBackgroundWake(value: unknown): TerminalBackgroundWake | undefined
 		const description: unknown = Reflect.get(value, "description");
 		const startedAtMs: unknown = Reflect.get(value, "startedAtMs");
 		if (typeof description !== "string" || typeof startedAtMs !== "number") return undefined;
-		return { event, id, description, startedAtMs };
+		const command: unknown = Reflect.get(value, "command");
+		const autoReapMinutes = optionalMinutes(Reflect.get(value, "autoReapMinutes"));
+		return {
+			event,
+			id,
+			description,
+			startedAtMs,
+			...(typeof command === "string" ? { command } : {}),
+			...(autoReapMinutes === undefined ? {} : { autoReapMinutes }),
+		};
 	}
 	if (event === "background_exit") {
 		const output: unknown = Reflect.get(value, "output");
 		const exit: unknown = Reflect.get(value, "exit");
 		if (typeof output !== "string" || (exit !== null && typeof exit !== "object")) return undefined;
-		return { event, id, exit: exit as TerminalExitView["exitResult"], output };
+		const autoReapedAfterMinutes = optionalMinutes(Reflect.get(value, "autoReapedAfterMinutes"));
+		return {
+			event,
+			id,
+			exit: exit as TerminalExitView["exitResult"],
+			output,
+			...(autoReapedAfterMinutes === undefined ? {} : { autoReapedAfterMinutes }),
+		};
 	}
 	return undefined;
 }
 
-function exitView(exit: TerminalExitView["exitResult"], output: string): TerminalExitView {
-	return { exitResult: exit, fullOutput: () => output };
+function exitView(
+	exit: TerminalExitView["exitResult"],
+	output: string,
+	autoReapedAfterMinutes?: number,
+): TerminalExitView {
+	return {
+		exitResult: exit,
+		fullOutput: () => output,
+		...(autoReapedAfterMinutes === undefined ? {} : { autoReapedAfterMinutes }),
+	};
 }
 
 function bashIdOf(value: unknown): string | undefined {
@@ -134,6 +165,9 @@ export function terminalChildJob(
 				defaultRows: ctx.defaultRows,
 				redactSecretsInOutput: ctx.redactSecretsInOutput === true,
 				...(ctx.timeoutAction === undefined ? {} : { timeoutAction: ctx.timeoutAction }),
+				...(ctx.backgroundAutoReapMinutes === undefined
+					? {}
+					: { backgroundAutoReapMinutes: ctx.backgroundAutoReapMinutes }),
 			};
 		},
 	};
@@ -152,11 +186,11 @@ function backgroundRelay(ctx: TerminalToolContext): Pick<ToolChildJob, "wake" | 
 			if (wake === undefined) return;
 			if (wake.event === "background_start") {
 				running.set(wake.id, generation);
-				ctx.onBackgroundStart?.(wake.id, wake.description, wake.startedAtMs);
+				ctx.onBackgroundStart?.(wake.id, wake.description, wake.startedAtMs, wake.command, wake.autoReapMinutes);
 				return;
 			}
 			running.delete(wake.id);
-			ctx.onBackgroundExit?.(wake.id, exitView(wake.exit, wake.output));
+			ctx.onBackgroundExit?.(wake.id, exitView(wake.exit, wake.output, wake.autoReapedAfterMinutes));
 		},
 		childExited: (generation) => {
 			for (const [id, startedOn] of running) {

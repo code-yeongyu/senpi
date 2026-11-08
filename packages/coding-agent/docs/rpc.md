@@ -6417,6 +6417,35 @@ capability:
 }
 ```
 
+#### Background session age
+
+The terminal builtin emits `terminal_background_age` on the same path, and on the in-process `pi.events`
+bus, when a background bash session is still running at 10 minutes and then every 30 minutes (10, 40,
+70, ...), and when the opt-in auto-reap (`terminal.backgroundAutoReapMinutes` or the `bash` parameter
+`auto_reap_minutes`) has stopped one. `data` has `kind` (`running` or `reaped`), `id` (the `bash_id`),
+`description`, optional `command`, `startedAtMs`, `ageMs`, `ageMinutes`, `autoReapMinutes` (the age at
+which the session is stopped automatically, or `null` when nothing will stop it), and `stop`, the call
+that stops it. Nothing is stopped by this event; a client that wants the session gone calls `kill_bash`
+with `stop.args`. A report that came due while the host slept arrives once, not once per missed interval.
+
+```json
+{
+  "type": "extension_event",
+  "name": "terminal_background_age",
+  "data": {
+    "kind": "running",
+    "id": "bash_3",
+    "description": "npm run dev",
+    "command": "npm run dev",
+    "startedAtMs": 1710000000000,
+    "ageMs": 600000,
+    "ageMinutes": 10,
+    "autoReapMinutes": null,
+    "stop": { "tool": "kill_bash", "args": { "bash_id": "bash_3" } }
+  }
+}
+```
+
 #### Job widgets
 
 The `job-widgets` builtin emits `job_widget_state` on the same path: live, display-ready widgets for the

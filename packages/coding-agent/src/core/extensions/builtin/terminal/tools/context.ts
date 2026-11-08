@@ -19,6 +19,8 @@ export interface TerminalToolContext {
 	readonly timeoutAction?: TimeoutAction;
 	/** Resolved `terminal.maxDurableMonitors`; omitted contexts admit any number of persistent monitors. */
 	readonly maxDurableMonitors?: number | "unlimited";
+	/** Resolved `terminal.backgroundAutoReapMinutes`: background sessions are stopped at this age; unset means never. */
+	readonly backgroundAutoReapMinutes?: number | undefined;
 	/** Resolve the environment for spawned sessions (mirrors core bash `getShellEnv`). */
 	readonly getEnv: () => NodeJS.ProcessEnv;
 	/**
@@ -26,8 +28,17 @@ export interface TerminalToolContext {
 	 * expose PI_* session metadata to spawned commands like the core bash tool does.
 	 */
 	readonly getSessionContext?: () => import("../../../types.ts").ExtensionContext | undefined;
-	/** Registers a session when it transitions to background liveness; `command` is what it runs, when known. */
-	readonly onBackgroundStart?: (id: string, description: string, startedAtMs: number, command?: string) => void;
+	/**
+	 * Registers a session when it transitions to background liveness; `command` is what it runs, when known, and
+	 * `autoReapMinutes` the age at which the opt-in auto-reap stops it.
+	 */
+	readonly onBackgroundStart?: (
+		id: string,
+		description: string,
+		startedAtMs: number,
+		command?: string,
+		autoReapMinutes?: number,
+	) => void;
 	/** A person or the model wrote to a session's stdin (`bash_input`): it is interactive from now on. */
 	readonly onSessionInput?: (id: string) => void;
 	/** Notified when a background session exits, so the notify layer can wake the agent. */
@@ -58,6 +69,8 @@ export interface TerminalToolContext {
 /** What a background exit notice reads: on the tool child it is a summary the child sent, not the live session. */
 export interface TerminalExitView {
 	readonly exitResult: Pick<TerminalSessionExit, "exitCode" | "signal" | "cancelled" | "timedOut"> | null;
+	/** Set when the opt-in auto-reap stopped the session at this age (senpi#6201). */
+	readonly autoReapedAfterMinutes?: number;
 	fullOutput(): string;
 }
 

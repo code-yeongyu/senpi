@@ -77,4 +77,47 @@ describe("terminal child background relay", () => {
 		bash.childExited?.(1);
 		expect(exits).toHaveLength(2);
 	});
+
+	// senpi#6201: a child's opt-in auto-reap reaches the server: the setting goes out in the job args, the reap age comes
+	// back on the start wake (for the age events) and the reap itself on the exit wake (for the notice).
+	it("carries the auto-reap setting to the child and the reap back to the server hooks", () => {
+		const started: unknown[][] = [];
+		const reaped: Array<number | undefined> = [];
+		const hooks = {
+			cwd: "/w",
+			defaultCols: 80,
+			defaultRows: 24,
+			backgroundAutoReapMinutes: 45,
+			getEnv: () => ({}),
+			onBackgroundStart: (...args: unknown[]) => started.push(args),
+			onBackgroundExit: (_id: string, runtime: TerminalExitView) => reaped.push(runtime.autoReapedAfterMinutes),
+		} as Partial<TerminalToolContext> as TerminalToolContext;
+		const bash = terminalChildJob(hooks, TERMINAL_CHILD_JOB_KINDS.bash);
+		const args = bash.args?.({ command: "x" }, "call", { cwd: "/w" } as never);
+		expect(args).toMatchObject({ backgroundAutoReapMinutes: 45 });
+
+		bash.wake?.(
+			{
+				event: "background_start",
+				id: "bash_c1_1",
+				description: "soak",
+				startedAtMs: 5,
+				command: "./soak.sh",
+				autoReapMinutes: 45,
+			},
+			1,
+		);
+		expect(started).toEqual([["bash_c1_1", "soak", 5, "./soak.sh", 45]]);
+		bash.wake?.(
+			{
+				event: "background_exit",
+				id: "bash_c1_1",
+				exit: { exitCode: null, signal: "SIGTERM", cancelled: true, timedOut: false },
+				output: "",
+				autoReapedAfterMinutes: 45,
+			},
+			1,
+		);
+		expect(reaped).toEqual([45]);
+	});
 });

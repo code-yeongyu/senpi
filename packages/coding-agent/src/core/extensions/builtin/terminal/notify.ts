@@ -1,5 +1,6 @@
 import { annotateShellTrust } from "../../../../engine-trust/shell-trust.ts";
 import type { ExtensionContext } from "../../types.ts";
+import type { TerminalBackgroundAgeEvent } from "../monitor-state-event.ts";
 import { withTerminalContext } from "./context-lifetime.ts";
 import { sanitizeTerminalOutput } from "./output-format.ts";
 import type { NotifyMode } from "./settings.ts";
@@ -53,7 +54,37 @@ export function getTerminalNotificationDelivery(
 	};
 }
 
+function minutes(count: number): string {
+	return `${count} minute${count === 1 ? "" : "s"}`;
+}
+
+function killCall(id: string): string {
+	return `kill_bash({ bash_id: "${id}" })`;
+}
+
+/** One plain sentence (or two) for the TUI and the model: which session, how old, and how it stops. */
+export function describeBackgroundAge(event: TerminalBackgroundAgeEvent): string {
+	const label =
+		event.command === undefined || event.command === event.description
+			? event.description
+			: `${event.description}: ${event.command}`;
+	const session = `Background terminal session ${event.id} (${label})`;
+	if (event.kind === "reaped") {
+		return `${session} was stopped automatically after ${minutes(event.autoReapMinutes ?? event.ageMinutes)} (auto-reap).`;
+	}
+	const reap =
+		event.autoReapMinutes === null
+			? "Nothing stops it automatically"
+			: `Auto-reap stops it at ${minutes(event.autoReapMinutes)}`;
+	return `${session} has been running for ${minutes(event.ageMinutes)}. ${reap}; stop it now with ${killCall(event.id)} if it is no longer needed.`;
+}
+
 function buildNotice(id: string, runtime: TerminalExitView, trustText: string | undefined): string {
+	const reaped = runtime.autoReapedAfterMinutes;
+	const reapText =
+		reaped === undefined
+			? ""
+			: ` It was stopped automatically after ${minutes(reaped)} (auto-reap: the auto_reap_minutes parameter or the terminal.backgroundAutoReapMinutes setting).`;
 	const status = describeExit(runtime) ?? "exited";
 	const code = runtime.exitResult?.exitCode;
 	const codeText = code === null || code === undefined ? "" : ` (exit code ${code})`;
@@ -68,7 +99,7 @@ function buildNotice(id: string, runtime: TerminalExitView, trustText: string | 
 		tailSection = `\nFinal output:\n${shown}${note}`;
 	}
 	const trustSection = trustText === undefined ? "" : `\n${trustText}`;
-	return `<system-reminder>Background terminal session ${id} finished: ${status}${codeText}.${tailSection}${trustSection}</system-reminder>`;
+	return `<system-reminder>Background terminal session ${id} finished: ${status}${codeText}.${reapText}${tailSection}${trustSection}</system-reminder>`;
 }
 
 /**
@@ -91,11 +122,26 @@ export class TerminalNotifier {
 		if (this.retired || this.notified.has(id)) return;
 		withTerminalContext(
 			() => this.deliverCompletion(id, runtime),
-			() => {
-				this.retired = true;
-				this.notified.clear();
-			},
+			() => this.retire(),
 		);
+	}
+
+	/** A still-running session's age notice (senpi#6201), delivered like a completion notice. */
+	notifyAge(event: TerminalBackgroundAgeEvent): void {
+		if (this.retired || this.notified.has(event.id)) return;
+		withTerminalContext(
+			() =>
+				getTerminalNotificationDelivery(this.deps)?.send(
+					`<system-reminder>${describeBackgroundAge(event)}</system-reminder>`,
+					{ details: { backgroundAge: event } },
+				),
+			() => this.retire(),
+		);
+	}
+
+	private retire(): void {
+		this.retired = true;
+		this.notified.clear();
 	}
 
 	private deliverCompletion(id: string, runtime: TerminalExitView): void {
