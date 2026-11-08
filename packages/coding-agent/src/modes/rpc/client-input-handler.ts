@@ -1,6 +1,7 @@
 import { AgentBusyError } from "../../core/agent-busy-error.ts";
 import type { AgentSession, PromptDisposition, PromptOptions } from "../../core/agent-session.ts";
 import { clientMessageIdentity } from "../../core/client-message-identity.ts";
+import type { ConnectionOrigin } from "../../core/turn-origin.ts";
 import { type ModelNotReadyCode, ModelNotReadyError } from "../../core/model-not-ready-error.ts";
 import { SessionMovedAwayError } from "../../core/session-move/ownership.ts";
 import { TurnConflictError } from "../../core/turn-conflict.ts";
@@ -55,7 +56,7 @@ type InputOutput = {
 };
 
 /** The sending connection's declared role; a connection that never declared `interactive_user` is an agent's. */
-type InputClient = { readonly interactiveUser: boolean };
+type InputClient = { readonly interactiveUser: boolean; readonly connectionOrigin?: ConnectionOrigin };
 
 /** The same admission path serves classic stdio, shared sessions, and worker sessions. */
 export async function handleClientInput(
@@ -112,6 +113,7 @@ export async function handleClientInput(
 							...options,
 							source: "rpc",
 							interactiveUser: client.interactiveUser,
+							...(client.connectionOrigin === undefined ? {} : { connectionOrigin: client.connectionOrigin }),
 							...chain,
 							onQueuedInput: hooks.queued,
 							promptDisposition: (next) => {
@@ -178,6 +180,7 @@ export async function handleClientInput(
 							expectedTurnId: command.expectedTurnId,
 							source: "rpc" as const,
 							interactiveUser: client.interactiveUser,
+							...(client.connectionOrigin === undefined ? {} : { connectionOrigin: client.connectionOrigin }),
 							...chain,
 							onQueuedInput: hooks.queued,
 						};

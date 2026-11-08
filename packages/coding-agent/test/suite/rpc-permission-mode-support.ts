@@ -12,12 +12,14 @@ const FAUX = pathToFileURL(fileURLToPath(new URL("../../../ai/dist/providers/fau
 
 // Every model turn reads `probe.txt` once: under `ask` that read raises "Permission required: read", under
 // `full-access` it returns PROBE_TEXT.
-const EXTENSION = `import { fauxAssistantMessage, fauxProvider, fauxToolCall } from ${JSON.stringify(FAUX)};
+/** The probe extension source; `callIdPrefix` names its tool calls. */
+export function probeExtensionSource(callIdPrefix = "call-"): string {
+	return `import { fauxAssistantMessage, fauxProvider, fauxToolCall } from ${JSON.stringify(FAUX)};
 export default function (pi) {
 	const faux = fauxProvider({ api: "fauxsock", provider: "fauxsock" });
 	const turns = [];
 	for (let turn = 0; turn < ${TURNS}; turn++) {
-		turns.push(fauxAssistantMessage([fauxToolCall("read", { path: "probe.txt" }, { id: "call-" + turn })], { stopReason: "toolUse" }));
+		turns.push(fauxAssistantMessage([fauxToolCall("read", { path: "probe.txt" }, { id: ${JSON.stringify(callIdPrefix)} + turn })], { stopReason: "toolUse" }));
 		turns.push(fauxAssistantMessage("done"));
 	}
 	faux.setResponses(turns);
@@ -38,6 +40,8 @@ export default function (pi) {
 		},
 	});
 }`;
+}
+const EXTENSION = probeExtensionSource();
 
 export type HostRuntime = "in-process" | "worker";
 
