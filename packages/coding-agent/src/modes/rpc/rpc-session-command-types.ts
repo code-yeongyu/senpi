@@ -9,6 +9,7 @@ import type { ClientMessageIdentity } from "../../core/client-message-identity.t
 import type { SessionEntry } from "../../core/session-manager.ts";
 import type { ToolBarrierSpec } from "../../core/tool-barrier.ts";
 
+import type { RpcAdmitExternalMessageCommand } from "./admit-external-message-wire.ts";
 import type { RpcRecoveryCommand } from "./rpc-recovery-command-types.ts";
 import type { RpcRemoteOrigin } from "./remote-origin.ts";
 import type { RpcSessionModelEntry } from "./rpc-session-state-types.ts";
@@ -162,6 +163,7 @@ export type RpcSessionCommand =
 	 * a session whose extension registered no control endpoint answers `admitted: []`.
 	 */
 	| { id?: string; type: "wake"; delivery_ids?: string[] }
+	| RpcAdmitExternalMessageCommand
 
 	// State
 	| { id?: string; type: "get_state" }

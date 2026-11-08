@@ -108,6 +108,7 @@ const NEW_WORK_COMMANDS: ReadonlySet<string> = new Set([
 	"bash",
 	"compact",
 	"wake",
+	"admit_external_message",
 	"edit_assistant_message",
 	"edit_user_message",
 ]);

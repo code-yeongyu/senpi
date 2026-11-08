@@ -5,6 +5,7 @@ import {
 } from "../../cli/tool-runtime.ts";
 import { messagePathProjectRoot, resolveMessagePath } from "../../core/message-path-resolution.ts";
 import { startOpenTimer } from "../../core/open-timing.ts";
+import { admitExternalMessage } from "./admit-external-message-command.ts";
 import { apiKeyLoginCredential } from "./api-key-login-credential.ts";
 import { clientFacingIdentity } from "./client-admission-record.ts";
 import type { ExtensionRpcRequestContext } from "../../core/extensions/rpc-context.ts";
@@ -1616,6 +1617,26 @@ export function createRpcConnectionHandler(
 					: undefined;
 				const result = (await sessionControl?.wake(deliveryIds)) ?? {};
 				return success(id, "wake", { admitted: result.admitted ?? [] });
+			}
+
+			case "admit_external_message": {
+				const peer = {
+					origin: connectionRoles.originOf(currentConnectionId()),
+					connectionOrigin: connectionOrigin(),
+				};
+				const answer = admitExternalMessage(session, command, peer);
+				if (!answer.ok) {
+					const { refusal } = answer;
+					return error(
+						id,
+						command.type,
+						refusal.message,
+						refusal.errorCode,
+						"errorData" in refusal ? refusal.errorData : undefined,
+					);
+				}
+				turnRequested = true;
+				return success(id, command.type, answer.data);
 			}
 
 			case "new_session": {

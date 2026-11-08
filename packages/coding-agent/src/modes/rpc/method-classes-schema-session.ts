@@ -23,6 +23,7 @@ import {
 	session,
 	ThinkingLevel,
 } from "./method-classes-schema-fields.ts";
+import { DELIVERY_RECORD_SCHEMAS } from "./method-classes-schema-delivery.ts";
 
 /** A thread call's hop count: 1 for the first call of a chain, one more per hop. */
 const ChainCount = Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER });
@@ -253,6 +254,7 @@ const SURFACE_AND_ACCOUNT_SCHEMAS = {
 
 export const SESSION_RECORD_SCHEMAS = {
 	...PROMPTING_SCHEMAS,
+	...DELIVERY_RECORD_SCHEMAS,
 	...STATE_AND_MODEL_SCHEMAS,
 	...BASH_AND_TREE_SCHEMAS,
 	...SURFACE_AND_ACCOUNT_SCHEMAS,

@@ -34,6 +34,17 @@ export function markInputTurnOrigin(message: object, mark: InputTurnMark): void 
 	inputMarks.set(message, mark);
 }
 
+/** Carries `from`'s origin mark onto `to`, a copy of the same input: a copy without it would open or join a turn unmarked. */
+export function copyInputTurnMark(from: object, to: object): void {
+	const mark = inputMarks.get(from);
+	if (mark !== undefined) inputMarks.set(to, mark);
+}
+
+/** Whether a message carries an origin mark: a user message always opens a turn's origin, any other only when marked. */
+export function hasInputTurnMark(message: object): boolean {
+	return inputMarks.has(message);
+}
+
 /** A run starts as engine work; the user message that opens a turn sets its origin, a steer keeps it. */
 export function noteRunStart(sessionManager: object): void {
 	currentOrigins.set(sessionManager, "engine");

@@ -171,6 +171,8 @@ export interface AgentOptions {
 	batchStoreFactory?: AgentLoopConfig["batchStoreFactory"];
 	afterToolFreeze?: AgentLoopConfig["afterToolFreeze"];
 	executionScope?: AgentLoopConfig["executionScope"];
+	/** Makes each finished model step durable before the loop acts on it (hosted custody, C6 C.P3); unset on fused and split-local. */
+	commitStep?: AgentLoopConfig["commitStep"];
 	onExecutionPipeline?: AgentLoopConfig["onExecutionPipeline"];
 	removedToolHints?: Record<string, string>;
 	resolveUnknownToolCall?: AgentLoopConfig["resolveUnknownToolCall"];
@@ -350,6 +352,7 @@ export class Agent {
 	public batchStoreFactory?: AgentLoopConfig["batchStoreFactory"];
 	public afterToolFreeze?: AgentLoopConfig["afterToolFreeze"];
 	public executionScope: NonNullable<AgentLoopConfig["executionScope"]>;
+	private readonly commitStep?: AgentLoopConfig["commitStep"];
 	public getExecutionScope?: () => NonNullable<AgentLoopConfig["executionScope"]>;
 	public onExecutionPipeline?: AgentLoopConfig["onExecutionPipeline"];
 	/** Migration guidance returned when a removed tool name is called. */
@@ -402,6 +405,7 @@ export class Agent {
 		this.batchStoreFactory = runtimeOptions.batchStoreFactory;
 		this.afterToolFreeze = runtimeOptions.afterToolFreeze;
 		this.executionScope = runtimeOptions.executionScope ?? { id: crypto.randomUUID(), root: "" };
+		this.commitStep = runtimeOptions.commitStep;
 		this.onExecutionPipeline = runtimeOptions.onExecutionPipeline;
 		this.removedToolHints = runtimeOptions.removedToolHints ?? {};
 		this.resolveUnknownToolCall = runtimeOptions.resolveUnknownToolCall;
@@ -807,6 +811,7 @@ export class Agent {
 			batchStoreFactory: this.batchStoreFactory,
 			afterToolFreeze: this.afterToolFreeze,
 			executionScope: this.getExecutionScope?.() ?? this.executionScope,
+			...(this.commitStep ? { commitStep: this.commitStep } : {}),
 			onExecutionPipeline: this.onExecutionPipeline,
 			removedToolHints: this.removedToolHints,
 			resolveUnknownToolCall: this.resolveUnknownToolCall,

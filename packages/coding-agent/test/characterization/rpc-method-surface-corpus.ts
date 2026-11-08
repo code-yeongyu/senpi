@@ -77,6 +77,8 @@ export const TODAY: { readonly [M in RpcCommand["type"]]: string } = {
 	abort_branch_summary: "ok",
 	new_session: "ok{cancelled}",
 	wake: "ok{admitted}",
+	admit_external_message:
+		'{"deliveryId":"$NO","text":"X14 delivery.","deliverAs":"followUp","whenIdle":"queue"} => ok{kind,turnId}',
 	get_state:
 		"ok{answeredUiRequests,autoCompactionEnabled,contextUsage,cwd,effectivePermissionPreset,entries,fastMode,favoriteModels,followUp,followUpMode,holds,isBashRunning,isCompacting,isStreaming,lifecycle,messageCount,model,ordered,pause,paused,pausedHeldInputCount,pausedNoticeCount,pendingDialogs,pendingMessageCount,pendingModelSwitch,pendingQuestions,permissionPreset,permissionPresetSource,permissionPresetStatus,projectTrusted,retryAttempt,runPaused,scopedModels,sessionFile,sessionId,sessionModelThinkingLevels,steering,steeringMode,thinkingLevel,thinkingLevelSource,usageTotals}",
 	get_snapshot: '{"tail":0} => ok{entries,history_truncated,markerId,next_before,state}',

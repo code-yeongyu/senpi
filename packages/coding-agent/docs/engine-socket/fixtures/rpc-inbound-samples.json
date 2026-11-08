@@ -1,9 +1,9 @@
 {
 	"methodClassesVersion": 1,
-	"methodClassesDigest": "67e7dac5622360f9e5fc471764f5a69c43c3abcc22bed55859761cbb53ede37c",
+	"methodClassesDigest": "7ea18de0fb5d28f89aabdc17cbaca72e973cdea7d5928fd82d91ccced025000e",
 	"sampleId": "00000000-0000-7000-8000-000000000000",
 	"samplePathRoot": "/nonexistent/senpi-rpc-inbound-sample",
-	"methodCount": 123,
+	"methodCount": 124,
 	"methods": [
 		{
 			"method": "abort",
@@ -92,6 +92,23 @@
 				"type": "account_reset",
 				"provider": "rpc-sample-provider",
 				"name": "rpc-sample-account"
+			}
+		},
+		{
+			"method": "admit_external_message",
+			"class": "drive",
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "admit_external_message",
+				"deliveryId": "00000000-0000-7000-8000-000000000000",
+				"text": "Sample delivery.",
+				"sender": {
+					"kind": "agent",
+					"session_id": "00000000-0000-7000-8000-000000000000"
+				},
+				"deliverAs": "followUp",
+				"whenIdle": "queue"
 			}
 		},
 		{

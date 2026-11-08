@@ -1,3 +1,4 @@
+import type { RpcAdmitExternalMessageResponse } from "./admit-external-message-wire.ts";
 import type { RpcAttachmentResponse } from "./attachment-types.ts";
 import type { UnknownAdmissionResponse } from "./compact-admission-error.ts";
 
@@ -18,4 +19,5 @@ export type RpcResponse =
 	| RpcHostCommandResponse
 	| RpcReadResponse
 	| RpcMutationResponse
+	| RpcAdmitExternalMessageResponse
 	| RpcPauseResponse;

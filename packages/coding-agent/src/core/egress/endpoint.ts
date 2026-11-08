@@ -34,7 +34,7 @@ export type EndpointSplit =
 	  };
 
 /** Query parameter names whose value is sealed whatever it looks like (compared case-insensitively). */
-const KEYISH_QUERY_NAMES: readonly string[] = [
+const KEYISH_QUERY_NAMES = [
 	"key",
 	"api_key",
 	"api-key",
@@ -53,9 +53,9 @@ const KEYISH_QUERY_NAMES: readonly string[] = [
 	"access-token",
 	"subscription-key",
 	"x-api-key",
-];
+] as const satisfies readonly string[];
 
-const SECRET: SecretUrlPart = { secret: true };
+const SECRET = { secret: true } as const satisfies SecretUrlPart;
 const URL_SHAPE = /^([a-z][a-z0-9+.-]*):\/\/([^/?#]*)(\/[^?#]*)?(?:\?([^#]*))?(#.*)?$/i;
 const HOST_PORT = /^([^@/?#:[\]]+|\[[^\]]+\])(?::(\d+))?$/;
 
@@ -64,7 +64,8 @@ function isTemplatedUrlPart(raw: string): boolean {
 }
 
 function isKeyishQueryName(name: string): boolean {
-	return KEYISH_QUERY_NAMES.includes(name.toLowerCase());
+	const lower = name.toLowerCase();
+	return KEYISH_QUERY_NAMES.some((keyish) => keyish === lower);
 }
 
 export function splitEndpoint(baseUrl: string, secretUrlParts: readonly MarkableUrlPart[] = []): EndpointSplit {
