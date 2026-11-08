@@ -19,7 +19,23 @@ interface Pattern {
 interface AutomatonNode {
 	readonly next: Map<string, number>;
 	fail: number;
-	readonly outputs: number[];
+	pattern: number | undefined;
+	dictionary: number;
+}
+
+const NO_NODE = -1;
+
+function newNode(): AutomatonNode {
+	return { next: new Map(), fail: 0, pattern: undefined, dictionary: NO_NODE };
+}
+
+function dedupe(patterns: readonly Pattern[]): Pattern[] {
+	const byText = new Map<string, Pattern>();
+	for (const pattern of patterns) {
+		const seen = byText.get(pattern.text);
+		if (seen === undefined || (seen.wholeToken && !pattern.wholeToken)) byText.set(pattern.text, pattern);
+	}
+	return [...byText.values()];
 }
 
 function isTokenChar(char: string | undefined): boolean {
@@ -63,19 +79,19 @@ function patternsFor(secret: string, publicPrefixes: readonly string[]): Pattern
 }
 
 function buildAutomaton(patterns: readonly Pattern[]): AutomatonNode[] {
-	const nodes: AutomatonNode[] = [{ next: new Map(), fail: 0, outputs: [] }];
+	const nodes: AutomatonNode[] = [newNode()];
 	patterns.forEach((pattern, index) => {
 		let state = 0;
 		for (const char of pattern.text) {
 			let target = nodes[state].next.get(char);
 			if (target === undefined) {
 				target = nodes.length;
-				nodes.push({ next: new Map(), fail: 0, outputs: [] });
+				nodes.push(newNode());
 				nodes[state].next.set(char, target);
 			}
 			state = target;
 		}
-		nodes[state].outputs.push(index);
+		nodes[state].pattern = index;
 	});
 	const queue: number[] = [...nodes[0].next.values()];
 	for (let head = 0; head < queue.length; head++) {
@@ -85,7 +101,8 @@ function buildAutomaton(patterns: readonly Pattern[]): AutomatonNode[] {
 			while (fallback !== 0 && !nodes[fallback].next.has(char)) fallback = nodes[fallback].fail;
 			const candidate = nodes[fallback].next.get(char);
 			nodes[target].fail = candidate !== undefined && candidate !== target ? candidate : 0;
-			nodes[target].outputs.push(...nodes[nodes[target].fail].outputs);
+			const fail = nodes[nodes[target].fail];
+			nodes[target].dictionary = fail.pattern !== undefined ? nodes[target].fail : fail.dictionary;
 			queue.push(target);
 		}
 	}
@@ -93,11 +110,14 @@ function buildAutomaton(patterns: readonly Pattern[]): AutomatonNode[] {
 }
 
 export function createRedactor(options: RedactorOptions): Redactor {
-	const patterns = options.secrets
-		.filter((secret) => secret.length > 0)
-		.flatMap((secret) => patternsFor(secret, options.publicPrefixes));
+	const patterns = dedupe(
+		options.secrets
+			.filter((secret) => secret.length > 0)
+			.flatMap((secret) => patternsFor(secret, options.publicPrefixes)),
+	);
 	if (patterns.length === 0) return { redact: (text) => text };
 	const nodes = buildAutomaton(patterns);
+	const lengths = patterns.map((pattern) => [...pattern.text].length);
 
 	return {
 		redact(text: string): string {
@@ -108,10 +128,15 @@ export function createRedactor(options: RedactorOptions): Redactor {
 				const char = chars[end];
 				while (state !== 0 && !nodes[state].next.has(char)) state = nodes[state].fail;
 				state = nodes[state].next.get(char) ?? 0;
-				for (const index of nodes[state].outputs) {
-					const pattern = patterns[index];
-					const start = end - [...pattern.text].length + 1;
-					if (pattern.wholeToken && (isTokenChar(chars[start - 1]) || isTokenChar(chars[end + 1]))) continue;
+				for (
+					let match = nodes[state].pattern !== undefined ? state : nodes[state].dictionary;
+					match !== NO_NODE;
+					match = nodes[match].dictionary
+				) {
+					const index = nodes[match].pattern as number;
+					const start = end - lengths[index] + 1;
+					if (patterns[index].wholeToken && (isTokenChar(chars[start - 1]) || isTokenChar(chars[end + 1])))
+						continue;
 					spans.push([start, end + 1]);
 				}
 			}
