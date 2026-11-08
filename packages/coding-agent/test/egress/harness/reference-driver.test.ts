@@ -435,6 +435,25 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 		expect(driver.stops).toEqual([{ stepId: "step-1", while: "latched" }]);
 	});
 
+	it("stop pressed while the rebuild builds its harness still cancels the latched step (W14, review LOW)", async () => {
+		driver = await createReferenceDriver();
+		driver.setResponses([fauxAssistantMessage([fauxText("lost")]), fauxAssistantMessage([fauxText("never")])]);
+		driver.inject.nextCommit("reject");
+		const build = driver.inject.holdNextHarnessBuild();
+
+		const prompt = driver.prompt("go");
+		await build.reached;
+		expect(driver.stop()).toBe("cancelled-latched-step");
+		build.release();
+		await prompt;
+
+		expect(driver.counters.providerCalls).toBe(1);
+		const steps = projectHistoryRows(driver.rows).filter((message) => message.role === "assistant");
+		expect(steps.map((message) => (message.role === "assistant" ? message.stopReason : undefined))).toEqual([
+			"aborted",
+		]);
+	});
+
 	it("records durable input rows in the order the model consumed them (S7 row order = call order)", async () => {
 		driver = await createReferenceDriver();
 		driver.setResponses([fauxAssistantMessage([fauxText("first")]), fauxAssistantMessage([fauxText("second")])]);
@@ -566,6 +585,318 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 		await expect(driver.whenRebuilt()).resolves.toBeUndefined();
 		expect(driver.rebuildFailures).toHaveLength(1);
 		expect(driver.rebuilds).toBe(0);
+	});
+
+	it("records every tool dispatch in the ledger, once per call (S8a)", async () => {
+		let runs = 0;
+		const echo: AgentTool = {
+			name: "echo",
+			label: "Echo",
+			description: "Echoes.",
+			parameters: Type.Object({}),
+			execute: async () => {
+				runs += 1;
+				return { content: [{ type: "text", text: "echoed" }], details: {} };
+			},
+		};
+		driver = await createReferenceDriver({ tools: [echo] });
+		driver.setResponses([
+			fauxAssistantMessage([fauxToolCall("echo", {})], { stopReason: "toolUse" }),
+			fauxAssistantMessage([fauxText("done")]),
+		]);
+
+		await driver.prompt("go");
+		await driver.settle();
+
+		expect(runs).toBe(1);
+		expect(driver.toolLedger.map((entry) => entry.toolName)).toEqual(["echo"]);
+	});
+
+	it("never dispatches a tool from an uncommitted step; the redial runs it exactly once (S8a, 2.3)", async () => {
+		let runs = 0;
+		const echo: AgentTool = {
+			name: "echo",
+			label: "Echo",
+			description: "Echoes.",
+			parameters: Type.Object({}),
+			execute: async () => {
+				runs += 1;
+				return { content: [{ type: "text", text: "echoed" }], details: {} };
+			},
+		};
+		driver = await createReferenceDriver({ tools: [echo] });
+		driver.setResponses([
+			fauxAssistantMessage([fauxToolCall("echo", {})], { stopReason: "toolUse" }),
+			fauxAssistantMessage([fauxToolCall("echo", {})], { stopReason: "toolUse" }),
+			fauxAssistantMessage([fauxText("done")]),
+		]);
+		driver.inject.nextCommit("reject");
+
+		await driver.prompt("go");
+		await driver.settle();
+
+		expect(driver.rebuilds).toBe(1);
+		expect(runs).toBe(1);
+		// Dispatched only on the rebuilt instance, after the latch bumped the generation.
+		expect(driver.toolLedger.map((entry) => entry.generation)).toEqual([driver.generation]);
+		// The rejected step was never committed: no durable step row carries its id.
+		const rejected = driver.latchHistory[0]?.stepId;
+		expect(rejected).toBeDefined();
+		expect(driver.rows.filter((row) => row.kind === "step" && row.stepId === rejected)).toEqual([]);
+	});
+
+	it("pauses a tool call at dispatch and kills it through its signal (S13)", async () => {
+		let sawAbort = false;
+		const slow: AgentTool = {
+			name: "slow",
+			label: "Slow",
+			description: "Waits for its signal.",
+			parameters: Type.Object({}),
+			execute: async (_id, _params, signal) => {
+				sawAbort = signal?.aborted ?? false;
+				return { content: [{ type: "text", text: sawAbort ? "aborted" : "ran" }], details: {} };
+			},
+		};
+		driver = await createReferenceDriver({ tools: [slow] });
+		driver.setResponses([
+			fauxAssistantMessage([fauxToolCall("slow", {})], { stopReason: "toolUse" }),
+			fauxAssistantMessage([fauxText("done")]),
+		]);
+		const held = driver.inject.pauseNextTool();
+
+		const run = driver.prompt("go");
+		await held.reached;
+		held.kill();
+		await run;
+		await driver.settle();
+
+		expect(sawAbort).toBe(true);
+		expect(driver.toolLedger.map((entry) => entry.outcome)).toEqual(["killed"]);
+	});
+
+	it("stops an active step: the run is aborted and the stop is recorded (W14, active)", async () => {
+		const held: AgentTool = {
+			name: "held",
+			label: "Held",
+			description: "Runs while held.",
+			parameters: Type.Object({}),
+			execute: async () => ({ content: [{ type: "text", text: "ran" }], details: {} }),
+		};
+		driver = await createReferenceDriver({ tools: [held] });
+		driver.setResponses([
+			fauxAssistantMessage([fauxToolCall("held", {})], { stopReason: "toolUse" }),
+			fauxAssistantMessage([fauxText("never reached")]),
+		]);
+		const hold = driver.inject.pauseNextTool();
+
+		const run = driver.prompt("go");
+		await hold.reached;
+		expect(driver.stop()).toBe("cancelled-active-step");
+		await run;
+		await driver.settle();
+
+		expect(driver.stops.map((entry) => entry.while)).toEqual(["active"]);
+		expect(driver.toolLedger.map((entry) => entry.outcome)).toEqual(["killed"]);
+		expect(driver.counters.providerCalls).toBe(1);
+	});
+
+	it("records a removal the session made in memory as a tombstone at the next admission (W11)", async () => {
+		driver = await createReferenceDriver();
+		driver.setResponses([fauxAssistantMessage([fauxText("one")]), fauxAssistantMessage([fauxText("two")])]);
+		const text = (message: AgentMessage): string =>
+			message.role === "user" || message.role === "assistant"
+				? typeof message.content === "string"
+					? message.content
+					: message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("")
+				: "";
+
+		await driver.prompt("first");
+		await driver.settle();
+		// The session drops the first exchange by plain reassignment, as compaction and edits do (no event).
+		const agent = driver.session.agent;
+		agent.state.messages = agent.state.messages.slice(2);
+		await driver.prompt("second");
+		await driver.settle();
+
+		expect(projectHistoryRows(driver.rows).map(text)).toEqual(agent.state.messages.map(text));
+		expect(driver.rows.some((row) => row.kind === "tombstone")).toBe(true);
+	});
+
+	it("evicted after the step committed, before its tool ran: resume runs the tool exactly once, no redial (S8a)", async () => {
+		let runs = 0;
+		const echo: AgentTool = {
+			name: "echo",
+			label: "Echo",
+			description: "Echoes.",
+			parameters: Type.Object({}),
+			execute: async (_id, _params, signal) => {
+				if (!signal?.aborted) runs += 1;
+				return { content: [{ type: "text", text: "echoed" }], details: {} };
+			},
+		};
+		driver = await createReferenceDriver({ tools: [echo] });
+		driver.setResponses([
+			fauxAssistantMessage([fauxToolCall("echo", {})], { stopReason: "toolUse" }),
+			fauxAssistantMessage([fauxText("after")]),
+		]);
+		const hold = driver.inject.pauseNextTool();
+
+		const run = driver.prompt("go").catch(() => undefined);
+		await hold.reached;
+		await driver.evict();
+		await run;
+		await driver.resume();
+		await driver.settle();
+
+		expect(runs).toBe(1);
+		expect(driver.counters.providerCalls).toBe(2);
+		expect(driver.toolLedger.map((entry) => entry.outcome)).toEqual(["killed", "ran"]);
+	});
+
+	it("killed between a rejection and its rebuild: exactly one replay after resume (S8b)", async () => {
+		driver = await createReferenceDriver();
+		driver.setResponses([fauxAssistantMessage([fauxText("lost")]), fauxAssistantMessage([fauxText("replayed")])]);
+		driver.inject.nextCommit("reject");
+		const build = driver.inject.holdNextHarnessBuild();
+
+		const prompt = driver.prompt("go").catch(() => undefined);
+		await build.reached;
+		await driver.evict();
+		build.release();
+		await prompt;
+		await driver.resume();
+		await driver.settle();
+
+		expect(driver.counters.providerCalls).toBe(2);
+		expect(assistantTexts(projectHistoryRows(driver.rows))).toEqual(["replayed"]);
+	});
+
+	it("eviction with queued steering and no latch: the steering is delivered exactly once after resume (S7 variant)", async () => {
+		const echo: AgentTool = {
+			name: "echo",
+			label: "Echo",
+			description: "Echoes.",
+			parameters: Type.Object({}),
+			execute: async () => ({ content: [{ type: "text", text: "echoed" }], details: {} }),
+		};
+		driver = await createReferenceDriver({ tools: [echo] });
+		driver.setResponses([
+			fauxAssistantMessage([fauxToolCall("echo", {})], { stopReason: "toolUse" }),
+			fauxAssistantMessage([fauxText("after")]),
+			fauxAssistantMessage([fauxText("spare")]),
+		]);
+		const hold = driver.inject.pauseNextTool();
+
+		const run = driver.prompt("go").catch(() => undefined);
+		await hold.reached;
+		await driver.enqueue({ id: "steer-1", kind: "steering", text: "turn left" });
+		await driver.evict();
+		await run;
+		await driver.resume();
+		await driver.settle();
+
+		const seen = (driver.callLog().at(-1)?.context.messages ?? []).filter((message) =>
+			JSON.stringify(message).includes("turn left"),
+		);
+		expect(seen).toHaveLength(1);
+	});
+
+	for (const historyStore of ["memory", "sqlite"] as const) {
+		for (const fault of ["reject", "already-committed", "ambiguous-landed", "ambiguous-lost"] as const) {
+			it(`commit fault ${fault} on the ${historyStore} store leaves exactly one durable step row (2.7 (4) store matrix)`, async () => {
+				driver = await createReferenceDriver({ historyStore });
+				driver.setResponses([
+					fauxAssistantMessage([fauxText("first")]),
+					fauxAssistantMessage([fauxText("second")]),
+				]);
+				if (fault === "already-committed")
+					driver.inject.nextCommit(fault, fauxAssistantMessage([fauxText("theirs")]));
+				// Narrows `fault` so TypeScript picks the matching `nextCommit` overload (TS2769); not a duplicate branch.
+				else if (fault === "reject") driver.inject.nextCommit(fault);
+				else driver.inject.nextCommit(fault);
+
+				await driver.prompt("go");
+				await driver.settle();
+
+				const assistants = projectHistoryRows(driver.rows).filter((message) => message.role === "assistant");
+				expect(assistants).toHaveLength(1);
+				expect(driver.historyStoreKind).toBe(historyStore);
+				expect(driver.storedRowCount()).toBe(driver.rows.length);
+				const inputs = driver.rows.filter((row) => row.kind === "input").map((row) => JSON.stringify(row.message));
+				expect(inputs).toEqual([...new Set(inputs)]);
+			});
+		}
+	}
+
+	for (const historyStore of ["memory", "sqlite"] as const) {
+		it(`a W11 removal then a rejected commit still replays the input once, ${historyStore} store (review MEDIUM 1+2)`, async () => {
+			driver = await createReferenceDriver({ historyStore });
+			driver.setResponses([
+				fauxAssistantMessage([fauxText("one")]),
+				fauxAssistantMessage([fauxText("lost")]),
+				fauxAssistantMessage([fauxText("answer")]),
+			]);
+			const text = (message: AgentMessage): string =>
+				message.role === "user" || message.role === "assistant"
+					? typeof message.content === "string"
+						? message.content
+						: message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("")
+					: "";
+
+			await driver.prompt("first");
+			await driver.settle();
+			const agent = driver.session.agent;
+			agent.state.messages = agent.state.messages.slice(2);
+			driver.inject.nextCommit("reject");
+			await driver.prompt("second");
+			await driver.settle();
+
+			expect(projectHistoryRows(driver.rows).map(text)).toEqual(["second", "answer"]);
+			const inputs = driver.rows.flatMap((row) => (row.kind === "input" ? [text(row.message)] : []));
+			expect(inputs).toEqual([...new Set(inputs)]);
+		});
+	}
+
+	it("a sqlite rebuild restores rows the in-memory view lost: the store is the truth (review LOW)", async () => {
+		driver = await createReferenceDriver({ historyStore: "sqlite" });
+		driver.setResponses([
+			fauxAssistantMessage([fauxText("one")]),
+			fauxAssistantMessage([fauxText("lost")]),
+			fauxAssistantMessage([fauxText("two")]),
+		]);
+
+		await driver.prompt("first");
+		await driver.settle();
+		(driver.rows as unknown as unknown[]).length = 0;
+		driver.inject.nextCommit("reject");
+		await driver.prompt("second");
+		await driver.settle();
+
+		expect(assistantTexts(projectHistoryRows(driver.rows))).toEqual(["one", "two"]);
+	});
+
+	it("a released hold leaves nothing for stop() to cancel after the run (review LOW)", async () => {
+		const echo: AgentTool = {
+			name: "echo",
+			label: "Echo",
+			description: "Echoes.",
+			parameters: Type.Object({}),
+			execute: async () => ({ content: [{ type: "text", text: "echoed" }], details: {} }),
+		};
+		driver = await createReferenceDriver({ tools: [echo] });
+		driver.setResponses([
+			fauxAssistantMessage([fauxToolCall("echo", {})], { stopReason: "toolUse" }),
+			fauxAssistantMessage([fauxText("done")]),
+		]);
+		const hold = driver.inject.pauseNextTool();
+
+		const run = driver.prompt("go");
+		await hold.reached;
+		hold.release();
+		await run;
+		await driver.settle();
+
+		expect(driver.stop()).toBe("nothing-latched");
 	});
 
 	it("never forwards an event the discarded instance emits after the latch", async () => {
