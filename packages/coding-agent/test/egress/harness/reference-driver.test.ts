@@ -481,6 +481,52 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 		expect(driver.counters.admissions).toBe(2);
 	});
 
+	it("rebuilds from the latch signal even when the old prompt never returns (S11, C.P4 cond 6)", async () => {
+		// An extension handler on the uncommitted step's message_end that never settles wedges the old session's
+		// event queue, so its prompt() can never return; the agent loop itself does not wait on it.
+		let wedgeArmed = true;
+		driver = await createReferenceDriver({
+			extensionFactories: [
+				(pi) => {
+					pi.on("message_end", (event) => {
+						if (event.message.role !== "assistant" || !wedgeArmed) return;
+						wedgeArmed = false;
+						return new Promise<undefined>(() => {});
+					});
+				},
+			],
+		});
+		driver.setResponses([fauxAssistantMessage([fauxText("lost")]), fauxAssistantMessage([fauxText("redialed")])]);
+		driver.inject.nextCommit("reject");
+		const oldSession = driver.session;
+
+		let oldPromptReturned = false;
+		void oldSession.prompt("go").finally(() => {
+			oldPromptReturned = true;
+		});
+		await driver.whenRebuilt();
+		await driver.settle();
+
+		expect(oldPromptReturned).toBe(false);
+		expect(driver.rebuilds).toBe(1);
+		expect(driver.session).not.toBe(oldSession);
+		expect(driver.latched).toBe(false);
+		expect(assistantTexts(projectHistoryRows(driver.rows))).toEqual(["redialed"]);
+	});
+
+	it("schedules exactly one rebuild per latch, however many paths notice it (cond 11 dedupe)", async () => {
+		driver = await createReferenceDriver();
+		driver.setResponses([fauxAssistantMessage([fauxText("lost")]), fauxAssistantMessage([fauxText("redialed")])]);
+		driver.inject.nextCommit("reject");
+
+		await driver.prompt("go");
+		await driver.whenRebuilt();
+		await driver.settle();
+
+		expect(driver.rebuilds).toBe(1);
+		expect(driver.counters.providerCalls).toBe(2);
+	});
+
 	it("never forwards an event the discarded instance emits after the latch", async () => {
 		driver = await createReferenceDriver();
 		driver.setResponses([fauxAssistantMessage([fauxText("lost")])]);

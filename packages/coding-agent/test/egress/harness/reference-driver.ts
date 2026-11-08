@@ -131,6 +131,7 @@ export interface ReferenceDriver {
 		releaseAux(): void;
 	};
 	rebuildStoreReadStarted(index?: number): Promise<void>;
+	whenRebuilt(): Promise<void>;
 	deliverLateLanding(): "refused" | "landed" | "none";
 	epochWaitReached(): Promise<void>;
 	confirmEpoch(): void;
@@ -230,6 +231,30 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 	let admissions = 0;
 	let refusals = 0;
 	let rebuilds = 0;
+	let pendingRebuild: Promise<void> = Promise.resolve();
+	const rebuildKeys = new Set<string>();
+	const listenerErrors: unknown[] = [];
+	let rebuildWaiters: Array<() => void> = [];
+	let rebuildsScheduled = 0;
+	// One rebuild per (stepId, generationAfter) however many paths notice the latch (cond 11); a scheduling failure is
+	// recorded, never thrown into the commit.
+	function signalRebuild(stepId: string, generationAfter: number): void {
+		const key = `${stepId}@${generationAfter}`;
+		if (rebuildKeys.has(key)) return;
+		rebuildKeys.add(key);
+		try {
+			rebuildsScheduled += 1;
+			pendingRebuild = pendingRebuild
+				.then(() => loopRun.exit(() => rebuild()))
+				.finally(() => {
+					const waiters = rebuildWaiters;
+					rebuildWaiters = [];
+					for (const wake of waiters) wake();
+				});
+		} catch (error) {
+			listenerErrors.push(error);
+		}
+	}
 	let adapterAppendAttempts = 0;
 
 	const first = await createHarness(options);
@@ -255,6 +280,9 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 			latchedAt = clock.now();
 			latchHistory.push({ stepId, code, generationAfter: generation, forwardedBefore: forwarded.length });
 			latchedStep = committingStep?.stepId === stepId ? committingStep : undefined;
+			// The latch is the only rebuild trigger (C.P4 cond 6): signalled here, before the commit rejects, so a wedged
+			// old instance whose prompt never returns still gets rebuilt.
+			signalRebuild(stepId, generation);
 			const error = new StepCommitError(stepId, code);
 			driverErrors.add(error);
 			throw error;
@@ -627,15 +655,21 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 		setResponses: first.setResponses,
 		appendResponses: first.appendResponses,
 		async prompt(text: string) {
-			const latchesBefore = latchHistory.length;
 			try {
 				await current.session.prompt(text);
 			} catch (error) {
 				if (!isStepCommitError(error)) throw error;
 			}
-			// Under decision C the old instance synthesizes its failure and `prompt` may resolve, so the rebuild keys on
-			// the latch, not on the rejection.
-			if (latchHistory.length > latchesBefore) await rebuild();
+			// A catch here is only an idempotent notification: the latch already scheduled any rebuild.
+			await pendingRebuild;
+		},
+		// Resolves when the next rebuild completes (or the pending one, when a rebuild is already scheduled).
+		whenRebuilt() {
+			if (rebuildsScheduled > rebuilds) return pendingRebuild;
+			if (rebuilds > 0 && rebuilds >= latchHistory.length) return Promise.resolve();
+			return new Promise<void>((resolve) => {
+				rebuildWaiters.push(resolve);
+			});
 		},
 		async followUp(text: string) {
 			followUps += 1;
