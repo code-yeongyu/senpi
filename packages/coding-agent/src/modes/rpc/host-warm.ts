@@ -83,6 +83,12 @@ export class HostWarmer {
 		return "warmed";
 	}
 
+	/** Settles once every load in flight now has settled; `undefined` when none is. */
+	inFlight(): Promise<void> | undefined {
+		if (this.loading.size === 0) return undefined;
+		return Promise.allSettled(this.loading.values()).then(() => undefined);
+	}
+
 	private async loadOnce(key: string, profile: HostWarmProfile): Promise<void> {
 		try {
 			await this.load(profile);
@@ -105,7 +111,7 @@ export class HostWarmer {
 export function createRegistryWarm(
 	prepare: NonNullable<PreparableRuntimeFactory["prepare"]>,
 	host: { agentDir: string; mcpRegistry?: HostMcpRegistry },
-): HostWarm {
+): { readonly warm: HostWarm; readonly inFlight: () => Promise<void> | undefined } {
 	const warmer = new HostWarmer(async (profile) => {
 		await access(profile.cwd);
 		const launchProfile: AgentSessionLaunchProfile = {
@@ -129,7 +135,7 @@ export function createRegistryWarm(
 			scope.close();
 		}
 	});
-	return (profile) => warmer.run(profile);
+	return { warm: (profile) => warmer.run(profile), inFlight: () => warmer.inFlight() };
 }
 
 type WarmCommand = Extract<RpcCommand, { type: "warm" }>;

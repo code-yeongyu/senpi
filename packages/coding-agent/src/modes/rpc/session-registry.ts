@@ -45,6 +45,7 @@ export class RpcSessionRegistry {
 	readonly closeGraceMs: number;
 	/** Present only when the runtime factory can build a session's services alone (`host-warm.ts`). */
 	readonly warm?: HostWarm;
+	private readonly warmsInFlight?: () => Promise<void> | undefined;
 
 	/** The agent directory this host keeps its sessions (and session-move folders) under. */
 	get agentDir(): string {
@@ -52,11 +53,14 @@ export class RpcSessionRegistry {
 	}
 
 	constructor(options: RpcSessionRegistryOptions) {
-		if (options.createRuntime.prepare)
-			this.warm = createRegistryWarm(options.createRuntime.prepare, {
+		if (options.createRuntime.prepare) {
+			const warming = createRegistryWarm(options.createRuntime.prepare, {
 				agentDir: options.agentDir,
 				...(options.mcpRegistry !== undefined ? { mcpRegistry: options.mcpRegistry } : {}),
 			});
+			this.warm = warming.warm;
+			this.warmsInFlight = warming.inFlight;
+		}
 		this.options =
 			options.mcpRegistry === undefined
 				? options
@@ -105,6 +109,10 @@ export class RpcSessionRegistry {
 	}
 
 	openSession(requested: RpcSessionLaunchProfile, options?: RpcSessionOpenOptions): Promise<OpenRpcSession> {
+		// A warm in flight (the boot load of senpi#6147 included) loads on this loop and yields it between modules
+		// (senpi#6199): an open builds its runtime after it, so its factories never run beside that load.
+		const warming = this.warmsInFlight?.();
+		if (warming !== undefined) return warming.then(() => this.openSession(requested, options));
 		return openRegistrySession(
 			{
 				entries: this.entries,
