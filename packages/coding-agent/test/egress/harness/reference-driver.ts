@@ -252,8 +252,8 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 			if (hasRow(stepId)) return;
 			// Negative read-back: advance the fence so the first write landing late is refused, then latch.
 			lateLanding = { stepId, fence: admitted.fence, message: step.message };
-			lateLandingFloor = fence.admissionSeq + 1;
-			fence = { ...fence, admissionSeq: lateLandingFloor };
+			fence = { ...fence, admissionSeq: fence.admissionSeq + 1 };
+			lateLandingFloor = fence.admissionSeq;
 			latch(stepId, "ambiguous_unresolved");
 		};
 		owner.createLoopConfig = (...args: unknown[]) => ({ ...createLoopConfig(...args), commitStep });
