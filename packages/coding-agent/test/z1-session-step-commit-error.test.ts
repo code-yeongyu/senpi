@@ -24,8 +24,11 @@ describe("CK1s hosted step-commit containment", () => {
 		driver.inject.nextCommit("reject");
 		const old = driver.session;
 		const observed: string[] = [];
+		let mirrorWritesAtLatch: number | undefined;
 		old.subscribe((event) => {
-			if (driver.latched) observed.push(event.type);
+			if (!driver.latched) return;
+			mirrorWritesAtLatch ??= driver.counters.adapterAppendAttempts;
+			observed.push(event.type);
 		});
 		const prompt = old.prompt("input");
 		await response.entered;
@@ -43,8 +46,10 @@ describe("CK1s hosted step-commit containment", () => {
 		expect(driver.rows.map((row) => [row.kind, getMessageText(row.message)])).toEqual([["input", "input"]]);
 		expect(driver.forwarded.slice(driver.latchHistory[0]?.forwardedBefore)).toEqual([]);
 		expect(driver.inbox).toEqual([{ text: "queued" }]);
-		// Mirror writes are expected under C; zero *durable* writes is the boundary.
-		expect(driver.counters.adapterAppendAttempts).toBeGreaterThan(0);
+		// Under C the discarded instance still writes its synthesized failure into the mirror after the latch; the
+		// durable rows above stay unchanged, which is the boundary.
+		expect(mirrorWritesAtLatch).toBeDefined();
+		expect(driver.counters.adapterAppendAttempts).toBeGreaterThan(mirrorWritesAtLatch ?? Number.POSITIVE_INFINITY);
 	});
 
 	it("S2 rebuilds from committed rows while the discarded instance retains the uncommitted message", async () => {
