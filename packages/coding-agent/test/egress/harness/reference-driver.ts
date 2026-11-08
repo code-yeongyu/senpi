@@ -6,7 +6,7 @@
  * - durable history rows come only from admitted input and committed steps, never from the session's own writes;
  * - events are stamped with their instance generation and only the current generation is forwarded;
  * - a rejected commit rebuilds a fresh instance from the durable rows.
- * Interim instance wraps of private members, removed when the CK1p seam lands (C.P3): Agent `createLoopConfig`,
+ * Interim instance wraps of private members (the step commit now uses the public `commitStep` seam, C.P3):
  * `runWithLifecycle`, `runQueuedMessagesAfterAgentEnd`, `processEvents`; AgentSession `_enforceCompactionBeforeProvider`
  * and `_sessionTitlePromise`; SessionManager `_appendEntry`.
  */
@@ -14,7 +14,6 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { DatabaseSync } from "node:sqlite";
 import {
 	HOSTED_REBUILD_DEADLINE_MS,
-	type AgentLoopConfig,
 	type AgentMessage,
 	isStepCommitError,
 	type StepCommit,
@@ -171,10 +170,6 @@ export function projectHistoryRows(rows: readonly HistoryRow[]): AgentMessage[] 
 	// A tombstone names the removed row by its position in the append-only log, which survives a store round trip.
 	const removed = new Set(rows.flatMap((row) => (row.kind === "tombstone" ? [row.removes] : [])));
 	return rows.flatMap((row, index) => (row.kind === "tombstone" || removed.has(index) ? [] : [row.message]));
-}
-
-interface LoopConfigOwner {
-	createLoopConfig(...args: unknown[]): AgentLoopConfig;
 }
 
 interface AdapterMirror {
@@ -340,7 +335,22 @@ export async function createReferenceDriver(
 	}));
 	options = ledgerTools ? { ...options, tools: ledgerTools } : options;
 
-	const first = await createHarness(options);
+	// Public seam (CK1p, C.P3): each harness gets a forwarding commitStep whose target install() fills per instance.
+	type CommitSlot = { fn?: (step: StepCommit) => Promise<void> };
+	const commitSlots = new WeakMap<Harness, CommitSlot>();
+	const createSeamHarness = async (harnessOptions: typeof options): Promise<Harness> => {
+		const slot: CommitSlot = {};
+		const harness = await createHarness({
+			...harnessOptions,
+			commitStep: (step: StepCommit) => {
+				if (!slot.fn) throw new Error("reference driver: commitStep called before install");
+				return slot.fn(step);
+			},
+		});
+		commitSlots.set(harness, slot);
+		return harness;
+	};
+	const first = await createSeamHarness(options);
 	let current = first;
 
 	function install(harness: Harness, instanceGeneration: number): void {
@@ -353,8 +363,6 @@ export async function createReferenceDriver(
 			adapterAppendAttempts += 1;
 			return appendToMirror(...args);
 		};
-		const owner = harness.agent as unknown as LoopConfigOwner;
-		const createLoopConfig = owner.createLoopConfig.bind(harness.agent);
 		let admitted: { readonly stepId: string; readonly fence: Fence } | undefined;
 
 		const latch = (stepId: string, code: StepCommitFailure): never => {
@@ -443,7 +451,8 @@ export async function createReferenceDriver(
 			lateLandingFloor = fence.admissionSeq;
 			latch(stepId, "ambiguous_unresolved");
 		};
-		owner.createLoopConfig = (...args: unknown[]) => ({ ...createLoopConfig(...args), commitStep });
+		const slot = commitSlots.get(harness);
+		if (slot) slot.fn = commitStep;
 
 		const lifecycleOwner = harness.agent as unknown as {
 			runWithLifecycle(executor: (signal: AbortSignal) => Promise<void>): Promise<void>;
@@ -596,7 +605,7 @@ export async function createReferenceDriver(
 			hold.arrive();
 			await hold.gate;
 		}
-		const next = await createHarness({ ...options, siblingOf: first });
+		const next = await createSeamHarness({ ...options, siblingOf: first });
 		// Picked up after the last await, so a stop() that lands while the store reads or the harness builds is never lost.
 		// A cancelled step is never redialed: its synthesized aborted message is committed once (W14).
 		const aborted = cancelledAbort;

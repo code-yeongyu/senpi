@@ -114,6 +114,8 @@ export function createTestUiContext(overrides: Partial<ExtensionUIContext> = {})
 }
 
 export interface HarnessOptions {
+	/** Hosted step commit forwarded to the Agent (custody C.P3); unset for every fused test. */
+	commitStep?: AgentOptions["commitStep"];
 	models?: FauxModelDefinition[];
 	api?: string;
 	provider?: string;
@@ -263,6 +265,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 	}
 
 	const agent = new Agent({
+		...(options.commitStep ? { commitStep: options.commitStep } : {}),
 		getApiKey: () => (withConfiguredAuth ? "faux-key" : undefined),
 		streamFn: streamSimple,
 		initialState: {
