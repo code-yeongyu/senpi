@@ -100,8 +100,10 @@ export async function close(
 		if (owner !== undefined) releaseOwnerAttachment(host, owner, command.sessionId);
 		if (claim.finalizer) {
 			// An explicit close ends the session for good: drop any handover-parked record entry, or
-			// the session would come back on the next host start (MEDIUM-1, senpi#3282 review).
-			await clearRetainedRecord(host, host.registry.peek(command.sessionId));
+			// the session would come back on the next host start (MEDIUM-1, senpi#3282 review). Awaited only when a record
+			// exists, so a host without one starts the teardown in the same tick as the claim.
+			if (host.handoverParkedDir !== undefined)
+				await clearRetainedRecord(host, host.registry.peek(command.sessionId));
 			await finalizeClose(host, command.sessionId, host.bindings.get(command.sessionId), () =>
 				reply.complete(true, "client_close"),
 			);
@@ -230,7 +232,6 @@ export async function dispose(host: RouterContext): Promise<void> {
 	await Promise.all(
 		[...host.bindings.entries()].map(async ([sessionId, binding]) => {
 			const entry = host.registry.peek(sessionId);
-			await abortForHostShutdownWithin(sessionId, entry);
 			// A retained session outlives this process: it parks under the transcript it is on now (its record stays
 			// for the next host on the endpoint, which reopens it) instead of closing, so attached clients do not read
 			// it as ended.
@@ -238,9 +239,11 @@ export async function dispose(host: RouterContext): Promise<void> {
 				host.handoverParkedDir !== undefined && entry?.retainOnDisconnect === true
 					? (entry.runtime?.session.sessionFile ?? entry.sessionPath)
 					: undefined;
+			// Claimed before any await, like close(): the stop fences the session in the tick it starts.
 			const claim = tryClaimClose(host, sessionId, { drainAttachments: true });
 			if (!claim) return;
 			if (claim.finalizer) {
+				await abortForHostShutdownWithin(sessionId, entry);
 				if (entry !== undefined && parkedPath !== undefined)
 					await recordRetainedSession(host, entry, parkedPath, false).catch((cause: unknown) => {
 						process.stderr.write(`senpi rpc host shutdown park record ${sessionId} failed: ${String(cause)}\n`);

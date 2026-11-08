@@ -137,7 +137,7 @@ export async function reclaimSession(
 	host.sessionsByConnection.get(owner)?.delete(row.sessionId);
 	if (host.sessionsByConnection.get(owner)?.size === 0) host.sessionsByConnection.delete(owner);
 	connectionLeft(host, row.sessionId, owner);
-	await clearRetainedRecord(host, entry);
+	if (host.handoverParkedDir !== undefined) await clearRetainedRecord(host, entry);
 	if (claim.finalizer) {
 		const binding = host.bindings.get(row.sessionId);
 		binding?.cancelPendingExtensionUiRequests?.();
