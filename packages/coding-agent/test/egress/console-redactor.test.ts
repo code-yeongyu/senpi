@@ -1,3 +1,5 @@
+import { Console } from "node:console";
+import { Writable } from "node:stream";
 import { describe, expect, it } from "vitest";
 import { installConsoleRedactor, runSealed, sealedWindowCount } from "../../src/core/egress/console-redactor.ts";
 import { createRedactor, REDACTED } from "../../src/core/egress/redact.ts";
@@ -173,6 +175,67 @@ describe("console redactor covers every console method", () => {
 		});
 		expect(conditions).toEqual([true, false]);
 		expect(lines).toEqual([`failed ${REDACTED}`]);
+	});
+});
+
+describe("console redactor on a real Node console", () => {
+	function captureStream() {
+		const chunks: string[] = [];
+		const stream = new Writable({
+			write(chunk, _encoding, callback) {
+				chunks.push(String(chunk));
+				callback();
+			},
+		});
+		return { stream, text: () => chunks.join("") };
+	}
+
+	it("redacts a real Console's writes and leaves its stream error handling alone", async () => {
+		const { stream, text } = captureStream();
+		const real = new Console({ stdout: stream, stderr: stream });
+		const internals = real as unknown as Record<string, unknown>;
+		const stdoutHandler = internals._stdoutErrorHandler;
+		const listenersBefore = stream.listenerCount("error");
+		installConsoleRedactor(real);
+		await runSealed(createRedactor({ secrets: [SECRET_A], publicPrefixes: [] }), async () => {
+			real.log(`key ${SECRET_A}`);
+			real.dir({ key: SECRET_A });
+			real.table([SECRET_A]);
+			real.error(SECRET_A);
+		});
+		expect(text()).not.toContain(SECRET_A);
+		expect(text()).toContain(REDACTED);
+		expect(internals._stdoutErrorHandler).toBe(stdoutHandler);
+		expect(stream.listenerCount("error")).toBe(listenersBefore);
+	});
+
+	it("keeps constructors and non-writing members of the global console untouched", () => {
+		const untouched = {
+			Console,
+			context: () => "context",
+			createTask: () => "task",
+			profile: () => "profile",
+			profileEnd: () => "profileEnd",
+			timeStamp: () => "timeStamp",
+			takeHeapSnapshot: () => "snapshot",
+			_stdoutErrorHandler: () => "handler",
+		};
+		const target = { ...untouched, log: () => {} };
+		installConsoleRedactor(target);
+		for (const [name, value] of Object.entries(untouched))
+			expect(target[name as keyof typeof untouched], name).toBe(value);
+		const { stream } = captureStream();
+		expect(new target.Console({ stdout: stream })).toBeInstanceOf(Console);
+	});
+
+	it("still wraps a writing method it has never heard of, such as Bun's console.write", async () => {
+		const lines: string[] = [];
+		const target = { write: (...args: unknown[]) => lines.push(args.map(String).join(" ")) };
+		installConsoleRedactor(target);
+		await runSealed(createRedactor({ secrets: [SECRET_A], publicPrefixes: [] }), async () => {
+			target.write(SECRET_A);
+		});
+		expect(lines).toEqual([REDACTED]);
 	});
 });
 

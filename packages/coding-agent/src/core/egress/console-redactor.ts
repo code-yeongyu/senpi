@@ -25,7 +25,24 @@ export async function runSealed<T>(redactor: Redactor, work: () => Promise<T>): 
 	}
 }
 
-/** Every function-valued method on the console object or its prototypes, so an unlisted method cannot bypass. */
+/** Console members that never write a line; wrapping them would only break them (Node and Bun consoles). */
+const NON_WRITING_MEMBERS = [
+	"context",
+	"createTask",
+	"profile",
+	"profileEnd",
+	"timeStamp",
+	"takeHeapSnapshot",
+	"record",
+	"recordEnd",
+	"screenshot",
+] as const;
+
+/**
+ * The console members to wrap: every function-valued member except constructors (`Console`), `_`-prefixed
+ * stream internals (`_stdoutErrorHandler`) and the known non-writing members. Anything unknown is wrapped, so a
+ * writing method no list names (Bun's `console.write`) cannot bypass the redactor.
+ */
 function consoleMethods(target: object): string[] {
 	const names = new Set<string>();
 	for (
@@ -34,7 +51,9 @@ function consoleMethods(target: object): string[] {
 		level = Object.getPrototypeOf(level)
 	) {
 		for (const name of Object.getOwnPropertyNames(level)) {
-			if (name !== "constructor" && typeof (target as Record<string, unknown>)[name] === "function") names.add(name);
+			if (name === "constructor" || name.startsWith("_") || /^[A-Z]/u.test(name)) continue;
+			if (NON_WRITING_MEMBERS.some((member) => member === name)) continue;
+			if (typeof (target as Record<string, unknown>)[name] === "function") names.add(name);
 		}
 	}
 	return [...names];
