@@ -843,6 +843,7 @@ export class ExtensionRunner {
 		this.runtime.getAllTools = actions.getAllTools;
 		this.runtime.getSettings = actions.getSettings;
 		this.runtime.setActiveTools = actions.setActiveTools;
+		this.runtime.setStagedTools = actions.setStagedTools;
 		this.runtime.refreshTools = actions.refreshTools;
 		this.runtime.registerRemovedToolHint = actions.registerRemovedToolHint;
 		this.runtime.registerLazyToolActivator = actions.registerLazyToolActivator;

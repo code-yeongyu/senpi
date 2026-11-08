@@ -1828,6 +1828,10 @@ export class AgentSession {
 
 	// Tool registry for extension getTools/setTools
 	private _toolRegistry: Map<string, AgentTool> = new Map();
+	/** tool_search matches staged for the next request; consumed on use or at turn end (issue #6219). */
+	private _stagedToolNames: readonly string[] | undefined;
+	/** Staged names merged into the last request; a call to one promotes it (issue #6219). */
+	private _stagedCallWatch: Set<string> | undefined;
 	private _lazyToolActivation = new LazyToolActivation({
 		getToolDefinition: (name) => this.getToolDefinition(name),
 		getActiveTools: () => this.getActiveToolNames(),
@@ -2437,6 +2441,11 @@ export class AgentSession {
 			this._toolExecutionDepth++;
 			this._toolCallIssuers.set(toolCall.id, assistantMessage);
 			try {
+				// A staged tool the model called is exactly the "first call" that activates it
+				// (issue #6219): the executor resolved it from the staged payload, so promote it here.
+				if (this._stagedCallWatch?.delete(toolCall.name)) {
+					this.setActiveToolsByName([...this.getActiveToolNames(), toolCall.name]);
+				}
 				const result = await this.preflightToolCall(toolCall, args, { signal });
 				if (result?.block) {
 					this._toolExecutionDepth--;
@@ -2726,6 +2735,12 @@ export class AgentSession {
 		const previousFinishTurn = this.agent.finishTurn;
 		this.agent.finishTurn = async (turn, signal) => {
 			this._boundaryDispatchedMessages.add(turn.message);
+			// A turn ending without tool results cannot have staged anything new, and any earlier
+			// staging was already consumed by the intervening request build; drop the rest (issue #6219).
+			if (turn.toolResults.length === 0) {
+				this._stagedToolNames = undefined;
+				this._stagedCallWatch = undefined;
+			}
 			// Agent.emit does not await the fork's event queue, so this turn's message_end persistence may
 			// still be queued; the boundary resolves persisted entry IDs, as upstream's awaited listeners allow.
 			await Promise.all(
@@ -2879,14 +2894,41 @@ export class AgentSession {
 				previousContext = previousSnapshot.context ?? postLateCompactionTurn.context;
 			}
 
+			// issue #6219 diagnostic: a strict transport that swallows the model's call for a staged
+			// tool surfaces exactly as an empty response to the staged request; warn so the stall is
+			// not silent.
+			const watched = this._stagedCallWatch;
+			if (
+				watched !== undefined &&
+				watched.size > 0 &&
+				turn.message.content.length === 0 &&
+				turn.toolResults.length === 0
+			) {
+				this._stagedCallWatch = undefined;
+				try {
+					this._extensionRunner
+						.getUIContext()
+						.notify(
+							"A deferred tool call may have been dropped by the transport: the model returned an empty response right after tool_search staged its matches (senpi#6219).",
+							"warning",
+						);
+				} catch {
+					// Headless surfaces without a UI keep the fingerprint in the transcript.
+				}
+			}
 			this._refreshToolDeclarationsForModel();
+			const stagedTools = this._takeStagedToolsForRequest();
+			this._stagedCallWatch = stagedTools.length > 0 ? new Set(stagedTools.map((tool) => tool.name)) : undefined;
 			return {
 				...previousSnapshot,
 				context: {
 					...previousContext,
 					messages: previousContext.messages,
 					systemPrompt: this._systemPromptOverride ?? this._baseSystemPrompt,
-					tools: this.agent.state.tools.slice(),
+					tools:
+						stagedTools.length > 0
+							? [...this.agent.state.tools, ...stagedTools]
+							: this.agent.state.tools.slice(),
 					declaredTools: this.agent.state.declaredTools?.slice(),
 				},
 				model: this.agent.state.model,
@@ -5667,6 +5709,26 @@ export class AgentSession {
 			: undefined;
 		this._baseSystemPrompt = this._rebuildSystemPrompt(declaredNames);
 		this.agent.state.systemPrompt = this._systemPromptOverride ?? this._baseSystemPrompt;
+	}
+
+	/**
+	 * Consume staged tool_search matches for the next request (issue #6219): transports whose
+	 * tool-call parsing depends on the request `tools` array silently drop a call for a tool that
+	 * is not listed, so the search's matches ride along for one request without being activated.
+	 * No-op when declared tools already carry every tool (senpi#2095) or the transport resolves
+	 * by-name calls without the listing.
+	 */
+	private _takeStagedToolsForRequest(): AgentTool[] {
+		const staged = this._stagedToolNames;
+		this._stagedToolNames = undefined;
+		console.error("[stage-debug] take", this.sessionId, "staged:", staged, "api:", this.model?.api);
+		if (staged === undefined || staged.length === 0) return [];
+		if (this.agent.state.declaredTools !== undefined) return [];
+		if (this.model?.api !== "openai-completions") return [];
+		const active = new Set(this.getActiveToolNames());
+		return [...new Set(staged)]
+			.filter((name) => !active.has(name))
+			.flatMap((name) => this._toolRegistry.get(name) ?? []);
 	}
 
 	/**
@@ -12236,6 +12298,10 @@ export class AgentSession {
 				getAllTools: () => this.getAllTools(),
 				getSettings: () => this.settingsManager.getSettings(),
 				setActiveTools: (toolNames) => this.setActiveToolsByName(toolNames),
+				setStagedTools: (names) => {
+					console.error("[stage-debug] WRITE", this.sessionId, names);
+					this._stagedToolNames = [...names];
+				},
 				refreshTools: () => this._refreshToolRegistry(),
 				registerRemovedToolHint: (name, hint) => {
 					this.agent.removedToolHints[name] = hint;

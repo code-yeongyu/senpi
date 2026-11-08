@@ -3138,6 +3138,13 @@ export interface ExtensionAPI {
 	 */
 	setActiveTools(toolNames: string[]): void;
 
+	/**
+	 * Stage tools by name for the next provider request without activating them: the request built
+	 * right after this call carries their definitions, and the request after that reverts unless a
+	 * by-name call activated them. Optional; hosts without it ignore staging.
+	 */
+	setStagedTools?(names: readonly string[]): void;
+
 	/** Get available slash commands in the current session. */
 	getCommands(): SlashCommandInfo[];
 
@@ -3657,6 +3664,8 @@ export type GetCommandsHandler = () => SlashCommandInfo[];
 
 export type SetActiveToolsHandler = (toolNames: string[]) => void;
 
+export type SetStagedToolsHandler = (names: readonly string[]) => void;
+
 export type RefreshToolsHandler = () => void;
 
 export type RegisterRemovedToolHintHandler = (name: string, hint: string) => void;
@@ -3762,6 +3771,7 @@ export interface ExtensionActions {
 	getAllTools: GetAllToolsHandler;
 	getSettings: GetSettingsHandler;
 	setActiveTools: SetActiveToolsHandler;
+	setStagedTools?: SetStagedToolsHandler;
 	refreshTools: RefreshToolsHandler;
 	registerRemovedToolHint: RegisterRemovedToolHintHandler;
 	registerLazyToolActivator: RegisterLazyToolActivatorHandler;

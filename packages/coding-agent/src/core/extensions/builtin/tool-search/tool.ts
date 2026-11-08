@@ -55,6 +55,7 @@ export function createToolSearchTool(service: ToolSearchService): ToolSearchTool
 				...(params.group === undefined ? {} : { group: params.group }),
 			};
 			const matches = service.search(params.query, MAX_RESULTS, options);
+			service.stage(matches.map((match) => match.name));
 			const text = buildToolSearchResultText({
 				group: params.group,
 				hiddenHints: service.hiddenToolHints(params.query),
