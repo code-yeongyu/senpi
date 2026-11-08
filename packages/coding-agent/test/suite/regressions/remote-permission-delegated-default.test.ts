@@ -143,6 +143,7 @@ describe("#6189 the origin of a turn on a session with no client-named mode", ()
 			`${JSON.stringify({ type: "extension_ui_response", sessionId, id: dialog.id, value: "Deny" })}\n`,
 		);
 		expect(JSON.stringify(await ended("probe-second"))).not.toContain(PROBE_TEXT);
+		await log.next((record) => record.type === "agent_end" && record.sessionId === sessionId);
 	}, 120_000);
 
 	it("asks when a remote device continues a session it never prompted (continue_from_leaf)", async () => {

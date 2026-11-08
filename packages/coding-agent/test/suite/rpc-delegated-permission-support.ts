@@ -107,7 +107,9 @@ export interface ProbeCall {
 
 /**
  * Answers every permission dialog `answerer` sees for `sessionId` with `answer` while it waits for the next `count`
- * probe calls to end on `watcher`; resolves with each call's dialogs and whether it ran.
+ * probe calls to end on `watcher`; resolves with each call's dialogs and whether it ran, once the turn that made the
+ * last call has ended (its `agent_end`), so the next record never meets a streaming turn and a row never leaves one
+ * streaming into the host's dispose.
  */
 export async function probeCalls(
 	watcher: FrameLog,
@@ -144,5 +146,6 @@ export async function probeCalls(
 		cursor = watcher.frames.indexOf(end) + 1;
 		calls.push({ asked: asked.splice(0), ran: JSON.stringify(end).includes(PROBE_TEXT) });
 	}
+	await watcher.next((record) => record.type === "agent_end" && record.sessionId === sessionId, cursor);
 	return calls;
 }
