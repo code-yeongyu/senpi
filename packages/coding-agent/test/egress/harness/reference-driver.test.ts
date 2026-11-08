@@ -147,6 +147,30 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 		expect(driver.session.sessionManager.buildSessionContext().messages).toEqual(projectHistoryRows(driver.rows));
 	});
 
+	it("a follow-up submitted while latched does not re-signal the rebuild: exactly one rebuild, delivered once (Fable C.P4 P1)", async () => {
+		driver = await createReferenceDriver();
+		driver.setResponses([fauxAssistantMessage([fauxText("lost")]), fauxAssistantMessage([fauxText("answered")])]);
+		driver.inject.nextCommit("reject");
+		driver.inject.slowRebuildStoreRead(1);
+		const reached = driver.rebuildStoreReadStarted();
+
+		const prompt = driver.prompt("go");
+		await reached;
+		expect(driver.latched).toBe(true);
+		await driver.followUp("during the latch");
+		driver.clock.advance(1);
+		await prompt;
+		await driver.whenRebuilt();
+		await driver.settle();
+
+		expect(driver.rebuilds).toBe(1);
+		expect(driver.latchHistory).toHaveLength(1);
+		const deliveries = driver.rows.filter(
+			(row) => row.message.role === "user" && JSON.stringify(row.message.content).includes("during the latch"),
+		);
+		expect(deliveries).toHaveLength(1);
+	});
+
 	it("resolves an ambiguous write that landed by read-back: one row, no latch", async () => {
 		driver = await createReferenceDriver();
 		driver.setResponses([fauxAssistantMessage([fauxText("one")])]);
@@ -479,6 +503,69 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 		expect(driver.forwarded.filter(({ event }) => event.type === "compaction_end")).toHaveLength(1);
 		expect(driver.counters.auxAdmissions).toBe(1);
 		expect(driver.counters.admissions).toBe(2);
+	});
+
+	it("rebuilds from the latch signal even when the old prompt never returns (S11, C.P4 cond 6)", async () => {
+		// An extension handler on the uncommitted step's message_end that never settles wedges the old session's
+		// event queue, so its prompt() can never return; the agent loop itself does not wait on it.
+		let wedgeArmed = true;
+		driver = await createReferenceDriver({
+			extensionFactories: [
+				(pi) => {
+					pi.on("message_end", (event) => {
+						if (event.message.role !== "assistant" || !wedgeArmed) return;
+						wedgeArmed = false;
+						return new Promise<undefined>(() => {});
+					});
+				},
+			],
+		});
+		driver.setResponses([fauxAssistantMessage([fauxText("lost")]), fauxAssistantMessage([fauxText("redialed")])]);
+		driver.inject.nextCommit("reject");
+		const oldSession = driver.session;
+
+		let oldPromptReturned = false;
+		void oldSession.prompt("go").finally(() => {
+			oldPromptReturned = true;
+		});
+		await driver.whenRebuilt();
+		await driver.settle();
+
+		expect(oldPromptReturned).toBe(false);
+		expect(driver.rebuilds).toBe(1);
+		expect(driver.session).not.toBe(oldSession);
+		expect(driver.latched).toBe(false);
+		expect(assistantTexts(projectHistoryRows(driver.rows))).toEqual(["redialed"]);
+	});
+
+	it("schedules exactly one rebuild per latch", async () => {
+		driver = await createReferenceDriver();
+		driver.setResponses([fauxAssistantMessage([fauxText("lost")]), fauxAssistantMessage([fauxText("redialed")])]);
+		driver.inject.nextCommit("reject");
+
+		await driver.prompt("go");
+		await driver.whenRebuilt();
+		await driver.settle();
+
+		expect(driver.rebuilds).toBe(1);
+		expect(driver.counters.providerCalls).toBe(2);
+	});
+
+	it("records a failed rebuild; prompt() and whenRebuilt() do not re-throw it", async () => {
+		driver = await createReferenceDriver();
+		driver.setResponses([
+			fauxAssistantMessage([fauxText("lost")]),
+			fauxAssistantMessage([fauxText("kept")]),
+			fauxAssistantMessage([fauxText("lost again")]),
+			fauxAssistantMessage([fauxText("redialed")]),
+		]);
+		driver.inject.failNextRebuild();
+		driver.inject.nextCommit("reject");
+
+		await expect(driver.prompt("first")).resolves.toBeUndefined();
+		await expect(driver.whenRebuilt()).resolves.toBeUndefined();
+		expect(driver.rebuildFailures).toHaveLength(1);
+		expect(driver.rebuilds).toBe(0);
 	});
 
 	it("never forwards an event the discarded instance emits after the latch", async () => {
