@@ -64,7 +64,7 @@ function profileKey(profile: HostWarmProfile): string {
 /** Coalesces concurrent warms of one profile and answers repeats without loading again. */
 export class HostWarmer {
 	private readonly warm = new Set<string>();
-	private readonly loading = new Map<string, Promise<void>>();
+	private readonly loading = new Map<string, { readonly cwd: string; readonly pending: Promise<void> }>();
 	private readonly load: (profile: HostWarmProfile) => Promise<void>;
 
 	constructor(load: (profile: HostWarmProfile) => Promise<void>) {
@@ -74,19 +74,23 @@ export class HostWarmer {
 	async run(profile: HostWarmProfile): Promise<HostWarmState> {
 		const key = profileKey(profile);
 		if (this.warm.has(key)) return "already_warm";
-		let pending = this.loading.get(key);
-		if (pending === undefined) {
-			pending = this.loadOnce(key, profile);
-			this.loading.set(key, pending);
+		let load = this.loading.get(key);
+		if (load === undefined) {
+			load = { cwd: profile.cwd, pending: this.loadOnce(key, profile) };
+			this.loading.set(key, load);
 		}
-		await pending;
+		await load.pending;
 		return "warmed";
 	}
 
-	/** Settles once every load in flight now has settled; `undefined` when none is. */
-	inFlight(): Promise<void> | undefined {
-		if (this.loading.size === 0) return undefined;
-		return Promise.allSettled(this.loading.values()).then(() => undefined);
+	/**
+	 * Settles once every load of `cwd` in flight NOW has settled; `undefined` when none is. A snapshot: a warm
+	 * that starts later, or one of another cwd, is not part of it.
+	 */
+	inFlight(cwd: string): Promise<void> | undefined {
+		const pending = [...this.loading.values()].filter((load) => load.cwd === cwd).map((load) => load.pending);
+		if (pending.length === 0) return undefined;
+		return Promise.allSettled(pending).then(() => undefined);
 	}
 
 	private async loadOnce(key: string, profile: HostWarmProfile): Promise<void> {
@@ -111,7 +115,7 @@ export class HostWarmer {
 export function createRegistryWarm(
 	prepare: NonNullable<PreparableRuntimeFactory["prepare"]>,
 	host: { agentDir: string; mcpRegistry?: HostMcpRegistry },
-): { readonly warm: HostWarm; readonly inFlight: () => Promise<void> | undefined } {
+): { readonly warm: HostWarm; readonly inFlight: (cwd: string) => Promise<void> | undefined } {
 	const warmer = new HostWarmer(async (profile) => {
 		await access(profile.cwd);
 		const launchProfile: AgentSessionLaunchProfile = {
@@ -135,7 +139,30 @@ export function createRegistryWarm(
 			scope.close();
 		}
 	});
-	return { warm: (profile) => warmer.run(profile), inFlight: () => warmer.inFlight() };
+	return { warm: (profile) => warmer.run(profile), inFlight: (cwd) => warmer.inFlight(cwd) };
+}
+
+/** How an open's wait for the warms of its cwd ended. */
+export type WarmWaitOutcome = "settled" | "warm_wait_deadline";
+
+/**
+ * Waits for `warming` at most `boundMs`. A warm whose extension factory never settles (there is no factory
+ * timeout) must not stall an open, so past the bound the open proceeds and the reason is reported.
+ */
+export async function waitForWarms(warming: Promise<void>, boundMs: number, cwd: string): Promise<WarmWaitOutcome> {
+	let deadline: ReturnType<typeof setTimeout> | undefined;
+	const outcome = await Promise.race([
+		warming.then(() => "settled" as const),
+		new Promise<"warm_wait_deadline">((resolve) => {
+			deadline = setTimeout(() => resolve("warm_wait_deadline"), boundMs);
+		}),
+	]);
+	clearTimeout(deadline);
+	if (outcome === "warm_wait_deadline")
+		process.stderr.write(
+			`senpi rpc open: warm_wait_deadline: a warm of ${cwd} still loading after ${boundMs} ms; opening anyway\n`,
+		);
+	return outcome;
 }
 
 type WarmCommand = Extract<RpcCommand, { type: "warm" }>;
