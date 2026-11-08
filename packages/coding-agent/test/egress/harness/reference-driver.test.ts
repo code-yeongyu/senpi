@@ -147,6 +147,30 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 		expect(driver.session.sessionManager.buildSessionContext().messages).toEqual(projectHistoryRows(driver.rows));
 	});
 
+	it("a follow-up submitted while latched does not re-signal the rebuild: exactly one rebuild, delivered once (Fable C.P4 P1)", async () => {
+		driver = await createReferenceDriver();
+		driver.setResponses([fauxAssistantMessage([fauxText("lost")]), fauxAssistantMessage([fauxText("answered")])]);
+		driver.inject.nextCommit("reject");
+		driver.inject.slowRebuildStoreRead(1);
+		const reached = driver.rebuildStoreReadStarted();
+
+		const prompt = driver.prompt("go");
+		await reached;
+		expect(driver.latched).toBe(true);
+		await driver.followUp("during the latch");
+		driver.clock.advance(1);
+		await prompt;
+		await driver.whenRebuilt();
+		await driver.settle();
+
+		expect(driver.rebuilds).toBe(1);
+		expect(driver.latchHistory).toHaveLength(1);
+		const deliveries = driver.rows.filter(
+			(row) => row.message.role === "user" && JSON.stringify(row.message.content).includes("during the latch"),
+		);
+		expect(deliveries).toHaveLength(1);
+	});
+
 	it("resolves an ambiguous write that landed by read-back: one row, no latch", async () => {
 		driver = await createReferenceDriver();
 		driver.setResponses([fauxAssistantMessage([fauxText("one")])]);
