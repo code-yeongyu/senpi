@@ -514,7 +514,7 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 		expect(assistantTexts(projectHistoryRows(driver.rows))).toEqual(["redialed"]);
 	});
 
-	it("schedules exactly one rebuild per latch, however many paths notice it (cond 11 dedupe)", async () => {
+	it("schedules exactly one rebuild per latch", async () => {
 		driver = await createReferenceDriver();
 		driver.setResponses([fauxAssistantMessage([fauxText("lost")]), fauxAssistantMessage([fauxText("redialed")])]);
 		driver.inject.nextCommit("reject");
@@ -525,6 +525,23 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 
 		expect(driver.rebuilds).toBe(1);
 		expect(driver.counters.providerCalls).toBe(2);
+	});
+
+	it("records a failed rebuild; prompt() and whenRebuilt() do not re-throw it", async () => {
+		driver = await createReferenceDriver();
+		driver.setResponses([
+			fauxAssistantMessage([fauxText("lost")]),
+			fauxAssistantMessage([fauxText("kept")]),
+			fauxAssistantMessage([fauxText("lost again")]),
+			fauxAssistantMessage([fauxText("redialed")]),
+		]);
+		driver.inject.failNextRebuild();
+		driver.inject.nextCommit("reject");
+
+		await expect(driver.prompt("first")).resolves.toBeUndefined();
+		await expect(driver.whenRebuilt()).resolves.toBeUndefined();
+		expect(driver.rebuildFailures).toHaveLength(1);
+		expect(driver.rebuilds).toBe(0);
 	});
 
 	it("never forwards an event the discarded instance emits after the latch", async () => {

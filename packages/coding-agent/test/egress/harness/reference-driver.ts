@@ -112,6 +112,7 @@ export interface ReferenceDriver {
 	readonly forwarded: readonly ForwardedEvent[];
 	readonly latchHistory: readonly LatchRecord[];
 	readonly classifications: readonly CommitClassification[];
+	readonly rebuildFailures: readonly unknown[];
 	readonly auxRows: readonly AuxRow[];
 	settleAux(): Promise<void>;
 	readonly stops: ReadonlyArray<{ readonly stepId: string; readonly while: "latched" }>;
@@ -127,6 +128,7 @@ export interface ReferenceDriver {
 		cancelNextStep(): void;
 		slowRebuildStoreRead(ms: number): void;
 		nextCommitError(error: unknown): void;
+		failNextRebuild(): void;
 		holdAux(): void;
 		releaseAux(): void;
 	};
@@ -232,28 +234,24 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 	let refusals = 0;
 	let rebuilds = 0;
 	let pendingRebuild: Promise<void> = Promise.resolve();
-	const rebuildKeys = new Set<string>();
-	const listenerErrors: unknown[] = [];
 	let rebuildWaiters: Array<() => void> = [];
 	let rebuildsScheduled = 0;
-	// One rebuild per (stepId, generationAfter) however many paths notice the latch (cond 11); a scheduling failure is
-	// recorded, never thrown into the commit.
-	function signalRebuild(stepId: string, generationAfter: number): void {
-		const key = `${stepId}@${generationAfter}`;
-		if (rebuildKeys.has(key)) return;
-		rebuildKeys.add(key);
-		try {
-			rebuildsScheduled += 1;
-			pendingRebuild = pendingRebuild
-				.then(() => loopRun.exit(() => rebuild()))
-				.finally(() => {
-					const waiters = rebuildWaiters;
-					rebuildWaiters = [];
-					for (const wake of waiters) wake();
-				});
-		} catch (error) {
-			listenerErrors.push(error);
-		}
+	const rebuildFailures: unknown[] = [];
+	let failNextRebuild = false;
+	// Each latch schedules exactly one rebuild (every latch bumps the generation, so latches never coincide). A failed
+	// rebuild is recorded and leaves the chain usable, so a later latch still rebuilds.
+	function signalRebuild(): void {
+		rebuildsScheduled += 1;
+		pendingRebuild = pendingRebuild
+			.then(() => loopRun.exit(() => rebuild()))
+			.catch((error: unknown) => {
+				rebuildFailures.push(error);
+			})
+			.finally(() => {
+				const waiters = rebuildWaiters;
+				rebuildWaiters = [];
+				for (const wake of waiters) wake();
+			});
 	}
 	let adapterAppendAttempts = 0;
 
@@ -282,7 +280,7 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 			latchedStep = committingStep?.stepId === stepId ? committingStep : undefined;
 			// The latch is the only rebuild trigger (C.P4 cond 6): signalled here, before the commit rejects, so a wedged
 			// old instance whose prompt never returns still gets rebuilt.
-			signalRebuild(stepId, generation);
+			signalRebuild();
 			const error = new StepCommitError(stepId, code);
 			driverErrors.add(error);
 			throw error;
@@ -493,6 +491,10 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 	}
 
 	async function rebuild(): Promise<void> {
+		if (failNextRebuild) {
+			failNextRebuild = false;
+			throw new Error("injected rebuild failure");
+		}
 		await readDurableHistory();
 		const next = await createHarness({ ...options, siblingOf: first });
 		// Picked up after the last await, so a stop() that lands while the store reads or the harness builds is never lost.
@@ -550,6 +552,7 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 		forwarded,
 		latchHistory,
 		classifications,
+		rebuildFailures,
 		auxRows,
 		get stops() {
 			return stops;
@@ -622,6 +625,9 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 				auxGate?.resolve();
 				auxGate = undefined;
 			},
+			failNextRebuild() {
+				failNextRebuild = true;
+			},
 			nextCommitError(error: unknown) {
 				plannedFaults.push({ kind: "throw", error });
 			},
@@ -663,7 +669,8 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 			// A catch here is only an idempotent notification: the latch already scheduled any rebuild.
 			await pendingRebuild;
 		},
-		// Resolves when the next rebuild completes (or the pending one, when a rebuild is already scheduled).
+		// Resolves when a scheduled rebuild completes. When every latch so far has already been rebuilt it resolves
+		// at once; before any latch it waits for the next rebuild. Callers that need the redial settled also call settle().
 		whenRebuilt() {
 			if (rebuildsScheduled > rebuilds) return pendingRebuild;
 			if (rebuilds > 0 && rebuilds >= latchHistory.length) return Promise.resolve();
