@@ -1,5 +1,5 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { isStepCommitError } from "@earendil-works/pi-agent-core";
+import { HOSTED_REBUILD_DEADLINE_MS, isStepCommitError } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it } from "vitest";
 import { createReferenceDriver, projectHistoryRows, type ReferenceDriver } from "./reference-driver.ts";
@@ -232,6 +232,40 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 			"aborted",
 		]);
 		expect(driver.session.agent.state.messages).toEqual(projectHistoryRows(driver.rows));
+	});
+
+	it("rebuilds within HOSTED_REBUILD_DEADLINE_MS of the latch on the fake clock", async () => {
+		driver = await createReferenceDriver();
+		driver.setResponses([fauxAssistantMessage([fauxText("lost")]), fauxAssistantMessage([fauxText("redialed")])]);
+		driver.inject.nextCommit("reject");
+		driver.inject.slowRebuildStoreRead(HOSTED_REBUILD_DEADLINE_MS - 1);
+
+		const prompt = driver.prompt("go");
+		await driver.rebuildStoreReadStarted();
+		driver.clock.advance(HOSTED_REBUILD_DEADLINE_MS - 1);
+		await prompt;
+
+		expect(driver.rebuilds).toBe(1);
+		expect(driver.counters.rebuildDeadlineMisses).toBe(0);
+		expect(driver.latched).toBe(false);
+	});
+
+	it("stays latched and retries the rebuild when the store read misses the deadline", async () => {
+		driver = await createReferenceDriver();
+		driver.setResponses([fauxAssistantMessage([fauxText("lost")]), fauxAssistantMessage([fauxText("redialed")])]);
+		driver.inject.nextCommit("reject");
+		driver.inject.slowRebuildStoreRead(HOSTED_REBUILD_DEADLINE_MS + 1);
+
+		const prompt = driver.prompt("go");
+		await driver.rebuildStoreReadStarted();
+		expect(driver.latched).toBe(true);
+		driver.clock.advance(HOSTED_REBUILD_DEADLINE_MS + 1);
+		await prompt;
+
+		expect(driver.counters.rebuildDeadlineMisses).toBe(1);
+		expect(driver.rebuilds).toBe(1);
+		expect(driver.latched).toBe(false);
+		expect(driver.counters.providerCalls).toBe(2);
 	});
 
 	it("never forwards an event the discarded instance emits after the latch", async () => {

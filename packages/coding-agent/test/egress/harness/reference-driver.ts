@@ -9,6 +9,7 @@
  * The commit hook is installed on the test agent instance (`createLoopConfig`) until the CK1p seam exists (C.P3).
  */
 import {
+	HOSTED_REBUILD_DEADLINE_MS,
 	type AgentLoopConfig,
 	type AgentMessage,
 	isStepCommitError,
@@ -49,11 +50,40 @@ export interface DriverCounters {
 	readonly events: number;
 	readonly drainedBy: readonly number[];
 	readonly adapterAppendAttempts: number;
+	readonly rebuildDeadlineMisses: number;
+}
+
+export interface FakeClock {
+	now(): number;
+	advance(ms: number): void;
+	sleep(ms: number): Promise<void>;
+}
+
+function createFakeClock(): FakeClock {
+	let now = 0;
+	const sleepers: Array<{ readonly until: number; readonly wake: () => void }> = [];
+	return {
+		now: () => now,
+		advance(ms) {
+			now += ms;
+			for (const sleeper of sleepers.filter((candidate) => candidate.until <= now)) {
+				sleepers.splice(sleepers.indexOf(sleeper), 1);
+				sleeper.wake();
+			}
+		},
+		sleep(ms) {
+			const { promise, resolve } = Promise.withResolvers<void>();
+			sleepers.push({ until: now + ms, wake: resolve });
+			return promise;
+		},
+	};
 }
 
 export interface ReferenceDriver {
 	readonly session: AgentSession;
 	readonly generation: number;
+	readonly latched: boolean;
+	readonly clock: FakeClock;
 	readonly rows: readonly HistoryRow[];
 	readonly inbox: readonly InboxEntry[];
 	readonly forwarded: readonly ForwardedEvent[];
@@ -67,7 +97,9 @@ export interface ReferenceDriver {
 		advanceFenceBeforeNextCommit(): void;
 		epochUnverifiedUntilConfirmed(): void;
 		cancelNextStep(): void;
+		slowRebuildStoreRead(ms: number): void;
 	};
+	rebuildStoreReadStarted(): Promise<void>;
 	deliverLateLanding(): "refused" | "landed" | "none";
 	epochWaitReached(): Promise<void>;
 	confirmEpoch(): void;
@@ -128,6 +160,10 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 		| { readonly reached: PromiseWithResolvers<void>; readonly confirmed: PromiseWithResolvers<void> }
 		| undefined;
 	let cancelNextStep = false;
+	const clock = createFakeClock();
+	let latchedAt: number | undefined;
+	let rebuildDeadlineMisses = 0;
+	let slowRead: { readonly ms: number; readonly started: PromiseWithResolvers<void> } | undefined;
 	const cancelledSteps = new Set<string>();
 	let cancelledAbort: { readonly stepId: string; readonly message: AgentMessage } | undefined;
 	const instances: Harness[] = [];
@@ -157,6 +193,7 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 		const latch = (stepId: string, code: StepCommitFailure): never => {
 			// Latch before the promise rejects: anything the session runs on its way out sees the new generation.
 			generation += 1;
+			latchedAt = clock.now();
 			latchHistory.push({ stepId, code, generationAfter: generation, forwardedBefore: forwarded.length });
 			throw new StepCommitError(stepId, code);
 		};
@@ -261,7 +298,26 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 		});
 	}
 
+	// The store reads behind a rebuild must finish within HOSTED_REBUILD_DEADLINE_MS of the latch (2.7(4)). A miss
+	// keeps the session latched and retries the rebuild; it never waits on the old instance.
+	async function readDurableHistory(): Promise<void> {
+		for (;;) {
+			const read = slowRead;
+			slowRead = undefined;
+			if (read !== undefined) {
+				const done = clock.sleep(read.ms);
+				read.started.resolve();
+				await done;
+			}
+			const since = latchedAt ?? clock.now();
+			if (clock.now() - since <= HOSTED_REBUILD_DEADLINE_MS) return;
+			rebuildDeadlineMisses += 1;
+			latchedAt = clock.now();
+		}
+	}
+
 	async function rebuild(): Promise<void> {
+		await readDurableHistory();
 		// A cancelled step is never redialed: its synthesized aborted message is committed once (W14).
 		const aborted = cancelledAbort;
 		cancelledAbort = undefined;
@@ -276,6 +332,7 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 		install(next, generation);
 		current = next;
 		rebuilds += 1;
+		latchedAt = undefined;
 		const pending = inbox.filter((entry) => entry.consumedBy === undefined);
 		for (const entry of pending) await next.session.followUp(entry.text);
 		// Re-admission: history ending in input the model has not answered (no committed row) dials again.
@@ -293,6 +350,10 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 		get generation() {
 			return generation;
 		},
+		get latched() {
+			return latchedAt !== undefined;
+		},
+		clock,
 		rows,
 		inbox,
 		forwarded,
@@ -305,6 +366,7 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 				events: forwarded.length,
 				drainedBy,
 				adapterAppendAttempts,
+				rebuildDeadlineMisses,
 			};
 		},
 		get rebuilds() {
@@ -331,6 +393,13 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 			cancelNextStep() {
 				cancelNextStep = true;
 			},
+			slowRebuildStoreRead(ms: number) {
+				slowRead = { ms, started: Promise.withResolvers<void>() };
+			},
+		},
+		rebuildStoreReadStarted() {
+			if (slowRead === undefined) throw new Error("no slow rebuild read is armed");
+			return slowRead.started.promise;
 		},
 		epochWaitReached() {
 			if (epochWait === undefined) throw new Error("no epoch wait is armed");
