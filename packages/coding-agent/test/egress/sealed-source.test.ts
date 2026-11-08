@@ -90,6 +90,40 @@ describe("SealedCredentialSource.resolve", () => {
 		});
 	});
 
+	it("hands the opener the exact lease the release was made under, per item and position", async () => {
+		const h = harness([ok("key-1", "hdr-1")]);
+		const positions: unknown[] = [];
+		let issued = 0;
+		const source = new SealedCredentialSource({
+			...h.deps,
+			lease: async () => ({ token: `lease-${++issued}` }),
+			openItem: async (released, position) => {
+				positions.push(position);
+				return new TextEncoder().encode(released.ct);
+			},
+		});
+		using lease = await source.resolve("anthropic", "d0", ["apiKey", "header:x"], SCOPE);
+		expect(lease.value("header:x")).toBe("hdr-1");
+		expect(h.requests[0].lease).toEqual({ token: "lease-1" });
+		expect(positions).toEqual([
+			{
+				accountId: "acct",
+				providerId: "anthropic",
+				entryDigest: "d0",
+				field: "apiKey",
+				lease: { token: "lease-1" },
+			},
+			{
+				accountId: "acct",
+				providerId: "anthropic",
+				entryDigest: "d0",
+				field: "header:x",
+				lease: { token: "lease-1" },
+			},
+		]);
+		expect(issued).toBe(1);
+	});
+
 	it("reloads and retries on stale_snapshot, with the reloaded entry digest", async () => {
 		const h = harness([stale, ok("key-2")]);
 		const source = new SealedCredentialSource(h.deps);
