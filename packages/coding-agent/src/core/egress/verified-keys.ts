@@ -61,7 +61,7 @@ export interface ValidityContext {
 
 const REQUIRED_STRINGS = ["accountId", "sigKeyId", "sigPkSha256"] as const;
 const OPTIONAL_STRINGS = ["kemKeyId", "kemPkSha256", "supersedes"] as const;
-const RECORD_KEYS: readonly string[] = [
+const RECORD_KEYS = [
 	"kind",
 	"generation",
 	"kmsKeyArns",
@@ -71,7 +71,7 @@ const RECORD_KEYS: readonly string[] = [
 	"checkedAt",
 	...REQUIRED_STRINGS,
 	...OPTIONAL_STRINGS,
-];
+] as const satisfies readonly string[];
 
 export function verifiedKeysPath(agentDir: string = getAgentDir()): string {
 	return join(agentDir, "state", "custody", "verified-keys.json");
@@ -87,7 +87,7 @@ const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
 function parseRecord(value: unknown): LocalKeyVerification | "absent" | undefined {
 	if (!isRecord(value)) return undefined;
 	const raw = value;
-	if (!Object.keys(raw).every((key) => RECORD_KEYS.includes(key))) return undefined;
+	if (!Object.keys(raw).every((key) => RECORD_KEYS.some((known) => known === key))) return undefined;
 	const {
 		kind,
 		accountId,
