@@ -233,7 +233,7 @@ describe("moved-path-guard breadcrumb trust (#2898)", () => {
 			return {
 				session: {
 					...fakeSessionBase(options),
-					extensionRunner: { hasHandlers: () => false, emit: async () => {} },
+					extensionRunner: { getFlagValues: () => new Map(), hasHandlers: () => false, emit: async () => {} },
 					abort: async () => {},
 					abortBash: () => {},
 					waitForIdle: async () => {},

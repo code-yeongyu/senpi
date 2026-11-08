@@ -1,6 +1,7 @@
 import { buildRpcSessionState } from "./connection-handler.ts";
 import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
 import { startOpenTimer } from "../../core/open-timing.ts";
+import { openReplyPermissionMode } from "../../core/permission-mode.ts";
 import { compactOpen, type OpenAcceptance } from "./compact-open-admission.ts";
 import { CompactAdmissionError } from "./compact-admission-error.ts";
 import { runAdmissionProducer } from "./compact-admission-producer.ts";
@@ -257,6 +258,7 @@ export async function open(
 				data: {
 					sessionId: opened.sessionId,
 					state: replyState,
+					...openReplyPermissionMode(replyState),
 					...(opened.attached ? { attached: true } : {}),
 					...(host.defaults.sessionPresence
 						? { presence: host.defaults.sessionPresence.view(replyState.sessionId) }

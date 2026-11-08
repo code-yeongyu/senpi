@@ -48,6 +48,7 @@ export const admissionCommands = [
 	"set_follow_up_mode",
 	"compact",
 	"set_auto_compaction",
+	"set_permission_preset",
 	"set_auto_retry",
 	"abort_retry",
 	"set_retry_fallback",

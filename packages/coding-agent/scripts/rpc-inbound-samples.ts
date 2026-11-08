@@ -135,6 +135,7 @@ export const RPC_INBOUND_SAMPLES = {
 	set_follow_up_mode: { type: "set_follow_up_mode", mode: "all" },
 	compact: { type: "compact" },
 	set_auto_compaction: { type: "set_auto_compaction", enabled: false },
+	set_permission_preset: { type: "set_permission_preset", permissionPreset: "ask" },
 	set_auto_retry: { type: "set_auto_retry", enabled: false },
 	abort_retry: { type: "abort_retry" },
 	set_retry_fallback: {

@@ -220,6 +220,8 @@ export const RPC_METHOD_CLASS = {
 	set_model: { classify: setModelClass, version: 1 },
 	// a session override; set_steering_mode, set_follow_up_mode and set_auto_retry write global settings (device_admin)
 	set_auto_compaction: "drive",
+	// like a preset-naming open_session: it changes what the agent may do without asking
+	set_permission_preset: "device_admin",
 	set_retry_fallback: "drive",
 	pause_for_run: "drive",
 	resume_for_run: "drive",

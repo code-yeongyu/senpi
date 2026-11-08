@@ -161,6 +161,7 @@ const STATE_AND_MODEL_SCHEMAS = {
 	set_follow_up_mode: session("set_follow_up_mode", { mode: literals("all", "one-at-a-time") }),
 	compact: session("compact", { customInstructions: OptStr }),
 	set_auto_compaction: session("set_auto_compaction", { enabled: Bool }),
+	set_permission_preset: session("set_permission_preset", { permissionPreset: Id }),
 	set_auto_retry: session("set_auto_retry", { enabled: Bool }),
 	abort_retry: session("abort_retry", {}),
 	set_retry_fallback: session("set_retry_fallback", { retryFallback: RetryFallback }),
