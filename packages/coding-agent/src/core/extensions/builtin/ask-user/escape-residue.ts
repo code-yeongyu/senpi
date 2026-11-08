@@ -112,14 +112,17 @@ export function freshEscapeResidueRetry(): EscapeResidueRetry {
 	return { refusedThisTurn: false, retryOpen: false, retriedThisTurn: false };
 }
 
-/** Records a residue call; true means refuse it, false means it is a re-call that opens as written. */
-export function refuseEscapeResidue(retry: EscapeResidueRetry): boolean {
+/**
+ * Records any call; true means refuse it. A call made while the retry is open uses it up, clean or not, so a clean
+ * re-call closes the retry and a later residue set is refused once again. A residue call with no open retry is refused.
+ */
+export function refuseEscapeResidue(retry: EscapeResidueRetry, hasResidue: boolean): boolean {
 	if (retry.retryOpen) {
 		retry.retriedThisTurn = true;
 		return false;
 	}
-	retry.refusedThisTurn = true;
-	return true;
+	if (hasResidue) retry.refusedThisTurn = true;
+	return hasResidue;
 }
 
 export function endEscapeResidueTurn(retry: EscapeResidueRetry): void {

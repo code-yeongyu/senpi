@@ -446,6 +446,27 @@ describe("ask-user escape residue (oh-my-openagent#12797)", () => {
 		await expect(call("later", first)).rejects.toMatchObject({ name: "AskUserEscapeResidueError" });
 	});
 
+	it("closes the retry on a clean re-call, so a later residue set is refused again", async () => {
+		// given a refused residue call whose re-call came back clean
+		const { tool, ctx, runner } = await setup();
+		const call = (id: string, payload: unknown) =>
+			required(tool).execute(id, payload, undefined, undefined, ctx as ExtensionToolContext);
+		await expect(call("refused", korean("ub0b4 Tailscale 쓰기"))).rejects.toMatchObject({
+			name: "AskUserEscapeResidueError",
+		});
+		await endTurn(runner);
+		const clean = await call("clean", korean("내 Tailscale 쓰기"));
+		expect(clean.details).toMatchObject({ status: "answered" });
+		await endTurn(runner);
+
+		// when an unrelated residue set comes later in the same run
+		const later = call("later", korean("uc0c8로 설치", "어떤 버전을 설치할까요?"));
+
+		// then it is refused once rather than opened with a warning
+		await expect(later).rejects.toMatchObject({ name: "AskUserEscapeResidueError" });
+		expect(ctx.ui.question).toHaveBeenCalledTimes(1);
+	});
+
 	it("keeps the re-call open across a turn that asked nothing", async () => {
 		// given a refused call, then a turn that did other work
 		const { tool, ctx, runner } = await setup();

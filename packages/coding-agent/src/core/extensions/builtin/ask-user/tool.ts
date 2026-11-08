@@ -380,7 +380,7 @@ export function createAskUserTool(variant: AskUserVariant, pi: ExtensionAPI, sta
 				return result(variant, unavailable, request);
 			}
 			const residue = findEscapeResidue(request.questions);
-			if (residue.length > 0 && refuseEscapeResidue(state.escapeResidue)) {
+			if (refuseEscapeResidue(state.escapeResidue, residue.length > 0)) {
 				emitAskUserClosed(pi, request.requestId, unavailable);
 				throw new AskUserEscapeResidueError(residue);
 			}
