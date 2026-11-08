@@ -119,8 +119,11 @@ export type RpcSessionParkedEvent = {
 	sessionId: string;
 	/** Session file to reopen this session by. */
 	sessionPath: string;
-	/** `idle`: the idle sweep parked it; `unloaded`: `unload_session` did. Absent from older hosts. */
-	reason?: "idle" | "unloaded";
+	/**
+	 * `idle`: the idle sweep parked it; `unloaded`: `unload_session` did; `host_shutdown`: the host stopped with the session
+	 * retained, and the next host on the endpoint reopens it. Absent from older hosts.
+	 */
+	reason?: "idle" | "unloaded" | "host_shutdown";
 };
 
 /**

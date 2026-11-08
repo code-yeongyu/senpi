@@ -61,6 +61,8 @@ export interface RpcSessionEntry {
 	 * Requested per `open_session`; an attach may turn it on, never off.
 	 */
 	retainOnDisconnect?: boolean;
+	/** The session path this host's handover-parked record entry is keyed by; it follows a transcript switch. */
+	recordedPath?: string;
 	/** Timestamp of the last routed command / observed activity; drives idle eviction. */
 	lastCommandAt: number;
 	/**

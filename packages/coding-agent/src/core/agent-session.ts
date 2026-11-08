@@ -560,15 +560,17 @@ type WithParentToolCallId<E> = E extends {
 	? E & { parentToolCallId?: string }
 	: E;
 
-/** Why a session-level abort happened, when the caller knows: today only a session replacement says so. */
-export interface AgentAbortCause {
-	readonly kind: "session_replaced";
-	/** What replaced the session: `new_session`, `fork` or a `switch_session`/resume. */
-	readonly reason: "new" | "fork" | "resume";
-	/** The replacement's transcript and durable session id, when they are known before the teardown. */
-	readonly targetSessionFile?: string;
-	readonly targetSessionId?: string;
-}
+/** Why a session-level abort happened, when the caller knows: a session replacement, or the host process stopping. */
+export type AgentAbortCause =
+	| {
+			readonly kind: "session_replaced";
+			/** What replaced the session: `new_session`, `fork` or a `switch_session`/resume. */
+			readonly reason: "new" | "fork" | "resume";
+			/** The replacement's transcript and durable session id, when they are known before the teardown. */
+			readonly targetSessionFile?: string;
+			readonly targetSessionId?: string;
+	  }
+	| { readonly kind: "host_shutdown" };
 
 type AgentSessionAgentEndEvent = Extract<AgentEvent, { type: "agent_end" }> & {
 	willRetry: boolean;
@@ -5261,6 +5263,17 @@ export class AgentSession {
 	/** Adapter for the deadline owner interface: a deadline stop that could not complete. */
 	_warnDeadline(event: TurnDeadlineWarning, detail: string): void {
 		this._sessionLogger.warn(event, { detail });
+	}
+
+	/**
+	 * End the running turn because the process hosting this session is stopping (an RPC host shutting down or
+	 * restarting): a system abort whose `agent_end` carries `abortCause: { kind: "host_shutdown" }`, never a user abort.
+	 */
+	async abortForHostShutdown(): Promise<void> {
+		if (!this.isStreaming) return;
+		if (this._abortCause === undefined) this._abortCause = { kind: "host_shutdown" };
+		await this._abortActiveAgentAndRetry("system");
+		if (!this.isIdle) await this._waitForIdleAfterAbort();
 	}
 
 	/** Adapter for the deadline owner interface: end the turn through the normal system abort. */
