@@ -279,6 +279,42 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 		expect(driver.counters.providerCalls).toBe(2);
 	});
 
+	it("classifies a commit error by its brand at the commit boundary, not by instanceof (S8d)", async () => {
+		driver = await createReferenceDriver();
+		driver.setResponses([
+			fauxAssistantMessage([fauxText("one")]),
+			fauxAssistantMessage([fauxText("two")]),
+			fauxAssistantMessage([fauxText("three")]),
+			fauxAssistantMessage([fauxText("four")]),
+		]);
+		// A StepCommitError from a second copy of the package: it carries the registry brand, but it is not an
+		// instance of this copy's class.
+		class SecondCopyStepCommitError extends Error {
+			readonly stepId = "second-copy";
+			readonly code = "fenced" as const;
+			constructor() {
+				super("step commit failed: fenced");
+				Object.defineProperty(this, Symbol.for("senpi.StepCommitError"), { value: true });
+			}
+		}
+		const secondCopy = new SecondCopyStepCommitError();
+		const lookAlike = Object.assign(new Error("step commit failed: fenced"), {
+			name: "StepCommitError",
+			code: "fenced",
+		});
+
+		driver.inject.nextCommitError(secondCopy);
+		await driver.prompt("brand");
+		driver.inject.nextCommitError(lookAlike);
+		await driver.prompt("look-alike");
+
+		expect(driver.classifications.map(({ error, kind, code }) => ({ error, kind, code }))).toEqual([
+			{ error: secondCopy, kind: "step-commit-error", code: "fenced" },
+			{ error: lookAlike, kind: "store-error", code: "storage_unavailable" },
+		]);
+		expect(driver.latchHistory.map((latch) => latch.code)).toEqual(["fenced", "storage_unavailable"]);
+	});
+
 	it("never forwards an event the discarded instance emits after the latch", async () => {
 		driver = await createReferenceDriver();
 		driver.setResponses([fauxAssistantMessage([fauxText("lost")])]);

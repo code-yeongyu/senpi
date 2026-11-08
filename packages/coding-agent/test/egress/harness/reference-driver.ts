@@ -89,6 +89,7 @@ export interface ReferenceDriver {
 	readonly inbox: readonly InboxEntry[];
 	readonly forwarded: readonly ForwardedEvent[];
 	readonly latchHistory: readonly LatchRecord[];
+	readonly classifications: readonly CommitClassification[];
 	readonly counters: DriverCounters;
 	readonly rebuilds: number;
 	readonly inject: {
@@ -99,6 +100,7 @@ export interface ReferenceDriver {
 		epochUnverifiedUntilConfirmed(): void;
 		cancelNextStep(): void;
 		slowRebuildStoreRead(ms: number): void;
+		nextCommitError(error: unknown): void;
 	};
 	rebuildStoreReadStarted(index?: number): Promise<void>;
 	deliverLateLanding(): "refused" | "landed" | "none";
@@ -140,7 +142,15 @@ interface Fence {
 type PlannedFault =
 	| { readonly kind: "reject"; readonly code: StepCommitFailure }
 	| { readonly kind: "already-committed"; readonly committedByAnother: AgentMessage }
-	| { readonly kind: "ambiguous"; readonly landed: boolean };
+	| { readonly kind: "ambiguous"; readonly landed: boolean }
+	| { readonly kind: "throw"; readonly error: unknown };
+
+export interface CommitClassification {
+	readonly stepId: string;
+	readonly error: unknown;
+	readonly kind: "step-commit-error" | "store-error";
+	readonly code: StepCommitFailure;
+}
 
 type FaultKind = "reject" | "already-committed" | "ambiguous-landed" | "ambiguous-lost";
 
@@ -155,6 +165,8 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 	const rowMessages = new WeakSet<object>();
 	const latchHistory: LatchRecord[] = [];
 	const plannedFaults: PlannedFault[] = [];
+	const classifications: CommitClassification[] = [];
+	const driverErrors = new WeakSet<object>();
 	let fence: Fence = { epoch: 1, admissionSeq: 0, generation: 1 };
 	let advanceFenceBeforeNextCommit = false;
 	let lateLanding: { readonly stepId: string; readonly fence: Fence; readonly message: AgentMessage } | undefined;
@@ -200,7 +212,9 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 			generation += 1;
 			latchedAt = clock.now();
 			latchHistory.push({ stepId, code, generationAfter: generation, forwardedBefore: forwarded.length });
-			throw new StepCommitError(stepId, code);
+			const error = new StepCommitError(stepId, code);
+			driverErrors.add(error);
+			throw error;
 		};
 		const writeStep = (stepId: string, step: StepCommit): void => {
 			rows.push({ kind: "step", stepId, message: step.message });
@@ -208,10 +222,27 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 		};
 		const hasRow = (stepId: string): boolean => rows.some((row) => row.kind === "step" && row.stepId === stepId);
 
+		// The classification boundary (2.7(4), S8d): the hosted commit's own failures are classified by the brand, so
+		// a StepCommitError from a second copy of the package latches with its code and anything else is a store error.
 		const commitStep = async (step: StepCommit): Promise<void> => {
+			try {
+				await hostedCommit(step);
+			} catch (error) {
+				if (typeof error === "object" && error !== null && driverErrors.has(error)) throw error;
+				const stepId = admitted?.stepId ?? "unadmitted";
+				const branded = isStepCommitError(error);
+				const code: StepCommitFailure = branded ? error.code : "storage_unavailable";
+				classifications.push({ stepId, error, kind: branded ? "step-commit-error" : "store-error", code });
+				latch(stepId, code);
+			}
+		};
+
+		const hostedCommit = async (step: StepCommit): Promise<void> => {
 			if (instanceGeneration !== generation || admitted === undefined) {
 				refusals += 1;
-				throw new StepCommitError(`stale-${instanceGeneration}`, "generation");
+				const refusal = new StepCommitError(`stale-${instanceGeneration}`, "generation");
+				driverErrors.add(refusal);
+				throw refusal;
 			}
 			const { stepId } = admitted;
 			if (epochWait !== undefined) {
@@ -236,6 +267,7 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 			}
 			if (!sameFence(admitted.fence, fence)) latch(stepId, "fenced");
 			const fault = plannedFaults.shift();
+			if (fault?.kind === "throw") throw fault.error;
 			if (fault?.kind === "reject") latch(stepId, fault.code);
 			if (fault?.kind === "already-committed") {
 				rows.push({ kind: "step", stepId, message: fault.committedByAnother });
@@ -367,6 +399,7 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 		inbox,
 		forwarded,
 		latchHistory,
+		classifications,
 		get counters(): DriverCounters {
 			return {
 				admissions,
@@ -402,6 +435,9 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 			},
 			cancelNextStep() {
 				cancelNextStep = true;
+			},
+			nextCommitError(error: unknown) {
+				plannedFaults.push({ kind: "throw", error });
 			},
 			slowRebuildStoreRead(ms: number) {
 				slowReads.push({ ms, started: Promise.withResolvers<void>() });
