@@ -1,7 +1,8 @@
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
 import { HOSTED_REBUILD_DEADLINE_MS, isStepCommitError } from "@earendil-works/pi-agent-core";
 import { type Message, normalizeContext } from "@earendil-works/pi-ai";
-import { fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai/compat";
+import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai/compat";
+import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { createReferenceDriver, projectHistoryRows, type ReferenceDriver } from "./reference-driver.ts";
 
@@ -432,6 +433,52 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 			.map(text);
 		expect(modelOrder).toEqual(["go", "steer me"]);
 		expect(rowOrder).toEqual(modelOrder);
+	});
+
+	it("admits the post-run queue drain as loop steps, not aux (W12, review MEDIUM-1)", async () => {
+		driver = await createReferenceDriver();
+		driver.setResponses([fauxAssistantMessage([fauxText("first")]), fauxAssistantMessage([fauxText("drained")])]);
+		let queued = false;
+		const agent = driver.session.agent;
+		agent.subscribe((event) => {
+			if (event.type !== "agent_end" || queued) return;
+			queued = true;
+			agent.followUp({ role: "user", content: [{ type: "text", text: "after the end" }], timestamp: Date.now() });
+		});
+
+		await driver.prompt("go");
+		await driver.settle();
+
+		expect(driver.counters.providerCalls).toBe(2);
+		expect(driver.counters.auxAdmissions).toBe(0);
+		expect(driver.counters.admissions).toBe(2);
+	});
+
+	it("admits mid-run threshold compaction as aux, not as a loop step (W12, review MEDIUM-2)", async () => {
+		const bigTool: AgentTool = {
+			name: "big",
+			label: "Big",
+			description: "Returns a large result.",
+			parameters: Type.Object({}),
+			execute: async () => ({ content: [{ type: "text", text: "tool output ".repeat(400) }], details: {} }),
+		};
+		driver = await createReferenceDriver({
+			tools: [bigTool],
+			models: [{ id: "faux-1", contextWindow: 3_000 }],
+			settings: { compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 600 } },
+		});
+		driver.setResponses([
+			fauxAssistantMessage([fauxToolCall("big", {})], { stopReason: "toolUse" }),
+			fauxAssistantMessage([fauxText("summary of the big result")]),
+			fauxAssistantMessage([fauxText("done")]),
+		]);
+
+		await driver.prompt("run big");
+		await driver.settle();
+
+		expect(driver.forwarded.filter(({ event }) => event.type === "compaction_end")).toHaveLength(1);
+		expect(driver.counters.auxAdmissions).toBe(1);
+		expect(driver.counters.admissions).toBe(2);
 	});
 
 	it("never forwards an event the discarded instance emits after the latch", async () => {

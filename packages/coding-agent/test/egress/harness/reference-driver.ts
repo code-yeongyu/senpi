@@ -6,7 +6,9 @@
  * - durable history rows come only from admitted input and committed steps, never from the session's own writes;
  * - events are stamped with their instance generation and only the current generation is forwarded;
  * - a rejected commit rebuilds a fresh instance from the durable rows.
- * The commit hook is installed on the test agent instance (`createLoopConfig`) until the CK1p seam exists (C.P3).
+ * Interim instance wraps of private members, removed when the CK1p seam lands (C.P3): Agent `createLoopConfig`,
+ * `runWithLifecycle`, `runQueuedMessagesAfterAgentEnd`, `processEvents`; AgentSession `_enforceCompactionBeforeProvider`
+ * and `_sessionTitlePromise`; SessionManager `_appendEntry`.
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
@@ -339,6 +341,20 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 		lifecycleOwner.runWithLifecycle = (executor) =>
 			runWithLifecycle((signal) => loopRun.run(true, () => executor(signal)));
 		// Event handlers (session title, extensions) run outside the loop context, so what they start is aux.
+		// The post-run queue drain is a loop run too, though it starts after the executor returns.
+		const drainOwner = harness.agent as unknown as {
+			runQueuedMessagesAfterAgentEnd(signal: AbortSignal): Promise<void>;
+		};
+		const runQueuedMessagesAfterAgentEnd = drainOwner.runQueuedMessagesAfterAgentEnd.bind(harness.agent);
+		drainOwner.runQueuedMessagesAfterAgentEnd = (signal) =>
+			loopRun.run(true, () => runQueuedMessagesAfterAgentEnd(signal));
+
+		// Compaction the session runs between loop steps is aux, though it runs inside the loop.
+		const compactionOwner = harness.session as unknown as {
+			_enforceCompactionBeforeProvider(...args: unknown[]): Promise<boolean>;
+		};
+		const enforceCompaction = compactionOwner._enforceCompactionBeforeProvider.bind(harness.session);
+		compactionOwner._enforceCompactionBeforeProvider = (...args) => loopRun.exit(() => enforceCompaction(...args));
 		const eventOwner = harness.agent as unknown as { processEvents(event: unknown): Promise<void> };
 		const processEvents = eventOwner.processEvents.bind(harness.agent);
 		eventOwner.processEvents = (event) => loopRun.exit(() => processEvents(event));
@@ -450,13 +466,14 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 
 	async function rebuild(): Promise<void> {
 		await readDurableHistory();
+		const next = await createHarness({ ...options, siblingOf: first });
+		// Picked up after the last await, so a stop() that lands while the store reads or the harness builds is never lost.
 		// A cancelled step is never redialed: its synthesized aborted message is committed once (W14).
 		const aborted = cancelledAbort;
 		cancelledAbort = undefined;
 		if (aborted !== undefined && !rows.some((row) => row.kind === "step" && row.stepId === aborted.stepId)) {
 			rows.push({ kind: "step", stepId: aborted.stepId, message: aborted.message });
 		}
-		const next = await createHarness({ ...options, siblingOf: first });
 		const history = projectHistoryRows(rows);
 		for (const message of history)
 			next.sessionManager.appendMessage(message as Parameters<typeof next.sessionManager.appendMessage>[0]);
