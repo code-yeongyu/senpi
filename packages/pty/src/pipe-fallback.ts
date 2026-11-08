@@ -39,6 +39,13 @@ type ExitHandler = (exit: PipeFallbackSessionExit) => void;
 const PIPE_FALLBACK_NOTE =
 	"Running with child_process pipe fallback because no PTY backend is active; terminal screen state and resize are unavailable.";
 
+/**
+ * How long stdout/stderr may keep draining after the child exits. 'close' waits for every holder of
+ * the pipes, so a grandchild the command left running would hold the exit for its whole life; the
+ * native PTY settles when the shell exits (senpi#6201).
+ */
+const EXIT_DRAIN_GRACE_MS = 250;
+
 export function isPipeFallbackForced(env: Readonly<Record<string, string | undefined>> = process.env): boolean {
 	const value = env.SENPI_PTY_FORCE_PIPE;
 	return value === "1" || value === "true";
@@ -108,6 +115,7 @@ export class PipeFallbackSession {
 	private spawnError: PipeFallbackSessionError | undefined;
 	private timedOut = false;
 	private timeoutHandle: NodeJS.Timeout | undefined;
+	private drainHandle: NodeJS.Timeout | undefined;
 	private readonly dataHandlers = new Set<DataHandler>();
 	private readonly exitHandlers = new Set<ExitHandler>();
 
@@ -156,14 +164,18 @@ export class PipeFallbackSession {
 			child.on("error", (error: Error) => {
 				this.spawnError = normalizeSpawnError(this.options.command, error);
 			});
-			child.on("close", (exitCode, signal) => {
+			const settleChildExit = (exitCode: number | null, signal: NodeJS.Signals | null) => {
 				this.settleExit({
 					exitCode: this.spawnError ? null : exitCode,
 					signal,
 					timedOut: this.timedOut,
 					error: this.spawnError,
 				});
+			};
+			child.on("exit", (exitCode, signal) => {
+				this.drainHandle = setTimeout(() => settleChildExit(exitCode, signal), EXIT_DRAIN_GRACE_MS);
 			});
+			child.on("close", settleChildExit);
 			if (this.options.timeoutMs !== undefined) {
 				this.timeoutHandle = setTimeout(() => {
 					this.timedOut = true;
@@ -293,6 +305,7 @@ export class PipeFallbackSession {
 	private settleExit(exit: PipeFallbackSessionExit): void {
 		if (this.exitResult !== null) return;
 		if (this.timeoutHandle) clearTimeout(this.timeoutHandle);
+		if (this.drainHandle) clearTimeout(this.drainHandle);
 		this.exitResult = exit;
 		this.resolveExit?.(exit);
 		for (const handler of this.exitHandlers) handler(exit);
