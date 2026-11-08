@@ -31,6 +31,7 @@ export type AdmitExternalMessageAnswer =
 type AdmittingSession = Pick<AgentSession, "externalAdmission" | "sessionManager" | "settingsManager">;
 
 const SENDER_NOT_ALLOWED = "sender_not_allowed";
+const DELEGATED_ORIGIN_UNKNOWN = "delegated_origin_unknown";
 const CANONICAL_TURN_ID = /^(0|[1-9]\d{0,15})$/;
 
 /** The ledger key: a remote device's ids live under that device, a local connection's under its own prefix. */
@@ -44,9 +45,9 @@ function claimedSender(sender: SessionControlSender | undefined): string {
 	if (sender === undefined) return "It names no sender.";
 	const claim =
 		sender.kind === "agent"
-			? `agent ${JSON.stringify(sender.name ?? "")} in session ${sender.session_id}`
+			? `agent ${JSON.stringify(sender.name ?? "")} in session ${JSON.stringify(sender.session_id)}`
 			: sender.kind === "external"
-				? `${sender.platform}${sender.author === undefined ? "" : ` user ${JSON.stringify(sender.author)}`}`
+				? `${JSON.stringify(sender.platform)}${sender.author === undefined ? "" : ` user ${JSON.stringify(sender.author)}`}`
 				: "the command line";
 	return `It says it was sent by ${claim}; that claim is not verified.`;
 }
@@ -65,6 +66,15 @@ export function admitExternalMessage(
 	const chain = admitInputChain(command.chainCount, session.settingsManager);
 	if (chain.kind === "refused") return { ok: false, refusal: chain.refusal };
 	const { origin } = peer;
+	// A delegated connection that names no device is never treated as this machine's own: it is refused (fail closed).
+	if (peer.connectionOrigin === "delegated" && origin === undefined)
+		return {
+			ok: false,
+			refusal: {
+				message: `${DELEGATED_ORIGIN_UNKNOWN}: a delegated connection that names no remote device cannot admit a delivery`,
+				errorCode: DELEGATED_ORIGIN_UNKNOWN,
+			},
+		};
 	if (origin !== undefined && command.sender?.kind === "command_line")
 		return {
 			ok: false,
