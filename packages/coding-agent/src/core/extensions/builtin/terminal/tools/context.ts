@@ -3,6 +3,7 @@ import type { TerminalSessionExit } from "@earendil-works/pi-pty";
 import type { TerminalManager } from "../manager.ts";
 import type { MonitorEvent, MonitorRegistry } from "../monitor-registry.ts";
 import { splitModelOnlyNotices } from "../output-format.ts";
+import type { SessionLogger } from "../../../../session-log.ts";
 import type { TimeoutAction } from "../settings.ts";
 
 /** Shared dependencies handed to every terminal tool factory. */
@@ -50,6 +51,8 @@ export interface TerminalToolContext {
 	 * the server and only then lets the command run. Absent on the in-process path, which spawns exactly as before.
 	 */
 	readonly launchBarrier?: TerminalLaunchBarrier;
+	/** Where a stalled spawn is reported (senpi#6189); defaults to the agent directory's session log. */
+	readonly sessionLogger?: Pick<SessionLogger, "warn">;
 }
 
 /** What a background exit notice reads: on the tool child it is a summary the child sent, not the live session. */
