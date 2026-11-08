@@ -239,7 +239,7 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 	const rebuildFailures: unknown[] = [];
 	let failNextRebuild = false;
 	// Each latch schedules exactly one rebuild (every latch bumps the generation, so latches never coincide). A failed
-	// rebuild is recorded and leaves the chain usable, so a later latch still rebuilds.
+	// rebuild is recorded in rebuildFailures and does not reject prompt() or whenRebuilt(); the driver stays latched.
 	function signalRebuild(): void {
 		rebuildsScheduled += 1;
 		pendingRebuild = pendingRebuild
@@ -669,8 +669,9 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 			// A catch here is only an idempotent notification: the latch already scheduled any rebuild.
 			await pendingRebuild;
 		},
-		// Resolves when a scheduled rebuild completes. When every latch so far has already been rebuilt it resolves
-		// at once; before any latch it waits for the next rebuild. Callers that need the redial settled also call settle().
+		// Resolves when the scheduled rebuild settles (completed, or failed and recorded in rebuildFailures). When
+		// every latch so far has settled it resolves at once; before any latch it waits for the next rebuild. Callers that
+		// need the redial settled also call settle().
 		whenRebuilt() {
 			if (rebuildsScheduled > rebuilds) return pendingRebuild;
 			if (rebuilds > 0 && rebuilds >= latchHistory.length) return Promise.resolve();
