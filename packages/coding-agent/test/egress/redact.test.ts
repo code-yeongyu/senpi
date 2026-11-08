@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { createRedactor, REDACTED } from "../../src/core/egress/redact.ts";
+import { syntheticSecret } from "./synthetic-secret.ts";
 
-const SECRET = "sk-ant-api03-Zq8xP2vL9mN4bR7tY1wK6cH3";
+const SECRET = `sk-ant-api03-${syntheticSecret(1, 24)}`;
 const PUBLIC_PREFIXES = ["sk-ant-api03-"];
 
 function embeddedBase64(secret: string, offset: number, url = false): string {
@@ -52,7 +53,7 @@ describe("redact: whole-value forms of a sealed secret", () => {
 });
 
 describe("redact: span merging", () => {
-	const secret = "Zq8xP2vL9mN4bR7tY1wK";
+	const secret = syntheticSecret(2, 20);
 	const redactor = createRedactor({ secrets: [secret], publicPrefixes: [] });
 
 	it("merges overlapping and touching 8-gram matches into one span", () => {

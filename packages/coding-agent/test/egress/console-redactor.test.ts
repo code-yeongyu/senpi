@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { installConsoleRedactor, runSealed, sealedWindowCount } from "../../src/core/egress/console-redactor.ts";
 import { createRedactor, REDACTED } from "../../src/core/egress/redact.ts";
+import { syntheticSecret } from "./synthetic-secret.ts";
 
 type Method = "log" | "info" | "warn" | "error" | "debug";
 
@@ -12,8 +13,8 @@ function captureConsole(): { target: Record<Method, (...args: unknown[]) => void
 	return { target: { log: sink, info: sink, warn: sink, error: sink, debug: sink }, lines };
 }
 
-const SECRET_A = "tenantA-Zq8xP2vL9mN4";
-const SECRET_B = "tenantB-Kc3hW7yR1tJ6";
+const SECRET_A = `tenantA-${syntheticSecret(3, 12)}`;
+const SECRET_B = `tenantB-${syntheticSecret(4, 12)}`;
 
 describe("console redactor", () => {
 	it("redacts a line with the patterns of the sealed context it was written in", async () => {
