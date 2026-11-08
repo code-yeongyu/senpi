@@ -1,3 +1,22 @@
+## 2026-11-07 - Valid configurationUpdate messages are replay-safe in retained suffixes (senpi#8566)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/retained-message-safety.ts`: `hasUnsafeRetainedContent` gains a `configurationUpdate` case. A bounded shape is accepted — `effort` in the ThinkingLevel enum (`off`/`minimal`/`low`/`medium`/`high`/`xhigh`/`max`, the values `appendConfigurationUpdate` writes), empty `content`, finite numeric `timestamp` — and returns safe. Malformed shapes still fall through to unsafe.
+- `packages/coding-agent/test/suite/regressions/8566-configuration-update-retained-safety.test.ts`: new regression coverage at the validator, the live session projection, and the deterministic fallback boundary.
+
+### Why
+
+- senpi#8566: a reasoning-effort change projects to a `configurationUpdate` message that normal request conversion accepts, but the safety checker rejected it through its default branch. On current `main` the omit-unsafe repair then silently discarded the latest reasoning configuration from the retained suffix instead of keeping it.
+
+### Why an extension could not handle it
+
+- The retained-suffix safety check runs in the builtin compaction policy before any provider request, and no extension hook sits between the projection and the fallback's suffix validation.
+
+### Expected merge conflict zones
+
+- LOW: the `configurationUpdate` case in `retained-message-safety.ts` and its regression test.
+
 ## 2026-11-05 - Summary request estimate: stale usage, cut input and activated tools (senpi#5905, PR #5948)
 
 ### What changed

@@ -9,6 +9,7 @@ $stdout.flush
 $__senpi_binding = TOPLEVEL_BINDING
 $__senpi_frame_mutex = Mutex.new
 $__senpi_current_cell = nil
+$__senpi_cell_token = nil
 $__senpi_memory_cell = nil
 $__senpi_capture_cell = nil
 $__senpi_connection = nil
@@ -277,6 +278,7 @@ def __senpi_run_cell(message)
   started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
   cell_id = message["cellId"].to_s
   $__senpi_current_cell = cell_id
+  $__senpi_cell_token = message["bridgeCellToken"].is_a?(String) ? message["bridgeCellToken"] : nil
   $__senpi_capture_cell = cell_id
   begin
     source = message["code"].to_s
@@ -303,6 +305,7 @@ def __senpi_run_cell(message)
   ensure
     $__senpi_capture_cell = nil
     $__senpi_current_cell = nil
+    $__senpi_cell_token = nil
     $__senpi_memory_cell = cell_id
   end
 end

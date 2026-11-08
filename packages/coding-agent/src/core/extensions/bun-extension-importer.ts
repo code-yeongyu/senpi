@@ -11,6 +11,7 @@ import {
 	rewriteCommonJsImport,
 } from "./bun-extension-commonjs.ts";
 import { ExtensionSourceError } from "./bun-extension-error.ts";
+import { loadSynchronously } from "./bun-extension-load-turns.ts";
 import { createPreparedSourceCache, type PreparedEdge, type PreparedSource } from "./bun-extension-prepared-cache.ts";
 import {
 	type CommonJsBody,
@@ -203,7 +204,7 @@ export function createBunExtensionImporter(
 			const id = graph.resolve(specifier, filename);
 			const evaluating = commonJsModules.get(id);
 			if (evaluating !== undefined) return evaluating.exports;
-			const result: { readonly default?: unknown } = nativeRequire(id);
+			const result: { readonly default?: unknown } = loadSynchronously(() => nativeRequire(id));
 			return commonJs.has(id) ? result.default : result;
 		},
 		evaluateCommonJs(filename: string, body: CommonJsBody): unknown {

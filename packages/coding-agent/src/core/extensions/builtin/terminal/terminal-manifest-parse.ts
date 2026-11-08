@@ -130,7 +130,20 @@ function rpcCheckpoint(value: unknown): TerminalManifestRpcCheckpoint {
 		if (typeof status !== "string") invalid("field rpcCheckpoint.statuses values must be strings");
 		statuses[key] = status;
 	}
-	return { hosts, statuses };
+	return value.remote === undefined
+		? { hosts, statuses }
+		: { hosts, statuses, remote: remoteCheckpoint(value.remote) };
+}
+
+function remoteCheckpoint(value: unknown): NonNullable<TerminalManifestRpcCheckpoint["remote"]> {
+	if (!isObj(value) || !isObj(value.settled)) invalid("field rpcCheckpoint.remote must be an object");
+	const settled: Record<string, readonly string[]> = {};
+	for (const [key, turns] of Object.entries(value.settled)) {
+		if (!Array.isArray(turns) || !turns.every((turn) => typeof turn === "string"))
+			invalid("field rpcCheckpoint.remote.settled values must be arrays of strings");
+		settled[key] = turns;
+	}
+	return value.cursor === undefined ? { settled } : { cursor: str(value, "cursor"), settled };
 }
 
 function parseMonitor(entry: unknown): ManifestMonitor {

@@ -12,6 +12,20 @@
 
 ### Removed
 
+## [2026.11.6-2] - 2026-11-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Codex Fast turns are now priced at the tier that was sent when the backend echoes `auto` or `default`, including tiers set only by the `/fast` payload hook, on both SSE and websocket transports ([#6156](https://github.com/code-yeongyu/senpi/pull/6156))
+
+### Removed
+
 ## [2026.11.6-1] - 2026-11-06
 
 ### Breaking Changes

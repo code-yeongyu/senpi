@@ -1286,7 +1286,7 @@ from them that the host itself went away (shutdown) or handed its endpoint to a 
 | `event_queue_failed` | `true` | The socket's event queue failed; follows its `overflow` record when it has one | `overflow`, `stall` or `transport_error` |
 | `event_lease_refused` | `true` | An event cannot be leased; follows its `event_lease_refused` record | `lease_limit` or `storage_unavailable` |
 | `compact_endpoint_unsupported` | `false` | A compact mirror of a session served only on the legacy wire; follows its `compact_refused` record | none |
-| `host_shutdown` | `true` | The host is shutting down; follows its sessions' `session_closed` records (`reason: "host_shutdown"`) | none |
+| `host_shutdown` | `true` | The host is shutting down; follows its sessions' `session_closed` records (`reason: "host_shutdown"`), or `session_parked { reason: "host_shutdown" }` for a retained session on a socket host | none |
 | `host_handoff` | `true` | The host drains for a newer generation; follows its sessions' handoff park records | none |
 
 #### interactive_user
@@ -2514,7 +2514,8 @@ releases the caller's own attachment and closes the session only when no other c
 
 Retention limits (what `open`'s `retain_on_disconnect: true` does NOT survive): an explicit `close`, the host's own
 idle-eviction window (`SENPI_RPC_SESSION_IDLE_EVICTION_MS`, default 30 minutes, after which the session is parked -
-any `senpi host session` verb given its path or durable id resumes it), or the host process exiting. A session that has not
+any `senpi host session` verb given its path or durable id resumes it). The host process exiting does not end it: the next
+host on the same endpoint reopens it (see "Retained sessions across a host restart"). A session that has not
 received a message yet may have no JSONL file on disk even though `open` already reported a `sessionPath`.
 
 A minimal orchestration run:
@@ -2744,6 +2745,15 @@ context - inside a provider scope of their own, then drops them.
 - A host whose sessions run in worker isolates (`--session-runtime worker`) has nothing it can warm from the host
   process: it answers `state: "unsupported"` and does not advertise the capability. A draining generation refuses with
   `host_draining`.
+- A host whose launch carried a private descriptor table (`SENPI_PRIVATE_FDS`) runs this warm itself once at boot,
+  for its default profile (the host's cwd and context, no `kind`), right after it starts listening, so an extension
+  can claim its private channel before any client connects. A `warm` of that profile then joins it, or answers
+  `already_warm` once it is done, and never loads again; a boot load that fails is logged to stderr and the host
+  keeps serving. Without a table nothing loads before an `open_session` or `warm`.
+  The boot warm's factory call is what claims the channel: its services are then dropped and its provider scope is
+  closed, so every later session's `takeInheritedPrivateChannel` returns `undefined`. An extension must keep its
+  channel handling host-global, never tied to that factory call's `pi`. This applies only to in-process hosts: a
+  `--session-runtime worker` host has no `warm`, so one handed a table loads nothing at boot.
 
 Probe `warm` in `get_protocol_info` capabilities before sending it: an older host answers an unknown command with an
 error.
@@ -2792,8 +2802,8 @@ viewer opened to the next one (senpi#5808). So every `open_session` on a delegat
 stays `open` with `attachments: 0` and attachable from any connection, exactly like a retained session (see "Retained
 sessions"). The host decides this when it reads the line, so a connection that ends while its open is still running
 leaves that session retained too. Like any retained session it is still closed by an explicit `close_session`, parked
-by the idle-eviction window, and recorded at park for the next host generation, which reopens it on startup, so a
-parked session survives into the next generation. `attach_session` never turns retention on: attaching over a delegated
+by the idle-eviction window, and recorded (at open, and again at park) for the next host on the endpoint, which reopens
+it on startup, so it survives into the next generation and across a host restart. `attach_session` never turns retention on: attaching over a delegated
 connection to a session that is not retained leaves it closing with its last attachment. One consequence to know: a
 delegated `open_session` by `sessionPath` (which needs `device_admin`) that lands on a session already live and opened by
 someone else joins it as an attach that asks for retention, so it turns retention on for that live session and every
@@ -3288,8 +3298,9 @@ What the host does enforce are lifecycle windows, and they only ever return memo
   command's `unknown_session`. A GENERATION HANDOFF also parks attached sessions, using the distinct activity
   predicate below, and emits `session_closed { sessionId, reason: "handoff_parked", sessionPath }`, so a client can tell "the host handed
   over, reopen by path" from "this session ended". An explicit `close_session` is `reason: "client_close"`; the host
-  process exiting is `reason: "host_shutdown"` (even for a retained session - the process is going away, so this is not
-  a park). `reason` is optional on the wire; a client that does not know a
+  process exiting is `reason: "host_shutdown"`, except for a retained session on a socket host, which PARKS instead
+  (`session_parked { reason: "host_shutdown" }`) because the next host on the endpoint reopens it (see "Retained sessions
+  across a host restart"). `reason` is optional on the wire; a client that does not know a
   value, or receives a record with no `reason` field, treats the record exactly as a reason-less one. "Session-owned
   work" is the complete activity contract, not just a streaming turn: an agent run, a running bash command,
   background terminal jobs and any other published wake source (terminal monitors, loop-guard holds), compaction,
@@ -3325,17 +3336,45 @@ What the host does enforce are lifecycle windows, and they only ever return memo
   in-flight turn to settlement, keeps its path reservation and worker slot, and stays in `list_sessions`. A later
   `open_session` with that `sessionPath` — from any connection — attaches to the same routing handle and returns
   `attached: true`. Retention never outranks an explicit teardown: a `close_session` from an attached connection still
-  reaches zero attachments and closes the session, host shutdown closes it, and the idle-eviction window above still
+  reaches zero attachments and closes the session, a socket host's shutdown parks it (see below), and the idle-eviction
+  window above still
   parks it (or the completed-detached-worker rule above parks it sooner) — announced as
   `session_parked { sessionId, sessionPath }`, after which the file reopens by path like any
   evicted session, and the parked session counts as gone for the empty-host exit below. The park is also recorded
   for the NEXT generation, which reopens it on startup; the host that parked it never reopens it on its own, so a
-  client reopening the session right after `session_parked` is the only open of that path (senpi#3485). It is also bounded by the empty-host exit
-  and the supervisor's idle-exit window below: retention survives a client, not the host. Any attach may turn retention
+  client reopening the session right after `session_parked` is the only open of that path (senpi#3485). Retention survives
+  the host process too (next item). Any attach may turn retention
   on for a live session; no attach turns it off for clients that already rely on it. Omitting the flag is byte-identical
   to the previous behavior — the session is closed with its last connection — except on a delegated connection
   (`declare_delegation`), where every `open_session` is retained (see "Delegated connections"; senpi#5808). Probe `retain_on_disconnect` in
   `get_protocol_info` capabilities before relying on it: an older host silently ignores the field.
+- **Retained sessions across a host restart**: every retained session with a session path is recorded in the
+  endpoint's daemon directory (`handover-parked/`, one entry per session path, the same record a handoff park writes)
+  as soon as its open succeeds; the entry follows the session's `set_session_context` patches and its park, and a
+  transcript switch (`new_session`, `switch_session`, a fork) moves it to the new file, so only the transcript the
+  session is on comes back. An explicit `close_session` or a reclaim removes every key the session was recorded
+  under. While the session is open the entry names the process that holds it; a park drops that, and a host never
+  reopens an entry whose holding process is still alive. So during a generation handoff the successor does not open
+  a session its draining predecessor still has loaded, idle and detached ones included: it reopens the predecessor's
+  park once the drain writes it (or the entry, if the predecessor dies without parking). A host
+  that starts on the same socket and agent dir - after a handoff, a clean stop, a crash, or a kill in the middle of a
+  turn - reopens, in the background right after it binds, every entry an earlier process wrote, replaying the
+  recorded launch profile as `open_session { sessionPath, durableSessionId, retain_on_disconnect: true, ... }`: the same
+  open-by-path a TUI resume runs on its session file. The session is `open` in `list_sessions` again with the same
+  `durableSessionId`, `sessionPath` and transcript, announced by a `session_opened` record, and no client has to
+  re-open it. A clean stop (SIGTERM, idle or empty exit) parks each retained session first: attached clients receive
+  `session_parked { sessionId, sessionPath, reason: "host_shutdown" }`, never `session_closed`, and a turn running at
+  the stop ends with `agent_end { aborted: true, abortSource: "system", abortCause: { kind: "host_shutdown" } }`, never
+  a user abort. A killed host sends nothing. Either way the turn the stopped process was running is not resumed: the
+  transcript holds what was persisted before the stop, as after a TUI crash. The routing handle (`sessionId`, `rpc-N`) is new, since handles are unique per process;
+  a client holding the old one gets `session_not_found` and re-resolves the session from `list_sessions` (or
+  `session_opened`) by `durableSessionId`. A relay that mirrors `list_sessions` (relayd keeps no session store of its
+  own) therefore sees the session again unchanged. Not reopened: an entry whose session file is gone (a session that
+  never received a message has none), an explicitly closed or reclaimed session (its entry is removed), and a session
+  whose context `task_status` is terminal (`completed`, `cancelled`, `error`, `failed`, `lost`, `interrupted`). There is
+  no separate resume-by-durable-id request: `open_session { sessionPath }` already resumes a known transcript, but a
+  remote client learns sessions only from `list_sessions`, so a session the restarted host did not list could not be
+  resumed by one at all.
 - **Empty-host exit**: when the registry holds zero sessions AND no client is connected, continuously for
   `SENPI_RPC_HOST_EMPTY_EXIT_MS` (default 15 minutes), the host exits through its clean shutdown path (flush, socket
   removal), for stdio and `--listen` hosts alike. A connected client counts as occupancy even with no session open,
@@ -3382,8 +3421,9 @@ registrant opens no socket and writes no registry directory.
   user's draft still holds it.
   - `get_protocol_info`: `mode: "tui"`, `endpoint_kind: "tui"`, `capabilities: ["tui_control", "session_status",
     "tui_observer", "observe_reads", "entries_tail"]` (`tui_observer`: the observe-and-drive set below), `generation: 0`, the endpoint's
-    `instanceId`, and `commands`: every command this endpoint accepts. A terminal from before the session
-    controls below lists no `commands`.
+    `instanceId`, `commands`: every command this endpoint accepts, and `method_classes`: the same table and digest a
+    host's answer carries (one builder serves both). A terminal from before the session controls below lists no
+    `commands`; one from before senpi#6158 carries no `method_classes`.
   - `list_sessions`: exactly one row, `kind: "interactive"`, `surface: "tui"`, `attachments: 1`.
   - `get_state`: the RPC session state plus `turn_epoch`, `blocking_question`, `compacting`,
     `editor_has_draft` and `state_version`.
@@ -3958,8 +3998,8 @@ On a socket host, session-scoped commands require the current connection to be a
 in the following effect-based read allow-list:
 
 `get_state`, `get_messages`, `get_entries`, `get_tree`, `get_fork_messages`,
-`get_last_assistant_text`, `get_media`, `get_commands`, `get_loaded_surfaces`,
-`get_available_models`, `get_available_thinking_levels`, `get_fast_mode`, `get_session_stats`,
+`get_last_assistant_text`, `get_media`, `get_commands`, `get_loaded_surfaces`, `get_project_trust`,
+`get_project_settings`, `get_available_models`, `get_available_thinking_levels`, `get_fast_mode`, `get_session_stats`,
 `get_pending_inputs`, `get_steering_messages`, `get_follow_up_messages`, `get_auth_providers`,
 `get_provider_accounts`, `resolve_path`, `memory_report`, `eval_cells.list`, `eval_cells.peek`,
 and `check_reload_veto`.
@@ -6031,6 +6071,113 @@ Extension rows come directly from the session's loaded resource inventory, not f
 
 In multi-session mode this is a session-scoped command and requires the routing `sessionId`.
 
+### Workspace trust and project settings
+
+A project folder's settings file, skills, prompt templates, extensions, themes and MCP servers load only when the
+project is trusted. The terminal asks when a session opens; an RPC session is never asked, so it stays untrusted
+until a client saves a decision with `set_project_trust`. These four commands act on the routed session's working
+directory (in multi-session mode each requires the routing `sessionId`) and use the same storage and rules as
+the terminal: the device's `trust.json` and the project's own settings file.
+
+#### get_project_trust
+
+```json
+{"type": "get_project_trust"}
+```
+
+```json
+{
+  "type": "response",
+  "command": "get_project_trust",
+  "success": true,
+  "data": {
+    "cwd": "/home/user/project",
+    "projectTrusted": false,
+    "requiresTrust": true,
+    "saved": null,
+    "locked": false,
+    "choices": [
+      { "choice": "trust", "label": "Trust", "trusted": true, "path": "/home/user/project" },
+      { "choice": "trust_parent", "label": "Trust parent folder (/home/user)", "trusted": true, "path": "/home/user" },
+      { "choice": "do_not_trust", "label": "Do not trust", "trusted": false, "path": "/home/user/project" }
+    ]
+  }
+}
+```
+
+- `projectTrusted`: whether this session runs with the project trusted now. (`get_state.projectTrusted` reports
+  only a decision saved for the folder itself.)
+- `requiresTrust`: whether the folder has anything trust gates; a folder without such files counts as trusted.
+- `saved`: the nearest decision saved at or above the folder, or `null`.
+- `locked`: the engine was launched with `--approve` or `--no-approve`; that flag outranks every saved decision,
+  so `set_project_trust` is refused.
+- `choices`: exactly the choices the terminal's `/trust` command offers.
+
+#### set_project_trust
+
+Saves one of the `/trust` choices and applies it to the session at once: project resources load (or unload)
+as they would on `reload`, and the next session opened in the folder gets the same decision. It is never
+implied by `open_session` or by a permission preset; only this explicit request saves a decision.
+
+```json
+{"type": "set_project_trust", "choice": "trust"}
+```
+
+`choice` is `trust` (this folder), `trust_parent` (the parent folder; clears this folder's own entry, as `/trust`
+does) or `do_not_trust`. The response carries the same `data` as `get_project_trust`, read after the change.
+Errors: `invalid_argument` for an unknown choice, `project_trust_locked` when the launch named the trust, and
+`project_trust_extension_decided` when a `project_trust` handler of an extension loaded before trust (never a
+project extension) decides the other way: such a handler decides before any saved choice when a session opens, so
+the request is refused and nothing is saved or applied. A folder with nothing trust gates stays trusted whatever is
+chosen.
+
+#### get_project_settings
+
+Reads the project settings file as stored. Reading runs nothing, so it works while the project is untrusted.
+
+```json
+{"type": "get_project_settings"}
+```
+
+```json
+{
+  "type": "response",
+  "command": "get_project_settings",
+  "success": true,
+  "data": {
+    "cwd": "/home/user/project",
+    "path": "/home/user/project/.senpi/settings.json",
+    "exists": true,
+    "projectTrusted": true,
+    "settings": { "defaultThinkingLevel": "high" },
+    "error": null
+  }
+}
+```
+
+`settings` is `null` when the file does not exist or does not parse; `error` then names the parse failure.
+
+#### set_project_setting
+
+Writes one top-level key of the project settings file through the same locked, merge-on-write path the
+terminal's project setters use; `"value": null` removes the key. The value is stored as given, like an edit to
+the file: values the session reads when it starts (default model and thinking level, steering and follow-up
+modes) apply after `reload` or in the next session.
+
+```json
+{"type": "set_project_setting", "key": "defaultThinkingLevel", "value": "high"}
+```
+
+The response carries the same `data` as `get_project_settings`, read after the write. Errors:
+`invalid_argument` when `key` is not an identifier (`[A-Za-z][A-Za-z0-9_]*`) or `value` is missing,
+`project_not_trusted` while the project is untrusted (trust it first), `project_settings_unreadable` when the
+existing file does not parse (nothing is written), and `project_settings_write_failed` when writing the file fails
+(permissions, a held lock).
+
+`get_project_trust` is an `observe` read; `set_project_trust`, `get_project_settings` and `set_project_setting`
+are `device_admin` (a saved trust decision decides whether project code runs on the device, and the settings
+commands read and write a file in the session's folder).
+
 ### extension_request
 
 Invoke a request handler registered by an extension through `pi.rpc.handle(name, handler)`:
@@ -6142,7 +6289,7 @@ When a multi-session host ends a routing handle it may name why:
 | `client_close` | An attached client sent `close_session` |
 | `idle_evicted` | The idle sweep ended a session that was not retained |
 | `session_dir_removed` | The session's transcript directory was deleted and nothing can reopen it: the idle sweep ended it because no client held it (whatever the idle window), or a generation handoff drain ended it instead of parking it. No `sessionPath` |
-| `host_shutdown` | The host process is exiting (SIGTERM, idle-exit, empty-host). A retained session is closed, not parked |
+| `host_shutdown` | The host process is exiting (SIGTERM, idle-exit, empty-host). A retained session on a socket host is parked instead (`session_parked { reason: "host_shutdown" }`) |
 | `replaced` | The routing handle ended because the live session behind it was replaced |
 | `handoff_parked` | A generation handoff drained this host; reopen with `open_session { sessionPath }` |
 | `released` | `release_session` handed the session to a runtime outside this host. Carries `sessionPath`, the file that runtime now writes: do NOT reopen it here |
@@ -6333,7 +6480,7 @@ cannot replace the ID on a queued start event. Older engines omit this additive 
 
 ### agent_end
 
-Emitted when one low-level agent run completes. Contains all messages generated during this run. If `willRetry` is true, an automatic retry will follow. A run stopped because its session was replaced also carries `abortCause: { kind: "session_replaced", reason, targetSessionFile?, targetSessionId? }` (see `session_replaced`); extensions' own `agent_end` does not carry it, they learn of the replacement from `session_shutdown`.
+Emitted when one low-level agent run completes. Contains all messages generated during this run. If `willRetry` is true, an automatic retry will follow. A run stopped because its session was replaced also carries `abortCause: { kind: "session_replaced", reason, targetSessionFile?, targetSessionId? }` (see `session_replaced`); a run the host's own stop cut short ends with `aborted: true`, `abortSource: "system"` and `abortCause: { kind: "host_shutdown" }`, never `abortSource: "user"` (senpi#6190); extensions' own `agent_end` does not carry it, they learn of the replacement from `session_shutdown`.
 
 ```json
 {
