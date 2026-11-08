@@ -26,6 +26,7 @@ export {
 import {
 	continuationTurnUsedTools,
 	evaluateGoalContinuation,
+	GOAL_STALL_LIVE_CHANNEL_THRESHOLD,
 	GOAL_TOOL_EFFECT_WINDOW,
 	GOAL_USER_GRACE_DELAY_MS,
 	type GoalContinuationInput,
@@ -113,6 +114,7 @@ export class MonitorAwareGoalContinuation {
 	#consecutiveLengthRecoveries = new Map<string, number>();
 	#recentNormalizedOutputHashes: string[] = [];
 	#toollessContinuationStreak = 0;
+	#liveChannelToollessStreak = 0;
 	#recentToolEffects: string[] = [];
 	#toollessStreakGoalId: string | null = null;
 	#endedTurnWasUserInitiated = false;
@@ -720,6 +722,7 @@ export class MonitorAwareGoalContinuation {
 			consecutiveLengthRecoveries: this.#consecutiveLengthRecoveries.get(goal.id) ?? 0,
 			recentNormalizedOutputHashes: this.#recentNormalizedOutputHashes,
 			toollessContinuationStreak: this.#toollessContinuationStreak,
+			liveChannelToollessStreak: this.#liveChannelToollessStreak,
 			continuationPending: this.#isContinuationPending(),
 			lastTurnStuckOnContextOverflow: isLastTurnStuckOnContextOverflow(ctx, lastAssistant),
 		};
@@ -733,20 +736,25 @@ export class MonitorAwareGoalContinuation {
 		if (!verdict.stallNotice) return content;
 
 		const liveSources = this.liveWakeSources();
+		// Report the counter that actually tripped the bound, so the notice matches the wait.
+		const stallCount =
+			liveSources.length > 0 && this.#liveChannelToollessStreak >= GOAL_STALL_LIVE_CHANNEL_THRESHOLD
+				? this.#liveChannelToollessStreak
+				: this.#toollessContinuationStreak;
 		this.#pi.events?.emit(GOAL_MONITOR_STALL_EVENT, {
 			goalId: goal.id,
-			consecutiveContinuations: this.#toollessContinuationStreak,
+			consecutiveContinuations: stallCount,
 			toolless: true,
 		});
 		if (this.#ctxHasUI(ctx)) {
 			const context =
 				liveSources.length > 0 ? `while ${liveSources.join(", ")} channels stayed active` : "without tool use";
 			ctx.ui.notify(
-				`Goal continuation repeated ${this.#toollessContinuationStreak} toolless turns ${context} - injected a stall check.`,
+				`Goal continuation repeated ${stallCount} toolless turns ${context} - injected a stall check.`,
 				"info",
 			);
 		}
-		content = `${buildGoalStallNotice(this.#toollessContinuationStreak, { liveSources })}\n\n${content}`;
+		content = `${buildGoalStallNotice(stallCount, { liveSources })}\n\n${content}`;
 		return content;
 	}
 
@@ -777,20 +785,27 @@ export class MonitorAwareGoalContinuation {
 		if (goal.id !== this.#toollessStreakGoalId) {
 			this.#toollessStreakGoalId = goal.id;
 			this.#toollessContinuationStreak = 0;
+			this.#liveChannelToollessStreak = 0;
 		}
 		if (this.#endedTurnWasUserInitiated) return;
 		if (turnUsedTools) {
 			this.#toollessContinuationStreak = 0;
+			this.#liveChannelToollessStreak = 0;
 			return;
 		}
 		// senpi#4265: ending a toolless turn while a resumption channel is live is the designed
 		// wait the continuation prompt itself endorses ("ending the turn while a live resumption
-		// channel ... is on duty ... is progress, not a status report"), so it neither advances
-		// nor clears the stall streak. The streak stays armed for a genuine stall, and the reset
-		// in #setWakeSourceCount (total reaches zero) re-bases it the moment real delivery comes.
-		// The repetition-hash guard and the continuation cap deliberately do not read this streak,
-		// so a permanently "live" channel cannot disarm stall detection forever.
-		if (this.#activeWakeSourceCount() > 0) return;
+		// channel ... is on duty ... is progress, not a status report"), so it does not advance
+		// the ordinary toolless streak. The wait is still bounded, though: a channel that stays
+		// live but never delivers (a hung monitor, a dead child) would otherwise suppress the
+		// stall check forever. Such turns are counted on a separate, higher threshold, and the
+		// counter re-bases whenever a channel actually delivers or drains (see #setWakeSourceCount).
+		if (this.#activeWakeSourceCount() > 0) {
+			this.#liveChannelToollessStreak += 1;
+			return;
+		}
+		// No live channel: the live-wait counter is meaningless, drop it.
+		this.#liveChannelToollessStreak = 0;
 		this.#toollessContinuationStreak += 1;
 	}
 
@@ -865,11 +880,15 @@ export class MonitorAwareGoalContinuation {
 	}
 
 	#setWakeSourceCount(source: string, activeCount: number, items?: readonly WakeSourceStateItem[]): void {
+		const previousSourceCount = this.#wakeSources.get(source) ?? 0;
 		const previousTotal = this.#activeWakeSourceCount();
 		const previousDeadline = this.#askUserDeadlineAtMs;
 		if (source === ASK_USER_WAKE_SOURCE) this.#noteAskUserWait(activeCount, items);
 		this.#wakeSources.set(source, activeCount);
 		const nextTotal = this.#activeWakeSourceCount();
+		// A channel that actually delivers (its count changes) or a new channel starting re-bases
+		// the live-wait counter, so a healthy wait never accumulates toward the dead-channel bound.
+		if (activeCount !== previousSourceCount) this.#liveChannelToollessStreak = 0;
 		if (previousTotal > 0 && nextTotal === 0) {
 			if (this.#scheduledContinuationKind === "monitor") this.#armDrainFire();
 			else this.#resetCacheWarmIteration();
@@ -942,6 +961,7 @@ export class MonitorAwareGoalContinuation {
 
 	#resetToollessContinuationStreak(): void {
 		this.#toollessContinuationStreak = 0;
+		this.#liveChannelToollessStreak = 0;
 		this.#toollessStreakGoalId = null;
 	}
 
