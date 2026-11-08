@@ -65,8 +65,12 @@ export interface ReferenceDriver {
 		nextCommit(kind: "already-committed", committedByAnother: AgentMessage): void;
 		nextCommit(kind: "ambiguous-landed" | "ambiguous-lost"): void;
 		advanceFenceBeforeNextCommit(): void;
+		epochUnverifiedUntilConfirmed(): void;
+		cancelNextStep(): void;
 	};
 	deliverLateLanding(): "refused" | "landed" | "none";
+	epochWaitReached(): Promise<void>;
+	confirmEpoch(): void;
 	setResponses: Harness["setResponses"];
 	appendResponses: Harness["appendResponses"];
 	prompt(text: string): Promise<void>;
@@ -120,6 +124,12 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 	let fence: Fence = { epoch: 1, admissionSeq: 0, generation: 1 };
 	let advanceFenceBeforeNextCommit = false;
 	let lateLanding: { readonly stepId: string; readonly fence: Fence; readonly message: AgentMessage } | undefined;
+	let epochWait:
+		| { readonly reached: PromiseWithResolvers<void>; readonly confirmed: PromiseWithResolvers<void> }
+		| undefined;
+	let cancelNextStep = false;
+	const cancelledSteps = new Set<string>();
+	let cancelledAbort: { readonly stepId: string; readonly message: AgentMessage } | undefined;
 	const instances: Harness[] = [];
 	let generation = 1;
 	let admissions = 0;
@@ -162,6 +172,22 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 				throw new StepCommitError(`stale-${instanceGeneration}`, "generation");
 			}
 			const { stepId } = admitted;
+			if (epochWait !== undefined) {
+				// epoch_unverified waits for a fresh epoch and re-checks; it never latches (15.4, C.P4 reading).
+				const wait = epochWait;
+				wait.reached.resolve();
+				await wait.confirmed.promise;
+				epochWait = undefined;
+			}
+			if (cancelledSteps.has(stepId)) {
+				cancelledAbort = {
+					stepId,
+					message:
+						step.message.role === "assistant"
+							? { ...step.message, content: [], stopReason: "aborted" }
+							: step.message,
+				};
+			}
 			if (advanceFenceBeforeNextCommit) {
 				advanceFenceBeforeNextCommit = false;
 				fence = { ...fence, admissionSeq: fence.admissionSeq + 1 };
@@ -195,6 +221,10 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 			admissions += 1;
 			fence = { epoch: fence.epoch, admissionSeq: fence.admissionSeq + 1, generation };
 			admitted = { stepId: `step-${fence.admissionSeq}`, fence };
+			if (cancelNextStep) {
+				cancelNextStep = false;
+				cancelledSteps.add(admitted.stepId);
+			}
 			return dial(model, context, streamOptions);
 		};
 
@@ -232,6 +262,12 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 	}
 
 	async function rebuild(): Promise<void> {
+		// A cancelled step is never redialed: its synthesized aborted message is committed once (W14).
+		const aborted = cancelledAbort;
+		cancelledAbort = undefined;
+		if (aborted !== undefined && !rows.some((row) => row.kind === "step" && row.stepId === aborted.stepId)) {
+			rows.push({ kind: "step", stepId: aborted.stepId, message: aborted.message });
+		}
 		const next = await createHarness({ ...options, siblingOf: first });
 		const history = projectHistoryRows(rows);
 		for (const message of history)
@@ -289,6 +325,19 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 			advanceFenceBeforeNextCommit() {
 				advanceFenceBeforeNextCommit = true;
 			},
+			epochUnverifiedUntilConfirmed() {
+				epochWait = { reached: Promise.withResolvers<void>(), confirmed: Promise.withResolvers<void>() };
+			},
+			cancelNextStep() {
+				cancelNextStep = true;
+			},
+		},
+		epochWaitReached() {
+			if (epochWait === undefined) throw new Error("no epoch wait is armed");
+			return epochWait.reached.promise;
+		},
+		confirmEpoch() {
+			epochWait?.confirmed.resolve();
 		},
 		deliverLateLanding() {
 			const landing = lateLanding;

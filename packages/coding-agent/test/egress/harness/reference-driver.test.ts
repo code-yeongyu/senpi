@@ -200,6 +200,40 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 		expect(assistantTexts(projectHistoryRows(driver.rows))).toEqual(["fresh"]);
 	});
 
+	it("waits on an unverified epoch without latching and commits once the epoch is confirmed", async () => {
+		driver = await createReferenceDriver();
+		driver.setResponses([fauxAssistantMessage([fauxText("waited")])]);
+		driver.inject.epochUnverifiedUntilConfirmed();
+
+		const prompt = driver.prompt("go");
+		await driver.epochWaitReached();
+		expect(assistantTexts(projectHistoryRows(driver.rows))).toEqual([]);
+		expect(driver.latchHistory).toEqual([]);
+
+		driver.confirmEpoch();
+		await prompt;
+
+		expect(driver.latchHistory).toEqual([]);
+		expect(assistantTexts(projectHistoryRows(driver.rows))).toEqual(["waited"]);
+	});
+
+	it("never redials a cancelled step: the rebuild commits one synthesized aborted message (W14)", async () => {
+		driver = await createReferenceDriver();
+		driver.setResponses([fauxAssistantMessage([fauxText("lost")]), fauxAssistantMessage([fauxText("never")])]);
+		driver.inject.cancelNextStep();
+		driver.inject.nextCommit("reject");
+
+		await driver.prompt("go");
+
+		expect(driver.rebuilds).toBe(1);
+		expect(driver.counters.providerCalls).toBe(1);
+		const steps = projectHistoryRows(driver.rows).filter((message) => message.role === "assistant");
+		expect(steps.map((message) => (message.role === "assistant" ? message.stopReason : undefined))).toEqual([
+			"aborted",
+		]);
+		expect(driver.session.agent.state.messages).toEqual(projectHistoryRows(driver.rows));
+	});
+
 	it("never forwards an event the discarded instance emits after the latch", async () => {
 		driver = await createReferenceDriver();
 		driver.setResponses([fauxAssistantMessage([fauxText("lost")])]);
