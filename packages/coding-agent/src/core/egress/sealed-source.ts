@@ -14,8 +14,6 @@ import type { HpkeWrap, ProviderId } from "./sealed-format.ts";
 
 const RELOADS_PER_STEP = 3;
 const STABLE_HEAD_MS = 5000;
-/** At most one minute of churn waiting per step; past it the step reports a config-churn wait. */
-const STABLE_HEAD_ATTEMPTS = 12;
 const REDACTED = "<redacted>";
 
 const RETRYABLE: readonly ReleaseFailure[] = [
@@ -42,7 +40,10 @@ export interface SealedSourceDeps {
 	readonly recipientPk: Uint8Array;
 	readonly reloadEntryDigest: (providerId: ProviderId) => Promise<string>;
 	readonly readHead: () => Promise<string>;
-	readonly sleep: (ms: number) => Promise<void>;
+	/** Rejects with the signal's reason once the step aborts. */
+	readonly sleep: (ms: number, signal: AbortSignal) => Promise<void>;
+	/** The abort signal of the step this release serves; it bounds the churn wait (custody design L844, C.3). */
+	readonly stepSignal: (scope: ReleaseScope) => AbortSignal;
 	/** Opens one released item with this instance's recipient key; its HPKE info/AAD binding is fixed by r11.1. */
 	readonly openItem: (item: HpkeWrap, position: ReleasedItemPosition) => Promise<Uint8Array>;
 }
@@ -125,21 +126,21 @@ export class SealedCredentialSource implements CredentialSource {
 		fields: readonly SecretField[],
 		scope: ReleaseScope,
 	): Promise<Map<SecretField, Uint8Array>> {
+		const signal = this.#deps.stepSignal(scope);
 		let digest = entryDigest;
 		let reloads = 0;
-		let churnRetried = false;
 		for (;;) {
+			signal.throwIfAborted();
 			const lease = await this.#deps.lease();
 			const result = await this.#release(providerId, digest, fields, scope, lease);
 			if (result.ok) return this.#open(providerId, digest, fields, result.items, lease);
 			if (result.code !== "stale_snapshot") throw new CredentialWait(result.code, RETRYABLE.includes(result.code));
 			if (reloads < RELOADS_PER_STEP) {
 				reloads++;
-				digest = await this.#deps.reloadEntryDigest(providerId);
-				continue;
+			} else {
+				// config-churn (C.3): every further stale retry re-enters the stable-head wait, never the immediate reloads.
+				await this.#waitForStableHead(signal);
 			}
-			if (churnRetried || !(await this.#waitForStableHead())) throw new CredentialWait("config-churn", true);
-			churnRetried = true;
 			digest = await this.#deps.reloadEntryDigest(providerId);
 		}
 	}
@@ -162,16 +163,15 @@ export class SealedCredentialSource implements CredentialSource {
 		});
 	}
 
-	/** True once the head held still for STABLE_HEAD_MS; false when it never settled within the bound. */
-	async #waitForStableHead(): Promise<boolean> {
+	/** Returns once the head held still for STABLE_HEAD_MS; rejects when the step aborts first. */
+	async #waitForStableHead(signal: AbortSignal): Promise<void> {
 		let previous = await this.#deps.readHead();
-		for (let attempt = 0; attempt < STABLE_HEAD_ATTEMPTS; attempt++) {
-			await this.#deps.sleep(STABLE_HEAD_MS);
+		for (;;) {
+			await this.#deps.sleep(STABLE_HEAD_MS, signal);
 			const current = await this.#deps.readHead();
-			if (current === previous) return true;
+			if (current === previous) return;
 			previous = current;
 		}
-		return false;
 	}
 
 	async #open(

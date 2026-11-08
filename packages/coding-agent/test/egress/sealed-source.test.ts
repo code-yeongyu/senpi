@@ -56,9 +56,11 @@ function harness(answers: ReleaseResult[], heads: string[] = []): Harness {
 			return next;
 		},
 		readHead: async () => heads.shift() ?? "stable",
-		sleep: async (ms) => {
+		sleep: async (ms, signal) => {
 			slept.push(ms);
+			signal.throwIfAborted();
 		},
+		stepSignal: () => new AbortController().signal,
 		openItem: async (released) => {
 			const bytes = new TextEncoder().encode(released.ct);
 			opened.push(bytes);
@@ -153,23 +155,85 @@ describe("SealedCredentialSource.resolve", () => {
 		expect(h.requests).toHaveLength(5);
 	});
 
-	it("never errors on churn: still stale after the stable-head retry is a config-churn wait", async () => {
-		const h = harness([stale, stale, stale, stale, stale]);
+	it("re-enters the stable-head wait after a stale post-wait retry, never the three immediate reloads (C.3)", async () => {
+		const h = harness([stale, stale, stale, stale, stale, stale, ok("key-7")]);
 		const source = new SealedCredentialSource(h.deps);
-		const outcome = source.resolve("anthropic", "d0", ["apiKey"], SCOPE);
-		await expect(outcome).rejects.toBeInstanceOf(CredentialWait);
-		await expect(outcome).rejects.toMatchObject({ reason: "config-churn" });
-		expect(h.requests).toHaveLength(5);
+		using lease = await source.resolve("anthropic", "d0", ["apiKey"], SCOPE);
+		expect(lease.value("apiKey")).toBe("key-7");
+		expect(h.requests).toHaveLength(7);
+		// 3 immediate reloads, then one stable-head wait (one 5 s sleep with a stable head) before each further retry.
+		expect(h.slept).toEqual([5000, 5000, 5000]);
+		expect(h.reloads).toHaveLength(6);
 	});
 
-	it("bounds the stable-head wait: a head that never settles becomes a config-churn wait", async () => {
+	it("keeps waiting on churn until the step aborts, and never turns churn into an error", async () => {
+		const controller = new AbortController();
+		const answers = Array.from({ length: 50 }, () => stale);
+		const h = harness(answers);
+		let sleeps = 0;
+		const source = new SealedCredentialSource({
+			...h.deps,
+			stepSignal: () => controller.signal,
+			sleep: async (ms, signal) => {
+				h.slept.push(ms);
+				if (++sleeps === 5) controller.abort(new Error("step aborted"));
+				signal.throwIfAborted();
+			},
+		});
+		const outcome = source.resolve("anthropic", "d0", ["apiKey"], SCOPE);
+		await expect(outcome).rejects.toThrow("step aborted");
+		expect(h.slept).toHaveLength(5);
+		expect(h.requests).toHaveLength(3 + 1 + 4);
+	});
+
+	it("waits through a head that never settles until the step aborts", async () => {
+		const controller = new AbortController();
 		let n = 0;
 		const h = harness([stale, stale, stale, stale]);
-		const source = new SealedCredentialSource({ ...h.deps, readHead: async () => `h${n++}` });
-		const outcome = source.resolve("anthropic", "d0", ["apiKey"], SCOPE);
-		await expect(outcome).rejects.toMatchObject({ reason: "config-churn", retryable: true });
-		expect(h.slept.length).toBeLessThanOrEqual(12);
+		const source = new SealedCredentialSource({
+			...h.deps,
+			readHead: async () => `h${n++}`,
+			stepSignal: () => controller.signal,
+			sleep: async (ms, signal) => {
+				h.slept.push(ms);
+				if (h.slept.length === 20) controller.abort(new Error("deadline"));
+				signal.throwIfAborted();
+			},
+		});
+		await expect(source.resolve("anthropic", "d0", ["apiKey"], SCOPE)).rejects.toThrow("deadline");
+		expect(h.slept).toHaveLength(20);
 		expect(h.requests).toHaveLength(4);
+	});
+
+	it("starts no release for a step that is already aborted", async () => {
+		const controller = new AbortController();
+		controller.abort(new Error("step gone"));
+		const h = harness([ok("x")]);
+		const source = new SealedCredentialSource({ ...h.deps, stepSignal: () => controller.signal });
+		await expect(source.resolve("anthropic", "d0", ["apiKey"], SCOPE)).rejects.toThrow("step gone");
+		expect(h.requests).toHaveLength(0);
+	});
+
+	it("hands the step's abort signal to the churn wait", async () => {
+		const controller = new AbortController();
+		const seen: AbortSignal[] = [];
+		const h = harness([stale, stale, stale, stale, ok("x")]);
+		const steps: unknown[] = [];
+		const source = new SealedCredentialSource({
+			...h.deps,
+			stepSignal: (scope) => {
+				steps.push(scope);
+				return controller.signal;
+			},
+			sleep: async (_ms, signal) => {
+				seen.push(signal);
+			},
+		});
+		using lease = await source.resolve("anthropic", "d0", ["apiKey"], SCOPE);
+		expect(lease.value("apiKey")).toBe("x");
+		expect(steps).toEqual([SCOPE]);
+		expect(seen.length).toBeGreaterThan(0);
+		expect(seen.every((signal) => signal === controller.signal)).toBe(true);
 	});
 
 	it("resets the reload budget per step", async () => {
