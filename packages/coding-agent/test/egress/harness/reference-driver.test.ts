@@ -787,6 +787,7 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 				]);
 				if (fault === "already-committed")
 					driver.inject.nextCommit(fault, fauxAssistantMessage([fauxText("theirs")]));
+				else if (fault === "reject") driver.inject.nextCommit(fault);
 				else driver.inject.nextCommit(fault);
 
 				await driver.prompt("go");
