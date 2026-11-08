@@ -596,6 +596,10 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 		expect(runs).toBe(1);
 		// Dispatched only on the rebuilt instance, after the latch bumped the generation.
 		expect(driver.toolLedger.map((entry) => entry.generation)).toEqual([driver.generation]);
+		// The rejected step was never committed: no durable step row carries its id.
+		const rejected = driver.latchHistory[0]?.stepId;
+		expect(rejected).toBeDefined();
+		expect(driver.rows.filter((row) => row.kind === "step" && row.stepId === rejected)).toEqual([]);
 	});
 
 	it("never forwards an event the discarded instance emits after the latch", async () => {
