@@ -36,8 +36,11 @@ describe("CK1p: Agent forwards AgentOptions.commitStep to every loop run (custod
 		const { agent } = recordingAgent([stopStep, stopStep], async (step) => {
 			commits.push(step.message.stopReason);
 		});
+		// Queued at agent_end, after the in-loop follow-up poll, so only the post-run drain can pick it up.
+		let queued = false;
 		agent.subscribe((event) => {
-			if (event.type !== "agent_start" || commits.length > 0) return;
+			if (event.type !== "agent_end" || queued) return;
+			queued = true;
 			agent.followUp({ role: "user", content: [{ type: "text", text: "next" }], timestamp: 2 });
 		});
 
@@ -71,12 +74,16 @@ describe("CK1p: Agent forwards AgentOptions.commitStep to every loop run (custod
 	});
 
 	it("emits the same events with commitStep unset as with a commit that always succeeds", async () => {
+		let commits = 0;
 		const unset = recordingAgent([stopStep]);
-		const set = recordingAgent([stopStep], async () => {});
+		const set = recordingAgent([stopStep], async () => {
+			commits += 1;
+		});
 
 		await unset.agent.prompt("go");
 		await set.agent.prompt("go");
 
+		expect(commits).toBe(1);
 		expect(set.trace).toEqual(unset.trace);
 	});
 });
