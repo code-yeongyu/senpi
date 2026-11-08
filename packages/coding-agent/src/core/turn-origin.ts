@@ -51,7 +51,7 @@ export function recordDelegatedOrigin(sessionManager: OriginSessionManager): voi
 	sessionManager.appendCustomEntry(DELEGATED_ORIGIN_ENTRY, { delegatedOrigin: true }, { startupBookkeeping: true });
 }
 
-export function delegatedOriginOf(sessionManager: Pick<SessionManager, "getEntries">): boolean {
+function delegatedOriginOf(sessionManager: Pick<SessionManager, "getEntries">): boolean {
 	if (delegatedSessions.has(sessionManager)) return true;
 	const persisted = sessionManager
 		.getEntries()
