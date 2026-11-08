@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { WakeSourceStateItem } from "../monitor-state-event.ts";
 import { TerminalManager, type TerminalManagerOptions } from "./manager.ts";
 import type { MonitorEndedEvent } from "./monitor-registry.ts";
@@ -110,6 +111,62 @@ export class TerminalSessionBundle {
 		}
 		this.#parkedMonitorEvents.push(event);
 		if (this.#parkedMonitorEvents.length > MAX_PARKED_MONITOR_EVENTS) this.#parkedMonitorEvents.shift();
+	}
+}
+
+/** The scope id is opaque, so a scope's session ids carry a digest of it (`bash_s<digest>_N`), never the id itself. */
+function scopeIdTag(scopeId: string): string {
+	return `s${createHash("sha256").update(scopeId).digest("hex").slice(0, 12)}`;
+}
+
+/** Called once when a scope's bundle is created: configures it and returns the sinks that route that scope's events. */
+export type OpenTerminalScope = (scopeId: string, bundle: TerminalSessionBundle) => TerminalEventSinks;
+
+/**
+ * Terminal bundles per execution scope (senpi brain/hand S16a): when one runtime serves several scopes, each gets its
+ * own bundle, so its PTY sessions, monitors, background sessions and their events are its own and `maxSessions`
+ * applies per scope. Releasing a scope tears down exactly its bundle; a scope that never asks for one starts nothing.
+ */
+export class ScopedTerminalBundles {
+	readonly #options: Omit<TerminalManagerOptions, "idScope">;
+	readonly #open: OpenTerminalScope;
+	readonly #bundles = new Map<string, TerminalSessionBundle>();
+	#disposed = false;
+
+	constructor(options: Omit<TerminalManagerOptions, "idScope">, open: OpenTerminalScope) {
+		this.#options = options;
+		this.#open = open;
+	}
+
+	forScope(scopeId: string): TerminalSessionBundle {
+		if (this.#disposed) throw new Error("The terminal scopes of this runtime are disposed.");
+		const existing = this.#bundles.get(scopeId);
+		if (existing) return existing;
+		const bundle = new TerminalSessionBundle({ ...this.#options, idScope: scopeIdTag(scopeId) });
+		this.#bundles.set(scopeId, bundle);
+		bundle.bind(this.#open(scopeId, bundle));
+		return bundle;
+	}
+
+	peek(scopeId: string): TerminalSessionBundle | undefined {
+		return this.#bundles.get(scopeId);
+	}
+
+	async releaseScope(scopeId: string): Promise<void> {
+		const bundle = this.#bundles.get(scopeId);
+		this.#bundles.delete(scopeId);
+		await bundle?.teardown();
+	}
+
+	async dispose(): Promise<void> {
+		this.#disposed = true;
+		const bundles = [...this.#bundles.values()];
+		this.#bundles.clear();
+		const failures: unknown[] = [];
+		for (const outcome of await Promise.allSettled(bundles.map((bundle) => bundle.teardown()))) {
+			if (outcome.status === "rejected") failures.push(outcome.reason);
+		}
+		if (failures.length > 0) throw new AggregateError(failures, "Failed to tear down scoped terminal bundles");
 	}
 }
 
