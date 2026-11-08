@@ -2185,7 +2185,7 @@ export function createRpcConnectionHandler(
 			}
 
 			case "get_project_trust":
-				return success(id, "get_project_trust", readProjectTrust(session));
+				return success(id, "get_project_trust", await readProjectTrust(session));
 
 			case "set_project_trust": {
 				const result = await writeProjectTrust(session, command.choice, (task) =>

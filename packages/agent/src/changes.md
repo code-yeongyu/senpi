@@ -1,3 +1,22 @@
+## 2026-11-05 - Session entries on the store's append-only record log (S21b-a, senpi#5955)
+
+### What changed
+
+- `packages/agent/src/durable/session-store.ts`: a session's entries are records in the store's append-only log, one kind per session (`session/<id>`). A record is an append (one entry) or a rewrite (the full header and entries, replacing everything before it). `readSessionState` reads the last rewrite plus every later append in seq order (a key seen twice keeps its first record). The manifest document holds only the header a new session starts with; a divergence is its own document (`divergenceWrite`). `manifestWrite`, `divergenceWrite`, `appendRecordWrites` and `rewriteRecordWrite` are the one layout both writers use; the manifest key and record kind stay module-private. An append's record id names the session, the rewrite count the handle last saw and the entry key, so a key another process committed first is refused by the store (`duplicate-record-id`) and surfaces as the session store's `duplicate-entry`; a handle still refuses a duplicate key against the entries it holds. A session stored in the layout before the record log (a manifest with `entryIds`) is refused as `corrupt-session`, with the instruction to re-import it from its JSONL file.
+- `packages/agent/src/index.ts`: exports that layout (`manifestWrite`, `divergenceWrite`, `appendRecordWrites`, `rewriteRecordWrite`, `readSessionState`, `SessionState`) from the main entry for the S07 importer.
+
+### Why
+
+Measured: two processes bound to one session, each appending, kept only one writer's entries. Each handle held the entry list in memory and wrote the whole manifest per append, so the last writer won. Row S21b (senpi#5822) needs co-bound Bun processes to keep writing. The store contract (DurableStore/SyncCommitStore) does not change.
+
+### Why an extension could not handle it
+
+The session store's own storage layout.
+
+### Expected merge conflict zones
+
+`session-store.ts` (layout functions, readSessionState, planAppend/planRewrite, the open handles); the durable-store export block in `packages/agent/src/index.ts`.
+
 ## 2026-11-06 - Hand rig steps take a measured number of event-loop turns (senpi#6115)
 
 ### What changed

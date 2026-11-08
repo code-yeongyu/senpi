@@ -1,3 +1,22 @@
+## 2026-11-05 - Resuming a session whose process died mid-goal asks before the goal continues (senpi#5755)
+
+### What changed
+
+- `index.ts` `session_start`: on a `resume`, or a `startup` that opens the saved session (`--continue`, `--session`), with UI, an `active` goal whose session reopened over an interrupted run (the `interrupted-run` hold, no stale stop) is stopped through `pauseOrBlockOnUserAbort`, the same path a quit-time abort takes. The existing `Resume blocked goal?` prompt then asks before any continuation runs; a startup that stopped the goal this way takes the same prompt. An RPC session binds a UI context, so it is stopped the same way, but RPC never shows that prompt (switch_session cannot answer a nested select while it binds): the goal stays `blocked`, a client resume of the interrupted run answers one turn with no goal continuation, and the client resumes the goal explicitly.
+- `stop-pause.ts`: `interruptedRunHeld(ctx)` reads the session's `interrupted-run` hold.
+
+### Why
+
+- senpi#5755: a killed or crashed process never ran the quit-time abort, so the goal stayed `active`. Its continuation sat as a held wake that the person's first message released, and hidden goal continuations followed that message without asking.
+
+### Why an extension could not handle it
+
+- This is the goal extension itself.
+
+### Expected merge conflict zones
+
+- LOW: the goal read at the top of the `session_start` handler in `index.ts`.
+
 ## 2026-10-30 - Goal parks until the soonest reset after an exhausted fallback ladder (senpi#3709)
 
 ### What changed

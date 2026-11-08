@@ -1,3 +1,22 @@
+## 2026-11-07 - pi.registerRpcRemoteSource (senpi#6151)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionAPI.registerRpcRemoteSource(source): () => void`.
+- `packages/coding-agent/src/core/extensions/loader.ts`: implements it like `registerReadClassifier`: tracked by the runtime, dropped on a failed load or runtime invalidation.
+
+### Why
+
+- oh-my-openagent#12719: omo serves `monitor` rpc targets on another device through its relay surface; this is the seam it registers.
+
+### Why an extension could not handle it
+
+- The registration hook is part of the extension API itself.
+
+### Expected merge conflict zones
+
+- LOW: the `registerReadClassifier` neighbourhood in `ExtensionAPI` and in the loader's API object; one import in each file.
+
 ## 2026-10-30 - Reauthorize and sign out selected ChatGPT accounts (part of #5003)
 
 ### What changed
