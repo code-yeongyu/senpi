@@ -38,9 +38,19 @@ export interface ForwardedEvent {
 	readonly event: AgentSessionEvent;
 }
 
+export type InboxKind = "followUp" | "steering";
+
 export interface InboxEntry {
+	readonly id: string;
+	readonly kind: InboxKind;
 	readonly text: string;
 	consumedBy?: number;
+}
+
+export interface ConsumeRecord {
+	readonly messageId: string;
+	readonly generation: number;
+	readonly rowIndex: number;
 }
 
 export interface DriverCounters {
@@ -87,6 +97,7 @@ export interface ReferenceDriver {
 	readonly clock: FakeClock;
 	readonly rows: readonly HistoryRow[];
 	readonly inbox: readonly InboxEntry[];
+	readonly consumeJournal: readonly ConsumeRecord[];
 	readonly forwarded: readonly ForwardedEvent[];
 	readonly latchHistory: readonly LatchRecord[];
 	readonly classifications: readonly CommitClassification[];
@@ -110,6 +121,7 @@ export interface ReferenceDriver {
 	appendResponses: Harness["appendResponses"];
 	prompt(text: string): Promise<void>;
 	followUp(text: string): Promise<void>;
+	enqueue(entry: { readonly id: string; readonly kind: InboxKind; readonly text: string }): Promise<void>;
 	settle(): Promise<void>;
 	callLog(): FauxCallLogEntry[];
 	cleanup(): void;
@@ -161,6 +173,8 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 	const rows: HistoryRow[] = [];
 	const forwarded: ForwardedEvent[] = [];
 	const inbox: InboxEntry[] = [];
+	const consumeJournal: ConsumeRecord[] = [];
+	let followUps = 0;
 	const drainedBy: number[] = [];
 	const rowMessages = new WeakSet<object>();
 	const latchHistory: LatchRecord[] = [];
@@ -313,17 +327,28 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 			release: async (_queue, _messages, giveBack) => {
 				giveBack.restore();
 			},
-			commitConsumption: async (_queue, messages) => {
+			commitConsumption: async (queue, messages) => {
 				if (instanceGeneration !== generation) {
 					refusals += 1;
 					throw new StepCommitError(`stale-${instanceGeneration}`, "generation");
 				}
 				for (const message of messages) {
 					const text = userText(message);
-					const entry = inbox.find((candidate) => candidate.consumedBy === undefined && candidate.text === text);
-					if (entry) entry.consumedBy = instanceGeneration;
+					const kind: InboxKind = queue === "steering" ? "steering" : "followUp";
+					const entry = inbox.find(
+						(candidate) =>
+							candidate.consumedBy === undefined && candidate.kind === kind && candidate.text === text,
+					);
 					rows.push({ kind: "input", message });
 					rowMessages.add(message);
+					if (entry) {
+						entry.consumedBy = instanceGeneration;
+						consumeJournal.push({
+							messageId: entry.id,
+							generation: instanceGeneration,
+							rowIndex: rows.length - 1,
+						});
+					}
 				}
 				drainedBy.push(instanceGeneration);
 			},
@@ -375,7 +400,10 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 		rebuilds += 1;
 		latchedAt = undefined;
 		const pending = inbox.filter((entry) => entry.consumedBy === undefined);
-		for (const entry of pending) await next.session.followUp(entry.text);
+		for (const entry of pending) {
+			if (entry.kind === "steering") await next.session.steer(entry.text);
+			else await next.session.followUp(entry.text);
+		}
 		// Re-admission: history ending in input the model has not answered (no committed row) dials again.
 		if (pending.length > 0 || rows.at(-1)?.kind === "input") {
 			await next.agent.continue().catch(() => undefined);
@@ -397,6 +425,7 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 		clock,
 		rows,
 		inbox,
+		consumeJournal,
 		forwarded,
 		latchHistory,
 		classifications,
@@ -480,8 +509,13 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 			if (latchHistory.length > latchesBefore) await rebuild();
 		},
 		async followUp(text: string) {
-			inbox.push({ text });
-			await current.session.followUp(text);
+			followUps += 1;
+			await this.enqueue({ id: `followUp-${followUps}`, kind: "followUp", text });
+		},
+		async enqueue(entry) {
+			inbox.push({ ...entry });
+			if (entry.kind === "steering") await current.session.steer(entry.text);
+			else await current.session.followUp(entry.text);
 		},
 		async settle() {
 			await current.session.waitForIdle();

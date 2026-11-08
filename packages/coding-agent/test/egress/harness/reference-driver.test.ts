@@ -315,6 +315,41 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 		expect(driver.latchHistory.map((latch) => latch.code)).toEqual(["fenced", "storage_unavailable"]);
 	});
 
+	it("journals steering and follow-up by id and kind, each consumed exactly once (W10)", async () => {
+		driver = await createReferenceDriver();
+		driver.setResponses([
+			fauxAssistantMessage([fauxText("lost")]),
+			fauxAssistantMessage([fauxText("after rebuild")]),
+			fauxAssistantMessage([fauxText("more")]),
+			fauxAssistantMessage([fauxText("done")]),
+		]);
+		driver.inject.nextCommit("reject");
+
+		await driver.enqueue({ id: "m-steer", kind: "steering", text: "steer me" });
+		await driver.enqueue({ id: "m-follow", kind: "followUp", text: "follow me" });
+		expect(driver.inbox.map(({ id, kind, consumedBy }) => ({ id, kind, consumedBy }))).toEqual([
+			{ id: "m-steer", kind: "steering", consumedBy: undefined },
+			{ id: "m-follow", kind: "followUp", consumedBy: undefined },
+		]);
+
+		await driver.prompt("go");
+		await driver.settle();
+
+		expect(driver.rebuilds).toBe(1);
+		// Steering joins the first turn before its commit fails (its consume and row are durable then); the follow-up
+		// waits for the turn's end, which only the rebuilt generation reaches.
+		expect(driver.consumeJournal.map(({ messageId, generation }) => ({ messageId, generation }))).toEqual([
+			{ messageId: "m-steer", generation: 1 },
+			{ messageId: "m-follow", generation: 2 },
+		]);
+		for (const text of ["steer me", "follow me"]) {
+			const rowsWithText = driver.rows.filter(
+				(row) => row.message.role === "user" && JSON.stringify(row.message.content).includes(text),
+			);
+			expect({ text, rows: rowsWithText.length }).toEqual({ text, rows: 1 });
+		}
+	});
+
 	it("never forwards an event the discarded instance emits after the latch", async () => {
 		driver = await createReferenceDriver();
 		driver.setResponses([fauxAssistantMessage([fauxText("lost")])]);
