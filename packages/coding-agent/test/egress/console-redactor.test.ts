@@ -80,20 +80,40 @@ describe("console redactor", () => {
 });
 
 describe("console redactor covers every console method", () => {
+	// Every method Node's console writes through, plus one no runtime defines: the wrapper must not need a list.
+	const WRITING_METHODS = [
+		"log",
+		"info",
+		"warn",
+		"error",
+		"debug",
+		"dir",
+		"dirxml",
+		"table",
+		"trace",
+		"group",
+		"groupCollapsed",
+		"count",
+		"countReset",
+		"time",
+		"timeEnd",
+		"timeLog",
+		"customPrint",
+	] as const;
+
 	function fullConsole() {
 		const lines: string[] = [];
 		const conditions: unknown[] = [];
 		const sink = (...args: unknown[]) => {
 			lines.push(args.map(String).join(" "));
 		};
-		const target = {
-			log: sink,
-			dir: sink,
-			table: sink,
-			trace: sink,
-			group: sink,
-			timeLog: sink,
-			customPrint: sink,
+		const target: Record<(typeof WRITING_METHODS)[number], (...args: unknown[]) => void> & {
+			assert: (condition: unknown, ...rest: unknown[]) => void;
+		} = {
+			...(Object.fromEntries(WRITING_METHODS.map((method) => [method, sink])) as Record<
+				(typeof WRITING_METHODS)[number],
+				(...args: unknown[]) => void
+			>),
 			assert: (condition: unknown, ...rest: unknown[]) => {
 				conditions.push(condition);
 				if (!condition) sink(...rest);
@@ -102,19 +122,46 @@ describe("console redactor covers every console method", () => {
 		return { target, lines, conditions };
 	}
 
-	it.each(["dir", "table", "trace", "group", "timeLog", "customPrint"] as const)(
-		"redacts console.%s inside a sealed context",
-		async (method) => {
-			const { target, lines } = fullConsole();
-			installConsoleRedactor(target);
-			await runSealed(createRedactor({ secrets: [SECRET_A], publicPrefixes: [] }), async () => {
-				target[method](`value ${SECRET_A}`, { nested: SECRET_A });
-			});
-			expect(lines).toHaveLength(1);
-			expect(lines[0]).not.toContain(SECRET_A);
-			expect(lines[0]).toContain(REDACTED);
-		},
-	);
+	it.each(WRITING_METHODS)("redacts console.%s inside a sealed context", async (method) => {
+		const { target, lines } = fullConsole();
+		installConsoleRedactor(target);
+		await runSealed(createRedactor({ secrets: [SECRET_A], publicPrefixes: [] }), async () => {
+			target[method](`value ${SECRET_A}`, { nested: SECRET_A });
+		});
+		expect(lines).toHaveLength(1);
+		expect(lines[0]).not.toContain(SECRET_A);
+		expect(lines[0]).toContain(REDACTED);
+	});
+
+	it.each(WRITING_METHODS)("drops an out-of-context console.%s while a sealed window is open", async (method) => {
+		const { target, lines } = fullConsole();
+		installConsoleRedactor(target);
+		let release: () => void = () => {};
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const sealed = runSealed(createRedactor({ secrets: [SECRET_A], publicPrefixes: [] }), () => held);
+		queueMicrotask(() => target[method](`leak ${SECRET_A}`));
+		await Promise.resolve();
+		release();
+		await sealed;
+		expect(lines).toEqual([]);
+	});
+
+	it("drops an out-of-context console.assert while a sealed window is open", async () => {
+		const { target, lines } = fullConsole();
+		installConsoleRedactor(target);
+		let release: () => void = () => {};
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const sealed = runSealed(createRedactor({ secrets: [SECRET_A], publicPrefixes: [] }), () => held);
+		queueMicrotask(() => target.assert(false, `leak ${SECRET_A}`));
+		await Promise.resolve();
+		release();
+		await sealed;
+		expect(lines).toEqual([]);
+	});
 
 	it("keeps console.assert's condition and redacts its message", async () => {
 		const { target, lines, conditions } = fullConsole();
@@ -125,21 +172,6 @@ describe("console redactor covers every console method", () => {
 		});
 		expect(conditions).toEqual([true, false]);
 		expect(lines).toEqual([`failed ${REDACTED}`]);
-	});
-
-	it("drops another tenant's console.dir while a sealed window is open", async () => {
-		const { target, lines } = fullConsole();
-		installConsoleRedactor(target);
-		let release: () => void = () => {};
-		const held = new Promise<void>((resolve) => {
-			release = resolve;
-		});
-		const sealed = runSealed(createRedactor({ secrets: [SECRET_A], publicPrefixes: [] }), () => held);
-		queueMicrotask(() => target.dir({ leaked: SECRET_A }));
-		await Promise.resolve();
-		release();
-		await sealed;
-		expect(lines).toEqual([]);
 	});
 });
 
