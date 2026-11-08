@@ -1,14 +1,32 @@
 # Changelog
 
-## [Unreleased]
+## [2026.11.6-3] - 2026-11-08
 
 ### Breaking Changes
 
 ### Added
 
+- Sealed custody formats for hosted model-key custody (internal, no caller yet): HPKE P-256 key wraps and AES-256-GCM provider fields and config objects, each bound to an AAD the opener rebuilds and never stores ([#5886](https://github.com/code-yeongyu/senpi/pull/5886))
+- A tool call stalled before it runs now leaves a trace: when its wait on the session's event queue or its `tool_call` hooks (the permission decision) outlives 30 s, or a bash spawn outlives 30 s (or the call's own shorter `timeout`), one warning naming the call goes to the session log, and the queue warning also names the entry the call waits behind. Nothing is aborted or delayed ([#6189](https://github.com/code-yeongyu/senpi/issues/6189))
+- `set_permission_preset` RPC record (classic and multi-session, `set_permission_preset_v1`) and the permission-mode fields on `get_state` and the `open_session` reply; a client-named preset is recorded in the session file ([#6204](https://github.com/code-yeongyu/senpi/pull/6204))
+- `pi.sessionDialog`, the `audience: "session"` dialog option and the `permission_preset_changed` event ([#6204](https://github.com/code-yeongyu/senpi/pull/6204))
+- Brain-to-hand wire messages and the signed placement-claim verifier for hosted model-key custody; not wired to any command yet ([#6220](https://github.com/code-yeongyu/senpi/pull/6220))
+
 ### Changed
 
+- Work a remote device starts now asks for approval on a session with no client-named mode, and child sessions follow their live parent's mode; a local turn keeps the host default ([#6206](https://github.com/code-yeongyu/senpi/pull/6206))
+
 ### Fixed
+
+- A weekly usage limit that names no model family no longer marks every model on the provider spent: one request on another model family decides, and the refusal names both families when both are limited ([#5613](https://github.com/code-yeongyu/senpi/pull/5613))
+- A goal paused by a Stop while the agent is idle now shows `Goal paused` and stops counting elapsed time; paused time no longer counts toward the goal ([#6173](https://github.com/code-yeongyu/senpi/pull/6173))
+- An RPC socket host restores its `retain_on_disconnect` sessions after it restarts, whether it was killed or stopped cleanly and whether the session was idle or mid-turn: the next host on the same socket and agent dir lists them again with their durable id and transcript, so viewers re-attach instead of getting `session_not_found` (senpi#6190)
+- A clean host stop parks a retained session (`session_parked { reason: "host_shutdown" }`) instead of closing it, and a turn the stop cuts short ends with `abortSource: "system"` and `abortCause: { kind: "host_shutdown" }` instead of a user abort (senpi#6190)
+- A socket host started without `host ensure` (`--mode rpc --listen`, `--headless`) writes its `endpoint.json` registry record before it serves, so after `host gc` collected its dead endpoint during an outage the restarted host is listed again, instead of serving while relay discovery and `host status --all` find nothing ([#6195](https://github.com/code-yeongyu/senpi/pull/6195), part of #6190)
+- `ask_user_question` / `request_user_input` refuse question text holding undecoded `\uXXXX` escapes once and ask the model to re-call with raw UTF-8 text; the re-call in a later turn opens as written with a warning, and parallel calls in one message are each refused once ([#6198](https://github.com/code-yeongyu/senpi/pull/6198))
+- A multi-session host launched with a private-fd table answers a client's RPC auth handshake while its boot extension load runs, instead of timing out the first client (`RPC authentication timed out`) until the whole extension graph had compiled; an `open_session` that arrives during that load (or a warm of its working directory) now builds its runtime after it, waiting at most the close grace window ([#6200](https://github.com/code-yeongyu/senpi/pull/6200), fixes #6199)
+- The terminal pipe fallback (used when the native PTY binding is unavailable) settles a session when its process exits, after a short drain of the output already written, instead of waiting for every process holding stdout or stderr to close. A command that left a process running (`cmd &`, a daemon, or the children of a shell killed from outside) no longer keeps its background terminal session, and the agent's `waiting_background` wait, open for that process's whole life. Settling does not kill those processes and does not put them out of reach: `kill_bash`, `TerminalSession.kill()`/`terminate()`, registry teardown and the registry's removal of exited sessions (capacity pruning, `sweepExited({ remove: true })`) still send TERM, then KILL after the grace, to the session's process group while it has members. The session forgets that group within about a second of it emptying, so an id the system later reuses is never signalled. The native PTY already settled when the shell exited ([#6203](https://github.com/code-yeongyu/senpi/pull/6203), part of #6201)
+- An extension import (a tool child's module job included) no longer fails with "Extension generation N has been disposed" when its importer is garbage-collected between two module loads; the import keeps its graph alive until it settles ([#6210](https://github.com/code-yeongyu/senpi/pull/6210), fixes #6208)
 
 ### Removed
 
