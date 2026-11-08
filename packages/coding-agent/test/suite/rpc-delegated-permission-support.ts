@@ -8,9 +8,11 @@ import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import type { ExtensionFactory } from "../../src/core/extensions/types.ts";
 import { ANSWER_DEADLINE_MS, type DelegatedHost, declare, type Peer, startHost } from "./rpc-delegated-host-support.ts";
+import { probeExtensionSource } from "./rpc-permission-mode-support.ts";
 import type { WireRecord } from "./rpc-delegated-peer.ts";
 
 export const PROBE_TEXT = "probe-content-6189-delegated";
+export const ASKED = ["Permission required: read"];
 export const DEVICE = { deviceId: "x6189-device", deviceName: "Remote" };
 const GRANT = ["observe", "drive", "thread", "answer", "device_admin"];
 const SCRIPTED_TURNS = 24;
@@ -18,9 +20,18 @@ const SCRIPTED_TURNS = 24;
 /** The probe turns, plus `extra` extensions (an engine follow-up, a held tool) for the row under test. */
 export async function permissionHost(
 	extra: readonly ExtensionFactory[] = [],
-	options: { readonly embedderPreset?: boolean } = {},
+	options: {
+		readonly embedderPreset?: boolean;
+		readonly hostArgs?: readonly string[];
+		readonly workers?: boolean;
+	} = {},
 ): Promise<DelegatedHost> {
-	const host = await startHost({ extensionFactories: extra, settingsDefaultPreset: options.embedderPreset !== true });
+	const host = await startHost({
+		extensionFactories: extra,
+		settingsDefaultPreset: options.embedderPreset !== true,
+		...(options.hostArgs === undefined ? {} : { hostArgs: options.hostArgs }),
+		...(options.workers ? { workers: true, workerExtensionSource: probeExtensionSource("probe-") } : {}),
+	});
 	await writeFile(join(host.cwd, "probe.txt"), PROBE_TEXT);
 	host.faux.setResponses(probeTurns(SCRIPTED_TURNS));
 	return host;

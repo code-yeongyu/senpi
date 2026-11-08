@@ -51,12 +51,17 @@ export function recordDelegatedOrigin(sessionManager: OriginSessionManager): voi
 	sessionManager.appendCustomEntry(DELEGATED_ORIGIN_ENTRY, { delegatedOrigin: true }, { startupBookkeeping: true });
 }
 
+// How many entries a session's scan has already found free of the marker: each gated decision reads only new entries.
+const scannedEntries = new WeakMap<object, number>();
+
 function delegatedOriginOf(sessionManager: Pick<SessionManager, "getEntries">): boolean {
 	if (delegatedSessions.has(sessionManager)) return true;
-	const persisted = sessionManager
-		.getEntries()
+	const entries = sessionManager.getEntries();
+	const persisted = entries
+		.slice(scannedEntries.get(sessionManager) ?? 0)
 		.some((entry) => entry.type === "custom" && entry.customType === DELEGATED_ORIGIN_ENTRY);
 	if (persisted) delegatedSessions.add(sessionManager);
+	else scannedEntries.set(sessionManager, entries.length);
 	return persisted;
 }
 

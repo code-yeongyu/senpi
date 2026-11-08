@@ -84,8 +84,9 @@ import { handleClientInput } from "./client-input-handler.ts";
 import { ConnectionQuestionBridge, degradeQuestion, sessionQuestionBridges } from "./connection-question-bridge.ts";
 import { remoteOriginDeclaration, remoteOriginField } from "./remote-origin.ts";
 import { advertisedCompactCapabilities, sessionDeclaration } from "./compact-negotiation.ts";
-import { type ConnectionOrigin, recordDelegatedOrigin } from "../../core/turn-origin.ts";
+import type { ConnectionOrigin } from "../../core/turn-origin.ts";
 import { commandAuthority } from "./command-authority.ts";
+import { noteDelegatedRecord } from "./delegated-drive-origin.ts";
 import { ConnectionRoles, DELEGATION_INCARNATION_STALE, roleConnection } from "./connection-roles.ts";
 import {
 	ACCOUNT_RESET_CAPABILITY,
@@ -1337,6 +1338,7 @@ export function createRpcConnectionHandler(
 		requestContext?: ExtensionRpcRequestContext,
 	): Promise<RpcResponse | undefined> => {
 		const id = command.id;
+		noteDelegatedRecord(command, connectionOrigin(), session.sessionManager);
 
 		switch (command.type) {
 			case "get_protocol_info":
@@ -1796,7 +1798,6 @@ export function createRpcConnectionHandler(
 			// =================================================================
 
 			case "compact": {
-				if (connectionOrigin() === "delegated") recordDelegatedOrigin(session.sessionManager);
 				const result = await session.compact(command.customInstructions);
 				return success(id, "compact", result);
 			}

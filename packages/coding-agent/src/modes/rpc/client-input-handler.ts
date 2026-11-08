@@ -1,7 +1,7 @@
 import { AgentBusyError } from "../../core/agent-busy-error.ts";
 import type { AgentSession, PromptDisposition, PromptOptions } from "../../core/agent-session.ts";
 import { clientMessageIdentity } from "../../core/client-message-identity.ts";
-import { type ConnectionOrigin, recordDelegatedOrigin } from "../../core/turn-origin.ts";
+import type { ConnectionOrigin } from "../../core/turn-origin.ts";
 import { type ModelNotReadyCode, ModelNotReadyError } from "../../core/model-not-ready-error.ts";
 import { SessionMovedAwayError } from "../../core/session-move/ownership.ts";
 import { TurnConflictError } from "../../core/turn-conflict.ts";
@@ -70,7 +70,6 @@ export async function handleClientInput(
 		const admittedChain = admitInputChain(command.chainCount, session.settingsManager);
 		if (admittedChain.kind === "refused") throw new ChainRefusedError(admittedChain.refusal);
 		const chain = admittedChain.chainCount === undefined ? {} : { chainCount: admittedChain.chainCount };
-		if (client.connectionOrigin === "delegated") recordDelegatedOrigin(session.sessionManager);
 		const admissions = ClientAdmissions.forSession(session);
 		let disposition: PromptDisposition | undefined;
 		let turnId: string | undefined;

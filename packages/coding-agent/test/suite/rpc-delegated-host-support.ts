@@ -59,6 +59,10 @@ export async function startHost(
 		readonly extensionFactories?: readonly ExtensionFactory[];
 		/** Open sessions on the host's own default (settings) instead of a host-level `full-access` preset. */
 		readonly settingsDefaultPreset?: boolean;
+		/** More CLI arguments for every session (a host-level `--permission-preset`). */
+		readonly hostArgs?: readonly string[];
+		/** Replaces the worker-side extension (`workers: true`), e.g. a scripted faux provider. */
+		readonly workerExtensionSource?: string;
 	} = {},
 ) {
 	const scratch = await mkdtemp(join(tmpdir(), "x5632-"));
@@ -73,10 +77,13 @@ export async function startHost(
 	const extension = join(scratch, "gates.mjs");
 	if (options.workers) {
 		execFileSync("mkfifo", [fifo]);
-		await writeFile(extension, workerExtension(fifo));
+		await writeFile(extension, options.workerExtensionSource ?? workerExtension(fifo));
 	}
 	const configuration = {
-		parsed: parseArgs(options.workers ? [...LEAN_ARGS, "--extension", extension] : LEAN_ARGS),
+		parsed: parseArgs([
+			...(options.workers ? [...LEAN_ARGS, "--extension", extension] : LEAN_ARGS),
+			...(options.hostArgs ?? []),
+		]),
 		cwd,
 		agentDir,
 		appMode: "rpc" as const,

@@ -1,5 +1,5 @@
 import type { CliRuntimeConfiguration } from "../../main.ts";
-import { withClientPreset } from "../../core/permission-mode.ts";
+import { clientNamedPreset, withClientPreset } from "../../core/permission-mode.ts";
 import { outsideCommand } from "./command-authority.ts";
 import type { SessionPathReservations as DaemonPathReservations } from "./host-reservations.ts";
 import { refreshesSessionActivity } from "./session-command-activity.ts";
@@ -210,7 +210,9 @@ export class WorkerSessionRegistry {
 		options?: RpcSessionOpenOptions,
 		requested: RpcSessionLaunchProfile = { cwd: "" },
 	): Promise<OpenRpcSession> {
-		const { promptSurface, browserEngine, permissionPreset } = requested;
+		const { promptSurface, browserEngine } = requested;
+		// A host-default preset folded into a preset-less attach is not a client choice (see session-registry-attach.ts).
+		const permissionPreset = clientNamedPreset(requested);
 		const entry = this.entries.get(owner);
 		if (entry?.state !== "open" || !entry.worker?.bindingReady || entry.worker.snapshot?.sessionPath !== path)
 			throw new RpcSessionRegistryError("session_path_in_use");

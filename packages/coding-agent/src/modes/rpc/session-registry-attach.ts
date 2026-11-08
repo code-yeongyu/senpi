@@ -7,7 +7,7 @@
  * {reason: "open_in_progress", retry_after_ms} naming an attached current owner, and the in-flight
  * open keeps running untouched.
  */
-import { withClientPreset } from "../../core/permission-mode.ts";
+import { clientNamedPreset, withClientPreset } from "../../core/permission-mode.ts";
 import type { SessionPathOwner, SessionPathReservations } from "./host-reservations.ts";
 import { hostInstanceId } from "./protocol-identity.ts";
 import {
@@ -132,9 +132,12 @@ export async function attachToOpenSession(
 	}
 	// The preset is applied even when the record already names it: the record is not the live session,
 	// so a resent attach also repairs a session that drifted from it (senpi#2842).
-	if (profile.permissionPreset !== undefined) {
-		entry.profile = frozenProfile(withClientPreset(entry.profile, profile.permissionPreset));
-		entry.runtime?.setPermissionPreset(profile.permissionPreset);
+	// Only a preset the client named moves the session: an embedder's host default folded into a preset-less attach is
+	// not a choice, and applying it would turn the host default into a client-named mode (remote approval-mode rule).
+	const namedPreset = clientNamedPreset(profile);
+	if (namedPreset !== undefined) {
+		entry.profile = frozenProfile(withClientPreset(entry.profile, namedPreset));
+		entry.runtime?.setPermissionPreset(namedPreset);
 	}
 	entry.lastCommandAt = now;
 	if (wasParked) {

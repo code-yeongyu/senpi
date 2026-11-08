@@ -52,6 +52,8 @@ export class ConnectionRoles {
 	private readonly origins = new Map<string, RpcRemoteOrigin>();
 	/** A worker isolate's first-seen delegation per connection (`retain`), kept for the worker's life. */
 	private readonly retained = new Map<string, DelegationDescriptor>();
+	/** A worker isolate's connections whose bind or command carried a delegation (a legacy one is never retained). */
+	private readonly carried = new Set<string>();
 	private source: ((connectionId: string) => DelegatedConnectionView | undefined) | undefined;
 
 	/** The host reads each connection's live record from its writer's delegations. */
@@ -142,9 +144,10 @@ export class ConnectionRoles {
 			: { deviceId: principal.deviceId, deviceName: principal.deviceName };
 	}
 
-	/** Whether the connection is delegated (a remote device's), on the host or as a worker retained it. */
+	/** Whether the connection is delegated (a remote device's): on the host, retained by a worker, or carried to one. */
 	isDelegated(connectionId: string | undefined): boolean {
-		return this.viewOf(roleConnection(connectionId)) !== undefined;
+		const key = roleConnection(connectionId);
+		return this.viewOf(key) !== undefined || this.carried.has(key);
 	}
 
 	has(connectionId: string | undefined, role: string): boolean {
@@ -176,6 +179,12 @@ export class ConnectionRoles {
 		this.claims.delete(connectionId);
 		this.origins.delete(connectionId);
 		this.retained.delete(connectionId);
+		this.carried.delete(connectionId);
+	}
+
+	/** Worker isolate: a bind or command for `connectionId` carried a delegation, in either mode. */
+	noteCarriedDelegation(connectionId: string): void {
+		this.carried.add(connectionId);
 	}
 
 	/** Forgets every connection, for a worker isolate whose session ends. */
@@ -183,5 +192,6 @@ export class ConnectionRoles {
 		this.claims.clear();
 		this.origins.clear();
 		this.retained.clear();
+		this.carried.clear();
 	}
 }
