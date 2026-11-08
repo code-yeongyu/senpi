@@ -382,6 +382,9 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 				giveBack.restore();
 			},
 			commitConsumption: async (queue, messages) => {
+				// Durable rows follow the order the model consumed input: a prompt already in the agent's transcript is
+				// recorded before the queued messages this drain hands to the next request.
+				if (instanceGeneration === generation) flushTranscriptInputs(harness);
 				if (instanceGeneration !== generation) {
 					refusals += 1;
 					throw new StepCommitError(`stale-${instanceGeneration}`, "generation");
@@ -410,6 +413,7 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 
 		harness.session.subscribe((event) => {
 			if (instanceGeneration !== generation) return;
+			if (event.type === "message_end" && event.message.role === "user") flushTranscriptInputs(harness);
 			forwarded.push({ generation: instanceGeneration, event });
 			if (event.type === "message_end" && event.message.role === "user" && !rowMessages.has(event.message)) {
 				rows.push({ kind: "input", message: event.message });
@@ -433,6 +437,14 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 			if (clock.now() - since <= HOSTED_REBUILD_DEADLINE_MS) return;
 			rebuildDeadlineMisses += 1;
 			latchedAt = clock.now();
+		}
+	}
+
+	function flushTranscriptInputs(harness: Harness): void {
+		for (const message of harness.agent.state.messages) {
+			if (message.role !== "user" || rowMessages.has(message)) continue;
+			rows.push({ kind: "input", message });
+			rowMessages.add(message);
 		}
 	}
 

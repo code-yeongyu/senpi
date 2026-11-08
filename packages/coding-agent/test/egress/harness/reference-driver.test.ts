@@ -410,6 +410,29 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 		expect(driver.stops).toEqual([{ stepId: "step-1", while: "latched" }]);
 	});
 
+	it("records durable input rows in the order the model consumed them (S7 row order = call order)", async () => {
+		driver = await createReferenceDriver();
+		driver.setResponses([fauxAssistantMessage([fauxText("first")]), fauxAssistantMessage([fauxText("second")])]);
+
+		await driver.enqueue({ id: "s-1", kind: "steering", text: "steer me" });
+		await driver.prompt("go");
+		await driver.settle();
+
+		const text = (message: AgentMessage): string =>
+			typeof message.content === "string"
+				? message.content
+				: message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
+		const lastCall = driver.callLog().at(-1);
+		const modelOrder = (lastCall?.context.messages ?? [])
+			.filter((message) => message.role === "user")
+			.map((message) => text(message as AgentMessage));
+		const rowOrder = projectHistoryRows(driver.rows)
+			.filter((message) => message.role === "user")
+			.map(text);
+		expect(modelOrder).toEqual(["go", "steer me"]);
+		expect(rowOrder).toEqual(modelOrder);
+	});
+
 	it("never forwards an event the discarded instance emits after the latch", async () => {
 		driver = await createReferenceDriver();
 		driver.setResponses([fauxAssistantMessage([fauxText("lost")])]);
