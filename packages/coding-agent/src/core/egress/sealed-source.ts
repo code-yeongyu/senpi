@@ -22,7 +22,7 @@ const RETRYABLE: readonly ReleaseFailure[] = [
 	"unresolved_field",
 	"wrap_missing",
 	"unavailable",
-];
+] as const;
 
 export interface ReleasedItemPosition {
 	readonly accountId: string;
