@@ -111,6 +111,32 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 		expect(assistantTexts(projectHistoryRows(driver.rows))).toEqual(["answered"]);
 	});
 
+	it("keeps the session's own writes in the adapter mirror and out of durable history (S10)", async () => {
+		driver = await createReferenceDriver();
+		driver.setResponses([fauxAssistantMessage([fauxText("kept")]), fauxAssistantMessage([fauxText("lost")])]);
+		await driver.prompt("first");
+		driver.inject.nextCommit("reject");
+		const appendsBefore = driver.counters.adapterAppendAttempts;
+
+		await driver.prompt("second");
+
+		expect(driver.counters.adapterAppendAttempts).toBeGreaterThan(appendsBefore);
+		expect(driver.rows.map((row) => row.kind)).toEqual(["input", "step", "input"]);
+		expect(assistantTexts(projectHistoryRows(driver.rows))).toEqual(["kept"]);
+	});
+
+	it("loads the rebuilt instance's adapter mirror from durable history (S15 precondition)", async () => {
+		driver = await createReferenceDriver();
+		driver.setResponses([fauxAssistantMessage([fauxText("kept")]), fauxAssistantMessage([fauxText("lost")])]);
+		await driver.prompt("first");
+		driver.inject.nextCommit("reject");
+
+		await driver.prompt("second");
+
+		expect(driver.rebuilds).toBe(1);
+		expect(driver.session.sessionManager.buildSessionContext().messages).toEqual(projectHistoryRows(driver.rows));
+	});
+
 	it("never forwards an event the discarded instance emits after the latch", async () => {
 		driver = await createReferenceDriver();
 		driver.setResponses([fauxAssistantMessage([fauxText("lost")])]);

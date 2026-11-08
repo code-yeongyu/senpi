@@ -48,6 +48,7 @@ export interface DriverCounters {
 	readonly providerCalls: number;
 	readonly events: number;
 	readonly drainedBy: readonly number[];
+	readonly adapterAppendAttempts: number;
 }
 
 export interface ReferenceDriver {
@@ -83,6 +84,10 @@ interface LoopConfigOwner {
 	createLoopConfig(...args: unknown[]): AgentLoopConfig;
 }
 
+interface AdapterMirror {
+	_appendEntry(...args: unknown[]): unknown;
+}
+
 export async function createReferenceDriver(options: HarnessOptions = {}): Promise<ReferenceDriver> {
 	const rows: HistoryRow[] = [];
 	const forwarded: ForwardedEvent[] = [];
@@ -97,12 +102,21 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 	let refusals = 0;
 	let steps = 0;
 	let rebuilds = 0;
+	let adapterAppendAttempts = 0;
 
 	const first = await createHarness(options);
 	let current = first;
 
 	function install(harness: Harness, instanceGeneration: number): void {
 		instances.push(harness);
+		// The in-memory SessionManager is the HostedSessionAdapter's read mirror (15.2): every session write lands
+		// there and is counted; durable rows come only from commits and inbox consumes.
+		const mirror = harness.sessionManager as unknown as AdapterMirror;
+		const appendToMirror = mirror._appendEntry.bind(harness.sessionManager);
+		mirror._appendEntry = (...args: unknown[]) => {
+			adapterAppendAttempts += 1;
+			return appendToMirror(...args);
+		};
 		const owner = harness.agent as unknown as LoopConfigOwner;
 		const createLoopConfig = owner.createLoopConfig.bind(harness.agent);
 		const commitStep = async (step: StepCommit): Promise<void> => {
@@ -169,7 +183,10 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 
 	async function rebuild(): Promise<void> {
 		const next = await createHarness({ ...options, siblingOf: first });
-		next.agent.state.messages = projectHistoryRows(rows);
+		const history = projectHistoryRows(rows);
+		for (const message of history)
+			next.sessionManager.appendMessage(message as Parameters<typeof next.sessionManager.appendMessage>[0]);
+		next.agent.state.messages = history;
 		install(next, generation);
 		current = next;
 		rebuilds += 1;
@@ -200,6 +217,7 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 				providerCalls: first.faux.getCallLog().length,
 				events: forwarded.length,
 				drainedBy,
+				adapterAppendAttempts,
 			};
 		},
 		get rebuilds() {
