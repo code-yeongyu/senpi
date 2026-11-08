@@ -729,6 +729,24 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 		expect(driver.toolLedger.map((entry) => entry.outcome)).toEqual(["killed", "ran"]);
 	});
 
+	it("killed between a rejection and its rebuild: exactly one replay after resume (S8b)", async () => {
+		driver = await createReferenceDriver();
+		driver.setResponses([fauxAssistantMessage([fauxText("lost")]), fauxAssistantMessage([fauxText("replayed")])]);
+		driver.inject.nextCommit("reject");
+		const build = driver.inject.holdNextHarnessBuild();
+
+		const prompt = driver.prompt("go").catch(() => undefined);
+		await build.reached;
+		await driver.evict();
+		build.release();
+		await prompt;
+		await driver.resume();
+		await driver.settle();
+
+		expect(driver.counters.providerCalls).toBe(2);
+		expect(assistantTexts(projectHistoryRows(driver.rows))).toEqual(["replayed"]);
+	});
+
 	it("never forwards an event the discarded instance emits after the latch", async () => {
 		driver = await createReferenceDriver();
 		driver.setResponses([fauxAssistantMessage([fauxText("lost")])]);

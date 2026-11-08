@@ -629,6 +629,7 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 			const last = rows.at(-1);
 			if (last?.kind !== "step" || last.message.role !== "assistant") return;
 			const ran = new Set(toolLedger.filter((entry) => entry.outcome === "ran").map((entry) => entry.toolCallId));
+			let dispatched = 0;
 			for (const block of last.message.content) {
 				if (block.type !== "toolCall" || ran.has(block.id)) continue;
 				const tool = ledgerTools?.find((candidate) => candidate.name === block.name);
@@ -644,8 +645,10 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 				};
 				rows.push({ kind: "step", stepId: last.stepId, message: result });
 				current.agent.state.messages = [...current.agent.state.messages, result];
+				dispatched += 1;
 			}
-			await current.agent.continue();
+			// A finished step (no pending tool calls) needs nothing more: continuing from it is refused.
+			if (dispatched > 0) await current.agent.continue();
 		},
 		stop() {
 			const step = latchedStep;
