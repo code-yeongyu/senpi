@@ -350,6 +350,45 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 		}
 	});
 
+	it("admits a session-title call as aux, not as a loop step (W12)", async () => {
+		driver = await createReferenceDriver({ autoTitleSessions: true });
+		driver.setResponses([fauxAssistantMessage([fauxText("answer")]), fauxAssistantMessage([fauxText("A title")])]);
+
+		await driver.prompt("please name this session");
+		await driver.settleAux();
+
+		expect(driver.counters.admissions).toBe(1);
+		expect(driver.counters.auxAdmissions).toBe(1);
+		expect(driver.auxRows.map((row) => row.kind)).toEqual(["aux"]);
+		expect(driver.counters.providerCalls).toBe(2);
+	});
+
+	it("refuses an aux call from the discarded instance with zero dials (aux-admit-from-discarded-instance)", async () => {
+		driver = await createReferenceDriver();
+		driver.setResponses([
+			fauxAssistantMessage([fauxText("lost")]),
+			fauxAssistantMessage([fauxText("redialed")]),
+			fauxAssistantMessage([fauxText("never")]),
+		]);
+		driver.inject.nextCommit("reject");
+		const oldAgent = driver.session.agent;
+
+		await driver.prompt("go");
+		const calls = driver.counters.providerCalls;
+		// What a compaction or title started by the old instance after the latch would send.
+		const outcome = await Promise.resolve(
+			oldAgent.streamFunction(driver.session.model ?? oldAgent.state.model, { systemPrompt: "", messages: [] }),
+		).then(
+			() => "dialed",
+			() => "refused",
+		);
+
+		expect(outcome).toBe("refused");
+		expect(driver.counters.auxRefusals).toBe(1);
+		expect(driver.counters.auxAdmissions).toBe(0);
+		expect(driver.counters.providerCalls).toBe(calls);
+	});
+
 	it("never forwards an event the discarded instance emits after the latch", async () => {
 		driver = await createReferenceDriver();
 		driver.setResponses([fauxAssistantMessage([fauxText("lost")])]);

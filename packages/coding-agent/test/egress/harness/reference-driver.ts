@@ -8,6 +8,7 @@
  * - a rejected commit rebuilds a fresh instance from the durable rows.
  * The commit hook is installed on the test agent instance (`createLoopConfig`) until the CK1p seam exists (C.P3).
  */
+import { AsyncLocalStorage } from "node:async_hooks";
 import {
 	HOSTED_REBUILD_DEADLINE_MS,
 	type AgentLoopConfig,
@@ -62,6 +63,14 @@ export interface DriverCounters {
 	readonly adapterAppendAttempts: number;
 	readonly rebuildDeadlineMisses: number;
 	readonly readBacks: number;
+	readonly auxAdmissions: number;
+	readonly auxRefusals: number;
+}
+
+export interface AuxRow {
+	readonly kind: "aux";
+	readonly generation: number;
+	readonly auxKey: string;
 }
 
 export interface FakeClock {
@@ -101,6 +110,8 @@ export interface ReferenceDriver {
 	readonly forwarded: readonly ForwardedEvent[];
 	readonly latchHistory: readonly LatchRecord[];
 	readonly classifications: readonly CommitClassification[];
+	readonly auxRows: readonly AuxRow[];
+	settleAux(): Promise<void>;
 	readonly counters: DriverCounters;
 	readonly rebuilds: number;
 	readonly inject: {
@@ -112,6 +123,8 @@ export interface ReferenceDriver {
 		cancelNextStep(): void;
 		slowRebuildStoreRead(ms: number): void;
 		nextCommitError(error: unknown): void;
+		holdAux(): void;
+		releaseAux(): void;
 	};
 	rebuildStoreReadStarted(index?: number): Promise<void>;
 	deliverLateLanding(): "refused" | "landed" | "none";
@@ -180,6 +193,14 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 	const latchHistory: LatchRecord[] = [];
 	const plannedFaults: PlannedFault[] = [];
 	const classifications: CommitClassification[] = [];
+	// A provider call made inside an agent run is a loop step; any other call (title, branch summary, compaction)
+	// is an aux call and goes through its own admission (W12).
+	const loopRun = new AsyncLocalStorage<true>();
+	const auxRows: AuxRow[] = [];
+	const auxCalls: Promise<unknown>[] = [];
+	let auxAdmissions = 0;
+	let auxRefusals = 0;
+	let auxGate: PromiseWithResolvers<void> | undefined;
 	const driverErrors = new WeakSet<object>();
 	let fence: Fence = { epoch: 1, admissionSeq: 0, generation: 1 };
 	let advanceFenceBeforeNextCommit = false;
@@ -304,8 +325,34 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 		};
 		owner.createLoopConfig = (...args: unknown[]) => ({ ...createLoopConfig(...args), commitStep });
 
+		const lifecycleOwner = harness.agent as unknown as {
+			runWithLifecycle(executor: (signal: AbortSignal) => Promise<void>): Promise<void>;
+		};
+		const runWithLifecycle = lifecycleOwner.runWithLifecycle.bind(harness.agent);
+		lifecycleOwner.runWithLifecycle = (executor) =>
+			runWithLifecycle((signal) => loopRun.run(true, () => executor(signal)));
+		// Event handlers (session title, extensions) run outside the loop context, so what they start is aux.
+		const eventOwner = harness.agent as unknown as { processEvents(event: unknown): Promise<void> };
+		const processEvents = eventOwner.processEvents.bind(harness.agent);
+		eventOwner.processEvents = (event) => loopRun.exit(() => processEvents(event));
+
 		const dial: StreamFn = harness.agent.streamFunction;
+		const admitAux: StreamFn = async (model, context, streamOptions) => {
+			if (auxGate !== undefined) await auxGate.promise;
+			if (instanceGeneration !== generation) {
+				auxRefusals += 1;
+				throw new StepCommitError(`stale-aux-${instanceGeneration}`, "generation");
+			}
+			auxAdmissions += 1;
+			auxRows.push({ kind: "aux", generation: instanceGeneration, auxKey: `aux-${auxAdmissions}` });
+			return dial(model, context, streamOptions);
+		};
 		harness.agent.streamFunction = (model, context, streamOptions) => {
+			if (loopRun.getStore() !== true) {
+				const call = admitAux(model, context, streamOptions);
+				auxCalls.push(Promise.resolve(call).catch(() => undefined));
+				return call;
+			}
 			if (instanceGeneration !== generation) {
 				refusals += 1;
 				throw new StepCommitError(`stale-${instanceGeneration}`, "generation");
@@ -439,6 +486,14 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 		forwarded,
 		latchHistory,
 		classifications,
+		auxRows,
+		async settleAux() {
+			const titles = instances.map(
+				(instance) =>
+					(instance.session as unknown as { _sessionTitlePromise?: Promise<unknown> })._sessionTitlePromise,
+			);
+			await Promise.allSettled([...titles, ...auxCalls]);
+		},
 		get counters(): DriverCounters {
 			return {
 				admissions,
@@ -449,6 +504,8 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 				adapterAppendAttempts,
 				rebuildDeadlineMisses,
 				readBacks,
+				auxAdmissions,
+				auxRefusals,
 			};
 		},
 		get rebuilds() {
@@ -474,6 +531,13 @@ export async function createReferenceDriver(options: HarnessOptions = {}): Promi
 			},
 			cancelNextStep() {
 				cancelNextStep = true;
+			},
+			holdAux() {
+				auxGate = Promise.withResolvers<void>();
+			},
+			releaseAux() {
+				auxGate?.resolve();
+				auxGate = undefined;
 			},
 			nextCommitError(error: unknown) {
 				plannedFaults.push({ kind: "throw", error });
