@@ -569,6 +569,35 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 		expect(driver.toolLedger.map((entry) => entry.toolName)).toEqual(["echo"]);
 	});
 
+	it("never dispatches a tool from an uncommitted step; the redial runs it exactly once (S8a, 2.3)", async () => {
+		let runs = 0;
+		const echo: AgentTool = {
+			name: "echo",
+			label: "Echo",
+			description: "Echoes.",
+			parameters: Type.Object({}),
+			execute: async () => {
+				runs += 1;
+				return { content: [{ type: "text", text: "echoed" }], details: {} };
+			},
+		};
+		driver = await createReferenceDriver({ tools: [echo] });
+		driver.setResponses([
+			fauxAssistantMessage([fauxToolCall("echo", {})], { stopReason: "toolUse" }),
+			fauxAssistantMessage([fauxToolCall("echo", {})], { stopReason: "toolUse" }),
+			fauxAssistantMessage([fauxText("done")]),
+		]);
+		driver.inject.nextCommit("reject");
+
+		await driver.prompt("go");
+		await driver.settle();
+
+		expect(driver.rebuilds).toBe(1);
+		expect(runs).toBe(1);
+		// Dispatched only on the rebuilt instance, after the latch bumped the generation.
+		expect(driver.toolLedger.map((entry) => entry.generation)).toEqual([driver.generation]);
+	});
+
 	it("never forwards an event the discarded instance emits after the latch", async () => {
 		driver = await createReferenceDriver();
 		driver.setResponses([fauxAssistantMessage([fauxText("lost")])]);
