@@ -785,6 +785,14 @@ export type AgentSessionEvent =
 	  }
 	| { type: "retry_fallback_succeeded"; model: string; chainKey: string }
 	| {
+			/** A limit that named no model family was checked on another family once (senpi#5596). */
+			type: "usage_limit_scope_probe";
+			provider: string;
+			heldFamily: string;
+			probeFamily: string;
+			outcome: "served" | "widened";
+	  }
+	| {
 			type: "retry_fallback_reverted";
 			from: string;
 			to: string;
@@ -2291,6 +2299,7 @@ export class AgentSession {
 			sessionModel.provider,
 			this._retryFallback.accountError(sessionModel.provider),
 			this._retryFallback.accountResetAt(sessionModel.provider),
+			this._retryFallback.widenedFamiliesOf(sessionModel.provider),
 		);
 	}
 
@@ -6323,8 +6332,24 @@ export class AgentSession {
 							model.provider,
 							errorMessage,
 							this._retryFallback.accountResetAt(model.provider),
+							this._retryFallback.widenedFamiliesOf(model.provider),
 							pool?.accountsOut,
 						);
+					}
+				}
+				// A family held by a weekly limit that named no family binds automated turns the same way, so a loop
+				// moves to another family or stops instead of hammering the held one (senpi#5596, senpi#3131).
+				const heldFamily =
+					this.model && !this._pendingModelSwitch && attributionOf(options) !== "user"
+						? this._retryFallback.heldFamily(this.model)
+						: undefined;
+				if (this.model && heldFamily) {
+					this._retryFallback.resetTurn();
+					this._fallbackTurnFailures = [];
+					if (!(await this._retryFallback.tryFallback("transient", { errorMessage: heldFamily.errorMessage }, false))) {
+						throw new AccountUsageLimitError(this.model.provider, heldFamily.errorMessage, undefined, [
+							heldFamily.family,
+						]);
 					}
 				}
 			} catch (error) {

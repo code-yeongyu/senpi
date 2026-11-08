@@ -14,14 +14,27 @@ import { isBillingErrorMessage } from "./billing.ts";
 export type UsageLimitScope = "model" | "account";
 
 export class AccountUsageLimitError extends Error {
-	/** `accountsOut`: a pooled provider's accounts, each with why it cannot serve (senpi#5590). */
-	constructor(provider: string, raw = "usage limit reached", resetsAt?: number, accountsOut?: string) {
-		const described = describeProviderFailureForUser(raw, {
+	/**
+	 * `families`: a no-family weekly limit confirmed on these families before it held the provider (senpi#5596).
+	 * `accountsOut`: a pooled provider's accounts, each with why it cannot serve (senpi#5590).
+	 */
+	constructor(
+		provider: string,
+		raw = "usage limit reached",
+		resetsAt?: number,
+		families?: readonly string[],
+		accountsOut?: string,
+	) {
+		const message = describeProviderFailureForUser(raw, {
 			model: provider,
 			usageLimit: "account",
 			...(resetsAt === undefined ? {} : { resetsAt: formatResetTime(resetsAt) }),
 		});
-		super(accountsOut === undefined ? described : `${described} No account can serve: ${accountsOut}.`);
+		const withFamilies =
+			families === undefined || families.length === 0
+				? message
+				: `${message} The limit named no model family; it was confirmed on ${families.join(" and ")}.`;
+		super(accountsOut === undefined ? withFamilies : `${withFamilies} No account can serve: ${accountsOut}.`);
 		this.name = "AccountUsageLimitError";
 	}
 }

@@ -64,7 +64,14 @@ export interface RetryFallbackControllerDeps {
 					reason: FallbackReason;
 					limit?: UsageLimitScope;
 			  }
-			| { type: "retry_fallback_reverted"; from: string; to: string; cause?: FallbackRevertCause },
+			| { type: "retry_fallback_reverted"; from: string; to: string; cause?: FallbackRevertCause }
+			| {
+					type: "usage_limit_scope_probe";
+					provider: string;
+					heldFamily: string;
+					probeFamily: string;
+					outcome: "served" | "widened";
+			  },
 	): void;
 	getCurrentSelector(): { model: Model<Api>; thinkingLevel?: ThinkingLevel } | undefined;
 	isAuthAvailable(provider: string): boolean;

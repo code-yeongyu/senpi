@@ -24,7 +24,7 @@ import type {
 import { releaseOnCredentialChange } from "./credential-recovery.ts";
 import { pinAfterSwitch } from "./pin.ts";
 import { isPureNetworkTransient } from "./transient-network.ts";
-import { UnusableEntries } from "./unusable.ts";
+import { type UsageLimitScopeProbe, UnusableEntries } from "./unusable.ts";
 import { type UsageLimitScope, usageLimitScope } from "./usage-limit.ts";
 
 export type { ActiveFallbackState, FallbackRungRefusal, RetryFallbackControllerDeps } from "./controller-types.ts";
@@ -69,6 +69,16 @@ export class RetryFallbackController {
 
 	get exhaustedChainKey(): string | undefined {
 		return this.lastExhaustedChainKey;
+	}
+
+	/** The weekly-limit family hold on `model`, while it lasts (senpi#5596). */
+	heldFamily(model: Model<Api>): { readonly family: string; readonly errorMessage: string } | undefined {
+		return this.unusable.heldFamily(model);
+	}
+
+	/** The families a no-family limit was confirmed on before it held the whole provider (senpi#5596). */
+	widenedFamiliesOf(provider: string): readonly string[] | undefined {
+		return this.unusable.widenedFamiliesOf(provider);
 	}
 
 	get turnRefusals(): readonly FallbackRungRefusal[] {
@@ -272,6 +282,20 @@ export class RetryFallbackController {
 	noteServed(selector: string): void {
 		this.ownFailures.delete(selector);
 		this.probes.accept(selector);
+		const slash = selector.indexOf("/");
+		if (slash > 0)
+			this.emitScopeProbe(
+				this.unusable.noteServed({
+					provider: selector.slice(0, slash),
+					id: selector.slice(slash + 1).split(":")[0] ?? "",
+				}),
+			);
+	}
+
+	private emitScopeProbe(probe: UsageLimitScopeProbe | undefined): void {
+		if (probe === undefined) return;
+		this.deps.logger.info("usage_limit_scope_probe", { ...probe });
+		this.deps.emit({ type: "usage_limit_scope_probe", ...probe });
 	}
 
 	/**
@@ -280,7 +304,7 @@ export class RetryFallbackController {
 	 * half-open probe - independent of whether a fallback candidate remains.
 	 */
 	noteHealthFailure(model: Model<Api>, thinkingLevel: ThinkingLevel | undefined, failure: CircuitFailure): void {
-		this.unusable.note(model, failure);
+		this.emitScopeProbe(this.unusable.note(model, failure));
 		if (!this.managedChainKey({ model, thinkingLevel })) return;
 		// A pure network fault is the transport's, not the model's: it never opens the shared circuit (senpi#3306).
 		if (isPureNetworkTransient(failure.errorMessage)) return;
@@ -342,8 +366,17 @@ export class RetryFallbackController {
 		// noteHealthFailure) so the final chain entry opens too.
 		if (failureObserved && current && reason === "transient")
 			this.noteHealthFailure(current.model, current.thinkingLevel, failure);
-		const limit = usageLimitScope(failure.errorMessage);
-		if (failureObserved && current) this.unusable.note(current.model, failure);
+		if (failureObserved && current) this.emitScopeProbe(this.unusable.note(current.model, failure));
+		// A weekly limit that named no family held only the failing family (senpi#5596): report it as that model's
+		// limit, so the switch never claims the account's other models were skipped.
+		const scopeOfText = usageLimitScope(failure.errorMessage);
+		const limit =
+			scopeOfText === "account" &&
+			current &&
+			!this.unusable.isProviderSpent(current.model.provider) &&
+			this.unusable.heldFamily(current.model)
+				? "model"
+				: scopeOfText;
 		// A model-wide park (transient, billing) can rule out the current model's other rungs, so the
 		// walk re-scans after noting it; the first scan logs only when no re-scan follows.
 		const modelWidePark = !networkBlip && failureObserved && (reason === "transient" || reason === "billing");
