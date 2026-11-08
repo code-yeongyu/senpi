@@ -15,7 +15,7 @@ import type {
 	SessionStartEvent,
 } from "./extensions/index.ts";
 import { type ExtensionRunner, emitSessionShutdownEvent } from "./extensions/runner.ts";
-import { applyClientPermissionMode, withPersistedClientPreset } from "./permission-mode.ts";
+import { applyClientPermissionMode } from "./permission-mode.ts";
 import type { CreateAgentSessionResult } from "./sdk.ts";
 import { assertSessionCwdExists } from "./session-cwd.ts";
 import type { SessionHolderEndpoint } from "./session-hold-errors.ts";
@@ -826,16 +826,14 @@ export async function createAgentSessionRuntime(
 	},
 ): Promise<AgentSessionRuntime> {
 	assertSessionCwdExists(options.sessionManager, options.cwd);
-	// A session file that recorded a client-named preset keeps it when this open names none (a relay host restore).
-	const launchProfile = withPersistedClientPreset(options.launchProfile, options.sessionManager, options.cwd);
-	const result = await createRuntime({ ...options, launchProfile });
+	const result = await createRuntime(options);
 	return new AgentSessionRuntime(
 		result.session,
 		result.services,
 		createRuntime,
 		result.diagnostics,
 		result.modelFallbackMessage,
-		launchProfile,
+		options.launchProfile,
 	);
 }
 

@@ -1,4 +1,3 @@
-import type { AgentSessionLaunchProfile } from "./agent-session-runtime.ts";
 import { parsePermissionPresetName } from "./extensions/builtin/permission-system/cli.ts";
 import { readPermissionPreset } from "./extensions/builtin/permission-system/preset-registry.ts";
 import { resolvePermissionPreset } from "./extensions/builtin/permission-system/settings.ts";
@@ -109,26 +108,11 @@ export function persistedClientPreset(sessionManager: Pick<SessionManager, "getE
 	return undefined;
 }
 
-/**
- * Persists a valid client-named preset as a `permission_mode` custom entry, so a later open that names none (a
- * relay host-restore, a re-attach) keeps it. Writes only on a change; an invalid preset is never persisted.
- */
 export function openReplyPermissionMode(state: Partial<PermissionMode>): Partial<PermissionModeReply> {
 	const { permissionPreset, permissionPresetSource, permissionPresetStatus } = state;
 	if (permissionPreset === undefined || permissionPresetSource === undefined || permissionPresetStatus === undefined)
 		return {};
 	return { permissionPreset, permissionPresetSource, permissionPresetStatus };
-}
-
-export function withPersistedClientPreset(
-	launchProfile: Readonly<AgentSessionLaunchProfile> | undefined,
-	sessionManager: Pick<SessionManager, "getEntries">,
-	cwd: string,
-): Readonly<AgentSessionLaunchProfile> | undefined {
-	if (launchProfile?.permissionPreset !== undefined) return launchProfile;
-	const persisted = persistedClientPreset(sessionManager);
-	if (persisted === undefined) return launchProfile;
-	return Object.freeze({ ...(launchProfile ?? { cwd }), permissionPreset: persisted });
 }
 
 /**
@@ -146,6 +130,10 @@ export function applyClientPermissionMode(
 		session.extensionRunner.emitBusEvent(PERMISSION_PRESET_CHANGED_CHANNEL, permissionModeOf(session));
 }
 
+/**
+ * Records a valid client-named preset as a `permission_mode` custom entry (bookkeeping only: nothing restores it
+ * on a later open). Writes only on a change; an invalid preset is never recorded.
+ */
 export function persistClientPreset(
 	sessionManager: Pick<SessionManager, "getEntries" | "appendCustomEntry">,
 	preset: string | undefined,

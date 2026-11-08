@@ -725,8 +725,7 @@ export function createRpcConnectionHandler(
 				opts,
 				false,
 				{ method: "confirm", title, message, timeout: opts?.timeout, ...dialogCall(opts) },
-				(r) =>
-				"cancelled" in r && r.cancelled ? false : "confirmed" in r ? r.confirmed : false,
+				(r) => ("cancelled" in r && r.cancelled ? false : "confirmed" in r ? r.confirmed : false),
 			),
 
 		input: (title, placeholder, opts) =>

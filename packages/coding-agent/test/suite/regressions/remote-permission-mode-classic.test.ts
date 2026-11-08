@@ -41,10 +41,8 @@ function classicRpc(child: ChildProcessWithoutNullStreams) {
 	};
 }
 
-it("set_permission_preset moves a classic --mode rpc session and refuses an unknown preset", async () => {
-	const agentDir = mkdtempSync(join(tmpdir(), "senpi-6189-classic-"));
-	writeRpcModelsJson(agentDir, "http://127.0.0.1:9");
-	const child = spawn(
+function startClassic(agentDir: string, extraArgs: readonly string[] = []): ChildProcessWithoutNullStreams {
+	return spawn(
 		"node",
 		[
 			fileURLToPath(new URL("../../../src/cli.ts", import.meta.url)),
@@ -57,6 +55,7 @@ it("set_permission_preset moves a classic --mode rpc session and refuses an unkn
 			MOCK_PROVIDER,
 			"--model",
 			MOCK_MODEL,
+			...extraArgs,
 		],
 		{
 			cwd: agentDir,
@@ -69,6 +68,17 @@ it("set_permission_preset moves a classic --mode rpc session and refuses an unkn
 			},
 		},
 	);
+}
+
+async function stop(child: ChildProcessWithoutNullStreams): Promise<void> {
+	child.kill("SIGTERM");
+	await once(child, "close");
+}
+
+it("set_permission_preset moves a classic --mode rpc session and refuses an unknown preset", async () => {
+	const agentDir = mkdtempSync(join(tmpdir(), "senpi-6189-classic-"));
+	writeRpcModelsJson(agentDir, "http://127.0.0.1:9");
+	const child = startClassic(agentDir);
 	try {
 		const request = classicRpc(child);
 
@@ -90,8 +100,36 @@ it("set_permission_preset moves a classic --mode rpc session and refuses an unkn
 		expect(refused.error).toMatch(/^invalid_launch_profile: /);
 		expect((await request({ type: "get_state" })).data).toMatchObject({ permissionPreset: "ask" });
 	} finally {
-		child.kill("SIGTERM");
-		await once(child, "close");
+		await stop(child);
+		rmSync(agentDir, { recursive: true, force: true });
+	}
+}, 120_000);
+
+it("keeps the operator's --permission-preset over a mode recorded in the session file", async () => {
+	const agentDir = mkdtempSync(join(tmpdir(), "senpi-6189-classic-"));
+	writeRpcModelsJson(agentDir, "http://127.0.0.1:9");
+	const sessionFile = join(agentDir, "recorded.jsonl");
+	const recording = startClassic(agentDir, ["--session", sessionFile]);
+	let sessionId: unknown;
+	try {
+		const request = classicRpc(recording);
+		expect((await request({ type: "set_permission_preset", permissionPreset: "full-access" })).success).toBe(true);
+		expect((await request({ type: "append_user_message", content: "recorded turn" })).success).toBe(true);
+		sessionId = (await request({ type: "get_state" })).data?.sessionId;
+	} finally {
+		await stop(recording);
+	}
+	const resumed = startClassic(agentDir, ["--session", sessionFile, "--permission-preset", "ask"]);
+	try {
+		const state = await classicRpc(resumed)({ type: "get_state" });
+		expect(state.data).toMatchObject({
+			sessionId,
+			permissionPreset: "ask",
+			permissionPresetSource: "host_default",
+			effectivePermissionPreset: "ask",
+		});
+	} finally {
+		await stop(resumed);
 		rmSync(agentDir, { recursive: true, force: true });
 	}
 }, 120_000);

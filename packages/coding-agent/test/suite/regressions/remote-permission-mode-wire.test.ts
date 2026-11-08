@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { rawClient } from "../rpc-raw-socket-client.ts";
@@ -89,25 +90,37 @@ describe("#6189 permission mode on the wire", () => {
 		600_000,
 	);
 
-	it("keeps a client-set preset across a preset-less reopen of the session file", async () => {
+	it("records a client-set preset in the session file, while a local preset-less reopen keeps the host default", async () => {
 		const host = await permissionModeHost();
 		try {
 			const client = await rawClient(host.socketPath);
 			const sessionPath = join(host.cwd, "kept.jsonl");
 			const first = await openFauxSession(client, host.cwd, { sessionPath, permissionPreset: "full-access" });
 			expect((await readTurn(client, first.sessionId)).asked).toEqual([]);
-			dataOf(await client.request({ type: "set_permission_preset", sessionId: first.sessionId, permissionPreset: "ask" }));
+			dataOf(
+				await client.request({
+					type: "set_permission_preset",
+					sessionId: first.sessionId,
+					permissionPreset: "ask",
+				}),
+			);
 			dataOf(await client.request({ type: "close_session", sessionId: first.sessionId }));
+
+			const recorded = (await readFile(sessionPath, "utf8"))
+				.split("\n")
+				.filter((line) => line.includes('"customType":"permission_mode"'))
+				.map((line) => JSON.parse(line).data);
+			expect(recorded.at(-1)).toEqual({ preset: "ask", source: "client" });
 
 			const reopened = await openFauxSession(client, host.cwd, { sessionPath });
 			expect(await stateOf(client, reopened.sessionId)).toMatchObject({
-				permissionPreset: "ask",
-				permissionPresetSource: "client",
-				effectivePermissionPreset: "ask",
+				permissionPreset: "full-access",
+				permissionPresetSource: "host_default",
+				effectivePermissionPreset: "full-access",
 			});
-			const strict = await readTurn(client, reopened.sessionId);
-			expect(strict.asked).toEqual(["Permission required: read"]);
-			expect(strict.result).not.toContain(PROBE_TEXT);
+			const unchanged = await readTurn(client, reopened.sessionId);
+			expect(unchanged.asked).toEqual([]);
+			expect(unchanged.result).toContain(PROBE_TEXT);
 			client.close();
 		} finally {
 			await host.dispose();
