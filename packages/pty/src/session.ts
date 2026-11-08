@@ -2,12 +2,15 @@ import { Buffer } from "node:buffer";
 import process from "node:process";
 import { loadNativePty, type NativePtyLoadResult, type NativePtyUnavailableDiagnostic } from "./native-loader.ts";
 import { PipeFallbackSession, shouldUsePipeFallback } from "./pipe-fallback.ts";
+import { stopLeftoverGroup } from "./process-tree.ts";
 import { createBunTerminalSession, isBunTerminalEnabled } from "./session-bun.ts";
 import {
 	exitedOperation,
+	normalizeGraceMs,
 	normalizeOperationResult,
 	normalizeTerminalExit,
 	notStartedOperation,
+	settledExitWithin,
 } from "./session-exit.ts";
 import { getNativeSessionFactory } from "./session-native.ts";
 import { defaultCommand, normalizeRawTailBytes, toNativeOptions, toPipeFallbackOptions } from "./session-options.ts";
@@ -189,6 +192,9 @@ export class TerminalSession {
 	kill(signal: TerminalSessionSignal = "SIGTERM"): TerminalSessionOperationResult {
 		const handle = this.backendHandle;
 		if (this.settledExit !== null) {
+			// Settled is not stopped: what the command left in its process group stays reachable (senpi#6201).
+			if (handle?.leftoverAlive?.() === true)
+				return normalizeOperationResult(handle.kill(signal), `Sent ${signal}.`);
 			return {
 				ok: true,
 				idempotent: true,
@@ -222,15 +228,33 @@ export class TerminalSession {
 	 * never started).
 	 */
 	async terminate(options: TerminalSessionTerminateOptions = {}): Promise<TerminalSessionExit | null> {
-		if (this.settledExit !== null) return this.settledExit;
+		if (this.settledExit !== null) {
+			await this.stopLeftover(options);
+			return this.settledExit;
+		}
 		if (this.backendHandle === null) return null;
 
 		this.kill(options.signal ?? "SIGTERM");
-		const graceful = await this.waitExitWithin(normalizeGraceMs(options.graceMs, DEFAULT_TERMINATE_GRACE_MS));
-		if (graceful !== null) return graceful;
+		const graceful = await this.exitWithin(normalizeGraceMs(options.graceMs, DEFAULT_TERMINATE_GRACE_MS));
+		if (graceful !== null) {
+			await this.stopLeftover(options);
+			return graceful;
+		}
 
 		this.kill(FORCE_SIGNAL);
-		return await this.waitExitWithin(normalizeGraceMs(options.forcedGraceMs, DEFAULT_FORCED_GRACE_MS));
+		return await this.exitWithin(normalizeGraceMs(options.forcedGraceMs, DEFAULT_FORCED_GRACE_MS));
+	}
+
+	/**
+	 * TERM, grace, KILL for what a settled session left in its process group; a no-op while it runs, once the
+	 * group is empty, and on backends that keep no leftover group (native, Bun).
+	 */
+	async stopLeftover(options: TerminalSessionTerminateOptions = {}): Promise<void> {
+		const handle = this.backendHandle;
+		if (this.settledExit === null || handle === null) return;
+		const graceMs = normalizeGraceMs(options.graceMs, DEFAULT_TERMINATE_GRACE_MS);
+		const forcedGraceMs = normalizeGraceMs(options.forcedGraceMs, DEFAULT_FORCED_GRACE_MS);
+		await stopLeftoverGroup(handle, options.signal ?? "SIGTERM", graceMs, forcedGraceMs);
 	}
 
 	async waitExit(): Promise<TerminalSessionExit> {
@@ -249,25 +273,10 @@ export class TerminalSession {
 		return normalizeTerminalExit(exit, backend, this.lastSignal !== null);
 	}
 
-	/** Await the settled exit for at most `graceMs`; `null` means it did not settle in time. */
-	private async waitExitWithin(graceMs: number): Promise<TerminalSessionExit | null> {
-		if (this.settledExit !== null) return this.settledExit;
-		const exitPromise = this.exitPromise;
-		if (exitPromise === null || graceMs <= 0) return this.settledExit;
-
-		let graceTimer: ReturnType<typeof setTimeout> | undefined;
-		try {
-			return await Promise.race([
-				// Attaching the catch here also keeps a late backend rejection from
-				// surfacing as an unhandled rejection once the grace timer wins.
-				exitPromise.catch(() => null),
-				new Promise<null>((resolve) => {
-					graceTimer = setTimeout(() => resolve(null), graceMs);
-				}),
-			]);
-		} finally {
-			if (graceTimer !== undefined) clearTimeout(graceTimer);
-		}
+	private exitWithin(graceMs: number): Promise<TerminalSessionExit | null> {
+		return this.settledExit !== null
+			? Promise.resolve(this.settledExit)
+			: settledExitWithin(this.exitPromise, graceMs);
 	}
 
 	private settleExit(exit: TerminalSessionExit): TerminalSessionExit {
@@ -285,11 +294,6 @@ export class TerminalSession {
 		this.rawOutput.append(buffer);
 		for (const handler of this.dataHandlers) handler(buffer);
 	}
-}
-
-function normalizeGraceMs(value: number | undefined, fallback: number): number {
-	if (value === undefined || !Number.isFinite(value) || value < 0) return fallback;
-	return value;
 }
 
 export function createTerminalSession(
