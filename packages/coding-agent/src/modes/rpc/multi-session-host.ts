@@ -25,6 +25,7 @@ import type { LaunchProofSource } from "./delegated-connection.ts";
 import { parseClientCapabilities } from "./custom-capability.ts";
 import { ClientOccupancy } from "./host-client-occupancy.ts";
 import { HostCoreGate, type HostCoreHooks } from "./host-core-gate.ts";
+import { bindRegisteredEndpoint } from "./host-bare-endpoint-registration.ts";
 import { createHostDaemonPaths } from "./host-daemon-paths.ts";
 import { ENDPOINT_OWNER_FENCE_CAPABILITY, GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
 import { HandoffAnnouncement } from "./host-handoff-announcement.ts";
@@ -666,7 +667,11 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	});
 	// Everything the internal listener needs is initialized: the runtime milestone of a coordinated start (senpi#4602).
 	reportStartupMilestone("host_runtime");
-	boundIdentity = await listen(server, socketPath, secret);
+	const bind = () => listen(server, socketPath, secret);
+	// A host binding its own public socket keeps its registry record; a supervised one's ensure keeps it.
+	boundIdentity = await (hostWatchdogBinding() === undefined
+		? bindRegisteredEndpoint({ agentDir: options.agentDir, socket: socketPath, log: hostLog }, bind)
+		: bind());
 	// A key record that cannot be published safely ends this host: held connections are refused, never served keyless.
 	await transport.publish(() => shutdown(1));
 	if (supervisorPublicOwnerFile) {
