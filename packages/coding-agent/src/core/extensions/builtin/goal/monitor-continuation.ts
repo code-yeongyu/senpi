@@ -783,6 +783,14 @@ export class MonitorAwareGoalContinuation {
 			this.#toollessContinuationStreak = 0;
 			return;
 		}
+		// senpi#4265: ending a toolless turn while a resumption channel is live is the designed
+		// wait the continuation prompt itself endorses ("ending the turn while a live resumption
+		// channel ... is on duty ... is progress, not a status report"), so it neither advances
+		// nor clears the stall streak. The streak stays armed for a genuine stall, and the reset
+		// in #setWakeSourceCount (total reaches zero) re-bases it the moment real delivery comes.
+		// The repetition-hash guard and the continuation cap deliberately do not read this streak,
+		// so a permanently "live" channel cannot disarm stall detection forever.
+		if (this.#activeWakeSourceCount() > 0) return;
 		this.#toollessContinuationStreak += 1;
 	}
 

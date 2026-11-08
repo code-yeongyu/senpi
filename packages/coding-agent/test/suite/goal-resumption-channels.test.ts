@@ -122,7 +122,10 @@ describe("goal continuation resumption channels", () => {
 		expect(channelEvents(events, GOAL_CONTINUATION_SCHEDULED_EVENT)).toHaveLength(1);
 	});
 
-	it("keeps the timer and toolless streak until the total across sources reaches zero", async () => {
+	// senpi#4265: the old pin asserted a monitor-flavored `<goal_stall_check>` after three
+	// toolless turns that were all spent waiting on live channels. That is exactly the fossilized
+	// streak this issue reports; the pin now asserts the fixed semantics.
+	it("keeps the timer and suppresses the toolless streak while any resumption channel is live", async () => {
 		vi.useFakeTimers();
 		const notices: string[] = [];
 		const ctx = await makeGoalContext(notices, "thread-total-zero");
@@ -148,7 +151,8 @@ describe("goal continuation resumption channels", () => {
 		const thirdDelivery = waitForSentCount(harness, 3);
 		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS);
 		await thirdDelivery;
-		expect(sent[2]?.message.content).toContain("<goal_stall_check>");
+		// Three toolless turns while channels were on duty: no stall check on any of them.
+		for (const message of sent) expect(message.message.content).not.toContain("<goal_stall_check>");
 
 		await endTurn(monitor, ctx, goal);
 		events.emit(WAKE_SOURCE_STATE_EVENT, { source: "terminal-background-sessions", activeCount: 0 });
@@ -157,6 +161,55 @@ describe("goal continuation resumption channels", () => {
 		await vi.advanceTimersByTimeAsync(1_000);
 		await drainDelivery;
 		expect(sent).toHaveLength(4);
+		expect(sent[3]?.message.content).not.toContain("<goal_stall_check>");
+	});
+
+	// senpi#4265: the reset half. A streak built by genuinely toolless turns (no channel on duty)
+	// must be re-based when a live channel reaches zero, so waiting on channels afterwards cannot
+	// inherit the old stall; and after the reset, three fresh toolless turns must stall again.
+	it("re-bases the toolless streak when live sources drain to zero", async () => {
+		vi.useFakeTimers();
+		const notices: string[] = [];
+		const ctx = await makeGoalContext(notices, "thread-drain-rebase");
+		const harness = createHarness();
+		const { monitor, events, sent } = harness;
+		const goal = activeGoal("goal-drain-rebase");
+		await persistGoal(ctx, goal);
+		monitor.start(ctx);
+
+		const endTurnWithText = async (text: string): Promise<void> => {
+			const message = cleanAssistantStop();
+			if (message.role !== "assistant") throw new Error("Expected an assistant message");
+			await monitor.afterAgentEnd({ ctx, goal, messages: [{ ...message, content: [{ type: "text", text }] }] });
+		};
+
+		// Two toolless turns with nothing on duty: streak 2, no stall yet.
+		await endTurnWithText("toolless turn one");
+		await endTurnWithText("toolless turn two");
+		expect(sent).toHaveLength(2);
+		for (const message of sent) expect(message.message.content).not.toContain("<goal_stall_check>");
+
+		// A child task goes live; the next toolless turn waits on it instead of counting.
+		events.emit(WAKE_SOURCE_STATE_EVENT, { source: "senpi-task", activeCount: 1 });
+		await events.flush();
+		await endTurnWithText("waiting on the child");
+		// The child delivers: total reaches zero, the drain fire continues, and the streak resets.
+		events.emit(WAKE_SOURCE_STATE_EVENT, { source: "senpi-task", activeCount: 0 });
+		await events.flush();
+		const drained = waitForSentCount(harness, 3);
+		await vi.advanceTimersByTimeAsync(1_000);
+		await drained;
+		expect(sent[2]?.message.content).not.toContain("<goal_stall_check>");
+
+		// The re-based streak needs three fresh toolless turns before the stall check returns;
+		// without the reset, this third turn after the drain would already be streak 4.
+		await endTurnWithText("toolless turn three");
+		await endTurnWithText("toolless turn four");
+		expect(sent[3]?.message.content).not.toContain("<goal_stall_check>");
+		expect(sent[4]?.message.content).not.toContain("<goal_stall_check>");
+		await endTurnWithText("toolless turn five");
+		expect(sent[5]?.message.content).toContain("<goal_stall_check>");
+		expect(sent).toHaveLength(6);
 	});
 
 	it("treats legacy and generalized terminal-monitor snapshots as idempotent writes", async () => {

@@ -91,28 +91,34 @@ describe("goal monitor continuation stall check", () => {
 		await cleanupGoalMonitorTempDirs();
 	});
 
-	it("injects the stall check from the third consecutive monitor continuation onward", async () => {
+	// senpi#4265: turns spent waiting on a live channel no longer build the streak; the stall must be
+	// earned by genuinely toolless turns, and a channel that joins afterwards keeps the stall and
+	// flavors it with per-source advice.
+	it("injects the stall check from the third consecutive toolless continuation, monitor-flavored once a channel joins", async () => {
 		vi.useFakeTimers();
-		const { harness, ctx, notices } = await createStallHarness("thread-stall-threshold");
+		const { harness, ctx, notices } = await createStallHarness("thread-stall-threshold", false);
 
-		await runMonitorContinuationCycle(harness, ctx);
-		await runMonitorContinuationCycle(harness, ctx);
-		expect(harness.sent).toHaveLength(2);
+		for (const turn of [1, 2, 3]) {
+			await runContinuationCycle(harness, ctx, [cleanAssistantStopWithText(`toolless turn ${turn}`)]);
+		}
+		expect(harness.sent).toHaveLength(3);
 		expect(harness.sent[0]?.message.content).not.toContain(STALL_MARKER);
 		expect(harness.sent[1]?.message.content).not.toContain(STALL_MARKER);
-		expect(stallEvents(harness)).toHaveLength(0);
-
-		await runMonitorContinuationCycle(harness, ctx);
-		expect(harness.sent).toHaveLength(3);
 		expect(harness.sent[2]?.message.content).toContain(STALL_MARKER);
-		expect(harness.sent[2]?.message.content).toContain("bash_output");
-		expect(harness.sent[2]?.message.content).toContain("kill_bash");
+		expect(harness.sent[2]?.message.content).not.toContain("bash_output");
 		expect(stallEvents(harness)).toEqual([expect.objectContaining({ consecutiveContinuations: 3, toolless: true })]);
-		expect(notices.some((notice) => /stall/i.test(notice))).toBe(true);
 
+		// The channel going live does not erase a stall the built streak already owns: the next
+		// continuation waits on it, the backstop delivers it, and the notice keeps the monitor flavor.
+		harness.events.emit("terminal_monitor_state", { activeCount: 1 });
+		await harness.events.flush();
 		await runMonitorContinuationCycle(harness, ctx);
+		expect(harness.sent).toHaveLength(4);
 		expect(harness.sent[3]?.message.content).toContain(STALL_MARKER);
+		expect(harness.sent[3]?.message.content).toContain("bash_output");
+		expect(harness.sent[3]?.message.content).toContain("kill_bash");
 		expect(stallEvents(harness)).toHaveLength(2);
+		expect(notices.some((notice) => /stall/i.test(notice))).toBe(true);
 	});
 
 	it("injects the stall check from the third toolless immediate continuation", async () => {
@@ -149,22 +155,36 @@ describe("goal monitor continuation stall check", () => {
 		expect(harness.sent[5]?.message.content).toContain(STALL_MARKER);
 	});
 
+	// senpi#4265: a streak built by toolless turns must be re-based the moment live sources drain
+	// to zero, and three fresh toolless turns are then needed before the stall check returns.
 	it("resets the streak when the monitors settle and a new monitor starts", async () => {
 		vi.useFakeTimers();
-		const { harness, ctx } = await createStallHarness("thread-stall-settle-reset");
+		const { harness, ctx } = await createStallHarness("thread-stall-settle-reset", false);
 
-		await runMonitorContinuationCycle(harness, ctx);
-		await runMonitorContinuationCycle(harness, ctx);
+		await runContinuationCycle(harness, ctx, [cleanAssistantStopWithText("toolless turn 1")]);
+		await runContinuationCycle(harness, ctx, [cleanAssistantStopWithText("toolless turn 2")]);
 
-		harness.events.emit("terminal_monitor_state", { activeCount: 0 });
-		await harness.events.flush();
 		harness.events.emit("terminal_monitor_state", { activeCount: 1 });
 		await harness.events.flush();
-
-		await runMonitorContinuationCycle(harness, ctx);
-		expect(harness.sent).toHaveLength(3);
+		await runContinuationCycle(harness, ctx, [cleanAssistantStopWithText("waiting turn")]);
+		harness.events.emit("terminal_monitor_state", { activeCount: 0 });
+		await harness.events.flush();
+		const drained = waitForSentCount(harness, 3);
+		await vi.advanceTimersByTimeAsync(1_000);
+		await drained;
 		expect(harness.sent[2]?.message.content).not.toContain(STALL_MARKER);
-		expect(stallEvents(harness)).toHaveLength(0);
+
+		harness.events.emit("terminal_monitor_state", { activeCount: 1 });
+		await harness.events.flush();
+		harness.events.emit("terminal_monitor_state", { activeCount: 0 });
+		await harness.events.flush();
+		await runContinuationCycle(harness, ctx, [cleanAssistantStopWithText("toolless turn 3")]);
+		await runContinuationCycle(harness, ctx, [cleanAssistantStopWithText("toolless turn 4")]);
+		expect(harness.sent[3]?.message.content).not.toContain(STALL_MARKER);
+		expect(harness.sent[4]?.message.content).not.toContain(STALL_MARKER);
+		await runContinuationCycle(harness, ctx, [cleanAssistantStopWithText("toolless turn 5")]);
+		expect(harness.sent[5]?.message.content).toContain(STALL_MARKER);
+		expect(stallEvents(harness)).toHaveLength(1);
 	});
 
 	it("resets the streak when a real user prompt starts a turn", async () => {
