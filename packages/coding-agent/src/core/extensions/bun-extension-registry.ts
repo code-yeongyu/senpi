@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { dirname, isAbsolute } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { loadInTurn } from "./bun-extension-load-turns.ts";
 import { publishRuntimeMetadata } from "./extension-runtime-module.ts";
 
 export type ModuleSource = { readonly contents: string; readonly loader: "js" };
@@ -25,7 +26,7 @@ declare const Bun: {
 			): void;
 			onLoad(
 				options: { readonly filter: RegExp; readonly namespace: string },
-				load: (args: { readonly path: string }) => ModuleSource,
+				load: (args: { readonly path: string }) => ModuleSource | Promise<ModuleSource>,
 			): void;
 		}) => void;
 	}): void;
@@ -163,7 +164,7 @@ function installRegistry(virtualModules: Readonly<Record<string, Readonly<Record
 				builder.onLoad({ filter: /.*/, namespace: extensionNamespace }, ({ path }) => {
 					const parsed = splitModuleId(path);
 					if (parsed === undefined) throw new ExtensionModuleIdError(path);
-					return graphFor(parsed.generation).load(parsed.filename);
+					return loadInTurn(() => graphFor(parsed.generation).load(parsed.filename));
 				});
 				installed = true;
 			},
