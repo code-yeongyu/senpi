@@ -29,6 +29,8 @@ export interface ReleasedItemPosition {
 	readonly providerId: ProviderId;
 	readonly entryDigest: string;
 	readonly field: SecretField;
+	/** The lease this release was made under: the opener rebuilds epoch and placementId from it (r11.2 C.5). */
+	readonly lease: EpochLeaseToken;
 }
 
 export interface SealedSourceDeps {
@@ -98,8 +100,9 @@ export class SealedCredentialSource implements CredentialSource {
 		let reloads = 0;
 		let churnRetried = false;
 		for (;;) {
-			const result = await this.#release(providerId, digest, fields, scope);
-			if (result.ok) return this.#lease(providerId, digest, fields, result.items);
+			const lease = await this.#deps.lease();
+			const result = await this.#release(providerId, digest, fields, scope, lease);
+			if (result.ok) return this.#lease(providerId, digest, fields, result.items, lease);
 			if (result.code !== "stale_snapshot") throw new CredentialWait(result.code, RETRYABLE.includes(result.code));
 			if (reloads < RELOADS_PER_STEP) {
 				reloads++;
@@ -122,13 +125,14 @@ export class SealedCredentialSource implements CredentialSource {
 		entryDigest: string,
 		fields: readonly SecretField[],
 		scope: ReleaseScope,
+		lease: EpochLeaseToken,
 	): Promise<ReleaseResult> {
 		return this.#deps.unsealer.release({
 			accountId: this.#deps.accountId,
 			providerId,
 			entryDigest,
 			fields,
-			lease: await this.#deps.lease(),
+			lease,
 			recipientPk: this.#deps.recipientPk,
 			scope,
 		});
@@ -149,12 +153,13 @@ export class SealedCredentialSource implements CredentialSource {
 		entryDigest: string,
 		fields: readonly SecretField[],
 		items: readonly HpkeWrap[],
+		epochLease: EpochLeaseToken,
 	): Promise<SecretLease> {
 		if (items.length !== fields.length) throw new CredentialWait("denied", false);
 		const values = new Map<SecretField, Uint8Array>();
 		try {
 			for (const [index, field] of fields.entries()) {
-				const position = { accountId: this.#deps.accountId, providerId, entryDigest, field };
+				const position = { accountId: this.#deps.accountId, providerId, entryDigest, field, lease: epochLease };
 				values.set(field, await this.#deps.openItem(items[index], position));
 			}
 		} catch (error) {
