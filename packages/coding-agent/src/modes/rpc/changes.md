@@ -1,3 +1,92 @@
+## 2026-11-08 - RPC input carries its connection's origin (senpi#6206)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-roles.ts`: `isDelegated` (host view, a worker's retained descriptor, or a carried legacy delegation) and `noteCarriedDelegation`.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `prompt` and `follow_up` pass whether their connection is delegated; every record is passed to `noteDelegatedRecord` before dispatch.
+- `packages/coding-agent/src/modes/rpc/delegated-drive-origin.ts` (new): a delegated record whose method class is `drive` or `device_admin` marks the session remote-driven, decided by the method-class table.
+- `packages/coding-agent/src/modes/rpc/session-worker.ts`: a bind or command that carries a delegation (either mode) marks its connection delegated in the isolate.
+- `packages/coding-agent/src/modes/rpc/client-input-handler.ts`: passes `connectionOrigin` into the session.
+- `packages/coding-agent/src/modes/rpc/session-router-open-profile.ts`: a host-level preset folded into an open is marked `host_default`.
+- `packages/coding-agent/src/modes/rpc/session-registry-attach.ts`, `worker-session-registry.ts`: only a client-named preset moves an attached session (an embedder's folded host default does not), and naming one clears the host-default marker.
+
+### Why
+
+- The delegated default needs the starting record's connection, and an embedder's host-level preset must not exempt a remote device's session (remote approval-mode work, tracked privately).
+
+### Why an extension could not handle it
+
+- Connection identity lives in the RPC host.
+
+### Expected merge conflict zones
+
+- LOW: the `prompt`, `follow_up` and `compact` cases of the connection handler.
+
+## 2026-11-08 - An in-process open waits, bounded, for the warms of its cwd in flight (senpi#6199)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-warm.ts`: `HostWarmer.inFlight(cwd)` settles once every load of that cwd in flight NOW has (a snapshot: later warms and other cwds are not in it); `createRegistryWarm` returns `{ warm, inFlight }`; `waitForWarms(warming, boundMs, cwd)` races that wait against a deadline and returns `"settled" | "warm_wait_deadline"`, reporting the deadline on stderr.
+- `packages/coding-agent/src/modes/rpc/session-registry.ts`: `RpcSessionRegistry.openSession` takes that snapshot for its cwd once and, when a warm is loading, waits through `waitForWarms` bounded by `closeGraceMs` (the closing-reservation wait's bound) before it opens; past the bound it opens anyway.
+
+### Why
+
+- Extension loads now yield the host loop between modules (senpi#6199), so an `open_session` can arrive while the boot load (senpi#6147) or a client's `warm` is still loading. Its factories must not run beside that load: the boot load is the host's first, and an extension that claims a private channel there must not race a second instance. The synchronous import used to give this order by accident.
+- Only a warm of the same cwd loads that cwd's extensions beside the open, so a warm of another cwd, or one that starts after the open began waiting, is not waited on; and an extension factory that never settles (there is no factory timeout) must not stall every `open_session` on the shared host, so the wait is bounded (independent review MEDIUM).
+
+### Why an extension could not handle it
+
+- The order is between two host-driven extension loads; an extension sees only its own factory call.
+
+### Expected merge conflict zones
+
+- LOW: `RpcSessionRegistry`'s constructor `warm` assignment and the head of `openSession`; `createRegistryWarm`'s return.
+
+## 2026-11-08 - A host that binds its own socket registers its endpoint before it serves (senpi#6190)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-bare-endpoint-registration.ts`: new. `bindRegisteredEndpoint` takes the endpoint's ensure lock (`acquireHostEnsureLock`, 10 s wait), writes the endpoint's daemon directories, layout marker and `endpoint.json` (`createDaemonDirectories`, first writer wins), binds, then releases. A lock it cannot get, or a record it cannot write, is logged and the host still binds. An abstract socket binds unchanged.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `runSocketHost` binds through it when no supervisor started the host (`hostWatchdogBinding() === undefined`: `--mode rpc --listen`, `--headless`); a supervised host binds exactly as before.
+
+### Why
+
+- Only `host ensure` wrote `endpoint.json`, and `host gc` (operator or the pass after any ensure) removes a dead endpoint's whole directory. A host that binds its own socket never wrote it back, so after one outage it served while every registry reader (`host status --all`, a relay device service) found nothing until the file was rewritten by hand.
+- Binding inside the ensure lock is what keeps a gc from undoing the write: gc judges and removes under that lock, so it either finished before the write or finds the socket bound and keeps the endpoint.
+- A supervised host is skipped because its ensure already wrote the record and holds that lock while it starts the host.
+
+### Why an extension could not handle it
+
+- The record must exist before the host's first command, and the bind happens inside the host core before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the `listen(server, socketPath, secret)` line in `runSocketHost` and the import block of `multi-session-host.ts`.
+
+## 2026-11-07 - Retained sessions survive a host restart (senpi#6190)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-router-residency.ts` (new): `recordRetainedSession` writes a retained session's handover-parked entry stamped with this host instance (and, while the session is open here, with the process holding it) and drops the key it was recorded under before; `syncRetainedRecord` runs after every successful open (and after an accepted `set_session_context`): a retained session is recorded as resident, a non-retained open by path clears an earlier park of that path (the clear `openPhysicalWithBarrier` used to do); `followRetainedRecord` moves the entry when the session switches transcripts; `clearRetainedRecord` removes every key on close and reclaim.
+- `packages/coding-agent/src/modes/rpc/host-handover-resident-writer.ts` (new): the holding-process stamp (host, boot, pid, process start) and a per-watch liveness probe built on the session writer claims' rules.
+- `packages/coding-agent/src/modes/rpc/session-router-context.ts`, `packages/coding-agent/src/modes/rpc/session-attachment-commands.ts`, `packages/coding-agent/src/modes/rpc/session-registry-types.ts`: the writer's `afterRecord` hook calls `followRetainedRecord`; reclaim calls `clearRetainedRecord`; `RpcSessionEntry.recordedPath` remembers the key.
+- `packages/coding-agent/src/modes/rpc/session-router-open.ts`, `packages/coding-agent/src/modes/rpc/session-router-routing.ts`, `packages/coding-agent/src/modes/rpc/session-router-occupancy.ts`: call those helpers; the idle/handoff park writes its entry through `recordRetainedSession`.
+- `packages/coding-agent/src/modes/rpc/host-handover-parked.ts`, `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts`: entries carry the optional `residentWriter` stamp; the reopen watch skips an entry whose stamped process is still alive (a handoff's draining predecessor parks it first); `clearInheritedParkedSession` removes an inherited entry after its reopen unless the reopen re-recorded it for this host, so a restored session is restored again after the next restart.
+- `packages/coding-agent/src/modes/rpc/session-router-close.ts`, `packages/coding-agent/src/modes/rpc/session-event-writer.ts`, `packages/coding-agent/src/modes/rpc/rpc-session-event-types.ts`, `packages/coding-agent/src/modes/rpc/session-status.ts`: `dispose` claims each session's close in the tick the stop starts (before any await, like `close`, so a late attach or reclaim is fenced against a stable entry), then ends its running turn with `abortForHostShutdown()` (bounded by the 10 s default close grace, so a run its abort cannot release never holds the stop), then parks every retained session of a socket host (`session_parked { reason: "host_shutdown" }`, its entry rewritten) instead of closing it; other sessions still close with `reason: "host_shutdown"`.
+
+### Why
+
+- The next host on an endpoint reopens every entry an earlier process left in the handover-parked record, but only a park wrote one, so a retained session that was resident when the host was killed or stopped vanished from `list_sessions`, and a relay mirroring that listing answered `session_not_found` until someone re-opened it by hand (senpi#6190). A clean stop also told attached clients the session had ended (`session_closed`).
+
+### Why an extension could not handle it
+
+- Session residency, the handover record and the shutdown teardown all live in the RPC host's router; no extension hook runs at host startup or shutdown with access to them.
+
+### Expected merge conflict zones
+
+- MEDIUM: `dispose` and `close` in `session-router-close.ts`, the success tail of `open` in `session-router-open.ts`, and `writer.afterRecord` in `session-router-context.ts`.
+- LOW: `reopenOne` in `host-handover-reopen.ts`, `setSessionContext` in `session-router-routing.ts`, the `session_parked` reason union.
+
 ## 2026-11-07 - The RPC workspace verbs leave the synchronous trust path (senpi#6185)
 
 ### What changed
