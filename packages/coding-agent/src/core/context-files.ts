@@ -24,6 +24,14 @@ export type ContextFiles = ContextFile[] & { readonly diagnostics: ResourceDiagn
 export interface ContextFileLimits {
 	maxBytesPerFile?: number;
 	maxTotalBytes?: number;
+	/**
+	 * The global (user-scope) context file to load instead of the agent-dir probe (senpi#5567).
+	 * A leading `~` is expanded; a relative path resolves against the process cwd; a directory
+	 * runs the same candidate probe as the agent dir. Unset or blank keeps the agent-dir file,
+	 * and a path that is set but missing (or unreadable, or a special file) falls back to the
+	 * agent-dir probe instead of erroring.
+	 */
+	globalPath?: string;
 }
 
 export const DEFAULT_CONTEXT_FILE_MAX_BYTES = 64 * 1024;
@@ -49,6 +57,35 @@ function loadContextFileFromDir(dir: string): ContextFile | null {
 		}
 	}
 	return null;
+}
+
+/**
+ * The global user-scope context file (senpi#5567). `contextFiles.globalPath` names a file (or a
+ * directory to probe for the usual candidates) to load in place of the agent-dir file. Precedence
+ * is defined and never errors: a blank or unset path, a missing or unreadable target, and a target
+ * directory with no candidates all fall back to the agent-dir probe, which stays the untouched default.
+ */
+function loadGlobalContextFile(agentDir: string, globalPath: string | undefined): ContextFile | null {
+	const explicit = typeof globalPath === "string" ? globalPath.trim() : "";
+	if (explicit === "") return loadContextFileFromDir(agentDir);
+	const resolved = resolvePath(explicit);
+	let isDirectory = false;
+	let isFile = false;
+	try {
+		const stats = statSync(resolved);
+		isDirectory = stats.isDirectory();
+		isFile = stats.isFile();
+	} catch {
+		return loadContextFileFromDir(agentDir);
+	}
+	if (isDirectory) return loadContextFileFromDir(resolved) ?? loadContextFileFromDir(agentDir);
+	if (!isFile) return loadContextFileFromDir(agentDir);
+	try {
+		return { path: resolved, content: stripBom(readFileSync(resolved, "utf-8")) };
+	} catch (error) {
+		console.error(chalk.yellow(`Warning: Could not read ${resolved}: ${error}`));
+		return loadContextFileFromDir(agentDir);
+	}
 }
 
 /**
@@ -177,7 +214,7 @@ export function loadProjectContextFiles(
 	const contextFiles: ContextFile[] = [];
 	const seenPaths = new Set<string>();
 
-	const globalContext = loadContextFileFromDir(resolvedAgentDir);
+	const globalContext = loadGlobalContextFile(resolvedAgentDir, options.globalPath);
 	if (globalContext) {
 		contextFiles.push({ ...globalContext, scope: "user" });
 		seenPaths.add(globalContext.path);
