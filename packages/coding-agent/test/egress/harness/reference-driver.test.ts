@@ -1,6 +1,8 @@
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
 import { HOSTED_REBUILD_DEADLINE_MS, isStepCommitError } from "@earendil-works/pi-agent-core";
-import { fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai/compat";
+import { type Message, normalizeContext } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai/compat";
+import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { createReferenceDriver, projectHistoryRows, type ReferenceDriver } from "./reference-driver.ts";
 
@@ -277,6 +279,206 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 		expect(driver.rebuilds).toBe(1);
 		expect(driver.latched).toBe(false);
 		expect(driver.counters.providerCalls).toBe(2);
+	});
+
+	it("classifies a commit error by its brand at the commit boundary, not by instanceof (S8d)", async () => {
+		driver = await createReferenceDriver();
+		driver.setResponses([
+			fauxAssistantMessage([fauxText("one")]),
+			fauxAssistantMessage([fauxText("two")]),
+			fauxAssistantMessage([fauxText("three")]),
+			fauxAssistantMessage([fauxText("four")]),
+		]);
+		// A StepCommitError from a second copy of the package: it carries the registry brand, but it is not an
+		// instance of this copy's class.
+		class SecondCopyStepCommitError extends Error {
+			readonly stepId = "second-copy";
+			readonly code = "fenced" as const;
+			constructor() {
+				super("step commit failed: fenced");
+				Object.defineProperty(this, Symbol.for("senpi.StepCommitError"), { value: true });
+			}
+		}
+		const secondCopy = new SecondCopyStepCommitError();
+		const lookAlike = Object.assign(new Error("step commit failed: fenced"), {
+			name: "StepCommitError",
+			code: "fenced",
+		});
+
+		driver.inject.nextCommitError(secondCopy);
+		await driver.prompt("brand");
+		driver.inject.nextCommitError(lookAlike);
+		await driver.prompt("look-alike");
+
+		expect(driver.classifications.map(({ error, kind, code }) => ({ error, kind, code }))).toEqual([
+			{ error: secondCopy, kind: "step-commit-error", code: "fenced" },
+			{ error: lookAlike, kind: "store-error", code: "storage_unavailable" },
+		]);
+		expect(driver.latchHistory.map((latch) => latch.code)).toEqual(["fenced", "storage_unavailable"]);
+	});
+
+	it("journals steering and follow-up by id and kind, each consumed exactly once (W10)", async () => {
+		driver = await createReferenceDriver();
+		driver.setResponses([
+			fauxAssistantMessage([fauxText("lost")]),
+			fauxAssistantMessage([fauxText("after rebuild")]),
+			fauxAssistantMessage([fauxText("more")]),
+			fauxAssistantMessage([fauxText("done")]),
+		]);
+		driver.inject.nextCommit("reject");
+
+		await driver.enqueue({ id: "m-steer", kind: "steering", text: "steer me" });
+		await driver.enqueue({ id: "m-follow", kind: "followUp", text: "follow me" });
+		expect(driver.inbox.map(({ id, kind, consumedBy }) => ({ id, kind, consumedBy }))).toEqual([
+			{ id: "m-steer", kind: "steering", consumedBy: undefined },
+			{ id: "m-follow", kind: "followUp", consumedBy: undefined },
+		]);
+
+		await driver.prompt("go");
+		await driver.settle();
+
+		expect(driver.rebuilds).toBe(1);
+		// Steering joins the first turn before its commit fails (its consume and row are durable then); the follow-up
+		// waits for the turn's end, which only the rebuilt generation reaches.
+		expect(driver.consumeJournal.map(({ messageId, generation }) => ({ messageId, generation }))).toEqual([
+			{ messageId: "m-steer", generation: 1 },
+			{ messageId: "m-follow", generation: 2 },
+		]);
+		for (const text of ["steer me", "follow me"]) {
+			const rowsWithText = driver.rows.filter(
+				(row) => row.message.role === "user" && JSON.stringify(row.message.content).includes(text),
+			);
+			expect({ text, rows: rowsWithText.length }).toEqual({ text, rows: 1 });
+		}
+	});
+
+	it("admits a session-title call as aux, not as a loop step (W12)", async () => {
+		driver = await createReferenceDriver({ autoTitleSessions: true });
+		driver.setResponses([fauxAssistantMessage([fauxText("answer")]), fauxAssistantMessage([fauxText("A title")])]);
+
+		await driver.prompt("please name this session");
+		await driver.settleAux();
+
+		expect(driver.counters.admissions).toBe(1);
+		expect(driver.counters.auxAdmissions).toBe(1);
+		expect(driver.auxRows.map((row) => row.kind)).toEqual(["aux"]);
+		expect(driver.counters.providerCalls).toBe(2);
+	});
+
+	it("refuses an aux call from the discarded instance with zero dials (aux-admit-from-discarded-instance)", async () => {
+		driver = await createReferenceDriver();
+		driver.setResponses([
+			fauxAssistantMessage([fauxText("lost")]),
+			fauxAssistantMessage([fauxText("redialed")]),
+			fauxAssistantMessage([fauxText("never")]),
+		]);
+		driver.inject.nextCommit("reject");
+		const oldAgent = driver.session.agent;
+
+		await driver.prompt("go");
+		const calls = driver.counters.providerCalls;
+		// What a compaction or title started by the old instance after the latch would send.
+		const outcome = await Promise.resolve(
+			oldAgent.streamFunction(driver.session.model ?? oldAgent.state.model, normalizeContext({ messages: [] })),
+		).then(
+			() => "dialed",
+			() => "refused",
+		);
+
+		expect(outcome).toBe("refused");
+		expect(driver.counters.auxRefusals).toBe(1);
+		expect(driver.counters.auxAdmissions).toBe(0);
+		expect(driver.counters.providerCalls).toBe(calls);
+	});
+
+	it("stop pressed while latched cancels the latched step: one synthesized abort, no redial (W14, S12)", async () => {
+		driver = await createReferenceDriver();
+		driver.setResponses([fauxAssistantMessage([fauxText("lost")]), fauxAssistantMessage([fauxText("never")])]);
+		driver.inject.nextCommit("reject");
+		driver.inject.slowRebuildStoreRead(1_000);
+
+		const prompt = driver.prompt("go");
+		await driver.rebuildStoreReadStarted();
+		expect(driver.stop()).toBe("cancelled-latched-step");
+		driver.clock.advance(1_000);
+		await prompt;
+
+		expect(driver.counters.providerCalls).toBe(1);
+		const steps = projectHistoryRows(driver.rows).filter((message) => message.role === "assistant");
+		expect(steps.map((message) => (message.role === "assistant" ? message.stopReason : undefined))).toEqual([
+			"aborted",
+		]);
+		expect(driver.stops).toEqual([{ stepId: "step-1", while: "latched" }]);
+	});
+
+	it("records durable input rows in the order the model consumed them (S7 row order = call order)", async () => {
+		driver = await createReferenceDriver();
+		driver.setResponses([fauxAssistantMessage([fauxText("first")]), fauxAssistantMessage([fauxText("second")])]);
+
+		await driver.enqueue({ id: "s-1", kind: "steering", text: "steer me" });
+		await driver.prompt("go");
+		await driver.settle();
+
+		const text = (message: AgentMessage | Message): string => {
+			if (message.role !== "user") return "";
+			const { content } = message;
+			return typeof content === "string"
+				? content
+				: content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
+		};
+		const lastCall = driver.callLog().at(-1);
+		const modelOrder = (lastCall?.context.messages ?? []).filter((message) => message.role === "user").map(text);
+		const rowOrder = projectHistoryRows(driver.rows)
+			.filter((message) => message.role === "user")
+			.map(text);
+		expect(modelOrder).toEqual(["go", "steer me"]);
+		expect(rowOrder).toEqual(modelOrder);
+	});
+
+	it("admits the post-run queue drain as loop steps, not aux (W12, review MEDIUM-1)", async () => {
+		driver = await createReferenceDriver();
+		driver.setResponses([fauxAssistantMessage([fauxText("first")]), fauxAssistantMessage([fauxText("drained")])]);
+		let queued = false;
+		const agent = driver.session.agent;
+		agent.subscribe((event) => {
+			if (event.type !== "agent_end" || queued) return;
+			queued = true;
+			agent.followUp({ role: "user", content: [{ type: "text", text: "after the end" }], timestamp: Date.now() });
+		});
+
+		await driver.prompt("go");
+		await driver.settle();
+
+		expect(driver.counters.providerCalls).toBe(2);
+		expect(driver.counters.auxAdmissions).toBe(0);
+		expect(driver.counters.admissions).toBe(2);
+	});
+
+	it("admits mid-run threshold compaction as aux, not as a loop step (W12, review MEDIUM-2)", async () => {
+		const bigTool: AgentTool = {
+			name: "big",
+			label: "Big",
+			description: "Returns a large result.",
+			parameters: Type.Object({}),
+			execute: async () => ({ content: [{ type: "text", text: "tool output ".repeat(400) }], details: {} }),
+		};
+		driver = await createReferenceDriver({
+			tools: [bigTool],
+			models: [{ id: "faux-1", contextWindow: 3_000 }],
+			settings: { compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 600 } },
+		});
+		driver.setResponses([
+			fauxAssistantMessage([fauxToolCall("big", {})], { stopReason: "toolUse" }),
+			fauxAssistantMessage([fauxText("summary of the big result")]),
+			fauxAssistantMessage([fauxText("done")]),
+		]);
+
+		await driver.prompt("run big");
+		await driver.settle();
+
+		expect(driver.forwarded.filter(({ event }) => event.type === "compaction_end")).toHaveLength(1);
+		expect(driver.counters.auxAdmissions).toBe(1);
+		expect(driver.counters.admissions).toBe(2);
 	});
 
 	it("never forwards an event the discarded instance emits after the latch", async () => {
