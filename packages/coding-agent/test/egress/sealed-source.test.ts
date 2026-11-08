@@ -216,6 +216,27 @@ describe("SealedCredentialSource.resolve", () => {
 		expect(notices).toEqual([SCOPE]);
 	});
 
+	it("keeps the step's reload count, notice latch and latest digest across a bump retry", async () => {
+		const h = harness([stale, stale, stale, stale, ok("first"), stale, ok("second")]);
+		const notices: unknown[] = [];
+		let bumped = false;
+		const source: SealedCredentialSource = new SealedCredentialSource({
+			...h.deps,
+			onChurnNotice: (scope) => notices.push(scope),
+			openItem: async (released, position) => {
+				if (!bumped) {
+					bumped = true;
+					source.bumpGeneration();
+				}
+				return h.deps.openItem(released, position);
+			},
+		});
+		using lease = await source.resolve("anthropic", "d0", ["apiKey"], SCOPE);
+		expect(lease.value("apiKey")).toBe("second");
+		expect(notices).toEqual([SCOPE]);
+		expect(h.requests.map((req) => req.entryDigest)).toEqual(["d0", "d1", "d2", "d3", "d4", "d4", "d5"]);
+	});
+
 	it("raises no churn notice when the immediate reloads are enough", async () => {
 		const h = harness([stale, stale, stale, ok("key")]);
 		const notices: unknown[] = [];

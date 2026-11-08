@@ -24,6 +24,12 @@ const RETRYABLE = [
 	"unavailable",
 ] as const satisfies readonly ReleaseFailure[];
 
+interface StepState {
+	digest: string;
+	reloads: number;
+	noticed: boolean;
+}
+
 export interface ReleasedItemPosition {
 	readonly accountId: string;
 	readonly providerId: ProviderId;
@@ -103,9 +109,10 @@ export class SealedCredentialSource implements CredentialSource {
 		scope: ReleaseScope,
 	): Promise<SecretLease> {
 		if (new Set(fields).size !== fields.length) throw new TypeError("a sealed release names each field at most once");
+		const step: StepState = { digest: entryDigest, reloads: 0, noticed: false };
 		for (let attempt = 0; attempt < 2; attempt++) {
 			const generation = this.#generation;
-			const values = await this.#resolveValues(providerId, entryDigest, fields, scope);
+			const values = await this.#resolveValues(providerId, step, fields, scope);
 			if (generation === this.#generation) {
 				const lease = new SealedLease(values, (disposed) => this.#live.delete(disposed));
 				this.#live.add(lease);
@@ -122,37 +129,35 @@ export class SealedCredentialSource implements CredentialSource {
 		for (const lease of [...this.#live]) lease[Symbol.dispose]();
 	}
 
+	/** One release attempt; `step` carries the reload count, notice latch and digest across bump retries (C.3). */
 	async #resolveValues(
 		providerId: ProviderId,
-		entryDigest: string,
+		step: StepState,
 		fields: readonly SecretField[],
 		scope: ReleaseScope,
 	): Promise<Map<SecretField, Uint8Array>> {
 		const signal = this.#deps.stepSignal(scope);
-		let digest = entryDigest;
-		let reloads = 0;
-		let noticed = false;
 		for (;;) {
 			signal.throwIfAborted();
 			const lease = await this.#deps.lease();
-			const result = await this.#release(providerId, digest, fields, scope, lease);
-			if (result.ok) return this.#open(providerId, digest, fields, result.items, lease);
+			const result = await this.#release(providerId, step.digest, fields, scope, lease);
+			if (result.ok) return this.#open(providerId, step.digest, fields, result.items, lease);
 			if (result.code !== "stale_snapshot")
 				throw new CredentialWait(
 					result.code,
 					RETRYABLE.some((code) => code === result.code),
 				);
-			if (reloads < RELOADS_PER_STEP) {
-				reloads++;
+			if (step.reloads < RELOADS_PER_STEP) {
+				step.reloads++;
 			} else {
 				// config-churn (C.3): every further stale retry re-enters the stable-head wait, never the immediate reloads.
-				if (!noticed) {
-					noticed = true;
+				if (!step.noticed) {
+					step.noticed = true;
 					this.#deps.onChurnNotice(scope);
 				}
 				await this.#waitForStableHead(signal);
 			}
-			digest = await this.#deps.reloadEntryDigest(providerId);
+			step.digest = await this.#deps.reloadEntryDigest(providerId);
 		}
 	}
 
