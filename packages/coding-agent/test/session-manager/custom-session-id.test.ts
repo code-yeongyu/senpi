@@ -166,4 +166,23 @@ describe("SessionManager.newSession with custom id", () => {
 		expect(sessionFile).toContain("forked-session-id");
 		expect(basename(sessionFile)).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z_forked-session-id\.jsonl$/);
 	});
+
+	it("rejects a fork id ending in a separator before creating the session folder (senpi#5930)", () => {
+		const tempDir = mkdtempSync(join(tmpdir(), "pi-session-manager-"));
+		const sourcePath = join(tempDir, "source.jsonl");
+		writeFileSync(
+			sourcePath,
+			`${JSON.stringify({
+				type: "session",
+				version: 3,
+				id: "source-session-id",
+				timestamp: new Date().toISOString(),
+				cwd: tempDir,
+			})}\n`,
+		);
+		const targetDir = join(tempDir, "not-yet-created");
+
+		expect(() => SessionManager.forkFrom(sourcePath, tempDir, targetDir, { id: "copy-" })).toThrow();
+		expect(existsSync(targetDir)).toBe(false);
+	});
 });

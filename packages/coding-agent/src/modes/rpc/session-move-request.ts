@@ -3,6 +3,7 @@
  * (answered as `invalid_move_request`). Nothing here touches a file.
  */
 import { isAbsolute } from "node:path";
+import { assertValidSessionId } from "../../core/session-manager.ts";
 import { isPlainId, parseMoveId } from "../../core/session-move/bundle.ts";
 import { type MoveAnswer, parseMoveStatus } from "../../core/session-move/move-ledger.ts";
 import type { MoveId } from "../../core/session-move/ownership.ts";
@@ -42,6 +43,14 @@ const PLAIN_ID_RULE = "a letter or digit, then letters, digits, '.', '_' or '-',
 function parseCopy(raw: Record<string, unknown>): MoveRequest | string {
 	if (!text(raw.sessionPath)) return "copy needs sessionPath, the session file to copy.";
 	if (!isPlainId(raw.sessionId)) return `sessionId must be a plain id: ${PLAIN_ID_RULE}.`;
+	// `forkFrom` applies the stricter rule (senpi#5930): an id ending in `.`, `_` or `-` passes the parser above
+	// but fails there as `move_failed` after the target folder was created. Refuse it here instead, before
+	// anything is written.
+	try {
+		assertValidSessionId(raw.sessionId);
+	} catch {
+		return "sessionId must end with a letter or digit.";
+	}
 	if (raw.sessionDir !== undefined && (!text(raw.sessionDir) || !isAbsolute(raw.sessionDir)))
 		return "sessionDir must be an absolute path.";
 	return { op: "copy", sessionPath: raw.sessionPath, sessionId: raw.sessionId, sessionDir: raw.sessionDir };

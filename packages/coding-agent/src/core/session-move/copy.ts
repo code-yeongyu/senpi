@@ -7,7 +7,7 @@
 import { readdir } from "node:fs/promises";
 import { loadEntriesFromFileAsync, type SessionHeader, SessionManager, sessionFileNameId } from "../session-manager.ts";
 import { serializeByKey } from "../session-sidecar-store.ts";
-import { headerSessionId } from "./ownership.ts";
+import { headerSessionId, ownershipSessionIds } from "./ownership.ts";
 
 export interface CopySessionOptions {
 	readonly sourceFile: string;
@@ -44,6 +44,13 @@ export async function copySessionAs(
 		throw new SessionCopyRefusal(
 			"invalid_move_request",
 			"The copy needs a new session id: under the source's own id it would stay read-only.",
+		);
+	// The source may itself be a copy: its inherited ownership entries name older ids, and a copy under one of
+	// those ids would make them apply again, so the copy would refuse every write (senpi#5930).
+	if (ownershipSessionIds(entries).has(options.sessionId))
+		throw new SessionCopyRefusal(
+			"invalid_move_request",
+			"The copy needs a new session id: that id is named by an ownership entry the source inherited, so the copy would stay read-only under it.",
 		);
 	const dir = options.sessionDir(cwd);
 	return serializeByKey(`session-copy:${dir}:${options.sessionId}`, async () => {

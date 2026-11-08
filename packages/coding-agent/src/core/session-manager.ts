@@ -3491,15 +3491,17 @@ export class SessionManager {
 		}
 		const sourceEntries = source.entries;
 
+		// Validate the id before creating anything (senpi#5930): the check used to run after the folder was
+		// created, so a trailing-separator id left an empty folder behind.
+		if (options?.id !== undefined) {
+			assertValidSessionId(options.id);
+		}
 		const dir = sessionDir ? normalizePath(sessionDir) : getDefaultSessionDir(resolvedTargetCwd);
 		if (!existsSync(dir)) {
 			mkdirSync(dir, { recursive: true });
 		}
 
 		// Create new session file with new ID but forked content
-		if (options?.id !== undefined) {
-			assertValidSessionId(options.id);
-		}
 		const newSessionId = options?.id ?? createSessionId();
 		const timestamp = new Date().toISOString();
 		const fileTimestamp = timestamp.replace(/[:.]/g, "-");
