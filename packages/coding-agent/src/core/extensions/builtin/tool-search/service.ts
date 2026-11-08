@@ -198,7 +198,6 @@ export class ToolSearchService {
 	 */
 	stage(names: readonly string[]): void {
 		this.#assertLive();
-		console.error("[stage-debug] service.stage:", names, "hook:", typeof this.#runtime.setStagedTools);
 		if (names.length === 0) return;
 		this.#runtime.setStagedTools?.(names);
 	}

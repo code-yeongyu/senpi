@@ -5721,7 +5721,6 @@ export class AgentSession {
 	private _takeStagedToolsForRequest(): AgentTool[] {
 		const staged = this._stagedToolNames;
 		this._stagedToolNames = undefined;
-		console.error("[stage-debug] take", this.sessionId, "staged:", staged, "api:", this.model?.api);
 		if (staged === undefined || staged.length === 0) return [];
 		if (this.agent.state.declaredTools !== undefined) return [];
 		if (this.model?.api !== "openai-completions") return [];
@@ -12299,7 +12298,6 @@ export class AgentSession {
 				getSettings: () => this.settingsManager.getSettings(),
 				setActiveTools: (toolNames) => this.setActiveToolsByName(toolNames),
 				setStagedTools: (names) => {
-					console.error("[stage-debug] WRITE", this.sessionId, names);
 					this._stagedToolNames = [...names];
 				},
 				refreshTools: () => this._refreshToolRegistry(),
