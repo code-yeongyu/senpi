@@ -71,7 +71,7 @@ const RECORD_KEYS: readonly string[] = [
 	"checkedAt",
 	...REQUIRED_STRINGS,
 	...OPTIONAL_STRINGS,
-];
+] as const;
 
 export function verifiedKeysPath(agentDir: string = getAgentDir()): string {
 	return join(agentDir, "state", "custody", "verified-keys.json");
