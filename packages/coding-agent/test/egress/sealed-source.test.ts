@@ -162,6 +162,16 @@ describe("SealedCredentialSource.resolve", () => {
 		expect(h.requests).toHaveLength(5);
 	});
 
+	it("bounds the stable-head wait: a head that never settles becomes a config-churn wait", async () => {
+		let n = 0;
+		const h = harness([stale, stale, stale, stale]);
+		const source = new SealedCredentialSource({ ...h.deps, readHead: async () => `h${n++}` });
+		const outcome = source.resolve("anthropic", "d0", ["apiKey"], SCOPE);
+		await expect(outcome).rejects.toMatchObject({ reason: "config-churn", retryable: true });
+		expect(h.slept.length).toBeLessThanOrEqual(12);
+		expect(h.requests).toHaveLength(4);
+	});
+
 	it("resets the reload budget per step", async () => {
 		const h = harness([stale, stale, stale, ok("a"), stale, stale, stale, ok("b")]);
 		const source = new SealedCredentialSource(h.deps);
@@ -216,6 +226,55 @@ describe("SecretLease", () => {
 		source.bumpGeneration();
 		expect(() => first.value("apiKey")).toThrow(SecretNotLeased);
 		expect(() => second.value("apiKey")).toThrow(SecretNotLeased);
+	});
+
+	it("never returns a lease built before a bump that happened while it was resolving", async () => {
+		const h = harness([ok("old"), ok("new")]);
+		let releaseFirst: () => void = () => {};
+		const firstGate = new Promise<void>((resolve) => {
+			releaseFirst = resolve;
+		});
+		let calls = 0;
+		const source = new SealedCredentialSource({
+			...h.deps,
+			unsealer: {
+				...h.deps.unsealer,
+				async release(req) {
+					calls += 1;
+					if (calls === 1) await firstGate;
+					return h.deps.unsealer.release(req);
+				},
+			},
+		});
+		const pending = source.resolve("anthropic", "d0", ["apiKey"], SCOPE);
+		await Promise.resolve();
+		source.bumpGeneration();
+		releaseFirst();
+		using lease = await pending;
+		expect(lease.value("apiKey")).toBe("new");
+		expect(h.opened[0].every((byte) => byte === 0)).toBe(true);
+	});
+
+	it("turns a second bump during the retry into a config-churn wait", async () => {
+		const h = harness([ok("a"), ok("b")]);
+		let source: SealedCredentialSource | undefined;
+		source = new SealedCredentialSource({
+			...h.deps,
+			openItem: async (released, position) => {
+				source?.bumpGeneration();
+				return h.deps.openItem(released, position);
+			},
+		});
+		const outcome = source.resolve("anthropic", "d0", ["apiKey"], SCOPE);
+		await expect(outcome).rejects.toMatchObject({ reason: "config-churn", retryable: true });
+		expect(h.opened.every((bytes) => bytes.every((byte) => byte === 0))).toBe(true);
+	});
+
+	it("refuses a request that names the same field twice", async () => {
+		const h = harness([ok("a", "b")]);
+		const source = new SealedCredentialSource(h.deps);
+		await expect(source.resolve("anthropic", "d0", ["apiKey", "apiKey"], SCOPE)).rejects.toBeInstanceOf(TypeError);
+		expect(h.requests).toHaveLength(0);
 	});
 
 	it("keeps leases of one source independent of another source's bump", async () => {

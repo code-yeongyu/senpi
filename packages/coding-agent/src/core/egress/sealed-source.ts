@@ -14,6 +14,8 @@ import type { HpkeWrap, ProviderId } from "./sealed-format.ts";
 
 const RELOADS_PER_STEP = 3;
 const STABLE_HEAD_MS = 5000;
+/** At most one minute of churn waiting per step; past it the step reports a config-churn wait. */
+const STABLE_HEAD_ATTEMPTS = 12;
 const REDACTED = "<redacted>";
 
 const RETRYABLE: readonly ReleaseFailure[] = [
@@ -85,6 +87,7 @@ class SealedLease implements SecretLease {
 export class SealedCredentialSource implements CredentialSource {
 	readonly #deps: SealedSourceDeps;
 	readonly #live = new Set<SealedLease>();
+	#generation = 0;
 
 	constructor(deps: SealedSourceDeps) {
 		this.#deps = deps;
@@ -96,28 +99,49 @@ export class SealedCredentialSource implements CredentialSource {
 		fields: readonly SecretField[],
 		scope: ReleaseScope,
 	): Promise<SecretLease> {
+		if (new Set(fields).size !== fields.length) throw new TypeError("a sealed release names each field at most once");
+		for (let attempt = 0; attempt < 2; attempt++) {
+			const generation = this.#generation;
+			const values = await this.#resolveValues(providerId, entryDigest, fields, scope);
+			if (generation === this.#generation) {
+				const lease = new SealedLease(values, (disposed) => this.#live.delete(disposed));
+				this.#live.add(lease);
+				return lease;
+			}
+			for (const bytes of values.values()) bytes.fill(0);
+		}
+		throw new CredentialWait("config-churn", true);
+	}
+
+	/** Disposes every live lease, and voids any lease still being resolved when the bump lands. */
+	bumpGeneration(): void {
+		this.#generation++;
+		for (const lease of [...this.#live]) lease[Symbol.dispose]();
+	}
+
+	async #resolveValues(
+		providerId: ProviderId,
+		entryDigest: string,
+		fields: readonly SecretField[],
+		scope: ReleaseScope,
+	): Promise<Map<SecretField, Uint8Array>> {
 		let digest = entryDigest;
 		let reloads = 0;
 		let churnRetried = false;
 		for (;;) {
 			const lease = await this.#deps.lease();
 			const result = await this.#release(providerId, digest, fields, scope, lease);
-			if (result.ok) return this.#lease(providerId, digest, fields, result.items, lease);
+			if (result.ok) return this.#open(providerId, digest, fields, result.items, lease);
 			if (result.code !== "stale_snapshot") throw new CredentialWait(result.code, RETRYABLE.includes(result.code));
 			if (reloads < RELOADS_PER_STEP) {
 				reloads++;
 				digest = await this.#deps.reloadEntryDigest(providerId);
 				continue;
 			}
-			if (churnRetried) throw new CredentialWait("config-churn", true);
+			if (churnRetried || !(await this.#waitForStableHead())) throw new CredentialWait("config-churn", true);
 			churnRetried = true;
-			await this.#waitForStableHead();
 			digest = await this.#deps.reloadEntryDigest(providerId);
 		}
-	}
-
-	bumpGeneration(): void {
-		for (const lease of [...this.#live]) lease[Symbol.dispose]();
 	}
 
 	async #release(
@@ -138,23 +162,25 @@ export class SealedCredentialSource implements CredentialSource {
 		});
 	}
 
-	async #waitForStableHead(): Promise<void> {
+	/** True once the head held still for STABLE_HEAD_MS; false when it never settled within the bound. */
+	async #waitForStableHead(): Promise<boolean> {
 		let previous = await this.#deps.readHead();
-		for (;;) {
+		for (let attempt = 0; attempt < STABLE_HEAD_ATTEMPTS; attempt++) {
 			await this.#deps.sleep(STABLE_HEAD_MS);
 			const current = await this.#deps.readHead();
-			if (current === previous) return;
+			if (current === previous) return true;
 			previous = current;
 		}
+		return false;
 	}
 
-	async #lease(
+	async #open(
 		providerId: ProviderId,
 		entryDigest: string,
 		fields: readonly SecretField[],
 		items: readonly HpkeWrap[],
 		epochLease: EpochLeaseToken,
-	): Promise<SecretLease> {
+	): Promise<Map<SecretField, Uint8Array>> {
 		if (items.length !== fields.length) throw new CredentialWait("denied", false);
 		const values = new Map<SecretField, Uint8Array>();
 		try {
@@ -166,8 +192,6 @@ export class SealedCredentialSource implements CredentialSource {
 			for (const bytes of values.values()) bytes.fill(0);
 			throw error;
 		}
-		const lease = new SealedLease(values, (disposed) => this.#live.delete(disposed));
-		this.#live.add(lease);
-		return lease;
+		return values;
 	}
 }
