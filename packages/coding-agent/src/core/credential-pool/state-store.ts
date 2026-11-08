@@ -341,7 +341,7 @@ export type HalfOpenLease = { leaseId: string; expiresAt: number };
  * until the lease expires or the probe settles the block.
  */
 export async function acquireHalfOpenLease(
-	repository: CredentialSlotRepository,
+	repository: Pick<CredentialSlotRepository, "mutateSlotState">,
 	providerId: string,
 	laneId: string,
 	slotId: string,
