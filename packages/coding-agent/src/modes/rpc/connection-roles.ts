@@ -142,6 +142,11 @@ export class ConnectionRoles {
 			: { deviceId: principal.deviceId, deviceName: principal.deviceName };
 	}
 
+	/** Whether the connection is delegated (a remote device's), on the host or as a worker retained it. */
+	isDelegated(connectionId: string | undefined): boolean {
+		return this.viewOf(roleConnection(connectionId)) !== undefined;
+	}
+
 	has(connectionId: string | undefined, role: string): boolean {
 		const key = roleConnection(connectionId);
 		const store = commandAuthority.getStore();

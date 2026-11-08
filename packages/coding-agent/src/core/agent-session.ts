@@ -297,6 +297,13 @@ import { deliveryIdOf, ExternalAdmission, type InputHold } from "./external-admi
 import { HELD_INPUT_ENTRY, type HeldInput, HeldInputs, type HoldInputResult, heldInputHistory } from "./held-inputs.ts";
 import { shouldWarnHighReasoning } from "./high-reasoning-warning.ts";
 import { customTurnOrigin, type InputOrigin, inputAttributionOf, inputOriginOf } from "./input-origin.ts";
+import {
+	type ConnectionOrigin,
+	inputTurnMark,
+	markInputTurnOrigin,
+	noteRunStart,
+	noteUserMessageStart,
+} from "./turn-origin.ts";
 import { markInterrupted, type StopInterrupt } from "./interrupted-tool-result.ts";
 import {
 	deliveredReceipts,
@@ -1245,6 +1252,8 @@ export interface QueuedInputOptions extends ClientMessageIdentity {
 	interactiveUser?: boolean;
 	/** RPC input that arrived as a thread call from another session: its chain hop count, reported on the `input` event. */
 	chainCount?: number;
+	/** Internal, RPC input: whether its record arrived on a local or a delegated (remote device) connection. */
+	connectionOrigin?: ConnectionOrigin;
 	/** Persist the prepared queue record before publishing or enqueuing it. */
 	onQueuedInput?: (input: PreparedClientInput) => void;
 	/** A steer meant only for this turn (`currentTurnId`): checked where it enters the queue, else `TurnConflictError`. */
@@ -1283,6 +1292,8 @@ export interface PromptOptions extends ClientMessageIdentity {
 	interactiveUser?: boolean;
 	/** RPC input that arrived as a thread call from another session: its chain hop count, reported on the `input` event. */
 	chainCount?: number;
+	/** Internal, RPC input: whether its record arrived on a local or a delegated (remote device) connection. */
+	connectionOrigin?: ConnectionOrigin;
 	/**
 	 * Send command-shaped text that no command handles to the model as plain text. Without it, such
 	 * interactive or RPC input is rejected with `UnknownCommandError`.
@@ -3681,7 +3692,10 @@ export class AgentSession {
 			if (event.type === "agent_start") {
 				this._lifecycleBinding.startRun();
 				this._requestSelectedModel = undefined;
+				noteRunStart(this.sessionManager);
 			}
+			if (event.type === "message_start" && event.message.role === "user")
+				noteUserMessageStart(this.sessionManager, event.message);
 			// Bind now: the core can start another run before this event's asynchronous delivery.
 			const bound =
 				event.type === "agent_start" ? { ...event, runId: this._lifecycleBinding.controller.ledger.runId } : event;
@@ -6619,6 +6633,7 @@ export class AgentSession {
 				...clientMessageIdentity(options),
 			};
 			this._userInputSources.set(userMessage, options?.source ?? "interactive");
+			markInputTurnOrigin(userMessage, inputTurnMark(options ?? {}));
 			messages.push(userMessage);
 
 			// Consume next-turn messages transactionally: a final admission rejection
@@ -7207,6 +7222,8 @@ export class AgentSession {
 		// `prompt()` does. Only restored input can lack one (a record written before sources were kept), and it
 		// stays unstamped: unknown origin, never defaulted to a trusted source.
 		if (input.source !== undefined) this._userInputSources.set(message, input.source);
+		// Restored input with no source keeps no mark: an unmarked turn is engine work, never a trusted origin.
+		if (input.source !== undefined) markInputTurnOrigin(message, inputTurnMark(input));
 		if (input.inputId !== undefined) this._queuedInputDispositions.track(message, input.inputId);
 		this._queuedMessages.set(queuedId, message);
 		if (this._promptStartPending && this._skipNextPostCompactionAssistantCheck) {

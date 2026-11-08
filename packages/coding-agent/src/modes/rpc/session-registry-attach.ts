@@ -7,6 +7,7 @@
  * {reason: "open_in_progress", retry_after_ms} naming an attached current owner, and the in-flight
  * open keeps running untouched.
  */
+import { withClientPreset } from "../../core/permission-mode.ts";
 import type { SessionPathOwner, SessionPathReservations } from "./host-reservations.ts";
 import { hostInstanceId } from "./protocol-identity.ts";
 import {
@@ -132,7 +133,7 @@ export async function attachToOpenSession(
 	// The preset is applied even when the record already names it: the record is not the live session,
 	// so a resent attach also repairs a session that drifted from it (senpi#2842).
 	if (profile.permissionPreset !== undefined) {
-		entry.profile = frozenProfile({ ...entry.profile, permissionPreset: profile.permissionPreset });
+		entry.profile = frozenProfile(withClientPreset(entry.profile, profile.permissionPreset));
 		entry.runtime?.setPermissionPreset(profile.permissionPreset);
 	}
 	entry.lastCommandAt = now;

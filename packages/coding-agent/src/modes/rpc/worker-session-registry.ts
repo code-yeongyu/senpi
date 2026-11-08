@@ -1,4 +1,5 @@
 import type { CliRuntimeConfiguration } from "../../main.ts";
+import { withClientPreset } from "../../core/permission-mode.ts";
 import { outsideCommand } from "./command-authority.ts";
 import type { SessionPathReservations as DaemonPathReservations } from "./host-reservations.ts";
 import { refreshesSessionActivity } from "./session-command-activity.ts";
@@ -224,7 +225,7 @@ export class WorkerSessionRegistry {
 		}
 		// Sent even when the record already names it: only the worker sees its live session (senpi#2842).
 		if (permissionPreset !== undefined) {
-			entry.profile = frozenProfile({ ...entry.profile, permissionPreset });
+			entry.profile = frozenProfile(withClientPreset(entry.profile, permissionPreset));
 			await entry.worker.setPermissionPreset(permissionPreset);
 		}
 		const result = this.openResult(owner, entry);

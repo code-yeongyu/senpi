@@ -84,6 +84,7 @@ import { handleClientInput } from "./client-input-handler.ts";
 import { ConnectionQuestionBridge, degradeQuestion, sessionQuestionBridges } from "./connection-question-bridge.ts";
 import { remoteOriginDeclaration, remoteOriginField } from "./remote-origin.ts";
 import { advertisedCompactCapabilities, sessionDeclaration } from "./compact-negotiation.ts";
+import { type ConnectionOrigin, recordDelegatedOrigin } from "../../core/turn-origin.ts";
 import { commandAuthority } from "./command-authority.ts";
 import { ConnectionRoles, DELEGATION_INCARNATION_STALE, roleConnection } from "./connection-roles.ts";
 import {
@@ -420,6 +421,8 @@ export function createRpcConnectionHandler(
 	const connectionRoles = options.connectionRoles ?? new ConnectionRoles();
 	const currentConnectionId = (): string => roleConnection(options.clientInfo?.connectionId());
 	const hasRole = (role: string): boolean => connectionRoles.has(currentConnectionId(), role);
+	const connectionOrigin = (): ConnectionOrigin =>
+		connectionRoles.isDelegated(currentConnectionId()) ? "delegated" : "local";
 	const routingSessionId = options.sessionId;
 	// True only while THIS connection's own command drives a replacement; the issuer
 	// already learns the new identity from its command response.
@@ -1400,7 +1403,7 @@ export function createRpcConnectionHandler(
 					session,
 					command,
 					{ output, promptCalls },
-					{ interactiveUser: hasRole(INTERACTIVE_USER_CAPABILITY) },
+					{ interactiveUser: hasRole(INTERACTIVE_USER_CAPABILITY), connectionOrigin: connectionOrigin() },
 				);
 				promptCalls.add(admission);
 				void admission.finally(() => promptCalls.delete(admission));
@@ -1485,7 +1488,7 @@ export function createRpcConnectionHandler(
 					session,
 					command,
 					{ output, promptCalls },
-					{ interactiveUser: hasRole(INTERACTIVE_USER_CAPABILITY) },
+					{ interactiveUser: hasRole(INTERACTIVE_USER_CAPABILITY), connectionOrigin: connectionOrigin() },
 				);
 				return undefined;
 			}
@@ -1793,6 +1796,7 @@ export function createRpcConnectionHandler(
 			// =================================================================
 
 			case "compact": {
+				if (connectionOrigin() === "delegated") recordDelegatedOrigin(session.sessionManager);
 				const result = await session.compact(command.customInstructions);
 				return success(id, "compact", result);
 			}

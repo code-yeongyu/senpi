@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { bindPermissionDecision } from "./permission-mode.ts";
 import {
 	Agent,
 	type AgentMessage,
@@ -723,6 +724,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		sessionManager.appendThinkingLevelChange(thinkingLevel, thinkingSelection, undefined, model);
 	}
 	sessionRef.current = session;
+	bindPermissionDecision(session);
 	const extensionsResult = resourceLoader.getExtensions();
 
 	return {
