@@ -1,6 +1,7 @@
 // The fused / one-machine assembly reaches the shared request-auth composition and nothing of hosted custody: no sealed
 // or device egress, no route or address policy, no custody sidecar reader, no hand-side call executor. It never sets the
-// loop's `commitStep` and never constructs a `StepCommitError`. The walk follows static and dynamic relative
+// loop's `commitStep` and never constructs a `StepCommitError`: the only `commitStep` code it may carry is the typed
+// option and the forward of a caller-injected value when set (senpi#6239), never a value of its own. The walk follows static and dynamic relative
 // imports and worker entries, as `suite/no-session-write-in-tool-child.test.ts` does; `import type` is erased.
 import { readFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
@@ -13,6 +14,19 @@ const CUSTODY_MODULE =
 const SPECIFIER =
 	/(?:new\s+URL|siblingWorkerUrl)\(\s*["'](\.{1,2}\/[^"']+)["']\s*,\s*import\.meta\.url|(?:import|export)\s[^'"]*?from\s*["'](\.{1,2}\/[^"']+)["']|import\s*\(\s*["'](\.{1,2}\/[^"']+)["']\s*\)|import\s+["'](\.{1,2}\/[^"']+)["']/g;
 const TYPE_SPECIFIER = /import\s+type\s[^'"]*?from\s*["'](\.{1,2}\/[^"']+)["']/g;
+// The two `commitStep` code lines the fused graph may carry: the optional, typed option and the conditional forward of
+// the caller's value. Any other code line naming `commitStep` would let the fused path supply one.
+const COMMIT_STEP_PASS_THROUGH = [
+	/^commitStep\?: (?:AgentOptions|CreateAgentSessionOptions)\["commitStep"\];$/u,
+	/^\.\.\.\(options\.commitStep \? \{ commitStep: options\.commitStep \} : \{\}\),$/u,
+];
+
+function commitStepCodeLines(source: string): string[] {
+	return source
+		.split("\n")
+		.map((line) => line.trim())
+		.filter((line) => !/^(?:\/\/|\/\*|\*)/u.test(line) && /\bcommitStep\b/u.test(line));
+}
 
 function reachable(roots: readonly string[]): Map<string, string> {
 	const sources = new Map<string, string>();
@@ -50,9 +64,12 @@ describe("fused assembly graph (Z1)", () => {
 	});
 
 	it("never sets commitStep and never constructs a StepCommitError", () => {
-		const offenders = [...graph].filter(
-			([, source]) => /\bcommitStep\b/u.test(source) || /new\s+StepCommitError\s*\(/u.test(source),
-		);
-		expect(offenders.map(([file]) => file)).toEqual([]);
+		const offenders = [...graph].flatMap(([file, source]) => [
+			...commitStepCodeLines(source)
+				.filter((line) => !COMMIT_STEP_PASS_THROUGH.some((allowed) => allowed.test(line)))
+				.map((line) => `${file}: ${line}`),
+			...(/new\s+StepCommitError\s*\(/u.test(source) ? [`${file}: new StepCommitError`] : []),
+		]);
+		expect(offenders).toEqual([]);
 	});
 });
