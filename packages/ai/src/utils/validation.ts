@@ -199,6 +199,77 @@ function normalizeOptionalNulls(value: unknown, schema: JsonSchemaObject): void 
 	}
 }
 
+/** JSON types a schema accepts, or undefined when its shape does not say (const/enum/$ref/allOf). */
+function acceptedJsonTypes(schema: JsonSchemaObject): Set<string> | undefined {
+	const types = getSchemaTypes(schema);
+	if (types.length > 0) return new Set(types);
+	const members = schema.anyOf ?? schema.oneOf;
+	if (!Array.isArray(members) || members.length === 0) return undefined;
+	const accepted = new Set<string>();
+	for (const member of members) {
+		const memberTypes = acceptedJsonTypes(member);
+		if (memberTypes === undefined) return undefined;
+		for (const type of memberTypes) accepted.add(type);
+	}
+	return accepted;
+}
+
+function parseJsonStructure(text: string, accepted: Set<string>): unknown {
+	const trimmed = text.trim();
+	const wantsArray = accepted.has("array") && trimmed.startsWith("[");
+	const wantsObject = accepted.has("object") && trimmed.startsWith("{");
+	if (!wantsArray && !wantsObject) return undefined;
+	try {
+		const parsed: unknown = JSON.parse(trimmed);
+		if (wantsArray && Array.isArray(parsed)) return parsed;
+		if (wantsObject && matchesJsonType(parsed, "object")) return parsed;
+	} catch (error) {
+		if (!(error instanceof SyntaxError)) throw error;
+	}
+	return undefined;
+}
+
+/**
+ * Models sometimes send an array or object argument as its JSON text (senpi#6265: the later calls of a
+ * parallel generate_image turn carried `reference_image_paths` as `'["/a.png"]'`). Value.Convert would
+ * wrap that text into a one-element array that passes validation, so the tool ran with the JSON text
+ * as a path. Decode the text back to the structure the schema declares before conversion, only where
+ * the schema rejects strings and the text parses to that declared array/object.
+ */
+function decodeJsonEncodedStructures(value: unknown, schema: JsonSchemaObject): unknown {
+	if (typeof value === "string") {
+		const accepted = acceptedJsonTypes(schema);
+		if (accepted === undefined || accepted.has("string")) return value;
+		const decoded = parseJsonStructure(value, accepted);
+		return decoded === undefined ? value : decodeJsonEncodedStructures(decoded, schema);
+	}
+	const types = getSchemaTypes(schema);
+
+	if (Array.isArray(value) && types.includes("array")) {
+		const items = schema.items;
+		for (let index = 0; index < value.length; index++) {
+			const itemSchema = Array.isArray(items) ? items[index] : items;
+			if (itemSchema) value[index] = decodeJsonEncodedStructures(value[index], itemSchema);
+		}
+		return value;
+	}
+
+	if (matchesJsonType(value, "object") && types.includes("object")) {
+		const record = value as Record<string, unknown>;
+		const properties = schema.properties ?? {};
+		const additional = schema.additionalProperties;
+		for (const key of Object.keys(record)) {
+			const propertySchema = Object.hasOwn(properties, key)
+				? properties[key]
+				: typeof additional === "object"
+					? additional
+					: undefined;
+			if (propertySchema) record[key] = decodeJsonEncodedStructures(record[key], propertySchema);
+		}
+	}
+	return value;
+}
+
 function getValidator(schema: Tool["parameters"]): ReturnType<typeof Compile> {
 	const key = schema as object;
 	const cached = validatorCache.get(key);
@@ -377,6 +448,7 @@ export function validateToolArguments(tool: Tool, toolCall: ToolCall): any {
 		return args;
 	}
 	normalizeOptionalNulls(args, tool.parameters as JsonSchemaObject);
+	decodeJsonEncodedStructures(args, tool.parameters as JsonSchemaObject);
 	Value.Convert(tool.parameters, args);
 
 	const validator = getValidator(tool.parameters);

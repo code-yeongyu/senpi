@@ -1651,6 +1651,69 @@ describe("agentLoop with AgentMessage", () => {
 		expect(turnToolResultIds).toEqual(["tool-1", "tool-2"]);
 	});
 
+	// senpi#6265: four parallel generate_image-shaped calls in one turn, call 1 with a real array and
+	// calls 2-4 with the array's JSON text (the observed wire). Every call must run with its paths.
+	it("runs every parallel call with its declared array argument (#6265)", async () => {
+		const toolSchema = Type.Object({
+			prompt: Type.String(),
+			reference_image_paths: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1, maxItems: 5 })),
+		});
+		const received = new Map<string, unknown>();
+		const tool: AgentTool<typeof toolSchema, undefined> = {
+			name: "generate_image",
+			label: "Generate image",
+			description: "Image tool",
+			parameters: toolSchema,
+			async execute(toolCallId, params) {
+				received.set(toolCallId, params.reference_image_paths);
+				return { content: [{ type: "text", text: "ok" }], details: undefined };
+			},
+		};
+		const intended = [
+			["/refs/a.png", "/refs/b.png"],
+			["/refs/c.png"],
+			["/refs/d.png", "/refs/e.png"],
+			["/refs/f.png"],
+		];
+		const toolCalls: AgentToolCall[] = intended.map((paths, index) => ({
+			type: "toolCall",
+			id: `tool-${index + 1}`,
+			name: "generate_image",
+			arguments: {
+				prompt: `image ${index + 1}`,
+				reference_image_paths: index === 0 ? paths : JSON.stringify(paths),
+			},
+		}));
+
+		let callIndex = 0;
+		const stream = agentLoop(
+			[createUserMessage("four images")],
+			{ messages: [], tools: [tool] },
+			{ model: createModel(), convertToLlm: identityConverter, toolExecution: "parallel" },
+			undefined,
+			() => {
+				const mockStream = new MockAssistantStream();
+				queueMicrotask(() => {
+					const message =
+						callIndex === 0
+							? createAssistantMessage(toolCalls, "toolUse")
+							: createAssistantMessage([{ type: "text", text: "done" }]);
+					mockStream.push({ type: "done", reason: callIndex === 0 ? "toolUse" : "stop", message });
+					callIndex++;
+				});
+				return mockStream;
+			},
+		);
+
+		const failed: string[] = [];
+		for await (const event of stream) {
+			if (event.type === "tool_execution_end" && event.isError) failed.push(event.toolCallId);
+		}
+
+		expect(failed).toEqual([]);
+		expect(toolCalls.map((toolCall) => received.get(toolCall.id))).toEqual(intended);
+	});
+
 	it("should inject queued messages after all tool calls complete", async () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		const executed: string[] = [];
