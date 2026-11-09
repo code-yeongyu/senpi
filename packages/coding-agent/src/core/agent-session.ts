@@ -526,6 +526,7 @@ function evalHelperCall(name: string): string {
 	if (name === "grep" || name === "glob") return `tool.${name}({ pattern: "...", path: "..." })`;
 	if (name === "workflow") return `tool.${name}({ action: "..." })`;
 	if (name === "monitor") return `tool.monitor({ description: "...", command: "...", filter: "..." })`;
+	if (name === "generate_image") return `tool.generate_image({ prompt: "..." })`;
 	return `tool.${name}({ ... })`;
 }
 /**
