@@ -1,3 +1,21 @@
+## 2026-11-08 - Inbound sample for `admit_external_message` (senpi#6233)
+
+### What changed
+
+- `packages/coding-agent/scripts/rpc-inbound-samples.ts`: one sample record for the new method; the shared fixture is regenerated.
+
+### Why
+
+The sample table is exhaustive over the inbound record types (#6233).
+
+### Why an extension could not handle it
+
+The sample table is the engine's own method list.
+
+### Expected merge conflict zones
+
+- LOW: one table entry.
+
 ## 2026-11-07 - Presenter tests count EPIPE as the host closing the channel (senpi#6161)
 
 ### What changed
