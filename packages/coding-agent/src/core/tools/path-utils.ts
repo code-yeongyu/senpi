@@ -1,5 +1,6 @@
 import { accessSync, constants, type Stats } from "node:fs";
 import { access, stat } from "node:fs/promises";
+import type { EntryType } from "@code-yeongyu/senpi-machine-ops";
 import { normalizePath, resolvePath } from "../../utils/paths.ts";
 
 const NARROW_NO_BREAK_SPACE = "\u202F";
@@ -61,8 +62,14 @@ export async function assertNotSpecialFile(
 	absolutePath: string,
 	displayPath: string,
 	verb: "edit" | "write" | "read",
+	statType?: () => Promise<EntryType | undefined>,
 ): Promise<void> {
-	const kind = await stat(absolutePath).then(specialFileKind, () => undefined);
+	const kind = statType
+		? await statType().then(
+				(type) => (type === "other" ? "special file" : undefined),
+				() => undefined,
+			)
+		: await stat(absolutePath).then(specialFileKind, () => undefined);
 	if (kind) throw new Error(`Could not ${verb} file: ${displayPath}. It is a ${kind}, not a regular file.`);
 }
 

@@ -62,7 +62,7 @@ export function createWriteToolDefinition(
 	options?: WriteToolOptions,
 ): ToolDefinition<typeof writeSchema, WriteToolDetails | undefined> {
 	const machine = options?.machine ?? defaultToolMachine();
-	const readBaseline = options?.operations ? undefined : readLocalWriteBaseline;
+	const readBaseline = options?.operations || options?.machine ? undefined : readLocalWriteBaseline;
 	const refuseSpecialFiles = !options?.operations;
 	const filesystemPolicy = options?.filesystemPolicy;
 	return {
@@ -108,7 +108,16 @@ export function createWriteToolDefinition(
 					throwIfAborted();
 				}
 				if (refuseSpecialFiles) {
-					await assertNotSpecialFile(absolutePath, path, "write");
+					await assertNotSpecialFile(
+						absolutePath,
+						path,
+						"write",
+						options?.machine
+							? async () =>
+									(await machine.ops.files.stat({ path: absolutePath }, machine.context(signal, "caller")))
+										.type
+							: undefined,
+					);
 					throwIfAborted();
 				}
 				const baseline = readBaseline ? await readBaseline(absolutePath) : ({ kind: "unavailable" } as const);

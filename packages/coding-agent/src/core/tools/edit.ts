@@ -211,7 +211,16 @@ export function createEditToolDefinition(
 				}
 				throwIfAborted();
 				if (refuseSpecialFiles) {
-					await assertNotSpecialFile(absolutePath, path, "edit");
+					await assertNotSpecialFile(
+						absolutePath,
+						path,
+						"edit",
+						options?.machine
+							? async () =>
+									(await machine.ops.files.stat({ path: absolutePath }, machine.context(signal, "caller")))
+										.type
+							: undefined,
+					);
 					throwIfAborted();
 				}
 

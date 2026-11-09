@@ -155,7 +155,20 @@ export function createReadToolDefinition(
 							await ops.access(absolutePath);
 							if (aborted) return;
 							if (refuseSpecialFiles) {
-								await assertNotSpecialFile(absolutePath, path, "read");
+								await assertNotSpecialFile(
+									absolutePath,
+									path,
+									"read",
+									options?.machine
+										? async () =>
+												(
+													await machine.ops.files.stat(
+														{ path: absolutePath },
+														machine.context(signal, "caller"),
+													)
+												).type
+										: undefined,
+								);
 								if (aborted) return;
 							}
 							const mimeType = ops.detectImageMimeType ? await ops.detectImageMimeType(absolutePath) : undefined;

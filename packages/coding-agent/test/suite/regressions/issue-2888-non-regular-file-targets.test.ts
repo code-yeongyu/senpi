@@ -1,10 +1,15 @@
 import { spawnSync } from "node:child_process";
-import { lstatSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { lstatSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import type { EntryType } from "@code-yeongyu/senpi-machine-ops";
 import { afterEach, describe, expect, it } from "vitest";
+import { createEditTool } from "../../../src/core/tools/edit.ts";
+import { createToolMachine, defaultToolMachine, type ToolMachine } from "../../../src/core/tools/machine.ts";
+import { createReadTool } from "../../../src/core/tools/read.ts";
+import { createWriteTool } from "../../../src/core/tools/write.ts";
 
 // code-yeongyu/senpi#2888: edit, write and read refuse an existing target that is not a regular file before opening it.
 // Opening a FIFO with no peer blocks, so each call runs in a child. After its imports the child gives the call 5 s, then
@@ -17,6 +22,7 @@ const toolUrl = (name: string) =>
 type Outcome = { outcome: "resolved" | "rejected" | "pending"; message?: string };
 type Report = { outcome?: Outcome; afterAbort?: Outcome };
 type ToolCall = { module: string; factory: string; args: Record<string, unknown> };
+type MachineCall = (cwd: string, machine: ToolMachine, path: string) => Promise<unknown>;
 
 function runToolCall(cwd: string, { module, factory, args }: ToolCall) {
 	const script = `import { writeSync } from "node:fs";
@@ -54,6 +60,30 @@ function runToolCall(cwd: string, { module, factory, args }: ToolCall) {
 		afterAbort: reports.find((report) => report.afterAbort)?.afterAbort,
 		stderr: child.stderr,
 	};
+}
+
+function machineReporting(type: EntryType): ToolMachine {
+	const base = defaultToolMachine().ops;
+	let content = "alpha\n";
+	return createToolMachine({
+		ops: {
+			...base,
+			files: {
+				...base.files,
+				async stat({ path }) {
+					return { path, type, size: content.length, mtimeMs: 0, mode: 0o600 };
+				},
+				async read({ path }) {
+					const bytes = Buffer.from(content);
+					return { path, bytes, size: bytes.length, offset: 0 };
+				},
+				async write({ path, bytes }) {
+					content = Buffer.from(bytes).toString("utf8");
+					return { path, writtenBytes: bytes.byteLength };
+				},
+			},
+		},
+	});
 }
 
 describe.runIf(process.platform !== "win32")("edit, write and read with a non-regular target (#2888)", () => {
@@ -113,4 +143,39 @@ describe.runIf(process.platform !== "win32")("edit, write and read with a non-re
 		},
 		90_000,
 	);
+
+	it.each<{ name: string; call: MachineCall; localSpecialControl: boolean }>([
+		{
+			name: "edit",
+			call: (cwd, machine, path) =>
+				createEditTool(cwd, { machine }).execute(
+					"c",
+					{ path, edits: [{ oldText: "alpha", newText: "beta" }] },
+					undefined,
+				),
+			localSpecialControl: true,
+		},
+		{
+			name: "write",
+			call: (cwd, machine, path) =>
+				createWriteTool(cwd, { machine }).execute("c", { path, content: "fresh\n" }, undefined),
+			localSpecialControl: true,
+		},
+		{
+			name: "read",
+			call: (cwd, machine, path) => createReadTool(cwd, { machine }).execute("c", { path }, undefined),
+			localSpecialControl: false,
+		},
+	])("$name follows the configured machine's target type", async ({ call, localSpecialControl }) => {
+		const root = fifoRoot();
+		writeFileSync(join(root, "regular.txt"), "local\n");
+
+		await expect(call(root, machineReporting("other"), "regular.txt")).rejects.toThrow(
+			"It is a special file, not a regular file.",
+		);
+
+		if (localSpecialControl) {
+			await expect(call(root, machineReporting("file"), "pipe")).resolves.toBeDefined();
+		}
+	});
 });
