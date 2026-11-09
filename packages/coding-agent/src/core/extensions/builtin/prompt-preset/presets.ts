@@ -163,6 +163,7 @@ function withDefaults(options: Partial<BuildDynamicSystemPromptOptions> = {}): B
 	return {
 		cwd: options.cwd ?? "",
 		selectedTools: options.selectedTools ?? [],
+		...(options.nativeSearchAvailable === undefined ? {} : { nativeSearchAvailable: options.nativeSearchAvailable }),
 		toolSnippets: options.toolSnippets ?? {},
 		promptGuidelines: options.promptGuidelines ?? [],
 		...(options.fullToolPrompt === undefined ? {} : { fullToolPrompt: options.fullToolPrompt }),
