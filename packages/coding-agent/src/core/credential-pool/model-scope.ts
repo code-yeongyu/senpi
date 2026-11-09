@@ -34,6 +34,11 @@ export function modelBlockKey(family: string, modelId: string): string {
 	return inFamily(modelId, family) ? family : modelId;
 }
 
+/** Whether a model block keyed by `key` (a family name or an exact model id) binds `modelId`. */
+export function modelBlockApplies(key: string, modelId: string): boolean {
+	return applies(key, modelId);
+}
+
 function applies(key: string, modelId: string): boolean {
 	return key === modelId || (FAMILY_KEY.test(key) && inFamily(modelId, key));
 }
