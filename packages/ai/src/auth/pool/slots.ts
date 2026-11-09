@@ -387,6 +387,23 @@ export class EmptyApiKeyError extends Error {
 	}
 }
 
+/**
+ * A reauthorization signed in a different ChatGPT account than the saved one it was started for (#5003). Nothing
+ * is written: the selected account keeps its registration and the other sign-in is not silently swapped in.
+ */
+export class ReauthorizeAccountMismatchError extends Error {
+	override readonly name = "ReauthorizeAccountMismatchError";
+
+	readonly slotName: string;
+
+	constructor(slotName: string) {
+		super(
+			`Signed in to a different ChatGPT account than '${slotName}'; nothing was changed. Sign in as that account, or add the other one as a new account.`,
+		);
+		this.slotName = slotName;
+	}
+}
+
 /** True when an API-key credential names a `key` that is blank, whitespace or not a string. */
 function hasBlankKey(credential: Credential): boolean {
 	if (credential.type !== "api_key" || !Object.hasOwn(credential, "key")) return false;
@@ -455,6 +472,12 @@ export function appendLoginSlot(
 		if (!provided) onAllocated?.(DEFAULT_SLOT_NAME, "generated");
 		return flat;
 	}
+	const target =
+		provided || options?.reauthorizeSlot === undefined ? undefined : findSlot(current, options.reauthorizeSlot);
+	if (target) {
+		assertSameReauthorizedAccount(target, flat, options?.accountIdentity);
+		return restoreReauthorizedSlot(current, target, flat, onAllocated);
+	}
 	const storedAccounts = Array.isArray(current.accounts) ? current.accounts : undefined;
 	if (!provided && "signedOut" in current && current.signedOut === true) {
 		// Sign-out keeps only the registration for a later sign-in (senpi#5003 W7). That sign-in takes over
@@ -511,7 +534,71 @@ export function appendLoginSlot(
 export type AppendLoginSlotOptions = {
 	/** The provider's `OAuthAuth.accountIdentity`. */
 	accountIdentity?: (credential: { access: string }) => string | undefined;
+	/** `LoginOptions.reauthorizeSlot`: the saved account this login reauthorizes. */
+	reauthorizeSlot?: string;
 };
+
+/**
+ * A reauthorization of a named saved account rewrites that account and nothing else (#5003). A signed-out account
+ * holds blank tokens, so neither the token-identity match nor the sign-in takeover can find it, and both used to
+ * append a duplicate `login-N`. The account keeps its name, label and source and drops `signedOut`; the flat
+ * projection moves to it when it carried that account or when the whole credential was signed out.
+ */
+/**
+ * The identity a reauthorization must keep. SIWC names an account by issuer, subject and issued client ID, which a
+ * sign-out keeps. A legacy Codex account is named by its token identity, or, once signed out and without a token,
+ * by its workspace (`accountId`). A field the saved account never recorded cannot be compared and is not checked.
+ */
+function assertSameReauthorizedAccount(
+	target: CredentialSlot,
+	flat: Credential,
+	accountIdentity: AppendLoginSlotOptions["accountIdentity"],
+): void {
+	if (flat.type !== "oauth") return;
+	const saved = target as CredentialSlot & Record<string, unknown>;
+	const fresh = flat as Credential & Record<string, unknown>;
+	const differs = (field: string) =>
+		typeof saved[field] === "string" &&
+		saved[field] !== "" &&
+		typeof fresh[field] === "string" &&
+		saved[field] !== fresh[field];
+	if ((saved.route ?? "codex") !== (flat.route ?? "codex")) throw new ReauthorizeAccountMismatchError(target.name);
+	if (flat.route === "siwc") {
+		if (["issuer", "subject", "clientId"].some(differs)) throw new ReauthorizeAccountMismatchError(target.name);
+		return;
+	}
+	const savedIdentity =
+		accountIdentity && typeof target.access === "string" && target.access !== ""
+			? accountIdentity({ access: target.access })
+			: undefined;
+	const freshIdentity = accountIdentity?.(flat);
+	if (savedIdentity !== undefined && freshIdentity !== undefined) {
+		if (savedIdentity !== freshIdentity) throw new ReauthorizeAccountMismatchError(target.name);
+		return;
+	}
+	if (differs("accountId")) throw new ReauthorizeAccountMismatchError(target.name);
+}
+
+function restoreReauthorizedSlot(
+	current: PooledCredential,
+	target: CredentialSlot,
+	flat: Credential,
+	onAllocated: ((name: string, origin: "generated" | "provider") => void) | undefined,
+): Credential {
+	onAllocated?.(target.name, "generated");
+	if (!Array.isArray(current.accounts) || current.accounts.length === 0) return flat;
+	const fresh: CredentialSlot = {
+		...slotFromFlatCredentialNamed(flat, target.name),
+		...(target.displayName === undefined ? {} : { displayName: target.displayName }),
+		...(target.source === undefined ? {} : { source: target.source }),
+	};
+	const accounts = listSlots(current).map((slot) => (slot.name === target.name ? fresh : slot));
+	const wholeSignedOut = "signedOut" in current && current.signedOut === true;
+	const reproject = wholeSignedOut || slotMirrorsFlat(current, target);
+	const next: PooledCredential = { ...(reproject ? projectFlatFields(current, fresh) : current), accounts };
+	if (reproject) Reflect.deleteProperty(next, "signedOut");
+	return next;
+}
 
 /**
  * A login of an account that is already saved rewrites that account instead of

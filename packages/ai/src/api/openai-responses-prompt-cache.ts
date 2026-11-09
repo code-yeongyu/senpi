@@ -12,11 +12,15 @@ export interface OpenAIPromptCacheOptionsPayload {
 	comparison_response_id?: string;
 }
 
+/** SIWC plan usage cannot opt into explicit prompt caching through inherited catalog compat. */
+export function supportsOpenAIResponsesExplicitPromptCacheMode(model: Model<"openai-responses">): boolean {
+	const compat = model.compat as OpenAIResponsesCompat | undefined;
+	return !compat?.siwc && compat?.supportsExplicitPromptCacheMode === true;
+}
+
 /** Explicit prompt-cache models (GPT-5.6+) on the first-party api.openai.com endpoint. */
 export function isOpenAIResponsesPromptCacheModel(model: Model<any>): boolean {
-	if (model.api !== "openai-responses") return false;
-	const compat = model.compat as OpenAIResponsesCompat | undefined;
-	if (compat?.supportsExplicitPromptCacheMode !== true) return false;
+	if (model.api !== "openai-responses" || !supportsOpenAIResponsesExplicitPromptCacheMode(model)) return false;
 	try {
 		return new URL(model.baseUrl || "https://api.openai.com/v1").hostname === "api.openai.com";
 	} catch {

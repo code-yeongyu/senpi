@@ -1,3 +1,43 @@
+## 2026-11-06 - The forced release suite runs coding-agent as parallel shards (senpi#6139)
+
+### What changed
+
+- `scripts/release-forced-test-suite.mjs` (new): `planForcedTestSuite` and `runForcedTestSuite`. The forced suite runs `npm run test:scripts`, then each other workspace's `test` script one at a time (`run-workspaces.mjs --workspace <path> test`), then `packages/coding-agent` as `FORCED_CODING_AGENT_SHARDS` (2) parallel `test -- --shard=i/2` runs, so every test still runs once. Each step runs under `release-forced-test-supervisor.mjs` with one shared 110-minute budget. The log gets a wall line per step and a total wall line. A failed step fails the suite after every step ran. A timeout names each step still running and its elapsed minutes.
+- `scripts/release.mjs`: `runForcedTests` and `main` are async and await `runForcedTestSuite` from the new module.
+- `scripts/release-test-gate.mjs`: `runForcedTestSuite` and `FORCED_TEST_SUITE_TIMEOUT_MS` moved to `release-forced-test-suite.mjs`.
+- `scripts/release-forced-test-supervisor.mjs`: header comment names its new caller.
+
+### Why
+
+- `scripts/release-forced-test-suite.mjs`: a forced release on 2026-11-06 (run 42284532624) spent 98.8 min in coding-agent alone and was stopped by the 110-minute cap with "the in-job suite hung", though nothing hung. Every release that regenerates the model catalog needs `force_tests`. With `CI` set, each coding-agent vitest run uses two fork workers, so two shards fill the 4-vCPU release runner without oversubscribing it. That brings the suite to about 60 min.
+
+### Why an extension could not handle it
+
+- `scripts/release-forced-test-suite.mjs`: the release orchestration and its test gate are repository build tooling.
+
+### Expected merge conflict zones
+
+- LOW: `scripts/release.mjs` `runForcedTests`, `main` and the forced-suite import; `scripts/release-test-gate.mjs` imports.
+
+## 2026-11-05 - Standalone compiles keep linkedom's optional canvas external (senpi#6045)
+
+### What changed
+
+- `scripts/build-binaries.sh`: both release `bun build --compile` commands pass `--external canvas`; the "Building trusted native dependencies" step (`npm rebuild canvas --foreground-scripts`) is removed.
+- `scripts/bun-release-externals.mjs` (new): `bunReleaseExternalFlags`, the one externals list every JS/TS Bun build of the release entry graph spreads (`compiled-extension-load.test.ts`, `bun-bundle-provider-coverage.test.ts`, both `release-graph-*.test.ts`, the QA `compiled-generations.mjs`). `build-binaries-flags.test.mjs` pins the shell and `build:binary` commands to it and fails any script that builds the release graph without spreading it.
+
+### Why
+
+- `bun build --compile` resolved canvas's `require('../build/Release/canvas.node')` even behind linkedom's optional `try/catch`, so the build rebuilt canvas first. On Windows a failed prebuilt download fell back to a node-gyp build that cannot find `cairo.h`, failing `Compiled extensions (Windows)` (senpi#6045). senpi never needs canvas: linkedom falls back to its JS shim, as the Node bundle already does.
+
+### Why an extension could not handle it
+
+- The release compile recipe is build tooling, outside any extension.
+
+### Expected merge conflict zones
+
+- LOW: one flag on each of the two compile lines, the removed two-line rebuild step, and one new module.
+
 ## 2026-11-04 - senpi vendors machine-ops instead of publishing it (senpi#5784)
 
 ### What changed

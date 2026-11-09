@@ -59,7 +59,7 @@ import { withGzipRequestBodies } from "../utils/gzip-request-body.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
 import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
-import { getAnthropicCompat, isAnthropicApiBaseUrl } from "../utils/prompt-cache-ttl.ts";
+import { allowsAnthropicLongCacheRetention, getAnthropicCompat } from "../utils/prompt-cache-ttl.ts";
 import { attachProviderDiagnostic } from "../utils/provider-diagnostic-carrier.ts";
 import {
 	anthropicProviderDiagnosticFromError,
@@ -162,12 +162,7 @@ function getCacheControl(
 	if (retention === "none") {
 		return { retention };
 	}
-	const ttl =
-		retention === "long" &&
-		isAnthropicApiBaseUrl(model.baseUrl) &&
-		getAnthropicCompat(model).supportsLongCacheRetention
-			? "1h"
-			: undefined;
+	const ttl = retention === "long" && allowsAnthropicLongCacheRetention(model) ? "1h" : undefined;
 	return {
 		retention,
 		cacheControl: { type: "ephemeral", ...(ttl && { ttl }) },
