@@ -14,7 +14,6 @@ let opener: Peer;
 beforeEach(() => {
 	for (const name of ["OMO_RPC_SOCKET_PATH", "OMO_RPC_SOCKET", "SENPI_RPC_SOCKET", "PI_RPC_SOCKET"])
 		vi.stubEnv(name, undefined);
-	vi.stubEnv("SENPI_RPC_REQUIRE_ATTACH", undefined);
 });
 beforeAll(async () => {
 	host = await startHost();

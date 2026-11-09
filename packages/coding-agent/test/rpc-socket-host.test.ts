@@ -36,7 +36,7 @@ describe("RPC Unix-socket multi-connection host", () => {
 		});
 	});
 
-	it("delivers foreign commands only after attachment, survives malformed frames, and reconnects", async () => {
+	it("refuses foreign commands from an unattached connection, survives malformed frames, and reconnects", async () => {
 		const qa = scratch("semantics");
 		const fake = await startFakeModelServer();
 		writeRpcModelsJson(qa.agentDir, fake.origin);
@@ -67,22 +67,20 @@ describe("RPC Unix-socket multi-connection host", () => {
 			});
 			const sessionId = openedSessionId(opened);
 
-			// Grace release still serves legacy callers, but records every unattached mutation (#3795).
-			const grace = waitForStderr(
-				child,
-				`senpi rpc host: prompt on ${sessionId} from a connection not attached to it (refused from the next release)`,
-			);
-			const settledA = a.peer.waitFor((value) => value.type === "agent_settled" && value.sessionId === sessionId);
+			// senpi#6245: an unattached connection's prompt is refused, not served (the #3795 grace ended).
 			await expect(
 				b.peer.request({
 					id: "foreign-prompt",
 					type: "prompt",
 					sessionId,
-					message: "unique-424242",
+					message: "foreign-424242",
 				}),
+			).resolves.toMatchObject({ success: false, errorCode: "session_not_attached" });
+			const settledA = a.peer.waitFor((value) => value.type === "agent_settled" && value.sessionId === sessionId);
+			await expect(
+				a.peer.request({ id: "owner-prompt", type: "prompt", sessionId, message: "unique-424242" }),
 			).resolves.toMatchObject({ success: true, sessionId });
 			await settledA;
-			await grace;
 			// agent_settled is a broadcast lifecycle record (session-event-fanout.ts), so the foreign connection gets it
 			// too. Each connection's records are FIFO, so once b holds it, everything the turn sent b is already here:
 			// none of it may be session content, which only attached connections receive.
@@ -100,6 +98,7 @@ describe("RPC Unix-socket multi-connection host", () => {
 			});
 			const messages = ((transcript.data as { messages?: unknown[] }).messages ?? []).map(messageText);
 			expect(messages).toContain("unique-424242");
+			expect(messages).not.toContain("foreign-424242");
 
 			a.peer.writeMalformed("not-json-mid-stream");
 			await a.peer.waitFor((value) => value.command === "parse" && value.success === false);

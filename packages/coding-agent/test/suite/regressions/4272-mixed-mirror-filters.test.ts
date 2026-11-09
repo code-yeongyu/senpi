@@ -5,7 +5,6 @@ afterEach(() => vi.unstubAllEnvs());
 
 it("R3.C4.3/C5.1 mixed mirrors share one seeded physical stream without losing selected records", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
-	vi.stubEnv("SENPI_RPC_REQUIRE_ATTACH", "1");
 	await using host = await statusHost();
 	const owner = host.client("owner");
 	const peer = host.client("peer");

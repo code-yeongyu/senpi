@@ -10,7 +10,6 @@ it.each(["get_recovery_page", "release_recovery"])(
 	"flag OFF keeps an unattached %s behind the enforced attach gate",
 	async (type) => {
 		vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "0");
-		vi.stubEnv("SENPI_RPC_REQUIRE_ATTACH", "1");
 		await using host = await statusHost();
 		const peer = host.client("peer");
 		expect(
@@ -31,7 +30,6 @@ it.each(["get_recovery_page", "release_recovery"])(
 	"RULING-94 scopes %s to the server-side peer and validates malformed IDs first",
 	async (type) => {
 		vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
-		vi.stubEnv("SENPI_RPC_REQUIRE_ATTACH", "1");
 		await using host = await statusHost();
 		const owner = host.client("owner");
 		const foreign = host.client("foreign");

@@ -883,7 +883,7 @@ reader (which stops near 4,000 levels on Node) never drops it.
 #### get_recovery_page
 
 Behind the same flag, one bounded page of a frozen checkpoint component, through the recovery-token owner
-(senpi#4272, R4.B3). The command is additive: with the flag off it answers the typed refusal `{"success": false, "error": "feature_disabled", "errorCode": "feature_disabled", "errorData": {"feature": "compact_updates"}}` (plus `sessionId` when the request named one), as does the classic single-session handler, which has no compact transport; with `SENPI_RPC_REQUIRE_ATTACH=1`, an unattached caller of a session-addressed request gets the attachment gate's `session_not_attached` first.
+(senpi#4272, R4.B3). The command is additive: with the flag off it answers the typed refusal `{"success": false, "error": "feature_disabled", "errorCode": "feature_disabled", "errorData": {"feature": "compact_updates"}}` (plus `sessionId` when the request named one), as does the classic single-session handler, which has no compact transport; an unattached caller of a session-addressed request gets the attachment gate's `session_not_attached` first.
 
 Compact generations are allocated per durable session, not per socket or accepted-state epoch (RULING-99).
 A reconnect receives a higher generation; a host restart resumes above the persisted reservation ceiling in
@@ -1141,7 +1141,7 @@ reference was the last (`remaining: 0`, the content goes once reads in flight un
 admission still references it, and `duplicate` for a receipt this admission already gave, which changes nothing, so
 a consumer may retry a receipt after a rollback. A lease of another connection or session, or an unknown one, is
 `recovery_repair_needed` with `reason: "unknown_token"`; a malformed request is `recovery_malformed_request`.
-With the flag off it answers the typed refusal `{"success": false, "error": "feature_disabled", "errorCode": "feature_disabled", "errorData": {"feature": "compact_updates"}}` (plus `sessionId` when the request named one), as does the classic single-session handler, which has no compact transport; with `SENPI_RPC_REQUIRE_ATTACH=1`, an unattached caller of a session-addressed request gets the attachment gate's `session_not_attached` first.
+With the flag off it answers the typed refusal `{"success": false, "error": "feature_disabled", "errorCode": "feature_disabled", "errorData": {"feature": "compact_updates"}}` (plus `sessionId` when the request named one), as does the classic single-session handler, which has no compact transport; an unattached caller of a session-addressed request gets the attachment gate's `session_not_attached` first.
 
 #### cancel_attempt
 
@@ -1159,7 +1159,7 @@ admission this connection currently holds (never used, already cancelled, or com
 `unknown_admission`. Otherwise the answer's `data` is `{outcome}`: `cancelled` for a pending attempt (its late result
 is never applied) and `already_complete` for an admission this connection holds (cancel does not undo it). Only a
 socket connection has admissions, so on any other transport the id is unknown. A malformed `admissionId` is refused
-with `admission_malformed_request`. With the flag off it answers the typed refusal `{"success": false, "error": "feature_disabled", "errorCode": "feature_disabled", "errorData": {"feature": "compact_updates"}}` (plus `sessionId` when the request named one), as does the classic single-session handler, which has no compact transport; with `SENPI_RPC_REQUIRE_ATTACH=1`, an unattached caller of a session-addressed request gets the attachment gate's `session_not_attached` first.
+with `admission_malformed_request`. With the flag off it answers the typed refusal `{"success": false, "error": "feature_disabled", "errorCode": "feature_disabled", "errorData": {"feature": "compact_updates"}}` (plus `sessionId` when the request named one), as does the classic single-session handler, which has no compact transport; an unattached caller of a session-addressed request gets the attachment gate's `session_not_attached` first.
 
 #### reset_stream
 
@@ -1178,7 +1178,7 @@ admission. Read the checkpoint with `get_recovery_page`. An `admissionId` this c
 `unknown_admission` before the command runs. A held admission that is not
 complete, not for `sessionId` or no longer on the session's stream is refused with `recovery_unknown_token` and
 `errorData: {kind: "repair_needed", reason: "unknown_token"}`; a checkpoint that cannot be frozen is refused with
-`recovery_<kind>` and that failure as `errorData`. With the flag off it answers the typed refusal `{"success": false, "error": "feature_disabled", "errorCode": "feature_disabled", "errorData": {"feature": "compact_updates"}}` (plus `sessionId` when the request named one), as does the classic single-session handler, which has no compact transport; with `SENPI_RPC_REQUIRE_ATTACH=1`, an unattached caller of a session-addressed request gets the attachment gate's `session_not_attached` first.
+`recovery_<kind>` and that failure as `errorData`. With the flag off it answers the typed refusal `{"success": false, "error": "feature_disabled", "errorCode": "feature_disabled", "errorData": {"feature": "compact_updates"}}` (plus `sessionId` when the request named one), as does the classic single-session handler, which has no compact transport; an unattached caller of a session-addressed request gets the attachment gate's `session_not_attached` first.
 
 **Admission IDs per socket (senpi#5274, RULING-113, RULING-117 and RULING-118).** A socket's admissions are capped by what is
 live, never by how many IDs it has used. At most 16 attempts run at once (`admission_admission_busy` past that). Running
@@ -1595,9 +1595,8 @@ Errors. Each of these carries `errorData.device`, and nothing is recorded:
 ending, so a choice could not be kept) carry no `errorData`.
 
 Who may call it: only a connection attached to the session. It moves where the session's tools run, which changes what
-the agent can reach (method class `device_admin`), so the attachment gate applies to it: under enforcement
-(`SENPI_RPC_REQUIRE_ATTACH=1`) an unattached connection is refused with `session_not_attached`. Until enforcement is
-the default, the host logs such a call and serves it, as for every gated command.
+the agent can reach (method class `device_admin`), so the attachment gate applies to it: an unattached connection is refused with `session_not_attached`, as for every
+gated command.
 
 ### Host identity (`get_protocol_info`)
 
@@ -2508,7 +2507,7 @@ transcript yet and cannot be resumed; a reference to it is `unknown_session`.
 
 Ownership: public endpoints first use [authentication](#authentication); socket clients then attach before mutating a session. The `senpi host session` commands already attach
 on the acting connection. Raw clients use `attach_session` for a live identity or `open_session` to open/resume
-a path. This release serves and logs legacy unattached mutations unless `SENPI_RPC_REQUIRE_ATTACH=1`;
+a path. An unattached mutation is refused with `session_not_attached`;
 see [Attachment admission](#attachment-admission). Reads remain available without an attachment. `close`
 releases the caller's own attachment and closes the session only when no other client still holds one.
 
@@ -4022,16 +4021,11 @@ An `open_session { "attended": false }` is an attachment like any other open: it
 connection to gated commands until its own `close_session` or disconnect gives the hold back.
 `senpi host session` therefore needs no extra `attach_session` after reopening a parked session.
 
-This release **serves** each new violation and writes exactly one stderr line per violation:
-
-```text
-senpi rpc host: <command> on <session> from a connection not attached to it (refused from the next release)
-```
-
-Set `SENPI_RPC_REQUIRE_ATTACH=1` to enforce now. Enforcement returns
+A gated command from a connection not attached to its session is refused (senpi#6245; the one-release grace that
+served and logged it ended, and `SENPI_RPC_REQUIRE_ATTACH` is no longer read). The refusal is
 `errorCode: "session_not_attached"` with `errorData.reason` and
 `errorData.action: "attach first with attach_session { sessionId, durableSessionId } or open_session { sessionPath }"`.
-Already-refused commands are not relaxed by grace: unattached `close_session` still returns
+The commands with their own admission keep it: unattached `close_session` still returns
 `unknown_session`, and `set_session_context` keeps its existing `session_not_attached` refusal.
 Stdio hosts and host-internal lifecycle calls have no current connection and retain existing behavior.
 Worker sessions pass through this same gate before worker dispatch.

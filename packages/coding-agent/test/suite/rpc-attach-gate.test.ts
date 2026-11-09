@@ -1,15 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { waitForStderr } from "../helpers/rpc-socket-host-support.ts";
 import { startWorkerHost } from "./rpc-worker-host-support.ts";
 
-// senpi#3795: admission is enforced at the real socket boundary in both runtimes.
+// senpi#3795, senpi#6245: admission is enforced by default at the real socket boundary in both runtimes.
 describe.each(["in-process", "worker"] as const)("attachment gate (%s)", (sessionRuntime) => {
 	it("refuses unattached mutations while keeping observational reads and existing close refusals", async () => {
-		const host = await startWorkerHost(undefined, {
-			socket: true,
-			sessionRuntime,
-			preload: 'process.env.SENPI_RPC_REQUIRE_ATTACH = "1";',
-		});
+		const host = await startWorkerHost(undefined, { socket: true, sessionRuntime });
 		try {
 			const owner = await host.connect();
 			const stranger = await host.connect();
@@ -55,37 +50,6 @@ describe.each(["in-process", "worker"] as const)("attachment gate (%s)", (sessio
 				success: false,
 				errorCode: "session_not_attached",
 			});
-			expect(host.stderrText()).not.toContain("(refused from the next release)");
-		} finally {
-			await host.dispose();
-		}
-	}, 60_000);
-
-	it("serves each unattached mutation in grace and logs exactly once per violation", async () => {
-		const host = await startWorkerHost(undefined, { socket: true, sessionRuntime });
-		try {
-			const owner = await host.connect();
-			const stranger = await host.connect();
-			const opened = await owner.request({ type: "open_session", cwd: host.cwd });
-			const sessionId = opened.data?.sessionId;
-			expect(opened.success).toBe(true);
-			for (const type of ["append_user_message", "abort"]) {
-				const logged = waitForStderr(
-					host.child,
-					`senpi rpc host: ${type} on ${sessionId} from a connection not attached to it (refused from the next release)`,
-				);
-				expect(await stranger.request({ type, sessionId, content: "grace" })).toMatchObject({ success: true });
-				await logged;
-			}
-			await stranger.request({ type: "get_state", sessionId });
-			const violations = host
-				.stderrText()
-				.split("\n")
-				.filter((line) => line.includes("(refused from the next release)"));
-			expect(violations).toEqual([
-				`senpi rpc host: append_user_message on ${sessionId} from a connection not attached to it (refused from the next release)`,
-				`senpi rpc host: abort on ${sessionId} from a connection not attached to it (refused from the next release)`,
-			]);
 		} finally {
 			await host.dispose();
 		}
