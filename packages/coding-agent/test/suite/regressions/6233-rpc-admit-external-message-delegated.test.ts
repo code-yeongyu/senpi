@@ -14,8 +14,8 @@ import {
 import type { Peer } from "../rpc-delegated-host-support.ts";
 
 // senpi#6233 security gate: on a connection that speaks for a remote device, the engine stamps the authenticated
-// device into the delivery (never the payload), writes its own provenance line ahead of the caller's text, keys the
-// delivery id under that device, refuses a sender that would render as this machine's own command line, and makes the
+// device into the delivery's metadata (never the payload) while the model reads exactly the text a same-machine delivery
+// carries (no device, Q 2026-11-08), keys the delivery id under that device, refuses a sender that would render as this machine's own command line, and makes the
 // approval mode govern a peer follow-up a local turn consumes.
 
 let host: DelegatedHost | undefined;
@@ -33,7 +33,7 @@ async function deliveryEntries(peer: Peer, sessionId: string): Promise<Record<st
 }
 
 describe("admit_external_message from a remote device's connection", () => {
-	it("stamps the authenticated device, prefixes engine provenance and keys the id under the device", async () => {
+	it("stamps the authenticated device into metadata only, keeps the model text a local delivery's, and keys the id under the device", async () => {
 		host = await permissionHost();
 		host.faux.setResponses([fauxAssistantMessage("ok")]);
 		const remote = await remotePeer(host);
@@ -62,9 +62,8 @@ describe("admit_external_message from a remote device's connection", () => {
 				display_text: "peer text",
 			},
 		});
-		expect(String(entry?.content)).not.toBe("peer text");
-		expect(String(entry?.content).endsWith("\n\npeer text")).toBe(true);
-		expect(String(entry?.content)).toContain(DEVICE.deviceId);
+		expect(String(entry?.content)).toBe("peer text");
+		expect(String(entry?.content)).not.toContain(DEVICE.deviceId);
 	}, 120_000);
 
 	it("refuses a command_line sender, and a remote_origin field, from a remote device", async () => {

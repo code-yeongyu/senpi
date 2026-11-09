@@ -4,14 +4,14 @@
  * never the extension `input` event, never a slash command or prompt template, whatever the text says.
  *
  * What the engine adds comes from the connection the record arrived on (`DeliveryPeer`), never from the record (the
- * security design gate's binding conditions): the device a remote connection speaks for is stamped into the entry and
- * ahead of the text the model reads, the ledger keys the delivery under that device, a `command_line` sender is refused
+ * security design gate's binding conditions): the device a remote connection speaks for is stamped into the entry's
+ * metadata (`details.remote_origin`) while the model reads exactly the text a same-machine delivery carries (senpi#6250:
+ * an agent need not know a message crossed devices), the ledger keys the delivery under that device, a `command_line` sender is refused
  * from a remote device, the turn that consumes the delivery takes the connection's origin, the thread-chain guard
  * runs first, and an id the transcript already holds is answered `already_admitted` after a restart too.
  */
 import type { AgentSession } from "../../core/agent-session.ts";
 import { writtenDeliveryIds } from "../../core/external-admission.ts";
-import type { SessionControlSender } from "../../core/extensions/session-control-types.ts";
 import type { ConnectionOrigin } from "../../core/turn-origin.ts";
 import type { RpcAdmitExternalMessageCommand, RpcAdmitExternalMessageReply } from "./admit-external-message-wire.ts";
 import { admitInputChain, type ChainRefusal } from "./chain-admission.ts";
@@ -39,24 +39,6 @@ function ledgerId(deliveryId: string, origin: RpcRemoteOrigin | undefined): stri
 	return origin === undefined
 		? `rpc:local/${deliveryId}`
 		: `device:${encodeURIComponent(origin.deviceId)}/${deliveryId}`;
-}
-
-function claimedSender(sender: SessionControlSender | undefined): string {
-	if (sender === undefined) return "It names no sender.";
-	const claim =
-		sender.kind === "agent"
-			? `agent ${JSON.stringify(sender.name ?? "")} in session ${JSON.stringify(sender.session_id)}`
-			: sender.kind === "external"
-				? `${JSON.stringify(sender.platform)}${sender.author === undefined ? "" : ` user ${JSON.stringify(sender.author)}`}`
-				: "the command line";
-	return `It says it was sent by ${claim}; that claim is not verified.`;
-}
-
-/** The line the engine writes ahead of a remote device's text, so the model reads provenance the caller cannot write. */
-function provenanceLine(origin: RpcRemoteOrigin, sender: SessionControlSender | undefined): string {
-	const id = JSON.stringify(origin.deviceId);
-	const device = origin.deviceName === undefined ? id : `${JSON.stringify(origin.deviceName)} (${id})`;
-	return `[Relayed message from remote device ${device}. ${claimedSender(sender)}]`;
 }
 
 export function admitExternalMessage(
@@ -98,7 +80,7 @@ export function admitExternalMessage(
 	const result = admission.admit(
 		{
 			delivery_id: id,
-			text: origin === undefined ? command.text : `${provenanceLine(origin, command.sender)}\n\n${command.text}`,
+			text: command.text,
 			deliverAs: command.deliverAs,
 			...(command.sender === undefined ? {} : { sender: command.sender }),
 			...(displayText === undefined ? {} : { display_text: displayText }),
