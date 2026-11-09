@@ -610,8 +610,10 @@ export async function createReferenceDriver(
 		current = next;
 		rebuilds += 1;
 		latchedAt = undefined;
-		// S13: the committed step's unrun tools finish before any queued steering is delivered, so the
-		// recovered call cannot be overtaken by input the model has not answered yet.
+		// Ordering rule (custody r11.2 2.3, S13): a rebuild finishes the committed step's unrun tools
+		// BEFORE it delivers any queued input. Tools dispatch only after a successful commit, and new input
+		// must never overtake a committed step's tool work. A production session driver is checked against
+		// this rule; the hand still dedupes a recovered call by (sessionId, toolCallId).
 		const recovered = await recoverCommittedTools(next);
 		const pending = inbox.filter((entry) => entry.consumedBy === undefined);
 		for (const entry of pending) {

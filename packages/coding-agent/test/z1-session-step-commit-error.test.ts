@@ -355,6 +355,7 @@ describe("CK1s hosted step-commit containment", () => {
 		expect(driver.counters.drainedBy).toEqual([2]);
 	});
 
+	// Pins custody r11.2 2.3: the recovered tool runs before queued steering is delivered.
 	it.each([false, true])(
 		"S13 pending tools preserve golden hooks/events with queued steering=%s",
 		async (steering) => {
