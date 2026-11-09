@@ -1,6 +1,13 @@
 import { releaseQuestionInput } from "../../../question-input.ts";
 import type { ExtensionAPI, ExtensionContext, QuestionCancelOrigin, ToolDefinition } from "../../types.ts";
 import { WAKE_SOURCE_STATE_EVENT, type WakeSourceStateEvent } from "../monitor-state-event.ts";
+import {
+	AskUserEscapeResidueError,
+	type EscapeResidueRetry,
+	escapeResidueNote,
+	findEscapeResidue,
+	refuseEscapeResidue,
+} from "./escape-residue.ts";
 import { TOOL_NAMES } from "./family.ts";
 import {
 	formatGatedCancellation,
@@ -39,6 +46,8 @@ import {
 export interface AskUserState {
 	timedOut: boolean;
 	unavailable: boolean;
+	/** One refusal per turn of residue calls; the re-calls in a later turn open as written (oh-my-openagent#12797). */
+	escapeResidue: EscapeResidueRetry;
 }
 const REASK = "The user did not answer the previous question this turn; continue without asking again.";
 const REASK_REQUIRED =
@@ -222,6 +231,7 @@ export function startQuestion(
 		active: true,
 		label: first ? `${first.header} - ${first.question}` : "Question",
 		id: request.requestId,
+		kind: "question",
 	});
 	signal?.addEventListener("abort", abort, { once: true });
 	let draft: { answers: QuestionResponse["answers"]; comment?: string } = { answers: {} };
@@ -323,13 +333,14 @@ export function createAskUserTool(variant: AskUserVariant, pi: ExtensionAPI, sta
 			: "Ask the user one to four concise questions.";
 	return {
 		name: TOOL_NAMES[variant],
+		runs: "brain",
 		workspaceEffect: "read",
 		label: "Ask user",
 		exposure: "direct",
 		allowLazyActivation: false,
 		parameters: variant === "codex" ? CODEX_PARAMS : CLAUDE_PARAMS,
 		promptSnippet: "Ask a material question, explicitly choosing whether to wait or receive the answer later.",
-		description: `${opener} Set ${flag} true to pause here until the user answers (the answer returns as this tool's result, or a timeout result after 30 idle minutes); set ${flag} false to keep working while the question stays open (the answer arrives later as a user message). Use it only when the answer materially changes the work; if it returns no answers, continue with best judgment instead of asking again, unless you set required true because the answer decides whether you take an action: then no answer means do not take it. Never use it for permission requests; ask those directly in your message. Unavailable to subagents.${variant === "claude" ? " Users will always be able to type a free-text answer or one comment covering everything; do not add an Other option." : ""} Call this tool directly, never from inside an eval cell (a cell that waits on the user would hold the kernel).`,
+		description: `${opener} Set ${flag} true to pause here until the user answers (the answer returns as this tool's result, or a timeout result after 30 idle minutes by default, where any user activity on the question restarts the idle clock, up to a 2-hour cap); set ${flag} false to keep working while the question stays open (the answer arrives later as a user message). Use it only when the answer materially changes the work; if it returns no answers, continue with best judgment instead of asking again, unless you set required true because the answer decides whether you take an action: then no answer means do not take it. Never use it for permission requests; ask those directly in your message. When the user's instructions (in the conversation or their instruction files) say not to ask, or not to ask with choices, do not call it: take the safe default, keep working, and say what you chose. Unavailable to subagents.${variant === "claude" ? " Users will always be able to type a free-text answer or one comment covering everything; do not add an Other option." : ""} Call this tool directly, never from inside an eval cell (a cell that waits on the user would hold the kernel).`,
 		prepareArguments(args) {
 			toCanonical(variant, args);
 			return args;
@@ -368,6 +379,12 @@ export function createAskUserTool(variant: AskUserVariant, pi: ExtensionAPI, sta
 				emitAskUserClosed(pi, request.requestId, unavailable);
 				return result(variant, unavailable, request);
 			}
+			const residue = findEscapeResidue(request.questions);
+			if (refuseEscapeResidue(state.escapeResidue, residue.length > 0)) {
+				emitAskUserClosed(pi, request.requestId, unavailable);
+				throw new AskUserEscapeResidueError(residue);
+			}
+			if (residue.length > 0) ctx.ui.notify(escapeResidueNote(residue), "warning");
 			const completion = startQuestion(pi, ctx, request, signal, state, variant);
 			if (!request.waitForAnswer)
 				return {

@@ -29,6 +29,7 @@ export interface MonitorRunawayGuard {
 }
 
 export interface ResolvedTerminalSettings {
+	readonly redactSecretsInOutput?: boolean;
 	readonly defaultCols: number;
 	readonly defaultRows: number;
 	readonly scrollback: number;
@@ -39,9 +40,12 @@ export interface ResolvedTerminalSettings {
 	readonly monitorRunaway: MonitorRunawayGuard;
 	/** Admission cap on persistent (restart-surviving) monitors per session. */
 	readonly maxDurableMonitors: number | "unlimited";
+	/** Age in minutes at which a background session is stopped (senpi#6201); undefined means never (the default). */
+	readonly backgroundAutoReapMinutes: number | undefined;
 }
 
 export const TERMINAL_SETTINGS_DEFAULTS: ResolvedTerminalSettings = {
+	redactSecretsInOutput: false,
 	defaultCols: DEFAULT_COLS,
 	defaultRows: DEFAULT_ROWS,
 	scrollback: DEFAULT_SCROLLBACK,
@@ -61,6 +65,7 @@ export const TERMINAL_SETTINGS_DEFAULTS: ResolvedTerminalSettings = {
 		minutes: DEFAULT_MONITOR_RUNAWAY_MINUTES,
 	},
 	maxDurableMonitors: "unlimited",
+	backgroundAutoReapMinutes: undefined,
 };
 
 /** Upper bound of a wake rate (setting or per-monitor override): one wake a second on average. */
@@ -83,6 +88,12 @@ function oneOf<T extends string>(value: unknown, allowed: readonly T[], fallback
 /** A positive integer caps durable monitors; anything else, including "unlimited", means no cap. */
 function durableMonitorCap(value: unknown): number | "unlimited" {
 	if (typeof value !== "number" || !Number.isFinite(value) || value < 1) return "unlimited";
+	return Math.trunc(value);
+}
+
+/** A whole number of minutes >= 1 turns auto-reap on; anything else (unset, 0, negative, non-numeric) leaves it off. */
+function autoReapMinutes(value: unknown): number | undefined {
+	if (typeof value !== "number" || !Number.isFinite(value) || value < 1) return undefined;
 	return Math.trunc(value);
 }
 
@@ -128,6 +139,7 @@ export function resolveTerminalSettings(raw: TerminalSettings | undefined): Reso
 			minutes: positiveInt(raw.monitorRunawayMinutes, TERMINAL_SETTINGS_DEFAULTS.monitorRunaway.minutes, 1440),
 		},
 		maxDurableMonitors: durableMonitorCap(raw.maxDurableMonitors),
+		backgroundAutoReapMinutes: autoReapMinutes(raw.backgroundAutoReapMinutes),
 	};
 }
 
@@ -136,5 +148,8 @@ export function loadTerminalSettings(settingsManager: SettingsManager): Resolved
 	const global = settingsManager.getGlobalSettings().terminal;
 	const project = settingsManager.getProjectSettings().terminal;
 	const merged: TerminalSettings = { ...global, ...project };
-	return resolveTerminalSettings(merged);
+	return {
+		...resolveTerminalSettings(merged),
+		redactSecretsInOutput: settingsManager.getBashRedactSecretsInOutput(),
+	};
 }

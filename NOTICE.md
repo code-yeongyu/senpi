@@ -65,3 +65,23 @@ MIT License
 Copyright (c) 2025 Mario Zechner
 Copyright (c) 2025-2026 Can Bölük
 ```
+
+## Job widgets
+
+The job widgets in
+`packages/coding-agent/src/core/extensions/builtin/job-widgets/` (the spec,
+its validation and derivation runtime, value formatting, the text tap, the spec
+author and its prompts, the per-session registry, and the look of the TUI
+widget line) are ported and adapted from oh-my-pi commit `9df0457b31`:
+`packages/coding-agent/src/job-widgets/` (`spec.ts`, `runtime.ts`,
+`format.ts`, `types.ts`, `text-tap.ts`, `author.ts`, `registry.ts`) and
+`src/prompts/system/job-widget-system.md` and `job-widget-user.md`, which are
+MIT-licensed:
+
+[`oh-my-pi`](https://github.com/can1357/oh-my-pi)
+
+```
+MIT License
+Copyright (c) 2025 Mario Zechner
+Copyright (c) 2025-2026 Can Bölük
+```

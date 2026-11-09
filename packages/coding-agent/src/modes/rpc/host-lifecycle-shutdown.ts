@@ -23,7 +23,8 @@ import {
 } from "./host-stop-intent.ts";
 import { errorMessage, supervisorLog, writeStderrLine } from "./host-supervisor-log.ts";
 import type { RpcPublicEndpoint } from "./rpc-public-key.ts";
-import { type SocketFileIdentity, shieldSocketDuringClose, unlinkOwnedSocket } from "./socket-ownership.ts";
+import { closeShieldedEndpoint, unlinkOwnedEndpoint } from "./host-endpoint-owner.ts";
+import type { SocketFileIdentity } from "./socket-ownership.ts";
 
 export { CHILD_STOP_TIMEOUT_MS } from "./host-stop-intent.ts";
 
@@ -35,6 +36,8 @@ export interface SupervisorState {
 	shutdownReason: string | undefined;
 	/** Settles once the child's end is on record; replaced the moment the child exits. */
 	childExitRecorded: Promise<void>;
+	/** Startup may still publish ownership files after the public listener became reachable. */
+	startupComplete: PromiseLike<void>;
 	publicSocketOwned: boolean;
 	publicSocketIdentity: SocketFileIdentity | undefined;
 	/** Another generation's entry replaced the public socket this one bound: its registration is the replacer's now. */
@@ -74,26 +77,29 @@ export async function performShutdown(context: SupervisorShutdown, reason: strin
 	let childStopStarted = false;
 	let hardExit: ReturnType<typeof setTimeout> | undefined;
 	try {
-		context.stopWatchers();
 		context.drain.stop();
 		writeStderrLine(`senpi rpc host supervisor: ${reason} shutdown`);
 		// No fallible socket/metadata cleanup may bypass the child's observed exit.
 		childStopStarted = true;
 		await stopChild(context, reason);
 		await state.childExitRecorded;
+		// The startup caller reports its failure; this join only waits until its writes have stopped.
+		await state.startupComplete.then(undefined, () => {});
+		context.stopWatchers();
 		await context.admission.flush();
 		context.activity.clients.destroyAll();
 		if (process.platform === "win32")
 			hardExit = setTimeout(() => process.exit(exitCode), WINDOWS_SUPERVISOR_SHUTDOWN_HARD_EXIT_MS);
 		// libuv unlinks the bound NAME when the listening handle closes - which would delete a newer
 		// host's entry renamed over this path. Shield the current entry for the close, then let the
-		// ownership check decide. A drained supervisor already stopped accepting.
-		if (!context.drain.active) await shieldSocketDuringClose(context.publicSocket, () => closeServer(context.server));
+		// ownership check decide. A drained supervisor already stopped accepting. Both run under the endpoint's
+		// mutation fence and re-read its owner token, so neither can land over a successor's adoption (senpi#4602).
+		if (!context.drain.active) await closeShieldedEndpoint(context.publicSocket, () => closeServer(context.server));
 		if (context.internalDir) await rm(context.internalDir, { recursive: true, force: true });
 		context.activity.stopObserver();
 		if (state.publicSocketOwned && process.platform !== "win32") {
 			// Ownership-checked: after a takeover a newer host may have published a fresh entry here.
-			await unlinkOwnedSocket(context.publicSocket, state.publicSocketIdentity, supervisorLog);
+			await unlinkOwnedEndpoint(context.publicSocket, state.publicSocketIdentity, context.instanceId, supervisorLog);
 		}
 		// After a handoff the pointer describes the SUCCESSOR, so this drops only the generation
 		// directory of the process that is leaving, and the pointer only while it still names it. A
@@ -172,7 +178,18 @@ async function stopChild(context: SupervisorShutdown, reason: string): Promise<v
 	} catch (cause) {
 		// Metadata/watch failures must not leave a child behind. A fired exit breaker is already
 		// the final bound: never restart it or enlarge the normal caller's shutdown budget.
-		if (!killAttempted) await reapChildAfterFailure(child, termAttempted);
+		if (!killAttempted) {
+			try {
+				await reapChildAfterFailure(child, termAttempted);
+			} catch (reapCause) {
+				// Log only the recovery error here: performShutdown logs the original
+				// failure once when this rethrow reaches it, so logging it here too
+				// would print the same line twice (#6144 review).
+				supervisorLog(
+					`shutdown recovery failed for host child pid ${pid ?? "unknown"}: ${errorMessage(reapCause)}`,
+				);
+			}
+		}
 		throw cause;
 	}
 }

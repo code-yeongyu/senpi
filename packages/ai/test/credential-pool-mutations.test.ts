@@ -432,7 +432,9 @@ describe("provider-managed sentinel slot repair", () => {
 			repairManagedSentinelSlots("anthropic-subscription", { type: "oauth", access: "a", refresh: "r", expires: 1 }),
 		).toBe(undefined);
 	});
+});
 
+describe("credential pool refresh", () => {
 	test("mergeRefreshed updates the primary slot even when top-level access was desynced (senpi#3407)", () => {
 		const desynced: PooledCredential = {
 			type: "oauth",
@@ -449,26 +451,26 @@ describe("provider-managed sentinel slot repair", () => {
 			access: "fresh-access",
 			refresh: "fresh-refresh",
 			expires: 200,
+			clientId: "fresh-client",
 		};
-		const merged = mergeRefreshed(desynced, refreshed) as PooledCredential & {
-			access?: string;
-			refresh?: string;
-			expires?: number;
-		};
+		const merged = mergeRefreshed(desynced, refreshed) as PooledCredential;
+		if (merged.type !== "oauth") throw new Error("expected OAuth credentials");
 		expect(merged.access).toBe("fresh-access");
 		expect(merged.refresh).toBe("fresh-refresh");
 		expect(merged.expires).toBe(200);
 		expect(merged.accounts?.[0]?.access).toBe("fresh-access");
 		expect(merged.accounts?.[0]?.refresh).toBe("fresh-refresh");
 		expect(merged.accounts?.[0]?.expires).toBe(200);
+		expect(merged.clientId).toBe("fresh-client");
+		expect(merged.accounts?.[0]?.clientId).toBe("fresh-client");
 		expect(merged.accounts?.[1]?.access).toBe("sec-access");
 	});
 
 	test("mergeRefreshedSlot keeps flat projection and primary slot in sync when rotating primary slot (senpi#3407)", () => {
 		const pooled: PooledCredential = {
 			type: "oauth",
-			access: "old-access",
-			refresh: "old-refresh",
+			access: "desynced-access",
+			refresh: "desynced-refresh",
 			expires: 100,
 			accounts: [
 				{ name: "default", source: "login", access: "old-access", refresh: "old-refresh", expires: 100 },
@@ -481,12 +483,34 @@ describe("provider-managed sentinel slot repair", () => {
 			refresh: "fresh-refresh",
 			expires: 200,
 		};
-		const merged = mergeRefreshedSlot(pooled, "default", refreshed) as PooledCredential & {
-			access?: string;
-			refresh?: string;
-			expires?: number;
-		};
+		const merged = mergeRefreshedSlot(pooled, "default", refreshed) as PooledCredential;
+		if (merged.type !== "oauth") throw new Error("expected OAuth credentials");
 		expect(merged.access).toBe("fresh-access");
+		expect(merged.accounts?.[0]?.access).toBe("fresh-access");
+		expect(merged.accounts?.[1]?.access).toBe("sec-access");
+	});
+
+	test("refreshing the primary slot preserves a flat projection of another slot", () => {
+		const pooled: PooledCredential = {
+			type: "oauth",
+			access: "sec-access",
+			refresh: "sec-refresh",
+			expires: 100,
+			accounts: [
+				{ name: "default", source: "login", access: "old-access", refresh: "old-refresh", expires: 100 },
+				{ name: "secondary", source: "login", access: "sec-access", refresh: "sec-refresh", expires: 100 },
+			],
+		};
+		const refreshed: Credential = {
+			type: "oauth",
+			access: "fresh-access",
+			refresh: "fresh-refresh",
+			expires: 200,
+		};
+		const merged = mergeRefreshedSlot(pooled, "default", refreshed) as PooledCredential;
+		if (merged.type !== "oauth") throw new Error("expected OAuth credentials");
+		expect(merged.access).toBe("sec-access");
+		expect(merged.refresh).toBe("sec-refresh");
 		expect(merged.accounts?.[0]?.access).toBe("fresh-access");
 		expect(merged.accounts?.[1]?.access).toBe("sec-access");
 	});

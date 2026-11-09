@@ -95,6 +95,7 @@ describe("model usability budget", () => {
 		// #1678: the restored default grep, rebuilt on the engine contract, adds 240
 		// schema units. D-15: the adopted structured bash result declares its
 		// `outputSchema` on the tool, which the tool estimate counts (+134 units).
+		// senpi#5998: the corrected grep and read descriptions state their real limits (+141 units).
 		// Assert the machine projection rather than pinning the human-readable
 		// error sentence.
 		expect(error.projection).toMatchObject({
@@ -102,14 +103,14 @@ describe("model usability budget", () => {
 			contextWindow: 16_000,
 			liveContextTokens: 0,
 			systemPromptTokens: 1,
-			activeToolSchemaTokens: 1_132,
+			activeToolSchemaTokens: 1_273,
 			outputReserveTokens: 4_000,
 			compactionReserveTokens: 16_384,
 			speculationLeadTokens: 8_192,
 			safetyMarginTokens: 8_192,
 			safetyMarginProfile: "default",
-			requiredTokens: 37_901,
-			shortfallTokens: 21_901,
+			requiredTokens: 38_042,
+			shortfallTokens: 22_042,
 			usable: false,
 		});
 	});

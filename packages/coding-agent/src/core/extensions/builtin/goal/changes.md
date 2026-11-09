@@ -1,3 +1,137 @@
+## 2026-11-08 - A Stop-held session pauses its goal and freezes the elapsed counter (senpi#6172)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: the goal extension now handles `session_hold_changed`.
+  - On `paused`, an idle active goal closes its accounting window at the Stop, is marked Stop-paused, and switches to `paused`.
+  - On `resumed`, a Stop-paused goal goes back to `active` and opens a new window.
+  - `session_start` pauses a goal reopened under a live Stop. A goal the live Stop paused (a crashed run reopened under a Stop included) skips the resume prompt and resumes with the session.
+  - `agent_end` pauses an active goal when a Stop is live even though the turn did not abort.
+- `packages/coding-agent/src/core/extensions/builtin/goal/stop-pause.ts`: `stopHoldLive` also counts `inherited_hold`.
+
+### Why
+
+- A Stop on an idle session emits no `session_abort`, so the goal stayed `active`. The footer kept counting `Pursuing goal (…)` while the session was paused, and the next turn committed the paused window into `timeUsedSeconds`.
+
+### Why an extension could not handle it
+
+- This is the goal builtin extension itself; the fix uses the existing `session_hold_changed` extension event.
+
+### Expected merge conflict zones
+
+- LOW: `goal/index.ts` `agent_end` and `session_start` handlers; `goal/stop-pause.ts` `stopHoldLive`.
+
+## 2026-11-05 - Resuming a session whose process died mid-goal asks before the goal continues (senpi#5755)
+
+### What changed
+
+- `index.ts` `session_start`: on a `resume`, or a `startup` that opens the saved session (`--continue`, `--session`), with UI, an `active` goal whose session reopened over an interrupted run (the `interrupted-run` hold, no stale stop) is stopped through `pauseOrBlockOnUserAbort`, the same path a quit-time abort takes. The existing `Resume blocked goal?` prompt then asks before any continuation runs; a startup that stopped the goal this way takes the same prompt. An RPC session binds a UI context, so it is stopped the same way, but RPC never shows that prompt (switch_session cannot answer a nested select while it binds): the goal stays `blocked`, a client resume of the interrupted run answers one turn with no goal continuation, and the client resumes the goal explicitly.
+- `stop-pause.ts`: `interruptedRunHeld(ctx)` reads the session's `interrupted-run` hold.
+
+### Why
+
+- senpi#5755: a killed or crashed process never ran the quit-time abort, so the goal stayed `active`. Its continuation sat as a held wake that the person's first message released, and hidden goal continuations followed that message without asking.
+
+### Why an extension could not handle it
+
+- This is the goal extension itself.
+
+### Expected merge conflict zones
+
+- LOW: the goal read at the top of the `session_start` handler in `index.ts`.
+
+## 2026-10-30 - Goal parks until the soonest reset after an exhausted fallback ladder (senpi#3709)
+
+### What changed
+
+- `monitor-continuation.ts` `afterAgentSettled(fallbackExhausted)`: on a limit-exhausted ladder the generic provider recovery is replaced. With a `resumeAt`, the goal arms one `providerRetry` wait for that time (or the 1 s margin when it already passed); without one, it arms nothing and stays parked until input. Outage-only exhaustion retains immediate first recovery and the existing 15 s to 30 min backoff.
+- `provider-retry.ts` `exhaustedLadderResumeDelayMs`: waits until `resumeAt` + 1 s, skips the 6 h wake cap, and is clamped to the timer maximum.
+- `index.ts` passes `event.fallbackExhausted` to `afterAgentSettled`.
+
+### Why
+
+- senpi#3709: after exhaustion the goal either resumed at once into the same limits or never resumed.
+
+### Why an extension could not handle it
+
+- The change is inside this builtin extension, driven by the new `agent_settled` field.
+
+### Expected merge conflict zones
+
+- LOW: `afterAgentSettled` in `monitor-continuation.ts`; the provider-retry delay helpers.
+
+## 2026-10-30 - Goal parks on a provider limit with one notice; refused turns are not stalls (senpi#3975)
+
+### What changed
+
+- `monitor-continuation.ts`: a provider-retry park with a known resume time notifies once ("Goal paused until <local time> (<ISO>) ..."). A turn whose last assistant message ended in an error neither counts toward nor clears the toolless stall streak.
+
+### Why
+
+- senpi#3975: refused turns while every credential was limited injected `<goal_stall_check>` after three blocks, and the park was silent.
+
+### Why an extension could not handle it
+
+- This is the goal extension itself.
+
+### Expected merge conflict zones
+
+- LOW: `afterAgentEnd` around `#recordToollessContinuationTurn`, and the provider-retry branch of `afterAgentSettled`.
+
+## 2026-10-27 - get_goal is search-exposed (senpi#4454)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/tool-registration.ts`: `get_goal` is deferred to by-name activation through the tool search; `create_goal` and `update_goal` stay active.
+
+### Why
+
+- Each deferred tool leaves the first request's tool list and system prompt, so every request carries fewer tool-schema tokens (senpi#4454).
+
+### Why an extension could not handle it
+
+- This builtin owns its tool registration.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/goal/tool-registration.ts`.
+
+## 2026-10-26 - Request-level refusals retain goal recovery (senpi#2491)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/terminal-provider-error.ts`: exclude runtime-marked request-level auth refusals from terminal credential failures; retain the normal provider recovery continuation.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/terminal-provider-error.ts`: a request refusal must not block an active goal with contradictory login guidance.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/terminal-provider-error.ts`: this goal builtin owns terminal auth classification and automatic recovery.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/goal/terminal-provider-error.ts` `terminalProviderAuthFailure` guard.
+
+## 2026-10-26 - Goal retries exclude refused calls (senpi#4321)
+
+### What changed
+
+- `prompt.ts`: the no-progress check, which says retries are unbounded and to change the source, namespace, tool or assumption each time, now says that a permission denial, a refusal by the user or a rule block is final for that intent. The model asks the user or leaves that part out. The GPT-6 Astra prompt carries the same sentence.
+
+### Why
+
+- An unattended goal read "change the tool each time" as covering refusals, so a denied call could be retried another way.
+
+### Why an extension could not handle it
+
+- The continuation prompt is this builtin's own text.
+
+### Expected merge conflict zones
+
+- `buildContinuationPrompt` and `buildGpt6AstraContinuationPrompt` line lists.
+
 ## 2026-10-25 - Report the todo backstop outcome to the lifecycle (senpi#3864)
 
 ### What changed

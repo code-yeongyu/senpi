@@ -1,13 +1,17 @@
+import { statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { realpathWithoutOpen } from "../../../../utils/paths.ts";
+import { resolveToCwd } from "../../../tools/path-utils.ts";
 import type { ToolInfo } from "../../types.ts";
 import { extractPatchedPaths } from "../gpt-apply-patch/index.ts";
+import { resolvePatchPath } from "../gpt-apply-patch/workspace.ts";
 import { BashArity } from "../permission-system/arity.ts";
 import { analyzeBashCommand, bestEffortCommandLines } from "../permission-system/bash-command-segments.ts";
 import {
 	type AlwaysScope,
+	expandHome,
 	extractExternalPaths,
-	isExternalPath,
+	resolveExternalPath,
 	toParentDirectoryPattern,
 } from "../permission-system/external-dir.ts";
 import type { Request } from "../permission-system/types.ts";
@@ -16,9 +20,15 @@ import { urlOriginAlias, widerAlwaysScope } from "./always-scope.ts";
 import { parseReadPermission } from "./read-permission.ts";
 
 /** Simplified permission request without ID/session metadata */
-export type PermissionRequest = Pick<Request, "permission" | "patterns" | "always" | "widerAlways"> & {
+export type PermissionRequest = Pick<
+	Request,
+	"permission" | "patterns" | "always" | "widerAlways" | "originalPaths"
+> & {
 	readonly autoApproveAsk?: true;
+	/** Absolute external lexical spellings restrict the resolved decision; other aliases share rule order. */
 	readonly ruleAliases?: readonly string[];
+	/** The strings the tool opens for its path-class request, matched literally and by file identity (design 6.2). */
+	readonly executed?: readonly string[];
 };
 
 /** Parser function that extracts permission requests from tool input */
@@ -42,7 +52,11 @@ function fallbackPermissionRequest(permission: string): PermissionRequest {
  * to the preset, not to its actual arg), so the fallback derives the target from the tool's
  * meaningful arg — path, command, url, or input — and keeps `*` only for a truly arg-less call.
  */
-function fallbackPermissionRequestFor(toolName: string, input: Record<string, unknown>): PermissionRequest {
+function fallbackPermissionRequestFor(
+	toolName: string,
+	input: Record<string, unknown>,
+	cwd: string,
+): PermissionRequest {
 	const found = getStringEntry(input, "path", "file_path", "command", "url", "input", "pattern", "filePath");
 	if (found === undefined) return fallbackPermissionRequest(toolName);
 	const [argKey, arg] = found;
@@ -53,11 +67,13 @@ function fallbackPermissionRequestFor(toolName: string, input: Record<string, un
 	// A URL is also matched as its canonical origin, so a domain grant (a literal origin) applies to
 	// every spelling of that origin; rules on the raw URL, a deny included, still match the raw URL.
 	const originAlias = argKey === "url" ? urlOriginAlias(arg) : undefined;
+	const pathArg = argKey === "path" || argKey === "file_path" || argKey === "filePath";
 	return {
 		permission: toolName,
 		patterns: [arg],
 		always: [arg],
 		...(originAlias === undefined ? {} : { ruleAliases: [arg, originAlias] }),
+		...(pathArg ? { executed: [resolveToCwd(arg, cwd)] } : {}),
 		...(widerAlways ? { widerAlways } : {}),
 	};
 }
@@ -84,23 +100,88 @@ function parseFilePath(input: Record<string, unknown>): string | undefined {
 	return getString(input, "path", "file_path");
 }
 
+/**
+ * The paths a tool may actually open for one raw argument. The `external_directory` check must
+ * classify exactly these, never the raw text, or a spelling the tool normalizes away (`@`,
+ * `file://`, Unicode spaces, Windows shell drives) slips past the check (senpi#4311).
+ */
+type TargetResolver = (rawPath: string, cwd: string) => readonly string[];
+
+/** The raw argument as written: tools that resolve with a plain `path.resolve` (monitor). */
+const rawTarget: TargetResolver = (rawPath) => [rawPath];
+
+/** write/edit/ls/find/glob open `resolveToCwd(raw, cwd)`. */
+const toolTarget: TargetResolver = (rawPath, cwd) => [resolveToCwd(rawPath, cwd)];
+
+/** apply_patch writes `resolvePatchPath(cwd, path)` for every patch-body path. */
+const patchTarget: TargetResolver = (rawPath, cwd) => [resolvePatchPath(cwd, rawPath)];
+
+/**
+ * A registration with no known tool implementation: the union of the old (raw) and new (resolved)
+ * readings, so no prompt that existed before disappears.
+ */
+const unknownToolTarget: TargetResolver = (rawPath, cwd) => [rawPath, resolveToCwd(rawPath, cwd)];
+
+/** Match grep's pathStat: only ENOENT permits selector fallback; other I/O errors block the call. */
+function grepPathStat(path: string) {
+	try {
+		return statSync(path);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+		throw error;
+	}
+}
+
+/**
+ * Match tools/grep/index.ts: an existing literal name wins; only a missing name with a file
+ * prefix is a selector. Probe synchronously because the final dispatch fence cannot yield.
+ * Ordinary paths need no selection probe (senpi#4316).
+ */
+const grepTarget: TargetResolver = (rawPath, cwd) => {
+	const resolved = resolveToCwd(rawPath, cwd);
+	const selector = /^(.*):L(\d+)-L?(\d+)$/.exec(resolved);
+	if (!selector || grepPathStat(resolved)) return [resolved];
+	return grepPathStat(selector[1])?.isFile() ? [selector[1]] : [resolved];
+};
+
 function withExternalDirectoryRequests(
 	requests: PermissionRequest[],
-	paths: string[],
+	paths: readonly string[],
 	cwd: string,
 	scope: AlwaysScope,
+	resolveTarget: TargetResolver,
 ): PermissionRequest[] {
-	const externalPaths = paths.filter((inputPath) => isExternalPath(inputPath, cwd));
+	// Classify the paths the tool opens (senpi#4316), each through the canonical spelling walk (senpi#4351).
+	const opened = paths.flatMap((inputPath) =>
+		resolveTarget(inputPath, cwd).flatMap((openedPath) => {
+			const target = resolveExternalPath(openedPath, cwd);
+			return target === undefined ? [] : [{ inputPath, openedPath, target }];
+		}),
+	);
+	// One pattern per canonical target, but every opened spelling keeps its lexical alias, so a rule on
+	// a second spelling of the same target still decides the call (senpi#4316).
+	const seen = new Set<string>();
+	const externalPaths = opened.filter(({ target }) => !seen.has(target) && seen.add(target));
 	if (externalPaths.length === 0) {
 		return requests;
 	}
+	const ruleAliases = uniq(
+		opened.flatMap(({ openedPath, target }) => {
+			const lexical = resolve(cwd, expandHome(openedPath));
+			return lexical === target ? [] : [lexical];
+		}),
+	);
 
 	return [
 		...requests,
 		{
 			permission: "external_directory",
-			patterns: externalPaths,
-			always: externalPaths.map((externalPath) => toParentDirectoryPattern(externalPath, scope)),
+			patterns: externalPaths.map(({ target }) => target),
+			always: externalPaths.map(({ inputPath, target }) => toParentDirectoryPattern(target, scope, inputPath)),
+			...(ruleAliases.length ? { ruleAliases } : {}),
+			...(externalPaths.some(({ inputPath, target }) => inputPath !== target)
+				? { originalPaths: externalPaths.map(({ inputPath }) => inputPath) }
+				: {}),
 		},
 	];
 }
@@ -150,6 +231,13 @@ function bashCommandRequests(command: string): PermissionRequest[] {
 			always: rememberable(prefixes).flatMap((prefix) => [prefix, `${prefix} *`]),
 		},
 	];
+}
+
+/** The complete bash tool parse, including external-directory requests. */
+function bashPermissionRequests(command: string, cwd: string): PermissionRequest[] {
+	const requests = bashCommandRequests(command);
+	const externalPaths = extractExternalPaths(command, cwd);
+	return withExternalDirectoryRequests(requests, externalPaths, cwd, "file", rawTarget);
 }
 
 /** The `eval` class a cell carries on its own, used when its tool-owned parser names anything narrower. */
@@ -212,7 +300,7 @@ export class ParserRegistry {
 	parse(toolName: string, input: Record<string, unknown>, cwd: string): PermissionRequest[] {
 		const parser = this.parsers.get(toolName);
 		if (!parser) {
-			return [fallbackPermissionRequestFor(toolName, input)];
+			return [fallbackPermissionRequestFor(toolName, input, cwd)];
 		}
 		return parser(toolName, input, cwd);
 	}
@@ -234,17 +322,7 @@ export function createBuiltinParserRegistry(): ParserRegistry {
 				return [fallbackPermissionRequest("bash")];
 			}
 
-			const requests = bashCommandRequests(command);
-			const externalPaths = extractExternalPaths(command, cwd);
-			if (externalPaths.length > 0) {
-				requests.push({
-					permission: "external_directory",
-					patterns: externalPaths,
-					always: externalPaths.map((externalPath) => toParentDirectoryPattern(externalPath, "file")),
-				});
-			}
-
-			return requests;
+			return bashPermissionRequests(command, cwd);
 		};
 
 	registry.register("bash", parseBashLikePermission("command"));
@@ -257,10 +335,11 @@ export function createBuiltinParserRegistry(): ParserRegistry {
 			// performs the authoritative access check and re-derives the parent the same way.
 			setApprovedMonitorParent(input, realpathWithoutOpen(dirname(resolve(cwd, path))));
 			return withExternalDirectoryRequests(
-				[{ permission: "read", patterns: [path], always: [path] }],
+				[{ permission: "read", patterns: [path], always: [path], executed: [resolve(cwd, path)] }],
 				[path],
 				cwd,
 				"file",
+				rawTarget,
 			);
 		}
 		return parseBashLikePermission("command")(toolName, input, cwd);
@@ -270,20 +349,23 @@ export function createBuiltinParserRegistry(): ParserRegistry {
 		return [fallbackPermissionRequest("edit")];
 	};
 
-	const parseEditPermission: ToolPermissionParser = (_toolName, input, cwd) => {
+	const parseEditPermission: ToolPermissionParser = (toolName, input, cwd) => {
 		const filePath = parseFilePath(input);
 		if (filePath) {
+			const resolveTarget = toolName === "edit" || toolName === "write" ? toolTarget : unknownToolTarget;
 			return withExternalDirectoryRequests(
 				[
 					{
 						permission: "edit",
 						patterns: [filePath],
 						always: [filePath],
+						executed: [toolTarget(filePath, cwd)[0] ?? filePath],
 					},
 				],
 				[filePath],
 				cwd,
 				"file",
+				resolveTarget,
 			);
 		}
 
@@ -301,9 +383,10 @@ export function createBuiltinParserRegistry(): ParserRegistry {
 			permission: "edit",
 			patterns: [patchedPath],
 			always: [patchedPath],
+			executed: patchTarget(patchedPath, cwd),
 		}));
 
-		return withExternalDirectoryRequests(editRequests, patchedPaths, cwd, "file");
+		return withExternalDirectoryRequests(editRequests, patchedPaths, cwd, "file", patchTarget);
 	};
 
 	registry.register("edit", parseEditPermission);
@@ -314,21 +397,34 @@ export function createBuiltinParserRegistry(): ParserRegistry {
 	registry.register("read", parseReadPermission);
 
 	registry.register("grep", (_toolName, input, cwd) => {
-		const searchPath = getString(input, "path");
+		// grep's `path` is a string or an array of strings, and the tool searches every element.
+		const rawPath = input.path;
+		const searchPaths =
+			typeof rawPath === "string"
+				? [rawPath]
+				: Array.isArray(rawPath)
+					? rawPath.filter((entry): entry is string => typeof entry === "string")
+					: [];
 		const pattern = getString(input, "pattern");
-		const permissionPattern = searchPath ?? pattern;
-		if (!permissionPattern) {
+		const permissionPatterns = searchPaths.length > 0 ? searchPaths : pattern ? [pattern] : [];
+		if (permissionPatterns.length === 0) {
 			return [fallbackPermissionRequest("grep")];
 		}
 
+		// The regex form sets no executed path and gets no identity route (M6).
 		const grepRequests: PermissionRequest[] = [
 			{
 				permission: "grep",
-				patterns: [permissionPattern],
+				patterns: permissionPatterns,
 				always: ["*"],
+				...(searchPaths.length > 0
+					? { executed: searchPaths.flatMap((searchPath) => grepTarget(searchPath, cwd)) }
+					: {}),
 			},
 		];
-		return searchPath ? withExternalDirectoryRequests(grepRequests, [searchPath], cwd, "directory") : grepRequests;
+		return searchPaths.length > 0
+			? withExternalDirectoryRequests(grepRequests, searchPaths, cwd, "directory", grepTarget)
+			: grepRequests;
 	});
 
 	const listParser: ToolPermissionParser = (_toolName, input, cwd) => {
@@ -339,11 +435,13 @@ export function createBuiltinParserRegistry(): ParserRegistry {
 					permission: "list",
 					patterns: [searchPath],
 					always: [searchPath],
+					executed: toolTarget(searchPath, cwd),
 				},
 			],
 			[searchPath],
 			cwd,
 			"directory",
+			toolTarget,
 		);
 	};
 

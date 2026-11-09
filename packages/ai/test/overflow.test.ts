@@ -297,39 +297,23 @@ describe("isContextOverflow", () => {
 		expect(isContextOverflow(message, 200000)).toBe(false);
 	});
 
-	it("does not treat TPM quota wording as overflow even with overflow-looking phrasing", () => {
-		const message = createErrorMessage("TPM limit exceeded: too many tokens");
-		expect(isContextOverflow(message, 200000)).toBe(false);
-	});
+	it.each([
+		["TPM quota wording", "TPM limit exceeded: too many tokens"],
+		["RPM quota wording", "RPM limit exceeded: too many tokens"],
+		["quota exceeded", "Quota exceeded: too many tokens in the last minute"],
+		["retry-after token quota wording", "Too many tokens. Retry after 10 seconds"],
+		["HTTP 429 prefixes", "429 Too many tokens"],
+		["status code 429", "Request failed with status code 429: too many tokens"],
+		["overloaded errors", "The model is overloaded. Too many tokens."],
+	])("does not treat %s as overflow even with overflow-looking phrasing", (_label, errorMessage) => {
+		// given
+		const message = createErrorMessage(errorMessage);
 
-	it("does not treat RPM quota wording as overflow even with overflow-looking phrasing", () => {
-		const message = createErrorMessage("RPM limit exceeded: too many tokens");
-		expect(isContextOverflow(message, 200000)).toBe(false);
-	});
+		// when
+		const overflow = isContextOverflow(message, 200000);
 
-	it("does not treat quota exceeded as overflow even with overflow-looking phrasing", () => {
-		const message = createErrorMessage("Quota exceeded: too many tokens in the last minute");
-		expect(isContextOverflow(message, 200000)).toBe(false);
-	});
-
-	it("does not treat retry-after token quota wording as overflow even with overflow-looking phrasing", () => {
-		const message = createErrorMessage("Too many tokens. Retry after 10 seconds");
-		expect(isContextOverflow(message, 200000)).toBe(false);
-	});
-
-	it("does not treat HTTP 429 prefixes as overflow even with overflow-looking phrasing", () => {
-		const message = createErrorMessage("429 Too many tokens");
-		expect(isContextOverflow(message, 200000)).toBe(false);
-	});
-
-	it("does not treat status code 429 as overflow even with overflow-looking phrasing", () => {
-		const message = createErrorMessage("Request failed with status code 429: too many tokens");
-		expect(isContextOverflow(message, 200000)).toBe(false);
-	});
-
-	it("does not treat overloaded errors as overflow even with overflow-looking phrasing", () => {
-		const message = createErrorMessage("The model is overloaded. Too many tokens.");
-		expect(isContextOverflow(message, 200000)).toBe(false);
+		// then
+		expect(overflow).toBe(false);
 	});
 
 	function createLengthStopMessage(options: {

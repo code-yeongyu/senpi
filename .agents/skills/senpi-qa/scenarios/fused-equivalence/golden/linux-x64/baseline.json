@@ -1,0 +1,25 @@
+{
+ "repo": {
+  "head": "5b6943e7e6e7c2c7e68151570909071ae1c9168c",
+  "dirty": false
+ },
+ "platform": "linux-x64",
+ "runtimes": {
+  "harness": "node@24.22.0",
+  "child": "bun@1.4.4"
+ },
+ "hashes": {
+  "harness": "sha256:7e0de6f104f2b0a7e7606b4742381e1af7e89729d84cf0b7ed38e2d64e30411d",
+  "normalizer": "sha256:84514c2fcc12276a4ff77acbbee2903ab61a040de09f87bf7650ca74d1c5fa7e",
+  "fakeModelServer": "sha256:cab5b6866b7854287218de51d1fafcc242a8602b2c83fb85572abe332f9f6560",
+  "cases": "sha256:059b695a0e192da0400b8dca6f91acf90e525b0d74c1d132cc06f1aeb7240683",
+  "fixtures": "sha256:406b03cc838ea251953667f945a0bc821242c6d378bfb290fbbf76402890fc7e"
+ },
+ "command": "node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --record --placement fused --cases E01,E04,E09,E12,E14,E17 --leave-unrecorded E13,E05,E29,E08,E15,E03,E19,E18,E02,E20,E16,E27,E07,E11,E10,E06,E26,E30 --evidence b0g-record",
+ "hostPin": {
+  "cpuModel": "EQ-Synthetic CPU",
+  "cores": 997,
+  "kernel": "Linux 0.0.0-eq-synthetic",
+  "repoRoot": "/eq-synthetic/checkout"
+ }
+}

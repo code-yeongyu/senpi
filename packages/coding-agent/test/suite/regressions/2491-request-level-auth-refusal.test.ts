@@ -50,7 +50,13 @@ describe("senpi#2491 request-level auth refusal", () => {
 
 		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-1"]);
 		expect(fallbackTargets(harness)).toEqual([]);
-		expect(lastFailure(harness)).toMatchObject({ category: "request_refused", provider: "faux", httpStatus: 401 });
+		// senpi#4328: request-level refusal retains the failing request's model identity too.
+		expect(lastFailure(harness)).toMatchObject({
+			category: "request_refused",
+			provider: "faux",
+			model: "faux-1",
+			httpStatus: 401,
+		});
 		expect(harness.session.state.messages.at(-1)).toMatchObject({ errorMessage: GATEWAY_TEXT });
 	});
 

@@ -22,7 +22,7 @@ describe("openai-images builtin registry", () => {
 		vi.resetModules();
 	});
 
-	it.each(["gpt-image-2.5-sunburst", "gpt-image-2.5-flare"] as const)(
+	it.each(["gpt-image-2.6-sunburst", "gpt-image-2.6-flare", "gpt-image-2.5-sunburst", "gpt-image-2.5-flare"] as const)(
 		"registers %s with editing and pricing",
 		(id) => {
 			expect(IMAGE_MODELS.openai).toHaveProperty([id]);

@@ -1,5 +1,67 @@
 # cursor-cli-oauth extension changes
 
+## 2026-11-05 - A refused account pool carries a typed diagnostic (senpi#4092)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/cursor-cli-oauth/provider-diagnostic.ts` (new): `cursorCliDiagnostic`
+  maps an `AllCursorAccountsBlockedError` (itself or as a `cause`) to `account_pool_blocked` (`rate_limit`, `resetsAt`
+  = soonest expiry) or `account_pool_auth_blocked` (`auth`, no expiry); anything else maps to none.
+- `packages/coding-agent/src/core/extensions/builtin/cursor-cli-oauth/stream.ts`: the turn's error path attaches that
+  diagnostic to the failed message.
+
+### Why
+
+- The Cursor lane was the only multi-account lane whose pool refusal was English text only; the goal retry and RPC
+  clients had to parse it to learn why and until when.
+- User-visible effect: an `auth` diagnostic is what the goal's terminal auth check reads (`goal/terminal-provider-error.ts`),
+  so a goal on a Cursor pool where every account needs a new login stops as blocked on sign-in instead of retrying.
+
+### Why an extension could not handle it
+
+- This is the extension; the change stays inside it.
+
+### Expected merge conflict zones
+
+- LOW: the `catch` block of the turn loop in `stream.ts`.
+
+## 2026-10-27 - Account imports and the native first-run copy stamp a login id (senpi#4099)
+
+### What changed
+
+- `account-command.ts`: `/cursor-account import local|native` stores the updated credential through `stampLogin`, like a login.
+- `native-bootstrap.ts`: the first-run copy of the native `cursor` login into the managed `native` slot stores it through `stampLogin`. The branches that leave an existing credential alone write nothing new and stamp nothing.
+
+### Why
+
+- Both paths add a signed-in account but wrote through `modify` without a login id, so a session that a billing failure had pinned to a fallback never saw them as a sign-in and stayed on the fallback (senpi#4099).
+
+### Why an extension could not handle it
+
+- These are this lane's own account-add writes.
+
+### Expected merge conflict zones
+
+- The `modify` callback in `importAccount` (`account-command.ts`) and in `bootstrapNativeCredential` (`native-bootstrap.ts`).
+
+## 2026-10-29 - Account selection uses the shared slot-block predicate (senpi#4885)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/cursor-cli-oauth/affinity.ts`: the private `isBlocked` copy is removed; `selectAccount` calls `isSlotBlocked` from `@earendil-works/pi-ai/auth/pool/select`. Behavior is unchanged (`auth_error` persists until re-login, other blocks until their deadline).
+
+### Why
+
+- The account listing now asks the same predicate, so selection and listing cannot drift again (senpi#4365 follow-up).
+
+### Why an extension could not handle it
+
+- The predicate is this builtin lane's own selection rule.
+
+### Expected merge conflict zones
+
+- LOW: the import line and `selectUnblocked` in `affinity.ts`.
+
 ## 2026-10-22 - The lane is the only owner of account selection (senpi#2081)
 
 ### What changed

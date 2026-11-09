@@ -1,5 +1,3 @@
-import { clearHandoverParkedSession } from "./host-handover-parked.ts";
-
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
 import { RPC_ERROR_UNKNOWN_SESSION } from "./rpc-types.ts";
 
@@ -9,6 +7,31 @@ import { forgetSessionOwnership, releaseOwnerAttachment } from "./session-router
 import type { RouterContext } from "./session-router-context.ts";
 import { code, error } from "./session-router-errors.ts";
 import { stopSweep } from "./session-router-occupancy.ts";
+import { clearRetainedRecord, recordRetainedSession } from "./session-router-residency.ts";
+import type { RpcSessionEntry } from "./session-registry-types.ts";
+
+/** How long a stop lets a cut turn settle before its teardown proceeds anyway: the default close grace. */
+const HOST_SHUTDOWN_ABORT_BOUND_MS = 10_000;
+
+/** Ends the running turn as a host shutdown (senpi#6190), bounded so a run its abort cannot release never holds the stop. */
+async function abortForHostShutdownWithin(sessionId: string, entry: RpcSessionEntry | undefined): Promise<void> {
+	// Async wrapper: a session that throws synchronously still only fails its own abort, never the whole stop.
+	const aborting = (async () => {
+		await entry?.runtime?.session.abortForHostShutdown();
+	})().catch((cause: unknown) => {
+		process.stderr.write(`senpi rpc host shutdown abort ${sessionId} failed: ${String(cause)}\n`);
+	});
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const bound = new Promise<void>((resolve) => {
+		timer = setTimeout(resolve, HOST_SHUTDOWN_ABORT_BOUND_MS);
+		timer.unref?.();
+	});
+	try {
+		await Promise.race([aborting, bound]);
+	} finally {
+		clearTimeout(timer);
+	}
+}
 import type { CloseClaimOptions } from "./session-router-types.ts";
 
 /**
@@ -77,10 +100,10 @@ export async function close(
 		if (owner !== undefined) releaseOwnerAttachment(host, owner, command.sessionId);
 		if (claim.finalizer) {
 			// An explicit close ends the session for good: drop any handover-parked record entry, or
-			// the session would come back on the next host start (MEDIUM-1, senpi#3282 review).
-			const entry = host.registry.peek(command.sessionId);
-			if (host.handoverParkedDir !== undefined && entry?.sessionPath !== undefined)
-				await clearHandoverParkedSession(host.handoverParkedDir, entry.sessionPath).catch(() => {});
+			// the session would come back on the next host start (MEDIUM-1, senpi#3282 review). Awaited only when a record
+			// exists, so a host without one starts the teardown in the same tick as the claim.
+			if (host.handoverParkedDir !== undefined)
+				await clearRetainedRecord(host, host.registry.peek(command.sessionId));
 			await finalizeClose(host, command.sessionId, host.bindings.get(command.sessionId), () =>
 				reply.complete(true, "client_close"),
 			);
@@ -112,7 +135,7 @@ export async function finalizeClose(
 	host.finalizations.set(sessionId, finalization);
 	try {
 		try {
-			await binding?.dispose();
+			await disposeWithinGrace(binding, host.registry.closeGraceMs, sessionId);
 		} catch (cause) {
 			process.stderr.write(`senpi rpc binding dispose for session ${sessionId} failed: ${String(cause)}\n`);
 		}
@@ -130,6 +153,35 @@ export async function finalizeClose(
 		finalization.resolve();
 		host.finalizations.delete(sessionId);
 	}
+}
+
+/**
+ * A binding's dispose may wait on the run: it lets the relocation answers that already exist reach their tool calls
+ * before the teardown aborts the run (senpi#5811). The close path's grace window bounds that wait, so a run held by
+ * something only its abort would release still closes; the teardown then aborts it as before (senpi#5903).
+ */
+async function disposeWithinGrace(
+	binding: RpcSessionBinding | undefined,
+	graceMs: number,
+	sessionId: string,
+): Promise<void> {
+	if (binding === undefined) return;
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const late = new Promise<"late">((resolve) => {
+		timer = setTimeout(() => resolve("late"), graceMs);
+	});
+	const disposed = binding.dispose().then(() => "disposed" as const);
+	try {
+		if ((await Promise.race([disposed, late])) === "disposed") return;
+	} finally {
+		clearTimeout(timer);
+	}
+	process.stderr.write(
+		`senpi rpc binding dispose for session ${sessionId} did not settle within ${graceMs} ms; closing anyway\n`,
+	);
+	disposed.catch((cause: unknown) =>
+		process.stderr.write(`senpi rpc binding dispose for session ${sessionId} failed: ${String(cause)}\n`),
+	);
 }
 
 export function createFinalization(): { promise: Promise<void>; resolve: () => void } {
@@ -176,17 +228,34 @@ export async function dispose(host: RouterContext): Promise<void> {
 	host.drainExitRequested = true;
 	stopSweep(host);
 	if (host.drainTimer !== undefined) clearInterval(host.drainTimer);
+	if (host.admissions) await host.admissions.dispose();
 	await Promise.all(
 		[...host.bindings.entries()].map(async ([sessionId, binding]) => {
+			const entry = host.registry.peek(sessionId);
+			// A retained session outlives this process: it parks under the transcript it is on now (its record stays
+			// for the next host on the endpoint, which reopens it) instead of closing, so attached clients do not read
+			// it as ended.
+			const parkedPath =
+				host.handoverParkedDir !== undefined && entry?.retainOnDisconnect === true
+					? (entry.runtime?.session.sessionFile ?? entry.sessionPath)
+					: undefined;
+			// Claimed before any await, like close(): the stop fences the session in the tick it starts.
 			const claim = tryClaimClose(host, sessionId, { drainAttachments: true });
 			if (!claim) return;
 			if (claim.finalizer) {
+				await abortForHostShutdownWithin(sessionId, entry);
+				if (entry !== undefined && parkedPath !== undefined)
+					await recordRetainedSession(host, entry, parkedPath, false).catch((cause: unknown) => {
+						process.stderr.write(`senpi rpc host shutdown park record ${sessionId} failed: ${String(cause)}\n`);
+					});
 				await finalizeClose(host, sessionId, binding, () =>
-					host.writer.closeSession(
-						sessionId,
-						{ type: "response", command: "close_session", success: true, data: {} },
-						"host_shutdown",
-					),
+					parkedPath !== undefined
+						? host.writer.parkSession(sessionId, parkedPath, "host_shutdown")
+						: host.writer.closeSession(
+								sessionId,
+								{ type: "response", command: "close_session", success: true, data: {} },
+								"host_shutdown",
+							),
 				);
 			} else await host.finalizations.get(sessionId)?.promise;
 			host.writer.forgetSession(sessionId);

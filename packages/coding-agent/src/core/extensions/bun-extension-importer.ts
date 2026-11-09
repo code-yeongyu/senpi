@@ -11,6 +11,7 @@ import {
 	rewriteCommonJsImport,
 } from "./bun-extension-commonjs.ts";
 import { ExtensionSourceError } from "./bun-extension-error.ts";
+import { loadSynchronously } from "./bun-extension-load-turns.ts";
 import { createPreparedSourceCache, type PreparedEdge, type PreparedSource } from "./bun-extension-prepared-cache.ts";
 import {
 	type CommonJsBody,
@@ -203,7 +204,7 @@ export function createBunExtensionImporter(
 			const id = graph.resolve(specifier, filename);
 			const evaluating = commonJsModules.get(id);
 			if (evaluating !== undefined) return evaluating.exports;
-			const result: { readonly default?: unknown } = nativeRequire(id);
+			const result: { readonly default?: unknown } = loadSynchronously(() => nativeRequire(id));
 			return commonJs.has(id) ? result.default : result;
 		},
 		evaluateCommonJs(filename: string, body: CommonJsBody): unknown {
@@ -259,7 +260,7 @@ export function createBunExtensionImporter(
 			// A package directory loads through its main or index file, as a native import does.
 			const entry = statSync(absolute).isDirectory() ? realpathSync(Bun.resolveSync(absolute, absolute)) : absolute;
 			const { id } = fileTarget(entry);
-			const module: { readonly default?: unknown } = await import(id);
+			const module: { readonly default?: unknown } = await registration.holdDuring(import(id));
 			const factory = module.default;
 			if (typeof factory !== "function") return factory;
 			// This wrapper is not stored in Bun's permanent module registry. A
@@ -273,7 +274,7 @@ export function createBunExtensionImporter(
 		async importNamespace(path: string): Promise<Record<string, unknown>> {
 			assertActive();
 			const { id } = fileTarget(realpathSync(resolve(path)));
-			return import(id);
+			return registration.holdDuring(import(id));
 		},
 		// Capture identity from the transpiler input, never from a later disk snapshot.
 		compiledSources(): ReadonlyMap<string, string> {

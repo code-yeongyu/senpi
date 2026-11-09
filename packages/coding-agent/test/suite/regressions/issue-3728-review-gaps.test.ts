@@ -36,7 +36,7 @@ function actorFixture() {
 		failure,
 		400,
 	);
-	actor.enableRecovery(() => () => []);
+	actor.enableRecovery(() => ({ empty: true, sessions: [], next: async () => undefined, release: () => {} }));
 	actor.enqueue('{"type":"agent_start"}\n');
 	return { actor, drain, writes, failure };
 }

@@ -1,7 +1,15 @@
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import { theme } from "../theme/theme.ts";
-import type { FooterRightForm, FooterSegment } from "./footer-layout.ts";
+import { elideHead, type FooterRightForm, type FooterSegment } from "./footer-layout.ts";
 import { keyText } from "./keybinding-hints.ts";
+
+/**
+ * Widest held-target id the floor form carries. With the running model's compact
+ * label, ` → `, this cap and ` (after compact)` the floor stays near 55 columns,
+ * which leaves an 80-column terminal the whole context meter (`321K/1M (32.1%)
+ * (auto)`), the number that explains why the switch is held (senpi#6120).
+ */
+const HELD_TARGET_FLOOR_COLUMNS = 14;
 
 /** One coloured run of the right side, in render order. */
 export type RightSideRun = {
@@ -42,6 +50,8 @@ export interface RightLabelInput {
 	readonly modelName: string;
 	readonly fastIndicator: string;
 	readonly routed: { readonly modelId: string; readonly thinkingLevel: string | undefined } | undefined;
+	/** A switch held until the next message compacts for it (senpi#1873): shown beside the running model (senpi#6092). */
+	readonly pending: { readonly modelId: string } | undefined;
 	readonly reasoning: boolean;
 	readonly thinkingLevel: string;
 	readonly providerPrefix: string;
@@ -67,6 +77,14 @@ function segmentFromRuns(runs: readonly RightSideRun[]): FooterSegment {
  * prefix while middle stats may still elide, then alone with pwd elision, down to
  * the same floor as before. The key hint therefore drops first, then the readable
  * label, then the provider; the model id and its level stay as long as they ever did.
+ *
+ * A held switch rides in every form as `→ <target> (after compact)`, right after
+ * the running model (and its level in the compact forms): the pick the user just
+ * made must be visible at once, so it is never the first thing the ladder drops.
+ * Below the compact form with the full target id sits one more rung, the floor,
+ * where the target id is head-elided to `HELD_TARGET_FLOOR_COLUMNS` and the
+ * `(after compact)` marker is kept whole, so a narrow terminal never shows a
+ * mid-id fragment and keeps its context meter.
  */
 export function buildRightLabel(input: RightLabelInput): RightLabel {
 	const modelRuns: RightSideRun[] = [
@@ -78,13 +96,25 @@ export function buildRightLabel(input: RightLabelInput): RightLabel {
 		routedRuns.push({ text: ` \u2192 ${input.routed.modelId}`, color: "accent" });
 		if (input.routed.thinkingLevel) routedRuns.push({ text: `:${input.routed.thinkingLevel}`, color: "dim" });
 	}
+	const heldRuns = (targetId: string): RightSideRun[] => [
+		{ text: " \u2192 ", color: "warning" },
+		{ text: targetId, color: "warning" },
+		{ text: " (after compact)", color: "muted" },
+	];
+	const pendingRuns: RightSideRun[] = input.pending ? heldRuns(input.pending.modelId) : [];
+	const elidedTarget = input.pending ? elideHead(input.pending.modelId, HELD_TARGET_FLOOR_COLUMNS) : undefined;
+	const pendingFloorRuns: RightSideRun[] =
+		input.pending && elidedTarget !== undefined && elidedTarget !== input.pending.modelId
+			? heldRuns(elidedTarget)
+			: pendingRuns;
 	const level = input.thinkingLevel || "off";
-	const compactRuns: RightSideRun[] = input.reasoning
-		? [...modelRuns, { text: `:${level}`, color: "dim" }, ...routedRuns]
-		: [...modelRuns, ...routedRuns];
+	const levelRuns: RightSideRun[] = input.reasoning ? [{ text: `:${level}`, color: "dim" }] : [];
+	const compactRuns: RightSideRun[] = [...modelRuns, ...levelRuns, ...routedRuns, ...pendingRuns];
+	const compactFloorRuns: RightSideRun[] = [...modelRuns, ...levelRuns, ...routedRuns, ...pendingFloorRuns];
 	const labelRuns: RightSideRun[] = [
 		...modelRuns,
 		...routedRuns,
+		...pendingRuns,
 		{ text: input.separator, color: "borderMuted" },
 		{ text: `effort ${level}`, color: "muted" },
 	];
@@ -100,8 +130,9 @@ export function buildRightLabel(input: RightLabelInput): RightLabel {
 	if (input.providerPrefix) {
 		richer.push({ ...segmentFromRuns([...providerRuns, ...compactRuns]), fitsWith: "middle-elision" });
 	}
-	const floor = segmentFromRuns(compactRuns);
+	if (pendingFloorRuns !== pendingRuns) richer.push(segmentFromRuns(compactRuns));
+	const floor = segmentFromRuns(compactFloorRuns);
 	const forms: [FooterRightForm, ...FooterRightForm[]] = [floor];
 	forms.unshift(...richer);
-	return { forms, floor, floorRuns: compactRuns };
+	return { forms, floor, floorRuns: compactFloorRuns };
 }

@@ -15,6 +15,12 @@ import type {
 	SessionStartEvent,
 } from "./extensions/index.ts";
 import { type ExtensionRunner, emitSessionShutdownEvent } from "./extensions/runner.ts";
+import {
+	applyClientPermissionMode,
+	clientNamedPreset,
+	markHostDefaultPresetFlag,
+	withClientPreset,
+} from "./permission-mode.ts";
 import type { CreateAgentSessionResult } from "./sdk.ts";
 import { assertSessionCwdExists } from "./session-cwd.ts";
 import type { SessionHolderEndpoint } from "./session-hold-errors.ts";
@@ -23,7 +29,7 @@ import { SessionManager } from "./session-manager.ts";
 import { reserveSessionWrite, unregisterSessionWriter } from "./session-write-reservation.ts";
 import type { SettingsManager } from "./settings-manager.ts";
 import { resetTimings, time } from "./timings.ts";
-import { ProjectTrustStore } from "./trust-manager.ts";
+import { getSavedProjectTrust, ProjectTrustStore } from "./trust-manager.ts";
 
 /**
  * Result returned by runtime creation.
@@ -43,6 +49,8 @@ export interface AgentSessionLaunchProfile {
 	/** Host-owned public endpoint evidence; never sourced from client session context. */
 	holderEndpoint?: SessionHolderEndpoint;
 	permissionPreset?: string;
+	/** `host_default`: `permissionPreset` is the host's own default (an embedder's host option), not a client's choice. */
+	permissionPresetSource?: "host_default";
 	creationModel?: { provider: string; modelId: string };
 	initialThinkingLevel?: string;
 	/**
@@ -68,6 +76,11 @@ export interface AgentSessionLaunchProfile {
 	 * another session on the host or the user's settings. Absent means the host's settings decide.
 	 */
 	retryFallback?: SessionRetryFallbackProfile;
+	/**
+	 * Per-session caller env (`open_session.env`, senpi#4381): the variables THIS session's tool
+	 * subprocesses see on top of the process environment. Never the host's own, never another session's.
+	 */
+	sessionEnv?: Readonly<Record<string, string>>;
 }
 
 /** The fallback policy one session runs with, chosen by its opener (e.g. a task child's own chain). */
@@ -172,6 +185,8 @@ export class AgentSessionRuntime {
 		this._diagnostics = _diagnostics;
 		this._modelFallbackMessage = _modelFallbackMessage;
 		this._launchProfile = launchProfile;
+		markHostDefaultPresetFlag(_session, launchProfile);
+		applyClientPermissionMode(_session, clientNamedPreset(launchProfile), { announce: false });
 		this._sessionHold = holdActiveSession(
 			_session.sessionManager,
 			wasFlushed(_session.sessionManager),
@@ -229,12 +244,15 @@ export class AgentSessionRuntime {
 	 * fork) keep it.
 	 */
 	setPermissionPreset(preset: string): void {
-		this._launchProfile = Object.freeze({ ...(this._launchProfile ?? { cwd: this.cwd }), permissionPreset: preset });
+		this._launchProfile = withClientPreset(this._launchProfile ?? { cwd: this.cwd }, preset);
 		this._session.extensionRunner.setFlagValue("permission-preset", preset);
 		// While a replacement is in flight (or after one failed) the live session is the disposed one:
 		// nothing may rebuild it. The preset is recorded above, and apply() syncs the next replacement to
 		// it before that one goes live. There is no flag to clear: the check is the session itself.
-		if (this._session !== this._disposedSession) this.syncFullAccessTrust(this._session, preset);
+		if (this._session !== this._disposedSession) {
+			this.syncFullAccessTrust(this._session, preset);
+			applyClientPermissionMode(this._session, preset, { announce: true });
+		}
 	}
 
 	/** The session teardownCurrent disposed; it stays the live session only until apply() installs a replacement. */
@@ -245,29 +263,66 @@ export class AgentSessionRuntime {
 	 * access withdraws it, unless the user has since saved "trust"; going back restores it, unless the
 	 * user saved "do not trust". Either way the session's runtime is rebuilt so project extensions,
 	 * skills, hooks and MCP servers load or unload, and nothing can cancel that rebuild. The trust is
-	 * never saved. Returns the rebuild, or undefined when the trust did not change.
+	 * never saved. The saved decision includes the one a linked git worktree inherits from its main
+	 * checkout (senpi#4388), which is read asynchronously, so each sync runs after the previous one and
+	 * becomes `projectTrustChange` at once. A sync that fails (an unreadable trust store) is recorded as a
+	 * diagnostic and never blocks the next one. Returns when the sync, and any rebuild it started, has settled.
 	 */
-	private syncFullAccessTrust(session: AgentSession, preset: string): Promise<void> | undefined {
+	private syncFullAccessTrust(session: AgentSession, preset: string): Promise<void> {
 		const settings = session.settingsManager;
-		// The session's own project: a replacement can belong to another project than the retired one (#3420 review).
-		const saved = new ProjectTrustStore(this.services.agentDir).get(session.sessionManager.getCwd());
-		if (preset !== "full-access" && settings.isTrustFromFullAccess() && saved !== true)
-			settings.setProjectTrusted(false);
-		else if (preset === "full-access" && settings.canRestoreFullAccessTrust() && saved !== false)
-			settings.setProjectTrusted(true);
-		else return undefined;
-		this._projectTrustChange = session.applyProjectTrustChange().catch((error: unknown) => {
-			this._trustChangeDiagnostics = [
-				...this._trustChangeDiagnostics,
-				{ type: "error", message: `Updating project code after a Full access change failed: ${String(error)}` },
-			];
-		});
-		return this._projectTrustChange;
+		const change = this._projectTrustChange
+			.then(async () => {
+				// The session's own project: a replacement can belong to another project than the retired one (#3420 review).
+				const saved = await getSavedProjectTrust(
+					new ProjectTrustStore(this.services.agentDir),
+					session.sessionManager.getCwd(),
+				);
+				// The session may have been retired while the decision was read; a retired session is never rebuilt.
+				if (session === this._disposedSession) return;
+				if (preset !== "full-access" && settings.isTrustFromFullAccess() && saved !== true)
+					settings.setProjectTrusted(false);
+				else if (preset === "full-access" && settings.canRestoreFullAccessTrust() && saved !== false)
+					settings.setProjectTrusted(true);
+				else return;
+				await session.applyProjectTrustChange().catch((error: unknown) => {
+					this._trustChangeDiagnostics = [
+						...this._trustChangeDiagnostics,
+						{
+							type: "error",
+							message: `Updating project code after a Full access change failed: ${String(error)}`,
+						},
+					];
+				});
+			})
+			.catch((error: unknown) => {
+				this._trustChangeDiagnostics = [
+					...this._trustChangeDiagnostics,
+					{
+						type: "error",
+						message: `Reading the project trust after a Full access change failed: ${String(error)}`,
+					},
+				];
+			});
+		this._projectTrustChange = change;
+		return change;
 	}
 
 	/** Settles when the rebuild that followed a Full-access trust change has finished. */
 	get projectTrustChange(): Promise<void> {
 		return this._projectTrustChange;
+	}
+
+	/**
+	 * Runs `task` after every trust change already started here and before any started later (senpi#6176), so an
+	 * explicit trust decision and a Full access sync never read each other's saved value mid-change.
+	 */
+	runInProjectTrustChangeOrder<T>(task: () => Promise<T>): Promise<T> {
+		const run = this._projectTrustChange.then(task);
+		this._projectTrustChange = run.then(
+			() => undefined,
+			() => undefined,
+		);
+		return run;
 	}
 
 	private _projectTrustChange: Promise<void> = Promise.resolve();
@@ -448,6 +503,8 @@ export class AgentSessionRuntime {
 		this._session = result.session;
 		if (profile?.permissionPreset !== undefined)
 			this._session.extensionRunner.setFlagValue("permission-preset", profile.permissionPreset);
+		markHostDefaultPresetFlag(this._session, profile);
+		applyClientPermissionMode(this._session, clientNamedPreset(profile), { announce: false });
 		if (profile?.promptSurface !== undefined) this._session.setPromptSurface(profile.promptSurface);
 		if (profile?.browserEngine !== undefined) this._session.setBrowserEngine(profile.browserEngine);
 		this._services = result.services;
@@ -696,10 +753,39 @@ export class AgentSessionRuntime {
 	}
 
 	/**
+	 * Abort the active run, waiting at most the #3711 quit budget. Arming the budget first makes this wait count
+	 * against the same total the `session_shutdown` handlers share, so a turn held by an extension cannot delay quit
+	 * past it.
+	 */
+	private async endActiveRunWithinQuitBudget(processExit: boolean): Promise<void> {
+		if (processExit) this.session.extensionRunner.armProcessExitBudget();
+		const budgetMs = this.services.settingsManager.getSessionShutdownQuitBudgetMs();
+		if (budgetMs === 0) {
+			await this.session.abort();
+			return;
+		}
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		try {
+			await Promise.race([
+				this.session.abort(),
+				new Promise<void>((resolve) => {
+					timer = setTimeout(resolve, budgetMs);
+				}),
+			]);
+		} finally {
+			if (timer !== undefined) clearTimeout(timer);
+		}
+	}
+
+	/**
 	 * `processExit`: the caller exits the process right after, so quit-time handlers share the total quit budget
 	 * (senpi#3711). An RPC host closing one session leaves it unset and keeps only the per-handler limits.
 	 */
-	async dispose(options: { readonly processExit?: boolean } = {}): Promise<void> {
+	async dispose(options: { readonly processExit?: boolean; readonly endActiveRun?: boolean } = {}): Promise<void> {
+		// A person quitting ends the active run first, as teardownCurrent() does (senpi#5753). Otherwise
+		// `session_shutdown` tears extension resources down under a running tool and the loop sends that failure
+		// to the model in one more request. Host closes keep their own bounded abort handling.
+		if (options.endActiveRun === true) await this.endActiveRunWithinQuitBudget(options.processExit === true);
 		await emitSessionShutdownEvent(
 			this.session.extensionRunner,
 			{ type: "session_shutdown", reason: "quit" },

@@ -1,3 +1,153 @@
+## 2026-11-07 - The headless project_trust context lives apart from the startup UI (senpi#6185)
+
+### What changed
+
+- `packages/coding-agent/src/cli/project-trust-headless.ts`: new. `createHeadlessProjectTrustContext`: the `project_trust` handler context that never asks (no answer to select/confirm/input; notices to stderr outside the TUI), with no UI import.
+- `packages/coding-agent/src/cli/project-trust.ts`: `createProjectTrustContext` builds on it and adds the startup selectors only for an interactive run with a UI; behavior is unchanged.
+
+### Why
+
+- `modes/rpc/project-workspace-commands.ts` (#6177) imported `createProjectTrustContext`, and through it `cli/startup-ui.ts`, `core/keybindings.ts` and `core/package-manager.ts`, putting their synchronous fs calls and `spawnSync` on the RPC session path.
+
+### Why an extension could not handle it
+
+- The context is what the core hands every `project_trust` handler; the import graph of the RPC session path is core.
+
+### Expected merge conflict zones
+
+- LOW: `createProjectTrustContext` in `cli/project-trust.ts`.
+
+## 2026-11-05 - Startup admission for a held session; held deliveries defer (senpi#5756)
+
+### What changed
+
+- `packages/coding-agent/src/cli/session-opening.ts`: new `admitStartupSession(sessionFile, io)` returning `open`, `cancelled` or `refused`, and `SESSION_HELD_EXIT_CODE`. It reuses `checkSessionHolders`, `describeSessionHolders`, `takeOverRefusal` and `stopSessionHolders`. Without a person to ask, or for a holder that cannot be stopped safely, it refuses and names the holder; otherwise it asks, stops the holder on take-over, and refuses if the session is still (or newly) held. A failed lookup stays advisory. `prepareSessionOpening` is unchanged.
+- `packages/coding-agent/src/cli/schedule-delivery.ts`: `DeliveryResult` failures may carry `sessionHeld: true`; `runDeliveryProcess` reports it for the launch's `sessionHeldExitCode`, which only `sessionResumeDelivery` sets (`SESSION_HELD_EXIT_CODE`). `--exec` hooks are unchanged.
+- `packages/coding-agent/src/cli/schedule-runner.ts`: `deliverClaimed` treats a `sessionHeld` result as a deferral: it undoes a recurring job's re-arm, puts the claimed generation back in `pending/` and returns a `deferred` event, so no `failed/` record is written.
+
+### Why
+
+senpi#5756: opening a held session at startup must never start a second writer. A session opened between the runner's `deferWhileSessionOpen` check and the child's admission would otherwise fail that occurrence for good.
+
+### Why an extension could not handle it
+
+It runs before the runtime and its extensions exist, and the runner owns the occurrence records.
+
+### Expected merge conflict zones
+
+- LOW: the import block of `session-opening.ts`, `DeliveryResult`/`ProcessLaunch` and the `close` handler in `schedule-delivery.ts`, the result handling in `deliverClaimed`.
+
+## 2026-11-05 - --hand and --headless engine flags (senpi#5840)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: parses `--hand` and `--headless` (validated by the new `engine-mode-args.ts`: both run in RPC mode, `--headless` as a multi-session host; a prompt, `--print`, stdin, @files, `--mode text|json`, both flags together, and `--listen`/`--multi-session` with `--hand` are refused), documents both in `--help`, accepts `--listen` after either flag, and runs a headless host's sessions in process by default.
+
+### Why
+
+- senpi#5840: the headless host (#5423) and the hand runtime (#5424, #5483) existed only as libraries; nothing in the CLI started either, so a launcher or device service had no engine to start.
+
+### Why an extension could not handle it
+
+- Mode selection happens in the CLI's own argument parser before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the `Args` interface, the `--multi-session` branch of `parseArgs`, `resolveSessionRuntime` and the multi-session lines of `--help`.
+
+## 2026-10-31 - ANTHROPIC_OAUTH_TOKEN help text (senpi#5131)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: the `ANTHROPIC_OAUTH_TOKEN` line of `--help` says the variable is read like `ANTHROPIC_API_KEY` and that Claude OAuth tokens are refused in favour of `anthropic-subscription`.
+
+### Why
+
+- senpi#5131: the old text advertised the removed OAuth path.
+
+### Why an extension could not handle it
+
+- The help text is the CLI's own.
+
+### Expected merge conflict zones
+
+- LOW: one line of the environment-variable list.
+
+## 2026-10-30 - Check CLI choices without type assertions (senpi#4971)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: compare session runtime and thinking level strings directly with their allowed tuple members.
+- `packages/coding-agent/src/modes/rpc/session-worker-requests.test.ts`: use valid `commit` requests instead of casting obsolete `open` request fixtures to `never`.
+
+### Why
+
+- Preserve the accepted CLI choices and deadline assertions while removing four unsafe type assertions.
+
+### Why an extension could not handle it
+
+- These predicates and worker request fixtures belong to the engine's CLI parser and colocated regression tests.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/cli/args.ts`, `packages/coding-agent/src/modes/rpc/session-worker-requests.test.ts`, and this PR's fragment.
+
+## 2026-10-28 - Prompt-size inventory follows the registered-server ownership rule (senpi#4604, fixes #4597)
+
+### What changed
+
+- `packages/coding-agent/src/cli/prompt-size-inventory.ts`: `mcpServerNames` merges extension-registered servers only when no extension handles `mcp_servers_change`, matching what the built-in gateway connects.
+
+### Why
+
+- `packages/coding-agent/src/cli/prompt-size-inventory.ts`: the inventory estimates the built-in gateway's prompt section; counting servers another extension connects would overcount.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/cli/prompt-size-inventory.ts`: the inventory is a CLI diagnostic outside the extension API.
+
+### Expected merge conflict zones
+
+- LOW: the `mcpServerNames` body.
+
+## 2026-10-25 - Explicit RPC endpoint attachment arguments (senpi#4269)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: exposes `--attach` and documents its required session reference.
+- `packages/coding-agent/src/cli/attach-args.ts`: validates attachment mode and incompatible session options before startup.
+
+### Why
+
+- `packages/coding-agent/src/cli/args.ts`: an explicit attachment must not fall through to local session creation or RPC server mode.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/cli/args.ts`: mode selection happens before a session loads extensions.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli/args.ts`: the argument result type, final validation, and help options.
+
+## 2026-10-26 - Read the canonical agent directory without opening state (#4368)
+
+### What changed
+
+- `packages/coding-agent/src/cli/agent-dir-command.ts`: add `config agent-dir --json`, reporting the exact `getAgentDir()` result and its directory source, selection rule and branded prefix. Every success or failure is one version-1 JSON record with `ok`; invalid arguments exit 2 and selector failures exit 1.
+- `packages/coding-agent/src/cli/config-command-help.ts`: extract the config help text and document the metadata command and its typed JSON exit contract.
+
+### Why
+
+- The desktop must ask the same engine version that will run its sessions instead of copying the CLI's directory-selection policy. Part of desktop#4753; the reporter's billing-error root cause remains unproven.
+
+### Why an extension could not handle it
+
+- Directory selection must be available before settings, extensions, data-home checks or host startup. The command only reads selector inputs and filesystem layout; it creates no marker or state files.
+
+### Expected merge conflict zones
+
+- LOW: metadata-command routing before full CLI startup.
+
 ## 2026-10-25 - Public host commands accept presenter enforcement (senpi#4247)
 
 ### What changed

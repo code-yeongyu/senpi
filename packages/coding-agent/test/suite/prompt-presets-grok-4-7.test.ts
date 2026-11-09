@@ -36,7 +36,7 @@ function occurrences(haystack: string, needle: string): number {
 }
 
 function getGrok47CatalogModels(): Model<Api>[] {
-	return getProviders().flatMap((provider) => (getModels(provider) as Model<Api>[]).filter(hasGrok47CatalogSignal));
+	return getProviders().flatMap((provider) => getModels(provider).filter(hasGrok47CatalogSignal));
 }
 
 const sharedOptions: BuildDynamicSystemPromptOptions = {

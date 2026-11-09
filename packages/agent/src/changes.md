@@ -1,3 +1,912 @@
+## 2026-11-08 - Agent forwards a hosted commitStep to every loop run (senpi#6236)
+
+### What changed
+
+- `packages/agent/src/agent.ts`: `AgentOptions.commitStep` (typed as `AgentLoopConfig["commitStep"]`), kept in a private read-only field and forwarded by `createLoopConfig` only when set. Every loop entry (initial prompt, queued continuation, `continue()`, post-run drains) goes through `createLoopConfig`, so this one site reaches them all.
+
+### Why
+
+- Custody C6 C.P3 (row CK1p): a hosted session must install its durable step commit through a public option instead of patching the agent's private loop config. Fused and split-local agents leave it unset, and their stream options stay key-identical.
+
+### Why an extension could not handle it
+
+- The loop config is assembled inside `Agent`; an extension has no access to it, and the hosted wrapper constructs the `Agent` itself.
+
+### Expected merge conflict zones
+
+- LOW: the `AgentOptions` interface, the field list, the constructor assignments and the `createLoopConfig` object in `packages/agent/src/agent.ts`, each one added line beside `executionScope`.
+
+## 2026-11-05 - Session entries on the store's append-only record log (S21b-a, senpi#5955)
+
+### What changed
+
+- `packages/agent/src/durable/session-store.ts`: a session's entries are records in the store's append-only log, one kind per session (`session/<id>`). A record is an append (one entry) or a rewrite (the full header and entries, replacing everything before it). `readSessionState` reads the last rewrite plus every later append in seq order (a key seen twice keeps its first record). The manifest document holds only the header a new session starts with; a divergence is its own document (`divergenceWrite`). `manifestWrite`, `divergenceWrite`, `appendRecordWrites` and `rewriteRecordWrite` are the one layout both writers use; the manifest key and record kind stay module-private. An append's record id names the session, the rewrite count the handle last saw and the entry key, so a key another process committed first is refused by the store (`duplicate-record-id`) and surfaces as the session store's `duplicate-entry`; a handle still refuses a duplicate key against the entries it holds. A session stored in the layout before the record log (a manifest with `entryIds`) is refused as `corrupt-session`, with the instruction to re-import it from its JSONL file.
+- `packages/agent/src/index.ts`: exports that layout (`manifestWrite`, `divergenceWrite`, `appendRecordWrites`, `rewriteRecordWrite`, `readSessionState`, `SessionState`) from the main entry for the S07 importer.
+
+### Why
+
+Measured: two processes bound to one session, each appending, kept only one writer's entries. Each handle held the entry list in memory and wrote the whole manifest per append, so the last writer won. Row S21b (senpi#5822) needs co-bound Bun processes to keep writing. The store contract (DurableStore/SyncCommitStore) does not change.
+
+### Why an extension could not handle it
+
+The session store's own storage layout.
+
+### Expected merge conflict zones
+
+`session-store.ts` (layout functions, readSessionState, planAppend/planRewrite, the open handles); the durable-store export block in `packages/agent/src/index.ts`.
+
+## 2026-11-06 - Hand rig steps take a measured number of event-loop turns (senpi#6115)
+
+### What changed
+
+- `packages/agent/src/execution/testing/hand-harness.ts`: `drain`, the wait every rig step takes between manual-clock advances, now takes a fixed `IO_TURNS_PER_STEP = 8` event-loop turns (`setImmediate`, or a timer turn where the host has none) instead of exactly one. The count is measured, not derived (an immediate turn and a timer hop are not one-to-one): on the FAULT-HAND cases over the async store, 2 turns per step still fails, 4 passes on every run, and 8 is 4 with the same margin again.
+
+### Why
+
+- senpi#6114: `test/execution/hand-conformance-async-store.test.ts` FAULT-HAND-01..05 failed `every call settled: not reached within 600000 ms of transport time` on main. The async store confirms each write only after three `setTimeout(0)` hops, the rig delivers carrier messages on the manual clock, and one `setImmediate` per 5 ms tick let a write land one hop per tick while the fault profile's own timers kept re-arming ahead of it, so `settle` spent its whole transport budget. Deterministic locally from #6051's own commit (which added the test); the previous main runs were green only by runner timing.
+- The turns are immediates, not `setTimeout(0)`: node clamps `setTimeout(0)` to about 1 ms, and a 600 s transport budget is 120,000 ticks, so timer turns cost about 150 s per case against vitest's 30 s wall limit. `setImmediate` costs microseconds, and each loop iteration still runs the timers phase, so pending `setTimeout(0)` hops land between two immediates. A fixed count, not a quiet-loop probe: the rig cannot observe from inside the loop whether other work is pending (a probe built from immediates always reads busy), so the count is stated as the measured bound, and an adapter needing more raises it.
+
+### Why an extension could not handle it
+
+- The harness is the conformance rig every hand case runs on; its step semantics are not reachable from an extension.
+
+### Expected merge conflict zones
+
+- LOW: the `drain`/`ioTurn` block near the top of `hand-harness.ts`.
+
+## 2026-11-05 - The local device files carry a brand (senpi#6054)
+
+### What changed
+
+- `packages/agent/src/index.ts`: exports `isLocalDeviceFiles` and `LOCAL_DEVICE_FILES` from the device-files module.
+
+### Why
+
+An extension that keeps its own local file path on a fused session must tell `ctx.deviceFiles` on a fused session (the local filesystem) from a split session's hand channel; a fresh `localDeviceFiles()` object carried no marker (senpi#5839).
+
+### Why an extension could not handle it
+
+The objects are built by the engine, and the session side is not exposed to extensions.
+
+### Expected merge conflict zones
+
+The device-files export block in `index.ts`.
+
+## 2026-11-05 - Session store exported from the main entry (S20b, senpi#5897)
+
+### What changed
+
+- `packages/agent/src/index.ts`: exports `openSessionStore`, `openSyncSessionStore`, `SessionStoreError`, their handle/session types and `SyncCommit`/`SyncCommitStore` from the package's main entry, alongside the `./conformance` exports.
+
+### Why
+
+`packages/coding-agent`'s `SessionManager` binding (S20b, senpi#5827) uses the session store at runtime and imports only the main entry; the `./conformance` entry is a test-support surface.
+
+### Why an extension could not handle it
+
+Package entry exports are part of the package itself.
+
+### Expected merge conflict zones
+
+The durable-store export block in `packages/agent/src/index.ts`.
+
+## 2026-11-05 - Harness tool bodies run on the cleared arguments (senpi#5883)
+
+### What changed
+
+- `packages/agent/src/harness/execution/tools.ts`: `executeToolCall()` runs the body on `call.args` (the object `after_tool` sees) instead of the host's frozen copy, after a new `unrecordableArguments()` check that settles arguments JSON cannot carry as a tool error.
+- `packages/agent/src/harness/execution/tool-host-call.ts`: `runOnPreparedToolHost()`'s `run` no longer receives the host's arguments copy.
+
+### Why
+
+senpi#5861: since senpi#5859 the body got the host's JSON copy, so in-place edits no longer reached `after_tool`, a `Date` from `prepareArguments` arrived as a string, and a BigInt threw untyped. The host still records its JSON copy.
+
+### Why an extension could not handle it
+
+The harness's tool execution is internal to `AgentHarness`; no extension point wraps it.
+
+### Expected merge conflict zones
+
+- LOW: `execution/tools.ts` `executeToolCall()`; `tool-host-call.ts` `runOnPreparedToolHost()`.
+
+## 2026-11-05 - A tool result JSON cannot carry settles as a tool error (senpi#5878)
+
+### What changed
+
+- `packages/agent/src/execution/prepared/executor-freeze.ts`: new `recordedResult()` pairs a settled body with its durable ledger value. When `resultValue()` cannot serialize the content, it returns an `isError` result reading `Tool result content is not JSON: <reason>` and records that instead.
+- `packages/agent/src/execution/prepared/executor.ts`: the release path settles through `recordedResult()` instead of calling `resultValue()` directly.
+
+### Why
+
+senpi#5864: after a tool body ran on the prepared ToolHost, content JSON cannot carry made the release reject with `TypeError: Do not know how to serialize a BigInt`. Before the host, the caller got the tool's result back. A typed tool error keeps the run going and names the broken content contract.
+
+### Why an extension could not handle it
+
+The release path is internal to the prepared executor; no hook runs between the body's result and the ledger write.
+
+### Expected merge conflict zones
+
+- LOW: `executor.ts` `runReleased()` around the result step; `executor-freeze.ts` after `resultValue()`.
+
+## 2026-11-05 - ToolHost.deviceFiles (senpi#5839)
+
+### What changed
+
+- `packages/agent/src/execution/tool-host.ts`: `ToolHost` gains an optional `deviceFiles(scope)` that returns the `DeviceFiles` of the device the host runs calls on.
+
+### Why
+
+Extensions on the loop side of a split session need the hand's file channel for the session's scope (senpi#5839).
+
+### Why an extension could not handle it
+
+The tool host is chosen by the embedder below the extension layer; an extension cannot reach it.
+
+### Expected merge conflict zones
+
+The `ToolHost` interface in `tool-host.ts`.
+
+## 2026-11-05 - Sync commit capability and a session store over DurableStore (S20a, senpi#5866)
+
+### What changed
+
+- `packages/agent/src/durable/store.ts`: `SyncCommit` (`commitSync`) and `SyncCommitStore`. `DurableStore` itself is unchanged and stays async.
+- `packages/agent/src/durable/store-memory.ts`: `openMemoryStore` returns a `SyncCommitStore`; `commit` wraps `commitSync`.
+- `packages/agent/src/durable/session-store.ts` (new): `openSessionStore` (any `DurableStore`) and `openSyncSessionStore` (a `SyncCommitStore` only, enforced by the parameter type). It keeps S07's key schema for the manifest and entries, so the importer and the store share one format.
+- `packages/agent/src/durable/testing/sync-commit-cases.ts` (new): SYNC-COMMIT-01/02, a separate registry run only by backends with `commitSync`. The Durable Object store confirms durability only asynchronously, so it is not in it.
+- `packages/agent/src/conformance/index.ts`: exports the types, the session store and the SYNC-COMMIT cases.
+
+### Why
+
+Plan row S20 (senpi#5827), part a: the store-first session needs a durable session record a hosted brain can hold, and `SessionManager`'s "a throw means the entry did not take" contract has to hold on the same call. That needs a synchronous durable commit on the backends it runs on.
+
+### Why an extension could not handle it
+
+The durable store contract and its backends are core packages; extensions do not reach them.
+
+### Expected merge conflict zones
+
+`durable/store.ts` after the `DurableStore` interface; `store-memory.ts` `openMemoryStore`; the store export block in `conformance/index.ts`.
+
+## 2026-11-04 - Export the admission line type from the conformance entry (S37, senpi#5732)
+
+### What changed
+
+- `packages/agent/src/conformance/index.ts`: exports the `AdmissionLine` type, so a writer outside this package can take the store's single admission line.
+
+### Why
+
+- The headless engine's takeover ledger shares the store's admission line (senpi#5732).
+
+### Why an extension could not handle it
+
+- It is this package's public type surface.
+
+### Expected merge conflict zones
+
+- LOW: one export line, identical to the one senpi#5660 adds.
+
+## 2026-11-05 - The session plane and the user-set thread chain count (senpi#5882)
+
+### What changed
+
+- `packages/agent/src/execution/plane-session.ts` is new: `SESSION_PLANE`, `SessionPlaneRequest`, `decodeSessionPlaneRequest()`, `loopSideToolNames()`, `serveSessionPlane()`, `createSessionPlaneClient()`, `createLoopToolHost()` and `createSplitToolHost()`.
+- `packages/agent/src/execution/chain-count.ts` is new: `CHAIN_COUNT_LIMIT`, `CHAIN_ORIGIN`, `ChainCountLimitError`, `nextChainCount()`, `decodeChainCount()` and `admitChainCall()`.
+- `packages/agent/src/index.ts`: exports both.
+
+### Why
+
+On a split session the session tools (todo, thread tools, subagents, and the other tools declared `runs: "brain"`) must run where the loop runs: the hand owns no session. A hand-run tool that needs one asks the brain over the nested plane from S31. Thread chains may recurse across sessions (A→B→A is allowed); the only limit is a count the user sets, unlimited by default, and there is no cost limit (decision K8).
+
+### Why an extension could not handle it
+
+Placement is decided per call by the loop's ToolHost, which an extension cannot replace for the session's own loop.
+
+### Expected merge conflict zones
+
+`src/index.ts` exports.
+
+## 2026-11-05 - Harness tool bodies run on the prepared ToolHost (senpi#5859)
+
+### What changed
+
+- `packages/agent/src/harness/execution/tool-host-call.ts` is new: `runOnPreparedToolHost()` runs one cleared harness call as a one-call sequential batch on `createPreparedToolHost` with its own in-memory batch store, a pass-through argument schema (the harness already prepared, validated and hooked the call) and the caller's witness sink.
+- `packages/agent/src/harness/execution/tools.ts`: `executeToolCall()` runs the tool body through it inside the same effect-gate admission, keeping the harness's own abort signal, update callback, `isError` rules and error result.
+- `packages/agent/src/harness/agent-harness.ts`, `runtime/types.ts`, `runtime/harness.ts`, `runtime/drive/tools.ts`: the `onExecutionPipeline` option reaches `executeToolCall()`.
+
+### Why
+
+Plan row S19c (senpi#5829): no harness tool body runs outside the ToolHost.
+
+### Why an extension could not handle it
+
+The harness's tool execution is internal to `AgentHarness`; no extension point wraps it.
+
+### Expected merge conflict zones
+
+`execution/tools.ts` `executeToolCall()`; the `AgentHarnessOptions` interface; `Config` in `runtime/types.ts`.
+
+## 2026-11-05 - Optional commitStep loop hook and the ModelEgress types (custody CK1, senpi#5857)
+
+### What changed
+
+- `packages/agent/src/agent-loop.ts`: one statement after a step's provider tool results are emitted and before `shouldTerminateAssistantTurn`: `if (config.commitStep) await config.commitStep({ message, providerToolResults })`. A rejection leaves the loop with no further events and no tool dispatch.
+- `packages/agent/src/types.ts`: `StepCommit`, `StepCommitFn` and the optional `AgentLoopConfig.commitStep`.
+- `packages/agent/src/index.ts`: exports the egress types (`packages/agent/src/egress/types.ts`, new) and `StepCommitError` / `isStepCommitError` / `StepCommitFailure` (`packages/agent/src/step-commit.ts`, new; the error is branded with a registry symbol, so a value from another copy of the package is still recognised).
+
+### Why
+
+A hosted brain must make each model step durable before the loop acts on it (dispatches tools, ends the turn), so a crash or a moved session never acts on a step that is not committed (#5830). Every local assembly leaves `commitStep` unset; the statement is then a false branch with no await, pinned by a microtask-count golden recorded on the loop before the change.
+
+### Why an extension could not handle it
+
+The commit point sits inside the loop between the provider tool-result emits and the turn-end decision; no event or hook runs at that point with the step's complete message and its provider tool results, and an event sink cannot make several sink calls one durable write.
+
+### Expected merge conflict zones
+
+- LOW: the provider tool-result loop in `runLoop` of `agent-loop.ts`; the `finishTurn` neighbourhood of `AgentLoopConfig` in `types.ts`; the `agent-loop.ts` export line in `index.ts`.
+
+## 2026-11-04 - Loop-hook link and KILL-HOOK (S33, senpi#5741)
+
+### What changed
+
+- `packages/agent/src/execution/loop-hook-host-protocol.ts`, `loop-hook-host.ts`, `loop-hook-host-hand.ts` are new: the one-lane loop-hook protocol, the loop host's side (`createLoopHookHost`) and the user machine's side (`serveLoopHooks`).
+- `packages/agent/src/execution/testing/kill-hook.ts` is new: KILL-HOOK-01..05.
+- `packages/agent/src/conformance/registry.ts` registers the KILL-HOOK cases; `packages/agent/src/conformance/index.ts` exports `KILL_HOOK_CASES` and `KILL_HOOK_DECLARATIONS`.
+- `packages/agent/src/index.ts` exports the loop-hook host and hand.
+
+### Why
+
+Brain/hand split S33 (decisions C8, K5, K7): with the loop away from the user's machine, the user's loop hooks still run on that machine and shape the provider request, and the work pauses while that machine is offline.
+
+### Why an extension could not handle it
+
+The link runs below the session, on the execution transport; no extension sees the loop host's provider requests before they leave.
+
+### Expected merge conflict zones
+
+`conformance/registry.ts` tail (the registry chain S27a, S26b, S33, S35); the `execution/` export block of `src/index.ts`; the `./conformance` export list.
+
+## 2026-11-04 - Epoch floor on the hand (senpi#5739)
+
+### What changed
+
+- `packages/agent/src/execution/remote-epoch.ts` and `remote-epoch-gate.ts` are new: the hand's per-scope epoch fence and the session's floor gate.
+- `packages/agent/src/execution/remote-protocol.ts`: `floor`, `floor_ack` and `floor_refused` messages; an optional `epoch` on invoke, abort and ack.
+- `packages/agent/src/execution/remote-executor.ts`: optional `fence`; floor frames answered; fenced invokes refused (without a ledger, again right before the tool runs) and fenced aborts and acks ignored.
+- `packages/agent/src/execution/remote-tool-host.ts`: optional `epoch`, passed to the hand link.
+- `packages/agent/src/execution/remote-link.ts`: with an epoch, each lane dispatches calls and file operations after its floor ACK, stamps the epoch on every invoke, file operation, abort and ack, re-sends the floor on `hello` and re-sends pending calls only after its new ACK; a refused epoch ends the message `epoch_refused`.
+- `packages/agent/src/execution/remote-file-call.ts`, `remote-device-files.ts`: a file operation carries its epoch to the hand's fence; an epoch refusal is `refused_by_policy`.
+- `packages/agent/src/execution/ledger.ts`, `ledger-types.ts`: an optional in-slot guard on `admit` and `apply`; refusal `epoch_fenced`.
+- `packages/agent/src/execution/remote-hand-ledger.ts`: the guard on every walk step and on the ack, a fenced walk's record cancelled, recovery once per process.
+- `packages/agent/src/index.ts`: exports the fence surface and the floor message types.
+
+### Why
+
+Brain/hand split S35 (senpi#5729): after a move, an old owner's delayed command must not run after the new owner's first one, and the new owner dispatches only after the hand acknowledged its floor.
+
+### Why an extension could not handle it
+
+The check must run inside the hand's own ledger admission slot and before its scope opens.
+
+### Expected merge conflict zones
+
+`remote-executor.ts` frame dispatch and options; `remote-tool-host.ts` dispatch; `src/index.ts` exports.
+
+## 2026-11-04 - Prepared executor and batch host in the agent package (senpi#5738)
+
+### What changed
+
+- `packages/agent/src/execution/prepared/` is new: the prepared executor and the prepared batch host, moved from `packages/coding-agent/src/core/execution/`. A loop with no execution scope (an empty workspace root) now admits its per-batch ledger under a fixed in-process workspace name.
+- `packages/agent/src/execution/canonical-digest.ts` is new: the one canonical JSON and Web Crypto SHA-256 every execution digest hashes.
+- `packages/agent/src/execution/coordinator-plan.ts`: the manifest digest uses `canonical-digest.ts` instead of its own copy.
+- `packages/agent/src/index.ts`: exports `createPreparedToolHost`, `canonicalJson`, `toStoreValue`, `openMemoryBatchStore` and `BatchStoreMissingError`, and the package entry's `Agent` and loop functions from `public-entry.ts` (they shadow the loop core's).
+- `packages/agent/src/agent-loop.ts`: with no `toolHost`, the default host is the prepared pipeline over `config.batchStoreFactory`; no factory throws `BatchStoreMissingError`.
+- `packages/agent/src/agent.ts` and `packages/agent/src/types.ts`: the `batchStoreFactory` option and the `BatchStoreFactory` type.
+- `packages/agent/src/execution/tool-host.ts`: `BatchStoreMissingError`, `PreflightCarryMissingError` and `noPreflightCarry`.
+- `packages/agent/src/execution/prepared/executor-pipeline.ts` (senpi#5795): `PreparationSource` requires `afterToolFreeze`, and the pipeline's `afterFreeze` calls it, so every `createPreparedToolHost` caller must say what follows a call from its preflight object to the frozen copy. `agent.ts`, `types.ts`, `agent-loop.ts` (refuses with `PreflightCarryMissingError` when unset), `index.ts` and `public-entry.ts` (defaults `noPreflightCarry`) carry the option.
+- `packages/agent/src/execution/prepared/pipeline-prepared-batch.ts` (senpi#5796): a call's command ID is its block position and the resolved-tool map is keyed by the call, so a batch that repeats a call ID runs each block.
+- `packages/agent/src/public-entry.ts` and `packages/agent/src/execution/prepared/memory-batch-store.ts` are new: the package entry's defaulting wrappers and the fresh per-batch in-memory store, both outside the loop-core closure.
+- `packages/agent/src/conformance/loop-core-manifest.ts`: lists the host-free prepared pipeline modules; `durable/store-memory.ts` stays out.
+- Removal (S36, Z3.d1): `agent-loop.ts` loses its own scheduler (`executeToolCallsSequential`, `executeToolCallsParallel`, `runPreparedToolCall`, `isSequentialToolCall`); `tool-name-alias.ts` loses `resolveCallTool`, whose only caller was that scheduler; `execution/tool-host.ts` narrows the witness to `pipeline: "prepared"`; `execution/coordinator-plan.ts` reworded a comment that named the removed scheduler.
+
+### Why
+
+Plan row S36: the legacy scheduler in `agent-loop.ts` can only be removed once the loop's own package carries the pipeline that replaces it. The executor needed only agent-core, and a browser-safe digest keeps `node:crypto` out of the core. Amendment A4: the loop core names only the store factory type and builds no store (senpi#4996); the entry supplies a fresh store per batch, because a call's command ID is the model's call ID and providers reuse those across turns.
+
+### Why an extension could not handle it
+
+The loop's default tool execution is the agent package's own contract.
+
+### Expected merge conflict zones
+
+`src/index.ts` exports; `coordinator-plan.ts` digest helpers.
+
+## 2026-11-03 - Device run operation for the memory component's git and lsof (senpi#5696)
+
+### What changed
+
+- `packages/agent/src/index.ts`: exports `RUN_CHANNEL`, `DeviceRunRequest` and `DeviceRunResult`. `DeviceFiles` gains `run()`, a direct spawn on a fused session; on a split session it is the hand's allowlisted `run`, advertised as `run/1`.
+
+### Why
+
+- The memory component also runs `git` and `lsof`. Running them on the device, inside a fixed allowlist, is the only option that keeps every memory capability while its files stay on the device (senpi#5645, design option (b)).
+
+### Why an extension could not handle it
+
+- The operation rides the hand's execution protocol and admission, which live in the agent core.
+
+### Expected merge conflict zones
+
+- LOW: the device-file export block in `packages/agent/src/index.ts`.
+
+## 2026-11-03 - Export the admission line type from the conformance entry (S34, senpi#5652)
+
+### What changed
+
+- `packages/agent/src/conformance/index.ts`: exports the `AdmissionLine` type, so a writer outside this package can take the store's single admission line.
+
+### Why
+
+- The headless engine's presence ledger shares the store's admission line (senpi#5652).
+
+### Why an extension could not handle it
+
+- It is this package's public type surface.
+
+### Expected merge conflict zones
+
+- LOW: one export line.
+
+## 2026-11-03 - Device files reach the hand's disk through a file channel (senpi#5691)
+
+### What changed
+
+- `packages/agent/src/index.ts`: exports the device file channel (`DeviceFiles`, `DeviceFileError`, its codes, the operation and outcome codecs, `FILE_CHANNEL`, `FILE_CHANNEL_MAX_BYTES`, `HELLO_WAIT_MS`) and the `RemoteFile` message type. The new modules under `src/execution/` are fork-only; `src/node.ts` adds the node-only `localDeviceFiles()`.
+
+### Why
+
+- Memory operations must stay on the device wherever the loop runs (senpi#5645, S40): extension code needs one way to the device's files that is the local filesystem on a fused session and the hand's own disk, through its grant, handlers and policy, on a split one.
+
+### Why an extension could not handle it
+
+- The channel rides the hand's execution protocol and admission (grant, scope binding, ledger), which live in the agent core; an extension cannot add a wire message kind or reach the hand's executor.
+
+### Expected merge conflict zones
+
+- LOW: the export list in `packages/agent/src/index.ts`, next to the remote executor exports.
+
+## 2026-11-03 - In-process ToolHost context (senpi#5657)
+
+### What changed
+
+- `packages/agent/src/agent-loop.ts`: passes `local: { context, assistantMessage }` to the ToolHost.
+- `packages/agent/src/execution/tool-host.ts`: optional `ToolHostOptions.local`.
+- `packages/agent/src/execution/tool-outcome-events.ts`: the module description is a file comment instead of the first function's JSDoc.
+- `packages/agent/src/index.ts`: exports the coordinator, ledger, memory store, admission line and `withToolNameCorrection`.
+
+### Why
+
+The prepared pipeline (brain/hand split S18b) runs today's preparation steps in the loop's process and needs the loop's context and the issuing assistant message; a remote host never reads them.
+
+### Why an extension could not handle it
+
+The ToolHost seam's options are the agent loop's own contract.
+
+### Expected merge conflict zones
+
+`agent-loop.ts` at the ToolHost call; `src/index.ts` exports.
+
+## 2026-11-03 - Durable scope lifecycle on the endpoint; LIFECYCLE, SCOPE and MULTI-LIFE-01 cases (S15, senpi#5681)
+
+### What changed
+
+- `packages/agent/src/execution/scope-lifecycle.ts` (new): `createScopeLifecycle` keeps a durable record per scope. A lifecycle event from the issuer commits its handler's effect before it is admitted, and later calls of that scope wait for it. Only the issuer closes. A forced close writes every live resource's terminal outcome first. The idle TTL never closes a scope with live resources. Close and the sweep decide inside the admission line, so a racing hold is never dropped. A close waits for an event in progress. A call on a closed or unknown scope throws `ScopeUnavailableError` and never runs.
+- `packages/agent/src/execution/testing/{lifecycle-cases,scope-cases,multi-lifecycle-cases,lifecycle-registry}.ts` (new): LIFECYCLE-01..03, SCOPE-01..02, MULTI-LIFE-01. `batch-harness.ts`: `scopes(idleTtlMs, dieAt?)`.
+- `packages/agent/src/conformance/{registry,index}.ts`: the cases are registered and exported with `createScopeLifecycle`.
+- `packages/agent/src/execution/nested.ts`: re-opening a parent and re-registering an activity compare fields regardless of key order, and `open` refuses a non-finite generation, admission time or lease, so no unreadable record is written (#5673 review).
+
+### Why
+
+- A split scope had no durable lifecycle: no commit-before-next-call order, no issuer-only close, and no guard on the TTL or a forced close (design 5.6.6, senpi#5681).
+
+### Why an extension could not handle it
+
+- It is the agent package's own execution layer.
+
+### Expected merge conflict zones
+
+- LOW: new files; one line each in the registry, the conformance index and the run-suite case map.
+
+## 2026-11-03 - Durable wakes from a hand to the brain; WAKEX and KILL-WAKEX cases (S14, senpi#5675)
+
+### What changed
+
+- `packages/agent/src/execution/{wake-types,wake-outbox,wake-inbox}.ts` (new):
+  - A hand's outbox commits a wake before sending it and re-offers un-acked wakes in order (except those refused for good). It removes a wake only on its ack, and drops wakes after scope close plus 7 days with a logged `wake_expired`.
+  - The brain's inbox accepts a wake only from the hand bound to its scope and deduplicates by event id. It acks only after its commit, and hands each wake to the loop until the take is recorded.
+- `packages/agent/src/execution/testing/{wake-exec-cases,kill-wakex,wake-registry}.ts` (new): WAKEX-01..07, KILL-WAKEX-01..06. `batch-harness.ts`: `wakeOutbox`, `wakeInbox`, `wakeLog`; kill labels cover every `execution.*` write.
+- `packages/agent/src/conformance/{registry,index}.ts`: the cases are registered and exported with `createWakeOutbox`, `createWakeInbox` and `WAKE_RETENTION_MS`.
+
+### Why
+
+- A wake from a hand (a background job finishing) had no durable path to the brain that owns its scope (design 5.6.4, senpi#5675).
+
+### Why an extension could not handle it
+
+- It is the agent package's own execution layer.
+
+### Expected merge conflict zones
+
+- LOW: new files; one line each in the registry, the conformance index and the run-suite case map.
+
+## 2026-11-03 - Nested admission on the brain that owns the parent; NEST, CANCEL and KILL-NEST cases (S13, senpi#5669)
+
+### What changed
+
+- `packages/agent/src/execution/{nested,nested-types,nested-codec}.ts` (new): `createNestedAdmission` admits a nested request only from the parent's recorded executor for its generation and scope. It persists `(parent, childRequestId) -> child` together with the budget debit, so a replay returns the same child and is debited once. It keeps the phase-scoped nested set (preparation, then body at release) with the parent's lease and 24-hour lifetime cap, and registers background activities that are a subset of the parent. A parent cancel is linearized with admissions, and its cascade to admitted children is durable. A cost or budget that is not a finite number >= 0 is refused, an activity is registered only for a live parent within its current phase, and re-opening a parent with different fields is refused.
+- `packages/agent/src/execution/testing/{nest-cases,cancel-cases,kill-nest,nest-registry}.ts` (new): NEST-01..09, CANCEL-01..02, KILL-NEST-01..03. `batch-harness.ts`: `nested(dieAt?)` over the brain's medium; its kill labels include nested writes.
+- `packages/agent/src/conformance/{registry,index}.ts`: the cases are registered and exported with `createNestedAdmission`.
+- `packages/agent/src/execution/coordinator-consent.ts`: an `expired` Gate B answer no longer aborts the call. The endpoint settles `lease_expired` on its own lease, and the brain records it uncertain (#5667 review).
+
+### Why
+
+- A nested request from a hand had no admission on the brain that owns its parent (design 5.6.3, senpi#5669).
+
+### Why an extension could not handle it
+
+- It is the agent package's own execution coordinator.
+
+### Expected merge conflict zones
+
+- LOW: new files; one line each in the registry, the conformance index and the run-suite case map.
+
+## 2026-11-03 - Gate A/B consent on the batch coordinator; CONSENT-01 and CONSENT-02 (S12, senpi#5663)
+
+### What changed
+
+- `packages/agent/src/execution/coordinator-consent.ts` (new), `coordinator.ts`, `coordinator-types.ts`, `coordinator-codec.ts`: an optional `consent` port on the coordinator. Gate A asks for approval of a raw call's request digest before preparation when the port classifies it as needing consent; Gate B asks for approval of a `prepared_awaiting_consent` call's frozen digest and applies it with `BatchExecutor.consent`. A denial is a blocked per-call result (`consent_denied`); an expiry or a late approval settles `lease_expired` and ABORTs the unreleased calls with no successor. Every answer is durable in the batch record (`consents`) before the step it decides.
+- `packages/agent/src/execution/testing/{consent-cases,seq-registry,batch-executor,batch-harness}.ts`: CONSENT-01 and CONSENT-02, a reference executor that gates the `gated`/`ask` tools, and a harness with a movable executor clock and a consent port per brain.
+- `packages/agent/src/execution/coordinator-sequential.ts`: a one-call batch that ABORTs on a blocked preparation outcome hands the later calls `interrupted_preparation`, as one batch does (#5662 review). `testing/multi-seq-cases.ts`: MULTI-FAIR-02's starvation bound stays under the test timeout and is cleared.
+
+### Why
+
+- A cross-machine call that needed consent had no durable consent step (design 5.6.1 Gate A/B, 5.6.2 decision table; senpi#5663).
+
+### Why an extension could not handle it
+
+- It is the agent package's own execution coordinator.
+
+### Expected merge conflict zones
+
+- LOW: `coordinator.ts` prepare loop; one line each in the conformance index and the run-suite case map.
+
+## 2026-11-03 - Sequential mode on the batch coordinator; SEQ-01 and MULTI-FAIR-02 (S11, senpi#5661)
+
+### What changed
+
+- `packages/agent/src/execution/coordinator-sequential.ts` (new): `createSequentialCoordinator` runs each call of a plan as its own one-call batch (`<batchId>#<index>`) in source order, so a call is prepared and run to its outcome before the next is prepared; a rerun after a crash resumes from the durable one-call batches; a call whose batch ABORTs ends the run and the later calls are `not_run`.
+- `packages/agent/src/execution/testing/{seq-cases,multi-seq-cases,seq-registry}.ts` (new): SEQ-01 and MULTI-FAIR-02; `batch-harness.ts`: the brain factory takes an issuer.
+- `packages/agent/src/conformance/{registry,index}.ts`: the new cases are registered and exported with `createSequentialCoordinator`; the transport case registered as `MULTI-FAIR-02` moves, unchanged, to `MULTI-FAIR-03` (`transport/testing/multi-cases.ts`).
+
+### Why
+
+- Today's `toolExecution: "sequential"` interleaving had no durable equivalent on the coordinator (design 5.6.1, senpi#5661).
+
+### Why an extension could not handle it
+
+- It is the agent package's own execution coordinator.
+
+### Expected merge conflict zones
+
+- LOW: new files; one line each in the registry, the conformance index and the transport case map.
+
+## 2026-11-03 - Shared tool-outcome events (senpi#5648)
+
+### What changed
+
+- `packages/agent/src/agent-loop.ts`: `createErrorToolResult`, `emitToolExecutionUpdate`, `emitToolExecutionEnd`, `createToolResultMessage`, `emitToolResultMessage` and `shouldTerminateToolBatch` moved, unchanged, to the new `packages/agent/src/execution/tool-outcome-events.ts`; the loop imports them.
+- `packages/agent/src/conformance/loop-core-manifest.ts`: the new module is part of the declared loop-core closure.
+- `packages/agent/src/index.ts`: exports the helpers.
+
+### Why
+
+The prepared pipeline (brain/hand split S18b) is a ToolHost that keeps the loop's side of a batch; it must emit exactly the loop's event and message shapes, so both use one implementation instead of a copy.
+
+### Why an extension could not handle it
+
+The helpers are the agent loop's own event construction.
+
+### Expected merge conflict zones
+
+`agent-loop.ts` near the tool-result helpers at the end of the file and the import block.
+
+## 2026-11-03 - The model plane: a hand call's nested model requests (senpi#5640)
+
+### What changed
+
+- `packages/agent/src/execution/plane.ts` is new: plane messages (`plane.request`, `plane.abort`, `plane.reply`, `plane.refused`) and their codec; `createPlaneServer()` for the brain (admission by live parent and lane, one serve per request with replayed answers, abort on parent end) and `createPlaneClient()` for the hand.
+- `packages/agent/src/execution/plane-model.ts` is new: `MODEL_PLANE`, `ModelPlaneRequest`, `decodeModelPlaneRequest()`, `serveModelPlane()` and `createModelPlaneClient()`.
+- `packages/agent/src/execution/remote-tool-host.ts`: optional `planes`; a call's end ends its nested requests.
+- `packages/agent/src/execution/remote-executor.ts`: `HandCall.nested`; a call's end fails its open nested requests.
+- `packages/agent/src/index.ts`: exports the plane and model-plane surface.
+
+### Why
+
+A model-backed tool running on a hand has no model: the hand owns no session and none of its credentials. Its completion has to come from the brain that owns the call (design 5.6.3), never from another hand, and the hand must not be able to steer the brain's provider endpoint or credentials.
+
+### Why an extension could not handle it
+
+The admission rule depends on the remote ToolHost's live-call table and on the executor's per-call abort, which only these modules hold.
+
+### Expected merge conflict zones
+
+`remote-tool-host.ts` and `remote-executor.ts` frame handlers; `src/index.ts` exports.
+
+## 2026-11-03 - Offline grant check on the hand (senpi#5659)
+
+### What changed
+
+- `packages/agent/src/execution/grant-verify.ts` is new: grant snapshot, verifier, `HandAuthority` and `authorize()`.
+- `packages/agent/src/execution/remote-executor.ts`: required `authority`; the grant check runs after the closed and lane checks and before the seen set, the ledger and the scope; the scope opens on the canonical root; a snapshot replacement aborts running calls it no longer allows.
+- `packages/agent/src/execution/testing/hand-harness.ts`: passes `{ kind: "self" }`.
+- `packages/agent/src/index.ts`: exports the verifier surface.
+
+### Why
+
+Brain/hand split S27b (R14.b): across machines the pair grant is the whole authority model for a user's own devices, checked with no per-call round trip. Design approved by the security gate (capability `execute`).
+
+### Why an extension could not handle it
+
+The check must precede the executor's own durable admission and scope opening.
+
+### Expected merge conflict zones
+
+`remote-executor.ts` invoke ordering and options; `src/index.ts` exports.
+
+## 2026-11-03 - List a directory while another process removes one of its entries (senpi#5615)
+
+### What changed
+
+- `packages/agent/src/harness/env/nodejs.ts`: `NodeExecutionEnv.listDir` omits an entry whose `lstat` fails with `ENOENT` after `readdir` listed it, instead of failing the whole listing. Any other per-entry error is still returned.
+
+### Why
+
+- A Session worker holds its session through a `<session>.jsonl.lock` directory next to the session file and removes it on release. A session listing that read the directory just before a worker released its lock failed with `Failed to list sessions directory ...: ENOENT ... lstat '<session>.jsonl.lock'`, so a server refreshing its session catalog while a worker retired failed that refresh (senpi#5272). The removed entry is now absent from the listing, as if `readdir` had run a moment later.
+
+### Why an extension could not handle it
+
+- `listDir` is the harness file-system primitive under `JsonlSessionRepo.list`; no extension hook runs between `readdir` and the per-entry `lstat`.
+
+### Expected merge conflict zones
+
+- LOW: the per-entry `try`/`catch` in `NodeExecutionEnv.listDir`.
+
+## 2026-11-02 - A hand's durable call record and its conformance cases (senpi#5513)
+
+### What changed
+
+- `packages/agent/src/execution/remote-hand-ledger.ts` is new: `createHandLedger()` admits each invoke into the execution ledger and walks it to `dispatched` before it runs, records its result, answers a re-delivered invoke from the record (refusing `identity_conflict` when the record holds another request under that execution ID), and on restart runs the ledger's recovery, then re-sends the outcomes the session has not acknowledged.
+- `packages/agent/src/execution/ledger.ts`: `ExecutionLedger.scan()` lists every row.
+- `packages/agent/src/execution/remote-executor.ts`: optional `ledger`, required `onFault` (a failed restart recovery is reported there and the hand then answers no frame), a `hello` after a restarted hand recovered, and `ack` handling; a call's scope is opened before the call is recorded, so a scope that cannot open leaves no record.
+- `packages/agent/src/execution/remote-tool-host.ts`: required `placement`; `terminal` outcomes mapped per placement; every outcome acknowledged; waiting calls re-sent on `hello`.
+- `packages/agent/src/execution/remote-protocol.ts`: `ack`, `terminal` and `hello` messages.
+- `packages/agent/src/execution/testing/{hand-harness,kill-hand,multi-hand-cases,fault-hand-cases}.ts` are new, registered in `packages/agent/src/conformance/registry.ts` and exported from `packages/agent/src/conformance/index.ts`; `packages/agent/src/index.ts` exports the new hand APIs.
+
+### Why
+
+- Brain/hand split (senpi#5482): a hand that dies after receiving a call left the session waiting forever, and a restarted hand had no record to keep it from running a call twice.
+
+### Why an extension could not handle it
+
+- The execution ledger, the ToolHost seam and the conformance registry are the agent core's.
+
+### Expected merge conflict zones
+
+- LOW: the end of `CONFORMANCE_REGISTRY` in `registry.ts` and the hand export blocks in `index.ts` and `conformance/index.ts`.
+
+## 2026-11-02 - Remote ToolHost and hand executor (senpi#5483)
+
+### What changed
+
+- `packages/agent/src/execution/remote-tool-host.ts` is new: `createRemoteToolHost({ transport, sessionRef? })` sends each raw call of a batch to a hand on the scope's lane, emits the tool events, waits per call in `sequential` mode, forwards an abort, and returns result messages in source order; a call is never re-sent.
+- `packages/agent/src/execution/remote-executor.ts` is new: `createRemoteExecutor({ transport, openScope })` opens scopes lazily, refuses a known scope with another root and a repeated execution ID, never passes the session reference on, and keeps `sequential` tool barriers per scope.
+- `packages/agent/src/execution/remote-protocol.ts` is new: the `invoke`, `abort`, `settled` and `refused` messages and a strict decoder.
+- `packages/agent/src/index.ts` exports the three modules, the reference transport and the `Transport` types.
+
+### Why
+
+- Brain/hand split (senpi#5482): a session must be able to run its tool calls on a hand, first on one machine over the in-process carrier.
+
+### Why an extension could not handle it
+
+- The ToolHost seam and the transport live in the agent core; an extension cannot replace where the loop dispatches tool calls.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/index.ts` export list, next to the internal-events exports.
+
+## 2026-11-02 - Durable batch coordinator (senpi#5429)
+
+### What changed
+
+- `packages/agent/src/execution/coordinator.ts`, `coordinator-types.ts`, `coordinator-plan.ts` and `coordinator-codec.ts` implement the brain-side batch coordinator over DurableStore and the `BatchExecutor` port.
+- `packages/agent/src/execution/testing/` supplies the reference batch executor, the BATCH-01..03/05..09, REPLAY-01..02 and KILL-BATCH cases, and their registry entries.
+- `packages/agent/src/conformance/registry.ts` and `packages/agent/src/conformance/index.ts` register and expose the cases.
+
+### Why
+
+- A batch's prepare replies, decision and release marks need one durable owner on the coordinating side, so a crash there recovers without rerunning hooks or bodies, and an interrupted preparation replays as it does today.
+
+### Why an extension could not handle it
+
+- The coordinator is a host-neutral execution primitive below extension callbacks.
+
+### Expected merge conflict zones
+
+- LOW: the conformance registry and barrel exports; the coordinator modules are new.
+
+## 2026-11-02 - The agent proxy handles `message_tool_arguments_reset` (senpi#5300)
+
+### What changed
+
+- `packages/agent/src/proxy.ts`: `ProxyAssistantMessageEvent` gains the `message_tool_arguments_reset` record, typed from `AssistantProgress`. `processProxyEvent` moves unchanged in its other cases to the fork-only `packages/agent/src/proxy-event-reducer.ts` (proxy.ts was over the 250-line file ceiling); `streamProxy` imports it from there, and the package's public exports are unchanged.
+- `packages/agent/src/proxy-event-reducer.ts`: `processProxyEvent` replaces the tool call's raw arguments with the record's `rawArgumentPrefix` and re-parses them, so the next `toolcall_delta` extends that prefix. The delta and reset cases share one `setRawArguments` step. The record produces no public event.
+
+### Why
+
+- `packages/agent/src/proxy.ts`: the proxy was the only in-repo consumer that buffers raw tool-call arguments. A reset fell through to `Unhandled proxy event type`, so a following delta at offset 0 carrying the whole prefix was appended to the stale buffer. The call's arguments then parsed from a doubled string (`{"path":"a{"path":"a.ts"}` gave `{ path: "a{" }`).
+
+### Why an extension could not handle it
+
+- `streamProxy` decodes the proxy wire and owns the partial message; extensions see neither the proxy events nor the raw argument buffer.
+
+### Expected merge conflict zones
+
+- MEDIUM: an upstream change to `processProxyEvent` lands in `packages/agent/src/proxy.ts` but the function now lives in `packages/agent/src/proxy-event-reducer.ts`; port it there.
+- LOW: the `ProxyAssistantMessageEvent` union and the `parseStreamingJson`/`ToolCall` imports in `packages/agent/src/proxy.ts`.
+
+## 2026-10-31 - Harness provider requests carry the session cwd (senpi#5257, fixes #5256)
+
+### What changed
+
+- `packages/agent/src/harness/context.ts`: new `withSessionCwd(cwd, context)` / `getSessionCwd(context)` attach and read the session working directory on a context.
+- `packages/agent/src/harness/compaction/compaction.ts`: `createSummaryRequestOptions` adds `cwd` from the request options or the context, so every summary request it builds (history summary, split-turn prefix, branch summary, and the standalone `compact` / `generateSummaryWithUsage` / `generateBranchSummary` helpers) carries it.
+- `packages/agent/src/harness/runtime/drive/structural.ts`: compaction and branch-summary requests run under a context carrying `session.metadata.cwd`.
+- `packages/agent/src/harness/runtime/drive/generation.ts`: assistant turn requests pass `cwd: session.metadata.cwd`.
+
+### Why
+
+- A provider that requires an absolute session cwd (`anthropic-subscription`) rejected every harness compaction, branch summary and turn, because no harness request carried one (#5256, downstream oh-my-openagent#12026).
+
+### Why an extension could not handle it
+
+- The summary request options are built inside the harness; an extension never sees them before the provider rejects the request.
+
+### Expected merge conflict zones
+
+- LOW: `createSummaryRequestOptions` in `compaction.ts`, the summary branch of `performStructuralAttempt` in `structural.ts`, and the `streamSimple` options in `generation.ts`.
+
+## 2026-10-30 - Produce source-bound conformance archives (senpi#5059)
+
+### What changed
+
+- `packages/agent/scripts/pack-conformance-archive.ts` snapshots one selected commit, builds and packs its agent package, and includes the original registry-relative implementation sources with a SHA-256 manifest.
+- The producer loads the packed conformance export and compares its reconstructed manifest with the same commit's source manifest.
+- `packages/agent/scripts/deterministic-tar-gz.ts` writes the archive as a gzip ustar whose bytes depend only on its files (sorted entries, fixed mode/owner/mtime, no gzip timestamp); `Bun.Archive` stamps each entry with the build time, so two builds of one commit differed.
+- The archive regression test checks compressed round-trip bytes, digests, zero entry and gzip timestamps, byte-identical repeat builds, and the existing CONF.bun suite-hash contract.
+
+### Why
+
+- An external host needs both executable conformance cases and the exact source bytes used by the suite-hash contract. A compiled package alone cannot provide the latter.
+
+### Why an extension could not handle it
+
+- The artifact boundary belongs to the engine's package and source registry. A versioned producer keeps external hosts from inventing a separate hash input or mixing source revisions.
+
+### Expected merge conflict zones
+
+- LOW: agent package scripts and development dependencies; generated dependency lockfiles. New producer, test, and documentation files.
+
+## 2026-10-30 - Unprepared scoped ToolHost seam (senpi#5030)
+
+### What changed
+
+- `packages/agent/src/agent-loop.ts` passes raw batches and scope through the optional ToolHost before resolution, preparation and hooks; its default adapter calls the existing legacy scheduler.
+- `packages/agent/src/agent.ts` carries the host, scope and receipt callback into each loop configuration.
+- `packages/agent/src/types.ts` exposes the contract and configuration, with definitions in `packages/agent/src/execution/tool-host.ts`.
+
+### Why
+
+- The execution boundary must precede effectful preparation so a later executor can own the complete tool pipeline.
+
+### Why an extension could not handle it
+
+- Extensions receive callbacks after the loop has already resolved and prepared a call.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/agent/src/agent-loop.ts` batch dispatch and loop initialization; `packages/agent/src/agent.ts` options and loop configuration; `packages/agent/src/types.ts` execution configuration.
+
+## 2026-10-30 - Durable execution endpoint ledger (senpi#5004)
+
+### What changed
+
+- `packages/agent/src/execution/ledger.ts`, `ledger-types.ts`, `ledger-transition.ts`, and `ledger-codec.ts` implement the executor ledger over DurableStore.
+- `packages/agent/src/execution/testing/` supplies LEDGER-01..12 and KILL-LEDGER cases.
+- `packages/agent/src/conformance/registry.ts` and `packages/agent/src/conformance/index.ts` register and expose the portable cases.
+
+### Why
+
+- Execution identity, effect boundaries, terminal ordering and restart outcomes need one durable owner before prepared execution is integrated.
+
+### Why an extension could not handle it
+
+- The ledger is a host-neutral execution primitive below extension callbacks.
+
+### Expected merge conflict zones
+
+- LOW: the conformance registry and barrel exports; the execution modules are new.
+
+## 2026-10-30 - Harness skill loader: ignore files no longer hide symlinked skills (senpi#5069)
+
+### What changed
+
+- `packages/agent/src/harness/skills.ts`: `loadSkillsFromDirInternal` skips the parent's ignore rules for an entry the environment reports as a symlink, and walks a linked directory with a fresh ignore matcher, matching the coding-agent skill walkers (senpi#5060).
+
+### Why
+
+- After senpi#5061 the two loaders disagreed: the coding-agent walkers loaded a git-ignored linked skill, the harness loader still dropped it silently.
+
+### Why an extension could not handle it
+
+- Skill discovery in the harness is a library function with no extension hook.
+
+### Expected merge conflict zones
+
+- LOW: the directory loop of `loadSkillsFromDirInternal` in `skills.ts`.
+
+## 2026-10-27 - Agent state carries the stable system prefix to the provider context (senpi#4447)
+
+### What changed
+
+- `packages/agent/src/types.ts`: `AgentState.systemPromptStablePrefix` and `AgentContext.systemPromptStablePrefix`.
+- `packages/agent/src/agent.ts`: the initial state and the context snapshot copy it.
+- `packages/agent/src/agent-loop.ts`: `buildProviderContext` passes it to `normalizeContext`.
+
+### Why
+
+- The boundary computed when the system prompt is composed has to reach the provider request with the prompt.
+
+### Why an extension could not handle it
+
+- Provider context assembly in `packages/agent/src/agent-loop.ts` has no extension seam.
+
+### Expected merge conflict zones
+
+- LOW: `AgentState`/`AgentContext` in `packages/agent/src/types.ts`, `createMutableAgentState`/`createContextSnapshot` in `packages/agent/src/agent.ts`, `buildProviderContext` in `packages/agent/src/agent-loop.ts`.
+
+## 2026-10-30 - Keep-alive bytes keep a slow first token alive; keep-alive-only silence is capped (senpi#4608)
+
+### What changed
+
+- `packages/agent/src/stream-keepalive.ts` (new): `createTransportLiveness` records when the provider last reported bytes and when the last assistant event arrived, and judges a fired silence bound: expire it, extend it to one bound after the last byte, or end the request with `StreamKeepAliveTimeoutError` once keep-alives alone exceeded the keep-alive budget.
+- `packages/agent/src/agent-loop.ts`: `streamAssistantResponse` passes `onTransportActivity` to the stream function (chaining a caller's own hook) and hands the liveness to the assistant event reader. When the start or idle bound fires and the provider reported bytes within one full configured bound, the deadline is re-armed instead of ending the request; each assistant event restarts the keep-alive budget. A caller abort past a keep-alive timeout still reads as the abort.
+- `packages/agent/src/types.ts`: `AgentLoopConfig.streamKeepAliveTimeoutMs` (unset or non-positive: keep-alives are unbounded).
+- `packages/agent/src/agent.ts`: `AgentOptions.streamKeepAliveTimeoutMs` and `Agent.streamKeepAliveTimeoutMs`, forwarded into the loop config.
+
+### Why
+
+- The silence bounds counted only public assistant events. With the empty-assistant recovery wrapper holding `start` back until content commits, the start bound is a first-content bound, so a request the provider had accepted and kept alive with SSE `ping` events or `:` comment keep-alives was cut at `streamStartTimeoutMs` (90 s until 2026-09-02, 300 s since) while the model was still producing its first token. The retry re-sent and re-billed the whole prompt, and relays in front of the API had to inject a synthetic content-shaped event to keep slow requests alive.
+
+### Why an extension could not handle it
+
+- The bounds live inside the loop's per-request event reader; no hook sees a request between its start and its first event, and the bytes are only visible to the provider adapter.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-loop.ts` `streamAssistantResponse` stream-function options, `createAssistantEventReader` and `readNextAssistantEvent` signatures and deadline handler.
+- LOW: `types.ts` next to `streamStartTimeoutMs`; `agent.ts` timeout option plumbing.
+
+## 2026-10-30 - Remove redundant compaction type assertions (senpi#4979)
+
+### What changed
+
+- `packages/agent/src/harness/compaction/compaction.ts`: use the declared `MessageEntry.message` type directly in message extraction, assistant-usage lookup and cut-point token estimation.
+- `packages/agent/src/harness/compaction/utils.ts`: use the discriminant-narrowed tool-call argument type in conversation serialization.
+
+### Why
+
+- `packages/agent/src/harness/compaction/compaction.ts`: the three assertions repeat the `MessageEntry` contract and can conceal future type changes.
+- `packages/agent/src/harness/compaction/utils.ts`: the `toolCall` discriminant already supplies the argument record type; the assertion adds no information.
+
+### Why an extension could not handle it
+
+- `packages/agent/src/harness/compaction/compaction.ts`: these are internal compaction implementation types.
+- `packages/agent/src/harness/compaction/utils.ts`: extensions cannot remove an internal source assertion; emitted runtime behavior is unchanged.
+
+### Expected merge conflict zones
+
+- `packages/agent/src/harness/compaction/compaction.ts`: message extraction, assistant-usage lookup and cut-point token estimation expressions.
+- `packages/agent/src/harness/compaction/utils.ts`: the `toolCall` branch in `serializeConversation`.
+
+## 2026-10-29 - Share tree-sitter runtime initialization (senpi#4748)
+
+### What changed
+
+- `packages/agent/src/harness/utils/read-folders/tree-sitter/engine.ts`: share initialization by resolved runtime path independently of parser caching. Serialize each initialization and its grammar loads on one process-global queue that survives cache resets. Discard only failed runtime and grammar loads, checking that the failing promise still owns its cache entry; retain genuinely missing grammars as negative cache entries.
+- `packages/agent/src/harness/utils/read-folders/index.ts` and the read-summary selection receipt refresh the engine source hash and receipt digest only. Historical measurements, measurement commit, language choices, and every receipt assertion remain unchanged; the boundary safety and harness suites requalify this initialization-only change.
+
+### Why
+
+- Concurrent uncached TypeScript and JavaScript loads reinitialized process-global web-tree-sitter state while a grammar was loading, producing an incompatible-language failure. Different injected runtime paths have the same process-global race, and pre-reset failures must not discard newer entries. Missing grammars must not repeat filesystem resolution on every cached read.
+
+### Why an extension could not handle it
+
+- Runtime initialization and parser caching are internal to the read folder engine, before any extension receives a folder.
+
+### Expected merge conflict zones
+
+- LOW: the runtime and grammar caches in `engine.ts`, plus the selection receipt hash binding in `index.ts`.
+
+## 2026-10-27 - Win32 simulation profile for code-level Windows tests (senpi#4510)
+
+### What changed
+
+- `packages/agent/src/testing/win32-sim.ts` (fork-only, test support): drive-letter `\` paths over a backing directory, case-insensitive and case-preserving names, `\\.\pipe\<name>` endpoints, `EBUSY`/`EPERM` with Windows errno values on rename or delete of an open file, and signal-less termination (`win32Kill`: supported signals terminate at once with no handler; others throw `ENOSYS`).
+
+### Why
+
+- `packages/agent/src/testing/win32-sim.ts`: Windows behavior is verified by code-level tests with simulated OS behavior rather than a VM, so every suite needs the same profile.
+
+### Why an extension could not handle it
+
+- `packages/agent/src/testing/win32-sim.ts`: it is test support imported by package test suites, not runtime behavior.
+
+### Expected merge conflict zones
+
+- None upstream: the file is fork-only.
+
+## 2026-10-26 - Thrown provider errors pass the provider error boundary (senpi#4282)
+
+### What changed
+
+- `packages/agent/src/assistant-terminal-state.ts`: `createTerminalFailureAssistantMessage` runs pi-ai's `sanitizeProviderErrorMessage` on the message it builds from a thrown error, so the terminal message is classified (`errorCause: { type: "model_config" }`) and redacted before `message_start`/`message_end`.
+- `packages/agent/src/agent.ts`: `handleRunFailure` runs `sanitizeProviderErrorMessage` on the failure message of a run that threw between turns.
+- `packages/agent/src/harness/pico3/kinds/generation.ts`: the terminal message the generation builds from a thrown stream error runs `sanitizeProviderErrorMessage`, so it is classified and redacted before it is recorded.
+
+### Why
+
+- An error the stream function throws, or one that fails the run between turns, never passes `AssistantMessageEventStream`: its raw text reached every event and the session file, and a thrown `404 model_not_found` lost its classification, so the session retried it and walked the fallback chain onto another model.
+
+### Why an extension could not handle it
+
+- Both messages are built inside the agent loop and published to every subscriber before an extension sees them.
+
+### Expected merge conflict zones
+
+- LOW: the end of `createTerminalFailureAssistantMessage`; the two lines before the first `processEvents` call in `handleRunFailure` and the `pi-ai` import block of `agent.ts`; the `pi-ai` import block and the stream `catch` of `generation.ts`.
+
+## 2026-10-25 - Identify assistant stream starts for lifecycle activity (senpi#3864)
+
+### What changed
+
+- `types.ts` adds optional `streaming: true` to the `message_start` event.
+- `agent-loop.ts` sets the marker only at the provider assistant stream-start boundary; prepared messages, user messages, tool results, and synthetic failures do not set it.
+
+### Why
+
+- An assistant role alone cannot distinguish a live model stream from a prepared or synthetic assistant message.
+
+### Why an extension could not handle it
+
+- Only the agent loop knows whether a message start came from the provider stream or from prepared input.
+
+### Expected merge conflict zones
+
+- `agent-loop.ts`: provider stream-start event.
+- `types.ts`: additive message-start event metadata.
+
 ## 2026-10-26 - Hand the internal channel to Agent at construction (senpi#4349, part of #4272)
 
 ### What changed

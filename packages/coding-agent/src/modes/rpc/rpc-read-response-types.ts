@@ -8,13 +8,17 @@ import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts"
 import type { ResolvedMessagePath } from "../../core/message-path-resolution.ts";
 import type { PendingInputSnapshot } from "../../core/pending-input-session.ts";
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
+import type { ReleaseReceipt } from "./compact-event-leases.ts";
+import type { EventPageAnswer, RecoveryPageAnswer } from "./compact-recovery-requests.ts";
 import type { ThinkingLevelSource } from "../../core/session-thinking-memory.ts";
 
 import type { EffectStatus } from "./effect-record.ts";
+import type { RpcProjectSettings, RpcProjectTrust } from "./project-workspace-commands.ts";
 import type { RpcSlashCommand } from "./rpc-command-surface.ts";
 import type { RpcEvalCell, RpcEvalCellSnapshot } from "./rpc-result-types.ts";
 import type {
 	RpcAuthProvider,
+	RpcAuthStoreError,
 	RpcLoadedExtension,
 	RpcLoadedMcpServer,
 	RpcProviderAccount,
@@ -111,6 +115,14 @@ export type RpcReadResponse =
 	| {
 			id?: string;
 			type: "response";
+			command: "get_recovery_page";
+			success: true;
+			data: RecoveryPageAnswer | EventPageAnswer;
+	  }
+	| { id?: string; type: "response"; command: "release_recovery"; success: true; data: ReleaseReceipt }
+	| {
+			id?: string;
+			type: "response";
 			command: "get_last_assistant_text";
 			success: true;
 			data: { text: string | null };
@@ -137,6 +149,8 @@ export type RpcReadResponse =
 			success: true;
 			data: { extensions: RpcLoadedExtension[]; mcpServers: RpcLoadedMcpServer[] };
 	  }
+	| { id?: string; type: "response"; command: "get_project_trust"; success: true; data: RpcProjectTrust }
+	| { id?: string; type: "response"; command: "get_project_settings"; success: true; data: RpcProjectSettings }
 	| { id?: string; type: "response"; command: "eval_cells.list"; success: true; data: RpcEvalCell[] }
 	| {
 			id?: string;
@@ -150,7 +164,7 @@ export type RpcReadResponse =
 			type: "response";
 			command: "get_auth_providers";
 			success: true;
-			data: { providers: RpcAuthProvider[] };
+			data: { providers: RpcAuthProvider[]; storeError?: RpcAuthStoreError };
 	  }
 	| {
 			id?: string;

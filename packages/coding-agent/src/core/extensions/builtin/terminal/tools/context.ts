@@ -3,10 +3,12 @@ import type { TerminalSessionExit } from "@earendil-works/pi-pty";
 import type { TerminalManager } from "../manager.ts";
 import type { MonitorEvent, MonitorRegistry } from "../monitor-registry.ts";
 import { splitModelOnlyNotices } from "../output-format.ts";
+import type { SessionLogger } from "../../../../session-log.ts";
 import type { TimeoutAction } from "../settings.ts";
 
 /** Shared dependencies handed to every terminal tool factory. */
 export interface TerminalToolContext {
+	readonly redactSecretsInOutput?: boolean;
 	readonly manager: TerminalManager;
 	readonly cwd: string;
 	/** Explicit shell path from settings (settings-manager `shellPath`), if any. */
@@ -17,6 +19,8 @@ export interface TerminalToolContext {
 	readonly timeoutAction?: TimeoutAction;
 	/** Resolved `terminal.maxDurableMonitors`; omitted contexts admit any number of persistent monitors. */
 	readonly maxDurableMonitors?: number | "unlimited";
+	/** Resolved `terminal.backgroundAutoReapMinutes`: background sessions are stopped at this age; unset means never. */
+	readonly backgroundAutoReapMinutes?: number | undefined;
 	/** Resolve the environment for spawned sessions (mirrors core bash `getShellEnv`). */
 	readonly getEnv: () => NodeJS.ProcessEnv;
 	/**
@@ -24,10 +28,23 @@ export interface TerminalToolContext {
 	 * expose PI_* session metadata to spawned commands like the core bash tool does.
 	 */
 	readonly getSessionContext?: () => import("../../../types.ts").ExtensionContext | undefined;
-	/** Registers a session when it transitions to background liveness. */
-	readonly onBackgroundStart?: (id: string, description: string, startedAtMs: number) => void;
+	/**
+	 * Registers a session when it transitions to background liveness; `command` is what it runs, when known, and
+	 * `autoReapMinutes` the age at which the opt-in auto-reap stops it.
+	 */
+	readonly onBackgroundStart?: (
+		id: string,
+		description: string,
+		startedAtMs: number,
+		command?: string,
+		autoReapMinutes?: number,
+	) => void;
+	/** A person or the model wrote to a session's stdin (`bash_input`): it is interactive from now on. */
+	readonly onSessionInput?: (id: string) => void;
 	/** Notified when a background session exits, so the notify layer can wake the agent. */
 	readonly onBackgroundExit?: (id: string, runtime: TerminalExitView) => void;
+	/** The opt-in auto-reap's one stop at `autoReapMinutes` did not end the session, for `reason`; it keeps running. */
+	readonly onBackgroundReapFailed?: (id: string, autoReapMinutes: number, reason: string) => void;
 	/** Session-scoped monitor state, sharing the terminal manager's bash-id namespace. */
 	readonly monitorRegistry?: MonitorRegistry;
 	/** Receives filtered monitor line and terminal-summary events. */
@@ -47,11 +64,15 @@ export interface TerminalToolContext {
 	 * the server and only then lets the command run. Absent on the in-process path, which spawns exactly as before.
 	 */
 	readonly launchBarrier?: TerminalLaunchBarrier;
+	/** Where a stalled spawn is reported (senpi#6189); defaults to the agent directory's session log. */
+	readonly sessionLogger?: Pick<SessionLogger, "warn">;
 }
 
 /** What a background exit notice reads: on the tool child it is a summary the child sent, not the live session. */
 export interface TerminalExitView {
 	readonly exitResult: Pick<TerminalSessionExit, "exitCode" | "signal" | "cancelled" | "timedOut"> | null;
+	/** Set when the opt-in auto-reap stopped the session at this age (senpi#6201). */
+	readonly autoReapedAfterMinutes?: number;
 	fullOutput(): string;
 }
 

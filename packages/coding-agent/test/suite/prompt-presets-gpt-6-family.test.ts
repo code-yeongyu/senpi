@@ -33,9 +33,7 @@ function hasGpt6SolOrLunaCatalogSignal(model: Model<Api>): boolean {
 }
 
 function getGpt6SolAndLunaCatalogModels(): Model<Api>[] {
-	return getProviders().flatMap((provider) =>
-		(getModels(provider) as Model<Api>[]).filter(hasGpt6SolOrLunaCatalogSignal),
-	);
+	return getProviders().flatMap((provider) => getModels(provider).filter(hasGpt6SolOrLunaCatalogSignal));
 }
 
 // The OpenAI GPT-6 guide ships one set of prompting practices for Astra, 6.1 Sol, Sol and Luna

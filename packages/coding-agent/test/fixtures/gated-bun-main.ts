@@ -1,6 +1,6 @@
 // Bun-runtime fixture for the gated Bun globals (senpi#3566 todo 4): a real channel, the server enforcer, the child
 // gate and one worker running gated Bun.spawn / Bun.spawnSync / Bun.$. Prints one JSON line with what it observed.
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { connectChannel, openChannelListener } from "../../src/modes/rpc/tool-child/channel.ts";
@@ -25,9 +25,21 @@ const enforcer = new LaunchEnforcer({
 	onViolation: (violation) => violations.push(violation),
 	leaderStart: (pid) => defaultGroupProbes.startOf(pid),
 });
+const launchIds: string[] = [];
+const provenIds = new Set<string>();
+// A proof is published without waiting for its call and reaches the server asynchronously, so the log is read only
+// once every launch's proof has arrived (senpi#5109); `onProven` is woken by each proof, never by a timer.
+let onProven: () => void = () => {};
 serverSide.onMessage((message) => {
-	if (message.type === "launch") void enforcer.onLaunch(message);
-	if (message.type === "launch_proof") enforcer.onProof(message);
+	if (message.type === "launch") {
+		launchIds.push(message.launchId);
+		void enforcer.onLaunch(message);
+	}
+	if (message.type === "launch_proof") {
+		enforcer.onProof(message);
+		provenIds.add(message.launchId);
+		onProven();
+	}
 	if (message.type === "launch_done") enforcer.onDone(message);
 });
 const gate = new LaunchGate(childSide);
@@ -54,6 +66,18 @@ const result = await new Promise<Record<string, unknown>>((resolve) => {
 	);
 });
 worker.terminate();
+// A held proof (SENPI_TOOL_CHILD_TEST_HOLD_LAUNCH_PROOF) is released only now, after the worker's result: the same
+// order a loaded host produces, where a proof frame is still in flight when the worker reports (senpi#5109).
+const controlDir = process.env.SENPI_TOOL_CHILD_TEST_CONTROL_DIR;
+if (controlDir !== undefined) {
+	for (const launchId of launchIds) await writeFile(join(controlDir, `release-proof-${launchId}`), "");
+}
+await new Promise<void>((resolve) => {
+	onProven = () => {
+		if (launchIds.every((launchId) => provenIds.has(launchId))) resolve();
+	};
+	onProven();
+});
 await log.settled();
 const records = (await readFile(log.path, "utf8"))
 	.trim()

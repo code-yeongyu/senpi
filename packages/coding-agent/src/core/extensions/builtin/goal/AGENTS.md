@@ -48,7 +48,10 @@ A terminal (`willRetry` false, not system-owned) provider error keeps the Goal a
 queues one guarded `providerRecovery` continuation after `agent_settled`, except a terminal
 401/403 (`terminalProviderAuthFailure`, #2293) or policy rejection (#1520): those block on the
 first hit. The auth block is mechanical (a new user message resumes after the user fixes the
-login); the policy block is not. A terminal
+login); the policy block is not. `fallbackExhausted` replaces recovery only after limit-shaped
+ladder exhaustion (senpi#3709): one `providerRetry` at the soonest future reset, plus 1 s
+(no 6 h cap), or after 1 s if all collected resets passed. Without a collected reset it parks
+until input. Outage-only exhaustion retains immediate recovery and provider backoff. A terminal
 *system* error preserves the active Goal: schedule the live monitor wait, or queue a guarded
 hidden `systemRecovery` continuation after `agent_settled` (staging preserves late user
 cancellation; canceling releases the single-flight latch for `/goal resume`). Intentional
@@ -56,7 +59,12 @@ blocks — user interrupt or a model-declared `update_goal` block — stay non-r
 Resuming with 8+ trailing continuation entries suppresses session-start auto-resume. On
 `session_start` reason `resume`, an idle TUI session with a stopped-but-unfinished goal
 (`paused`/`blocked`) prompts first (`isResumeOfStoppedGoal`); accepting flips to `active` as
-a `"user"` mutation. `active`/`complete` never prompt.
+a `"user"` mutation. `active`/`complete` never prompt, except an `active` goal reopened over an
+interrupted run (its process died mid-turn): it is first stopped as interrupted, as a quit
+would have, so it prompts too, on `resume` and on a `startup` that opens it (`--continue`,
+`--session`) alike (senpi#5755). RPC binds a UI context, so the same stop applies there, but
+RPC never prompts: the goal stays `blocked` (resuming the interrupted run answers one turn, no
+continuation) until the client resumes the goal explicitly.
 
 ## CONVENTIONS
 

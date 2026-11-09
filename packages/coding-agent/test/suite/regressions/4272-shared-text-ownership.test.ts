@@ -2,7 +2,7 @@ import { afterEach, expect, it } from "vitest";
 import { CompactContentIndex } from "../../../src/modes/rpc/compact-content-index.ts";
 import { CompactContentStore, type LeafId } from "../../../src/modes/rpc/compact-content-store.ts";
 import { CompactSessionState } from "../../../src/modes/rpc/compact-session-state.ts";
-import { controlledIo, spoolRoot } from "../compact-storage-support.ts";
+import { controlledIo, spoolRoot, startIdentity } from "../compact-storage-support.ts";
 
 // senpi#4272, RULING-26a: a commit belongs to every referencing row and subscriber.
 const cleanups: (() => Promise<void>)[] = [];
@@ -50,6 +50,7 @@ it("rejects a released consumer cut and makes a second release harmless", async 
 	const state = new CompactSessionState({ dir: root.dir });
 	state.accept({
 		type: "block_start",
+		...startIdentity(),
 		messageId: "m",
 		contentIndex: 0,
 		kind: "text",
@@ -61,4 +62,5 @@ it("rejects a released consumer cut and makes a second release harmless", async 
 	expect(() => state.release(cut)).not.toThrow();
 	await expect(state.read(cut)).rejects.toMatchObject({ name: "CompactReadError", reason: "released" });
 	expect(state.storageStatus().frozenTailBytes).toBe(0);
+	await state.retire();
 });
