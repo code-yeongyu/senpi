@@ -23,6 +23,7 @@ import {
 	session,
 	ThinkingLevel,
 } from "./method-classes-schema-fields.ts";
+import { DELIVERY_RECORD_SCHEMAS } from "./method-classes-schema-delivery.ts";
 
 /** A thread call's hop count: 1 for the first call of a chain, one more per hop. */
 const ChainCount = Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER });
@@ -161,6 +162,7 @@ const STATE_AND_MODEL_SCHEMAS = {
 	set_follow_up_mode: session("set_follow_up_mode", { mode: literals("all", "one-at-a-time") }),
 	compact: session("compact", { customInstructions: OptStr }),
 	set_auto_compaction: session("set_auto_compaction", { enabled: Bool }),
+	set_permission_preset: session("set_permission_preset", { permissionPreset: Id }),
 	set_auto_retry: session("set_auto_retry", { enabled: Bool }),
 	abort_retry: session("abort_retry", {}),
 	set_retry_fallback: session("set_retry_fallback", { retryFallback: RetryFallback }),
@@ -223,6 +225,10 @@ const BASH_AND_TREE_SCHEMAS = {
 const SURFACE_AND_ACCOUNT_SCHEMAS = {
 	get_commands: session("get_commands", {}),
 	get_loaded_surfaces: session("get_loaded_surfaces", {}),
+	get_project_trust: session("get_project_trust", {}),
+	set_project_trust: session("set_project_trust", { choice: literals("trust", "trust_parent", "do_not_trust") }),
+	get_project_settings: session("get_project_settings", {}),
+	set_project_setting: session("set_project_setting", { key: Id, value: Type.Unknown() }),
 	extension_request: session("extension_request", { name: Id, data: Opt(Type.Unknown()) }),
 	"eval_cells.list": session("eval_cells.list", {}),
 	"eval_cells.peek": session("eval_cells.peek", { cellId: Id, tailBytes: OptNum }),
@@ -248,6 +254,7 @@ const SURFACE_AND_ACCOUNT_SCHEMAS = {
 
 export const SESSION_RECORD_SCHEMAS = {
 	...PROMPTING_SCHEMAS,
+	...DELIVERY_RECORD_SCHEMAS,
 	...STATE_AND_MODEL_SCHEMAS,
 	...BASH_AND_TREE_SCHEMAS,
 	...SURFACE_AND_ACCOUNT_SCHEMAS,

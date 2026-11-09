@@ -29,6 +29,7 @@ import { answerListSessions, answerProtocolInfo, answerSubscriptionLimits } from
 import { acknowledgePrompt, otherRequestsSettled } from "./session-router-observation.ts";
 import { sweepDrain } from "./session-router-occupancy.ts";
 import { openWithBarrier } from "./session-router-open.ts";
+import { syncRetainedRecord } from "./session-router-residency.ts";
 import {
 	answerSetSessionContext,
 	answerSubscribeSessions,
@@ -262,7 +263,11 @@ export function setSessionContext(
 		return notAttachedRefusal(command);
 	try {
 		const entry = host.registry.getForCommand(command.sessionId, command.type);
-		return answerSetSessionContext(command, entry, host.writer.status);
+		const answered = answerSetSessionContext(command, entry, host.writer.status);
+		// The record carries the overlay a restart reopens the session with (a terminal task_status
+		// is not reopened at all), so it follows each accepted patch.
+		if (answered.success) void syncRetainedRecord(host, command.sessionId, undefined);
+		return answered;
 	} catch (cause) {
 		return error(command.id, command.type, code(cause), detail(cause));
 	}

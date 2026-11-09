@@ -1,3 +1,816 @@
+## 2026-11-08 - A relayed delivery reads like a same-machine delivery; the device stays in metadata (senpi#6250)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/admit-external-message-command.ts`: a delivery admitted on a connection that speaks for a remote device is written with the caller's `text` unchanged, exactly as on a local connection. The engine-written `[Relayed message from remote device ...]` line (`provenanceLine`, with its `claimedSender` sentence) is removed. The device stays engine-stamped in the entry's `details.remote_origin`; the per-device ledger key, the `already_admitted` dedupe, the `command_line` sender refusal, the fail-closed refusal of a delegated connection that names no device, and the delivery's turn origin are unchanged.
+
+### Why
+
+An agent does not need to know that a message from another session crossed devices (product decision, 2026-11-08): a cross-device delivery should read exactly like a session-to-session delivery on the same machine. The origin remains engine-stamped where code reads it, never in what the model reads.
+
+### Why an extension could not handle it
+
+The text the engine writes into a `session_control_delivery` entry for an RPC-admitted record is engine-owned; an extension cannot rewrite it.
+
+### Expected merge conflict zones
+
+- LOW: `admit-external-message-command.ts` (the `text` field of the admitted input and the removed helpers).
+
+## 2026-11-08 - `admit_external_message`: a relayed peer-agent message admitted as a delivery (senpi#6233)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/admit-external-message-wire.ts` (new): the record (`deliveryId`, `text`, `sender?`, `displayText?`, `deliverAs`, `expectedTurnId?` string, `whenIdle?`, `chainCount?`), its reply `{ kind, turnId }`, and the field check both validators run (closed sender shapes, a record naming `remote_origin` refused).
+- `packages/coding-agent/src/modes/rpc/admit-external-message-command.ts` (new): the handler. It runs the K8 chain guard first, refuses a `command_line` sender from a remote device, keys the ledger as `rpc:local/<id>` or `device:<deviceId>/<id>`, answers `already_admitted` for an id the transcript holds, stamps the connection's remote device and engine provenance on a remote delivery, and marks the delivery with the connection's turn origin. A delegated connection that names no device is refused (`delegated_origin_unknown`), never admitted as local; the device's `deviceName` and `deviceId` and the claimed `session_id` and `platform` are JSON-quoted in the provenance line, so a newline or `]` in them cannot add a line or close the header.
+- `packages/coding-agent/src/modes/rpc/method-classes-schema-delivery.ts` (new): the inbound schema; `method-classes-schema-session.ts` spreads it in.
+- `packages/coding-agent/src/modes/rpc/method-classes.ts`: `admit_external_message: "drive"` (the method-classes digest moves).
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the case, fed with `ConnectionRoles.originOf` and the connection origin.
+- `packages/coding-agent/src/modes/rpc/rpc-session-command-types.ts`, `rpc-response-types.ts`, `rpc-input-validation.ts`: the record, its response and its field check joined to the existing unions and validator.
+- `packages/coding-agent/src/modes/rpc/host-idle-handover.ts`: the record is new work, like `wake`.
+
+### Why
+
+A client relaying one agent's message to a session on another device could only send it as a user prompt (`role: "user"`, the `input` event, slash dispatch), never as the delivery `pi.session.admitExternalMessage` writes in process (#6233). The security design gate made the engine-stamped origin, the namespaced and restart-safe ledger, the per-lane approval origin and the chain guard binding.
+
+### Why an extension could not handle it
+
+The RPC record table, the method-class table and the connection's authenticated origin are engine-owned; an extension cannot add a session record or read which device a connection speaks for.
+
+### Expected merge conflict zones
+
+- LOW: `connection-handler.ts` (one case beside `wake`), `method-classes.ts` (one table row), the two union files.
+
+## 2026-11-08 - Tool-child terminal jobs carry the background auto-reap (senpi#6201)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/tool-child/terminal-jobs.ts`: the job args carry `backgroundAutoReapMinutes` into the child's tool context; the `background_start` wake carries the command and the reap age, the `background_exit` wake carries `autoReapedAfterMinutes`, and a failed reap is sent as a `background_reap_failed` wake with its reason.
+
+### Why
+
+- The reap runs where the session's process group lives, which is the tool child under `--tool-runtime child`; the server needs the reap age for its age notices and the reap for the completion notice (senpi#6201).
+
+### Why an extension could not handle it
+
+- The tool child's terminal jobs are the host's own runtime, not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: `parseArgs`, `exitSummary` and `contextFor` in `terminal-jobs.ts`.
+
+## 2026-11-08 - RPC input carries its connection's origin (senpi#6206)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-roles.ts`: `isDelegated` (host view, a worker's retained descriptor, or a carried legacy delegation) and `noteCarriedDelegation`.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `prompt` and `follow_up` pass whether their connection is delegated; every record is passed to `noteDelegatedRecord` before dispatch.
+- `packages/coding-agent/src/modes/rpc/delegated-drive-origin.ts` (new): a delegated record whose method class is `drive` or `device_admin` marks the session remote-driven, decided by the method-class table.
+- `packages/coding-agent/src/modes/rpc/session-worker.ts`: a bind or command that carries a delegation (either mode) marks its connection delegated in the isolate.
+- `packages/coding-agent/src/modes/rpc/client-input-handler.ts`: passes `connectionOrigin` into the session.
+- `packages/coding-agent/src/modes/rpc/session-router-open-profile.ts`: a host-level preset folded into an open is marked `host_default`.
+- `packages/coding-agent/src/modes/rpc/session-registry-attach.ts`, `worker-session-registry.ts`: only a client-named preset moves an attached session (an embedder's folded host default does not), and naming one clears the host-default marker.
+
+### Why
+
+- The delegated default needs the starting record's connection, and an embedder's host-level preset must not exempt a remote device's session (remote approval-mode work, tracked privately).
+
+### Why an extension could not handle it
+
+- Connection identity lives in the RPC host.
+
+### Expected merge conflict zones
+
+- LOW: the `prompt`, `follow_up` and `compact` cases of the connection handler.
+
+## 2026-11-08 - An in-process open waits, bounded, for the warms of its cwd in flight (senpi#6199)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-warm.ts`: `HostWarmer.inFlight(cwd)` settles once every load of that cwd in flight NOW has (a snapshot: later warms and other cwds are not in it); `createRegistryWarm` returns `{ warm, inFlight }`; `waitForWarms(warming, boundMs, cwd)` races that wait against a deadline and returns `"settled" | "warm_wait_deadline"`, reporting the deadline on stderr.
+- `packages/coding-agent/src/modes/rpc/session-registry.ts`: `RpcSessionRegistry.openSession` takes that snapshot for its cwd once and, when a warm is loading, waits through `waitForWarms` bounded by `closeGraceMs` (the closing-reservation wait's bound) before it opens; past the bound it opens anyway.
+
+### Why
+
+- Extension loads now yield the host loop between modules (senpi#6199), so an `open_session` can arrive while the boot load (senpi#6147) or a client's `warm` is still loading. Its factories must not run beside that load: the boot load is the host's first, and an extension that claims a private channel there must not race a second instance. The synchronous import used to give this order by accident.
+- Only a warm of the same cwd loads that cwd's extensions beside the open, so a warm of another cwd, or one that starts after the open began waiting, is not waited on; and an extension factory that never settles (there is no factory timeout) must not stall every `open_session` on the shared host, so the wait is bounded (independent review MEDIUM).
+
+### Why an extension could not handle it
+
+- The order is between two host-driven extension loads; an extension sees only its own factory call.
+
+### Expected merge conflict zones
+
+- LOW: `RpcSessionRegistry`'s constructor `warm` assignment and the head of `openSession`; `createRegistryWarm`'s return.
+
+## 2026-11-08 - A host that binds its own socket registers its endpoint before it serves (senpi#6190)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-bare-endpoint-registration.ts`: new. `bindRegisteredEndpoint` takes the endpoint's ensure lock (`acquireHostEnsureLock`, 10 s wait), writes the endpoint's daemon directories, layout marker and `endpoint.json` (`createDaemonDirectories`, first writer wins), binds, then releases. A lock it cannot get, or a record it cannot write, is logged and the host still binds. An abstract socket binds unchanged.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `runSocketHost` binds through it when no supervisor started the host (`hostWatchdogBinding() === undefined`: `--mode rpc --listen`, `--headless`); a supervised host binds exactly as before.
+
+### Why
+
+- Only `host ensure` wrote `endpoint.json`, and `host gc` (operator or the pass after any ensure) removes a dead endpoint's whole directory. A host that binds its own socket never wrote it back, so after one outage it served while every registry reader (`host status --all`, a relay device service) found nothing until the file was rewritten by hand.
+- Binding inside the ensure lock is what keeps a gc from undoing the write: gc judges and removes under that lock, so it either finished before the write or finds the socket bound and keeps the endpoint.
+- A supervised host is skipped because its ensure already wrote the record and holds that lock while it starts the host.
+
+### Why an extension could not handle it
+
+- The record must exist before the host's first command, and the bind happens inside the host core before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the `listen(server, socketPath, secret)` line in `runSocketHost` and the import block of `multi-session-host.ts`.
+
+## 2026-11-07 - Retained sessions survive a host restart (senpi#6190)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-router-residency.ts` (new): `recordRetainedSession` writes a retained session's handover-parked entry stamped with this host instance (and, while the session is open here, with the process holding it) and drops the key it was recorded under before; `syncRetainedRecord` runs after every successful open (and after an accepted `set_session_context`): a retained session is recorded as resident, a non-retained open by path clears an earlier park of that path (the clear `openPhysicalWithBarrier` used to do); `followRetainedRecord` moves the entry when the session switches transcripts; `clearRetainedRecord` removes every key on close and reclaim.
+- `packages/coding-agent/src/modes/rpc/host-handover-resident-writer.ts` (new): the holding-process stamp (host, boot, pid, process start) and a per-watch liveness probe built on the session writer claims' rules.
+- `packages/coding-agent/src/modes/rpc/session-router-context.ts`, `packages/coding-agent/src/modes/rpc/session-attachment-commands.ts`, `packages/coding-agent/src/modes/rpc/session-registry-types.ts`: the writer's `afterRecord` hook calls `followRetainedRecord`; reclaim calls `clearRetainedRecord`; `RpcSessionEntry.recordedPath` remembers the key.
+- `packages/coding-agent/src/modes/rpc/session-router-open.ts`, `packages/coding-agent/src/modes/rpc/session-router-routing.ts`, `packages/coding-agent/src/modes/rpc/session-router-occupancy.ts`: call those helpers; the idle/handoff park writes its entry through `recordRetainedSession`.
+- `packages/coding-agent/src/modes/rpc/host-handover-parked.ts`, `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts`: entries carry the optional `residentWriter` stamp; the reopen watch skips an entry whose stamped process is still alive (a handoff's draining predecessor parks it first); `clearInheritedParkedSession` removes an inherited entry after its reopen unless the reopen re-recorded it for this host, so a restored session is restored again after the next restart.
+- `packages/coding-agent/src/modes/rpc/session-router-close.ts`, `packages/coding-agent/src/modes/rpc/session-event-writer.ts`, `packages/coding-agent/src/modes/rpc/rpc-session-event-types.ts`, `packages/coding-agent/src/modes/rpc/session-status.ts`: `dispose` claims each session's close in the tick the stop starts (before any await, like `close`, so a late attach or reclaim is fenced against a stable entry), then ends its running turn with `abortForHostShutdown()` (bounded by the 10 s default close grace, so a run its abort cannot release never holds the stop), then parks every retained session of a socket host (`session_parked { reason: "host_shutdown" }`, its entry rewritten) instead of closing it; other sessions still close with `reason: "host_shutdown"`.
+
+### Why
+
+- The next host on an endpoint reopens every entry an earlier process left in the handover-parked record, but only a park wrote one, so a retained session that was resident when the host was killed or stopped vanished from `list_sessions`, and a relay mirroring that listing answered `session_not_found` until someone re-opened it by hand (senpi#6190). A clean stop also told attached clients the session had ended (`session_closed`).
+
+### Why an extension could not handle it
+
+- Session residency, the handover record and the shutdown teardown all live in the RPC host's router; no extension hook runs at host startup or shutdown with access to them.
+
+### Expected merge conflict zones
+
+- MEDIUM: `dispose` and `close` in `session-router-close.ts`, the success tail of `open` in `session-router-open.ts`, and `writer.afterRecord` in `session-router-context.ts`.
+- LOW: `reopenOne` in `host-handover-reopen.ts`, `setSessionContext` in `session-router-routing.ts`, the `session_parked` reason union.
+
+## 2026-11-07 - The RPC workspace verbs leave the synchronous trust path (senpi#6185)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/project-workspace-commands.ts`: uses `createHeadlessProjectTrustContext` and `hasTrustRequiringProjectResourcesAsync`; `readProjectTrust` is async.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: awaits `readProjectTrust`.
+
+### Why
+
+- The RPC session path must not block the shared host (`test/suite/no-sync-in-session-path.test.ts`); #6177 had reached synchronous fs from these verbs.
+
+### Why an extension could not handle it
+
+- The verbs and the session path's import graph are core RPC.
+
+### Expected merge conflict zones
+
+- LOW: the `get_project_trust` case in `connection-handler.ts`.
+
+## 2026-11-07 - RPC clients trust a workspace and read/write its project settings (senpi#6176)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/project-workspace-commands.ts`: new. `get_project_trust` / `set_project_trust` (the `/trust` choices, saved through `ProjectTrustStore.setMany`, applied with `AgentSession.applyProjectTrustChange` inside `AgentSessionRuntime.runInProjectTrustChangeOrder`; refused with `project_trust_locked` under `--approve`/`--no-approve`, and with `project_trust_extension_decided` when a pre-trust extension's `project_trust` handler decides the other way, saving and applying nothing) and `get_project_settings` / `set_project_setting` (the project settings file read as stored; one top-level key written through `SettingsManager.setProjectSetting`).
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the four cases.
+- `packages/coding-agent/src/modes/rpc/rpc-session-command-types.ts`, `rpc-read-response-types.ts`, `rpc-mutation-response-types.ts`: the wire types.
+- `packages/coding-agent/src/modes/rpc/rpc-error-types.ts`: `project_trust_locked`, `project_trust_extension_decided`, `project_not_trusted`, `project_settings_unreadable`, `project_settings_write_failed`.
+- `packages/coding-agent/src/modes/rpc/method-classes.ts`: `get_project_trust` observe; `set_project_trust`, `get_project_settings`, `set_project_setting` device_admin (the digest moves).
+- `packages/coding-agent/src/modes/rpc/method-classes-schema-session.ts`: their inbound schemas.
+- `packages/coding-agent/src/modes/rpc/session-attachment-gate.ts`, `session-command-activity.ts`: the two reads join the read allow-lists.
+- `packages/coding-agent/src/modes/rpc/loopless-runtime-settings.ts`: passes `projectTrustLocked` from the launch flag.
+
+### Why
+
+- An RPC session resolves trust without a UI, so a project is never trusted over RPC and its settings, skills, prompts, extensions and MCP servers never load for the desktop app, local or remote; no verb could save a decision or edit project settings.
+
+### Why an extension could not handle it
+
+- Trust decides which extensions load at all, and the session rebuild and the RPC method-class table are core; an extension cannot run before the trust decision it would be making.
+
+### Expected merge conflict zones
+
+- LOW: the `get_loaded_surfaces` neighbourhood in `connection-handler.ts`, `method-classes.ts` and the schema table.
+
+## 2026-11-07 - A prompt, steer or follow_up without a string message is refused at the boundary (senpi#6171)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`: `rpcCommandPayloadError` refuses `prompt`, `steer` and `follow_up` whose `message` is missing or not a string with `message must be a string.`, after every existing check, so a command that was already refused keeps its refusal text.
+
+### Why
+
+- senpi#6171: such a command passed validation and the session threw a raw `TypeError` (`text.startsWith` on a non-string) during prompt preprocessing; the client got that runtime error instead of the boundary's refusal, and the interactive control endpoint already refused the same input.
+
+### Why an extension could not handle it
+
+- Inbound RPC validation runs in the connection handler before any session or extension sees the command.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `rpcCommandPayloadError` in `rpc-input-validation.ts`.
+
+## 2026-11-07 - The settle a sealed session owes names no turn (senpi#6157)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-open-turns.ts`: the per-session turn ledger and `turnOf` are gone; `note` takes the record type and reason only.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: `settleBeforeSeal` writes each owed `agent_settled { reason: "session_closed" }` without `turnId`, the bytes it wrote before senpi#6151.
+
+### Why
+
+- senpi#6157: the owed settle is a legacy record too, so it stays off the legacy wire like the session's own settle (#4272 T5).
+
+### Why an extension could not handle it
+
+- The owed settle is written by the host's session writer as it seals the session.
+
+### Expected merge conflict zones
+
+- LOW: `SessionOpenTurns.note`/`take` and `settleBeforeSeal`.
+
+## 2026-11-07 - The settle a sealed session owes names its turn (senpi#6151)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-open-turns.ts`: `note` remembers the `turnId` each session's last `agent_start` carried; `turnOf(sessionId)` reads it, and `take` forgets it.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: `enqueue` passes the record's `turnId` to the ledger, and `settleBeforeSeal` stamps it on each owed `agent_settled { reason: "session_closed" }`.
+
+### Why
+
+- oh-my-openagent#12719: a turn a close, park or release cut short still ends once per `turnId` for a remote watcher.
+
+### Why an extension could not handle it
+
+- The owed settle is written by the host's session writer as it seals the session.
+
+### Expected merge conflict zones
+
+- LOW: `SessionOpenTurns.note`/`take` and `settleBeforeSeal`.
+
+## 2026-11-07 - A multi-session host handed a private-fd table loads its extensions at boot (senpi#6147)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-boot-extensions.ts` (new): `warmAtBootForPrivateFds` starts the registry's `warm` for the host's default profile (host cwd and context, no kind) when the launch carried a private descriptor table (`privateTablePresent()`). The call is fire-and-forget, and a failure is logged as one stderr line.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `createHostCore` also returns the registry's `warm`. The socket host starts the boot load right after it listens, and the stdio host starts it after it attaches its reader.
+
+### Why
+
+- A multi-session host loaded extensions only on `open_session` or `warm`, so an extension that claims its private channel during registration never ran before a session opened. The omo desktop waits for that channel's first frame before opening a session (oh-my-openagent#12702, #12705). The boot load is the default-profile warm, so a later `warm` of that profile joins it or answers `already_warm`. Without a table nothing changes.
+
+### Why an extension could not handle it
+
+- An extension cannot run before the host loads it, and when the host loads it is exactly what this changes.
+
+### Expected merge conflict zones
+
+- LOW: the `createHostCore` return object and the end of `runStdioHost` / `runSocketHost` in `multi-session-host.ts`.
+
+## 2026-11-07 - Shutdown recovery keeps the pre-signal error (senpi#3067 L4)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-shutdown.ts`: the `reapChildAfterFailure` call in `stopChild`'s catch logs only the recovery error; the original error is logged once by `performShutdown`'s catch when the rethrow reaches it, so the same line is no longer printed twice. The original is still rethrown and reported.
+- `packages/coding-agent/test/suite/regressions/3067-recovery-keeps-original.test.ts`: the recovery's signals go through a stubbed `process.kill` (no real signal to a reaped pid), and the timer loop advances until shutdown settles within a 120 s bound instead of a fixed 40 turns.
+
+### Why
+
+- senpi#3067 L4: when the shutdown fails before the child is signalled and the recovery itself throws, the recovery error replaced the original — `performShutdown` logged the recovery error as the shutdown failure and the original error never appeared anywhere, so the cause of the shutdown was lost.
+
+### Why an extension could not handle it
+
+- The supervisor teardown runs in core RPC plumbing before any extension loads, and no extension hook runs between the shutdown failure and its recovery.
+
+### Expected merge conflict zones
+
+- LOW: the `stopChild` catch in `host-lifecycle-shutdown.ts`.
+
+## 2026-11-06 - A claimed question refuses a late progress draft (senpi#5960)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: a question's `progress` path now honors the claim that `respond` already takes (the first answer wins). Once an answer has won, `extension_ui_progress` answers `question_already_resolved` instead of overwriting the selections that answer is settling with. Before a claim it applies as before: it copies the draft, rearms the idle timer and emits `question_updated`.
+
+### Why
+
+- `respond` already made the first answer win, but `extension_ui_progress` was outside that claim: a draft that arrived while the winner's `beforeAnswer` ran rewrote `answers`, so a winner answering A with a draft B landing during admission settled as `answered` with B's selections (item 3 of #5960).
+
+### Why an extension could not handle it
+
+- The claim and the draft both live in the RPC connection's question bridge; the extension raising the question sees neither.
+
+### Expected merge conflict zones
+
+- LOW: the `progress` closure inside `ask` and the `progress` method of `ConnectionQuestionBridge`.
+
+## 2026-11-06 - Connection roles over a delegated connection: an authority word per incarnation (omo-relay-daemon#307)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-authority.ts`, `delegation-record.ts`, `delegation-resolve.ts`, `command-authority.ts` (new, fork-only): the authority word of a role-bound delegated connection (`Int32` in a `SharedArrayBuffer`: `epoch << 3 | retired << 2 | mask`, incarnation stamped in slot 1), the socket-lifetime delegation record (incarnations, retire on detach and close, exhaustion), the worker's scalar incarnation resolution, and the one-snapshot-per-command `CommandAuthority` with its `authority` receipt and `relayExec` intake.
+- `packages/coding-agent/src/modes/rpc/delegation-declaration.ts`, `delegated-connection.ts`, `delegated-answer.ts`: `declare_delegation.roles` (each of `interactive_user`, `task_parent` at most once) makes the connection role-bound for its life; a later declaration only narrows roles (`delegation_fixed` otherwise, and on a connection that started without roles); every successful reply of a role-bound connection echoes `data.roles`. `detach_connection` on a role-bound connection retires the current incarnation at line receipt and issues the next with the same roles ceiling; the record is closed (not deleted) at physical close and deleted only by `forget`. An invalid `relayExec` is refused `delegation_malformed`.
+- `packages/coding-agent/src/modes/rpc/connection-roles.ts`: claims are kept per incarnation; `declare(connection, capabilities, incarnation)` returns `declared | fixed | stale` and is the single stale check every claim-creating path reaches; `isStale` is its side-effect-free preflight. A delegated connection's origin is its principal (a forwarded `remoteOrigin` is accepted and ignored). `has` reads the running command's single snapshot.
+- `packages/coding-agent/src/modes/rpc/session-connection-context.ts`, `session-event-writer-state.ts`, `session-event-writer-connections.ts`, `session-event-writer.ts`: each line captures its connection's delegation descriptor at its start; responses to a record that carried `relayExec` get the `authority` receipt; `unregisterConnection` closes the delegation record instead of dropping it.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: a role-bound line runs inside one `CommandAuthority`, with `relayExec` taken out before inspect; a socket whose incarnations ran out is ended after its detach answer is flushed, through the connection's sink (`endExhaustedConnections`), whose half-close delivers bytes still buffered in the transport instead of destroying them.
+- `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: a session worker is created outside the opening command's authority (`outsideCommand`), because on Node a Worker's listeners keep the async context it was built in and would stamp that command's receipt onto every later response it forwards.
+- `packages/coding-agent/src/modes/rpc/session-router-context.ts`, `session-router-attachments.ts`: the host roles read the writer's live records; the record and its claims are forgotten only in the socket-gone branch of the release.
+- `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`, `session-worker-signals.ts`, `session-worker-credit.ts`, `session-worker-client.ts`, `session-worker.ts`, `worker-client-capabilities.ts`: `bind`/`command` carry the captured descriptor and `exec`; the `capabilities` message carries the declaring command's incarnation; credit code `stale` (4) answers a declaration from a retired incarnation, which the worker turns into a command-local `delegation_incarnation_stale` refusal (`declareOnHost`). The host answers it BEFORE the compact-selection check and commits the claim only after that check.
+- `packages/coding-agent/src/modes/rpc/compact-negotiation.ts`, `compact-socket-commands.ts`, `connection-handler.ts`: `set_client_info` passes the command's incarnation to every declaration; the host-level declaration runs the stale preflight before `CompactSelection.declare`.
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts`, `host-capabilities.ts`: multi-session hosts advertise `delegation_roles_v1`.
+- `packages/coding-agent/src/modes/interactive/session-control-rpc-commands.ts`: reads the tri-state `declare` result (`declared` only).
+
+### Why
+
+- A relay forwarder needs the viewer's interactive role (`hold_input`, `withdraw_held_input`, Stop, pause) to stop counting the moment the host turns the viewer's command authority off, including for records already admitted to a session worker, and needs an execution-time receipt of the roles that admitted each record.
+
+### Why an extension could not handle it
+
+- Role checks, delegation inspection, the session-worker protocol and response routing are RPC host internals; no extension API reaches them.
+
+### Expected merge conflict zones
+
+- MEDIUM: `connection-handler.ts` `set_client_info` branch and the `clientInfo.setCapabilities` option type; `multi-session-host.ts` `createHostCore` line handler; `session-worker.ts` `bind`/`command` cases; `session-worker-protocol.ts` message unions.
+- LOW: `connection-roles.ts` (rewritten around per-incarnation claims), `delegated-connection.ts` declaration branch, `session-event-writer.ts` `enqueue`/`enqueueControl` entry.
+
+## 2026-11-06 - Settle only offered sealed secret requests (senpi#6062)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/secret-sealed-holders.ts`: settled frames are limited to the request's offered holders. Requests ending before key generation completes emit no unmatched holder frame.
+- Deterministic key-failure and settle-before-key tests cover the asynchronous request latch.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/secret-sealed-holders.ts`: a holder snapshot alone does not prove a request was offered.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/secret-sealed-holders.ts`: the holder source owns request delivery and settlement.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/secret-sealed-holders.ts`, `SealedSecretHolders.settle`.
+
+## 2026-11-05 - A failed compact current-state retire is reported, never an unhandled rejection (senpi#6068)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-lane-current.ts`: `retire()` reports a rejected state retire once on stderr (`senpi rpc acceptance: compact current state retire failed: <reason>`) and keeps the rejecting cleanup for `idle()` joiners; `fail()` shares the reason formatting.
+
+### Why
+
+- The lane's other retire paths already handled their cleanup rejection; this one did not, so a refused spool reclaim on session close or after a fold failure was an unhandled rejection of the host process.
+
+### Why an extension could not handle it
+
+- The compact current state is internal to the RPC acceptance lane; no extension sees its retire.
+
+### Expected merge conflict zones
+
+- LOW: `retire()` and the module-level `reasonOf` at the end of `compact-lane-current.ts`.
+
+## 2026-11-05 - A host that answers "stopping" during startup readiness is reported as stopping (senpi#6017)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-startup-run.ts`: when the last readiness reply carries `lifecycle: "stopping"`, `driveStartupToReady` fails the start with a cause that names the stop (and the supervisor's exit, when it exited) instead of the "incompatible host" diagnostic. A ready host whose protocol or capabilities do not match keeps the incompatible diagnostic unchanged.
+
+### Why
+
+- A supervisor that began stopping before its launcher verified it answers from its own admission (`capabilities: []` plus `socket_auth` from the public filter). The readiness gate printed that reply as a protocol mismatch, while `decideHostAction` already reads the same reply as `host_stopping`.
+
+### Why an extension could not handle it
+
+- The readiness gate runs inside `ensureHost`, before any session or extension exists.
+
+### Expected merge conflict zones
+
+- LOW: the message helpers next to `exitMessage` and the explicit-cause block at the end of `driveStartupToReady`.
+
+## 2026-10-30 - Selected OAuth account operations and account state (part of #5003)
+
+### What changed
+
+- `login_start` accepts an optional immutable `slotId` for shared-runtime reauthorization over the existing prompt transport.
+- `logout` forwards optional `slotId` and returns the revocation status. `get_provider_accounts` carries the same active, paused and Usage-link projection as the terminal.
+- `packages/coding-agent/docs/rpc.md` documents the additive request and response fields.
+
+### Why
+
+- RPC clients need the same per-account lifecycle and truthful state as `/gpt-account`, without receiving credentials.
+
+### Why an extension could not handle it
+
+- The typed RPC command handler owns these requests and responses.
+
+### Expected merge conflict zones
+
+- OAuth login handling, account listing, logout response and wire type definitions.
+
+## 2026-11-05 - Shared sealed answer route, terminal answers and S5-4 gate folds (senpi#4249)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/secret-sealed-answer-route.ts` is new: `answerSealedFrame`, the 7.1 handling of one `mcp_presenter_secret_answer` frame, shared by the RPC host and the terminal.
+- `packages/coding-agent/src/modes/rpc/secret-input-presentations.ts`: `answerSealed` delegates to the shared route.
+- `packages/coding-agent/src/modes/rpc/secret-input-requests.ts`:
+  - `input` reports the request id through an optional `created` callback;
+  - `answerLocal` answers a request from the terminal's own input and leaves a receipt, so a later sealed answer is `already_answered`.
+
+### Why
+
+- D11 secret phase (senpi#4249), row S5-5: terminal (S3-6b) parity needs the RPC host's sealed answer handling on the terminal's control endpoint. The four LOWs of S5-4's design-conformance gate moved into the PRs that own the code: three into #5956, the HPKE zeroing into #5937.
+
+### Why an extension could not handle it
+
+- The secret prompt latch, the sealed answer checks and the worker isolate protocol are host internals of the RPC mode.
+
+### Expected merge conflict zones
+
+- None: every path is fork-only.
+
+## 2026-11-05 - Sealed secret answers on the worker runtime (senpi#4249)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-worker-secret-route.ts` is new: `WorkerSecretRoutes`, the isolate's secret route, moved out of `session-worker.ts`. It covers:
+  - `raiser` and `sealed` from the host's select;
+  - `accepts` is raiser-only;
+  - the request key's `secret_sealed_offer` and the settle with outcome and winning grant;
+  - `answer` runs 7.1 steps 3 and 6 at the isolate's latch, with its own step-up `jti` cache.
+- `packages/coding-agent/src/modes/rpc/session-worker-host-secrets.ts` is new: `WorkerHostSecrets`, the host half, moved out of `session-worker-client.ts`. It covers:
+  - select with the 5.2 semantics, reporting `raiser` and `sealed`;
+  - bounded frames, with the sealed offer signed and fanned out;
+  - the settle fan-out;
+  - authenticated sealed answers forwarded only for held ids, one in flight and four queued per id.
+- `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts` changes:
+  - adds `secret_sealed_answer` and `secret_sealed_result`;
+  - `secret_settled` carries `outcome` and `winnerGrant`.
+- `packages/coding-agent/src/modes/rpc/session-worker-requests.ts`: a sealed answer is a control-class request.
+- `packages/coding-agent/src/modes/rpc/secret-sealed-answers.ts`: the open takes the plain `SealedAnswer` data, so the isolate opens the same values the host checked.
+- `packages/coding-agent/src/modes/rpc/session-worker-host-secrets.ts` also:
+  - admits the isolate's `secret_settled` once per held id, with a known outcome, and a winner only among the grants whose answers the host forwarded for that id;
+  - refuses a malformed `secret_sealed_offer` instead of relaying it as a raiser frame;
+  - re-checks a queued answer's grant before forwarding it;
+  - unbinds its latch when the worker exits;
+  - relays the isolate's sealed answer result only in the shapes its latch can produce, rebuilt field by field.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-presenters.ts`: a secret reply's `type` and `id` are written after its fields, so no field replaces them.
+- `packages/coding-agent/src/modes/rpc/session-worker-secrets.ts`: `isSealedOffer` requires a 32-byte base64url `hpkePk`.
+- `packages/coding-agent/src/modes/rpc/session-worker-secrets.ts`: `secret_sealed_offer` is admitted once per id within `secretFrameBytes`, and `isSealedOffer` is added.
+- `packages/coding-agent/src/modes/rpc/session-worker.ts` and `session-worker-client.ts`: use the two new modules.
+- `packages/coding-agent/src/modes/rpc/secret-input-requests.ts`:
+  - `SealedAnswer` is plain data;
+  - the latch takes a claim context (grant re-check, `jti` cache);
+  - the route gains `raiser`;
+- `packages/coding-agent/src/modes/rpc/secret-sealed-holders.ts`:
+  - `answer` returns data and `admitJti` is added;
+  - `settle` compares grant ids;
+  - a settled offer is retired, taking no more token records while staying answerable for `replay` until forgotten.
+
+### Why
+
+- D11 secret phase (senpi#4249), row S5-4: the worker runtime, the default for stdio hosts and embedders, accepts sealed answers with the request key confined to the isolate that owns the latch (design 5.5).
+
+### Why an extension could not handle it
+
+- Worker isolates, their host protocol and the secret prompt latch are host internals of the RPC mode.
+
+### Expected merge conflict zones
+
+- None: every path is fork-only.
+
+## 2026-11-05 - list_hands and select_hand on a headless engine (senpi#5938)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/hand-selection-commands.ts` (new): `list_hands { sessionId? }` and `select_hand { sessionId, device | null }`, answered from `RpcHostSessionDefaults.handSelection`. Refusals: `hand_selection_unsupported` (no directory), `unknown_session`, `session_closing` (a session already ending takes no new choice), `hand_not_listed`, `hand_unreachable` (with `errorData.device`).
+- `session-router-routing.ts` dispatches both commands. `session-router-host-reads.ts` adds `hand_selection` to `get_protocol_info.capabilities` only when a hand selection is set. `custom-capability.ts` adds `HAND_SELECTION_CAPABILITY`.
+- `multi-session-host.ts` and `session-router-types.ts`: `handSelection` option and default.
+- `rpc-host-command-types.ts` and `rpc-host-response-types.ts`: the two records and their answers.
+- `method-classes-schema-host.ts`: their schemas.
+- `method-classes.ts`: `list_hands` is `observe`; `select_hand` is `device_admin`, because it moves where the session's tools run.
+- `session-attachment-gate.ts`: `list_hands` is exempt as a read.
+- `scripts/rpc-inbound-samples.ts` and the regenerated `docs/engine-socket/fixtures/rpc-inbound-samples.json` carry one sample each.
+
+### Why
+
+- senpi#5938, R4: a client (the desktop executor picker, sisyphuslabs/omo-desktop-app#5885) had no way to see which hands a headless engine can reach, or to choose one for a session.
+
+### Why an extension could not handle it
+
+- Host-level RPC commands, the capability list and the method-class table are owned by the multi-session host.
+
+### Expected merge conflict zones
+
+- LOW: the `dispatch` chain in `session-router-routing.ts`, the host schema and class tables, and `answerProtocolInfo`.
+
+## 2026-11-05 - Sealed secret answers accepted at the latch (senpi#4249)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/secret-sealed-answers.ts` is new. It handles `mcp_presenter_secret_answer`:
+  - shape parsing;
+  - the strict envelope-signature check;
+  - the step-up token check through the injected authority, with the host checks (account, device, host device, `jti` named in the transcript, expiry no later than the deadline);
+  - the open-and-unpad used at the latch.
+- `packages/coding-agent/src/modes/rpc/secret-sealed-hpke.ts` is new: the RFC 9180 base-mode open for DHKEM(X25519, HKDF-SHA256) / HKDF-SHA256 / AES-256-GCM, with strict X25519 public values.
+- `packages/coding-agent/src/modes/rpc/ed25519-strict.ts` is new: strict Ed25519 verification (canonical points, no small-order points, a prime-order public key, `S < L`) before the native equation.
+- `packages/coding-agent/src/modes/rpc/secret-sealed.ts`: `secretRequestHash`, the HPKE info and AAD, the answer and cancel transcripts, `unpadSecretValue`, and the `mcp_presenter_secret_settled` record type.
+- `packages/coding-agent/src/modes/rpc/secret-input-requests.ts`:
+  - `respondSealed` runs the claim at the latch synchronously: `jti` admission, pending and deadline, grant re-check, then the open.
+  - Receipts carry the principal, so `replay` needs the same answer id and principal, and `answeredUiRequests` stays raiser-only.
+  - The route gains `sealedOutcome` and `bindSealedResponder`.
+- `packages/coding-agent/src/modes/rpc/secret-input-presentations.ts`: `answerSealed` checks that the sender holds an eligible grant in the request's snapshot, answers a settled request from its receipt, then hands the authority's result to the session's latch. It also sends every holder the settle.
+- `packages/coding-agent/src/modes/rpc/secret-sealed-holders.ts`:
+  - `eligible`, `principalOf`, `answer` and `settle` (`elsewhere` is false only for the winning grant);
+  - each offered request keeps its `req` and deadline;
+  - a per-incarnation step-up `jti` cache.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-presenters.ts` and `session-event-writer.ts`: the private-record handler moves to the presenter surface and routes `mcp_presenter_secret_answer`, replying on the sender's connection only.
+- Review fold:
+  - `packages/coding-agent/src/modes/rpc/secret-input-requests.ts`: `dispose()` ends every prompt and releases the session's sealed latch; `close()` keeps the latch bound because the connection reuses the set on every rebind.
+  - `packages/coding-agent/src/modes/rpc/connection-handler.ts`: final teardown calls `dispose()`.
+  - `packages/coding-agent/src/modes/rpc/secret-input-presentations.ts`: unbinding a route removes only that route's own latch.
+  - `packages/coding-agent/src/modes/rpc/secret-sealed-answers.ts`, `secret-sealed.ts` and `secret-sealed-hpke.ts`: the open zeroes the plaintext itself (no copies; zeroed on a failed open too).
+
+### Why
+
+- D11 secret phase (senpi#4249), row S5-3: a same-account presenter's sealed answer is accepted, opened only by the host that raised the prompt, and settled for every holder.
+
+### Why an extension could not handle it
+
+- The secret prompt latch, the presenter grants and the injected account authority are host internals of the RPC mode.
+
+### Expected merge conflict zones
+
+- None: every path is fork-only.
+
+## 2026-11-05 - Secret prompts fan out, sealed, to same-account holders (senpi#4249)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/secret-sealed.ts` is new. It implements the request binding of omo-relay-spec decision 0022 (`B`, `displayHash`, the `omo-secret-request-v1` transcript), generates the per-request X25519 key, and defines the private record types.
+- `packages/coding-agent/src/modes/rpc/secret-sealed-holders.ts` is new: `SealedSecretHolders`.
+  - Sealed-holder eligibility (current account-principal grant with `secret_input_v1`, attestation not lapsed, valid host token).
+  - Signed `mcp_presenter_secret_request` fan-out to each holder.
+  - `mcp_presenter_secret_token` on every host token re-mint.
+  - Grant-change notifications.
+- `packages/coding-agent/src/modes/rpc/secret-input-presentations.ts`:
+  - The owner record gains `raiser` and a sealed snapshot. A raiser-refused prompt with sealed holders proceeds.
+  - `accepts` is raiser-only; `available` is true while the raiser is live or any holder's grant is current. `detach` keeps a prompt that holders still hold.
+  - A sealed-only prompt never writes a raiser lane, and the notice excludes holders.
+  - `route(session, sealed)`: only an opted-in route adds holders.
+- `packages/coding-agent/src/modes/rpc/secret-input-requests.ts`: a prompt with holders gets a per-request key, kept in its pending entry, and is offered to them (`sealed`, `offerSealed` on the route).
+- `packages/coding-agent/src/modes/rpc/secret-host-token.ts`: adds `hostPk`, `hostJkt`, `signRequest` (only for a binding that names this host instance and key) and `onToken`.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-control.ts`: the token cache moves into `SealedSecretHolders`, now the public `sealed` field; the `secretHostToken` accessor is removed.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-grants.ts` and `mcp-presenter-authority.ts`: `secretCandidates` and `isCurrent`.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-host-surface.ts` and `session-event-writer-presenters.ts`: `attachSealedSecrets`.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts` and `session-binding.ts`: the in-process session binding opts its secret route into sealed holders; a worker isolate's route does not.
+- `packages/coding-agent/src/modes/rpc/raiser-notices.ts` and `security-presentations.ts`: `raised` takes the list of excluded connections.
+- `packages/coding-agent/src/modes/rpc/mcp-form-dialog.ts`: the presenter frame union includes the sealed secret records.
+
+### Why
+
+- D11 secret phase (senpi#4249), row S5-2: a same-account presenter answers a host's secret prompt sealed end to end. This row sends the signed request to eligible holders; answer acceptance follows in S5-3.
+
+### Why an extension could not handle it
+
+- Secret prompt routing, the presenter grants and the injected account authority are host internals of the RPC mode; no extension sees them.
+
+### Expected merge conflict zones
+
+- None: every path is fork-only.
+
+## 2026-11-05 - Thread calls carry their chain count and meet the user's limit (senpi#5923)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-session-command-types.ts`: `prompt`, `steer` and `follow_up` take an optional `chainCount`.
+- `packages/coding-agent/src/modes/rpc/method-classes-schema-session.ts`: the three schemas accept `chainCount`, a positive safe integer.
+- `packages/coding-agent/src/modes/rpc/chain-admission.ts` is new: `admitInputChain()` admits an input's `chainCount` with `admitChainCall()` against `settingsManager.getThreadChainCountLimit()`, or returns the typed refusal (`errorCode: "chain_count_limit"`, `errorData: { count, limit }`). A `chainCount` that is not a positive safe integer is refused first with `errorCode: "invalid_chain_count"` and `errorData: { chainCount }`, since the RPC boundary only shape-checks a command and a malformed count would never compare above the limit.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `prompt`, `steer` and `follow_up` run `admitInputChain()` first, before `holdAutomaticInput` can keep the input as a notice, and answer its refusal.
+- `packages/coding-agent/src/modes/rpc/client-input-handler.ts`: runs the same admission before `ClientAdmissions` records anything and passes an admitted count to the session.
+
+### Why
+
+senpi#5641 / #5899 (decision K8): the user-set thread chain count limit has to be read where chains are created. A thread call reaches another session as RPC input, so the limit is enforced there. Unset means unlimited; there is no default cap and no cost limit.
+
+### Why an extension could not handle it
+
+The refusal has to happen before the input is admitted and recorded, which only the RPC input path controls.
+
+### Expected merge conflict zones
+
+- LOW: the `prompt`/`steer`/`follow_up` command types and schemas, their cases in `connection-handler.ts`, the top of `handleClientInput` and its error mapping.
+
+## 2026-11-05 - move_session op copy (senpi#5889)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-move-request.ts` (new): the `move_session` request parser, moved out of
+  `session-move-commands.ts` unchanged, plus op `copy` (`sessionPath`, plain `sessionId`, absolute `sessionDir?`).
+- `packages/coding-agent/src/modes/rpc/session-move-commands.ts`: runs `copy` through `copySessionAs` (default folder:
+  this host's session folder for the source's `cwd`) and passes `invalid_move_request` from the core through.
+- `packages/coding-agent/src/modes/rpc/session-move-wire.ts`, `method-classes-schema-host.ts`, `host-capabilities.ts`:
+  the `copy` op type and schema, and the advertised `move_session_copy` capability.
+- `packages/coding-agent/docs/rpc.md`: the `copy` row and paragraph.
+
+### Why
+
+- omo-desktop-app#4049 offers "Copy to a new thread" on a sealed copy; the copy must be a new session under the new
+  thread's id, with the open session left as it is.
+
+### Why an extension could not handle it
+
+- `move_session` and its capability list are the RPC host's own surface.
+
+### Expected merge conflict zones
+
+- LOW: the `move_session` union in `method-classes-schema-host.ts` and `session-move-wire.ts`, the capability list in
+  `host-capabilities.ts`.
+
+## 2026-11-05 - A write into a sealed session is refused with session_moved_away (senpi#5889)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/client-input-handler.ts`: a new admission of `prompt`, `steer` or `follow_up` checks
+  `sessionManager.getOwnership()` first and throws `SessionMovedAwayError` for a session that is moving or moved. The
+  refusal carries `errorCode: "session_moved_away"` and `errorData: { state }`. A replay of an already admitted id is
+  answered as before.
+- `packages/coding-agent/docs/rpc.md`: the "Sealed session" refusal.
+
+### Why
+
+- Clients branch on a refusal's code, never its text. The refusal had no code, and a `prompt` was accepted before its
+  turn failed to write, so a client could not show a read-only session with a copy action (omo-desktop-app#4049).
+
+### Why an extension could not handle it
+
+- Admission and its refusal records are the RPC host's; no extension hook runs before a prompt is accepted.
+
+### Expected merge conflict zones
+
+- LOW: the top of the `admissions.admit` callback and the refusal spread at the end of `handleClientInput`.
+
+## 2026-11-05 - Host key and host token cache for the sealed secret route (senpi#4249)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-account.ts`: `PresenterAccountAuthority` gains the optional `mintSecretHostToken` (with `SecretHostTokenRequest` and `SecretHostProof`) and `verifySecretAnswer` (with `SecretAnswerVerification`, `SecretAnswerStepUp` and the `SecretAnswerRefusal` codes). Nothing calls `verifySecretAnswer` yet.
+- `packages/coding-agent/src/modes/rpc/secret-host-token.ts` is new: `SecretHostTokens`.
+  - A per-instance in-memory Ed25519 host key, created only for an authority with both methods.
+  - A proof callback that signs only the engine-built host-proof transcript, only while its mint is pending.
+  - One issuer token per `(hostInstance, durableSessionId)`: minted on the first account-principal `secret_input_v1` acquire, re-minted at two thirds of its lifetime (local clock), and dropped with the last such grant. A mint has 30 s to settle; a failed one is retried within 60 s while a holder remains.
+  - Claims checked against the request before caching; a synchronous `current()` read.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-grants.ts`: the registration records `secretInput` from the signed acquire's features. `secretInputHeld(state, binding)` is new; it counts only account-principal grants.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-authority.ts`: `secretInputHeld(binding)`.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-control.ts`: creates and disposes the cache, asks it for a token after a `secret_input_v1` acquire, and exposes `secretHostToken(durableSessionId)`.
+
+### Why
+
+- D11 secret phase (senpi#4249), row S5-1: a presenter verifies the host before any secret field renders. The host proves itself with an issuer token bound to its in-memory key, its account and device, its host instance and the session. The token is cached so that secret routing stays synchronous.
+
+### Why an extension could not handle it
+
+- The presenter control endpoint, its grants and the injected account authority are host internals of the RPC mode; no extension sees them.
+
+### Expected merge conflict zones
+
+- None: every path is fork-only.
+
+## 2026-11-04 - A session opened over a delegated connection outlives that connection (senpi#5808)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `createHostCore` reads `writer.delegations.isDelegated` at line receipt, right after the delegation verdict, and dispatches every `open_session` on a delegated connection with `retain_on_disconnect: true`, whatever the record carried. A connection that never declares is unchanged: an explicit value is honored, and only a machine-owned host defaults an omitted one to `true`.
+
+### Why
+
+- Since senpi#5651 a forwarder opens one delegated connection per viewer, and that connection ends when the viewer leaves. The ordinary drop rule (`releaseConnection` -> `releaseDisconnectAttachment`) then closed the session the viewer opened, so the next viewer could not attach (`session_closing`; senpi#5808). The forwarder keeps serving the session, so ending its per-viewer connection now detaches. An explicit `false` is overridden because honoring it would reproduce senpi#5808 for any forwarder that sends it. The read happens at receipt so an open still running when its connection ends is retained too. `attach_session` is untouched and never turns retention on, so a principal granted only `thread` gains nothing that needs `device_admin`.
+
+### Why an extension could not handle it
+
+- Connection lifetime and `open_session` dispatch belong to the RPC host's per-line handler, which no extension reaches.
+
+### Expected merge conflict zones
+
+- LOW: a few lines in `createHostCore`'s `handle`, next to the `machineOwned` default.
+
+## 2026-11-04 - Private presenter records on delegated connections, and presenter control discovery (senpi#4249)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/delegated-connection.ts`: on a delegated connection, any `mcp_form_*` / `mcp_presenter_*` record is decided by `delegated-presenter-records.ts` instead of the method-class table; `mcp_presenter_control_info` on a non-delegated connection is answered when the connection proved the launch key and refused `presenter_not_authorized` otherwise. Reply shapes moved to `delegation-wire.ts` and declaration parsing to `delegation-declaration.ts` (250-line ceiling), unchanged.
+- `packages/coding-agent/src/modes/rpc/delegated-presenter-records.ts` (new): the four presenter client records pass to the presenter authority under the `answer` grant; every other outcome is a private refusal (`delegation_not_granted`, `delegation_unclassified`, `presenter_not_authorized`).
+- `packages/coding-agent/src/modes/rpc/delegated-answer.ts` (new): writes a non-pass verdict; private outcomes go through `writeMcpFormReply`, never the control queue.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-presenters.ts`: `writeMcpFormReply` (the private `writeRaw` write) and the `mcpPresenterControlEndpoint` getter. A later main refactor moved `handleMcpForm` into this presenter base class, so that handler is the one that writes its form reply through `writeMcpFormReply`; `session-event-writer.ts` keeps only the queue scheduler.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `createHostCore.handle` hands every non-pass delegation verdict to `answerDelegation`.
+
+### Why
+
+- A relay host forwarding a remote presenter's private records on its delegated connection had every one refused as `delegation_unclassified` in the generic response shape, so the delegated lane could not work and a forwarder routing by `id` could settle a pending command with it. The host's relay also had no way to learn the presenter control endpoint without attaching to a session (senpi#4249 R-1b PR (d), d1 and d2).
+
+### Why an extension could not handle it
+
+- Both decisions run in the host core's per-line dispatch, on the delegation state and launch-key proof only the RPC transport holds.
+
+### Expected merge conflict zones
+
+- LOW: the top of `createHostCore.handle`, `ConnectionDelegations.inspect`, `handleMcpForm`.
+
+## 2026-11-04 - A presenter control over a shared authority revokes only its own grants (senpi#4249)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-host-surface.ts`: `PresenterHostSurface.sharedAuthority`, plus `presenterContextReply`, which both the RPC writer and the terminal surface use.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-control.ts`: `dispose()` revokes every control stream's registrations synchronously, and disposes the authority only when the surface owns it. An account principal's grants carry its verified `{ principalKind: "account", dev, dname }` identity into the `mcp_form_settled` audit. The management transcript is built by `challengeTranscript`.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-account.ts`: `accountIdentity`.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-control-start.ts`: `startMcpPresenterControl` takes any `PresenterHostSurface`.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-presenters.ts`: the context reply goes through `presenterContextReply`.
+
+### Why
+
+- D11 S3-6b (senpi#4249): the terminal's authority belongs to the TUI's own form binding, so stopping the terminal's control endpoint must not end the terminal's own presenter. The audit names a same-account winner by its attestation (design 2.5).
+
+### Why an extension could not handle it
+
+- The presenter control endpoint is a host internal of the RPC mode.
+
+### Expected merge conflict zones
+
+- None: these paths are fork-only.
+
+## 2026-11-04 - Background secret and grant-select routes stay local; value-free raiser notices (senpi#4249, D11 S3-5)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/secret-input-presentations.ts`: a background secret (no raising connection) takes only a local eligible presenter; a connection that declared a delegation or a `remoteOrigin` is never chosen, and with none the call ends `no_presenter`. A background request whose presenter later declares a `remoteOrigin` is no longer live. The prompt and its settle record send a `secret_input_notice` / `secret_input_notice_settled` to the other attached connections that opted in.
+- `packages/coding-agent/src/modes/rpc/security-presentations.ts`: the worker grant fallback and the in-process grant-presentation registration take only local `grant_select` connections (`accepted:false` when there is none); a remote declaration cancels that connection's background grants; `routeWorkerGrant` takes the dialog title and sends `grant_select_notice`, and `settleGrant` its `grant_select_notice_settled`.
+- `packages/coding-agent/src/modes/rpc/raiser-notices.ts` (new): the opt-in notice fan-out (`raiser_notice_v1`), value-free, outside replay and observer lanes; `ConnectionLocality`.
+- `packages/coding-agent/src/modes/rpc/session-event-writer-state.ts`, `session-event-writer-connections.ts`: the writer's locality (delegated per senpi#5632, or a declared origin read through the host's `originOf` hook) feeds both routers; `noticeGrantDialog` for the in-process path.
+- `packages/coding-agent/src/modes/rpc/session-router-context.ts`: installs `writer.originOf` from the host's connection roles.
+- `packages/coding-agent/src/modes/rpc/compact-socket-commands.ts`: `set_client_info` records `remoteOrigin` before committing capabilities, so the capability recheck already sees it.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `session-binding.ts`: `grantDialogRaised` reports an emitted in-process grant select to the writer.
+- `packages/coding-agent/src/modes/rpc/session-worker-client.ts`: passes a worker grant select's title to `routeWorkerGrant`.
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts`: `RAISER_NOTICE_CAPABILITY` (`raiser_notice_v1`).
+
+### Why
+
+- The background fallback took the first capable attached connection, so a relayed remote device or a delegated connection could become the presenter of a secret it never raised, and the value would cross the relay (D11 design 2.10, A8). Raiser-only dialogs may be seen elsewhere but answered only by the raiser (D11 4.2).
+
+### Why an extension could not handle it
+
+- The routing decision and the connection's delegation and origin state live inside the RPC host's writer and router; no extension sees the presenter choice.
+
+### Expected merge conflict zones
+
+- LOW: `select` in `SecretInputPresentations.route`, `routeWorkerGrant` and `#register` in `RpcSecurityPresentations`, the end of `declareSocketClient`, `createDialogPromise` in `connection-handler.ts`.
+
+## 2026-11-04 - Quiet takeover on a headless engine (S37, senpi#5732)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/attach-ledger.ts` (new): the durable takeover record. `attach.takeover` is appended and the session's holder document replaced in one commit, under the store's admission line, with the holder generation one higher. A takeover by the current holder writes nothing.
+- `packages/coding-agent/src/modes/rpc/attach-takeover.ts` (new): `attach_session { takeover: true, holder }` on a machine-owned host with a ledger records the takeover, attaches the caller, sends every other connection holding the session one `session_released { reason: "taken_over" }` record and releases its holds with disconnect semantics. It refuses with `takeover_holder_required` without `holder`, and with `takeover_unsupported` on any other host.
+- `packages/coding-agent/src/modes/rpc/attach-takeover.ts`: only the ledger commit is awaited before shared state is read. After it the takeover re-checks the host (draining: `session_busy_lifecycle`), the caller (gone: `session_not_attached`, nobody let go) and the session (closed: `unknown_session`), attaches the caller and removes every other connection's holds with no await in between, then sends the notices and runs the deferred releases; a failed ledger write answers `takeover_failed`.
+- `packages/coding-agent/src/modes/rpc/rpc-session-event-types.ts`, `rpc-types.ts`, `rpc-client-events.ts`: `RpcSessionReleasedEvent` (`session_released { sessionId, reason: "taken_over" }`), in the public `RpcClientEvent` union.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `collectEvents` skips `session_released` like the other connection-level records.
+- `packages/coding-agent/src/modes/rpc/session-attachment-commands.ts`: `attachSession` hands a `takeover: true` command to `takeOver`; without it, the path is unchanged.
+- `packages/coding-agent/src/modes/rpc/attachment-types.ts`: the optional `takeover` and `holder` command fields, and the `holder`, `generation` and `released` answer fields.
+- `packages/coding-agent/src/modes/rpc/method-classes-schema-host.ts`: the `attach_session` schema accepts `takeover` and `holder`.
+- `packages/coding-agent/src/modes/rpc/session-router-types.ts`: `RpcHostSessionDefaults.sessionOwner?` and `sessionTakeover?`.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `MultiSessionHostOptions.sessionTakeover?`; no CLI flag sets it yet.
+- `packages/coding-agent/src/modes/rpc/testing/kill-attach.ts` (new): KILL-ATTACH-01..05.
+
+### Why
+
+- R21: opening a session elsewhere takes it over, and the previous client lets go quietly, with no "move" concept (senpi#5732).
+
+### Why an extension could not handle it
+
+- Attachments and their release are RPC host internals that no extension reaches.
+
+### Expected merge conflict zones
+
+- LOW: new files; one line in `attachSession`; one optional field each in the host options, the session defaults, the command and answer types and the `attach_session` schema.
+
+## 2026-10-28 - The supervisor adopts a replacement owner whose watch event was dropped (senpi#4645)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-activity.ts`: `SupervisorOwner.shouldExit` ADOPTS an owner record that differs from the one it holds, re-reading it through `reload()` (which resets death detection for the new owner) and deciding for the real owner on the next tick, instead of only refusing the exit. The record re-read already happened there; it could never act on what it read.
+
+### Why
+
+- A replacement owner reaches the supervisor only through an `fs.watch` event on `owner.json`, and node does not guarantee that event. When it was dropped, the supervisor stayed bound to the dead predecessor: `shouldExit` re-read the record, saw a mismatch and refused forever, so the replacement's own death could not end the generation and the host outlived its owner until the idle window (15 minutes by default) instead of exiting on owner death (senpi#3044).
+
+### Why an extension could not handle it
+
+- The owner probe and the exit decision both run inside the lifecycle supervisor process, which starts before and outside any session; no extension surface sees the owner record, the owner pipe, or the shutdown decision.
+
+### Expected merge conflict zones
+
+- The tail of `SupervisorOwner.shouldExit` is upstream-adjacent: an upstream change to the owner-record comparison or to the quiescence check will meet this branch.
+
 ## 2026-11-05 - A coordinated host's idle window waits for its launcher's first probe (senpi#6001)
 
 ### What changed

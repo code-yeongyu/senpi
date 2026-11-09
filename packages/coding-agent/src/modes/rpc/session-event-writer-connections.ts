@@ -34,6 +34,7 @@ export abstract class SessionEventWriterConnections extends SessionEventWriterLa
 			record.type === "host_request" ||
 			record.type === "relocation_due" ||
 			(record.type === "extension_ui_request" &&
+				record.audience !== "session" &&
 				["select", "confirm", "input", "editor"].includes(String(record.method)))
 		);
 	}

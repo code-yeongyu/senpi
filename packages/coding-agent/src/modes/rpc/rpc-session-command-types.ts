@@ -9,6 +9,7 @@ import type { ClientMessageIdentity } from "../../core/client-message-identity.t
 import type { SessionEntry } from "../../core/session-manager.ts";
 import type { ToolBarrierSpec } from "../../core/tool-barrier.ts";
 
+import type { RpcAdmitExternalMessageCommand } from "./admit-external-message-wire.ts";
 import type { RpcRecoveryCommand } from "./rpc-recovery-command-types.ts";
 import type { RpcRemoteOrigin } from "./remote-origin.ts";
 import type { RpcSessionModelEntry } from "./rpc-session-state-types.ts";
@@ -162,6 +163,7 @@ export type RpcSessionCommand =
 	 * a session whose extension registered no control endpoint answers `admitted: []`.
 	 */
 	| { id?: string; type: "wake"; delivery_ids?: string[] }
+	| RpcAdmitExternalMessageCommand
 
 	// State
 	| { id?: string; type: "get_state" }
@@ -205,6 +207,9 @@ export type RpcSessionCommand =
 	// Compaction
 	| { id?: string; type: "compact"; customInstructions?: string }
 	| { id?: string; type: "set_auto_compaction"; enabled: boolean }
+
+	// Approval mode
+	| { id?: string; type: "set_permission_preset"; permissionPreset: string }
 
 	// Retry
 	| { id?: string; type: "set_auto_retry"; enabled: boolean }
@@ -324,6 +329,12 @@ export type RpcSessionCommand =
 	// Commands and loaded runtime surfaces
 	| { id?: string; type: "get_commands" }
 	| { id?: string; type: "get_loaded_surfaces" }
+
+	// The session workspace's project trust and project-scope settings (senpi#6176)
+	| { id?: string; type: "get_project_trust" }
+	| { id?: string; type: "set_project_trust"; choice: "trust" | "trust_parent" | "do_not_trust" }
+	| { id?: string; type: "get_project_settings" }
+	| { id?: string; type: "set_project_setting"; key: string; value: unknown }
 	| { id?: string; type: "extension_request"; name: string; data?: unknown }
 	| { id?: string; type: "eval_cells.list" }
 	| { id?: string; type: "eval_cells.peek"; cellId: string; tailBytes?: number }

@@ -7,6 +7,7 @@ import "./modes/rpc/host-startup-beacon.ts";
 import "./private-fds.ts";
 // Third, and before anything that can touch process.stdin: the guards above only change directory and read env.
 import "./modes/rpc/internal-bootstrap.ts";
+import "./windows-power-throttling-startup.ts";
 import "./internal-role.ts";
 import { enableStartupCompileCache } from "./compile-cache.ts";
 import { APP_NAME } from "./config.ts";

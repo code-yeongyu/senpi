@@ -1,3 +1,60 @@
+## 2026-11-07 - Codex turns are priced at the tier that was sent when the backend echoes auto/default (senpi#6156)
+
+### What changed
+
+- `packages/ai/src/api/openai-codex-responses.ts`: `resolveCodexServiceTier` treats a `default`, `auto` or absent response echo as uninformative and resolves to the tier that was sent; `flex`, `priority`, `fast`, `ultrafast` and `scale` echoes stay authoritative.
+- `packages/ai/src/api/openai-codex-responses.ts`: the SSE path (`processStream`) now receives the sent tier from `body.service_tier` after `onPayload`, instead of the pre-hook `options.serviceTier`.
+- `packages/ai/src/api/openai-codex-responses.ts`: the websocket path prices against `requestBody.service_tier` of the frame just sent.
+- `packages/ai/test/chatgpt-subscription-stream.test.ts`: 6 new regression tests for senpi#2890 (auto/default echo with priority sent; explicit flex echo stays flex; `onPayload`-only priority tier on SSE and websocket).
+
+### Why
+
+- senpi#2890: ChatGPT-subscription Codex turns served at the Fast tier were recorded and priced as Standard (1x) when the backend echoed `auto`, and when `/fast` set the tier only through the `onPayload` payload hook. Port of the oh-my-pi v18.8.1 fixes (`204b8f3`, `6428580`).
+
+### Why an extension could not handle it
+
+- The service-tier resolution and the pricing fallback live inside the Codex Responses transport; an extension can only add the tier to the payload, it cannot change which tier the transport prices against.
+
+### Expected merge conflict zones
+
+- LOW: `resolveCodexServiceTier`, the `processStream` signature and its SSE call site, and the websocket `processResponsesStream` options.
+
+## 2026-11-02 - Honor explicit Anthropic long-cache retention on compatible proxies (senpi#1248)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: the `getCacheControl` wire-level `cache_control.ttl` decision delegates to the shared `allowsAnthropicLongCacheRetention()` helper, so an explicit `compat.supportsLongCacheRetention` value is authoritative on any host while an unset value keeps the `api.anthropic.com` hostname inference. The file no longer imports `isAnthropicApiBaseUrl`.
+
+### Why
+
+- A model routed through an Anthropic-compatible proxy could explicitly declare one-hour cache support, but the wire path still required the native Anthropic hostname and silently omitted `ttl: "1h"`. Sharing one helper with the TTL resolver keeps the request TTL and the internal cache accounting from drifting.
+
+### Why an extension could not handle it
+
+- The cache-control object is serialized inside the private Anthropic Messages request builder before dispatch; no extension hook can rewrite that provider-wire field or keep it synchronized with the core TTL accounting.
+
+### Expected merge conflict zones
+
+- LOW: the prompt-cache helper import and the `ttl` expression in `getCacheControl` in `packages/ai/src/api/anthropic-messages.ts`.
+
+## 2026-11-06 - The warm pre-flight accepts an opted-in Anthropic-compatible host (senpi#1248)
+
+### What changed
+
+- `packages/ai/src/api/warm-prompt-cache.ts`: the Anthropic branch returns `{ supported: false }` for a host only through the shared `supportsAnthropicCacheWarming()` predicate instead of its own `isAnthropicApiBaseUrl` check, and the model cast moved above the guard so one predicate owns both decisions.
+
+### Why
+
+- `warmPromptCache` refused every non-native `anthropic-messages` base URL, so an explicitly opted-in gateway got `supported: false` and the keep-alive stopped with `unsupported-model` even after the retention decision learned to honour `compat.supportsLongCacheRetention` (senpi#1248).
+
+### Why an extension could not handle it
+
+- The warm request is assembled inside the provider package and its SDK client is constructed there; an extension cannot rewrite the refusal or the base URL it dials.
+
+### Expected merge conflict zones
+
+- LOW: the Anthropic branch guard in `warmPromptCache`.
+
 ## 2026-10-30 - SIWC prewarm eligibility follows resolved cache support (senpi#5101)
 
 ### What changed

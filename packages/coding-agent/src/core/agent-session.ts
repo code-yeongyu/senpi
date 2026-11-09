@@ -19,6 +19,7 @@ import { rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { bindPipelineWitness } from "./execution/pipeline-witness.ts";
+import { runExecuteToolOnHost } from "./execute-tool-on-host.ts";
 import { carryPreflightFacts } from "./execution/preflight-carry.ts";
 import type {
 	Agent,
@@ -151,6 +152,7 @@ import {
 	ContinueFromLeafError,
 	trackTurnAdmission,
 } from "./continue-from-leaf.ts";
+import { getCredentialAccounts } from "./credential-accounts.ts";
 import { credentialRecoveryRevision } from "./credential-recovery-revision.ts";
 import { admitCursorHistory, cursorAdmissionBudgetBytes } from "./cursor-history-admission.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
@@ -296,6 +298,16 @@ import { deliveryIdOf, ExternalAdmission, type InputHold } from "./external-admi
 import { HELD_INPUT_ENTRY, type HeldInput, HeldInputs, type HoldInputResult, heldInputHistory } from "./held-inputs.ts";
 import { shouldWarnHighReasoning } from "./high-reasoning-warning.ts";
 import { customTurnOrigin, type InputOrigin, inputAttributionOf, inputOriginOf } from "./input-origin.ts";
+import {
+	type ConnectionOrigin,
+	copyInputTurnMark,
+	hasInputTurnMark,
+	inputTurnMark,
+	markInputTurnOrigin,
+	noteRunStart,
+	noteUserMessageStart,
+} from "./turn-origin.ts";
+import { releaseDecisionPreset } from "./permission-decision.ts";
 import { markInterrupted, type StopInterrupt } from "./interrupted-tool-result.ts";
 import {
 	deliveredReceipts,
@@ -392,6 +404,7 @@ import {
 } from "./retry-fallback/request-shape.ts";
 import {
 	AccountUsageLimitError,
+	formatResetTime,
 	describeUsageLimitEntry,
 	describeUsageLimitMessage,
 	usageLimitScope,
@@ -454,6 +467,13 @@ import {
 } from "./runtime/bootstrap.ts";
 import type { SourceInfo } from "./source-info.ts";
 import { toolInfoOf } from "./tool-info.ts";
+import {
+	PendingQueueLedger,
+	type PendingQueueSnapshot,
+	queueEntryLabel,
+	STALL_WARNING_MS,
+	watchForStall,
+} from "./stall-warning.ts";
 import { stopResumeDirective } from "./stop-resume-directive.ts";
 import { type AgentSessionStructuredRecord, StructuredSessionLane } from "./structured-session-lane.ts";
 import {
@@ -552,15 +572,17 @@ type WithParentToolCallId<E> = E extends {
 	? E & { parentToolCallId?: string }
 	: E;
 
-/** Why a session-level abort happened, when the caller knows: today only a session replacement says so. */
-export interface AgentAbortCause {
-	readonly kind: "session_replaced";
-	/** What replaced the session: `new_session`, `fork` or a `switch_session`/resume. */
-	readonly reason: "new" | "fork" | "resume";
-	/** The replacement's transcript and durable session id, when they are known before the teardown. */
-	readonly targetSessionFile?: string;
-	readonly targetSessionId?: string;
-}
+/** Why a session-level abort happened, when the caller knows: a session replacement, or the host process stopping. */
+export type AgentAbortCause =
+	| {
+			readonly kind: "session_replaced";
+			/** What replaced the session: `new_session`, `fork` or a `switch_session`/resume. */
+			readonly reason: "new" | "fork" | "resume";
+			/** The replacement's transcript and durable session id, when they are known before the teardown. */
+			readonly targetSessionFile?: string;
+			readonly targetSessionId?: string;
+	  }
+	| { readonly kind: "host_shutdown" };
 
 type AgentSessionAgentEndEvent = Extract<AgentEvent, { type: "agent_end" }> & {
 	willRetry: boolean;
@@ -772,6 +794,14 @@ export type AgentSessionEvent =
 			limit?: "model" | "account";
 	  }
 	| { type: "retry_fallback_succeeded"; model: string; chainKey: string }
+	| {
+			/** A limit that named no model family was checked on another family once (senpi#5596). */
+			type: "usage_limit_scope_probe";
+			provider: string;
+			heldFamily: string;
+			probeFamily: string;
+			outcome: "served" | "widened";
+	  }
 	| {
 			type: "retry_fallback_reverted";
 			from: string;
@@ -1227,6 +1257,8 @@ export interface QueuedInputOptions extends ClientMessageIdentity {
 	interactiveUser?: boolean;
 	/** RPC input that arrived as a thread call from another session: its chain hop count, reported on the `input` event. */
 	chainCount?: number;
+	/** Internal, RPC input: whether its record arrived on a local or a delegated (remote device) connection. */
+	connectionOrigin?: ConnectionOrigin;
 	/** Persist the prepared queue record before publishing or enqueuing it. */
 	onQueuedInput?: (input: PreparedClientInput) => void;
 	/** A steer meant only for this turn (`currentTurnId`): checked where it enters the queue, else `TurnConflictError`. */
@@ -1265,6 +1297,8 @@ export interface PromptOptions extends ClientMessageIdentity {
 	interactiveUser?: boolean;
 	/** RPC input that arrived as a thread call from another session: its chain hop count, reported on the `input` event. */
 	chainCount?: number;
+	/** Internal, RPC input: whether its record arrived on a local or a delegated (remote device) connection. */
+	connectionOrigin?: ConnectionOrigin;
 	/**
 	 * Send command-shaped text that no command handles to the model as plain text. Without it, such
 	 * interactive or RPC input is rejected with `UnknownCommandError`.
@@ -1456,6 +1490,8 @@ export class AgentSession {
 	private _eventListeners: AgentSessionEventListener[] = [];
 	private readonly _structuredLane: StructuredSessionLane;
 	private _agentEventQueue: Promise<void> = Promise.resolve();
+	/** What `_agentEventQueue` still holds, so a tool call stalled behind it can say what it waits on (senpi#6189). */
+	private readonly _agentEventQueueLedger = new PendingQueueLedger();
 	private readonly _lifecycleEvents = new LifecycleEventSequencer<AgentSessionEvent>();
 	/**
 	 * Exact message objects whose message_end persistence is still queued.
@@ -1858,7 +1894,8 @@ export class AgentSession {
 			config.internalChannel,
 			(deliver) => {
 				if (!this._unsubscribeAgent) return;
-				this._agentEventQueue = this._agentEventQueue.then(deliver, deliver);
+				const tracked = this._agentEventQueueLedger.track("structured_record", deliver);
+				this._agentEventQueue = this._agentEventQueue.then(tracked, tracked);
 			},
 			(control) => this._recoveryIdentity?.own(control),
 		);
@@ -2276,6 +2313,7 @@ export class AgentSession {
 			sessionModel.provider,
 			this._retryFallback.accountError(sessionModel.provider),
 			this._retryFallback.accountResetAt(sessionModel.provider),
+			this._retryFallback.widenedFamiliesOf(sessionModel.provider),
 		);
 	}
 
@@ -2444,34 +2482,60 @@ export class AgentSession {
 		args: unknown,
 		options: { waitForEventQueue?: boolean; parentToolCallId?: string; signal?: AbortSignal } = {},
 	) {
-		if (options.waitForEventQueue !== false) {
-			await this._agentEventQueue;
-		}
-		const signal = options.signal ?? this.agent.signal;
-		// A call released by Stop never runs: block it without asking its hooks (a permission prompt) about it.
-		// Callers such as executeTool only honor an explicit block, so returning nothing here would let it run.
-		if ((await this._waitForToolBarrier(toolCall, signal)) && signal?.aborted) {
-			return { block: true, reason: "Operation aborted" };
-		}
-
-		const runner = this._extensionRunner;
-		if (!runner.hasHandlers("tool_call")) {
-			return undefined;
-		}
-
-		try {
-			return await runner.emitToolCall({
-				type: "tool_call",
-				toolName: toolCall.name,
+		// Neither wait below has a deadline of its own: one that never settles is logged once, never cut short (senpi#6189).
+		// The call's own `timeout` bounds its execution, not this phase, which includes a human permission decision.
+		const thresholdMs = STALL_WARNING_MS;
+		const warnStalled = (event: string, elapsedMs: number, queue?: PendingQueueSnapshot) =>
+			this._sessionLogger.warn(event, {
 				toolCallId: toolCall.id,
+				toolName: toolCall.name,
 				...(options.parentToolCallId ? { parentToolCallId: options.parentToolCallId } : {}),
-				input: args as Record<string, unknown>,
+				thresholdMs,
+				elapsedMs,
+				...queue,
 			});
-		} catch (err) {
-			if (err instanceof Error) {
-				throw err;
+		if (options.waitForEventQueue !== false) {
+			const queueWatch = watchForStall(thresholdMs, (elapsedMs) =>
+				warnStalled("tool_call_event_queue_stalled", elapsedMs, this._agentEventQueueLedger.snapshot()),
+			);
+			try {
+				await this._agentEventQueue;
+			} finally {
+				queueWatch.stop();
 			}
-			throw new Error(`Extension failed, blocking execution: ${String(err)}`);
+		}
+		const preflightWatch = watchForStall(thresholdMs, (elapsedMs) =>
+			warnStalled("tool_call_preflight_stalled", elapsedMs),
+		);
+		try {
+			const signal = options.signal ?? this.agent.signal;
+			// A call released by Stop never runs: block it without asking its hooks (a permission prompt) about it.
+			// Callers such as executeTool only honor an explicit block, so returning nothing here would let it run.
+			if ((await this._waitForToolBarrier(toolCall, signal)) && signal?.aborted) {
+				return { block: true, reason: "Operation aborted" };
+			}
+
+			const runner = this._extensionRunner;
+			if (!runner.hasHandlers("tool_call")) {
+				return undefined;
+			}
+
+			try {
+				return await runner.emitToolCall({
+					type: "tool_call",
+					toolName: toolCall.name,
+					toolCallId: toolCall.id,
+					...(options.parentToolCallId ? { parentToolCallId: options.parentToolCallId } : {}),
+					input: args as Record<string, unknown>,
+				});
+			} catch (err) {
+				if (err instanceof Error) {
+					throw err;
+				}
+				throw new Error(`Extension failed, blocking execution: ${String(err)}`);
+			}
+		} finally {
+			preflightWatch.stop();
 		}
 	}
 
@@ -3540,26 +3604,26 @@ export class AgentSession {
 			this._queuedInputAges.noteRunStarted();
 		}
 		this._isAgentRunActive = true;
-		onTurnAdmitted?.();
-		// A new turn admitted: arm the inactivity lease and the hard max-runtime cap.
-		this._deadlineTracker.arm();
-		this._handlerTurnScope += 1;
-		// A new prompt replaces any retry that compaction before it scheduled.
-		this._failedResponse = undefined;
-		this._recordSelection();
-		this._requiredCompactionAdmissionError = undefined;
-		this._transcriptWriteFailures.startRun();
-		this._promptOwnsRun = true;
-		if (!this.agent.state.isStreaming) {
-			const withoutRefused = this._transcriptWriteFailures.takeRefusedOut(this.agent.state.messages);
-			if (withoutRefused) {
-				this.agent.state.messages = withoutRefused;
-				this._incrementMessageRevision();
-			}
-		}
-		this.agent.abortServerSideFallback =
-			this.settingsManager.getAbortServerSideFallback() && this._retryFallback.hasConfiguredChain();
 		try {
+			onTurnAdmitted?.();
+			// A new turn admitted: arm the inactivity lease and the hard max-runtime cap.
+			this._deadlineTracker.arm();
+			this._handlerTurnScope += 1;
+			// A new prompt replaces any retry that compaction before it scheduled.
+			this._failedResponse = undefined;
+			this._recordSelection();
+			this._requiredCompactionAdmissionError = undefined;
+			this._transcriptWriteFailures.startRun();
+			this._promptOwnsRun = true;
+			if (!this.agent.state.isStreaming) {
+				const withoutRefused = this._transcriptWriteFailures.takeRefusedOut(this.agent.state.messages);
+				if (withoutRefused) {
+					this.agent.state.messages = withoutRefused;
+					this._incrementMessageRevision();
+				}
+			}
+			this.agent.abortServerSideFallback =
+				this.settingsManager.getAbortServerSideFallback() && this._retryFallback.hasConfiguredChain();
 			await this.agent.prompt(messages);
 			// AgentSession's subscriber intentionally queues event work instead of
 			// blocking Agent core. Wait for this run's queued recovery decision
@@ -3633,7 +3697,10 @@ export class AgentSession {
 			if (event.type === "agent_start") {
 				this._lifecycleBinding.startRun();
 				this._requestSelectedModel = undefined;
+				noteRunStart(this.sessionManager);
 			}
+			if (event.type === "message_start" && (event.message.role === "user" || hasInputTurnMark(event.message)))
+				noteUserMessageStart(this.sessionManager, event.message);
 			// Bind now: the core can start another run before this event's asynchronous delivery.
 			const bound =
 				event.type === "agent_start" ? { ...event, runId: this._lifecycleBinding.controller.ledger.runId } : event;
@@ -3722,7 +3789,8 @@ export class AgentSession {
 			this._lifecycleEvents.release(heldLifecycle, (held) => this._emit(held));
 			return this._processAgentEvent(queuedEvent, signal);
 		};
-		const processing = this._agentEventQueue.then(deliverThenProcess, deliverThenProcess);
+		const tracked = this._agentEventQueueLedger.track(queueEntryLabel(queuedEvent), deliverThenProcess);
+		const processing = this._agentEventQueue.then(tracked, tracked);
 		this._agentEventQueue =
 			pendingEnd !== undefined
 				? processing.finally(() => {
@@ -4914,6 +4982,7 @@ export class AgentSession {
 	 */
 	dispose(): void {
 		this._disposed = true;
+		releaseDecisionPreset(this.sessionManager);
 		this._unsubscribeSecurityNotices?.();
 		this._unfollowProviderAccountChanges();
 		this.securityNotices.dispose();
@@ -5225,6 +5294,17 @@ export class AgentSession {
 		this._sessionLogger.warn(event, { detail });
 	}
 
+	/**
+	 * End the running turn because the process hosting this session is stopping (an RPC host shutting down or
+	 * restarting): a system abort whose `agent_end` carries `abortCause: { kind: "host_shutdown" }`, never a user abort.
+	 */
+	async abortForHostShutdown(): Promise<void> {
+		if (!this.isStreaming) return;
+		if (this._abortCause === undefined) this._abortCause = { kind: "host_shutdown" };
+		await this._abortActiveAgentAndRetry("system");
+		if (!this.isIdle) await this._waitForIdleAfterAbort();
+	}
+
 	/** Adapter for the deadline owner interface: end the turn through the normal system abort. */
 	async abortTurnForDeadline(): Promise<void> {
 		await this._abortActiveAgentAndRetry("system");
@@ -5400,37 +5480,27 @@ export class AgentSession {
 			);
 		}
 
-		let result: AgentToolResult<unknown>;
-		let isError = false;
-		try {
-			result = await prepared.tool.execute(
-				prepared.toolCall.id,
-				prepared.args as never,
-				options?.signal,
-				options?.onUpdate as AgentToolUpdateCallback<unknown> | undefined,
-			);
-			isError = result.isError === true;
-		} catch (err) {
-			result = {
-				content: [
-					{
-						type: "text",
-						text: err instanceof Error ? err.message : String(err),
-					},
-				],
-				details: { isError: true },
-			};
-			isError = true;
-		}
-		const hookResult = await this._emitAfterToolCallHooks(prepared.toolCall, prepared.args, result, isError);
-
-		if (!hookResult) {
+		const { result, hook } = await runExecuteToolOnHost(
+			{
+				agent: this.agent,
+				afterHooks: (call, result, isError) =>
+					this._emitAfterToolCallHooks(call.toolCall, call.args, result, isError),
+			},
+			prepared,
+			{
+				...(options?.signal === undefined ? {} : { signal: options.signal }),
+				...(options?.onUpdate === undefined
+					? {}
+					: { onUpdate: options.onUpdate as AgentToolUpdateCallback<unknown> }),
+			},
+		);
+		if (!hook) {
 			return result as AgentToolResult<TDetails>;
 		}
 
 		return {
-			content: hookResult.content ?? result.content,
-			details: (hookResult.details ?? result.details) as TDetails,
+			content: hook.content ?? result.content,
+			details: (hook.details ?? result.details) as TDetails,
 			terminate: result.terminate,
 		};
 	}
@@ -5936,6 +6006,46 @@ export class AgentSession {
 	 * @throws Error if streaming and no streamingBehavior specified
 	 * @throws Error if no model selected or no API key available (when not streaming)
 	 */
+	/**
+	 * A provider whose stored credential pools two or more accounts: whether any of them can serve `modelId` now
+	 * (no live block, and no live block on that model), and the accounts with why each is out. A cooling account is
+	 * not usable until its cooldown ends, so an automated loop never probes a spent pool turn after turn (senpi#3131).
+	 * Undefined for a single-credential provider, or when pool health cannot be read (the hold then stays).
+	 * Reads pool health only, never key material.
+	 */
+	private async _pooledAccountHealth(
+		provider: string,
+		modelId: string,
+	): Promise<{ readonly usable: boolean; readonly accountsOut: string } | undefined> {
+		const storage = this._modelRuntime.authStorage;
+		if (storage === undefined) return undefined;
+		let summaries: Awaited<ReturnType<typeof getCredentialAccounts>>;
+		try {
+			summaries = await getCredentialAccounts(storage, provider);
+		} catch {
+			return undefined;
+		}
+		const accounts = summaries.filter((account) => account.unused !== true);
+		if (accounts.length < 2) return undefined;
+		const now = Date.now();
+		const blocksModel = (blocked: { readonly model: string; readonly until: number }) =>
+			blocked.until > now &&
+			(blocked.model === modelId ||
+				new RegExp(`(?:^|[^a-z])${blocked.model}(?:[^a-z]|$)`, "i").test(modelId));
+		const usable = accounts.some(
+			(account) => !account.blocked && !(account.blockedModels ?? []).some(blocksModel),
+		);
+		const accountsOut = accounts
+			.map((account) => {
+				const reason = account.blockedReason ?? "blocked";
+				return account.blockedUntil === undefined
+					? `${account.name} (${reason})`
+					: `${account.name} (${reason} until ${formatResetTime(account.blockedUntil)})`;
+			})
+			.join(", ");
+		return { usable, accountsOut };
+	}
+
 	async prompt(text: string, options?: PromptOptions): Promise<void> {
 		this._standingRecovery = undefined;
 		const barrierError = options?.toolBarrier === undefined ? undefined : toolBarrierSpecError(options.toolBarrier);
@@ -6218,6 +6328,13 @@ export class AgentSession {
 				const model = this.model;
 				// A turn the user started asks the provider again unless it stated when the limit resets (senpi#5568);
 				// automated turns keep the remembered hold so a loop never hammers a spent account (senpi#3131).
+				// A pooled provider is out only when no account can serve: one account's billing or limit is that
+				// account's, and the pool's own block already routes around it (senpi#5590).
+				const pool =
+					model && !this._pendingModelSwitch && this._retryFallback.isProviderSpent(model.provider)
+						? await this._pooledAccountHealth(model.provider, model.id)
+						: undefined;
+				if (model && pool?.usable) this._retryFallback.releaseAccountHold(model.provider);
 				if (
 					model &&
 					!this._pendingModelSwitch &&
@@ -6233,7 +6350,24 @@ export class AgentSession {
 							model.provider,
 							errorMessage,
 							this._retryFallback.accountResetAt(model.provider),
+							this._retryFallback.widenedFamiliesOf(model.provider),
+							pool?.accountsOut,
 						);
+					}
+				}
+				// A family held by a weekly limit that named no family binds automated turns the same way, so a loop
+				// moves to another family or stops instead of hammering the held one (senpi#5596, senpi#3131).
+				const heldFamily =
+					this.model && !this._pendingModelSwitch && attributionOf(options) !== "user"
+						? this._retryFallback.heldFamily(this.model)
+						: undefined;
+				if (this.model && heldFamily) {
+					this._retryFallback.resetTurn();
+					this._fallbackTurnFailures = [];
+					if (!(await this._retryFallback.tryFallback("transient", { errorMessage: heldFamily.errorMessage }, false))) {
+						throw new AccountUsageLimitError(this.model.provider, heldFamily.errorMessage, undefined, [
+							heldFamily.family,
+						]);
 					}
 				}
 			} catch (error) {
@@ -6553,6 +6687,7 @@ export class AgentSession {
 				...clientMessageIdentity(options),
 			};
 			this._userInputSources.set(userMessage, options?.source ?? "interactive");
+			markInputTurnOrigin(userMessage, inputTurnMark(options ?? {}));
 			messages.push(userMessage);
 
 			// Consume next-turn messages transactionally: a final admission rejection
@@ -7141,6 +7276,8 @@ export class AgentSession {
 		// `prompt()` does. Only restored input can lack one (a record written before sources were kept), and it
 		// stays unstamped: unknown origin, never defaulted to a trusted source.
 		if (input.source !== undefined) this._userInputSources.set(message, input.source);
+		// Restored input with no source keeps no mark: an unmarked turn is engine work, never a trusted origin.
+		if (input.source !== undefined) markInputTurnOrigin(message, inputTurnMark(input));
 		if (input.inputId !== undefined) this._queuedInputDispositions.track(message, input.inputId);
 		this._queuedMessages.set(queuedId, message);
 		if (this._promptStartPending && this._skipNextPostCompactionAssistantCheck) {
@@ -7351,6 +7488,7 @@ export class AgentSession {
 	): Promise<void> {
 		// Normalize the legacy untyped content boundary before persisting a retry payload.
 		const deliveryMessage = { ...message, content: message.content ?? [] };
+		copyInputTurnMark(message, deliveryMessage);
 		if (this._sizesOnlyStartup && options?.triggerTurn === true) {
 			// Size inspection makes no model call (#3483) and owes no work: no ticket, custody record or session file.
 			this._pendingNextTurnMessages.push({ role: "custom", ...deliveryMessage, timestamp: Date.now() } satisfies CustomMessage);
@@ -7576,6 +7714,8 @@ export class AgentSession {
 				: message.details,
 			timestamp: Date.now(),
 		} satisfies CustomMessage;
+		// A delivery that found a run already streaming becomes a steer or follow-up: it keeps the origin it was admitted with.
+		copyInputTurnMark(message, appMessage);
 		if (this._sizesOnlyStartup && options?.triggerTurn === true) {
 			// Size inspection makes no model call (#3483): keep the message for a turn that never starts.
 			this._pendingNextTurnMessages.push(appMessage);
@@ -8221,7 +8361,8 @@ export class AgentSession {
 					event,
 					(lifecycle) => this._emit(lifecycle),
 					(run) => {
-						this._agentEventQueue = this._agentEventQueue.then(run, run);
+						const tracked = this._agentEventQueueLedger.track(queueEntryLabel(event), run);
+						this._agentEventQueue = this._agentEventQueue.then(tracked, tracked);
 						void this._agentEventQueue.catch(() => {});
 					},
 				),

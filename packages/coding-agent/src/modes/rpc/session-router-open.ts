@@ -1,11 +1,12 @@
 import { buildRpcSessionState } from "./connection-handler.ts";
 import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
 import { startOpenTimer } from "../../core/open-timing.ts";
+import { openReplyPermissionMode } from "../../core/permission-mode.ts";
 import { compactOpen, type OpenAcceptance } from "./compact-open-admission.ts";
 import { CompactAdmissionError } from "./compact-admission-error.ts";
 import { runAdmissionProducer } from "./compact-admission-producer.ts";
 
-import { clearHandoverParkedSession, type HandoverParkedEntry } from "./host-handover-parked.ts";
+import type { HandoverParkedEntry } from "./host-handover-parked.ts";
 import { parkedOpenCommand } from "./host-handover-parked-open.ts";
 
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
@@ -19,6 +20,7 @@ import { code, detail, error } from "./session-router-errors.ts";
 import { sweepDrain } from "./session-router-occupancy.ts";
 import { invalidSpawnedBy, validatedOpenProfile } from "./session-router-open-profile.ts";
 import { relocationConnection } from "./session-router-relocation.ts";
+import { syncRetainedRecord } from "./session-router-residency.ts";
 import { liveToolMediaScope, toolMediaPersister } from "./tool-media-store.ts";
 
 export function openWithBarrier(
@@ -62,24 +64,6 @@ function openPhysicalWithBarrier(
 	// A late open's physical session is released by its admission (the accept/rollback path, 4272-admission-
 	// abandonment), so the late response itself owns nothing to release here.
 	const opened = signal === undefined ? start() : runAdmissionProducer(signal, start, async () => {});
-	// A manual reopen-by-path supersedes the handover auto-reopen for that session: clear its
-	// record entry, or a later generation would reopen a second copy (MEDIUM-1, senpi#3282 review).
-	// Cleared only after the open SUCCEEDS (MEDIUM-A): if the open fails - a session_path_in_use
-	// during a handover, or a bad profile - the entry must stay so a later generation can still
-	// reopen the session. open() resolves `undefined` on success (the response is written through
-	// the writer) and an RpcResponse only on failure, so success is `response === undefined`.
-	if (command.sessionPath !== undefined && host.handoverParkedDir !== undefined) {
-		const dir = host.handoverParkedDir;
-		const sessionPath = command.sessionPath;
-		void opened.then(
-			(response) => {
-				if (response === undefined) void clearHandoverParkedSession(dir, sessionPath).catch(() => {});
-			},
-			() => {
-				// A rejection means the open failed before producing a response; the entry stays.
-			},
-		);
-	}
 	return opened.finally(() => {
 		resolveBarrier();
 		opens.delete(barrier);
@@ -255,6 +239,9 @@ export async function open(
 			releaseOwnerAttachment(host, owner, openedSession.sessionId);
 			await releaseOwnedSession(host, openedSession.sessionId);
 		}
+		// After the open SUCCEEDS (MEDIUM-A): a failed open keeps any record entry, so a later start
+		// still reopens that session.
+		await syncRetainedRecord(host, openedSession.sessionId, command.sessionPath);
 		if (options?.accept) {
 			return undefined;
 		}
@@ -271,6 +258,7 @@ export async function open(
 				data: {
 					sessionId: opened.sessionId,
 					state: replyState,
+					...openReplyPermissionMode(replyState),
 					...(opened.attached ? { attached: true } : {}),
 					...(host.defaults.sessionPresence
 						? { presence: host.defaults.sessionPresence.view(replyState.sessionId) }

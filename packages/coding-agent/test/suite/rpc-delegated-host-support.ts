@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { fauxProvider } from "@earendil-works/pi-ai/compat";
 import { expect, vi } from "vitest";
 import { parseArgs } from "../../src/cli/args.ts";
+import type { ExtensionFactory } from "../../src/core/extensions/types.ts";
 import { createCliRuntimeFactory } from "../../src/main.ts";
 import { attachJsonlLineReader } from "../../src/modes/rpc/jsonl.ts";
 import { ConnectionDelegations } from "../../src/modes/rpc/delegated-connection.ts";
@@ -50,7 +51,20 @@ export default function (pi) {
 `;
 }
 
-export async function startHost(options: { readonly workers?: boolean; readonly incarnationMax?: number } = {}) {
+export async function startHost(
+	options: {
+		readonly workers?: boolean;
+		readonly incarnationMax?: number;
+		/** More in-process extensions (a test's tool-gating probes); in-process sessions only. */
+		readonly extensionFactories?: readonly ExtensionFactory[];
+		/** Open sessions on the host's own default (settings) instead of a host-level `full-access` preset. */
+		readonly settingsDefaultPreset?: boolean;
+		/** More CLI arguments for every session (a host-level `--permission-preset`). */
+		readonly hostArgs?: readonly string[];
+		/** Replaces the worker-side extension (`workers: true`), e.g. a scripted faux provider. */
+		readonly workerExtensionSource?: string;
+	} = {},
+) {
 	const scratch = await mkdtemp(join(tmpdir(), "x5632-"));
 	const cwd = join(scratch, "cwd");
 	const agentDir = join(scratch, "agent");
@@ -63,10 +77,13 @@ export async function startHost(options: { readonly workers?: boolean; readonly 
 	const extension = join(scratch, "gates.mjs");
 	if (options.workers) {
 		execFileSync("mkfifo", [fifo]);
-		await writeFile(extension, workerExtension(fifo));
+		await writeFile(extension, options.workerExtensionSource ?? workerExtension(fifo));
 	}
 	const configuration = {
-		parsed: parseArgs(options.workers ? [...LEAN_ARGS, "--extension", extension] : LEAN_ARGS),
+		parsed: parseArgs([
+			...(options.workers ? [...LEAN_ARGS, "--extension", extension] : LEAN_ARGS),
+			...(options.hostArgs ?? []),
+		]),
 		cwd,
 		agentDir,
 		appMode: "rpc" as const,
@@ -79,7 +96,7 @@ export async function startHost(options: { readonly workers?: boolean; readonly 
 		{
 			agentDir,
 			cwd,
-			permissionPreset: "full-access",
+			...(options.settingsDefaultPreset ? {} : { permissionPreset: "full-access" }),
 			createRuntime: createCliRuntimeFactory(configuration, {
 				extensionFactories: [
 					(pi) => {
@@ -97,6 +114,7 @@ export async function startHost(options: { readonly workers?: boolean; readonly 
 							},
 						});
 					},
+					...(options.extensionFactories ?? []),
 				],
 			}),
 			...(options.workers ? { workerConfiguration: configuration } : {}),
@@ -149,6 +167,7 @@ export async function startHost(options: { readonly workers?: boolean; readonly 
 	return {
 		scratch,
 		cwd,
+		faux,
 		writer,
 		core,
 		fifo,

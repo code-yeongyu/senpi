@@ -1,6 +1,12 @@
 {
 	"version": 1,
 	"nodes": {
+		"senpi#6259": {
+			"additions": [
+				"legacyContracts/test/eval-nested-tool-updates.test.ts/Given a cell that settles many nested tool calls without printing (#6257 review) When each call settles, then the live view holds only the newest settled call's output"
+			],
+			"reason": "senpi#6257/#6259 review (MEDIUM): a settled nested call's text is held until the cell replaces it, and only the newest one is held, so a cell that settles many calls without printing cannot accumulate their output. This contract pins that bound. No prompt cell moves."
+		},
 		"senpi#5066": {
 			"additions": [
 				"legacyContracts/test/permission-slots.test.ts/permission slot ownership (#4309) bounds a held decision when the host claims before-wait (#4709)",
@@ -6033,6 +6039,35 @@
 				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation Given a bun host with no isolation setting, when its kernel child dies of SIGBUS, then the host survives and the next cell says the kernel restarted"
 			],
 			"reason": "senpi#6095 (Fixes #6094): the JavaScript kernel defaults to process isolation when the host's executable is bun (Bun 1.4.4 Worker threads corrupt the JSC heap and kill the session with SIGBUS/SIGTRAP; upstream oven-sh/bun#41857, #43663 open). Reviewed additions only: ten new contract titles (feature-settings.test.ts: the host-dependent default table, explicit-setting precedence, currentJsIsolationHost on bun/.exe/node/compiled paths and the running host; js-process-kernel.test.ts: a bun host with no setting survives a SIGBUS of its kernel child) and the new module packages/senpi-codemode/src/kernels/js/runtime-name.ts (runtimeNameOf moved out of process-worker.ts so feature-settings.ts does not import the kernel graph) in the extension and firstKernel import maps. No prompt cell, schema, helper census or invariant moves; the frozen baseline is unchanged.",
+			"changes": []
+		},
+		"senpi#6131": {
+			"additions": [
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/power-throttling-startup.js",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/power-throttling.js",
+				"legacyContracts/test/power-throttling.test.ts/installKernelPowerThrottlingOptOut loads nothing off Windows or with SENPI_KEEP_POWER_THROTTLING=1",
+				"legacyContracts/test/power-throttling.test.ts/installKernelPowerThrottlingOptOut opts the kernel process and every child of both launchers out with ControlMask=EXECUTION_SPEED, StateMask=0",
+				"legacyContracts/test/power-throttling.test.ts/installKernelPowerThrottlingOptOut never turns a launch into an exception when kernel32 throws"
+			],
+			"reason": "senpi#6131 (Fixes #6125): the JavaScript kernel entries (worker-entry.js, inline-worker-entry.js, process-entry.js) import power-throttling-startup.js first, which opts the kernel realm's children out of Windows EcoQoS throttling. Reviewed additions only: the two new modules in the firstKernel import graph (off Windows they import nothing and patch nothing) and the three contract titles of test/power-throttling.test.ts.",
+			"changes": []
+		},
+		"senpi#6181": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/extension/cell-tool-updates.ts",
+				"imports/extension/packages/senpi-codemode/src/tool/bridge-cell-binding.ts",
+				"imports/extension/packages/senpi-codemode/src/tool/nested-tool-call.ts",
+				"imports/extension/packages/senpi-codemode/src/tool/nested-tool-output.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/extension/cell-tool-updates.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/bridge-cell-binding.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/nested-tool-call.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/nested-tool-output.ts",
+				"legacyContracts/test/eval-nested-tool-updates.test.ts/Given a cell that awaits a nested tool streaming partial results (#6167) When the jl cell runs it, then each partial reaches the cell's live update before the tool returns, and the result is unchanged",
+				"legacyContracts/test/eval-nested-tool-updates.test.ts/Given a cell that awaits a nested tool streaming partial results (#6167) When the js cell runs it, then each partial reaches the cell's live update before the tool returns, and the result is unchanged",
+				"legacyContracts/test/eval-nested-tool-updates.test.ts/Given a cell that awaits a nested tool streaming partial results (#6167) When the py cell runs it, then each partial reaches the cell's live update before the tool returns, and the result is unchanged",
+				"legacyContracts/test/eval-nested-tool-updates.test.ts/Given a cell that awaits a nested tool streaming partial results (#6167) When the rb cell runs it, then each partial reaches the cell's live update before the tool returns, and the result is unchanged"
+			],
+			"reason": "senpi#6181 (follow-up to #6168): #6168 streamed nested tool partial results into the eval cell's live update and added four modules (src/extension/cell-tool-updates.ts, src/tool/bridge-cell-binding.ts, src/tool/nested-tool-call.ts, src/tool/nested-tool-output.ts, measured in the extension and firstKernel import graphs) plus the js/py/rb/jl contract titles of test/eval-nested-tool-updates.test.ts, without an allowlist node, so codemode-gate failed on main. Reviewed additions only; no prompt cell, schema or existing measurement moves.",
 			"changes": []
 		}
 	}

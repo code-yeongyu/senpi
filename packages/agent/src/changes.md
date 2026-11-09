@@ -1,3 +1,191 @@
+## 2026-11-08 - Agent forwards a hosted commitStep to every loop run (senpi#6236)
+
+### What changed
+
+- `packages/agent/src/agent.ts`: `AgentOptions.commitStep` (typed as `AgentLoopConfig["commitStep"]`), kept in a private read-only field and forwarded by `createLoopConfig` only when set. Every loop entry (initial prompt, queued continuation, `continue()`, post-run drains) goes through `createLoopConfig`, so this one site reaches them all.
+
+### Why
+
+- Custody C6 C.P3 (row CK1p): a hosted session must install its durable step commit through a public option instead of patching the agent's private loop config. Fused and split-local agents leave it unset, and their stream options stay key-identical.
+
+### Why an extension could not handle it
+
+- The loop config is assembled inside `Agent`; an extension has no access to it, and the hosted wrapper constructs the `Agent` itself.
+
+### Expected merge conflict zones
+
+- LOW: the `AgentOptions` interface, the field list, the constructor assignments and the `createLoopConfig` object in `packages/agent/src/agent.ts`, each one added line beside `executionScope`.
+
+## 2026-11-05 - Session entries on the store's append-only record log (S21b-a, senpi#5955)
+
+### What changed
+
+- `packages/agent/src/durable/session-store.ts`: a session's entries are records in the store's append-only log, one kind per session (`session/<id>`). A record is an append (one entry) or a rewrite (the full header and entries, replacing everything before it). `readSessionState` reads the last rewrite plus every later append in seq order (a key seen twice keeps its first record). The manifest document holds only the header a new session starts with; a divergence is its own document (`divergenceWrite`). `manifestWrite`, `divergenceWrite`, `appendRecordWrites` and `rewriteRecordWrite` are the one layout both writers use; the manifest key and record kind stay module-private. An append's record id names the session, the rewrite count the handle last saw and the entry key, so a key another process committed first is refused by the store (`duplicate-record-id`) and surfaces as the session store's `duplicate-entry`; a handle still refuses a duplicate key against the entries it holds. A session stored in the layout before the record log (a manifest with `entryIds`) is refused as `corrupt-session`, with the instruction to re-import it from its JSONL file.
+- `packages/agent/src/index.ts`: exports that layout (`manifestWrite`, `divergenceWrite`, `appendRecordWrites`, `rewriteRecordWrite`, `readSessionState`, `SessionState`) from the main entry for the S07 importer.
+
+### Why
+
+Measured: two processes bound to one session, each appending, kept only one writer's entries. Each handle held the entry list in memory and wrote the whole manifest per append, so the last writer won. Row S21b (senpi#5822) needs co-bound Bun processes to keep writing. The store contract (DurableStore/SyncCommitStore) does not change.
+
+### Why an extension could not handle it
+
+The session store's own storage layout.
+
+### Expected merge conflict zones
+
+`session-store.ts` (layout functions, readSessionState, planAppend/planRewrite, the open handles); the durable-store export block in `packages/agent/src/index.ts`.
+
+## 2026-11-06 - Hand rig steps take a measured number of event-loop turns (senpi#6115)
+
+### What changed
+
+- `packages/agent/src/execution/testing/hand-harness.ts`: `drain`, the wait every rig step takes between manual-clock advances, now takes a fixed `IO_TURNS_PER_STEP = 8` event-loop turns (`setImmediate`, or a timer turn where the host has none) instead of exactly one. The count is measured, not derived (an immediate turn and a timer hop are not one-to-one): on the FAULT-HAND cases over the async store, 2 turns per step still fails, 4 passes on every run, and 8 is 4 with the same margin again.
+
+### Why
+
+- senpi#6114: `test/execution/hand-conformance-async-store.test.ts` FAULT-HAND-01..05 failed `every call settled: not reached within 600000 ms of transport time` on main. The async store confirms each write only after three `setTimeout(0)` hops, the rig delivers carrier messages on the manual clock, and one `setImmediate` per 5 ms tick let a write land one hop per tick while the fault profile's own timers kept re-arming ahead of it, so `settle` spent its whole transport budget. Deterministic locally from #6051's own commit (which added the test); the previous main runs were green only by runner timing.
+- The turns are immediates, not `setTimeout(0)`: node clamps `setTimeout(0)` to about 1 ms, and a 600 s transport budget is 120,000 ticks, so timer turns cost about 150 s per case against vitest's 30 s wall limit. `setImmediate` costs microseconds, and each loop iteration still runs the timers phase, so pending `setTimeout(0)` hops land between two immediates. A fixed count, not a quiet-loop probe: the rig cannot observe from inside the loop whether other work is pending (a probe built from immediates always reads busy), so the count is stated as the measured bound, and an adapter needing more raises it.
+
+### Why an extension could not handle it
+
+- The harness is the conformance rig every hand case runs on; its step semantics are not reachable from an extension.
+
+### Expected merge conflict zones
+
+- LOW: the `drain`/`ioTurn` block near the top of `hand-harness.ts`.
+
+## 2026-11-05 - The local device files carry a brand (senpi#6054)
+
+### What changed
+
+- `packages/agent/src/index.ts`: exports `isLocalDeviceFiles` and `LOCAL_DEVICE_FILES` from the device-files module.
+
+### Why
+
+An extension that keeps its own local file path on a fused session must tell `ctx.deviceFiles` on a fused session (the local filesystem) from a split session's hand channel; a fresh `localDeviceFiles()` object carried no marker (senpi#5839).
+
+### Why an extension could not handle it
+
+The objects are built by the engine, and the session side is not exposed to extensions.
+
+### Expected merge conflict zones
+
+The device-files export block in `index.ts`.
+
+## 2026-11-05 - Session store exported from the main entry (S20b, senpi#5897)
+
+### What changed
+
+- `packages/agent/src/index.ts`: exports `openSessionStore`, `openSyncSessionStore`, `SessionStoreError`, their handle/session types and `SyncCommit`/`SyncCommitStore` from the package's main entry, alongside the `./conformance` exports.
+
+### Why
+
+`packages/coding-agent`'s `SessionManager` binding (S20b, senpi#5827) uses the session store at runtime and imports only the main entry; the `./conformance` entry is a test-support surface.
+
+### Why an extension could not handle it
+
+Package entry exports are part of the package itself.
+
+### Expected merge conflict zones
+
+The durable-store export block in `packages/agent/src/index.ts`.
+
+## 2026-11-05 - Harness tool bodies run on the cleared arguments (senpi#5883)
+
+### What changed
+
+- `packages/agent/src/harness/execution/tools.ts`: `executeToolCall()` runs the body on `call.args` (the object `after_tool` sees) instead of the host's frozen copy, after a new `unrecordableArguments()` check that settles arguments JSON cannot carry as a tool error.
+- `packages/agent/src/harness/execution/tool-host-call.ts`: `runOnPreparedToolHost()`'s `run` no longer receives the host's arguments copy.
+
+### Why
+
+senpi#5861: since senpi#5859 the body got the host's JSON copy, so in-place edits no longer reached `after_tool`, a `Date` from `prepareArguments` arrived as a string, and a BigInt threw untyped. The host still records its JSON copy.
+
+### Why an extension could not handle it
+
+The harness's tool execution is internal to `AgentHarness`; no extension point wraps it.
+
+### Expected merge conflict zones
+
+- LOW: `execution/tools.ts` `executeToolCall()`; `tool-host-call.ts` `runOnPreparedToolHost()`.
+
+## 2026-11-05 - A tool result JSON cannot carry settles as a tool error (senpi#5878)
+
+### What changed
+
+- `packages/agent/src/execution/prepared/executor-freeze.ts`: new `recordedResult()` pairs a settled body with its durable ledger value. When `resultValue()` cannot serialize the content, it returns an `isError` result reading `Tool result content is not JSON: <reason>` and records that instead.
+- `packages/agent/src/execution/prepared/executor.ts`: the release path settles through `recordedResult()` instead of calling `resultValue()` directly.
+
+### Why
+
+senpi#5864: after a tool body ran on the prepared ToolHost, content JSON cannot carry made the release reject with `TypeError: Do not know how to serialize a BigInt`. Before the host, the caller got the tool's result back. A typed tool error keeps the run going and names the broken content contract.
+
+### Why an extension could not handle it
+
+The release path is internal to the prepared executor; no hook runs between the body's result and the ledger write.
+
+### Expected merge conflict zones
+
+- LOW: `executor.ts` `runReleased()` around the result step; `executor-freeze.ts` after `resultValue()`.
+
+## 2026-11-05 - ToolHost.deviceFiles (senpi#5839)
+
+### What changed
+
+- `packages/agent/src/execution/tool-host.ts`: `ToolHost` gains an optional `deviceFiles(scope)` that returns the `DeviceFiles` of the device the host runs calls on.
+
+### Why
+
+Extensions on the loop side of a split session need the hand's file channel for the session's scope (senpi#5839).
+
+### Why an extension could not handle it
+
+The tool host is chosen by the embedder below the extension layer; an extension cannot reach it.
+
+### Expected merge conflict zones
+
+The `ToolHost` interface in `tool-host.ts`.
+
+## 2026-11-05 - Sync commit capability and a session store over DurableStore (S20a, senpi#5866)
+
+### What changed
+
+- `packages/agent/src/durable/store.ts`: `SyncCommit` (`commitSync`) and `SyncCommitStore`. `DurableStore` itself is unchanged and stays async.
+- `packages/agent/src/durable/store-memory.ts`: `openMemoryStore` returns a `SyncCommitStore`; `commit` wraps `commitSync`.
+- `packages/agent/src/durable/session-store.ts` (new): `openSessionStore` (any `DurableStore`) and `openSyncSessionStore` (a `SyncCommitStore` only, enforced by the parameter type). It keeps S07's key schema for the manifest and entries, so the importer and the store share one format.
+- `packages/agent/src/durable/testing/sync-commit-cases.ts` (new): SYNC-COMMIT-01/02, a separate registry run only by backends with `commitSync`. The Durable Object store confirms durability only asynchronously, so it is not in it.
+- `packages/agent/src/conformance/index.ts`: exports the types, the session store and the SYNC-COMMIT cases.
+
+### Why
+
+Plan row S20 (senpi#5827), part a: the store-first session needs a durable session record a hosted brain can hold, and `SessionManager`'s "a throw means the entry did not take" contract has to hold on the same call. That needs a synchronous durable commit on the backends it runs on.
+
+### Why an extension could not handle it
+
+The durable store contract and its backends are core packages; extensions do not reach them.
+
+### Expected merge conflict zones
+
+`durable/store.ts` after the `DurableStore` interface; `store-memory.ts` `openMemoryStore`; the store export block in `conformance/index.ts`.
+
+## 2026-11-04 - Export the admission line type from the conformance entry (S37, senpi#5732)
+
+### What changed
+
+- `packages/agent/src/conformance/index.ts`: exports the `AdmissionLine` type, so a writer outside this package can take the store's single admission line.
+
+### Why
+
+- The headless engine's takeover ledger shares the store's admission line (senpi#5732).
+
+### Why an extension could not handle it
+
+- It is this package's public type surface.
+
+### Expected merge conflict zones
+
+- LOW: one export line, identical to the one senpi#5660 adds.
+
 ## 2026-11-05 - The session plane and the user-set thread chain count (senpi#5882)
 
 ### What changed

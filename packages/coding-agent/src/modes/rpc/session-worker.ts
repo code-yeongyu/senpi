@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { parentPort, workerData } from "node:worker_threads";
+import "../../windows-power-throttling-startup.ts";
 import { captureAdmissionReply } from "./compact-admission-reply.ts";
 import { workerAdmissionCommand } from "./worker-admission-command.ts";
 import { runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
@@ -303,6 +304,7 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			const bound = roleConnection(message.connection);
 			if (message.delegation !== undefined && connectionRoles.retain(bound, message.delegation).kind === "conflict")
 				throw new Error(DELEGATION_AUTHORITY_CONFLICT);
+			if (message.delegation !== undefined) connectionRoles.noteCarriedDelegation(bound);
 			if (message.roles !== undefined) connectionRoles.adopt(bound, message.roles, message.delegation?.incarnation);
 			const bindingEntry = entry;
 			privateFormsEnforced = message.mcpFormsEnforced === true;
@@ -365,6 +367,7 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 				message.delegation === undefined ? undefined : connectionRoles.retain(connection, message.delegation);
 			if (resolved?.kind !== "conflict" && message.roles !== undefined)
 				connectionRoles.adopt(connection, message.roles, message.delegation?.incarnation);
+			if (message.delegation !== undefined) connectionRoles.noteCarriedDelegation(connection);
 			if (message.origin !== undefined) connectionRoles.declareOrigin(connection, message.origin);
 			const activeBinding = binding;
 			const run =

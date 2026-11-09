@@ -1,9 +1,9 @@
 {
 	"methodClassesVersion": 1,
-	"methodClassesDigest": "56c692be165af1736661e24017ebd1526ae2e7aed1beb726abd2c3691bca9f43",
+	"methodClassesDigest": "7ea18de0fb5d28f89aabdc17cbaca72e973cdea7d5928fd82d91ccced025000e",
 	"sampleId": "00000000-0000-7000-8000-000000000000",
 	"samplePathRoot": "/nonexistent/senpi-rpc-inbound-sample",
-	"methodCount": 118,
+	"methodCount": 124,
 	"methods": [
 		{
 			"method": "abort",
@@ -92,6 +92,23 @@
 				"type": "account_reset",
 				"provider": "rpc-sample-provider",
 				"name": "rpc-sample-account"
+			}
+		},
+		{
+			"method": "admit_external_message",
+			"class": "drive",
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "admit_external_message",
+				"deliveryId": "00000000-0000-7000-8000-000000000000",
+				"text": "Sample delivery.",
+				"sender": {
+					"kind": "agent",
+					"session_id": "00000000-0000-7000-8000-000000000000"
+				},
+				"deliverAs": "followUp",
+				"whenIdle": "queue"
 			}
 		},
 		{
@@ -532,6 +549,24 @@
 			"connectionLocal": false,
 			"sample": {
 				"type": "get_pending_inputs"
+			}
+		},
+		{
+			"method": "get_project_settings",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "get_project_settings"
+			}
+		},
+		{
+			"method": "get_project_trust",
+			"class": "observe",
+			"sampleClass": "observe",
+			"connectionLocal": false,
+			"sample": {
+				"type": "get_project_trust"
 			}
 		},
 		{
@@ -1045,6 +1080,37 @@
 				"type": "set_model",
 				"provider": "rpc-sample-provider",
 				"modelId": "rpc-sample-model"
+			}
+		},
+		{
+			"method": "set_permission_preset",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "set_permission_preset",
+				"permissionPreset": "ask"
+			}
+		},
+		{
+			"method": "set_project_setting",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "set_project_setting",
+				"key": "defaultThinkingLevel",
+				"value": "minimal"
+			}
+		},
+		{
+			"method": "set_project_trust",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "set_project_trust",
+				"choice": "trust"
 			}
 		},
 		{

@@ -49,7 +49,7 @@ import { printPromptSizes } from "./cli/print-prompt-sizes.ts";
 import { pipedStdinOptions } from "./cli/piped-stdin-options.ts";
 import { exitAfterOutput, printThenExit } from "./cli/print-then-exit.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
-import { prepareSessionOpening } from "./cli/session-opening.ts";
+import { admitStartupSession, prepareSessionOpening, SESSION_HELD_EXIT_CODE } from "./cli/session-opening.ts";
 import {
 	createStartupLoadingIndicator,
 	pauseIndicatorDuringPrompts,
@@ -482,7 +482,21 @@ function validateSessionIdFlags(parsed: Args): void {
 	}
 }
 
-function openSessionOrExit(path: string, sessionDir?: string): SessionManager {
+/**
+ * Admission of an existing session file before startup loads, migrates, rebinds or runs it: a session another live
+ * process runs must not get a second writer (senpi#5756). Forking only reads its source and is not admitted.
+ */
+async function admitOrExit(sessionFile: string, appMode: AppMode): Promise<void> {
+	const admission = await admitStartupSession(sessionFile, {
+		canAsk: appMode === "interactive" && process.stdin.isTTY === true,
+		confirm: promptConfirm,
+		err: (line) => console.error(line),
+	});
+	if (admission !== "open") process.exit(admission === "cancelled" ? 0 : SESSION_HELD_EXIT_CODE);
+}
+
+async function openSessionOrExit(path: string, appMode: AppMode, sessionDir?: string): Promise<SessionManager> {
+	await admitOrExit(path, appMode);
 	try {
 		return SessionManager.open(path, sessionDir);
 	} catch (error: unknown) {
@@ -502,7 +516,13 @@ function forkSessionOrExit(sourcePath: string, cwd: string, sessionDir?: string,
 	}
 }
 
-async function rebindSessionOrExit(sourcePath: string, cwd: string, sessionDir?: string): Promise<SessionManager> {
+async function rebindSessionOrExit(
+	sourcePath: string,
+	cwd: string,
+	appMode: AppMode,
+	sessionDir?: string,
+): Promise<SessionManager> {
+	await admitOrExit(sourcePath, appMode);
 	try {
 		const reboundPath = await rebindSessionFile(sourcePath, cwd, sessionDir);
 		console.log(chalk.dim(`Session moved to ${cwd}`));
@@ -567,7 +587,7 @@ export async function createSessionManager(
 		}
 		const sessionCwd = resolved.type === "global" ? resolved.cwd : await sessionCwdOrUndefined(resolved.path);
 		if (resolved.type === "local" || sessionCwd === undefined || resolvePath(sessionCwd) === resolvePath(cwd)) {
-			return openSessionOrExit(resolved.path, sessionDir);
+			return openSessionOrExit(resolved.path, appMode, sessionDir);
 		}
 		if ((await classifySessionRepository(resolved.path, sessionCwd, cwd)) === "different") {
 			console.error(
@@ -577,7 +597,7 @@ export async function createSessionManager(
 			);
 			process.exit(1);
 		}
-		return rebindSessionOrExit(resolved.path, cwd, sessionDir);
+		return rebindSessionOrExit(resolved.path, cwd, appMode, sessionDir);
 	}
 
 	if (parsed.session) {
@@ -586,12 +606,12 @@ export async function createSessionManager(
 		switch (resolved.type) {
 			case "path":
 			case "local":
-				return openSessionOrExit(resolved.path, sessionDir);
+				return openSessionOrExit(resolved.path, appMode, sessionDir);
 
 			case "global": {
 				// Recorded under a folder the OmO desktop moved here: this folder's own session (senpi#2990).
 				if (resolved.cwd !== "" && resolvePath(resolveMovedPath(resolved.cwd)) === resolvePath(cwd))
-					return openSessionOrExit(resolved.path, sessionDir);
+					return openSessionOrExit(resolved.path, appMode, sessionDir);
 				// The confirmation blocks on readline, which only an interactive session can
 				// answer. Print, JSON, and RPC runs reach here with a TTY attached
 				// too (`-p` from a terminal), where the question hangs the process or resolves
@@ -606,7 +626,7 @@ export async function createSessionManager(
 					out: (line) => console.log(line),
 					err: (line) => console.error(line),
 				});
-				if (action === "rebind") return rebindSessionOrExit(resolved.path, cwd, sessionDir);
+				if (action === "rebind") return rebindSessionOrExit(resolved.path, cwd, appMode, sessionDir);
 				if (action === "fork") return forkSessionOrExit(resolved.path, cwd, sessionDir);
 				if (action === "abort") console.log(chalk.dim("Aborted."));
 				return process.exit(action === "abort" ? 0 : 1);
@@ -631,6 +651,8 @@ export async function createSessionManager(
 				console.log(chalk.dim("No session selected"));
 				process.exit(0);
 			}
+			// The resume target may be rebound (moved and rewritten) below, so the picked file is admitted first.
+			await admitOrExit(selectedPath, appMode);
 			const target = await resolveResumeTarget({
 				sessionPath: selectedPath,
 				cwd,
@@ -659,7 +681,13 @@ export async function createSessionManager(
 		// A shared session dir matches sessions the OmO desktop moved here in continueRecent. In the default per-folder
 		// layout they sit in the old folder's dir: continue the newest of those and the folder's own, in place (senpi#2990).
 		const movedHere = sessionDir === undefined ? await movedHereSessionToContinue(cwd) : undefined;
-		if (movedHere !== undefined) return SessionManager.open(movedHere, sessionDir);
+		if (movedHere !== undefined) {
+			await admitOrExit(movedHere, appMode);
+			return SessionManager.open(movedHere, sessionDir);
+		}
+		// Loading the recent session can migrate and rewrite it, so its file is admitted before it is loaded.
+		const recentPath = SessionManager.recentSessionFile(cwd, sessionDir);
+		if (recentPath !== null && existsSync(recentPath)) await admitOrExit(recentPath, appMode);
 		const recent = SessionManager.continueRecent(cwd, sessionDir);
 		const recentFile = recent.getSessionFile();
 		if (recentFile !== undefined && existsSync(recentFile)) return recent;
@@ -671,7 +699,7 @@ export async function createSessionManager(
 			out: (line) => console.log(line),
 			err: (line) => console.error(line),
 		});
-		return movedChoice === undefined ? recent : rebindSessionOrExit(movedChoice, cwd, sessionDir);
+		return movedChoice === undefined ? recent : rebindSessionOrExit(movedChoice, cwd, appMode, sessionDir);
 	}
 
 	if (parsed.sessionId) {
@@ -679,6 +707,7 @@ export async function createSessionManager(
 		if (existingSession) {
 			if (parsed.spawnedBy)
 				console.error(chalk.yellow("Warning: --spawned-by is ignored when resuming an existing session."));
+			await admitOrExit(existingSession.path, appMode);
 			return SessionManager.open(existingSession.path, sessionDir);
 		}
 		console.error(
@@ -900,10 +929,12 @@ export function createCliRuntimeFactory(
 	}) => {
 		const timer = startOpenTimer("runtime-services");
 		const projectTrustDiagnostics: AgentSessionRuntimeDiagnostic[] = [];
-		const cachedProjectTrust = projectTrustByCwd.get(cwd);
 		const hasTrustRequiringResources = hasTrustRequiringProjectResources(cwd);
 		// The saved decision, including the one a linked git worktree inherits from its main checkout (senpi#4388).
 		const savedProjectTrust = await getSavedProjectTrust(trustStore, cwd);
+		// The memo stands in for an unsaved answer only: a decision saved since (an RPC `set_project_trust`, senpi#6176)
+		// is what a fresh process would read, so it outranks what an earlier session of this process resolved.
+		const cachedProjectTrust = savedProjectTrust === null ? projectTrustByCwd.get(cwd) : undefined;
 		timer.mark("project_trust");
 		// A full-access session trusts its project without asking, for that session only: nothing is
 		// cached here or saved to the trust store, and a saved "do not trust" still wins (#2465).
@@ -930,7 +961,11 @@ export function createCliRuntimeFactory(
 			cachedProjectTrust === undefined &&
 			parsed.projectTrustOverride === undefined &&
 			savedProjectTrust !== true;
-		const runtimeSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted, trustFromFullAccess });
+		const runtimeSettingsManager = SettingsManager.create(cwd, agentDir, {
+			projectTrusted,
+			trustFromFullAccess,
+			projectTrustLocked: parsed.projectTrustOverride !== undefined,
+		});
 		// The opener's per-session fallback policy is an in-memory override: never saved, never shared.
 		if (launchProfile?.retryFallback) applyRetryFallbackProfile(runtimeSettingsManager, launchProfile.retryFallback);
 		const services = await createAgentSessionServices({

@@ -59,6 +59,7 @@ export interface TerminalJobArgs {
 	readonly defaultRows: number;
 	readonly timeoutAction?: TimeoutAction;
 	readonly redactSecretsInOutput?: boolean;
+	readonly backgroundAutoReapMinutes?: number;
 }
 
 function parseArgs(value: unknown): TerminalJobArgs {
@@ -71,6 +72,7 @@ function parseArgs(value: unknown): TerminalJobArgs {
 		throw new ToolChildJobError("terminal_job_bad_args", "a terminal job needs cwd, toolCallId and env");
 	const shellPath = field("shellPath");
 	const timeoutAction = field("timeoutAction");
+	const autoReap = field("backgroundAutoReapMinutes");
 	return {
 		params: field("params"),
 		toolCallId,
@@ -83,6 +85,7 @@ function parseArgs(value: unknown): TerminalJobArgs {
 		defaultRows: Number(field("defaultRows")) || 0,
 		redactSecretsInOutput: field("redactSecretsInOutput") === true,
 		...(timeoutAction === "background" || timeoutAction === "kill" ? { timeoutAction } : {}),
+		...(typeof autoReap === "number" && Number.isFinite(autoReap) ? { backgroundAutoReapMinutes: autoReap } : {}),
 	};
 }
 
@@ -120,6 +123,9 @@ function exitSummary(id: string, runtime: TerminalExitView): TerminalBackgroundW
 				? null
 				: { exitCode: exit.exitCode, signal: exit.signal, cancelled: exit.cancelled, timedOut: exit.timedOut },
 		output: output.length > NOTICE_TAIL_MAX_CHARS ? output.slice(output.length - NOTICE_TAIL_MAX_CHARS - 1) : output,
+		...(runtime.autoReapedAfterMinutes === undefined
+			? {}
+			: { autoReapedAfterMinutes: runtime.autoReapedAfterMinutes }),
 	};
 }
 
@@ -143,9 +149,21 @@ export function createTerminalJobHandlers(injected?: TerminalManager): Readonly<
 	const contextFor = (args: TerminalJobArgs, job: ToolChildJobContext): TerminalToolContext => ({
 		manager: managerFor(job.generation),
 		...(args.timeoutAction === undefined ? {} : { timeoutAction: args.timeoutAction }),
-		onBackgroundStart: (id, description, startedAtMs) =>
-			tell(job, { event: "background_start", id, description, startedAtMs }),
+		...(args.backgroundAutoReapMinutes === undefined
+			? {}
+			: { backgroundAutoReapMinutes: args.backgroundAutoReapMinutes }),
+		onBackgroundStart: (id, description, startedAtMs, command, autoReapMinutes) =>
+			tell(job, {
+				event: "background_start",
+				id,
+				description,
+				startedAtMs,
+				...(command === undefined ? {} : { command }),
+				...(autoReapMinutes === undefined ? {} : { autoReapMinutes }),
+			}),
 		onBackgroundExit: (id, runtime) => tell(job, exitSummary(id, runtime)),
+		onBackgroundReapFailed: (id, autoReapMinutes, reason) =>
+			tell(job, { event: "background_reap_failed", id, autoReapMinutes, reason }),
 		cwd: args.cwd,
 		...(args.shellPath === undefined ? {} : { shellPath: args.shellPath }),
 		defaultCols: args.defaultCols,

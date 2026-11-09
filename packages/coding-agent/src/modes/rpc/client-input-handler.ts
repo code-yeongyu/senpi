@@ -1,6 +1,7 @@
 import { AgentBusyError } from "../../core/agent-busy-error.ts";
 import type { AgentSession, PromptDisposition, PromptOptions } from "../../core/agent-session.ts";
 import { clientMessageIdentity } from "../../core/client-message-identity.ts";
+import type { ConnectionOrigin } from "../../core/turn-origin.ts";
 import { type ModelNotReadyCode, ModelNotReadyError } from "../../core/model-not-ready-error.ts";
 import { SessionMovedAwayError } from "../../core/session-move/ownership.ts";
 import { TurnConflictError } from "../../core/turn-conflict.ts";
@@ -55,7 +56,7 @@ type InputOutput = {
 };
 
 /** The sending connection's declared role; a connection that never declared `interactive_user` is an agent's. */
-type InputClient = { readonly interactiveUser: boolean };
+type InputClient = { readonly interactiveUser: boolean; readonly connectionOrigin?: ConnectionOrigin };
 
 /** The same admission path serves classic stdio, shared sessions, and worker sessions. */
 export async function handleClientInput(
@@ -71,10 +72,12 @@ export async function handleClientInput(
 		const chain = admittedChain.chainCount === undefined ? {} : { chainCount: admittedChain.chainCount };
 		const admissions = ClientAdmissions.forSession(session);
 		let disposition: PromptDisposition | undefined;
+		let turnId: string | undefined;
 		let responded = false;
 		const respond = (admission: ClientMessageAdmission | undefined): void => {
 			responded = true;
 			const finalDisposition = admission?.disposition ?? disposition;
+			const admittedTurnId = admission?.turnId ?? turnId;
 			io.output({
 				id: command.id,
 				type: "response",
@@ -82,6 +85,7 @@ export async function handleClientInput(
 				success: true,
 				data: {
 					disposition: finalDisposition,
+					...(admittedTurnId === undefined ? {} : { turnId: admittedTurnId }),
 					...clientMessageIdentity(command),
 					...(admission ? { admission } : {}),
 					...(command.type === "prompt" && command.toolBarrier !== undefined
@@ -109,18 +113,27 @@ export async function handleClientInput(
 							...options,
 							source: "rpc",
 							interactiveUser: client.interactiveUser,
+							...(client.connectionOrigin === undefined ? {} : { connectionOrigin: client.connectionOrigin }),
 							...chain,
 							onQueuedInput: hooks.queued,
 							promptDisposition: (next) => {
 								disposition = next;
-								acceptedAdmission = hooks.accepted(next);
+								if (next !== "started") acceptedAdmission = hooks.accepted(next);
 							},
 							preflightResult: (succeeded) => {
-								if (succeeded && disposition !== undefined) {
+								if (succeeded && disposition !== undefined && disposition !== "started") {
 									preflightSucceeded = true;
 									accepted.resolve(disposition);
 									respond(acceptedAdmission);
 								}
+							},
+							onTurnAdmitted: () => {
+								// The epoch exists here, before agent.prompt emits the user message.
+								turnId = session.currentTurnId;
+								acceptedAdmission = hooks.accepted("started", turnId);
+								preflightSucceeded = true;
+								accepted.resolve("started");
+								respond(acceptedAdmission);
 							},
 						})
 						.catch((error: unknown) => {
@@ -167,6 +180,7 @@ export async function handleClientInput(
 							expectedTurnId: command.expectedTurnId,
 							source: "rpc" as const,
 							interactiveUser: client.interactiveUser,
+							...(client.connectionOrigin === undefined ? {} : { connectionOrigin: client.connectionOrigin }),
 							...chain,
 							onQueuedInput: hooks.queued,
 						};

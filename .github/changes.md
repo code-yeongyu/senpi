@@ -1,3 +1,58 @@
+## 2026-11-06 - The forced release suite's budget comment describes the sharded run (senpi#6139)
+
+### What changed
+
+- `.github/workflows/publish-npm.yml`: the `release` job's comment says `force_tests` runs coding-agent as parallel vitest shards (~60 min, bounded at 110 min by `scripts/release-forced-test-suite.mjs`). `timeout-minutes` is unchanged.
+
+### Why
+
+- `.github/workflows/publish-npm.yml`: the old comment described a ~55-minute serial run, which had grown to over 110 min.
+
+### Why an extension could not handle it
+
+- `.github/workflows/publish-npm.yml`: workflow configuration is repository tooling.
+
+### Expected merge conflict zones
+
+- LOW: the comment above `timeout-minutes` in the `release` job.
+
+## 2026-11-06 - The Windows tool-child job also runs the EcoQoS opt-out tests (senpi#6125)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `tool-child-windows` job runs `src/core/windows-power-throttling.test.ts` and `src/core/windows-power-throttling.win32.test.ts` under Bun, and its executed-tests step requires the win32 file to have passed tests.
+
+### Why
+
+- The opt-out is only observable against the real kernel32, so the assertion that this process and spawned children read `ControlMask=EXECUTION_SPEED, StateMask=0` needs a Windows runner, and a skipped file must fail the job.
+
+### Why an extension could not handle it
+
+- CI workflow configuration, not runtime behaviour.
+
+### Expected merge conflict zones
+
+- LOW: the `tool-child-windows` test command line and its file loop.
+
+## 2026-11-05 - No canvas rebuild or prebuild fetch before compiles (senpi#6045)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the "Fresh release entry graphs (codemode and exclusions)" step no longer runs `npm rebuild canvas --foreground-scripts`, and that job's system dependencies drop the cairo/pango/jpeg/gif/rsvg headers that only served the canvas build.
+- `.github/workflows/read-summary-binary-parity.yml`: removed the "Fetch the existing locked canvas prebuild" step.
+
+### Why
+
+- Every compile now keeps canvas external (senpi#6045), so the native binding is never needed. The prebuild download was the step that failed `Read binary parity (windows-latest)`.
+
+### Why an extension could not handle it
+
+- CI workflow steps, outside any extension.
+
+### Expected merge conflict zones
+
+- LOW: one removed line and one shortened apt line in `ci.yml`, and one removed three-line step in the parity workflow.
+
 ## 2026-11-05 - CI runs the coding-agent tests on ten shards with a 15-minute per-shard budget (senpi#5910, senpi#5855)
 
 ### What changed
