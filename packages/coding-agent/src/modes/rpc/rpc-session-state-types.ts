@@ -4,6 +4,7 @@ import type { Model, ProviderDiagnostic, ThinkingSelection } from "@earendil-wor
 import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
 import type { QueuedInput } from "../../core/agent-session.ts";
 import type { HoldKind } from "../../core/engine-turn-hold.ts";
+import type { PermissionMode } from "../../core/permission-mode.ts";
 import type { ProviderOrigin } from "../../core/provider-origin.ts";
 
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
@@ -142,7 +143,7 @@ export interface RpcSessionModelEntry {
 	serviceTier?: ServiceTier;
 }
 
-export interface RpcSessionState {
+export interface RpcSessionState extends Partial<PermissionMode> {
 	/** The running turn's id; absent when no turn is running. A steer or follow-up names it as `expectedTurnId` (senpi#5776). */
 	currentTurnId?: string;
 	/** Latest 64 UI-answer receipts in this session generation, oldest first. */

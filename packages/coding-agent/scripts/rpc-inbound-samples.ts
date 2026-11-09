@@ -115,6 +115,14 @@ export const RPC_INBOUND_SAMPLES = {
 	abort_branch_summary: { type: "abort_branch_summary" },
 	new_session: { type: "new_session" },
 	wake: { type: "wake" },
+	admit_external_message: {
+		type: "admit_external_message",
+		deliveryId: SAMPLE_ID,
+		text: "Sample delivery.",
+		sender: { kind: "agent", session_id: SAMPLE_ID },
+		deliverAs: "followUp",
+		whenIdle: "queue",
+	},
 	get_state: { type: "get_state" },
 	get_snapshot: { type: "get_snapshot", tail: 0 },
 	request_self_settle: { type: "request_self_settle" },
@@ -135,6 +143,7 @@ export const RPC_INBOUND_SAMPLES = {
 	set_follow_up_mode: { type: "set_follow_up_mode", mode: "all" },
 	compact: { type: "compact" },
 	set_auto_compaction: { type: "set_auto_compaction", enabled: false },
+	set_permission_preset: { type: "set_permission_preset", permissionPreset: "ask" },
 	set_auto_retry: { type: "set_auto_retry", enabled: false },
 	abort_retry: { type: "abort_retry" },
 	set_retry_fallback: {

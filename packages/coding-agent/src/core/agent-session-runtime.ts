@@ -15,6 +15,12 @@ import type {
 	SessionStartEvent,
 } from "./extensions/index.ts";
 import { type ExtensionRunner, emitSessionShutdownEvent } from "./extensions/runner.ts";
+import {
+	applyClientPermissionMode,
+	clientNamedPreset,
+	markHostDefaultPresetFlag,
+	withClientPreset,
+} from "./permission-mode.ts";
 import type { CreateAgentSessionResult } from "./sdk.ts";
 import { assertSessionCwdExists } from "./session-cwd.ts";
 import type { SessionHolderEndpoint } from "./session-hold-errors.ts";
@@ -43,6 +49,8 @@ export interface AgentSessionLaunchProfile {
 	/** Host-owned public endpoint evidence; never sourced from client session context. */
 	holderEndpoint?: SessionHolderEndpoint;
 	permissionPreset?: string;
+	/** `host_default`: `permissionPreset` is the host's own default (an embedder's host option), not a client's choice. */
+	permissionPresetSource?: "host_default";
 	creationModel?: { provider: string; modelId: string };
 	initialThinkingLevel?: string;
 	/**
@@ -177,6 +185,8 @@ export class AgentSessionRuntime {
 		this._diagnostics = _diagnostics;
 		this._modelFallbackMessage = _modelFallbackMessage;
 		this._launchProfile = launchProfile;
+		markHostDefaultPresetFlag(_session, launchProfile);
+		applyClientPermissionMode(_session, clientNamedPreset(launchProfile), { announce: false });
 		this._sessionHold = holdActiveSession(
 			_session.sessionManager,
 			wasFlushed(_session.sessionManager),
@@ -234,12 +244,15 @@ export class AgentSessionRuntime {
 	 * fork) keep it.
 	 */
 	setPermissionPreset(preset: string): void {
-		this._launchProfile = Object.freeze({ ...(this._launchProfile ?? { cwd: this.cwd }), permissionPreset: preset });
+		this._launchProfile = withClientPreset(this._launchProfile ?? { cwd: this.cwd }, preset);
 		this._session.extensionRunner.setFlagValue("permission-preset", preset);
 		// While a replacement is in flight (or after one failed) the live session is the disposed one:
 		// nothing may rebuild it. The preset is recorded above, and apply() syncs the next replacement to
 		// it before that one goes live. There is no flag to clear: the check is the session itself.
-		if (this._session !== this._disposedSession) this.syncFullAccessTrust(this._session, preset);
+		if (this._session !== this._disposedSession) {
+			this.syncFullAccessTrust(this._session, preset);
+			applyClientPermissionMode(this._session, preset, { announce: true });
+		}
 	}
 
 	/** The session teardownCurrent disposed; it stays the live session only until apply() installs a replacement. */
@@ -490,6 +503,8 @@ export class AgentSessionRuntime {
 		this._session = result.session;
 		if (profile?.permissionPreset !== undefined)
 			this._session.extensionRunner.setFlagValue("permission-preset", profile.permissionPreset);
+		markHostDefaultPresetFlag(this._session, profile);
+		applyClientPermissionMode(this._session, clientNamedPreset(profile), { announce: false });
 		if (profile?.promptSurface !== undefined) this._session.setPromptSurface(profile.promptSurface);
 		if (profile?.browserEngine !== undefined) this._session.setBrowserEngine(profile.browserEngine);
 		this._services = result.services;

@@ -9238,6 +9238,10 @@
      },
      "pendingQuestions": [],
      "pendingDialogs": [],
+     "permissionPreset": "full-access",
+     "permissionPresetSource": "host_default",
+     "permissionPresetStatus": "applied",
+     "effectivePermissionPreset": "full-access",
      "model": {
       "id": "<id:1>",
       "name": "mock-model",

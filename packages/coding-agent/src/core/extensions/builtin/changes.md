@@ -1,3 +1,42 @@
+## 2026-11-08 - terminal_background_age event (senpi#6201)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/monitor-state-event.ts`: `TERMINAL_BACKGROUND_AGE_EVENT` (`terminal_background_age`) and its payload `TerminalBackgroundAgeEvent` (`kind` running|reaped|reap_failed, `id`, `description`, `command?`, `startedAtMs`, `ageMs`, `ageMinutes`, `autoReapMinutes`, `reason?`, `stop`).
+
+### Why
+
+- RPC drivers need a typed event they can act on when a background session runs long (senpi#6201).
+
+### Why an extension could not handle it
+
+- The event name and payload are the shared cross-extension seam, like the other terminal events in this file.
+
+### Expected merge conflict zones
+
+- LOW: the constant block at the top of `monitor-state-event.ts`.
+
+## 2026-11-08 - ask-user refuses escape residue in question text once (oh-my-openagent#12797)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/escape-residue.ts` (new): `findEscapeResidue` finds `\uXXXX` escapes left in question, header and option text, both literal ones and ones whose backslash was dropped (`ub0b4`), with guards against hex-like ids and quoted code (fenced blocks, double-backtick and single-backtick spans are blanked before the check); `AskUserEscapeResidueError` is the typed tool error. `EscapeResidueRetry` with `refuseEscapeResidue` and `endEscapeResidueTurn` scopes the one refusal to assistant turns.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: before a card opens, a call whose text holds escape residue is refused with `AskUserEscapeResidueError`, which asks the model to re-call with raw UTF-8 text. Every residue call in one turn is refused, since parallel calls of one assistant message run in that turn; residue calls in a later turn open as written and the user gets a warning notice. Any call made while the retry is open uses it up, so after a clean re-call the next residue set is refused once again. `AskUserState.escapeResidue` carries the bound.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/extension.ts`, `packages/coding-agent/src/core/extensions/builtin/ask-user/resume.ts`: the new state starts fresh and resets on `session_start` and `agent_end`; `turn_end` closes a refusal turn and opens the retry.
+
+### Why
+
+- Models sometimes write non-ASCII tool-call text as `\uXXXX` escapes and drop the backslash, so a Korean card showed `ub0b4 Tailscale 쓰기` for `내 Tailscale 쓰기` (oh-my-openagent#12797). The JSON is valid, so parsing cannot catch it; only the text can.
+- A per-call flag let one of two parallel residue calls open unrefused and then refused its re-call; a turn-scoped bound refuses each set once and never refuses a re-call.
+
+### Why an extension could not handle it
+
+- The check belongs to the ask-user builtin's own argument handling; it is a fork-only builtin, not an upstream path.
+
+### Expected merge conflict zones
+
+- LOW: `AskUserState` and the `execute` path just before `startQuestion` in `tool.ts`; the `turn_end` and `agent_end` handlers in `extension.ts`.
+
 ## 2026-10-30 - ChatGPT account route and plan states (part of senpi#5003)
 
 ### What changed

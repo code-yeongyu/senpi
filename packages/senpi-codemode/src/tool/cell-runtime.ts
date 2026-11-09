@@ -73,6 +73,7 @@ export class CellResultBuilder implements CellToolUpdateSink {
 			...(options.artifactPath === undefined ? {} : { artifactPath: options.artifactPath }),
 			...(options.imageResizer === undefined ? {} : { imageResizer: options.imageResizer }),
 			onChunk: (chunk) => {
+				this.#nestedTools.releaseSettled();
 				this.#liveLines.append(chunk);
 				this.#scheduleOutputUpdate();
 			},
@@ -127,11 +128,15 @@ export class CellResultBuilder implements CellToolUpdateSink {
 		this.#scheduleOutputUpdate();
 	}
 
+	/** Settling changes nothing on screen (the call's lines stay until the cell replaces them), so it emits nothing. */
 	nestedToolSettled(callId: string): void {
-		if (this.dropNestedTool(callId)) this.#scheduleOutputUpdate();
+		this.dropNestedTool(callId);
 	}
 
-	/** Removes a settled call's partial from the live view without emitting; the caller's next update shows it gone. */
+	/**
+	 * Marks a call settled without emitting: its lines stay in the live view until the cell's own next output or its
+	 * completion replaces them (#6257).
+	 */
 	dropNestedTool(callId: string): boolean {
 		if (!this.#nestedTools.drop(callId)) return false;
 		this.#state.output = this.#liveCellOutput();

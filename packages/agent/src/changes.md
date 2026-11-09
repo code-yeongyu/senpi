@@ -1,3 +1,21 @@
+## 2026-11-08 - Agent forwards a hosted commitStep to every loop run (senpi#6236)
+
+### What changed
+
+- `packages/agent/src/agent.ts`: `AgentOptions.commitStep` (typed as `AgentLoopConfig["commitStep"]`), kept in a private read-only field and forwarded by `createLoopConfig` only when set. Every loop entry (initial prompt, queued continuation, `continue()`, post-run drains) goes through `createLoopConfig`, so this one site reaches them all.
+
+### Why
+
+- Custody C6 C.P3 (row CK1p): a hosted session must install its durable step commit through a public option instead of patching the agent's private loop config. Fused and split-local agents leave it unset, and their stream options stay key-identical.
+
+### Why an extension could not handle it
+
+- The loop config is assembled inside `Agent`; an extension has no access to it, and the hosted wrapper constructs the `Agent` itself.
+
+### Expected merge conflict zones
+
+- LOW: the `AgentOptions` interface, the field list, the constructor assignments and the `createLoopConfig` object in `packages/agent/src/agent.ts`, each one added line beside `executionScope`.
+
 ## 2026-11-05 - Session entries on the store's append-only record log (S21b-a, senpi#5955)
 
 ### What changed

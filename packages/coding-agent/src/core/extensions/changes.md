@@ -1,3 +1,84 @@
+## 2026-11-08 - `SessionControlRemoteOrigin` on a delivery's details (senpi#6233)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/session-control-types.ts`: `SessionControlRemoteOrigin`, the engine-stamped `remote_origin` and `chain_count` fields of `SessionControlDeliveryDetails`, and `sessionControlRemoteOriginOf`.
+
+### Why
+
+A delivery admitted over RPC for a remote device carries the device the engine authenticated, for human surfaces and audit (#6233).
+
+### Why an extension could not handle it
+
+The fields are written by the engine's admission; an extension reads them through the exported parser.
+
+### Expected merge conflict zones
+
+- None: additive optional fields.
+
+## 2026-11-08 - An extension graph stays alive while an import it serves is in flight (senpi#6208)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/bun-extension-registry.ts`: the registration returned by `registerExtensionGraph` gains `holdDuring(pending)`, which keeps the graph in a module-level strong map until that import settles (counted, so concurrent imports of one graph each hold it).
+- `packages/coding-agent/src/core/extensions/bun-extension-importer.ts`: `import()` and `importNamespace()` run their `import(id)` through `registration.holdDuring`.
+
+### Why
+
+- The registry holds a graph only through a `WeakRef`, and since senpi#6199 an import serves one module per `setImmediate` turn. A caller that dropped its importer while the import was still loading (the tool child's module-job worker returns `importNamespace(path)` and keeps nothing) let a garbage collection between two turns take the graph, and the next load failed with "Extension generation 0 has been disposed" (the Windows "Tool child Job Object" CI job). Before senpi#6199 the whole graph loaded inside the job that created the `WeakRef`, which kept the target alive by accident.
+- An explicit `dispose()` still removes the generation, so loads after it still fail as disposed.
+
+### Why an extension could not handle it
+
+- The importer and its registry are the extension runtime itself; no extension runs before its own graph has loaded.
+
+### Expected merge conflict zones
+
+- LOW: the object returned by `registerExtensionGraph`, and the `import(id)` lines in the importer's `import` and `importNamespace`.
+
+## 2026-11-08 - `pi.sessionDialog`, the `audience` dialog option and `permission_preset_changed` (senpi#6204)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionUIDialogOptions.audience`, an optional `opts` on `editor`, and `ExtensionAPI.sessionDialog`.
+- `packages/coding-agent/src/core/extensions/loader.ts`: wires `pi.sessionDialog` to the current UI context.
+- `packages/coding-agent/src/core/extensions/session-dialog-api.ts` (new): the session-addressed dialog adapter.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/settings.ts`: exports `resolvePermissionPreset`, sharing one preset order with `loadPermissionSettings`.
+
+### Why
+
+- A task runner forwarding a background child's permission prompt needs a dialog every attached client can answer (remote approval-mode work, tracked privately).
+
+### Why an extension could not handle it
+
+- Dialog targeting is decided by the RPC event writer from the raising connection; an extension cannot address a frame to the session.
+
+### Expected merge conflict zones
+
+- LOW: `ExtensionUIDialogOptions` and the `ExtensionAPI` block next to `getPermissionPreset`.
+
+## 2026-11-08 - The Bun extension importer loads one module per event-loop turn during an import (senpi#6199)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/bun-extension-load-turns.ts`: new. `loadInTurn(load)` queues a module load and drains the queue one load per `setImmediate` turn; `loadSynchronously(require)` marks a synchronous `require()`, whose loads run at once.
+- `packages/coding-agent/src/core/extensions/bun-extension-registry.ts`: the extension namespace's `onLoad` returns `loadInTurn(() => graph.load(filename))`, so during an `import()` it answers with a promise.
+- `packages/coding-agent/src/core/extensions/bun-extension-importer.ts`: `graph.require` runs `nativeRequire` under `loadSynchronously`.
+
+### Why
+
+- Bun fetches the whole static graph of an `import()` inside one microtask drain, and every load was synchronous (read, hash, transpile, rewrite, prepared-cache write). A host compiling an extension graph (its boot load, a warm, an open) answered no socket until the last module, so a client's 2 s RPC auth handshake timed out behind a cold load (senpi#6199).
+- Bun rejects a promise from `onLoad` for a synchronous `require()` ("require() async module is unsupported"), so require keeps the synchronous path.
+- The queue is shared by the whole process: every `import()` that goes through the extension namespace, interactive-mode startup included, now yields one `setImmediate` turn per module, not only a host's loads.
+
+### Why an extension could not handle it
+
+- The loader is the extension runtime itself; no extension runs before its own graph is fetched.
+
+### Expected merge conflict zones
+
+- LOW: the `onLoad` registration in `installRegistry` and the `nativeRequire` line in `graph.require`.
+
 ## 2026-11-07 - pi.registerRpcRemoteSource (senpi#6151)
 
 ### What changed

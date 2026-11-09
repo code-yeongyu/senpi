@@ -1,9 +1,9 @@
 {
 	"methodClassesVersion": 1,
-	"methodClassesDigest": "3860136b2a1b07c20373ed361df07c045bd1e84fce001917e271ca0e4b903e63",
+	"methodClassesDigest": "7ea18de0fb5d28f89aabdc17cbaca72e973cdea7d5928fd82d91ccced025000e",
 	"sampleId": "00000000-0000-7000-8000-000000000000",
 	"samplePathRoot": "/nonexistent/senpi-rpc-inbound-sample",
-	"methodCount": 122,
+	"methodCount": 124,
 	"methods": [
 		{
 			"method": "abort",
@@ -92,6 +92,23 @@
 				"type": "account_reset",
 				"provider": "rpc-sample-provider",
 				"name": "rpc-sample-account"
+			}
+		},
+		{
+			"method": "admit_external_message",
+			"class": "drive",
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "admit_external_message",
+				"deliveryId": "00000000-0000-7000-8000-000000000000",
+				"text": "Sample delivery.",
+				"sender": {
+					"kind": "agent",
+					"session_id": "00000000-0000-7000-8000-000000000000"
+				},
+				"deliverAs": "followUp",
+				"whenIdle": "queue"
 			}
 		},
 		{
@@ -1063,6 +1080,16 @@
 				"type": "set_model",
 				"provider": "rpc-sample-provider",
 				"modelId": "rpc-sample-model"
+			}
+		},
+		{
+			"method": "set_permission_preset",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "set_permission_preset",
+				"permissionPreset": "ask"
 			}
 		},
 		{

@@ -58,6 +58,7 @@ import {
 import { kernelToolInvokerStorage } from "./kernel-tools-context.ts";
 import { createLifecycleApi } from "./lifecycle-api.ts";
 import { withProviderLoginStart } from "./provider-login-start.ts";
+import { createSessionDialogApi } from "./session-dialog-api.ts";
 import { StaleExtensionContextError } from "./stale-context-error.ts";
 import type {
 	AppendEntryOptions,
@@ -718,6 +719,11 @@ function createExtensionAPI(
 			}
 			return readPermissionPreset(sessionManager);
 		},
+
+		sessionDialog: createSessionDialogApi(() => {
+			assertActive();
+			return runtime.createContext().ui;
+		}),
 
 		getSubscriptionLimits() {
 			assertActive();

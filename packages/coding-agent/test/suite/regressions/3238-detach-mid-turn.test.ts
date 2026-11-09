@@ -36,7 +36,7 @@ function runtimeWithTurnRunningUntilSettled(
 				favoriteModels: [],
 				scopedModels: [],
 				isBashRunning: false,
-				extensionRunner: { hasHandlers: () => false, emit: async () => {} },
+				extensionRunner: { getFlagValues: () => new Map(), hasHandlers: () => false, emit: async () => {} },
 				subscribe: (listener: (event: SessionEvent) => void) => {
 					listeners.add(listener);
 					return () => listeners.delete(listener);

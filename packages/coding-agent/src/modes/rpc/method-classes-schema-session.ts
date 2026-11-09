@@ -23,6 +23,7 @@ import {
 	session,
 	ThinkingLevel,
 } from "./method-classes-schema-fields.ts";
+import { DELIVERY_RECORD_SCHEMAS } from "./method-classes-schema-delivery.ts";
 
 /** A thread call's hop count: 1 for the first call of a chain, one more per hop. */
 const ChainCount = Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER });
@@ -161,6 +162,7 @@ const STATE_AND_MODEL_SCHEMAS = {
 	set_follow_up_mode: session("set_follow_up_mode", { mode: literals("all", "one-at-a-time") }),
 	compact: session("compact", { customInstructions: OptStr }),
 	set_auto_compaction: session("set_auto_compaction", { enabled: Bool }),
+	set_permission_preset: session("set_permission_preset", { permissionPreset: Id }),
 	set_auto_retry: session("set_auto_retry", { enabled: Bool }),
 	abort_retry: session("abort_retry", {}),
 	set_retry_fallback: session("set_retry_fallback", { retryFallback: RetryFallback }),
@@ -252,6 +254,7 @@ const SURFACE_AND_ACCOUNT_SCHEMAS = {
 
 export const SESSION_RECORD_SCHEMAS = {
 	...PROMPTING_SCHEMAS,
+	...DELIVERY_RECORD_SCHEMAS,
 	...STATE_AND_MODEL_SCHEMAS,
 	...BASH_AND_TREE_SCHEMAS,
 	...SURFACE_AND_ACCOUNT_SCHEMAS,

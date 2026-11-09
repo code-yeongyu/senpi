@@ -32,7 +32,7 @@ function runtime(options: Parameters<CreateAgentSessionRuntimeFactory>[0]): Crea
 			scopedModels: [],
 			isBashRunning: false,
 			isStreaming: false,
-			extensionRunner: { hasHandlers: () => false, emit: async () => {} },
+			extensionRunner: { getFlagValues: () => new Map(), hasHandlers: () => false, emit: async () => {} },
 			abort: async () => {},
 			abortBash: () => {},
 			waitForIdle: async () => {},
