@@ -1756,6 +1756,19 @@ export interface HandlerRegistrationOptions {
 	runs?: ExtensionSide;
 }
 
+/**
+ * Registration options for the provider request and stream hooks (`before_provider_request`, `provider_stream_event`,
+ * `after_provider_response`).
+ */
+export interface ProviderHookOptions extends HandlerRegistrationOptions {
+	/**
+	 * The providers whose requests or streams this handler reads or changes; omitted, every provider. A hand advertises
+	 * these to a hosted brain so it knows which calls need the device's hooks (hosted model-key custody CK21). The
+	 * declaration never filters dispatch: the handler still receives every event wherever it runs.
+	 */
+	providers?: readonly ProviderId[];
+}
+
 /** Registration options for `pi.on("before_agent_start", handler, options)`. */
 export interface BeforeAgentStartHandlerOptions extends HandlerRegistrationOptions {
 	/**
@@ -2757,7 +2770,7 @@ export interface ExtensionAPI {
 	on(
 		event: "before_provider_request",
 		handler: ExtensionHandler<BeforeProviderRequestEvent, BeforeProviderRequestEventResult>,
-		options?: HandlerRegistrationOptions,
+		options?: ProviderHookOptions,
 	): () => void;
 	on(
 		event: "before_provider_headers",
@@ -2767,12 +2780,12 @@ export interface ExtensionAPI {
 	on(
 		event: "after_provider_response",
 		handler: ExtensionHandler<AfterProviderResponseEvent>,
-		options?: HandlerRegistrationOptions,
+		options?: ProviderHookOptions,
 	): () => void;
 	on(
 		event: "provider_stream_event",
 		handler: ExtensionHandler<ProviderStreamEvent>,
-		options?: HandlerRegistrationOptions,
+		options?: ProviderHookOptions,
 	): () => void;
 	on(
 		event: "before_agent_start",
@@ -3926,6 +3939,8 @@ export interface Extension {
 	nonMutatingContextHandlers?: WeakSet<HandlerFn>;
 	/** The declared side of each handler registered with `{ runs }`; a handler that declared none has no entry. */
 	handlerSides?: WeakMap<HandlerFn, ExtensionSide>;
+	/** The declared providers of each provider hook registered with `{ providers }`; undeclared hooks have no entry. */
+	handlerProviders?: WeakMap<HandlerFn, readonly ProviderId[]>;
 	tools: Map<string, RegisteredTool>;
 	/** Optional for compatibility with extension records created before child modules. */
 	childModules?: Map<string, RegisteredChildModule>;
