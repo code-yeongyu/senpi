@@ -24,6 +24,7 @@ import {
 } from "../rpc/custom-capability.ts";
 import { answerGetEntries } from "../rpc/get-entries-command.ts";
 import { answeredUiRequestId, settledQuestionStatus, unansweredQuestionIds } from "../rpc/extension-ui-response.ts";
+import { describeRpcMethodClasses } from "../rpc/method-classes.ts";
 import { buildRpcSessionState } from "../rpc/rpc-session-state.ts";
 import { sessionUiAnswerLedger } from "../rpc/ui-answer-ledger.ts";
 import type { ControlAttachments } from "./session-control-attach.ts";
@@ -99,6 +100,7 @@ export async function runControlCommand(
 				engineVersion: build.text,
 				engineOrdinal: build.ordinal,
 				commands: TUI_CONTROL_COMMANDS,
+				method_classes: describeRpcMethodClasses(),
 			});
 		}
 		case "list_sessions":

@@ -12,6 +12,95 @@
 
 ### Removed
 
+## [2026.11.9-2] - 2026-11-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.9] - 2026-11-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.6-3] - 2026-11-08
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- The bundled catalog drops the Fireworks models upstream retired (`gpt-oss-120b`, `inkling`, `nemotron-3-ultra-nvfp4`, `nemotron-lightning-3p5-30b-a3b`), and the Fireworks tests no longer depend on which rows upstream still ships, so a release that regenerates the catalog after such a retirement passes its tests ([#6209](https://github.com/code-yeongyu/senpi/pull/6209), fixes #6207)
+
+### Removed
+
+## [2026.11.6-2] - 2026-11-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Codex Fast turns are now priced at the tier that was sent when the backend echoes `auto` or `default`, including tiers set only by the `/fast` payload hook, on both SSE and websocket transports ([#6156](https://github.com/code-yeongyu/senpi/pull/6156))
+
+### Removed
+
+## [2026.11.6-1] - 2026-11-06
+
+### Breaking Changes
+
+### Added
+
+- GPT Image 2.6 Sunburst and Flare in the OpenAI image catalog, and the 2.6 `complexity` option on OpenAI image requests ([#5820](https://github.com/code-yeongyu/senpi/issues/5820))
+
+### Changed
+
+### Fixed
+
+- An explicit `compat.supportsLongCacheRetention` on an `anthropic-messages` model is now authoritative on any host: `true` sends `cache_control.ttl: "1h"` (and reports a 3600 s prompt-cache TTL) through Anthropic-compatible proxies, `false` keeps the 5-minute TTL everywhere, and an unset flag keeps the native-host inference ([#1248](https://github.com/code-yeongyu/senpi/pull/1248))
+- The prompt-cache keep-alive pre-flight and the warm request now share one Anthropic host decision, so an `anthropic-messages` gateway whose model sets `compat.supportsLongCacheRetention: true` is warmed instead of reported unsupported ([#1248](https://github.com/code-yeongyu/senpi/pull/1248))
+- Route selected ChatGPT reauthorization and revocation through the account's saved OAuth route.
+
+### Removed
+
+## [2026.11.5-1] - 2026-11-05
+
+### Breaking Changes
+
+### Added
+
+- Add opt-in SIWC request shaping to the public Responses adapter, including supported tool loading and HTTP history replay ([#5021](https://github.com/code-yeongyu/senpi/pull/5021)). Provider registration remains separate.
+- Route saved SIWC ChatGPT accounts through public Responses, retain native web search, and keep legacy account requests unchanged (part of #5003).
+- Continue with ChatGPT signs in through SIWC on the existing ChatGPT subscription provider; signing in again with the same verified registration replaces its slot instead of duplicating it (part of #5003).
+- Offer Continue with ChatGPT alongside legacy sign-in through the shared subscription provider.
+
+### Changed
+
+### Fixed
+
+- Sign in with ChatGPT models are ineligible for prompt-cache prewarm even when their catalog enables explicit caching (#5101).
+
+### Removed
+
 ## [2026.11.4-2] - 2026-11-04
 
 ### Breaking Changes

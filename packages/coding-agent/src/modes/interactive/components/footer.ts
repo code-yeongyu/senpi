@@ -226,6 +226,7 @@ export class FooterComponent implements Component {
 		const modelName = state.model?.id || "no-model";
 		const fastIndicator = this.session.isFastModeActive() ? FAST_MODE_INDICATOR : "";
 		const routed = this.session.routedModel;
+		const pending = this.session.pendingModelSwitch;
 		let accountSuffix = "";
 		if (state.model) {
 			try {
@@ -245,6 +246,7 @@ export class FooterComponent implements Component {
 			modelName,
 			fastIndicator,
 			routed: routed ? { modelId: routed.model.id, thinkingLevel: routed.thinkingLevel } : undefined,
+			pending: pending ? { modelId: pending.model.id } : undefined,
 			reasoning: state.model?.reasoning === true,
 			thinkingLevel: state.thinkingLevel || "off",
 			providerPrefix,

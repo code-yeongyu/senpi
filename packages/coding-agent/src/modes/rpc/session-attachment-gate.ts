@@ -6,6 +6,7 @@ import { error } from "./session-router-errors.ts";
 export const ATTACH_GATE_EXEMPT: ReadonlySet<RpcCommand["type"]> = new Set<RpcCommand["type"]>([
 	"get_protocol_info",
 	"list_sessions",
+	"list_hands",
 	"subscribe_sessions",
 	"unsubscribe_sessions",
 	"get_subscription_limits",
@@ -25,6 +26,8 @@ export const ATTACH_GATE_EXEMPT: ReadonlySet<RpcCommand["type"]> = new Set<RpcCo
 	"get_media",
 	"get_commands",
 	"get_loaded_surfaces",
+	"get_project_trust",
+	"get_project_settings",
 	"get_available_models",
 	"get_available_thinking_levels",
 	"get_fast_mode",

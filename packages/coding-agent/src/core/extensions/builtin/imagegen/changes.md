@@ -1,3 +1,26 @@
+## 2026-11-05 - generate_image defaults to GPT Image 2.6 with a one-shot 2.5 fallback (senpi#5821, fixes #5820)
+
+### What changed
+
+- `params.ts`: `DEFAULT_IMAGE_MODEL` is `gpt-image-2.6-sunburst`; the model union adds both 2.6 ids and keeps the 2.5 pair and `gpt-image-2`; `complexity` is a new optional parameter; `IMAGE_MODEL_FALLBACKS` maps each 2.6 id to its 2.5 counterpart; `NATIVE_IMAGE_MODEL` keeps the native `image_generation` lane on `gpt-image-2.5-sunburst`; details gain `fallbackFrom`.
+- `model-request.ts` (new): model synthesis and the generation request moved out of `tool.ts`; when the endpoint answers with a model-config error for a 2.6 id, the same endpoint is asked once more with the 2.5 counterpart and without `complexity`.
+- `saved-images.ts` (new): `collectImages` and `writeImages` moved out of `tool.ts` unchanged.
+- `tool.ts`: rejects `complexity` on models older than 2.6 as `invalid_params`, reports the model that answered plus a fallback note, and its description names 2.6.
+- `skill/SKILL.md`: 2.6 model selection, the complexity control, the automatic fallback, and quality tiers on 2.5 and 2.6.
+- `../openai-image-gen/inject.ts`: pins `NATIVE_IMAGE_MODEL` instead of `DEFAULT_IMAGE_MODEL`.
+
+### Why
+
+- The owner default is the most capable model, which is now 2.6 Sunburst. Several OpenAI-compatible gateways do not serve the 2.6 ids yet, and failing every default request on them would be a regression, so the client tool falls back on that one error class. The native lane has no client-side retry and 2.6 is not yet verified on the subscription backend, so it keeps 2.5 Sunburst.
+
+### Why an extension could not handle it
+
+- This is the builtin imagegen extension itself.
+
+### Expected merge conflict zones
+
+- MEDIUM: the request block in `tool.ts` `execute()`, which also moves in open PR #5676.
+
 ## 2026-11-03 - Scan only gateways whose API serves OpenAI Images (senpi#5674)
 
 ### What changed
