@@ -92,7 +92,7 @@ export function extensionSourceName(extensionPath: string): string {
 }
 
 /** The first line of a raw error message, with control bytes stripped and paths cut to file names. */
-export function extensionErrorReason(message: string): string {
+function extensionErrorReason(message: string): string {
 	const firstLine =
 		message
 			.replace(ANSI_SEQUENCES, "")
