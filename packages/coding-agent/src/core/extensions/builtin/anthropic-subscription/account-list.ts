@@ -53,13 +53,20 @@ export function formatClaudeAccountList(input: ClaudeAccountListInput): string {
 		status: slotStatus(account, now),
 		limits: accountLimitsFor(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, account.name),
 	}));
+	const missingPin =
+		pinned !== undefined && !accounts.some((account) => account.name === pinned)
+			? [`Pinned account: ${pinned} (${pinSource.toLowerCase()}) - not in this list`]
+			: [];
 	if (entries.length === 0) {
-		return renderAccountList("Anthropic Subscription accounts", [], ["Add one with /claude-account add."], now);
+		return renderAccountList(
+			"Anthropic Subscription accounts",
+			[],
+			[...missingPin, "Add one with /claude-account add."],
+			now,
+		);
 	}
 	const footer = [
-		...(pinned !== undefined && !accounts.some((account) => account.name === pinned)
-			? [`Pinned account: ${pinned} (${pinSource.toLowerCase()}) - not in this list`]
-			: []),
+		...missingPin,
 		...(affinityError === undefined ? [] : [`Next turn: unavailable - ${affinityError}`]),
 		MANAGE_HINT,
 	];
