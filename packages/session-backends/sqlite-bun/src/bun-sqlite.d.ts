@@ -1,6 +1,11 @@
-// The repository type-checks with `types: ["node"]` and installs no Bun type package. `bun:sqlite`'s `Database` class
-// is declared once, in packages/coding-agent/src/modes/rpc/bun-sqlite.d.ts; this file merges in the part of Bun 1.4's
-// API this package uses (queries and transactions).
+// The repository type-checks with `types: ["node"]` and installs no Bun type package, so this file is the
+// single source for the `bun:sqlite` declaration the workspace uses: the `Database` class is declared
+// exactly once, here, with the full surface the workspace uses (construction, exec/close, queries and
+// transactions). It used to be split: `packages/coding-agent/src/modes/rpc/bun-sqlite.d.ts` held the
+// class while this file only merged in the query/transaction members. A standalone consumer of this
+// package never loaded that file, so `new Database(...)` had no value declaration outside the
+// workspace (senpi#5996). `src/index.ts` references this file so the declaration ships with the
+// package entry point.
 declare module "bun:sqlite" {
 	type Binding = string | number | bigint | boolean | null | Uint8Array;
 
@@ -16,7 +21,10 @@ declare module "bun:sqlite" {
 		immediate(): Result;
 	}
 
-	interface Database {
+	export class Database {
+		constructor(filename: string, options?: { readonly create?: boolean });
+		exec(sql: string): unknown;
+		close(force?: boolean): void;
 		query<Row = unknown>(sql: string): Statement<Row>;
 		transaction<Result>(body: () => Result): Transaction<Result>;
 	}
