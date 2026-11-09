@@ -1,8 +1,10 @@
+import { HOSTED_REBUILD_DEADLINE_MS } from "@earendil-works/pi-agent-core";
 import { normalizeContext } from "@earendil-works/pi-ai";
-import { fauxAssistantMessage } from "@earendil-works/pi-ai/compat";
+import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it } from "vitest";
 import { createReferenceDriver, projectHistoryRows, type ReferenceDriver } from "./egress/harness/reference-driver.ts";
 import { handlerHop, heldHandler, heldResponse } from "./fixtures/faux-provider/step-commit.ts";
+import { recoveryHooks, recoveryTool } from "./fixtures/faux-provider/tool-recovery.ts";
 import { createHarness, getMessageText, type Harness } from "./suite/harness.ts";
 
 // senpi#5841: section 15 governs. Failure synthesis is allowed; stale effects are not.
@@ -22,8 +24,7 @@ describe("CK1s hosted step-commit containment", () => {
 		const response = heldResponse(fauxAssistantMessage("uncommitted"));
 		driver.setResponses([response.response, fauxAssistantMessage("must not dial")]);
 		driver.inject.nextCommit("reject");
-		// C.P4 cond 6: the latch alone schedules the rebuild; holding its store read keeps the old run observable.
-		driver.inject.slowRebuildStoreRead(1);
+		const build = driver.inject.holdNextHarnessBuild();
 		const old = driver.session;
 		const observed: string[] = [];
 		let mirrorWritesAtLatch: number | undefined;
@@ -52,6 +53,8 @@ describe("CK1s hosted step-commit containment", () => {
 		// durable rows above stay unchanged, which is the boundary.
 		expect(mirrorWritesAtLatch).toBeDefined();
 		expect(driver.counters.adapterAppendAttempts).toBeGreaterThan(mirrorWritesAtLatch ?? Number.POSITIVE_INFINITY);
+		build.release();
+		await driver.whenRebuilt();
 	});
 
 	it("S2 rebuilds from committed rows while the discarded instance retains the uncommitted message", async () => {
@@ -98,12 +101,12 @@ describe("CK1s hosted step-commit containment", () => {
 		drivers.push(driver);
 		driver.setResponses([fauxAssistantMessage("uncommitted"), fauxAssistantMessage("must not dial")]);
 		driver.inject.nextCommit("reject");
-		// C.P4 cond 6: the latch alone schedules the rebuild; holding its store read keeps the old run observable.
-		driver.inject.slowRebuildStoreRead(1);
-		await driver.session.prompt("input").then(() => {
+		const build = driver.inject.holdNextHarnessBuild();
+		const old = driver.session;
+		await old.prompt("input").then(() => {
 			settled = true;
 		});
-		await driver.session.waitForIdle();
+		await old.waitForIdle();
 
 		expect(claimed).toBe(true);
 		expect(claimStarts).toEqual([false]);
@@ -112,6 +115,8 @@ describe("CK1s hosted step-commit containment", () => {
 		expect(driver.counters.providerCalls).toBe(1);
 		expect(driver.rows.filter((row) => row.kind === "step")).toEqual([]);
 		expect(driver.forwarded.slice(driver.latchHistory[0]?.forwardedBefore)).toEqual([]);
+		build.release();
+		await driver.whenRebuilt();
 	});
 
 	it("S5 fences the old instance's overflow compaction, then admits one rebuilt compaction (retry fencing: S14)", async () => {
@@ -324,8 +329,91 @@ describe("CK1s hosted step-commit containment", () => {
 		]);
 	});
 
+	it("S7 eviction preserves queued steering without a latch and consumes it once on resume", async () => {
+		const driver = await createReferenceDriver();
+		drivers.push(driver);
+		driver.setResponses([fauxAssistantMessage("first answer"), fauxAssistantMessage("steered answer")]);
+		await driver.prompt("input");
+		const old = driver.session;
+		await driver.enqueue({ id: "steer-eviction", kind: "steering", text: "turn left" });
+		expect(driver.inbox).toEqual([{ id: "steer-eviction", kind: "steering", text: "turn left" }]);
+		await driver.evict();
+		expect(driver.latchHistory).toEqual([]);
+		await driver.resume();
+		await driver.settle();
+		await old.agent.continueWithQueuedMessages();
+		expect(driver.counters.providerCalls).toBe(2);
+		expect(driver.inbox).toEqual([{ id: "steer-eviction", kind: "steering", text: "turn left", consumedBy: 2 }]);
+		expect(driver.consumeJournal).toEqual([{ messageId: "steer-eviction", generation: 2, rowIndex: 2 }]);
+		expect(driver.callLog()[1]?.context.messages.map(getMessageText)).toEqual(["input", "first answer", "turn left"]);
+		expect(driver.rows.map((row) => getMessageText(row.message))).toEqual([
+			"input",
+			"first answer",
+			"turn left",
+			"steered answer",
+		]);
+		expect(driver.counters.drainedBy).toEqual([2]);
+	});
+
+	it.each([false, true])(
+		"[harness-gap] S13 pending tools preserve golden hooks/events with queued steering=%s",
+		async (steering) => {
+			const goldenTrace: string[] = [];
+			const resumedTrace: string[] = [];
+			const goldenGate = heldHandler();
+			const goldenTool = recoveryTool(goldenGate.run);
+			const resumedTool = recoveryTool();
+			const control = await createHarness({
+				tools: [goldenTool.tool],
+				extensionFactories: recoveryHooks(goldenTrace),
+			});
+			fused.push(control);
+			const driver = await createReferenceDriver({
+				tools: [resumedTool.tool],
+				extensionFactories: recoveryHooks(resumedTrace),
+			});
+			drivers.push(driver);
+			const message = fauxAssistantMessage([fauxToolCall("record", {}, { id: "parity-1" })], {
+				stopReason: "toolUse",
+			});
+			control.setResponses([message, fauxAssistantMessage("completed")]);
+			driver.setResponses([message, fauxAssistantMessage("completed")]);
+			const goldenPrompt = control.session.prompt("input");
+			await goldenGate.entered;
+			if (steering) await control.session.steer("turn left");
+			goldenGate.release();
+			await goldenPrompt;
+			const hold = driver.inject.pauseNextTool();
+			const prompt = driver.prompt("input");
+			await hold.reached;
+			if (steering) await driver.enqueue({ id: "parity-steer", kind: "steering", text: "turn left" });
+			await driver.evict();
+			await prompt;
+			const discardedEnd = resumedTrace.length;
+			await driver.resume();
+			await driver.settle();
+			expect(resumedTool.effects).toEqual(["parity-1"]);
+			expect(driver.toolLedger.filter((entry) => entry.outcome === "ran")).toMatchObject([
+				{ toolCallId: "parity-1", generation: 2 },
+			]);
+			expect(goldenTrace).toEqual([
+				"call:parity-1",
+				"result:parity-1",
+				"end:parity-1",
+				...(steering ? ["steering"] : []),
+			]);
+			expect(resumedTrace.slice(discardedEnd), "resume must execute the same public tool hooks and events").toEqual(
+				goldenTrace,
+			);
+			expect(driver.callLog()[1]?.context.messages.map(getMessageText)).toEqual(
+				control.faux.getCallLog()[1]?.context.messages.map(getMessageText),
+			);
+			expect(driver.consumeJournal.map((entry) => entry.messageId)).toEqual(steering ? ["parity-steer"] : []);
+		},
+	);
+
 	it.each(["message_end", "agent_settled"] as const)(
-		"S11 containment precondition: a held %s handler cannot delay the latch",
+		"S11 rebuilds within the deadline while the old %s handler stays pending",
 		async (eventType) => {
 			const handler = heldHandler();
 			let held = false;
@@ -351,17 +439,20 @@ describe("CK1s hosted step-commit containment", () => {
 			drivers.push(driver);
 			driver.setResponses([fauxAssistantMessage("uncommitted"), fauxAssistantMessage("recovered")]);
 			driver.inject.nextCommit("reject");
-			// C.P4 cond 6: the latch alone schedules the rebuild; holding its store read keeps the latched window observable.
-			driver.inject.slowRebuildStoreRead(1);
+			driver.inject.slowRebuildStoreRead(HOSTED_REBUILD_DEADLINE_MS - 1);
 			const old = driver.session;
 			const rejected = Promise.withResolvers<void>();
 			const unsubscribe = old.agent.subscribe((event) => {
 				if (event.type === "message_start" && driver.latched) rejected.resolve();
 			});
-			const prompt = driver.prompt("input");
+			let promptReturned = false;
+			const prompt = old.prompt("input").then(() => {
+				promptReturned = true;
+			});
 			try {
 				await handler.entered;
 				await rejected.promise;
+				await driver.rebuildStoreReadStarted();
 				expect(driver.latched).toBe(true);
 				expect(driver.generation).toBe(2);
 				const model = old.model;
@@ -371,6 +462,22 @@ describe("CK1s hosted step-commit containment", () => {
 				).rejects.toThrowError(/generation/);
 				expect(driver.counters.auxRefusals).toBe(1);
 				expect(driver.counters.providerCalls).toBe(1);
+				driver.clock.advance(HOSTED_REBUILD_DEADLINE_MS - 1);
+				await driver.whenRebuilt();
+				await driver.settle();
+				expect(driver.clock.now()).toBeLessThanOrEqual(HOSTED_REBUILD_DEADLINE_MS);
+				expect(driver.counters.rebuildDeadlineMisses).toBe(0);
+				expect(driver.rebuilds).toBe(1);
+				expect(driver.session).not.toBe(old);
+				expect(promptReturned, "new instance completes while old prompt remains pending").toBe(false);
+				expect(driver.rows.map((row) => getMessageText(row.message))).toEqual(["input", "recovered"]);
+				const before = driver.counters;
+				handler.release();
+				await prompt;
+				await old.prompt("late old admission");
+				expect(driver.counters.admissions).toBe(before.admissions);
+				expect(driver.counters.providerCalls).toBe(before.providerCalls);
+				expect(driver.counters.refusals).toBe(before.refusals + 2);
 			} finally {
 				handler.release();
 				driver.clock.advance(1);

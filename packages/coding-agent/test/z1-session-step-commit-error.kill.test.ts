@@ -1,20 +1,195 @@
 import { HOSTED_REBUILD_DEADLINE_MS } from "@earendil-works/pi-agent-core";
 import { normalizeContext } from "@earendil-works/pi-ai";
-import { fauxAssistantMessage } from "@earendil-works/pi-ai/compat";
+import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { isStepCommitError, StepCommitError } from "../../agent/src/step-commit.ts";
 import { createReferenceDriver, type ReferenceDriver } from "./egress/harness/reference-driver.ts";
+import { heldResponse } from "./fixtures/faux-provider/step-commit.ts";
+import { recoveryTool } from "./fixtures/faux-provider/tool-recovery.ts";
 import { SecondCopyStepCommitError } from "./fixtures/step-commit-error-second-copy/index.ts";
 import { getMessageText } from "./suite/harness.ts";
 
-// senpi#5841: these are commit/fence fault cases, not a claim of process-KILL coverage.
-// The CK22 API has no restart-from-store or generation-bearing ToolHost yet.
+// senpi#5841: eviction drives CK22's in-process fault boundary, not an OS process kill.
 describe("CK1s commit fault recovery", () => {
 	const drivers: ReferenceDriver[] = [];
 	afterEach(() => {
 		for (const driver of drivers.splice(0).reverse()) driver.cleanup();
 		vi.useRealTimers();
 		vi.restoreAllMocks();
+	});
+
+	it("S8a resumes a committed tool once and fences its discarded dispatch", async () => {
+		const probe = recoveryTool();
+		const driver = await createReferenceDriver({ tools: [probe.tool] });
+		drivers.push(driver);
+		driver.setResponses([
+			fauxAssistantMessage([fauxToolCall("record", {}, { id: "effect-1" })], { stopReason: "toolUse" }),
+			fauxAssistantMessage("completed"),
+		]);
+		const hold = driver.inject.pauseNextTool();
+		const prompt = driver.prompt("input");
+		await hold.reached;
+		expect(driver.rows.filter((row) => row.kind === "step")).toHaveLength(1);
+		expect(probe.effects).toEqual([]);
+		await driver.evict();
+		await prompt;
+		expect(probe.effects, "discarded instance must produce no tool effect").toEqual([]);
+		expect(driver.toolLedger).toEqual([
+			{ toolName: "record", toolCallId: "effect-1", generation: 1, outcome: "killed" },
+		]);
+		await driver.resume();
+		await driver.settle();
+		expect(probe.effects, "committed pending tool runs exactly once").toEqual(["effect-1"]);
+		expect(driver.toolLedger).toEqual([
+			{ toolName: "record", toolCallId: "effect-1", generation: 1, outcome: "killed" },
+			{ toolName: "record", toolCallId: "effect-1", generation: 2, outcome: "ran" },
+		]);
+		expect(driver.counters.providerCalls).toBe(2);
+		expect(driver.callLog()[1]?.context.messages.filter((message) => message.role === "toolResult")).toMatchObject([
+			{ toolCallId: "effect-1", content: [{ type: "text", text: "recorded" }] },
+		]);
+		await driver.evict();
+		await driver.resume();
+		expect(probe.effects).toEqual(["effect-1"]);
+		expect(driver.counters.providerCalls).toBe(2);
+	});
+
+	it("S8b eviction between rejection and rebuild replays the input once", async () => {
+		const driver = await createReferenceDriver();
+		drivers.push(driver);
+		driver.setResponses([fauxAssistantMessage("uncommitted"), fauxAssistantMessage("replayed")]);
+		driver.inject.nextCommit("reject");
+		const build = driver.inject.holdNextHarnessBuild();
+		const prompt = driver.prompt("input");
+		await build.reached;
+		expect(driver.latched).toBe(true);
+		expect(driver.counters.providerCalls).toBe(1);
+		await driver.evict();
+		build.release();
+		await prompt;
+		await driver.resume();
+		await driver.settle();
+		expect(driver.counters.providerCalls, "one initial call and exactly one replay").toBe(2);
+		expect(driver.counters.admissions).toBe(2);
+		expect(driver.rows.map((row) => [row.kind, getMessageText(row.message)])).toEqual([
+			["input", "input"],
+			["step", "replayed"],
+		]);
+		expect(driver.callLog().map((call) => call.context.messages.map(getMessageText))).toEqual([["input"], ["input"]]);
+		expect(driver.forwarded.filter((entry) => entry.generation === 2)).toEqual([]);
+	});
+
+	it("[harness-gap] S8a refuses discarded dispatch before invoking a signal-insensitive tool", async () => {
+		const probe = recoveryTool();
+		const driver = await createReferenceDriver({
+			tools: [{ ...probe.tool, execute: (id, params) => probe.tool.execute(id, params) }],
+		});
+		drivers.push(driver);
+		driver.setResponses([
+			fauxAssistantMessage([fauxToolCall("record", {}, { id: "uncooperative" })], { stopReason: "toolUse" }),
+		]);
+		const hold = driver.inject.pauseNextTool();
+		const prompt = driver.prompt("input");
+		await hold.reached;
+		await driver.evict();
+		await prompt;
+		// Section 15.1(d) requires dispatch refusal, independently of tool abort cooperation.
+		expect(probe.effects, "discarded generation must be refused before invoking the tool").toEqual([]);
+	});
+
+	it("S8a partially dispatched batch resumes only the unrun tool from the exactly-once ledger", async () => {
+		const probe = recoveryTool();
+		const firstDone = Promise.withResolvers<void>();
+		let hold: ReturnType<ReferenceDriver["inject"]["pauseNextTool"]> | undefined;
+		const driver = await createReferenceDriver({
+			tools: [
+				{
+					...probe.tool,
+					executionMode: "sequential",
+					execute: async (id, params, signal) => {
+						const result = await probe.tool.execute(id, params, signal);
+						if (id === "already-ran" && !hold) {
+							hold = driver.inject.pauseNextTool();
+							firstDone.resolve();
+						}
+						return result;
+					},
+				},
+			],
+		});
+		drivers.push(driver);
+		driver.setResponses([
+			fauxAssistantMessage(
+				[fauxToolCall("record", {}, { id: "already-ran" }), fauxToolCall("record", {}, { id: "pending" })],
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage("completed"),
+		]);
+		const prompt = driver.prompt("input");
+		await firstDone.promise;
+		if (!hold) throw new Error("First tool must arm the second dispatch gate");
+		await hold.reached;
+		await driver.evict();
+		await prompt;
+		expect(probe.effects).toEqual(["already-ran"]);
+		await driver.resume();
+		await driver.settle();
+		expect(probe.effects, "ledger must prevent replaying the completed tool").toEqual(["already-ran", "pending"]);
+		expect(driver.toolLedger.filter((entry) => entry.outcome === "ran").map((entry) => entry.toolCallId)).toEqual([
+			"already-ran",
+			"pending",
+		]);
+	});
+
+	it("S12 active tool stop aborts dispatch once and never redials", async () => {
+		const probe = recoveryTool();
+		const driver = await createReferenceDriver({ tools: [probe.tool] });
+		drivers.push(driver);
+		driver.setResponses([
+			fauxAssistantMessage([fauxToolCall("record", {}, { id: "stopped" })], { stopReason: "toolUse" }),
+			fauxAssistantMessage("must not dial"),
+		]);
+		const hold = driver.inject.pauseNextTool();
+		const prompt = driver.prompt("input");
+		await hold.reached;
+		expect(driver.latched).toBe(false);
+		expect(driver.stop()).toBe("cancelled-active-step");
+		await prompt;
+		await driver.settle();
+		expect(driver.counters.providerCalls, "active tool stop must not redial").toBe(1);
+		expect(probe.aborted).toEqual(["stopped"]);
+		expect(probe.effects).toEqual([]);
+		expect(driver.toolLedger).toEqual([
+			{ toolName: "record", toolCallId: "stopped", generation: 1, outcome: "killed" },
+		]);
+		expect(driver.stops).toEqual([{ stepId: "step-1", while: "active" }]);
+		expect(driver.stop()).toBe("nothing-latched");
+	});
+
+	it.each([
+		{ rejectCommit: false, name: "S12 active stop commits one abort without redial after eviction" },
+		{ rejectCommit: true, name: "[harness-gap] S12 active stop survives the aborted step's commit rejection" },
+	])("$name", async ({ rejectCommit }) => {
+		const driver = await createReferenceDriver();
+		drivers.push(driver);
+		const response = heldResponse(fauxAssistantMessage("must not commit"));
+		driver.setResponses([response.response, fauxAssistantMessage("must not dial")]);
+		if (rejectCommit) driver.inject.nextCommit("reject");
+		const prompt = driver.prompt("input");
+		await response.entered;
+		expect(driver.latched).toBe(false);
+		expect(driver.stop()).toBe("cancelled-active-step");
+		response.release();
+		await prompt;
+		await driver.settle();
+		await driver.evict();
+		await driver.resume();
+		expect(driver.counters.providerCalls, "active stop must not redial").toBe(1);
+		expect(driver.stops).toEqual([{ stepId: "active", while: "active" }]);
+		const steps = driver.rows.filter((row) => row.kind === "step");
+		expect(steps.map((row) => row.message)).toMatchObject([{ role: "assistant", stopReason: "aborted" }]);
+		expect(steps.map((row) => getMessageText(row.message))).toEqual([""]);
+		expect(driver.stop()).toBe("nothing-latched");
 	});
 
 	it("S8d classifies an injected second-copy commit error by brand and contains stale effects", async () => {
@@ -25,13 +200,13 @@ describe("CK1s commit fault recovery", () => {
 		expect(error instanceof StepCommitError).toBe(false);
 		expect(isStepCommitError(error)).toBe(true);
 		driver.inject.nextCommitError(error);
-		// C.P4 cond 6: the latch alone schedules the rebuild; holding its store read keeps the old run latched and observable.
-		driver.inject.slowRebuildStoreRead(1);
-		await driver.session.prompt("input");
+		const build = driver.inject.holdNextHarnessBuild();
+		const old = driver.session;
+		await old.prompt("input");
 		expect(driver.classifications).toEqual([{ stepId: "step-1", error, kind: "step-commit-error", code: "fenced" }]);
 		expect(driver.classifications[0]?.error).toBe(error);
 		expect(driver.latchHistory).toMatchObject([{ stepId: "step-1", code: "fenced", generationAfter: 2 }]);
-		await driver.session.prompt("stale retry");
+		await old.prompt("stale retry");
 		// streamAssistantResponse synthesizes a terminal error after the refused
 		// admission; its commit is refused separately (decision C).
 		expect(driver.counters.refusals).toBe(2);
@@ -39,6 +214,8 @@ describe("CK1s commit fault recovery", () => {
 		expect(driver.counters.providerCalls).toBe(1);
 		expect(driver.rows.filter((row) => row.kind === "step")).toEqual([]);
 		expect(driver.forwarded.slice(driver.latchHistory[0]?.forwardedBefore)).toEqual([]);
+		build.release();
+		await driver.whenRebuilt();
 	});
 
 	it("S6a dispose cancels a real pending retry timer before another admission", async () => {
@@ -141,8 +318,7 @@ describe("CK1s commit fault recovery", () => {
 		await driver.prompt("input");
 		await driver.followUp("queued input");
 		driver.inject.nextCommit("reject");
-		// C.P4 cond 6: the latch alone schedules the rebuild; holding its store read keeps the old run latched and observable.
-		driver.inject.slowRebuildStoreRead(1);
+		const build = driver.inject.holdNextHarnessBuild();
 		const old = driver.session;
 		// The hosted caller schedules the public Agent continuation. This does not
 		// claim coverage of AgentSession's compaction-dependent scheduling path.
@@ -156,6 +332,8 @@ describe("CK1s commit fault recovery", () => {
 		expect(driver.counters.providerCalls).toBe(2);
 		expect(driver.rows.map((row) => getMessageText(row.message))).toEqual(["input", "committed", "queued input"]);
 		expect(driver.forwarded.slice(driver.latchHistory[0]?.forwardedBefore)).toEqual([]);
+		build.release();
+		await driver.whenRebuilt();
 	});
 
 	it.each(["ambiguous-landed", "ambiguous-lost"] as const)(
