@@ -168,13 +168,23 @@ function showAccounts(
 	}
 	const lines = ["Anthropic Subscription accounts:"];
 	if (accounts.length === 0) lines.push("  (none)");
-	for (const account of accounts) {
-		const states = [accountLabel(account), account.source, slotStatus(account)];
-		if (account.name === pinned) states.push("pinned");
-		if (account.name === affinityPick) states.push("affinity pick");
-		lines.push(`  ${states.join(" | ")}`);
-	}
+	// One account per header line, column-aligned, with the long state values on their own rows so a
+	// blocked account no longer pushes its timestamp (and the pin/affinity markers) off the viewport.
 	const labelFor = (name: string) => accountLabel(accounts.find((account) => account.name === name) ?? { name });
+	const labels = accounts.map(accountLabel);
+	const labelWidth = Math.max(0, ...labels.map((label) => label.length));
+	const sourceWidth = Math.max(0, ...accounts.map((account) => (account.source ?? "").length));
+	accounts.forEach((account, index) => {
+		const markers = [account.name === pinned ? "pinned" : undefined, account.name === affinityPick ? "affinity pick" : undefined]
+			.filter((marker): marker is string => marker !== undefined)
+			.join(", ");
+		const header = [`  ${labels[index]?.padEnd(labelWidth) ?? ""}`, (account.source ?? "").padEnd(sourceWidth), markers]
+			.filter((part) => part.trim() !== "")
+			.join("  ")
+			.trimEnd();
+		lines.push(header);
+		lines.push(`    status: ${slotStatus(account)}`);
+	});
 	lines.push(`Pinned account: ${pinned === undefined ? "none" : `${labelFor(pinned)} (${pinSource.toLowerCase()})`}`);
 	lines.push(
 		`Affinity pick: ${affinityPick === undefined ? (affinityError ? `unavailable - ${affinityError}` : "none") : labelFor(affinityPick)}`,

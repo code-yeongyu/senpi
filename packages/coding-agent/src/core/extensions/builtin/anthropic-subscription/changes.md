@@ -1,3 +1,18 @@
+## 2026-11-09 - `/claude-account` list reads as one line per account
+
+### What changed
+
+- `account-command.ts` `showAccounts`: each account is a short header row (label, source, and the `pinned` / `affinity pick` markers) in aligned columns, and its state goes on its own indented `status:` row. A blocked account's window no longer shares a line with its label and markers, so the pin and affinity choice are always readable and long account names do not collide with the source column.
+
+### Why
+
+The previous render joined label, source, state, pin and affinity into one pipe-delimited line. With a blocked window carrying an ISO timestamp that line ran wide enough to wrap in a narrow TUI panel, which is the reported readability complaint.
+
+### Expected conflict zones
+
+- The one list assertion in `test/suite/anthropic-subscription-account-command.test.ts` (it pins the row shape, not prose).
+- `showAccounts` itself; the surrounding command handler and deps are untouched.
+
 ## 2026-10-18 - A compiled build finds Claude Code shipped beside its executable (senpi#3639)
 
 ### What changed

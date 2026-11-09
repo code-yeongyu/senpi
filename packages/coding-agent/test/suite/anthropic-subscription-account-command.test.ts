@@ -104,8 +104,13 @@ describe("/claude-account", () => {
 		await command(harness).handler("", ctx);
 
 		const output = notices.at(-1)?.message ?? "";
-		expect(output).toContain("alpha | login | available | pinned | affinity pick");
-		expect(output).toContain("bravo | import | blocked until");
+		const lines = output.split("\n");
+		// One header row per account keeps the label, source and markers on a short, aligned line.
+		expect(lines).toContain("  alpha  login   pinned, affinity pick");
+		expect(lines).toContain("  bravo  import");
+		// The long state text lives on its own indented row so a block window cannot push it off-screen.
+		expect(lines).toContain("    status: available");
+		expect(lines.some((line) => line.startsWith("    status: blocked until "))).toBe(true);
 		expect(output).toContain("Pinned account: alpha (settings)");
 		expect(output).toContain("Affinity pick: alpha");
 	});
