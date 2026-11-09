@@ -146,6 +146,16 @@ const AUTH_ERROR_CODES: ReadonlySet<string> = new Set([
 ]);
 const MAX_CAUSE_LINKS = 16;
 const ACCOUNT_SCOPED_403_TEXT = /account|credential|token|api[ _-]?key|organization|subscription/i;
+// A refusal scoped to one model the account's plan does not include (senpi#3972): the vendor names
+// the model and the entitlement gap ("Your subscription does not include access to model-a",
+// "model GLM-5.3 is not available on this plan"). That is a verdict on the model, not on the
+// credential — blocking the slot would poison every other model on the same provider (#2081 class).
+const MODEL_SCOPED_403_TEXT = [
+	// "does not include access to model-a", "does not include model GLM-5.3", "not entitled to use model X".
+	/(?:does not include(?: access to)?|not entitled to(?: use)?|no access to)[^.]{0,60}?\bmodel\b/i,
+	// "model-a is not available", "model X not included in your plan".
+	/\bmodel\b[^.]{0,80}?\b(?:is not|not|no)\b[^.]{0,40}?\b(?:available|included|entitled|enabled|accessible)\b/i,
+];
 const RATE_LIMIT_TEXT = /rate[ _-]?limit|too many requests|resource_exhausted/i;
 const BILLING_TEXT =
 	/billing|credits?[ _-]?(?:required|exhausted|balance)|insufficient[ _-]?(?:funds|quota|credit)|payment[ _-]?required|quota[ _-]?exhausted/i;
@@ -365,6 +375,10 @@ export function classifyCredentialFailure(
 		return { kind: "failover", block: { reason: "auth_error" } };
 	}
 	if (status === 403 && !limitText) {
+		// A model-scoped refusal fails the request and leaves the slot healthy, so the next model on
+		// the same provider is still attempted (senpi#3972). The vendor's own message already names
+		// the model and the reason; the classifier's job is only to not poison the slot for it.
+		if (MODEL_SCOPED_403_TEXT.some((pattern) => pattern.test(text))) return { kind: "fail_request" };
 		return ACCOUNT_SCOPED_403_TEXT.test(text)
 			? { kind: "failover", block: { reason: "auth_error" } }
 			: { kind: "fail_request" };

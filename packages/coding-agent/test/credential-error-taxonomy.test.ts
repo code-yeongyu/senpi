@@ -300,4 +300,26 @@ describe("transient failures never classify as a permanent credential verdict (s
 	] as const)("a genuine %s still blocks the slot as auth_error", (_label, error) => {
 		expect(classifyCredentialFailure(error)).toEqual({ kind: "failover", block: { reason: "auth_error" } });
 	});
+
+	test("a 403 that refuses one model the plan does not include fails the request without blocking the slot (senpi#3972)", () => {
+		// The maintainer's audit RED (issue #3972, comment 2026-10-23): a fake z.ai returns 403
+		// "Your subscription does not include access to model-a" for one model only. That refusal is
+		// a verdict on the model, not on the credential: the slot must stay selectable for model-b,
+		// so nothing may be persisted as auth_error.
+		expect(classifyCredentialFailure(status(403, "Your subscription does not include access to model-a"))).toEqual({
+			kind: "fail_request",
+		});
+		expect(classifyCredentialFailure(status(403, "model GLM-5.3 is not available on this plan"))).toEqual({
+			kind: "fail_request",
+		});
+		// Negative controls: an account-level refusal still blocks the slot.
+		expect(classifyCredentialFailure(status(403, "Your subscription has expired"))).toEqual({
+			kind: "failover",
+			block: { reason: "auth_error" },
+		});
+		expect(classifyCredentialFailure(status(403, "account suspended for this credential"))).toEqual({
+			kind: "failover",
+			block: { reason: "auth_error" },
+		});
+	});
 });
