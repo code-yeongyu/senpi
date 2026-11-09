@@ -1075,6 +1075,16 @@ pi.on("before_provider_request", (event, ctx) => {
 
 This is mainly useful for debugging provider serialization and cache behavior.
 
+`before_provider_request`, `provider_stream_event` and `after_provider_response` handlers can declare the providers whose requests or streams they read or change:
+
+```typescript
+pi.on("before_provider_request", (event) => ({ ...event.payload, metadata: { tag: "x" } }), {
+  providers: ["anthropic"],
+});
+```
+
+The declaration does not filter dispatch: the handler still receives every event. A device serving a hosted session advertises it, so the hosted side knows which providers' calls need that device's hooks. A handler without `providers` counts as touching every provider. The value must be a non-empty array of provider ids; anything else throws at registration.
+
 #### after_provider_response
 
 Fired after an HTTP response is received and before its stream body is consumed. Handlers run in extension load order.
