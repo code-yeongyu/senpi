@@ -356,7 +356,7 @@ describe("CK1s hosted step-commit containment", () => {
 	});
 
 	it.each([false, true])(
-		"[harness-gap] S13 pending tools preserve golden hooks/events with queued steering=%s",
+		"S13 pending tools preserve golden hooks/events with queued steering=%s",
 		async (steering) => {
 			const goldenTrace: string[] = [];
 			const resumedTrace: string[] = [];

@@ -79,7 +79,7 @@ describe("CK1s commit fault recovery", () => {
 		expect(driver.forwarded.filter((entry) => entry.generation === 2)).toEqual([]);
 	});
 
-	it("[harness-gap] S8a refuses discarded dispatch before invoking a signal-insensitive tool", async () => {
+	it("S8a refuses discarded dispatch before invoking a signal-insensitive tool", async () => {
 		const probe = recoveryTool();
 		const driver = await createReferenceDriver({
 			tools: [{ ...probe.tool, execute: (id, params) => probe.tool.execute(id, params) }],
@@ -168,7 +168,7 @@ describe("CK1s commit fault recovery", () => {
 
 	it.each([
 		{ rejectCommit: false, name: "S12 active stop commits one abort without redial after eviction" },
-		{ rejectCommit: true, name: "[harness-gap] S12 active stop survives the aborted step's commit rejection" },
+		{ rejectCommit: true, name: "S12 active stop survives the aborted step's commit rejection" },
 	])("$name", async ({ rejectCommit }) => {
 		const driver = await createReferenceDriver();
 		drivers.push(driver);
