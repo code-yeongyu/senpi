@@ -1,6 +1,12 @@
 {
 	"version": 1,
 	"nodes": {
+		"senpi#6259": {
+			"additions": [
+				"legacyContracts/test/eval-nested-tool-updates.test.ts/Given a cell that settles many nested tool calls without printing (#6257 review) When each call settles, then the live view holds only the newest settled call's output"
+			],
+			"reason": "senpi#6257/#6259 review (MEDIUM): a settled nested call's text is held until the cell replaces it, and only the newest one is held, so a cell that settles many calls without printing cannot accumulate their output. This contract pins that bound. No prompt cell moves."
+		},
 		"senpi#5066": {
 			"additions": [
 				"legacyContracts/test/permission-slots.test.ts/permission slot ownership (#4309) bounds a held decision when the host claims before-wait (#4709)",
