@@ -92,6 +92,25 @@ describe("omo-relay-daemon#307: responses to a relayExec record carry the author
 		expect(answers.list).toMatchObject({ success: true, authority: { exec: 47, roles: null } });
 	});
 
+	it("senpi#6280: an applied close_session carries the receipt, finalizer and joined close alike", async () => {
+		const { peer, sessionId: joined } = await hostPeer();
+		const opened = await peer.send({ type: "open_session", attended: false, relayExec: 51 });
+		expect(opened).toMatchObject({ success: true, authority: { exec: 51 } });
+		const own = String(opened.sessionId);
+		expect(await peer.send({ type: "close_session", sessionId: own, relayExec: 52 })).toMatchObject({
+			success: true,
+			sessionId: own,
+			authority: { exec: 52, incarnation: 1, epoch: 1 },
+		});
+		// The opener stays attached, so this close only releases the peer's attachment (the joined reply path).
+		expect(await peer.send({ type: "close_session", sessionId: joined, relayExec: 53 })).toMatchObject({
+			success: true,
+			sessionId: joined,
+			authority: { exec: 53, incarnation: 1, epoch: 1 },
+		});
+		expect(await opener.send({ type: "get_state", sessionId: joined })).toMatchObject({ success: true });
+	});
+
 	it("A4: a relayExec that is not a positive safe integer refuses the record as malformed", async () => {
 		const { peer, sessionId } = await hostPeer();
 		for (const relayExec of [0, -1, 1.5, "7", null]) {
@@ -110,5 +129,9 @@ describe("omo-relay-daemon#307: responses to a relayExec record carry the author
 			expect(answer).toMatchObject({ success: true });
 			expect(answer).not.toHaveProperty("authority");
 		}
+		expect(await legacy.send(attachTo(sessionId))).toMatchObject({ success: true });
+		const closed = await legacy.send({ type: "close_session", sessionId, relayExec: 10 });
+		expect(closed).toMatchObject({ success: true, sessionId });
+		expect(closed).not.toHaveProperty("authority");
 	});
 });
