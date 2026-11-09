@@ -383,7 +383,9 @@ describe("vertex-garden automatic default selection", () => {
 describe("vertex-garden thinking toggle", () => {
 	function gardenModel(id: string): Model<"openai-completions"> {
 		const config = VERTEX_MODEL_GARDEN_MODELS.find((entry) => entry.id === id);
-		if (!config) throw new Error(`vertex-garden config missing for ${id}`);
+		if (!config || config.type === "image" || config.type === "classifier") {
+			throw new Error(`vertex-garden chat config missing for ${id}`);
+		}
 		return {
 			...model("openai-completions", id, "vertex-garden"),
 			thinkingLevelMap: config.thinkingLevelMap,
