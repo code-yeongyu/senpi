@@ -12,6 +12,32 @@
 
 ### Removed
 
+## [2026.11.9-2] - 2026-11-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- A nested tool's streamed lines no longer vanish from a running eval cell's live update for one frame when the tool finishes; they stay until the cell's own output or its completion replaces them ([#6259](https://github.com/code-yeongyu/senpi/pull/6259)).
+
+### Removed
+
+## [2026.11.9] - 2026-11-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.11.6-3] - 2026-11-08
 
 ### Breaking Changes
