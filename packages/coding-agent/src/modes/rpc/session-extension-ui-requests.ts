@@ -12,6 +12,7 @@ export const sessionDialogRequests = new WeakMap<object, SessionExtensionUiReque
 /** Per-session extension UI request state; never share this map between bindings. */
 export class SessionExtensionUiRequests {
 	private readonly pending = new Map<string, PendingRequest>();
+	private readonly claimed = new Set<string>();
 	private readonly changed: ((change?: UiRequestChange) => void) | undefined;
 	constructor(changed?: (change?: UiRequestChange) => void) {
 		this.changed = changed;
@@ -35,10 +36,22 @@ export class SessionExtensionUiRequests {
 		return [...this.pending.values()].flatMap((request) => (request.frame ? [request.frame] : []));
 	}
 
+	/**
+	 * The first answer wins: it claims the request before `beforeAnswer` runs, so an answer that arrives while
+	 * `beforeAnswer` runs finds the request claimed and settles nothing. A claim whose `beforeAnswer` throws is
+	 * released and the request stays pending. The request stays listed in `snapshot()` until it settles.
+	 */
 	resolve(response: RpcExtensionUIResponse, beforeAnswer?: () => void): boolean {
 		const request = this.pending.get(response.id);
-		if (!request) return false;
-		beforeAnswer?.();
+		if (!request || this.claimed.has(response.id)) return false;
+		this.claimed.add(response.id);
+		try {
+			beforeAnswer?.();
+		} finally {
+			this.claimed.delete(response.id);
+		}
+		// A cancel or close that ran inside `beforeAnswer` settled the request first.
+		if (this.pending.get(response.id) !== request) return false;
 		this.pending.delete(response.id);
 		this.changed?.({
 			type: "ui_request_settled",

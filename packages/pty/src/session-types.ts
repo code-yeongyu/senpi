@@ -75,6 +75,9 @@ export interface TerminalSessionHandle {
 	readonly wait?: () => Promise<unknown>;
 	readonly pid?: number;
 	readonly processGroupId?: number;
+	/** After the settle, whether processes the command started are still in its process group (pipe fallback only). */
+	readonly leftoverAlive?: () => boolean;
+	readonly waitLeftoverGone?: (graceMs: number) => Promise<boolean>;
 }
 
 export type CreateNativeTerminalSession = (

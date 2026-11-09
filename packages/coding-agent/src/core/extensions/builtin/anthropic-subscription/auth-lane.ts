@@ -11,6 +11,7 @@ import {
 	emptyCredential,
 	envSlotToken,
 	listAccounts,
+	unusableStoredSlotCount,
 } from "./accounts.ts";
 import { isBlockedFor, type PinSource, selectAccount } from "./affinity.ts";
 import { type AuthenticatedAttemptInput, createAttemptMessages, type RetainableAttempt } from "./auth-attempt.ts";
@@ -21,7 +22,8 @@ import { accountDirFor, claudeCliSharedRoot, ensureAccountDir } from "./claude-c
 import { buildClaudeCliEnvironment } from "./claude-cli-environment.ts";
 import { profileChanged, verifyClaudeCliInitialization } from "./claude-cli-token-source.ts";
 import { writeConfigDirCredential } from "./config-dir-credentials.ts";
-import { asksLegacyLongContext } from "./context-window.ts";
+import { asksLegacyLongContext, CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW } from "./context-window.ts";
+import { isExtraUsageExhausted } from "./errors.ts";
 import { runFailover } from "./failover.ts";
 import { logContinuityEvent } from "./session-observability.ts";
 import { markLongContextRefused } from "./long-context.ts";
@@ -30,15 +32,27 @@ import { refreshFailure } from "./refresh-failure.ts";
 import type { AnthropicSubscriptionAuthLane } from "./options.ts";
 import type { Options, SDKMessage, SdkQuery } from "./sdk-boundary.ts";
 import type { AnthropicSubscriptionProviderSettings, AnthropicSubscriptionTokenInjection } from "./settings.ts";
-import { ClaudeSignInRequiredError, signInRequiredNames } from "./sign-in-again.ts";
+import { ClaudeSignInRequiredError, isServableAccountSlot, signInRequiredAccounts } from "./sign-in-again.ts";
 
 export { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./account-management.ts";
 export { overrideAuthLaneBoundary, resetAuthLaneBoundary } from "./auth-lane-boundary.ts";
+
+const DEFAULT_FALLBACK_OUTPUT_TOKENS = 32_000;
+const MIN_FALLBACK_OUTPUT_TOKENS = 8_192;
 
 /** A managed lane with an empty pool must refuse rather than spawn the SDK against ambient host credentials. */
 const NO_MANAGED_ACCOUNTS_ERROR =
 	"authentication_failed: No Anthropic Subscription accounts configured for the managed lane; " +
 	"run /login anthropic-subscription or set CLAUDE_CODE_OAUTH_TOKEN";
+
+/**
+ * A stored account that names no account cannot be selected, signed into, or affinity-routed, and its seat digest would
+ * hash an undefined name. Refusing here keeps the turn from silently falling back to ambient host credentials
+ * (oh-my-openagent#12228).
+ */
+const UNUSABLE_STORED_ACCOUNT_ERROR =
+	"claude_account_unusable: a stored Claude account has no name, so no turn can use it; " +
+	"run /login anthropic-subscription to add a named account";
 
 export type { AuthenticatedAttemptInput } from "./auth-attempt.ts";
 
@@ -63,6 +77,13 @@ export type AuthenticatedQueryInput = {
 	/** The account this session's SDK transcript lives under; preferred while it can serve (senpi#2891). */
 	preferredAccount?: string;
 	onQuery?: (query: ReturnType<SdkQuery>) => void;
+	/** Called once when a refused [1m] request is retried at the 200k window, so the turn can say so. */
+	onLongContextFallback?: () => void;
+	/** Full request context estimate, including a resident session's already billed prefix. */
+	contextTokens?: () => number;
+	/** Explicit response cap for the 200k retry; otherwise it uses the fallback default. */
+	outputReserveTokens?: number;
+	onAttemptStart?: () => void;
 	createAttempt?: (
 		input: AuthenticatedAttemptInput,
 	) => RetainableAttempt<SDKMessage> | Promise<RetainableAttempt<SDKMessage>>;
@@ -106,7 +127,13 @@ async function managedPool(
 	const configuredLane = resolveEffectiveLane(settings, accounts);
 	const lane =
 		configuredLane === "config-dir" && hasRequestOauthToken(requestEnvironment) ? "oauth-slots" : configuredLane;
-	if (lane === "ambient") return undefined;
+	const unusableStoredAccounts = unusableStoredSlotCount(credential);
+	if (lane === "ambient") {
+		// An ambient lane the user configured explicitly is their choice and is never overridden (omo#6784); a lane that
+		// defaulted to ambient only because every stored account was dropped names the real cause instead.
+		if (settings.tokenInjection === "ambient" || unusableStoredAccounts === 0) return undefined;
+		throw new Error(UNUSABLE_STORED_ACCOUNT_ERROR);
+	}
 	if (accounts.length === 0) throw new Error(NO_MANAGED_ACCOUNTS_ERROR);
 	const stored = credential?.type === "oauth" ? (credential as AnthropicSubscriptionCredential) : undefined;
 	return {
@@ -204,6 +231,45 @@ function prepareEnvSlot(
 export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncGenerator<SDKMessage> {
 	const signal = input.signal ?? new AbortController().signal;
 	const pool = await managedPool(input.providerSettings, input.env);
+	let standardWindow = false;
+	let retryAccountName: string | undefined;
+	let outputReserveTokens = input.outputReserveTokens ?? DEFAULT_FALLBACK_OUTPUT_TOKENS;
+	const buildOptions = (lane: AnthropicSubscriptionAuthLane): Options => {
+		const options = input.buildOptions(lane);
+		if (standardWindow) {
+			options.model = options.model?.replace(/\[1m\]$/, "");
+			options.env = {
+				...options.env,
+				CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW),
+				// Reserve and request the same output budget, not the model catalog's ceiling.
+				CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(outputReserveTokens),
+			};
+		}
+		return options;
+	};
+	const onLongContextRefused = (error: unknown): void => {
+		if (isExtraUsageExhausted(error)) {
+			// The full estimate already includes the preamble margin when no billed prefix exists.
+			const contextTokens = input.contextTokens?.() ?? 0;
+			outputReserveTokens =
+				input.outputReserveTokens ??
+				Math.max(
+					MIN_FALLBACK_OUTPUT_TOKENS,
+					Math.min(DEFAULT_FALLBACK_OUTPUT_TOKENS, CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW - contextTokens),
+				);
+			if (contextTokens > CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW - outputReserveTokens) {
+				const reason = error instanceof Error ? error.message : String(error);
+				throw new Error(
+					`${reason} The prompt plus ${outputReserveTokens} output tokens cannot fit the 200k retry. Top up extra usage to keep the 1M window, or start a new session or compact this session before retrying.`,
+				);
+			}
+			// Exhausted balance is not an entitlement verdict: only this request uses 200k.
+			standardWindow = true;
+		} else {
+			markLongContextRefused();
+		}
+		input.onLongContextFallback?.();
+	};
 	if (!pool) {
 		const parentEnvironment = mergeRequestAuthEnvironment(activeBoundary.env(), input.env);
 		const ambientEnvironment: Record<string, string | undefined> = { ...parentEnvironment };
@@ -213,12 +279,12 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 		// Lane-owned variables from buildOptions (the compaction-owner overlay) win over the host.
 		let askedLegacyLongContext = false;
 		const ambientAttempt = async () => {
-			const options = input.buildOptions("ambient");
+			const options = buildOptions("ambient");
 			askedLegacyLongContext = asksLegacyLongContext(options.model);
 			options.env = { ...ambientEnvironment, ...options.env };
 			return createAttemptMessages(input, { accountName: "ambient", accounts: [], authLane: "ambient", options });
 		};
-		yield* retryAtStandardWindowOnce(ambientAttempt, () => askedLegacyLongContext);
+		yield* retryAtStandardWindowOnce(ambientAttempt, () => askedLegacyLongContext, onLongContextRefused);
 		return;
 	}
 	if (input.probe === true) {
@@ -237,15 +303,17 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 			isUsable: (account) => !isBlockedFor(account, activeBoundary.now(), input.model),
 			now: activeBoundary.now(),
 			transientError: (error) => (error instanceof CredentialStoreBusyError ? error : refreshFailure(error)),
-			claudeCliSignedIn: async (slot) => {
+			claudeCliStatus: async (slot) => {
 				const configDir = accountDirFor(activeBoundary.getAgentDir(), slot.dirId);
-				return (await activeBoundary.claudeCliAuthStatus(configDir, pool.environment)).state === "signed_in";
+				return (await activeBoundary.claudeCliAuthStatus(configDir, pool.environment)).state;
 			},
 		});
 	}
-	// A slot that must sign in again is never selected, like a removed one; with none left the turn names them.
-	const signedOut = signInRequiredNames(pool.accounts);
-	pool.accounts = pool.accounts.filter((account) => account.store !== "claude-cli" || !account.signInRequired);
+	// A slot that must sign in again is never selected, like a removed one, and neither is a stored CLI slot whose
+	// account dir id is unusable: that slot carries no readable login and preparing it would fail with an internal
+	// error before the first model call (omo#12228). With none left the turn names them.
+	const signedOut = signInRequiredAccounts(pool.accounts);
+	pool.accounts = pool.accounts.filter(isServableAccountSlot);
 	if (pool.accounts.length === 0) throw new ClaudeSignInRequiredError(signedOut);
 	let askedLegacyLongContext = false;
 	yield* runFailover({
@@ -261,14 +329,17 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 						? {}
 						: { pinSource: pool.pinSource }),
 				accountFallback: input.providerSettings.accountFallback,
+				accountStrategy: input.providerSettings.accountStrategy,
 				...(pool.accountOrder === undefined ? {} : { accountOrder: pool.accountOrder }),
 				...(input.preferredAccount === undefined ? {} : { preferredAccount: input.preferredAccount }),
 				now: activeBoundary.now(),
 				...(input.model === undefined ? {} : { model: input.model }),
 			}),
 		runAttempt: async (slot) => {
+			if (retryAccountName !== slot.name) standardWindow = false;
+			retryAccountName = slot.name;
 			const authLane = laneFor(pool, slot);
-			const options = input.buildOptions(authLane);
+			const options = buildOptions(authLane);
 			askedLegacyLongContext = asksLegacyLongContext(options.model);
 			const accounts = pool.accounts.map((account) => ({ ...account }));
 			const prepared = slot.store === "claude-cli" ? prepareClaudeCliSlot(pool, slot) : prepareEnvSlot(pool, slot);
@@ -285,7 +356,7 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 		},
 		classify: (error) => classifyForRequest(error, askedLegacyLongContext),
 		...(input.sessionId === undefined ? {} : { sessionKey: input.sessionId }),
-		onLongContextRefused: () => markLongContextRefused(),
+		onLongContextRefused,
 		store: pool.store,
 		providerId: ANTHROPIC_SUBSCRIPTION_PROVIDER_ID,
 		...(input.model === undefined ? {} : { model: input.model }),

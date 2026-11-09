@@ -10,10 +10,10 @@ import {
 	protocolDepthLimitOf,
 } from "../../../src/modes/rpc/compact-protocol-depth.ts";
 import { SessionAcceptanceLane } from "../../../src/modes/rpc/session-acceptance-lane.ts";
-import { type RpcSessionEntry, RpcSessionRegistry } from "../../../src/modes/rpc/session-registry.ts";
 import type { SessionWorkerToHost } from "../../../src/modes/rpc/session-worker-protocol.ts";
 import { dataOf, statusHost } from "../rpc-session-status-support.ts";
-import { builtFauxPath, workerAcceptanceHost } from "./4272-worker-acceptance-support.ts";
+import { builtFauxPath, EVENT_SAFETY_MS, workerAcceptanceHost } from "./4272-worker-acceptance-support.ts";
+import { observeInProcessOpens } from "../rpc-in-process-entry-support.ts";
 
 // senpi#4557 review LOW-2 and LOW-3: a model's tool call nested 2,000 deep goes through the real ingest (the
 // structured lane, the pairing, the binding or the isolate's frame writer, the acceptance lane). Each session event
@@ -91,12 +91,10 @@ it(`runs on ${process.versions.bun ? `bun ${process.versions.bun}` : `node ${pro
 it("in process: a deep tool call is refused once per event through the real ingest and the state stays", async () => {
 	vi.stubEnv(FLAG, "1");
 	await using host = await statusHost();
-	const admissions = vi.spyOn(RpcSessionRegistry.prototype, "getForCommand");
+	const admissions = observeInProcessOpens(host);
 	const client = host.client("deep");
 	const sessionId = String(dataOf(await client.request({ type: "open_session", cwd: host.cwd })).sessionId);
-	const entry = admissions.mock.results.findLast((result) => result.type === "return")?.value as
-		| RpcSessionEntry
-		| undefined;
+	const entry = admissions.entryFor(sessionId);
 	const lane = entry?.acceptance;
 	if (!lane) throw new Error("no real lane");
 	const lines = refusalLines();
@@ -105,7 +103,7 @@ it("in process: a deep tool call is refused once per event through the real inge
 		fauxAssistantMessage([fauxToolCall("deep", { value: nested(DEPTH) })], { stopReason: "toolUse", timestamp: 1 }),
 		fauxAssistantMessage(ANSWER, { timestamp: 1 }),
 	]);
-	const done = client.waitFor((record) => record.type === "agent_idle", 15_000);
+	const done = client.waitFor((record) => record.type === "agent_idle", EVENT_SAFETY_MS);
 	dataOf(await client.request({ type: "prompt", sessionId, message: "go deep" }));
 	await done;
 	await host.writer.flush();
@@ -124,7 +122,7 @@ it("in process: a deep tool call is refused once per event through the real inge
 	} finally {
 		lane.release(root);
 	}
-}, 60_000);
+}, 600_000);
 
 /** Runs inside the isolate only: the structured lane's seeded `text_start` (the answer after the call) is a real loss. */
 const answerSeedFails = `
@@ -188,5 +186,5 @@ it.skipIf(process.versions.bun !== undefined)(
 			await host.dispose();
 		}
 	},
-	90_000,
+	600_000,
 );

@@ -12,6 +12,211 @@
 
 ### Removed
 
+## [2026.11.9-2] - 2026-11-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.9] - 2026-11-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.6-3] - 2026-11-08
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.6-2] - 2026-11-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Alt+letter, digit and symbol keys sent in the legacy ESC-prefixed form are recognized while the Kitty keyboard protocol is negotiated, so Alt+Q (restore queued messages) works again on WSL in Windows Terminal 1.25+ ([#6058](https://github.com/code-yeongyu/senpi/issues/6058)).
+
+### Removed
+
+## [2026.11.6-1] - 2026-11-06
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- An Enter written right after the text it submits is no longer swallowed as part of that paste: a CR that follows a paste with LF or CRLF line breaks submits the request, while an unbracketed paste whose own line breaks are bare CR keeps its trailing CR in the paste ([#3076](https://github.com/code-yeongyu/senpi/issues/3076), [#6102](https://github.com/code-yeongyu/senpi/pull/6102)).
+
+### Removed
+
+## [2026.11.5-1] - 2026-11-05
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.4-2] - 2026-11-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.4-1] - 2026-11-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Appending an inline Kitty image below a full terminal screen no longer clears the screen and scrollback and replays the whole transcript; the image scrolls into place like appended text. Thanks to @copycatcode for the report ([#4583](https://github.com/code-yeongyu/senpi/issues/4583))
+- Complete BEL-terminated OSC52 clipboard writes reach the terminal while the TUI stdout guard is active, preserving the validated bytes, writer completion and backpressure ([#5680](https://github.com/code-yeongyu/senpi/pull/5680))
+
+### Removed
+
+## [2026.11.3-3] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+- `encodeProgramStatus` builds a sanitized OSC 7501 Program Status report ([#5323](https://github.com/code-yeongyu/senpi/issues/5323))
+
+### Changed
+
+### Fixed
+
+- Shift+Enter inserts a newline instead of submitting in macOS Terminal.app ([#5647](https://github.com/code-yeongyu/senpi/pull/5647))
+
+### Removed
+
+## [2026.11.3-2] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.3-1] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.2-3] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.2-2] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.02-1] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.31-2] - 2026-10-31
+
+### Breaking Changes
+
+### Added
+
+- Add masked single-line input with instance-local editing buffers and explicit disposal. ([#5120](https://github.com/code-yeongyu/senpi/pull/5120))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.31-1] - 2026-10-31
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.10.30-2] - 2026-10-30
 
 ### Breaking Changes

@@ -15,7 +15,6 @@ import {
 	type CompactionResult,
 	DEFAULT_COMPACTION_SETTINGS,
 	estimateContextTokens,
-	estimateTokens,
 	prepareCompaction,
 } from "../../../compaction/index.ts";
 import {
@@ -47,6 +46,7 @@ import {
 import { computeEffectiveKeepRecentTokens, computeEffectiveThreshold } from "./policy.ts";
 import { buildPrompt, type MergedCompactionPromptVariant } from "./prompts.ts";
 import {
+	estimateSummaryRequestTokens,
 	generateSummaryMessage,
 	getSummaryText,
 	hasSummarizationReasoningOverride,
@@ -285,14 +285,15 @@ export async function runExtensionCompaction(
 	// has none of these and is rejected before a request.
 	const authenticated = (resolved: ResolvedRequestAuth | undefined): boolean =>
 		resolved?.ok === true && Boolean(resolved.apiKey || hasCredentialHeaders(resolved.headers) || resolved.ambient);
+	const session = { sessionId: context.sessionManager.getSessionId() };
 	let selectedModel = context.getCompactionModel?.() ?? snapshot.model;
-	let auth = await context.modelRegistry?.getApiKeyAndHeaders(selectedModel);
+	let auth = await context.modelRegistry?.getApiKeyAndHeaders(selectedModel, session);
 	if (signal?.aborted) return undefined;
 	// A configured summary model whose credentials could not be confirmed earlier (#830) must not
 	// disable compaction: without credentials at request time, summarize on the session model.
 	if (selectedModel !== snapshot.model && !authenticated(auth)) {
 		selectedModel = snapshot.model;
-		auth = await context.modelRegistry?.getApiKeyAndHeaders(selectedModel);
+		auth = await context.modelRegistry?.getApiKeyAndHeaders(selectedModel, session);
 		if (signal?.aborted) return undefined;
 	}
 	const selectedSnapshot =
@@ -314,12 +315,12 @@ export async function runExtensionCompaction(
 		customInstructions: requestSnapshot.customInstructions,
 	});
 	const promptTokens = approxTokens(prompt.user);
+	const sourceMessages = [
+		...requestSnapshot.preparation.messagesToSummarize,
+		...requestSnapshot.preparation.turnPrefixMessages,
+	];
 	let messages = boundSummarizationInput(
-		pruneToolResults(
-			[...requestSnapshot.preparation.messagesToSummarize, ...requestSnapshot.preparation.turnPrefixMessages],
-			requestSnapshot.contextWindow,
-			SUMMARIZATION_INPUT_BUDGET_RATIO,
-		),
+		pruneToolResults(sourceMessages, requestSnapshot.contextWindow, SUMMARIZATION_INPUT_BUDGET_RATIO),
 		requestSnapshot.contextWindow,
 		promptTokens,
 	);
@@ -352,7 +353,7 @@ export async function runExtensionCompaction(
 		// retry transient failures without the 120s-era retry budget disqualifying
 		// every slow attempt (#1068).
 		const attemptBudgetMs = summarizationMaxDurationMs(
-			messages.reduce((total, message) => total + estimateTokens(message), 0),
+			estimateSummaryRequestTokens(requestSnapshot, messages, prompt, sourceMessages),
 			snapshot.preparation.settings.summarizationMaxDurationMs,
 		);
 		try {

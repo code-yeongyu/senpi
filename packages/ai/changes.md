@@ -1,3 +1,59 @@
+## 2026-11-05 - GPT Image 2.6 entries in the static OpenAI image catalog (senpi#5821, fixes #5820)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: `OPENAI_IMAGE_MODELS` gains `gpt-image-2.6-sunburst` and `gpt-image-2.6-flare` (released 2026-11-04) ahead of the 2.5 pair, with the same rates ($5 text input / $8 image input / $30 image output / $1.25 cached input per 1M tokens) and text plus image inputs; the source comment cites both model pages. `src/providers/data/openai.json` and its manifest entry are regenerated; no other provider file changes in this PR.
+- `packages/ai/src/api/openai-images-params.ts`: `OpenAIImagesOptions.complexity` (`low` | `medium` | `high`) is forwarded as the GPT Image 2.6 `complexity` request field when set, on generations and edits alike.
+- `packages/ai/src/utils/provider-error.ts`: `isModelConfigError` also matches an OpenAI-compatible gateway's image allowlist reply, "Model <id> is not supported on /v1/images/…", while an option error such as "Transparent background is not supported for this model" stays unmatched.
+
+### Why
+
+- OpenAI released GPT Image 2.6 Sunburst and Flare with a new `complexity` planning control, and gateways lag the release: one answers HTTP 400 with the allowlist text above, so callers need to recognize it as "this route does not serve the model".
+
+### Why an extension could not handle it
+
+- The static image catalog, the Images adapter's request builder, and the shared model-config classifier are package internals that every image caller reads.
+
+### Expected merge conflict zones
+
+- LOW: the head of `OPENAI_IMAGE_MODELS` in `generate-models.ts`, the option spread at the end of `buildParams()`, and the `MODEL_CONFIG_ERROR` pattern.
+
+## 2026-11-01 - Credential-shaped test fixtures are built from parts at runtime (senpi#5310)
+
+### What changed
+
+- `packages/ai/test/anthropic-claude-oauth-token-refused.test.ts`, `anthropic-cache-checkpoint-stability.test.ts`, `google-vertex-api-key-resolution.test.ts`: the `sk-ant-oat01-`, `sk-ant-api03-` and `AIza` fixtures are joined from a prefix and a body at runtime. The values are byte-identical; tests only.
+
+### Why
+
+- GitGuardian flagged the literal fixtures on every PR that merged main (senpi#5308); no scanner configuration is relaxed.
+
+### Why an extension could not handle it
+
+- Test sources only; nothing an extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the three test files' fixture constants.
+
+## 2026-10-30 - Mixed strict tool compatibility in catalog generation (senpi#4821)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: adds `mixedStrictTools: true` to the default and detected Chat Completions compatibility metadata, preserving the existing per-tool behavior unless a model explicitly disables mixing.
+
+### Why
+
+- `packages/ai/scripts/generate-models.ts`: catalog generation must retain explicit no-mix overrides without changing the default behavior of other providers.
+
+### Why an extension could not handle it
+
+- `packages/ai/scripts/generate-models.ts`: compatibility metadata is generated build data, before runtime extensions run.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/scripts/generate-models.ts` `OPENAI_COMPLETIONS_DEFAULT_COMPAT` and `detectOpenAICompletionsCompat`.
+
 ## 2026-10-28 - GPT-6.1 Terra on the ChatGPT subscription (senpi#4578)
 
 ### What changed

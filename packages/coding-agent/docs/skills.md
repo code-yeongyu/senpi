@@ -92,16 +92,16 @@ appears inline. Bare inline dollar text remains literal, so `Use $HOME` and `exp
 do not become skill invocations.
 
 After resolving the explicit tokens, Senpi removes only those tokens and wraps the remaining text once
-as the user request. Unknown tokens stay literal, duplicates are skipped, and at most five distinct
-skills expand per prompt. Raise that limit with `maxSkillExpansionsPerPrompt` in `settings.json`
-when you deliberately compose more skills.
+as the user request. Unknown tokens stay literal and duplicates are skipped. There is no limit on how
+many skills one prompt composes: every invoked skill loads. Skill bodies are inlined until they total
+about 128K characters; any skill past that budget is still loaded, as a reference that names its
+`SKILL.md` path and tells the model to read it before acting. The first skill is always inlined.
 
 Toggle skill commands via `/settings` in interactive mode or in `settings.json`:
 
 ```json
 {
-  "enableSkillCommands": true,
-  "maxSkillExpansionsPerPrompt": 5
+  "enableSkillCommands": true
 }
 ```
 

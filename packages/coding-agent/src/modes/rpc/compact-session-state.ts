@@ -5,6 +5,7 @@ import type { CallScope } from "./compact-call-model.ts";
 import { readCalls } from "./compact-call-view.ts";
 import { type CompactColdFlow, coldFlowOperations } from "./compact-cold-flows.ts";
 import type { CompactColdOperation } from "./compact-cold-operations.ts";
+import type { CompactContentStore } from "./compact-content-store.ts";
 import { CompactCurrentComponents } from "./compact-current-components.ts";
 import { CompactReadError, CompactReadLease } from "./compact-read-lease.ts";
 import { foldSeededBlock } from "./compact-seeded-block.ts";
@@ -14,6 +15,9 @@ import { CompactSessionCalls } from "./compact-session-calls.ts";
 import { type FrozenCompactState, readActiveMessages, readCompactState } from "./compact-state-view.ts";
 import { type CompactTransition, CompactTransitionError } from "./compact-transition.ts";
 export type { CompactSessionStateOptions } from "./compact-state-storage.ts";
+
+/** Work on the cut's store under its lease (S09 catalog); `valid` re-checks the cut after every await. */
+export type CutStorageUse<T> = (store: CompactContentStore, valid: () => void) => Promise<T>;
 
 /** Synchronous acceptance; cuts and settlement transfer persistent component roots (senpi#4272). */
 export class CompactSessionState extends CompactActiveMessages {
@@ -115,11 +119,16 @@ export class CompactSessionState extends CompactActiveMessages {
 	}
 
 	/** A call record at its lane step; `changed` is false when the record is ignored and takes no sequence (Q9). */
-	acceptCall(record: object, sequence: number, turnId: string | null): CallFold {
+	acceptCall(record: object, sequence: number, turnId: string | null, callKey?: string): CallFold {
 		this.store.assertReadable();
-		const fold = foldCallRecord(this.calls, record, this.callScope(turnId), sequence);
+		const fold = foldCallRecord(this.calls, record, this.callScope(turnId), sequence, callKey);
 		if (fold.changed) this.sequence = sequence;
 		return fold;
+	}
+
+	/** The outstanding call whose block this is: the call a `toolcall_*` update streams (RULING-123), by the table's index. */
+	callOwning(messageId: string, contentIndex: number) {
+		return this.calls.table.byOwner(messageId, contentIndex);
 	}
 
 	applyCold(t: CompactColdOperation) {
@@ -180,6 +189,10 @@ export class CompactSessionState extends CompactActiveMessages {
 	readCalls(frozen: FrozenCompactState) {
 		const owner = { calls: this.calls, ...this.roots };
 		return this.under(frozen, (valid) => readCalls(frozen, owner, valid));
+	}
+
+	cutStorage<T>(frozen: FrozenCompactState, use: CutStorageUse<T>): Promise<T> {
+		return this.under(frozen, (valid) => use(this.store, valid));
 	}
 
 	private get roots() {

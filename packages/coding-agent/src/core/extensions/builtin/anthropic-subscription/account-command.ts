@@ -1,14 +1,16 @@
 import type { AccountLoginReceipt, Credential } from "@earendil-works/pi-ai";
 import { accountLabel } from "@earendil-works/pi-ai/auth/pool/slots";
+import { describeAccountBlock } from "../../../credential-account-status.ts";
 import { describeModelBlocks } from "../../../credential-pool/model-scope.ts";
+import { accountLimitsFor, describeAccountLimits } from "../../../subscription-limits/limit-summary.ts";
 import type { ExtensionAPI, ExtensionCommandContext } from "../../types.ts";
 import { accountDisplayNameCommand, promptAccountDisplayName } from "../account-display-name.ts";
 import { createExtensionLoginInteraction, LOGIN_CANCELLED_MESSAGE } from "../oauth-login-interaction.ts";
-import { emitProviderAccountsChanged } from "./account-events.ts";
 import {
 	ANTHROPIC_SUBSCRIPTION_PROVIDER_ID,
 	pinProviderAccount,
 	removeProviderAccount,
+	timedBlock,
 	unblockProviderAccount,
 } from "./account-management.ts";
 import { type AccountSlot, type AnthropicSubscriptionCredential, emptyCredential, listAccounts } from "./accounts.ts";
@@ -36,16 +38,18 @@ function asCredential(value: Credential | undefined): AnthropicSubscriptionCrede
 }
 
 function accountStatus(slot: AccountSlot, now: number): string | undefined {
-	if (slot.blockedUntil !== undefined && slot.blockedUntil > now) {
-		const until = new Date(slot.blockedUntil).toISOString();
-		return slot.blockReason === "auth_error" ? `login rejected; re-checked at ${until}` : `blocked until ${until}`;
-	}
-	return undefined;
+	const block = timedBlock(slot, now);
+	return block.blocked ? describeAccountBlock(block) : undefined;
 }
 
 function slotStatus(slot: AccountSlot): string {
 	const now = Date.now();
-	const states = [accountStatus(slot, now), ...describeModelBlocks(slot.modelBlocks, now)];
+	// The cadence block of an expired login is the self-heal re-probe, not something the user waits out (senpi#5350).
+	const account =
+		slot.store === "claude-cli" && slot.signInRequired === "login_expired"
+			? "sign-in expired - run /login anthropic-subscription"
+			: accountStatus(slot, now);
+	const states = [account, ...describeModelBlocks(slot.modelBlocks, now)];
 	const blocked = states.filter((state): state is string => state !== undefined);
 	return blocked.length === 0 ? "available" : blocked.join(", ");
 }
@@ -161,6 +165,7 @@ function showAccounts(
 				pinnedAccount: pinned,
 				...(pinned === undefined ? {} : { pinSource: pinSource === "CLI" ? ("cli" as const) : pinSource }),
 				accountFallback: settings.accountFallback,
+				accountStrategy: settings.accountStrategy,
 				...(credential?.order === undefined ? {} : { accountOrder: credential.order }),
 			}).name;
 		} catch (error) {
@@ -174,6 +179,8 @@ function showAccounts(
 		if (account.name === pinned) states.push("pinned");
 		if (account.name === affinityPick) states.push("affinity pick");
 		lines.push(`  ${states.join(" | ")}`);
+		const limits = accountLimitsFor(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, account.name);
+		lines.push(`    ${describeAccountLimits(limits, Date.now())}`);
 	}
 	const labelFor = (name: string) => accountLabel(accounts.find((account) => account.name === name) ?? { name });
 	lines.push(`Pinned account: ${pinned === undefined ? "none" : `${labelFor(pinned)} (${pinSource.toLowerCase()})`}`);
@@ -199,7 +206,9 @@ async function addAccount(ctx: ExtensionCommandContext, deps: ClaudeAccountComma
 				receipt = committed;
 			},
 		});
-		emitProviderAccountsChanged(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID);
+		// senpi#5116: ModelRuntime.login already emits accounts_changed (with
+		// the "login" remedy); a second emit here sent RPC clients a duplicate
+		// auth_accounts_changed event.
 		ctx.ui.notify("Anthropic Subscription account added.", "info");
 		await promptAccountDisplayName(ctx, receipt);
 	} catch (error) {

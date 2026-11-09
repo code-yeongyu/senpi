@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 import { getAgentDir, VERSION } from "../../src/config.ts";
 import { engineBuildIdentityFrom } from "../../src/core/engine-build-identity.ts";
+import { describeRpcMethodClasses } from "../../src/modes/rpc/method-classes.ts";
 import { SessionCommandRouter } from "../../src/modes/rpc/session-command-router.ts";
 import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
 
@@ -26,6 +27,7 @@ describe("multi-session RPC protocol info", () => {
 					"multi_session",
 					"snapshot_cursor",
 					"ui_answer_ledger",
+					"secret_input_v1", // senpi#5108: hosts advertise guarded private input.
 					"dialog_observer",
 					"session_lifecycle",
 					"expected_host_instance",
@@ -44,19 +46,25 @@ describe("multi-session RPC protocol info", () => {
 					"eval_cells",
 					"auth_key_verify",
 					"provider_account_test",
+					"account_reset",
 					"queued_message_revision",
 					"tool_barrier",
 					"user_activity",
+					"session_model_scope", // senpi#5933: set_model honours scope "session".
 					"session_held",
 					"resume_session",
 					"attended",
 					"observe_reads",
 					"entries_tail",
+					"set_permission_preset_v1",
 					"retain_on_disconnect",
 					"detach_connection",
+					"delegated_connection_v1",
+					"delegation_roles_v1",
 					"unload_session",
 					"move_session",
 					"move_session_revoke",
+					"move_session_copy",
 					"session_relocation",
 					"session_context",
 					"session_kind",
@@ -87,6 +95,8 @@ describe("multi-session RPC protocol info", () => {
 				launch_profile: { profile_id: expect.stringMatching(/^[0-9a-f]{64}$/), core: expect.anything() },
 				agentDir: resolve(getAgentDir()),
 				memory_pressure: false,
+				// The method-class table this engine runs; `test/rpc/method-class-table.test.ts` pins how the digest is built.
+				method_classes: describeRpcMethodClasses(),
 				path_identity_resolver: {
 					state: expect.stringMatching(/^(not_started|ready|unavailable)$/),
 					detail: expect.toSatisfy((value: unknown) => value === null || typeof value === "string"),

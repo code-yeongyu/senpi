@@ -12,6 +12,226 @@
 
 ### Removed
 
+## [2026.11.9-2] - 2026-11-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- A nested tool's streamed lines no longer vanish from a running eval cell's live update for one frame when the tool finishes; they stay until the cell's own output or its completion replaces them ([#6259](https://github.com/code-yeongyu/senpi/pull/6259)).
+
+### Removed
+
+## [2026.11.9] - 2026-11-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.6-3] - 2026-11-08
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.6-2] - 2026-11-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- A tool called from an eval cell now streams its partial results into the cell's live update (in JavaScript cells and over the bridge for Python, Ruby and Julia cells), so `tool.bash(...)` output shows while the command runs instead of all at once when it ends; the value returned to the cell and the cell's result are unchanged ([#6167](https://github.com/code-yeongyu/senpi/issues/6167))
+
+### Removed
+
+## [2026.11.6-1] - 2026-11-06
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The JavaScript `eval` kernel runs in its own process by default when senpi's executable is `bun` on macOS or Linux, so a crash on the kernel (Bun 1.4.4 `Worker` threads can corrupt the JavaScriptCore heap and kill the host with `SIGBUS`/`SIGTRAP`) settles the cell with the signal and the session survives; a Node.js host, a compiled binary and a Windows bun host keep the worker thread, and `isolation.js` / `SENPI_CODEMODE_JS_ISOLATION` still win on every host ([#6094](https://github.com/code-yeongyu/senpi/issues/6094), [#6095](https://github.com/code-yeongyu/senpi/pull/6095))
+
+### Fixed
+
+- The bundled `bun` skill's capability map now gives `--retry=<N>` and `--compile --bytecode --bytecode-order=<profile>` in forms bun accepts, its shell-trap fix spawns with `env: process.env`, and the references it points to now cover IPC, `stripANSI`, `inspect.table`, hashing, UUID v7, semver, `deepEquals`, gzip/zstd and `which` ([#6008](https://github.com/code-yeongyu/senpi/issues/6008))
+- On Windows, the JavaScript eval kernels opt every process they start out of EcoQoS power throttling, as senpi does, so commands run from eval code are not held to a few percent of a core; `SENPI_KEEP_POWER_THROTTLING=1` keeps Windows' default ([#6131](https://github.com/code-yeongyu/senpi/pull/6131))
+
+### Removed
+
+## [2026.11.5-1] - 2026-11-05
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.4-2] - 2026-11-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.4-1] - 2026-11-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.3-3] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.3-2] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.3-1] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- JS eval imports a module by `file://` URL (for example `import(pathToFileURL(p).href)`) instead of refusing it as an unsupported protocol; other schemes without a registered root are still refused ([#4111](https://github.com/code-yeongyu/senpi/issues/4111), reported by @yjacket).
+
+### Removed
+
+## [2026.11.2-3] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+- Eval cells are judged by the kill guard before a signal leaves them: JS `Bun.$` (and `new Bun.$.Shell()` instances), `Bun.spawn`/`spawnSync`, `child_process` and `process.kill`, and Python `subprocess`, `os.system`, `os.popen`, `os.exec*`/`spawn*`, `os.kill` and `os.killpg`, whether or not permission enforcement is on ([#5354](https://github.com/code-yeongyu/senpi/pull/5354))
+- Eval kernels and the processes they start get the kill guard's runtime shims on `PATH`, its `BASH_ENV` wrapper and its interactive-bash `PROMPT_COMMAND` hook while the guard is on, so `kill`, `pkill` and `killall` run from a cell or its children are judged on their real arguments ([#5358](https://github.com/code-yeongyu/senpi/pull/5358))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.2-2] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.02-1] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- An eval call that leaves out `language` now runs when the kernel is unambiguous (only one language enabled, or clear js/py code markers) and its result says the language was inferred ([#5157](https://github.com/code-yeongyu/senpi/pull/5157))
+
+### Fixed
+
+- Python Windows startup supports native builtin path helpers without losing captured permission identity isolation, and the isolated compiled-host check includes all Python runtime assets ([#5052](https://github.com/code-yeongyu/senpi/pull/5052)).
+- A Ruby or Julia kernel whose interpreter cannot be spawned (for example `julia` missing from `PATH`) now fails its cells with the spawn error (`Kernel startup failed: spawn julia ENOENT`) and closes at once, instead of waiting two seconds for an exit that never comes and reporting `Kernel process did not exit after SIGKILL` (#3500) ([#5181](https://github.com/code-yeongyu/senpi/pull/5181))
+- A stopped JavaScript cell no longer runs code from an `fs` callback operation that was already in flight when it was stopped: the callback is dropped (a late `fs.open` descriptor is closed), the same way the stopped cell's timers never fire, so a stopped polling loop cannot tick once more after the stop ([#5179](https://github.com/code-yeongyu/senpi/issues/5179))
+
+### Removed
+
+## [2026.10.31-2] - 2026-10-31
+
+### Breaking Changes
+
+### Added
+
+- The eval prompt's `Host:` line honors the test-only `SENPI_TEST_WORKSTATION` pin (the same variable and shape coding-agent's workstation facts read, #4662): its CPU model and core count replace the real ones, so a harness driving the CLI gets the same prompt bytes on every host; unset or empty, nothing changes ([#4837](https://github.com/code-yeongyu/senpi/pull/4837))
+- The same pin's optional `repoRoot: {from, to}` field shows the bun-1-4 skill path under the checkout `from` under the synthetic root `to` instead, so the checkout location does not reach the prompt either (#5067) ([#4837](https://github.com/code-yeongyu/senpi/pull/4837))
+
+### Changed
+
+- The bundled `bun-1-4` skill is now `bun`: its capability map and operating rules cover Bun 1.4.1-1.4.4 (`bun check`, `bun fmt`, `Bun.FetchSession`, HTTP/2 in `Bun.serve`, offline installs) and the Bun.$ / Bun.spawn / bun test practices learned in agent sessions, with a new `references/session-recipes.md`; the eval prompt's pointer names the `bun` skill and also fires before a cell that spawns a process or runs tests ([#5158](https://github.com/code-yeongyu/senpi/pull/5158))
+
+### Fixed
+
+- An eval call that leaves out `language`, `code` or `summary` now gets one clear error per missing field (naming the enabled languages) instead of a list of every schema branch it failed ([#5150](https://github.com/code-yeongyu/senpi/pull/5150))
+- `eval` `peek`/`stop` with a mistyped `cell_id` now suggests the one close known cell id ([#5153](https://github.com/code-yeongyu/senpi/issues/5153))
+
+### Removed
+
+## [2026.10.31-1] - 2026-10-31
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.10.30-2] - 2026-10-30
 
 ### Breaking Changes

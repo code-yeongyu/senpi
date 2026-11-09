@@ -1,3 +1,95 @@
+## 2026-11-07 - Session-less MCP status reads get no peer data; server snapshots gain optional session scoping (senpi#3001)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: `getWireStatusSnapshot()` and `refreshWireStatusSnapshot()` return `{ servers: [] }` to a caller that passes no session id while more than one session is live, instead of the most recently attached session's status; with a single live session the stored snapshot is that session's own, so the id-less read keeps working. `releaseSession()` rebinds `#latestWireStatus` to the remaining live session's own snapshot when it drops a released session id, so a release with no reason cannot leave a departed peer's status in the fallback. `getServerSnapshots(sessionId?)` returns only the servers the named session declares, and `[]` for an unknown id; the no-arg call still lists the merged config of all live sessions. The session-scoped form is API-only for now: no production caller passes a session id yet (the /mcp command, manager TUI and instructions still read the merged config).
+- `packages/coding-agent/test/suite/regressions/2514-mcp-session-binding.test.ts`: four regression tests for senpi#3001 — the per-owner catalog fence (item 1), no connection created when the service is disposed mid re-sync (item 2), the no-id peer-data fence plus session-scoped server snapshots (item 3), and the single-session fallback returning the remaining session's status after a release with no reason (review follow-up on #6169).
+
+### Why
+
+- senpi#3001: `#latestWireStatus` held whichever session captured last, so a caller passing no session id could receive a peer's status, and `getServerSnapshots()` listed the merged config of all live sessions. The per-session status already resolved through the calling session's binding; the id-less reads did not.
+
+### Why an extension could not handle it
+
+- The wire-status snapshot and the server snapshots are produced inside the builtin MCP service's session binding and credential resolution; no extension hook sits between the capture and the caller.
+
+### Expected merge conflict zones
+
+- LOW: the id-less fences in `getWireStatusSnapshot()` / `refreshWireStatusSnapshot()`, the `#latestWireStatus` rebind in `releaseSession()`, the optional `sessionId` parameter on `getServerSnapshots()`, and the four regression tests.
+
+## 2026-10-27 - The MCP sign-in callback page carries the host brand (senpi#4434, closes #4432)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/callback.ts`: the loopback callback no longer answers with hard-coded `<title>senpi</title>` pages ("Return to senpi and retry"); its success and failure pages come from `oauthSuccessHtml` / `oauthErrorHtml` in `@earendil-works/pi-ai/utils/oauth-page`, so they show the host brand set with `setOAuthPageBrand` (name, and logo when the brand carries one) like the provider sign-in pages.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-provider.ts`: the dynamic client registration's `client_name` (shown on the MCP authorization server's consent screen) is `oauthBrandName()` instead of a hard-coded `senpi`; existing registrations are reused as before.
+
+### Why
+
+- Branded hosts (OmO, the desktop) showed "senpi" after an MCP server sign-in (#4432 review).
+
+### Why an extension could not handle it
+
+- This is the builtin MCP extension's own callback listener; the fix is inside it.
+
+### Expected merge conflict zones
+
+- LOW: the response lines in `LoopbackCallbackServer.#handle` (fork-native module).
+
+## 2026-11-01 - Resource utility tools keep their place ahead of the per-server MCP tools (senpi#5289)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/expose/tier-b.ts`: `registerMcpTierBTools` sorts by name only the per-server tool definitions and per-server proxy gateways; the fixed utility tools (`mcp_list_resources`, `mcp_read_resource`) keep their reference order ahead of them.
+
+### Why
+
+- #5290 sorted every MCP-managed name, which also moved the utility tools behind the per-server tools; only the per-server names ever followed server connect order.
+
+### Why an extension could not handle it
+
+- The order is decided inside the builtin MCP extension's own registration.
+
+### Expected merge conflict zones
+
+- LOW: the `catalogNames` and gateway loop in `registerMcpTierBTools`.
+
+## 2026-11-01 - Direct-mode MCP tools keep one order whichever server connects first (senpi#5289)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/expose/tier-b.ts`: `registerMcpTierBTools` passes its managed names (full definitions, proxy gateways, utility tools) to `orderActiveSet` together with the tool-search catalog names, so MCP tools sort by name in direct mode too. Base tools keep their reference order.
+
+### Why
+
+- In direct mode MCP tools are not in the tool-search catalog, so `orderActiveSet` kept them in reference order, which was the order their servers finished connecting. The tool list a model received, and its prompt-cache prefix, could change between runs, and the fused equivalence scenario E11 failed on a loaded host with two tool names swapped.
+
+### Why an extension could not handle it
+
+- The order is decided inside the builtin MCP extension's own registration.
+
+### Expected merge conflict zones
+
+- LOW: the `catalogNames` line in `registerMcpTierBTools`.
+
+## 2026-10-27 - MCP instructions are a volatile system-prompt addition (senpi#4447)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: the `before_agent_start` result sets `systemPromptCache: "volatile"`.
+
+### Why
+
+- MCP instructions follow the connected server set, so they belong behind the cross-session cache boundary.
+
+### Why an extension could not handle it
+
+- This is the MCP builtin's own handler.
+
+### Expected merge conflict zones
+
+- LOW: the `before_agent_start` return in `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`.
+
 ## 2026-10-29 - An unanchored discovery record never steers OAuth traffic (senpi#4924)
 
 ### What changed

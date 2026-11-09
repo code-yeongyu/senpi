@@ -6,6 +6,7 @@ import { error } from "./session-router-errors.ts";
 export const ATTACH_GATE_EXEMPT: ReadonlySet<RpcCommand["type"]> = new Set<RpcCommand["type"]>([
 	"get_protocol_info",
 	"list_sessions",
+	"list_hands",
 	"subscribe_sessions",
 	"unsubscribe_sessions",
 	"get_subscription_limits",
@@ -25,6 +26,8 @@ export const ATTACH_GATE_EXEMPT: ReadonlySet<RpcCommand["type"]> = new Set<RpcCo
 	"get_media",
 	"get_commands",
 	"get_loaded_surfaces",
+	"get_project_trust",
+	"get_project_settings",
 	"get_available_models",
 	"get_available_thinking_levels",
 	"get_fast_mode",
@@ -51,6 +54,18 @@ export function attachmentGate(host: RouterContext, command: RpcCommand): RpcRes
 	const owner = host.writer.currentConnection();
 	if (owner === undefined || ATTACH_GATE_EXEMPT.has(command.type)) return undefined;
 	if (!("sessionId" in command) || command.sessionId === undefined) return undefined;
+	// RULING-96: compact recovery proves token/lease authority, not an ordinary session attachment.
+	if (
+		host.writer.recoveryPages !== undefined &&
+		(command.type === "get_recovery_page" || command.type === "release_recovery")
+	)
+		return undefined;
+	if (
+		host.writer.recoveryPages !== undefined &&
+		command.type === "reset_stream" &&
+		host.writer.isCompactSubscription(owner, command.admissionId, command.sessionId)
+	)
+		return undefined;
 	if (
 		command.type === "close_session" ||
 		command.type === "set_session_context" ||

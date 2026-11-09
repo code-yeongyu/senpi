@@ -26,7 +26,7 @@ export type ProviderAccountSummary = {
 	readonly pinned: boolean;
 };
 
-function timedBlock(
+export function timedBlock(
 	account: Pick<AccountSlot, "blockedUntil" | "blockReason">,
 	now: number,
 ): Pick<ProviderAccountSummary, "blocked" | "blockedReason" | "blockedUntil"> {
@@ -137,7 +137,7 @@ export async function unblockProviderAccount(
 		};
 	});
 	const sessionScoped = forgetSessionBlocksFor(name);
-	if (lifted || sessionScoped) emitProviderAccountsChanged(provider);
+	if (lifted || sessionScoped) emitProviderAccountsChanged(provider, "reset");
 	return lifted || sessionScoped;
 }
 

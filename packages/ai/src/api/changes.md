@@ -1,3 +1,258 @@
+## 2026-11-07 - Codex turns are priced at the tier that was sent when the backend echoes auto/default (senpi#6156)
+
+### What changed
+
+- `packages/ai/src/api/openai-codex-responses.ts`: `resolveCodexServiceTier` treats a `default`, `auto` or absent response echo as uninformative and resolves to the tier that was sent; `flex`, `priority`, `fast`, `ultrafast` and `scale` echoes stay authoritative.
+- `packages/ai/src/api/openai-codex-responses.ts`: the SSE path (`processStream`) now receives the sent tier from `body.service_tier` after `onPayload`, instead of the pre-hook `options.serviceTier`.
+- `packages/ai/src/api/openai-codex-responses.ts`: the websocket path prices against `requestBody.service_tier` of the frame just sent.
+- `packages/ai/test/chatgpt-subscription-stream.test.ts`: 6 new regression tests for senpi#2890 (auto/default echo with priority sent; explicit flex echo stays flex; `onPayload`-only priority tier on SSE and websocket).
+
+### Why
+
+- senpi#2890: ChatGPT-subscription Codex turns served at the Fast tier were recorded and priced as Standard (1x) when the backend echoed `auto`, and when `/fast` set the tier only through the `onPayload` payload hook. Port of the oh-my-pi v18.8.1 fixes (`204b8f3`, `6428580`).
+
+### Why an extension could not handle it
+
+- The service-tier resolution and the pricing fallback live inside the Codex Responses transport; an extension can only add the tier to the payload, it cannot change which tier the transport prices against.
+
+### Expected merge conflict zones
+
+- LOW: `resolveCodexServiceTier`, the `processStream` signature and its SSE call site, and the websocket `processResponsesStream` options.
+
+## 2026-11-02 - Honor explicit Anthropic long-cache retention on compatible proxies (senpi#1248)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: the `getCacheControl` wire-level `cache_control.ttl` decision delegates to the shared `allowsAnthropicLongCacheRetention()` helper, so an explicit `compat.supportsLongCacheRetention` value is authoritative on any host while an unset value keeps the `api.anthropic.com` hostname inference. The file no longer imports `isAnthropicApiBaseUrl`.
+
+### Why
+
+- A model routed through an Anthropic-compatible proxy could explicitly declare one-hour cache support, but the wire path still required the native Anthropic hostname and silently omitted `ttl: "1h"`. Sharing one helper with the TTL resolver keeps the request TTL and the internal cache accounting from drifting.
+
+### Why an extension could not handle it
+
+- The cache-control object is serialized inside the private Anthropic Messages request builder before dispatch; no extension hook can rewrite that provider-wire field or keep it synchronized with the core TTL accounting.
+
+### Expected merge conflict zones
+
+- LOW: the prompt-cache helper import and the `ttl` expression in `getCacheControl` in `packages/ai/src/api/anthropic-messages.ts`.
+
+## 2026-11-06 - The warm pre-flight accepts an opted-in Anthropic-compatible host (senpi#1248)
+
+### What changed
+
+- `packages/ai/src/api/warm-prompt-cache.ts`: the Anthropic branch returns `{ supported: false }` for a host only through the shared `supportsAnthropicCacheWarming()` predicate instead of its own `isAnthropicApiBaseUrl` check, and the model cast moved above the guard so one predicate owns both decisions.
+
+### Why
+
+- `warmPromptCache` refused every non-native `anthropic-messages` base URL, so an explicitly opted-in gateway got `supported: false` and the keep-alive stopped with `unsupported-model` even after the retention decision learned to honour `compat.supportsLongCacheRetention` (senpi#1248).
+
+### Why an extension could not handle it
+
+- The warm request is assembled inside the provider package and its SDK client is constructed there; an extension cannot rewrite the refusal or the base URL it dials.
+
+### Expected merge conflict zones
+
+- LOW: the Anthropic branch guard in `warmPromptCache`.
+
+## 2026-10-30 - SIWC prewarm eligibility follows resolved cache support (senpi#5101)
+
+### What changed
+
+- `packages/ai/src/api/openai-responses-prompt-cache.ts`: shares the SIWC-aware explicit-cache capability resolver between prewarm eligibility and the adapter.
+- `packages/ai/src/api/openai-responses.ts`: uses that resolver in `getCompat`.
+
+### Why
+
+- `packages/ai/src/api/openai-responses-prompt-cache.ts`: inherited explicit-cache support must not make SIWC plan usage eligible for prewarm.
+- `packages/ai/src/api/openai-responses.ts`: eligibility and request construction must resolve the same capability.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/openai-responses-prompt-cache.ts`: eligibility runs before adapter loading or extension request hooks.
+- `packages/ai/src/api/openai-responses.ts`: the adapter owns resolved wire capabilities.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/api/openai-responses-prompt-cache.ts` capability and eligibility helpers.
+- LOW: `packages/ai/src/api/openai-responses.ts` prompt-cache imports and `getCompat`.
+
+## 2026-10-30 - Shape public Responses requests for SIWC plan usage (senpi#5003 W8)
+
+### What changed
+
+- `packages/ai/src/api/openai-responses.ts`: opt-in `model.compat.siwc` selects HTTP/SSE, enforces `store: false` and `stream: true` after payload hooks, removes unsupported fields and continuation IDs, rewrites system items as developer items, and permits only local tools and web search. Flat local tools are supplied eagerly through `additional_tools`; namespaces remain intact. Non-streaming cache prewarm is rejected before sending.
+- `packages/ai/src/api/openai-responses-shared.ts`: SIWC uses developer messages regardless of the model's reasoning flag and disables tool-search loading. Deferred tools use `additional_tools` when supported, otherwise they are supplied eagerly.
+
+### Why
+
+- `packages/ai/src/api/openai-responses.ts`: OpenAI's SIWC preview rejects these fields, hosted tools and HTTP continuation. The fork retained its request builder during the September sync instead of adopting upstream's token-prefix heuristic.
+- `packages/ai/src/api/openai-responses-shared.ts`: client-executed `tool_search` is also unsupported on SIWC, so removing its declaration alone would lose deferred tool definitions.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/openai-responses.ts`: transport selection and the final request after hooks are adapter internals.
+- `packages/ai/src/api/openai-responses-shared.ts`: transcript conversion owns developer roles and placement of deferred tool definitions.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/api/openai-responses.ts`: compatibility resolution, final request preparation, and cache prewarm.
+- `packages/ai/src/api/openai-responses-shared.ts`: deferred mode resolution and instruction role selection.
+
+## 2026-11-02 - openai-completions keeps proxy-returned thought signatures on replayed tool calls (senpi#4564)
+
+### What changed
+
+- `packages/ai/src/api/openai-completions.ts`: a streamed tool-call delta's `provider_specific_fields.thought_signature` (sent by OpenAI-compatible proxies such as LiteLLM when they serve Gemini) is kept on the tool call's `thoughtSignature`. `convertMessages()` sends it back as `provider_specific_fields: { thought_signature }` on the replayed assistant tool call (function and custom calls). A `thoughtSignature` that holds a legacy encrypted reasoning detail keeps travelling through `reasoning_details` and is not sent here. Tool-call ids are still normalized for every replay, so the c44e3d1481 protection for long or foreign ids is unchanged.
+
+### Why
+
+- LiteLLM returns Gemini's thought signature twice: appended to the tool-call id after `__thought__`, and in `provider_specific_fields`. On the next request it reads the field first and falls back to the id. senpi dropped the field while parsing and normalized the id (character replacement plus the 40-character cut), so the turn after every tool call answered `400 Invalid value at '...thought_signature' (TYPE_BYTES)` or `400 Invalid thought signature.` (senpi#4564, reported by bluet). Sending the field back is enough for the proxy, which prefers it over the id.
+- `transformMessages()` already drops `thoughtSignature` when a tool call is replayed to a different model, so a signature only reaches the model that produced it.
+
+### Why an extension could not handle it
+
+- Stream parsing and the request payload are built inside the provider adapter; extensions see neither the raw tool-call deltas nor the replayed `tool_calls` entries.
+
+### Expected merge conflict zones
+
+- LOW: the `choice.delta.tool_calls` loop in `streamOpenAICompletions` and the `assistantMsg.tool_calls` mapping in `convertMessages()`.
+
+## 2026-10-30 - Anthropic affinity header carries the session-affinity key (senpi#2553)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: the session-affinity header (`x-session-affinity`, or `x-session-id` for OpenRouter) carries `options.sessionAffinityKey ?? options.sessionId`; the `createClient` parameter is renamed `affinityKey`. Compat gating is unchanged.
+- `packages/ai/src/api/simple-options.ts`: `buildBaseOptions` forwards `sessionAffinityKey`.
+
+### Why
+
+- The coding agent sends an HMAC of the session id there so a gateway never learns the session id (senpi#2553).
+
+### Why an extension could not handle it
+
+- The header value is computed inside the provider's client construction.
+
+### Expected merge conflict zones
+
+- LOW: the `cacheSessionId`/`affinityKey` line before `createClient(` in `streamAnthropic`, the `createClient` signature, and the affinity-header block in `createClient`; one added line in `buildBaseOptions`.
+
+## 2026-10-30 - lazyStream keeps an attached provider diagnostic (senpi#3975)
+
+### What changed
+
+- `packages/ai/src/api/lazy.ts`: `createSetupErrorMessage` reads the diagnostic a provider adapter or credential pool attached to the error (`readProviderDiagnostic`) and keeps it on the error message as `providerDiagnostic`.
+
+### Why
+
+- senpi#3975: a credential pool whose every slot is limited throws its refusal through `lazyStream`. The rate-limit diagnostic it attaches, with the soonest unblock time, was dropped there, so the turn read as unclassified and the goal retried at once.
+
+### Why an extension could not handle it
+
+- `lazyStream` builds the error message every lazily loaded API returns; no extension sees the thrown error.
+
+### Expected merge conflict zones
+
+- LOW: the import block and `createSetupErrorMessage` in `lazy.ts`.
+
+## 2026-11-03 - Replayed thinking bound to a different conversation no longer wedges a session (senpi#5587)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `buildParams` takes a `replay` argument; a Claude request with thinking on that replays signed thinking sends `thinking.block_binding.prefix_mismatch_behavior: "drop_block"` plus the `thinking-binding-controls-2026-08-01` beta on every thinking branch, not only the `supportsMidConvoEffort` one, unless betas are suppressed or the transport refused the control. A budget-thinking request whose final tool-use turn lost its thinking degrades thinking as a foreign turn does. `stream()` builds every attempt from the context with rejected turns stripped, rebuilds once without the binding when a transport refuses it, and on exactly the "bound to a different conversation" 400 rebuilds once on the same model without the replayed signed thinking, records an `anthropic_thinking_binding_recovery` diagnostic and a request-shape log line; a second identical refusal ends the turn with one actionable error carrying the provider diagnostic.
+- `packages/ai/src/api/anthropic-thinking-binding.ts` (new): the error matchers, the Claude-only binding rule, `bindReplayedThinking`, the per-session memory of rejected turns and refused bindings (cleared at session teardown) and the unrecoverable-error builder.
+- `packages/ai/src/api/anthropic-request-shape-log.ts`: `logAnthropicRecovery` writes one record per rebuilt request to the debug request-shape log.
+
+### Why
+
+- The binding policy was gated on a per-model compat flag set for a handful of catalog entries, so custom and gateway Claude entries, the plain adaptive and budget branches and beta-suppressed configurations replayed signed thinking with no policy. A block minted under another prefix then failed every request of the session, because the block is stored in history; nothing recognised the 400 (the unsigned-thinking matcher predates the backticked message).
+
+### Why an extension could not handle it
+
+- The request body, its betas and the retry around the SDK call are built inside the provider adapter; an extension's payload hook runs after `buildParams` and cannot rebuild a rejected request.
+
+### Expected merge conflict zones
+
+- MEDIUM: `buildParams` (the `thinkingBinding` beta shape and the budget-thinking degrade condition) and the `createRequest`/retry block in `stream()` of `anthropic-messages.ts`.
+- LOW: the new module and the appended function in `anthropic-request-shape-log.ts`.
+
+## 2026-10-30 - Preserve SIWC admission and stream failures (part of #5003)
+
+### What changed
+
+- `packages/ai/src/api/openai-responses.ts` preserves direct-admission detail bodies, attaches SIWC diagnostics before HTTP retries, and names unsupported parameters.
+- `packages/ai/src/api/openai-responses-shared.ts` preserves structured stream error codes and parameters and requires `response.completed` on SIWC routes.
+
+### Why
+
+- `packages/ai/src/api/openai-responses.ts` previously lost direct-admission bodies and retried terminal account restrictions.
+- `packages/ai/src/api/openai-responses-shared.ts` previously collapsed structured failures into prose and accepted incomplete SIWC responses.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/openai-responses.ts` owns the SDK request and retry boundary before extension delivery.
+- `packages/ai/src/api/openai-responses-shared.ts` owns the Responses event decoder before extension delivery.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/api/openai-responses.ts`: client construction, request retries, and error formatting.
+- `packages/ai/src/api/openai-responses-shared.ts`: terminal and error event branches.
+
+## 2026-10-31 - The Claude Code OAuth impersonation request path is removed; sk-ant-oat tokens are refused (senpi#5131)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: the `isOAuthToken` branch of `createClient` is gone, and with it the Bearer auth for `sk-ant-oat` keys, the `claude-code-20250219` / `oauth-2025-04-20` identity betas, the `user-agent: claude-cli/<version>` and `x-app: cli` headers, the `claudeCodeVersion` constant, the `claude_code_version_too_old` retry (`retryWithNewerClaudeCode`, `noteTooOldClaudeCode`), the `"You are Claude Code, Anthropic's official CLI for Claude."` system block, and the Claude Code tool-name mapping (`claudeCodeTools`, `toClaudeCodeName`, `fromClaudeCodeName`) that `buildParams`, `getBetaFeatures`, `convertMessages`, `convertToolResult`, `convertTools`, `collectProviderNativeToolPairing` and the stream reader threaded through an `isOAuthToken` parameter. `createClient` returns the client. A new pre-flight `assertNotClaudeOAuthToken`, next to `assertRequestAuth` in both `stream` and `streamSimple`, throws the exported `ClaudeOAuthTokenRefusedError` (`code: "claude_oauth_token_refused"`, `provider`, `modelId`; `isClaudeOAuthTokenRefusedError` narrows it) before any client is constructed; its message names `/login anthropic-subscription`, `CLAUDE_CODE_OAUTH_TOKEN` and `anthropic-subscription/<model>`. The system block holds a cache checkpoint only when a system prompt exists.
+
+### Why
+
+- senpi#5131, owner ruling 2026-10-31: senpi must not send a Claude subscription token to the Messages API while presenting itself as Claude Code. #3315 moved subscriptions to the Agent SDK lane and #4515 deleted the PKCE login, but a token placed in `ANTHROPIC_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, an `anthropic` API-key credential or a `models.json` `apiKey` still took this path. The refusal replaces a silent `401` from the API with the action the user needs.
+
+### Why an extension could not handle it
+
+- The client construction, headers and request body of the builtin `anthropic-messages` API are pi-ai's own; an extension cannot remove a header branch from them.
+
+### Expected merge conflict zones
+
+- HIGH: upstream still carries the OAuth stealth branch (`createClient`, `buildParams`, `convertMessages`, `convertTools`). Keep every `isOAuthToken` parameter and Claude Code mapping deleted; keep `assertNotClaudeOAuthToken` beside `assertRequestAuth`.
+
+## 2026-10-30 - Request-level strict tool sampling (senpi#4821)
+
+### What changed
+
+- `packages/ai/src/api/openai-completions.ts`: `convertTools` resolves function-tool strictness before serialization. With `mixedStrictTools: false`, a non-strict function tool downgrades every function tool; a required-strict tool instead fails before sending and names both conflicting tools. Grammar tools are excluded.
+
+### Why
+
+- `packages/ai/src/api/openai-completions.ts`: OpenGateway rejects requests mixing strict and non-strict function tools. Per-tool schema fallback left strict siblings enabled.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/openai-completions.ts`: the adapter owns strict-schema conversion and the final wire tool definitions.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/api/openai-completions.ts` `convertTools`.
+
+## 2026-10-27 - Anthropic sends the cross-session stable system prefix as its own cached block (senpi#4447)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `buildParams` builds `params.system` through `anthropicSystemTextBlocks`, passing the leading system message's `stablePrefix`.
+- `packages/ai/src/api/anthropic-system-blocks.ts`: new. When the rendered prompt still starts with the recorded stable prefix it goes out as two text blocks whose concatenation is the prompt; the stable block carries the system `cache_control`, the tail none, so the breakpoint count is unchanged. A prompt that no longer starts with it (a later `context_with_system` rewrite) goes out as one block.
+
+### Why
+
+- One system block with one breakpoint missed whenever any byte of a volatile tail (memory, MCP instructions) differed between sessions, so a new session read only the tools prefix and re-wrote the ~20k-token stable prompt.
+
+### Why an extension could not handle it
+
+- System block construction and breakpoint placement happen inside `packages/ai/src/api/anthropic-messages.ts` after every extension hook.
+
+### Expected merge conflict zones
+
+- LOW: the `params.system` assignment in `buildParams` in `packages/ai/src/api/anthropic-messages.ts`.
+
 ## 2026-10-30 - Anthropic SSE reports transport activity (senpi#4608)
 
 ### What changed

@@ -1,3 +1,5 @@
+import type { RpcRemoteOrigin } from "./remote-origin.ts";
+import type { DelegationDescriptor } from "./delegation-record.ts";
 import type { BrowserEngine } from "../../core/browser-engine.ts";
 import type { McpFormInput, McpFormOutcome } from "../../core/mcp-form-types.ts";
 import type { RecoveryCarrier } from "../../core/session-recovery-identity.ts";
@@ -8,6 +10,7 @@ import type { CliRuntimeConfiguration } from "../../main.ts";
 import type { CanonicalRecord } from "./compact-lane-transitions.ts";
 import type { ExtensionOwnerIdentity, ExtensionOwnerWire } from "./extension-owner.ts";
 import type { RpcSessionState } from "./rpc-types.ts";
+import type { SealedAnswer, SealedAnswerReply, SecretInputOutcome } from "./secret-input-requests.ts";
 import type { SessionBootstrap } from "./session-acceptance-lane.ts";
 import type { RpcSessionLaunchProfile } from "./session-registry.ts";
 import { RpcSessionRegistryError } from "./session-registry-types.ts";
@@ -22,6 +25,15 @@ export const SESSION_WORKER_LIMITS = {
 	reservations: 64,
 	openMs: 30_000,
 	controlMs: 5_000,
+	// Secret frames ride the control exchange, outside `outputBytes`, so the host bounds them itself (senpi#5192).
+	// One `secret_frame` record: a secret prompt's title and placeholder are a few hundred bytes, so 64 KiB is
+	// generous for any real prompt yet keeps the side channel far below the 16 MiB payload frame.
+	secretFrameBytes: 64 * 1024,
+	// Unsettled secret inputs per worker: one per waiting tool call or command, so the same 64 as `requests`.
+	secretInputs: 64,
+	// Every secret id the host tracks per worker: the 1024 settled receipts `SecretInputRequests` keeps for
+	// answer replay, plus `secretInputs` open ones.
+	secretIds: 1024 + 64,
 } as const;
 
 /** The bytes a transition carries: its entry, plus the owned message copies of the flow it journals (senpi#4460). */
@@ -42,11 +54,18 @@ export function withinFrameLimit(transitions: readonly TranscriptTransition[]): 
 	);
 }
 
-/** Wire values the host writes into a worker's wait signal; `conflict` is the generic denial. */
-export const WORKER_CREDIT_CODES = { granted: 1, conflict: 2, limit: 3 } as const;
+/**
+ * Wire values the host writes into a worker's wait signal; `conflict` is the generic denial. `stale`
+ * (omo-relay-daemon#307) answers a `capabilities` declaration captured under an incarnation that is no longer the
+ * connection's current one: the worker refuses that one command and lives on.
+ */
+export const WORKER_CREDIT_CODES = { granted: 1, conflict: 2, limit: 3, stale: 4 } as const;
 
 /** Host decision on a worker's session-write path request. */
-export type SessionWriteGrant = keyof typeof WORKER_CREDIT_CODES;
+export type SessionWriteGrant = Exclude<WorkerCreditAnswer, "stale">;
+
+/** Every answer the host writes into a worker's wait signal. */
+export type WorkerCreditAnswer = keyof typeof WORKER_CREDIT_CODES;
 
 export interface WorkerSnapshot {
 	state: RpcSessionState;
@@ -60,6 +79,7 @@ export interface WorkerSnapshot {
 	streaming: boolean;
 }
 
+import type { AdmissionReplyScope } from "./compact-admission-reply.ts";
 export type HostToSessionWorker =
 	| {
 			type: "prepare";
@@ -69,8 +89,11 @@ export type HostToSessionWorker =
 			/** The host's subscription limit records when the isolate starts (senpi#3695). */
 			subscriptionLimits: readonly MirroredLimits[];
 	  }
-	/** `acceptance`: the host owns an acceptance lane, so the isolate sends a bootstrap and ordered output frames. */
-	| { type: "commit"; request: number; acceptance?: true; recoveryEpoch?: string }
+	/**
+	 * `acceptance`: the host owns an acceptance lane, so the isolate sends a bootstrap and ordered output frames;
+	 * `permits`: then the incarnation's payload permit block, already holding its fixed initial credit (S12b).
+	 */
+	| { type: "commit"; request: number; acceptance?: true; recoveryEpoch?: string; permits?: SharedArrayBuffer }
 	| {
 			type: "bind";
 			request: number;
@@ -79,6 +102,8 @@ export type HostToSessionWorker =
 			connection?: string;
 			/** Roles the connection explicitly declared on the host (senpi#3811); the isolate adopts them. */
 			roles?: readonly string[];
+			/** The delegation the attaching line captured (omo-relay-daemon#307). */
+			delegation?: DelegationDescriptor;
 			mcpFormsEnforced?: boolean;
 	  }
 	| { type: "mcp_form_bound"; id: string; epoch: string; version?: string }
@@ -86,12 +111,18 @@ export type HostToSessionWorker =
 	| { type: "mcp_form_settlement"; id: string; epoch: string; settlementId: string; outcome: McpFormOutcome }
 	| {
 			type: "command";
+			admissionReply?: AdmissionReplyScope;
 			request: number;
 			command: object;
 			connection?: string;
 			roles?: readonly string[];
+			/** The remote device the connection declared on the host (senpi#5475); the isolate adopts it. */
+			origin?: RpcRemoteOrigin;
 			/** The gate the host captured at ingress, before its first await (#4728). */
 			owner?: ExtensionOwnerWire;
+			/** The delegation the command's line captured at its start, and its forwarder's `relayExec` (#307). */
+			delegation?: DelegationDescriptor;
+			exec?: number;
 	  }
 	/** Gates the host already retired atomically; the isolate only wakes their waiters. */
 	| { type: "owners_retired"; owners: readonly ExtensionOwnerIdentity[] }
@@ -100,11 +131,27 @@ export type HostToSessionWorker =
 	| { type: "permission_preset"; request: number; preset: string }
 	| { type: "cancel_ui" }
 	| { type: "cancel_grant"; id: string }
+	| { type: "cancel_secret"; id: string }
+	/** A sealed answer the host authenticated (D11 secret phase 5.5); the isolate runs 7.1 steps 3 and 6 on it. */
+	| { type: "secret_sealed_answer"; request: number; answer: SealedAnswer }
 	/** A change to the host's subscription limit records after `prepare`, mirrored into the isolate (senpi#3695). */
 	| { type: "subscription_limits"; accounts: readonly MirroredLimits[] }
 	| { type: "close" };
 
 export type SessionWorkerToHost =
+	| { type: "secret_select"; id: string; connection?: string; decision: SharedArrayBuffer; signal: SharedArrayBuffer }
+	| { type: "secret_frame"; id: string; record: object; signal: SharedArrayBuffer }
+	| {
+			type: "secret_settled";
+			id: string;
+			signal: SharedArrayBuffer;
+			/** The outcome and winning grant, so the host settles the request's sealed holders (5.5). */
+			outcome?: SecretInputOutcome;
+			winnerGrant?: string;
+	  }
+	| { type: "secret_forget"; id: string; signal: SharedArrayBuffer }
+	| { type: "secret_sealed_result"; request: number; reply: SealedAnswerReply }
+	| { type: "secret_handshake"; capabilities: readonly string[]; signal: SharedArrayBuffer }
 	| { type: "mcp_form_bind"; id: string; durableId: string }
 	| { type: "mcp_form_ready"; id: string; epoch: string }
 	| { type: "mcp_form_release"; epoch: string }
@@ -125,10 +172,16 @@ export type SessionWorkerToHost =
 	| { type: "control_done"; control: "cancel_ui" }
 	| {
 			type: "output";
+			admissionReply?: AdmissionReplyScope;
 			/** One per output frame of this worker incarnation, from 0; continuity only, never the accepted sequence. */
 			ordinal?: number;
 			record: object;
+			/** A record nested past the protocol depth limit travels as its JSON text (`record` is then `{}`): the host parses
+			 * text without recursion, where its structured-clone reader drops a deep frame (Node ~4,000 levels; RULING-68). */
+			recordText?: string;
 			recovery?: RecoveryCarrier;
+			/** A bridge-started call's `tool_execution_start`: the key its producer minted with it (RULING-127 (b)). */
+			callKey?: string;
 			/** Transcript transitions the isolate's manager committed before this record, accepted just before it. */
 			transitions?: readonly TranscriptTransition[];
 			/** The next incarnation's baseline, on the `session_replaced` record that starts it. */
@@ -165,8 +218,32 @@ export type SessionWorkerToHost =
 			limit?: number | undefined;
 			signal: SharedArrayBuffer;
 	  }
-	| { type: "capabilities"; connection?: string; capabilities: readonly string[]; signal: SharedArrayBuffer }
+	| {
+			type: "capabilities";
+			connection?: string;
+			capabilities: readonly string[];
+			/** The incarnation the declaring command captured, never looked up when sent or received (#307). */
+			incarnation?: number;
+			signal: SharedArrayBuffer;
+	  }
 	| { type: "loaded_surfaces"; previous?: string; digest: string; signal: SharedArrayBuffer }
+	/**
+	 * One piece of a payload message too large for one frame (S12b): at most D stored bytes of its JSON (signals left out)
+	 * at `offset` of `length`, both in stored bytes. Ordered pieces take consecutive physical ordinals; the final piece is
+	 * the commit frame and carries the message's own ordinal, binding and signals (RULING-64).
+	 */
+	| {
+			type: "fragment";
+			/** The type of the message the fragments carry, so a refused transfer names its event (RULING-80 (3a)). */
+			of: string;
+			length: number;
+			offset: number;
+			text: string;
+			ordinal?: number;
+			firstOrdinal?: number;
+			signal?: SharedArrayBuffer;
+			epochSignal?: SharedArrayBuffer;
+	  }
 	| { type: "request_close" }
 	/** A record a turn in the isolate reported, mirrored into the host's store (senpi#3695). */
 	| { type: "subscription_limits"; limits: MirroredLimits }

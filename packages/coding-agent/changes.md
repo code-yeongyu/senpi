@@ -1,3 +1,286 @@
+## 2026-11-08 - Inbound sample for `admit_external_message` (senpi#6233)
+
+### What changed
+
+- `packages/coding-agent/scripts/rpc-inbound-samples.ts`: one sample record for the new method; the shared fixture is regenerated.
+
+### Why
+
+The sample table is exhaustive over the inbound record types (#6233).
+
+### Why an extension could not handle it
+
+The sample table is the engine's own method list.
+
+### Expected merge conflict zones
+
+- LOW: one table entry.
+
+## 2026-11-07 - Presenter tests count EPIPE as the host closing the channel (senpi#6161)
+
+### What changed
+
+- `packages/coding-agent/test/suite/host-cli-presenter-support.ts`: `hostCloses` accepts `EPIPE` as well as `ECONNRESET` before the close event; `host-cli-presenter-waits.test.ts` covers both, and still rejects any other errno.
+
+### Why
+
+- A forced release run failed `immediate handoff preserves enforcement and requires fresh enrollment (explicit true)` with `the stale management channel failed before the host closed it: write EPIPE`. Under load the client's write raced the host's close, so the same close surfaced as `EPIPE`.
+
+### Why an extension could not handle it
+
+- It is a test helper in this repository.
+
+### Expected merge conflict zones
+
+- LOW: none.
+
+## 2026-11-07 - The Windows stale-table test retries removing its just-run executable (senpi#6142)
+
+### What changed
+
+- `packages/coding-agent/test/suite/host-private-fds-proof-gate.test.ts`: the test's `finally` cleanup removes its temporary directory with `maxRetries: 10, retryDelay: 100`, as the sibling pair test already does.
+
+### Why
+
+- On Windows, a compiled executable that has just exited can stay locked for a moment. A single `unlink` then threw `EBUSY` and failed a test whose assertions had all passed (main red at 3c237e1a48). The child is awaited before the cleanup, so the retry is a bounded backstop.
+
+### Why an extension could not handle it
+
+- It is a test cleanup in this repository.
+
+### Expected merge conflict zones
+
+- LOW: none.
+
+## 2026-11-06 - The runtime inventory snapshot hook is bounded by copy progress (senpi#6091, fixes #5816)
+
+### What changed
+
+- `packages/coding-agent/test/runtime-snapshot/inventory.test.ts`: the `beforeAll` that materializes the snapshot has no wall-clock deadline. It copies through a counting copier, and a watchdog fails the hook when no copy finishes for 30 s. The `afterAll` removal has no deadline either. Assertions and the per-runtime budget are unchanged. Tests only.
+
+### Why
+
+- The snapshot is the whole dependency closure (14,676 files in 286 packages), and its wall time follows host load: 3-4 s idle, 26 s under a 4% CPU quota. The fixed 60 s hook budget failed whole-suite receipts on loaded hosts with no failing assertion. Its planning and removal are synchronous, so a vitest deadline on them could never catch a hang.
+
+### Why an extension could not handle it
+
+- This is the package's own test.
+
+### Expected merge conflict zones
+
+- LOW: the constants and hooks at the top of `inventory.test.ts`.
+
+## 2026-11-05 - build:binary keeps linkedom's optional canvas external (senpi#6045)
+
+### What changed
+
+- `packages/coding-agent/package.json`: the `build:binary` `bun build --compile` passes `--external canvas`.
+
+### Why
+
+- Matches the release compile in `scripts/build-binaries.sh` (senpi#6045): the compile must not need canvas's native binding, and linkedom falls back to its JS canvas shim.
+
+### Why an extension could not handle it
+
+- Package build script, outside any extension.
+
+### Expected merge conflict zones
+
+- LOW: one flag in the `build:binary` script string.
+
+## 2026-11-05 - The `./presenter-authority` package entry (D11 M-1, senpi#4249)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `exports["./presenter-authority"]` -> `dist/presenter-authority-slot.js`, a side-effect-free entry, so a distribution registers its authority without evaluating the engine before cli.js's pre-main phase.
+
+### Why
+
+- Importing the package index would evaluate the engine graph before the CLI's own startup ordering (cli.ts keeps cli-main a dynamic import for this reason).
+
+### Why an extension could not handle it
+
+- Package exports are not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: one new key in `exports`.
+
+## 2026-10-30 - Experimental subscription egress SDK entry (senpi#5039)
+
+### What changed
+
+- `packages/coding-agent/package.json`: exports `./subscription-egress`, with strict versioned model-call schemas and an off-by-default hand executor.
+
+### Why
+
+- `packages/coding-agent/package.json`: gives attachment owners a public entry for executing subscription model calls locally without forwarding credentials or enabling hosted selection.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/package.json`: package exports must exist before an attachment owner imports the SDK.
+
+### Expected merge conflict zones
+
+- LOW: the exports map in `packages/coding-agent/package.json`.
+
+## 2026-11-03 - coding-agent depends on @code-yeongyu/senpi-machine-ops (senpi#5592)
+
+### What changed
+
+- `packages/coding-agent/package.json`: new dependency `@code-yeongyu/senpi-machine-ops`; `build:binary` builds it before coding-agent.
+- `packages/coding-agent/tsconfig.build.json`: paths for `@code-yeongyu/senpi-machine-ops` and its `in-process-holder` subpath to the package's `dist`.
+
+### Why
+
+- A remote machine executor and the agent's own tools must share one implementation of file and process operations, their limits and their permission checks. The shared layer is the new engine-free workspace package `packages/machine-ops` (`@code-yeongyu/senpi-machine-ops`), which imports nothing from `packages/agent` or `packages/coding-agent`.
+
+### Why an extension could not handle it
+
+- A package dependency and build paths are manifest changes, not extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the dependency list and `build:binary` in `package.json`; the `paths` block in `tsconfig.build.json`.
+
+## 2026-10-26 - The senpi package ships the Windows socket-secret bridge (senpi#4312)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `files` includes `native/socket-secret`, where the publish job stages `prebuilds/win32-x64/` and `prebuilds/win32-arm64/senpi_socket_secret.<host>.node`.
+
+### Why
+
+- sisyphuslabs/omo-desktop-app#4199: the Windows public socket secret is published and repaired through a native bridge with no fallback, so the installed package must carry it for both Windows architectures.
+
+### Why an extension could not handle it
+
+- Package contents are decided by the manifest, before any extension runs.
+
+### Expected merge conflict zones
+
+- LOW: the `files` array in `packages/coding-agent/package.json`.
+
+## 2026-11-03 - Loopless worker entry in the compiled binary (senpi#5438)
+
+### What changed
+
+- `packages/coding-agent/package.json` (`build:binary`): `./src/modes/rpc/loopless-worker.ts` joins the `bun build --compile` entry list, next to `./src/modes/rpc/session-worker.ts`, so the compiled binary can start a loopless worker isolate.
+
+### Why
+
+- A loopless worker runs in its own isolate (senpi#5413, brain/hand split); a compiled binary starts isolates only from entries compiled into it.
+
+### Why an extension could not handle it
+
+- The compiled entry list is the build script itself.
+
+### Expected merge conflict zones
+
+- LOW: the `build:binary` entry list, which other worker entries also extend.
+
+## 2026-11-01 - Kill guard judge embedded in the compiled binary (senpi#5349, PR #5354)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `build:binary` adds `./src/core/kill-guard/index.ts` as an explicit `bun build --compile` entry.
+
+### Why
+
+- Codemode workers import the kill guard's judge by URL; in the compiled binary that module has to be an embedded entry under its source path.
+
+### Why an extension could not handle it
+
+- The compile entry list is the package's own build script.
+
+### Expected merge conflict zones
+
+- LOW: the `bun build --compile` entry list in `build:binary`.
+
+## 2026-11-01 - Credential-shaped test fixtures are built from parts at runtime (senpi#5310)
+
+### What changed
+
+- Nine `packages/coding-agent/test/` files (hooks redaction/safety, hidden stdout log, stderr guard, job-widget author/view redaction, regressions 3537 and 3674, the Anthropic warning test): the `sk-ant-`, `ghp_`, `github_pat_`, `sk-proj-` and `AKIA` fixtures are joined from a prefix and a body at runtime. The values are byte-identical; tests only.
+
+### Why
+
+- GitGuardian flags credential-shaped literals in a PR's commit range (senpi#5308); building them at runtime closes the class without touching scanner configuration.
+
+### Why an extension could not handle it
+
+- Test sources only; nothing an extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the fixture constants at the top of each test file.
+
+## 2026-10-30 - Shared fixture digests use the production codec (RULING-98, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/package.json`: remove the old local SF1 import's redundant fixture glob; the existing `docs` entry already includes the shared fixtures.
+- `packages/coding-agent/scripts/fragment-record-source.ts`: Generate shared fixture digests through the production catalog codec.
+- `packages/coding-agent/scripts/fragment-record-fixtures.ts`: Generate shared fixture digests through the production catalog codec.
+- `packages/coding-agent/scripts/fragment-record-index.ts`: Generate shared fixture digests through the production catalog codec.
+
+### Why
+
+- `packages/coding-agent/package.json`: remove the old local SF1 import's redundant fixture glob; the existing `docs` entry already includes the shared fixtures.
+- `packages/coding-agent/scripts/fragment-record-source.ts`: Resolve the pending S09-Q1 digest decision without changing fixture bytes, boundaries or fault cases.
+- `packages/coding-agent/scripts/fragment-record-fixtures.ts`: Resolve the pending S09-Q1 digest decision without changing fixture bytes, boundaries or fault cases.
+- `packages/coding-agent/scripts/fragment-record-index.ts`: Resolve the pending S09-Q1 digest decision without changing fixture bytes, boundaries or fault cases.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/package.json`: remove the old local SF1 import's redundant fixture glob; the existing `docs` entry already includes the shared fixtures.
+- `packages/coding-agent/scripts/fragment-record-source.ts`: Package-owned shared protocol fixtures and their generator run outside extensions.
+- `packages/coding-agent/scripts/fragment-record-fixtures.ts`: Package-owned shared protocol fixtures and their generator run outside extensions.
+- `packages/coding-agent/scripts/fragment-record-index.ts`: Package-owned shared protocol fixtures and their generator run outside extensions.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/package.json`: remove the old local SF1 import's redundant fixture glob; the existing `docs` entry already includes the shared fixtures.
+- `packages/coding-agent/scripts/fragment-record-source.ts`: Fixture generator digest calls and shared index assembly.
+- `packages/coding-agent/scripts/fragment-record-fixtures.ts`: Fixture generator digest calls and shared index assembly.
+- `packages/coding-agent/scripts/fragment-record-index.ts`: Fixture generator digest calls and shared index assembly.
+
+## 2026-10-30 - First-class private secret input (senpi#5108)
+
+### What changed
+
+- Document guarded private input with a usage example, real CLI QA scenario, and regression coverage for ownership, login, deadlines, teardown and leaks.
+
+### Why
+
+- Extension input previously exposed credentials through ordinary dialogs and RPC answer paths.
+
+### Why an extension could not handle it
+
+- Connection authorization, transport publication, host lifecycle and terminal focus are owned by the engine.
+
+### Expected merge conflict zones
+
+- MEDIUM: extension UI contracts, RPC binding/worker dispatch and interactive dialog lifecycle.
+
+## 2026-10-29 - Regenerate the private-descriptor bootstrap launcher (#4859)
+
+### What changed
+
+- `packages/coding-agent/dist/cli.js`: regenerate the tracked launcher through `bun run build`, including the existing source private-descriptor capture and forwarding imports.
+
+### Why
+
+- The tracked launcher must match its compiled source for the committed-dist CI gate.
+
+### Why an extension could not handle it
+
+- The launcher is a generated bootstrap artifact.
+
+### Expected merge conflict zones
+
+- Generated launcher imports and re-execution blocks.
+
 ## 2026-10-28 - The coding-agent test run owns a shared source compile cache (senpi#4614)
 
 ### What changed

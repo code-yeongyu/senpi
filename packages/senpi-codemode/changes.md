@@ -1,3 +1,146 @@
+## 2026-11-09 - A settled nested tool's lines stay in the eval live update until the cell replaces them (senpi#6257)
+
+### What changed
+
+- `src/tool/nested-tool-output.ts`: `drop()` keeps the settled call's last text as the one held text (only the newest settled call is held, so a cell that settles many calls without printing keeps one tail); a live call's next text, `releaseSettled()` and `clear()` remove it; `appendTo`/`appendLines` show it before the live calls.
+- `src/tool/cell-runtime.ts`: the cell's own output chunk releases held nested lines before it is appended; `nestedToolSettled` no longer emits an update of its own (settling changes nothing on screen). `#finish` still clears everything, so the cell's result never contains nested output.
+- `test/eval-nested-tool-updates.test.ts`: 200 settled calls without cell output leave only the last call's tail held; after the last nested tick is live, no update may show the running cell with neither the ticks nor the cell's own output.
+
+### Why
+
+When a nested tool that streamed lines settled, the cell emitted one live update showing only its header (the throttled update scheduled by the last tick, or the settle itself), about 10 ms before the cell's own output or completion. Clients rendering every update showed the lines, an empty running cell for one frame, then the lines again (a desktop client measured the blank at 50-103 ms in 4 of 5 runs).
+
+### Expected merge conflict zones
+
+- LOW: `nested-tool-output.ts` and `cell-runtime.ts` (`nestedToolSettled`, `dropNestedTool`, the collector's `onChunk`).
+
+## 2026-11-06 - JavaScript kernel defaults to process isolation on bun hosts (senpi#6095)
+
+### What changed
+
+- `packages/senpi-codemode/src/config/feature-settings.ts`: `resolveJsIsolation` takes the host (`currentJsIsolationHost`: the runtime name of `process.execPath` and `process.platform`) and, with no file or environment value, returns `defaultJsIsolation(host)`: `process` when the host's executable is `bun` on a non-Windows platform, else `worker`. The environment still wins over the file and the file over the host default.
+- `packages/senpi-codemode/src/kernels/js/runtime-name.ts` (new): `runtimeNameOf` moved out of `process-worker.ts`, which re-exports it, so the settings module does not import the kernel graph.
+- `packages/senpi-codemode/README.md`: the isolation section and the settings table describe the host-dependent default.
+- `.agents/skills/senpi-qa/scenarios/fused-equivalence/golden/{linux-x64,darwin-arm64}/E{08,16,20}.json`: the B0 goldens of the three cases that run eval cells, recorded with a bun child runtime, now carry the new default's shape: every eval `runtime` block gains `isolation: "process"` (124 blocks) and E16's memory readings report `measure: "footprint"` instead of `"heap"` (7 per platform). No other golden field changes.
+- `packages/senpi-codemode/test/gate/allowlist.json`: a `senpi#6095` node records the fourteen new gate keys as reviewed additions (twelve contract titles, the new `runtime-name.ts` module in the extension and firstKernel import maps); the frozen baseline is unchanged.
+
+### Why
+
+- senpi#6094: a bun-hosted TUI session dies with `SIGBUS`/`SIGTRAP`/`SIGSEGV`/`SIGABRT` on its `WebWorker::create` thread, the codemode JavaScript kernel's `Worker`, several times a day; one frame is the cross-thread stack-sanitizer class of code-yeongyu/oh-my-openagent#12369. The class is open upstream (oven-sh/bun#41857, oven-sh/bun#43663) and Bun 1.4.4 is the newest release. A kernel in its own process cannot take the session down, and the opt-in process mode already settles the crashed cell with the signal and restarts the kernel for the next one.
+- A Node.js host keeps the worker thread (its `worker_threads` are not the faulting runtime). A compiled binary keeps it too: its executable cannot run `process-entry.js`, so process mode there needs a `bun` or `node` on `PATH`, which only an explicit setting should ask for. A Windows bun host keeps it as well: the crash evidence is macOS, and the process kernel's Windows channel (no libc; cell output shares the frame channel) has no CI coverage, so the mode stays opt-in there (review finding on this PR).
+- This reverses the 2026-09-30 codemode plan call that kept the worker default with process isolation opt-in; that call predates the production crashes.
+
+### Why an extension could not handle it
+
+- The default is read by the builtin codemode session manager and runtime factory before any session kernel starts; an extension cannot choose the mode a session's `eval` kernel is created with.
+
+### Expected merge conflict zones
+
+- LOW: the `resolveJsIsolation` signature in `feature-settings.ts`; the import block of `process-worker.ts`; the README isolation section and settings table.
+
+## 2026-11-03 - Full eval guidelines for the Opus and Fable presets (senpi#5665)
+
+### What changed
+
+- `packages/senpi-codemode/src/prompt/eval-prompt.ts`: `buildEvalPrompt` also returns `fullPromptGuidelines`, the pre-#5342 per-dialect batching line and reset line.
+- `packages/senpi-codemode/src/tool/eval-tool.ts`: passes them as the eval tool's `fullPromptGuidelines`.
+
+### Why
+
+- A beta tester reported that Opus 5.5 got slower and less capable after the senpi#5335 diet (#5342) shipped. Q's order: revert the diet only for the Fable and Opus presets; every other model keeps it.
+
+### Why an extension could not handle it
+
+- The text lives in builtin prompt generators, builtin tool definitions, and builtin extension prompt hooks, and the preset that selects the wording is a builtin extension.
+
+### Expected merge conflict zones
+
+- LOW: the eval prompt parts and the tool definition.
+
+## 2026-11-01 - System prompt diet, shared modules (senpi#5335)
+
+### What changed
+
+- `packages/senpi-codemode/src/prompt/eval-prompt.ts`: the per-dialect batching guideline is removed (each dialect's description already carries it) and the remaining guideline keeps only the kernel memory notice rule.
+- Terse pass: the kernel memory notice guideline in `packages/senpi-codemode/src/prompt/eval-prompt.ts` is shortened.
+
+### Why
+
+- senpi#5335: the batching guideline and the reset rule restated the eval description.
+
+### Why an extension could not handle it
+
+- The eval tool definition owns its guidelines.
+
+### Expected merge conflict zones
+
+- LOW: `promptGuidelines` in `buildEvalPrompt`.
+
+## 2026-10-31 - eval infers an omitted run language when it is unambiguous (senpi#5154)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/eval-language-inference.ts` (new): `inferEvalLanguage` fills an omitted run language with the only enabled kernel, or, when exactly js and py are enabled, with `classifyEvalCode`: a strong marker of one language (py: `def name(`, a plain `import x` / `from x import y` line; js: `await` on a call, a template literal, `JSON.`/`Object.`/`Array.`, `const`/`let`, `=>`, `console.log(`, ESM imports) and no strong or weak signal of the other. `print(` is no signal, since the prelude gives both runtimes `print`. Any conflict fills nothing.
+- `packages/senpi-codemode/src/tool/eval-argument-validator.ts`: the eval validator fills the language before its missing-field check, records the fill as `language_inferred`, and drops a caller-sent `language_inferred`. An explicit language is never changed. A filled call that still fails validation reports the caller's own arguments.
+- `packages/senpi-codemode/src/tool/eval-request.ts`: `parseEvalRequest` applies the same inference for direct callers and carries `language_inferred` on the run request; a `language_inferred` argument counts only on an object the validator filled.
+- `packages/senpi-codemode/src/tool/eval-tool.ts`: a run whose language was inferred leads its result with `language_inferred: <lang> (<basis>)`.
+
+### Why
+
+- senpi#5154: a run call that omitted language always failed with the teaching error, even when the kernel could not be anything else, and a weaker tool-calling model could repeat that omission many times.
+
+### Expected merge conflict zones
+
+- LOW: the language checks in `parseEvalRequest`, the validator closure from senpi#5150, and `execute` in `createEvalTool`.
+
+## 2026-10-30 - Restore Windows Python startup assets and builtin helpers (senpi#4955, senpi#5048)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/py/path_identity_windows.py`: rebuild only Python lexical functions with private globals, retaining native builtin helpers directly and preserving function defaults.
+- `.github/workflows/ci.yml`: copy every Python runtime sibling into the isolated compiled Python host, rather than copying only `prelude.py`.
+- `packages/senpi-codemode/test/py-canonical-parity.test.ts`: simulate a builtin `ntpath.normpath` and poison module attributes after capture.
+- `packages/senpi-codemode/test/py-packaged-assets.test.ts`: compare the actual CI sidecar copy selection with the runtime Python asset set.
+
+### Why
+
+- CPython's builtin `ntpath.normpath` has no `__code__`. The isolated CI host also omitted the permission bridge and path-identity siblings required by the prelude.
+
+### Why an extension could not handle it
+
+- Permission identity capture runs before user cells, and the isolated host's runtime files are selected by CI before startup.
+
+### Expected merge conflict zones
+
+- LOW: Windows lexical-helper capture and the isolated Python host copy step.
+
+## 2026-10-31 - A mistyped detached cell id names the one close known id (senpi#5153)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/detached-cell-manager.ts`: `EvalCellNotFoundError` takes an optional suggestion; the unknown-id lookup behind `peek`, `stop` and `waitForTerminal` compares the requested id with every live, interrupting and retained settled id and appends `did you mean "<id>"?` when exactly one is within a quarter of the id's length in edit distance (at least one edit). No close id or a tie leaves the message byte-identical; `errorCode` stays `eval_cell_not_found`.
+- `packages/senpi-codemode/test/eval-cell-id-suggestion.test.ts`: match on a settled cell (peek), match on a live cell (stop), no match, and an ambiguous tie.
+
+### Why
+
+- Cell ids are long opaque strings; a weaker tool-calling model often drops or swaps a character when copying one and then repeats the same wrong id.
+
+## 2026-10-31 - eval validates a run call's missing fields first (senpi#5138)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/eval-argument-validator.ts` (new): `registerEvalArgumentValidator` registers the eval schema's argument validator. A run call (`action` omitted or `"run"`) missing `language`, `code` or `summary` (absent, null, or a blank summary) fails with one `required` error per missing field, in that order, carrying the eval teaching text (`language` names the enabled languages). Every other call goes through the generic `validateToolArguments` path and its coercion unchanged; when that fails, the generic path's own error is rethrown, so the message (including its `Received arguments` block) is exactly what the schema gets without a registered validator.
+- `packages/senpi-codemode/src/tool/eval-request.ts`: `evalRunFieldRequiredMessage` is the single source of the three run-field teaching errors, shared by validation and `parseEvalRequest`.
+- `packages/senpi-codemode/src/tool/eval-tool.ts`: `createEvalTool` registers the validator for its schema.
+
+### Why
+
+- senpi#5138: a run call missing `language` got the generic anyOf dump (every branch's failure), and the eval-specific error in `parseEvalRequest` was never reached because validation failed first.
+
+### Expected merge conflict zones
+
+- LOW: one import and one call in `createEvalTool`.
+
 ## 2026-10-29 - Preserve executable group-signal detection while ignoring inert shell text (senpi#3019)
 
 ### What changed

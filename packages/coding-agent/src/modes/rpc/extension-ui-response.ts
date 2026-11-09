@@ -2,6 +2,20 @@ import type { QuestionRequest, QuestionResponse } from "../../core/extensions/ty
 import type { RpcExtensionUIResponse } from "./rpc-types.ts";
 import type { UiAnswerLedger } from "./ui-answer-ledger.ts";
 
+/** Only a named grant-selection request takes the worker's grant-dialog routing path. */
+export function isGrantSelectRequest(record: object): record is object & { id: string } {
+	return (
+		"type" in record &&
+		record.type === "extension_ui_request" &&
+		"method" in record &&
+		record.method === "select" &&
+		"grantSelect" in record &&
+		record.grantSelect === true &&
+		"id" in record &&
+		typeof record.id === "string"
+	);
+}
+
 /**
  * An `extension_ui_response` carries two ids: `id`, the frame's own correlation id that its reply
  * echoes, and `uiRequestId`, the extension UI request it answers. The short form every older client
@@ -104,6 +118,21 @@ export function settleExtensionUiResponse(
 
 function reply(id: string) {
 	return { id, type: "response", command: "extension_ui_response" } as const;
+}
+
+/** The one correlated reply to an `extension_ui_progress` record, keyed by its `id` (senpi#5761). */
+export type ExtensionUiProgressReply = {
+	readonly id: string;
+	readonly type: "response";
+	readonly command: "extension_ui_progress";
+} & ({ readonly success: true } | { readonly success: false; readonly error: string });
+
+export function extensionUiProgressReply(
+	id: string,
+	outcome: "applied" | "question_already_resolved" | "unknown_extension_ui_request",
+): ExtensionUiProgressReply {
+	const head = { id, type: "response", command: "extension_ui_progress" } as const;
+	return outcome === "applied" ? { ...head, success: true } : { ...head, success: false, error: outcome };
 }
 
 export function refusedExtensionUiResponse(id: string, error: string): ExtensionUiResponseReply {
