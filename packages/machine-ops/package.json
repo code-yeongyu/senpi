@@ -1,7 +1,7 @@
 {
 	"name": "@code-yeongyu/senpi-machine-ops",
 	"private": true,
-	"version": "2026.11.9",
+	"version": "2026.11.9-2",
 	"description": "Engine-free host operation layer shared by senpi's file and shell tools and remote machine executors",
 	"type": "module",
 	"main": "./dist/src/index.js",
@@ -48,7 +48,7 @@
 		"node": ">=24.0.0"
 	},
 	"dependencies": {
-		"@earendil-works/pi-pty": "^2026.11.9"
+		"@earendil-works/pi-pty": "^2026.11.9-2"
 	},
 	"devDependencies": {
 		"@types/node": "26.6.2"
