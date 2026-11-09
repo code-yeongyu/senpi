@@ -1,3 +1,4 @@
+import { normalizeProviderId } from "../legacy-provider-ids.ts";
 import type { Api, CacheRetention, Model, OpenAIResponsesCompat } from "../types.ts";
 
 /**
@@ -15,7 +16,7 @@ export type OpenAIPromptCacheLane = "chatgpt-subscription" | "api-long" | "api-e
 /** GPT-5.6 and later (`gpt-5.6-*`, `gpt-5.10`, `gpt-6-*`, `gpt-7`, ...). */
 const OPENAI_EXTENDED_CACHE_MODEL_ID = /^gpt-(?:5\.(?:[6-9]|\d{2,})|(?:[6-9]|\d{2,})(?:\.\d+)?)(?:-|$)/i;
 
-const CHATGPT_SUBSCRIPTION_PROVIDERS: ReadonlySet<string> = new Set(["chatgpt-subscription", "openai-codex"]);
+const CHATGPT_SUBSCRIPTION_PROVIDER = "chatgpt-subscription";
 
 /** Hosts that serve signed-in ChatGPT usage: the Codex backend, and the API host Sign in with ChatGPT routes to. */
 const CHATGPT_SUBSCRIPTION_HOSTS: ReadonlySet<string> = new Set(["chatgpt.com", "api.openai.com"]);
@@ -36,7 +37,9 @@ function isChatGptSubscription(model: Model<Api>): boolean {
 	if (model.api !== "openai-codex-responses" && model.api !== "openai-responses") return false;
 	const host = hostnameOf(model.baseUrl);
 	if (host === undefined || !CHATGPT_SUBSCRIPTION_HOSTS.has(host)) return false;
-	return CHATGPT_SUBSCRIPTION_PROVIDERS.has(model.provider) || responsesCompat(model)?.siwc === true;
+	return (
+		normalizeProviderId(model.provider) === CHATGPT_SUBSCRIPTION_PROVIDER || responsesCompat(model)?.siwc === true
+	);
 }
 
 /**
