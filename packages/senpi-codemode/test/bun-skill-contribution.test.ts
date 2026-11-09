@@ -187,15 +187,33 @@ describe("bun skill assets", () => {
 		// process.execPath unconditionally. Inside a compiled host (the OmO
 		// engine, any --compile binary) execPath is the host binary itself,
 		// so a script path passed to it starts another agent instead of
-		// running the script. Both the skill and its session recipes must
-		// carry the compiled-host qualification next to the advice.
+		// running the script. The qualification must sit on the advice's own
+		// line in every file that gives it — file-wide toContain cannot tell
+		// whether it sits next to the advice, and harmless rewording
+		// elsewhere would break it. SKILL.md rule 5 sends agents to
+		// references/test.md first, so the traps table carries it too.
+		const lineWith = (text: string, needle: string) => {
+			const lines = text.split("\n").filter((line) => line.includes(needle));
+			expect(lines.length).toBeGreaterThan(0);
+			return lines;
+		};
 		const skill = readFileSync(bunSkillMd, "utf8");
+		const skillRule = lineWith(skill, "re-spawns Bun as `process.execPath`");
+		expect(skillRule).toHaveLength(1);
+		expect(skillRule[0]).toContain("standalone Bun");
+		expect(skillRule[0]).toContain("omo#12569");
+		expect(skillRule[0]).toMatch(/compiled host/);
 		const recipes = readFileSync(join(bunSkillRefs, "session-recipes.md"), "utf8");
-		for (const text of [skill, recipes]) {
-			expect(text).toContain("process.execPath");
-			expect(text).toContain("standalone Bun");
-			expect(text).toContain("omo#12569");
-			expect(text).toMatch(/compiled (host|binary)/);
-		}
+		const respawnLine = lineWith(recipes, "Re-spawning Bun:");
+		expect(respawnLine).toHaveLength(1);
+		expect(respawnLine[0]).toContain("standalone Bun");
+		expect(respawnLine[0]).toContain("omo#12569");
+		expect(respawnLine[0]).toMatch(/compiled binary/);
+		const traps = readFileSync(join(bunSkillRefs, "test.md"), "utf8");
+		const trapRow = lineWith(traps, 'Respawned `"bun"` is not this Bun');
+		expect(trapRow).toHaveLength(1);
+		expect(trapRow[0]).toContain("standalone Bun");
+		expect(trapRow[0]).toContain("omo#12569");
+		expect(trapRow[0]).toMatch(/compiled host/);
 	});
 });
