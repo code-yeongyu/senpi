@@ -5,7 +5,10 @@
  * - the dispatch ledger refuses by generation. A call held across an eviction is refused before the
  *   tool runs, so a tool that ignores its abort signal still produces no effect for a discarded instance;
  * - a committed-but-unrun tool call is recovered through the public tool pipeline, so a resumed call
- *   fires the same hooks, events and result transformation as a live one, under the same abort signal.
+ *   runs the same `beforeToolCall`/`afterToolCall` hooks (so `tool_call`/`tool_result`) and result
+ *   transformation as a live one, under an abort signal a stop can cancel. It is not a full live run: it
+ *   emits no `tool_execution_update` and no `turn_start`/`turn_end`, and runs pending calls one at a
+ *   time whatever the agent's tool execution mode.
  */
 import { type AgentMessage, type AgentTool, type AgentToolCall, runToolCall } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
