@@ -8458,7 +8458,7 @@ export class AgentSession {
 	}
 
 	/**
-	 * A refused engine turn still records its message and settles a cross-session delivery it carries. A delivery
+	 * A refused engine turn still records its message and settles a cross-session delivery it carries. A message
 	 * whose entry the file refuses leaves the context too: its sender redelivers it, and it must not appear twice.
 	 */
 	private _recordRefusedEngineTurnMessage(appMessage: CustomMessage): void {
@@ -8578,22 +8578,26 @@ export class AgentSession {
 			appMessage.details,
 			{ recoveryOwner: recoveryCarrier(start) },
 		);
-		// The entry is written: only a failure of the write itself counts as refused. Listener errors from the
-		// notifications below are handled separately, so a throwing listener cannot surface as a refused write
-		// and settle a persisted delivery as failed (senpi#2972).
-		try {
-			this._emitEntryAppended(entryId);
-			this._recordWrittenTicket(appMessage, entryId);
-			this._takePersistWatcher(appMessage)?.persisted(entryId);
-			this._incrementMessageRevision();
-			this._emit(start);
-			this._emit({ type: "message_end", message: appMessage });
-		} catch (error) {
-			this._sessionLogger.warn("custom_message_listener_failed", {
-				customType: appMessage.customType,
-				error: error instanceof Error ? error.message : String(error),
-			});
-		}
+		// The entry is written: only a failure of the write itself counts as refused. Bookkeeping (ticket,
+		// watcher settlement, revision) runs before any notification, and each notification is guarded on its
+		// own, so a throwing listener can neither leave a persisted delivery unsettled nor suppress a later
+		// notification (senpi#2972).
+		this._recordWrittenTicket(appMessage, entryId);
+		this._takePersistWatcher(appMessage)?.persisted(entryId);
+		this._incrementMessageRevision();
+		const notify = (emit: () => void): void => {
+			try {
+				emit();
+			} catch (error) {
+				this._sessionLogger.warn("custom_message_listener_failed", {
+					customType: appMessage.customType,
+					error: error instanceof Error ? error.message : String(error),
+				});
+			}
+		};
+		notify(() => this._emitEntryAppended(entryId));
+		notify(() => this._emit(start));
+		notify(() => this._emit({ type: "message_end", message: appMessage }));
 	}
 
 	private _flushPendingCustomMessages(): void {

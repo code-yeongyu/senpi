@@ -1,7 +1,9 @@
 import { fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { ExtensionAPI, SendMessageItem } from "../../../src/core/extensions/types.ts";
 import { createHarness, type Harness } from "../harness.ts";
+import { settlesWithin } from "./issue-3811-resume-support.ts";
 
 async function drain(harness: Harness): Promise<void> {
 	for (let pass = 0; pass < 20; pass++) {
@@ -25,6 +27,34 @@ async function spentHarness(): Promise<Harness> {
 
 function stateHas(harness: Harness, marker: string): boolean {
 	return JSON.stringify(harness.session.agent.state.messages).includes(marker);
+}
+
+/** A spent-budget session bound in RPC mode, with the extension API captured (senpi#2972). */
+async function spentItemizedHarness(): Promise<{ harness: Harness; api: () => ExtensionAPI }> {
+	let api: ExtensionAPI | undefined;
+	const harness = await createHarness({
+		settings: { engineTurns: { maxPerUserInput: 1 } },
+		extensionFactories: [
+			(pi: ExtensionAPI) => {
+				api = pi;
+			},
+		],
+	});
+	await harness.session.bindExtensions({ mode: "rpc", shutdownHandler: () => {} });
+	harness.setResponses([
+		fauxAssistantMessage([fauxText("user reply")]),
+		fauxAssistantMessage([fauxText("d-1 reply")]),
+	]);
+	await harness.session.prompt("hello");
+	harness.session.externalAdmission.admit({ delivery_id: "d-1", text: "DELIVERY d-1", deliverAs: "followUp" });
+	await drain(harness);
+	return {
+		harness,
+		api: () => {
+			if (api === undefined) throw new Error("extension binding unavailable");
+			return api;
+		},
+	};
 }
 
 function fileHas(harness: Harness, marker: string): boolean {
@@ -89,5 +119,29 @@ describe("senpi#2972 engine-turn pause: a refused message follows the transcript
 		expect(harness.session.externalAdmission.list()).toEqual({ pending: [], emitted: ["d-1", "d-2"] });
 		expect(stateHas(harness, "DELIVERY d-2")).toBe(true);
 		expect(fileHas(harness, "DELIVERY d-2")).toBe(true);
+	});
+
+	it("case 3: a listener that throws on entry_appended after a successful write still settles the delivery", async () => {
+		// given a session whose budget is spent, bound in RPC mode, and a listener that throws on entry_appended
+		const { harness: itemizedHarness, api } = await spentItemizedHarness();
+		harness = itemizedHarness;
+		harness.session.subscribe((event) => {
+			if (event.type === "entry_appended") throw new Error("listener boom");
+		});
+		const items: readonly SendMessageItem[] = [{ itemId: "i-1", producer: "task", content: "ITEMIZED d-2 finished" }];
+
+		// when an itemized delivery arrives with the budget spent
+		const sending = api().sendMessage(
+			{ customType: "omo-senpi:wake", content: "ITEMIZED d-2 finished", display: false },
+			{ triggerTurn: true, deliverAs: "followUp", items },
+		);
+
+		// then its receipts settle as persisted (never hang), the entry is written, and no turn started
+		const receipts = await settlesWithin(Promise.resolve(sending), "the itemized delivery's receipts");
+		expect(receipts?.map((receipt) => [receipt.itemId, receipt.disposition])).toEqual([["i-1", "message_persisted"]]);
+		await drain(harness);
+		expect(harness.faux.getCallLog()).toHaveLength(2);
+		expect(stateHas(harness, "ITEMIZED d-2 finished")).toBe(true);
+		expect(fileHas(harness, "ITEMIZED d-2 finished")).toBe(true);
 	});
 });
