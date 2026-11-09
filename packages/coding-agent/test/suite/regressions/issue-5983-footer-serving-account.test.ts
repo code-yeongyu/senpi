@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { accountFooterSuffix } from "../../../src/modes/interactive/components/footer.ts";
+import { setKeybindings } from "@earendil-works/pi-tui";
+import { beforeAll, describe, expect, it } from "vitest";
+import { KeybindingsManager } from "../../../src/core/keybindings.ts";
+import { FooterComponent, accountFooterSuffix } from "../../../src/modes/interactive/components/footer.ts";
+import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
+import { stripAnsi } from "../../../src/utils/ansi.ts";
+import { createFooterData, createFooterSession } from "../../helpers/footer-test-fixtures.ts";
 
 // senpi#5983: the footer named the pinned account even after a usage-limit
 // refusal moved every later turn to a sibling, and it ignored the settings
@@ -76,5 +81,62 @@ describe("accountFooterSuffix (senpi#5983)", () => {
 		expect(accountFooterSuffix(pooled("default", { default: now - 1_000 }), "session-5983", { now })).toBe(
 			"@default",
 		);
+	});
+});
+
+// senpi#6222 review: the Anthropic CLI/settings pin must not leak into a
+// non-Anthropic pooled provider. A slot that shares the Anthropic pin's name
+// ("default") was named by the footer and overrode that provider's own
+// stored pin, though its rotation never sees the Anthropic pin. The pin is
+// resolved only when the current model uses the Anthropic subscription
+// provider; otherwise the provider's stored pin stands.
+describe("FooterComponent resolveAccountPin provider gate (senpi#6222 review)", () => {
+	beforeAll(() => {
+		initTheme(undefined, false);
+		setKeybindings(new KeybindingsManager());
+	});
+
+	// Non-Anthropic pooled provider (openai-codex) with slots "default"/"work"
+	// and stored pin "work"; the Anthropic pin is "default".
+	function pooledCodexCredential() {
+		const slot = (name: string) => ({
+			name,
+			access: "fake-a",
+			refresh: "fake-r",
+			expires: 4_102_444_800_000,
+			source: "login" as const,
+		});
+		return {
+			type: "oauth" as const,
+			access: "fake-a",
+			refresh: "fake-r",
+			expires: 4_102_444_800_000,
+			pinned: "work",
+			accounts: [slot("default"), slot("work")],
+		};
+	}
+
+	function renderFooter(provider: string, modelId: string): string {
+		const session = createFooterSession({
+			sessionName: "",
+			modelId,
+			provider,
+			credential: pooledCodexCredential(),
+		});
+		const footer = new FooterComponent(session, createFooterData(2), {
+			resolveAccountPin: () => "default",
+		});
+		return stripAnsi(footer.render(120)[0] ?? "");
+	}
+
+	it("keeps the provider's own stored pin for a same-named non-Anthropic slot", () => {
+		const plain = renderFooter("openai-codex", "gpt-5-codex");
+		expect(plain).toContain("(openai-codex@work)");
+		expect(plain).not.toContain("@default");
+	});
+
+	it("still applies the Anthropic pin for the Anthropic subscription provider", () => {
+		const plain = renderFooter("anthropic-subscription", "claude-sonnet-5-5");
+		expect(plain).toContain("(anthropic-subscription@default)");
 	});
 });

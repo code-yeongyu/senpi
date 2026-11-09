@@ -6,6 +6,7 @@ import { applyAccountOrder, rendezvousOrder } from "@earendil-works/pi-ai/auth/p
 import { accountLabel, type PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { AgentSession } from "../../../core/agent-session.ts";
+import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "../../../core/extensions/builtin/anthropic-subscription/provider-id.ts";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
 import { theme } from "../theme/theme.ts";
 import { type FooterSegment, planFooterLayout } from "./footer-layout.ts";
@@ -46,7 +47,10 @@ export function formatTokens(count: number): string {
  * pick shown is the effective pin (CLI > settings > stored, senpi#5983) when
  * present, else the first account of the user order (senpi#3591), else the
  * session's HRW winner - the same ranking the rotation engine uses, so the
- * footer names the slot that will serve. A blocked pin (blockedUntil in the
+ * footer names the slot that will serve. The effective pin only reaches the
+ * footer for the Anthropic subscription provider (senpi#6222 review); other
+ * pooled providers keep their stored pin even when a slot shares the pin's
+ * name. A blocked pin (blockedUntil in the
  * future) is skipped for the first usable slot in that ranking, and the
  * suffix marks the blocked pin (`@B (A blocked until 14:00)`); when every
  * slot is blocked it names the top-ranked slot and marks it blocked instead
@@ -280,7 +284,15 @@ export class FooterComponent implements Component {
 		if (state.model) {
 			try {
 				const sessionId = this.session.sessionManager.getSessionId();
-				const pinnedAccount = this.resolveAccountPin?.(sessionId);
+				// The resolver carries the Anthropic CLI/settings pin; resolve
+				// it only when the current model uses the Anthropic
+				// subscription provider. A same-named slot of another pooled
+				// provider (e.g. openai-codex "default") keeps its own stored
+				// pin instead (senpi#6222 review).
+				const pinnedAccount =
+					state.model.provider === ANTHROPIC_SUBSCRIPTION_PROVIDER_ID
+						? this.resolveAccountPin?.(sessionId)
+						: undefined;
 				accountSuffix = accountFooterSuffix(
 					this.session.modelRegistry.authStorage.get(state.model.provider),
 					sessionId,
