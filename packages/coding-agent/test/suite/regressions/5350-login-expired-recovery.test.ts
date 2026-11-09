@@ -225,7 +225,9 @@ describe("senpi#5350 the login_expired surfaces", () => {
 		await commands.get("claude-account")?.handler("", ctx);
 		const output = notices.map((notice) => notice.message).join("\n");
 		const lines = output.split("\n");
-		expect(lines[lines.indexOf("alice") + 1]).toMatch(/^ {2}status +sign-in expired; run \/login anthropic-subscription$/);
+		expect(lines[lines.indexOf("alice") + 1]).toMatch(
+			/^ {2}status +sign-in expired; run \/login anthropic-subscription$/,
+		);
 		expect(output).not.toContain("sign-in rejected");
 	});
 });

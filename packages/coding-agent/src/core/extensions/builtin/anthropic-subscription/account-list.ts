@@ -43,18 +43,16 @@ function slotStatus(slot: AccountSlot, now: number): string[] {
 /** The `/claude-account` list (senpi#6288): one readable block per account, pin and next turn as tags. */
 export function formatClaudeAccountList(input: ClaudeAccountListInput): string {
 	const { accounts, pinned, pinSource, affinityPick, affinityError, now } = input;
-	const entries = accounts.map(
-		(account): AccountListEntry => ({
-			label: accountLabel(account),
-			tags: [
-				...(account.name === pinned ? [PIN_TAG[pinSource]] : []),
-				...(account.name === affinityPick ? ["next turn"] : []),
-				...(account.source === "env" ? ["from environment"] : []),
-			],
-			status: slotStatus(account, now),
-			limits: accountLimitsFor(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, account.name),
-		}),
-	);
+	const entries = accounts.map((account): AccountListEntry => ({
+		label: accountLabel(account),
+		tags: [
+			...(account.name === pinned ? [PIN_TAG[pinSource]] : []),
+			...(account.name === affinityPick ? ["next turn"] : []),
+			...(account.source === "env" ? ["from environment"] : []),
+		],
+		status: slotStatus(account, now),
+		limits: accountLimitsFor(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, account.name),
+	}));
 	if (entries.length === 0) {
 		return renderAccountList("Anthropic Subscription accounts", [], ["Add one with /claude-account add."], now);
 	}
