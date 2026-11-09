@@ -91,8 +91,13 @@ function concat(...parts: readonly Uint8Array[]): Bytes {
 	return out;
 }
 
-const KEM_SUITE_ID = concat(encoder.encode("KEM"), i2osp(KEM_ID, 2));
-const HPKE_SUITE_ID = concat(encoder.encode("HPKE"), i2osp(KEM_ID, 2), i2osp(KDF_ID, 2), i2osp(AEAD_ID, 2));
+function kemSuiteId(): Bytes {
+	return concat(encoder.encode("KEM"), i2osp(KEM_ID, 2));
+}
+
+function hpkeSuiteId(): Bytes {
+	return concat(encoder.encode("HPKE"), i2osp(KEM_ID, 2), i2osp(KDF_ID, 2), i2osp(AEAD_ID, 2));
+}
 
 async function hmacSha256(key: Bytes, data: Bytes): Promise<Bytes> {
 	const hmacKey = await crypto.subtle.importKey("raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
@@ -134,8 +139,8 @@ function labeledExpand(
 }
 
 async function extractAndExpand(dh: Uint8Array, kemContext: Uint8Array): Promise<Bytes> {
-	const eaePrk = await labeledExtract(KEM_SUITE_ID, new Uint8Array(), "eae_prk", dh);
-	return labeledExpand(KEM_SUITE_ID, eaePrk, "shared_secret", kemContext, N_SECRET);
+	const eaePrk = await labeledExtract(kemSuiteId(), new Uint8Array(), "eae_prk", dh);
+	return labeledExpand(kemSuiteId(), eaePrk, "shared_secret", kemContext, N_SECRET);
 }
 
 async function importPublicKey(raw: Uint8Array): Promise<CryptoKey> {
@@ -223,13 +228,13 @@ export async function hpkeKeySchedule(
 	info: Uint8Array,
 ): Promise<{ readonly key: Bytes; readonly baseNonce: Bytes }> {
 	const empty = new Uint8Array();
-	const pskIdHash = await labeledExtract(HPKE_SUITE_ID, empty, "psk_id_hash", empty);
-	const infoHash = await labeledExtract(HPKE_SUITE_ID, empty, "info_hash", info);
+	const pskIdHash = await labeledExtract(hpkeSuiteId(), empty, "psk_id_hash", empty);
+	const infoHash = await labeledExtract(hpkeSuiteId(), empty, "info_hash", info);
 	const context = concat(Uint8Array.of(MODE_BASE), pskIdHash, infoHash);
-	const secret = await labeledExtract(HPKE_SUITE_ID, sharedSecret, "secret", empty);
+	const secret = await labeledExtract(hpkeSuiteId(), sharedSecret, "secret", empty);
 	return {
-		key: await labeledExpand(HPKE_SUITE_ID, secret, "key", context, N_K),
-		baseNonce: await labeledExpand(HPKE_SUITE_ID, secret, "base_nonce", context, N_N),
+		key: await labeledExpand(hpkeSuiteId(), secret, "key", context, N_K),
+		baseNonce: await labeledExpand(hpkeSuiteId(), secret, "base_nonce", context, N_N),
 	};
 }
 

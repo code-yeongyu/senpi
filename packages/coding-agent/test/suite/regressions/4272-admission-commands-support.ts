@@ -28,6 +28,7 @@ export const admissionCommands = [
 	"abort_branch_summary",
 	"new_session",
 	"wake",
+	"admit_external_message",
 	"get_state",
 	"get_snapshot",
 	"request_self_settle",
