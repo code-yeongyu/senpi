@@ -6,6 +6,7 @@ import { existsSync } from "node:fs";
 import { sanitizeProviderDiagnostic } from "@earendil-works/pi-ai";
 import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
 import type { AgentSession } from "../../core/agent-session.ts";
+import { permissionModeOf } from "../../core/permission-mode.ts";
 import { ProjectTrustStore } from "../../core/trust-manager.ts";
 import { clientFacingIdentity } from "./client-admission-record.ts";
 import { sessionQuestionBridges } from "./connection-question-bridge.ts";
@@ -42,6 +43,7 @@ export function buildRpcSessionState(session: AgentSession, lastAbortSource?: Ag
 		lifecycle: observeLifecycle(session.lifecycle),
 		pendingQuestions: sessionQuestionBridges.get(session)?.pendingQuestions(),
 		pendingDialogs: sessionDialogRequests.get(session)?.snapshot() ?? [],
+		...permissionModeOf(session),
 		model: session.model,
 		pendingModelSwitch: session.pendingModelSwitch
 			? {
@@ -55,6 +57,7 @@ export function buildRpcSessionState(session: AgentSession, lastAbortSource?: Ag
 		...(typeof session.getSessionModelThinkingLevels === "function"
 			? { sessionModelThinkingLevels: session.getSessionModelThinkingLevels() }
 			: {}),
+		...(session.currentTurnId === undefined ? {} : { currentTurnId: session.currentTurnId }),
 		...(lastAbortSource ? { lastAbortSource } : {}),
 		...(lastProviderDiagnostic ? { lastProviderDiagnostic } : {}),
 		serviceTier: session.effectiveServiceTier,

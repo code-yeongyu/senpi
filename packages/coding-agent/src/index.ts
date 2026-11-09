@@ -1,4 +1,12 @@
 // Core session management
+export { SecretInputUnavailableError, type SecretInputUnavailableReason } from "./core/extensions/secret-input.ts";
+export type { RpcSecretInputSettledEvent } from "./modes/rpc/rpc-types.ts";
+export type {
+	PresenterAccountAuthority,
+	PresenterAttestation,
+	PresenterAttestationRefusal,
+	PresenterAttestationResult,
+} from "./modes/rpc/mcp-presenter-account.ts";
 
 export { sanitizeTerminalLabel, visibleWidth } from "@earendil-works/pi-tui";
 export { type Args, parseArgs } from "./cli/args.ts";
@@ -27,6 +35,7 @@ export {
 	type SessionStats,
 } from "./core/agent-session.ts";
 export { type OAuthCredential, readStoredCredential } from "./core/auth-storage.ts";
+export { REQUIRED_COMPACTION_ERROR_MESSAGE, RequiredCompactionError } from "./core/required-compaction-error.ts";
 // Compaction
 export {
 	type BranchPreparation,
@@ -63,6 +72,25 @@ export {
 	engineBuildIdentityFrom,
 } from "./core/engine-build-identity.ts";
 export { createEventBus, type EventBus, type EventBusController } from "./core/event-bus.ts";
+export {
+	decideKillGuardRequest,
+	KILL_GUARD_TAG,
+	type KillGuardRequest,
+	type KillGuardVerdict,
+} from "./core/kill-guard/index.ts";
+export {
+	KILL_GUARD_MODULE_URL,
+	type KillGuardSetting,
+	killGuardProtectedPids,
+	readKillGuardSetting,
+} from "./core/kill-guard/host.ts";
+export {
+	type ActivateKillGuardRuntimeOptions,
+	activateKillGuardRuntime,
+	activeKillGuardEnvironment,
+	type KillGuardRuntime,
+	releaseKillGuardRuntime,
+} from "./core/kill-guard/runtime.ts";
 // Job widgets: hosts register background jobs and their widget-author model route
 export * from "./core/extensions/builtin/job-widgets/public.ts";
 export {
@@ -141,6 +169,7 @@ export type {
 	ExtensionToolContext,
 	ExtensionUIContext,
 	ExtensionUIDialogOptions,
+	ExtensionUIInputOptions,
 	ExtensionVirtualModel,
 	ExtensionWidgetOptions,
 	FilesystemOperation,
@@ -174,6 +203,7 @@ export type {
 	ModelSelectSource,
 	NormalizedBuildSystemPromptOptions,
 	PowerShellToolCallEvent,
+	ProgramStatus,
 	ProjectTrustContext,
 	ProjectTrustEvent,
 	ProjectTrustEventDecision,
@@ -478,6 +508,16 @@ export {
 	type ReadClassifier,
 	registerReadClassifier,
 } from "./core/tools/read-classifiers.ts";
+export {
+	registerRpcRemoteSource,
+	type RpcRemoteHandlers,
+	type RpcRemoteOpenOptions,
+	type RpcRemoteSettledTurn,
+	type RpcRemoteSource,
+	type RpcRemoteState,
+	type RpcRemoteSubscription,
+	type RpcRemoteTarget,
+} from "./core/extensions/builtin/terminal/rpc-remote-source.ts";
 export {
 	hasTrustRequiringProjectResources,
 	type ProjectTrustDecision,

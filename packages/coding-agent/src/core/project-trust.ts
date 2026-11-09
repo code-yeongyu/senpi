@@ -5,6 +5,7 @@ import type { LoadExtensionsResult, ProjectTrustContext } from "./extensions/typ
 import type { DefaultProjectTrust } from "./settings-manager.ts";
 import {
 	getProjectTrustOptions,
+	getSavedProjectTrust,
 	hasTrustRequiringProjectResources,
 	type ProjectTrustOption,
 	type ProjectTrustStore,
@@ -82,7 +83,7 @@ export async function resolveProjectTrusted(options: ResolveProjectTrustedOption
 		}
 	}
 
-	const decision = options.trustStore.get(options.cwd);
+	const decision = await getSavedProjectTrust(options.trustStore, options.cwd);
 	if (decision !== null) {
 		return decision;
 	}

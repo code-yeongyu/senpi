@@ -1,4 +1,6 @@
 import { TURN_RETRY_SUPPRESSION_PREFIX } from "@earendil-works/pi-ai/auth/pool/failover";
+import { attachProviderDiagnostic } from "@earendil-works/pi-ai/utils/provider-diagnostic-carrier";
+import { credentialPoolBlockedDiagnostic } from "@earendil-works/pi-ai/utils/provider-diagnostic-vocabulary";
 import { type CredentialAction, type CredentialBlock, classifyCredentialFailure } from "./classify.ts";
 
 /**
@@ -57,6 +59,19 @@ export type RunCredentialFailoverOptions<TEvent, TSlot extends RunSlot> = {
 	persistBlock: (slot: TSlot, block: CredentialBlock) => void | Promise<void>;
 	onRotate?: (event: CredentialFailoverEvent<TSlot>) => void | Promise<void>;
 	onSuccess?: (slot: TSlot) => void | Promise<void>;
+	/**
+	 * Marks the terminal event forwarded when every slot is limited, with the time the first one is due
+	 * back, so the session and goal read a rate limit with its reset instead of one slot's bare error
+	 * (senpi#3975).
+	 */
+	withPoolRetryAt?: (event: TEvent, retryAt: number) => TEvent;
+	/**
+	 * Called once when the request leaves a selected slot without a verdict on it: neither a success
+	 * nor a persisted block (an abort, a request-scoped failure, exhausted same-slot retries, or the
+	 * caller stopping the stream). A lane hands back what it reserved for the attempt, such as a
+	 * half-open probe lease, so the slot is not stranded until that reservation expires (senpi#4094).
+	 */
+	releaseSlot?: (slot: TSlot) => void | Promise<void>;
 	now?: () => number;
 };
 
@@ -108,6 +123,30 @@ function coolingProbe<TSlot extends RunSlot>(slots: readonly TSlot[], attempted:
 }
 
 /**
+ * The slots a request's next attempt may pick from: the untried, unblocked ones, else the cooling
+ * probe. Empty means the request is refused. Shared by the stream and by auxiliary callers that
+ * resolve the session's account outside it (senpi#3924), so both treat an all-blocked pool alike.
+ */
+export function attemptCandidates<TSlot extends RunSlot>(
+	slots: readonly TSlot[],
+	attempted: ReadonlySet<string>,
+	now: number,
+): TSlot[] {
+	const available = slots.filter((slot) => !attempted.has(slot.name) && isAvailable(slot, now));
+	return available.length > 0 ? available : coolingProbe(slots, attempted);
+}
+
+/** The refusal a request gets when {@link attemptCandidates} is empty before any attempt ran. */
+export function noSlotsError(slots: readonly RunSlot[], now: number): CredentialFailoverError {
+	const retryAt = soonestRetryAt(slots, now);
+	return new CredentialFailoverError(
+		{ kind: "fail_request" },
+		new Error(noSlotsMessage(slots, now)),
+		retryAt === undefined ? {} : { retryAt },
+	);
+}
+
+/**
  * A slot's due-back time as the reader's local clock shows it, followed by the ISO instant that the goal
  * provider-retry scan (`providerRetryAt`) and turn-end liveness read from this text (senpi#4329).
  */
@@ -150,6 +189,31 @@ function noSlotsMessage(slots: readonly RunSlot[], now: number): string {
 	return blocked.length === 0
 		? `No credential slots available. ${step}`
 		: `No credential slots available: ${blocked.join(", ")}. ${step}`;
+}
+
+function isRateLimitBlock(action: CredentialAction): boolean {
+	return action.kind === "failover" && action.block.reason === "rate_limit";
+}
+
+/** Blocks that need the user (a new login, a re-enabled or topped-up account), not a wait. */
+const OUT_OF_POOL_REASONS: ReadonlySet<string> = new Set(["auth_error", "account_disabled"]);
+
+/**
+ * The soonest rate-limit reset when the pool waits only on rate limits, else undefined (senpi#3975).
+ * Slots out for auth or a disabled account are not counted; every other slot must be rate-limited, so a
+ * slot with an unknown block or none keeps the refusal unclassified, and a disabled slot's re-probe time
+ * is never the pool's reset.
+ */
+function limitedUntil(slots: readonly RunSlot[], now: number): number | undefined {
+	const resets: number[] = [];
+	for (const slot of slots) {
+		if (OUT_OF_POOL_REASONS.has(slot.blockReason ?? "")) continue;
+		if (slot.blockReason !== "rate_limit" || slot.blockedUntil === undefined || slot.blockedUntil <= now) {
+			return undefined;
+		}
+		resets.push(slot.blockedUntil);
+	}
+	return resets.length === 0 ? undefined : Math.min(...resets);
 }
 
 function soonestRetryAt(slots: readonly RunSlot[], now: number): number | undefined {
@@ -197,90 +261,114 @@ export async function* runCredentialFailover<TEvent, TSlot extends RunSlot>(
 	let lastOriginal: unknown;
 	let lastTerminalEvent: TEvent | undefined;
 	let startAnnounced = false;
+	// The slot this request selected and has not yet settled with a success or a persisted block.
+	let unsettled: TSlot | undefined;
 
-	while (true) {
-		const slots = await options.listSlots();
-		const available = slots.filter((slot) => !attempted.has(slot.name) && isAvailable(slot, now()));
-		const candidates = available.length > 0 ? available : coolingProbe(slots, attempted);
-		if (candidates.length === 0) {
-			if (lastTerminalEvent !== undefined) {
-				yield lastTerminalEvent;
-				return;
+	try {
+		while (true) {
+			const slots = await options.listSlots();
+			const candidates = attemptCandidates(slots, attempted, now());
+			if (candidates.length === 0) {
+				// Only a refusal that is itself a limit is the pool's rate limit: a probe refused for auth, billing
+				// or a missing model keeps its own classification, which the goal's auth block reads (senpi#3975).
+				const limitedRetryAt =
+					lastError === undefined || isRateLimitBlock(lastError.action) ? limitedUntil(slots, now()) : undefined;
+				if (lastTerminalEvent !== undefined) {
+					yield limitedRetryAt === undefined || options.withPoolRetryAt === undefined
+						? lastTerminalEvent
+						: options.withPoolRetryAt(lastTerminalEvent, limitedRetryAt);
+					return;
+				}
+				const retryAt = soonestRetryAt(slots, now());
+				const refusal =
+					lastError === undefined || lastOriginal === undefined
+						? noSlotsError(slots, now())
+						: new CredentialFailoverError(
+								lastError.action,
+								lastOriginal,
+								retryAt === undefined ? {} : { retryAt },
+							);
+				throw limitedRetryAt === undefined
+					? refusal
+					: attachProviderDiagnostic(refusal, credentialPoolBlockedDiagnostic(limitedRetryAt));
 			}
-			const retryAt = soonestRetryAt(slots, now());
-			throw lastError !== undefined && lastOriginal !== undefined
-				? new CredentialFailoverError(lastError.action, lastOriginal, retryAt === undefined ? {} : { retryAt })
-				: new CredentialFailoverError(
-						{ kind: "fail_request" },
-						new Error(noSlotsMessage(slots, now())),
-						retryAt === undefined ? {} : { retryAt },
-					);
-		}
-		const slot = options.select(candidates);
-		let committedOutput = false;
-		let terminalEvent: TEvent | undefined;
-		let attemptStream: AsyncIterable<TEvent> | undefined;
-		try {
-			attemptStream = await options.runAttempt(slot);
-			for await (const event of attemptStream) {
-				const failure = options.errorFromEvent?.(event);
-				if (failure !== undefined) {
-					terminalEvent = event;
+			const slot = options.select(candidates);
+			unsettled = slot;
+			let committedOutput = false;
+			let terminalEvent: TEvent | undefined;
+			let attemptStream: AsyncIterable<TEvent> | undefined;
+			try {
+				attemptStream = await options.runAttempt(slot);
+				for await (const event of attemptStream) {
+					const failure = options.errorFromEvent?.(event);
+					if (failure !== undefined) {
+						terminalEvent = event;
+						throw failure;
+					}
+					if (options.isStreamStart?.(event)) {
+						if (startAnnounced) continue;
+						startAnnounced = true;
+					}
+					committedOutput ||= options.isCommittedOutput(event);
+					yield event;
+				}
+				unsettled = undefined;
+				await options.onSuccess?.(slot);
+				return;
+			} catch (error) {
+				if (attemptStream) await settle(attemptStream);
+				const failureCount = (slot.failureCount ?? 0) + (retriesBySlot.get(slot.name) ?? 0);
+				const action = classify(error, {
+					failureCount,
+				});
+				lastOriginal = error;
+				lastTerminalEvent = terminalEvent;
+
+				if (action.kind === "retry_same" && !committedOutput) {
+					const used = (retriesBySlot.get(slot.name) ?? 0) + 1;
+					retriesBySlot.set(slot.name, used);
+					if (used < action.maxAttempts) {
+						// Hand back what the attempt reserved before listing again: the next pass takes its own
+						// reservation, and a lease kept here would list this slot as another request's probe.
+						unsettled = undefined;
+						await options.releaseSlot?.(slot);
+						continue;
+					}
+					if (terminalEvent !== undefined) {
+						yield terminalEvent;
+						return;
+					}
+					throw new CredentialFailoverError(action, error);
+				}
+				if (action.kind !== "failover") {
+					if (terminalEvent !== undefined) {
+						yield terminalEvent;
+						return;
+					}
+					throw new CredentialFailoverError(action, error);
+				}
+
+				unsettled = undefined;
+				await options.persistBlock(slot, action.block);
+				attempted.add(slot.name);
+				const failure = new CredentialFailoverError(action, error);
+				lastError = failure;
+				await options.onRotate?.({
+					slot,
+					block: action.block,
+					attempt: attempted.size,
+					committedOutput,
+				});
+				if (committedOutput) {
+					if (terminalEvent !== undefined) {
+						yield terminalEvent;
+						return;
+					}
 					throw failure;
 				}
-				if (options.isStreamStart?.(event)) {
-					if (startAnnounced) continue;
-					startAnnounced = true;
-				}
-				committedOutput ||= options.isCommittedOutput(event);
-				yield event;
-			}
-			await options.onSuccess?.(slot);
-			return;
-		} catch (error) {
-			if (attemptStream) await settle(attemptStream);
-			const failureCount = (slot.failureCount ?? 0) + (retriesBySlot.get(slot.name) ?? 0);
-			const action = classify(error, {
-				failureCount,
-			});
-			lastOriginal = error;
-			lastTerminalEvent = terminalEvent;
-
-			if (action.kind === "retry_same" && !committedOutput) {
-				const used = (retriesBySlot.get(slot.name) ?? 0) + 1;
-				retriesBySlot.set(slot.name, used);
-				if (used < action.maxAttempts) continue;
-				if (terminalEvent !== undefined) {
-					yield terminalEvent;
-					return;
-				}
-				throw new CredentialFailoverError(action, error);
-			}
-			if (action.kind !== "failover") {
-				if (terminalEvent !== undefined) {
-					yield terminalEvent;
-					return;
-				}
-				throw new CredentialFailoverError(action, error);
-			}
-
-			await options.persistBlock(slot, action.block);
-			attempted.add(slot.name);
-			const failure = new CredentialFailoverError(action, error);
-			lastError = failure;
-			await options.onRotate?.({
-				slot,
-				block: action.block,
-				attempt: attempted.size,
-				committedOutput,
-			});
-			if (committedOutput) {
-				if (terminalEvent !== undefined) {
-					yield terminalEvent;
-					return;
-				}
-				throw failure;
 			}
 		}
+	} finally {
+		if (unsettled !== undefined) await options.releaseSlot?.(unsettled);
 	}
 }

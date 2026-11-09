@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-client",
-	"version": "2026.10.27-2",
+	"version": "2026.11.6-3",
 	"description": "Transport-neutral client for remote pi sessions over framed CBOR bytes",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -13,6 +13,10 @@
 		"./unix": {
 			"types": "./dist/unix.d.ts",
 			"import": "./dist/unix.js"
+		},
+		"./materializer-test-kit": {
+			"types": "./dist/materializer-test-kit.d.ts",
+			"import": "./dist/materializer-test-kit.js"
 		},
 		"./package.json": "./package.json"
 	},
@@ -48,7 +52,7 @@
 	},
 	"dependencies": {
 		"@earendil-works/chord": "0.99.1",
-		"@earendil-works/pi-protocol": "2026.10.27-2"
+		"@earendil-works/pi-protocol": "2026.11.6-3"
 	},
 	"devDependencies": {
 		"shx": "0.4.0",

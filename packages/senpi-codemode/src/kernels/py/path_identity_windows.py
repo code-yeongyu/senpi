@@ -27,7 +27,9 @@ def windows_primitives(failure):
         if isinstance(function, types.FunctionType) and function.__globals__ is vars(ntpath):
             namespace[name] = types.FunctionType(function.__code__, namespace, name, function.__defaults__)
     dirname, basename, normpath, splitdrive = (
-        types.FunctionType(getattr(ntpath, name).__code__, namespace, name)
+        # C builtins do not read ntpath's mutable module globals.
+        types.FunctionType(function.__code__, namespace, name, function.__defaults__)
+        if isinstance(function := getattr(ntpath, name), types.FunctionType) else function
         for name in ("dirname", "basename", "normpath", "splitdrive")
     )
     getcwd = os.getcwd

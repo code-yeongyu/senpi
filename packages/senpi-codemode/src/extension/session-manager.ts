@@ -1,6 +1,11 @@
 import { join } from "node:path";
 import type { ExtensionContext } from "@code-yeongyu/senpi";
-import { readProcessFootprint } from "@code-yeongyu/senpi";
+import {
+	decideKillGuardRequest,
+	KILL_GUARD_MODULE_URL,
+	killGuardProtectedPids,
+	readProcessFootprint,
+} from "@code-yeongyu/senpi";
 import { type BridgeServerHandle, startBridgeServer } from "../bridge/http-server.ts";
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
@@ -11,10 +16,12 @@ import { JavaScriptKernel } from "../kernels/js/context-manager.ts";
 import type { KernelToolsCapability, KernelToolsDescribeResult } from "../kernels/js/kernel-tools-types.ts";
 import type { SessionEnvironment } from "../kernels/session-env.ts";
 import type { KernelLifecycle } from "../kernels/shared/kernel-death.ts";
+import type { CellToolUpdateSink } from "../tool/nested-tool-output.ts";
 import type { EvalKernel, EvalLanguage } from "../tool/types.ts";
 import { type BridgeDispatchContext, dispatchBridgeCompletion } from "./bridge-dispatch.ts";
 import { type BridgeToolCallRequest, routeBridgeToolCall } from "./bridge-tool-call.ts";
 import { CellKernelTools } from "./cell-kernel-tools.ts";
+import { CellToolUpdates } from "./cell-tool-updates.ts";
 import { parkWhenIdle } from "./idle-parking-kernel.ts";
 import { KernelGlobalsLedger } from "./kernel-globals-ledger.ts";
 import {
@@ -73,6 +80,7 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 	/** One per language for the manager's life, so an idle-park restart never re-announces an earlier generation. */
 	readonly #ledgers = new Map<EvalLanguage, Promise<KernelGlobalsLedger>>();
 	readonly #cellKernelTools = new CellKernelTools();
+	readonly #cellToolUpdates = new CellToolUpdates();
 	#context: ExtensionContext | undefined;
 	#generation = 0;
 	#disposePromise: Promise<void> | undefined;
@@ -95,17 +103,32 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 			onCall: async (request) => await this.#call(request),
 			onEmit: async () => undefined,
 			onCompletion: async (request) => await dispatchBridgeCompletion(this.#options, request, dispatch),
+			...(this.#options.killGuard === true
+				? {
+						onKillGuardCheck: (request: unknown) =>
+							decideKillGuardRequest(request, { agentPid: process.pid, agentPpid: process.ppid }),
+					}
+				: {}),
 		});
 	}
 
 	async #call(request: BridgeToolCallRequest): Promise<unknown> {
 		return await this.#cellKernelTools.run(request.cellToken, () =>
-			routeBridgeToolCall(this.#options, request, this.#context?.evalHandleHost),
+			routeBridgeToolCall(
+				this.#options,
+				request,
+				this.#context?.evalHandleHost,
+				this.#cellToolUpdates.sinkFor(request.cellToken),
+			),
 		);
 	}
 
 	bindCellKernelTools(token: string, capability: KernelToolsCapability): () => void {
 		return this.#cellKernelTools.bind(token, capability);
+	}
+
+	bindCellToolUpdates(token: string, sink: CellToolUpdateSink): () => void {
+		return this.#cellToolUpdates.bind(token, sink);
 	}
 
 	async getKernel(language: EvalLanguage, onMessage: (message: KernelToHostMessage) => void): Promise<EvalKernel> {
@@ -285,6 +308,9 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 					: {}),
 				...(resolveKernelToolsEnabled(this.#options.settings) ? {} : { kernelToolsEnabled: false }),
 				...(this.#options.sessionEnv ? { sessionEnv: this.#options.sessionEnv } : {}),
+				...(this.#options.killGuard === true
+					? { killGuard: { moduleUrl: KILL_GUARD_MODULE_URL, agentPid: process.pid } }
+					: {}),
 				...(localRoots ? { localRoots: { ...localRoots } } : {}),
 				...(this.#options.artifactsDir ? { artifactsDir: this.#options.artifactsDir } : {}),
 			});
@@ -307,6 +333,7 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 			sessionId: this.#options.sessionId,
 			cwd: this.#options.cwd,
 			...(sessionEnv ? { sessionEnv } : {}),
+			...(this.#options.killGuard === true ? { killGuard: { protectedPids: killGuardProtectedPids() } } : {}),
 			connection,
 			onMessage,
 			...lifecycle,

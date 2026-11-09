@@ -1,3 +1,13 @@
+import { EPOCH_REGISTRY } from "../execution/testing/epoch-registry.ts";
+import { HAND_REGISTRY } from "../execution/testing/hand-registry.ts";
+import { KILL_HOOK_DECLARATIONS } from "../execution/testing/kill-hook.ts";
+import { BATCH_REGISTRY } from "../execution/testing/batch-registry.ts";
+import { LEDGER_REGISTRY } from "../execution/testing/ledger-registry.ts";
+import { LIFECYCLE_REGISTRY } from "../execution/testing/lifecycle-registry.ts";
+import { NEST_REGISTRY } from "../execution/testing/nest-registry.ts";
+import { WAKE_EXEC_REGISTRY } from "../execution/testing/wake-registry.ts";
+import { SEQ_REGISTRY } from "../execution/testing/seq-registry.ts";
+
 export const ADAPTER_KINDS = ["store", "wake", "transport", "executor", "host"] as const;
 
 export type AdapterKind = (typeof ADAPTER_KINDS)[number];
@@ -46,6 +56,14 @@ const wakeCase = (id: string, impl: string, expected: string): RegisteredCase =>
 	adapters: ["store", "wake"],
 	expected,
 });
+const KILL_HOOK_IMPL = "packages/agent/src/execution/testing/kill-hook.ts";
+const HOOK_REGISTRY: readonly RegisteredCase[] = KILL_HOOK_DECLARATIONS.map(({ id, expected }) => ({
+	id,
+	impl: KILL_HOOK_IMPL,
+	intro: "#5726",
+	adapters: ["transport", "executor"],
+	expected,
+}));
 const storeCase = (id: string, impl: string, expected: string): RegisteredCase => ({
 	id,
 	impl,
@@ -55,6 +73,12 @@ const storeCase = (id: string, impl: string, expected: string): RegisteredCase =
 });
 
 export const CONFORMANCE_REGISTRY: readonly RegisteredCase[] = [
+	...LEDGER_REGISTRY,
+	...BATCH_REGISTRY,
+	...SEQ_REGISTRY,
+	...NEST_REGISTRY,
+	...WAKE_EXEC_REGISTRY,
+	...LIFECYCLE_REGISTRY,
 	storeCase(
 		"STORE-01",
 		STORE_CASES_IMPL,
@@ -203,7 +227,7 @@ export const CONFORMANCE_REGISTRY: readonly RegisteredCase[] = [
 		"a stalled or long lane in A does not starve B: B is delivered within a bounded number of A's frames",
 	),
 	transportCase(
-		"MULTI-FAIR-02",
+		"MULTI-FAIR-03",
 		MULTI_CASES_IMPL,
 		"a frame lost on one lane is resent on that lane's own deadline: another lane's ACK progress never postpones it",
 	),
@@ -212,4 +236,7 @@ export const CONFORMANCE_REGISTRY: readonly RegisteredCase[] = [
 	faultCase(3, "laggy"),
 	faultCase(4, "flap"),
 	faultCase(5, "drop-reattach"),
+	...HAND_REGISTRY,
+	...EPOCH_REGISTRY,
+	...HOOK_REGISTRY,
 ];

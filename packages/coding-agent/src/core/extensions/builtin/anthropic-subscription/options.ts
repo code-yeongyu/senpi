@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Api, Context, Model, SimpleStreamOptions, ThinkingBudgets, ThinkingLevel } from "@earendil-works/pi-ai";
 import { CONFIG_DIR_NAME, getAgentDir } from "../../../../config.ts";
@@ -25,7 +26,8 @@ import {
 import { loadOverrideSystemPrompt, resolveCustomSystemPrompt } from "./system-prompt.ts";
 import { BUILTIN_SDK_TOOLS, canUseTool, HOST_TOOL_DENIAL_HOOKS } from "./tools.ts";
 
-export type AnthropicSubscriptionAuthLane = AnthropicSubscriptionTokenInjection;
+/** `claude-cli`: a CLI-store account, whose own config dir links `projects` to the shared transcript root (senpi#4436). */
+export type AnthropicSubscriptionAuthLane = AnthropicSubscriptionTokenInjection | "claude-cli";
 
 export interface AnthropicSubscriptionQueryOptionsInput {
 	readonly model: Model<Api>;
@@ -159,11 +161,25 @@ function claudeSkillsPath(path: string, cwd: string): string {
 	] as const;
 	for (const [root, claudeRoot] of targets) {
 		const inside = relative(root, path);
-		if (inside === "") return claudeRoot;
-		if (!/^\.\.(?:[\\/]|$)/.test(inside) && !isAbsolute(inside))
-			return `${claudeRoot}/${inside.split(sep).join("/")}`;
+		if (inside !== "" && (/^\.\.(?:[\\/]|$)/.test(inside) || isAbsolute(inside))) continue;
+		const candidate = inside === "" ? claudeRoot : `${claudeRoot}/${inside.split(sep).join("/")}`;
+		return resolvesToSameFile(candidate, path, cwd, homedir()) ? candidate : path;
 	}
 	return path;
+}
+
+function expandDisplayPath(candidate: string, cwd: string, home: string): string {
+	if (candidate === "~") return home;
+	if (candidate.startsWith("~/")) return join(home, candidate.slice(2));
+	return isAbsolute(candidate) ? candidate : resolve(cwd, candidate);
+}
+
+function resolvesToSameFile(candidate: string, path: string, cwd: string, home: string): boolean {
+	try {
+		return realpathSync(expandDisplayPath(candidate, cwd, home)) === realpathSync(expandDisplayPath(path, cwd, home));
+	} catch {
+		return false;
+	}
 }
 
 // The catalog names each skill root once in `<skill_roots>` and locates skills by `rN/` alias, so the roots carry the

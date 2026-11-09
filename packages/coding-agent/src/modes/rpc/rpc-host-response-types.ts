@@ -4,7 +4,45 @@ import type { RpcProtocolInfo } from "./rpc-protocol-info-types.ts";
 import type { RpcSessionState } from "./rpc-session-state-types.ts";
 import type { SessionStatusRecord } from "./session-status.ts";
 
+/**
+ * Whether the machines a session depends on are reachable (C2, K7; senpi#5652). Only a headless host built with a
+ * presence binding reports it: `state` is the owning machine's (the placement's) reachability, `paused` is true while
+ * any machine the session waits on is offline, and `held` counts the steps parked until those machines reconnect.
+ */
+export interface RpcSessionPresence {
+	readonly placement: string;
+	readonly state: "online" | "offline";
+	readonly paused: boolean;
+	readonly waitingOn: readonly { readonly machine: string; readonly role: "owner" | "hand" }[];
+	readonly held: number;
+}
+
 export type RpcHostCommandResponse =
+	| {
+			id?: string;
+			type: "response";
+			command: "list_hands";
+			success: true;
+			data: {
+				hands: ReadonlyArray<{ device: string; label: string; platform: string; reachable: boolean }>;
+				/** Present when the command named a session: its recorded hand, `null` when local. */
+				selected?: string | null;
+			};
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "select_hand";
+			success: true;
+			data: { sessionId: string; selected: string | null };
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "cancel_attempt";
+			success: true;
+			data: { outcome: "cancelled" | "already_complete" | "unknown" };
+	  }
 	| {
 			id?: string;
 			type: "response";
@@ -17,7 +55,7 @@ export type RpcHostCommandResponse =
 			type: "response";
 			command: "open_session";
 			success: true;
-			data: { sessionId: string; state: RpcSessionState; attached?: boolean };
+			data: { sessionId: string; state: RpcSessionState; attached?: boolean; presence?: RpcSessionPresence };
 	  }
 	| { id?: string; type: "response"; command: "close_session"; success: true; data: Record<string, never> }
 	| {
@@ -93,6 +131,7 @@ export type RpcHostCommandResponse =
 					idleMs?: number;
 					/** The session's tool child (senpi#3566): `none` until its first job, then `live` or `exited`. */
 					tool_child?: { state: "none" | "live" | "exited"; generation?: number; pid?: number };
+					presence?: RpcSessionPresence;
 				}>;
 			};
 	  }
