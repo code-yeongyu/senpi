@@ -120,19 +120,28 @@ function formatGatedNoAnswer(
 	words: WordPlacement,
 	cancellationReason?: string,
 ): string {
-	const reason =
-		cancellationReason ??
-		(response.status === "timed_out"
-			? `The user did not answer within ${Math.round((response.autoResolvedAfterMs ?? DEFAULT_ASK_USER_TIMEOUT_MS) / 60_000)} minutes. (사용자가 답변을 안하고 timeout 으로 종료됨)`
-			: response.status === "cancelled"
-				? "The user dismissed the question."
-				: response.status === "orphaned-after-restart"
-					? "The pending question could not be resumed after a restart."
-					: "This session has no user attached (subagent or headless).");
+	const partial =
+		(response.status === "answered" || response.status === "comment-submitted") && response.unanswered.length > 0;
+	const reason = partial
+		? "The user answered only part of the question."
+		: (cancellationReason ??
+			(response.status === "timed_out"
+				? `The user did not answer within ${Math.round((response.autoResolvedAfterMs ?? DEFAULT_ASK_USER_TIMEOUT_MS) / 60_000)} minutes. (사용자가 답변을 안하고 timeout 으로 종료됨)`
+				: response.status === "cancelled"
+					? "The user dismissed the question."
+					: response.status === "orphaned-after-restart"
+						? "The pending question could not be resumed after a restart."
+						: "This session has no user attached (subagent or headless)."));
 	const lines = [reason];
 	const selected = answeredLines(response, questions, words);
-	if (selected.length > 0)
-		lines.push(...selectedBlock("Before going idle the user had selected (not an answer):", selected));
+	if (selected.length > 0) {
+		// A partial answer's answered lines are real answers, not idle
+		// selections, so they stand on their own; the unanswered questions
+		// are named below and the gated action is refused (senpi#2966).
+		if (partial) lines.push(...selected);
+		else lines.push(...selectedBlock("Before going idle the user had selected (not an answer):", selected));
+	}
+	if (partial) lines.push(...unansweredLine(response, questions));
 	lines.push(GATED_NO_ANSWER);
 	return lines.join("\n");
 }
@@ -151,7 +160,12 @@ export function formatGatedCancellation(
 }
 
 function formatBody(response: QuestionResponse, questions: Questions, words: WordPlacement, required = false): string {
-	if (required && response.status !== "answered" && response.status !== "comment-submitted") {
+	// A required call with any unanswered question refuses the gated action,
+	// even when it settled as answered/comment-submitted (senpi#2966).
+	if (
+		required &&
+		((response.status !== "answered" && response.status !== "comment-submitted") || response.unanswered.length > 0)
+	) {
 		return formatGatedNoAnswer(response, questions, words);
 	}
 	switch (response.status) {
