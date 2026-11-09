@@ -118,7 +118,7 @@ function readConfiguredNpmCommand(): string[] | undefined {
 
 async function runCommand(step: SelfUpdateBootstrapCommand): Promise<void> {
 	await new Promise<void>((resolve, reject) => {
-		const child = spawn(step.command, step.args, { stdio: "inherit" });
+		const child = spawn(step.command, step.args, { stdio: "inherit", windowsHide: true });
 		child.on("error", (error) => {
 			reject(error);
 		});
