@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	cachedExtensionFactory,
 	clearExtensionCache,
@@ -11,6 +11,18 @@ import {
 	extensionModuleImporter,
 	rememberExtensionFactory,
 } from "../../src/core/extensions/extension-module-cache.ts";
+
+const fsSpies = vi.hoisted(() => ({ readFileSync: undefined as undefined | { mock: { calls: unknown[][] } } }));
+vi.mock("node:fs", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:fs")>();
+	const readFileSync = vi.fn(actual.readFileSync);
+	fsSpies.readFileSync = readFileSync;
+	return { ...actual, readFileSync };
+});
+
+function readsOf(files: readonly string[]): number {
+	return (fsSpies.readFileSync?.mock.calls ?? []).filter((call) => files.includes(String(call[0]))).length;
+}
 
 const roots: string[] = [];
 
@@ -56,6 +68,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	vi.useRealTimers();
 	clearExtensionCache();
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
@@ -81,6 +94,35 @@ describe("extension module cache", () => {
 		// Then
 		expect(reused).toBe(factory);
 		expect(extensionModuleGenerationCount() - before).toBe(1);
+	});
+
+	// senpi#6256: every cached lookup (one per extension per session open) re-hashed the whole compiled graph.
+	it("re-reads no compiled source on a warm lookup, and still drops the generation on a later edit", async () => {
+		// Given: a generation whose two sources settled long before the clock reads them.
+		const root = fixtureRoot();
+		const entry = writeSource(join(root, "extension.ts"), "export default () => {};\n");
+		const dependency = writeSource(join(root, "dependency.ts"), "export const value = 1;\n");
+		const { importer } = fakeImporter([entry, dependency]);
+		const factory = () => undefined;
+		await extensionModuleImporter(async () => importer);
+		rememberExtensionFactory(entry, factory, importer);
+		vi.useFakeTimers({ toFake: ["Date"] });
+		vi.setSystemTime(Date.now() + 60_000);
+		expect(cachedExtensionFactory(entry)).toBe(factory);
+		const readsBefore = readsOf([entry, dependency]);
+
+		// When: the next session opens.
+		const warm = cachedExtensionFactory(entry);
+
+		// Then: served from the proven sources without reading either one again.
+		expect(warm).toBe(factory);
+		expect(readsOf([entry, dependency]) - readsBefore).toBe(0);
+
+		// When: the dependency is edited after it was proven.
+		writeSource(dependency, "export const value = 22;\n");
+
+		// Then
+		expect(cachedExtensionFactory(entry)).toBeUndefined();
 	});
 
 	it("drops the generation when the entry source changes", async () => {
