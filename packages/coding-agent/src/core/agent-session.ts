@@ -8466,11 +8466,16 @@ export class AgentSession {
 			this._appendCustomMessage(appMessage);
 			this.externalAdmission.observePersisted(appMessage);
 		} catch (error) {
-			if (deliveryIdOf(appMessage) !== undefined) {
-				const index = this.agent.state.messages.lastIndexOf(appMessage);
-				if (index >= 0) this.agent.state.messages.splice(index, 1);
-			}
-			this.externalAdmission.observeRefused(appMessage, error instanceof Error ? error.message : String(error));
+			// The session file refused the entry: the message leaves the context too, so the context matches the
+			// file, and the failure follows the same contract as the main persistence path — it is recorded,
+			// logged, and emitted (senpi#2972). This holds for non-delivery messages as well as deliveries.
+			const errorMessage = error instanceof Error ? error.message : String(error);
+			const index = this.agent.state.messages.lastIndexOf(appMessage);
+			if (index >= 0) this.agent.state.messages.splice(index, 1);
+			this._transcriptWriteFailures.record(appMessage, error);
+			this._sessionLogger.warn("transcript_write_failed", { role: appMessage.role, error: errorMessage });
+			this._emit({ type: "transcript_write_failed", role: appMessage.role, errorMessage });
+			this.externalAdmission.observeRefused(appMessage, errorMessage);
 			this._takePersistWatcher(appMessage)?.failed(error);
 		}
 	}
@@ -8573,12 +8578,22 @@ export class AgentSession {
 			appMessage.details,
 			{ recoveryOwner: recoveryCarrier(start) },
 		);
-		this._emitEntryAppended(entryId);
-		this._recordWrittenTicket(appMessage, entryId);
-		this._takePersistWatcher(appMessage)?.persisted(entryId);
-		this._incrementMessageRevision();
-		this._emit(start);
-		this._emit({ type: "message_end", message: appMessage });
+		// The entry is written: only a failure of the write itself counts as refused. Listener errors from the
+		// notifications below are handled separately, so a throwing listener cannot surface as a refused write
+		// and settle a persisted delivery as failed (senpi#2972).
+		try {
+			this._emitEntryAppended(entryId);
+			this._recordWrittenTicket(appMessage, entryId);
+			this._takePersistWatcher(appMessage)?.persisted(entryId);
+			this._incrementMessageRevision();
+			this._emit(start);
+			this._emit({ type: "message_end", message: appMessage });
+		} catch (error) {
+			this._sessionLogger.warn("custom_message_listener_failed", {
+				customType: appMessage.customType,
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
 	}
 
 	private _flushPendingCustomMessages(): void {
