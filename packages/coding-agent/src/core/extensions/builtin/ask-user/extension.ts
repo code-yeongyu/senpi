@@ -1,5 +1,6 @@
 import { APP_NAME } from "../../../../config.ts";
 import type { ExtensionAPI, ExtensionContext, QuestionCancelOrigin } from "../../types.ts";
+import { endEscapeResidueTurn, freshEscapeResidueRetry } from "./escape-residue.ts";
 import { pickVariant, TOOL_NAMES } from "./family.ts";
 import { deliverQueuedQuestionOutcomes, getPendingQuestions } from "./registry.ts";
 import { resumeDanglingQuestion } from "./resume.ts";
@@ -24,7 +25,7 @@ export default function askUserExtension(pi: ExtensionAPI): void {
 			// In TUI mode interactive-mode's text dispatch handles /answer first.
 		},
 	});
-	const state: AskUserState = { timedOut: false, unavailable: false };
+	const state: AskUserState = { timedOut: false, unavailable: false, escapeResidue: freshEscapeResidueRetry() };
 	let registered = false;
 	const cancelPending = (
 		ctx: ExtensionContext,
@@ -57,6 +58,7 @@ export default function askUserExtension(pi: ExtensionAPI): void {
 	pi.on("session_start", async (event, ctx) => {
 		state.timedOut = false;
 		state.unavailable = false;
+		state.escapeResidue = freshEscapeResidueRetry();
 		const sessionId = ctx.sessionManager.getSessionId();
 		for (const entry of getPendingQuestions(sessionId)) entry.rebind(pi, ctx, state);
 		deliverQueuedQuestionOutcomes(sessionId, pi, ctx);
@@ -72,8 +74,12 @@ export default function askUserExtension(pi: ExtensionAPI): void {
 	pi.on("model_select", async (event, ctx) => {
 		sync(ctx, event.model);
 	});
+	pi.on("turn_end", () => {
+		endEscapeResidueTurn(state.escapeResidue);
+	});
 	pi.on("agent_end", async () => {
 		state.timedOut = false;
+		state.escapeResidue = freshEscapeResidueRetry();
 	});
 	pi.on("session_shutdown", async (event, ctx) => {
 		if (event.reason === "reload") {

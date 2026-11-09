@@ -23,6 +23,7 @@ import type {
 	AgentToolCallOutcome,
 	AgentToolResult,
 	AgentToolUpdateCallback,
+	DeviceFiles,
 	ThinkingLevel,
 	ToolExecutionMode,
 } from "@earendil-works/pi-agent-core";
@@ -121,11 +122,13 @@ import type {
 import type { ReadClassifier } from "../tools/read-classifiers.ts";
 import type { ModelRoute, ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
 import type { McpServerDeclaration } from "./builtin/mcp/config-schema.ts";
+import type { RpcRemoteSource } from "./builtin/terminal/rpc-remote-source.ts";
 import type { McpServerRegistry } from "./mcp-server-registry.ts";
 import type { PermissionPresetName } from "./builtin/permission-system/types.ts";
 import type { EvalHandleHost } from "./eval-handle-host.ts";
 import type { ExtensionKernelTools } from "./kernel-tools-context.ts";
 import type { SessionControlActions, SessionControlWakeEvent } from "./session-control-types.ts";
+import type { SessionDialogApi } from "./session-dialog-api.ts";
 import type { UserActivityKind } from "./user-activity.ts";
 
 export type { ExecOptions, ExecResult } from "../exec.ts";
@@ -161,6 +164,11 @@ export interface ExtensionUIDialogOptions {
 	toolCallId?: string;
 	/** Set with `toolCallId` when another tool (for example a codemode script) issued that call. */
 	parentToolCallId?: string;
+	/**
+	 * `session`: address the dialog to every client attached to the session instead of the connection whose command
+	 * is running, so a prompt raised after that command returned still reaches someone who can answer. RPC field.
+	 */
+	audience?: "session";
 }
 
 /** A guarded private single-line input; callers on older hosts must check capabilities first. */
@@ -363,7 +371,7 @@ export interface ExtensionUIContext {
 	getEditorText(): string;
 
 	/** Show a multi-line editor for text editing. */
-	editor(title: string, prefill?: string): Promise<string | undefined>;
+	editor(title: string, prefill?: string, opts?: ExtensionUIDialogOptions): Promise<string | undefined>;
 
 	/** Stack additional autocomplete behavior on top of the built-in provider. */
 	addAutocompleteProvider(factory: AutocompleteProviderFactory): void;
@@ -560,6 +568,12 @@ export interface ExtensionContext {
 	readonly browserEngine?: BrowserEngine;
 	/** Caller env the opener gave THIS session (`open_session.env`, senpi#4381); absent when it gave none. */
 	readonly sessionEnv?: Readonly<Record<string, string>>;
+	/**
+	 * The files of the device this session's tools run on (senpi#5839): the local filesystem on a fused session and on a
+	 * hand, the hand's file channel on the loop side of a split session. Data that must stay on the device goes through
+	 * it. Optional for contexts built outside a runner; every runner-built context has it.
+	 */
+	readonly deviceFiles?: DeviceFiles;
 	/** Model registry for API key resolution */
 	modelRegistry: ModelRegistry;
 	/** Current model (may be undefined) */
@@ -2069,6 +2083,11 @@ export interface InputEvent {
 	attribution: InputAttribution;
 	/** How the input will be delivered during streaming, or undefined when idle */
 	streamingBehavior?: "steer" | "followUp";
+	/**
+	 * Set when the input is a thread call from another session: its chain hop count (decision K8). A thread call this
+	 * session sends next carries one more.
+	 */
+	chainCount?: number;
 }
 
 /** Fired after interception and admission determine ownership of an input. */
@@ -2975,6 +2994,14 @@ export interface ExtensionAPI {
 	getPermissionPreset(): PermissionPresetName | undefined;
 
 	/**
+	 * Dialogs addressed to every client attached to this session, not only to the connection whose command is
+	 * running: a prompt raised after that command returned (a background child's permission request a task runner
+	 * forwards) still reaches someone who can answer. The first answer wins. Secret inputs stay with the raising
+	 * connection. In the terminal UI they show like any dialog.
+	 */
+	sessionDialog: SessionDialogApi;
+
+	/**
 	 * Every subscription account's latest limit windows: the records `get_subscription_limits` serves, fed by
 	 * the engine's usage poll and by turns (senpi#3684). An account nothing has reported for is absent.
 	 */
@@ -3009,6 +3036,12 @@ export interface ExtensionAPI {
 
 	/** Register a compact read classifier; removed on unregister, failed load, or runtime invalidation. */
 	registerReadClassifier(classifier: ReadClassifier): () => void;
+
+	/**
+	 * Serve `monitor` rpc targets on another device (`<device>/<session>`, `<device>/*`). The latest registration
+	 * wins; removed on unregister, failed load, or runtime invalidation. Without one, such a target is refused.
+	 */
+	registerRpcRemoteSource(source: RpcRemoteSource): () => void;
 
 	// =========================================================================
 	// Actions
@@ -3791,6 +3824,7 @@ export interface ExtensionContextActions {
 	getAskUserSettings?: () => { enabled: boolean; timeoutMinutes: number };
 	getBrowserEngine?: () => BrowserEngine | undefined;
 	getSessionEnv?: () => Readonly<Record<string, string>> | undefined;
+	getDeviceFiles?: () => DeviceFiles;
 	getImageSettings: () => { autoResize: boolean; blockImages: boolean };
 	sessionSettings: ExtensionSessionSettings;
 	compact: (options?: CompactOptions) => void;

@@ -1,4 +1,4 @@
-const SENPI_MEMORY_INTERNALS = Set([:senpi_current_cell, :senpi_connection, :senpi_frame_io, :senpi_stdout_capture, :senpi_stderr_capture, :senpi_protocol_stdin])
+const SENPI_MEMORY_INTERNALS = Set([:senpi_current_cell, :senpi_cell_token, :senpi_connection, :senpi_frame_io, :senpi_stdout_capture, :senpi_stderr_capture, :senpi_protocol_stdin])
 
 const SENPI_SIZER_SAMPLE = 1_000
 const SENPI_SIZER_NODE_BUDGET = 5_000

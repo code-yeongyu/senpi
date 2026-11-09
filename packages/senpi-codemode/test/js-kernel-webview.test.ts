@@ -97,6 +97,7 @@ async function warmUpChromeCell(): Promise<void> {
 		const retireMs = Math.round(performance.now() - retireStartedAt);
 		// Closing the kernel retires the Chrome it used; check that on the failure path too.
 		leftover = await bunChromeChildren();
+		chromeLeftByWarmUp = leftover;
 		const path = process.env.SENPI_WEBVIEW_READINESS_LOG;
 		if (path)
 			appendFileSync(
@@ -108,17 +109,39 @@ async function warmUpChromeCell(): Promise<void> {
 	expect(leftover).toEqual([]);
 }
 
+// senpi#5927: the file-level hook records a warm-up failure instead of throwing it, which would skip every case.
+// Each case that uses Chrome rethrows it, naming the stage, while the cases that never use Chrome still run.
+let chromeWarmUp: Promise<Error | undefined> | undefined;
+// A failed warm-up reports the Chrome it left; the per-case check below looks only for Chrome a case left.
+let chromeLeftByWarmUp: readonly number[] = [];
+
+function warmUpChromeOnce(): Promise<Error | undefined> {
+	chromeWarmUp ??= warmUpChromeCell().then(
+		() => undefined,
+		(error: unknown) => (error instanceof Error ? error : new Error(String(error))),
+	);
+	return chromeWarmUp;
+}
+
+async function requireChromeWarmUp(): Promise<void> {
+	const failure = await warmUpChromeOnce();
+	if (failure) throw new Error(`chrome warm-up failed, so this chrome-backed case did not run: ${failure.message}`);
+}
+
+// The default backend is WebKit on macOS and Chrome on Linux and Windows.
+const defaultBackendIsChrome = process.platform !== "darwin";
+
 describe.skipIf(!bunWebViewAvailable)("Bun.WebView from an eval cell", { timeout: TEST_TIMEOUT_MS }, () => {
 	beforeAll(async () => {
 		page = await serveFixturePage();
-		await warmUpChromeCell();
+		await warmUpChromeOnce();
 	}, WARM_UP_TIMEOUT_MS);
 
 	// Closing the kernel releases its views and retires the Chrome they used, and resolves once that
 	// Chrome is gone; it runs even when the test failed, so nothing reaches the next test.
 	afterEach(async () => {
 		await Promise.allSettled(kernels.splice(0).map((kernel) => kernel.close()));
-		expect(await bunChromeChildren()).toEqual([]);
+		expect((await bunChromeChildren()).filter((pid) => !chromeLeftByWarmUp.includes(pid))).toEqual([]);
 	}, TEST_TIMEOUT_MS);
 
 	afterAll(async () => {
@@ -126,6 +149,7 @@ describe.skipIf(!bunWebViewAvailable)("Bun.WebView from an eval cell", { timeout
 	});
 
 	it("drives a chrome-backed view: navigate, evaluate, click, screenshot", async () => {
+		await requireChromeWarmUp();
 		const value = await cell(
 			[
 				`const view = new Bun.WebView({ backend: "chrome", width: 640, height: 480 });`,
@@ -151,6 +175,7 @@ describe.skipIf(!bunWebViewAvailable)("Bun.WebView from an eval cell", { timeout
 	});
 
 	it("serves the default backend from the main-thread service on every platform", async () => {
+		if (defaultBackendIsChrome) await requireChromeWarmUp();
 		const value = await cell(
 			[
 				`await using view = new Bun.WebView({ width: 320, height: 240 });`,
@@ -167,6 +192,7 @@ describe.skipIf(!bunWebViewAvailable)("Bun.WebView from an eval cell", { timeout
 	});
 
 	it('proxies the WebView named by `import { WebView } from "bun"`, with console capture and raw CDP', async () => {
+		await requireChromeWarmUp();
 		const value = await cell(
 			[
 				`import { WebView } from "bun";`,
@@ -185,6 +211,7 @@ describe.skipIf(!bunWebViewAvailable)("Bun.WebView from an eval cell", { timeout
 	it.each(["default", "chrome"])(
 		"walks the %s-backend view's history with goBack() and goForward()",
 		async (backend) => {
+			if (backend === "chrome" || defaultBackendIsChrome) await requireChromeWarmUp();
 			// WebKit acknowledges history commands before navigation finishes, while Chrome emits
 			// onNavigated at frame commit, before its command promise clears the navigation slot.
 			// Wait for both signals so neither backend starts the next command too early.
