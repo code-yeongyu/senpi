@@ -12,7 +12,9 @@ import { answerWarm } from "./host-warm.ts";
 import { answerRecoveryPage, answerReleaseRecovery } from "./recovery-page-command.ts";
 
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
+import { compactTransportDisabled } from "./compact-transport-refusal.ts";
 import { RPC_ERROR_MISSING_SESSION_ID } from "./rpc-types.ts";
+import { answerListHands, answerSelectHand } from "./hand-selection-commands.ts";
 import { attachSession, reclaimSession, releaseAttachment } from "./session-attachment-commands.ts";
 import { attachmentGate } from "./session-attachment-gate.ts";
 import { runWithSessionAttribution } from "./session-attribution.ts";
@@ -27,6 +29,7 @@ import { answerListSessions, answerProtocolInfo, answerSubscriptionLimits } from
 import { acknowledgePrompt, otherRequestsSettled } from "./session-router-observation.ts";
 import { sweepDrain } from "./session-router-occupancy.ts";
 import { openWithBarrier } from "./session-router-open.ts";
+import { syncRetainedRecord } from "./session-router-residency.ts";
 import {
 	answerSetSessionContext,
 	answerSubscribeSessions,
@@ -105,9 +108,13 @@ export async function dispatch(
 		const outcome = await host.admissions.cancel(epoch, command.admissionId);
 		return { id: command.id, type: "response", command: "cancel_attempt", success: true, data: { outcome } };
 	}
+	if ((command.type === "reset_stream" || command.type === "cancel_attempt") && host.admissions === undefined)
+		return compactTransportDisabled(command);
 	if (command.type === "get_protocol_info") return answerProtocolInfo(host, command);
 	if (command.type === "get_subscription_limits") return answerSubscriptionLimits(command);
 	if (command.type === "list_sessions") return answerListSessions(host, command);
+	if (command.type === "list_hands") return answerListHands(host, command);
+	if (command.type === "select_hand") return answerSelectHand(host, command);
 	if (command.type === "detach_connection")
 		return detachConnection(command, host.writer.currentConnection(), (id) => releaseConnection(host, id));
 	if (command.type === "open_session") return openWithBarrier(host, command);
@@ -221,6 +228,8 @@ export async function dispatch(
 		return answerRecoveryPage(host.writer.recoveryPages, host.writer, command);
 	if (command.type === "release_recovery" && host.writer.recoveryEvents !== undefined)
 		return answerReleaseRecovery(host.writer.recoveryEvents, host.writer, command);
+	if (command.type === "get_recovery_page" || command.type === "release_recovery")
+		return compactTransportDisabled(command);
 	if (!command.sessionId) return error(command.id, command.type, RPC_ERROR_MISSING_SESSION_ID);
 	const sessionId = command.sessionId;
 	if (host.writer.isSessionSealed(sessionId) && host.registry.peek(sessionId)?.state === "open")
@@ -254,7 +263,11 @@ export function setSessionContext(
 		return notAttachedRefusal(command);
 	try {
 		const entry = host.registry.getForCommand(command.sessionId, command.type);
-		return answerSetSessionContext(command, entry, host.writer.status);
+		const answered = answerSetSessionContext(command, entry, host.writer.status);
+		// The record carries the overlay a restart reopens the session with (a terminal task_status
+		// is not reopened at all), so it follows each accepted patch.
+		if (answered.success) void syncRetainedRecord(host, command.sessionId, undefined);
+		return answered;
 	} catch (cause) {
 		return error(command.id, command.type, code(cause), detail(cause));
 	}

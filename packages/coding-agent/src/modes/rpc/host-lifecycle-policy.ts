@@ -69,18 +69,28 @@ export type IdleExitDecision = "active" | "idle" | "exit";
  * Pure idle-window decision core. `update()` must be called with the CURRENT
  * activity state; the window only counts continuously idle time and any
  * activity resets it, so a busy host can never cross the threshold.
+ *
+ * `firstClientWithinMs` is the launcher's decision budget on a coordinated start (senpi#6001): until the
+ * first client attaches, or that budget has passed, the window has not begun, so a host whose own startup
+ * outlasts its idle window cannot exit before the ensure that started it has probed it.
  */
 export class IdleExitDecider {
 	private idleSince: number | undefined;
+	private firstClientBy: number | undefined;
 	private readonly now: () => number;
 	readonly idleExitMs: number;
 
-	constructor(idleExitMs: number, now: () => number = Date.now) {
+	constructor(idleExitMs: number, now: () => number = Date.now, firstClientWithinMs?: number) {
 		this.idleExitMs = idleExitMs;
 		this.now = now;
+		this.firstClientBy = firstClientWithinMs === undefined ? undefined : now() + firstClientWithinMs;
 	}
 
 	update(activity: HostActivity): IdleExitDecision {
+		// Only a client ends the wait for the first one: an unknown observer counts as an active turn at startup.
+		if (activity.connections > 0) this.firstClientBy = undefined;
+		if (this.firstClientBy !== undefined && this.now() < this.firstClientBy) return "active";
+		this.firstClientBy = undefined;
 		// Any attachment or active turn both holds the host open and resets the
 		// window, so only CONTINUOUS idle can ever cross the threshold.
 		if (activity.connections > 0 || activity.activeTurns > 0) {

@@ -1,9 +1,9 @@
 {
 	"methodClassesVersion": 1,
-	"methodClassesDigest": "4df5316e9c2712173b8338fdeb1bb1a78ae1f2c3da8b8ac694e1f3cc7c8382ed",
+	"methodClassesDigest": "7ea18de0fb5d28f89aabdc17cbaca72e973cdea7d5928fd82d91ccced025000e",
 	"sampleId": "00000000-0000-7000-8000-000000000000",
 	"samplePathRoot": "/nonexistent/senpi-rpc-inbound-sample",
-	"methodCount": 116,
+	"methodCount": 124,
 	"methods": [
 		{
 			"method": "abort",
@@ -92,6 +92,23 @@
 				"type": "account_reset",
 				"provider": "rpc-sample-provider",
 				"name": "rpc-sample-account"
+			}
+		},
+		{
+			"method": "admit_external_message",
+			"class": "drive",
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "admit_external_message",
+				"deliveryId": "00000000-0000-7000-8000-000000000000",
+				"text": "Sample delivery.",
+				"sender": {
+					"kind": "agent",
+					"session_id": "00000000-0000-7000-8000-000000000000"
+				},
+				"deliverAs": "followUp",
+				"whenIdle": "queue"
 			}
 		},
 		{
@@ -535,6 +552,24 @@
 			}
 		},
 		{
+			"method": "get_project_settings",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "get_project_settings"
+			}
+		},
+		{
+			"method": "get_project_trust",
+			"class": "observe",
+			"sampleClass": "observe",
+			"connectionLocal": false,
+			"sample": {
+				"type": "get_project_trust"
+			}
+		},
+		{
 			"method": "get_protocol_info",
 			"class": "observe",
 			"sampleClass": "observe",
@@ -661,6 +696,15 @@
 			"connectionLocal": false,
 			"sample": {
 				"type": "interrupt"
+			}
+		},
+		{
+			"method": "list_hands",
+			"class": "observe",
+			"sampleClass": "observe",
+			"connectionLocal": false,
+			"sample": {
+				"type": "list_hands"
 			}
 		},
 		{
@@ -933,6 +977,17 @@
 			}
 		},
 		{
+			"method": "select_hand",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "select_hand",
+				"sessionId": "00000000-0000-7000-8000-000000000000",
+				"device": null
+			}
+		},
+		{
 			"method": "send_custom_message",
 			"class": "device_admin",
 			"sampleClass": "device_admin",
@@ -1017,13 +1072,45 @@
 		},
 		{
 			"method": "set_model",
-			"class": "device_admin",
+			"class": "dynamic",
+			"dynamicVersion": 1,
 			"sampleClass": "device_admin",
 			"connectionLocal": false,
 			"sample": {
 				"type": "set_model",
 				"provider": "rpc-sample-provider",
 				"modelId": "rpc-sample-model"
+			}
+		},
+		{
+			"method": "set_permission_preset",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "set_permission_preset",
+				"permissionPreset": "ask"
+			}
+		},
+		{
+			"method": "set_project_setting",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "set_project_setting",
+				"key": "defaultThinkingLevel",
+				"value": "minimal"
+			}
+		},
+		{
+			"method": "set_project_trust",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "set_project_trust",
+				"choice": "trust"
 			}
 		},
 		{

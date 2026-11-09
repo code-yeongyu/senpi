@@ -119,8 +119,23 @@ export type RpcSessionParkedEvent = {
 	sessionId: string;
 	/** Session file to reopen this session by. */
 	sessionPath: string;
-	/** `idle`: the idle sweep parked it; `unloaded`: `unload_session` did. Absent from older hosts. */
-	reason?: "idle" | "unloaded";
+	/**
+	 * `idle`: the idle sweep parked it; `unloaded`: `unload_session` did; `host_shutdown`: the host stopped with the session
+	 * retained, and the next host on the endpoint reopens it. Absent from older hosts.
+	 */
+	reason?: "idle" | "unloaded" | "host_shutdown";
+};
+
+/**
+ * Sent only to the connections a headless engine's quiet takeover let go (senpi#5732): this connection no longer holds
+ * the session, which goes on running for its new holder. Not the `session_released` transcript entry that
+ * `release_session` writes; that one is a session entry, this one is a connection record.
+ */
+export type RpcSessionReleasedEvent = {
+	type: "session_released";
+	/** Routing handle this connection held; another client holds it now. */
+	sessionId: string;
+	reason: "taken_over";
 };
 
 /**
