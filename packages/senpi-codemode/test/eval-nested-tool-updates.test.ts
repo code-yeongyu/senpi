@@ -143,6 +143,13 @@ describe("Given a cell that awaits a nested tool streaming partial results (#616
 				expect(settled.details.cells?.[0]?.output).not.toContain("tick-");
 				const ticksSeen = new Set(updates.flatMap((update) => update.text.match(/tick-\d/g) ?? []));
 				expect([...ticksSeen].sort()).toEqual(["tick-1", "tick-2", "tick-3"]);
+				// #6257: once the last tick is live, no update may show the running cell with neither the ticks nor
+				// the cell's own output (a settled nested call is replaced by the next real update, never by a blank).
+				const lastTick = updates.findIndex((update) => update.text.includes(`tick-${TICKS}`));
+				const blanks = updates
+					.slice(lastTick)
+					.filter((update) => !update.text.includes(`tick-${TICKS}`) && !update.text.includes("ticker done"));
+				expect(blanks).toEqual([]);
 			},
 			120_000,
 		);
