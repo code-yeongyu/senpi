@@ -6,22 +6,26 @@ import type {
 	OpenAICompletionsCompat,
 	ProviderEnv,
 } from "../types.ts";
+import { classifyOpenAIPromptCacheLane, type OpenAIPromptCacheLane } from "./openai-prompt-cache-lane.ts";
 import { getProviderEnvValue } from "./provider-env.ts";
 
 export const PROMPT_CACHE_TTL_SHORT_SECONDS = 300;
 export const PROMPT_CACHE_TTL_LONG_SECONDS = 3600;
 /**
- * OpenAI GPT-5.6 and later: `prompt_cache_options.ttl` accepts only `"30m"`, and the cache stays
- * eligible at least 30 minutes after the latest write or reuse.
+ * OpenAI GPT-5.6 and later: the default `prompt_cache_options.ttl: "30m"` keeps the cache eligible at least
+ * 30 minutes after the latest write or reuse.
  */
 export const PROMPT_CACHE_TTL_OPENAI_EXTENDED_SECONDS = 1800;
+/** OpenAI GPT-5.6 and later on the Responses API: `prompt_cache_options.ttl: "12h"`, a 12-hour minimum lifetime. */
+export const PROMPT_CACHE_TTL_OPENAI_LONG_SECONDS = 43_200;
 
 /**
  * How long a provider promises to keep a prompt prefix cached.
  *
  * - `ttl`: an explicit expiry contract; `ttlSeconds` is the conservative lifetime after the last write or reuse.
- * - `best-effort`: the provider caches automatically but promises no expiry (direct DeepSeek clears unused entries
- *   after hours to days), so nothing needs to wake or ping solely to preserve the cache.
+ * - `best-effort`: the provider caches automatically with no expiry senpi can schedule around (direct DeepSeek
+ *   clears unused entries after hours to days; signed-in ChatGPT keeps its cache with no expiry), so nothing needs
+ *   to wake or ping solely to preserve the cache.
  * - `none`: caching is disabled or the lane has no known cache contract.
  */
 export type PromptCacheLifetime =
@@ -35,6 +39,13 @@ const BEST_EFFORT_PROMPT_CACHE: PromptCacheLifetime = { kind: "best-effort" };
 function ttl(ttlSeconds: number): PromptCacheLifetime {
 	return { kind: "ttl", ttlSeconds };
 }
+
+const OPENAI_LANE_PROMPT_CACHE_LIFETIME: Readonly<Record<OpenAIPromptCacheLane, PromptCacheLifetime>> = {
+	"chatgpt-subscription": BEST_EFFORT_PROMPT_CACHE,
+	"api-long": ttl(PROMPT_CACHE_TTL_OPENAI_LONG_SECONDS),
+	"api-extended": ttl(PROMPT_CACHE_TTL_OPENAI_EXTENDED_SECONDS),
+	"api-short": ttl(PROMPT_CACHE_TTL_SHORT_SECONDS),
+};
 
 function hostnameOf(baseUrl: string): string | undefined {
 	try {
@@ -437,23 +448,6 @@ function isDirectDeepSeekModel(model: Model<"openai-completions">): boolean {
 	return model.provider === "deepseek" || hostnameOf(model.baseUrl) === "api.deepseek.com";
 }
 
-/** GPT-5.6 and later (`gpt-5.6-*`, `gpt-5.10`, `gpt-6-*`, `gpt-7`, ...). */
-const OPENAI_EXTENDED_CACHE_MODEL_ID = /^gpt-(?:5\.(?:[6-9]|\d{2,})|(?:[6-9]|\d{2,})(?:\.\d+)?)(?:-|$)/i;
-
-/**
- * The OpenAI-operated Responses lanes (OpenAI API, Azure OpenAI, ChatGPT subscription) serving a GPT-5.6+
- * model, where OpenAI documents a cache lifetime of at least 30 minutes. Gateways that merely proxy the same
- * model ids keep the conservative short lifetime because their routing does not carry that contract.
- */
-function hasOpenAIExtendedPromptCache(model: Model<Api>): boolean {
-	if (model.api === "openai-responses") {
-		const responsesModel = model as Model<"openai-responses">;
-		if (responsesModel.compat?.supportsExplicitPromptCacheMode === true) return true;
-		if (responsesModel.provider !== "openai" && hostnameOf(responsesModel.baseUrl) !== "api.openai.com") return false;
-	}
-	return OPENAI_EXTENDED_CACHE_MODEL_ID.test(model.id);
-}
-
 /** Env that puts Claude Code on API-key, gateway or cloud billing, where it caches the main conversation for 5 minutes. */
 const CLAUDE_CODE_API_BILLING_ENV = [
 	"ANTHROPIC_API_KEY",
@@ -527,9 +521,7 @@ export function resolvePromptCacheLifetime(model: Model<Api>, env?: ProviderEnv)
 		case "azure-openai-responses": {
 			const retention = resolveOpenAIResponsesCacheRetention(model.cacheRetention, env);
 			if (retention === "none") return NO_PROMPT_CACHE;
-			return hasOpenAIExtendedPromptCache(model)
-				? ttl(PROMPT_CACHE_TTL_OPENAI_EXTENDED_SECONDS)
-				: ttl(PROMPT_CACHE_TTL_SHORT_SECONDS);
+			return OPENAI_LANE_PROMPT_CACHE_LIFETIME[classifyOpenAIPromptCacheLane(model, retention)];
 		}
 		default:
 			return NO_PROMPT_CACHE;
