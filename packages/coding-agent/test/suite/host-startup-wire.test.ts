@@ -97,8 +97,9 @@ describe("startup event wire (senpi#4602)", () => {
 	});
 
 	it.skipIf(process.platform === "win32")(
-		"releases the inherited fillers, keeps a slot the private table names, and strips the list",
+		"keeps a listed slot that holds no inherited filler socket, keeps a slot the private table names, and strips the list",
 		() => {
+			// The spawn test above proves real filler sockets are released; a listed slot holding a file is the runtime's own.
 			const [filler, privateSlot] = [openSync("/dev/null", "r"), openSync("/dev/null", "r")];
 			const env: NodeJS.ProcessEnv = {
 				SENPI_PRIVATE_FDS: JSON.stringify({ channel: privateSlot }),
@@ -111,17 +112,11 @@ describe("startup event wire (senpi#4602)", () => {
 			};
 			try {
 				releaseInheritedStartupFillers(env);
-				if (filler < STARTUP_EVENT_FD) expect(() => fstatSync(filler)).toThrow();
+				expect(() => fstatSync(filler)).not.toThrow();
 				expect(() => fstatSync(privateSlot)).not.toThrow();
 				expect(parseStartupHandOff(env.SENPI_RPC_HOST_STARTUP_EVENTS)?.fillers).toEqual([]);
 			} finally {
-				for (const fd of [filler, privateSlot]) {
-					try {
-						closeSync(fd);
-					} catch {
-						// Released above: already closed.
-					}
-				}
+				for (const fd of [filler, privateSlot]) closeSync(fd);
 			}
 		},
 	);
