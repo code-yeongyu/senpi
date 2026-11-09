@@ -39,8 +39,9 @@ class FakePi {
 	getActiveTools(): string[] {
 		return [...this.activeTools];
 	}
-	getAllTools(): readonly { readonly name: string }[] {
-		return this.tools.map((name) => ({ name }));
+	readonly evalExposed = new Set<string>();
+	getAllTools(): readonly { readonly name: string; readonly exposure?: string }[] {
+		return this.tools.map((name) => (this.evalExposed.has(name) ? { name, exposure: "eval" } : { name }));
 	}
 	setActiveTools(toolNames: string[]): void {
 		this.activeTools.clear();
@@ -323,6 +324,37 @@ describe("senpi-codemode extension factory", () => {
 			expect(tool.description).toContain("agent(");
 			expect(tool.description).toContain("output(");
 			expect(tool.description).toContain("<workflow>");
+		} finally {
+			await emit(pi, "session_shutdown", {}, ctx);
+			await rm(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps agent()/output() in the description when the task tool is eval-exposed and withheld from the model", async () => {
+		// Given a `task` tool registered with exposure "eval": the session hides it from the active list while eval exists
+		const cwd = await mkdtemp(join(tmpdir(), "senpi-codemode-evalspawns-"));
+		await mkdir(join(cwd, ".senpi"), { recursive: true });
+		await writeFile(
+			join(cwd, ".senpi", "codemode.json"),
+			JSON.stringify({ languages: { py: true, js: true, rb: false, jl: false } }),
+		);
+		const pi = new FakePi();
+		pi.tools.push("task");
+		pi.evalExposed.add("task");
+		const manager = new DisposableManager();
+		senpiCodemode(pi, { createSessionManager: () => manager });
+		const ctx = extensionContext(cwd);
+
+		try {
+			// When
+			await emit(pi, "session_start", { reason: "startup" }, ctx);
+
+			// Then the spawn helpers are still advertised: a cell reaches the withheld tool through executeTool
+			const tool = pi.registeredTool;
+			if (!tool) throw new Error("eval tool was not registered");
+			expect(pi.getActiveTools()).not.toContain("task");
+			expect(tool.description).toContain("agent(");
+			expect(tool.description).toContain("output(");
 		} finally {
 			await emit(pi, "session_shutdown", {}, ctx);
 			await rm(cwd, { recursive: true, force: true });
