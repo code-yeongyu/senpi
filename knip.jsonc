@@ -1561,6 +1561,7 @@
         "src/experimental/mini/main.ts",
         // QA drivers and benchmarks run by path.
         "scripts/**/*.mjs",
+        "scripts/bench-open-session.ts",
         "bench/*.ts",
         // Example extensions are loaded by path (`senpi -e <file>`), never imported. The examples with
         // their own package.json are separate workspaces.
