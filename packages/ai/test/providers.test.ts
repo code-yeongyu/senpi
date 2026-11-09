@@ -222,7 +222,6 @@ describe("builtin providers", () => {
 			["openrouter", "openai/gpt-5.6-terra"],
 		] as const;
 		const unsupported = [
-			["fireworks", "accounts/fireworks/models/nemotron-3-ultra-nvfp4"],
 			["openai", "gpt-4.1"],
 			["openai", "gpt-5.2"],
 			["anthropic", "claude-sonnet-4-5"],
@@ -245,6 +244,12 @@ describe("builtin providers", () => {
 			expect(models.getModel(provider, modelId), `${provider}/${modelId}`).not.toHaveProperty(
 				"compat.supportsMidConvoSystemMessages",
 			);
+		}
+		// Fireworks rows retire upstream often, so the negative side covers every non-K3 row the catalog has.
+		const fireworksWithoutKimiK3 = models.getModels("fireworks").filter((model) => !model.id.includes("kimi-k3"));
+		expect(fireworksWithoutKimiK3.length).toBeGreaterThan(0);
+		for (const model of fireworksWithoutKimiK3) {
+			expect(model, `fireworks/${model.id}`).not.toHaveProperty("compat.supportsMidConvoSystemMessages");
 		}
 	});
 

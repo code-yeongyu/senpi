@@ -1,3 +1,85 @@
+## 2026-11-06 - A stored Claude account with no name is a sign-in state, not a crypto TypeError (oh-my-openagent#12228)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/accounts.ts`: `isListedStoredSlot(slot)` also requires a non-empty string `name`, so the one listing rule shared by the lane, the RPC account list and the configured check never hands out an account it cannot name. New `unusableStoredSlotCount(credential)` counts the stored entries that rule drops.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-lane.ts`: `managedPool` refuses with `claude_account_unusable: a stored Claude account has no name, so no turn can use it; run /login anthropic-subscription to add a named account` when the lane defaulted to ambient only because every stored claude-cli account was unusable, instead of spawning the SDK against host credentials. A lane the user set to `ambient` explicitly (settings or `SENPI_CLAUDE_SDK_OAUTH_TOKEN_INJECTION`) is never refused.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/seat-digest.ts`: `seatDigest(accountName)` refuses a value that is not a non-empty string with that same named error rather than passing it to `createHmac(...).update(...)`.
+
+### Why
+
+- `auth.json` is read as JSON and cast, so a stored account entry with no `name` reached the lane as `accountName: undefined`, and the seat digest runs for every resident attempt: `createHmac(...).update(undefined)` threw `The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView. Received undefined` before any model call, on the main turn and on session-title generation alike, and model fallback repeated it at the same line on the next model. Signing in again could not clear it because the nameless entry stayed in the file and kept being selected (oh-my-openagent#12228).
+
+### Why an extension could not handle it
+
+- This builtin owns the managed account pool, its listing rule and the seat digest that identifies a seat in logs.
+
+### Expected merge conflict zones
+
+- LOW: `accounts.ts` (`isListedStoredSlot` and the new counter) and `seat-digest.ts`; `auth-lane.ts` only in the `managedPool` body, beside the ambient resolution.
+
+## 2026-11-06 - An unusable Claude account dir id is a sign-in state, not a turn failure (oh-my-openagent#12228)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/sign-in-again.ts`: new `isServableAccountSlot(slot)` - a stored CLI slot is servable only when no sign-in is required and its account dir id parses. `signInRequiredAccounts` now also reports a CLI slot whose `dirId` is unusable, as `login_expired`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-lane.ts`: the pre-failover filter drops every unservable slot through that predicate instead of only the `signInRequired` ones, so a pool that still has a readable account serves the turn and a pool with none fails with the sign-in prompt naming the unusable account.
+
+### Why
+
+- `accountDirFor` refuses an id of any other shape with `Invalid Claude account dir id`, and the lane selected such a slot first: the whole turn failed before the first model call, the error named no remedy, and model fallback repeated it on a sibling model (oh-my-openagent#12228). A stored slot with no usable dir holds no login this engine can read, which is what the sign-in prompt exists for.
+
+### Why an extension could not handle it
+
+- This builtin owns the managed account pool and its pre-failover selection filter.
+
+### Expected merge conflict zones
+
+- LOW: `sign-in-again.ts` (the predicate and `signInRequiredAccounts`) and the sign-in filter in `auth-lane.ts`.
+
+## 2026-11-06 - A rendered skill path names the copy the runtime loaded
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/options.ts`: `claudeSkillsPath` returns the Claude-form path only when it resolves to the same file as the skill path the runtime loaded (`realpathSync` on both sides, `~` expanded against home); otherwise the loaded absolute path is rendered unchanged.
+
+### Why
+
+- The rewrite was unconditional. Where `~/.claude/skills` is a symlink farm into a different install, the prompt named a skill file that install does not ship, so the model read another version's text or fell back to a same-named `SKILL.md` in the project.
+
+### Why an extension could not handle it
+
+- This file is the extension; the rewrite is part of its `preset-append` assembly.
+
+### Expected merge conflict zones
+
+- None upstream: the directory is fork-only. Inside the fork, `claudeSkillsPath` and its two call sites in `rewriteSkillsLocations`.
+
+## 2026-11-01 - A signed-out Claude CLI login needs sign-in again and heals itself (part of senpi#5350)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/accounts.ts`: `ClaudeCliAccountSlot.signInRequired` gains `"login_expired"`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-block-recovery.ts`: the recovery callback is now `claudeCliStatus`, which returns the `claude auth status` state instead of a boolean. A due `auth_error` re-probe that reports `signed_out` marks the slot `login_expired` and keeps the `auth_error` block (`blockedUntil = now + AUTH_BLOCK_REPROBE_MS`), so the same local probe keeps running. A due `login_expired` slot is probed too, and `signed_in` drops the flag and the block. `unreadable`, `rejected` (including a spawn timeout) and a thrown probe keep today's 15-min re-block. The first transition each way logs `claude_cli_login_expired` / `claude_cli_login_restored` with `{accountName}` only, after the store write lands.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/errors.ts`: a turn result reading `OAuth session expired and could not be refreshed` (Claude Code's refused refresh: `subtype: success`, `is_error`, no HTTP status, `terminal_reason: api_error`) classifies as `auth_error` with `signInRequired: "login_expired"`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/failover.ts`: `blockedAccount` and `persistBlock` carry that `signInRequired` onto a claude CLI slot, so a refused refresh marks the account `login_expired` at once and a sibling serves the turn. `claude auth status` still reports signed in at that point, so the 15-minute probe can clear the mark again; that residual is tracked on senpi#5350.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/accounts.ts`: `isForeignAuthBlock` never treats a `login_expired` block as another engine's (senpi#5623), since only this engine sets that mark.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-lane.ts`: passes the status state through, and builds the sign-in-required turn error from each account's reason.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/sign-in-again.ts`: all sign-in-required prompts share the prefix `Claude sign-in `, which `isSignInAgainError` keys on. The retired-sign-in text is unchanged. A new `login_expired` text reads `Claude sign-in expired. Sign in again with Claude to keep using: <names>. Run /login anthropic-subscription.` `ClaudeSignInRequiredError` takes names (retired sign-in) or `{name, reason}` entries. `signInRequiredNames` is replaced by `signInRequiredAccounts`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/account-command.ts`: `/claude-account list` shows `sign-in expired - run /login anthropic-subscription` for a `login_expired` account, in place of the timed-block text.
+
+### Why
+
+- Since senpi#4436 the bundled Claude CLI owns the login. A refused grant makes the CLI blank its store, so `claude auth status` reports `signed_out`. Until now the account was re-blocked every 15 minutes forever and never shown as needing `/login`. Only the literal `signed_out` marks it. Because the cadence probe keeps running, a false `signed_out` (a locked keychain) heals at the next `signed_in` probe, and a still-valid login is never locked out. `/claude-account unblock` does not clear the flag, because `unblockProviderAccount` keeps `auth_error` blocks.
+
+### Why an extension could not handle it
+
+- This builtin owns the managed account pool, its auth-block re-probe and its turn errors.
+
+### Expected merge conflict zones
+
+- LOW: fork-only files; `probeClaudeCliSlot` / `isClaudeCliProbeDue` in `auth-block-recovery.ts`, the `recoverAuthBlockedSlots` call and the sign-in filter in `auth-lane.ts`, `slotStatus` in `account-command.ts`.
+
 ## 2026-11-03 - Read a claude CLI account's access token for the usage poll (senpi#5627)
 
 ### What changed

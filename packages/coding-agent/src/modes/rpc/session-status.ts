@@ -198,7 +198,10 @@ export function terminalOfLifecycle(record: {
 }): SessionStatusTerminal | undefined {
 	const reason = typeof record.reason === "string" ? record.reason : undefined;
 	if (record.type === "session_parked")
-		return { status: "unloaded", reason: reason === "unloaded" ? "unload_session" : "idle" };
+		return {
+			status: "unloaded",
+			reason: reason === "unloaded" ? "unload_session" : reason === "host_shutdown" ? "host_shutdown" : "idle",
+		};
 	if (record.type !== "session_closed") return undefined;
 	if (reason === "handoff_parked") return { status: "unloaded", reason: "handoff" };
 	return reason === undefined ? { status: "closed" } : { status: "closed", reason };

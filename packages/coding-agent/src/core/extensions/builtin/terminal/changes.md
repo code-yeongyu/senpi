@@ -1,3 +1,54 @@
+## 2026-11-08 - A still-running background session reports its age; auto-reap is opt-in (senpi#6201)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/background-age.ts` (new): `BackgroundAgeSchedule` keeps one unref'd timer per session bundle, armed for the earliest due notice across every background session, and reports each session at 10 minutes and then every 30 minutes (10, 40, 70, ...). A late timer or a session registered after it started reports once for the milestones it missed, never a burst. `backgroundAgeEvent` builds the `TerminalBackgroundAgeEvent` payload.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/session-bundle.ts`: `notifyBackgroundStart` takes the command and the auto-reap age and adds the session to the schedule; exit, teardown and the schedule's `remove`/`dispose` clear it. A new sink `onBackgroundAge` receives `running` notices, on an exit whose view says it was reaped one `reaped` notice, and from `notifyBackgroundReapFailed` one `reap_failed` notice carrying the reason while the session stays on the schedule. While parked only the newest notice per session is kept, and it is dropped when the session exits.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/extension-state.ts`: the `onBackgroundAge` sink emits `terminal_background_age` on `pi.events` and `pi.rpc`, shows a TUI notice, and hands a `running` or `reap_failed` notice to the notifier; `onBackgroundReapFailed` reaches the bundle; `onBackgroundStart` forwards the command and the auto-reap age; the tool context exposes `backgroundAutoReapMinutes`.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/notify.ts`: `describeBackgroundAge` writes the notice (session id, command or label, age, the `kill_bash` call); `TerminalNotifier.notifyAge` delivers it like a completion notice; a completion notice of a reaped session says it was stopped automatically after N minutes.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/background-auto-reap.ts` (new): `trackBackgroundSession` announces a background session and, only when `auto_reap_minutes` or the setting asks for it, arms one unref'd timer that stops the session through `manager.stop` (TERM, then KILL to the group, as `kill_bash` does) at that age and marks its exit view `autoReapedAfterMinutes` only once that stop resolved and the session really exited (the exit report waits for the stop); a stop that rejects, finds no session, or leaves it running is logged as `bash_auto_reap_failed`, reported once through `onBackgroundReapFailed`, and never retried. The timer is cleared on exit. `resolveAutoReapMinutes` gives the call's value precedence and treats 0 as off.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/bash.ts`: new `auto_reap_minutes` parameter; both background starts (`run_in_background` and the auto-detach) go through `trackBackgroundSession`.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/context.ts`: `backgroundAutoReapMinutes`, the `autoReapMinutes` argument of `onBackgroundStart`, `onBackgroundReapFailed`, and `TerminalExitView.autoReapedAfterMinutes`.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/child-placement.ts`: the job args carry `backgroundAutoReapMinutes`; the child's start wake carries the command and the reap age, its exit wake the reap, and a `background_reap_failed` wake a failed reap, so the same notices work under `--tool-runtime child`.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/settings.ts`: `terminal.backgroundAutoReapMinutes` resolves to a whole number of minutes >= 1, or undefined (off, the default).
+
+### Why
+
+- A background session that is still running keeps the agent in `waiting_background` for as long as it runs, and nothing told the agent, the user or an RPC driver (senpi#6201). Killing it on a timer would remove the capability of long sessions, so the default is a notice that names the session and the call that stops it; stopping at an age is opt-in.
+
+### Why an extension could not handle it
+
+- The terminal builtin owns the background sessions, their bundle and their stop path; this is fork-only code.
+
+### Expected merge conflict zones
+
+- LOW: `notifyBackgroundStart`/`notifyBackgroundExit`/`teardown` in `session-bundle.ts`, the sinks in `extension-state.ts`, the two background-start sites in `tools/bash.ts`.
+
+## 2026-11-07 - Monitor rpc targets on another device through an extension source (senpi#6151)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/rpc-remote-source.ts` (new): the `RpcRemoteSource` seam (`open(target, { events, exclude, resumeFrom? }, { record, resynced, cursor, lost, ended })` resolving to `{ initial, stop }`) and its registry (`registerRpcRemoteSource`, latest registration wins).
+- `packages/coding-agent/src/core/extensions/builtin/terminal/rpc-monitor-remote.ts` (new): `RpcRemoteFeed`, the remote half of a watch. Records go through the watch's own render path with the device in the socket's place; a lost device is said once; a resync reports each status change, gone session and settled turn once; `agent_settled` is reported once per `turnId`; an ended access settles the monitor.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/rpc-monitor-targets.ts`: `RpcTarget` gains `{ kind: "remote", device, session }`. `<device>/<session>` and `<device>/*` (one `/`, no leading `/`, no `.jsonl` suffix, no drive letter) parse as remote while a source is registered and are refused without one. Every other target parses as before.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/rpc-monitor-watch.ts`: a remote target starts an `RpcRemoteFeed` instead of endpoint observers; the checkpoint carries `remote: { cursor?, settled }`, `diffSince` adds the turns that settled while detached, and `stop` stops the source.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/rpc-monitor-render.ts`: `detachedLabel(key)`, the label `diffSince` already used, shared with the remote feed.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/rpc-monitor-source.ts`: passes the remote source, the restored checkpoint and an `ended` hook (settles with reason `exit`) to the watch; a remote open that rejects leaves no record behind.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/monitor-rpc.ts`: a remote open the source refuses answers the call as an error naming the reason.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/terminal-manifest-model.ts`, `terminal-manifest-parse.ts`: the rpc checkpoint's optional `remote` block, parsed strictly.
+
+### Why
+
+- oh-my-openagent#12719: a session on a daemon-only host can be driven over the relay, but nothing woke the calling agent when it finished. `monitor` rpc is the one wake surface, so a remote session is one more target, served by the omo extension that owns the relay; senpi itself knows no relay.
+
+### Why an extension could not handle it
+
+- The target grammar, the watch, its checkpoint and its restore live in this builtin; an extension can supply the source but not the monitor branch that renders and persists it.
+
+### Expected merge conflict zones
+
+- LOW: `parseRpcTarget`, `RpcMonitorWatch.start`/`checkpoint`/`diffSince`/`stop`, `RpcMonitorSource.register`/`settle`, `createRpcMonitor`, the rpc checkpoint type and its parse.
+
 ## 2026-11-03 - Full terminal section for the Opus and Fable presets (senpi#5665)
 
 ### What changed

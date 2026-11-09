@@ -1,3 +1,905 @@
+## 2026-11-08 - Engine-stamped delivery provenance and a delivery's turn origin (senpi#6233)
+
+### What changed
+
+- `packages/coding-agent/src/core/external-admission.ts`: `admit(input, stamp)` takes an engine-only `DeliveryStamp` (remote origin, chain count, turn mark) that `pi.session.admitExternalMessage` never passes; `writtenDeliveryIds` folds the transcript's delivery ids.
+- `packages/coding-agent/src/core/turn-origin.ts`: `hasInputTurnMark`, `copyInputTurnMark`.
+- `packages/coding-agent/src/core/agent-session.ts`: a marked custom message (a delivery) sets the turn's origin at `message_start`, as a user message does, so a remote device's follow-up consumed inside a local turn runs under the delegated approval rule. `sendCustomMessage` and `_deliverCustomMessage` carry the mark onto the copies they build, so a started delivery that finds a run already streaming joins it as a marked steer, never an unmarked one.
+
+### Why
+
+senpi#6233 security gate H1/H2/H3: a remote delivery's provenance must be engine-authored, a remote follow-up must not inherit a local turn's origin, and replay must be refused after a restart.
+
+### Why an extension could not handle it
+
+Admission, the turn-origin rule the permission decision reads, and the transcript fold are core session state.
+
+### Expected merge conflict zones
+
+- LOW: the one `message_start` condition in `agent-session.ts` `_handleAgentEvent`, and one `copyInputTurnMark` line each in `sendCustomMessage` and `_deliverCustomMessage`.
+
+## 2026-11-08 - createAgentSession forwards a hosted commitStep (senpi#6239)
+
+### What changed
+
+- `packages/coding-agent/src/core/sdk.ts`: `CreateAgentSessionOptions.commitStep` (typed `AgentOptions["commitStep"]`), passed to the `Agent` that `createAgentSession` builds only when set.
+- `packages/coding-agent/src/core/agent-session-services.ts`: `CreateAgentSessionFromServicesOptions.commitStep`, forwarded to `createAgentSession` only when set, so a session built through the services path keeps the step commit.
+
+### Why
+
+- Custody C6 C.P3 (CK1p follow-up C2): a hosted session is assembled through `createAgentSession`, which builds the only `Agent`, so the step commit must reach it there for V7a2's production use and the hosted-entry pin.
+
+### Why an extension could not handle it
+
+- The `Agent` is constructed inside `createAgentSession` before any extension loads; an extension cannot supply its construction options.
+
+### Expected merge conflict zones
+
+- LOW: the `CreateAgentSessionOptions` interface head and the `new Agent({ ... })` options in `packages/coding-agent/src/core/sdk.ts`, one line each.
+- LOW: the `CreateAgentSessionFromServicesOptions` interface and the `createAgentSession({ ... })` call in `packages/coding-agent/src/core/agent-session-services.ts`, one line each.
+
+## 2026-11-08 - Device-proxy egress and the egress_call ledger (custody CK9, senpi#6234)
+
+### What changed
+
+- `packages/coding-agent/src/core/egress/device-proxy.ts` (new): `createDeviceProxyEgress`, the device route of hosted model-key custody for an admitted loop step: the re-admission replay rules (committed step: no dial; cancelled step: aborted message; ended success: replay without device contact or hooks; ended error: closed and redialed with the stored request; dispatched: result query, re-attach or supersede), byte-for-byte reissue with `step.reset`, `session/variants` on a definition mismatch, the user choice before every reissue of a callback-stream step (lost call, mismatch or ended error), and claim refusal handling (a refused start is acked and the step started again under a new callId after renewal or key backoff; non-retryable refusals end with an error row).
+- `packages/coding-agent/src/core/egress/device-proxy-call.ts` (new): follows one call: `hooked` stored only as the seq-0 frame of a request without applied hooks, the terminal event pushed only after the row is durably `ended` with the assembled message, then `ack`; liveness probe, offline wait after the resume window, `cancel{budget}` after one idle plus one resume window, also when the events stream ends before the terminal frame; dropped and finished event streams are closed.
+- `packages/coding-agent/src/core/egress/device-proxy-lost-calls.ts` (new): paces the lost-call (`unknown`) reissue per (step, device): one at once, the next after the key backoff, then the user's choice, which restarts that device's count and backoff.
+- `packages/coding-agent/src/core/egress/device-proxy-request.ts` (new): wire-option allowlist (options hygiene), applied to the admitted request, to hook output before it is stored, and to every stored request before it is sent; the 4.5 request-hook rules.
+- `packages/coding-agent/src/core/egress/device-proxy-waits.ts` (new): tracked waits bracketed by `onWait`/`onWaitEnd` with one abort listener per signal (the registry belongs to each egress and each digest board, no module state), registry-key backoff, and the live-digest board that wakes only on a changed digest.
+- `packages/coding-agent/src/core/egress/device-proxy-ports.ts` (new): the ports the hosted wrapper supplies.
+- `packages/coding-agent/src/core/egress/ledger.ts`, `ledger-schema.ts` (new): the `egress_call` ledger: rows, the admitted request and the ended call's assembled message in 96 KiB chunks, W4/W4'/ended/supersede/refused-start replacement/W14 writes through the host's admitted mutation (W14, including on a superseded row whose reissue was waiting, and every retire delete the row's chunks), and `closeCallWrites` for the step commit.
+- `packages/coding-agent/src/core/egress/wire.ts`: the `env` comment names the adapters that derive the dial target from `env`.
+
+### Why
+
+Hosted brains route a provider through the user's own device as an add-on to sealed custody; the device route must replay, reissue and pause exactly once per step without falling back silently (#5847).
+
+### Why an extension could not handle it
+
+The device route is a provider-pipeline layer below every extension hook, and its ledger writes are part of the hosted session's durable step commit.
+
+### Expected merge conflict zones
+
+- None: every file is new and fork-only except a comment in the fork-only `wire.ts`.
+
+## 2026-11-08 - Terminal setting backgroundAutoReapMinutes (senpi#6201)
+
+### What changed
+
+- `packages/coding-agent/src/core/terminal-settings.ts`: `TerminalSettings` gains `backgroundAutoReapMinutes?: number` (default unset: off), the age at which the terminal extension stops a background session.
+
+### Why
+
+- Opt-in auto-reap of long background sessions (senpi#6201); off by default so no long session is killed unless asked.
+
+### Why an extension could not handle it
+
+- `TerminalSettings` is the typed shape of the `terminal` settings block that the terminal extension reads.
+
+### Expected merge conflict zones
+
+- LOW: the end of the `TerminalSettings` interface.
+
+## 2026-11-03 - A pooled provider is held only when no account can serve (senpi#5590)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: at the turn boundary, a provider whose stored credential pools two or more accounts is checked with `_pooledAccountHealth`, which reads the pool's account summaries (`getCredentialAccounts`, names and health only). If any account is unblocked or only rate-limit cooling, the provider's account hold is released and the turn goes to the pool for every input source. When no account can serve, the refusal adds each account and why it is out.
+- `packages/coding-agent/src/core/retry-fallback/unusable.ts`, `controller.ts`: `releaseAccountHold(provider)`; `releaseGuessedAccountHold` builds on it.
+- `packages/coding-agent/src/core/retry-fallback/usage-limit.ts`: `AccountUsageLimitError` takes an accounts summary; `formatResetTime` is exported.
+
+### Why
+
+- One pooled account's credit-exhaustion reply was read as billing with account scope, and the hold is keyed by provider name, so accounts that were only on a per-minute cooldown were refused locally on every later turn.
+
+### Why an extension could not handle it
+
+- The refusal happens inside `AgentSession._prompt` against the session's private retry-fallback state, before extensions see the input.
+
+### Expected merge conflict zones
+
+- LOW: the turn-boundary block in `AgentSession._prompt`, next to the #5568 guessed-hold release.
+
+## 2026-11-08 - Custody wire messages and the placement-claim verifier (custody CK7, senpi#6220)
+
+### What changed
+
+- `packages/coding-agent/src/core/egress/placement-claim.ts` (new): `PlacementClaim`/`SignedPlacementClaim`, the domain-separated signing bytes (`omo-custody/placement-claim/v1` || NUL || canonical JSON), `CLAIM_MAX_LIFETIME_MS` and `CLAIM_ISSUE_SKEW_MS`, and `verifyPlacementClaim` with the total failure order (closed envelope, roster freshness, key selection and local trust, signature/account/epoch/placement, lifetime bounds, expiry against `max(now, rosterIssuedAt)`), plus each refusal's wire code and retryability.
+- `packages/coding-agent/src/core/egress/wire.ts` (new): the brain-to-hand `model` lane messages (`provider.call.*` including `hooked` at seq 0, the step/aux call kinds, the twelve error codes with `claim_invalid`, `custody.refresh.*`, `custody.rewrap.request`/`deliver`, `hook.model_request`, `hand.session.advertise`, `HandPresence` with `sessionAdverts`/`liveDigests`, `StepNotice`) and the exhaustive `WireStreamOptions` allowlist.
+
+### Why
+
+A hand must execute a hosted brain's request only for the placement that currently owns the session, and the device-proxy egress (CK9), the hand executor (CK8) and the hook and refresh channels need one shared message contract (#5844).
+
+### Why an extension could not handle it
+
+The claim check is part of the custody trust root that gates execution on the device, below every extension hook, and the wire types are shared by core custody rows.
+
+### Expected merge conflict zones
+
+- None: both files are new and fork-only.
+
+## 2026-11-08 - Delegated-origin work asks on a session with no client-named mode (senpi#6206)
+
+### What changed
+
+- `packages/coding-agent/src/core/turn-origin.ts` (new): a turn's origin (`local`, `delegated`, `engine`) is assigned at its starting record, and a `delegated_origin` custom entry records that a remote device drove the session.
+- `packages/coding-agent/src/core/permission-decision.ts` (new): the per-decision preset rule (client-named, then the delegated default or recorded mode, then the live parent, then host default). The delegated rule is decided before any client-supplied `spawnedBy`, a `spawnedBy` loop asks, and a disposed session stops counting as a live parent.
+- `packages/coding-agent/src/core/agent-session.ts`: `connectionOrigin` on prompt and queued input; each user message is marked with its turn origin, and the run start and user-message start set the current origin; `dispose()` releases the session as a live parent.
+- `packages/coding-agent/src/core/sdk.ts`: `createAgentSession` binds the per-decision rule, so SDK-created and in-process child sessions get it.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `permissionPresetSource: "host_default"` on the launch profile; a host-default preset is never marked as a client's choice, and naming a preset clears the marker.
+- `packages/coding-agent/src/core/permission-mode.ts`: `bindPermissionDecision`, `clientNamedPreset`, `withClientPreset` and `markHostDefaultPresetFlag` (a host-default preset in the flag never counts as the operator's launch flag).
+
+### Why
+
+- A session a remote device drove with no named approval mode ran every tool call on the host's default, so nothing the remote device started ever asked (remote approval-mode work, tracked privately).
+
+### Why an extension could not handle it
+
+- Which connection started a turn is known only to the RPC record handlers and the session's input queue, and children are created by the core session factory.
+
+### Expected merge conflict zones
+
+- LOW: `_handleAgentEvent` (the `agent_start` and user `message_start` branch), `_enqueuePreparedInput` and the user-message construction in `prompt()` of `AgentSession`.
+- LOW: the end of `createAgentSession`.
+
+## 2026-11-08 - A client-named approval mode is echoed and recorded in the session file (senpi#6204)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: the constructor, `apply()` and `setPermissionPreset` bind the named preset to the live session (reported as `client`, persisted, and announced on a live change).
+- `packages/coding-agent/src/core/permission-mode.ts` (new): the mode a session enforces (`permissionPreset`, `permissionPresetSource`, `permissionPresetStatus`, `effectivePermissionPreset`) and the `permission_mode` custom entry.
+
+### Why
+
+- A remote client could not confirm which approval mode a session enforces, and the mode it named was not recorded anywhere a later open could see it (remote approval-mode work, tracked privately). Restoring it changes enforcement, so this change only records it.
+
+### Why an extension could not handle it
+
+- The client-named preset is bound where the runtime applies the launch profile; an extension loads after the flags are already computed.
+
+### Expected merge conflict zones
+
+- LOW: the constructor and `apply()` of `AgentSessionRuntime`.
+
+## 2026-11-07 - A host stop ends the running turn as a host shutdown, not a user abort (senpi#6190)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `AgentAbortCause` becomes a union that adds `{ kind: "host_shutdown" }` beside `session_replaced`, and `AgentSession.abortForHostShutdown()` ends a running turn through the system abort path with that cause, so its `agent_end` carries `aborted: true`, `abortSource: "system"` and `abortCause: { kind: "host_shutdown" }`. It does nothing when no turn is streaming.
+
+### Why
+
+- An RPC host that stopped mid-turn tore the session down through the plain `abort()`, which defaults to `abortSource: "user"`, so a host restart was recorded as the user aborting their own turn (senpi#6190).
+
+### Why an extension could not handle it
+
+- The abort source is decided by the session's abort provenance inside `AgentSession`; the RPC host that knows it is stopping has no other way to name the source of the abort it starts.
+
+### Expected merge conflict zones
+
+- LOW: the `AgentAbortCause` declaration and the new method beside `abortTurnForDeadline`.
+
+## 2026-11-07 - Tool-call waits without a deadline log a stall warning (senpi#6189)
+
+### What changed
+
+- `packages/coding-agent/src/core/stall-warning.ts` (new): `watchForStall` logs once when a wait outlives its threshold (30 s; a bash spawn uses the call's own shorter `timeout`), and `PendingQueueLedger` records the unsettled entries of a promise chain so a stalled wait can name the entry at its head. The ledger wraps each queued task and releases its entry from that task's own result, so it never attaches a handler to the chain and a rejection on the chain stays exactly as visible (an unhandled one still reaches `unhandledRejection`).
+- `packages/coding-agent/src/core/agent-session.ts`: `preflightToolCall` watches its wait on `_agentEventQueue` (`tool_call_event_queue_stalled`, with `queueDepth`, `queueHead`, `ageMs`) and its tool-barrier plus `tool_call` hook phase (`tool_call_preflight_stalled`), both at a fixed 30 s: the call's own `timeout` bounds its execution, not this phase, which includes the human permission decision. Every append to `_agentEventQueue` is recorded in the ledger. The waits, their order and their outcomes are unchanged.
+- `packages/coding-agent/src/core/session-log.ts`: the data allowlist admits `toolCallId`, `parentToolCallId`, `toolName`, `thresholdMs`, `elapsedMs`, `queueDepth` and `queueHead`.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/bash.ts`, `tools/context.ts`: a bash spawn (which runs after the permission decision) that outlives its threshold (30 s, or the call's own shorter `timeout`) logs `bash_spawn_stalled` to the session log (`TerminalToolContext.sessionLogger`, defaulting to the agent directory's session log).
+
+### Why
+
+- senpi#6189: a `tool.bash` call from an eval cell never settled and left no trace. No timer fired, because the kill timer and detach gate are armed only after spawn, and the event-queue wait and the permission hooks before it have no deadline. These warnings say which wait stalled on the next occurrence. They change no behaviour.
+
+### Why an extension could not handle it
+
+- The event-queue wait and the preflight run inside `AgentSession` before any extension hook sees the call, and the queue is private session state.
+
+### Expected merge conflict zones
+
+- LOW: `preflightToolCall` body and the three `_agentEventQueue` append sites in `agent-session.ts`; the `ALLOWED_DATA_KEY` regex in `session-log.ts`.
+
+## 2026-11-03 - A weekly limit naming no model family probes another family once (senpi#5596)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/unusable.ts`: a weekly-limit reply that names no family, on a model belonging to one, holds only that family and leaves the provider usable; the next limit on another family of the same provider widens the hold to the provider. `modelFamilyOf`, `noteServed` and `widenedFamiliesOf` report the probe.
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`, `controller-types.ts`: each probe outcome emits a typed `usage_limit_scope_probe` event and a `fallback.log` line.
+- `packages/coding-agent/src/core/retry-fallback/usage-limit.ts`: `AccountUsageLimitError` names the families a widened limit was confirmed on.
+- `packages/coding-agent/src/core/agent-session.ts`: the event joins `AgentSessionEvent`; the turn-boundary refusals pass the widened families.
+
+### Why
+
+- A weekly window binds either one model family or the whole account, and the reply text cannot tell which; marking the whole provider spent stranded models that could still serve.
+
+### Why an extension could not handle it
+
+- Fallback scope and the turn-boundary refusal live in the session's private retry-fallback controller.
+
+### Expected merge conflict zones
+
+- LOW: `UnusableEntries.note` and the `AgentSessionEvent` union next to `retry_fallback_succeeded`.
+
+## 2026-11-07 - The trust-requiring resource scan answers asynchronously too (senpi#6185)
+
+### What changed
+
+- `packages/coding-agent/src/core/trust-requiring-resources.ts`: new. `hasTrustRequiringProjectResources` and `projectAgentsSkillDirs` move here from `trust-manager.ts` unchanged in behavior, written once as a probe generator with a synchronous driver (the existing exports) and an asynchronous one (`hasTrustRequiringProjectResourcesAsync`, `node:fs/promises`).
+- `packages/coding-agent/src/core/trust-manager.ts`: the scan and its helpers leave; both exports are re-exported from the new module, so every importer is unchanged.
+
+### Why
+
+- The RPC workspace verbs (#6177) called the synchronous scan on the RPC session path, which `test/suite/no-sync-in-session-path.test.ts` forbids (its baseline never grows); main was red on it.
+
+### Why an extension could not handle it
+
+- The scan decides whether a session asks for a trust decision at all, before any project extension may load.
+
+### Expected merge conflict zones
+
+- MEDIUM: the removed block of `trust-manager.ts` (constants after the `TrustFile` type, `isHomeOrAboveDir` through `hasTrustRequiringProjectResources`); upstream edits to those helpers now land in `trust-requiring-resources.ts`.
+
+## 2026-11-07 - SettingsManager reads the project file regardless of trust and writes one key (senpi#6176)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts`: `projectTrustLocked` create option + `isProjectTrustLocked()`; `readProjectSettingsFile(path)` (parsed and migrated, never trust-gated, no write); `setProjectSetting(key, value)` through `updateProjectSettings` (trusted-only, refuses a file that failed to load instead of skipping the write silently), awaiting the write queue and throwing the project-scope error that write recorded.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `runInProjectTrustChangeOrder(task)` runs a trust change on the same chain as the Full access syncs, so an RPC trust decision and a preset change never read each other's saved value mid-change.
+
+### Why
+
+- The RPC workspace verbs (senpi#6176) need the project file as stored and a single-key write on the same locked merge-on-write path the terminal uses.
+
+### Why an extension could not handle it
+
+- Project settings storage, its lock and its load-error state are private to `SettingsManager`.
+
+### Expected merge conflict zones
+
+- LOW: `SettingsManagerCreateOptions`, next to `getProjectSettings` and `isProjectTrusted`.
+
+## 2026-11-07 - agent_start and agent_settled carry no turnId again (senpi#6157)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the session's `agent_start` carries `runId` only and `agent_settled` carries no field of its own, as before senpi#6151; the two `AgentSessionEvent` variants drop `turnId`.
+
+### Why
+
+- senpi#6157: the stamped records reached the legacy wire and the structured lane, which #4272 T5 and T6 forbid. The one turn id a legacy client reads is the started prompt reply's (senpi#5999, senpi#6135). Main was red on both tests and on EQ E29.
+
+### Why an extension could not handle it
+
+- Both events are emitted by the session itself.
+
+### Expected merge conflict zones
+
+- LOW: the `agent_start` binding in `_handleAgentEvent`, the `_emit({ type: "agent_settled" })` line in `_emitAgentSettled`, the two event variants in `AgentSessionEvent`.
+
+## 2026-11-07 - agent_start and agent_settled carry turnId (senpi#6151)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the session's `agent_start` carries `turnId` (`currentTurnId`, the `expectedTurnId` a steer names) beside `runId`, and `agent_settled` carries the `turnId` of the turn that settled, read in `_emitAgentSettled` before the run goes inactive.
+
+### Why
+
+- oh-my-openagent#12719: a remote watch must report a turn end exactly once across reconnects and resnapshots, and the settle names no turn to deduplicate by.
+
+### Why an extension could not handle it
+
+- The turn id is the session's admission epoch, and both events are emitted by the session itself.
+
+### Expected merge conflict zones
+
+- LOW: the `agent_start` binding in `_handleAgentEvent`, the `_emit({ type: "agent_settled" })` line and the start of `_emitAgentSettled`; the two event variants in `AgentSessionEvent`.
+
+## 2026-11-05 - Held-session admission helpers (senpi#5756)
+
+### What changed
+
+- `packages/coding-agent/src/core/foreign-session-holders.ts`: `takeOverRefusal(holders, retry = "then /resume again")` takes the retry hint, so the startup refusal says to open the session again. `/resume` output is unchanged.
+- `packages/coding-agent/src/core/session-manager.ts`: new `SessionManager.recentSessionFile(cwd, sessionDir)`, the file `continueRecent` would open, found without loading it; `continueRecent` uses it.
+
+### Why
+
+The startup refusal reuses the `/resume` refusal reasons, and `--continue` must admit its file before loading it, since a load can migrate and rewrite the file.
+
+### Why an extension could not handle it
+
+Core helpers shared by `/resume`, startup and session loading.
+
+### Expected merge conflict zones
+
+- LOW: the `takeOverRefusal` signature; `SessionManager.continueRecent` and the new static next to it.
+
+## 2026-11-05 - The S07 importer writes the shared record-log layout (S21b-a, senpi#5955)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-import/jsonl-import.ts`: it reads sessions through `readSessionState` and writes through the shared layout. The ledger now carries `prefixDigest`, a hash chain over the file's lines through the high-water mark. A file whose lines through that mark are byte-for-byte unchanged and that only grew past it is appended as records beside whatever co-bound writers appended meanwhile, and the outcome is `extended` (where it used to be `adopted` or `forked`); any other change rewrites the session from the file, with S07's outcomes and divergence as before. A stored divergence is parsed into its typed shape.
+- `recordProjectedTail` takes every projected append not yet recorded, in file order, and extends the chain through all of them; `packages/coding-agent/src/core/session-store/durable-binding.ts` keeps those appends until a record that carries them lands, so a burst of appends (a message and its tool result) recorded at once keeps the chain instead of dropping the digest.
+
+### Why
+
+The importer wrote the same manifest layout directly and raced a co-bound appender the same way (an extending import dropped an entry appended meanwhile).
+
+### Why an extension could not handle it
+
+The importer is the durable store's own JSONL writer.
+
+### Expected merge conflict zones
+
+`importFile`'s write planning and `getSession`/`recordProjection`/`recordProjectedTail` in `jsonl-import.ts`; `projected`, `recordWhole` and the repair in `durable-binding.ts`.
+
+## 2026-11-05 - pi.executeTool() runs on the prepared ToolHost (senpi#5852)
+
+### What changed
+
+- `packages/coding-agent/src/core/execute-tool-on-host.ts` is new: `runExecuteToolOnHost()` runs one `executeTool()` call as a one-call sequential batch on `createPreparedToolHost`, with the agent's batch store, execution scope and `onExecutionPipeline` witness sink. The caller's signal and `onUpdate` reach the tool body unchanged, a thrown body keeps today's `{ details: { isError: true } }` result, and the call's arguments pass through the host unvalidated (the `tool_call` chain may rewrite them, and its contract is that they are not validated again). The host's `beforeToolCall` only carries the preflight facts to its copy of the arguments; the `tool_result` chain runs in its finalize step, and a hook failure is returned to the caller as before.
+- `packages/coding-agent/src/core/agent-session.ts`: `executeTool()` keeps its tool lookup and `invalid_params` check, then runs the call through `runExecuteToolOnHost()` instead of calling `tool.execute()` itself. Its lookup, `invalid_params` check and `tool_call` preflight stay where they were, in `executeTool()` itself.
+
+### Why
+
+Plan row S19a (senpi#5826): every tool body runs on the ToolHost, so no `executeTool()` call reaches a tool without the prepared executor's prepare, freeze and release.
+
+### Why an extension could not handle it
+
+`executeTool()` is the session's own extension API method; an extension cannot change how the session runs it.
+
+### Expected merge conflict zones
+
+`agent-session.ts` in `executeTool()` and its imports.
+
+## 2026-11-04 - Quit ends the active run before session_shutdown (senpi#5754, fixes #5753)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `dispose({ endActiveRun: true })` aborts the run before emitting `session_shutdown`, waiting at most the #3711 quit budget (armed first, so the wait counts against the same total; 0 keeps it unbounded), the order `teardownCurrent()` already uses for a replacement. Without the option `dispose()` is unchanged, so RPC host closes keep their bounded stuck-abort handling.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: both quit paths of `shutdown()` (signal and interactive) pass `endActiveRun: true`.
+- `packages/coding-agent/test/suite/regressions/issue-5753-quit-aborts-run-before-shutdown.test.ts` (new): a quit while a tool runs sends no further provider request; a quit during a goal's turn stops the goal as an interrupt (`blocked`), so the next resume asks before continuing; a turn an extension holds cannot delay quit past `sessionShutdownQuitBudgetMs`.
+
+### Why
+
+- A quit mid-turn disposed extension resources under the running tool. The tool failed and the dying process sent that failure to the model in one more request (and goal continuations kept firing), so a session closed mid-turn was reopened further along than where it was left.
+
+### Why an extension could not handle it
+
+- The order of the run's end and `session_shutdown` belongs to the runtime's own dispose.
+
+### Expected merge conflict zones
+
+- LOW: the head of `AgentSessionRuntime.dispose()` and its options type; the two `runtimeHost.dispose(...)` calls in `InteractiveMode.shutdown()`.
+
+## 2026-11-06 - A started RPC input's run setup sits inside its settlement boundary (senpi#5999)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: in `_promptAgent`, the `onTurnAdmitted` callback and the run setup after it (deadline lease, handler turn scope, selection record, transcript-failure start, refused-message trim, server-side fallback flag) moved inside the existing `try` whose settlement clears the run.
+
+### Why
+
+- The RPC host now answers a started input from `onTurnAdmitted` and persists the admitted turn id there. That persistence can throw after the turn is marked active; outside the `try`, the run stayed active (`currentTurnId` set) and cleanup timed out. Inside it, the existing settlement ends the run.
+
+### Why an extension could not handle it
+
+- The run's active flag and its settlement boundary are private to `AgentSession`; no extension hook runs between them.
+
+### Expected merge conflict zones
+
+- MEDIUM: `_promptAgent` between `this._isAgentRunActive = true` and `await this.agent.prompt(messages)`; upstream edits to the run setup lines conflict as an indentation change.
+
+## 2026-11-06 - A non-persisting session's ownership matches its write path (senpi#5922)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts` `getOwnership()`: a manager that persists nothing (`!persist` or no `sessionFile`) answers `{ writable: true }` instead of folding its in-memory `fileEntries`. `_persist` returns before the write guard in the same case, so admission and the write path now agree; a persisted session still folds, and a `session_moved` entry in its file still reads read-only.
+
+### Why
+
+- `_persist` checked the write guard only for a persisted session while `getOwnership()` folded the entries regardless, so an in-memory session holding its own `session_moved` entry was refused at admission although every write would have succeeded - the one place where the admission check and the write path disagreed (item 2 of #5922).
+
+### Why an extension could not handle it
+
+- `getOwnership()` is the session manager's own answer to the RPC admission path; an extension only sees the refusal.
+
+### Expected merge conflict zones
+
+- LOW: the two-line guard at the top of `getOwnership()` in `session-manager.ts` and the new `SessionManager.getOwnership` describe in `test/suite/session-move-ownership.test.ts`.
+
+## 2026-11-06 - A byte-order mark before the signed bytes reads unknown (senpi#5961)
+
+### What changed
+
+- `packages/coding-agent/src/core/egress/signed-statement.ts`: `parseCanonical` decodes with `ignoreBOM: true`, so a leading `EF BB BF` stays in the decoded text and fails the "bytes must equal their canonical JSON" equality instead of being stripped before it. Signed bytes that are exactly the canonical JSON keep reading as facts.
+
+### Why
+
+- `new TextDecoder("utf-8", { fatal: true })` strips a leading byte-order mark by default, so `EF BB BF` + canonical JSON passed the one-encoding rule the rest of the reader relies on: a payload could carry a second accepted encoding even though the signature covers those bytes (found reviewing #5954, LOW 1 of #5961).
+
+### Why an extension could not handle it
+
+- The canonical-bytes check runs inside `verifySignedStatement`, before any caller (the key-facts reader, the custody wiring) sees the statement; an extension has no seam there.
+
+### Expected merge conflict zones
+
+- LOW: the one `TextDecoder` line in `parseCanonical` and the `it.each` table of `signed bytes` cases in `test/egress/facts-signature.test.ts`.
+
+## 2026-10-30 - Shared SIWC account state and logout results (part of #5003)
+
+### What changed
+
+- `model-runtime.ts` forwards selected logout options and revocation results, synchronizes surviving credentials, and attributes actual stored-account selection per session.
+- `credential-accounts.ts` and `credential-account-order.ts` share active and paused metadata. `credential-pool/classify.ts`, `state-store.ts` and `rotation-stream.ts` retain the SIWC usage-limit classification independently of the internal probe cooldown.
+- `credential-pool/rotation-slots.ts` excludes signed-out registrations from selection. Single ChatGPT OAuth registrations also use the existing pool health path.
+
+### Why
+
+- An account must be shown active only after actual selection, including failover. A SIWC quota pause has no known reset time. Signing out one account must preserve its registration and signed-in siblings.
+
+### Why an extension could not handle it
+
+- Runtime credential synchronization and revision-bound pool health are shared across terminal and RPC.
+
+### Expected merge conflict zones
+
+- Runtime login/logout and streaming attribution; pool health schema and failure/success writes; shared account summaries.
+
+## 2026-11-05 - Anchored key-facts reader, verifier revocations and roster freshness (custody CK11, senpi#5954)
+
+### What changed
+
+- `packages/coding-agent/src/core/egress/signed-statement.ts` (new): verifier-signed statements; the signature over the exact payload bytes is checked under a pinned verifier key before the bytes are parsed, and the bytes must be their canonical JSON.
+- `packages/coding-agent/src/core/egress/verifier-revocations.ts` (new): accept rules for signed verifier-key revocations, a monotonic store under `<agentDir>/state/custody/verifier-revocations.json` (losing its lock aborts the temp-file write in flight and fails with the typed `FileLockLostError`), and the new-wrap freshness rule.
+- `packages/coding-agent/src/core/egress/key-facts-client.ts`: `anchoredKeyFactsReader` replaces the always-unknown stub; stale facts come back as a typed `facts-stale` answer.
+- `packages/coding-agent/src/core/egress/pinned-infra.ts`: `keyFactsEndpoint` and `keyFactsVerifierKeys` pins (both empty in this release); a `facts-stale` answer keeps the clock notice.
+- `packages/coding-agent/src/core/egress/roster-entries.ts`: the known roster view carries `rv`, `iat`, `exp` and the monotonic receive time; `rosterViewAt` and `heldRosterView`.
+- `packages/coding-agent/src/core/egress/verified-keys.ts`: `serviceEntryValidity` applies roster freshness and verifier revocations.
+- `packages/coding-agent/src/core/egress/ecdsa-p256.ts`: shared `verifyP1363Sha256`.
+
+### Why
+
+A device must not trust key facts that anyone able to interpose TLS could forge, and a forged or stale record must stop counting without a client release (#5836).
+
+### Why an extension could not handle it
+
+These checks are the trust root of hosted model-key custody, consumed by core custody code below every extension hook.
+
+### Expected merge conflict zones
+
+- None: every touched file is fork-only and added by the custody rows.
+
+## 2026-11-05 - Input carries a thread call's chain count (senpi#5923)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `PromptOptions` and `QueuedInputOptions` take `chainCount`, passed to the `input` event from `prompt()` and from `_runInputHandlers` for steer and follow-up input.
+
+### Why
+
+A session that received a thread call needs the call's hop count so a thread call it sends next carries one more (decision K8).
+
+### Why an extension could not handle it
+
+The `input` event is built inside the session.
+
+### Expected merge conflict zones
+
+- LOW: the `emitInput` call in `prompt()`, `_runInputHandlers` and its call in `_admitQueuedInput`.
+
+## 2026-11-05 - Copy a read-only session into a new session (senpi#5889)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-move/copy.ts` (new): `copySessionAs` reads the source header's `cwd`, refuses
+  the source's own id (`invalid_move_request`) and an id a session file in the target folder already carries
+  (`move_target_occupied`), then writes the copy with `SessionManager.forkFrom(source, cwd, dir, { id })`, serialized per
+  folder and id in this process.
+
+### Why
+
+- A revoked import or a session that moved away refuses every write, and a client had no RPC to keep working from it:
+  `fork`/`clone` rebind the open session in place, and `forkFrom` was reachable only from the CLI.
+
+### Why an extension could not handle it
+
+- Session files and the move ownership fold are core; an extension cannot mint a session file the host's routing knows.
+
+### Expected merge conflict zones
+
+- None upstream: `core/session-move/` is fork-only.
+
+## 2026-11-05 - Durable session reprojection writes through a replaceable file seam (QX1.win.S20, senpi#5907)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-store/durable-binding.ts`: `DurableStoreBinding.files` (`ProjectionFiles.replace`), used by the asynchronous reprojection paths (the stale repair and the open-time reprojection). The default is today's `replaceFileAtomically`. New `test/session-store/win32-sim.test.ts` runs those writes on the shared win32 simulation profile with `EPERM` and `EBUSY` on rename of an open file.
+
+### Why
+
+Plan obligation QX1.win.S20 (senpi#5892), a hard dependency of S21b (senpi#5822): on Windows, a reader holding the session file open makes the rename-over refuse. The stale mark must stay, the file must stay unchanged, and the reprojection must succeed byte-identically once the handle is released.
+
+### Why an extension could not handle it
+
+The binding is SessionManager's persistence path.
+
+### Expected merge conflict zones
+
+`DurableStoreBinding` and the reprojection paths in `durable-binding.ts`.
+
+## 2026-11-05 - A session's ownership is readable before a write (senpi#5889)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: new `getOwnership()` answers who may write the file now, from the
+  write guard's own fold over `fileEntries` (the one every persisted write is checked against).
+- `packages/coding-agent/src/core/session-move/write-guard.ts`: the incremental fold is public as `ownership(entries)`;
+  `assertWritable`, `assertRewritable` and `isWritable` read it unchanged.
+
+### Why
+
+- RPC admission must refuse input into a sealed file before a `prompt` is accepted. The guard refused it only when the
+  turn persisted the user message, after the client had already been told the prompt started.
+
+### Why an extension could not handle it
+
+- The ownership fold lives inside the session manager's write path; extensions see neither the guard nor `fileEntries`.
+
+### Expected merge conflict zones
+
+- LOW: the `getSessionFile` / `getOwnership` accessors in `session-manager.ts` and its import block.
+
+## 2026-11-05 - SessionManager bound to the durable store (S20b, senpi#5897)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-store/durable-binding.ts` is new: `DurableSessionBinding` opens the session in the store (reprojecting a file a durable stale mark names, else running S07's single-file check), commits appends and rewrites synchronously (`openSyncSessionStore`), records each projection in S07's ledger asynchronously on its admission line, and on a failed projection write commits a stale mark and warns. Reprojection runs on the admission line too, so the binding adds no synchronous filesystem call to the session path.
+- `packages/coding-agent/src/core/session-manager.ts`: `bindDurableStore`, `onProjectionWarning`, `settleDurableProjection`. When bound, `_persist` commits to the store and then appends through today's append site; the first flush, `_rewriteFile` and `persistHeaderNow` commit a rewrite and project the whole file. Switching to another session file drops the binding. Unbound sessions are unchanged.
+- `packages/coding-agent/src/core/session-import/jsonl-import.ts`: `recordProjectedTail` records one projected append (its bytes only) as the ledger's new high-water mark.
+- `packages/agent/src/index.ts`: exports the session store and `SyncCommitStore` from the main entry.
+
+### Why
+
+Plan row S20 (senpi#5827), part b: the store-first session on filesystem hosts, keeping `_persist`'s contract that a throw means the entry did not take.
+
+### Why an extension could not handle it
+
+Session persistence is `SessionManager`'s own write path; extensions do not reach it.
+
+### Expected merge conflict zones
+
+`session-manager.ts` `_persist` (flushed branch), `_rewriteFile`, `persistHeaderNow`, `_beginSessionFile`, `newSession`; the durable-store exports in `packages/agent/src/index.ts`.
+
+## 2026-11-05 - Custody roster entries, pinned infra and the device key check (custody CK11, senpi#5896)
+
+### What changed
+
+- `packages/coding-agent/src/core/egress/roster-entries.ts` (new): `device-kem`, `custody` (current/standby) and `placement-registry` (with `supersedes`) entry formats with `templateVersion`, strict parsers, the signed payload, and `verifyServiceSig` (self-signature under the entry's own `sigPk`).
+- `packages/coding-agent/src/core/egress/ecdsa-p256.ts` (new): ECDSA P-256/SHA-256 verification of KMS DER signatures with a strict DER parser.
+- `packages/coding-agent/src/core/egress/key-policy-template.ts` (new): the pinned v1 KMS key-policy template for custody KEM, custody signing and registry keys.
+- `packages/coding-agent/src/core/egress/pinned-infra.ts` (new): `PinnedCustodyInfra` (no custody account pinned yet, so every check fails closed) and `checkServiceKey`.
+- `packages/coding-agent/src/core/egress/verified-keys.ts` (new): the device's `LocalKeyVerification` store under `<agentDir>/state/custody/verified-keys.json` (each record names the key-facts verifier key that vouched for it; a record without one counts as absent) and `serviceEntryValidity` (a recorded revocation stays sticky without blocking the re-issued revoker; two entries with one key that disagree on `supersedes` read `unknown`). Losing the store lock aborts the temp-file write in flight and fails with the typed `FileLockLostError`, so nothing more is written after the loss.
+- `packages/coding-agent/src/core/egress/key-facts-client.ts` (new): key-facts types and a reader that answers `unknown` for every key until the facts channel has a shipped trust anchor.
+
+### Why
+
+A device must check a Custody Service key itself before it wraps anything to it (#5836). Nothing calls these modules yet, and no existing configuration changes.
+
+### Why an extension could not handle it
+
+The key check and its records are the trust root of hosted model-key custody; core custody code consumes them below every extension hook.
+
+### Expected merge conflict zones
+
+- None: every file is new.
+
+## 2026-11-05 - The session binds its device files (senpi#5839)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `getDeviceFiles` returns the tool host's `deviceFiles` for the session's execution scope when the host serves one, otherwise `localDeviceFiles()`.
+
+### Why
+
+The loop side of a split session reaches the hand's files through the session's own tool host (senpi#5839).
+
+### Why an extension could not handle it
+
+The session's tool host and execution scope are not visible to extensions.
+
+### Expected merge conflict zones
+
+The `getSessionEnv` line of the contextActions block in `agent-session.ts`.
+
+## 2026-11-02 - The reasoning baseline rides every request and resets on a model switch (senpi#4116)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `prepareNextTurnWithContext` snapshot returns `requestThinkingLevel(reasoningBaseline, thinkingLevel)` instead of the live level, so every request of a run carries the same request-level effort as its first. `_switchActiveModel` clears `reasoningBaseline` on a model identity change, before and after the switch's own `_setThinkingLevel`, so the previous model's level is never pinned as the new model's baseline; a switch to the same model keeps it, and the switch's `configuration_update` entry is unchanged. The favorite cycle (`_cycleFavoriteModel`, Ctrl+P) commits without `_switchActiveModel`, so it applies the same rules itself: it clears the baseline on an identity change before and after its own `_setThinkingLevel`, and restores it when the cycle is held or refused.
+- `packages/coding-agent/src/core/reasoning-baseline.ts` (new): `requestThinkingLevel` and `resumeReasoningBaseline`, which replays the live rules over a branch (an in-model change pins the level before it; a switch to another model clears it; a post-compaction re-append is not a baseline).
+- `packages/coding-agent/src/core/sdk.ts`: resume restores the baseline with `resumeReasoningBaseline` instead of the branch's first `thinking_level_change`.
+
+### Why
+
+Effort changes on a `supportsConfigurationUpdate` model travel as `configuration_update` items so the request-level effort, and with it the prompt cache, stays fixed (senpi#2094). Later requests of a run sent the live level and a switch inherited the previous model's level, splitting the cache inside every run (senpi#4116).
+
+### Why an extension could not handle it
+
+The next-turn snapshot, the model-switch state reset, and the resume of agent state are owned by `AgentSession` and `createAgentSession`; no extension hook can rewrite the request-level effort of the loop's later requests or the baseline the session restores.
+
+### Expected merge conflict zones
+
+- LOW: the return object at the end of `_installAgentNextTurnRefresh`, the baseline reset after `this.agent.state.model = model` in `_switchActiveModel` and after `this.agent.state.model = next.model` in `_cycleFavoriteModel`, and the `reasoningBaseline` constant in `sdk.ts`.
+
+## 2026-11-05 - The turn retry decision is one shared predicate (senpi#6012)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_isRetryableError` delegates to `isTurnRetryableFailure` in the new fork-only `core/turn-retry-eligibility.ts`, which holds the same checks in the same order. The suppression-prefix constant moves there too.
+
+### Why
+
+- The interactive transcript must fold a failed attempt into the retry episode only for a failure the engine actually retries. Reading the engine's own predicate keeps the two from disagreeing; a text-only copy hid a context overflow whose token count contained "500" (senpi#6012 review).
+
+### Why an extension could not handle it
+
+- The turn retry decision is private to `AgentSession`, and the transcript's row ownership is decided in `InteractiveMode`; no extension hook spans the two.
+
+### Expected merge conflict zones
+
+- LOW: the body of `_isRetryableError` and the `TURN_RETRY_SUPPRESSION_PREFIX` constant in `agent-session.ts`.
+
+## 2026-11-05 - WebView release waits for a port-close drop's in-flight launch (senpi#5936)
+
+### What changed
+
+- `packages/coding-agent/src/core/webview/webview-service.ts`: each client has one drop promise (`#drops`), and the client stays in `#clients` until that drop has settled its launches and ended the Chrome retirement it scheduled. A `release()` that runs after the port-close drop now awaits that same drop instead of a stale `#retiring`.
+
+### Why
+
+- A kernel's close ends its worker before releasing its WebView client, so with a launch in flight the port-close drop ran first and `release()`/`kernel.close()` resolved while that launch's Chrome was still alive (senpi#5936).
+
+### Why an extension could not handle it
+
+- The WebView service is the process-wide owner of Bun's main-thread Chrome; the release ordering lives inside it and no extension hook reaches it.
+
+### Expected merge conflict zones
+
+- LOW: `WebViewService.#drop` in `packages/coding-agent/src/core/webview/webview-service.ts` (fork-only file).
+
+## 2026-11-05 - `threads.chainCountLimit` (senpi#5882)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts`: `Settings.threads?.chainCountLimit` and `getThreadChainCountLimit()`, which returns a non-negative integer the user set and `undefined` (unlimited) otherwise.
+
+### Why
+
+The thread chain count limit (decision K8) is user-set only: no default, no cap, no cost limit. The setting is read at each chain admission.
+
+### Why an extension could not handle it
+
+Settings keys and their typed getters live in the settings manager.
+
+### Expected merge conflict zones
+
+The `Settings` interface and the getters next to `getTurnMaxRuntimeMs()`.
+
+## 2026-11-05 - Prepared pipeline keys calls by block (senpi#5799)
+
+### What changed
+
+- `packages/coding-agent/src/core/execution/pipeline-prepared-batch.ts`: a call's command ID is its block position in the batch; every batch-local map keys by it, the duplicate-ID refusal is gone, and events and results keep the model's call ID.
+- `packages/coding-agent/src/core/execution/executor.ts` and `executor-types.ts`: `PrepareRequest.commandId`, defaulting to the call's ID, keys the ledger row and the prepare memo.
+
+### Why
+
+A model may repeat a call ID inside one message. Keyed by that ID, two blocks would share one ledger row, so the batch was refused; the legacy scheduler runs both, and the per-block call keys (senpi#5346, #5348, #5374) depend on it once the prepared pipeline is the default (senpi#5796).
+
+### Why an extension could not handle it
+
+The batch adapter and the prepared executor are the session's own ToolHost internals.
+
+### Expected merge conflict zones
+
+None upstream: these files are fork-only.
+
+## 2026-11-04 - A named steer is checked where it enters the queue (senpi#5776)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `currentTurnId` (the turn epoch while a turn runs); `prompt` refuses a named steer whose turn is not running before a run hold or an extension command can take it, never holds one for a later turn, and the queue path checks `expectedTurnId` again in the same synchronous step as the enqueue; a prompt that names a turn and would start one throws `TurnConflictError`; the bare `.` continue shortcut does not apply to it.
+- `packages/coding-agent/src/core/turn-conflict.ts`: `TurnConflictError` and `turnConflict`.
+- `packages/coding-agent/src/core/pending-input-session.ts`: `admit` reads a refusal before the input is recorded (a refusal there records nothing) and again right before the enqueue; a refusal at the second read cancels the record in the same transaction, and the input is never enqueued.
+- `packages/coding-agent/src/core/pending-input-types.ts` and `pending-input.ts`: removal cause `turn_conflict`; a submit under an id removed for `turn_conflict` is admitted again instead of replayed, so a refused steer can be resent under its id.
+
+### Why
+
+`prompt` awaits `input` handlers, command holds and the pending-input journal before it queues a steer, and a turn can end in that gap. A check made before those awaits let a steer meant for one turn land in the next one.
+
+### Why an extension could not handle it
+
+The check has to sit in the same step as the session's own enqueue, which no extension hook reaches.
+
+### Expected merge conflict zones
+
+`agent-session.ts` `PromptOptions`, `QueuedInputOptions`, the manual-continue condition and the start path in `prompt`, and `_enqueueQueuedInput`; `pending-input-session.ts` `admit`.
+
+## 2026-11-04 - Execution-pipeline receipts through a configured sink outside the session (senpi#5771)
+
+### What changed
+
+- `packages/coding-agent/src/core/execution/pipeline-witness-sink.ts` is new: `resolveWitnessSink()` picks the configured sink, else a file sink for `SENPI_EXECUTION_PIPELINE_WITNESS` (one JSON line `{ pipeline, toolCallId }` per call), else none. A sink that cannot write emits an `ExecutionPipelineWitnessWarning` instead of failing the tool batch.
+- `packages/coding-agent/src/core/sdk.ts`: `CreateAgentSessionOptions.executionPipelineWitness`, passed to the agent as `onExecutionPipeline`.
+- `packages/coding-agent/src/core/agent-session-services.ts`: `createAgentSessionFromServices()` forwards `executionPipelineWitness`.
+
+### Why
+
+Plan row S18b part 3: the EQ witness and S21a's `default` pipeline need receipts from a production-path sink, while a session's entries stay unchanged.
+
+### Why an extension could not handle it
+
+The sink is the agent's `onExecutionPipeline`, set when the session is built, before any extension loads.
+
+### Expected merge conflict zones
+
+`sdk.ts` near the `new Agent({ ... })` options; `agent-session-services.ts` in `createAgentSessionFromServices()`.
+
+## 2026-11-04 - Holder check and take-over for interactive resume (senpi#5750, fixes #5744)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-hold-errors.ts`, `packages/coding-agent/src/core/session-holder-records.ts`: with the opt-in probe `markUnproven`, a holder whose owner start time cannot be read is reported with `unproven: true`. Default lookups and RPC `session_held` data are unchanged.
+- `packages/coding-agent/src/core/foreign-session-holders.ts`: adds `takeOverRefusal`, `checkSessionHolders` (one lookup whose failure is reported, not thrown), `stopSessionHolders` (SIGTERM each validated holder, then wait for the holder records to clear, 10 s default), `describeSessionHolders` (the shared `pid N in "<cwd>"` text) and `SESSION_HOLDER_LOOKUP_FAILED`. `sessionHolderWarning` uses the shared text.
+
+### Why
+
+- Interactive resume needs the holder set before it switches, and an explicit take-over path, so it never becomes a second writer.
+
+### Why an extension could not handle it
+
+- Holder records and their identity validation are core session-persistence state.
+
+### Expected merge conflict zones
+
+- LOW: the helpers between `foreignSessionHolders` and `sessionHolderWarning`.
+
+## 2026-11-04 - The prepared pipeline comes from the agent package (senpi#5738)
+
+### What changed
+
+- `packages/coding-agent/src/core/execution/executor*.ts`, `pipeline-prepared.ts` and `pipeline-prepared-batch.ts` moved to `packages/agent/src/execution/prepared/`.
+- `packages/coding-agent/src/core/execution/pipeline-witness.ts`: binds the execution scope only; `pipeline-config.ts` parses `SENPI_EXECUTION_PIPELINE` (unset, `default` or `prepared`; `legacy` refused). No default receipt writer: receipts go only to an explicit `Agent.onExecutionPipeline` sink.
+- `packages/coding-agent/src/core/execution/catalog-digest.ts`: hashes agent-core's `canonicalJson` with `node:crypto`, the same bytes as before.
+- `packages/coding-agent/src/core/cursor-exec-bridge.ts` (senpi#5780): `executeTool` runs each Cursor-resolved call as a one-call batch on agent-core's `createPreparedToolHost` (validation, argument preparation, the `tool_call` preflight and `tool_result` hook as the host's before/after hooks, lifecycle events, one `prepared` witness receipt) instead of its own validate/preflight/execute sequence. It keeps the full-registry lookup and the run-ownership recheck, both after preflight (a block from the before hook) and at execution itself (the tool the host runs refuses with `Tool execution has no active run` once the owning run is no longer the agent's signal, because the prepared host still awaits digest, ledger and release steps after preflight) and drops the host's tool-result message events, because the provider pairs the result and the loop appends buffered results. New options `openBatchStore`, `getExecutionScope`, `recordWitness`.
+- `packages/coding-agent/src/core/execution/preflight-carry.ts` is new (senpi#5795): `carryPreflightFacts` moves the permission Once approval and the approved monitor parent from the preflight's arguments object to the frozen copy. `agent-session.ts` installs it as the agent's `afterToolFreeze` beside `beforeToolCall`; `cursor-exec-bridge.ts` passes it to its prepared host.
+- `packages/coding-agent/src/core/cursor-exec-bridge-session.ts` (senpi#5780): supplies those from the agent (`batchStoreFactory`, refusing with `BatchStoreMissingError` when unset; `getExecutionScope`/`executionScope`; `onExecutionPipeline`).
+
+### Why
+
+Plan row S36 (senpi#5728): the prepared pipeline moves into the agent package so the loop can use it as its default. Removing the legacy pipeline means every tool call runs on the prepared executor; the Cursor exec bridge was the one model-visible call path that did not, so fused EQ E19 had no witness receipt (senpi#5780).
+
+### Why an extension could not handle it
+
+The session's ToolHost and receipt sink are bound by the session itself.
+
+### Expected merge conflict zones
+
+`pipeline-witness.ts`; `catalog-digest.ts`; `cursor-exec-bridge.ts` `executeTool` and `cursor-exec-bridge-session.ts` options.
+
+## 2026-11-04 - Prepared pipeline is the default (senpi#5733)
+
+### What changed
+
+- `packages/coding-agent/src/core/execution/pipeline-config.ts` is new: `resolveExecutionPipeline` reads `SENPI_EXECUTION_PIPELINE` (unset, empty or `default`: prepared; `legacy`/`prepared`: that pipeline).
+- `packages/coding-agent/src/core/execution/pipeline-prepared.ts`: the flag read and `ExecutionPipeline` moved to `pipeline-config.ts`.
+- `packages/coding-agent/src/core/execution/pipeline-witness.ts`: binds the resolved pipeline; the default keeps a ToolHost the session was built with, naming `prepared` still refuses to replace it; receipts stay explicit-sink only.
+
+### Why
+
+Plan row S21a (senpi#5412): the prepared pipeline becomes the default; the legacy route stays reachable through the internal flag until S36 removes it.
+
+### Why an extension could not handle it
+
+The session's ToolHost is bound by the session itself at construction.
+
+### Expected merge conflict zones
+
+`pipeline-witness.ts`; `pipeline-prepared.ts` header.
+
+## 2026-11-01 - Sign-in-required notice text follows each account's reason (part of senpi#5350)
+
+### What changed
+
+- `packages/coding-agent/src/core/auth-storage.ts`: `signInRequiredNotices` builds its message with `signInRequiredMessage`. Accounts from the retired sign-in still read "Claude sign-in changed ..." (byte-identical), while a `login_expired` account reads "Claude sign-in expired ...".
+
+### Why
+
+- Without this, an expired Claude CLI login would have shown the retired-sign-in text at startup.
+
+### Why an extension could not handle it
+
+- The notice is built at the auth.json load seam in `AuthStorage`, before any extension runs.
+
+### Expected merge conflict zones
+
+- LOW: the `sign-in-again.ts` import and `signInRequiredNotices` in `auth-storage.ts`.
+
+## 2026-10-30 - Safe ChatGPT account registration summaries (part of senpi#5003)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-accounts.ts`: projects route, explicit plan permission and signed-out metadata without credentials.
+
+### Why
+
+- Account lists need to distinguish SIWC and legacy registrations, including disabled plan usage.
+
+### Why an extension could not handle it
+
+- Terminal and RPC account lists already share this core projection.
+
+### Expected merge conflict zones
+
+- The account summary type and stored-slot projection.
+
+## 2026-10-30 - Preserve account transport after pool selection (part of senpi#5003)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-runtime.ts`: apply the selected slot's optional chat API when preparing each attempt.
+
+### Why
+
+- `packages/coding-agent/src/core/model-runtime.ts`: mixed-route pools otherwise send SIWC tokens to the legacy backend.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/model-runtime.ts`: slot selection and auth preparation happen below extension hooks.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/model-runtime.ts`: `prepareRequest`.
+
+## 2026-10-27 - Fallback fit counts the reported usage in both the repair and the guard (senpi#3447)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the repair decision, the slice and the switch guard charge one
+  measure of the live context: the provider-reported figure when a provider reported it for the current context,
+  otherwise the per-message estimate, and never less than that estimate (`_switchTokenScale`, through
+  `resolveThresholdContextTokens`, which also ignores an implausible Cursor cacheRead spike).
+  `_getDownswitchLiveContextTokens` subtracts the system prompt and tool schemas only from a reported figure; an
+  estimate never contained them. `_measureContextTokens` (moved out of `_computeContextUsage`) says which one it is.
+  A rung whose usable window is not smaller than the session model's charges no fit. Compaction and
+  branch summaries are charged at their own estimate and only the other messages take the reported ratio, which a held
+  switch keeps from its admission for its post-compaction fit. `_emit` attaches this turn's rung
+  refusals to `retry_fallback_exhausted` as `refusals`.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/resume-slice.ts`: `planResumeSlice` accepts an optional
+  `tokenScale` (default 1) and sizes cut targets and the fit check in reported tokens.
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: records each rung the switch refuses in the turn and
+  exposes them as `turnRefusals`. `FallbackRungRefusal` lives in `controller-types.ts`.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`, `print-mode.ts`: an exhaustion with refusals
+  shows each refused rung's reason and numbers.
+
+### Why
+
+- A rung the estimate said fits was not reduced, then refused on the larger reported usage, so fallback ended with no
+  reduction and no visible reason. Without reported usage, the guard charged less than the estimate, so a context too
+  large for the rung could be switched onto it.
+
+### Why an extension could not handle it
+
+- The fallback walk, the switch guard, and the slice repair are core internals that extensions do not see.
+
+### Expected merge conflict zones
+
+- LOW: `_reduceForSwitchTarget` / `_projectSwitchFit`, the `retry_fallback_exhausted` event type, `_emit`'s event
+  rewrites, the controller's walk loop.
+
 ## 2026-11-03 - Header-only provider auth is queryable without resolving (senpi#5709, fixes #5707)
 
 ### What changed

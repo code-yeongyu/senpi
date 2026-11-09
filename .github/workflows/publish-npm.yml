@@ -71,8 +71,8 @@ jobs:
     # first and CI tests it there. The job waits up to 40 min for that CI result (CI walls
     # measured at 7-22 min), plus about 10 min of install, build and push, so 60 min clears it.
     # A release whose HEAD already has green CI finishes in a few minutes.
-    # force_tests runs the whole suite serially in this job instead (~55 min, estimated from the summed CI test jobs, bounded at 110 min by
-    # scripts/release-test-gate.mjs), so that mode gets 180 min.
+    # force_tests runs the whole suite in this job instead, coding-agent as parallel vitest shards (~60 min, estimated from
+    # the 2026-11-06 forced run, bounded at 110 min by scripts/release-forced-test-suite.mjs), so that mode gets 180 min.
     timeout-minutes: ${{ inputs.force_tests && 180 || 60 }}
     steps:
       - name: Checkout

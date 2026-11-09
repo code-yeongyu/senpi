@@ -42,9 +42,12 @@ for (const { mergeStatus, ci, catalogDirty = false, manifestStampOnly = false, f
 	it(`release CLI with CI ${ci}${catalogDirty ? " and a changed catalog" : ""}${forceTests ? " and --force-tests" : ""} recovers concurrent main advancement and respects merge exit ${mergeStatus}`, () => {
 		const root = mkdtempSync(join(tmpdir(), "senpi-release-cli-"));
 		try {
+			// The forced suite resolves the root "workspaces" and shards coding-agent's own `test` script (senpi#6139).
+			writeFileSync(join(root, "package.json"), JSON.stringify({ workspaces: ["packages/*"] }));
 			for (const file of WORKSPACE_PACKAGES) {
 				mkdirSync(dirname(join(root, file)), { recursive: true });
-				writeFileSync(join(root, file), JSON.stringify({ version: "2026.9.12-2" }));
+				const scripts = file === "packages/coding-agent/package.json" ? { scripts: { test: "vitest --run" } } : {};
+				writeFileSync(join(root, file), JSON.stringify({ version: "2026.9.12-2", ...scripts }));
 			}
 			for (const file of CHANGELOGS) {
 				writeFileSync(join(root, file), "# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- Fixture.\n");
@@ -78,9 +81,9 @@ if (${JSON.stringify(name)} === "git") {
 	if (args[0] === "merge-base") process.exit(1);
 	if (args[0] === "merge") process.exit(${mergeStatus});
 }
-if (${JSON.stringify(name)} === "npm" && args[0] === "test") {
-	const changelog = require("node:fs").readFileSync(${JSON.stringify(CHANGELOGS[0])}, "utf8");
-	writeFileSync("TEST_SAW_CHANGELOG", changelog.includes("## [Unreleased]\\n\\n### Fixed\\n\\n- Fixture.") ? "unstamped" : "stamped");
+if (${JSON.stringify(name)} === "npm" && args[0] === "run" && args[1] === "test:scripts") {
+	const changelog = require("node:fs").readFileSync(${JSON.stringify(join(root, CHANGELOGS[0]))}, "utf8");
+	writeFileSync(${JSON.stringify(join(root, "TEST_SAW_CHANGELOG"))}, changelog.includes("## [Unreleased]\\n\\n### Fixed\\n\\n- Fixture.") ? "unstamped" : "stamped");
 }
 if (${JSON.stringify(name)} === "gh") {
 	process.stdout.write(String(args[1]).includes("actions/runs?check_suite_id=7")
@@ -99,11 +102,19 @@ if (${JSON.stringify(name)} === "gh") {
 			}
 			const result = spawnSync(process.execPath, [fileURLToPath(new URL("./release.mjs", import.meta.url)), "--version", "2026.9.12-3", ...(forceTests ? ["--force-tests"] : [])], {
 				cwd: root,
-				env: { ...process.env, PATH: `${bin}${delimiter}${dirname(process.execPath)}` },
+				// Without npm_* (set when this runs under `npm run`), run-workspaces resolves the stubbed npm from PATH.
+				env: {
+					...Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^npm_/i.test(key))),
+					PATH: `${bin}${delimiter}${dirname(process.execPath)}`,
+				},
 				encoding: "utf8",
 				timeout: 15000,
 			});
 			const commands = readFileSync(calls, "utf8").trim().split("\n").map(JSON.parse);
+			// The forced suite's steps: `npm run test:scripts`, then the coding-agent shards through run-workspaces.
+			const isScriptsStep = (args) => args[0] === "npm" && args[1] === "run" && args[2] === "test:scripts";
+			const isShard = (n) => (args) => JSON.stringify(args) === JSON.stringify(["npm", "run", "test", "--", `--shard=${n}/2`]);
+			const isForcedSuiteStep = (args) => isScriptsStep(args) || isShard(1)(args) || isShard(2)(args);
 			if (catalogDirty && !forceTests) {
 				// A changed catalog is never pushed to main untested (v2026.10.19-1): without --force-tests the release stops
 				// before it commits, tags or pushes anything.
@@ -117,9 +128,11 @@ if (${JSON.stringify(name)} === "gh") {
 				assert.equal(result.status, 0, result.stderr);
 				const index = (predicate) => commands.findIndex(predicate);
 				const catalogCommit = index((args) => args[1] === "commit" && /regenerate the model catalog/.test(args.at(-1)));
-				const test = index((args) => args[0] === "npm" && args[1] === "test");
+				const test = index(isScriptsStep);
+				const shards = [index(isShard(1)), index(isShard(2))];
 				const firstPush = index((args) => args[1] === "push");
 				assert.ok(catalogCommit >= 0 && catalogCommit < test && test < firstPush, JSON.stringify(commands));
+				assert.ok(shards.every((shard) => shard > test && shard < firstPush), JSON.stringify(commands));
 				assert.deepEqual(commands.filter((args) => args[1] === "push"), [
 					["git", "push", "origin", "main"],
 					["git", "push", "origin", "v2026.9.12-3"],
@@ -131,11 +144,13 @@ if (${JSON.stringify(name)} === "gh") {
 				// real CHANGELOG.md must see its [Unreleased] section, as CI would (v2026.10.16 release run 38824836070).
 				assert.equal(result.status, 0, result.stderr);
 				const index = (predicate) => commands.findIndex(predicate);
-				const test = index((args) => args[0] === "npm" && args[1] === "test");
+				const test = index(isScriptsStep);
+				const shards = [index(isShard(1)), index(isShard(2))];
 				const firstClean = index((args) => args[0] === "npm" && args[1] === "run" && args[2] === "clean");
 				const firstBuild = index((args) => args[0] === "npm" && args[1] === "run" && args[2] === "build");
 				const releaseCommit = index((args) => args[1] === "commit" && /^release: v/.test(args.at(-1)));
 				assert.ok(firstClean >= 0 && firstClean < firstBuild && firstBuild < test && test < releaseCommit, JSON.stringify(commands));
+				assert.ok(shards.every((shard) => shard > test && shard < releaseCommit), JSON.stringify(commands));
 				assert.equal(readFileSync(join(root, "TEST_SAW_CHANGELOG"), "utf8"), "unstamped");
 				assert.equal(commands.some((args) => args[0] === "gh"), false, "a forced release does not wait for CI");
 				return;
@@ -165,10 +180,10 @@ if (${JSON.stringify(name)} === "gh") {
 				assert.equal(result.status, 1, result.stderr);
 				assert.match(result.stderr, /CI failed on fixture-sha/);
 				assert.deepEqual(commands.filter((args) => args[1] === "push" || args[1] === "tag" || args[1] === "commit"), []);
-				assert.equal(commands.some((args) => args[0] === "npm" && args[1] === "test"), false);
+				assert.equal(commands.some(isForcedSuiteStep), false);
 				return;
 			}
-			assert.equal(commands.some((args) => args[0] === "npm" && args[1] === "test"), false);
+			assert.equal(commands.some(isForcedSuiteStep), false);
 			assert.ok(commands.some((args) => args[0] === "git" && args[1] === "merge"), result.stderr);
 			assert.equal(result.status, mergeStatus, result.stderr);
 			assert.deepEqual(commands.filter((args) => args[1] === "push"), mergeStatus === 0 ? [

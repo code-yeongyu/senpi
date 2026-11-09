@@ -6,17 +6,10 @@
  * so a method added to the engine is covered here the moment it is classified.
  *
  * Records travel over a real Unix socket through the bare host's public-key filter (`PublicRpcConnection`) into the
- * per-connection dispatch `runSocketHost` builds, on the in-process registry, with a faux provider.
+ * per-connection dispatch `createHostCore` builds, on the in-process registry, with a faux provider
+ * (`rpc-delegated-host-support.ts`).
  */
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { connect, createServer, type Server, type Socket } from "node:net";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { fauxProvider } from "@earendil-works/pi-ai/compat";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { parseArgs } from "../../src/cli/args.ts";
-import { createCliRuntimeFactory } from "../../src/main.ts";
-import { attachJsonlLineReader } from "../../src/modes/rpc/jsonl.ts";
 import {
 	classifyRpcMethod,
 	describeRpcMethodClasses,
@@ -26,22 +19,26 @@ import {
 	type RpcMethodType,
 } from "../../src/modes/rpc/method-classes.ts";
 import { validateRpcInboundRecord } from "../../src/modes/rpc/method-classes-schema.ts";
-import { createHostCore } from "../../src/modes/rpc/multi-session-host.ts";
-import { connectAuthenticatedRpcSocket } from "../../src/modes/rpc/rpc-auth-client.ts";
-import { PublicRpcConnection } from "../../src/modes/rpc/rpc-public-auth.ts";
-import { RpcPublicEndpoint } from "../../src/modes/rpc/rpc-public-key.ts";
 import type { RpcCommand } from "../../src/modes/rpc/rpc-types.ts";
-import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
-import { socketSink } from "../../src/modes/rpc/socket-sink.ts";
 import { corpusRequest, NO_ID, type Opened, TODAY } from "../characterization/rpc-method-surface-corpus.ts";
-
-type WireRecord = Record<string, unknown>;
+import {
+	type DelegatedHost,
+	declare,
+	type Peer,
+	PRINCIPAL,
+	SECRET_COMMAND,
+	startHost,
+	type WireRecord,
+} from "./rpc-delegated-host-support.ts";
 
 /**
- * `RPC_METHOD_CLASSES_DIGEST` on main as of the last merge (fecca3f8ca, which added `account_reset`): this change adds
- * methods outside the table, never a table entry, so the branch digest equals main's.
+ * `RPC_METHOD_CLASSES_DIGEST` at the base this test runs on: main (with `list_hands` (observe) and `select_hand`
+ * (device_admin) in the table, senpi#5938) plus senpi#5379, which moves `set_model` from `device_admin` to `dynamic`,
+ * and senpi#6177, which adds `get_project_trust` (observe) and `set_project_trust`, `get_project_settings`, `set_project_setting`
+ * (device_admin).
+ * Delegated connections add methods outside the table, never a table entry.
  */
-const DIGEST_ON_BASE = "4df5316e9c2712173b8338fdeb1bb1a78ae1f2c3da8b8ac694e1f3cc7c8382ed";
+const DIGEST_ON_BASE = "7ea18de0fb5d28f89aabdc17cbaca72e973cdea7d5928fd82d91ccced025000e";
 const FORWARDABLE = [
 	"observe",
 	"drive",
@@ -59,11 +56,7 @@ const CONNECTION_LOCAL_NEEDS: Partial<Record<RpcMethodType, RpcMethodClass>> = {
 	reclaim_session: "device_admin",
 	move_session: "device_admin",
 };
-const PRINCIPAL = { deviceId: "x5632-device" };
-const LEAN_ARGS = ["--mode", "rpc", "--multi-session", "--no-extensions", "--no-skills", "--no-context-files"];
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
-const SECRET_COMMAND = "x5632-secret";
-const ANSWER_DEADLINE_MS = 20_000;
 
 /**
  * The three inbound types that are not `RpcCommand`s answer a request by its `id`; each gets a record here, typed so a
@@ -74,167 +67,6 @@ const NON_COMMAND: { readonly [K in Exclude<RpcMethodType, RpcCommand["type"]>]:
 	extension_ui_progress: (sessionId) => ({ sessionId, answers: {} }),
 	host_response: (sessionId) => ({ sessionId, data: {} }),
 };
-
-class Peer {
-	private readonly answers = new Map<string, (record: WireRecord) => void>();
-	private readonly frames: WireRecord[] = [];
-	private readonly watchers = new Set<(record: WireRecord) => void>();
-	private serial = 0;
-	readonly socket: Socket;
-	readonly name: string;
-
-	constructor(socket: Socket, name: string) {
-		this.socket = socket;
-		this.name = name;
-		attachJsonlLineReader(socket, (line) => {
-			const record = JSON.parse(line) as WireRecord;
-			if (record.type === "response" && typeof record.id === "string") this.answers.get(record.id)?.(record);
-			this.frames.push(record);
-			for (const watch of this.watchers) watch(record);
-		});
-	}
-
-	nextId(): string {
-		return `${this.name}-${++this.serial}`;
-	}
-
-	send(record: WireRecord): Promise<WireRecord> {
-		const id = typeof record.id === "string" ? record.id : this.nextId();
-		const answered = this.answer(id, String(record.type));
-		this.socket.write(`${JSON.stringify({ ...record, id })}\n`);
-		return answered;
-	}
-
-	/**
-	 * For a record the host may answer with nothing (an answer to a dialog nobody raised): resolves with its response if
-	 * one precedes the answer to a `get_protocol_info` sent right behind it on this connection, else `undefined`.
-	 */
-	async sendSettled(record: WireRecord): Promise<WireRecord | undefined> {
-		const id = this.nextId();
-		let answer: WireRecord | undefined;
-		this.answers.set(id, (response) => {
-			answer = response;
-		});
-		this.socket.write(`${JSON.stringify({ ...record, id })}\n`);
-		const sentinel = this.send({ type: "get_protocol_info", observe: true });
-		await sentinel;
-		this.answers.delete(id);
-		return answer;
-	}
-
-	answer(id: string, type = "record"): Promise<WireRecord> {
-		return new Promise<WireRecord>((resolve, reject) => {
-			const timer = setTimeout(
-				() => reject(new Error(`${this.name}: no answer to ${type} ${id}`)),
-				ANSWER_DEADLINE_MS,
-			);
-			this.answers.set(id, (record) => {
-				clearTimeout(timer);
-				this.answers.delete(id);
-				resolve(record);
-			});
-		});
-	}
-
-	frame(predicate: (record: WireRecord) => boolean): Promise<WireRecord> {
-		const seen = this.frames.find(predicate);
-		if (seen) return Promise.resolve(seen);
-		return new Promise<WireRecord>((resolve, reject) => {
-			const timer = setTimeout(() => {
-				this.watchers.delete(watch);
-				reject(new Error(`${this.name}: no matching frame`));
-			}, ANSWER_DEADLINE_MS);
-			const watch = (record: WireRecord) => {
-				if (!predicate(record)) return;
-				clearTimeout(timer);
-				this.watchers.delete(watch);
-				resolve(record);
-			};
-			this.watchers.add(watch);
-		});
-	}
-}
-
-async function startHost() {
-	const scratch = await mkdtemp(join(tmpdir(), "x5632-"));
-	const cwd = join(scratch, "cwd");
-	const agentDir = join(scratch, "agent");
-	await mkdir(cwd);
-	await mkdir(agentDir, { mode: 0o700 });
-	for (const name of ["SENPI_CODING_AGENT_DIR", "OMO_CODING_AGENT_DIR"]) vi.stubEnv(name, agentDir);
-	vi.stubEnv("SENPI_RPC_KEY_ROOT", agentDir);
-	const faux = fauxProvider({ models: [{ id: "faux-1", reasoning: false, contextWindow: 128_000 }] });
-	const writer = new SessionEventWriter(() => {});
-	const core = createHostCore(
-		{
-			agentDir,
-			cwd,
-			permissionPreset: "full-access",
-			createRuntime: createCliRuntimeFactory(
-				{ parsed: parseArgs(LEAN_ARGS), cwd, agentDir, appMode: "rpc" },
-				{
-					extensionFactories: [
-						(pi) => {
-							pi.registerProvider(faux.provider);
-							pi.registerCommand(SECRET_COMMAND, {
-								description: "asks for a secret",
-								handler: async (_args, ctx) => {
-									await ctx.ui.input("Key", undefined, { secret: true });
-								},
-							});
-						},
-					],
-				},
-			),
-			creationModel: { provider: faux.getModel().provider, modelId: "faux-1" },
-		},
-		writer,
-		[],
-	);
-	const socketPath = join(scratch, "s");
-	const endpoint = new RpcPublicEndpoint(agentDir, socketPath);
-	await endpoint.publish();
-	const sockets = new Set<Socket>();
-	let connections = 0;
-	// The bare host's wiring: the public-key filter in front of the per-connection dispatch, the connection
-	// registered with the proof the filter delivers in band.
-	const server: Server = createServer((raw) => {
-		sockets.add(raw);
-		const id = `socket-${++connections}`;
-		const stream = new PublicRpcConnection(raw, endpoint, false).stream;
-		stream.on("error", () => {});
-		writer.registerConnection(id, socketSink(stream), { launchProof: "in_band" });
-		raw.once("close", () => {
-			sockets.delete(raw);
-			writer.unregisterConnection(id);
-		});
-		attachJsonlLineReader(stream, (line) => void writer.withConnection(id, () => core.handle(line)));
-	});
-	await new Promise<void>((resolve) => server.listen(socketPath, resolve));
-	let peers = 0;
-	return {
-		scratch,
-		async proven(): Promise<Peer> {
-			const { socket } = await connectAuthenticatedRpcSocket(socketPath, undefined, { keyRoot: agentDir });
-			return new Peer(socket, `p${++peers}`);
-		},
-		async keyless(): Promise<Peer> {
-			const socket = connect(socketPath);
-			await new Promise<void>((resolve) => socket.once("connect", resolve));
-			const peer = new Peer(socket, `k${++peers}`);
-			expect(await peer.send({ type: "get_protocol_info" })).toMatchObject({ success: true });
-			return peer;
-		},
-		async dispose(): Promise<void> {
-			await core.router.dispose();
-			for (const socket of sockets) socket.destroy();
-			await new Promise<void>((resolve) => server.close(() => resolve()));
-			await endpoint.dispose();
-			await rm(scratch, { recursive: true, force: true });
-			vi.unstubAllEnvs();
-		},
-	};
-}
 
 /** Acceptance and reply shape, as X14 compares them: `ok{sorted data keys}` or `no:<errorCode>:<error>`. */
 function signature(record: WireRecord | undefined, method: string, scratch: string): string {
@@ -278,7 +110,7 @@ const VALIDATOR_REFUSED: ReadonlySet<RpcMethodType> = new Set<RpcMethodType>([
 	"set_retry_fallback",
 ]);
 
-let host: Awaited<ReturnType<typeof startHost>>;
+let host: DelegatedHost;
 
 function sendFor(peer: Peer, type: RpcMethodType, record: WireRecord): Promise<WireRecord | undefined> {
 	return Object.hasOwn(NON_COMMAND, type) ? peer.sendSettled(record) : peer.send(record);
@@ -290,10 +122,6 @@ async function recordFor(type: RpcMethodType): Promise<WireRecord> {
 	return Object.hasOwn(TODAY, type)
 		? corpusRequest(type, TODAY[type as RpcCommand["type"]], opened, host.scratch).record
 		: { type, ...NON_COMMAND[type as keyof typeof NON_COMMAND](opened.sessionId) };
-}
-
-async function declare(peer: Peer, granted: readonly string[], principal: object = PRINCIPAL) {
-	return peer.send({ type: "declare_delegation", principal, granted });
 }
 
 // vitest restores stubbed env before every test (`unstubEnvs`), so the host behaviour this suite compares against X14
@@ -515,5 +343,125 @@ describe("senpi#5632: delegated connections are decided by the engine's own clas
 		const info = await opener.send({ type: "get_protocol_info" });
 		expect((info.data as WireRecord).method_classes).toEqual(describeRpcMethodClasses());
 		expect((info.data as { capabilities: string[] }).capabilities).toContain("delegated_connection_v1");
+	});
+});
+
+/**
+ * senpi#5808: a delegated connection is a forwarder's channel for one viewer, so it ends whenever that viewer leaves.
+ * The session it opened belongs to the forwarder, which keeps serving it to the next viewer: every open on a delegated
+ * connection is retained, whatever `retain_on_disconnect` says, so its end detaches and never closes. A connection that
+ * never declared keeps today's rule: closed with its last client unless it asked to be retained.
+ */
+describe("senpi#5808: a session opened over a delegated connection outlives that connection", () => {
+	type Row = { sessionId: string; durableSessionId: string; retain_on_disconnect: boolean; attachments: number };
+
+	async function rows(): Promise<Row[]> {
+		return ((await opener.send({ type: "list_sessions" })).data as { sessions: Row[] }).sessions;
+	}
+
+	async function delegatedPeer(granted: readonly string[] = FORWARDABLE): Promise<Peer> {
+		const peer = await host.proven();
+		expect(await declare(peer, granted)).toMatchObject({ success: true });
+		return peer;
+	}
+
+	async function openedThenDropped(peer: Peer, record: WireRecord = {}): Promise<string> {
+		const { sessionId } = (await peer.send({ type: "open_session", ...record })).data as Opened;
+		await host.drop(peer);
+		return sessionId;
+	}
+
+	it("stays open, listed and attachable from a new connection after the delegated opener ends", async () => {
+		const sessionId = await openedThenDropped(await delegatedPeer());
+		const next = await delegatedPeer();
+		const row = (await rows()).find((candidate) => candidate.sessionId === sessionId);
+		expect(row).toMatchObject({ status: "open", attachments: 0, retain_on_disconnect: true });
+		expect(
+			await next.send({ type: "attach_session", sessionId, durableSessionId: row?.durableSessionId }),
+		).toMatchObject({ success: true, data: { attached: true } });
+		expect(await next.send({ type: "get_state", sessionId })).toMatchObject({
+			success: true,
+			data: { sessionId: row?.durableSessionId },
+		});
+	});
+
+	it("retains a delegated open whatever retain_on_disconnect it sends", async () => {
+		const asksFalse = await openedThenDropped(await delegatedPeer(), { retain_on_disconnect: false });
+		const asksTrue = await openedThenDropped(await delegatedPeer(), { retain_on_disconnect: true });
+		const listed = await rows();
+		for (const sessionId of [asksFalse, asksTrue])
+			expect(listed.find((row) => row.sessionId === sessionId)).toMatchObject({
+				attachments: 0,
+				retain_on_disconnect: true,
+			});
+	});
+
+	it("decides at line receipt: an open whose delegated connection ends before it is dispatched is retained", async () => {
+		const id = "x5808-ends-before-dispatch";
+		host.writer.registerConnection(
+			id,
+			{ writeRaw: () => {}, waitForBackpressure: async () => {} },
+			{ launchProof: "proven" },
+		);
+		const line = (record: WireRecord) =>
+			host.writer.withConnection(id, () => host.core.handle(JSON.stringify(record)));
+		await line({ type: "declare_delegation", principal: PRINCIPAL, granted: FORWARDABLE });
+		const before = new Set((await rows()).map((row) => row.sessionId));
+		// handle() reads the line synchronously up to its first await; the connection ends right behind that.
+		const opening = line({ type: "open_session" });
+		host.writer.unregisterConnection(id);
+		await opening;
+		await host.core.router.releaseConnection(id);
+		const opened = (await rows()).filter((row) => !before.has(row.sessionId));
+		expect(opened).toHaveLength(1);
+		expect(opened[0]).toMatchObject({ attachments: 0, retain_on_disconnect: true });
+	});
+
+	it("keeps a connection that never declared on today's rule: closed with it unless it asked to be retained", async () => {
+		const local = await host.proven();
+		const sessionIdOf = async (record: WireRecord) =>
+			((await local.send({ type: "open_session", ...record })).data as Opened).sessionId;
+		const omitted = await sessionIdOf({});
+		const asksFalse = await sessionIdOf({ retain_on_disconnect: false });
+		const asksTrue = await sessionIdOf({ retain_on_disconnect: true });
+		await host.drop(local);
+		const next = await host.proven();
+		for (const sessionId of [omitted, asksFalse])
+			expect(await next.send({ type: "get_state", sessionId })).toMatchObject({
+				success: false,
+				error: "unknown_session",
+			});
+		expect(await next.send({ type: "get_state", sessionId: asksTrue })).toMatchObject({ success: true });
+	});
+
+	it("never turns retention on through attach_session on a delegated connection", async () => {
+		const owner = await host.proven();
+		const { sessionId } = (await owner.send({ type: "open_session" })).data as Opened;
+		const row = (await rows()).find((candidate) => candidate.sessionId === sessionId);
+		const viewer = await delegatedPeer(["observe", "thread"]);
+		expect(
+			await viewer.send({ type: "attach_session", sessionId, durableSessionId: row?.durableSessionId }),
+		).toMatchObject({ success: true });
+		expect((await rows()).find((candidate) => candidate.sessionId === sessionId)).toMatchObject({
+			attachments: 2,
+			retain_on_disconnect: false,
+		});
+		await host.drop(viewer);
+		expect((await rows()).find((candidate) => candidate.sessionId === sessionId)).toMatchObject({
+			attachments: 1,
+			retain_on_disconnect: false,
+		});
+		await host.drop(owner);
+		expect((await rows()).some((candidate) => candidate.sessionId === sessionId)).toBe(false);
+	});
+
+	it("still refuses an open the delegation did not grant", async () => {
+		const delegated = await delegatedPeer(["observe"]);
+		const before = (await rows()).length;
+		expect(await delegated.send({ type: "open_session" })).toMatchObject({
+			success: false,
+			errorCode: "delegation_not_granted",
+		});
+		expect(await rows()).toHaveLength(before);
 	});
 });

@@ -42,6 +42,21 @@ export const RPC_ERROR_SESSION_NOT_HELD = "session_not_held";
 
 export const RPC_ERROR_MEDIA_NOT_FOUND = "media_not_found";
 
+/** `set_project_trust` on an engine launched with `--approve`/`--no-approve`: the flag outranks every saved decision. */
+export const RPC_ERROR_PROJECT_TRUST_LOCKED = "project_trust_locked";
+
+/** `set_project_trust` against what a `project_trust` extension handler decides; nothing is saved or applied. */
+export const RPC_ERROR_PROJECT_TRUST_EXTENSION_DECIDED = "project_trust_extension_decided";
+
+/** `set_project_setting` whose write to the project settings file failed (permissions, a held lock). */
+export const RPC_ERROR_PROJECT_SETTINGS_WRITE_FAILED = "project_settings_write_failed";
+
+/** `set_project_setting` while the session's project is untrusted; `set_project_trust` first. */
+export const RPC_ERROR_PROJECT_NOT_TRUSTED = "project_not_trusted";
+
+/** `set_project_setting` while the project settings file does not parse; fix the file first. */
+export const RPC_ERROR_PROJECT_SETTINGS_UNREADABLE = "project_settings_unreadable";
+
 /** `open_session.context` broke a documented cap (key count, key syntax, value or total bytes). */
 export const RPC_ERROR_INVALID_SESSION_CONTEXT = "invalid_session_context";
 
@@ -59,6 +74,12 @@ export const RPC_ERROR_SUBSCRIPTION_LIMIT = "subscription_limit";
 
 /** `subscribe_sessions`/`unsubscribe_sessions` on a transport with no per-connection identity (stdio). */
 export const RPC_ERROR_UNSUPPORTED_TRANSPORT = "unsupported_transport";
+
+/**
+ * A public method whose host feature is off. `errorData.feature` names it, e.g. `compact_updates` for `reset_stream`,
+ * `cancel_attempt`, `get_recovery_page` and `release_recovery` while engine-socket compact updates are off (senpi#5748).
+ */
+export const RPC_ERROR_FEATURE_DISABLED = "feature_disabled";
 
 /** `open_session.kind` was neither `interactive` nor `worker`; an unknown kind is never downgraded. */
 export const RPC_ERROR_INVALID_SESSION_KIND = "invalid_session_kind";
@@ -184,6 +205,11 @@ export type RpcErrorCode =
 	| typeof RPC_ERROR_INVALID_PATH
 	| typeof RPC_ERROR_OPEN_FAILED
 	| typeof RPC_ERROR_MEDIA_NOT_FOUND
+	| typeof RPC_ERROR_PROJECT_TRUST_LOCKED
+	| typeof RPC_ERROR_PROJECT_TRUST_EXTENSION_DECIDED
+	| typeof RPC_ERROR_PROJECT_SETTINGS_WRITE_FAILED
+	| typeof RPC_ERROR_PROJECT_NOT_TRUSTED
+	| typeof RPC_ERROR_PROJECT_SETTINGS_UNREADABLE
 	| typeof RPC_ERROR_INVALID_SESSION_CONTEXT
 	| typeof RPC_ERROR_INVALID_SUBSCRIPTION
 	| typeof RPC_ERROR_UNKNOWN_SUBSCRIPTION
