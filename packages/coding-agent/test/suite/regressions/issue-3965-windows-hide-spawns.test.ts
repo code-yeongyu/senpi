@@ -13,6 +13,14 @@ import { describe, expect, it } from "vitest";
 // sees a flashing empty console window", which no behavioral test on Linux
 // can observe (windowsHide is a no-op off win32).
 //
+// Two GUI launches are deliberate exceptions (review on #6279) and are pinned
+// NOT to hide: the browser launch (`utils/open-browser.ts`, rundll32 hands
+// the hidden window state to ShellExecute, so a fresh browser could open
+// hidden) and the external editor (`modes/interactive/external-editor.ts`,
+// stdio inherit + shell shares the parent console, so the flag could hide
+// cmd.exe and with it a GUI editor like notepad). They must never re-enter
+// the table above without a real Windows behavior test behind them.
+//
 // Out of scope by design (see the PR body for the full audit table):
 // unix-only commands (bash/sh, lsof, ps, tmux, tar, fd) and passthrough
 // wrappers whose options object is caller-owned (gated-child-process,
@@ -55,11 +63,6 @@ const WINDOWS_HIDE_SPAWNS: readonly SpawnSite[] = [
 		windowLines: 1,
 	},
 	{
-		file: "packages/coding-agent/src/utils/open-browser.ts",
-		anchor: 'spawn(cmd, args, { stdio: "ignore", detached: true',
-		windowLines: 1,
-	},
-	{
 		file: "packages/coding-agent/src/experimental/mini/server/run.ts",
 		anchor: 'spawn(process.execPath, args, { stdio: ["pipe", "pipe", "inherit"]',
 		windowLines: 1,
@@ -67,16 +70,6 @@ const WINDOWS_HIDE_SPAWNS: readonly SpawnSite[] = [
 	{
 		file: "packages/coding-agent/src/experimental/mini/tui/run.ts",
 		anchor: "spawn(process.execPath, [...runtimeExecArgv(), SERVER_ENTRY, socketPath, sessionsRoot], {",
-		windowLines: 8,
-	},
-	{
-		file: "packages/coding-agent/src/modes/interactive/external-editor.ts",
-		anchor: "spawn(editor, [...editorArgs, filePath], {",
-		windowLines: 8,
-	},
-	{
-		file: "packages/coding-agent/src/modes/interactive/external-editor.ts",
-		anchor: "spawn(editor, [...editorArgs, options.path], {",
 		windowLines: 8,
 	},
 	{
@@ -116,6 +109,28 @@ const WINDOWS_HIDE_SPAWNS: readonly SpawnSite[] = [
 	},
 ];
 
+// GUI launches that must NOT pass `windowsHide: true` (review on #6279):
+// the browser launch hands a hidden window state to ShellExecute, and the
+// external editor shares the parent console, so the flag would hide a window
+// the user is meant to see.
+const NO_WINDOWS_HIDE_SPAWNS: readonly SpawnSite[] = [
+	{
+		file: "packages/coding-agent/src/utils/open-browser.ts",
+		anchor: 'spawn(cmd, args, { stdio: "ignore", detached: true',
+		windowLines: 1,
+	},
+	{
+		file: "packages/coding-agent/src/modes/interactive/external-editor.ts",
+		anchor: "spawn(editor, [...editorArgs, filePath], {",
+		windowLines: 8,
+	},
+	{
+		file: "packages/coding-agent/src/modes/interactive/external-editor.ts",
+		anchor: "spawn(editor, [...editorArgs, options.path], {",
+		windowLines: 8,
+	},
+];
+
 function optionsWindow(site: SpawnSite): string {
 	const lines = readFileSync(join(REPO_ROOT, site.file), "utf-8").split("\n");
 	const anchorIndex = lines.findIndex((line) => line.includes(site.anchor));
@@ -132,6 +147,16 @@ describe("windowsHide on win32-reachable spawns (senpi#3965)", () => {
 			const window = optionsWindow(site);
 			// then the console window is hidden
 			expect(window).toContain("windowsHide: true");
+		},
+	);
+
+	// GUI launches reverted by the review on #6279: hiding their window would
+	// hide something the user is meant to see, so the flag must stay out.
+	it.each(NO_WINDOWS_HIDE_SPAWNS)(
+		"#given $file #when the spawn at '$anchor' runs on Windows #then its options must NOT hide the window",
+		(site) => {
+			const window = optionsWindow(site);
+			expect(window).not.toContain("windowsHide: true");
 		},
 	);
 });

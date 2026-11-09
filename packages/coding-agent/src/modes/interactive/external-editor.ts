@@ -32,9 +32,6 @@ export async function editInExternalEditor(options: ExternalEditorOptions): Prom
 			const child = spawn(editor, [...editorArgs, filePath], {
 				stdio: "inherit",
 				shell: process.platform === "win32",
-				// senpi#3965: a console-subsystem editor (or cmd.exe) must not
-				// flash its own console window on Windows.
-				windowsHide: true,
 			});
 			child.on("error", () => resolve({ launched: false }));
 			child.on("close", (code) => resolve({ launched: true, code }));
@@ -68,9 +65,6 @@ export async function editFileInExternalEditor(options: { command: string; path:
 		const child = spawn(editor, [...editorArgs, options.path], {
 			stdio: "inherit",
 			shell: process.platform === "win32",
-			// senpi#3965: a console-subsystem editor (or cmd.exe) must not
-			// flash its own console window on Windows.
-			windowsHide: true,
 		});
 		child.on("error", () => resolve({ launched: false }));
 		child.on("close", (code) => resolve({ launched: true, code }));
