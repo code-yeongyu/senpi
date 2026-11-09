@@ -9,6 +9,7 @@ import "../modes/rpc/host-startup-beacon.ts";
 // The private descriptor table is captured right after that, before anything spawns.
 import "../private-fds.ts";
 import "../modes/rpc/internal-bootstrap.ts";
+import "../windows-power-throttling-startup.ts";
 import { dispatchAgentDirectoryCommand } from "../cli/agent-dir-command.ts";
 import { dispatchKillGuardCommand } from "../cli/kill-guard-command.ts";
 

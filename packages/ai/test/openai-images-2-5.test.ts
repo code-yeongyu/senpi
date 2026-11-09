@@ -60,6 +60,23 @@ describe("OpenAI GPT Image 2.5", () => {
 		}
 	});
 
+	it("sends GPT Image 2.6 complexity on generations and edits only when set (senpi#5820)", async () => {
+		const target = { ...model, id: "gpt-image-2.6-flare" };
+		expect((await run({ complexity: "low" }, context, target)).stopReason).toBe("stop");
+		expect(mockState.generate).toHaveBeenLastCalledWith(
+			expect.objectContaining({ model: "gpt-image-2.6-flare", complexity: "low" }),
+			expect.anything(),
+		);
+		const edit = { input: [...context.input, image] };
+		expect((await run({ complexity: "medium" }, edit, target)).stopReason).toBe("stop");
+		expect(mockState.edit).toHaveBeenLastCalledWith(
+			expect.objectContaining({ complexity: "medium" }),
+			expect.anything(),
+		);
+		await run({}, context, target);
+		expect(mockState.generate.mock.lastCall?.[0]).not.toHaveProperty("complexity");
+	});
+
 	it.each(["2048x1152", "3840x2160"] as const)("passes size %s to generations", async (size) => {
 		expect((await run({ size })).stopReason).toBe("stop");
 		expect(mockState.generate).toHaveBeenCalledWith(expect.objectContaining({ size }), expect.anything());

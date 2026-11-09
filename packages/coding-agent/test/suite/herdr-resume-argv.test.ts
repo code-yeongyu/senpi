@@ -31,6 +31,25 @@ describe("Herdr restart launcher", () => {
 		});
 	});
 
+	// herdr keys prompt delivery and resume on the agents it knows, so the protocol agent stays pi
+	// and the brand travels in a display-only pane token that herdr's pane and agent APIs expose.
+	it.each(["omo", "pi"])("names the %s brand in the app pane token and clears it on quit", async (command) => {
+		launcher.command = command;
+		const f = await herdrReporterFixture();
+		await f.start();
+		expect(f.requests.find((request) => request.method === "pane.report_metadata")?.params).toMatchObject({
+			tokens: { app: command },
+		});
+		await f.emit("session_shutdown", { reason: "quit" });
+		expect(f.requests.slice(-2).map((request) => [request.method, request.params.tokens])).toEqual([
+			["pane.report_metadata", { app: null }],
+			["pane.release_agent", undefined],
+		]);
+		const agents = f.requests.filter((request) => "agent" in request.params).map((request) => request.params.agent);
+		expect(agents.length).toBeGreaterThan(0);
+		expect(new Set(agents)).toEqual(new Set(["pi"]));
+	});
+
 	it("uses the same session ID fallback as the reported reference", async () => {
 		launcher.command = "senpi";
 		const f = await herdrReporterFixture();
