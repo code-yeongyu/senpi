@@ -1,5 +1,23 @@
 # changes
 
+## 2026-11-06 - Copy reaches a remote viewer without SSH/Mosh markers (senpi#6108, PR #6109)
+
+### What changed
+
+- `packages/coding-agent/src/utils/clipboard.ts`: `copyToClipboard()` also emits OSC 52 after a verified native or command clipboard write when stdout is a terminal, so the terminal that displays the session receives the text too. `isRemoteSession()` also treats `SSH_TTY` as a remote marker. Success still rests on a write that was verified or, as before, on OSC 52 where it is the only route (remote or display-less sessions); a failed local write with a terminal on stdout still throws.
+
+### Why
+
+- A persistent terminal session can be viewed from another machine while the program's environment carries no SSH/Mosh markers. On macOS the native write to the execution host's clipboard succeeded, OSC 52 was skipped, and the user saw "Copied!" while the viewing machine's clipboard was unchanged.
+
+### Why an extension could not handle it
+
+- `copyToClipboard()` is the core clipboard writer used by the interactive copy paths; an extension cannot change what the core writer sends to the terminal.
+
+### Expected merge conflict zones
+
+- LOW: `isRemoteSession()` and the OSC 52 condition near the end of `copyToClipboard()`.
+
 ## 2026-11-01 - getShellEnv carries the kill guard's runtime layer (senpi#5349, PR #5358)
 
 ### What changed

@@ -9,7 +9,8 @@
   "jsPlugins": [
     "./scripts/oxlint/model-type-comparison.ts",
     "./scripts/oxlint/biome-ports.ts",
-    "./scripts/oxlint/copy.mjs"
+    "./scripts/oxlint/copy.mjs",
+    "./scripts/oxlint/egress.mjs"
   ],
   "categories": {},
   "rules": {
@@ -296,6 +297,11 @@
         "**/*.{gen,generated}.{ts,tsx,js,jsx,mts,cts,mjs,cjs}"
       ],
       "rules": { "senpi-copy/no-em-dash-copy": "error" }
+    },
+    {
+      "files": ["packages/coding-agent/src/core/egress/**"],
+      "excludeFiles": ["**/*.{test,spec}.{ts,tsx,js,jsx,mts,cts,mjs,cjs}"],
+      "rules": { "senpi-egress/no-module-state": "error" }
     }
   ],
   "ignorePatterns": [

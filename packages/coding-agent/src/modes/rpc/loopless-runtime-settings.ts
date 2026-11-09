@@ -51,7 +51,11 @@ export async function resolveLooplessSettings(
 		hasTrustRequiringResources &&
 		parsed.projectTrustOverride === undefined &&
 		savedProjectTrust !== true;
-	const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted, trustFromFullAccess });
+	const settingsManager = SettingsManager.create(cwd, agentDir, {
+		projectTrusted,
+		trustFromFullAccess,
+		projectTrustLocked: parsed.projectTrustOverride !== undefined,
+	});
 	const reloadOptions: ResourceLoaderReloadOptions | undefined = shouldResolveProjectTrust
 		? {
 				resolveProjectTrust: ({ extensionsResult }) =>

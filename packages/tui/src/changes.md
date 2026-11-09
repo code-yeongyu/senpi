@@ -1,3 +1,42 @@
+## 2026-11-05 - Legacy ESC-prefixed Alt chords decode while the Kitty protocol is negotiated (senpi#6058)
+
+### What changed
+
+- `packages/tui/src/keys.ts`: `matchesKey` accepts the legacy alt+printable form (`ESC <key>` for a letter, digit or symbol) whether or not the Kitty protocol is active, and `parseKey`'s two-byte ESC branch returns `alt+<key>` in both modes. The legacy `ctrl+alt` form (`ESC <ctrl char>`), `ESC CR` (shift+enter in Kitty mode) and `ESC B`/`ESC F` (alt+left/right only outside Kitty mode) keep their Kitty-mode behavior.
+
+### Why
+
+- Under ConPTY (WSL in Windows Terminal 1.25+) the Kitty flags reply comes from the outer terminal, while the console host encodes the keys the WSL process reads in legacy form. The decoder marked Kitty active and then rejected every `ESC <key>` Alt chord, so the Windows/WSL defaults Alt+Q, Alt+V and Alt+Z did nothing. A conforming Kitty terminal sends Escape as `CSI 27 u`, so a raw ESC plus a printable key is unambiguous in both modes.
+
+### Why an extension could not handle it
+
+- Key decoding happens in the TUI input layer before any keybinding or extension sees the input.
+
+### Expected merge conflict zones
+
+- LOW: the legacy alt+printable branch of `matchesKey` and the two-byte ESC branch of `parseKey` in `keys.ts`.
+
+## 2026-11-06 - A paste's own trailing CR stays in the paste; the next read's CR submits (senpi#3076)
+
+### What changed
+
+- `packages/tui/src/stdin-buffer.ts`: `consumeUnbracketedBurst` decides from the burst state, not from the byte alone. A trailing CR is a submit only when the burst it ends carries LF or CRLF line breaks; a burst whose own breaks are bare CR — an unbracketed paste from a terminal that converts pasted newlines to CR (xterm, VTE, iTerm2) — is emitted whole, trailing CR included, so its paste is not submitted. The same rule holds one read later: `lastBurstPasteUsesCrLineBreaks` records whether the paste committed just before was CR-only, and a following CR continues that paste instead of becoming Enter. After an LF/CRLF paste the next read's CR is the Enter key that submits the block. The held break is a `HeldLineBreakKind` (`enter` | `paste` | `keystroke`) rather than the former `endsPaste` boolean, and a held "enter" still joins the LF half of a split CRLF pair and is released before any read that does not start with it. LF-only and CRLF-only bursts, keystroke-paced input and the bracketed-paste path are unchanged.
+
+### Why
+
+- Automation that types into the TUI writes its text and then Enter as two reads (`herdr pane send-text`, then `send-keys Enter`). When that CR landed inside the 20 ms burst window the paste detector emitted it as `paste("\r")` and the request stayed in the editor behind a `[paste #N]` marker with nothing submitted (senpi#3076).
+- A first attempt treated every trailing CR as Enter, which made an unbracketed CR-only multiline paste submit itself — the exact input the burst detector exists for (review finding on that head). The burst's own line-ending style separates the two cases.
+
+### Why an extension could not handle it
+
+- Stdin framing decides what reaches the editor as a key before any extension sees an input event; a swallowed Enter never becomes an input event an extension could reinterpret.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/stdin-buffer.ts`: `consumeUnbracketedBurst`, the held-line-break block in `process()`, `holdTrailingNewline`/`releaseHeldNewline`, and the `heldNewline*`/`lastBurstPaste*` field declarations.
+- `packages/tui/test/stdin-buffer.test.ts`: the `StdinBuffer unbracketed paste bursts` block.
+- `packages/tui/test/paste-submit-contract.test.ts`: the whole file.
+
 ## 2026-11-03 - Clipboard frames pass through the stdout guard (senpi#5680)
 
 ### What changed

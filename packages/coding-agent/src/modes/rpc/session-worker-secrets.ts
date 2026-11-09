@@ -1,11 +1,32 @@
 import { SESSION_WORKER_LIMITS } from "./session-worker-protocol.ts";
 
-const SECRET_FRAME_TYPES = ["extension_ui_request", "secret_input_settled"] as const;
+const SECRET_FRAME_TYPES = ["extension_ui_request", "secret_input_settled", "secret_sealed_offer"] as const;
 type SecretFrameType = (typeof SECRET_FRAME_TYPES)[number];
 
 function secretFrameType(record: object): SecretFrameType | undefined {
 	const type: unknown = "type" in record ? record.type : undefined;
 	return SECRET_FRAME_TYPES.find((known) => known === type);
+}
+
+/** A worker's offer of a sealed request to the host's holders (D11 secret phase 5.5); the host signs and fans it out. */
+export interface SealedOfferRecord {
+	readonly type: "secret_sealed_offer";
+	readonly hpkePk: string;
+	readonly title: string;
+	readonly placeholder?: string;
+	readonly deadlineAtMs: number;
+}
+
+export function isSealedOffer(record: object): record is SealedOfferRecord {
+	if (!("type" in record) || record.type !== "secret_sealed_offer") return false;
+	const offer = record as Record<string, unknown>;
+	return (
+		typeof offer.hpkePk === "string" &&
+		/^[A-Za-z0-9_-]{43}$/.test(offer.hpkePk) &&
+		typeof offer.title === "string" &&
+		(offer.placeholder === undefined || typeof offer.placeholder === "string") &&
+		Number.isSafeInteger(offer.deadlineAtMs)
+	);
 }
 
 /**
@@ -34,7 +55,10 @@ export class WorkerSecretIds {
 		if (!this.sent.has(id)) this.sent.set(id, new Set());
 	}
 
-	/** A live id's request and settled record, each at most once and within `secretFrameBytes`; a refusal spends nothing. */
+	/**
+	 * A live id's request, settled record and sealed offer (D11 secret phase 5.5), each at most once and within
+	 * `secretFrameBytes`; a refusal spends nothing.
+	 */
 	admitFrame(id: string, record: object): boolean {
 		const sent = this.sent.get(id);
 		const type = secretFrameType(record);

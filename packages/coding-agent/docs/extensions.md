@@ -885,6 +885,18 @@ pi.on("ui_prompt_end", async (event, ctx) => {
 });
 ```
 
+#### Permission mode and session-wide dialogs
+
+`pi.getPermissionPreset()` returns the preset the permission system enforces for this session right now, or `undefined` when no permission system runs for it or its setup failed.
+
+When a client moves a live session to another preset (`set_permission_preset`, or an attach naming one), the session announces it on the `pi.events` bus. A session's initial preset is not announced; read it with `pi.getPermissionPreset()`.
+
+| Channel | Payload | Meaning |
+|---------|---------|---------|
+| `permission_preset_changed` | `{ permissionPreset, permissionPresetSource, permissionPresetStatus, effectivePermissionPreset }` | The session's approval mode changed; the payload is the same mode `get_state` reports. |
+
+`pi.sessionDialog.select / confirm / input / editor` raise a dialog addressed to every client attached to the session, not only to the connection whose command is running. Use it for a prompt raised after that command returned, such as a background child's permission request a task runner forwards. The first answer wins; a later answer to the same dialog is refused with `already_answered`. In the terminal UI it shows like any other dialog. The same addressing is available on `ctx.ui` dialogs with the `audience: "session"` option.
+
 #### Pending-question bus events
 
 These additive events use `pi.events.on(...)`, not `pi.on(...)`:
@@ -1296,6 +1308,7 @@ pi.on("input", async (event, ctx) => {
   // event.source - "interactive" (typed), "rpc" (API), or "extension" (via sendUserMessage)
   // event.attribution - "user" (a person sent it) or "agent" (an extension, tool, subagent, another agent's RPC client, or the session)
   // event.streamingBehavior - "steer" | "followUp" | undefined
+  // event.chainCount - the hop count of a thread call from another session (RPC `chainCount`), else undefined
   //   undefined when idle, "steer" for mid-stream interrupts,
   //   "followUp" for messages queued until the agent finishes
 
@@ -1379,7 +1392,7 @@ export default function (pi: ExtensionAPI) {
 
 Optional read-only list of resolved paths for every successfully loaded extension, including event-only extensions. Builtin and inline factories retain synthetic identifiers such as `<builtin:herdr>`. The runner resolves file paths against the session working directory and provides this list to event, command, and tool contexts; older hosts and hand-built contexts may omit it.
 
-The builtin `herdr` reporter reads this list at session start. Inside a herdr TUI pane it reports pending questions and host dialogs as `blocked`, active turns/subagents/monitors as `working`, and otherwise `idle`, using source `custom:senpi`. It reports session titles and releases the pane only on quit, not reload or session navigation.
+The builtin `herdr` reporter reads this list at session start. Inside a herdr TUI pane it reports pending questions and host dialogs as `blocked`, an active turn and bounded background work that will start a turn (subagents, DAG runs, detached eval cells, one-shot monitors with a deadline) as `working`, and otherwise `idle`; once the turn has ended, monitors with no deadline and background terminal sessions are named in the idle report's message instead of keeping the pane `working`, using source `custom:senpi`. It reports session titles and releases the pane only on quit, not reload or session navigation.
 
 In every TUI session, herdr pane or not, the same reporter also publishes that state through `ctx.ui.setProgramStatus` (OSC 7501), so terminals that read the Program Status Protocol, such as herdr-core panes, see it too. A built-in question is reported with `kind: "question"` and a permission prompt with `kind: "permission"`; other dialogs carry no kind. The status is cleared on quit. Deferring to a user reporter affects only the herdr socket, not this status.
 
@@ -2488,6 +2501,22 @@ pi.registerMemoryReporter("myCache", () => ({ entries: cache.size, approxBytes: 
 ```
 
 Names the report owns (`sessionId`, `takenAt`, `pid`, `main`, `kernels`, `residentStore`, `tuiRenderCache`, `heapSnapshot`, `reporterErrors`) throw at registration. When two extensions register the same name, the first loaded wins.
+
+### pi.registerRpcRemoteSource(source)
+
+Serve `monitor` rpc targets that name a session on another device: `<device>/<session>` or `<device>/*` (see [terminal tools](terminal-tools.md#session-status-rpc-branch)). senpi knows no transport; the source does. `open(target, { events, exclude, resumeFrom? }, handlers)` resolves to `{ initial, stop }`, where `initial` is `{ rows, settledTurns?, generation?, cursor? }` and its `rows` are snapshot-shaped (`sessionId`, `status`, ...). Through `handlers` the source reports `record(record)` for each live record, `resynced(state)` after a gap, `cursor(cursor)` when its resume position moves, `lost(reason)` when the device stops answering, and `ended(reason)` when the watch can never continue. senpi renders every record with the local renderer, reports each settled turn a resync names in `settledTurns` once and each live `agent_settled` as it arrives, and saves the cursor in a persistent monitor's checkpoint, so a restore passes it back as `resumeFrom`. Reject `open` with a typed reason when the target cannot be watched.
+
+```typescript
+const unregister = pi.registerRpcRemoteSource({
+  async open(target, options, handlers) {
+    const stream = await myTransport.watch(target.device, target.session, options.resumeFrom);
+    stream.on("record", handlers.record);
+    return { initial: stream.state, stop: () => stream.close() };
+  },
+});
+```
+
+The latest registration wins; it is removed on unregister, a failed load or runtime invalidation. Without one, a remote target is refused.
 
 ### pi.registerEntryRenderer(customType, renderer)
 

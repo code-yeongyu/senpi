@@ -3,9 +3,9 @@ import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, expect, it, vi } from "vitest";
 import { type FrozenAcceptedRoot, SessionAcceptanceLane } from "../../../src/modes/rpc/session-acceptance-lane.ts";
-import { RpcSessionRegistry, type RpcSessionEntry } from "../../../src/modes/rpc/session-registry.ts";
 import { dataOf, statusHost, type WireRecord } from "../rpc-session-status-support.ts";
 import { EVENT_SAFETY_MS } from "./4272-worker-acceptance-support.ts";
+import { observeInProcessOpens } from "../rpc-in-process-entry-support.ts";
 
 afterEach(() => {
 	vi.unstubAllEnvs();
@@ -33,12 +33,10 @@ it("T3i legacy records keep their grammar while the real lane tracks the call th
 	});
 	await using host = await statusHost();
 	await writeFile(join(host.cwd, "note.txt"), "legacy bytes\n");
-	const admissions = vi.spyOn(RpcSessionRegistry.prototype, "getForCommand");
+	const admissions = observeInProcessOpens(host);
 	const client = host.client("calls");
 	const sessionId = String(dataOf(await client.request({ type: "open_session", cwd: host.cwd })).sessionId);
-	const entry = admissions.mock.results.findLast((result) => result.type === "return")?.value as
-		| RpcSessionEntry
-		| undefined;
+	const entry = admissions.entryFor(sessionId);
 	const lane = entry?.acceptance;
 	if (!lane) throw new Error("no real lane");
 	const call = fauxToolCall("read", { path: join(host.cwd, "note.txt") }, { id: "call-read-1" });
