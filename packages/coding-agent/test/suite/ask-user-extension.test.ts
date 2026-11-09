@@ -1,3 +1,4 @@
+import { fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mapSdkToolNameToPi, resolveSdkTools } from "../../src/core/extensions/builtin/anthropic-subscription/tools.ts";
 import askUserExtension from "../../src/core/extensions/builtin/ask-user/index.ts";
@@ -348,5 +349,186 @@ describe("ask-user builtin", () => {
 		expect(text).not.toContain("only after tests pass");
 		const userWords = (outcome.details as { userWords?: Array<{ text: string }> }).userWords ?? [];
 		expect(userWords.map((word) => word.text)).toContain("only after tests pass");
+	});
+});
+
+// oh-my-openagent#12797: models sometimes write question text as \uXXXX escapes and drop the backslash (or keep a
+// literal one), so the card showed `ub0b4 Tailscale 쓰기` instead of `내 Tailscale 쓰기`.
+describe("ask-user escape residue (oh-my-openagent#12797)", () => {
+	const korean = (label: string, question = "어떤 방식으로 연결할까요?") => ({
+		questions: [{ header: "Tailscale", question, options: [{ label }, { label: "새로 설치" }], multiSelect: false }],
+		waitForAnswer: true,
+	});
+	// One assistant message's tool calls run in parallel inside one turn; the model sees a refusal only after turn_end.
+	const endTurn = (runner: ReturnType<Harness["getExtensionRunner"]>) =>
+		runner.emitBoundary(
+			{
+				type: "turn_end",
+				turnIndex: 0,
+				message: fauxAssistantMessage("asking"),
+				toolResults: [],
+				messageEntryId: "turn",
+				toolResultEntryIds: [],
+				outcome: "completed",
+			},
+			() => ({ contextEntries: [], contextMessages: [], llmMessages: [], pendingMessages: [], canContinue: false }),
+		);
+
+	it("asks for one re-call on a bare escape, then shows an identical re-call as written with a note", async () => {
+		// given the captured payload: a label whose first syllable lost its backslash
+		const { tool, ctx, runner } = await setup();
+		const notify = vi.fn();
+		ctx.ui.notify = notify;
+		const payload = korean("ub0b4 Tailscale 쓰기");
+
+		// when the model calls the tool
+		const first = required(tool).execute("residue-1", payload, undefined, undefined, ctx as ExtensionToolContext);
+
+		// then it gets a typed error naming the residue, and no card opens
+		await expect(first).rejects.toMatchObject({
+			name: "AskUserEscapeResidueError",
+			message: expect.stringContaining('"ub0b4"'),
+		});
+		expect(ctx.ui.question).not.toHaveBeenCalled();
+
+		// when the re-call in the next turn still carries the same residue
+		await endTurn(runner);
+		const second = await required(tool).execute("residue-2", payload, undefined, undefined, ctx as ExtensionToolContext);
+
+		// then the card opens with the text as written, and the user sees a short note instead of a second error
+		expect(second.details).toMatchObject({ status: "answered" });
+		expect(ctx.ui.question).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(required(ctx.ui.question)).mock.calls[0]?.[0].questions[0]?.options[0]?.label).toBe(
+			"ub0b4 Tailscale 쓰기",
+		);
+		expect(notify).toHaveBeenCalledWith(expect.stringContaining("ub0b4"), "warning");
+
+		// and a later question set, after the turn ended, gets its own single re-call
+		await runner.emit({ type: "agent_end", messages: [] });
+		await expect(
+			required(tool).execute("residue-3", payload, undefined, undefined, ctx as ExtensionToolContext),
+		).rejects.toMatchObject({ name: "AskUserEscapeResidueError" });
+	});
+
+	it("refuses each of two parallel residue calls once, then opens each re-call that still has residue", async () => {
+		// given one assistant message with two question sets, each holding residue
+		const { tool, ctx, runner } = await setup();
+		const notify = vi.fn();
+		ctx.ui.notify = notify;
+		const first = korean("ub0b4 Tailscale 쓰기");
+		const second = korean("uc0c8로 설치", "어떤 버전을 설치할까요?");
+		const call = (id: string, payload: unknown) =>
+			required(tool).execute(id, payload, undefined, undefined, ctx as ExtensionToolContext);
+
+		// when both calls run in parallel in one turn
+		const parallel = await Promise.allSettled([call("parallel-1", first), call("parallel-2", second)]);
+
+		// then both are refused, and no card opens
+		expect(parallel.map((outcome) => outcome.status)).toEqual(["rejected", "rejected"]);
+		for (const outcome of parallel)
+			if (outcome.status === "rejected") expect(outcome.reason).toMatchObject({ name: "AskUserEscapeResidueError" });
+		expect(ctx.ui.question).not.toHaveBeenCalled();
+
+		// when the next turn re-calls both, one unchanged and one with different residue
+		await endTurn(runner);
+		const reFirst = await call("recall-1", first);
+		const reSecond = await call("recall-2", korean("uc0c8 설치", "어떤 버전을 설치할까요?"));
+
+		// then each opens as written with a warning instead of a second refusal
+		expect(reFirst.details).toMatchObject({ status: "answered" });
+		expect(reSecond.details).toMatchObject({ status: "answered" });
+		expect(ctx.ui.question).toHaveBeenCalledTimes(2);
+		expect(notify).toHaveBeenCalledTimes(2);
+		expect(notify).toHaveBeenCalledWith(expect.stringContaining("uc0c8"), "warning");
+
+		// and a later residue set, after that re-call turn ended, gets its own single refusal
+		await endTurn(runner);
+		await expect(call("later", first)).rejects.toMatchObject({ name: "AskUserEscapeResidueError" });
+	});
+
+	it("closes the retry on a clean re-call, so a later residue set is refused again", async () => {
+		// given a refused residue call whose re-call came back clean
+		const { tool, ctx, runner } = await setup();
+		const call = (id: string, payload: unknown) =>
+			required(tool).execute(id, payload, undefined, undefined, ctx as ExtensionToolContext);
+		await expect(call("refused", korean("ub0b4 Tailscale 쓰기"))).rejects.toMatchObject({
+			name: "AskUserEscapeResidueError",
+		});
+		await endTurn(runner);
+		const clean = await call("clean", korean("내 Tailscale 쓰기"));
+		expect(clean.details).toMatchObject({ status: "answered" });
+		await endTurn(runner);
+
+		// when an unrelated residue set comes later in the same run
+		const later = call("later", korean("uc0c8로 설치", "어떤 버전을 설치할까요?"));
+
+		// then it is refused once rather than opened with a warning
+		await expect(later).rejects.toMatchObject({ name: "AskUserEscapeResidueError" });
+		expect(ctx.ui.question).toHaveBeenCalledTimes(1);
+	});
+
+	it("keeps the re-call open across a turn that asked nothing", async () => {
+		// given a refused call, then a turn that did other work
+		const { tool, ctx, runner } = await setup();
+		const payload = korean("ub0b4 Tailscale 쓰기");
+		const call = (id: string) =>
+			required(tool).execute(id, payload, undefined, undefined, ctx as ExtensionToolContext);
+		await expect(call("refused")).rejects.toMatchObject({ name: "AskUserEscapeResidueError" });
+		await endTurn(runner);
+		await endTurn(runner);
+
+		// when the re-call comes two turns later
+		const recall = await call("recall");
+
+		// then it opens instead of being refused a second time
+		expect(recall.details).toMatchObject({ status: "answered" });
+	});
+
+	it("asks for a re-call when a literal backslash escape was left undecoded", async () => {
+		// given JSON that wrote `\\ub0b4`, so the decoded label still holds a backslash escape
+		const { tool, ctx } = await setup();
+		const payload = JSON.parse(String.raw`{"questions":[{"header":"Tailscale","question":"어떤 방식으로 연결할까요?","options":[{"label":"\\ub0b4 Tailscale 쓰기"},{"label":"새로 설치"}],"multiSelect":false}],"waitForAnswer":true}`);
+
+		// then the call is refused with the typed error and no card opens
+		await expect(
+			required(tool).execute("literal", payload, undefined, undefined, ctx as ExtensionToolContext),
+		).rejects.toMatchObject({ name: "AskUserEscapeResidueError", message: expect.stringContaining("\\ub0b4") });
+		expect(ctx.ui.question).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		["clean Hangul", korean("내 Tailscale 쓰기")],
+		[
+			"escaped JSON that decodes correctly",
+			JSON.parse(String.raw`{"questions":[{"header":"Tailscale","question":"\uc5b4\ub5a4 \ubc29\uc2dd\uc73c\ub85c \uc5f0\uacb0\ud560\uae4c\uc694?","options":[{"label":"\ub0b4 Tailscale \uc4f0\uae30"},{"label":"\uc0c8\ub85c \uc124\uce58"}],"multiSelect":false}],"waitForAnswer":true}`),
+		],
+		[
+			"English text with u-prefixed ids",
+			{
+				questions: [
+					{
+						header: "Cleanup",
+						question: "Delete user u1234 and the stale key uabcd from build u00ff?",
+						options: [{ label: "Delete u1234" }, { label: "Keep both" }],
+						multiSelect: false,
+					},
+				],
+				waitForAnswer: true,
+			},
+		],
+		["Korean text with an id outside its script", korean("u1234 계정 삭제", "사용자 u1234 를 삭제할까요?")],
+		["an escape quoted as code", korean("`\\u00e9` 유지", "정규식의 `\\uac00` 범위를 유지할까요?")],
+		["an escape inside a fenced block", korean("유지", '이 코드를 유지할까요?\n```ts\nconst e = "\\u00e9";\n```')],
+		["an escape inside a double-backtick span", korean("``\\u00e9`` 유지", "``a `\\uac00` b`` 범위를 유지할까요?")],
+	])("opens the card without an error for %s", async (_label, payload) => {
+		// given text with no escape residue
+		const { tool, ctx } = await setup();
+
+		// when the model calls the tool
+		const result = await required(tool).execute("clean", payload, undefined, undefined, ctx as ExtensionToolContext);
+
+		// then the card opens on the first call
+		expect(result.details).toMatchObject({ status: "answered" });
+		expect(ctx.ui.question).toHaveBeenCalledTimes(1);
 	});
 });

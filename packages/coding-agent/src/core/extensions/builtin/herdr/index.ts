@@ -14,10 +14,17 @@ import { HerdrClient, type HerdrMethod } from "./herdr-client.ts";
 import {
 	initialHerdrState,
 	isHerdrBlockedEvent,
+	openEndedMonitors,
 	reduceHerdrState,
 	selectHerdrBlockedKind,
 	selectHerdrReport,
 } from "./herdr-state.ts";
+
+/**
+ * Herdr keys prompt delivery and session restore on agent labels it knows, so the protocol agent stays `pi`.
+ * The product command (`omo`, `senpi`, `pi`) travels in this display-only pane token instead (omo#12395).
+ */
+const APP_TOKEN = "app";
 
 export interface HerdrDependencies {
 	getLoadedExtensionPaths: (ctx: ExtensionContext) => readonly string[];
@@ -108,8 +115,8 @@ export function createHerdrExtension(deps: HerdrDependencies) {
 			const next = ctx.sessionManager.getSessionName() ?? "";
 			if (title === next) return;
 			title = next;
-			if (!(await send("pane.report_metadata", { title: next, display_agent: next })) && title === next)
-				title = undefined;
+			const params = { title: next, display_agent: next, tokens: { [APP_TOKEN]: APP_COMMAND } };
+			if (!(await send("pane.report_metadata", params)) && title === next) title = undefined;
 		}
 		function refreshChildren(ctx: ExtensionContext): void {
 			state = reduceHerdrState(state, { type: "children", count: countRunningChildTasks(ctx, debug) });
@@ -141,7 +148,11 @@ export function createHerdrExtension(deps: HerdrDependencies) {
 			subscriptions.push(
 				pi.events.on(TERMINAL_MONITOR_STATE_EVENT, (data) => {
 					if (stopped || !isTerminalMonitorStateEvent(data)) return;
-					state = reduceHerdrState(state, { type: "monitors", count: data.activeCount });
+					state = reduceHerdrState(state, {
+						type: "monitors",
+						count: data.activeCount,
+						openEnded: openEndedMonitors(data),
+					});
 					return publish();
 				}),
 			);
@@ -189,7 +200,10 @@ export function createHerdrExtension(deps: HerdrDependencies) {
 			if (event.reason === "quit") ctx.ui.setProgramStatus?.(undefined);
 			// Drain before the host builds the successor runtime, or releases the pane.
 			await Promise.all(pending);
-			if (event.reason === "quit") await send("pane.release_agent", { agent: "pi" });
+			if (event.reason !== "quit") return;
+			// Herdr keeps pane tokens after release and after the process exits, so the brand is cleared explicitly.
+			await send("pane.report_metadata", { tokens: { [APP_TOKEN]: null } });
+			await send("pane.release_agent", { agent: "pi" });
 		});
 	};
 }

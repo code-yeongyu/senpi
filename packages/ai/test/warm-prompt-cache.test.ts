@@ -71,12 +71,50 @@ describe("warmPromptCache", () => {
 		});
 	});
 
-	it("returns unsupported without sending a request for non-native Anthropic lanes", async () => {
+	it("warms an Anthropic-compatible proxy that asserts cache support", async () => {
+		let requestBody: Record<string, unknown> | undefined;
+		const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+			requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+			return jsonResponse({
+				id: "msg_warm",
+				type: "message",
+				role: "assistant",
+				content: [],
+				model: "claude-sonnet-4-5",
+				stop_reason: "max_tokens",
+				stop_sequence: null,
+				usage: { input_tokens: 7, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+			});
+		});
+		const gatewayModel = {
+			...getModel("anthropic", "claude-sonnet-4-5"),
+			provider: "gateway",
+			baseUrl: "https://gateway.example.test/anthropic",
+			compat: { supportsLongCacheRetention: true },
+		} as Model<"anthropic-messages">;
+
+		const result = await warmPromptCache(gatewayModel, context, { apiKey: "test-key", fetch });
+
+		expect(fetch).toHaveBeenCalledOnce();
+		expect(requestBody).toMatchObject({ max_tokens: 0, model: "claude-sonnet-4-5" });
+		expect(JSON.stringify(requestBody)).toContain('"cache_control"');
+		expect(result).toEqual({
+			supported: true,
+			usage: { input: 7, output: 0, cacheRead: 0, cacheWrite: 0 },
+			usageRaw: { input_tokens: 7, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+		});
+	});
+
+	it("returns unsupported without sending a request for non-native Anthropic lanes that do not opt in", async () => {
 		const fetch = vi.fn();
 		const gatewayModel = {
 			...getModel("anthropic", "claude-sonnet-4-5"),
 			provider: "gateway",
 			baseUrl: "https://gateway.example.test/anthropic",
+		} as Model<"anthropic-messages">;
+		const optedOutGatewayModel = {
+			...gatewayModel,
+			compat: { supportsLongCacheRetention: false },
 		} as Model<"anthropic-messages">;
 		const nonAnthropicModel = {
 			...gatewayModel,
@@ -84,6 +122,9 @@ describe("warmPromptCache", () => {
 		} as unknown as Model<"openai-completions">;
 
 		await expect(warmPromptCache(gatewayModel, context, { apiKey: "test-key", fetch })).resolves.toEqual({
+			supported: false,
+		});
+		await expect(warmPromptCache(optedOutGatewayModel, context, { apiKey: "test-key", fetch })).resolves.toEqual({
 			supported: false,
 		});
 		await expect(warmPromptCache(nonAnthropicModel, context, { apiKey: "test-key", fetch })).resolves.toEqual({

@@ -657,6 +657,12 @@ This is the default and has no setting. Tools may declare `exposure: "eval"` to 
 
 When a limit is reached the session pauses with a notice instead of starting another turn; any message you send continues it, because only turns since your last message count.
 
+### Thread Chains
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `threads.chainCountLimit` | number | unset | Hops a thread chain may make (session A prompts B, B prompts A, ...) before the next thread call is refused with `chain_count_limit`; a chain that comes back to a session it already visited is allowed. Unset (the default) means unlimited. There is no cost limit. Read when RPC input arrives with a `chainCount` (a thread call from another session; see `rpc.md`) |
+
 ### Ask User
 
 | Setting | Type | Default | Description |

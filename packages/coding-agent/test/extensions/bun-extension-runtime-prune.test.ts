@@ -11,6 +11,7 @@ const RUNTIME_FILES = [
 	"bun-extension-commonjs.ts",
 	"bun-extension-error.ts",
 	"bun-extension-importer.ts",
+	"bun-extension-load-turns.ts",
 	"bun-extension-prepared-cache.ts",
 	"bun-extension-registry.ts",
 	"bun-extension-strict-directive.ts",

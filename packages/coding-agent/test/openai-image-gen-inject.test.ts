@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_IMAGE_MODEL } from "../src/core/extensions/builtin/imagegen/params.ts";
+import { DEFAULT_IMAGE_MODEL, NATIVE_IMAGE_MODEL } from "../src/core/extensions/builtin/imagegen/params.ts";
 import { applyImageGenerationTools } from "../src/core/extensions/builtin/openai-image-gen/inject.ts";
 
 const GENERATE_IMAGE = { type: "function", name: "generate_image", parameters: { type: "object" } };
@@ -13,10 +13,11 @@ function tools(payload: unknown): unknown[] {
 }
 
 describe("native image_generation injection", () => {
-	it("injects the server tool pinned to the default image model", () => {
+	it("injects the server tool pinned to the verified native model, not the client default (senpi#5820)", () => {
 		const payload = applyImageGenerationTools({ tools: [GENERATE_IMAGE, READ] }, "native");
-		expect(tools(payload)).toEqual([READ, { type: "image_generation", model: DEFAULT_IMAGE_MODEL }]);
-		expect(DEFAULT_IMAGE_MODEL).toBe("gpt-image-2.5-sunburst");
+		expect(tools(payload)).toEqual([READ, { type: "image_generation", model: "gpt-image-2.5-sunburst" }]);
+		expect(NATIVE_IMAGE_MODEL).toBe("gpt-image-2.5-sunburst");
+		expect(DEFAULT_IMAGE_MODEL).toBe("gpt-image-2.6-sunburst");
 	});
 
 	it("replaces pre-existing native entries so exactly one pinned entry remains", () => {
@@ -24,11 +25,11 @@ describe("native image_generation injection", () => {
 			{ tools: [{ type: "image_generation" }, READ, { type: "image_generation", model: "gpt-image-1" }] },
 			"native",
 		);
-		expect(tools(payload)).toEqual([READ, { type: "image_generation", model: DEFAULT_IMAGE_MODEL }]);
+		expect(tools(payload)).toEqual([READ, { type: "image_generation", model: NATIVE_IMAGE_MODEL }]);
 	});
 
 	it("strips native entries in client mode and both tools when unavailable", () => {
-		const payload = { tools: [{ type: "image_generation", model: DEFAULT_IMAGE_MODEL }, GENERATE_IMAGE, READ] };
+		const payload = { tools: [{ type: "image_generation", model: NATIVE_IMAGE_MODEL }, GENERATE_IMAGE, READ] };
 		expect(tools(applyImageGenerationTools(payload, "client"))).toEqual([GENERATE_IMAGE, READ]);
 		expect(tools(applyImageGenerationTools(payload, "unavailable"))).toEqual([READ]);
 	});

@@ -1,3 +1,22 @@
+## 2026-11-07 - Session-less MCP status reads get no peer data; server snapshots gain optional session scoping (senpi#3001)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: `getWireStatusSnapshot()` and `refreshWireStatusSnapshot()` return `{ servers: [] }` to a caller that passes no session id while more than one session is live, instead of the most recently attached session's status; with a single live session the stored snapshot is that session's own, so the id-less read keeps working. `releaseSession()` rebinds `#latestWireStatus` to the remaining live session's own snapshot when it drops a released session id, so a release with no reason cannot leave a departed peer's status in the fallback. `getServerSnapshots(sessionId?)` returns only the servers the named session declares, and `[]` for an unknown id; the no-arg call still lists the merged config of all live sessions. The session-scoped form is API-only for now: no production caller passes a session id yet (the /mcp command, manager TUI and instructions still read the merged config).
+- `packages/coding-agent/test/suite/regressions/2514-mcp-session-binding.test.ts`: four regression tests for senpi#3001 — the per-owner catalog fence (item 1), no connection created when the service is disposed mid re-sync (item 2), the no-id peer-data fence plus session-scoped server snapshots (item 3), and the single-session fallback returning the remaining session's status after a release with no reason (review follow-up on #6169).
+
+### Why
+
+- senpi#3001: `#latestWireStatus` held whichever session captured last, so a caller passing no session id could receive a peer's status, and `getServerSnapshots()` listed the merged config of all live sessions. The per-session status already resolved through the calling session's binding; the id-less reads did not.
+
+### Why an extension could not handle it
+
+- The wire-status snapshot and the server snapshots are produced inside the builtin MCP service's session binding and credential resolution; no extension hook sits between the capture and the caller.
+
+### Expected merge conflict zones
+
+- LOW: the id-less fences in `getWireStatusSnapshot()` / `refreshWireStatusSnapshot()`, the `#latestWireStatus` rebind in `releaseSession()`, the optional `sessionId` parameter on `getServerSnapshots()`, and the four regression tests.
+
 ## 2026-10-27 - The MCP sign-in callback page carries the host brand (senpi#4434, closes #4432)
 
 ### What changed

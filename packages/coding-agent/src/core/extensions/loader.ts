@@ -42,6 +42,7 @@ import { validateChildModuleRegistration } from "../tool-dispatch/offload.ts";
 import { type ReadClassifier, registerReadClassifier } from "../tools/read-classifiers.ts";
 import type { ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
 import { validateMcpServerDeclaration } from "./builtin/mcp/config-schema.ts";
+import { type RpcRemoteSource, registerRpcRemoteSource } from "./builtin/terminal/rpc-remote-source.ts";
 import { McpServerRegistry } from "./mcp-server-registry.ts";
 import { readPermissionPreset } from "./builtin/permission-system/preset-registry.ts";
 import type { PermissionPresetName } from "./builtin/permission-system/types.ts";
@@ -57,6 +58,7 @@ import {
 import { kernelToolInvokerStorage } from "./kernel-tools-context.ts";
 import { createLifecycleApi } from "./lifecycle-api.ts";
 import { withProviderLoginStart } from "./provider-login-start.ts";
+import { createSessionDialogApi } from "./session-dialog-api.ts";
 import { StaleExtensionContextError } from "./stale-context-error.ts";
 import type {
 	AppendEntryOptions,
@@ -667,6 +669,13 @@ function createExtensionAPI(
 			return unregister;
 		},
 
+		registerRpcRemoteSource(source: RpcRemoteSource): () => void {
+			assertActive();
+			const unregister = runtime.trackEventBusSubscription(registerRpcRemoteSource(source));
+			if (state === "loading") loadingUnsubscribers.push(unregister);
+			return unregister;
+		},
+
 		registerMcpServer(name: string, config: RegisteredMcpServerDeclaration["config"]): void {
 			assertActive();
 			const error = validateMcpServerDeclaration(name, config);
@@ -710,6 +719,11 @@ function createExtensionAPI(
 			}
 			return readPermissionPreset(sessionManager);
 		},
+
+		sessionDialog: createSessionDialogApi(() => {
+			assertActive();
+			return runtime.createContext().ui;
+		}),
 
 		getSubscriptionLimits() {
 			assertActive();
