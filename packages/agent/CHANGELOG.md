@@ -1,10 +1,12 @@
 # Changelog
 
-## [Unreleased]
+## [2026.11.9] - 2026-11-09
 
 ### Breaking Changes
 
 ### Added
+
+- `AgentOptions.commitStep`: an optional hook that makes each finished model step durable before the loop acts on it, forwarded to every loop run only when set ([#6236](https://github.com/code-yeongyu/senpi/pull/6236))
 
 ### Changed
 

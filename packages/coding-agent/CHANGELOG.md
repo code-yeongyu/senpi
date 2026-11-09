@@ -1,14 +1,24 @@
 # Changelog
 
-## [Unreleased]
+## [2026.11.9] - 2026-11-09
 
 ### Breaking Changes
 
 ### Added
 
+- A background terminal session that is still running is reported at 10 minutes and then every 30 minutes, naming its `bash_id`, its command and the `kill_bash` call that stops it. The report reaches the agent like a completion notice, shows in the TUI, and goes to RPC clients as the typed `terminal_background_age` event. Nothing is killed by default; the new `terminal.backgroundAutoReapMinutes` setting or the `bash` parameter `auto_reap_minutes` opts into stopping a background session at that age (TERM, then KILL to its process group, as `kill_bash` does), which its completion notice and a `reaped` event report; a stop that does not end the session is reported once as failed with the reason and is not retried ([#6212](https://github.com/code-yeongyu/senpi/pull/6212))
+- Sealed credential source for hosted model-key custody (internal, no caller yet): per-instance leases with bounded reloads, entry-signature verification, secret redaction and a tenant-scoped console redactor, plus a `no-module-state` lint that keeps tenant state out of module scope in `src/core/egress` ([#6225](https://github.com/code-yeongyu/senpi/pull/6225))
+- Device-proxy egress and the egress_call ledger for hosted model-key custody; not wired to any command yet ([#6234](https://github.com/code-yeongyu/senpi/pull/6234))
+- `CreateAgentSessionOptions.commitStep`: forwarded to the session's `Agent` when set ([#6239](https://github.com/code-yeongyu/senpi/pull/6239))
+- RPC `admit_external_message`: admits a relayed peer-agent message as the engine's own delivery entry, with the remote device stamped by the engine, never as user input ([#6240](https://github.com/code-yeongyu/senpi/pull/6240))
+
 ### Changed
 
+- A message another session sends from a different device now reads to the receiving agent exactly like one from a session on the same machine; the device is kept in the delivery's metadata only ([#6251](https://github.com/code-yeongyu/senpi/pull/6251))
+
 ### Fixed
+
+- When one account in a provider's credential pool runs out of credits, the session no longer refuses every later turn for that provider while another account can still serve; when every account is out, the refusal names each one and why ([#5598](https://github.com/code-yeongyu/senpi/pull/5598))
 
 ### Removed
 
