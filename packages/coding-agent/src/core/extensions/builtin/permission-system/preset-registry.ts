@@ -20,3 +20,17 @@ export function registerPermissionPresetReader(session: object, read: PresetRead
 export function readPermissionPreset(session: object): PermissionPresetName | undefined {
 	return readers.get(session)?.();
 }
+
+/**
+ * The preset a gated decision must use instead of the configured one, read at EACH decision (the core's
+ * delegated-default rule: `ask` for delegated-origin work on a session no client named a mode for).
+ */
+const decisionOverrides = new WeakMap<object, PresetReader>();
+
+export function registerDecisionPresetOverride(session: object, read: PresetReader): void {
+	decisionOverrides.set(session, read);
+}
+
+export function readDecisionPresetOverride(session: object): PermissionPresetName | undefined {
+	return decisionOverrides.get(session)?.();
+}

@@ -5,6 +5,14 @@ import { cleanupHerdrReporterFixtures, herdrReporterFixture } from "./herdr-repo
 
 const WAKE = "wake_source_state";
 
+/** One live watch as the terminal extension broadcasts it; only `persistent` and `deadlineMs` vary here. */
+function monitorState(watch: { persistent: boolean; deadlineMs: number | null }) {
+	return {
+		activeCount: 1,
+		monitors: [{ id: "bash_1", description: "watch", paused: false, startedAtMs: 0, ...watch }],
+	};
+}
+
 beforeEach(() => {
 	vi.useRealTimers();
 });
@@ -15,7 +23,7 @@ afterEach(async () => {
 	vi.unstubAllEnvs();
 });
 
-describe("herdr lifecycle reporter folds every wake source into the working state", () => {
+describe("herdr lifecycle reporter: a turn and bounded work are working, open-ended sources are named on idle", () => {
 	it("keeps the pane working through settlement while a DAG run is live, and idles when it clears", async () => {
 		// Given
 		const f = await herdrReporterFixture();
@@ -23,6 +31,9 @@ describe("herdr lifecycle reporter folds every wake source into the working stat
 		f.setIdle(false);
 		await f.emit("agent_start");
 		await f.bus(WAKE, { source: "omo-dag", activeCount: 1 });
+
+		// Then
+		expect(f.requests.at(-1)?.params).toMatchObject({ state: "working", message: "1 DAG run" });
 
 		// When
 		f.setIdle(true);
@@ -35,6 +46,7 @@ describe("herdr lifecycle reporter folds every wake source into the working stat
 		await f.bus(WAKE, { source: "omo-dag", activeCount: 0 });
 
 		// Then
+		expect(f.requests.at(-1)?.params).toEqual(expect.not.objectContaining({ message: expect.anything() }));
 		expect(f.requests.at(-1)?.params.state).toBe("idle");
 	});
 
@@ -63,6 +75,76 @@ describe("herdr lifecycle reporter folds every wake source into the working stat
 			message:
 				"3 subagents running + 2 monitors live + 1 custom-source + 2 detached eval cells + 1 background session",
 		});
+	});
+
+	it.each([
+		[
+			"a persistent monitor",
+			"terminal_monitor_state",
+			monitorState({ persistent: true, deadlineMs: null }),
+			"1 monitor live",
+		],
+		[
+			"a background terminal session",
+			WAKE,
+			{ source: "terminal-background-sessions", activeCount: 1 },
+			"1 background session",
+		],
+	])("idles the pane once the turn ends while only %s is live, and names it", async (_what, event, data, message) => {
+		// Given
+		const f = await herdrReporterFixture();
+		await f.start();
+		f.setIdle(false);
+		await f.emit("agent_start");
+		await f.bus(event, data);
+
+		// When
+		f.setIdle(true);
+		await f.emit("agent_settled");
+
+		// Then
+		expect(f.requests.at(-1)?.params).toMatchObject({ state: "idle", message });
+	});
+
+	it.each([
+		["a subagent", { source: "senpi-task", activeCount: 1 }, "1 subagent running"],
+		["a detached eval cell", { source: "senpi-codemode", activeCount: 1 }, "1 detached eval cell"],
+		[
+			"a pending loop-guard recovery",
+			{ source: "loop-guard-hard-stop", activeCount: 1 },
+			"1 loop-guard recovery pending",
+		],
+		["an unknown source", { source: "custom-source", activeCount: 1 }, "1 custom-source"],
+	])("keeps the pane working after the turn while %s will start the next one", async (_what, data, message) => {
+		// Given
+		const f = await herdrReporterFixture();
+		await f.start();
+		f.setIdle(false);
+		await f.emit("agent_start");
+		await f.bus(WAKE, data);
+
+		// When
+		f.setIdle(true);
+		await f.emit("agent_settled");
+
+		// Then
+		expect(f.requests.at(-1)?.params).toMatchObject({ state: "working", message });
+	});
+
+	it("keeps the pane working after the turn while a one-shot monitor with a deadline is live", async () => {
+		// Given
+		const f = await herdrReporterFixture();
+		await f.start();
+		f.setIdle(false);
+		await f.emit("agent_start");
+		await f.bus("terminal_monitor_state", monitorState({ persistent: false, deadlineMs: 1_800_000 }));
+
+		// When
+		f.setIdle(true);
+		await f.emit("agent_settled");
+
+		// Then
+		expect(f.requests.at(-1)?.params).toMatchObject({ state: "working", message: "1 monitor live" });
 	});
 
 	it("leaves a pending question to the blocked state instead of counting ask-user as work", async () => {

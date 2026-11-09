@@ -59,7 +59,7 @@ import { withGzipRequestBodies } from "../utils/gzip-request-body.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
 import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
-import { getAnthropicCompat, isAnthropicApiBaseUrl } from "../utils/prompt-cache-ttl.ts";
+import { allowsAnthropicLongCacheRetention, getAnthropicCompat } from "../utils/prompt-cache-ttl.ts";
 import { attachProviderDiagnostic } from "../utils/provider-diagnostic-carrier.ts";
 import {
 	anthropicProviderDiagnosticFromError,
@@ -96,7 +96,17 @@ import {
 	isAnthropicWebSearchReplayBlock,
 	isReplayableAnthropicProviderNativeBlock,
 } from "./anthropic-native-replay-blocks.ts";
-import { logAnthropicRequestShape } from "./anthropic-request-shape-log.ts";
+import { logAnthropicRecovery, logAnthropicRequestShape } from "./anthropic-request-shape-log.ts";
+import {
+	acceptsThinkingBinding,
+	bindReplayedThinking,
+	isThinkingBindingControlRefusedError,
+	isThinkingBindingMismatchError,
+	replaysSignedThinking,
+	THINKING_BINDING_RECOVERY_DIAGNOSTIC,
+	ThinkingBindingRecovery,
+	thinkingBindingUnrecoverableError,
+} from "./anthropic-thinking-binding.ts";
 import { sanitizeAnthropicToolPairs } from "./anthropic-tool-pairs.ts";
 import { demoteToolReferenceReplay, demoteUnavailableToolReferences } from "./anthropic-tool-references.ts";
 import {
@@ -152,12 +162,7 @@ function getCacheControl(
 	if (retention === "none") {
 		return { retention };
 	}
-	const ttl =
-		retention === "long" &&
-		isAnthropicApiBaseUrl(model.baseUrl) &&
-		getAnthropicCompat(model).supportsLongCacheRetention
-			? "1h"
-			: undefined;
+	const ttl = retention === "long" && allowsAnthropicLongCacheRetention(model) ? "1h" : undefined;
 	return {
 		retention,
 		cacheControl: { type: "ephemeral", ...(ttl && { ttl }) },
@@ -1357,7 +1362,8 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					options?.env,
 					"short",
 				);
-				const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
+				const affinityKey =
+					cacheRetention === "none" ? undefined : (options?.sessionAffinityKey ?? options?.sessionId);
 
 				openClient = () => {
 					client = createClient(
@@ -1371,7 +1377,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 							? withGzipRequestBodies(options?.fetch)
 							: options?.fetch,
 						copilotDynamicHeaders,
-						cacheSessionId,
+						affinityKey,
 						options?.env,
 						federation,
 					);
@@ -1392,9 +1398,14 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					if (key.startsWith(expiredSearchPrefix)) expiredSearchIds.add(key.slice(expiredSearchPrefix.length));
 				}
 			}
+			const thinkingRecovery = new ThinkingBindingRecovery(fallbackKey);
 			let lastSentParams: MessageCreateParamsStreaming | undefined;
 			const createRequest = async (): Promise<{ params: MessageCreateParamsStreaming; response: Response }> => {
-				let params = buildParams(model, normalizedContext, options, unsignedThinkingReplay);
+				const replay = thinkingRecovery.strip(normalizedContext);
+				let params = buildParams(model, replay.context, options, unsignedThinkingReplay, {
+					bindReplayedThinking: thinkingRecovery.bindingAllowed,
+					replayedThinkingRemoved: replay.removed,
+				});
 				const nextParams = await options?.onPayload?.(params, model);
 				if (nextParams !== undefined) {
 					params = nextParams as MessageCreateParamsStreaming;
@@ -1450,6 +1461,31 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				}
 				return newlyExpired.length > 0;
 			};
+			const thinkingBindingFailure = (error: Error): Error =>
+				attachProviderDiagnostic(
+					thinkingBindingUnrecoverableError(error),
+					anthropicProviderDiagnosticFromError(error),
+				);
+			// senpi#5587: rebuild once on the same model without the signed thinking the API bound elsewhere.
+			const recoverThinkingBinding = async (error: Error) => {
+				const removed = thinkingRecovery.rejectReplayedThinking(normalizedContext.messages);
+				if (removed === 0) throw thinkingBindingFailure(error);
+				appendAssistantMessageDiagnostic(output, {
+					type: THINKING_BINDING_RECOVERY_DIAGNOSTIC,
+					timestamp: Date.now(),
+					details: {
+						removedThinkingBlocks: removed,
+						message: "Retried without earlier reasoning the provider bound to a different conversation.",
+					},
+				});
+				logAnthropicRecovery(model, "thinking_binding_mismatch", { removedThinkingBlocks: removed });
+				try {
+					return await createRequest();
+				} catch (retryError) {
+					if (isThinkingBindingMismatchError(retryError)) throw thinkingBindingFailure(retryError);
+					throw retryError;
+				}
+			};
 			const createRequestDemotingExpiredSearches = async (): Promise<{
 				params: MessageCreateParamsStreaming;
 				response: Response;
@@ -1478,6 +1514,15 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 								if (fallbackKey) toolReferenceReplayFallbacks.add(fallbackKey);
 								return createRequest();
 							}
+							if (
+								isThinkingBindingControlRefusedError(error) &&
+								thinkingRecovery.bindingAllowed &&
+								model.compat?.supportsMidConvoEffort !== true
+							) {
+								thinkingRecovery.refuseBinding();
+								return createRequest();
+							}
+							if (isThinkingBindingMismatchError(error)) return recoverThinkingBinding(error);
 							if (markNewlyExpiredSearches(error)) return createRequestDemotingExpiredSearches();
 							throw error;
 						}
@@ -2035,7 +2080,7 @@ function createClient(
 	optionsHeaders?: Record<string, string>,
 	fetch?: typeof globalThis.fetch,
 	dynamicHeaders?: Record<string, string>,
-	sessionId?: string,
+	affinityKey?: string,
 	env?: ProviderEnv,
 	federation?: AnthropicFederationConfig,
 ): Anthropic {
@@ -2109,11 +2154,11 @@ function createClient(
 	// API key, header-owned auth, or workload identity federation.
 	const affinityCompat = getAnthropicCompat(model);
 	const sessionAffinityHeaders: Record<string, string | null> = {};
-	if (sessionId && affinityCompat.sendSessionAffinityHeaders) {
+	if (affinityKey && affinityCompat.sendSessionAffinityHeaders) {
 		// OpenRouter routes prompt-cache affinity through its own header name and
 		// rejects x-session-affinity (earendil-works/pi#9102).
 		const header = affinityCompat.sessionAffinityFormat === "openrouter" ? "x-session-id" : "x-session-affinity";
-		sessionAffinityHeaders[header] = sessionId;
+		sessionAffinityHeaders[header] = affinityKey;
 	}
 	const defaultHeaders = sanitizeAdaptiveThinkingHeaders(
 		model,
@@ -2255,6 +2300,7 @@ function buildParams(
 	context: TranscriptContext,
 	options?: AnthropicOptions,
 	unsignedThinkingReplay = getAnthropicCompat(model).unsignedThinkingReplay,
+	replay = { bindReplayedThinking: false, replayedThinkingRemoved: false },
 ): MessageCreateParamsStreamingWithFallbacks {
 	const compat = getAnthropicCompat(model);
 	const { cacheControl } = getCacheControl(model, options?.cacheRetention ?? model.cacheRetention, options?.env);
@@ -2315,12 +2361,21 @@ function buildParams(
 	const deferredToolNames = new Set(deferredTools.map((tool) => tool.name));
 	const activeEffort = managedEffortForRequest(model, options) ?? "high";
 	const sendFallbacks = options?.refusalFallbacks !== undefined && !betasSuppressed;
+	// senpi#5587: any Claude request replaying signed thinking asks the API to drop a block bound elsewhere.
+	const bindsReplayedThinking =
+		!midConvoEffort &&
+		!betasSuppressed &&
+		replay.bindReplayedThinking &&
+		options?.thinkingEnabled === true &&
+		model.reasoning &&
+		acceptsThinkingBinding(model) &&
+		replaysSignedThinking(conversationMessages);
 	const betaFeatures = getBetaFeatures(
 		model,
 		context,
 		{
 			midConvoEffort,
-			thinkingBinding: midConvoEffort && options?.thinkingEnabled !== false,
+			thinkingBinding: (midConvoEffort && options?.thinkingEnabled !== false) || bindsReplayedThinking,
 			nativeToolChanges,
 			refusalFallbacks: sendFallbacks,
 		},
@@ -2471,10 +2526,11 @@ function buildParams(
 	// continuation (the "cache misses every second prompt" report).
 	if (
 		params.thinking?.type === "enabled" &&
-		finalAssistantTurnIsForeign(context.messages) &&
+		(finalAssistantTurnIsForeign(context.messages) || replay.replayedThinkingRemoved) &&
 		finalAssistantTurnStartsWithToolUse(params.messages)
 	)
 		disableThinkingForRequest(params, model, compat);
+	if (bindsReplayedThinking) bindReplayedThinking(params);
 
 	if (options?.metadata) {
 		const userId = options.metadata.user_id;

@@ -4,6 +4,7 @@ import type { Static } from "typebox";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
 	clonePhases,
+	DEFAULT_INIT_PHASE,
 	getLatestPhasesFromBranchEntries,
 	getTodoWidgetLines,
 	type TodoPhase,
@@ -332,4 +333,262 @@ describe("todo unwraps a list wrapped one level too deep (#5148)", () => {
 
 		expect(result.isError).toBe(true);
 	});
+});
+
+describe("todo normalizes near-canonical shapes before validation (#5332)", () => {
+	const harnesses: Harness[] = [];
+
+	afterEach(() => {
+		while (harnesses.length > 0) harnesses.pop()?.cleanup();
+	});
+
+	async function runTodo(params: Record<string, unknown>) {
+		const harness = await createHarnessWithTodoExtension();
+		harnesses.push(harness);
+		harness.setResponses(responsesForTodo(params));
+		await harness.session.prompt("initialize");
+		return getLatestTodoResult(harness);
+	}
+
+	function phaseNames(result: ReturnType<typeof getLatestTodoResult>): string[] {
+		return ((result.details as TodoToolDetails).phases ?? []).map((phase) => phase.name);
+	}
+
+	it("initializes the issue shape's nested phases as top-level phases", async () => {
+		const result = await runTodo({
+			op: "init",
+			list: [
+				{
+					phase: "Plan",
+					items: [
+						{ phase: "Setup", items: ["Survey code"] },
+						{ phase: "Verify", items: ["Run tests"] },
+					],
+				},
+			],
+		});
+
+		expect(result.isError).not.toBe(true);
+		expect((result.details as TodoToolDetails).phases).toEqual([
+			{ name: "Setup", tasks: [{ content: "Survey code", status: "in_progress" }] },
+			{ name: "Verify", tasks: [{ content: "Run tests", status: "pending" }] },
+		]);
+		expect(getMessageText(result)).toContain('[auto-corrected] "list" entry "Plan"');
+		expect((result.details as TodoToolDetails).corrections?.length).toBeGreaterThan(0);
+	});
+
+	it.each([
+		[
+			"nested phases inside a phase's items",
+			{
+				op: "init",
+				list: [
+					{
+						phase: "Work",
+						items: [
+							{ phase: "Foundation", items: ["Survey code"] },
+							{ phase: "Verification", items: ["Run checks"] },
+							{ phase: "Report", items: ["Write report"] },
+						],
+					},
+				],
+			},
+			["Foundation", "Verification", "Report"],
+		],
+		[
+			"content records inside a phase's items",
+			{
+				op: "init",
+				list: [{ phase: "Setup", items: [{ taskId: "x", content: "Read the brief" }, "Write tests"] }],
+			},
+			["Setup"],
+		],
+		[
+			"top-level items holding phase records",
+			{
+				op: "init",
+				items: [
+					{ phase: "Setup", items: ["Survey code"] },
+					{ phase: "Verify", items: ["Run checks"] },
+				],
+			},
+			["Setup", "Verify"],
+		],
+		[
+			"top-level items holding content records",
+			{ op: "init", items: [{ content: "Read the brief" }, { content: "Write tests" }] },
+			[DEFAULT_INIT_PHASE],
+		],
+		[
+			"nameless phases get default names",
+			{ op: "init", list: [{ items: ["Survey code"] }, { items: ["Run checks"] }] },
+			[DEFAULT_INIT_PHASE, `${DEFAULT_INIT_PHASE} 2`],
+		],
+		[
+			"a nameless phase skips an already-used default name",
+			{
+				op: "init",
+				list: [{ phase: DEFAULT_INIT_PHASE, items: ["Survey code"] }, { items: ["Run checks"] }],
+			},
+			[DEFAULT_INIT_PHASE, `${DEFAULT_INIT_PHASE} 2`],
+		],
+		[
+			"a phase with no tasks is dropped",
+			{ op: "init", list: [{ phase: "Empty" }, { phase: "Setup", items: ["Survey code"] }] },
+			["Setup"],
+		],
+		[
+			"a JSON-string list is parsed",
+			{ op: "init", list: JSON.stringify([{ phase: "Setup", items: ["Survey code"] }]) },
+			["Setup"],
+		],
+		[
+			"stray strings mixed with phases are dropped",
+			{ op: "init", list: ["items", { phase: "Setup", items: ["Survey code"] }] },
+			["Setup"],
+		],
+		["an op with stray punctuation is stripped", { op: "view}" }, []],
+	])("normalizes %s", async (_shape, params, expectedPhases) => {
+		const result = await runTodo(params);
+
+		expect(result.isError).not.toBe(true);
+		expect(getMessageText(result)).toContain("[auto-corrected]");
+		expect(phaseNames(result)).toEqual(expectedPhases);
+	});
+
+	it.each([
+		[
+			"strings mixed with phase records in one items array",
+			{
+				op: "init",
+				list: [{ phase: "Setup", items: ["Do thing", { phase: "Nested", items: ["Nested task"] }] }],
+			},
+		],
+		["a list made only of strings", { op: "init", list: ["Survey code", "Write tests"] }],
+		[
+			"a list whose phases are all empty",
+			{ op: "init", list: [{ phase: "Empty", items: [] }, { phase: "Also empty" }] },
+		],
+		["an unparseable JSON string", { op: "init", list: "not json {" }],
+	])("still rejects %s", async (_shape, params) => {
+		const result = await runTodo(params);
+
+		expect(result.isError).toBe(true);
+		expect(getMessageText(result)).not.toContain("[auto-corrected]");
+	});
+
+	it("ignores a caller-sent __todoPreparedCorrections key on a canonical init", async () => {
+		const result = await runTodo({
+			op: "init",
+			list: [{ phase: "Setup", items: ["Survey code"] }],
+			__todoPreparedCorrections: ["[auto-corrected] injected"],
+		});
+
+		expect(result.isError).not.toBe(true);
+		expect(getMessageText(result)).not.toContain("injected");
+		const details = result.details as TodoToolDetails;
+		expect(details.corrections ?? []).toEqual([]);
+	});
+
+	// senpi#5336 review: a prepare-time correction must never widen a malformed or op-less
+	// call into a bulk change. Every row runs through the agent loop's prepare -> validate
+	// -> execute path against the same seeded list, so a widened correction shows up as a
+	// silent success where an error is expected, or as a changed list where none is allowed.
+	const seededPhases: TodoPhase[] = [
+		{
+			name: "Setup",
+			tasks: [
+				{ content: "A", status: "in_progress" },
+				{ content: "B", status: "pending" },
+			],
+		},
+		{ name: "Work", tasks: [{ content: "C", status: "pending" }] },
+	];
+
+	async function runTodoOnSeededList(params: Record<string, unknown>) {
+		const harness = await createHarnessWithTodoExtension();
+		harnesses.push(harness);
+		harness.setResponses([
+			...responsesForTodo({
+				op: "init",
+				list: [
+					{ phase: "Setup", items: ["A", "B"] },
+					{ phase: "Work", items: ["C"] },
+				],
+			}),
+			...responsesForTodo(params),
+		]);
+
+		await harness.session.prompt("seed the list");
+		const seeded = getLatestPhasesFromBranchEntries(harness.sessionManager.getBranch());
+		expect(seeded).toEqual(seededPhases);
+		await harness.session.prompt("run the case");
+		return {
+			result: getLatestTodoResult(harness),
+			phases: getLatestPhasesFromBranchEntries(harness.sessionManager.getBranch()),
+			seeded,
+		};
+	}
+
+	type SeededOutcome = { error: true } | { error: false; expectedPhases: TodoPhase[]; notice: string };
+
+	it.each([
+		["an op with a task number inside it", { op: "rm 2" }, { error: true }],
+		["an op with a task number after it naming a phase", { op: "rm 2", phase: "Setup" }, { error: true }],
+		["an op with a task number before it naming a task", { op: " 2rm", task: "A" }, { error: true }],
+		["an op with a task selector inside it", { op: "done #1" }, { error: true }],
+		["a punctuated destructive op with no target", { op: "drop!" }, { error: true }],
+		["a punctuated targeting op with no target", { op: "start?" }, { error: true }],
+		["an op with an interior hyphen", { op: "re-move" }, { error: true }],
+		[
+			"op-less phase records in items against a seeded list",
+			{ items: [{ phase: "New", items: ["X"] }] },
+			{ error: true },
+		],
+		["op-less content records in items with a phase", { phase: "Setup", items: [{ content: "x" }] }, { error: true }],
+		[
+			"a punctuated done that carries its target",
+			{ op: "done.", task: "A" },
+			{
+				error: false,
+				expectedPhases: [
+					{
+						name: "Setup",
+						tasks: [
+							{ content: "A", status: "completed" },
+							{ content: "B", status: "in_progress" },
+						],
+					},
+					{ name: "Work", tasks: [{ content: "C", status: "pending" }] },
+				],
+				notice: '[auto-corrected] "op" "done." is not a known operation',
+			},
+		],
+		[
+			"an explicit init with phase records in items",
+			{ op: "init", items: [{ phase: "New", items: ["X"] }] },
+			{
+				error: false,
+				expectedPhases: [{ name: "New", tasks: [{ content: "X", status: "in_progress" }] }],
+				notice: '[auto-corrected] "items" held phase records',
+			},
+		],
+	] as Array<[string, Record<string, unknown>, SeededOutcome]>)(
+		"never widens %s into a bulk change or a list replacement",
+		async (_shape, params, expected) => {
+			const { result, seeded, phases } = await runTodoOnSeededList(params);
+
+			if (expected.error) {
+				expect(result.isError).toBe(true);
+				expect(getMessageText(result)).not.toContain("[auto-corrected]");
+				expect(phases).toEqual(seeded);
+				return;
+			}
+
+			expect(result.isError).not.toBe(true);
+			expect(getMessageText(result)).toContain(expected.notice);
+			expect((result.details as TodoToolDetails).corrections?.length).toBeGreaterThan(0);
+			expect(phases).toEqual(expected.expectedPhases);
+		},
+	);
 });

@@ -16,8 +16,9 @@ afterEach(() => {
 
 describe("sizes-only startup network boundary (#3483)", () => {
 	it("resolves image generation exactly like a normal startup, since its auth decides the tools", async () => {
-		// Given: the real arbitration over a client (non-native) model.
-		const resolve = vi.spyOn(imageGenAuth, "resolveImageGenAuth");
+		// Given: the real arbitration over a client (non-native) model. Since senpi#5707 startup decides it with
+		// `imageGenAvailability` (configuration only); credentials resolve when the tool sends a request.
+		const resolve = vi.spyOn(imageGenAuth, "imageGenAvailability");
 		const run = async (sizesOnly: boolean) => {
 			resolve.mockClear();
 			const harness = await createHarness({ extensionFactories: [openaiImageGen] });

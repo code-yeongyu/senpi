@@ -23,7 +23,7 @@ import { GOAL_CONTINUATION_SCHEDULED_EVENT, MonitorAwareGoalContinuation } from 
 import { reengageGoalAfterReload } from "./reload-reengagement.ts";
 import { registerGoalFireNowRequest } from "./rpc-wait-surface.ts";
 import { isStaleExtensionContextError } from "./stale-context.ts";
-import { markStopPaused, markStopResumed, pausedByStop, stopHoldLive } from "./stop-pause.ts";
+import { interruptedRunHeld, markStopPaused, markStopResumed, pausedByStop, stopHoldLive } from "./stop-pause.ts";
 import { accountGoalUsage, migrateLegacyGoal, readGoal, updateGoal } from "./store.ts";
 import { GOAL_STORE_CHANGED_EVENT, isGoalStoreChangedEvent } from "./store-changed-event.ts";
 import { goalStoreRef as buildGoalStoreRef } from "./store-ref.ts";
@@ -185,13 +185,32 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		todoOwedBackstop.resetChain();
 		const ref = goalStoreRef(ctx);
 		await migrateLegacyGoal(ref);
-		const goal = await readGoal(goalStoreRef(ctx));
+		let goal = await readGoal(goalStoreRef(ctx));
+		// A process that died mid-turn never ran the quit-time abort that stops an active goal (senpi#5753). Stop it the
+		// same way here, so the resume prompt below asks before any continuation runs (senpi#5755). Opening that session
+		// at launch (`--continue`, `--session`) is the same resume, so it asks too.
+		let stoppedInterruptedGoal = false;
+		if (
+			(event.reason === "resume" || event.reason === "startup") &&
+			ctx.hasUI &&
+			goal?.status === "active" &&
+			goal.continuationStoppedAt === undefined &&
+			interruptedRunHeld(ctx)
+		) {
+			goal = await pauseOrBlockOnUserAbort(ctx, goal.id);
+			stoppedInterruptedGoal = true;
+		}
 		if (goal?.status === "active") {
 			beginAgentGoalAccounting(goal);
 		} else {
 			clearAgentGoalAccounting();
 		}
 		refreshGoalUi(ctx, goal);
+		// A session reopened under a live Stop keeps its goal paused until the Stop is released.
+		if (await pauseGoalWithHeldSession(ctx)) return;
+		// A goal a live Stop paused (a crashed run included) resumes with the session once the Stop is released, so the
+		// resume prompt would only restart its counter under the hold.
+		if (goal?.status === "paused" && stopHoldLive(ctx) && pausedByStop(ctx, goal.id)) return;
 		// Opening the session earns one reminder; renders and extension reloads do not.
 		// Stale stops retain active status, unlike user-paused or blocking stops.
 		if (
@@ -202,7 +221,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 			if (ctx.hasUI) ctx.ui.notify(GOAL_STALE_STOP_NOTICE, "info");
 			return;
 		}
-		if (await maybePromptResumeStoppedGoal(pi, ctx, event.reason, goal)) {
+		if (await maybePromptResumeStoppedGoal(pi, ctx, stoppedInterruptedGoal ? "resume" : event.reason, goal)) {
 			return;
 		}
 		if (goal && event.reason === "reload") {
@@ -236,6 +255,12 @@ export default function goalExtension(pi: ExtensionAPI): void {
 				await queueGoalContinuationForCurrentSession(pi, ctx, goal);
 			}
 		}
+	});
+
+	// A Stop that lands while no turn runs emits no `session_abort`, so the goal pauses and resumes with the session here.
+	pi.on("session_hold_changed", async (event, ctx) => {
+		if (event.change === "paused") await pauseGoalWithHeldSession(ctx);
+		else await resumeGoalWithReleasedSession(ctx);
 	});
 
 	pi.on("held_wakes_released", async (event, ctx) => {
@@ -323,6 +348,10 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		}
 		if (event.aborted === true && event.abortSource === "user" && goal?.status === "active") {
 			goal = await pauseOrBlockOnUserAbort(ctx, goal.id);
+		} else if (goal?.status === "active" && goal.continuationStoppedAt === undefined && stopHoldLive(ctx)) {
+			// A Stop that joined this turn's agent_end boundary leaves the turn un-aborted; the goal still pauses with it.
+			markStopPaused(pi, goal.id);
+			goal = await updateGoal(goalStoreRef(ctx), { status: "paused" }, "user");
 		}
 		if (goal?.status === "active") {
 			beginAgentGoalAccounting(goal);
@@ -357,8 +386,8 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		});
 	});
 
-	pi.on("agent_settled", async (_event, ctx) => {
-		const goal = await monitorContinuation.afterAgentSettled();
+	pi.on("agent_settled", async (event, ctx) => {
+		const goal = await monitorContinuation.afterAgentSettled(event.fallbackExhausted);
 		if (goal !== undefined) syncContinuationGoal(ctx, goal);
 	});
 
@@ -438,6 +467,30 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		}
 		if (continuedGoal === goal) return;
 		syncContinuationGoal(ctx, continuedGoal);
+	}
+
+	/** Close the accounting window at the Stop and pause an idle active goal; a running turn pauses at its `agent_end`. */
+	async function pauseGoalWithHeldSession(ctx: ExtensionContext): Promise<boolean> {
+		if (agentTurnInProgress || !stopHoldLive(ctx)) return false;
+		const goal = await readGoal(goalStoreRef(ctx));
+		if (goal?.status !== "active" || goal.continuationStoppedAt !== undefined) return false;
+		const accounted = await accountCurrentAgentTurn(ctx, "active");
+		if (accounted?.status !== "active") return false;
+		markStopPaused(pi, accounted.id);
+		const paused = await updateGoal(goalStoreRef(ctx), { status: "paused" }, "user");
+		clearAgentGoalAccounting();
+		refreshGoalUiBestEffort(ctx, paused);
+		return true;
+	}
+
+	async function resumeGoalWithReleasedSession(ctx: ExtensionContext): Promise<void> {
+		if (stopHoldLive(ctx)) return;
+		const goal = await readGoal(goalStoreRef(ctx));
+		if (goal?.status !== "paused" || !pausedByStop(ctx, goal.id)) return;
+		markStopResumed(pi, goal.id);
+		const resumed = await updateGoal(goalStoreRef(ctx), { status: "active" }, "user");
+		beginAgentGoalAccounting(resumed);
+		refreshGoalUiBestEffort(ctx, resumed);
 	}
 
 	function beginAgentGoalAccounting(goal: Goal): void {

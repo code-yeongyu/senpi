@@ -9,6 +9,7 @@ import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { compiledLoaderProbeSource, extensionSource } from "./compiled-extension-fixtures.ts";
 import { compiledExtensionPlatform } from "./compiled-extension-platform.ts";
+import { bunReleaseExternalFlags } from "./bun-release-externals.mjs";
 import { renameSyncRetry } from "./rename-sync-retry.mjs";
 
 const repo = resolve(import.meta.dir, "..");
@@ -30,7 +31,7 @@ const probeSchema = z.object({
 	sentinel: z.literal("native-extension"), value: z.number(), dynamicIdentity: z.boolean(),
 	typeboxKind: z.string(), tuiText: z.string(), url: z.string(), path: z.string(),
 });
-const optimizationFlags = ["--splitting", "--minify", "--keep-names"];
+const optimizationFlags = ["--splitting", "--minify", "--keep-names", ...bunReleaseExternalFlags];
 const releaseEntries = [
 	"./dist/bun/cli.js", "./src/modes/rpc/session-worker.ts", "./src/utils/image-resize-worker.ts",
 ];

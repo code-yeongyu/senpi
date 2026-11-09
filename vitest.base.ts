@@ -25,6 +25,11 @@ export const workspaceSourcePaths = {
 	serverUnix: fileURLToPath(new URL("./packages/server/src/transports/unix/index.ts", import.meta.url)),
 	codingAgentIndex: fileURLToPath(new URL("./packages/coding-agent/src/index.ts", import.meta.url)),
 	tuiIndex: fileURLToPath(new URL("./packages/tui/src/index.ts", import.meta.url)),
+	machineOpsIndex: fileURLToPath(new URL("./packages/machine-ops/src/index.ts", import.meta.url)),
+	machineOpsInProcessHolder: fileURLToPath(
+		new URL("./packages/machine-ops/src/process/in-process-holder.ts", import.meta.url),
+	),
+	machineOpsConformance: fileURLToPath(new URL("./packages/machine-ops/test/conformance/index.ts", import.meta.url)),
 } as const;
 
 export default defineConfig({
@@ -64,6 +69,15 @@ export default defineConfig({
 			{ find: /^@earendil-works\/pi-server$/, replacement: workspaceSourcePaths.serverIndex },
 			{ find: /^@earendil-works\/pi-server\/unix$/, replacement: workspaceSourcePaths.serverUnix },
 			{ find: /^@earendil-works\/pi-tui$/, replacement: workspaceSourcePaths.tuiIndex },
+			{ find: /^@code-yeongyu\/senpi-machine-ops$/, replacement: workspaceSourcePaths.machineOpsIndex },
+			{
+				find: /^@code-yeongyu\/senpi-machine-ops\/in-process-holder$/,
+				replacement: workspaceSourcePaths.machineOpsInProcessHolder,
+			},
+			{
+				find: /^@code-yeongyu\/senpi-machine-ops\/conformance$/,
+				replacement: workspaceSourcePaths.machineOpsConformance,
+			},
 		],
 	},
 });

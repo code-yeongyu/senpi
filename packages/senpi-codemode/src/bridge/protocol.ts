@@ -59,6 +59,8 @@ const hostToKernelMessageSchema = Type.Union([
 		envRoot: Type.Optional(Type.String()),
 		/** The file a `%load` cell runs; the runner compiles under its name and imports beside it. */
 		sourceFile: Type.Optional(Type.String({ minLength: 1 })),
+		/** The run's bridge secret; the kernel attaches it to the cell's `/call` requests (see `EvalKernelRunInput`). */
+		bridgeCellToken: Type.Optional(Type.String({ minLength: 1 })),
 		/** Python only: active tool globals to install before the cell and deactivated ones to remove. */
 		preludes: Type.Optional(
 			Type.Object({

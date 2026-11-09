@@ -93,9 +93,24 @@ describe("auth.json lock is released during the OAuth exchange (#1542)", () => {
 		const refreshB = models.getAuth(PROVIDER_ID, { slotName: "b" });
 		let siblingError: unknown;
 		try {
+			// Wait until BOTH exchanges are parked at the provider. Each refresh takes the
+			// auth.json lock for its strict reload and awaits the release before its
+			// exchange starts, so after both `started` signals no refresh holds the lock
+			// unless it is held across the exchange (#1542). Waiting for slot "a" alone let
+			// the sibling run while slot "b" was still inside its reload: the sibling's sync
+			// wait blocks the event loop, so b's async release could never run (#5711).
+			// If slot "b" settles without reaching its exchange (a lock held across a's
+			// exchange starves its reload), stop waiting so the assertions below report it.
 			await exchanges.get("r-a")?.started.promise;
+			await Promise.race([
+				exchanges.get("r-b")?.started.promise,
+				refreshB.then(
+					() => undefined,
+					() => undefined,
+				),
+			]);
 
-			// While slot "a" is at the provider, another process writes a third slot. The
+			// While both slots are at the provider, another process writes a third slot. The
 			// sync lock budget is 1s, so a lock held across the exchange surfaces here as
 			// CredentialStoreBusyError instead of a hang.
 			const sibling = AuthStorage.create(authPath);
