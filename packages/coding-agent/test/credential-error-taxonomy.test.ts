@@ -312,6 +312,26 @@ describe("transient failures never classify as a permanent credential verdict (s
 		expect(classifyCredentialFailure(status(403, "model GLM-5.3 is not available on this plan"))).toEqual({
 			kind: "fail_request",
 		});
+		// The real z.ai refusal (review on #6275): "yet" sits in the middle and the
+		// sentence names no "model", so the model-word patterns cannot see it.
+		expect(
+			classifyCredentialFailure(
+				status(403, "Your current subscription plan does not yet include access to GLM-5.3"),
+			),
+		).toEqual({ kind: "fail_request" });
+		// Negative controls: an account-level refusal still blocks the slot, even
+		// when it names a model first (review on #6275: the old second pattern
+		// matched any "model ... not ... enabled" 403).
+		expect(
+			classifyCredentialFailure(status(403, "Access to model gpt-x denied: your account is not enabled")),
+		).toEqual({
+			kind: "failover",
+			block: { reason: "auth_error" },
+		});
+		expect(classifyCredentialFailure(status(403, "your API key was disabled"))).toEqual({
+			kind: "failover",
+			block: { reason: "auth_error" },
+		});
 		// Negative controls: an account-level refusal still blocks the slot.
 		expect(classifyCredentialFailure(status(403, "Your subscription has expired"))).toEqual({
 			kind: "failover",
@@ -320,6 +340,20 @@ describe("transient failures never classify as a permanent credential verdict (s
 		expect(classifyCredentialFailure(status(403, "account suspended for this credential"))).toEqual({
 			kind: "failover",
 			block: { reason: "auth_error" },
+		});
+	});
+
+	test("a model-scoped refusal that arrives as 429 (z.ai code 1311) fails the request without a rate-limit cooldown (senpi#3972)", () => {
+		// The same plan-entitlement refusal, delivered with HTTP 429 instead of
+		// 403, is still a verdict on the model — not a throttle — so the slot
+		// must not take a rate_limit cooldown for it.
+		expect(
+			classifyCredentialFailure(
+				status(429, "Your current subscription plan does not yet include access to GLM-5.3"),
+			),
+		).toEqual({ kind: "fail_request" });
+		expect(classifyCredentialFailure(status(429, "model GLM-5.3 is not available on this plan"))).toEqual({
+			kind: "fail_request",
 		});
 	});
 });
