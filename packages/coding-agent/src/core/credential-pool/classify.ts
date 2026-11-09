@@ -41,6 +41,8 @@ export type CredentialBlock =
 			retryAfterWasCapped: boolean;
 			/** Where the wait came from, for the local block log (senpi#3216). */
 			resetSource?: RateLimitResetSource;
+			/** SIWC quota pause: cooldown is a probe policy, not the provider's reset time. */
+			usageLimit?: true;
 			/** Set when the limit names the one model family it binds ("Fable limit"). */
 			modelFamily?: string;
 	  };
@@ -346,6 +348,7 @@ export function classifyCredentialFailure(
 				kind: "failover",
 				block: {
 					reason: "rate_limit",
+					usageLimit: true,
 					...rateLimitCooldown(failureCount, undefined, {
 						baseMs: context.cooldownBaseMs,
 						capMs: Math.min(context.cooldownCapMs ?? COOLDOWN_CAP_MS, 30 * 60_000),

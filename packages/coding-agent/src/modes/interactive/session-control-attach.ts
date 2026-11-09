@@ -19,6 +19,7 @@ import { subscribeSessionRecords } from "../rpc/session-record-stream.ts";
 import type { SessionStatusEntryView } from "../rpc/session-status.ts";
 import { sessionRuntimeView } from "../rpc/session-status-source.ts";
 import type { ControlConnection } from "./session-control-server.ts";
+import type { TerminalPresenterSurface } from "./terminal-presenter-surface.ts";
 
 export class ControlAttachments {
 	readonly writer = new SessionEventWriter(() => {});
@@ -27,9 +28,12 @@ export class ControlAttachments {
 	private readonly attached = new Set<string>();
 	private readonly stopRecords: () => void;
 	private readonly session: AgentSession;
+	/** The terminal's MCP form presenters (D11 S3-6b), when enforcement is on. */
+	readonly presenters: TerminalPresenterSurface | undefined;
 
-	constructor(session: AgentSession, pendingQuestions: () => number) {
+	constructor(session: AgentSession, pendingQuestions: () => number, presenters?: TerminalPresenterSurface) {
 		this.session = session;
+		this.presenters = presenters;
 		this.writer.status.setSource({
 			sessionIds: () => [this.handle],
 			entryView: (id) => (id === this.handle ? this.entryView() : undefined),
@@ -51,12 +55,14 @@ export class ControlAttachments {
 
 	opened(connection: ControlConnection): void {
 		this.writer.registerConnection(keyOf(connection), connection.transport);
+		this.presenters?.opened(keyOf(connection), connection.transport);
 	}
 
 	closed(connection: ControlConnection): void {
 		const key = keyOf(connection);
 		if (this.attached.delete(key)) this.writer.status.publish(this.handle, "detach", "client");
 		this.roles.release(key);
+		this.presenters?.closed(key);
 		this.writer.unregisterConnection(key);
 	}
 
@@ -64,6 +70,7 @@ export class ControlAttachments {
 	detach(connection: ControlConnection): boolean {
 		const key = keyOf(connection);
 		if (!this.attached.delete(key)) return false;
+		this.presenters?.detach(key);
 		this.writer.detachConnectionFromSession(key, this.handle);
 		this.writer.status.publish(this.handle, "detach", "client");
 		return true;
@@ -74,6 +81,7 @@ export class ControlAttachments {
 		const key = keyOf(connection);
 		if (this.attached.has(key)) return false;
 		this.attached.add(key);
+		this.presenters?.attach(key);
 		this.writer.attachConnectionToSession(key, this.handle);
 		this.writer.status.publish(this.handle, "attach", "client");
 		return true;

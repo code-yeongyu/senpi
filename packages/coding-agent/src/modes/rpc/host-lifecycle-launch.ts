@@ -260,8 +260,7 @@ export function spawnableChildLaunch(
  */
 export const HOST_CHILD_WATCH_FD = 3;
 
-/** Spawns the host child with the environment that binds it to this supervisor and its generation. */
-export function spawnHostChild(options: {
+export interface HostChildOptions {
 	readonly launch: SupervisorLaunch;
 	readonly internalSocket: string;
 	readonly internal: { readonly dir?: string; readonly secretPath: string };
@@ -275,8 +274,44 @@ export function spawnHostChild(options: {
 	readonly publicSocket: string;
 	/** Give the child the startup pipe and its hand-off (a coordinated start of the engine's own host, senpi#4602). */
 	readonly reportsStartup?: boolean;
-}): ChildProcess {
-	const { launch, internalSocket, internal, internalSecret, publicSocket } = options;
+}
+
+/**
+ * The variables that bind the host child to this supervisor and its generation. The public socket is
+ * passed on every platform: the child stamps it as its sessions' `host_socket`, and a host session
+ * without one cannot register a control endpoint, so nothing would drain its gateway deliveries
+ * (omo#12486). Exported for tests.
+ */
+export function hostChildEnvironment(
+	options: HostChildOptions,
+	startupHandOff: string | undefined,
+	platform: NodeJS.Platform = process.platform,
+): NodeJS.ProcessEnv {
+	const { launch, internal, internalSecret } = options;
+	return {
+		...process.env,
+		...(launch.agentDir ? { SENPI_CODING_AGENT_DIR: launch.agentDir } : {}),
+		// The child binds a PRIVATE socket, so it cannot derive this endpoint's daemon directory
+		// from what it listens on: it is told, and it claims its session paths there.
+		[HOST_DAEMON_DIR_ENV]: options.daemonDir,
+		[HOST_INSTANCE_ID_ENV]: options.instanceId,
+		[HOST_WATCH_FD_ENV]: String(HOST_CHILD_WATCH_FD),
+		[HOST_WATCH_PPID_ENV]: String(process.pid),
+		[HOST_WATCH_PSTART_ENV]: options.supervisorStart?.time,
+		[HOST_WATCH_PSTART_TICKS_ENV]: options.supervisorStart?.ticks,
+		[HOST_WATCH_LIFETIME_FIFO_ENV]: options.lifetimeFifo,
+		...(internal.dir ? { [HOST_SCRATCH_DIR_ENV]: internal.dir } : {}),
+		[SOCKET_SECRET_FILE_ENV]: platform === "win32" && internalSecret ? internal.secretPath : undefined,
+		[INTERNAL_KEY_STDIN_ENV]: options.internalKey ? "1" : undefined,
+		[HOST_CLEANUP_PATHS_ENV]: options.cleanupPaths.join("\n"),
+		[HOST_PUBLIC_SOCKET_ENV]: options.publicSocket,
+		[HOST_STARTUP_EVENTS_ENV]: startupHandOff,
+	};
+}
+
+/** Spawns the host child with the environment that binds it to this supervisor and its generation. */
+export function spawnHostChild(options: HostChildOptions): ChildProcess {
+	const { launch, internalSocket } = options;
 	const childLaunch = spawnableChildLaunch(resolveHostChildLaunch(launch, internalSocket));
 	// A shell wrapper cannot prove preservation of the private inherited handle.
 	const bootstrap = launch.presenterBootstrapFd !== undefined && !childLaunch.shell;
@@ -288,27 +323,10 @@ export function spawnHostChild(options: {
 		childLaunch.command,
 		childLaunch.args,
 		{
-			env: {
-				...process.env,
-				...(launch.agentDir ? { SENPI_CODING_AGENT_DIR: launch.agentDir } : {}),
-				// The child binds a PRIVATE socket, so it cannot derive this endpoint's daemon directory
-				// from what it listens on: it is told, and it claims its session paths there.
-				[HOST_DAEMON_DIR_ENV]: options.daemonDir,
-				[HOST_INSTANCE_ID_ENV]: options.instanceId,
-				[HOST_WATCH_FD_ENV]: String(HOST_CHILD_WATCH_FD),
-				[HOST_WATCH_PPID_ENV]: String(process.pid),
-				[HOST_WATCH_PSTART_ENV]: options.supervisorStart?.time,
-				[HOST_WATCH_PSTART_TICKS_ENV]: options.supervisorStart?.ticks,
-				[HOST_WATCH_LIFETIME_FIFO_ENV]: options.lifetimeFifo,
-				...(internal.dir ? { [HOST_SCRATCH_DIR_ENV]: internal.dir } : {}),
-				[SOCKET_SECRET_FILE_ENV]: process.platform === "win32" && internalSecret ? internal.secretPath : undefined,
-				[INTERNAL_KEY_STDIN_ENV]: options.internalKey ? "1" : undefined,
-				[HOST_CLEANUP_PATHS_ENV]: options.cleanupPaths.join("\n"),
-				...(process.platform === "win32" ? {} : { [HOST_PUBLIC_SOCKET_ENV]: publicSocket }),
-				[HOST_STARTUP_EVENTS_ENV]: options.reportsStartup
-					? hostChildStartupHandOff(startupStdio.fillers)
-					: undefined,
-			},
+			env: hostChildEnvironment(
+				options,
+				options.reportsStartup ? hostChildStartupHandOff(startupStdio.fillers) : undefined,
+			),
 			// Slot 3 is the lifetime pipe: "pipe" gives the child a read end it can
 			// wait on and keeps the write end owned by this process alone.
 			shell: childLaunch.shell,

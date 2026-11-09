@@ -72,7 +72,7 @@ describe("senpi#4084 fallback exhaustion leads with the primary failure", () => 
 			sessionManager: { getHeader: () => undefined },
 			agent: { waitForIdle: async () => {}, subscribe: vi.fn(() => () => {}) },
 			state: { messages: [] },
-			extensionRunner: { hasHandlers: () => false, emit: vi.fn(async () => {}) },
+			extensionRunner: { getFlagValues: () => new Map(), hasHandlers: () => false, emit: vi.fn(async () => {}) },
 			bindExtensions: vi.fn(async () => {}),
 			subscribe: vi.fn((cb: (event: AgentSessionEvent) => void) => {
 				listener = cb;

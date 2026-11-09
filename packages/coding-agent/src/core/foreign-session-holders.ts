@@ -72,11 +72,11 @@ const HOLDER_EXIT_POLL_MS = 100;
  * Why taking over is not offered, or `undefined` when it is: a holder whose identity is unverified could be a
  * reused pid, and a holder inside a multi-session host would take every other session of that host down with it.
  */
-export function takeOverRefusal(holders: readonly SessionHolder[]): string | undefined {
+export function takeOverRefusal(holders: readonly SessionHolder[], retry = "then /resume again"): string | undefined {
 	if (holders.some((holder) => holder.host_instance !== undefined))
-		return "It is open in a multi-session host; close it there, then /resume again.";
+		return `It is open in a multi-session host; close it there, ${retry}.`;
 	if (holders.some((holder) => holder.unproven === true))
-		return "The other process could not be verified; quit it there, then /resume again.";
+		return `The other process could not be verified; quit it there, ${retry}.`;
 	return undefined;
 }
 

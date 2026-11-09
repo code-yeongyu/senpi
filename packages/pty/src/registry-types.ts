@@ -22,6 +22,8 @@ export interface SessionRegistrySession {
 	readonly stop?: () => MaybePromise<unknown>;
 	readonly kill?: (signal?: TerminalSessionSignal) => MaybePromise<unknown>;
 	readonly signal?: (signal: TerminalSessionSignal) => MaybePromise<unknown>;
+	/** Stops what the session left in its process group after it settled (TerminalSession, senpi#6201). */
+	readonly stopLeftover?: () => Promise<unknown>;
 	readonly waitExit?: () => Promise<unknown>;
 	readonly wait?: () => Promise<unknown>;
 }

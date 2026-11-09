@@ -1,28 +1,13 @@
 import { writeFileSync } from "node:fs";
 import { Type } from "typebox";
 import { describe, expect, it, vi } from "vitest";
-import type { ExtensionAPI, ExtensionFactory } from "../src/index.ts";
-import { createHarness } from "./suite/harness.ts";
+import { createExecuteToolHarness } from "./helpers/execute-tool-harness.ts";
 
 function textOf(result: { content: Array<{ type: string; text?: string }> }): string {
 	return result.content
 		.filter((part): part is { type: "text"; text: string } => part.type === "text")
 		.map((part) => part.text)
 		.join("\n");
-}
-
-async function createExecuteToolHarness(factory: (pi: ExtensionAPI) => void) {
-	let api: ExtensionAPI | undefined;
-	const extensionFactories: ExtensionFactory[] = [
-		(pi) => {
-			api = pi;
-			factory(pi);
-		},
-	];
-	return createHarness({ extensionFactories }).then((harness) => ({
-		...harness,
-		api: api as ExtensionAPI,
-	}));
 }
 
 describe("pi.executeTool hook dispatch", () => {
@@ -59,6 +44,38 @@ describe("pi.executeTool hook dispatch", () => {
 			expect(calls).toEqual([{ toolName: "echo_ext", input: { value: "start" } }]);
 			expect(textOf(result)).toBe("value:start-mutated:rewritten");
 			expect(result.details).toEqual({ value: "start-mutated", rewritten: true });
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it.each([
+		["a number", 5],
+		["an object", { nested: true }],
+	])("runs the body with a tool_call mutation to %s unchanged, never re-validated", async (_name, mutated) => {
+		const received: unknown[] = [];
+		const harness = await createExecuteToolHarness((pi) => {
+			pi.registerTool({
+				name: "typed_ext",
+				label: "Typed",
+				description: "Takes a string",
+				parameters: Type.Object({ value: Type.String() }),
+				execute: async (_toolCallId, params) => {
+					received.push(params.value);
+					return { content: [{ type: "text", text: "ran" }], details: {} };
+				},
+			});
+			pi.on("tool_call", (event) => {
+				(event.input as Record<string, unknown>).value = mutated;
+				return undefined;
+			});
+		});
+
+		try {
+			const result = await harness.api.executeTool("typed_ext", { value: "start" });
+
+			expect(textOf(result)).toBe("ran");
+			expect(received).toEqual([mutated]);
 		} finally {
 			harness.cleanup();
 		}

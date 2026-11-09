@@ -24,6 +24,7 @@ const slotStateSchema = z.looseObject({
 	stateVersion: z.number().int().nonnegative(),
 	blockedUntil: z.number().int().positive().optional(),
 	blockReason: z.enum(["auth_error", "rate_limit", "account_disabled"]).optional(),
+	usageLimit: z.literal(true).optional(),
 	failureCount: z.number().int().nonnegative().optional(),
 	lastSuccessAt: z.number().int().positive().optional(),
 	credentialRevision: z.string().regex(HEX_256_BIT).optional(),
@@ -43,6 +44,8 @@ export type CredentialSlotState = Readonly<{
 	stateVersion: number;
 	blockedUntil?: number;
 	blockReason?: "auth_error" | "rate_limit" | "account_disabled";
+	/** SIWC usage-limit pause; it has no known reset time, so the cooldown is only a probe interval. */
+	usageLimit?: true;
 	failureCount?: number;
 	lastSuccessAt?: number;
 	credentialRevision?: string;
@@ -344,7 +347,7 @@ export type HalfOpenLease = { leaseId: string; expiresAt: number };
  * until the lease expires or the probe settles the block.
  */
 export async function acquireHalfOpenLease(
-	repository: CredentialSlotRepository,
+	repository: Pick<CredentialSlotRepository, "mutateSlotState">,
 	providerId: string,
 	laneId: string,
 	slotId: string,

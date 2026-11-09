@@ -12,6 +12,7 @@ import type { SpawnedBy } from "../core/session-lifecycle-types.ts";
 import { isSpawnedBy } from "../core/session-spawned-by.ts";
 import type { TuiMode } from "../core/settings-manager.ts";
 import { applyAttachArgs } from "./attach-args.ts";
+import { applyEngineModeArgs } from "./engine-mode-args.ts";
 import { isGrokNeoEnabled } from "./grok-neo-gate.ts";
 import { isToolRuntimeKind, type ToolRuntimeKind } from "./tool-runtime.ts";
 
@@ -66,6 +67,10 @@ export interface Args {
 	grokNeo?: boolean;
 	/** Serve independently routed plain-RPC sessions over one host. */
 	multiSession?: boolean;
+	/** Start the engine as a hand: loopless tool execution for a remote loop on `<agentDir>/rpc/hand.sock`. */
+	hand?: boolean;
+	/** Start the headless engine: the machine-owned multi-session host on `<agentDir>/rpc/headless.sock`. */
+	headless?: boolean;
 	presenterBootstrapFd?: number;
 	mcpPresenterEnforcement?: boolean;
 	/**
@@ -104,8 +109,11 @@ export function isSessionRuntimeKind(value: string): value is SessionRuntimeKind
  * hosts and embedders keep the worker runtime unchanged. An explicit
  * `--session-runtime` always wins over both defaults.
  */
-export function resolveSessionRuntime(parsed: Pick<Args, "sessionRuntime" | "listen">): SessionRuntimeKind {
+export function resolveSessionRuntime(
+	parsed: Pick<Args, "sessionRuntime" | "listen" | "headless">,
+): SessionRuntimeKind {
 	if (parsed.sessionRuntime) return parsed.sessionRuntime;
+	if (parsed.headless && parsed.listen === undefined) return "in-process";
 	return parsed.listen !== undefined && parsed.listen !== "stdio://" ? "in-process" : "worker";
 }
 
@@ -329,6 +337,10 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 			result.grokNeo = true;
 		} else if (arg === "--multi-session") {
 			result.multiSession = true;
+		} else if (arg === "--hand") {
+			result.hand = true;
+		} else if (arg === "--headless") {
+			result.headless = true;
 		} else if (arg === "--mcp-presenter-fd") {
 			if (args[++i] === "4") result.presenterBootstrapFd = 4;
 			else result.diagnostics.push({ type: "error", message: "Invalid presenter bootstrap descriptor" });
@@ -346,7 +358,7 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 			if (value !== undefined && !value.startsWith("--")) i++;
 			if (value !== undefined && isToolRuntimeKind(value)) result.toolRuntime = value;
 			else result.diagnostics.push({ type: "error", message: "--tool-runtime must be in-process or child" });
-		} else if (arg === "--listen" && result.mode === "rpc") {
+		} else if (arg === "--listen" && (result.mode === "rpc" || result.hand || result.headless)) {
 			const value = args[i + 1];
 			if (value === undefined || value.startsWith("--")) {
 				result.diagnostics.push({ type: "error", message: "--listen requires a value" });
@@ -390,6 +402,7 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 	}
 
 	applyAttachArgs(result);
+	applyEngineModeArgs(result);
 	return result;
 }
 
@@ -484,6 +497,8 @@ ${grokNeoOptionsText}  --multi-session               Serve multiple routed RPC s
   --listen <address>            RPC listener: stdio://, unix://, unix:///path, or a socket path
   --session-runtime <kind>      Multi-session host runtime: in-process (socket default) or worker
   --tool-runtime <kind>         Where heavy tool work runs: in-process (default) or child
+  --hand                        Start as a hand: run tool calls for a remote loop on <agent dir>/rpc/hand.sock
+  --headless                    Start the headless engine: a machine-owned session host on <agent dir>/rpc/headless.sock
   --auto-title-sessions         Auto-generate session titles outside interactive mode (deprecated for hosts; prefer open_session.auto_title)
   --help, -h                     Show this help
   --version, -v                  Show version number

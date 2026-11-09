@@ -140,8 +140,9 @@ import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.t
 import { isManualContinueSubmission } from "../../core/manual-continue.ts";
 import { attachMcpGrantPresentation } from "../../core/mcp-grant-presentations.ts";
 import { registerMcpMrtrPresentation } from "../../core/mcp-mrtr-presentations.ts";
-import { markMcpFormPresented, type McpFormBinding } from "../../core/mcp-form-types.ts";
-import { registerLocalMcpPresenter } from "./mcp-local-presenter.ts";
+import { markMcpFormPresented } from "../../core/mcp-form-types.ts";
+import { type LocalMcpPresenter, registerLocalMcpPresenter } from "./mcp-local-presenter.ts";
+import { raceTerminalSecretInput } from "./terminal-sealed-secrets.ts";
 import { createCompactionSummaryMessage, createCustomMessage } from "../../core/messages.ts";
 import type { ModelChangeOrigin } from "../../core/model-change-origin.ts";
 import {
@@ -308,11 +309,13 @@ import {
 import { getModelSearchText } from "./model-search.ts";
 import { PAUSE_STATUS_KEY, pauseFooterText, resumeCommandTarget } from "./pause-footer.ts";
 import {
+	episodeOwnsFailure,
 	isNetworkProviderError,
-	isNetworkProviderMessage,
 	isRetryableProviderError,
+	isRetryableProviderMessage,
 	ProviderErrorPresentation,
 } from "./provider-error-presentation.ts";
+import { providerErrorReason } from "./provider-error-reason.ts";
 import { replayAssistantTools } from "./replay-assistant-tools.ts";
 import { interactiveErrorText } from "./required-compaction-wording.ts";
 import { allScopeSessions, chooseResumePath, currentScopeSessions } from "./resume-rebind.ts";
@@ -320,6 +323,7 @@ import { isRiskyMainModel, RISKY_MAIN_MODEL_WARNING } from "./risky-main-model-w
 import { maybeShowRuntimeNotice } from "./runtime-notice-presenter.ts";
 import { type SubmissionTicket, TuiSessionControlHost } from "./session-control-host.ts";
 import type { TuiControlContext } from "./session-control-lifecycle.ts";
+import type { PresenterAccountAuthority } from "../rpc/mcp-presenter-account.ts";
 import { formatSessionFailureInfo } from "./session-failure-info.ts";
 import { DEFAULT_SMOOTH_FPS, StreamingRevealController } from "./streaming-reveal.ts";
 import {
@@ -909,6 +913,8 @@ async function attachClipboardImage(
 export interface InteractiveModeOptions {
 	/** Opt in to host-issued MCP form authority; ordinary terminal forms remain the default. */
 	mcpPresenterEnforcement?: boolean;
+	/** Lets same-account devices enroll as form presenters on this terminal; injected by the distribution (D11 S3-6b). */
+	presenterAccountAuthority?: PresenterAccountAuthority;
 	/** Renderer mode for the interactive terminal. */
 	uiMode?: TuiMode;
 	/** Providers that were migrated to auth.json (shows warning) */
@@ -2811,7 +2817,7 @@ export class InteractiveMode {
 	private detachMcpGrantPresentation?: () => void;
 	/** A presentation is optional until extension UI is created; shutdown may precede it. */
 	private mcpMrtrPresentationLifetime?: AbortController;
-	private mcpLocalPresenter?: McpFormBinding;
+	private mcpLocalPresenter?: LocalMcpPresenter;
 	private async bindCurrentSessionExtensions(): Promise<void> {
 		this.mcpMrtrPresentationLifetime?.abort();
 		this.mcpMrtrPresentationLifetime = new AbortController();
@@ -3813,7 +3819,14 @@ export class InteractiveMode {
 				this.withBlockedHostDialog(
 					crypto.randomUUID(),
 					title,
-					() => this.showExtensionInput(title, placeholder, opts),
+					() =>
+						raceTerminalSecretInput(
+							this.mcpLocalPresenter?.sealed,
+							(local) => this.showExtensionInput(title, placeholder, local),
+							title,
+							placeholder,
+							opts,
+						),
 					opts?.secret ? { ...opts, ephemeral: true } : opts,
 				),
 			// Async answers are delivered by the ask-user extension, not here: the
@@ -4217,7 +4230,11 @@ export class InteractiveMode {
 	}
 
 	private sessionControlContext(): Omit<TuiControlContext, "editorRevision"> {
+		const account = this.options?.presenterAccountAuthority;
 		return {
+			...(this.mcpLocalPresenter && {
+				mcpPresenter: { local: this.mcpLocalPresenter, ...(account && { account }) },
+			}),
 			session: this.session,
 			agentDir: this.session.agentDir,
 			surface: {
@@ -5478,6 +5495,13 @@ export class InteractiveMode {
 			case "model_change_pending":
 				this.showWarning(event.notice);
 				this.footer.invalidate();
+				this.ui.requestRender();
+				break;
+
+			case "model_change_cancelled":
+				// The footer carried the held target (senpi#6092); a hold that ends without landing takes it back off.
+				this.footer.invalidate();
+				this.ui.requestRender();
 				break;
 
 			case "high_reasoning_warning":
@@ -5589,7 +5613,7 @@ export class InteractiveMode {
 						this.session.retryAttempt,
 						this.session.currentAbortSource,
 					);
-					if (isNetworkProviderMessage(renderedMessage)) {
+					if (isRetryableProviderMessage(renderedMessage, this.session)) {
 						this.getProviderErrors().record(renderedMessage.errorMessage ?? "", this.toolOutputExpanded);
 					} else if (renderedMessage.stopReason === "stop" || renderedMessage.stopReason === "toolUse") {
 						this.providerErrors?.clear();
@@ -5707,7 +5731,13 @@ export class InteractiveMode {
 				}
 				this.detachAssistantTextSegments();
 				this.clearPendingTools();
-				if (event.failure !== undefined && !event.willRetry && !failureAlreadyDescribed(event.messages))
+				// A failure the quiet episode owns gets its one final notice when the episode finishes (senpi#6012).
+				if (
+					event.failure !== undefined &&
+					!event.willRetry &&
+					!failureAlreadyDescribed(event.messages) &&
+					!episodeOwnsFailure(event.messages, this.providerErrors, this.session)
+				)
 					this.showError(formatProviderFailure(event.failure));
 
 				this.ui.requestRender();
@@ -6181,6 +6211,7 @@ export class InteractiveMode {
 				event.delayMs,
 				indicator,
 				isRetryableProviderError(event.errorMessage),
+				providerErrorReason(event.errorMessage),
 			),
 		);
 		this.ui.requestRender();
@@ -6418,7 +6449,7 @@ export class InteractiveMode {
 				break;
 			}
 			case "assistant": {
-				if (isNetworkProviderMessage(message)) {
+				if (isRetryableProviderMessage(message, this.session)) {
 					this.getProviderErrors().record(message.errorMessage ?? "", this.toolOutputExpanded);
 					this.providerErrors?.finish();
 				} else if (message.stopReason === "stop" || message.stopReason === "toolUse") {
@@ -6433,7 +6464,7 @@ export class InteractiveMode {
 					this.getMarkdownTransformers(),
 				);
 				assistantComponent.setExpanded(this.toolOutputExpanded);
-				assistantComponent.setProviderErrorOwned(isNetworkProviderMessage(message));
+				assistantComponent.setProviderErrorOwned(isRetryableProviderMessage(message, this.session));
 				if (options?.replayOwnsTurnNotice === true) assistantComponent.setOwnsTurnNotice(true);
 				if (options?.replayOwnsTurnNotice === false) assistantComponent.setProviderErrorOwned(true);
 				this.chatContainer.addChild(assistantComponent);
@@ -6456,7 +6487,7 @@ export class InteractiveMode {
 	private syncTrailingAssistantText(message: AssistantMessage): void {
 		if (!this.streamingComponent) return;
 		this.streamingComponent.setProviderErrorOwned(
-			isNetworkProviderMessage(message) || headNoticeShownElsewhere(message),
+			isRetryableProviderMessage(message, this.session) || headNoticeShownElsewhere(message),
 		);
 		const head = assistantStreamingHeadMessage(message);
 		// Single writer: while smooth streaming paces the head (no toolCall block),
@@ -6488,7 +6519,7 @@ export class InteractiveMode {
 			}
 			const runMessage: AssistantMessage = { ...message, content: runBlocks };
 			// Only the run that ends the message shows the turn's error; earlier runs repeat it otherwise (senpi#4954).
-			const errorShownElsewhere = isNetworkProviderMessage(message) || index < content.length;
+			const errorShownElsewhere = isRetryableProviderMessage(message, this.session) || index < content.length;
 			const existing = this.assistantTextSegments.get(runStart);
 			if (existing) {
 				existing.setProviderErrorOwned(errorShownElsewhere);
@@ -6931,7 +6962,7 @@ export class InteractiveMode {
 			// which the stdout/stderr error handler turns into emergencyTerminalExit;
 			// the render loop is already idle, so this cannot hot-spin (see #4144).
 			await this.sessionControlHost?.disposeActive();
-			await this.runtimeHost.dispose({ processExit: true });
+			await this.runtimeHost.dispose({ processExit: true, endActiveRun: true });
 			this.themeController.disableAutoSync();
 			await this.ui.terminal.drainInput(1000);
 			this.stop();
@@ -6949,7 +6980,7 @@ export class InteractiveMode {
 		this.stop({ restoreStderr: false });
 		try {
 			await this.sessionControlHost?.disposeActive();
-			await this.runtimeHost.dispose({ processExit: true });
+			await this.runtimeHost.dispose({ processExit: true, endActiveRun: true });
 		} finally {
 			restoreInteractiveStderr();
 		}
@@ -8383,11 +8414,16 @@ export class InteractiveMode {
 		const systemPromptStr = systemPromptChange?.systemPromptName
 			? ` (optimized system prompt applied: ${systemPromptChange.systemPromptName})`
 			: "";
-		mode.showStatus(
-			persistDefault
-				? `Model: ${model.id}${systemPromptStr} · now the default model for new sessions`
-				: `Model: ${model.id}${systemPromptStr}`,
-		);
+		const held = mode.session.pendingModelSwitch?.model;
+		const isHeld = held !== undefined && held.provider === model.provider && held.id === model.id;
+		const tail = isHeld
+			? persistDefault
+				? " · after the next compaction, then the default model for new sessions"
+				: " · after the next compaction"
+			: persistDefault
+				? " · now the default model for new sessions"
+				: "";
+		mode.showStatus(`Model: ${model.id}${systemPromptStr}${tail}`);
 		mode.showRiskyMainModelWarning(model);
 		void mode.maybeWarnAboutAnthropicSubscriptionAuth(model);
 		mode.checkDaxnutsEasterEgg(model);
@@ -9383,7 +9419,7 @@ export class InteractiveMode {
 					}
 
 					try {
-						const { notices } = await this.session.modelRuntime.logoutProvider(providerOption.id, {
+						const { notices, revocation } = await this.session.modelRuntime.logoutProvider(providerOption.id, {
 							signal: AbortSignal.timeout(15_000),
 						});
 						this.updateAvailableProviderCount();
@@ -9391,7 +9427,11 @@ export class InteractiveMode {
 							providerOption.authType === "oauth"
 								? `Logged out of ${providerOption.name}`
 								: `Removed stored API key for ${providerOption.name}. Environment variables and models.json config are unchanged.`;
-						this.showStatus([message, ...notices].join(" "));
+						const revocationNotice =
+							revocation?.status === "remote_revocation_unconfirmed"
+								? ["Remote revocation was not confirmed; disconnect the app in ChatGPT Settings."]
+								: [];
+						this.showStatus([message, ...notices, ...revocationNotice].join(" "));
 					} catch (error: unknown) {
 						const message = error instanceof Error ? error.message : String(error);
 						this.showError(

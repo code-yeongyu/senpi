@@ -1,3 +1,4 @@
+import { withReceipt } from "./command-authority.ts";
 import { normalizeJsonValue } from "./json-normal-value.ts";
 import { serializeJsonLine } from "./jsonl.ts";
 import { observeLifecycleDelivery } from "./lifecycle-delivery.ts";
@@ -22,50 +23,15 @@ export { MAX_SHARED_STDIO_QUEUE_BYTES, MAX_SHARED_STDIO_QUEUE_RECORDS } from "./
  * scheduling boundary and violate D9.
  */
 export class SessionEventWriter extends SessionEventWriterDestinations {
-	secretInputRoute(sessionId: string): SecretInputRoute {
-		return this.secretPresentations.route(sessionId);
+	secretInputRoute(sessionId: string, sealed = false): SecretInputRoute {
+		return this.secretPresentations.route(sessionId, sealed);
 	}
 	setSoleSecretCapabilities(capabilities: readonly string[]): void {
 		this.secretPresentations.handshake(capabilities);
 	}
-	/** Private records bypass event queues, snapshots, mirrors, replay, and overflow preview errors. */
-	handleMcpForm(value: unknown): boolean {
-		if (!this.presenterAuthority) return false;
-		if (
-			typeof value !== "object" ||
-			value === null ||
-			!("type" in value) ||
-			typeof value.type !== "string" ||
-			(!value.type.startsWith("mcp_form_") && value.type !== "mcp_presenter_context")
-		)
-			return false;
-		const id = this.currentConnection();
-		const sender = id === undefined ? undefined : this.presenterConnections.get(id);
-		const reply =
-			value.type === "mcp_presenter_context"
-				? this.mcpPresenterContextReply(sender, value)
-				: sender && this.presenterAuthority
-					? this.presenterAuthority.receive(sender, value)
-					: { error: "presenter_not_authorized" };
-		const connection = id === undefined ? undefined : this.fanout.get(id)?.connection;
-		if (connection) {
-			try {
-				connection.writeRaw(
-					serializeJsonLine({
-						type: "mcp_form_reply",
-						...("id" in value && typeof value.id === "string" ? { id: value.id } : {}),
-						...reply,
-					}),
-				);
-			} catch {
-				if (sender) this.presenterAuthority?.detach(sender);
-			}
-		}
-		return true;
-	}
-
 	/** Queue a session record. Content events target connections attached to the session. */
 	enqueue(sessionId: string, value: object): boolean {
+		value = withReceipt(value, this.connectionContext.getStore());
 		if (declarationReply(value, undefined) === undefined) return true;
 		if (this.sealedSessions.has(sessionId)) return false;
 		const targetId = this.connectionContext.getStore();
@@ -141,6 +107,7 @@ export class SessionEventWriter extends SessionEventWriterDestinations {
 	/** Queue one untagged host-control response for the given connection (defaults to the current one). */
 	enqueueControl(value: object, targetOverride?: string): Promise<void> {
 		const peer = targetOverride ?? this.currentConnection();
+		value = withReceipt(value, peer);
 		const reply = declarationReply(value, peer === undefined ? undefined : this.compactSelection(peer));
 		if (reply === undefined) return Promise.resolve();
 		value = reply;
@@ -276,7 +243,7 @@ export class SessionEventWriter extends SessionEventWriterDestinations {
 	 * session's reaches every connection. No client asked for this teardown, so there is
 	 * no close response to answer.
 	 */
-	parkSession(sessionId: string, sessionPath: string, reason: "idle" | "unloaded"): void {
+	parkSession(sessionId: string, sessionPath: string, reason: "idle" | "unloaded" | "host_shutdown"): void {
 		this.sealLifecycle(sessionId, { type: "session_parked", sessionId, sessionPath, reason });
 	}
 
