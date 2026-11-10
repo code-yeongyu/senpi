@@ -15,6 +15,17 @@ export interface ReachableToolRegistry {
  */
 export function reachableToolNames(pi: ReachableToolRegistry): Set<string> {
 	const names = new Set(pi.getActiveTools());
-	for (const tool of pi.getAllTools()) if (tool.exposure === "eval") names.add(tool.name);
+	for (const tool of registeredTools(pi)) if (tool.exposure === "eval") names.add(tool.name);
 	return names;
+}
+
+// The loader's registry methods throw until the runtime binds (the dedupe probe in
+// coding-agent's codemode-builtin-dedupe.test.ts registers eval before that point); an
+// unreadable registry adds nothing, like promptKernelPreludes.
+function registeredTools(pi: ReachableToolRegistry): readonly EvalSchemaToolInfo[] {
+	try {
+		return pi.getAllTools();
+	} catch {
+		return [];
+	}
 }

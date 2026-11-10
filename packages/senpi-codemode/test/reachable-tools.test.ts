@@ -51,6 +51,16 @@ describe("eval-exposed tools stay reachable from a cell", () => {
 		expect(executeTool.isToolAvailable?.("task_cancel")).toBe(false);
 	});
 
+	it("falls back to the active list when the registry cannot be read yet", () => {
+		const pi = {
+			getActiveTools: () => ["eval", "read"],
+			getAllTools: (): readonly never[] => {
+				throw new Error("runtime not bound");
+			},
+		};
+		expect([...reachableToolNames(pi)].sort()).toEqual(["eval", "read"]);
+	});
+
 	it("keeps the kernel prelude of an eval-exposed tool while it is withheld", () => {
 		const pi = registry(
 			["eval"],
