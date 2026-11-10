@@ -5,10 +5,10 @@ import { longContextAvailable } from "./long-context.ts";
 export const CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW = 200_000;
 
 /** The most of a request's output budget Claude Code holds back from its window (`zoo` in Claude Code 2.1.321). */
-export const CLAUDE_CODE_OUTPUT_RESERVE_CAP = 20_000;
+const CLAUDE_CODE_OUTPUT_RESERVE_CAP = 20_000;
 
 /** The margin Claude Code keeps below its reserved window before it refuses a request (`Woo` in Claude Code 2.1.321). */
-export const CLAUDE_CODE_BLOCKING_BUFFER = 3_000;
+const CLAUDE_CODE_BLOCKING_BUFFER = 3_000;
 
 /**
  * The `CLAUDE_CODE_MAX_CONTEXT_TOKENS` that makes Claude Code accept a conversation up to `window`.
