@@ -4,8 +4,8 @@ import type { SessionManager } from "./session-manager.ts";
  * Who started a turn, for the delegated-default permission rule (remote approval-mode work):
  * - `local`: a local connection's or the TUI's own input;
  * - `delegated`: input that arrived on a delegated (remote device) connection;
- * - `peer`: a relayed delivery from an agent on a remote device of the same account, whose device is the delegation's
- *   principal (senpi#6305): it runs under the receiving session's own preset, as the session's own work does;
+ * - `peer`: an agent's relayed delivery on a delegated connection the forwarder granted `peer_agent` (senpi#6305): it
+ *   runs under the receiving session's own preset, as the session's own work does;
  * - `engine`: a turn no client record started (an extension's message, a goal or loop turn, restored input).
  * A steer joins the running turn (`join`) and never changes its origin.
  */

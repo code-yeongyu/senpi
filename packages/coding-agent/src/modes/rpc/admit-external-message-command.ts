@@ -22,6 +22,8 @@ export interface DeliveryPeer {
 	/** The remote device the connection speaks for (`ConnectionRoles.originOf`); absent on a plain local connection. */
 	readonly origin: RpcRemoteOrigin | undefined;
 	readonly connectionOrigin: ConnectionOrigin;
+	/** The forwarder granted this connection `peer_agent` in its host-mode delegation (senpi#6305). */
+	readonly peerAgent?: boolean;
 }
 
 export type AdmitExternalMessageAnswer =
@@ -42,12 +44,13 @@ function ledgerId(deliveryId: string, origin: RpcRemoteOrigin | undefined): stri
 }
 
 /**
- * The turn a delivery opens: a steer joins the running turn; an agent's delivery on a delegated connection, whose
- * device is the delegation's principal, is a peer turn (senpi#6305); anything else keeps the connection's origin.
+ * The turn a delivery opens: a steer joins the running turn; an agent's delivery on a delegated connection the
+ * forwarder granted `peer_agent` is a peer turn (senpi#6305), the record's sender kind being only a consistency check;
+ * anything else keeps the connection's origin.
  */
 function deliveryTurnMark(command: RpcAdmitExternalMessageCommand, peer: DeliveryPeer): InputTurnMark {
 	if (command.deliverAs === "steer") return "join";
-	if (peer.connectionOrigin === "delegated" && peer.origin !== undefined && command.sender?.kind === "agent")
+	if (peer.connectionOrigin === "delegated" && peer.peerAgent === true && command.sender?.kind === "agent")
 		return "peer";
 	return peer.connectionOrigin;
 }
