@@ -49,7 +49,7 @@ const sha256 = (text: string): string => createHash("sha256").update(text).diges
 const FULL_PRESETS: readonly PromptPresetName[] = [
 	"claude-fable-5",
 	"claude-fable-5-1",
-	"claude-fable-5-5",
+	"claude-fable-5-2",
 	"claude-opus-5-5",
 	"claude-opus-5",
 	"claude-opus-4-8",
@@ -88,15 +88,15 @@ const PRESET_ROWS: ReadonlyArray<{
 		},
 	},
 	{
-		preset: "claude-fable-5-5",
+		preset: "claude-fable-5-2",
 		source: "037918157",
 		hashes: {
-			"terminal:0": "7fe610a6f9a1edb0021012ac9233bea930190618d8923d133b4f311949a81dca",
-			"terminal:1": "f36babeef92ba1c8c283b0d57ef5667a287288bd74e3c50f1559be3f0c1280a3",
-			"app:0": "8b0fcb7fdb125c8a122a74dfa5402e2a94e2f91a3fc4d304a110f81cba129fb9",
-			"app:1": "aa0150f320888cf6086a09e6133c70cc9d074fcd3965bc586bd416b759290252",
-			"chat:0": "5634c73539008c973cc2dc58b0b0ed5dd3de3260f577d3094296931f2a6a49b4",
-			"chat:1": "6d563b146d86d33fb620428f6f832a48322336d940a7d44f541674f71db46a7e",
+			"terminal:0": "00f34799a946a2767fb596dc08f7ad434728d3c5f6cc4ca30d099f981636a960",
+			"terminal:1": "1f38f2d99e508b0a295989c168fef1ebe03bffbca89a9ea2906e506319e63768",
+			"app:0": "3e5385f56ab7e54697d8129e5166ca8cac597e1761377d881829ec573ff49ef8",
+			"app:1": "e596d8930d80feffb7296168b5cab1f338739864617914a60dda553ddeb81440",
+			"chat:0": "48636bb52dcc918840cfb13c2fb20457d393a9a3a2143db2c48ab7ae0473255c",
+			"chat:1": "63d95b3f02ca02790829c24f443049aa7e6a0d99584f6848b180693e4e4b8286",
 		},
 	},
 	{
