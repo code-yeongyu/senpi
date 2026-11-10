@@ -12,6 +12,21 @@
 
 ### Removed
 
+## [2026.11.10] - 2026-11-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- The bundled Bun skill no longer tells agents to re-spawn Bun as `process.execPath` unconditionally: inside a compiled host that path is the host binary, so the skill now limits it to standalone Bun and directs compiled hosts to resolve `bun` through PATH ([code-yeongyu/oh-my-openagent#12569](https://github.com/code-yeongyu/oh-my-openagent/issues/12569), [#6232](https://github.com/code-yeongyu/senpi/pull/6232))
+- Hide the console window for installer and kernel subprocess spawns on Windows ([#3965](https://github.com/code-yeongyu/senpi/issues/3965))
+
+### Removed
+
 ## [2026.11.9-2] - 2026-11-09
 
 ### Breaking Changes
