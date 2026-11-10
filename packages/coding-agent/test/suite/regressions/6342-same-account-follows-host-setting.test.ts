@@ -209,10 +209,11 @@ describe("a turn follows the receiving machine's own setting", () => {
 		const started = new Promise<void>((resolve) => {
 			runStarted = resolve;
 		});
+		let custom: Promise<unknown> | undefined;
 		const [localRun, joined] = await calls(local, id, 2, async () => {
 			const sent = local.send({ type: "prompt", sessionId: id, message: "go" });
 			await started;
-			await remote.send({
+			custom = remote.send({
 				type: "send_custom_message",
 				sessionId: id,
 				customType: "remote-work",
@@ -223,6 +224,7 @@ describe("a turn follows the receiving machine's own setting", () => {
 			});
 			await sent;
 		});
+		await custom;
 		expect(localRun).toEqual(RAN);
 		expect(joined).toEqual({ asked: ASKED, ran: false });
 	}, 120_000);
