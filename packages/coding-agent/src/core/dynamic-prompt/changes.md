@@ -1,5 +1,28 @@
 # changes.md — dynamic-prompt
 
+## 2026-11-10 - The code is the model's own; the smallest-change rule is gone (senpi#6358)
+
+### What changed
+
+- `style.ts` (full and diet): the opening Style paragraph no longer says "Smallest correct change wins: no refactors beside a focused fix". It now states ownership ("This codebase is yours: what it is for and how it is built are your call, and you will keep building on it") and what the owner does: build on the code that already does the job instead of adding a parallel copy, fit new behavior into the structure that is there, leave no duplicate or dead code behind; a defect in the code being changed is fixed now, one elsewhere is a follow-up for the summary. The kept constraints follow unchanged: no helpers or abstractions for hypothetical needs, no defensive checks inside trusted code, trust framework guarantees, validate only at system boundaries, targeted edit over file rewrite.
+- `intent-gate.ts` (full and diet): the change-ask route reads "diagnose and fix at the cause, at exactly the asked scope - what fully satisfies an open-ended goal and nothing beyond it" (was "diagnose and fix minimally ... the smallest path that fully satisfies an open-ended goal").
+- `verification.ts` (both claim-audit variants): "Fix failures your change caused and any that sit in the code you changed; note other pre-existing failures separately" (was "Fix only issues your changes caused; note pre-existing failures separately").
+- Goldens: `test/suite/regressions/3483-prompt-goldens.json`, `test/suite/prompt-presets-native-baseline.json` (all 204 rows; `sourceCommit` kept as the suite asserts it) and the senpi-qa fused-equivalence goldens (darwin-arm64 and linux-x64) carry the new sentences; the goldens were derived by replacing exactly the changed sentences, and the 3483 byte-equality suite proves the derivation for the default prompt.
+
+### Why
+
+- Anthropic's Fable 5.2 prompting guide documents that a model with no ownership statement acts like a guest in someone else's repository: it bolts a new function on beside the existing one, leaves the duplicate, and only mentions a nearby defect. senpi#6314 kept the ownership sentence out and the smallest-change rule in; the repository owner ruled the reverse (senpi#6358): ownership in, smallest-change out, so neither cancels the other. "Fix minimally" and "fix only failures your change caused" were the same rule in other words and would have cancelled ownership on the most common ask (a bug fix) and on a pre-existing failure inside the changed code.
+
+### Why an extension could not handle it
+
+- The sentences are built inside the shared prompt builder.
+
+### Expected merge conflict zones
+
+- Fork-only files. The first Style paragraph in `style.ts`, the change-ask bullet in `intent-gate.ts`, the claim-audit sentence in `verification.ts`.
+
+---
+
 ## 2026-11-09 - Prompt builder carries a provider-native search signal (senpi#6264)
 
 ### What changed
