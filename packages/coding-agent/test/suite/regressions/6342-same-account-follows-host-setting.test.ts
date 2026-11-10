@@ -52,6 +52,15 @@ const gatedTurn: ExtensionFactory = (pi) => {
 	});
 };
 
+let runStarted: () => void = () => {};
+const runStartSignal: ExtensionFactory = (pi) => {
+	pi.on("agent_start", () => {
+		const signal = runStarted;
+		runStarted = () => {};
+		signal();
+	});
+};
+
 let customFollowUpArmed = false;
 const engineCustomFollowUp: ExtensionFactory = (pi) => {
 	pi.on("agent_end", () => {
@@ -80,7 +89,7 @@ async function sameAccountPeer(target: DelegatedHost, roles?: readonly string[])
 }
 
 async function setup(connect: (target: DelegatedHost) => Promise<Peer>) {
-	host = await permissionHost([engineFollowUp, engineCustomTurn, engineCustomFollowUp, gatedTurn], {
+	host = await permissionHost([engineFollowUp, engineCustomTurn, engineCustomFollowUp, gatedTurn, runStartSignal], {
 		embedderPreset: true,
 	});
 	const local = await host.proven();
@@ -194,6 +203,29 @@ describe("a turn follows the receiving machine's own setting", () => {
 		},
 		120_000,
 	);
+
+	it("keeps asking for a cross-account custom message that joins a running local turn", async () => {
+		const { local, remote, id } = await setup(remotePeer);
+		const started = new Promise<void>((resolve) => {
+			runStarted = resolve;
+		});
+		const [localRun, joined] = await calls(local, id, 2, async () => {
+			const sent = local.send({ type: "prompt", sessionId: id, message: "go" });
+			await started;
+			await remote.send({
+				type: "send_custom_message",
+				sessionId: id,
+				customType: "remote-work",
+				content: "remote work",
+				display: true,
+				triggerTurn: true,
+				deliverAs: "followUp",
+			});
+			await sent;
+		});
+		expect(localRun).toEqual(RAN);
+		expect(joined).toEqual({ asked: ASKED, ran: false });
+	}, 120_000);
 
 	it("never asks for a local slash command's run when a cross-account record arrives before it starts", async () => {
 		const { local, remote, id } = await setup(remotePeer);

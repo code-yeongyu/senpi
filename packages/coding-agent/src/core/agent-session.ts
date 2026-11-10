@@ -7714,6 +7714,9 @@ export class AgentSession {
 		} satisfies CustomMessage;
 		// A delivery that found a run already streaming becomes a steer or follow-up: it keeps the origin it was admitted with.
 		copyInputTurnMark(message, appMessage);
+		// senpi#6342: a custom message a cross-account record's own handling sends carries that origin wherever it waits
+		// (joining a streaming run, parked behind a compaction, held for the next turn), so the turn it opens still asks.
+		if (!hasInputTurnMark(appMessage) && recordIsDelegated()) markInputTurnOrigin(appMessage, "delegated");
 		if (this._sizesOnlyStartup && options?.triggerTurn === true) {
 			// Size inspection makes no model call (#3483): keep the message for a turn that never starts.
 			this._pendingNextTurnMessages.push(appMessage);
