@@ -80,6 +80,23 @@ describe("a turn follows the receiving machine's own setting", () => {
 		expect(engineCall).toEqual(RAN);
 	}, 120_000);
 
+	it("keeps no origin after a peer-lane delivery: a later engine-started turn runs on the host setting", async () => {
+		const { local, remote, id } = await setup(async (target) => {
+			const peer = await target.proven();
+			expect(await declare(peer, GRANT, DEVICE, { roles: ["peer_agent"] })).toMatchObject({ success: true });
+			return peer;
+		});
+		expect(await calls(remote, id, 1, () => deliver(remote, id, "pa", AGENT))).toEqual([
+			{ asked: ASKED, ran: false },
+		]);
+		armed = true;
+		const [localCall, engineCall] = await calls(local, id, 2, () =>
+			local.send({ type: "prompt", sessionId: id, message: "go" }),
+		);
+		expect(localCall).toEqual(RAN);
+		expect(engineCall).toEqual(RAN);
+	}, 120_000);
+
 	it("runs a same-account device's prompt on the host setting", async () => {
 		const { remote, id } = await setup((target) => sameAccountPeer(target));
 		expect(await calls(remote, id, 1, () => remote.send({ type: "prompt", sessionId: id, message: "go" }))).toEqual([
