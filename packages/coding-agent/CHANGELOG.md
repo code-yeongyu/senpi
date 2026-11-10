@@ -8,8 +8,6 @@
 
 ### Changed
 
-- Every built-in system prompt now tells the model the codebase is its own ("This codebase is yours: what it is for and how it is built are your call, and you will keep building on it") and to change it the way its owner would: build on the code that already does the job instead of adding a parallel copy, fit new behavior into the structure that is there, leave no duplicate or dead code behind, and fix a defect in the code being changed instead of only noting it. The "smallest correct change wins: no refactors beside a focused fix" rule and its rewordings ("no drive-by refactors", "diagnose and fix minimally", "the best change is usually the smallest correct change") are removed from every core so the two cannot cancel each other; the request still sets the scope, and a problem outside the code being changed is still a follow-up for the summary ([#6358](https://github.com/code-yeongyu/senpi/issues/6358)).
-
 ### Fixed
 
 ### Removed
