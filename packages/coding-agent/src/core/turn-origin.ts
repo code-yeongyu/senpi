@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+
 /**
  * Who started a turn, for the remote approval-mode rule (senpi#6342: a turn follows the permission setting of the machine
  * it runs on, and no origin outlives the turn it started):
@@ -10,12 +12,14 @@
 export type TurnOrigin = "local" | "delegated" | "engine";
 export type InputTurnMark = TurnOrigin | "join";
 export type ConnectionOrigin = "local" | "delegated";
-/** One record's claim on the next run it starts; only that record can withdraw it. */
-export type DelegatedRunMark = { readonly record: object };
 
 const inputMarks = new WeakMap<object, InputTurnMark>();
 const currentOrigins = new WeakMap<object, TurnOrigin>();
-const delegatedRuns = new WeakMap<object, DelegatedRunMark>();
+// The record being handled, for the work its own handling creates (senpi#6342). It lives in that record's async
+// context, so no other record can change or clear it. The first run that record starts takes the origin and closes it,
+// so later engine work that merely descends from that run (an extension's follow-up) does not inherit it.
+type RecordScope = { readonly origin: ConnectionOrigin; open: boolean };
+const recordScopes = new AsyncLocalStorage<RecordScope>();
 const continuingTurns = new WeakSet<object>();
 
 /** The mark an input gets where it is created: explicit for client records, `local` for the TUI, else `engine`. */
@@ -26,6 +30,7 @@ export function inputTurnMark(input: {
 }): InputTurnMark {
 	if (input.mode === "steer") return "join";
 	if (input.connectionOrigin !== undefined) return input.connectionOrigin;
+	if (recordIsDelegated()) return "delegated";
 	return input.source === undefined || input.source === "interactive" ? "local" : "engine";
 }
 
@@ -44,13 +49,27 @@ export function hasInputTurnMark(message: object): boolean {
 	return inputMarks.has(message);
 }
 
+/** Runs `handle`, and every async task it starts, as the record `origin` describes. */
+export function runInRecordScope<T>(origin: ConnectionOrigin, handle: () => Promise<T>): Promise<T> {
+	return recordScopes.run({ origin, open: true }, handle);
+}
+
+/** Whether the work being created belongs to an open cross-account record's own handling. */
+export function recordIsDelegated(): boolean {
+	const scope = recordScopes.getStore();
+	return scope?.open === true && scope.origin === "delegated";
+}
+
 /**
- * A run starts as engine work, or as delegated work when a cross-account device's record asked for it; the user message
- * that opens a turn sets its origin, a steer keeps it.
+ * A run starts as engine work, or as delegated work when a cross-account record's own handling starts it; a retry keeps
+ * the turn it continues. The user message that opens a turn sets its origin, a steer keeps it.
  */
 export function noteRunStart(sessionManager: object): void {
-	if (delegatedRuns.delete(sessionManager)) currentOrigins.set(sessionManager, "delegated");
-	else if (!continuingTurns.has(sessionManager)) currentOrigins.set(sessionManager, "engine");
+	if (continuingTurns.has(sessionManager)) return;
+	const delegated = recordIsDelegated();
+	const scope = recordScopes.getStore();
+	if (scope !== undefined) scope.open = false;
+	currentOrigins.set(sessionManager, delegated ? "delegated" : "engine");
 }
 
 /** A retry or recovery run repeats the turn it continues, so it keeps that turn's origin until the continuation ends. */
@@ -66,23 +85,6 @@ export function noteUserMessageStart(sessionManager: object, message: object): v
 	const mark = inputMarks.get(message);
 	if (mark === "join") return;
 	currentOrigins.set(sessionManager, mark ?? "engine");
-}
-
-/** A cross-account device's record that can act on the session's work: the next run it starts counts as delegated, once. */
-export function noteDelegatedRun(sessionManager: object, record: object): DelegatedRunMark {
-	const mark = { record };
-	delegatedRuns.set(sessionManager, mark);
-	return mark;
-}
-
-/** A local record that can act on the session's work owns the next run, so no cross-account mark outlives it. */
-export function clearDelegatedRun(sessionManager: object): void {
-	delegatedRuns.delete(sessionManager);
-}
-
-/** Withdraws `mark` if no run used it: a record that started no run leaves no origin behind. A later record's mark stays. */
-export function dropDelegatedRun(sessionManager: object, mark: DelegatedRunMark): void {
-	if (delegatedRuns.get(sessionManager) === mark) delegatedRuns.delete(sessionManager);
 }
 
 /** Whether the deciding turn counts as delegated-origin: a cross-account device started this turn or this run. */

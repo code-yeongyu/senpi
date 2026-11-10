@@ -307,6 +307,7 @@ import {
 	markInputTurnOrigin,
 	noteRunStart,
 	noteTurnContinuation,
+	recordIsDelegated,
 	noteUserMessageStart,
 } from "./turn-origin.ts";
 import { releaseDecisionPreset } from "./permission-decision.ts";
@@ -7274,6 +7275,7 @@ export class AgentSession {
 		if (input.source !== undefined) this._userInputSources.set(message, input.source);
 		// Restored input with no source keeps no mark: an unmarked turn is engine work, never a trusted origin.
 		if (input.source !== undefined) markInputTurnOrigin(message, inputTurnMark(input));
+		else if (recordIsDelegated()) markInputTurnOrigin(message, "delegated");
 		if (input.inputId !== undefined) this._queuedInputDispositions.track(message, input.inputId);
 		this._queuedMessages.set(queuedId, message);
 		if (this._promptStartPending && this._skipNextPostCompactionAssistantCheck) {

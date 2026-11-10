@@ -1,9 +1,9 @@
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionFactory } from "../../../src/core/extensions/types.ts";
-import { noteDelegatedRecord } from "../../../src/modes/rpc/delegated-drive-origin.ts";
+import { recordTurnOrigin } from "../../../src/modes/rpc/delegated-drive-origin.ts";
 import { RPC_METHOD_CLASS } from "../../../src/modes/rpc/method-classes.ts";
-import { decidingTurnIsDelegated, noteRunStart } from "../../../src/core/turn-origin.ts";
+import { decidingTurnIsDelegated, noteRunStart, runInRecordScope } from "../../../src/core/turn-origin.ts";
 import { attach, type DelegatedHost } from "../rpc-delegated-host-support.ts";
 import {
 	ASKED,
@@ -209,8 +209,7 @@ describe("#6189 the origin of a turn on a session with no client-named mode", ()
 		expect(staticRows.filter((row) => row.methodClass === "drive").length).toBeGreaterThan(20);
 		const marks = (type: string, origin: "local" | "delegated") => {
 			const sessionManager = {};
-			noteDelegatedRecord({ type }, origin, sessionManager);
-			noteRunStart(sessionManager);
+			void runInRecordScope(recordTurnOrigin({ type }, origin), async () => noteRunStart(sessionManager));
 			return decidingTurnIsDelegated(sessionManager) ? 1 : 0;
 		};
 		const outcome = staticRows.map(({ type }) => ({

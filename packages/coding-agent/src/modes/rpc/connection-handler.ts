@@ -87,8 +87,8 @@ import { remoteOriginDeclaration, remoteOriginField } from "./remote-origin.ts";
 import { advertisedCompactCapabilities, sessionDeclaration } from "./compact-negotiation.ts";
 import type { ConnectionOrigin } from "../../core/turn-origin.ts";
 import { commandAuthority } from "./command-authority.ts";
-import { type DelegatedRunMark, dropDelegatedRun } from "../../core/turn-origin.ts";
-import { noteDelegatedRecord } from "./delegated-drive-origin.ts";
+import { runInRecordScope } from "../../core/turn-origin.ts";
+import { recordTurnOrigin } from "./delegated-drive-origin.ts";
 import { ConnectionRoles, DELEGATION_INCARNATION_STALE, roleConnection } from "./connection-roles.ts";
 import {
 	ACCOUNT_RESET_CAPABILITY,
@@ -1339,21 +1339,11 @@ export function createRpcConnectionHandler(
 	});
 
 	// Handle a single command
-	// senpi#6342: a record's delegated-run mark is withdrawn when the record was refused or threw, since it started no
-	// run; a run it did start uses the mark at agent_start, and a later local acting record clears any mark left over.
-	const runMarks = new WeakMap<object, DelegatedRunMark>();
-	const withdrawRefusedRunMark = (command: object, refused: boolean): void => {
-		const mark = runMarks.get(command);
-		if (mark !== undefined && refused) dropDelegatedRun(session.sessionManager, mark);
-	};
-
 	const handleCommand = async (
 		command: RpcCommand,
 		requestContext?: ExtensionRpcRequestContext,
 	): Promise<RpcResponse | undefined> => {
 		const id = command.id;
-		const runMark = noteDelegatedRecord(command, turnOrigin(), session.sessionManager);
-		if (runMark !== undefined) runMarks.set(command, runMark);
 
 		switch (command.type) {
 			case "get_protocol_info":
@@ -2543,11 +2533,10 @@ export function createRpcConnectionHandler(
 			return;
 		}
 		try {
-			const response = await handleCommand(command, requestContext).catch((thrown: unknown) => {
-				withdrawRefusedRunMark(command, true);
-				throw thrown;
-			});
-			withdrawRefusedRunMark(command, response?.success === false);
+			// senpi#6342: the record's own handling, and the first run it starts, run under the record's origin.
+			const response = await runInRecordScope(recordTurnOrigin(command, turnOrigin()), () =>
+				handleCommand(command, requestContext),
+			);
 			if (response) {
 				output(response);
 				await waitForRpcBackpressure();

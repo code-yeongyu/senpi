@@ -37,6 +37,21 @@ const engineCustomTurn: ExtensionFactory = (pi) => {
 	});
 };
 
+let openGate: () => void = () => {};
+let gateArmed: () => void = () => {};
+const gatedTurn: ExtensionFactory = (pi) => {
+	pi.registerCommand("gated-turn", {
+		description: "starts an engine custom-message turn once the test opens its gate",
+		handler: async () => {
+			await new Promise<void>((resolve) => {
+				openGate = resolve;
+				gateArmed();
+			});
+			pi.sendMessage({ customType: "gated-work", content: "gated work", display: true }, { triggerTurn: true });
+		},
+	});
+};
+
 let customFollowUpArmed = false;
 const engineCustomFollowUp: ExtensionFactory = (pi) => {
 	pi.on("agent_end", () => {
@@ -65,7 +80,9 @@ async function sameAccountPeer(target: DelegatedHost, roles?: readonly string[])
 }
 
 async function setup(connect: (target: DelegatedHost) => Promise<Peer>) {
-	host = await permissionHost([engineFollowUp, engineCustomTurn, engineCustomFollowUp], { embedderPreset: true });
+	host = await permissionHost([engineFollowUp, engineCustomTurn, engineCustomFollowUp, gatedTurn], {
+		embedderPreset: true,
+	});
 	const local = await host.proven();
 	const session = await open(local);
 	const remote = await connect(host);
@@ -148,6 +165,49 @@ describe("a turn follows the receiving machine's own setting", () => {
 			{ asked: ASKED, ran: false },
 			RAN,
 		]);
+	}, 120_000);
+
+	it.each([
+		["a refused record from the same device", "remote"],
+		["a local record", "local"],
+	] as const)(
+		"keeps asking for a cross-account slash command's run when %s arrives before it starts",
+		async (_label, who) => {
+			const { local, remote, id } = await setup(remotePeer);
+			const armed = new Promise<void>((resolve) => {
+				gateArmed = resolve;
+			});
+			expect(
+				await calls(remote, id, 1, async () => {
+					const sent = remote.send({ type: "prompt", sessionId: id, message: "/gated-turn" });
+					await armed;
+					await (who === "remote" ? remote : local).send({
+						type: "set_thinking_level",
+						sessionId: id,
+						level: "low",
+						scope: "turn",
+					});
+					openGate();
+					await sent;
+				}),
+			).toEqual([{ asked: ASKED, ran: false }]);
+		},
+		120_000,
+	);
+
+	it("never asks for a local slash command's run when a cross-account record arrives before it starts", async () => {
+		const { local, remote, id } = await setup(remotePeer);
+		const armed = new Promise<void>((resolve) => {
+			gateArmed = resolve;
+		});
+		const [localRun] = await calls(local, id, 1, async () => {
+			const sent = local.send({ type: "prompt", sessionId: id, message: "/gated-turn" });
+			await armed;
+			await remote.send({ type: "set_thinking_level", sessionId: id, level: "low", scope: "turn" });
+			openGate();
+			await sent;
+		});
+		expect(localRun).toEqual(RAN);
 	}, 120_000);
 
 	it("leaves no origin behind from a cross-account record that starts no run", async () => {
