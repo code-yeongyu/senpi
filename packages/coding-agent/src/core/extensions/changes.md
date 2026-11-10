@@ -1,3 +1,21 @@
+## 2026-11-08 - `SessionControlRemoteOrigin` on a delivery's details (senpi#6233)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/session-control-types.ts`: `SessionControlRemoteOrigin`, the engine-stamped `remote_origin` and `chain_count` fields of `SessionControlDeliveryDetails`, and `sessionControlRemoteOriginOf`.
+
+### Why
+
+A delivery admitted over RPC for a remote device carries the device the engine authenticated, for human surfaces and audit (#6233).
+
+### Why an extension could not handle it
+
+The fields are written by the engine's admission; an extension reads them through the exported parser.
+
+### Expected merge conflict zones
+
+- None: additive optional fields.
+
 ## 2026-11-08 - An extension graph stays alive while an import it serves is in flight (senpi#6208)
 
 ### What changed

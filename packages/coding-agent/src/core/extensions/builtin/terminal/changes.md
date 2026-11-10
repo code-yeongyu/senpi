@@ -1,3 +1,29 @@
+## 2026-11-08 - A still-running background session reports its age; auto-reap is opt-in (senpi#6201)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/background-age.ts` (new): `BackgroundAgeSchedule` keeps one unref'd timer per session bundle, armed for the earliest due notice across every background session, and reports each session at 10 minutes and then every 30 minutes (10, 40, 70, ...). A late timer or a session registered after it started reports once for the milestones it missed, never a burst. `backgroundAgeEvent` builds the `TerminalBackgroundAgeEvent` payload.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/session-bundle.ts`: `notifyBackgroundStart` takes the command and the auto-reap age and adds the session to the schedule; exit, teardown and the schedule's `remove`/`dispose` clear it. A new sink `onBackgroundAge` receives `running` notices, on an exit whose view says it was reaped one `reaped` notice, and from `notifyBackgroundReapFailed` one `reap_failed` notice carrying the reason while the session stays on the schedule. While parked only the newest notice per session is kept, and it is dropped when the session exits.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/extension-state.ts`: the `onBackgroundAge` sink emits `terminal_background_age` on `pi.events` and `pi.rpc`, shows a TUI notice, and hands a `running` or `reap_failed` notice to the notifier; `onBackgroundReapFailed` reaches the bundle; `onBackgroundStart` forwards the command and the auto-reap age; the tool context exposes `backgroundAutoReapMinutes`.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/notify.ts`: `describeBackgroundAge` writes the notice (session id, command or label, age, the `kill_bash` call); `TerminalNotifier.notifyAge` delivers it like a completion notice; a completion notice of a reaped session says it was stopped automatically after N minutes.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/background-auto-reap.ts` (new): `trackBackgroundSession` announces a background session and, only when `auto_reap_minutes` or the setting asks for it, arms one unref'd timer that stops the session through `manager.stop` (TERM, then KILL to the group, as `kill_bash` does) at that age and marks its exit view `autoReapedAfterMinutes` only once that stop resolved and the session really exited (the exit report waits for the stop); a stop that rejects, finds no session, or leaves it running is logged as `bash_auto_reap_failed`, reported once through `onBackgroundReapFailed`, and never retried. The timer is cleared on exit. `resolveAutoReapMinutes` gives the call's value precedence and treats 0 as off.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/bash.ts`: new `auto_reap_minutes` parameter; both background starts (`run_in_background` and the auto-detach) go through `trackBackgroundSession`.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/context.ts`: `backgroundAutoReapMinutes`, the `autoReapMinutes` argument of `onBackgroundStart`, `onBackgroundReapFailed`, and `TerminalExitView.autoReapedAfterMinutes`.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/child-placement.ts`: the job args carry `backgroundAutoReapMinutes`; the child's start wake carries the command and the reap age, its exit wake the reap, and a `background_reap_failed` wake a failed reap, so the same notices work under `--tool-runtime child`.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/settings.ts`: `terminal.backgroundAutoReapMinutes` resolves to a whole number of minutes >= 1, or undefined (off, the default).
+
+### Why
+
+- A background session that is still running keeps the agent in `waiting_background` for as long as it runs, and nothing told the agent, the user or an RPC driver (senpi#6201). Killing it on a timer would remove the capability of long sessions, so the default is a notice that names the session and the call that stops it; stopping at an age is opt-in.
+
+### Why an extension could not handle it
+
+- The terminal builtin owns the background sessions, their bundle and their stop path; this is fork-only code.
+
+### Expected merge conflict zones
+
+- LOW: `notifyBackgroundStart`/`notifyBackgroundExit`/`teardown` in `session-bundle.ts`, the sinks in `extension-state.ts`, the two background-start sites in `tools/bash.ts`.
+
 ## 2026-11-07 - Monitor rpc targets on another device through an extension source (senpi#6151)
 
 ### What changed
