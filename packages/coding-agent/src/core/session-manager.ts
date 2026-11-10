@@ -24,7 +24,7 @@ import {
 	statSync,
 	writeFileSync,
 } from "fs";
-import { appendFile, type FileHandle, open, readdir, rm } from "fs/promises";
+import { appendFile, type FileHandle, mkdir, open, readdir, rm } from "fs/promises";
 import { basename, join, resolve } from "path";
 import { StringDecoder } from "string_decoder";
 import { APP_NAME, getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
@@ -1762,6 +1762,20 @@ export class SessionManager {
 
 	isPersisted(): boolean {
 		return this.persist;
+	}
+
+	/** Give an unclaimed in-memory session its first file without rebuilding or changing its identity. */
+	async enablePersistence(): Promise<void> {
+		if (this.persist) return;
+		const dir = getDefaultSessionDirPath(this.cwd);
+		await mkdir(dir, { recursive: true });
+		const header = this.fileEntries[0] as SessionHeader;
+		const path = join(dir, `${header.timestamp.replace(/[:.]/g, "-")}_${this.sessionId}.jsonl`);
+		reserveSessionWrite(path);
+		this.sessionDir = dir;
+		this.sessionFile = path;
+		this.persist = true;
+		registerSessionWriter(this);
 	}
 
 	getCwd(): string {

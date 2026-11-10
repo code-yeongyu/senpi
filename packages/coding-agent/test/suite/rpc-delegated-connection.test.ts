@@ -38,7 +38,8 @@ import {
  * (device_admin), and senpi#6307, which adds `read_project_file` and `write_project_file` (device_admin).
  * Delegated connections add methods outside the table, never a table entry.
  */
-const DIGEST_ON_BASE = "62f1fd2318255fb0f1b7fad0141a9be6b8745542b36c6417c3a1777a7717f636";
+// senpi#6344 adds two cwd-naming device_admin commands: park_session and claim_session.
+const DIGEST_ON_BASE = "bca41dd6cac2eff3dc82c24d763e4143d90f44ee75920da9bca1c2c8a98c5156";
 const FORWARDABLE = [
 	"observe",
 	"drive",

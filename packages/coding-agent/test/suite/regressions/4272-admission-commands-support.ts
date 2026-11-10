@@ -112,6 +112,8 @@ export const admissionCommands = [
 	"reclaim_session",
 	"get_protocol_info",
 	"open_session",
+	"park_session",
+	"claim_session",
 	"close_session",
 	"move_session",
 	"release_session",
