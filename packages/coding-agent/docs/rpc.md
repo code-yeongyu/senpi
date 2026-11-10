@@ -2785,13 +2785,14 @@ for that profile in the background.
 Both commands require an absolute `cwd`. `kind` defaults to `interactive`; `context` has the same validation and
 host-identity merge as `open_session`, and its key order does not affect matching. Repeated parks of the same profile
 share one build or answer `state: "already_parked"`. Each host holds at most four speculative profiles, including
-builds in flight; another profile answers `state: "full"`. This cap never limits ordinary opens. A ready park expires
+builds in flight and scheduled replacements; another profile answers `state: "full"`. This cap never limits ordinary opens. A ready park expires
 after 60 seconds; repeating `park_session` does not extend its lifetime.
 
 Claim accepts the open options. `retain_on_disconnect`, model/provider, thinking level, permission preset,
 prompt surface and browser engine apply through the same live operations used by ordinary session commands or
 attach-on-open. A requested `sessionPath`, `durableSessionId`, `expectedHostInstance`, `spawnedBy`, `env`,
-`auto_title`, or `retryFallback` returns `claimed: false` without consuming the park. Compact admissions (`admissionId`,
+`auto_title`, `retryFallback`, or an unpaired provider/model choice returns `claimed: false`
+without consuming the park. Compact admissions (`admissionId`,
 `retry`, or a connection that selected compact transport) also miss, so the caller uses the existing `open_session`
 admission contract. Invalid applicable options receive their ordinary error response.
 

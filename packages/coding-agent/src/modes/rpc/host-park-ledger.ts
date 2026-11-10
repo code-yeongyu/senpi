@@ -32,8 +32,13 @@ export class HostParkLedger {
 			await existing.ready;
 			return "already_parked";
 		}
+		const replacement = this.replacements.get(key);
+		if (replacement !== undefined) {
+			clearTimeout(replacement);
+			this.replacements.delete(key);
+		}
 		if (this.stopped) throw new Error("host_draining");
-		if (this.parks.size >= MAX_PARKS) return "full";
+		if (this.parks.size + this.replacements.size >= MAX_PARKS) return "full";
 		const ready = Promise.withResolvers<void>();
 		ready.promise.catch(() => {});
 		const park: Park = { ready: ready.promise };

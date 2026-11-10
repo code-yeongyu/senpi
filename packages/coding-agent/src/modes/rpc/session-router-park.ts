@@ -97,6 +97,7 @@ async function claimReady(
 		command.expectedHostInstance !== undefined ||
 		command.admissionId !== undefined ||
 		command.retry !== undefined ||
+		(command.provider !== undefined) !== (command.modelId !== undefined) ||
 		command.spawnedBy !== undefined ||
 		command.env !== undefined ||
 		command.auto_title !== undefined ||
@@ -117,7 +118,7 @@ async function claimReady(
 		const ctx = { session: runtime.session, sessionId: opened.sessionId, by: { connectionId: owner ?? "host" } };
 		await runWithProviderScope(entry.scope, async () => {
 			const responses: RpcResponse[] = [];
-			if (command.provider && command.modelId)
+			if (command.provider !== undefined && command.modelId !== undefined)
 				responses.push(
 					await runSetModel(ctx, {
 						type: "set_model",
