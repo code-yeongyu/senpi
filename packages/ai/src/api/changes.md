@@ -1,3 +1,22 @@
+## 2026-11-09 - OpenAI Responses `long` retention sends `prompt_cache_options.ttl: "12h"` (senpi#6292, closes #6290)
+
+### What changed
+
+- `packages/ai/src/api/openai-responses.ts`: `getPromptCacheOptions()` sends `{ ttl: "12h" }` for `cacheRetention: "long"` on GPT-5.6+ models that accept `prompt_cache_options`, instead of `{ ttl: "30m" }`.
+- `packages/ai/src/api/openai-responses-prompt-cache.ts`: `OpenAIPromptCacheOptionsPayload.ttl` accepts `"30m" | "12h"`.
+
+### Why
+
+- `"30m"` is OpenAI's default, so `long` bought nothing; `"12h"` is the longest documented value (write 2.5x, reads unchanged).
+
+### Why an extension could not handle it
+
+- The field is built inside the provider adapter and reserved from `extraBody`.
+
+### Expected merge conflict zones
+
+- LOW: one line in `getPromptCacheOptions()` and the payload type.
+
 ## 2026-11-07 - Codex turns are priced at the tier that was sent when the backend echoes auto/default (senpi#6156)
 
 ### What changed

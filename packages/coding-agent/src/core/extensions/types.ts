@@ -1008,6 +1008,8 @@ export interface ToolPermissionRequest {
 	readonly patterns: readonly string[];
 	/** Patterns an "always" approval of this call records. */
 	readonly always: readonly string[];
+	/** An `ask` decision for this call is approved without a prompt; an `allow` or `deny` rule still decides first. */
+	readonly autoApproveAsk?: true;
 }
 
 /**

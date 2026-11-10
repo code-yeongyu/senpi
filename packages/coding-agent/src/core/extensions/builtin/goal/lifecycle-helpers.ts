@@ -1,9 +1,10 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { isTurnStuckOnContextOverflow } from "../../../compaction/stuck-overflow.ts";
-import { enginePauseSinceLastTurn } from "../../../engine-paused.ts";
+import { ENGINE_PAUSED_ENTRY_TYPE, enginePauseSinceLastTurn } from "../../../engine-paused.ts";
 import { GOAL_CONTINUATION_MESSAGE_TYPE } from "../../../messages.ts";
 import { createSessionLogger } from "../../../session-log.ts";
 import type { SessionEntry } from "../../../session-manager.ts";
+import { isRecord } from "../../../work-custody-record.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { getLatestPhasesFromBranchEntries } from "../todotools/state.ts";
 import {
@@ -199,6 +200,12 @@ async function handleDeniedContinuation(
 		goal,
 		at,
 		blockedReason,
+		{
+			reason,
+			consecutiveContinuations: input.consecutiveContinuations,
+			unattendedContinuations: goal.unattendedContinuations ?? 0,
+			noProgressContinuations: goal.noProgressContinuations ?? 0,
+		},
 	);
 	if (!stopped.recorded) return stopped.goal;
 	// Preserve the guard's existing side effects even if publishing the additive entries fails.
@@ -247,6 +254,80 @@ async function handleDeniedContinuation(
 		});
 	}
 	return stopped.goal;
+}
+
+/**
+ * senpi#3015: the stop claim and the session entries are two separate writes, so a crash
+ * between them leaves the claim without its entries. On session start the claim still
+ * stands, so re-append the missing entries once from the payload the claim captured.
+ * A claim whose entries already landed is left alone; a claim recorded before the
+ * payload existed cannot be rebuilt and is left alone too.
+ */
+export async function recoverMissingGoalContinuationStop(
+	pi: ExtensionAPI,
+	ctx: ExtensionContext,
+	goal: Goal,
+): Promise<void> {
+	const at = goal.continuationStoppedAt;
+	const detail = goal.continuationStoppedDetail;
+	if (at === undefined || detail === undefined) return;
+	const branch = ctx.sessionManager.getBranch();
+	const logger = createSessionLogger(ctx.agentDir);
+	if (!hasStopEntrySince(branch, goal.id, at)) {
+		try {
+			pi.appendEntry("goal-continuation-stopped", {
+				goalId: goal.id,
+				reason: detail.reason,
+				consecutiveContinuations: detail.consecutiveContinuations,
+				unattendedContinuations: detail.unattendedContinuations,
+				noProgressContinuations: detail.noProgressContinuations,
+				at,
+			});
+		} catch (error) {
+			logger.warn("goal_continuation_record_write_failed", {
+				kind: "goal-continuation-stopped",
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
+	}
+	if (detail.reason !== "stale" && detail.reason !== "repetition") return;
+	if (hasEnginePausedEntrySince(branch, at) || enginePauseSinceLastTurn(branch)) return;
+	try {
+		pi.appendEntry(ENGINE_PAUSED_ENTRY_TYPE, {
+			reason: detail.reason === "stale" ? "goal-stale" : "goal-repeat",
+			customType: GOAL_CONTINUATION_MESSAGE_TYPE,
+			count: detail.consecutiveContinuations,
+			at,
+		});
+	} catch (error) {
+		logger.warn("goal_continuation_record_write_failed", {
+			kind: ENGINE_PAUSED_ENTRY_TYPE,
+			error: error instanceof Error ? error.message : String(error),
+		});
+	}
+}
+
+function hasStopEntrySince(branch: readonly SessionEntry[], goalId: string, sinceAt: number): boolean {
+	return branch.some(
+		(entry) =>
+			entry?.type === "custom" &&
+			entry.customType === "goal-continuation-stopped" &&
+			isRecord(entry.data) &&
+			entry.data.goalId === goalId &&
+			typeof entry.data.at === "number" &&
+			entry.data.at >= sinceAt,
+	);
+}
+
+function hasEnginePausedEntrySince(branch: readonly SessionEntry[], sinceAt: number): boolean {
+	return branch.some(
+		(entry) =>
+			entry?.type === "custom" &&
+			entry.customType === ENGINE_PAUSED_ENTRY_TYPE &&
+			isRecord(entry.data) &&
+			typeof entry.data.at === "number" &&
+			entry.data.at >= sinceAt,
+	);
 }
 
 function blockedReasonForContinuationGuard(

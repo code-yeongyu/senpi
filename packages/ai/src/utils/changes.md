@@ -1,3 +1,39 @@
+## 2026-11-09 - OpenAI prompt-cache lanes: ChatGPT subscription is best-effort, long retention is 12 hours (senpi#6292, closes #6290)
+
+### What changed
+
+- `packages/ai/src/utils/prompt-cache-ttl.ts`: the OpenAI Responses branch of `resolvePromptCacheLifetime()` maps `classifyOpenAIPromptCacheLane()` through a lane table: the ChatGPT subscription lane is `best-effort` (no TTL), GPT-5.6+ with `long` retention on a request that sends `prompt_cache_options.ttl: "12h"` is 43200 s (`PROMPT_CACHE_TTL_OPENAI_LONG_SECONDS`, new export), other GPT-5.6+ OpenAI-operated rows stay 1800 s, the rest 300 s. The GPT-5.6+ id regex and the extended-cache predicate moved to `packages/ai/src/utils/openai-prompt-cache-lane.ts` (new), which detects the subscription by host: any `openai-codex-responses` model on `chatgpt.com` (whatever its provider id, closes #6296), and an `openai-responses` model on `api.openai.com` only with `compat.siwc`.
+
+### Why
+
+- OpenAI's 2026-10-20 change: the Responses API sells a 12-hour minimum lifetime (https://developers.openai.com/api/docs/guides/prompt-caching), and signed-in Codex / ChatGPT Work usage keeps its cache with no expiry. A fixed 30-minute TTL on the subscription lane made the handoff hint tell users their cache had expired and kept cache-keepalive pinging on plan usage.
+
+### Why an extension could not handle it
+
+- The lifetime resolver is the single source every cache consumer (handoff hint, keepalive, goal backstop, cache-aware timeouts) reads; an extension cannot change it.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `openai-responses` / `openai-codex-responses` / `azure-openai-responses` case of `resolvePromptCacheLifetime()` and the constants at the top of `prompt-cache-ttl.ts`.
+
+## 2026-11-09 - Tool arguments decode JSON-encoded arrays and objects before conversion (senpi#6265)
+
+### What changed
+
+- `packages/ai/src/utils/validation.ts`: `validateToolArguments()` runs a schema-directed `decodeJsonEncodedStructures()` pass before `Value.Convert`. Where a property's schema declares an array or object and does not accept a string, a string value whose JSON text parses to that declared array or object is replaced by the parsed value, recursing through object properties, `additionalProperties` and array items. Strings the schema accepts, unions with an untyped member, and text that does not parse to the declared structure are left as they were, so a bare single value still takes the existing `Value.Convert` wrap.
+
+### Why
+
+- In a turn of parallel `generate_image` calls, the later calls carried `reference_image_paths` as the array's JSON text. `Value.Convert` wrapped that text into a one-element array, which passed validation, so the tool resolved the JSON text as a path and failed with ENOENT before any request (senpi#6265). The same path decoded every array- or object-typed tool parameter the same way.
+
+### Why an extension could not handle it
+
+- Argument validation and conversion run in the shared core before any tool's `execute` sees the parameters; per-tool `prepareArguments` shims would have to repeat the fix for every array-typed parameter, including MCP tools whose schemas no extension owns.
+
+### Expected merge conflict zones
+
+- LOW: the new helpers inserted above `getValidator`, and the one added call between `normalizeOptionalNulls` and `Value.Convert` in `validateToolArguments`.
+
 ## 2026-11-02 - Shared tri-state Anthropic long-cache retention decision (senpi#1248)
 
 ### What changed

@@ -68,6 +68,8 @@ export const DELEGATED_CONNECTION_CAPABILITY = "delegated_connection_v1";
  * incarnation, `relayExec` and the `authority` receipt.
  */
 export const DELEGATION_ROLES_CAPABILITY = "delegation_roles_v1";
+/** A host-mode delegation may carry the forwarder-granted `peer_agent` role (senpi#6305). */
+export const PEER_AGENT_ROLE_CAPABILITY = "peer_agent_role_v1";
 
 /**
  * Client opt-in (D11 S3-5): the connection renders the value-free `secret_input_notice` and `grant_select_notice` of a
