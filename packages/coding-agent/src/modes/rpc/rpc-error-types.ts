@@ -57,6 +57,18 @@ export const RPC_ERROR_PROJECT_NOT_TRUSTED = "project_not_trusted";
 /** `set_project_setting` while the project settings file does not parse; fix the file first. */
 export const RPC_ERROR_PROJECT_SETTINGS_UNREADABLE = "project_settings_unreadable";
 
+/** `read_project_file`/`write_project_file` on a path outside the instruction-file allowlist or the workspace. */
+export const RPC_ERROR_PROJECT_FILE_NOT_ALLOWED = "project_file_not_allowed";
+
+/** `write_project_file` whose `ifEtag` is not the file's current version; `errorData.currentEtag` names it. */
+export const RPC_ERROR_PROJECT_FILE_CONFLICT = "project_file_conflict";
+
+/** `read_project_file`/`write_project_file` over the project file size limit. */
+export const RPC_ERROR_PROJECT_FILE_TOO_LARGE = "project_file_too_large";
+
+/** `write_project_file` whose write failed (permissions, disk). */
+export const RPC_ERROR_PROJECT_FILE_WRITE_FAILED = "project_file_write_failed";
+
 /** `open_session.context` broke a documented cap (key count, key syntax, value or total bytes). */
 export const RPC_ERROR_INVALID_SESSION_CONTEXT = "invalid_session_context";
 
@@ -210,6 +222,10 @@ export type RpcErrorCode =
 	| typeof RPC_ERROR_PROJECT_SETTINGS_WRITE_FAILED
 	| typeof RPC_ERROR_PROJECT_NOT_TRUSTED
 	| typeof RPC_ERROR_PROJECT_SETTINGS_UNREADABLE
+	| typeof RPC_ERROR_PROJECT_FILE_NOT_ALLOWED
+	| typeof RPC_ERROR_PROJECT_FILE_CONFLICT
+	| typeof RPC_ERROR_PROJECT_FILE_TOO_LARGE
+	| typeof RPC_ERROR_PROJECT_FILE_WRITE_FAILED
 	| typeof RPC_ERROR_INVALID_SESSION_CONTEXT
 	| typeof RPC_ERROR_INVALID_SUBSCRIPTION
 	| typeof RPC_ERROR_UNKNOWN_SUBSCRIPTION

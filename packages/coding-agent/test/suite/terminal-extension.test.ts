@@ -137,21 +137,26 @@ describe("terminal builtin extension — real session execution (pipe fallback)"
 		expect(idMatch).not.toBeNull();
 		const bashId = idMatch![1]!;
 
-		// Wait for the output event-driven (monitor-style), then peek without blocking.
+		// Wait on the output event itself (monitor-style), then peek without blocking. No wall-clock
+		// deadline here: a loaded host can take seconds to schedule the child (senpi#5341). The
+		// session's exit event is the failure path, and vitest's testTimeout is the outer bound.
 		const runtime = ctx.manager.get(bashId);
 		if (!runtime) throw new Error(`No terminal session found with id: ${bashId}`);
 		await new Promise<void>((resolve, reject) => {
-			const timer = setTimeout(() => reject(new Error("READY_MARK never arrived within 5s")), 5000);
-			const done = () => {
-				clearTimeout(timer);
-				unsubscribe();
-				resolve();
+			const settle = (outcome: () => void) => {
+				unsubscribeOutput();
+				unsubscribeExit();
+				outcome();
 			};
-			const unsubscribe = runtime.onOutput((chunk) => {
-				if (chunk.includes("READY_MARK")) done();
+			const unsubscribeOutput = runtime.onOutput((chunk) => {
+				if (chunk.includes("READY_MARK")) settle(resolve);
+			});
+			const unsubscribeExit = runtime.session.onExit(() => {
+				if (runtime.fullOutput().includes("READY_MARK")) settle(resolve);
+				else settle(() => reject(new Error(`exited without READY_MARK: ${runtime.fullOutput()}`)));
 			});
 			// Subscribed first, then check what execute's early-output grace already buffered.
-			if (runtime.fullOutput().includes("READY_MARK")) done();
+			if (runtime.fullOutput().includes("READY_MARK")) settle(resolve);
 		});
 		const peeked = await output.execute("call-peek", { bash_id: bashId });
 		expect(firstText(peeked)).toContain("READY_MARK");

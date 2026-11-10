@@ -84,6 +84,8 @@ export const admissionCommands = [
 	"set_project_trust",
 	"get_project_settings",
 	"set_project_setting",
+	"read_project_file",
+	"write_project_file",
 	"extension_request",
 	"eval_cells.list",
 	"eval_cells.peek",

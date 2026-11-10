@@ -35,11 +35,11 @@ import {
  * `RPC_METHOD_CLASSES_DIGEST` at the base this test runs on: main (with `list_hands` (observe) and `select_hand`
  * (device_admin) in the table, senpi#5938) plus senpi#5379, which moves `set_model` from `device_admin` to `dynamic`,
  * and senpi#6177, which adds `get_project_trust` (observe) and `set_project_trust`, `get_project_settings`, `set_project_setting`
- * (device_admin).
+ * (device_admin), and senpi#6307, which adds `read_project_file` and `write_project_file` (device_admin).
  * Delegated connections add methods outside the table, never a table entry.
  */
 // senpi#6344 adds two cwd-naming device_admin commands: park_session and claim_session.
-const DIGEST_ON_BASE = "62141b8bac2c4c8dbfcca40d44e7f4d810de19557d811805fe6816ecd6b140e1";
+const DIGEST_ON_BASE = "bca41dd6cac2eff3dc82c24d763e4143d90f44ee75920da9bca1c2c8a98c5156";
 const FORWARDABLE = [
 	"observe",
 	"drive",

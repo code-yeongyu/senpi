@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Type } from "typebox";
+import { resolvePromptSurface } from "../../../dynamic-prompt/build.ts";
 import { defineTool, type ExtensionToolContext } from "../../types.ts";
 import { injectHtmlRenderBootstrap } from "./bootstrap.ts";
 import { inlineLocalImages } from "./images.ts";
@@ -61,6 +62,15 @@ export interface ShowHtmlPageDetails {
 const clampHeight = (height: number | undefined) =>
 	height === undefined ? undefined : Math.min(2000, Math.max(80, Math.round(height)));
 
+/**
+ * Whether this session's host shows the page. The OmO desktop opens every session it renders with
+ * `open_session.promptSurface: "app"` and publishes a completed call from its details; every other
+ * surface (terminal, chat bridge, or none named) only gets the file. The result states which happened,
+ * because the model trusts it in later turns too (senpi#6273).
+ */
+const hostRendersPage = (ctx: ExtensionToolContext): boolean =>
+	(ctx.getSystemPromptOptions?.().surface ?? resolvePromptSurface(process.env)) === "app";
+
 export const showHtmlPageTool = defineTool<typeof Params, ShowHtmlPageDetails>({
 	name: "show_html_page",
 	label: "Show HTML Page",
@@ -72,8 +82,8 @@ export const showHtmlPageTool = defineTool<typeof Params, ShowHtmlPageDetails>({
 		"Local images written as absolute file paths " +
 		"are inlined automatically after a magic-byte check (a renamed non-image is refused); pass screenshots " +
 		"that way, never as base64 data: URIs, since the page is limited to 512000 characters before images are " +
-		"inlined. In the desktop thread this renders inline above your " +
-		"reply; elsewhere it is written to a file you can open in the desktop.",
+		"inlined. In the OmO desktop thread the page renders inline above your reply; elsewhere it is only " +
+		"saved to a file and not displayed. The result says which happened.",
 	exposure: "search",
 	allowLazyActivation: true,
 	searchKeywords: ["html", "chart", "table", "diagram", "visualize", "render page", "mockup"],
@@ -99,7 +109,9 @@ export const showHtmlPageTool = defineTool<typeof Params, ShowHtmlPageDetails>({
 				{
 					type: "text",
 					text:
-						`Wrote the page to ${path}. Open it in the desktop to see it rendered with your theme. ` +
+						(hostRendersPage(ctx)
+							? `The page was shown to the reader inline above your reply. A copy is saved at ${path}. `
+							: `Wrote the page to ${path}. It was not displayed in this interface. `) +
 						(missing === undefined
 							? "Local images were inlined."
 							: `Some local images could not be read and were left as written: ${missing.join(", ")}.`),

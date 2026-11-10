@@ -290,6 +290,9 @@ export const RPC_METHOD_CLASS = {
 	// reads a file from the session's cwd; writes one into it
 	get_project_settings: "device_admin",
 	set_project_setting: "device_admin",
+	// reads or replaces an instruction file in the session's cwd (AGENTS.md, CLAUDE.md, .omo/rules/**)
+	read_project_file: "device_admin",
+	write_project_file: "device_admin",
 	// switch_session opens (and appends to) the named session file; import_jsonl reads any host file into a session
 	// both write what the model reads as engine work: an assistant reply it never gave, a custom context message
 	// (append_session_entry classes the same entries appended directly as device_admin)

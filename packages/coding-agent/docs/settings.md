@@ -635,16 +635,17 @@ An empty array starts with no built-in tools while preserving extension and SDK 
 
 #### Eval-only tools
 
-Whenever the `eval` tool is available (codemode loaded), `bash`, `powershell`, `grep`, `workflow` and `monitor` leave the model's direct tool list and run only inside eval cells:
+Whenever the `eval` tool is available (codemode loaded), `bash`, `powershell`, `grep`, `glob`, `generate_image`, `workflow` and `monitor` leave the model's direct tool list and run only inside eval cells:
 
 ```js
 const { output } = await tool.bash({ command: "ls -la" });
 const hits = await tool.grep({ pattern: "TODO", path: "src" });
+const image = await tool.generate_image({ prompt: "a line-art fox, transparent background" });
 const snapshot = await tool.workflow({ action: "snapshot", run_id });
 await tool.monitor({ description: "build", command: "bun run build", filter: "^done" });
 ```
 
-This is the default and has no setting. Tools may declare `exposure: "eval"` to join this policy; `bash`, `powershell` and `grep` use that declaration. They remain registered and discoverable through `tool_schema` inside eval. Hooks and permission checks apply unchanged to calls made this way, and the prompt surfaces that document these tools render the `tool.<name>(` form to match. If the model attempts a direct call anyway, the call returns a hint naming the eval form instead of executing the tool. When the `eval` tool is unavailable (codemode not loaded, or a child agent whose allowlist omits it), the policy stays inert and otherwise enabled tools remain directly callable, so shell, text search, workflow and monitor access is never lost.
+This is the default and has no setting. Tools may declare `exposure: "eval"` to join this policy; `bash`, `powershell`, `grep`, `glob` and `generate_image` use that declaration, and extension tools (for example the omo plugin's `thread_*` family) join the same way. They remain registered and discoverable through `tool_schema` inside eval. Hooks and permission checks apply unchanged to calls made this way, and the prompt surfaces that document these tools render the `tool.<name>(` form to match. If the model attempts a direct call anyway, the call returns a hint naming the eval form instead of executing the tool. When the `eval` tool is unavailable (codemode not loaded, or a child agent whose allowlist omits it), the policy stays inert and otherwise enabled tools remain directly callable, so shell, text search, workflow and monitor access is never lost.
 
 ### Automatic Turns
 

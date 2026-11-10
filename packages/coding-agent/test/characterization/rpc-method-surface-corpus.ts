@@ -143,6 +143,9 @@ export const TODAY: { readonly [M in RpcCommand["type"]]: string } = {
 	get_project_settings: "ok{cwd,error,exists,path,projectTrusted,settings}",
 	set_project_setting:
 		'{"key":"1x14","value":true} => no:invalid_argument:set_project_setting requires an identifier \'key\' and a JSON \'value\' (null removes the key).',
+	read_project_file: '{"path":"AGENTS.md"} => ok{content,cwd,etag,exists,path,projectTrusted}',
+	write_project_file:
+		'{"path":"x14.ts","content":"x","ifEtag":null} => no:project_file_not_allowed:x14.ts is not an instruction file inside this workspace (AGENTS.md, CLAUDE.md or .omo/rules/**).',
 	extension_request: '{"name":"x14-none"} => no::Unknown extension RPC request: x14-none',
 	"eval_cells.list": "ok:object",
 	"eval_cells.peek": '{"cellId":"$NO"} => no:eval_cell_not_found:Unknown detached eval cell "<uuid>"',
