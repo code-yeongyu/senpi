@@ -6,7 +6,6 @@ import { createInMemoryModelRegistry, createModelRegistry, getModelRuntime } fro
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { vi } from "vitest";
 import type { AgentMessage, AgentOptions, AgentTool } from "@earendil-works/pi-agent-core";
 import { Agent } from "@earendil-works/pi-agent-core";
 import type {
@@ -21,6 +20,7 @@ import type { RetryPolicyProfile } from "@earendil-works/pi-ai/utils/retry-profi
 import { makeTempDir, onTempCleanup } from "../../../../scripts/vitest-temp.ts";
 import type { ToolRuntimeKind } from "../../src/cli/tool-runtime.ts";
 import { AgentSession, type AgentSessionEvent } from "../../src/core/agent-session.ts";
+import { settledFallbackLoggers } from "../../src/core/retry-fallback/log.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import type { ExtensionRunner, ExtensionUIContext } from "../../src/core/extensions/index.ts";
 import type { SessionStartEvent } from "../../src/core/extensions/types.ts";
@@ -340,14 +340,8 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 	});
 
 	// The session's fallback logger removes earlier log generations asynchronously on its first start and queues the
-	// lines logged meanwhile; its marker file appears right before those lines are written, so wait for it here and a
-	// test can read fallback.log as soon as the harness exists.
-	await vi.waitFor(
-		() => {
-			if (!existsSync(join(agentDir, "logs", ".fallback-log-v2"))) throw new Error("fallback log setup pending");
-		},
-		{ timeout: 5_000, interval: 1 },
-	);
+	// lines logged meanwhile; wait until it has flushed them so a test can read fallback.log as soon as the harness exists.
+	await settledFallbackLoggers();
 
 	const events: AgentSessionEvent[] = [];
 	session.subscribe((event) => {

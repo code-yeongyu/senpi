@@ -29,6 +29,20 @@ export interface SettledFallbackLogger extends FallbackLogger {
 	settled(): Promise<void>;
 }
 
+const unsettledLoggers = new Set<Promise<void>>();
+
+/** Resolves once every fallback logger created so far has finished its first-start removal and flushed its queue. */
+export async function settledFallbackLoggers(): Promise<void> {
+	await Promise.all([...unsettledLoggers]);
+}
+
+function errorCode(failure: unknown): string {
+	if (typeof failure === "object" && failure !== null && "code" in failure && typeof failure.code === "string") {
+		return failure.code;
+	}
+	return "unknown";
+}
+
 export function createFallbackLogger(agentDir: string, options: FallbackLoggerOptions = {}): SettledFallbackLogger {
 	const filePath = join(agentDir, "logs", "fallback.log");
 	const maxBytes = validMaxBytes(options.maxBytes);
@@ -68,9 +82,16 @@ export function createFallbackLogger(agentDir: string, options: FallbackLoggerOp
 				);
 			}
 			if (failure !== undefined) {
-				write(formatLine("warn", "retire_generations_failed", { errorMessage: String(failure) }));
+				// The code only: the error text names the agent dir's absolute path.
+				write(
+					formatLine("warn", "retire_generations_failed", {
+						errorMessage: `removal failed: ${errorCode(failure)}`,
+					}),
+				);
 			}
 		});
+	unsettledLoggers.add(settled);
+	void settled.then(() => unsettledLoggers.delete(settled));
 
 	function log(level: "debug" | "info" | "warn", event: string, data?: Record<string, unknown>): void {
 		try {

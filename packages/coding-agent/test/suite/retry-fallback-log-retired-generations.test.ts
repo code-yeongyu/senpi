@@ -123,5 +123,9 @@ describe("fallback log generations from before the shared registry", () => {
 			.split("\n")
 			.map((line) => (JSON.parse(line) as { event: string }).event);
 		expect(events).toEqual(["still_logged", "retire_generations_failed"]);
+		const warning = readFileSync(join(logs, "fallback.log"), "utf8").trimEnd().split("\n")[1] ?? "";
+		expect(warning).toContain("removal failed: ERR_FS_EISDIR");
+		expect(warning).not.toContain(agentDir);
+		expect(warning).not.toContain("blocked");
 	});
 });
