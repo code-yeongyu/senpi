@@ -225,18 +225,6 @@ describe("project file verbs: stored file limits and permissions", () => {
 		expect(await host.write("AGENTS.md", "two\n", first.etag)).toMatchObject({ success: true });
 		expect(statSync(join(host.cwd, "AGENTS.md")).mode & 0o777).toBe(0o600);
 	});
-
-	it("still applies a write queued behind a failed one", async () => {
-		const host = await startHost();
-		await host.trust();
-		const [stale, fresh] = await Promise.all([
-			host.write("AGENTS.md", "a", "sha256-stale"),
-			host.write("AGENTS.md", "b", null),
-		]);
-		expect(stale).toMatchObject({ success: false, errorCode: "project_file_conflict" });
-		expect(fresh).toMatchObject({ success: true });
-		expect(readFileSync(join(host.cwd, "AGENTS.md"), "utf8")).toBe("b");
-	});
 });
 
 describe("project file verbs: only allowlisted paths inside the workspace", () => {

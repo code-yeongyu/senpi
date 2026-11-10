@@ -6280,7 +6280,8 @@ writes to one file are applied one at a time. The response carries the same `dat
 after the write. The session reads its instruction files when they are next loaded (a new session or `reload`).
 Errors: `invalid_argument` when `content` is not a string or `ifEtag` is neither a string nor `null`,
 `project_not_trusted` while the project is untrusted, `project_file_not_allowed` as for `read_project_file`,
-`project_file_too_large` (`errorData: { limitBytes }`) for content over 512 KiB, `project_file_conflict` when
+`project_file_too_large` (`errorData: { limitBytes }`) for content over 512 KiB or a stored file over 512 KiB (its
+version cannot be checked without reading it), `project_file_conflict` when
 `ifEtag` is not the file's current version (`errorData: { currentEtag, exists }`; nothing is written; read again
 and retry), and `project_file_write_failed` when the write fails (permissions, disk).
 
