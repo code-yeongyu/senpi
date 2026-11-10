@@ -1,3 +1,23 @@
+## 2026-11-09 - Hide the console window for codemode installer and kernel spawns on Windows (senpi#3965)
+
+### What changed
+
+- `packages/senpi-codemode/src/environments/js-installer.ts`: the installer spawn (npm/pnpm) now passes `windowsHide: true`.
+- `packages/senpi-codemode/src/environments/py-installer.ts`: the interpreter spawn (python/pip) now passes `windowsHide: true`.
+- `packages/senpi-codemode/src/kernels/shared/subprocess-process.ts`: the default kernel subprocess spawn now passes `windowsHide: true`.
+
+### Why
+
+- Installers, interpreters, and kernel children can all be console-subsystem exes on Windows; without `windowsHide` each start flashed a console window.
+
+### Why an extension could not handle it
+
+- The spawns are the codemode package's own environment/kernel lifecycle, not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: one options line in each of three codemode files.
+
 ## 2026-11-09 - A settled nested tool's lines stay in the eval live update until the cell replaces them (senpi#6257)
 
 ### What changed
