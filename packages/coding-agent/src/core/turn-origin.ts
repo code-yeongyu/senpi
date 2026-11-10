@@ -10,10 +10,12 @@
 export type TurnOrigin = "local" | "delegated" | "engine";
 export type InputTurnMark = TurnOrigin | "join";
 export type ConnectionOrigin = "local" | "delegated";
+/** One record's claim on the next run it starts; only that record can withdraw it. */
+export type DelegatedRunMark = { readonly record: object };
 
 const inputMarks = new WeakMap<object, InputTurnMark>();
 const currentOrigins = new WeakMap<object, TurnOrigin>();
-const delegatedRuns = new WeakSet<object>();
+const delegatedRuns = new WeakMap<object, DelegatedRunMark>();
 const continuingTurns = new WeakSet<object>();
 
 /** The mark an input gets where it is created: explicit for client records, `local` for the TUI, else `engine`. */
@@ -67,13 +69,20 @@ export function noteUserMessageStart(sessionManager: object, message: object): v
 }
 
 /** A cross-account device's record that can act on the session's work: the next run it starts counts as delegated, once. */
-export function noteDelegatedRun(sessionManager: object): void {
-	delegatedRuns.add(sessionManager);
+export function noteDelegatedRun(sessionManager: object, record: object): DelegatedRunMark {
+	const mark = { record };
+	delegatedRuns.set(sessionManager, mark);
+	return mark;
 }
 
-/** Drops a mark its record left unused: a command that started no run leaves no origin behind. */
-export function dropDelegatedRun(sessionManager: object): void {
+/** A local record that can act on the session's work owns the next run, so no cross-account mark outlives it. */
+export function clearDelegatedRun(sessionManager: object): void {
 	delegatedRuns.delete(sessionManager);
+}
+
+/** Withdraws `mark` if no run used it: a record that started no run leaves no origin behind. A later record's mark stays. */
+export function dropDelegatedRun(sessionManager: object, mark: DelegatedRunMark): void {
+	if (delegatedRuns.get(sessionManager) === mark) delegatedRuns.delete(sessionManager);
 }
 
 /** Whether the deciding turn counts as delegated-origin: a cross-account device started this turn or this run. */

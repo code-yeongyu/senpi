@@ -11699,6 +11699,7 @@ export class AgentSession {
 	private async _continueAgentAfterCurrentRun(
 		options: AgentContinuationOptions = {},
 		retryTimeoutMs?: number,
+		keepsTurnOrigin = false,
 	): Promise<"continued" | "taken-over"> {
 		await this.agent.waitForIdle();
 		try {
@@ -11726,7 +11727,7 @@ export class AgentSession {
 
 			await runBoundedRetryContinuation({
 				continueRun: async () => {
-					noteTurnContinuation(this.sessionManager);
+					if (keepsTurnOrigin) noteTurnContinuation(this.sessionManager);
 					if (this._continueWithQueuedInput) {
 						// Joined input of a start that never ran: the transcript tail may be anything, even empty.
 						this._continueWithQueuedInput = false;
@@ -11811,13 +11812,14 @@ export class AgentSession {
 		options: AgentContinuationOptions = {},
 		retryContinuation = false,
 		retryTimeoutMs?: number,
+		keepsTurnOrigin = retryContinuation,
 	): void {
 		// Tool hooks wait for queued message persistence, so continue() cannot run inside this event promise.
 		const currentEventQueue = this._agentEventQueue;
 		const finishContinuationWork = this._sessionWorkBarrier.begin();
 		const continueAfterEvent = async (): Promise<void> => {
 			try {
-				const outcome = await this._continueAgentAfterCurrentRun(options, retryTimeoutMs);
+				const outcome = await this._continueAgentAfterCurrentRun(options, retryTimeoutMs, keepsTurnOrigin);
 				if (retryContinuation && outcome === "taken-over") {
 					DEFERRED_RETRY_QUEUE_OWNERS.delete(this);
 				}
@@ -11967,7 +11969,8 @@ export class AgentSession {
 				// continue from the turn they failed to answer, so strip the whole run.
 				this._stripTrailingFailedAssistants();
 
-				this._scheduleContinuationAfterCurrentEvent();
+				// The recovery run repeats this turn, so it keeps the turn's origin.
+				this._scheduleContinuationAfterCurrentEvent({}, false, undefined, true);
 				return true;
 			} else if (this.pendingMessageCount > 0) {
 				this._scheduleContinuationAfterCurrentEvent();

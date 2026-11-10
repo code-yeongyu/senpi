@@ -37,9 +37,22 @@ const engineCustomTurn: ExtensionFactory = (pi) => {
 	});
 };
 
+let customFollowUpArmed = false;
+const engineCustomFollowUp: ExtensionFactory = (pi) => {
+	pi.on("agent_end", () => {
+		if (!customFollowUpArmed) return;
+		customFollowUpArmed = false;
+		pi.sendMessage(
+			{ customType: "engine-follow-up", content: "engine work", display: true },
+			{ deliverAs: "followUp", triggerTurn: true },
+		);
+	});
+};
+
 let host: DelegatedHost | undefined;
 afterEach(async () => {
 	armed = false;
+	customFollowUpArmed = false;
 	await host?.dispose();
 	host = undefined;
 }, 60_000);
@@ -52,7 +65,7 @@ async function sameAccountPeer(target: DelegatedHost, roles?: readonly string[])
 }
 
 async function setup(connect: (target: DelegatedHost) => Promise<Peer>) {
-	host = await permissionHost([engineFollowUp, engineCustomTurn], { embedderPreset: true });
+	host = await permissionHost([engineFollowUp, engineCustomTurn, engineCustomFollowUp], { embedderPreset: true });
 	const local = await host.proven();
 	const session = await open(local);
 	const remote = await connect(host);
@@ -118,6 +131,22 @@ describe("a turn follows the receiving machine's own setting", () => {
 		]);
 		expect(await calls(remote, id, 1, () => remote.send({ type: "prompt", sessionId: id, message: "go" }))).toEqual([
 			{ asked: ASKED, ran: false },
+		]);
+	}, 120_000);
+
+	it("keeps asking for a run a cross-account device's slash command starts with no user message", async () => {
+		const { remote, id } = await setup(remotePeer);
+		expect(
+			await calls(remote, id, 1, () => remote.send({ type: "prompt", sessionId: id, message: "/engine-turn" })),
+		).toEqual([{ asked: ASKED, ran: false }]);
+	}, 120_000);
+
+	it("runs a later unmarked engine turn on the host setting after a cross-account prompt", async () => {
+		const { remote, id } = await setup(remotePeer);
+		customFollowUpArmed = true;
+		expect(await calls(remote, id, 2, () => remote.send({ type: "prompt", sessionId: id, message: "go" }))).toEqual([
+			{ asked: ASKED, ran: false },
+			RAN,
 		]);
 	}, 120_000);
 
