@@ -21,13 +21,15 @@ type QueryEnvironment = { env?: Record<string, string | undefined> };
  * Pin Claude Code's prompt-cache lifetime for a one-shot query and return it, so senpi's history breakpoint uses the
  * same lifetime (senpi#2982). The Messages API rejects a 1-hour breakpoint that follows a 5-minute one, and Claude Code
  * otherwise picks its lifetime per request: 1 hour on a subscription within its usage limits, 5 minutes on an API key
- * or after the limits. `FORCE_PROMPT_CACHING_5M` wins, as it does in Claude Code; then an explicit
- * `CLAUDE_CODE_PROMPT_CACHE_TTL`. The managed subscription lanes pin 1 hour,
+ * or after the limits. `FORCE_PROMPT_CACHING_5M` wins, as it does in Claude Code; then a lifetime from a loaded
+ * settings file. The managed subscription lanes pin 1 hour,
  * Claude Code's subscription default; so does the `claude-cli` lane, whose account is a verified first-party claude.ai login. The ambient lane can be an API key or a subscription login, so nothing is
  * pinned there unless a lifetime is set explicitly — and a lifetime set in a loaded settings file counts as explicit
  * (senpi#2988): Claude Code applies the `env` block of the settings files it loads, so `settingsEnv` carries the
- * effective settings env for the sources this attempt loads. Precedence is explicit env, then settings env, then the
- * lane default: a value the operator set in the process environment wins over a settings file, and a settings value
+ * effective settings env for the sources this attempt loads. Precedence is settings env, then explicit env, then the
+ * lane default: Claude Code writes each settings source's env over the process env, and launch-env keys are only
+ * protected when the session is host-orchestrated (a desktop host, or `CLAUDE_CODE_ENVIRONMENT_KIND=byoc`); an SDK
+ * spawn is neither, so a settings value wins over the process env and over `options.env`, and a settings value
  * wins over senpi's assumption about Claude Code's default.
  */
 export function pinOneShotPromptCacheTtl(
@@ -42,9 +44,9 @@ export function pinOneShotPromptCacheTtl(
 		isTruthy(settingsEnv?.[FORCE_PROMPT_CACHING_5M_ENV]);
 	const ttl =
 		(forced5m ? "5m" : undefined) ??
+		parsePromptCacheTtl(settingsEnv?.[PROMPT_CACHE_TTL_ENV]) ??
 		parsePromptCacheTtl(options.env?.[PROMPT_CACHE_TTL_ENV]) ??
 		parsePromptCacheTtl(environment[PROMPT_CACHE_TTL_ENV]) ??
-		parsePromptCacheTtl(settingsEnv?.[PROMPT_CACHE_TTL_ENV]) ??
 		(authLane === "ambient" ? undefined : "1h");
 	if (ttl === undefined) return undefined;
 	options.env = { ...options.env, [PROMPT_CACHE_TTL_ENV]: ttl };

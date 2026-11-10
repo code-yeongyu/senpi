@@ -1,19 +1,23 @@
 import { describe, expect, it, vi } from "vitest";
-import { resolveClaudeSettingsEnv } from "../../../src/core/extensions/builtin/anthropic-subscription/claude-settings-env.ts";
+import {
+	resolveClaudeSettingsEnv,
+	resolveQuerySettingsEnv,
+} from "../../../src/core/extensions/builtin/anthropic-subscription/claude-settings-env.ts";
 import { pinOneShotPromptCacheTtl } from "../../../src/core/extensions/builtin/anthropic-subscription/prompt-cache-ttl.ts";
 
 describe("senpi#2988 a lifetime set in a loaded settings file is visible to the one-shot pin", () => {
 	it.each([
 		["oauth-slots", {}, {}, { FORCE_PROMPT_CACHING_5M: "1" }, "5m"],
 		["oauth-slots", {}, {}, { CLAUDE_CODE_PROMPT_CACHE_TTL: "5m" }, "5m"],
-		["oauth-slots", {}, { CLAUDE_CODE_PROMPT_CACHE_TTL: "1h" }, { CLAUDE_CODE_PROMPT_CACHE_TTL: "5m" }, "1h"],
+		["oauth-slots", {}, { CLAUDE_CODE_PROMPT_CACHE_TTL: "1h" }, { CLAUDE_CODE_PROMPT_CACHE_TTL: "5m" }, "5m"],
+		["oauth-slots", { CLAUDE_CODE_PROMPT_CACHE_TTL: "1h" }, {}, { CLAUDE_CODE_PROMPT_CACHE_TTL: "5m" }, "5m"],
 		["oauth-slots", { FORCE_PROMPT_CACHING_5M: "1" }, {}, { CLAUDE_CODE_PROMPT_CACHE_TTL: "1h" }, "5m"],
 		["ambient", {}, {}, { CLAUDE_CODE_PROMPT_CACHE_TTL: "5m" }, "5m"],
 		["ambient", {}, {}, { FORCE_PROMPT_CACHING_5M: "1" }, "5m"],
 		["oauth-slots", {}, {}, { CLAUDE_CODE_PROMPT_CACHE_TTL: "10m" }, "1h"],
 		["ambient", {}, {}, {}, undefined],
 	] as const)(
-		"pins %s with explicit env %j and settings env %j to %s",
+		"pins %s with options env %j, process env %j and settings env %j to %s",
 		(lane, optionsEnv, environment, settingsEnv, expected) => {
 			// given the query options of a one-shot attempt on that lane
 			const options: { env?: Record<string, string | undefined> } = { env: { ...optionsEnv } };
@@ -62,6 +66,13 @@ describe("senpi#2988 a lifetime set in a loaded settings file is visible to the 
 
 		// then there is nothing for the pin to read
 		expect(env).toBeUndefined();
+	});
+
+	it("resolves to nothing when the attempt loads no settings sources", async () => {
+		// given an explicit empty source list, and the default prompt mode (which
+		// also loads none): no merge runs in either case
+		expect(await resolveQuerySettingsEnv("/work/project", { settingSources: [] })).toBeUndefined();
+		expect(await resolveQuerySettingsEnv("/work/project", {})).toBeUndefined();
 	});
 
 	it("falls back to the old pin behavior when settings resolution fails", async () => {
