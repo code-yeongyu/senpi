@@ -13,8 +13,15 @@ import { OAuthFlowError } from "./oauth-errors.ts";
 import {
 	canonicalAuthorizationServerIssuer,
 	credentialsMatchIssuer,
+	discoveryNamesItsServer,
 	validatedAuthorizationServerIssuer,
 } from "./oauth-issuer.ts";
+import {
+	grantForFlow,
+	registrationForFlow,
+	withPromotedRegistration,
+	withRegistration,
+} from "./registered-redirect.ts";
 import type { McpStoredAuth, McpTokenStore } from "./token-store.ts";
 
 // Buffer before absolute token expiry at which a refresh is considered due.
@@ -25,6 +32,8 @@ export interface McpOAuthProviderOptions {
 	serverUrl: string;
 	store: McpTokenStore;
 	redirectUrl?: string | URL;
+	/** This flow sends an authorize request: reuse only a stored registration naming `redirectUrl` (senpi#6327). */
+	requireRegisteredRedirect?: boolean;
 	scopes?: string[];
 	clientId?: string;
 	clientMetadataUrl?: string;
@@ -58,22 +67,6 @@ export function freezeGrantAttribution(record: McpStoredAuth | undefined): McpSt
 	if (issuer !== undefined) next.issuer = issuer;
 	else delete next.refreshToken;
 	return next;
-}
-
-/**
- * Whether a stored discovery record carries its own evidence for the authorization server it names (senpi#4924):
- * that server's metadata, the MCP server's protected-resource metadata naming it, or the MCP server's own origin
- * (the SDK's legacy root fallback). A bare URL from anywhere else would send the SDK to an unverified server.
- */
-function discoveryNamesItsServer(state: OAuthDiscoveryState, serverUrl: string): boolean {
-	if (state.authorizationServerMetadata !== undefined) return true;
-	const named = canonicalAuthorizationServerIssuer(String(state.authorizationServerUrl));
-	if (named === new URL(serverUrl).origin) return true;
-	return (
-		state.resourceMetadata?.authorization_servers?.some(
-			(server) => canonicalAuthorizationServerIssuer(String(server)) === named,
-		) ?? false
-	);
 }
 
 export function storedAuthToTokens(record: McpStoredAuth | undefined, now = Date.now()): OAuthTokens | undefined {
@@ -172,7 +165,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
 	clientInformation(): OAuthClientInformationMixed | undefined {
 		if (this.#options.clientId !== undefined) return { client_id: this.#options.clientId };
 		if (this.#options.clientMetadataUrl !== undefined) return { client_id: this.#options.clientMetadataUrl };
-		return this.#store.read()?.clientInfo;
+		return registrationForFlow(this.#store.read(), this.#options);
 	}
 
 	async saveClientInformation(info: OAuthClientInformationFull): Promise<void> {
@@ -181,7 +174,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
 			discovery === undefined
 				? info.issuer && canonicalAuthorizationServerIssuer(info.issuer)
 				: validatedAuthorizationServerIssuer(discovery, this.serverName);
-		await this.#store.update((current) => ({ ...(current ?? {}), clientInfo: { ...info, issuer } }));
+		await this.#store.update((current) => withRegistration(current, { ...info, issuer }, this.#options));
 	}
 
 	async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
@@ -223,7 +216,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
 	}
 
 	tokens(): OAuthTokens | undefined {
-		return storedAuthToTokens(this.#store.read());
+		return storedAuthToTokens(grantForFlow(this.#store.read(), this.#options));
 	}
 
 	async saveTokens(tokens: OAuthTokens): Promise<void> {
@@ -232,7 +225,11 @@ export class McpOAuthProvider implements OAuthClientProvider {
 			discovery === undefined
 				? tokens.issuer && canonicalAuthorizationServerIssuer(tokens.issuer)
 				: validatedAuthorizationServerIssuer(discovery, this.serverName);
-		await this.#store.update((current) => mergeTokensIntoStoredAuth(current, { ...tokens, issuer }, this.serverUrl));
+		// A flow's staged registration replaces the signed-in client in the same write as its tokens (senpi#6327).
+		const stamped = { ...tokens, issuer };
+		await this.#store.update((current) =>
+			mergeTokensIntoStoredAuth(withPromotedRegistration(current, this.#options), stamped, this.serverUrl),
+		);
 		this.#logFingerprint("saveTokens", tokens.access_token);
 	}
 
