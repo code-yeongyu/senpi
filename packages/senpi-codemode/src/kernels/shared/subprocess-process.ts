@@ -204,6 +204,8 @@ export function spawnSubprocess(spawn: SubprocessSpawn | undefined, request: Sub
 		detached: true,
 		env: request.env,
 		stdio: ["pipe", "pipe", "pipe"],
+		// senpi#3965: kernel children can be console-subsystem exes on Windows.
+		windowsHide: true,
 	});
 	globalThis.__senpiCodemodeGateObserveResource?.("processes", child, "close");
 	return child;
