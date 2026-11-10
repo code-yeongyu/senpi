@@ -1,10 +1,12 @@
-import { closeSync, existsSync, fchmodSync, mkdirSync, openSync, rmSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, fchmodSync, mkdirSync, openSync, writeSync } from "node:fs";
+import { access, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { rotateLogIfNeeded } from "../log-file-rotation.ts";
 import { redactSecrets, redactSensitiveTokenValues } from "../sensitive-output.ts";
 
 const DEFAULT_MAX_BYTES = 5 * 1024 * 1024;
 const MAX_STRING_LENGTH = 200;
+const MAX_QUEUED_LINES = 256;
 const BLOCKED_KEY =
 	/^(?:__proto__|constructor|prototype|headers?|env(?:ironment)?|authorization|credential(?:s)?|password|secret|token|api_?key|client_?secret)$/i;
 const ALLOWED_DATA_KEY =
@@ -22,20 +24,65 @@ export interface FallbackLoggerOptions {
 	maxBytes?: number;
 }
 
-export function createFallbackLogger(agentDir: string, options: FallbackLoggerOptions = {}): FallbackLogger {
+export interface SettledFallbackLogger extends FallbackLogger {
+	/** Resolves once the one-time removal of earlier log generations has finished and every line logged before it was written. */
+	settled(): Promise<void>;
+}
+
+export function createFallbackLogger(agentDir: string, options: FallbackLoggerOptions = {}): SettledFallbackLogger {
 	const filePath = join(agentDir, "logs", "fallback.log");
 	const maxBytes = validMaxBytes(options.maxBytes);
 	let reportedWriteFailure = false;
-	try {
-		retireUnsharedRegistryGenerations(filePath);
-	} catch (error) {
-		reportedWriteFailure = true;
-		console.error("Unable to remove earlier retry fallback debug log generations", error);
+	// Lines logged while the earlier generations are still being removed wait here, so the removal can never delete them.
+	// They are redacted before they enter the queue and the queue is bounded: the newest lines win, the drops are counted.
+	let queued: string[] | undefined = [];
+	let dropped = 0;
+
+	function write(line: string): void {
+		try {
+			writeLine(filePath, line, maxBytes);
+		} catch (error) {
+			if (!reportedWriteFailure) {
+				reportedWriteFailure = true;
+				console.error("Unable to write retry fallback debug log", error);
+			}
+		}
 	}
+
+	const settled = retireUnsharedRegistryGenerations(filePath)
+		.then(() => undefined)
+		.catch((error: unknown) => {
+			reportedWriteFailure = true;
+			console.error("Unable to remove earlier retry fallback debug log generations", error);
+			return error;
+		})
+		.then((failure: unknown) => {
+			const lines = queued ?? [];
+			queued = undefined;
+			for (const line of lines) write(line);
+			if (dropped > 0) {
+				write(
+					formatLine("warn", "queued_lines_dropped", {
+						reason: `${dropped} lines dropped while earlier log generations were removed`,
+					}),
+				);
+			}
+			if (failure !== undefined) {
+				write(formatLine("warn", "retire_generations_failed", { errorMessage: String(failure) }));
+			}
+		});
 
 	function log(level: "debug" | "info" | "warn", event: string, data?: Record<string, unknown>): void {
 		try {
 			const line = formatLine(level, event, data);
+			if (queued !== undefined) {
+				queued.push(redactSensitiveTokenValues(line, "[redacted]"));
+				if (queued.length > MAX_QUEUED_LINES) {
+					queued.shift();
+					dropped += 1;
+				}
+				return;
+			}
 			writeLine(filePath, line, maxBytes);
 		} catch (error) {
 			if (!reportedWriteFailure) {
@@ -49,6 +96,7 @@ export function createFallbackLogger(agentDir: string, options: FallbackLoggerOp
 		debug: (event, data) => log("debug", event, data),
 		info: (event, data) => log("info", event, data),
 		warn: (event, data) => log("warn", event, data),
+		settled: () => settled,
 	};
 }
 
@@ -57,13 +105,19 @@ export function createFallbackLogger(agentDir: string, options: FallbackLoggerOp
  * removed once per agent dir, the first time an engine with the shared registry starts on it; the marker makes every
  * later start leave the logs alone.
  */
-function retireUnsharedRegistryGenerations(filePath: string): void {
+async function retireUnsharedRegistryGenerations(filePath: string): Promise<void> {
 	const marker = join(dirname(filePath), ".fallback-log-v2");
-	if (existsSync(marker)) return;
-	rmSync(`${filePath}.1`, { force: true });
-	rmSync(filePath, { force: true });
-	mkdirSync(dirname(filePath), { recursive: true, mode: 0o700 });
-	writeFileSync(marker, "", { mode: 0o600 });
+	if (
+		await access(marker).then(
+			() => true,
+			() => false,
+		)
+	)
+		return;
+	await rm(`${filePath}.1`, { force: true });
+	await rm(filePath, { force: true });
+	await mkdir(dirname(filePath), { recursive: true, mode: 0o700 });
+	await writeFile(marker, "", { mode: 0o600 });
 }
 
 function validMaxBytes(value: number | undefined): number {

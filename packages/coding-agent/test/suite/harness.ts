@@ -6,6 +6,7 @@ import { createInMemoryModelRegistry, createModelRegistry, getModelRuntime } fro
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { vi } from "vitest";
 import type { AgentMessage, AgentOptions, AgentTool } from "@earendil-works/pi-agent-core";
 import { Agent } from "@earendil-works/pi-agent-core";
 import type {
@@ -337,6 +338,16 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		...(options.toolRuntime !== undefined ? { toolRuntime: options.toolRuntime } : {}),
 		...(options.sessionStartEvent !== undefined ? { sessionStartEvent: options.sessionStartEvent } : {}),
 	});
+
+	// The session's fallback logger removes earlier log generations asynchronously on its first start and queues the
+	// lines logged meanwhile; its marker file appears right before those lines are written, so wait for it here and a
+	// test can read fallback.log as soon as the harness exists.
+	await vi.waitFor(
+		() => {
+			if (!existsSync(join(agentDir, "logs", ".fallback-log-v2"))) throw new Error("fallback log setup pending");
+		},
+		{ timeout: 5_000, interval: 1 },
+	);
 
 	const events: AgentSessionEvent[] = [];
 	session.subscribe((event) => {
