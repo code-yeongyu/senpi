@@ -502,8 +502,9 @@
       "packages/coding-agent/scripts/qa-rpc-socket/lib/offload-workload.mjs": ["workload"],
       // pre-existing at origin main aceb1cc1d9: unused export parseInject (entry, newly export-checked)
       "packages/coding-agent/scripts/qa-rpc-socket/lib/qa-args.mjs": ["parseInject"],
-      // pre-existing at origin main aceb1cc1d9: unused exports sandboxHostEnv, QA_READINESS_TIMEOUT_MS, qaHostLaunch (entry, newly export-checked)
-      "packages/coding-agent/scripts/qa-rpc-socket/lib/qa-host.mjs": ["QA_READINESS_TIMEOUT_MS", "qaHostLaunch", "sandboxHostEnv"],
+      // pre-existing at origin main aceb1cc1d9: unused exports QA_READINESS_TIMEOUT_MS, qaHostLaunch (entry, newly export-checked);
+      // sandboxHostEnv left this list when scripts/bench-open-session.ts began importing it (senpi#6260)
+      "packages/coding-agent/scripts/qa-rpc-socket/lib/qa-host.mjs": ["QA_READINESS_TIMEOUT_MS", "qaHostLaunch"],
       // pre-existing at origin main aceb1cc1d9: unused export REQUIREMENT_CAPABILITIES (entry, newly export-checked)
       "packages/coding-agent/scripts/qa-rpc-socket/lib/qa-scenarios.mjs": ["REQUIREMENT_CAPABILITIES"],
       // pre-existing at origin main aceb1cc1d9: unused export connectSocket (entry, newly export-checked)
@@ -1561,6 +1562,7 @@
         "src/experimental/mini/main.ts",
         // QA drivers and benchmarks run by path.
         "scripts/**/*.mjs",
+        "scripts/bench-open-session.ts",
         "bench/*.ts",
         // Example extensions are loaded by path (`senpi -e <file>`), never imported. The examples with
         // their own package.json are separate workspaces.
