@@ -1114,18 +1114,15 @@ export async function restoreModelFromSession(
 	const restored = resolveStoredModelWithAuth(savedProvider, savedModelId, modelRuntime);
 	const restoredModel = restored?.model;
 
-	// Check if restored model exists and still has auth configured
-	const hasConfiguredAuth = restoredModel ? modelRuntime.hasConfiguredAuth(restoredModel.provider) : false;
-
-	if (restoredModel && hasConfiguredAuth) {
+	// A signed-out provider keeps its model; the first prompt asks for a login (senpi#4410).
+	if (restoredModel) {
 		if (shouldPrintMessages) {
 			console.log(chalk.dim(`Restored model: ${restoredModel.provider}/${restoredModel.id}`));
 		}
 		return { model: restoredModel, thinkingSelection: restored.thinkingSelection, fallbackMessage: undefined };
 	}
 
-	// Model not found or no API key - fall back
-	const reason = !restoredModel ? "model no longer exists" : "no auth configured";
+	const reason = "model no longer exists";
 
 	if (shouldPrintMessages) {
 		console.error(chalk.yellow(`Warning: Could not restore model ${savedProvider}/${savedModelId} (${reason}).`));

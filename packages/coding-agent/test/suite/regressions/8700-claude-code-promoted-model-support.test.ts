@@ -60,8 +60,7 @@ describe("regression omo#8700: the pinned Claude Code knows every Claude model s
 				`The bundled Claude Code ${binary.claudeCodeVersion} does not know these promoted models; the API rejects them with`,
 				'400 "Claude Code X does not support this model". Bump @anthropic-ai/claude-agent-sdk in',
 				"packages/coding-agent/package.json to the newest release (SDK 0.3.N ships Claude Code 2.1.N), regenerate",
-				"the locks (bun run refresh-lock, then node scripts/generate-claude-agent-sdk-platform-lock.mjs), and set",
-				"claudeCodeVersion in packages/ai/src/api/anthropic-messages.ts to the new SDK's claudeCodeVersion.",
+				"the locks (bun run refresh-lock, then node scripts/generate-claude-agent-sdk-platform-lock.mjs).",
 			].join(" "),
 		).toEqual([]);
 	});

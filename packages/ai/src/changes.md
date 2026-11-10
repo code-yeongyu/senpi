@@ -1,3 +1,334 @@
+## 2026-11-05 - Login forwards the reauthorized account name (part of #5003)
+
+### What changed
+
+- `packages/ai/src/models.ts`: `Models.login` passes `LoginOptions.reauthorizeSlot` to `appendLoginSlot`.
+- `Models.login` rethrows `ReauthorizeAccountMismatchError` unwrapped, so the user sees why nothing changed.
+
+### Why
+
+- So a reauthorization restores the selected account instead of adding a copy.
+
+### Why an extension could not handle it
+
+- `Models.login` owns the credential write for every provider.
+
+### Expected merge conflict zones
+
+- The `appendLoginSlot` call inside `Models.login`.
+
+## 2026-11-06 - The warming-eligibility helper is exported from the package root (senpi#1248)
+
+### What changed
+
+- `packages/ai/src/index.ts`: re-exports `supportsAnthropicCacheWarming` from `./utils/prompt-cache-ttl.ts`, so the builtin keep-alive in `packages/coding-agent` decides warmth eligibility with the same helper its warm request uses.
+
+### Why
+
+- Two independent host checks let the keep-alive pre-flight disagree with `warmPromptCache`: one warmed a host the other refused, which is how an Anthropic-compatible gateway stayed cold while its requests carried `cache_control` (senpi#1248).
+
+### Why an extension could not handle it
+
+- A root barrel export is package surface, outside any extension.
+
+### Expected merge conflict zones
+
+- LOW: one name in the `prompt-cache-ttl` export list.
+
+## 2026-10-30 - Carry credential-selected chat transport into dispatch (part of senpi#5003)
+
+### What changed
+
+- `packages/ai/src/models.ts`: apply an optional credential-selected chat API alongside its base URL.
+
+### Why
+
+- `packages/ai/src/models.ts`: a model's catalog API cannot choose the route of the selected account.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/models.ts`: auth resolution and provider dispatch are shared core operations.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/models.ts`: `applyAuth`.
+
+## 2026-10-30 - Add an explicit credential-route switch for SIWC (senpi#5003 W8)
+
+### What changed
+
+- `packages/ai/src/types.ts`: add optional `OpenAIResponsesCompat.siwc`. The provider integration sets it on the model for a selected SIWC credential route; it defaults to false.
+
+### Why
+
+- `packages/ai/src/types.ts`: SIWC placement is still separate work. Provider IDs and token prefixes cannot identify the selected route without guessing.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/types.ts`: the exported compatibility contract must carry the route to the Responses adapter.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/types.ts`: the fork's `OpenAIResponsesCompat` extension.
+
+## 2026-10-30 - Keep retained SIWC hints out of CLI output (senpi#5046)
+
+### What changed
+
+- `packages/ai/src/cli.ts` prints a hint-free authorization URL through the new browser-safe `packages/ai/src/utils/oauth-url.ts` helper.
+
+### Why
+
+- `packages/ai/src/cli.ts` must not log retained ID tokens inside authorization URLs.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/cli.ts` owns its authorization URL console output.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/cli.ts`: auth_url output; `packages/ai/src/utils/oauth-url.ts`: new helper.
+
+## 2026-10-30 - Session-affinity key option for Anthropic Messages (senpi#2553)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `StreamOptions` gains `sessionAffinityKey?: string`, an opaque routing key that Anthropic Messages sends in its session-affinity header instead of `sessionId`.
+
+### Why
+
+- A gateway that spreads requests over several upstream accounts needs a stable per-session key to keep one session on one account and its prompt cache; the header carried the raw session id, and only for named gateways (senpi#2553).
+
+### Why an extension could not handle it
+
+- The affinity header is built inside the Anthropic client construction from the session id; no hook replaces that value without also changing `sessionId`, which keys per-session caches and resource cleanup.
+
+### Expected merge conflict zones
+
+- LOW: the `sessionId` doc block in `StreamOptions`.
+
+## 2026-10-27 - Models.login stamps a login id that refreshes never mint (senpi#4099)
+
+### What changed
+
+- `packages/ai/src/models.ts`: `Models.login` stamps the credential it commits through `stampLogin(appendLoginSlot(...))`, so every sign-in stores a fresh `loginId`.
+
+### Why
+
+- Retry fallback needs a durable "someone signed in" signal that a token refresh never produces (senpi#4099). The material HMAC moves on every refresh.
+
+### Why an extension could not handle it
+
+- Extension login flows commit through `Models.login`, and only that write path knows a sign-in happened.
+
+### Expected merge conflict zones
+
+- The `appendLoginSlot` call inside `Models.login`'s `modify`.
+
+## 2026-10-30 - Stable SIWC host identity and app name (senpi#5014, part of #5003)
+
+### What changed
+
+- `packages/ai/src/cli.ts`: persist the standalone AI CLI's UUIDv4 in user-level state and reuse it across invocations and working directories.
+
+### Why
+
+- `packages/ai/src/cli.ts`: OpenAI requires a stable host identifier rather than a fresh UUID on every invocation.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/cli.ts`: the standalone CLI owns its installation persistence.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/cli.ts`: login options and installation persistence.
+
+## 2026-11-01 - Tool names with a stray word prefix resolve to their unique suffix tool (senpi#5316)
+
+### What changed
+
+- `packages/ai/src/utils/tool-name-match.ts`: `resolveToolNameMatch` gains a last-resort step, `strayPrefixMatch`. When the requested name is unregistered, matches nothing through the exact, fold and unprefixed steps, and carries no `mcp` namespace, it resolves to the one registered tool whose exact name is a `_`-separated suffix of the requested name (`trophy_eval` -> `eval`). It refuses when two suffix tools match, when any word of the stripped prefix is a destructive verb (`delete_write`, `force_bash`), or when a prefix word itself names a registered tool (`read_write`); those calls keep the existing not-found error.
+
+### Why
+
+- Models behind a namespacing proxy drop the namespace but keep one word of it (`trophy_eval`, `fringe_write`), and each such call failed `Tool ... not found` and cost a turn (code-yeongyu/oh-my-openagent#12065, senpi#5315).
+
+### Why an extension could not handle it
+
+- The matcher is the shared core resolver used by the agent loop and the Anthropic tool-reference repair; an extension cannot change how an unknown tool-call name is resolved.
+
+### Expected merge conflict zones
+
+- LOW: fork-only file `packages/ai/src/utils/tool-name-match.ts`; upstream has no copy.
+
+## 2026-10-30 - Identify the SIWC credential route (part of #5003)
+
+### What changed
+
+- `packages/ai/src/types.ts` adds the per-credential `OpenAIResponsesCompat.siwc` route marker.
+- `packages/ai/src/provider-diagnostic.ts` preserves a validated SIWC route on structured diagnostics.
+
+### Why
+
+- `packages/ai/src/types.ts` must distinguish plan usage from API-key and Codex routes without token heuristics.
+- `packages/ai/src/provider-diagnostic.ts` must preserve the status-only direct-admission policy across error boundaries.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/types.ts` defines the adapter's shared compatibility contract.
+- `packages/ai/src/provider-diagnostic.ts` validates diagnostics before retry and pool consumers read them.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/types.ts`: `OpenAIResponsesCompat`.
+- `packages/ai/src/provider-diagnostic.ts`: diagnostic fields and sanitizer.
+
+## 2026-10-30 - Invoke optional OAuth revocation during logout (part of #5003)
+
+### What changed
+
+- `packages/ai/src/models.ts`: invokes the provider's revocation hook, returns its typed result, blocks new auth until every overlapping logout completes using a per-provider counter, and aborts active provider requests before revocation.
+
+### Why
+
+- `packages/ai/src/models.ts`: every Models logout caller must use the same revocation and local-clear path.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/models.ts`: Models owns provider dispatch and the injected credential store.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/models.ts`: logout orchestration and request auth setup.
+
+## 2026-10-30 - First-class private secret input (senpi#5108)
+
+### What changed
+
+- Covered files: `packages/ai/src/compat/extension-oauth-types.ts`.
+- The compatibility OAuth prompt type retains the text, secret, or manual-code discriminator through auth adapters.
+
+### Why
+
+- Extension input previously exposed credentials through ordinary dialogs and RPC answer paths.
+
+### Why an extension could not handle it
+
+- Connection authorization, transport publication, host lifecycle and terminal focus are owned by the engine.
+
+### Expected merge conflict zones
+
+- MEDIUM: extension UI contracts, RPC binding/worker dispatch and interactive dialog lifecycle.
+
+## 2026-10-30 - Mixed strict tools compatibility contract (senpi#4821)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `OpenAICompletionsCompat` gains optional `mixedStrictTools?: boolean`, defaulting to true.
+
+### Why
+
+- `packages/ai/src/types.ts`: providers need to declare whether a request may mix strict and non-strict function tools independently of strict-schema support.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/types.ts`: the shared compatibility interface defines the typed contract consumed by model catalogs and request adapters.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/types.ts` `OpenAICompletionsCompat`, beside `supportsStrictMode`.
+
+## 2026-10-30 - Models.login passes the provider's account identity to the login write (senpi#5009)
+
+### What changed
+
+- `packages/ai/src/models.ts`: `Models.login` passes `provider.auth.oauth?.accountIdentity` to `appendLoginSlot`, so a re-login of a saved account replaces it.
+
+### Why
+
+- oh-my-openagent#9633: the interactive `/login` path writes through `Models.login`.
+
+### Why an extension could not handle it
+
+- The write happens inside `Models.login` under the credential lock.
+
+### Expected merge conflict zones
+
+- LOW: the `appendLoginSlot` call in `Models.login`.
+
+## 2026-10-27 - No Anthropic OAuth flow in the bundled loaders or the oauth entry point (senpi#4436, S7)
+
+### What changed
+
+- `packages/ai/src/bun-oauth.ts`: the standalone binary registers no `anthropic` OAuth flow.
+- `packages/ai/src/oauth.ts`: `loadAnthropicOAuth` is no longer re-exported; `registerBundledOAuthFlowLoaders` stays.
+
+### Why
+
+- senpi#4436 (R7): the PKCE direct-login route and its token refresh are removed; nothing loads them.
+
+### Why an extension could not handle it
+
+- The bundled flow registry and the `./oauth` subpath are pi-ai's own public surface.
+
+### Expected merge conflict zones
+
+- LOW: the import list and loader object in `bun-oauth.ts`; the first export line of `oauth.ts`.
+
+## 2026-10-27 - Context and the leading system message carry the stable system prefix (senpi#4447)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `Context.systemPromptStablePrefix` and request-time `SystemMessage.stablePrefix` (the prefix text, so a rewritten prompt that no longer starts with it is detected). The prefix is shared across sessions in the same working directory: the base prompt names the cwd.
+
+### Why
+
+- Providers with block-level prompt caching need to know where the cross-session stable part of the system prompt ends.
+
+### Why an extension could not handle it
+
+- `Context` and `SystemMessage` are the provider-facing contract defined in `packages/ai/src/types.ts`.
+
+### Expected merge conflict zones
+
+- LOW: the `Context` and `SystemMessage` interfaces in `packages/ai/src/types.ts`.
+
+## 2026-10-30 - `StreamOptions.onTransportActivity` (senpi#4608)
+
+### What changed
+
+- `packages/ai/src/types.ts`: new optional `StreamOptions.onTransportActivity`, called whenever a response body delivers bytes, keep-alives included. Liveness only; adapter support is explicit.
+
+### Why
+
+- The agent loop needs to tell a connection that is alive but has no content yet from a dead one, and only the adapter sees the bytes. A callback in the options crosses lazy and recovery wrappers unchanged, which a method on the inner stream would not.
+
+### Why an extension could not handle it
+
+- The option is part of the core stream contract every adapter receives.
+
+### Expected merge conflict zones
+
+- LOW: `types.ts` `StreamOptions`, next to `onProviderStreamEvent`.
+
+## 2026-10-29 - `Provider.baseUrl` documents the model.baseUrl transport contract (senpi#4765)
+
+### What changed
+
+- `packages/ai/src/models.ts`: the `Provider.baseUrl` doc comment states that transports send each request to `model.baseUrl`, never to this value or a hard-coded host, because senpi sets every model's `baseUrl` (and this field) to a user's models.json `baseUrl` when one is configured. Documentation only; no type change.
+
+### Why
+
+- senpi#4765: a native `Provider` registered by an extension is composed under the same rule as any other provider: when models.json sets a `baseUrl`, every model carries it, so its `stream` must read `model.baseUrl`.
+
+### Why an extension could not handle it
+
+- `Provider` is the pi-ai public provider type; its contract is documented where it is declared.
+
+### Expected merge conflict zones
+
+- LOW: the doc comment above `Provider.baseUrl` in `models.ts`.
+
 ## 2026-10-27 - Shared seed frontier contract (part of #4272)
 
 ### What changed

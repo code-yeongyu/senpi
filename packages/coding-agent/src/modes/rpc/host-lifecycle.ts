@@ -1,12 +1,21 @@
 #!/usr/bin/env node
+// First: report the coordinated start before the lifecycle graph loads (senpi#4602).
+import "./host-startup-beacon.ts";
+import "../../private-fds.ts";
 import { randomUUID } from "node:crypto";
+import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { getAgentDir, isBundledNode, VERSION } from "../../config.ts";
 import { HostAdmission } from "./host-admission.ts";
 import { classifyChildExit, noteChildExit } from "./host-child-exit.ts";
 import { hostCrashCleanupPaths } from "./host-cleanup-paths.ts";
 import { isCliModuleEntry } from "./host-cli-entry.ts";
-import { createHostDaemonPaths, generationPaths } from "./host-daemon-paths.ts";
+import {
+	createGenerationDirectory,
+	createHostDaemonPaths,
+	generationPaths,
+	HostDaemonStateError,
+} from "./host-daemon-paths.ts";
 import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
 import { SupervisorActivity, SupervisorOwner } from "./host-lifecycle-activity.ts";
 import { drainOnPublicSocketLoss, SupervisorDrain, watchWin32ChildIdentity } from "./host-lifecycle-drain.ts";
@@ -19,13 +28,14 @@ import {
 } from "./host-lifecycle-launch.ts";
 import { resolveHostPolicy } from "./host-lifecycle-policy.ts";
 import {
-	adoptPublicSocket,
-	createPublicProxy,
-	ensurePublicSocketSecret,
-	listen,
-	prepareSocketPath,
-	waitForListener,
-} from "./host-lifecycle-proxy.ts";
+	awaitInternalStartup,
+	declareHostChild,
+	hostChildReportsStartup,
+	hostChildSpawned,
+	publishSupervisorEndpoint,
+	supervisorPublished,
+} from "./host-lifecycle-startup.ts";
+import { createPublicProxy, ensurePublicSocketSecret } from "./host-lifecycle-proxy.ts";
 import { readSettingsFile, recordChildPid } from "./host-lifecycle-scratch.ts";
 import {
 	performShutdown,
@@ -69,6 +79,7 @@ export {
 	resolveHostPolicy,
 } from "./host-lifecycle-policy.ts";
 export { createInternalSocketPath } from "./host-lifecycle-scratch.ts";
+export { HOST_CHILD_LISTEN_MS } from "./host-lifecycle-startup.ts";
 
 export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void> {
 	const paths = createHostDaemonPaths({ socket: launch.socket, agentDir: launch.agentDir ?? getAgentDir() });
@@ -77,15 +88,29 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	const told = process.env[HOST_INSTANCE_ID_ENV];
 	const instanceId = told !== undefined && told.trim() !== "" ? told : randomUUID();
 	const generation = generationPaths(paths, instanceId);
-	const policy = resolveHostPolicy(await readSettingsFile(paths.settingsFile), process.env);
+	const created = await mkdir(generation.dir, { recursive: true, mode: 0o700 }).catch((cause) => {
+		throw new HostDaemonStateError(generation.dir, cause);
+	});
+	let startupRegistered = false;
+	await using _generationStartup = {
+		async [Symbol.asyncDispose]() {
+			// An ensured directory is not ours to discard. Until shutdown owns a new one,
+			// every failed startup must remove it, including failures after child spawn.
+			if (created !== undefined && !startupRegistered) {
+				await rm(generation.dir, { recursive: true, force: true });
+			}
+		},
+	};
+	// A direct launch has no ensure to provision its records before the child can write them.
+	await createGenerationDirectory(generation);
+	const settings = await readSettingsFile(paths.settingsFile);
+	const policy = resolveHostPolicy(settings, process.env);
 	const publicSocket = launch.socket;
 	const publicEndpoint =
 		process.platform === "win32" ? undefined : new RpcPublicEndpoint(launch.agentDir ?? getAgentDir(), publicSocket);
 	// A successor generation binds its own name and adopts the public one by rename; an ordinary
 	// start binds the public name directly. Everything downstream - the child's environment, the
 	// ownership token, the teardown - is expressed in terms of the PUBLIC path either way.
-	const bindSocket = launch.bindSocket ?? publicSocket;
-	const successor = launch.bindSocket !== undefined;
 	// Direct-launch contract: the supervisor owns the public secret. ensureHost()
 	// writes it before spawning, but the hidden --internal-rpc-host-supervisor route
 	// has no such caller, so a fresh profile would otherwise die reading it (#1370).
@@ -114,8 +139,10 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	});
 	const watchers: Array<() => void> = [];
 
+	declareHostChild(launch.childCommand);
 	const child = spawnHostChild({
 		launch,
+		reportsStartup: hostChildReportsStartup(launch.childCommand),
 		internalSocket,
 		internal,
 		...hop.transport,
@@ -128,12 +155,13 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 			generationPidFile: generation.pidFile,
 			settingsFile: paths.settingsFile,
 			publicSocket,
-			successor: Boolean(successor),
+			successor: launch.bindSocket !== undefined,
 			platform: process.platform,
 		}),
 		publicSocket,
 	});
 	const childStartedAt = Date.now();
+	await hostChildSpawned(child, generation.dir, hop.supervisorStart?.time);
 	// Nothing is ever written; the pipe exists purely so its EOF is a reliable
 	// death notification. Errors on it must not crash the supervisor.
 	child.stdio[HOST_CHILD_WATCH_FD]?.on("error", () => {});
@@ -224,22 +252,32 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	// exists, so a SIGTERM arriving during host startup must run the same cleanup instead of Node's
 	// default kill, which would leave that directory behind.
 	registerSupervisorSignals(shutdown, () => drain.drain());
+	startupRegistered = true;
 	try {
-		// Direct supervisor launches predate owner records and may have no generation directory.
+		// Direct supervisor launches predate owner records and may have no generation settings.
 		// Ensured starts create it before spawning and always carry an explicit owner/null record.
 		if (launch.ownerFd !== undefined || (await readSettingsFile(generation.settingsFile))) {
 			await owner.start(launch.ownerFd);
 		}
-		await waitForListener(internalSocket, 30_000, internalSecret, internalKey);
-		await activity.openObserver();
+		await awaitInternalStartup({
+			internalSocket,
+			internalSecret,
+			internalKey,
+			openObserver: () => activity.openObserver(),
+		});
 		if (state.shuttingDown) return;
 		// Shutdown stops the child immediately, but joins these writes before removing their directories.
 		state.startupComplete = (async () => {
-			await prepareSocketPath(bindSocket);
-			await listen(server, bindSocket, publicSecret);
-			await publicEndpoint?.publish();
-			state.publicSocketOwned = true;
-			if (successor) await adoptPublicSocket(bindSocket, publicSocket, launch.replaceIdentity);
+			await publishSupervisorEndpoint({
+				launch,
+				server,
+				publicSecret,
+				publicEndpoint,
+				generationDir: generation.dir,
+				instanceId,
+				settings,
+				state,
+			});
 			state.publicSocketIdentity = await statSocketIdentity(publicSocket);
 			// The child's crash cleanup compares the public entry against this generation's private token.
 			if (state.publicSocketIdentity && internal.dir) {
@@ -260,6 +298,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 			watchers.push(await drain.acceptRequests(generation));
 		})();
 		await state.startupComplete;
+		supervisorPublished();
 	} catch (cause) {
 		await shutdown(`startup failed: ${errorMessage(cause)}`, 1);
 	}

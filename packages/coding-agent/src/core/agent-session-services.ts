@@ -62,6 +62,10 @@ export interface CreateAgentSessionServicesOptions {
  */
 export interface CreateAgentSessionFromServicesOptions {
 	services: AgentSessionServices;
+	/** The session's execution-pipeline receipt sink (see `CreateAgentSessionOptions.executionPipelineWitness`). */
+	executionPipelineWitness?: CreateAgentSessionOptions["executionPipelineWitness"];
+	/** The hosted step commit (see `CreateAgentSessionOptions.commitStep`); unset outside hosted custody. */
+	commitStep?: CreateAgentSessionOptions["commitStep"];
 	sessionManager: SessionManager;
 	sessionStartEvent?: SessionStartEvent;
 	model?: Model<any>;
@@ -88,6 +92,7 @@ export interface CreateAgentSessionFromServicesOptions {
 	autoTitleSessions?: boolean;
 	promptSurface?: CreateAgentSessionOptions["promptSurface"];
 	browserEngine?: CreateAgentSessionOptions["browserEngine"];
+	sessionEnv?: CreateAgentSessionOptions["sessionEnv"];
 	toolRuntime?: CreateAgentSessionOptions["toolRuntime"];
 }
 
@@ -271,6 +276,7 @@ export async function createAgentSessionFromServices(
 	options: CreateAgentSessionFromServicesOptions,
 ): Promise<CreateAgentSessionResult> {
 	return createAgentSession({
+		...(options.commitStep ? { commitStep: options.commitStep } : {}),
 		cwd: options.services.cwd,
 		agentDir: options.services.agentDir,
 		modelRuntime: options.services.modelRuntime,
@@ -294,6 +300,8 @@ export async function createAgentSessionFromServices(
 		autoTitleSessions: options.autoTitleSessions,
 		promptSurface: options.promptSurface,
 		browserEngine: options.browserEngine,
+		sessionEnv: options.sessionEnv,
+		executionPipelineWitness: options.executionPipelineWitness,
 		...(options.toolRuntime !== undefined ? { toolRuntime: options.toolRuntime } : {}),
 	});
 }

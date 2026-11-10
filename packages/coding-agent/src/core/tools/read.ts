@@ -6,13 +6,12 @@ import {
 	selectedReadFolder,
 } from "@earendil-works/pi-agent-core";
 import type { Api, ImageContent, Model, ModelImageResizeOptions, TextContent } from "@earendil-works/pi-ai";
-import { constants } from "fs";
-import { access as fsAccess, readFile as fsReadFile } from "fs/promises";
 import { type Static, Type } from "typebox";
 import { processImage } from "../../utils/image-process.ts";
 import { detectSupportedImageMimeTypeFromFile } from "../../utils/mime.ts";
 import type { ExtensionContext, FilesystemPolicyChecker, ToolDefinition } from "../extensions/types.ts";
 import { canonicalizeFilesystemPath } from "./filesystem-policy.ts";
+import { asBuffer, defaultToolMachine, type ToolMachine } from "./machine.ts";
 import { modelOnlyText } from "./model-only-text.ts";
 import { resolveReadPathAsync } from "./path-utils.ts";
 import { type ReadRenderState, readRenderers } from "./renderers/read.ts";
@@ -27,7 +26,8 @@ const readSchema = Type.Object({
 
 export const readToolSystemPromptContribution = {
 	snippet: "Read file contents",
-	guidelines: ["Use read to examine files instead of cat or sed."],
+	guidelines: ["Files: read, not cat/sed."],
+	fullGuidelines: ["Use read to examine files instead of cat or sed."],
 } as const;
 
 export type ReadToolInput = Static<typeof readSchema>;
@@ -53,11 +53,17 @@ export interface ReadOperations {
 	detectImageMimeType?: (absolutePath: string) => Promise<string | null | undefined>;
 }
 
-const defaultReadOperations: ReadOperations = {
-	readFile: (path) => fsReadFile(path),
-	access: (path) => fsAccess(path, constants.R_OK),
-	detectImageMimeType: detectSupportedImageMimeTypeFromFile,
-};
+/** The default read operations: the shared operation layer, called with the context of one admitted call. */
+function machineReadOperations(machine: ToolMachine, signal: AbortSignal | undefined): ReadOperations {
+	const ctx = machine.context(signal);
+	return {
+		readFile: async (path) => asBuffer((await machine.ops.files.read({ path }, ctx)).bytes),
+		access: async (path) => {
+			await machine.ops.files.stat({ path, access: "read" }, ctx);
+		},
+		detectImageMimeType: detectSupportedImageMimeTypeFromFile,
+	};
+}
 
 export interface ReadToolOptions {
 	/** Structural folder. Default options select the measured folder; omit here for verbatim reads. */
@@ -66,10 +72,14 @@ export interface ReadToolOptions {
 	autoResizeImages?: boolean;
 	/** Fallback resize profile when the execution context has no model metadata. */
 	resizeOptions?: ModelImageResizeOptions;
+	/** Read the model from the execution context. False for a runtime without a session, whose context refuses `model` (senpi#5223). Default: true */
+	contextModel?: boolean;
 	/** Custom operations for file reading. Default: local filesystem */
 	operations?: ReadOperations;
 	/** Extension-registered filesystem policy checker. */
 	filesystemPolicy?: FilesystemPolicyChecker;
+	/** Operation layer and policy gate. Default: the process-wide local machine. */
+	machine?: ToolMachine;
 }
 
 function getNonVisionImageNote(model: Model<Api> | undefined): string | undefined {
@@ -85,16 +95,19 @@ export function createReadToolDefinition(
 ): ToolDefinition<typeof readSchema, ReadToolDetails | undefined, ReadRenderState> {
 	const autoResizeImages = options?.autoResizeImages ?? true;
 	const fallbackResizeOptions = options?.resizeOptions;
-	const ops = options?.operations ?? defaultReadOperations;
+	const contextModel = options?.contextModel ?? true;
+	const customOps = options?.operations;
+	const machine = options?.machine ?? defaultToolMachine();
 	const filesystemPolicy = options?.filesystemPolicy;
 	return {
 		...(options?.operations !== undefined || filesystemPolicy !== undefined ? { serverPinned: true } : {}),
 		name: "read",
 		workspaceEffect: "read",
 		label: "read",
-		description: `Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.`,
+		description: `Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete. A .js or .json file of 100+ lines read without offset/limit may come back folded: bodies are replaced by markers and a footer lists the offset/limit ranges to reread; markers are not source, so reread those ranges before quoting or editing them.`,
 		promptSnippet: readToolSystemPromptContribution.snippet,
 		promptGuidelines: [...readToolSystemPromptContribution.guidelines],
+		fullPromptGuidelines: [...readToolSystemPromptContribution.fullGuidelines],
 		parameters: readSchema,
 		constrainedSampling: { type: "json_schema", strict: "prefer" },
 		async execute(
@@ -122,6 +135,10 @@ export function createReadToolDefinition(
 
 					(async () => {
 						try {
+							const admitted = machine.begin("files.read", { path, offset, limit }, signal);
+							if (admitted !== undefined) await admitted;
+							if (aborted) return;
+							const ops = customOps ?? machineReadOperations(machine, signal);
 							const absolutePath = await resolveReadPathAsync(path, ctx?.cwd || cwd);
 							if (aborted) return;
 							if (filesystemPolicy) {
@@ -139,13 +156,14 @@ export function createReadToolDefinition(
 							const mimeType = ops.detectImageMimeType ? await ops.detectImageMimeType(absolutePath) : undefined;
 							let content: (TextContent | ImageContent)[];
 							let details: ReadToolDetails | undefined;
-							const nonVisionImageNote = getNonVisionImageNote(ctx?.model);
+							const model = contextModel ? ctx?.model : undefined;
+							const nonVisionImageNote = getNonVisionImageNote(model);
 							if (mimeType) {
 								// Read image as binary.
 								const buffer = await ops.readFile(absolutePath);
 								const processed = await processImage(buffer, mimeType, {
 									autoResizeImages,
-									resizeOptions: ctx?.model?.inputLimits?.images?.resize ?? fallbackResizeOptions,
+									resizeOptions: model?.inputLimits?.images?.resize ?? fallbackResizeOptions,
 								});
 								if (!processed.ok) {
 									let textNote = `Read image file [${mimeType}]\n${processed.message}`;

@@ -15,12 +15,12 @@
 		"base64": ""
 	},
 	"sourceLength": 0,
-	"sourceDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+	"sourceDigest": "3d5f96ca2a52d51a2ddb9a6cf945cf997897987a6fb89d78921d25353bd057ed",
 	"expectedRecords": [
 		{
 			"offset": 0,
 			"length": 0,
-			"digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+			"digest": "ffc2c1a84871d187dda1b79abfbb9e12f0fdbfc9420681dd8937f04df0c9144c",
 			"next": null,
 			"complete": true,
 			"data": ""

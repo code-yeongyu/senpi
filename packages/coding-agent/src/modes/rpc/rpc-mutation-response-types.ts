@@ -1,5 +1,5 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { Model } from "@earendil-works/pi-ai";
+import type { Model, OAuthRevocationResult } from "@earendil-works/pi-ai";
 
 import type { PromptDisposition, QueuedInput, QueuedInputDisposition } from "../../core/agent-session.ts";
 
@@ -10,12 +10,15 @@ import type { CompactionResult } from "../../core/compaction/index.ts";
 
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
 import type { SessionControlAdmission } from "../../core/extensions/types.ts";
+import type { PermissionModeReply } from "../../core/permission-mode.ts";
 
 import type { ApiKeyVerification } from "../../core/verify-api-key.ts";
 
 import type { ClientMessageAdmission } from "./client-admission-record.ts";
+import type { RpcProjectSettings, RpcProjectTrust } from "./project-workspace-commands.ts";
 import type { RpcAbortQuiesce, RpcEffectAnswer, RpcQueuedInputChange } from "./rpc-effect-answer-types.ts";
 import type { EditAssistantMessageResult, EditUserMessageResult, NavigateTreeResult } from "./rpc-result-types.ts";
+import type { RpcProviderAccount } from "./rpc-session-state-types.ts";
 import type { RpcMoveSessionResponse } from "./session-move-wire.ts";
 
 export type RpcMutationResponse =
@@ -33,6 +36,8 @@ export type RpcMutationResponse =
 			success: true;
 			data?: ClientMessageIdentity & {
 				disposition?: PromptDisposition;
+				/** Authoritative engine turn captured when this input starts it. */
+				turnId?: string;
 				admission?: ClientMessageAdmission;
 				/** Kept as a notice: automatic input while the user's Stop holds the session (senpi#3811). */
 				heldAsNotice?: boolean;
@@ -48,6 +53,7 @@ export type RpcMutationResponse =
 			success: true;
 			data?: ClientMessageIdentity & {
 				disposition?: QueuedInputDisposition;
+				turnId?: string;
 				admission?: ClientMessageAdmission;
 				heldAsNotice?: boolean;
 			};
@@ -59,6 +65,7 @@ export type RpcMutationResponse =
 			success: true;
 			data?: ClientMessageIdentity & {
 				disposition?: QueuedInputDisposition;
+				turnId?: string;
 				admission?: ClientMessageAdmission;
 				heldAsNotice?: boolean;
 			};
@@ -147,9 +154,18 @@ export type RpcMutationResponse =
 			data: { enabled: boolean; serviceTier: ServiceTier; provider: string; modelId: string };
 	  }
 	| { id?: string; type: "response"; command: "set_steering_mode"; success: true }
+	| { id?: string; type: "response"; command: "set_project_trust"; success: true; data: RpcProjectTrust }
+	| { id?: string; type: "response"; command: "set_project_setting"; success: true; data: RpcProjectSettings }
 	| { id?: string; type: "response"; command: "set_follow_up_mode"; success: true }
 	| { id?: string; type: "response"; command: "compact"; success: true; data: CompactionResult }
 	| { id?: string; type: "response"; command: "set_auto_compaction"; success: true }
+	| {
+			id?: string;
+			type: "response";
+			command: "set_permission_preset";
+			success: true;
+			data: PermissionModeReply;
+	  }
 	| { id?: string; type: "response"; command: "set_auto_retry"; success: true }
 	| { id?: string; type: "response"; command: "abort_retry"; success: true }
 	| { id?: string; type: "response"; command: "set_retry_fallback"; success: true }
@@ -214,7 +230,13 @@ export type RpcMutationResponse =
 			/** Present when the key replaced a login of the other kind; `backupPath` holds the previous file (senpi#3448). */
 			data?: { replaced: "oauth" | "api_key"; backupPath?: string };
 	  }
-	| { id?: string; type: "response"; command: "logout"; success: true }
+	| {
+			id?: string;
+			type: "response";
+			command: "logout";
+			success: true;
+			data?: { notices?: string[]; status?: OAuthRevocationResult["status"] };
+	  }
 	| {
 			id?: string;
 			type: "response";
@@ -224,8 +246,16 @@ export type RpcMutationResponse =
 	  }
 	| RpcMoveSessionResponse
 	| { id?: string; type: "response"; command: "account_pin"; success: true }
-	| { id?: string; type: "response"; command: "account_remove"; success: true }
+	| { id?: string; type: "response"; command: "account_remove"; success: true; data?: { notice: string } }
+	| { id?: string; type: "response"; command: "account_reset"; success: true }
 	| { id?: string; type: "response"; command: "account_order"; success: true }
+	| {
+			id?: string;
+			type: "response";
+			command: "test_provider_account";
+			success: true;
+			data: { check: NonNullable<RpcProviderAccount["check"]> };
+	  }
 	| {
 			id?: string;
 			type: "response";

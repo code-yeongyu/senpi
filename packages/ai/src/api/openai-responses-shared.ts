@@ -140,6 +140,8 @@ function convertToolResultOutput<TApi extends Api>(
 }
 
 export interface OpenAIResponsesStreamOptions {
+	/** SIWC succeeds only on response.completed, never on a finished tool alone. */
+	siwc?: boolean;
 	onProviderStreamEvent?: StreamOptions["onProviderStreamEvent"];
 	serviceTier?: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast";
 	grammarToolInputProperties?: ReadonlyMap<string, string>;
@@ -260,9 +262,10 @@ export type ResponsesDeferredToolsMode = "additional-tools" | "tool-search";
 
 /** `additional_tools` items win over client tool search when a model supports both. */
 export function resolveResponsesDeferredToolsMode(
-	compat: { supportsAdditionalTools?: boolean; supportsToolSearch?: boolean } | undefined,
+	compat: { supportsAdditionalTools?: boolean; supportsToolSearch?: boolean; siwc?: boolean } | undefined,
 ): ResponsesDeferredToolsMode | undefined {
 	if (compat?.supportsAdditionalTools) return "additional-tools";
+	if (compat?.siwc) return undefined;
 	return compat?.supportsToolSearch ? "tool-search" : undefined;
 }
 
@@ -380,7 +383,11 @@ export function convertResponsesMessages<TApi extends Api>(
 	};
 	const includeInitialSystemMessage = options?.includeSystemPrompt ?? true;
 	const compat = model.compat as { supportsDeveloperRole?: boolean } | undefined;
-	const instructionRole = model.reasoning && compat?.supportsDeveloperRole !== false ? "developer" : "system";
+	const instructionRole =
+		(model.compat as { siwc?: boolean } | undefined)?.siwc ||
+		(model.reasoning && compat?.supportsDeveloperRole !== false)
+			? "developer"
+			: "system";
 
 	let msgIndex = 0;
 	let sourceIndex = 0;
@@ -1257,14 +1264,24 @@ export async function processResponsesStream<TApi extends Api>(
 			}
 		} else if (event.type === "response.completed" || event.type === "response.incomplete") {
 			finalizeResponse(event.response);
+			if (options?.siwc && event.type === "response.incomplete") {
+				throw new Error(`Response incomplete: ${event.response.incomplete_details?.reason ?? "unknown reason"}`);
+			}
 		} else if (event.type === "error") {
 			const errorEvent = event as typeof event & {
-				error?: { code?: string | null; message?: string };
+				error?: { code?: string | null; message?: string; param?: string };
 				status?: number;
 			};
 			const code = errorEvent.error?.code ?? errorEvent.code ?? errorEvent.status;
 			const message = errorEvent.error?.message || errorEvent.message || "Unknown error";
-			throw new Error(code == null ? message : `Error Code ${code}: ${message}`);
+			const failure = new Error(code == null ? message : `Error Code ${code}: ${message}`);
+			throw options?.siwc
+				? Object.assign(failure, {
+						code: typeof code === "string" ? code : undefined,
+						status: errorEvent.status,
+						param: errorEvent.error?.param ?? errorEvent.param,
+					})
+				: failure;
 		} else if (event.type === "response.failed") {
 			sawTerminalResponseEvent = true;
 			output.rawStopReason = event.response?.status;
@@ -1275,11 +1292,17 @@ export async function processResponsesStream<TApi extends Api>(
 				: details?.reason
 					? `incomplete: ${details.reason}`
 					: "Unknown error (no error details in response)";
-			throw new Error(msg);
+			const failure = new Error(msg);
+			throw options?.siwc
+				? Object.assign(failure, {
+						code: error?.code,
+						param: error && "param" in error ? error.param : undefined,
+					})
+				: failure;
 		}
 	}
 	const hasFinalizedToolCall = output.content.some((block) => block.type === "toolCall" && !("partialJson" in block));
-	if (!sawTerminalResponseEvent && !hasFinalizedToolCall) {
+	if (!sawTerminalResponseEvent && (options?.siwc || !hasFinalizedToolCall)) {
 		throw new Error("OpenAI Responses stream ended before a terminal response event");
 	}
 	// The agent runs every tool call in the final message. Refuse to hand over calls whose

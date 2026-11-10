@@ -1,3 +1,157 @@
+## 2026-11-07 - Valid configurationUpdate messages are replay-safe in retained suffixes (senpi#8566)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/retained-message-safety.ts`: `hasUnsafeRetainedContent` gains a `configurationUpdate` case. A bounded shape is accepted — `effort` in the ThinkingLevel enum (`off`/`minimal`/`low`/`medium`/`high`/`xhigh`/`max`, the values `appendConfigurationUpdate` writes), empty `content`, finite numeric `timestamp` — and returns safe. Malformed shapes still fall through to unsafe.
+- `packages/coding-agent/test/suite/regressions/8566-configuration-update-retained-safety.test.ts`: new regression coverage at the validator, the live session projection, and the deterministic fallback boundary.
+
+### Why
+
+- senpi#8566: a reasoning-effort change projects to a `configurationUpdate` message that normal request conversion accepts, but the safety checker rejected it through its default branch. On current `main` the omit-unsafe repair then silently discarded the latest reasoning configuration from the retained suffix instead of keeping it.
+
+### Why an extension could not handle it
+
+- The retained-suffix safety check runs in the builtin compaction policy before any provider request, and no extension hook sits between the projection and the fallback's suffix validation.
+
+### Expected merge conflict zones
+
+- LOW: the `configurationUpdate` case in `retained-message-safety.ts` and its regression test.
+
+## 2026-11-05 - Summary request estimate: stale usage, cut input and activated tools (senpi#5905, PR #5948)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative-summary.ts`: `estimateSummaryRequestTokens` no longer trusts provider usage from a message that predates the branch's latest compaction or context edit (a message kept through an earlier compaction); that request is estimated whole, system prompt and tools included, like a transcript without usage. When pruning, input bounding or an overflow shrink cut messages before the usage message, their estimated size is taken off the usage figure. Tool schemas a later tool result activated (`addedToolNames`) are counted on top of the usage, as pi-ai's estimator does.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative.ts`: `runExtensionCompaction` passes the uncut summarization input so the estimate can measure what was cut.
+
+### Why
+
+- The usage figure measured the transcript before it was cut, or a context an earlier compaction replaced, so the attempt budget could be sized for a much larger request than the one sent. Tools activated after the last usage were never billed in it, so they were missing from the estimate.
+
+### Why an extension could not handle it
+
+- This is the compaction builtin's own summary route.
+
+### Expected merge conflict zones
+
+- LOW: `estimateSummaryRequestTokens` in `speculative-summary.ts`; the `sourceMessages` setup before `boundSummarizationInput` in `runExtensionCompaction`.
+
+## 2026-11-05 - Summary budget sized to the request it sends (senpi#5905, PR #5909)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative-summary.ts`: new `estimateSummaryRequestTokens` sizes a summary request from the last provider-reported usage inside the summarized transcript plus an estimate of what follows it; with no usage it estimates the whole request, system prompt and tools included. `generateSummaryMessage` uses it for its default budget.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative.ts`: `runExtensionCompaction` sizes each attempt budget with it instead of the transcript's chars/4 estimate.
+
+### Why
+
+- The request carries the agent system prompt, the tool schemas and replayed reasoning, which the transcript estimate never saw: on large OpenAI sessions it measured a third of the provider-reported context, so a ~145k-token compaction stayed on the 120s floor and failed with "Summarization stream exceeded its 120000ms wall-clock budget" (senpi#5905).
+
+### Why an extension could not handle it
+
+- This is the compaction builtin's own summary route.
+
+### Expected merge conflict zones
+
+- LOW: the `attemptBudgetMs` computation in `runExtensionCompaction`; the default budget in `generateSummaryMessage`.
+
+## 2026-10-30 - SIWC remote compaction never falls through to the compact endpoint (senpi#5101)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote.ts`: retains the Responses v2 stream route for SIWC, then returns to local summarization if v2 is disabled or produces no checkpoint; timeout metadata names that same next step.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote.ts`: SIWC plan usage supports streaming POST `/v1/responses`, not `/v1/responses/compact` or a WebSocket fallback.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote.ts`: the builtin remote-compaction runner owns the transport fallback chain.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote.ts` v2 timeout next-step selection and fallback boundary.
+
+## 2026-11-02 - Speculative warm summaries are kept across turns (senpi#5481, PR #5504)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/orchestration.ts`: `resolveIdleWarmAction` takes the job's completion state, anchor validity, fit and the clock. It returns `replace` for a job whose summarized prefix was rewritten, `none` for a running job (no replace on growth), `reuse` for a finished summary that fits, and `regenerate` for one that does not once `speculativeCooldownMs` has passed; only a failed job keeps the replace-on-growth rule.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/warm-candidate.ts` (new): `assessWarmCandidateFit` projects the context a finished warm summary would leave on the current branch and compares it with `threshold - lead`.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/rejected-recovery.ts`: `projectCompactedContextTokens` is split out of `wouldCompactionOverflow`, which now calls it; the overflow result is unchanged.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative-job.ts`: a job records its result and completion time when it settles.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: the `agent_end` idle paths keep a running or fitting warm summary, regenerate an unfit one at most once per lineage and only when the fresh cut moved past its anchor (`MAX_WARM_REGENERATIONS`, reset on an accepted compaction and on a rewritten prefix), and replace a job whose prefix was rewritten; `before_agent_start` drops such a job before the grace-band and threshold decision; the idle apply also runs on `agent_settled` for a summary that finished before `agent_end`, and every guard that stands it down logs a reason.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/log.ts`: new events `speculative_reused`, `speculative_regenerated` and `idle_apply_skipped`.
+
+### Why
+
+- On one developer host about 90% of warm summaries were generated and discarded unused every week, and on 1M-window sessions the idle apply landed on 1.8% of idle triggers: every turn that grew the session by more than `max(keepRecentTokens, 8192)` aborted the running summary and started another one over the whole prefix (senpi#5481). The reference designs keep a prepared summary while its source prefix is unchanged and regenerate it at most once.
+
+### Why an extension could not handle it
+
+- This is the compaction builtin's own policy; the warm job, its apply guards and the log live inside this extension.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `agent_end` handler's two idle branches and the start of `before_agent_start` in `index.ts`; `armIdleApply`, now split into `armIdleApply` + `tryIdleApply`.
+- LOW: `resolveIdleWarmAction` in `orchestration.ts`; the event list in `log.ts`; `wouldCompactionOverflow` in `rejected-recovery.ts`.
+
+## 2026-10-26 - Share Claude preamble runway with the subscription safety net (senpi#4066)
+
+### What changed
+
+- `model-usability-budget.ts` and subscription `long-context-budget.ts` import `CLAUDE_SAFETY_MARGIN_TOKENS` from the dependency-free `claude-safety-margin.ts` rather than duplicating the Claude-family margin.
+
+### Why
+
+- The first-turn fallback preamble reserve must stay aligned with Claude-family admission without loading the compaction runtime graph.
+
+### Why an extension could not handle it
+
+- Both consumers are builtin extension budget calculations.
+
+### Expected merge conflict zones
+
+- LOW: the Claude-family profile in `model-usability-budget.ts`.
+
+## 2026-10-27 - Compaction authenticates as the session's account (senpi#3924)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative.ts`, `compaction/openai-remote.ts`, `compaction/index.ts`: `getApiKeyAndHeaders` receives `{ sessionId: sessionManager.getSessionId() }`; the remote-compaction context type accepts the option.
+
+### Why
+
+- A pooled provider's flat entry is not an account. For a provider-managed pool it is the `<provider>-managed` sentinel with `expires: 0`, so a request that resolved it without a slot sent the sentinel to the token endpoint: every compaction on a pooled `chatgpt-subscription` failed with a 401 while the session's own turns, leased on the pinned slot, kept working.
+
+### Why an extension could not handle it
+
+- The builtin is the caller; the fix is passing its session to the registry.
+
+### Expected merge conflict zones
+
+- LOW: the `getApiKeyAndHeaders` call lines.
+
+## 2026-10-27 - Compaction summary requests split the system prompt like the turn (senpi#4447)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative.ts`, `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: speculative and core-route summary snapshots record `ctx.getSystemPromptStablePrefix()` next to `systemPrompt`.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative-summary.ts`: the summary request passes it as `systemPromptStablePrefix` when it sends the agent's own prompt.
+
+### Why
+
+- A summary request meant to reuse the turn's cached prefix must send the same system blocks and breakpoint as the turn.
+
+### Why an extension could not handle it
+
+- These are the compaction builtin's own request builders.
+
+### Expected merge conflict zones
+
+- LOW: the snapshot objects in `speculative.ts` and `index.ts`, the request context in `speculative-summary.ts`.
+
 ## 2026-10-26 - Terminal summarizer failures degrade on every compaction kind (senpi#4340)
 
 ### What changed

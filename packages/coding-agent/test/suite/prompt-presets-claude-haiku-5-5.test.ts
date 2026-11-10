@@ -28,7 +28,7 @@ function hasHaiku55CatalogSignal(model: Model<Api>): boolean {
 }
 
 function getHaiku55CatalogModels(): Model<Api>[] {
-	return getProviders().flatMap((provider) => (getModels(provider) as Model<Api>[]).filter(hasHaiku55CatalogSignal));
+	return getProviders().flatMap((provider) => getModels(provider).filter(hasHaiku55CatalogSignal));
 }
 
 describe("Claude Haiku 5.5 prompt preset", () => {
@@ -151,5 +151,32 @@ describe("Claude Haiku 5.5 prompt preset", () => {
 		expect(withSearch).toContain("your training data ends well before it");
 		expect(withoutSearch).not.toContain("your training data ends well before it");
 		expect(withSearch).not.toMatch(/\d{4}-\d{2}-\d{2}/);
+	});
+
+	it("adds the search-grounding sentence when only Anthropic-native search is available (senpi#2935)", () => {
+		// given
+		const settings: PromptPresetSettings = { promptPreset: "auto" };
+		const model = createModel("claude-haiku-5-5", "anthropic");
+
+		// when
+		const nativeOnly =
+			resolvePreset(model, settings, { selectedTools: ["read"], nativeSearchAvailable: true })?.prompt ?? "";
+
+		// then
+		expect(nativeOnly).toContain("your training data ends well before it");
+		expect(nativeOnly).not.toMatch(/\d{4}-\d{2}-\d{2}/);
+	});
+
+	it("omits the search-grounding sentence when neither builtin nor native search is available (senpi#2935)", () => {
+		// given
+		const settings: PromptPresetSettings = { promptPreset: "auto" };
+		const model = createModel("claude-haiku-5-5", "anthropic");
+
+		// when
+		const neither =
+			resolvePreset(model, settings, { selectedTools: ["read"], nativeSearchAvailable: false })?.prompt ?? "";
+
+		// then
+		expect(neither).not.toContain("your training data ends well before it");
 	});
 });

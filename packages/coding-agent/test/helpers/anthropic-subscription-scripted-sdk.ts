@@ -26,6 +26,7 @@ import {
 	overrideSessionRegistryBoundary,
 	resetSessionRegistryBoundary,
 } from "../../src/core/extensions/builtin/anthropic-subscription/session-registry.ts";
+import { cliLaneEnv, cliSlot } from "../support/claude-cli-test-slots.ts";
 
 export const SCRIPTED_PROVIDER = "anthropic-subscription";
 
@@ -104,15 +105,9 @@ const originalAgentDir = process.env.SENPI_CODING_AGENT_DIR;
 const originalExecutable = process.env.CLAUDE_CODE_EXECUTABLE;
 const temporaryDirectories: string[] = [];
 
-/** One pinned oauth-slots account whose settings file selects the managed lane. */
+/** One pinned claude CLI account, the managed lane every stored account runs on (senpi#4436). */
 export async function installSingleAccountLane(): Promise<void> {
-	const slot: AccountSlot = {
-		name: "primary",
-		access: "access-primary",
-		refresh: "r",
-		expires: Date.now() + 3_600_000,
-		source: "login",
-	};
+	const slot: AccountSlot = cliSlot("primary");
 	const store = new InMemoryCredentialStore();
 	await store.modify(
 		SCRIPTED_PROVIDER,
@@ -129,7 +124,7 @@ export async function installSingleAccountLane(): Promise<void> {
 	);
 	overrideAuthLaneBoundary({
 		createStore: () => store,
-		env: () => ({ PATH: "/usr/bin" }),
+		env: () => cliLaneEnv(),
 		getAgentDir: () => agentDir,
 	});
 }

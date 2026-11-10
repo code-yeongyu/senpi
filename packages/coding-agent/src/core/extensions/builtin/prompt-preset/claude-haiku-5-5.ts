@@ -17,8 +17,9 @@
 //   today's date and, with a long system prompt, a nudge that its training data
 //   ends well before that date. The date already reaches the model in the
 //   environment-context message (senpi#2093 keeps it out of the system prompt
-//   for prefix caching), so one line, rendered only when web_search is active
-//   this turn, points at that date and carries the guide's nudge. The guide's
+//   for prefix caching), so one line, rendered when the model can search this
+//   turn — through the web_search tool or Anthropic-native search (senpi#2935) —
+//   points at that date and carries the guide's nudge. The guide's
 //   warning against blanket "always search" wording is respected: facts that
 //   cannot change need no search.
 // Kept from Sonnet 5.5 (the Haiku guide documents the same text): Scope's
@@ -59,7 +60,8 @@ Only the user's explicit request commits you to implementation. The stop conditi
 };
 
 function buildSearchGroundingLine(context: DynamicPromptCoreContext): string {
-	if (!context.tools.some((tool) => tool.name === "web_search")) {
+	const hasBuiltinSearch = context.tools.some((tool) => tool.name === "web_search");
+	if (!hasBuiltinSearch && !context.nativeSearchAvailable) {
 		return "";
 	}
 	return ` Today's date is in the environment context, and your training data ends well before it: records, office holders, prices, versions, rules, and anything "latest" may have changed since, so search for those before you answer, even when you feel sure; facts that cannot change need no search.`;

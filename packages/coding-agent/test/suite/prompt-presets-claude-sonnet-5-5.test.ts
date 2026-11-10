@@ -28,7 +28,7 @@ function hasSonnet55CatalogSignal(model: Model<Api>): boolean {
 }
 
 function getSonnet55CatalogModels(): Model<Api>[] {
-	return getProviders().flatMap((provider) => (getModels(provider) as Model<Api>[]).filter(hasSonnet55CatalogSignal));
+	return getProviders().flatMap((provider) => getModels(provider).filter(hasSonnet55CatalogSignal));
 }
 
 describe("Claude Sonnet 5.5 prompt preset", () => {
@@ -120,5 +120,18 @@ describe("Claude Sonnet 5.5 prompt preset", () => {
 
 		// then
 		expect(misses).toEqual([]);
+	});
+
+	it("keeps the Sonnet prompt unchanged when only Anthropic-native search is available (senpi#2935)", () => {
+		// given
+		const settings: PromptPresetSettings = { promptPreset: "auto" };
+		const model = createModel("claude-sonnet-5-5", "anthropic");
+
+		// when
+		const nativeOnly =
+			resolvePreset(model, settings, { selectedTools: ["read"], nativeSearchAvailable: true })?.prompt ?? "";
+
+		// then
+		expect(nativeOnly).not.toContain("your training data ends well before it");
 	});
 });

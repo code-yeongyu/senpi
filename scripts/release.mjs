@@ -53,13 +53,17 @@ import {
 	awaitCiEvidence,
 	catalogChangedSinceHead,
 	discardTimestampOnlyCatalogChange,
-	FORCED_TEST_SUITE_TIMEOUT_MS,
 	planCiEvidence,
 	REGENERATED_CATALOG_PATHS,
 	REQUIRED_CHECK_NAME,
-	runForcedTestSuite,
 } from "./release-test-gate.mjs";
+import {
+	FORCED_CODING_AGENT_SHARDS,
+	FORCED_TEST_SUITE_TIMEOUT_MS,
+	runForcedTestSuite,
+} from "./release-forced-test-suite.mjs";
 import { compileFragments } from "./sync-changes-fragments.mjs";
+import { fileURLToPath } from "node:url";
 
 const VERSION_RE = /^\d{4}\.\d{1,2}\.\d{1,2}(-\d+)?$/;
 
@@ -412,22 +416,39 @@ function secureCiEvidence(version, dryRun, forceTests, pinnedSha) {
  * run 38824836070 failed when the suite ran on stamped changelogs). It cleans and builds first; the release cleans and
  * builds again after stamping.
  */
-function runForcedTests(dryRun, forceTests) {
+async function runForcedTests(dryRun, forceTests) {
 	if (!forceTests) return;
 	if (dryRun) {
-		dryRunLog("npm run clean, npm run build, then CI=1 npm test (--force-tests), before stamping");
+		dryRunLog(
+			`npm run clean, npm run build, then the CI=1 test suite with coding-agent in ${FORCED_CODING_AGENT_SHARDS} parallel shards (--force-tests), before stamping`,
+		);
 		return;
 	}
 	runClean(false);
 	runBuild(false);
-	// Run with CI=1 so packages reproduce their CI test behavior — notably the coding-agent vitest suite serializes
-	// its subprocess-heavy tests to a single fork (see packages/coding-agent/vitest.config.ts). App code never
-	// branches on CI.
-	log(`CI=1 npm test (budget ${FORCED_TEST_SUITE_TIMEOUT_MS / 60_000} min)`);
-	runForcedTestSuite();
+	// Run with CI=1 so packages reproduce their CI test behavior — notably the coding-agent vitest suite caps its
+	// fork pool (see packages/coding-agent/vitest.config.ts). App code never branches on CI.
+	log(
+		`CI=1 test suite, coding-agent in ${FORCED_CODING_AGENT_SHARDS} parallel shards (budget ${FORCED_TEST_SUITE_TIMEOUT_MS / 60_000} min)`,
+	);
+	await runForcedTestSuite();
 }
 
-function main() {
+/**
+ * Refuse a version the shipped update checker cannot order (senpi#5406). A subprocess, so after a pinned `--sha`
+ * checkout it loads the pinned tree's `version-check.ts`, the checker this release actually ships.
+ */
+function assertShippedCheckerOrders(version) {
+	try {
+		const guard = fileURLToPath(new URL("./release-version-guard.mjs", import.meta.url));
+		execFileSync(process.execPath, [guard, version], { stdio: ["ignore", "ignore", "inherit"] });
+	} catch {
+		process.stderr.write(`[release] error: refusing to cut ${version}: the shipped update checker cannot order it\n`);
+		process.exit(1);
+	}
+}
+
+async function main() {
 	const args = parseArgs(process.argv.slice(2));
 	if (args.help) {
 		printUsage();
@@ -451,6 +472,7 @@ function main() {
 	preflight(args.dryRun);
 
 	const version = resolveVersion(args);
+	assertShippedCheckerOrders(version);
 	const date = todayISO();
 	log(`target version: v${version}`);
 	log(`release date: ${date}`);
@@ -459,7 +481,7 @@ function main() {
 	}
 
 	secureCiEvidence(version, args.dryRun, args.forceTests, args.sha);
-	runForcedTests(args.dryRun, args.forceTests);
+	await runForcedTests(args.dryRun, args.forceTests);
 	applyWorkspaceVersions(version, args.dryRun, log, dryRunLog);
 	runSyncVersions(args.dryRun, runCommand, log, dryRunLog);
 	runPackageLockRefresh(args.dryRun, runCommand, log, dryRunLog);
@@ -510,7 +532,7 @@ function main() {
 }
 
 try {
-	main();
+	await main();
 } catch (err) {
 	process.stderr.write(`[release] error: ${err instanceof Error ? err.message : String(err)}\n`);
 	process.exitCode = 1;

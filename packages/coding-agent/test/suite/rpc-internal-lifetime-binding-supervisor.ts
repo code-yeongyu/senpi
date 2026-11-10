@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { HOST_WATCH_LIFETIME_FIFO_ENV, prepareLifetimeBinding } from "../../src/modes/rpc/host-lifetime-binding.ts";
+import { hostSpawnEnv } from "../helpers/rpc-host-spawn-env.ts";
 
 const [runtime = "node", hopDir = ""] = process.argv.slice(2);
 const binding = prepareLifetimeBinding(hopDir);
@@ -15,7 +16,7 @@ const host = spawn(
 	],
 	{
 		env: {
-			...process.env,
+			...hostSpawnEnv(),
 			SENPI_RPC_INTERNAL_KEY_STDIN: "1",
 			...(binding.lifetimeFifo === undefined ? {} : { [HOST_WATCH_LIFETIME_FIFO_ENV]: binding.lifetimeFifo }),
 		},

@@ -42,7 +42,7 @@ task-tool names are known.
   JS runtime (`node`/`bun`).
 - JavaScript import rewriting for supported local modules and package imports
   in the persistent JS worker (Bun when senpi runs on bun, Node.js otherwise).
-- On a Bun >= 1.4 kernel the eval prompt names the bundled `bun-1-4` skill as
+- On a Bun >= 1.4 kernel the eval prompt names the bundled `bun` skill as
   MUST READ before the first js cell; node kernels keep the Node.js wording.
 - GPT models receive a terse `eval` prompt dialect that prioritizes composing
   active tools through `tool.<name>(args)` and documents detach-on-timeout.
@@ -61,13 +61,29 @@ schema; it is not an installation failure.
 
 ### JavaScript process isolation
 
-By default the JavaScript kernel runs as a worker thread on the host's own
-runtime (`isolation.js: "worker"`). Setting `isolation.js: "process"` (or
-`SENPI_CODEMODE_JS_ISOLATION=process`, which wins over the file) runs each
-JavaScript kernel in its own subprocess instead, so a kernel crash (a native
-`SIGSEGV`, an out-of-memory, `process.exit`, an uncaught error) cannot take down
-the host session. The next cell runs on a replacement child, and its result
-carries the restart notice and names the crash.
+The JavaScript kernel runs either as a worker thread on the host's own runtime
+(`isolation.js: "worker"`) or in its own subprocess (`isolation.js: "process"`),
+where a kernel crash (a native `SIGSEGV` or `SIGBUS`, an out-of-memory,
+`process.exit`, an uncaught error) cannot take down the host session. The next
+cell runs on a replacement child, and its result carries the restart notice and
+names the crash. Without a setting, the default follows the host's executable:
+
+- A macOS or Linux host whose executable is `bun` (an npm or bun install of
+  senpi or omo run through `bun`) defaults to `"process"`. A Bun 1.4.4 `Worker`
+  thread can corrupt the JavaScriptCore heap and kill the whole host with
+  `SIGBUS` or `SIGTRAP` (open upstream class; the symptom behind omo#12369),
+  and a kernel in its own process cannot.
+- A Node.js host and a compiled binary (the desktop engine) default to
+  `"worker"`. A compiled executable cannot run the kernel child itself, so
+  process mode there needs a `bun` or `node` on `PATH`, which only an explicit
+  setting asks for.
+- A Windows bun host also defaults to `"worker"`: the crash evidence is
+  macOS, and the process kernel's Windows channel is not covered by CI, so
+  there the mode stays opt-in.
+
+`SENPI_CODEMODE_JS_ISOLATION` wins over the file, and the file wins over the
+host default, in both directions: `isolation.js: "worker"` restores the thread
+on a bun host.
 
 **Trust model.** Process mode isolates crashes, not hostile code. A cell runs in
 the same process that talks to the host, so it can reach everything that process
@@ -121,7 +137,7 @@ How it works:
   runtime (`Install bun or node, or use isolation.js: "worker"`). The result's
   memory reading is the child's process footprint.
 
-The default stays `"worker"`, and worker-mode behaviour is unchanged.
+Worker-mode behaviour is unchanged.
 
 To run the `environments` suites with bun children (the runtime the product
 uses), run them under bun: `SENPI_CODEMODE_JS_ISOLATION=process bunx --bun vitest
@@ -328,7 +344,7 @@ Configuration is loaded in this order:
 | `environments.autoProvision` | `true` | Lets installs provision a managed environment. `false` makes installs refuse with `environment_installer_unavailable`. |
 | `environments.js.installer` | `auto` | Installer for the managed JavaScript environment: `auto`, `bun` or `npm`. |
 | `environments.py.installer` | `pip` | Installer for the managed Python environment. |
-| `isolation.js` | `worker` | JavaScript kernel isolation: `worker` (today's worker thread) or `process`. Env override: `SENPI_CODEMODE_JS_ISOLATION`. |
+| `isolation.js` | `process` on a macOS or Linux host whose executable is `bun`, else `worker` | JavaScript kernel isolation: `worker` (a worker thread) or `process` (its own subprocess; a kernel crash cannot kill the session). Env override: `SENPI_CODEMODE_JS_ISOLATION`. |
 | `sandbox.enabled` | `false` | Allows sandbox cells. While `false` the sandbox option is neither accepted nor advertised. |
 | `sandbox.memoryMb` | `64` | Memory cap (MiB) for a sandbox cell. Env override: `SENPI_CODEMODE_SANDBOX_MEMORY_MB` (a positive integer wins). |
 | `sandbox.timeoutSeconds` | `300` | Time limit for a sandbox cell. |

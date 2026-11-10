@@ -6,7 +6,8 @@
  *   2. retry-after header      (strict integer delta-seconds `^\d+$`, else HTTP-date)
  *   3. x-ratelimit-reset{,-requests,-tokens}  (epoch seconds, max-wins)
  *   4. JSON retryDelay strings (ms/s/m units, recursive, max-wins; numeric rejected)
- *   5. body prose              (ms-marker, seconds-marker, relative, resets-in, resets-at ISO8601)
+ *   5. body prose              (ms-marker, seconds-marker, relative, resets-in, resets-at ISO8601,
+ *                              wall clock with an optional zone: "resets 12am (Asia/Seoul)")
  *
  * Eligibility gate: status 429 OR body marks rate-limit error.
  * Explicit zero = 0 (beats lower-precedence positives).
@@ -152,7 +153,8 @@ function fromBodyProse(bodyText: string, nowMs: number): number | undefined {
 		if (!Number.isNaN(parsed)) return clampAbsolute(parsed, nowMs);
 	}
 
-	return undefined;
+	// resets <wall clock> [(<IANA zone>)], the shape Claude Code writes (senpi#1771)
+	return clockResetMs(bodyText, nowMs);
 }
 
 /* ---------- helpers ---------- */
@@ -246,4 +248,86 @@ export function parseRetryAfterMsMarker(message: string): number | undefined {
 	const m = message.match(MARKER_RE);
 	if (!m) return undefined;
 	return Number.parseInt(m[1], 10);
+}
+
+/* ---------- wall-clock reset prose ---------- */
+
+// A reset written as a wall clock: "resets 12am (Asia/Seoul)", "resets Oct 2, 9am", "try again at 12:00 AM".
+// Shared with the credential pool (reset-time.ts) so both read the text the same way (senpi#1771). Milliseconds
+// from `nowMs` to the next such moment, or undefined; a time with no zone reads in the host's local zone.
+const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+
+const CLOCK_RE =
+	/\b(?:resets?|try again)\s+(?:at\s+|on\s+)?(?:([a-z]{3})[a-z]*\.?\s+(\d{1,2}),?\s+(?:at\s+)?)?(\d{1,2})(?::(\d{2}))?\s*([ap])\.?\s?m\b\.?(?:\s*\(([A-Za-z_]+(?:\/[A-Za-z0-9_+-]+)*)\))?/i;
+
+export function clockResetMs(text: string, nowMs: number): number | undefined {
+	const match = CLOCK_RE.exec(text);
+	if (!match) return undefined;
+	const [, monthName, dayText, hourText, minuteText, meridiem, zoneText] = match;
+	const hour12 = Number.parseInt(hourText ?? "", 10);
+	const minute = minuteText === undefined ? 0 : Number.parseInt(minuteText, 10);
+	if (hour12 < 1 || hour12 > 12 || minute > 59) return undefined;
+	const hour = (hour12 % 12) + (meridiem?.toLowerCase() === "p" ? 12 : 0);
+	const zone = zoneText ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+	if (!isValidTimeZone(zone)) return undefined;
+	const today = zonedParts(zone, nowMs);
+
+	if (monthName !== undefined) {
+		const month = MONTHS.indexOf(monthName.toLowerCase());
+		const day = Number.parseInt(dayText ?? "", 10);
+		if (month < 0 || day < 1 || day > 31) return undefined;
+		let target = zonedToEpoch(zone, today.year, month, day, hour, minute);
+		if (target <= nowMs) target = zonedToEpoch(zone, today.year + 1, month, day, hour, minute);
+		return target - nowMs;
+	}
+	let target = zonedToEpoch(zone, today.year, today.month, today.day, hour, minute);
+	if (target <= nowMs) target = zonedToEpoch(zone, today.year, today.month, today.day + 1, hour, minute);
+	return target - nowMs;
+}
+
+function isValidTimeZone(zone: string): boolean {
+	try {
+		new Intl.DateTimeFormat("en-US", { timeZone: zone });
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+type ZonedParts = { year: number; month: number; day: number; hour: number; minute: number; second: number };
+
+function zonedParts(zone: string, epochMs: number): ZonedParts {
+	const parts = new Intl.DateTimeFormat("en-US", {
+		timeZone: zone,
+		hourCycle: "h23",
+		year: "numeric",
+		month: "numeric",
+		day: "numeric",
+		hour: "numeric",
+		minute: "numeric",
+		second: "numeric",
+	}).formatToParts(epochMs);
+	const get = (type: Intl.DateTimeFormatPartTypes) =>
+		Number.parseInt(parts.find((part) => part.type === type)?.value ?? "0", 10);
+	return {
+		year: get("year"),
+		month: get("month") - 1,
+		day: get("day"),
+		hour: get("hour"),
+		minute: get("minute"),
+		second: get("second"),
+	};
+}
+
+function zoneOffsetMs(zone: string, epochMs: number): number {
+	const p = zonedParts(zone, epochMs);
+	const wallAsUtc = Date.UTC(p.year, p.month, p.day, p.hour, p.minute, p.second);
+	return wallAsUtc - Math.floor(epochMs / 1000) * 1000;
+}
+
+/** The instant a wall-clock time in `zone` names; two passes settle a DST boundary. */
+function zonedToEpoch(zone: string, year: number, month: number, day: number, hour: number, minute: number): number {
+	const wall = Date.UTC(year, month, day, hour, minute);
+	const first = wall - zoneOffsetMs(zone, wall);
+	return wall - zoneOffsetMs(zone, first);
 }

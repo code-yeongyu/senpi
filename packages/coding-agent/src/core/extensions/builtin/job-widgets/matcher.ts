@@ -89,7 +89,11 @@ function groupConstruct(pattern: string, at: number): string | undefined {
 	return undefined;
 }
 
-/** Reads a pattern's named groups and constructs outside escapes and character classes. */
+/**
+ * Reads a pattern's named groups and constructs outside escapes, character classes and `\Q\E`
+ * quoted text (literal in RE2, up to `\E` or the end of the pattern), so the groups it reports are
+ * the ones RE2's `namedGroups()` reports.
+ */
 export function scanPattern(pattern: string): PatternScan {
 	const groups: string[] = [];
 	let normalized = "";
@@ -99,6 +103,13 @@ export function scanPattern(pattern: string): PatternScan {
 		const char = pattern.charAt(index);
 		if (char === "\\") {
 			const next = pattern.charAt(index + 1);
+			if (!inClass && next === "Q") {
+				const close = pattern.indexOf("\\E", index + 2);
+				const end = close < 0 ? pattern.length : close + 2;
+				normalized += pattern.slice(index, end);
+				index = end - 1;
+				continue;
+			}
 			const reference = inClass ? undefined : escapeReference(pattern, index + 1);
 			if (reference !== undefined) return fail(reference);
 			normalized += char + next;

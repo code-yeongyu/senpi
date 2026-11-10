@@ -2,7 +2,7 @@ import { ConfigReferenceError } from "@earendil-works/pi-ai/utils/config-referen
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { getAgentDir } from "../../../../config.ts";
 import { redactResolvedReferenceData } from "../../../config-reference-redaction.ts";
-import { getMcpMrtrPresentation, type McpMrtrPresentation } from "../../../mcp-mrtr-presentations.ts";
+import { getMcpMrtrPresentation } from "../../../mcp-mrtr-presentations.ts";
 import type { ExtensionAPI, ExtensionUIContext, SessionShutdownEvent, SessionStartEvent } from "../../types.ts";
 import {
 	getToolSearchService,
@@ -25,13 +25,13 @@ import { HostMcpRegistry } from "./host-registry.ts";
 import { refreshMcpInstructionsForSession } from "./instructions.ts";
 import { createMcpLogger } from "./log.ts";
 import { prepareProjectSkillServer } from "./project-skill-policy.ts";
-import { createMcpRequestOrigin, type McpRequestOrigin } from "./request-origin.ts";
-import { McpMrtrError } from "./modern/errors.ts";
+import type { McpRequestOrigin } from "./request-origin.ts";
 import { reconnectMcpNow } from "./reconnect.ts";
 import type { McpResourceServer } from "./resources.ts";
 import { createMcpSessionConnection, disposeEntryConnection } from "./service-connection.ts";
 import { getMcpServiceExposureStatus } from "./service-exposure.ts";
 import { registerMcpServiceDirectTools } from "./service-register.ts";
+import * as scopes from "./service-scopes.ts";
 import { buildMcpServerSnapshot } from "./service-snapshot.ts";
 import { refreshMcpToolsOnListChanged, subscribeMcpToolsChanged } from "./service-tools-changed.ts";
 import type {
@@ -60,6 +60,7 @@ import {
 	shouldRaceMcpStartup,
 	waitForMcpStartupRace,
 } from "./startup-race.ts";
+import { McpStartupWindows, type StartupWindowRelease } from "./startup-window.ts";
 import { safeTimer } from "./wrap.ts";
 import type { McpListedTool as ListedTool } from "./tool-contracts.ts";
 
@@ -75,17 +76,12 @@ type McpToolRegistrar = Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" |
  * tool-search service, resolved per call, and what was registered there. Connections stay
  * shared across bindings; only the binding is per session.
  */
-interface McpSessionBinding {
-	readonly lifetime: AbortController;
-	presentation?: McpMrtrPresentation;
+interface McpSessionBinding extends scopes.McpScopedBinding {
 	readonly pi: McpToolRegistrar;
 	/** Only for a session whose extension load owns no tool-search service (SDK and test hosts). */
 	readonly fallbackToolSearch: ToolSearchService | undefined;
 	/** True when `fallbackToolSearch` is the process-wide fallback rather than a private one. */
 	readonly holdsProcessFallback: boolean;
-	readonly context: McpSessionContext;
-	/** The config this session resolved at attach: its tools register and are fenced against it alone (senpi#2597). */
-	readonly config: ResolvedMcpConfig;
 	/** This session's trust, env and agent dir: they resolve and spawn the servers it declares (senpi#2986). */
 	readonly options: McpSessionOptions;
 	readonly registeredIdentities: Map<string, string>;
@@ -113,8 +109,9 @@ export class McpService {
 	readonly #interactiveAuthServers = new Set<string>();
 	readonly #promptCommandNames = new Set<string>();
 	readonly #registrationListeners = new Set<() => void>();
-	readonly #wireStatusListeners = new Set<(sessionId: string | undefined, snapshot: McpWireStatusSnapshot) => void>();
+	readonly #wireStatusListeners = new Set<McpWireStatusListener>();
 	#wireStatusRefreshQueue: Promise<void> = Promise.resolve();
+	readonly #startupWindows = new McpStartupWindows();
 	#refreshActiveSetWhenNoTools = false;
 	readonly #bindings = new Map<object, McpSessionBinding>();
 	// Attaches and release re-syncs queued or running: a release defers its dispose until none is left.
@@ -151,6 +148,32 @@ export class McpService {
 		ctx: McpSessionContext,
 		_pi?: McpToolRegistrar,
 		options: McpSessionOptions = {},
+	): Promise<void> {
+		// RPC inventory changes of this session are held from now until the connects this attach starts settle (senpi#4828).
+		const windowSessionId = shouldCaptureWireStatus(ctx) ? ctx.sessionManager?.getSessionId?.() : undefined;
+		const startupWindow = windowSessionId === undefined ? undefined : this.#startupWindows.open(windowSessionId);
+		const startupConnects: Promise<void>[] = [];
+		try {
+			await this.#attachQueued(event, ctx, _pi, options, startupConnects);
+		} finally {
+			if (windowSessionId !== undefined && startupWindow !== undefined) {
+				void startupWindow
+					.close(startupConnects, (release) =>
+						this.#refreshWireStatus(windowSessionId, () => this.#statusOwner(windowSessionId), release),
+					)
+					.catch((error: unknown) => {
+						createMcpLogger("service").error("Failed to announce the settled MCP startup inventory", error);
+					});
+			}
+		}
+	}
+
+	async #attachQueued(
+		event: SessionStartEvent,
+		ctx: McpSessionContext,
+		_pi: McpToolRegistrar | undefined,
+		options: McpSessionOptions,
+		startupConnects: Promise<void>[],
 	): Promise<void> {
 		// Counted from the moment it queues, so a session's release cannot dispose the service
 		// under an attach that has not bound yet.
@@ -203,7 +226,7 @@ export class McpService {
 			const binding = _pi === undefined ? undefined : this.#bind(_pi, owner);
 			const current = this.#effectiveConfig(config);
 			this.#config = current;
-			await this.#syncFromConfig(current, binding ?? owner, event.reason !== "reload", binding);
+			await this.#syncFromConfig(current, binding ?? owner, event.reason !== "reload", binding, startupConnects);
 			if (binding !== undefined) await this.#registerDirectTools(binding);
 			// Replay promotion markers from the (possibly resumed) session history
 			// BEFORE the first turn: the request tool snapshot is taken before the
@@ -219,6 +242,16 @@ export class McpService {
 				);
 			}
 		});
+	}
+
+	/**
+	 * A further execution scope of the runtime that owns `pi` joins its binding (brain/hand S16c) without a rebind, a
+	 * config re-sync or an abort; only its own wire status is published. A `session_start` drops every joined scope.
+	 */
+	async attachScope(ctx: McpSessionContext, pi: McpToolRegistrar): Promise<void> {
+		const binding = this.#bindings.get(pi);
+		const sessionId = binding === undefined ? undefined : scopes.joinBindingScope(binding, ctx)?.sessionId;
+		if (sessionId !== undefined && shouldCaptureWireStatus(ctx)) await this.refreshWireStatusSnapshot(sessionId);
 	}
 
 	/**
@@ -297,6 +330,8 @@ export class McpService {
 		const binding: McpSessionBinding = {
 			lifetime: new AbortController(),
 			presentation: owner.context.ui === undefined ? undefined : getMcpMrtrPresentation(owner.context.ui),
+			scopes: new Map(),
+			ui: scopes.elicitationUiOf(owner.context),
 			pi,
 			fallbackToolSearch,
 			holdsProcessFallback,
@@ -346,6 +381,14 @@ export class McpService {
 		const releasedId = released?.sessionId;
 		if (releasedId !== undefined && !live.some((binding) => binding.sessionId === releasedId)) {
 			this.#wireStatusBySession.delete(releasedId);
+			// The id-less read falls back to #latestWireStatus once a single session is live, so rebind it to the
+			// remaining session's own snapshot (senpi#3001): without this, the released session's status outlives
+			// it whenever the release carries no reason and no re-sync re-captures.
+			const remaining = live.at(-1);
+			this.#latestWireStatus =
+				remaining?.sessionId !== undefined
+					? (this.#wireStatusBySession.get(remaining.sessionId) ?? { servers: [] })
+					: { servers: [] };
 		}
 		const latest = live.at(-1);
 		if (latest !== undefined) {
@@ -593,13 +636,16 @@ export class McpService {
 	}
 
 	/** Subscribe to live MCP inventory transitions for session-scoped hosts. */
-	onWireStatusChanged(listener: (sessionId: string | undefined, snapshot: McpWireStatusSnapshot) => void): () => void {
+	onWireStatusChanged(listener: McpWireStatusListener): () => void {
 		this.#wireStatusListeners.add(listener);
 		return () => this.#wireStatusListeners.delete(listener);
 	}
 
 	/** Refresh and return the current session-owned MCP wire inventory. */
 	async refreshWireStatusSnapshot(sessionId?: string): Promise<McpWireStatusSnapshot> {
+		// A caller that passes no session id gets no peer data while more than one session is live (senpi#3001);
+		// capturing here would store the most recently attached session's status for it to read back.
+		if (sessionId === undefined && this.#liveBindings().length > 1) return { servers: [] };
 		return this.#refreshWireStatus(sessionId, () => this.#statusOwner(sessionId));
 	}
 
@@ -607,8 +653,9 @@ export class McpService {
 	async #refreshWireStatus(
 		sessionId: string | undefined,
 		owner: () => McpConfigOwner | undefined,
+		release?: StartupWindowRelease,
 	): Promise<McpWireStatusSnapshot> {
-		const refresh = this.#wireStatusRefreshQueue.then(() => this.#captureWireStatus(sessionId, owner()));
+		const refresh = this.#wireStatusRefreshQueue.then(() => this.#captureWireStatus(sessionId, owner(), release));
 		this.#wireStatusRefreshQueue = refresh.then(
 			() => undefined,
 			() => undefined,
@@ -649,6 +696,7 @@ export class McpService {
 		this.#promptCommandNames.clear();
 		this.#registrationListeners.clear();
 		this.#wireStatusListeners.clear();
+		this.#startupWindows.clear();
 		this.#wireStatusBySession.clear();
 		this.#latestWireStatus = { servers: [] };
 		this.#deferredAttach.clear();
@@ -683,7 +731,20 @@ export class McpService {
 		await reconnectMcpNow(entry.connection);
 	}
 
-	getServerSnapshots(): McpServerSnapshot[] {
+	/**
+	 * The lifecycle-only server snapshots. Without a session id these still list the merged config of all live
+	 * sessions, as the /mcp command and the manager TUI expect. With one, only the servers that session declares
+	 * (senpi#3001): a caller that can name its session gets no peer data.
+	 */
+	getServerSnapshots(sessionId?: string): McpServerSnapshot[] {
+		if (sessionId !== undefined) {
+			const owner = this.#statusOwner(sessionId);
+			if (owner === undefined) return [];
+			const names = new Set<string>(Object.keys(owner.config.servers));
+			return [...names]
+				.sort()
+				.map((name) => this.#serverSnapshot(name, owner.config.servers[name], this.#entryForName(name)));
+		}
 		const names = new Set<string>(Object.keys(this.#config?.servers ?? {}));
 		for (const entry of this.#connections.values()) names.add(entry.name);
 		return [...names]
@@ -726,8 +787,12 @@ export class McpService {
 	 * Return the attach-time inventory captured for one session. This is the
 	 * handoff consumed by RPC's session-owned adapter; it deliberately
 	 * does not expose or derive from the lifecycle-only server snapshots.
+	 * A caller that passes no session id gets no peer data while more than
+	 * one session is live (senpi#3001): with a single live session the stored
+	 * snapshot is that session's own, so the id-less read keeps working.
 	 */
 	getWireStatusSnapshot(sessionId?: string): McpWireStatusSnapshot {
+		if (sessionId === undefined && this.#liveBindings().length > 1) return { servers: [] };
 		return sessionId === undefined
 			? this.#latestWireStatus
 			: (this.#wireStatusBySession.get(sessionId) ?? { servers: [] });
@@ -743,6 +808,7 @@ export class McpService {
 		owner: McpConfigOwner,
 		useCache: boolean,
 		binding: McpSessionBinding | undefined,
+		startupConnects?: Promise<void>[],
 	): Promise<void> {
 		const hadConnectionsBeforeSync = this.#connections.size > 0;
 		this.#refreshActiveSetWhenNoTools = Object.keys(config.servers).length > 0 || hadConnectionsBeforeSync;
@@ -894,7 +960,10 @@ export class McpService {
 						// once the service is gone or this connection was replaced (#2524 review).
 						shouldRefreshTools: () => !this.#disposed && this.#entryForName(name) === entry,
 						deadlineMs: 0,
-						onDeferred: (settled) => this.#deferredAttach.track(settled),
+						onDeferred: (settled) => {
+							this.#deferredAttach.track(settled);
+							startupConnects?.push(settled);
+						},
 					}),
 				);
 			}
@@ -952,7 +1021,8 @@ export class McpService {
 				onRegistered: (entry, identity) => binding.registeredIdentities.set(entry.key, identity),
 				contextRequired: binding.context.mode !== undefined,
 				sessionManager: binding.context.sessionManager,
-				requestOrigin: (entry) => this.#requestOrigin(binding, entry),
+				servesSession: (sessionManager) => scopes.bindingServesScope(binding, sessionManager),
+				requestOrigin: (entry, caller) => this.#requestOrigin(binding, entry, caller),
 				bindPresentation: (ui) => this.bindMcpMrtrPresentation(binding.pi, ui),
 				// A new attach of this session replaces its binding (and with it its config); a peer's attach does not.
 				isCurrent: (entry) =>
@@ -1022,10 +1092,19 @@ export class McpService {
 	#statusOwner(sessionId: string | undefined): McpConfigOwner | undefined {
 		const live = this.#liveBindings();
 		if (sessionId === undefined) return live.at(-1);
-		return live.findLast((binding) => binding.context.sessionManager?.getSessionId?.() === sessionId);
+		return (
+			live.findLast((binding) => binding.context.sessionManager?.getSessionId?.() === sessionId) ??
+			// A further scope of a runtime reports the binding that serves it: one runtime declares one set of servers.
+			live.findLast((binding) => scopes.bindingServesScopeSession(binding, sessionId))
+		);
 	}
 
-	async #captureWireStatus(sessionId: string | undefined, owner: McpConfigOwner | undefined): Promise<void> {
+	/** A `release` (a closing startup window) is announced even when unchanged; otherwise an open window holds it. */
+	async #captureWireStatus(
+		sessionId: string | undefined,
+		owner: McpConfigOwner | undefined,
+		release?: StartupWindowRelease,
+	): Promise<void> {
 		if (this.#config === null || owner === undefined) return;
 		const servers = await Promise.all(
 			Object.keys(owner.config.servers)
@@ -1036,8 +1115,10 @@ export class McpService {
 		const previous = this.getWireStatusSnapshot(sessionId);
 		this.#latestWireStatus = snapshot;
 		if (sessionId !== undefined) this.#wireStatusBySession.set(sessionId, snapshot);
-		if (JSON.stringify(previous) === JSON.stringify(snapshot)) return;
-		for (const listener of this.#wireStatusListeners) listener(sessionId, snapshot);
+		if (release === undefined && JSON.stringify(previous) === JSON.stringify(snapshot)) return;
+		if (release === undefined && this.#startupWindows.hold(sessionId)) return;
+		const startupSettled = release === "startup-settled";
+		for (const listener of this.#wireStatusListeners) listener(sessionId, snapshot, startupSettled);
 	}
 
 	/** Only a connection resolving `owner`'s own credentials counts: a peer's catalog and login never show in its status. */
@@ -1118,29 +1199,22 @@ export class McpService {
 		this.#elicitationUiProvider = provider;
 	}
 
-	bindMcpMrtrPresentation(pi: object, ui: ExtensionUIContext): void {
+	bindMcpMrtrPresentation(pi: object, ui: ExtensionUIContext, sessionManager?: object): void {
 		const binding = this.#bindings.get(pi);
 		const presentation = getMcpMrtrPresentation(ui);
-		if (binding && presentation) binding.presentation = presentation;
+		if (binding && presentation) scopes.bindScopePresentation(binding, presentation, sessionManager);
 	}
 
-	#requestOrigin(binding: McpSessionBinding, entry: McpConnectionEntry): McpRequestOrigin {
-		const source = binding.config.servers[entry.name]?.source;
-		return createMcpRequestOrigin({
+	#requestOrigin(
+		binding: McpSessionBinding,
+		entry: McpConnectionEntry,
+		caller?: { readonly sessionManager?: object },
+	): McpRequestOrigin {
+		return scopes.scopedRequestOrigin(
 			binding,
-			connection: entry.connection,
-			signal: AbortSignal.any([binding.lifetime.signal, entry.connection.requestLifetimeSignal]),
-			presentation: binding.presentation,
-			privateFormsEnforced: binding.presentation?.privateForms !== undefined,
-			privateForm: binding.presentation?.privateForms?.capture(),
-			serverLabel: entry.name,
-			serverSource:
-				source === "project" || source === "claude"
-					? "project"
-					: source === "skill" || source === "extension"
-						? "plugin"
-						: "user",
-			isCurrent: () =>
+			entry,
+			caller,
+			() =>
 				!this.#disposed &&
 				!binding.lifetime.signal.aborted &&
 				this.#bindings.get(binding.pi) === binding &&
@@ -1148,12 +1222,7 @@ export class McpService {
 				declares(binding.config, entry.name, entry.configHash) &&
 				entry.isCurrent?.() !== false &&
 				entry.credentialsCurrent?.() !== false,
-			resolveAuthority: async (signal) => {
-				if (await entry.generationChanged?.()) throw new McpMrtrError("MCP_MRTR_CONTEXT_CHANGED");
-				// Same observed-revocation boundary as ordinary MCP requests. Never prompts for a new grant.
-				return await entry.connection.projectPolicy?.resolve(signal, false);
-			},
-		});
+		);
 	}
 
 	getMcpElicitationUi(): McpElicitationUi | undefined {
@@ -1296,6 +1365,13 @@ function wireAuthStatus(
 			return assertNever(mode);
 	}
 }
+
+/** `startupSettled` marks the one announcement that closes a session's startup window (senpi#4828). */
+type McpWireStatusListener = (
+	sessionId: string | undefined,
+	snapshot: McpWireStatusSnapshot,
+	startupSettled: boolean,
+) => void;
 
 function shouldCaptureWireStatus(ctx: McpSessionContext): boolean {
 	return ctx.mode === "rpc";
