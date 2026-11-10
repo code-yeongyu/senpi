@@ -21,6 +21,7 @@ import {
 	DELEGATION_ROLES_CAPABILITY,
 	DETACH_CONNECTION_CAPABILITY,
 	DURABLE_SESSION_ID_CAPABILITY,
+	PEER_AGENT_ROLE_CAPABILITY,
 	ENTRIES_TAIL_CAPABILITY,
 	EVAL_CELLS_CAPABILITY,
 	MEDIA_PLACEHOLDERS_CAPABILITY,
@@ -123,6 +124,8 @@ export function multiSessionHostCapabilities(options: {
 			DELEGATED_CONNECTION_CAPABILITY,
 			// ...and decides a host-mode connection's roles per incarnation, with receipts (omo-relay-daemon#307).
 			DELEGATION_ROLES_CAPABILITY,
+			// ...and may carry the forwarder-granted `peer_agent` role on such a connection (senpi#6305).
+			PEER_AGENT_ROLE_CAPABILITY,
 			// Only a multi-session host keeps sessions loaded that a client can ask it to free.
 			UNLOAD_SESSION_CAPABILITY,
 			// Only a multi-session host owns a move ledger and the hosted-session list export checks against.

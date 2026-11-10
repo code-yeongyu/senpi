@@ -12,7 +12,7 @@
  */
 import type { AgentSession } from "../../core/agent-session.ts";
 import { writtenDeliveryIds } from "../../core/external-admission.ts";
-import type { ConnectionOrigin } from "../../core/turn-origin.ts";
+import type { ConnectionOrigin, InputTurnMark } from "../../core/turn-origin.ts";
 import type { RpcAdmitExternalMessageCommand, RpcAdmitExternalMessageReply } from "./admit-external-message-wire.ts";
 import { admitInputChain, type ChainRefusal } from "./chain-admission.ts";
 import type { RpcRemoteOrigin } from "./remote-origin.ts";
@@ -22,6 +22,8 @@ export interface DeliveryPeer {
 	/** The remote device the connection speaks for (`ConnectionRoles.originOf`); absent on a plain local connection. */
 	readonly origin: RpcRemoteOrigin | undefined;
 	readonly connectionOrigin: ConnectionOrigin;
+	/** The forwarder granted this connection `peer_agent` in its host-mode delegation (senpi#6305). */
+	readonly peerAgent?: boolean;
 }
 
 export type AdmitExternalMessageAnswer =
@@ -39,6 +41,18 @@ function ledgerId(deliveryId: string, origin: RpcRemoteOrigin | undefined): stri
 	return origin === undefined
 		? `rpc:local/${deliveryId}`
 		: `device:${encodeURIComponent(origin.deviceId)}/${deliveryId}`;
+}
+
+/**
+ * The turn a delivery opens: a steer joins the running turn; an agent's delivery on a delegated connection the
+ * forwarder granted `peer_agent` is a peer turn (senpi#6305), the record's sender kind being only a consistency check;
+ * anything else keeps the connection's origin.
+ */
+function deliveryTurnMark(command: RpcAdmitExternalMessageCommand, peer: DeliveryPeer): InputTurnMark {
+	if (command.deliverAs === "steer") return "join";
+	if (peer.connectionOrigin === "delegated" && peer.peerAgent === true && command.sender?.kind === "agent")
+		return "peer";
+	return peer.connectionOrigin;
 }
 
 export function admitExternalMessage(
@@ -90,7 +104,7 @@ export function admitExternalMessage(
 		{
 			...(origin === undefined ? {} : { remoteOrigin: origin }),
 			...(chain.chainCount === undefined ? {} : { chainCount: chain.chainCount }),
-			turnMark: command.deliverAs === "steer" ? "join" : peer.connectionOrigin,
+			turnMark: deliveryTurnMark(command, peer),
 		},
 	);
 	return answer(result.kind, result.turn_epoch);
