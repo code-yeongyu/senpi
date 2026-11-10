@@ -274,6 +274,23 @@ export interface HostChildOptions {
 	readonly publicSocket: string;
 	/** Give the child the startup pipe and its hand-off (a coordinated start of the engine's own host, senpi#4602). */
 	readonly reportsStartup?: boolean;
+	/**
+	 * The adopted engine trust generation's hand-off (`loadHostChildTrustHandOff`), empty when none was adopted. A child
+	 * that arrives without it imports trust again and re-execs, closing the startup pipe (senpi#6312).
+	 */
+	readonly trustHandOff: Readonly<Record<string, string>>;
+}
+
+/**
+ * The same hand-off an initial daemon or successor spawn carries (`adoptedEngineTrustHandOff`). Both modules load
+ * lazily, keeping the marker writer and its zod schema out of the supervisor's startup graph
+ * (`test/supervisor-import-graph.test.ts`): only a supervisor that adopted a generation loads the writer.
+ */
+export async function loadHostChildTrustHandOff(): Promise<Record<string, string>> {
+	const { adoptedEngineTrust } = await import("../../engine-trust/adopted.ts");
+	if (adoptedEngineTrust() === undefined) return {};
+	const { adoptedEngineTrustHandOff } = await import("../../engine-trust/hand-off.ts");
+	return adoptedEngineTrustHandOff();
 }
 
 /**
@@ -290,6 +307,7 @@ export function hostChildEnvironment(
 	const { launch, internal, internalSecret } = options;
 	return {
 		...process.env,
+		...options.trustHandOff,
 		...(launch.agentDir ? { SENPI_CODING_AGENT_DIR: launch.agentDir } : {}),
 		// The child binds a PRIVATE socket, so it cannot derive this endpoint's daemon directory
 		// from what it listens on: it is told, and it claims its session paths there.

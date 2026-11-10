@@ -1,3 +1,21 @@
+## 2026-11-09 - Hide the console window for self-update bootstrap commands on Windows (senpi#3965)
+
+### What changed
+
+- `packages/coding-agent/src/self-update-bootstrap.ts`: `runCommand` now passes `windowsHide: true` to its spawn.
+
+### Why
+
+- Update commands (npm/bun) are console-subsystem exes on Windows, but `runCommand` inherits the parent console (`stdio: "inherit"`), so `windowsHide` hides no new window here; the flag is kept for uniformity with the other win32 spawns.
+
+### Why an extension could not handle it
+
+- The spawn is the self-update bootstrap's own command runner, not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: one options line in the bootstrap runner.
+
 ## 2026-11-07 - A saved trust decision outranks the per-process trust memo (senpi#6176)
 
 ### What changed
