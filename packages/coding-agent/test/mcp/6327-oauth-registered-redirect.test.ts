@@ -5,11 +5,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
 	type AuthCommandDeps,
 	runAuth,
+	runAuthComplete,
 	runAuthStart,
 } from "../../src/core/extensions/builtin/mcp/auth/commands-auth.ts";
 import { resolveServerAuth } from "../../src/core/extensions/builtin/mcp/auth/context.ts";
 import { beginAuthorization } from "../../src/core/extensions/builtin/mcp/auth/oauth.ts";
 import type { McpOAuthProvider } from "../../src/core/extensions/builtin/mcp/auth/oauth-provider.ts";
+import { McpRefreshManager } from "../../src/core/extensions/builtin/mcp/auth/oauth-refresh.ts";
 import { McpTokenStore } from "../../src/core/extensions/builtin/mcp/auth/token-store.ts";
 import { type IdpFixture, spawnOAuthIdp } from "./fixtures/spawn-idp.ts";
 
@@ -136,7 +138,7 @@ describe("MCP OAuth registers the redirect URI it authorizes with (senpi#6327)",
 		expect(store.read()?.accessToken).toMatch(/^SENTINEL_AT_/);
 	});
 
-	it("a flow that replaces a registration never presents the replaced client's refresh token", async () => {
+	it("a flow that registers a new client never presents the old client's refresh token, and replaces it only on exchange", async () => {
 		// Given: a registration for port 1 with the attributed grant issued to it.
 		const { deps, store } = await harness();
 		const stale = { client_id: "dcr-stale", redirect_uris: ["http://127.0.0.1:1/callback"] };
@@ -149,10 +151,79 @@ describe("MCP OAuth registers the redirect URI it authorizes with (senpi#6327)",
 		expect(flow.clientInformation()).toBeUndefined();
 		await flow.saveClientInformation({ client_id: "dcr-fresh", redirect_uris: ["http://127.0.0.1:2/callback"] });
 
-		// Then: the refresh token left with its client, so the SDK cannot present it under the new client_id.
+		// Then: the flow uses the new client without the old refresh token, while the signed-in client keeps both.
 		expect(flow.clientInformation()?.client_id).toBe("dcr-fresh");
 		expect(flow.tokens()?.refresh_token).toBeUndefined();
+		expect(provider(deps).clientInformation()?.client_id).toBe("dcr-stale");
+		expect(provider(deps).tokens()?.refresh_token).toBe("RT-stale");
+
+		// When: the flow's code exchange succeeds without issuing a refresh token.
+		await flow.saveTokens({ access_token: "AT-fresh", token_type: "Bearer", issuer: "https://as.example" });
+
+		// Then: the new client replaces the old one, and the old client's refresh token is gone with it.
+		expect(store.read()?.clientInfo?.client_id).toBe("dcr-fresh");
 		expect(store.read()?.refreshToken).toBeUndefined();
+		expect(store.read()?.accessToken).toBe("AT-fresh");
+	});
+
+	it("an abandoned re-auth on another redirect URI keeps the signed-in client refreshing until the new one completes", async () => {
+		// Given: a completed /mcp auth on a loopback port, holding a working refresh token.
+		const { fixture, deps, store } = await harness();
+		expect((await interactiveAuth(deps)).authorizeStatus).toBe(302);
+		const signedIn = store.read();
+		expect(signedIn?.refreshToken).toMatch(/^SENTINEL_RT_/);
+
+		// When: the paste flow starts (a new redirect URI, so a new registration) and the user walks away.
+		const url = new URL(await runAuthStart(deps));
+		expect((await fixture.getLog()).registrations).toHaveLength(2);
+
+		// Then: the signed-in client and its refresh token are still stored, and a background refresh still works.
+		expect(store.read()?.clientInfo?.client_id).toBe(signedIn?.clientInfo?.client_id);
+		expect(store.read()?.refreshToken).toBe(signedIn?.refreshToken);
+		await store.update((current) => ({ ...current, expiresAt: 0 }));
+		const refreshed = await new McpRefreshManager(provider(deps)).refresh();
+		expect(refreshed.access_token).toMatch(/^SENTINEL_AT_/);
+		expect(refreshed.access_token).not.toBe(signedIn?.accessToken);
+
+		// When: the abandoned flow is finished after all.
+		const location = (await fetch(url, { redirect: "manual" })).headers.get("location");
+		expect(location).not.toBeNull();
+		await runAuthComplete(deps, location ?? "");
+
+		// Then: only now does its client replace the old one, with the refresh token issued to it.
+		const registrations = (await fixture.getLog()).registrations;
+		expect(store.read()?.clientInfo?.client_id).toBe(registrations.at(-1)?.clientId);
+		expect(store.read()?.refreshToken).toMatch(/^SENTINEL_RT_/);
+		expect(store.read()?.refreshToken).not.toBe(signedIn?.refreshToken);
+	});
+
+	it("client_credentials sends no authorize request, so it uses a stored registration made for another redirect URI", async () => {
+		// Given: a background connect registered the placeholder, and /mcp auth runs with a configured callback URL.
+		const { fixture, deps, store } = await harness();
+		await backgroundConnect(deps);
+		deps.config = { ...deps.config, oauth: { flow: "client_credentials" } };
+		deps.callbackUrl = "http://127.0.0.1:9/callback";
+
+		// When: the client_credentials grant runs.
+		await runAuth(deps);
+
+		// Then: it used the stored client, registered nothing, and stored the machine token.
+		const log = await fixture.getLog();
+		expect(log.registrations).toHaveLength(1);
+		expect(log.requests.some((entry) => entry.grantType === "client_credentials")).toBe(true);
+		expect(store.read()?.accessToken).toMatch(/^SENTINEL_AT_/);
+	});
+
+	it("a registration is matched by the redirect URI the client sent, not the server's rewritten echo", async () => {
+		// Given: a flow for a loopback port, against a server that echoes `localhost` for `127.0.0.1`.
+		const { deps } = await harness();
+		const flow = provider(deps, "http://127.0.0.1:2/callback");
+
+		// When: the flow registers and the server's response rewrites the redirect URI.
+		await flow.saveClientInformation({ client_id: "dcr-echo", redirect_uris: ["http://localhost:2/callback"] });
+
+		// Then: the flow still uses the client it just registered for its own redirect URI.
+		expect(flow.clientInformation()?.client_id).toBe("dcr-echo");
 	});
 
 	it("background connects keep the stored registration so an existing sign-in keeps refreshing", async () => {
