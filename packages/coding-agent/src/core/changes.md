@@ -1,3 +1,122 @@
+## 2026-11-10 - Promote a speculative in-memory session without rebuilding it (senpi#6344)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: `enablePersistence()` allocates the existing in-memory session's default file asynchronously, preserving its identity and buffered transcript.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `persistSession()` promotes that manager and acquires the existing runtime file hold.
+- `packages/coding-agent/src/core/open-timing.ts`: `withoutOpenTiming()` drops speculative build timing across its asynchronous construction scope.
+
+### Why
+
+- A parked runtime must hold no session-list file or file lease until a caller claims it. Rebuilding to gain persistence would defeat the claim's purpose. A crash before claim leaves no durable transcript to restore.
+- `packages/coding-agent/src/core/session-manager.ts` preserves the buffered identity and entries; `packages/coding-agent/src/core/agent-session-runtime.ts` acquires the same file hold as ordinary construction; `packages/coding-agent/src/core/open-timing.ts` prevents unclaimed builds from being charged to a caller.
+
+### Why an extension could not handle it
+
+- Persistence and writer registration belong to `packages/coding-agent/src/core/session-manager.ts`; the file hold belongs to `packages/coding-agent/src/core/agent-session-runtime.ts`; construction timing belongs to `packages/coding-agent/src/core/open-timing.ts`.
+
+### Expected merge conflict zones
+
+- LOW: the persistence accessor area in `packages/coding-agent/src/core/session-manager.ts`, the file-hold methods in `packages/coding-agent/src/core/agent-session-runtime.ts`, and timer creation in `packages/coding-agent/src/core/open-timing.ts`.
+
+## 2026-11-09 - Refused engine-turn messages follow the transcript-failure contract (senpi#2972)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_recordRefusedEngineTurnMessage` now applies the main persistence path's contract to every refused message, not just deliveries — the message leaves `agent.state.messages` so the context matches the file, the failure is recorded via `TranscriptWriteFailures.record`, logged as `transcript_write_failed`, and emitted as a `transcript_write_failed` event. `_appendCustomMessage` only treats a failure of the write itself (`appendCustomMessageEntry`) as refused: bookkeeping (written ticket, persist-watcher settlement, revision) runs before any notification, and each of the `entry_appended` / `message_start` / `message_end` notifications is guarded on its own and logged as `custom_message_listener_failed` when it throws, so a throwing listener can neither leave a persisted delivery unsettled nor suppress a later notification (senpi#2972).
+
+### Why
+
+- A refused non-delivery message on the engine-turn pause path stayed in context with no failure record, so the context diverged from the file; and a listener throwing after a successful write made a cross-session delivery already on disk get taken out of context and settled as failed, so its sender redelivered a message that was already there (senpi#2972).
+
+### Why an extension could not handle it
+
+- The pause path and the custom-message append live in the session core (`AgentSession`); no extension hook runs between the file write and the refused/delivered settlement.
+
+### Expected merge conflict zones
+
+- LOW: the catch block of `_recordRefusedEngineTurnMessage` and the post-write tail of `_appendCustomMessage`.
+
+## 2026-11-10 - A relayed peer-agent delivery runs under the receiving session's own preset (senpi#6305)
+
+### What changed
+
+- `turn-origin.ts`: a fourth turn origin, `peer`, for a turn opened by an agent's relayed delivery on a delegated connection whose host-mode delegation the forwarder granted `peer_agent`. `decidingTurnIsDelegated` is false for it, so the permission decision treats the turn as the session's own work (a client-named preset, a live parent, the host default) and never runs it above that preset.
+
+## 2026-11-09 - generate_image joins the eval-only policy (senpi#6272, closes #6269)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `evalHelperCall` renders `tool.generate_image({ prompt: "..." })` for `generate_image`, so the eval-only paragraph of the system prompt, the redirect hint a direct call gets, and the `tool_search` answer for a query naming the tool all show the real argument instead of the generic `{ ... }` sample.
+
+### Why
+
+- `generate_image` now declares `exposure: "eval"` (imagegen `changes.md`, this PR). The policy machinery already handled declared eval tools; only the sample call was generic.
+
+### Why an extension could not handle it
+
+- The sample-call table is private to `AgentSession`'s prompt rebuild and hint publication; an extension cannot reach it.
+
+### Expected merge conflict zones
+
+- LOW: the one added line in `evalHelperCall`.
+
+## 2026-11-10 - Fable 5.2 default fallback chain (senpi#3893)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/settings.ts`: `DEFAULT_FALLBACK_CHAINS` ships `"claude-fable-5-2": ["claude-opus-5-5", "claude-opus-5"]` beside Fable 5.1 and Fable 5, with bare rungs (senpi#4103). The launch-gated key is removed.
+
+### Why
+
+- Fable 5.2 is released and gets the same Opus-only step-down as the earlier Fable models.
+
+### Why an extension could not handle it
+
+- The shipped defaults are resolved by `settings-manager.ts` before extensions run.
+
+### Expected merge conflict zones
+
+- LOW: the `DEFAULT_FALLBACK_CHAINS` literal.
+
+## 2026-11-09 - Hide the console window for win32-reachable spawns in core (senpi#3965)
+
+### What changed
+
+- `packages/coding-agent/src/core/exec.ts`: `execCommand` now passes `windowsHide: true`.
+- `packages/coding-agent/src/core/share/share-gh.ts`: the `gh gist create` spawn now passes `windowsHide: true`.
+
+### Why
+
+- Both spawn console-subsystem exes (arbitrary commands via `execCommand`, `gh` on Windows); without `windowsHide` each launch can flash its own console window.
+
+### Why an extension could not handle it
+
+- Both spawns live in core helpers, not in an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: one options line each in two core files.
+
+## 2026-11-09 - Pooled-account usability follows the pool's own block rule (senpi#6254)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-accounts.ts`: `accountCanServe(account, modelId, now)`: an account can serve a model when it is not blocked, not signed out, and no live block binds that model by the pool's own matcher.
+- `packages/coding-agent/src/core/agent-session.ts`: `_pooledAccountHealth` uses `accountCanServe` instead of its own regex.
+
+### Why
+
+- The inline rule treated every model-block key as an unescaped family pattern, so an exact-id block on `claude-opus-4-5` also blocked `claude-opus-4-5-thinking`, and it counted signed-out accounts as usable although the pool skips them.
+
+### Why an extension could not handle it
+
+- The turn-boundary hold lives in the session's private retry-fallback state.
+
+### Expected merge conflict zones
+
+- LOW: `_pooledAccountHealth` in `AgentSession`.
+
 ## 2026-11-08 - Engine-stamped delivery provenance and a delivery's turn origin (senpi#6233)
 
 ### What changed

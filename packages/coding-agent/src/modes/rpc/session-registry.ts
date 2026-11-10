@@ -35,6 +35,7 @@ export {
 /** Process-local lifecycle owner for multi-session RPC runtimes. */
 export class RpcSessionRegistry {
 	readonly supportsCompact: (profile?: RpcSessionLaunchProfile) => boolean;
+	readonly supportsParkClaim = true;
 	private readonly entries = new Map<string, RpcSessionEntry>();
 	private readonly reservations = new Set<string>();
 	private readonly pendingClaims: PendingClaims = new Map();
@@ -76,8 +77,9 @@ export class RpcSessionRegistry {
 			closeGraceMs: this.closeGraceMs,
 			get: (handle) => this.entries.get(handle),
 			delete: (handle) => {
+				const speculative = this.entries.get(handle)?.speculative;
 				const deleted = this.entries.delete(handle);
-				this.options.onSizeChange?.(this.entries.size);
+				if (!speculative) this.options.onSizeChange?.(this.size);
 				return deleted;
 			},
 			releaseReservation: async (key) => {
@@ -100,7 +102,27 @@ export class RpcSessionRegistry {
 
 	/** Number of live entries, including ones still opening or closing. */
 	get size(): number {
-		return this.entries.size;
+		return [...this.entries.values()].filter((entry) => !entry.speculative).length;
+	}
+
+	/** Commit the ledger's exclusive claim after its existing runtime has acquired a persistent file. */
+	async claimPark(handle: string, retainOnDisconnect: boolean): Promise<OpenRpcSession> {
+		const entry = this.entries.get(handle);
+		if (!entry?.speculative || entry.state !== "open" || !entry.runtime)
+			throw new RpcSessionRegistryError("unknown_session");
+		await entry.runtime.persistSession();
+		// No await between the duplicate decision and publication: an ordinary open may have
+		// reserved this identity while persistence was being enabled.
+		for (const other of this.entries.values())
+			if (!other.speculative && other.durableSessionId === entry.runtime.session.sessionId)
+				throw new RpcSessionRegistryError("session_id_in_use");
+		entry.speculative = false;
+		entry.attachments = 1;
+		entry.retainOnDisconnect = retainOnDisconnect;
+		entry.lastCommandAt = this.now();
+		this.syncRuntimeMetadata();
+		this.options.onSizeChange?.(this.size);
+		return { sessionId: handle, durableSessionId: entry.runtime.session.sessionId, sessionPath: entry.sessionPath };
 	}
 
 	/** Daemon-family identities come from the endpoint's claims and generation registry. */
@@ -189,21 +211,23 @@ export class RpcSessionRegistry {
 	list(): RpcSessionRow[] {
 		this.syncRuntimeMetadata();
 		const now = this.now();
-		return [...this.entries].map(([sessionId, entry]) => ({
-			sessionId,
-			durableSessionId: entry.durableSessionId,
-			sessionPath: entry.sessionPath,
-			cwd: entry.cwd,
-			name: entry.runtime?.session.sessionManager.getSessionName(),
-			kind: entry.kind,
-			context: publishedSessionContext(entry.context, entry.contextOverlay),
-			// A closing entry has already released its last attachment; never publish that as negative.
-			attachments: Math.max(0, entry.attachments),
-			retain_on_disconnect: entry.retainOnDisconnect === true,
-			status: entry.state === "quarantined" ? "closing" : entry.state,
-			idleMs: Math.max(0, now - entry.lastCommandAt),
-			tool_child: entry.runtime?.session.toolChildRow() ?? { state: "none" },
-		}));
+		return [...this.entries]
+			.filter(([, entry]) => !entry.speculative)
+			.map(([sessionId, entry]) => ({
+				sessionId,
+				durableSessionId: entry.durableSessionId,
+				sessionPath: entry.sessionPath,
+				cwd: entry.cwd,
+				name: entry.runtime?.session.sessionManager.getSessionName(),
+				kind: entry.kind,
+				context: publishedSessionContext(entry.context, entry.contextOverlay),
+				// A closing entry has already released its last attachment; never publish that as negative.
+				attachments: Math.max(0, entry.attachments),
+				retain_on_disconnect: entry.retainOnDisconnect === true,
+				status: entry.state === "quarantined" ? "closing" : entry.state,
+				idleMs: Math.max(0, now - entry.lastCommandAt),
+				tool_child: entry.runtime?.session.toolChildRow() ?? { state: "none" },
+			}));
 	}
 
 	private syncRuntimeMetadata(): void {

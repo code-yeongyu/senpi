@@ -4,6 +4,7 @@ import { type Message, normalizeContext } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
+import { heldResponse } from "../../fixtures/faux-provider/step-commit.ts";
 import { createReferenceDriver, projectHistoryRows, type ReferenceDriver } from "./reference-driver.ts";
 
 const assistantTexts = (messages: readonly AgentMessage[]): string[] =>
@@ -897,6 +898,222 @@ describe("CK22 reference hosted session driver (custody 15.1, 15.2)", () => {
 		await driver.settle();
 
 		expect(driver.stop()).toBe("nothing-latched");
+	});
+
+	it("refuses a dispatch held across an eviction before a signal-insensitive tool runs (15.1(d))", async () => {
+		const effects: string[] = [];
+		const uncooperative: AgentTool = {
+			name: "uncooperative",
+			label: "Uncooperative",
+			description: "Ignores its abort signal.",
+			parameters: Type.Object({}),
+			execute: async (id) => {
+				effects.push(id);
+				return { content: [{ type: "text", text: "ran" }], details: {} };
+			},
+		};
+		driver = await createReferenceDriver({ tools: [uncooperative] });
+		driver.setResponses([
+			fauxAssistantMessage([fauxToolCall("uncooperative", {}, { id: "stale-1" })], { stopReason: "toolUse" }),
+		]);
+		const hold = driver.inject.pauseNextTool();
+
+		const run = driver.prompt("go");
+		await hold.reached;
+		await driver.evict();
+		await run;
+
+		expect(effects, "a discarded generation must be refused before the tool runs").toEqual([]);
+		expect(driver.toolLedger).toEqual([
+			{ toolName: "uncooperative", toolCallId: "stale-1", generation: 1, outcome: "killed" },
+		]);
+	});
+
+	it("cancels the active step before the abort, so its rejected commit never redials (W14, active)", async () => {
+		driver = await createReferenceDriver();
+		const held = heldResponse(fauxAssistantMessage([fauxText("must not commit")]));
+		driver.setResponses([held.response, fauxAssistantMessage([fauxText("must not dial")])]);
+		driver.inject.nextCommit("reject");
+
+		const run = driver.prompt("go");
+		await held.entered;
+		expect(driver.stop()).toBe("cancelled-active-step");
+		held.release();
+		await run;
+		await driver.settle();
+		await driver.evict();
+		await driver.resume();
+
+		expect(driver.counters.providerCalls, "a cancelled active step is never redialed").toBe(1);
+		const steps = driver.rows.filter((row) => row.kind === "step");
+		expect(steps.map((row) => row.message)).toMatchObject([{ role: "assistant", stopReason: "aborted" }]);
+		expect(driver.stop()).toBe("nothing-latched");
+	});
+
+	it("resumes a committed tool call through the public pipeline, before queued steering (S13)", async () => {
+		const trace: string[] = [];
+		const effects: string[] = [];
+		const failing: AgentTool = {
+			name: "failing",
+			label: "Failing",
+			description: "Fails with details.",
+			parameters: Type.Object({}),
+			execute: async (id) => {
+				effects.push(id);
+				return { content: [{ type: "text", text: "tool failed" }], details: { attempt: id }, isError: true };
+			},
+		};
+		driver = await createReferenceDriver({
+			tools: [failing],
+			extensionFactories: [
+				(pi) => {
+					pi.on("tool_call", (event) => {
+						trace.push(`call:${event.toolCallId}`);
+					});
+					pi.on("tool_result", (event) => {
+						trace.push(`result:${event.toolCallId}:${event.isError}`);
+					});
+					pi.on("message_end", (event) => {
+						if (event.message.role === "toolResult") trace.push(`end:${event.message.toolCallId}`);
+						if (event.message.role === "user") trace.push("input");
+					});
+				},
+			],
+		});
+		driver.setResponses([
+			fauxAssistantMessage([fauxToolCall("failing", {}, { id: "pending-1" })], { stopReason: "toolUse" }),
+			fauxAssistantMessage([fauxText("done")]),
+		]);
+		const hold = driver.inject.pauseNextTool();
+
+		const run = driver.prompt("go");
+		await hold.reached;
+		await driver.enqueue({ id: "steer-1", kind: "steering", text: "turn left" });
+		await driver.evict();
+		await run;
+		const discarded = trace.length;
+
+		await driver.resume();
+		await driver.settle();
+
+		expect(effects, "the committed tool runs exactly once, on the rebuilt instance").toEqual(["pending-1"]);
+		expect(trace.slice(discarded), "a resumed call fires the live hooks, and steering follows it").toEqual([
+			"call:pending-1",
+			"result:pending-1:true",
+			"end:pending-1",
+			"input",
+		]);
+		const resultRow = driver.rows.findLast((row) => row.kind === "step" && row.message.role === "toolResult");
+		expect(resultRow?.message, "the committed result keeps the tool's own error and details").toMatchObject({
+			isError: true,
+			details: { attempt: "pending-1" },
+		});
+		expect(
+			driver.callLog()[1]?.context.messages.filter((message) => message.role === "toolResult"),
+			"the model is continued from the recovered result, never before it",
+		).toMatchObject([{ toolCallId: "pending-1" }]);
+		expect(driver.consumeJournal.map((entry) => entry.messageId)).toEqual(["steer-1"]);
+	});
+
+	// A stop of the current generation kills a held call through its signal, the same contract as a live
+	// dispatch ("kills it through its signal" above); only a discarded generation is refused before the tool runs.
+	it("stop() while a recovered call is held kills it and dials nothing more (#6249)", async () => {
+		const effects: string[] = [];
+		const aborted: string[] = [];
+		const record: AgentTool = {
+			name: "record",
+			label: "Record",
+			description: "Records an effect unless aborted.",
+			parameters: Type.Object({}),
+			execute: async (id, _params, signal) => {
+				if (signal?.aborted) {
+					aborted.push(id);
+					throw new Error("aborted before effect");
+				}
+				effects.push(id);
+				return { content: [{ type: "text", text: "recorded" }], details: {} };
+			},
+		};
+		driver = await createReferenceDriver({ tools: [record] });
+		driver.setResponses([
+			fauxAssistantMessage([fauxToolCall("record", {}, { id: "replay-1" })], { stopReason: "toolUse" }),
+			fauxAssistantMessage([fauxText("must not dial")]),
+		]);
+		const first = driver.inject.pauseNextTool();
+		const run = driver.prompt("go");
+		await first.reached;
+		await driver.evict();
+		await run;
+
+		const replay = driver.inject.pauseNextTool();
+		const resumed = driver.resume();
+		await replay.reached;
+		expect(driver.stop()).toBe("cancelled-active-step");
+		await resumed;
+		await driver.settle();
+
+		expect(aborted, "the replayed call sees the stop's abort").toEqual(["replay-1"]);
+		expect(effects, "a stopped replay produces no tool effect").toEqual([]);
+		expect(driver.toolLedger.at(-1), "the replayed call is recorded as killed").toMatchObject({
+			toolCallId: "replay-1",
+			generation: 2,
+			outcome: "killed",
+		});
+		expect(driver.counters.providerCalls, "a stop during recovery never continues the model").toBe(1);
+	});
+
+	it("steering queued before a stopped recovery waits for the next prompt, as after a live stop (#6249)", async () => {
+		const record: AgentTool = {
+			name: "record",
+			label: "Record",
+			description: "Records an effect unless aborted.",
+			parameters: Type.Object({}),
+			execute: async (_id, _params, signal) => {
+				if (signal?.aborted) throw new Error("aborted before effect");
+				return { content: [{ type: "text", text: "recorded" }], details: {} };
+			},
+		};
+		driver = await createReferenceDriver({ tools: [record] });
+		driver.setResponses([
+			fauxAssistantMessage([fauxToolCall("record", {}, { id: "replay-1" })], { stopReason: "toolUse" }),
+			fauxAssistantMessage([fauxText("answered")]),
+		]);
+		const first = driver.inject.pauseNextTool();
+		const run = driver.prompt("go");
+		await first.reached;
+		await driver.enqueue({ id: "steer-1", kind: "steering", text: "turn left" });
+		await driver.evict();
+		await run;
+
+		const replay = driver.inject.pauseNextTool();
+		const resumed = driver.resume();
+		await replay.reached;
+		expect(driver.stop()).toBe("cancelled-active-step");
+		await resumed;
+		await driver.settle();
+		expect(driver.counters.providerCalls, "the stop dials nothing, steering included").toBe(1);
+		expect(
+			driver.inbox.map((entry) => entry.consumedBy),
+			"the steering is parked, not dropped",
+		).toEqual([undefined]);
+
+		await driver.prompt("next");
+		await driver.settle();
+		expect(driver.counters.providerCalls).toBe(2);
+		expect(
+			driver.inbox.map((entry) => entry.consumedBy),
+			"the next prompt consumes it once",
+		).toEqual([driver.generation]);
+		const seen = driver
+			.callLog()[1]
+			?.context.messages.flatMap((message) =>
+				message.role === "user" && typeof message.content !== "string"
+					? message.content.flatMap((part) => (part.type === "text" ? [part.text] : []))
+					: message.role === "user"
+						? [message.content]
+						: [],
+			);
+		expect(seen, "the next request carries the parked steering").toContain("turn left");
 	});
 
 	it("never forwards an event the discarded instance emits after the latch", async () => {

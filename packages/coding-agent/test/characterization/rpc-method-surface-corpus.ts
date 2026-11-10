@@ -12,7 +12,7 @@ export type Opened = { sessionId: string; state: { sessionFile: string } };
 export const NO_ID = "00000000-0000-7000-8000-000000000000";
 /** Host commands carry no `sessionId` routing envelope; every other method is routed to the fresh session. */
 const HOST_METHODS = new Set(
-	"get_protocol_info open_session close_session release_session unload_session detach_connection get_subscription_limits list_sessions subscribe_sessions unsubscribe_sessions set_session_context warm attach_session release_attachment reclaim_session move_session list_hands select_hand".split(
+	"get_protocol_info open_session park_session claim_session close_session release_session unload_session detach_connection get_subscription_limits list_sessions subscribe_sessions unsubscribe_sessions set_session_context warm attach_session release_attachment reclaim_session move_session list_hands select_hand".split(
 		" ",
 	),
 );
@@ -41,6 +41,8 @@ export const TODAY: { readonly [M in RpcCommand["type"]]: string } = {
 		'{"subscriptionId":"$NO"} => no:unknown_subscription:unknown_subscription: this connection holds no subscription with that id',
 	set_session_context: '{"sessionId":"$SID","patch":{"lane":"x14"}} => ok{context}',
 	warm: "ok{state}",
+	park_session: '{"cwd":"$TMP","context":{"role":"speculative"}} => ok{state}',
+	claim_session: '{"cwd":"$TMP","context":{"role":"missing"}} => ok{claimed}',
 	attach_session:
 		'{"sessionId":"$SID","durableSessionId":"$NO"} => no:session_identity_mismatch:session_identity_mismatch',
 	release_attachment: '{"sessionId":"$SID"} => ok{deferred}',
@@ -141,6 +143,9 @@ export const TODAY: { readonly [M in RpcCommand["type"]]: string } = {
 	get_project_settings: "ok{cwd,error,exists,path,projectTrusted,settings}",
 	set_project_setting:
 		'{"key":"1x14","value":true} => no:invalid_argument:set_project_setting requires an identifier \'key\' and a JSON \'value\' (null removes the key).',
+	read_project_file: '{"path":"AGENTS.md"} => ok{content,cwd,etag,exists,path,projectTrusted}',
+	write_project_file:
+		'{"path":"x14.ts","content":"x","ifEtag":null} => no:project_file_not_allowed:x14.ts is not an instruction file inside this workspace (AGENTS.md, CLAUDE.md or .omo/rules/**).',
 	extension_request: '{"name":"x14-none"} => no::Unknown extension RPC request: x14-none',
 	"eval_cells.list": "ok:object",
 	"eval_cells.peek": '{"cellId":"$NO"} => no:eval_cell_not_found:Unknown detached eval cell "<uuid>"',

@@ -1,3 +1,104 @@
+## 2026-11-10 - The one-shot cache pin reads the lifetime from loaded settings files (senpi#2988)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/claude-settings-env.ts`: new `resolveClaudeSettingsEnv` reads the effective `env` block through the SDK's own `resolveSettings` merge engine, for exactly the sources the attempt loads; `resolveQuerySettingsEnv` picks those sources (an explicit `settingSources` list, or user/project in preset-append ambient mode) and resolves to nothing otherwise. A merge failure returns undefined instead of failing the turn.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/prompt-cache-ttl.ts`: `pinOneShotPromptCacheTtl` takes the settings env as a fourth input. Precedence is settings env, then explicit env, then the lane default — Claude Code writes each settings source's env over the process env, and launch-env keys are only protected when the session is host-orchestrated, so a settings `FORCE_PROMPT_CACHING_5M` / `CLAUDE_CODE_PROMPT_CACHE_TTL` beats both the process env and `options.env` as well as the managed lanes' 1h assumption, and an ambient lane pins a settings lifetime instead of adding no breakpoint.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/stream.ts`: resolves the settings env once per stream and passes it to the pin only for attempts whose `settingSources` are non-empty.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/sdk-boundary.lazy.ts`: the lazy SDK module also loads `resolveSettings`.
+
+### Why
+
+- The pin only saw process env and query-options env, so a lifetime set in a loaded settings file was invisible: on a managed lane the pin defaulted to 1h while Claude Code used the settings 5m, and the 1h breakpoint could then be rejected by the Messages API — the exact failure senpi#2982 fixed for explicit env.
+
+### Why an extension could not handle it
+
+- This builtin owns the one-shot prompt rebuild, the cache breakpoint, and the SDK boundary the settings merge comes through.
+
+### Expected merge conflict zones
+
+- LOW: `prompt-cache-ttl.ts` (the pin signature) and `stream.ts` (only the pin call site); `claude-settings-env.ts` is new, and `sdk-boundary.lazy.ts` only gains one picked member.
+
+## 2026-11-10 - Claude Code refuses a request only past the window senpi compacts against (senpi#6303)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/context-window.ts`: new exported `claudeCodeMaxContextTokens(window, outputTokens = cap)`, built on the module-local `CLAUDE_CODE_OUTPUT_RESERVE_CAP` (20k) and `CLAUDE_CODE_BLOCKING_BUFFER` (3k), which returns `window + min(outputTokens, 20k) + 3k`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/query-environment.ts`: while senpi owns compaction, `CLAUDE_CODE_MAX_CONTEXT_TOKENS` is `claudeCodeMaxContextTokens(plannedContextWindow(model))` instead of the bare planned window.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-lane.ts`: the one-shot 200k retry after a refused `[1m]` request passes `claudeCodeMaxContextTokens(200k, outputReserveTokens)`, the output budget it already sends as `CLAUDE_CODE_MAX_OUTPUT_TOKENS`.
+
+### Why
+
+- With `DISABLE_COMPACT` set, Claude Code takes `CLAUDE_CODE_MAX_CONTEXT_TOKENS` as the model's window, but it refuses a request on its own, with a synthetic `Prompt is too long` (`invalid_request`) and no API call, once the conversation passes that window minus its output reserve (the request's output budget, capped at 20k) minus a 3k buffer (`But()` and `Woo` in Claude Code 2.1.321). Handing it the bare planned window put that point 23k below the window senpi compacts against: senpi's hard valve on a 200k window is 200k minus a 16,384 reserve (183,616), and Claude Code refused from 177k. Every turn in between failed in about 30 ms, and the recovery compaction's summarization request, which carries the same history through the same lane, failed the same way. A session on a 200k row (`claude-haiku-4-5`, `claude-opus-4-5`, a legacy id after a 1M refusal, or a models.json row declaring 200k) looped between "Context overflow detected, compacting" and `Prompt is too long`. Windows of 575k and up were not hit only because the scaled reserve (4% of the window, capped at 49,152) already exceeds 23k.
+- senpi keeps its own output reserve below the window, so Claude Code's second reserve only moved its refusal point inside senpi's plan. The variable now carries the window plus Claude Code's reserve, and Claude Code's refusal point is the window itself. For the main path the cap is added whatever the model's output budget: Claude Code reserves its own default there, which is at least 20k for every Claude model, and a larger addition only lets a request reach the API's own window check, whose `prompt is too long: N tokens > M maximum` senpi's overflow recovery already parses.
+- The value is part of the resident-process fingerprint (`session-sync.ts`), so a resident Claude Code process restarts once at the new value.
+
+### Why an extension could not handle it
+
+- This builtin owns the Claude Code subprocess environment and the 200k retry.
+
+### Expected merge conflict zones
+
+- LOW: `context-window.ts` (new constants and helper after `CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW`), the `CLAUDE_CODE_MAX_CONTEXT_TOKENS` line in `query-environment.ts`, and the `standardWindow` env block in `auth-lane.ts`. Tests that pin the variable (`3801-*`, `4065-*`, `anthropic-subscription-options`, `prompt-presets-claude-fable-5-5`) now compute it through `claudeCodeMaxContextTokens`.
+
+## 2026-11-10 - Floor table no longer reads the Fable 5.5 launch block (senpi#3893)
+
+### What changed
+
+- `executable-model-support.ts`: `OBSERVED_CLAUDE_CODE_MODEL_FLOORS` drops the launch-gated spread. No floor is recorded for `claude-fable-5-2` because none has been observed. A comment names the line to add when the API rejects an older Claude Code for it.
+
+### Why
+
+- The table is append-only from observed rejections; the provisional launch id is retired.
+
+### Why an extension could not handle it
+
+- The table lives in this builtin.
+
+### Expected merge conflict zones
+
+- LOW: the `OBSERVED_CLAUDE_CODE_MODEL_FLOORS` literal.
+
+## 2026-11-09 - An aborted turn releases the anthropic-subscription pump at once (senpi#2974)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-turn-attempt.ts`: `createSessionTurnAttempt` passes an abort-aware `writable()` to the pump: the wait races the queue's `writable()` against a promise that resolves when the turn's abort signal fires. An abort while the consumer is stalled releases the pump immediately, so the terminal result is read and the interrupt receipt decides keep-or-close instead of the 1 s abort grace timer firing first and closing the session as `abort_uncertain`. The grace timer stays as the backstop for an interrupt that never delivers a terminal result.
+
+### Why
+
+- #2973 made the session stream apply backpressure: the pump awaits the turn's `writable()` before reading the next SDK message. When a turn was aborted while its consumer was not reading, the pump waited on a full queue; if that lasted longer than `SESSION_TURN_ABORT_GRACE_MS` (1 s), the grace timer settled the turn as `abort_uncertain` and closed the session, instead of taking the interrupted-and-kept path the interrupt receipt (`still_queued: []`) entitled it to (senpi#2974).
+
+### Why an extension could not handle it
+
+- The pump's backpressure wait and the turn's abort wiring both live in this builtin's session turn path; no extension API exposes the pump's `writable()` wait or the abort signal it must race against.
+
+### Expected merge conflict zones
+
+- LOW: the `writable` closure in `createSessionTurnAttempt` only; no other caller of `submitSessionTurn` passes a `writable`.
+
+## 2026-11-09 - `/claude-account` lists one readable block per account (senpi#6288)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/account-list.ts` (new): `formatClaudeAccountList` maps each slot to a list entry: label, tags (pin with its source, `next turn` for the affinity pick, `from environment`), status rows (account block, login-expired guidance, per-model blocks) and the account's limit readings.
+- `packages/coding-agent/src/core/extensions/builtin/account-list-view.ts` (new): provider-neutral plain-text renderer. One header line per account, aligned `label  value` rows, relative times with a short local clock (`formatWhen`), and list wording for account blocks (`describeBlockStatus`).
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/account-command.ts`: `showAccounts` still resolves pin and affinity pick, then notifies `formatClaudeAccountList`; the `|`-row and status helpers moved out.
+- `packages/coding-agent/src/core/subscription-limits/limit-summary.ts`: the reading-age helper is exported as `readingAge`; `describeAccountLimits` output is unchanged.
+- `packages/coding-agent/src/core/credential-pool/model-scope.ts`: `describeModelBlocks` (UTC ISO wording) is removed; `/claude-account` was its only caller.
+
+### Why
+
+- The old list put every account on one `|`-joined row, packed all limit windows into one line that repeated a full date with year and time zone per window, printed per-model blocks as UTC ISO, and wrapped to column 1 at 80 and 120 columns (senpi#6288, first item of senpi#5100).
+
+### Why an extension could not handle it
+
+- This is the builtin extension's own command output; no core path changes.
+
+### Expected merge conflict zones
+
+- LOW: `showAccounts` in `account-command.ts` and its import block; the `/claude-account` cases of `regressions/4092-account-list-block-reason`, `regressions/5350-login-expired-recovery` and `regressions/omo-9234-account-list-limits`.
+
 ## 2026-11-06 - A stored Claude account with no name is a sign-in state, not a crypto TypeError (oh-my-openagent#12228)
 
 ### What changed

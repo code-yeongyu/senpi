@@ -16,7 +16,12 @@ export function observeLifecycleDelivery(record: object): object {
 	const data = record.data;
 	if (typeof data !== "object" || data === null) return record;
 	if (record.command === "get_state") return { ...record, data: observeState(data) };
-	if (record.command === "open_session" && "state" in data && typeof data.state === "object" && data.state !== null)
+	if (
+		(record.command === "open_session" || record.command === "claim_session") &&
+		"state" in data &&
+		typeof data.state === "object" &&
+		data.state !== null
+	)
 		return { ...record, data: { ...data, state: observeState(data.state) } };
 	return record;
 }

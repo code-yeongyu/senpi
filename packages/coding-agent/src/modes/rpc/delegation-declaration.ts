@@ -15,10 +15,12 @@ export interface Principal {
 	readonly deviceId: string;
 	readonly deviceName?: string;
 	readonly conn?: string;
+	/** The forwarder states this device is the host's own account (senpi#6342); fixed for the record's life. */
+	readonly sameAccount?: true;
 }
 
 /** The connection roles a host-mode declaration may carry (omo-relay-daemon#307). */
-const DECLARABLE_ROLES: ReadonlySet<string> = new Set(["interactive_user", "task_parent"]);
+const DECLARABLE_ROLES: ReadonlySet<string> = new Set(["interactive_user", "task_parent", "peer_agent"]);
 
 export interface Declaration {
 	readonly principal: Principal;
@@ -38,6 +40,8 @@ export function parseDeclaration(record: object): Declaration | string {
 	if (deviceName !== undefined && !boundedString(deviceName, MAX_PRINCIPAL_FIELD))
 		return "principal.deviceName must be 1-256 characters";
 	if (conn !== undefined && !boundedString(conn, MAX_CONN_FIELD)) return "principal.conn must be 1-64 characters";
+	const sameAccount: unknown = Reflect.get(principal, "sameAccount");
+	if (sameAccount !== undefined && sameAccount !== true) return "principal.sameAccount must be true when present";
 	const granted: unknown = Reflect.get(record, "granted");
 	if (!Array.isArray(granted)) return "granted must be an array of method classes";
 	const classes = new Set<RpcMethodClass>();
@@ -54,13 +58,16 @@ export function parseDeclaration(record: object): Declaration | string {
 			deviceId: deviceId as string,
 			...(deviceName === undefined ? {} : { deviceName: deviceName as string }),
 			...(conn === undefined ? {} : { conn: conn as string }),
+			...(sameAccount === true ? { sameAccount: true as const } : {}),
 		},
 		granted: classes,
 	};
 }
 
 export function samePrincipal(a: Principal, b: Principal): boolean {
-	return a.deviceId === b.deviceId && a.deviceName === b.deviceName && a.conn === b.conn;
+	return (
+		a.deviceId === b.deviceId && a.deviceName === b.deviceName && a.conn === b.conn && a.sameAccount === b.sameAccount
+	);
 }
 
 function parseRoles(value: unknown): ReadonlySet<string> | undefined | string {

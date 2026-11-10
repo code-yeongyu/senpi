@@ -12,6 +12,47 @@
 
 ### Removed
 
+## [2026.11.10-2] - 2026-11-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.10-1] - 2026-11-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- `agent()`, `output()` and the eval prompt's spawn helpers keep working when the task tools are eval-only (`exposure: "eval"`, withheld from the model while eval exists), and an eval-only tool's kernel prelude stays loaded ([#6276](https://github.com/code-yeongyu/senpi/pull/6276))
+
+### Removed
+
+## [2026.11.10] - 2026-11-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- The bundled Bun skill no longer tells agents to re-spawn Bun as `process.execPath` unconditionally: inside a compiled host that path is the host binary, so the skill now limits it to standalone Bun and directs compiled hosts to resolve `bun` through PATH ([code-yeongyu/oh-my-openagent#12569](https://github.com/code-yeongyu/oh-my-openagent/issues/12569), [#6232](https://github.com/code-yeongyu/senpi/pull/6232))
+- Hide the console window for installer and kernel subprocess spawns on Windows ([#3965](https://github.com/code-yeongyu/senpi/issues/3965))
+
+### Removed
+
 ## [2026.11.9-2] - 2026-11-09
 
 ### Breaking Changes

@@ -29,6 +29,7 @@ import { answerListSessions, answerProtocolInfo, answerSubscriptionLimits } from
 import { acknowledgePrompt, otherRequestsSettled } from "./session-router-observation.ts";
 import { sweepDrain } from "./session-router-occupancy.ts";
 import { openWithBarrier } from "./session-router-open.ts";
+import { claimSession, parkSession } from "./session-router-park.ts";
 import { syncRetainedRecord } from "./session-router-residency.ts";
 import {
 	answerSetSessionContext,
@@ -52,6 +53,9 @@ export function handle(host: RouterContext, command: RpcCommand): Promise<RpcRes
 }
 
 function admitted(host: RouterContext, command: RpcCommand): Promise<RpcResponse | undefined> {
+	if ("sessionId" in command && command.sessionId !== undefined && host.registry.peek(command.sessionId)?.speculative)
+		return Promise.resolve(error(command.id, command.type, "unknown_session"));
+	if (command.type === "park_session") return parkSession(host, command);
 	const refusal = attachmentGate(host, command) ?? compactAdmissionGate(host, command);
 	if (refusal) return Promise.resolve(refusal);
 	// RULING-111 (LEAK-B/C): the host-side pre-declaration belongs to the compact negotiation; with the flag off a
@@ -98,7 +102,7 @@ function otherAttachments(host: RouterContext, caller: string | undefined, sessi
 
 export async function dispatch(
 	host: RouterContext,
-	command: Exclude<RpcCommand, { type: "warm" }>,
+	command: Exclude<RpcCommand, { type: "warm" | "park_session" }>,
 ): Promise<RpcResponse | undefined> {
 	if (command.type === "reset_stream" && host.admissions) return resetStream(host, command);
 	if (command.type === "cancel_attempt" && host.admissions !== undefined) {
@@ -118,6 +122,7 @@ export async function dispatch(
 	if (command.type === "detach_connection")
 		return detachConnection(command, host.writer.currentConnection(), (id) => releaseConnection(host, id));
 	if (command.type === "open_session") return openWithBarrier(host, command);
+	if (command.type === "claim_session") return claimSession(host, command);
 	if (command.type === "attach_session") return attachSession(host, command);
 	if (command.type === "release_attachment") return releaseAttachment(host, command);
 	if (command.type === "reclaim_session") return reclaimSession(host, command);

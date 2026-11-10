@@ -79,32 +79,33 @@ export async function collectServerCatalogForCache(
 	configHash: string,
 	credentialIdentity?: string,
 ): Promise<McpCachedServerCatalog> {
+	const client = connection.client;
 	const tools = await collectAllPages<ListedTool>((cursor) =>
-		listMcpTools(connection.client, cursor === undefined ? {} : { cursor }, {
+		listMcpTools(client, cursor === undefined ? {} : { cursor }, {
 			timeout: config.requestTimeoutMs,
 		}),
 	);
 	const resources = await collectOptionalPages<ListedResource>((cursor) =>
-		connection.client.listResources(cursor === undefined ? {} : { cursor }, {
+		client.listResources(cursor === undefined ? {} : { cursor }, {
 			timeout: config.requestTimeoutMs,
 		}),
 	);
 	const prompts = await collectOptionalPages<ListedPrompt>((cursor) =>
-		connection.client.listPrompts(cursor === undefined ? {} : { cursor }, {
+		client.listPrompts(cursor === undefined ? {} : { cursor }, {
 			timeout: config.requestTimeoutMs,
 		}),
 	);
 	const resourceTemplates = await collectOptionalPages<ListedResourceTemplate>((cursor) =>
-		connection.client.listResourceTemplates(cursor === undefined ? {} : { cursor }, {
+		client.listResourceTemplates(cursor === undefined ? {} : { cursor }, {
 			timeout: config.requestTimeoutMs,
 		}),
 	);
 	return {
 		configHash,
-		...(isModernMcpClient(connection.client) ? { modern: true } : {}),
+		...(isModernMcpClient(client) ? { modern: true } : {}),
 		credentialIdentity,
 		fetchedAt: Date.now(),
-		instructions: connection.client.getInstructions(),
+		instructions: client.getInstructions(),
 		prompts,
 		resources,
 		resourceTemplates,
