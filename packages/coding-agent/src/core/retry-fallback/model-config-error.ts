@@ -1,4 +1,5 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { redactSecrets } from "../sensitive-output.ts";
 import type { FallbackLogger } from "./log.ts";
 
 const EXCERPT_LIMIT = 500;
@@ -35,7 +36,7 @@ export function createModelConfigErrorReporter(
 			const key = `${sessionId}\u0000${model}`;
 			if (reported.has(key)) return;
 			reported.add(key);
-			const errorMessage = message.errorMessage ?? "";
+			const errorMessage = redactSecrets(message.errorMessage ?? "");
 			logger.warn("model_config_error", { model, provider: message.provider, errorMessage });
 			emit({
 				type: "model_config_error",
