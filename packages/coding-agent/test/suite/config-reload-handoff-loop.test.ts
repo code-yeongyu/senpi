@@ -97,7 +97,7 @@ function context(
 function recordingLogger(events: LoggedEvent[]): ConfigReloadLogger {
 	const record = (level: string) => (event: string, details: unknown) => {
 		events.push({ level, event, details });
-		return { written: true, disabled: false };
+		return { written: true, paused: false };
 	};
 	return {
 		debug: record("debug"),

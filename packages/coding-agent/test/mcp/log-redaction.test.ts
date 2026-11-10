@@ -164,7 +164,7 @@ https://example.invalid/path?client_secret=${token}`);
 		expect(statSync(logger.filePath).mode & 0o777).toBe(0o600);
 	});
 
-	it("warns and disables the file sink when rotation fails without leaking secrets", () => {
+	it("warns and pauses the file sink when rotation fails without leaking secrets", () => {
 		const logger = createMcpLogger("rotation-failure", { maxFileBytes: 8 });
 		const secret = "rotation-failure-token";
 		mkdirSync(dirname(logger.filePath), { recursive: true });
@@ -177,7 +177,7 @@ https://example.invalid/path?client_secret=${token}`);
 		expect(ringText).not.toContain(secret);
 		expect(ringText).toContain(expectedRedaction(secret));
 		expect(ringText).toContain("new Authorization: Bearer <redacted:");
-		expect(ringText.match(/file sink disabled/g)).toHaveLength(1);
+		expect(ringText.match(/file sink paused after write failure; retrying/g)).toHaveLength(1);
 		expect(readFileSync(logger.filePath, "utf8")).not.toContain(secret);
 		expect(statSync(`${logger.filePath}.1`).isDirectory()).toBe(true);
 	});
@@ -212,7 +212,7 @@ https://example.invalid/path?client_secret=${token}`);
 		const ringText = logger.getRingBuffer().join("\n");
 		expect(ringText).toContain("first message");
 		expect(ringText).toContain("second message");
-		expect(ringText.match(/file sink disabled/g)).toHaveLength(1);
+		expect(ringText.match(/file sink paused after write failure; retrying/g)).toHaveLength(1);
 		expect(existsSync(logger.filePath)).toBe(false);
 	});
 });

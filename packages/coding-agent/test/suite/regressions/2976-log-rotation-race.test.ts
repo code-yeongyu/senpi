@@ -1,7 +1,8 @@
 import { execFile } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
@@ -48,6 +49,14 @@ describe("senpi#2976 processes sharing one config-reload log across the rotation
 		);
 
 		// when they all write far past the small rotation cap
+		// Wait until every worker signals readiness (senpi#2981): writing the barrier before the
+		// workers have started would let them race past it instead of starting together.
+		const readyFiles = Array.from({ length: WORKERS }, (_, index) => join(agentDir, `ready-w${index}`));
+		const deadline = Date.now() + 30_000;
+		while (!readyFiles.every((file) => existsSync(file))) {
+			if (Date.now() > deadline) throw new Error("log-rotation race workers did not start in time");
+			await sleep(10);
+		}
 		writeFileSync(barrier, "");
 		const results = (await Promise.all(runs)).map(
 			(run) => JSON.parse(run.stdout.trim().split("\n").pop() ?? "{}") as WorkerResult,
