@@ -150,6 +150,17 @@ export class ConnectionRoles {
 		return this.viewOf(key) !== undefined || this.carried.has(key);
 	}
 
+	/**
+	 * Whether the forwarder itself granted `role` to this connection (senpi#6305): only a host-mode delegation's live,
+	 * unretired authority word counts. No client claim, legacy-mode delegation or local connection can satisfy it.
+	 */
+	grantedByForwarder(connectionId: string | undefined, role: string): boolean {
+		const descriptor = this.viewOf(roleConnection(connectionId))?.descriptor;
+		if (descriptor?.mode !== "host" || descriptor.authority === undefined) return false;
+		const state = readAuthority(descriptor.authority);
+		return !state.retired && state.roles.includes(role);
+	}
+
 	has(connectionId: string | undefined, role: string): boolean {
 		const key = roleConnection(connectionId);
 		const store = commandAuthority.getStore();

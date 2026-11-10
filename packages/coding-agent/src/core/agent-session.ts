@@ -152,7 +152,7 @@ import {
 	ContinueFromLeafError,
 	trackTurnAdmission,
 } from "./continue-from-leaf.ts";
-import { getCredentialAccounts } from "./credential-accounts.ts";
+import { accountCanServe, getCredentialAccounts } from "./credential-accounts.ts";
 import { credentialRecoveryRevision } from "./credential-recovery-revision.ts";
 import { admitCursorHistory, cursorAdmissionBudgetBytes } from "./cursor-history-admission.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
@@ -526,6 +526,7 @@ function evalHelperCall(name: string): string {
 	if (name === "grep" || name === "glob") return `tool.${name}({ pattern: "...", path: "..." })`;
 	if (name === "workflow") return `tool.${name}({ action: "..." })`;
 	if (name === "monitor") return `tool.monitor({ description: "...", command: "...", filter: "..." })`;
+	if (name === "generate_image") return `tool.generate_image({ prompt: "..." })`;
 	return `tool.${name}({ ... })`;
 }
 /**
@@ -6028,13 +6029,7 @@ export class AgentSession {
 		const accounts = summaries.filter((account) => account.unused !== true);
 		if (accounts.length < 2) return undefined;
 		const now = Date.now();
-		const blocksModel = (blocked: { readonly model: string; readonly until: number }) =>
-			blocked.until > now &&
-			(blocked.model === modelId ||
-				new RegExp(`(?:^|[^a-z])${blocked.model}(?:[^a-z]|$)`, "i").test(modelId));
-		const usable = accounts.some(
-			(account) => !account.blocked && !(account.blockedModels ?? []).some(blocksModel),
-		);
+		const usable = accounts.some((account) => accountCanServe(account, modelId, now));
 		const accountsOut = accounts
 			.map((account) => {
 				const reason = account.blockedReason ?? "blocked";

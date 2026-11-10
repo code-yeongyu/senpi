@@ -107,9 +107,15 @@ describe("account lists show each account's limit windows (oh-my-openagent#9234)
 
 		const lines = (await listOutput(command)).split("\n");
 
-		const reported = lines.findIndex((line) => line.includes("claude-9234-reported | login"));
-		expect(lines[reported + 1]).toBe(EXPECTED_LIMITS);
-		const silent = lines.findIndex((line) => line.includes("claude-9234-silent | login"));
-		expect(lines[silent + 1]).toBe("    limits: not reported yet");
+		// senpi#6288: the Claude list gives each window its own aligned row under the account.
+		const header = (name: string) => lines.findIndex((line) => line === name || line.startsWith(`${name}  [`));
+		const reported = header("claude-9234-reported");
+		expect(lines.slice(reported + 2, reported + 5)).toEqual([
+			expect.stringMatching(/^ {2}5h +72% used, resets in 2 h \(.+\)$/),
+			expect.stringMatching(/^ {2}7d +31% used, resets in 3 d \(.+\)$/),
+			expect.stringMatching(/^ {2}updated +just now$/),
+		]);
+		const silent = header("claude-9234-silent");
+		expect(lines[silent + 2]).toMatch(/^ {2}limits +not reported yet$/);
 	});
 });

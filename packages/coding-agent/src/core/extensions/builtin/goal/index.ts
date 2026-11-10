@@ -18,7 +18,12 @@ import { GoalDirectInputLifecycle } from "./direct-input-lifecycle.ts";
 import { GoalElapsedTicker } from "./elapsed-ticker.ts";
 import { formatGoalForTool, goalStatusLabel } from "./format.ts";
 import { goalLifecycleChanged, registerGoalLifecycleCollector } from "./lifecycle-facts.ts";
-import { GOAL_STALE_STOP_NOTICE, isResumeOfStoppedGoal, queueGoalContinuation } from "./lifecycle-helpers.ts";
+import {
+	GOAL_STALE_STOP_NOTICE,
+	isResumeOfStoppedGoal,
+	queueGoalContinuation,
+	recoverMissingGoalContinuationStop,
+} from "./lifecycle-helpers.ts";
 import { GOAL_CONTINUATION_SCHEDULED_EVENT, MonitorAwareGoalContinuation } from "./monitor-continuation.ts";
 import { reengageGoalAfterReload } from "./reload-reengagement.ts";
 import { registerGoalFireNowRequest } from "./rpc-wait-surface.ts";
@@ -186,6 +191,9 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		const ref = goalStoreRef(ctx);
 		await migrateLegacyGoal(ref);
 		let goal = await readGoal(goalStoreRef(ctx));
+		// senpi#3015: a crash between the stop claim and the session append leaves the claim
+		// without its entries; re-append the missing ones once on reopen.
+		if (goal) await recoverMissingGoalContinuationStop(pi, ctx, goal);
 		// A process that died mid-turn never ran the quit-time abort that stops an active goal (senpi#5753). Stop it the
 		// same way here, so the resume prompt below asks before any continuation runs (senpi#5755). Opening that session
 		// at launch (`--continue`, `--session`) is the same resume, so it asks too.

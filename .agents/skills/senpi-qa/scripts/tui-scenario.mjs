@@ -36,9 +36,10 @@ const SCENARIOS = {
 	"claude-account": {
 		steps: [{ text: "/claude-account", key: "Enter" }],
 		assertions: [
-			{ name: "default account row", expected: "default | login" },
-			{ name: "second account row", expected: "work | import" },
-			{ name: "pin state", expected: "pinned" },
+			// senpi#6288: one block per account, pin and next turn as header tags.
+			{ name: "list title", expected: "Anthropic Subscription accounts (2)" },
+			{ name: "pinned account header", expected: "default  [pinned" },
+			{ name: "status row", expected: "status  available" },
 		],
 	},
 	// Startup swallows submits but preserves the editor text, so each retry

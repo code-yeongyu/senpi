@@ -1,3 +1,59 @@
+## 2026-11-10 - Fable 5.2 default fallback chain (senpi#3893)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/settings.ts`: `DEFAULT_FALLBACK_CHAINS` ships `"claude-fable-5-2": ["claude-opus-5-5", "claude-opus-5"]` beside Fable 5.1 and Fable 5, with bare rungs (senpi#4103). The launch-gated key is removed.
+
+### Why
+
+- Fable 5.2 is released and gets the same Opus-only step-down as the earlier Fable models.
+
+### Why an extension could not handle it
+
+- The shipped defaults are resolved by `settings-manager.ts` before extensions run.
+
+### Expected merge conflict zones
+
+- LOW: the `DEFAULT_FALLBACK_CHAINS` literal.
+
+## 2026-11-09 - Hide the console window for win32-reachable spawns in core (senpi#3965)
+
+### What changed
+
+- `packages/coding-agent/src/core/exec.ts`: `execCommand` now passes `windowsHide: true`.
+- `packages/coding-agent/src/core/share/share-gh.ts`: the `gh gist create` spawn now passes `windowsHide: true`.
+
+### Why
+
+- Both spawn console-subsystem exes (arbitrary commands via `execCommand`, `gh` on Windows); without `windowsHide` each launch can flash its own console window.
+
+### Why an extension could not handle it
+
+- Both spawns live in core helpers, not in an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: one options line each in two core files.
+
+## 2026-11-09 - Pooled-account usability follows the pool's own block rule (senpi#6254)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-accounts.ts`: `accountCanServe(account, modelId, now)`: an account can serve a model when it is not blocked, not signed out, and no live block binds that model by the pool's own matcher.
+- `packages/coding-agent/src/core/agent-session.ts`: `_pooledAccountHealth` uses `accountCanServe` instead of its own regex.
+
+### Why
+
+- The inline rule treated every model-block key as an unescaped family pattern, so an exact-id block on `claude-opus-4-5` also blocked `claude-opus-4-5-thinking`, and it counted signed-out accounts as usable although the pool skips them.
+
+### Why an extension could not handle it
+
+- The turn-boundary hold lives in the session's private retry-fallback state.
+
+### Expected merge conflict zones
+
+- LOW: `_pooledAccountHealth` in `AgentSession`.
+
 ## 2026-11-08 - Engine-stamped delivery provenance and a delivery's turn origin (senpi#6233)
 
 ### What changed
