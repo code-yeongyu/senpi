@@ -1162,8 +1162,6 @@
       "packages/coding-agent/src/modes/rpc/session-router-close.ts": ["createFinalization"],
       // pre-existing at origin main aceb1cc1d9: unused exports parkForHandoff, evictIdleSession
       "packages/coding-agent/src/modes/rpc/session-router-occupancy.ts": ["evictIdleSession", "parkForHandoff"],
-      // pre-existing at origin main aceb1cc1d9: unused exports open
-      "packages/coding-agent/src/modes/rpc/session-router-open.ts": ["open"],
       // pre-existing at origin main aceb1cc1d9: unused exports dispatch, setSessionContext
       "packages/coding-agent/src/modes/rpc/session-router-routing.ts": ["dispatch", "setSessionContext"],
       // pre-existing at origin main aceb1cc1d9: unused exports DETACHED_RETIREMENT_GRACE_MS
