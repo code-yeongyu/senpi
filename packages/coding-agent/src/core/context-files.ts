@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, type Stats, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, sep } from "node:path";
 import chalk from "chalk";
@@ -26,10 +26,12 @@ export interface ContextFileLimits {
 	maxTotalBytes?: number;
 	/**
 	 * The global (user-scope) context file to load instead of the agent-dir probe (senpi#5567).
-	 * A leading `~` is expanded; a relative path resolves against the process cwd; a directory
-	 * runs the same candidate probe as the agent dir. Unset or blank keeps the agent-dir file,
-	 * and a path that is set but missing (or unreadable, or a special file) falls back to the
-	 * agent-dir probe instead of erroring.
+	 * Honored from the user's own settings only (`SettingsManager.getGlobalContextFilePath`); a
+	 * project's settings never set it. A leading `~` is expanded; a relative path resolves against
+	 * the agent dir, like other paths in global settings; a directory runs the same candidate probe
+	 * as the agent dir. Unset or blank keeps the agent-dir file. A path that is set but missing,
+	 * unreadable, a special file, or a directory with no candidate falls back to the agent-dir probe
+	 * and reports one warning diagnostic instead of erroring.
 	 */
 	globalPath?: string;
 }
@@ -59,32 +61,49 @@ function loadContextFileFromDir(dir: string): ContextFile | null {
 	return null;
 }
 
+interface GlobalContextFileResult {
+	file: ContextFile | null;
+	/** Set when a configured `globalPath` could not be used, so a typo is visible instead of silent. */
+	diagnostic?: ResourceDiagnostic;
+}
+
 /**
  * The global user-scope context file (senpi#5567). `contextFiles.globalPath` names a file (or a
  * directory to probe for the usual candidates) to load in place of the agent-dir file. Precedence
- * is defined and never errors: a blank or unset path, a missing or unreadable target, and a target
- * directory with no candidates all fall back to the agent-dir probe, which stays the untouched default.
+ * is defined and never errors: a blank or unset path keeps the agent-dir probe silently; a
+ * configured target that is missing, unreadable, a special file, or a directory with no candidates
+ * falls back to the agent-dir probe and returns one warning naming the configured path.
  */
-function loadGlobalContextFile(agentDir: string, globalPath: string | undefined): ContextFile | null {
+function loadGlobalContextFile(agentDir: string, globalPath: string | undefined): GlobalContextFileResult {
 	const explicit = typeof globalPath === "string" ? globalPath.trim() : "";
-	if (explicit === "") return loadContextFileFromDir(agentDir);
-	const resolved = resolvePath(explicit);
-	let isDirectory = false;
-	let isFile = false;
+	if (explicit === "") return { file: loadContextFileFromDir(agentDir) };
+	const resolved = resolvePath(explicit, agentDir);
+	const fallBack = (problem: string): GlobalContextFileResult => ({
+		file: loadContextFileFromDir(agentDir),
+		diagnostic: {
+			type: "warning",
+			path: resolved,
+			message: `contextFiles.globalPath ${problem}; using the global context file from ${agentDir} instead.`,
+		},
+	});
+	let stats: Stats;
 	try {
-		const stats = statSync(resolved);
-		isDirectory = stats.isDirectory();
-		isFile = stats.isFile();
-	} catch {
-		return loadContextFileFromDir(agentDir);
-	}
-	if (isDirectory) return loadContextFileFromDir(resolved) ?? loadContextFileFromDir(agentDir);
-	if (!isFile) return loadContextFileFromDir(agentDir);
-	try {
-		return { path: resolved, content: stripBom(readFileSync(resolved, "utf-8")) };
+		stats = statSync(resolved);
 	} catch (error) {
-		console.error(chalk.yellow(`Warning: Could not read ${resolved}: ${error}`));
-		return loadContextFileFromDir(agentDir);
+		const code = (error as NodeJS.ErrnoException).code;
+		return fallBack(
+			code === "ENOENT" || code === "ENOTDIR" ? "does not exist" : `could not be read (${String(error)})`,
+		);
+	}
+	if (stats.isDirectory()) {
+		const file = loadContextFileFromDir(resolved);
+		return file ? { file } : fallBack("is a directory with no AGENTS.md or CLAUDE.md");
+	}
+	if (!stats.isFile()) return fallBack("is not a regular file or directory");
+	try {
+		return { file: { path: resolved, content: stripBom(readFileSync(resolved, "utf-8")) } };
+	} catch (error) {
+		return fallBack(`could not be read (${String(error)})`);
 	}
 }
 
@@ -198,9 +217,9 @@ function applyContextFileLimits(files: ContextFile[], limits: ContextFileLimits)
 	return Object.assign(kept, { diagnostics });
 }
 
-/** Compares directories by their real path, ignoring case where the filesystem does (Windows). */
-function directoryKey(dir: string): string {
-	const real = canonicalizePath(resolvePath(dir));
+/** Compares files and directories by their real path, ignoring case where the filesystem does (Windows). */
+function pathKey(path: string): string {
+	const real = canonicalizePath(resolvePath(path));
 	return process.platform === "win32" ? real.toLowerCase() : real;
 }
 
@@ -209,15 +228,16 @@ export function loadProjectContextFiles(
 ): ContextFiles {
 	const resolvedCwd = resolvePath(options.cwd);
 	const resolvedAgentDir = resolvePath(options.agentDir);
-	const homeKey = directoryKey(options.homeDir ?? homedir());
+	const homeKey = pathKey(options.homeDir ?? homedir());
 
 	const contextFiles: ContextFile[] = [];
+	// Real-path keys: a symlinked ancestor file that points at an already loaded file is the same file.
 	const seenPaths = new Set<string>();
 
 	const globalContext = loadGlobalContextFile(resolvedAgentDir, options.globalPath);
-	if (globalContext) {
-		contextFiles.push({ ...globalContext, scope: "user" });
-		seenPaths.add(globalContext.path);
+	if (globalContext.file) {
+		contextFiles.push({ ...globalContext.file, scope: "user" });
+		seenPaths.add(pathKey(globalContext.file.path));
 	}
 
 	const ancestorContextFiles: ContextFile[] = [];
@@ -229,11 +249,12 @@ export function loadProjectContextFiles(
 		const contextFile = loadContextFileFromDir(currentDir);
 		const isShadowed =
 			shadowedContextFile !== undefined && canonicalizePath(contextFile?.path ?? "") === shadowedContextFile;
-		if (contextFile && !isShadowed && !seenPaths.has(contextFile.path)) {
+		const contextFileKey = contextFile ? pathKey(contextFile.path) : undefined;
+		if (contextFile && contextFileKey !== undefined && !isShadowed && !seenPaths.has(contextFileKey)) {
 			ancestorContextFiles.unshift(
-				directoryKey(currentDir) === homeKey ? { ...contextFile, scope: "user" } : contextFile,
+				pathKey(currentDir) === homeKey ? { ...contextFile, scope: "user" } : contextFile,
 			);
-			seenPaths.add(contextFile.path);
+			seenPaths.add(contextFileKey);
 		}
 
 		const parentDir = dirname(currentDir);
@@ -243,5 +264,7 @@ export function loadProjectContextFiles(
 
 	contextFiles.push(...ancestorContextFiles);
 
-	return applyContextFileLimits(contextFiles, options);
+	const limited = applyContextFileLimits(contextFiles, options);
+	if (globalContext.diagnostic) limited.diagnostics.unshift(globalContext.diagnostic);
+	return limited;
 }

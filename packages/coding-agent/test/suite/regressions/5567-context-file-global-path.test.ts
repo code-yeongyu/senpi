@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -57,6 +57,7 @@ describe("issue #5567: configurable global context-file path", () => {
 			const files = loadProjectContextFiles({ cwd, agentDir, globalPath });
 			expect(findByPath(files, agentFile)?.content).toBe("agent dir instructions");
 			expect(findByPath(files, agentFile)?.scope).toBe("user");
+			expect(files.diagnostics).toEqual([]);
 		}
 	});
 
@@ -67,6 +68,30 @@ describe("issue #5567: configurable global context-file path", () => {
 		const files = loadProjectContextFiles({ cwd, agentDir, globalPath: join(globalDir, "gone.md") });
 
 		expect(findByPath(files, agentFile)?.content).toBe("agent dir instructions");
+	});
+
+	it("reports exactly one warning when the configured globalPath does not exist", () => {
+		const { cwd, agentDir, globalDir } = workspace();
+		writeFile(join(agentDir, "AGENTS.md"), "agent dir instructions");
+		const missing = join(globalDir, "gone.md");
+		const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		const files = loadProjectContextFiles({ cwd, agentDir, globalPath: missing });
+
+		expect(files.diagnostics).toEqual([expect.objectContaining({ type: "warning", path: missing })]);
+		expect(consoleError).not.toHaveBeenCalled();
+	});
+
+	it("resolves a relative globalPath against the agent dir, like other paths in global settings", () => {
+		const { cwd, agentDir } = workspace();
+		mkdirSync(join(agentDir, "rules"));
+		const target = writeFile(join(agentDir, "rules", "global.md"), "relative global instructions");
+
+		const files = loadProjectContextFiles({ cwd, agentDir, globalPath: join("rules", "global.md") });
+
+		expect(findByPath(files, target)?.content).toBe("relative global instructions");
+		expect(findByPath(files, target)?.scope).toBe("user");
+		expect(files.diagnostics).toEqual([]);
 	});
 
 	it("probes the usual candidates when globalPath is a directory", () => {
@@ -91,6 +116,7 @@ describe("issue #5567: configurable global context-file path", () => {
 		const files = loadProjectContextFiles({ cwd, agentDir, globalPath: globalDir });
 
 		expect(findByPath(files, agentFile)?.content).toBe("agent dir instructions");
+		expect(files.diagnostics).toEqual([expect.objectContaining({ type: "warning", path: globalDir })]);
 	});
 
 	it("applies the same size limits to the explicit global file", () => {
@@ -121,4 +147,20 @@ describe("issue #5567: configurable global context-file path", () => {
 		expect(matches).toHaveLength(1);
 		expect(matches[0]?.scope).toBe("user");
 	});
+
+	// Creating a symlink on Windows needs developer mode or elevation.
+	it.skipIf(process.platform === "win32")(
+		"loads the explicit global file once when an ancestor context file is a symlink to it",
+		() => {
+			const { cwd, agentDir, globalDir } = workspace();
+			const explicit = writeFile(join(globalDir, "AGENTS.md"), "shared instructions");
+			symlinkSync(explicit, join(cwd, "AGENTS.md"));
+
+			const files = loadProjectContextFiles({ cwd, agentDir, globalPath: explicit });
+
+			expect(files.filter((file) => file.content === "shared instructions")).toEqual([
+				expect.objectContaining({ path: explicit, scope: "user" }),
+			]);
+		},
+	);
 });
