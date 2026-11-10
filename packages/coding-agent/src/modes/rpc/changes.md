@@ -1,3 +1,63 @@
+## 2026-11-08 - A relayed delivery reads like a same-machine delivery; the device stays in metadata (senpi#6250)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/admit-external-message-command.ts`: a delivery admitted on a connection that speaks for a remote device is written with the caller's `text` unchanged, exactly as on a local connection. The engine-written `[Relayed message from remote device ...]` line (`provenanceLine`, with its `claimedSender` sentence) is removed. The device stays engine-stamped in the entry's `details.remote_origin`; the per-device ledger key, the `already_admitted` dedupe, the `command_line` sender refusal, the fail-closed refusal of a delegated connection that names no device, and the delivery's turn origin are unchanged.
+
+### Why
+
+An agent does not need to know that a message from another session crossed devices (product decision, 2026-11-08): a cross-device delivery should read exactly like a session-to-session delivery on the same machine. The origin remains engine-stamped where code reads it, never in what the model reads.
+
+### Why an extension could not handle it
+
+The text the engine writes into a `session_control_delivery` entry for an RPC-admitted record is engine-owned; an extension cannot rewrite it.
+
+### Expected merge conflict zones
+
+- LOW: `admit-external-message-command.ts` (the `text` field of the admitted input and the removed helpers).
+
+## 2026-11-08 - `admit_external_message`: a relayed peer-agent message admitted as a delivery (senpi#6233)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/admit-external-message-wire.ts` (new): the record (`deliveryId`, `text`, `sender?`, `displayText?`, `deliverAs`, `expectedTurnId?` string, `whenIdle?`, `chainCount?`), its reply `{ kind, turnId }`, and the field check both validators run (closed sender shapes, a record naming `remote_origin` refused).
+- `packages/coding-agent/src/modes/rpc/admit-external-message-command.ts` (new): the handler. It runs the K8 chain guard first, refuses a `command_line` sender from a remote device, keys the ledger as `rpc:local/<id>` or `device:<deviceId>/<id>`, answers `already_admitted` for an id the transcript holds, stamps the connection's remote device and engine provenance on a remote delivery, and marks the delivery with the connection's turn origin. A delegated connection that names no device is refused (`delegated_origin_unknown`), never admitted as local; the device's `deviceName` and `deviceId` and the claimed `session_id` and `platform` are JSON-quoted in the provenance line, so a newline or `]` in them cannot add a line or close the header.
+- `packages/coding-agent/src/modes/rpc/method-classes-schema-delivery.ts` (new): the inbound schema; `method-classes-schema-session.ts` spreads it in.
+- `packages/coding-agent/src/modes/rpc/method-classes.ts`: `admit_external_message: "drive"` (the method-classes digest moves).
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the case, fed with `ConnectionRoles.originOf` and the connection origin.
+- `packages/coding-agent/src/modes/rpc/rpc-session-command-types.ts`, `rpc-response-types.ts`, `rpc-input-validation.ts`: the record, its response and its field check joined to the existing unions and validator.
+- `packages/coding-agent/src/modes/rpc/host-idle-handover.ts`: the record is new work, like `wake`.
+
+### Why
+
+A client relaying one agent's message to a session on another device could only send it as a user prompt (`role: "user"`, the `input` event, slash dispatch), never as the delivery `pi.session.admitExternalMessage` writes in process (#6233). The security design gate made the engine-stamped origin, the namespaced and restart-safe ledger, the per-lane approval origin and the chain guard binding.
+
+### Why an extension could not handle it
+
+The RPC record table, the method-class table and the connection's authenticated origin are engine-owned; an extension cannot add a session record or read which device a connection speaks for.
+
+### Expected merge conflict zones
+
+- LOW: `connection-handler.ts` (one case beside `wake`), `method-classes.ts` (one table row), the two union files.
+
+## 2026-11-08 - Tool-child terminal jobs carry the background auto-reap (senpi#6201)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/tool-child/terminal-jobs.ts`: the job args carry `backgroundAutoReapMinutes` into the child's tool context; the `background_start` wake carries the command and the reap age, the `background_exit` wake carries `autoReapedAfterMinutes`, and a failed reap is sent as a `background_reap_failed` wake with its reason.
+
+### Why
+
+- The reap runs where the session's process group lives, which is the tool child under `--tool-runtime child`; the server needs the reap age for its age notices and the reap for the completion notice (senpi#6201).
+
+### Why an extension could not handle it
+
+- The tool child's terminal jobs are the host's own runtime, not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: `parseArgs`, `exitSummary` and `contextFor` in `terminal-jobs.ts`.
+
 ## 2026-11-08 - RPC input carries its connection's origin (senpi#6206)
 
 ### What changed

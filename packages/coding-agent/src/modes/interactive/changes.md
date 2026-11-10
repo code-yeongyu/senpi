@@ -1,3 +1,21 @@
+## 2026-11-08 - A remote delivery leads with its engine-stamped device (senpi#6233)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/remote-delivery-message.ts`: a delivery with `details.remote_origin` renders "Relayed from device ..." first, then the claimed sender, over its display text.
+
+### Why
+
+The claimed sender is caller data; the device line is the provenance a reader can trust (#6233 gate condition 1).
+
+### Why an extension could not handle it
+
+The renderer is the built-in one for the engine's own delivery entry type.
+
+### Expected merge conflict zones
+
+- LOW: `renderRemoteDelivery`.
+
 ## 2026-11-07 - The terminal control endpoint advertises the engine's method classes (senpi#6158)
 
 ### What changed

@@ -1,3 +1,21 @@
+## 2026-11-08 - terminal_background_age event (senpi#6201)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/monitor-state-event.ts`: `TERMINAL_BACKGROUND_AGE_EVENT` (`terminal_background_age`) and its payload `TerminalBackgroundAgeEvent` (`kind` running|reaped|reap_failed, `id`, `description`, `command?`, `startedAtMs`, `ageMs`, `ageMinutes`, `autoReapMinutes`, `reason?`, `stop`).
+
+### Why
+
+- RPC drivers need a typed event they can act on when a background session runs long (senpi#6201).
+
+### Why an extension could not handle it
+
+- The event name and payload are the shared cross-extension seam, like the other terminal events in this file.
+
+### Expected merge conflict zones
+
+- LOW: the constant block at the top of `monitor-state-event.ts`.
+
 ## 2026-11-08 - ask-user refuses escape residue in question text once (oh-my-openagent#12797)
 
 ### What changed
