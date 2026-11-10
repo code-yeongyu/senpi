@@ -9,7 +9,7 @@ import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as _bundledPiAgentCore from "@earendil-works/pi-agent-core";
-import type { Provider } from "@earendil-works/pi-ai";
+import type { Provider, ProviderId } from "@earendil-works/pi-ai";
 import * as _bundledPiAiCompat from "@earendil-works/pi-ai/compat";
 import * as _bundledPiAiOauth from "@earendil-works/pi-ai/oauth";
 import * as _bundledPiAiProviders from "@earendil-works/pi-ai/providers/all";
@@ -78,6 +78,7 @@ import type {
 	FilesystemPolicy,
 	LazyToolActivator,
 	LoadExtensionsResult,
+	ProviderHookOptions,
 	MarkdownTransformer,
 	MemoryReporter,
 	MessageRenderer,
@@ -118,6 +119,25 @@ function assertExtensionSide(extension: Extension, runs: unknown, registration: 
 	if (runs === "brain" || runs === "hand") return;
 	throw new Error(
 		`Extension "${extension.path}" declared runs: ${JSON.stringify(runs)} for ${registration}; runs must be "brain" or "hand".`,
+	);
+}
+
+/** The events whose handlers may declare `{ providers }` (CK21). */
+const PROVIDER_HOOK_EVENTS: readonly string[] = [
+	"before_provider_request",
+	"provider_stream_event",
+	"after_provider_response",
+];
+
+function declaredProviders(extension: Extension, providers: unknown, registration: string): readonly ProviderId[] {
+	if (
+		Array.isArray(providers) &&
+		providers.length > 0 &&
+		providers.every((provider) => typeof provider === "string" && provider !== "")
+	)
+		return Object.freeze([...(providers as ProviderId[])]);
+	throw new Error(
+		`Extension "${extension.path}" declared providers: ${JSON.stringify(providers)} for ${registration}; providers must be a non-empty array of provider ids.`,
 	);
 }
 
@@ -470,14 +490,17 @@ function createExtensionAPI(
 		on(
 			event: string,
 			handler: HandlerFn,
-			options?: BeforeAgentStartHandlerOptions & ContextHandlerOptions,
+			options?: BeforeAgentStartHandlerOptions & ContextHandlerOptions & ProviderHookOptions,
 		): () => void {
 			assertActive();
 			const runs = options?.runs;
-			if (runs !== undefined) {
-				assertExtensionSide(extension, runs, `"${event}"`);
-				if (session.side !== undefined && runs !== session.side) return () => {};
-			}
+			if (runs !== undefined) assertExtensionSide(extension, runs, `"${event}"`);
+			// Checked on every side, also for a handler this side does not register: a malformed declaration always throws.
+			const providers =
+				PROVIDER_HOOK_EVENTS.includes(event) && options?.providers !== undefined
+					? declaredProviders(extension, options.providers, `"${event}"`)
+					: undefined;
+			if (runs !== undefined && session.side !== undefined && runs !== session.side) return () => {};
 			const registeredHandler: HandlerFn = ownedBy(extension, (...args: unknown[]) => {
 				// A child event can run inside its parent's task-tool async scope.
 				// Bind the host context here, preserving registered-handler metadata.
@@ -493,6 +516,10 @@ function createExtensionAPI(
 			if (runs !== undefined) {
 				extension.handlerSides ??= new WeakMap();
 				extension.handlerSides.set(registeredHandler, runs);
+			}
+			if (providers !== undefined) {
+				extension.handlerProviders ??= new WeakMap();
+				extension.handlerProviders.set(registeredHandler, providers);
 			}
 			if (event === "before_agent_start" && options?.previewSafe === true) {
 				extension.previewSafeHandlers ??= new WeakSet();
