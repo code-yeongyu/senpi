@@ -24,19 +24,27 @@ type QueryEnvironment = { env?: Record<string, string | undefined> };
  * or after the limits. `FORCE_PROMPT_CACHING_5M` wins, as it does in Claude Code; then an explicit
  * `CLAUDE_CODE_PROMPT_CACHE_TTL`. The managed subscription lanes pin 1 hour,
  * Claude Code's subscription default; so does the `claude-cli` lane, whose account is a verified first-party claude.ai login. The ambient lane can be an API key or a subscription login, so nothing is
- * pinned there and the caller adds no breakpoint.
+ * pinned there unless a lifetime is set explicitly — and a lifetime set in a loaded settings file counts as explicit
+ * (senpi#2988): Claude Code applies the `env` block of the settings files it loads, so `settingsEnv` carries the
+ * effective settings env for the sources this attempt loads. Precedence is explicit env, then settings env, then the
+ * lane default: a value the operator set in the process environment wins over a settings file, and a settings value
+ * wins over senpi's assumption about Claude Code's default.
  */
 export function pinOneShotPromptCacheTtl(
 	options: QueryEnvironment,
 	authLane: AnthropicSubscriptionAuthLane,
 	environment: Readonly<Record<string, string | undefined>>,
+	settingsEnv?: Readonly<Record<string, string | undefined>>,
 ): PromptCacheTtl | undefined {
 	const forced5m =
-		isTruthy(options.env?.[FORCE_PROMPT_CACHING_5M_ENV]) || isTruthy(environment[FORCE_PROMPT_CACHING_5M_ENV]);
+		isTruthy(options.env?.[FORCE_PROMPT_CACHING_5M_ENV]) ||
+		isTruthy(environment[FORCE_PROMPT_CACHING_5M_ENV]) ||
+		isTruthy(settingsEnv?.[FORCE_PROMPT_CACHING_5M_ENV]);
 	const ttl =
 		(forced5m ? "5m" : undefined) ??
 		parsePromptCacheTtl(options.env?.[PROMPT_CACHE_TTL_ENV]) ??
 		parsePromptCacheTtl(environment[PROMPT_CACHE_TTL_ENV]) ??
+		parsePromptCacheTtl(settingsEnv?.[PROMPT_CACHE_TTL_ENV]) ??
 		(authLane === "ambient" ? undefined : "1h");
 	if (ttl === undefined) return undefined;
 	options.env = { ...options.env, [PROMPT_CACHE_TTL_ENV]: ttl };
