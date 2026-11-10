@@ -12,6 +12,30 @@
 
 ### Removed
 
+## [2026.11.10-1] - 2026-11-10
+
+### Breaking Changes
+
+### Added
+
+- RPC: `read_project_file` and `write_project_file` let a client read and edit the session workspace's `AGENTS.md`, `CLAUDE.md` and `.omo/rules/**` files, with an etag precondition, a typed conflict and the project trust gate, so a remote client edits Rules the same way a local one does ([#6307](https://github.com/code-yeongyu/senpi/pull/6307), fixes #6297)
+
+### Changed
+
+- `generate_image` is eval-only, like `bash`: whenever the `eval` tool is available it leaves the model's direct tool list and is called as `tool.generate_image({ prompt: "..." })` inside an eval cell (`tool_schema("generate_image")` lists the parameters); without an eval tool it stays an ordinary direct tool. Behaviour, parameters and results are unchanged ([#6272](https://github.com/code-yeongyu/senpi/pull/6272), closes [#6269](https://github.com/code-yeongyu/senpi/issues/6269))
+
+### Fixed
+
+- The isolated CLI re-launch no longer replays a `node -e` caller's eval code in the child, so loading the CLI entry from eval runs the caller exactly once ([#6274](https://github.com/code-yeongyu/senpi/pull/6274))
+- A goal-continuation stop lost to a crash between the goal-state claim and the session append is re-appended once when the session reopens, instead of never reaching the session or RPC clients ([#6301](https://github.com/code-yeongyu/senpi/pull/6301))
+- `anthropic-subscription` sessions on windows under 575k (200k rows such as `claude-haiku-4-5`, legacy long-context ids after a 1M refusal, models.json rows declaring 200k) no longer loop between context-overflow compaction and `Prompt is too long`: Claude Code is handed the planned window plus its own output reserve, so it refuses a request only past the window senpi compacts against ([#6303](https://github.com/code-yeongyu/senpi/pull/6303))
+- A message another agent sends from a device of the same account now runs under the receiving session's own permission preset instead of stopping on an approval nobody can answer on an unattended host. Remote prompts and deliveries from any other kind of sender still ask (senpi#6305).
+- MCP OAuth no longer fails with `Mismatching Redirect URL` on authorization servers that match `redirect_uri` exactly: `/mcp auth` and `/mcp auth-start` register a client for the redirect URI they send instead of reusing one registered for the background placeholder (`127.0.0.1:0`) or an earlier loopback port. The signed-in client and its refresh token stay in use until the new sign-in completes, and `/mcp auth` with `flow: "client_credentials"` keeps using a stored registration ([#6328](https://github.com/code-yeongyu/senpi/pull/6328))
+- `show_html_page` no longer tells the model to open the page in the desktop. In an OmO desktop thread the result says the page was shown inline above the reply, plus the saved path. Elsewhere it says the page was written to the path and not displayed. The model no longer reports a failure for a page the reader saw, or refuses the tool in later turns ([#6331](https://github.com/code-yeongyu/senpi/pull/6331), fixes [#6273](https://github.com/code-yeongyu/senpi/issues/6273))
+- The one-shot prompt-cache pin now reads `FORCE_PROMPT_CACHING_5M` / `CLAUDE_CODE_PROMPT_CACHE_TTL` from the settings files a query loads, so its breakpoint matches the lifetime Claude Code actually uses ([#6333](https://github.com/code-yeongyu/senpi/pull/6333))
+
+### Removed
+
 ## [2026.11.10] - 2026-11-10
 
 ### Breaking Changes

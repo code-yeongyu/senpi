@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ULTRAFAST_DOCUMENTED_MODEL_IDS } from "../src/api/openai-responses-shared.ts";
 import {
 	closeChatGptSubscriptionWebSocketSessions,
 	streamSimple as streamCodex,
@@ -171,6 +172,13 @@ describe.each(["openai", "chatgpt-subscription"] as const)("%s Ultrafast price s
 		for (const key of ["input", "output", "cacheRead", "cacheWrite", "total"] as const) {
 			expect(ultrafast.usage.cost[key]).toBeCloseTo(base.usage.cost[key]);
 		}
+	});
+});
+
+describe("Ultrafast documented models", () => {
+	it("lists GPT-6 Astra and GPT-6.1 Sol as the documented Ultrafast models", () => {
+		// senpi#2978: one list, read by both pricing adapters and the selection warning.
+		expect([...ULTRAFAST_DOCUMENTED_MODEL_IDS].sort()).toEqual(["gpt-6-astra", "gpt-6.1-sol"]);
 	});
 });
 

@@ -139,6 +139,7 @@ import {
 	writeProjectSetting,
 	writeProjectTrust,
 } from "./project-workspace-commands.ts";
+import { readProjectFile, writeProjectFile } from "./project-file-commands.ts";
 import { protocolIdentity } from "./protocol-identity.ts";
 import { buildRpcCommandsForSession, createCommandsChangedEvent, rpcCommandListDigest } from "./rpc-command-surface.ts";
 import {
@@ -269,6 +270,8 @@ export interface RpcConnectionHandler {
 	 * extension UI context is installed (used by tests that drive ctx.ui directly).
 	 */
 	readonly ready: Promise<void>;
+	/** Complete a prebuilt binding with the capabilities its opener supplied. */
+	setClientCapabilities(capabilities: readonly string[]): void;
 	/** Feed one inbound JSONL line (command or extension_ui_response). */
 	handleInputLine(line: string): Promise<void>;
 	/**
@@ -1384,7 +1387,9 @@ export function createRpcConnectionHandler(
 								// Client flags cannot advertise a host guard this classic binding does not run, nor a tool runtime.
 								...advertisedCompactCapabilities(options.capabilities ?? [], false).filter(
 									(capability) =>
-										capability !== SESSION_HELD_CAPABILITY && !isHostOwnedToolRuntimeCapability(capability),
+										capability !== SESSION_HELD_CAPABILITY &&
+										capability !== "park_claim" &&
+										!isHostOwnedToolRuntimeCapability(capability),
 								),
 							]),
 						],
@@ -1393,7 +1398,9 @@ export function createRpcConnectionHandler(
 					},
 				};
 			case "open_session":
-				return error(id, "open_session", "multi_session_disabled");
+			case "park_session":
+			case "claim_session":
+				return error(id, command.type, "multi_session_disabled");
 
 			// =================================================================
 			// Prompting
@@ -2253,6 +2260,20 @@ export function createRpcConnectionHandler(
 					: error(id, "set_project_setting", result.message, result.errorCode);
 			}
 
+			case "read_project_file": {
+				const result = await readProjectFile(session, command.path);
+				return result.ok
+					? success(id, "read_project_file", result.data)
+					: error(id, "read_project_file", result.message, result.errorCode, result.errorData);
+			}
+
+			case "write_project_file": {
+				const result = await writeProjectFile(session, command.path, command.content, command.ifEtag);
+				return result.ok
+					? success(id, "write_project_file", result.data)
+					: error(id, "write_project_file", result.message, result.errorCode, result.errorData);
+			}
+
 			case "extension_request":
 			case "eval_cells.list":
 			case "eval_cells.peek":
@@ -2608,6 +2629,10 @@ export function createRpcConnectionHandler(
 		},
 		pendingPrompts() {
 			return [...promptCalls];
+		},
+		setClientCapabilities(capabilities) {
+			replaceClientCapabilities([...capabilities]);
+			refreshGrantPresentation();
 		},
 		isShutdownRequested() {
 			return shutdownRequested;

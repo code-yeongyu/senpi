@@ -1,3 +1,37 @@
+## 2026-11-10 - admit_external_message marks an agent's relayed delivery as a peer turn (senpi#6305)
+
+### What changed
+
+- `admit-external-message-command.ts`: `deliveryTurnMark` returns `peer` only when the connection is delegated and the forwarder granted it `peer_agent` (`ConnectionRoles.grantedByForwarder`, read from the live authority word, never from the record or a client claim); the record's `sender.kind` of `agent` is only a consistency check.
+- `connection-authority.ts`, `delegation-declaration.ts`, `connection-roles.ts`: `peer_agent` is a third host-mode role (word bit 2; retired moves to bit 3 and the epoch field to 28 bits), declarable only in `declare_delegation`, never claimable with `set_client_info`, and ignored on a legacy-mode delegation.
+- `custom-capability.ts`, `host-capabilities.ts`: hosts advertise `peer_agent_role_v1`, so a forwarder declares the role only to an engine that understands it. A steer still joins the running turn; every other delivery keeps the connection's origin, so a non-agent or sender-less delivery from a remote device still asks.
+- `test/suite/regressions/6305-peer-delivery-receiver-preset.test.ts`: on a host whose default preset is `full-access`, an agent's delivery from a remote device's connection runs its gated call without asking, while an `external` sender and a delivery with no sender still ask.
+
+## 2026-11-09 - RPC clients read and edit the workspace's instruction files (senpi#6297)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/project-file-path.ts`: new. The allowlist (`AGENTS.md`/`CLAUDE.md` at any depth, `.omo/rules/**`; canonical relative paths only, never through `.git` or `node_modules`) and the resolution that walks the path segment by segment with `lstat` from the real workspace root, refusing any symlink or non-folder on the way; missing parent folders are created one at a time and re-checked.
+- `packages/coding-agent/src/modes/rpc/project-file-commands.ts`: new. `read_project_file` (opens with `O_NOFOLLOW`, a missing file is `exists: false`) and `write_project_file` (trust-gated, `ifEtag` required with `null` to create, sha256 etag compare, temp file + rename, one write at a time per file); 512 KiB cap, under the host's 1,000,000-character message limit.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the two cases, refusals with `errorData`.
+- `packages/coding-agent/src/modes/rpc/rpc-session-command-types.ts`, `rpc-read-response-types.ts`, `rpc-mutation-response-types.ts`: the wire types.
+- `packages/coding-agent/src/modes/rpc/rpc-error-types.ts`: `project_file_not_allowed`, `project_file_conflict`, `project_file_too_large`, `project_file_write_failed`.
+- `packages/coding-agent/src/modes/rpc/method-classes.ts`: both verbs `device_admin` (the digest moves).
+- `packages/coding-agent/src/modes/rpc/method-classes-schema-session.ts`: their inbound schemas.
+- `packages/coding-agent/src/modes/rpc/session-attachment-gate.ts`, `session-command-activity.ts`: `read_project_file` joins the read allow-lists.
+
+### Why
+
+- A client driving an engine on another machine (a desktop app's remote workspace) has no filesystem there, so it could not edit Rules at all; one engine verb gives local and remote clients the same edit path.
+
+### Why an extension could not handle it
+
+- The RPC method-class table, the inbound schemas and the attachment gate are core; an extension request is not classed per method for a remote caller.
+
+### Expected merge conflict zones
+
+- LOW: the `set_project_setting` neighbourhood in `connection-handler.ts`, `method-classes.ts`, the schema table and the error-code union.
+
 ## 2026-11-10 - A host child receives its supervisor's adopted engine trust generation (senpi#6312)
 
 ### What changed

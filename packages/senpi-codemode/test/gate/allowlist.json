@@ -6076,6 +6076,19 @@
 			],
 			"reason": "senpi#6315 (catch-up for #6232): #6232 added the bun-skill-contribution contract case ('bun skill assets qualifies process.execPath as a Bun launcher', omo#12569) without listing it here, so codemode-gate reported it as an unreviewed addition on every PR based on main at or after bb2a3ca52b. This lists that one reviewed case; the baseline is unchanged.",
 			"changes": []
+		},
+		"senpi#6276": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/extension/reachable-tools.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/extension/reachable-tools.ts",
+				"legacyContracts/test/extension.test.ts/senpi-codemode extension factory keeps agent()/output() in the description when the task tool is eval-exposed and withheld from the model",
+				"legacyContracts/test/reachable-tools.test.ts/eval-exposed tools stay reachable from a cell counts a registered eval-exposed tool the session withholds from the model",
+				"legacyContracts/test/reachable-tools.test.ts/eval-exposed tools stay reachable from a cell reports an eval-exposed task tool available to agent()/output()",
+				"legacyContracts/test/reachable-tools.test.ts/eval-exposed tools stay reachable from a cell falls back to the active list when the registry cannot be read yet",
+				"legacyContracts/test/reachable-tools.test.ts/eval-exposed tools stay reachable from a cell keeps the kernel prelude of an eval-exposed tool while it is withheld"
+			],
+			"reason": "senpi#6276 (catch-up): #6276 kept eval-exposed tools reachable for agent(), output() and the kernel preludes, adding src/extension/reachable-tools.ts (loaded by the extension and the first kernel) and five contract cases (test/extension.test.ts, test/reachable-tools.test.ts) without listing them here, so codemode-gate failed on main from 749ae14d9b. This lists those 7 reviewed additions; the baseline is unchanged.",
+			"changes": []
 		}
 	}
 }

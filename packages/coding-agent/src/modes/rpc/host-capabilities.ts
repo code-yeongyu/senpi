@@ -43,6 +43,7 @@ import {
 	SESSION_STATUS_CAPABILITY,
 	TOOL_BARRIER_CAPABILITY,
 	WARM_CAPABILITY,
+	PARK_CLAIM_CAPABILITY,
 } from "./custom-capability.ts";
 import { EFFECT_LEDGER_CAPABILITY } from "./effect-record.ts";
 import { SESSION_MODEL_SCOPE_CAPABILITY } from "./rpc-session-command-types.ts";
@@ -72,6 +73,7 @@ export const SET_PERMISSION_PRESET_CAPABILITY = "set_permission_preset_v1";
  */
 export function multiSessionHostCapabilities(options: {
 	readonly warm: boolean;
+	readonly parkClaim?: boolean;
 	readonly toolRuntime: ToolRuntimeKind;
 	readonly negotiated: readonly string[];
 	readonly mcpPresenters?: boolean;
@@ -160,11 +162,13 @@ export function multiSessionHostCapabilities(options: {
 			AUTO_PERMISSION_PRESET_CAPABILITY,
 			// Only an in-process runtime shares the loop a warm loads into (senpi#2314).
 			...(options.warm ? [WARM_CAPABILITY] : []),
+			...(options.parkClaim ? [PARK_CLAIM_CAPABILITY] : []),
 			...toolRuntimeCapabilities(options.toolRuntime),
 			// The host alone says where tool work runs; a negotiated copy would make two answers.
 			...options.negotiated.filter(
 				(capability) =>
 					capability !== "mcp_form_presenter_v1" &&
+					capability !== PARK_CLAIM_CAPABILITY &&
 					// RULING-111 (LEAK-E): only the compact negotiation owns these names; flag off echoes them as main does.
 					(!compactUpdatesEnabled() ||
 						(capability !== "compact_message_updates_v1" && capability !== "compact_events")) &&
