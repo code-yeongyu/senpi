@@ -24,7 +24,12 @@ import {
 import type { FauxCallLogEntry } from "@earendil-works/pi-ai/compat";
 import type { AgentSession, AgentSessionEvent } from "../../../src/core/agent-session.ts";
 import { createHarness, type Harness, type HarnessOptions } from "../../suite/harness.ts";
-import { createToolDispatchLedger, recoverPendingToolCalls, type ToolLedgerEntry } from "./tool-dispatch.ts";
+import {
+	createToolDispatchLedger,
+	recoverPendingToolCalls,
+	type ToolLedgerEntry,
+	type ToolRecovery,
+} from "./tool-dispatch.ts";
 
 export type HistoryRow =
 	| { readonly kind: "input"; readonly message: AgentMessage }
@@ -557,11 +562,12 @@ export async function createReferenceDriver(
 
 	// S8a/S13: the tool calls of the last committed step that the exactly-once ledger has not run are
 	// the rebuilt instance's to finish, through the same pipeline a live dispatch uses.
-	async function recoverCommittedTools(instance: Harness): Promise<number> {
+	async function recoverCommittedTools(instance: Harness): Promise<ToolRecovery> {
+		const nothing: ToolRecovery = { ran: 0, stopped: false };
 		const last = rows.findLast((row) => row.kind !== "tombstone");
-		if (last?.kind !== "step") return 0;
+		if (last?.kind !== "step") return nothing;
 		const assistantMessage = last.message;
-		if (assistantMessage.role !== "assistant") return 0;
+		if (assistantMessage.role !== "assistant") return nothing;
 		const { stepId } = last;
 		return recoverPendingToolCalls({
 			instance,
@@ -614,7 +620,10 @@ export async function createReferenceDriver(
 		// BEFORE it delivers any queued input. Tools dispatch only after a successful commit, and new input
 		// must never overtake a committed step's tool work. A production session driver is checked against
 		// this rule; the hand still dedupes a recovered call by (sessionId, toolCallId).
-		const recovered = await recoverCommittedTools(next);
+		const recovery = await recoverCommittedTools(next);
+		// #6249: a stop during recovery ends the step. Its aborted results are committed, and nothing is dialed
+		// after it, exactly as a stop of a live step never redials.
+		if (recovery.stopped) return;
 		const pending = inbox.filter((entry) => entry.consumedBy === undefined);
 		for (const entry of pending) {
 			if (entry.kind === "steering") await next.session.steer(entry.text);
@@ -622,7 +631,11 @@ export async function createReferenceDriver(
 		}
 		// Re-admission: history ending in input the model has not answered (no committed row) dials again,
 		// and so does a recovered tool result, which the model owes an answer to.
-		if (recovered > 0 || pending.length > 0 || rows.findLast((row) => row.kind !== "tombstone")?.kind === "input") {
+		if (
+			recovery.ran > 0 ||
+			pending.length > 0 ||
+			rows.findLast((row) => row.kind !== "tombstone")?.kind === "input"
+		) {
 			await next.agent.continue().catch(() => undefined);
 		}
 	}

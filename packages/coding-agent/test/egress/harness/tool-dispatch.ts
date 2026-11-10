@@ -154,22 +154,29 @@ export interface ToolRecoveryOptions {
 	readonly onResult: (message: AgentMessage) => void;
 }
 
+/** How a recovery run ended: `stopped` means a stop aborted it, and the model is owed no continuation. */
+export interface ToolRecovery {
+	readonly ran: number;
+	readonly stopped: boolean;
+}
+
 /**
- * Runs the committed step's unrun tool calls on the rebuilt instance and returns how many ran.
+ * Runs the committed step's unrun tool calls on the rebuilt instance.
  *
  * The lifecycle run is what makes this the real pipeline rather than a replay: it owns the abort
  * signal a concurrent stop uses and the active run `processEvents` requires, while `runToolCall`
  * keeps argument preparation, `beforeToolCall`, execution and `afterToolCall` in one order with a
  * live dispatch. The result therefore carries the hooks' own content, `isError` and `details`.
  */
-export async function recoverPendingToolCalls(options: ToolRecoveryOptions): Promise<number> {
+export async function recoverPendingToolCalls(options: ToolRecoveryOptions): Promise<ToolRecovery> {
 	const { instance, assistantMessage, alreadyRan, now, onResult } = options;
 	const pending = assistantMessage.content.filter(
 		(block): block is AgentToolCall => block.type === "toolCall" && !alreadyRan.has(block.id),
 	);
-	if (pending.length === 0) return 0;
+	if (pending.length === 0) return { ran: 0, stopped: false };
 	const agent = instance.agent;
 	const internals = agent as unknown as RecoveringAgent;
+	let stopped = false;
 	await internals.runWithLifecycle(async (signal) => {
 		for (const call of pending) {
 			await internals.processEvents({
@@ -215,6 +222,7 @@ export async function recoverPendingToolCalls(options: ToolRecoveryOptions): Pro
 			await internals.processEvents({ type: "message_end", message: result });
 			onResult(result);
 		}
+		stopped = signal.aborted;
 	});
-	return pending.length;
+	return { ran: pending.length, stopped };
 }
