@@ -3580,6 +3580,19 @@ export class AgentSession {
 		if (settling) await settling;
 	}
 
+	/**
+	 * Enters the active-run bracket that `isStreaming` reports and `_emitAgentSettled` closes. Every path that
+	 * starts the agent enters it: a prompt, and a continuation that starts after the previous run settled.
+	 * @returns Whether this call opened the bracket (false when a run was already active).
+	 */
+	private _beginActiveRun(): boolean {
+		if (this._isAgentRunActive) return false;
+		this.externalAdmission.beginTurn();
+		this._queuedInputAges.noteRunStarted();
+		this._isAgentRunActive = true;
+		return true;
+	}
+
 	private async _promptAgent(
 		messages: AgentMessage | AgentMessage[],
 		{
@@ -3599,11 +3612,7 @@ export class AgentSession {
 			throw new Error("The previous run was interrupted. Human input or Resume is required before another turn.");
 		deferredTurnClaim?.resolve("started");
 		this._lifecycleBinding.prepareRun();
-		if (!this._isAgentRunActive) {
-			this.externalAdmission.beginTurn();
-			this._queuedInputAges.noteRunStarted();
-		}
-		this._isAgentRunActive = true;
+		this._beginActiveRun();
 		try {
 			onTurnAdmitted?.();
 			// A new turn admitted: arm the inactivity lease and the hard max-runtime cap.
@@ -11722,43 +11731,23 @@ export class AgentSession {
 			if (this.agent.state.isStreaming) return "taken-over";
 			if (!this._promptOwnsRun) this._transcriptWriteFailures.startRun();
 
-			await runBoundedRetryContinuation({
-				continueRun: async () => {
-					if (this._continueWithQueuedInput) {
-						// Joined input of a start that never ran: the transcript tail may be anything, even empty.
-						this._continueWithQueuedInput = false;
-						await this.agent.continueWithQueuedMessages(options);
-					} else if (this._scheduledContinuationRecompacted) {
-						const tail = this.agent.state.messages.at(-1);
-						if (tail?.role === "assistant" && (tail.stopReason === "error" || tail.stopReason === "aborted")) {
-							this._retireFailedRetryAssistant(tail);
-							if (this.agent.state.messages.at(-1) === tail) {
-								this.agent.state.messages = this.agent.state.messages.slice(0, -1);
-								this._incrementMessageRevision();
-							}
-						}
-						await this.agent.continueWithQueuedMessages(options);
-					} else {
-						await this.agent.continue(options);
-					}
-				},
-				getActiveSignal: () => this.agent.signal,
-				abortActive: () =>
-					this.agent.abort(
-						new ProviderRetryWatchdogAbortError(
-							providerRetryWatchdogAbortMessage(retryTimeoutMs, this.agent.streamStartTimeoutMs),
-						),
-					),
-				timeoutMs: retryTimeoutMs,
-				onStreamStarted: (listener) => {
-					const unsubscribe = this.agent.subscribe((event) => {
-						if (event.type !== "message_start" || event.message.role !== "assistant") return;
-						unsubscribe();
-						listener();
-					});
-					return unsubscribe;
-				},
-			});
+			// A continuation after the run settled (an extension compaction aborts the run, then resumes its queue)
+			// is a new active run. Outside the bracket the session reported idle while the agent worked: Esc did not
+			// interrupt it and typed input waited for it to end (senpi#6345). Its agent_end settles it as usual.
+			const openedRun = this._beginActiveRun();
+			let runStarted = false;
+			const unsubscribeRunStart = openedRun
+				? this.agent.subscribe((event) => {
+						if (event.type === "agent_start") runStarted = true;
+					})
+				: undefined;
+			try {
+				await this._runContinuation(options, retryTimeoutMs);
+			} finally {
+				unsubscribeRunStart?.();
+				// Nothing was left to continue: close the bracket this continuation opened, as no agent_end will.
+				if (openedRun && !runStarted && !this.agent.state.isStreaming) await this._emitAgentSettled();
+			}
 			return "continued";
 		} catch (error) {
 			if (
@@ -11773,6 +11762,46 @@ export class AgentSession {
 			this._scheduledContinuationRecompacted = false;
 			this._continueWithQueuedInput = false;
 		}
+	}
+
+	private async _runContinuation(options: AgentContinuationOptions, retryTimeoutMs: number | undefined): Promise<void> {
+		await runBoundedRetryContinuation({
+			continueRun: async () => {
+				if (this._continueWithQueuedInput) {
+					// Joined input of a start that never ran: the transcript tail may be anything, even empty.
+					this._continueWithQueuedInput = false;
+					await this.agent.continueWithQueuedMessages(options);
+				} else if (this._scheduledContinuationRecompacted) {
+					const tail = this.agent.state.messages.at(-1);
+					if (tail?.role === "assistant" && (tail.stopReason === "error" || tail.stopReason === "aborted")) {
+						this._retireFailedRetryAssistant(tail);
+						if (this.agent.state.messages.at(-1) === tail) {
+							this.agent.state.messages = this.agent.state.messages.slice(0, -1);
+							this._incrementMessageRevision();
+						}
+					}
+					await this.agent.continueWithQueuedMessages(options);
+				} else {
+					await this.agent.continue(options);
+				}
+			},
+			getActiveSignal: () => this.agent.signal,
+			abortActive: () =>
+				this.agent.abort(
+					new ProviderRetryWatchdogAbortError(
+						providerRetryWatchdogAbortMessage(retryTimeoutMs, this.agent.streamStartTimeoutMs),
+					),
+				),
+			timeoutMs: retryTimeoutMs,
+			onStreamStarted: (listener) => {
+				const unsubscribe = this.agent.subscribe((event) => {
+					if (event.type !== "message_start" || event.message.role !== "assistant") return;
+					unsubscribe();
+					listener();
+				});
+				return unsubscribe;
+			},
+		});
 	}
 
 	/**
