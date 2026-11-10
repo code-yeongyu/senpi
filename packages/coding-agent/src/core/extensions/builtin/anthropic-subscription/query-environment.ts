@@ -1,6 +1,29 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { CLAUDE_SDK_OAUTH_API_ID } from "./api-id.ts";
 import { plannedContextWindow } from "./context-window.ts";
+import type { Options } from "./sdk-boundary.ts";
+import type { AnthropicSubscriptionProviderSettings } from "./settings.ts";
+
+type ClaudeCodeInlineSettings = Exclude<Options["settings"], string | undefined>;
+
+/**
+ * The inline settings (`--settings`) the lane sends to the Claude Code subprocess; `configFingerprint` hashes them, so
+ * a change restarts the resident process.
+ *
+ * - Compaction owner: native auto-compact is on only when the SDK owns compaction.
+ * - claude.ai connectors: the child runs with `--setting-sources=`, so a user's own Claude Code settings cannot turn
+ *   the account connectors off, and each attach adds their tool schemas to the context (oh-my-openagent#12166).
+ *   `claudeAiConnectors: false` sends Claude Code's `disableClaudeAiConnectors`; unset leaves the object unchanged.
+ */
+export function claudeCodeInlineSettings(
+	providerSettings: Pick<AnthropicSubscriptionProviderSettings, "claudeAiConnectors">,
+	senpiOwnsCompaction: boolean,
+): ClaudeCodeInlineSettings {
+	return {
+		autoCompactEnabled: !senpiOwnsCompaction,
+		...(providerSettings.claudeAiConnectors === false ? { disableClaudeAiConnectors: true } : {}),
+	};
+}
 
 /**
  * Variables the lane layers over the Claude Code subprocess environment the auth lane builds; they win over the
