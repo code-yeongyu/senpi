@@ -2,6 +2,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { FABLE55_LAUNCH } from "@earendil-works/pi-ai/utils/fable55-launch";
 import { getAnthropicCompat, resolvePromptCacheTtlSeconds } from "@earendil-works/pi-ai/utils/prompt-cache-ttl";
 import { describe, expect, it } from "vitest";
+import { claudeCodeMaxContextTokens } from "../../src/core/extensions/builtin/anthropic-subscription/context-window.ts";
 import { classifySdkError } from "../../src/core/extensions/builtin/anthropic-subscription/errors.ts";
 import { buildAnthropicSubscriptionQueryOptions } from "../../src/core/extensions/builtin/anthropic-subscription/options.ts";
 import { resolvePreset, resolvePresetName } from "../../src/core/extensions/builtin/prompt-preset/presets.ts";
@@ -93,7 +94,7 @@ describe("Fable 5.5 provisional preset (senpi#3893)", () => {
 			expect(options.settings).toEqual({ autoCompactEnabled: false });
 			expect(options.env).toMatchObject({
 				CLAUDE_CODE_TOTAL_TOKENS_REMINDER: "off",
-				CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(current.contextWindow),
+				CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(claudeCodeMaxContextTokens(current.contextWindow)),
 				DISABLE_COMPACT: "1",
 			});
 		},
