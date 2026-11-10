@@ -138,6 +138,7 @@ import {
 	writeProjectSetting,
 	writeProjectTrust,
 } from "./project-workspace-commands.ts";
+import { readProjectFile, writeProjectFile } from "./project-file-commands.ts";
 import { protocolIdentity } from "./protocol-identity.ts";
 import { buildRpcCommandsForSession, createCommandsChangedEvent, rpcCommandListDigest } from "./rpc-command-surface.ts";
 import {
@@ -2246,6 +2247,20 @@ export function createRpcConnectionHandler(
 				return result.ok
 					? success(id, "set_project_setting", result.data)
 					: error(id, "set_project_setting", result.message, result.errorCode);
+			}
+
+			case "read_project_file": {
+				const result = await readProjectFile(session, command.path);
+				return result.ok
+					? success(id, "read_project_file", result.data)
+					: error(id, "read_project_file", result.message, result.errorCode, result.errorData);
+			}
+
+			case "write_project_file": {
+				const result = await writeProjectFile(session, command.path, command.content, command.ifEtag);
+				return result.ok
+					? success(id, "write_project_file", result.data)
+					: error(id, "write_project_file", result.message, result.errorCode, result.errorData);
 			}
 
 			case "extension_request":

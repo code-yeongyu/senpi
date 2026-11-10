@@ -1,9 +1,9 @@
 {
 	"methodClassesVersion": 1,
-	"methodClassesDigest": "7ea18de0fb5d28f89aabdc17cbaca72e973cdea7d5928fd82d91ccced025000e",
+	"methodClassesDigest": "62f1fd2318255fb0f1b7fad0141a9be6b8745542b36c6417c3a1777a7717f636",
 	"sampleId": "00000000-0000-7000-8000-000000000000",
 	"samplePathRoot": "/nonexistent/senpi-rpc-inbound-sample",
-	"methodCount": 124,
+	"methodCount": 126,
 	"methods": [
 		{
 			"method": "abort",
@@ -834,6 +834,16 @@
 			}
 		},
 		{
+			"method": "read_project_file",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "read_project_file",
+				"path": "AGENTS.md"
+			}
+		},
+		{
 			"method": "reclaim_session",
 			"class": "connection_local",
 			"sampleClass": "connection_local",
@@ -1288,6 +1298,18 @@
 			"sample": {
 				"type": "withdraw_held_input",
 				"inputId": "00000000-0000-7000-8000-000000000000"
+			}
+		},
+		{
+			"method": "write_project_file",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "write_project_file",
+				"path": "AGENTS.md",
+				"content": "# Rules\n",
+				"ifEtag": null
 			}
 		}
 	]

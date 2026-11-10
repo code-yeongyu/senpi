@@ -3999,7 +3999,7 @@ in the following effect-based read allow-list:
 
 `get_state`, `get_messages`, `get_entries`, `get_tree`, `get_fork_messages`,
 `get_last_assistant_text`, `get_media`, `get_commands`, `get_loaded_surfaces`, `get_project_trust`,
-`get_project_settings`, `get_available_models`, `get_available_thinking_levels`, `get_fast_mode`, `get_session_stats`,
+`get_project_settings`, `read_project_file`, `get_available_models`, `get_available_thinking_levels`, `get_fast_mode`, `get_session_stats`,
 `get_pending_inputs`, `get_steering_messages`, `get_follow_up_messages`, `get_auth_providers`,
 `get_provider_accounts`, `resolve_path`, `memory_report`, `eval_cells.list`, `eval_cells.peek`,
 and `check_reload_veto`.
@@ -6233,6 +6233,58 @@ existing file does not parse (nothing is written), and `project_settings_write_f
 `get_project_trust` is an `observe` read; `set_project_trust`, `get_project_settings` and `set_project_setting`
 are `device_admin` (a saved trust decision decides whether project code runs on the device, and the settings
 commands read and write a file in the session's folder).
+
+#### read_project_file
+
+Reads one of the workspace's instruction files: `AGENTS.md` or `CLAUDE.md` at the session's folder or in any folder
+below it, or a file under `.omo/rules/`. Reading runs nothing, so it works while the project is untrusted.
+
+```json
+{"type": "read_project_file", "path": "AGENTS.md"}
+```
+
+```json
+{
+  "type": "response",
+  "command": "read_project_file",
+  "success": true,
+  "data": {
+    "cwd": "/home/user/project",
+    "path": "AGENTS.md",
+    "exists": true,
+    "content": "# Project rules\n",
+    "etag": "sha256-…",
+    "projectTrusted": true
+  }
+}
+```
+
+`path` is relative to the session's folder, `/`-separated and canonical: no empty, `.` or `..` segment, no `\\`, `:`
+or NUL, and never through `.git` or `node_modules`. A file that does not exist yet is a success with `exists: false`
+and `content`/`etag` `null`. `etag` is an opaque version of the stored bytes: compare it, never parse it.
+Errors: `invalid_argument` when `path` is not a string, `project_file_not_allowed` (`errorData: { path }`) for any
+other path, or when a folder on the way or the file itself is a symlink or not a regular file and folder, and
+`project_file_too_large` (`errorData: { limitBytes }`) for a stored file over 512 KiB.
+
+#### write_project_file
+
+Replaces (or creates) one of the files `read_project_file` reads, naming the version it replaces.
+
+```json
+{"type": "write_project_file", "path": "AGENTS.md", "content": "# Project rules\n", "ifEtag": "sha256-…"}
+```
+
+`ifEtag` is required: the `etag` last read, or `null` to create a file that must not exist yet. Missing parent
+folders are created. The file lands by a temporary file and a rename, so a reader never sees a partial write, and
+writes to one file are applied one at a time. The response carries the same `data` as `read_project_file`, read
+after the write. The session reads its instruction files when they are next loaded (a new session or `reload`).
+Errors: `invalid_argument` when `content` is not a string or `ifEtag` is neither a string nor `null`,
+`project_not_trusted` while the project is untrusted, `project_file_not_allowed` as for `read_project_file`,
+`project_file_too_large` (`errorData: { limitBytes }`) for content over 512 KiB, `project_file_conflict` when
+`ifEtag` is not the file's current version (`errorData: { currentEtag, exists }`; nothing is written; read again
+and retry), and `project_file_write_failed` when the write fails (permissions, disk).
+
+Both are `device_admin`: they read and write a file in the session's folder.
 
 ### extension_request
 
