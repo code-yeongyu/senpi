@@ -88,7 +88,10 @@ export interface HandHookLink {
 	connect(connectionId: string, sessions: readonly HandHookSession[]): Promise<void>;
 	/** A session bound (or re-hashed) mid-connection: its advertisement goes out before anything else for it. */
 	advertise(session: HandHookSession): Promise<void>;
-	/** One `hook.model_request` received on `connectionId`; its reply follows that session's advertisement. */
+	/**
+	 * One `hook.model_request` received on `connectionId`; its reply follows that session's advertisement. Its hooks run
+	 * outside the outgoing order, so a slow hook holds back no other request's reply and no advertisement.
+	 */
 	receive(connectionId: string, request: HookModelRequest): Promise<void>;
 }
 
@@ -123,15 +126,18 @@ export function createHandHookLink(options: HandHookLinkOptions): HandHookLink {
 			if (connectionId === undefined) throw new HookNotAdvertisedError("no connection to advertise on");
 			await sendAdvert(connectionId, session, advertised);
 		},
-		receive(connection, request) {
-			return enqueue(async () => {
+		async receive(connection, request) {
+			// Only the advertised check and the reply's send take a place in the outgoing order.
+			await enqueue(async () => {
 				if (connection !== connectionId || !advertised.has(request.sessionId))
 					throw new HookNotAdvertisedError(
 						`hook.model_request for session ${JSON.stringify(request.sessionId)} was not preceded by its advertisement on connection ${JSON.stringify(connection)}`,
 					);
-				const current = connectionId;
-				const reply = await options.serve(request);
-				if (current !== connectionId) return;
+			});
+			const reply = await options.serve(request);
+			await enqueue(async () => {
+				// A reconnect since the request arrived: its connection is gone, so its reply is not sent.
+				if (connection !== connectionId) return;
 				await options.send(reply);
 			});
 		},

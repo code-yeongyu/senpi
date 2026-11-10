@@ -5,7 +5,13 @@ import type { ProviderId } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import type { HandSessionAdvertisement, HookModelRequest, HookModelRequestReply } from "../../src/core/egress/wire.ts";
 import type { SignedPlacementClaim } from "../../src/core/egress/placement-claim.ts";
-import type { ExtensionFactory } from "../../src/core/extensions/types.ts";
+import { createEventBus } from "../../src/core/event-bus.ts";
+import { createExtensionRuntime, loadExtensionFromFactory } from "../../src/core/extensions/loader.ts";
+import {
+	DEFAULT_EXTENSION_SESSION_PROFILE,
+	type ExtensionFactory,
+	type ProviderHookOptions,
+} from "../../src/core/extensions/types.ts";
 import {
 	computeAdvertHash,
 	createHandHookLink,
@@ -95,6 +101,34 @@ describe("CK21: provider access declarations", () => {
 					},
 				]),
 			).rejects.toThrow(/providers/);
+	});
+
+	it("refuses a malformed declaration at registration also when its handler declares the other side", async () => {
+		const registrations: ExtensionFactory[] = [
+			(pi) => void pi.on("before_provider_request", () => undefined, { runs: "hand", providers: [] }),
+			(pi) => void pi.on("provider_stream_event", () => undefined, { runs: "hand", providers: [] }),
+			(pi) => void pi.on("after_provider_response", () => undefined, { runs: "hand", providers: [] }),
+		];
+		for (const register of registrations)
+			await expect(
+				loadExtensionFromFactory(
+					register,
+					process.cwd(),
+					createEventBus(),
+					createExtensionRuntime(),
+					"/user/bad.ts",
+					{ ...DEFAULT_EXTENSION_SESSION_PROFILE, side: "brain" },
+				),
+			).rejects.toThrow(/providers/);
+	});
+
+	it("ignores a providers option on any other event", async () => {
+		const options: ProviderHookOptions = { providers: [] };
+		const access = await accessOf({
+			path: "/user/a.ts",
+			factory: (pi) => void pi.on("tool_call", () => undefined, options),
+		});
+		expect(access).toEqual({ requestHooks: [], streamHooks: [] });
 	});
 
 	it("never filters the fused dispatch: a hook declared for another provider still runs there", async () => {
@@ -247,5 +281,50 @@ describe("CK21: the advertisement precedes dispatch", () => {
 		await receiving;
 
 		expect(sent).toEqual(["hand.session.advertise", "hook.model_request.reply"]);
+	});
+
+	it("runs each hook outside the outgoing order: a held hook holds back neither another session's reply nor a reconnect's advertisements", async () => {
+		const sent: Array<HandSessionAdvertisement | HookModelRequestReply> = [];
+		const serving = Promise.withResolvers<void>();
+		const held = Promise.withResolvers<void>();
+		const link = createHandHookLink({
+			send: async (message) => void sent.push(message),
+			serve: async (request) => {
+				if (request.sessionId === "a") {
+					serving.resolve();
+					await held.promise;
+				}
+				return {
+					t: "hook.model_request.reply",
+					sessionId: request.sessionId,
+					stepId: request.stepId,
+					output: request.input,
+				};
+			},
+		});
+		await link.connect("c1", [session("a"), session("b")]);
+		const a = link.receive("c1", hookRequest("a"));
+		await serving.promise;
+
+		// Both settle at once when nothing holds them; the bound only ends the wait if A's hook does.
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const others = await Promise.race([
+			link
+				.receive("c1", hookRequest("b"))
+				.then(() => link.connect("c2", [session("a"), session("b")]))
+				.then(() => "sent" as const),
+			new Promise<"held back">((resolve) => {
+				timer = setTimeout(() => resolve("held back"), 2000);
+			}),
+		]);
+		clearTimeout(timer);
+		const whileHeld = kinds(sent);
+		held.resolve();
+		await a;
+
+		expect(others).toBe("sent");
+		expect(whileHeld).toEqual(["advert:a@c1", "advert:b@c1", "reply:b/s1", "advert:a@c2", "advert:b@c2"]);
+		// A's request named c1, which is stale once c2 connected: its reply is not sent.
+		expect(kinds(sent)).toEqual(whileHeld);
 	});
 });

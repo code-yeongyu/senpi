@@ -494,14 +494,13 @@ function createExtensionAPI(
 		): () => void {
 			assertActive();
 			const runs = options?.runs;
-			if (runs !== undefined) {
-				assertExtensionSide(extension, runs, `"${event}"`);
-				if (session.side !== undefined && runs !== session.side) return () => {};
-			}
+			if (runs !== undefined) assertExtensionSide(extension, runs, `"${event}"`);
+			// Checked on every side, also for a handler this side does not register: a malformed declaration always throws.
 			const providers =
 				PROVIDER_HOOK_EVENTS.includes(event) && options?.providers !== undefined
 					? declaredProviders(extension, options.providers, `"${event}"`)
 					: undefined;
+			if (runs !== undefined && session.side !== undefined && runs !== session.side) return () => {};
 			const registeredHandler: HandlerFn = ownedBy(extension, (...args: unknown[]) => {
 				// A child event can run inside its parent's task-tool async scope.
 				// Bind the host context here, preserving registered-handler metadata.

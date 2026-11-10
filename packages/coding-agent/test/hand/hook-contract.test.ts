@@ -197,6 +197,36 @@ describe("CK21: a hand serves hook.model_request", () => {
 		});
 	});
 
+	it("carries a user hook's failure in the reply, as a fused session reports it, and still replies with the payload", async () => {
+		const thrower: ExtensionFactory = (pi) =>
+			void pi.on("before_provider_request", () => {
+				throw new Error("boom-from-hook");
+			});
+		const loaded = await createTestExtensionsResult([{ path: "/user/thrower.ts", factory: thrower }]);
+		const runner = new ExtensionRunner(
+			loaded.extensions,
+			loaded.runtime,
+			process.cwd(),
+			undefined,
+			await createInMemoryModelRegistry(AuthStorage.inMemory()),
+			loaded.eventBus,
+		);
+		const hooks = extensionLoopHooks(runner, "hand", process.cwd(), createLoopHookCall());
+
+		const reply = await serveHookModelRequest(request(GOLDEN), {
+			verifyClaim: async () => "valid",
+			runRequestHooks: loopHookRequestHooks(hooks, { id: "scope-1", root: process.cwd() }),
+		});
+
+		expect(reply).toEqual({
+			t: "hook.model_request.reply",
+			sessionId: "loop-session",
+			stepId: "step-1",
+			output: GOLDEN,
+			errors: [{ extensionPath: "/user/thrower.ts", event: "before_provider_request", error: "boom-from-hook" }],
+		});
+	});
+
 	it("refuses every claim that does not verify, with its wire code, before any hook runs", async () => {
 		for (const verdict of ["invalid", "malformed", "expired", "superseded", "unknown"] as const) {
 			let ran = 0;
@@ -204,7 +234,7 @@ describe("CK21: a hand serves hook.model_request", () => {
 				verifyClaim: async (): Promise<ClaimVerdict> => verdict,
 				runRequestHooks: async (_sessionId, input) => {
 					ran++;
-					return input;
+					return { output: input };
 				},
 			});
 			await expect(served).rejects.toBeInstanceOf(HookRequestRefusedError);
@@ -220,7 +250,7 @@ describe("CK21: a hand serves hook.model_request", () => {
 				verifyClaim: async () => "valid",
 				runRequestHooks: async (_sessionId, input) => {
 					ran++;
-					return input;
+					return { output: input };
 				},
 			}),
 		).rejects.toBeInstanceOf(HookContractError);

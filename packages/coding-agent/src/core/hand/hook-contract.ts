@@ -5,12 +5,13 @@
  * and the effective request model, without the request headers or the model's own headers, which can carry a
  * credential and never leave the side that dials. A step call has this input; an aux call has none. A hand serves
  * `hook.model_request` by running its user's request hooks on the input, only after the request's placement claim
- * verified, and replies with the payload they produced.
+ * verified, and replies with the payload they produced, with their failures and the messages and notices they sent.
  */
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExecutionScope } from "@earendil-works/pi-agent-core";
 import { CLAIM_VERDICT_ERRORS, type ClaimVerdict } from "../egress/placement-claim.ts";
 import type {
+	HookFailure,
 	HookModelRequest,
 	HookModelRequestReply,
 	ProviderCallErrorCode,
@@ -113,11 +114,16 @@ export function hookModelOf(input: HookRequestInput): Model<Api> | undefined {
 	return input.model as Model<Api> | undefined;
 }
 
+/** What the user's request hooks produced: the reply's `output`, their failures and what they sent. */
+export type HookRequestHooksResult = Omit<HookModelRequestReply, "t" | "sessionId" | "stepId" | "output"> & {
+	readonly output: HookRequestInput;
+};
+
 export interface HookServePorts {
 	/** The hand's placement-claim check (CK7's verifier with the hand's trust and clock). */
 	verifyClaim(claim: unknown): Promise<ClaimVerdict>;
-	/** Runs the user's request hooks of `sessionId` on `input` and returns their output. */
-	runRequestHooks(sessionId: string, input: HookRequestInput): Promise<HookRequestInput>;
+	/** Runs the user's request hooks of `sessionId` on `input` and returns what they produced. */
+	runRequestHooks(sessionId: string, input: HookRequestInput): Promise<HookRequestHooksResult>;
 }
 
 /** Serves one `hook.model_request`: claim first, then the closed input, then the hooks. */
@@ -128,13 +134,36 @@ export async function serveHookModelRequest(
 	const verdict = await ports.verifyClaim(request.claim);
 	if (verdict !== "valid") throw new HookRequestRefusedError(verdict);
 	const input = parseHookRequestInput(request.input);
-	const output = await ports.runRequestHooks(request.sessionId, input);
-	return { t: "hook.model_request.reply", sessionId: request.sessionId, stepId: request.stepId, output };
+	const produced = await ports.runRequestHooks(request.sessionId, input);
+	return { t: "hook.model_request.reply", sessionId: request.sessionId, stepId: request.stepId, ...produced };
+}
+
+const isHookFailure = (value: unknown): value is HookFailure =>
+	isPlainObject(value) &&
+	typeof value.extensionPath === "string" &&
+	typeof value.event === "string" &&
+	typeof value.error === "string";
+
+function hookFailures(value: unknown): readonly HookFailure[] {
+	if (!Array.isArray(value) || !value.every(isHookFailure))
+		throw new HookContractError("the hand's request-hook reply has malformed errors");
+	return value.map(({ extensionPath, event, error }) => ({ extensionPath, event, error }));
+}
+
+function wireList(value: unknown, at: string): readonly WireJson[] {
+	if (!Array.isArray(value)) throw new HookContractError(`the hand's request-hook reply has malformed ${at}`);
+	return value.map((item, index) => wireJson(item, `${at}[${index}]`));
+}
+
+function droppedCount(value: unknown): number {
+	if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) return value;
+	throw new HookContractError("the hand's request-hook reply has a malformed droppedLate");
 }
 
 /**
  * `runRequestHooks` over a hand's loop-hook runner (`LooplessHand.loopHooks`): the session's hooks run on the runtime of
- * `scope`, inside a loop-hook call bound to that session, with the loop busy (a model request is mid-turn).
+ * `scope`, inside a loop-hook call bound to that session, with the loop busy (a model request is mid-turn). The hooks'
+ * failures and what they sent travel with the output, as they do on every loop-hook reply.
  */
 export function loopHookRequestHooks(
 	loopHooks: (event: string, payload: WireJson) => Promise<unknown>,
@@ -148,6 +177,13 @@ export function loopHookRequestHooks(
 			input,
 		});
 		if (!isPlainObject(reply)) throw new HookContractError("the hand's request-hook reply is not an object");
-		return parseHookRequestInput(reply.output);
+		const { errors, sent, notices, droppedLate } = reply;
+		return {
+			output: parseHookRequestInput(reply.output),
+			...(errors === undefined ? {} : { errors: hookFailures(errors) }),
+			...(sent === undefined ? {} : { sent: wireList(sent, "sent") }),
+			...(notices === undefined ? {} : { notices: wireList(notices, "notices") }),
+			...(droppedLate === undefined ? {} : { droppedLate: droppedCount(droppedLate) }),
+		};
 	};
 }
