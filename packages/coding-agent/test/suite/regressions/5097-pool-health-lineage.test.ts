@@ -130,6 +130,29 @@ describe("senpi#5097: a block keeps the health its own credential earned", () =>
 		expect(state.lastSuccessAt).toBe(START);
 	});
 
+	it("a later block of another kind drops an earlier usage-limit pause", async () => {
+		const accountRevision = await seedAccountHealth();
+		await repository.mutateSlotState(
+			PROVIDER,
+			"stored",
+			"alpha",
+			(current) =>
+				({
+					...current,
+					credentialRevision: accountRevision,
+					blockReason: "rate_limit",
+					blockedUntil: START - 1,
+					usageLimit: true,
+				}) as Omit<CredentialSlotState, "stateVersion">,
+		);
+		await request(failure(402, "Payment required"));
+
+		const state = await alphaState();
+		expect(state.blockReason).toBe("account_disabled");
+		expect(state.usageLimit).toBeUndefined();
+		expect(state.futureEngineField).toBe("kept");
+	});
+
 	it("a rejected-token block written under the token key keeps the account-keyed model block", async () => {
 		const accountRevision = await seedAccountHealth();
 		await request(failure(401, "Unauthorized"));

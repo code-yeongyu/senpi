@@ -24,7 +24,7 @@ import {
 	rememberHeadroomAccount,
 	type SlotPickPolicy,
 } from "./session-slot.ts";
-import type { CredentialSlotState } from "./state-store.ts";
+import { type CredentialSlotState, KNOWN_SLOT_STATE_FIELDS } from "./state-store.ts";
 
 export { listRotationSlots, type RotationLane, type RotationSlot, type RotationSources } from "./rotation-slots.ts";
 
@@ -92,17 +92,11 @@ function blockPatch(
 	// Health belongs to the credential that earned it: a new credential starts clean, while the same
 	// credential keeps its counters, model blocks, and the fields another engine version wrote (senpi#5097).
 	const kept = sameLineage(current, credentialRevision, lineage) ? current : undefined;
-	const {
-		stateVersion: _stateVersion,
-		blockedUntil: _blockedUntil,
-		blockReason: _blockReason,
-		lease: _lease,
-		failureCount: _failureCount,
-		credentialRevision: _credentialRevision,
-		lastSuccessAt: _lastSuccessAt,
-		modelBlocks: _modelBlocks,
-		...unknownFields
-	} = kept ?? { stateVersion: 0 };
+	// Only fields this engine does not own carry over: a known field (a usage-limit pause, a lease) is decided
+	// below, so one this engine adds to the schema later is never kept stale by mistake.
+	const unknownFields = Object.fromEntries(
+		Object.entries(kept ?? {}).filter(([field]) => !KNOWN_SLOT_STATE_FIELDS.has(field)),
+	);
 	const failureCount = (kept?.failureCount ?? 0) + 1;
 	const liveModelBlocks = kept === undefined ? undefined : pruneModelBlocks(kept.modelBlocks, now);
 	const base = {
