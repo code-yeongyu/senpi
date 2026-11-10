@@ -55,6 +55,9 @@ it("exempts exactly the reviewed commands from the attach gate", () => {
 			"list_sessions",
 			"memory_report",
 			"open_session",
+			// senpi#6307: reads one allowlisted instruction file, without effect like get_project_settings;
+			// write_project_file stays gated.
+			"read_project_file",
 			"reclaim_session",
 			"resolve_path",
 			"subscribe_sessions",
