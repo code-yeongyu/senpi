@@ -174,8 +174,6 @@ function openSession(
 	return null;
 }
 
-/** Declares this connection's roles, fixed once declared, exactly as on a host; the other fields change nothing here. */
-
 /**
  * A live attachment on the session's identity, as on a host: `sessionId` is this terminal's routing handle,
  * `durableSessionId` its session id, and `expectedHostInstance`, when sent, this endpoint's instance id. The answer

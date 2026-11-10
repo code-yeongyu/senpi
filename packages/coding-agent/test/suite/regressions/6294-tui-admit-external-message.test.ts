@@ -63,7 +63,10 @@ describe("TUI session control admit_external_message", () => {
 		expect(reply.data).toMatchObject({ kind: expect.any(String), turnId: expect.stringMatching(/^\d+$/) });
 		const [entry, ...rest] = deliveries();
 		expect(rest).toEqual([]);
-		expect(entry?.type === "custom_message" ? entry.details : undefined).toMatchObject({ remote_origin: DEVICE });
+		expect(entry?.type === "custom_message" ? entry.details : undefined).toMatchObject({
+			remote_origin: DEVICE,
+			delivery_id: "device:dev-1/d-1",
+		});
 		expect(entry?.type === "custom_message" ? JSON.stringify(entry.content) : "").not.toContain("dev-1");
 	});
 
@@ -130,6 +133,16 @@ describe("TUI session control admit_external_message", () => {
 		expect(deliveries()).toEqual([]);
 	});
 
+	it("keeps a connection's remote device fixed once declared", async () => {
+		const { client } = await terminal(DEVICE);
+		const redeclared = await client.request({
+			type: "set_client_info",
+			remoteOrigin: { deviceId: "dev-2", deviceName: "Other" },
+		});
+		expect(redeclared).toMatchObject({ success: false, error: expect.stringMatching(/^remote_origin_fixed/) });
+		expect(await client.request({ type: "set_client_info", remoteOrigin: DEVICE })).toMatchObject({ success: true });
+	});
+
 	it("keys a local connection's delivery under the local prefix and stamps no remote origin", async () => {
 		const { client, deliveries } = await terminal();
 		const reply = await client.request({
@@ -141,6 +154,8 @@ describe("TUI session control admit_external_message", () => {
 		});
 		expect(reply).toMatchObject({ success: true });
 		const [entry] = deliveries();
-		expect(entry?.type === "custom_message" ? entry.details : undefined).not.toHaveProperty("remote_origin");
+		const details = entry?.type === "custom_message" ? entry.details : undefined;
+		expect(details).toMatchObject({ delivery_id: "rpc:local/d-5" });
+		expect(details).not.toHaveProperty("remote_origin");
 	});
 });
