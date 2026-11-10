@@ -45,7 +45,7 @@ export interface RpcProtocolIdentity {
 	/**
 	 * The inbound method-class table this engine runs (`method-classes.ts`): its `version`, `digest`, and the whole
 	 * table as data (`classes`: each type's class or `dynamic`; `dynamic_versions`: each rule's version), never the
-	 * rule functions (senpi#5632).
+	 * rule functions (senpi#5632); `rule_data`: each rule that is one field lookup, as data (senpi#6318).
 	 */
 	readonly method_classes: RpcMethodClassesDescription;
 }

@@ -31,6 +31,7 @@
 
 import { createHash } from "node:crypto";
 import type { SessionEntry, SessionMessageEntry } from "../../core/session-manager.ts";
+import { fieldRule, type RpcMethodClassRuleData, ruleDataOf } from "./method-class-rule-data.ts";
 import type { RpcInboundRecord } from "./rpc-host-command-types.ts";
 
 export type RpcMethodClass = "observe" | "drive" | "answer" | "thread" | "device_admin" | "connection_local";
@@ -49,6 +50,8 @@ export type RpcInboundRecordOf<K extends RpcMethodType> = Extract<RpcInboundReco
 interface RpcMethodClassRule<K extends RpcMethodType> {
 	readonly classify: (record: RpcInboundRecordOf<K>) => RpcMethodClass;
 	readonly version: number;
+	/** The rule as data when it is one field lookup (`fieldRule`, senpi#6318): `classify` is built from it. */
+	readonly data?: RpcMethodClassRuleData;
 }
 
 /** A fixed class, or a versioned rule for a type whose class depends on its fields. */
@@ -113,16 +116,6 @@ function openSessionClass(record: object): RpcMethodClass {
 	return namesAny(record, ["sessionPath", "cwd", "permissionPreset", "browserEngine", "env"])
 		? "device_admin"
 		: "thread";
-}
-
-/** `scope: "turn"` changes only this turn; any other scope remembers the model's level device-wide. */
-function thinkingLevelClass(record: object): RpcMethodClass {
-	return Reflect.get(record, "scope") === "turn" ? "drive" : "device_admin";
-}
-
-/** `scope: "session"` switches only this session's model; any other scope persists the device's default model. */
-function setModelClass(record: object): RpcMethodClass {
-	return Reflect.get(record, "scope") === "session" ? "drive" : "device_admin";
 }
 
 /** An effect looked up by session id is a read; one looked up in a named session file opens a host path. */
@@ -215,9 +208,9 @@ export const RPC_METHOD_CLASS = {
 	set_label: "drive",
 	set_session_name: "drive",
 	// drive only for this turn's level; otherwise it remembers the model's level in the device-wide settings
-	set_thinking_level: { classify: thinkingLevelClass, version: 1 },
+	set_thinking_level: fieldRule(1, "scope", { turn: "drive" }, "device_admin"),
 	// drive only for this session's model; otherwise it persists the default model in the device-wide settings
-	set_model: { classify: setModelClass, version: 1 },
+	set_model: fieldRule(1, "scope", { session: "drive" }, "device_admin"),
 	// a session override; set_steering_mode, set_follow_up_mode and set_auto_retry write global settings (device_admin)
 	set_auto_compaction: "drive",
 	// like a preset-naming open_session: it changes what the agent may do without asking
@@ -357,6 +350,8 @@ export interface RpcMethodClassesDescription {
 	readonly digest: string;
 	readonly classes: Readonly<Record<RpcMethodType, RpcMethodClassDescription>>;
 	readonly dynamic_versions: Readonly<Partial<Record<RpcMethodType, number>>>;
+	/** Each `dynamic` entry whose rule is one field lookup, as data (senpi#6318); the digest does not cover it. */
+	readonly rule_data: Readonly<Partial<Record<RpcMethodType, RpcMethodClassRuleData>>>;
 }
 
 /**
@@ -383,12 +378,15 @@ export const RPC_METHOD_CLASSES_DIGEST = rpcMethodClassesDigest(
 export function describeRpcMethodClasses(): RpcMethodClassesDescription {
 	const classes: Record<string, RpcMethodClassDescription> = {};
 	const dynamicVersions: Record<string, number> = {};
+	const ruleData: Record<string, RpcMethodClassRuleData> = {};
 	for (const [type, entry] of Object.entries(RPC_METHOD_CLASS)) {
 		if (typeof entry === "string") {
 			classes[type] = entry;
 		} else {
 			classes[type] = DYNAMIC;
 			dynamicVersions[type] = entry.version;
+			const data = ruleDataOf(entry);
+			if (data !== undefined) ruleData[type] = data;
 		}
 	}
 	return {
@@ -396,5 +394,6 @@ export function describeRpcMethodClasses(): RpcMethodClassesDescription {
 		digest: RPC_METHOD_CLASSES_DIGEST,
 		classes: classes as RpcMethodClassesDescription["classes"],
 		dynamic_versions: dynamicVersions,
+		rule_data: ruleData,
 	};
 }

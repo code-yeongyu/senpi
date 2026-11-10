@@ -1,6 +1,7 @@
 /** The `classify_record` answer (senpi#5632): the class of one record, without running it, on any connection. */
 import type { DelegationResponse } from "./delegation-wire.ts";
 import { requestId } from "./delegation-wire.ts";
+import { ruleDataOf } from "./method-class-rule-data.ts";
 import {
 	classifyRpcMethod,
 	RPC_METHOD_CLASS,
@@ -18,6 +19,7 @@ export function classifyRecord(record: object): DelegationResponse {
 	const type = typeof target === "object" && target !== null ? Reflect.get(target, "type") : undefined;
 	const entry =
 		methodClass !== undefined && typeof type === "string" ? RPC_METHOD_CLASS[type as RpcMethodType] : undefined;
+	const ruleData = entry === undefined ? undefined : ruleDataOf(entry);
 	return {
 		...(id === undefined ? {} : { id }),
 		type: "response",
@@ -31,7 +33,7 @@ export function classifyRecord(record: object): DelegationResponse {
 				? {}
 				: typeof entry === "string"
 					? { static: true }
-					: { static: false, rule: entry.version }),
+					: { static: false, rule: entry.version, ...(ruleData === undefined ? {} : { rule_data: ruleData }) }),
 		},
 	};
 }

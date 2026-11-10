@@ -1649,7 +1649,8 @@ parsing a version string:
     "version": 1,
     "digest": "71d68465…",
     "classes": { "get_state": "observe", "prompt": "dynamic", "...": "..." },
-    "dynamic_versions": { "prompt": 1, "...": 1 }
+    "dynamic_versions": { "prompt": 1, "...": 1 },
+    "rule_data": { "set_model": { "version": 1, "field": "scope", "map": { "session": "drive" }, "default": "device_admin" }, "...": {} }
   }
 }
 ```
@@ -1678,9 +1679,10 @@ parsing a version string:
   record-dependent entry). A client that classifies records with its own copy of the table uses that copy only
   while its digest equals this one, and otherwise treats every record as unclassified. `classes` is the whole
   table as data: each inbound type's class, or `dynamic` when the class depends on the record's fields, with that
-  rule's version in `dynamic_versions` (the rules themselves are never shipped; ask `classify_record`, see
-  "Delegated connections"). Hosts released before the field omit it; hosts released before `classes` send only
-  `version` and `digest`.
+  rule's version in `dynamic_versions`. `rule_data` carries, for each `dynamic` entry whose rule is one field
+  lookup, that rule as data (see "Rule data" under "Delegated connections"); every other rule is never shipped, so
+  ask `classify_record`. Hosts released before the field omit it; hosts released before `classes` send only
+  `version` and `digest`, and hosts released before `rule_data` omit that member.
 - `memory_pressure` - multi-session hosts only: `true` while this host's memory sampler reads its memory footprint
   above `SENPI_RPC_HOST_RSS_WARN_MB`, else `false`. Not identity and never an admission signal; `senpi host status`
   reports it per endpoint. Classic hosts and hosts released before the field omit it.
@@ -2880,6 +2882,23 @@ are not role-bound never get `authority`, and `relayExec` is an ignored member t
 `class` is `null` for a record the engine does not classify; `static` says whether the class depends only on the
 type (`rule` is then absent), so a client may cache static answers per `digest`. It is never an authorization: the
 host decides again when the record arrives.
+
+#### Rule data
+
+When a record-dependent rule reads one field of the record, the answer also carries the rule itself as data, next
+to `static: false` and `rule` (senpi#6318):
+
+```json
+{ "id": "c2", "type": "response", "command": "classify_record", "success": true, "data": { "class": "device_admin", "version": 1, "digest": "71d68465…", "static": false, "rule": 1, "rule_data": { "version": 1, "field": "scope", "map": { "session": "drive" }, "default": "device_admin" } } }
+```
+
+`rule_data.version` is the version of the rule-data language, not of the rule (that is `rule`). Version 1 has one
+form: read `record[field]`; when it is a string and an own key of `map`, the class is `map[value]`, otherwise
+`default`. Nothing in it executes. The engine's own classifier for that rule is built from the same data, so a client
+that evaluates it decides every record as the engine does, and may keep it per `digest` and type like a static answer
+(`get_protocol_info.method_classes.rule_data` lists the same data for every such type). A client that does not know
+the `rule_data.version`, or cannot read its shape, ignores it and asks for every record, as for a rule without
+`rule_data` (`prompt`, `open_session`, ...). Like every answer here, it is never an authorization.
 
 ### Prompt surface
 
