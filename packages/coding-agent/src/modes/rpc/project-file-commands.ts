@@ -9,7 +9,8 @@
  */
 
 import { createHash, randomUUID } from "node:crypto";
-import { open, rename, rm, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { chmod, open, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type { AgentSession } from "../../core/agent-session.ts";
 import {
@@ -77,17 +78,31 @@ function parsePath(command: string, path: unknown): ProjectFilePath | Refusal {
 	return parseProjectFilePath(path) ?? notAllowed(path);
 }
 
-/** Reads the stored bytes without following a link; `undefined` when the file is gone. */
-async function readStored(absolute: string): Promise<Buffer | undefined> {
+type Stored =
+	| { readonly kind: "missing" }
+	| { readonly kind: "refused" }
+	| { readonly kind: "too_large" }
+	| { readonly kind: "file"; readonly bytes: Buffer; readonly mode: number };
+
+/**
+ * Reads the stored bytes without following a link and without blocking on a FIFO swapped in after resolution; the
+ * size is checked on the open handle before anything is read.
+ */
+async function readStored(absolute: string): Promise<Stored> {
 	let handle: Awaited<ReturnType<typeof open>>;
 	try {
-		handle = await open(absolute, "r", NO_FOLLOW);
+		handle = await open(absolute, constants.O_RDONLY | NO_FOLLOW | (constants.O_NONBLOCK ?? 0));
 	} catch (error) {
-		if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+		const code = error instanceof Error && "code" in error ? error.code : undefined;
+		if (code === "ENOENT") return { kind: "missing" };
+		if (code === "ELOOP") return { kind: "refused" };
 		throw error;
 	}
 	try {
-		return await handle.readFile();
+		const stat = await handle.stat();
+		if (!stat.isFile()) return { kind: "refused" };
+		if (stat.size > PROJECT_FILE_MAX_BYTES) return { kind: "too_large" };
+		return { kind: "file", bytes: await handle.readFile(), mode: stat.mode & 0o777 };
 	} finally {
 		await handle.close();
 	}
@@ -96,17 +111,16 @@ async function readStored(absolute: string): Promise<Buffer | undefined> {
 async function readFileState(
 	session: AgentSession,
 	file: ProjectFilePath,
-): Promise<{ data: RpcProjectFile; bytes: number; absolute: string; missingFolders: readonly string[] } | Refusal> {
+): Promise<
+	{ data: RpcProjectFile; mode: number | undefined; absolute: string; missingFolders: readonly string[] } | Refusal
+> {
 	const cwd = session.sessionManager.getCwd();
 	const resolved = await resolveProjectFile(cwd, file);
 	if (!resolved.ok) return notAllowed(file.relative);
-	let stored: Buffer | undefined;
-	try {
-		stored = resolved.exists ? await readStored(resolved.absolute) : undefined;
-	} catch (error) {
-		if (error instanceof Error && "code" in error && error.code === "ELOOP") return notAllowed(file.relative);
-		throw error;
-	}
+	const read: Stored = resolved.exists ? await readStored(resolved.absolute) : { kind: "missing" };
+	if (read.kind === "refused") return notAllowed(file.relative);
+	if (read.kind === "too_large") return tooLarge(file.relative);
+	const stored = read.kind === "file" ? read.bytes : undefined;
 	return {
 		data: {
 			cwd,
@@ -116,7 +130,7 @@ async function readFileState(
 			etag: stored === undefined ? null : etagOf(stored),
 			projectTrusted: session.settingsManager.isProjectTrusted(),
 		},
-		bytes: stored?.byteLength ?? 0,
+		mode: read.kind === "file" ? read.mode : undefined,
 		absolute: resolved.absolute,
 		missingFolders: resolved.missingFolders,
 	};
@@ -127,14 +141,29 @@ export async function readProjectFile(session: AgentSession, path: unknown): Pro
 	if ("ok" in file) return file;
 	const state = await readFileState(session, file);
 	if ("ok" in state) return state;
-	if (state.bytes > PROJECT_FILE_MAX_BYTES) return tooLarge(file.relative);
 	return { ok: true, data: state.data };
 }
 
-async function replaceAtomically(absolute: string, content: string): Promise<void> {
-	const temp = join(dirname(absolute), `.${basename(absolute)}.${randomUUID()}.tmp`);
+/** Thrown when the parent folder no longer resolves to itself, i.e. a folder on the way was swapped for a link. */
+class ParentMoved extends Error {}
+
+async function assertParentInPlace(folder: string): Promise<void> {
+	if ((await realpath(folder)) !== folder) throw new ParentMoved(folder);
+}
+
+/**
+ * Temp file + rename in the resolved folder, keeping an existing file's permissions. The folder is re-resolved before
+ * the temp file is written and again before the rename, so a folder swapped for a link after resolution is refused
+ * instead of followed (the remaining window between that check and the syscall needs a local writer racing it).
+ */
+async function replaceAtomically(absolute: string, content: string, mode: number | undefined): Promise<void> {
+	const folder = dirname(absolute);
+	const temp = join(folder, `.${basename(absolute)}.${randomUUID()}.tmp`);
+	await assertParentInPlace(folder);
 	try {
-		await writeFile(temp, content, { flag: "wx", mode: 0o644 });
+		await writeFile(temp, content, { flag: "wx", mode: mode ?? 0o644 });
+		if (mode !== undefined) await chmod(temp, mode);
+		await assertParentInPlace(folder);
 		await rename(temp, absolute);
 	} catch (error) {
 		await rm(temp, { force: true });
@@ -160,8 +189,9 @@ async function writeChecked(
 	}
 	try {
 		if (!(await createMissingFolders(state.missingFolders))) return notAllowed(file.relative);
-		await replaceAtomically(state.absolute, content);
+		await replaceAtomically(state.absolute, content, state.mode);
 	} catch (error) {
+		if (error instanceof ParentMoved) return notAllowed(file.relative);
 		return {
 			ok: false,
 			message: `Writing ${file.relative} failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -196,7 +226,9 @@ export async function writeProjectFile(
 	if (Buffer.byteLength(content, "utf8") > PROJECT_FILE_MAX_BYTES) return tooLarge(file.relative);
 	const key = join(session.sessionManager.getCwd(), file.relative);
 	const previous = writeChains.get(key) ?? Promise.resolve();
-	const next = previous.then(() => writeChecked(session, file, content, ifEtag));
+	const run = () => writeChecked(session, file, content, ifEtag);
+	// A write queued behind a failed one still runs, and its caller never receives the earlier caller's error.
+	const next = previous.then(run, run);
 	writeChains.set(key, next);
 	try {
 		return await next;

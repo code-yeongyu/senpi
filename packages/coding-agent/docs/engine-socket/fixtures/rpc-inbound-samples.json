@@ -840,7 +840,7 @@
 			"connectionLocal": false,
 			"sample": {
 				"type": "read_project_file",
-				"path": "AGENTS.md"
+				"path": "/nonexistent/senpi-rpc-inbound-sample/AGENTS.md"
 			}
 		},
 		{
@@ -1307,7 +1307,7 @@
 			"connectionLocal": false,
 			"sample": {
 				"type": "write_project_file",
-				"path": "AGENTS.md",
+				"path": "/nonexistent/senpi-rpc-inbound-sample/AGENTS.md",
 				"content": "# Rules\n",
 				"ifEtag": null
 			}
