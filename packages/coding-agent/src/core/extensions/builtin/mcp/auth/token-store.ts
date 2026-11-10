@@ -10,10 +10,16 @@ import { adoptLegacyRecord, type LegacyMigration, readRecordAsync } from "./lega
 // OAuth credential record of one server, persisted at
 // <agentDir>/mcp-auth/<sha256(serverName \0 serverUrl)>/tokens.json (dir 0700, file 0600).
 // Records an older senpi stored by URL alone (<sha256(serverUrl)>) move to the first server that reads them.
+// A dynamic registration, with the redirect URIs this client sent when it registered (senpi#6327).
+export type McpClientRegistration = OAuthClientInformationFull & { redirectUrisSent?: string[] };
+
 export interface McpStoredAuth {
 	accessToken?: string;
 	refreshToken?: string;
-	clientInfo?: OAuthClientInformationFull;
+	clientInfo?: McpClientRegistration;
+	// Registered by an authorization flow that has not completed; replaces clientInfo, and the refresh token issued
+	// to it, only when that flow's code exchange succeeds (senpi#6327).
+	pendingClientInfo?: McpClientRegistration;
 	codeVerifier?: string;
 	discoveryState?: OAuthDiscoveryState;
 	resource?: string;

@@ -1,5 +1,4 @@
 import { closeSync, openSync, readSync } from "node:fs";
-import { FABLE55_LAUNCH } from "@earendil-works/pi-ai/utils/fable55-launch";
 import { claudeCodeExecutableCandidates, defaultExecutableDeps } from "./executable.ts";
 import { bundledClaudeCodeVersion } from "./executable-version.ts";
 
@@ -7,13 +6,11 @@ import { bundledClaudeCodeVersion } from "./executable-version.ts";
  * Minimum Claude Code versions the Anthropic API has been observed to demand for a model, taken
  * from its 400 "Claude Code X does not support this model; version Y or newer is required".
  * Append-only: record a floor only from such an observed rejection, never from a guess.
+ * `claude-fable-5-2` has none yet: add `"claude-fable-5-2": "<Y>"` here once that 400 is observed.
  */
 export const OBSERVED_CLAUDE_CODE_MODEL_FLOORS: Readonly<Record<string, string>> = {
 	"claude-fable-5-1": "2.1.251",
 	"claude-opus-5-5": "2.1.280",
-	...(FABLE55_LAUNCH.minimumClaudeCodeVersion === null
-		? {}
-		: { [FABLE55_LAUNCH.modelId]: FABLE55_LAUNCH.minimumClaudeCodeVersion }),
 };
 
 export type BundledClaudeCodeBinary = { path: string; claudeCodeVersion: string | undefined };

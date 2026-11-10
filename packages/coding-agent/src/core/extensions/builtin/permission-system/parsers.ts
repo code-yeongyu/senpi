@@ -279,6 +279,7 @@ export function toolOwnedPermissionRequests(
 		permission: request.permission,
 		patterns: [...request.patterns],
 		always: [...request.always],
+		...(request.autoApproveAsk === true ? { autoApproveAsk: true as const } : {}),
 	}));
 }
 

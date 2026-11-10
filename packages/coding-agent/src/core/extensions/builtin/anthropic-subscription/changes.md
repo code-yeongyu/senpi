@@ -1,3 +1,61 @@
+## 2026-11-10 - Floor table no longer reads the Fable 5.5 launch block (senpi#3893)
+
+### What changed
+
+- `executable-model-support.ts`: `OBSERVED_CLAUDE_CODE_MODEL_FLOORS` drops the launch-gated spread. No floor is recorded for `claude-fable-5-2` because none has been observed. A comment names the line to add when the API rejects an older Claude Code for it.
+
+### Why
+
+- The table is append-only from observed rejections; the provisional launch id is retired.
+
+### Why an extension could not handle it
+
+- The table lives in this builtin.
+
+### Expected merge conflict zones
+
+- LOW: the `OBSERVED_CLAUDE_CODE_MODEL_FLOORS` literal.
+
+## 2026-11-09 - An aborted turn releases the anthropic-subscription pump at once (senpi#2974)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-turn-attempt.ts`: `createSessionTurnAttempt` passes an abort-aware `writable()` to the pump: the wait races the queue's `writable()` against a promise that resolves when the turn's abort signal fires. An abort while the consumer is stalled releases the pump immediately, so the terminal result is read and the interrupt receipt decides keep-or-close instead of the 1 s abort grace timer firing first and closing the session as `abort_uncertain`. The grace timer stays as the backstop for an interrupt that never delivers a terminal result.
+
+### Why
+
+- #2973 made the session stream apply backpressure: the pump awaits the turn's `writable()` before reading the next SDK message. When a turn was aborted while its consumer was not reading, the pump waited on a full queue; if that lasted longer than `SESSION_TURN_ABORT_GRACE_MS` (1 s), the grace timer settled the turn as `abort_uncertain` and closed the session, instead of taking the interrupted-and-kept path the interrupt receipt (`still_queued: []`) entitled it to (senpi#2974).
+
+### Why an extension could not handle it
+
+- The pump's backpressure wait and the turn's abort wiring both live in this builtin's session turn path; no extension API exposes the pump's `writable()` wait or the abort signal it must race against.
+
+### Expected merge conflict zones
+
+- LOW: the `writable` closure in `createSessionTurnAttempt` only; no other caller of `submitSessionTurn` passes a `writable`.
+
+## 2026-11-09 - `/claude-account` lists one readable block per account (senpi#6288)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/account-list.ts` (new): `formatClaudeAccountList` maps each slot to a list entry: label, tags (pin with its source, `next turn` for the affinity pick, `from environment`), status rows (account block, login-expired guidance, per-model blocks) and the account's limit readings.
+- `packages/coding-agent/src/core/extensions/builtin/account-list-view.ts` (new): provider-neutral plain-text renderer. One header line per account, aligned `label  value` rows, relative times with a short local clock (`formatWhen`), and list wording for account blocks (`describeBlockStatus`).
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/account-command.ts`: `showAccounts` still resolves pin and affinity pick, then notifies `formatClaudeAccountList`; the `|`-row and status helpers moved out.
+- `packages/coding-agent/src/core/subscription-limits/limit-summary.ts`: the reading-age helper is exported as `readingAge`; `describeAccountLimits` output is unchanged.
+- `packages/coding-agent/src/core/credential-pool/model-scope.ts`: `describeModelBlocks` (UTC ISO wording) is removed; `/claude-account` was its only caller.
+
+### Why
+
+- The old list put every account on one `|`-joined row, packed all limit windows into one line that repeated a full date with year and time zone per window, printed per-model blocks as UTC ISO, and wrapped to column 1 at 80 and 120 columns (senpi#6288, first item of senpi#5100).
+
+### Why an extension could not handle it
+
+- This is the builtin extension's own command output; no core path changes.
+
+### Expected merge conflict zones
+
+- LOW: `showAccounts` in `account-command.ts` and its import block; the `/claude-account` cases of `regressions/4092-account-list-block-reason`, `regressions/5350-login-expired-recovery` and `regressions/omo-9234-account-list-limits`.
+
 ## 2026-11-06 - A stored Claude account with no name is a sign-in state, not a crypto TypeError (oh-my-openagent#12228)
 
 ### What changed

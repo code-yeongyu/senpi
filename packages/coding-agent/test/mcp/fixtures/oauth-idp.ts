@@ -5,7 +5,8 @@ import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-import { type HttpReply, IdpState, parseIdpOptions } from "./oauth-idp-core.ts";
+import { type HttpReply, IdpState } from "./oauth-idp-core.ts";
+import { parseIdpOptions } from "./oauth-idp-options.ts";
 import { parseFixtureOptions } from "./options.ts";
 import { createFixtureServer } from "./sdk-server.ts";
 
@@ -72,6 +73,7 @@ function logSnapshot(state: IdpState): Record<string, unknown> {
 		registerHits: state.registerHits,
 		discoveryHits: state.discoveryHits,
 		familyInvalidated: state.familyInvalidated,
+		registrations: state.registrations,
 	};
 }
 
