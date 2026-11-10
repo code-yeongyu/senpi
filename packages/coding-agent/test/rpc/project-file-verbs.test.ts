@@ -1,7 +1,7 @@
 /**
  * An RPC client reads and edits the session workspace's instruction files (AGENTS.md, CLAUDE.md, nested AGENTS.md,
  * `.omo/rules/**`) with `read_project_file` / `write_project_file`, the verbs a remote desktop needs to edit Rules on a
- * machine it has no filesystem access to (desktop#6333). Records go through the multi-session host's own dispatch on
+ * machine it has no filesystem access to. Records go through the multi-session host's own dispatch on
  * the in-process registry with a faux provider; the project carries a project skill, so trust gates it.
  */
 import {
