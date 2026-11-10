@@ -47,8 +47,17 @@ export function fieldRule(
 	return { version, data, classify: (record) => classifyByRuleData(data, record) };
 }
 
-export function ruleDataOf(
-	entry: RpcMethodClass | { readonly version: number; readonly data?: RpcMethodClassRuleData },
-): RpcMethodClassRuleData | undefined {
+type TableEntry = RpcMethodClass | { readonly version: number; readonly data?: RpcMethodClassRuleData };
+
+export function ruleDataOf(entry: TableEntry): RpcMethodClassRuleData | undefined {
 	return typeof entry === "string" ? undefined : entry.data;
+}
+
+export function ruleDataTable(table: Readonly<Record<string, TableEntry>>): Record<string, RpcMethodClassRuleData> {
+	return Object.fromEntries(
+		Object.entries(table).flatMap(([type, entry]) => {
+			const data = ruleDataOf(entry);
+			return data === undefined ? [] : [[type, data]];
+		}),
+	);
 }

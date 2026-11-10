@@ -31,7 +31,7 @@
 
 import { createHash } from "node:crypto";
 import type { SessionEntry, SessionMessageEntry } from "../../core/session-manager.ts";
-import { fieldRule, type RpcMethodClassRuleData, ruleDataOf } from "./method-class-rule-data.ts";
+import { fieldRule, type RpcMethodClassRuleData, ruleDataTable } from "./method-class-rule-data.ts";
 import type { RpcInboundRecord } from "./rpc-host-command-types.ts";
 
 export type RpcMethodClass = "observe" | "drive" | "answer" | "thread" | "device_admin" | "connection_local";
@@ -344,6 +344,9 @@ export function rpcMethodPermitted(record: unknown, granted: ReadonlySet<RpcMeth
 
 export type RpcMethodClassDescription = RpcMethodClass | typeof DYNAMIC;
 
+type RpcDynamicMethodType = { [K in RpcMethodType]: Table[K] extends RpcMethodClass ? never : K }[RpcMethodType];
+type Table = typeof RPC_METHOD_CLASS;
+
 /** Every entry as a class, or `dynamic` for a record-dependent entry, and the version of each `dynamic` entry. */
 export interface RpcMethodClassesDescription {
 	readonly version: typeof RPC_METHOD_CLASSES_VERSION;
@@ -351,7 +354,7 @@ export interface RpcMethodClassesDescription {
 	readonly classes: Readonly<Record<RpcMethodType, RpcMethodClassDescription>>;
 	readonly dynamic_versions: Readonly<Partial<Record<RpcMethodType, number>>>;
 	/** Each `dynamic` entry whose rule is one field lookup, as data (senpi#6318); the digest does not cover it. */
-	readonly rule_data: Readonly<Partial<Record<RpcMethodType, RpcMethodClassRuleData>>>;
+	readonly rule_data: Readonly<Partial<Record<RpcDynamicMethodType, RpcMethodClassRuleData>>>;
 }
 
 /**
@@ -378,15 +381,12 @@ export const RPC_METHOD_CLASSES_DIGEST = rpcMethodClassesDigest(
 export function describeRpcMethodClasses(): RpcMethodClassesDescription {
 	const classes: Record<string, RpcMethodClassDescription> = {};
 	const dynamicVersions: Record<string, number> = {};
-	const ruleData: Record<string, RpcMethodClassRuleData> = {};
 	for (const [type, entry] of Object.entries(RPC_METHOD_CLASS)) {
 		if (typeof entry === "string") {
 			classes[type] = entry;
 		} else {
 			classes[type] = DYNAMIC;
 			dynamicVersions[type] = entry.version;
-			const data = ruleDataOf(entry);
-			if (data !== undefined) ruleData[type] = data;
 		}
 	}
 	return {
@@ -394,6 +394,6 @@ export function describeRpcMethodClasses(): RpcMethodClassesDescription {
 		digest: RPC_METHOD_CLASSES_DIGEST,
 		classes: classes as RpcMethodClassesDescription["classes"],
 		dynamic_versions: dynamicVersions,
-		rule_data: ruleData,
+		rule_data: ruleDataTable(RPC_METHOD_CLASS) as RpcMethodClassesDescription["rule_data"],
 	};
 }
