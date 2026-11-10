@@ -101,9 +101,3 @@ export function mergeModelBlocks(
 	}
 	return merged.size === 0 ? undefined : Object.fromEntries(merged);
 }
-
-export function describeModelBlocks(blocks: ModelBlocks | undefined, now: number): string[] {
-	return Object.entries(pruneModelBlocks(blocks, now) ?? {}).map(
-		([key, block]) => `blocked for ${key} until ${new Date(block.blockedUntil).toISOString()}`,
-	);
-}

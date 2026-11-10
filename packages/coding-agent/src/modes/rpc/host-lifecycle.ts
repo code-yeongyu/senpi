@@ -22,6 +22,7 @@ import { drainOnPublicSocketLoss, SupervisorDrain, watchWin32ChildIdentity } fro
 import { prepareInternalHop } from "./host-lifecycle-internal-key.ts";
 import {
 	HOST_CHILD_WATCH_FD,
+	loadHostChildTrustHandOff,
 	parseSupervisorArgs,
 	type SupervisorLaunch,
 	spawnHostChild,
@@ -143,6 +144,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	const child = spawnHostChild({
 		launch,
 		reportsStartup: hostChildReportsStartup(launch.childCommand),
+		trustHandOff: await loadHostChildTrustHandOff(),
 		internalSocket,
 		internal,
 		...hop.transport,
