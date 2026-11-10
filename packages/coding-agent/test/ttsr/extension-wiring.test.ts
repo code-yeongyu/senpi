@@ -79,6 +79,7 @@ function createUi(notices: string[]): ExtensionUIContext {
 		setFooter: () => {},
 		setHeader: () => {},
 		setTitle: () => {},
+		setProgramStatus: () => {},
 		custom: async <T>(): Promise<T> => {
 			throw new Error("TTSR wiring tests do not render custom UI");
 		},

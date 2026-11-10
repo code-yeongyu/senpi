@@ -4,10 +4,12 @@ import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { registerTodoCommand } from "./commands.ts";
 import { FIRST_TURN_CUSTOM_TYPE, FIRST_TURN_REMINDER, shouldArmFirstTurn, withForcedTodoChoice } from "./first-turn.ts";
 import { phasesFromCursorTodos } from "./native-todo-mirror.ts";
-import { TASK_MANAGEMENT_SECTION } from "./prompt.ts";
+import { activeSharedSections } from "../prompt-preset/active-preset.ts";
+import { FULL_TASK_MANAGEMENT_SECTION, TASK_MANAGEMENT_SECTION } from "./prompt.ts";
 import {
 	clonePhases,
 	getLatestTodoStateFromBranchEntries,
+	getTodoStateFromToolResult,
 	type TodoAsk,
 	type TodoCompletionTransition,
 	type TodoPhase,
@@ -24,8 +26,14 @@ function readFirstTurnPlan(ctx: ExtensionContext) {
 	}).getTodoFirstTurnPlan();
 }
 
+/** Every handler here reads or drives the session, so it belongs to the loop's side of a split session (S39). */
+const LOOP = { runs: "brain" } as const;
+
+const sameState = (a: TodoState, b: TodoState): boolean => JSON.stringify(a) === JSON.stringify(b);
+
 export default function todotoolsExtension(pi: ExtensionAPI): void {
 	let currentState: TodoState = { phases: [], ask: undefined };
+	const executedHere = new Set<string>();
 	// Armed by the first-turn opener; cleared once that run's first assistant message lands.
 	let pendingForce: { forceNamed: boolean; logged: boolean } | undefined;
 	let logger: SessionLogger | undefined;
@@ -58,45 +66,70 @@ export default function todotoolsExtension(pi: ExtensionAPI): void {
 		syncWidget(ctx);
 	};
 
-	pi.on("session_start", async (_event, ctx) => {
-		clearPendingForce();
-		syncFromSession(ctx);
-	});
+	pi.on(
+		"session_start",
+		async (_event, ctx) => {
+			clearPendingForce();
+			syncFromSession(ctx);
+		},
+		LOOP,
+	);
 
-	pi.on("session_tree", async (_event, ctx) => {
-		clearPendingForce();
-		syncFromSession(ctx);
-	});
+	pi.on(
+		"session_tree",
+		async (_event, ctx) => {
+			clearPendingForce();
+			syncFromSession(ctx);
+		},
+		LOOP,
+	);
 
-	pi.on("agent_end", clearPendingForce);
-	pi.on("session_abort", clearPendingForce);
-	pi.on("session_shutdown", clearPendingForce);
+	pi.on("agent_end", clearPendingForce, LOOP);
+	pi.on("session_abort", clearPendingForce, LOOP);
+	pi.on("session_shutdown", clearPendingForce, LOOP);
 
-	pi.on("message_end", async (event, ctx) => {
-		const message = event.message;
-		if (message?.role === "assistant") clearPendingForce();
-		if (message?.role !== "assistant" || !Array.isArray(message.content)) {
-			return;
-		}
-		for (const block of message.content) {
-			if (block.type !== "toolCall" || block.name !== "todo" || block.arguments?.op) {
-				continue;
+	pi.on(
+		"message_end",
+		async (event, ctx) => {
+			const message = event.message;
+			if (message?.role === "assistant") clearPendingForce();
+			// A todo call that ran outside this process (on a hand) returns its list in the result's details: adopt it so
+			// the widget, /todo and the next call see it. A call this instance ran already set its list, and its result
+			// arrives only after the whole batch, so adopting it would bring back an older list.
+			if (message?.role === "toolResult" && message.toolName === "todo") {
+				if (executedHere.delete(message.toolCallId)) return;
+				const ranElsewhere = getTodoStateFromToolResult(message);
+				if (ranElsewhere !== undefined && !sameState(ranElsewhere, currentState)) {
+					currentState = ranElsewhere;
+					syncWidget(ctx);
+				}
+				return;
 			}
-			const phases = phasesFromCursorTodos(block.arguments?.todos);
-			if (phases === undefined) {
-				continue;
+			if (message?.role !== "assistant" || !Array.isArray(message.content)) {
+				return;
 			}
-			setCurrentPhases(phases);
-			const ask = getCurrentAsk();
-			pi.appendEntry(TODO_STATE_ENTRY_TYPE, { schema: "v2", phases, ...(ask ? { ask } : {}) });
-			syncWidget(ctx);
-		}
-	});
+			for (const block of message.content) {
+				if (block.type !== "toolCall" || block.name !== "todo" || block.arguments?.op) {
+					continue;
+				}
+				const phases = phasesFromCursorTodos(block.arguments?.todos);
+				if (phases === undefined) {
+					continue;
+				}
+				setCurrentPhases(phases);
+				const ask = getCurrentAsk();
+				pi.appendEntry(TODO_STATE_ENTRY_TYPE, { schema: "v2", phases, ...(ask ? { ask } : {}) });
+				syncWidget(ctx);
+			}
+		},
+		LOOP,
+	);
 
 	pi.on(
 		"before_agent_start",
 		async (event, ctx) => {
-			const systemPrompt = `${event.systemPrompt}\n${TASK_MANAGEMENT_SECTION}`;
+			const section = activeSharedSections(ctx) === "full" ? FULL_TASK_MANAGEMENT_SECTION : TASK_MANAGEMENT_SECTION;
+			const systemPrompt = `${event.systemPrompt}\n${section}`;
 			if (event.preview) return { systemPrompt };
 			const branchEntries = ctx.sessionManager.getBranch();
 			const setting = readFirstTurnPlan(ctx);
@@ -116,23 +149,30 @@ export default function todotoolsExtension(pi: ExtensionAPI): void {
 				message: { customType: FIRST_TURN_CUSTOM_TYPE, content: FIRST_TURN_REMINDER, display: false },
 			};
 		},
-		{ previewSafe: true },
+		{ previewSafe: true, ...LOOP },
 	);
 
-	pi.on("before_provider_request", async (event, ctx) => {
-		if (!pendingForce) return undefined;
-		const forced = pendingForce.forceNamed
-			? withForcedTodoChoice(event.payload, event.model ?? ctx.model)
-			: undefined;
-		if (!pendingForce.logged) {
-			pendingForce.logged = true;
-			logger ??= createSessionLogger(ctx.agentDir);
-			logger.info("todo_first_turn", { mode: forced === undefined ? "reminder-only" : "forced" });
-		}
-		return forced;
-	});
+	pi.on(
+		"before_provider_request",
+		async (event, ctx) => {
+			if (!pendingForce) return undefined;
+			const forced = pendingForce.forceNamed
+				? withForcedTodoChoice(event.payload, event.model ?? ctx.model)
+				: undefined;
+			if (!pendingForce.logged) {
+				pendingForce.logged = true;
+				logger ??= createSessionLogger(ctx.agentDir);
+				logger.info("todo_first_turn", { mode: forced === undefined ? "reminder-only" : "forced" });
+			}
+			return forced;
+		},
+		LOOP,
+	);
 
-	const accessors = { getCurrentPhases, setCurrentPhases, getCurrentAsk, setCurrentAsk, syncWidget };
+	const noteExecuted = (toolCallId: string): void => {
+		executedHere.add(toolCallId);
+	};
+	const accessors = { getCurrentPhases, setCurrentPhases, getCurrentAsk, setCurrentAsk, syncWidget, noteExecuted };
 	registerTodoTool(pi, accessors);
 	registerTodoCommand(pi, accessors);
 }

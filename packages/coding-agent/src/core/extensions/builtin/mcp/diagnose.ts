@@ -122,6 +122,9 @@ function execFileForDiagnostics(
 				killSignal: "SIGKILL",
 				maxBuffer: MCP_STDIO_DIAGNOSTIC_MAX_BYTES * 4,
 				timeout: MCP_STDIO_DIAGNOSTIC_TIMEOUT_MS,
+				// senpi#3965: an MCP server command can be a console-subsystem
+				// exe on Windows; never flash its own console window.
+				windowsHide: true,
 			},
 			(error, stdout, stderr) => {
 				resolve({

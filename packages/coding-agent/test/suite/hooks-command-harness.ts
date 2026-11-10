@@ -116,6 +116,7 @@ function createUiContext(
 		setFooter: () => {},
 		setHeader: () => {},
 		setTitle: () => {},
+		setProgramStatus: () => {},
 		custom: async <T>(): Promise<T> => {
 			throw new Error("custom UI is not implemented in /hooks command tests");
 		},

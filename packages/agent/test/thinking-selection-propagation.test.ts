@@ -2,8 +2,8 @@ import type { AssistantMessage, Message, Model, SimpleStreamOptions, ThinkingSel
 import { createAssistantMessageEventStream, normalizeContext } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
-import { Agent } from "../src/agent.ts";
-import { agentLoop } from "../src/agent-loop.ts";
+import { Agent } from "../src/index.ts";
+import { agentLoop } from "../src/index.ts";
 import { streamProxy } from "../src/proxy.ts";
 import type { AgentContext, AgentLoopConfig, AgentTool } from "../src/types.ts";
 

@@ -148,6 +148,7 @@ describe("cursor exec bridge run ownership across runs", () => {
 		const emitExternalEvent = vi.fn();
 		const agent = {
 			signal: new AbortController().signal,
+			executionScope: { id: "test-scope", root: "" },
 			emitExternalEvent,
 		};
 		const bridge = createSessionCursorExecBridge(sessionRef, () => agent);

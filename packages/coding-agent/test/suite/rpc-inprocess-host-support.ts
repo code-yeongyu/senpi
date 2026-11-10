@@ -189,6 +189,7 @@ export function inProcessRuntimeFactory(): {
 					return isSessionBusySnapshot(this.activitySnapshot);
 				},
 				extensionRunner: {
+					getFlagValues: () => new Map(),
 					hasHandlers: () => false,
 					emit: async () => {},
 					emitSessionMove: async () => [],

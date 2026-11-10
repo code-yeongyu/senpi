@@ -57,7 +57,7 @@ export async function createRpcMonitor(ctx: TerminalToolContext, input: MonitorI
 	const events: RpcEvents | undefined = input.events;
 	const persistent = input.persistent === true;
 	const timeoutMs = persistent ? undefined : resolveTimeoutMs(input.timeout_ms);
-	const { id, monitorId, rows } = await registry.registerRpc({
+	const armed = registry.registerRpc({
 		description,
 		target,
 		targetText: input.target ?? "",
@@ -75,6 +75,19 @@ export async function createRpcMonitor(ctx: TerminalToolContext, input: MonitorI
 				}
 			: {}),
 	});
+	// A remote source refuses with a typed reason (unknown device, no grant, no plan): the caller reads it.
+	const refusal =
+		target.kind === "remote"
+			? await armed.then(
+					() => undefined,
+					(error: unknown) => error,
+				)
+			: undefined;
+	if (refusal !== undefined)
+		return errorResult(
+			`Cannot watch ${input.target}: ${refusal instanceof Error ? refusal.message : String(refusal)}`,
+		);
+	const { id, monitorId, rows } = await armed;
 	ctx.manager.bindMonitorId(monitorId, id);
 	await handMonitorSpec(sessionKey, {
 		monitorId,

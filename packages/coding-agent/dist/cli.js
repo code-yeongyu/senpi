@@ -8,14 +8,18 @@ var __rewriteRelativeImportExtension = (this && this.__rewriteRelativeImportExte
     return path;
 };
 import "./valid-cwd.js";
-// Second: capture the private descriptor table before anything can spawn (senpi#4749).
+// Release a coordinated start's filler pipes while the private table is still in the environment (senpi#4602).
+import "./private-fd-startup-release.js";
+// Then: capture the private descriptor table before anything can spawn (senpi#4749).
 import "./private-fds.js";
+import "./windows-power-throttling-startup.js";
 import "./internal-role.js";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, fstatSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { processBunRuntimeOptions, resolveBunReexec } from "./bun-runtime.js";
+import { isFifoMode } from "./utils/inherited-duplex.js";
 import { captureStdout, exitAfterOutput, printThenExit } from "./cli/print-then-exit.js";
 import { dispatchAgentDirectoryCommand } from "./cli/agent-dir-command.js";
 import { dispatchKillGuardCommand } from "./cli/kill-guard-command.js";
@@ -25,8 +29,32 @@ import { hasInheritedInspectorOption, releaseInheritedInspectorForChild } from "
 import { prepareRuntimeSnapshot } from "./runtime-snapshot/enter.js";
 import { handleBootstrapSelfUpdate } from "./self-update-bootstrap.js";
 import { preparePrivateFdSpawn, spawnWithPrivateFds } from "./private-fd-spawn.js";
-/** Only a presenter-enabled launch may carry its reserved private channel through CLI re-execution. */
+import { HOST_STARTUP_EVENTS_ENV } from "./modes/rpc/host-identity-env.js";
+import { STARTUP_EVENT_FD } from "./modes/rpc/host-startup-wire.js";
+/**
+ * A coordinated host start keeps its startup pipe through CLI re-execution (senpi#4602): the hand-off variable
+ * is still unread here, and the process that loads cli-main reports on the same descriptor.
+ */
 function reexecStdio() {
+    const base = channelStdio();
+    if (!process.env[HOST_STARTUP_EVENTS_ENV])
+        return base;
+    try {
+        const stat = fstatSync(STARTUP_EVENT_FD);
+        if (!stat.isSocket() && !isFifoMode(stat.mode))
+            return base;
+    }
+    catch {
+        return base;
+    }
+    const slots = typeof base === "string" ? [base, base, base] : [...base];
+    while (slots.length < STARTUP_EVENT_FD)
+        slots.push("ignore");
+    slots[STARTUP_EVENT_FD] = STARTUP_EVENT_FD;
+    return slots;
+}
+/** Only a presenter-enabled launch may carry its reserved private channel through CLI re-execution. */
+function channelStdio() {
     const argv = process.argv.slice(2);
     const presenter = argv.indexOf("--mcp-presenter-fd");
     if (presenter < 0 || argv[presenter + 1] !== "4")

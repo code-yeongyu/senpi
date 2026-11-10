@@ -1,6 +1,6 @@
 import { lstat } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { type Credential, normalizeProviderId } from "@earendil-works/pi-ai";
+import { type Credential, type OAuthCredential, normalizeProviderId } from "@earendil-works/pi-ai";
 import { slotsOfOwnKind } from "@earendil-works/pi-ai/auth/pool/kinds";
 import { applyAccountOrder, isSlotBlocked, withoutOrderedAccount } from "@earendil-works/pi-ai/auth/pool/select";
 import {
@@ -8,6 +8,7 @@ import {
 	listSlots,
 	type PooledCredential,
 	pinSlot,
+	projectSlot,
 	removeSlot,
 	renameSlotDisplayName,
 } from "@earendil-works/pi-ai/auth/pool/slots";
@@ -22,7 +23,11 @@ import {
 	type CredentialSlotState,
 } from "./credential-pool/state-store.ts";
 import { emitProviderAccountsChanged } from "./extensions/builtin/anthropic-subscription/account-events.ts";
-import { isListedStoredSlot, SENTINEL_OAUTH_FIELDS } from "./extensions/builtin/anthropic-subscription/accounts.ts";
+import {
+	isForeignAuthBlock,
+	isListedStoredSlot,
+	SENTINEL_OAUTH_FIELDS,
+} from "./extensions/builtin/anthropic-subscription/accounts.ts";
 import { isAccountBlocked } from "./extensions/builtin/anthropic-subscription/affinity.ts";
 import {
 	accountDirFor,
@@ -57,6 +62,10 @@ export type CredentialAccountSummary = {
 	readonly blockedModels?: readonly { readonly model: string; readonly until: number }[];
 	/** A slot of the other kind than the stored credential: kept, never used, cannot be pinned (senpi#3486). */
 	readonly unused?: true;
+	/** ChatGPT registration route; never inferred from token contents. */
+	readonly route?: "siwc" | "legacy";
+	readonly planUsageEnabled?: boolean;
+	readonly signedOut?: boolean;
 	/** Set for an account signed in through the bundled `claude` CLI, whose own store holds the login (senpi#4436). */
 	readonly store?: "claude-cli";
 	readonly signedInAt?: number;
@@ -67,6 +76,9 @@ export type CredentialAccountSummary = {
 	/** The sign-in connection test's last result. */
 	readonly check?: CredentialAccountCheck;
 	readonly signIn?: "signed_in" | "needs_sign_in";
+	readonly active?: boolean;
+	readonly paused?: true;
+	readonly usageUrl?: string;
 };
 
 export type CredentialAccountCheck = {
@@ -127,6 +139,14 @@ export function assertValidAccountName(name: string): void {
 	}
 }
 
+/** Resolve the immutable account ID, never its display name or its position in a list. */
+export function selectedOAuthAccount(storage: AuthStorage, provider: string, name: string): OAuthCredential {
+	assertValidAccountName(name);
+	const credential = projectSlot(storage.get(provider), name);
+	if (credential?.type !== "oauth") throw new Error(`OAuth account not found: ${name}`);
+	return credential;
+}
+
 function pooledFrom(credential: Credential | undefined): PooledCredential | undefined {
 	return credential === undefined ? undefined : credential;
 }
@@ -154,7 +174,7 @@ function stringField(value: object, key: string): string | undefined {
  * Cursor and Claude persist their lane's blocks in auth.json. Generic pool
  * rotation ignores those fields and reads revision-matched sidecar health.
  */
-type SlotBlock = Pick<CredentialAccountSummary, "blocked" | "blockedReason" | "blockedUntil">;
+type SlotBlock = Pick<CredentialAccountSummary, "blocked" | "blockedReason" | "blockedUntil" | "paused" | "usageUrl">;
 
 const UNBLOCKED: SlotBlock = { blocked: false };
 
@@ -179,6 +199,7 @@ function liveBlock(reason: string | undefined, blockedUntil: number | undefined,
 }
 
 function sidecarBlock(sidecar: CredentialSlotState | undefined, now: number): SlotBlock {
+	if (sidecar?.usageLimit) return { blocked: true, paused: true, usageUrl: "https://chatgpt.com/settings/usage" };
 	if (sidecar === undefined || isAvailable(sidecar, now)) return UNBLOCKED;
 	return liveBlock(sidecar?.blockReason, sidecar?.blockedUntil, now);
 }
@@ -193,6 +214,8 @@ function storedSlotBlock(provider: string, slot: object, now: number): SlotBlock
 	const blockedUntil = numberField(slot, "blockedUntil");
 	const blockedReason = accountBlockedReason(blockReason);
 	if (blockedReason === "disabled") return { blocked: true, blockedReason };
+	// The Claude lane does not skip a slot for an auth block no Claude CLI verdict backs (senpi#5623).
+	if (normalizeProviderId(provider) === "anthropic-subscription" && isForeignAuthBlock(slot)) return UNBLOCKED;
 	const skipped =
 		normalizeProviderId(provider) === "anthropic-subscription"
 			? isAccountBlocked({ blockedUntil }, now)
@@ -259,12 +282,20 @@ export async function getCredentialAccounts(
 	provider: string,
 	env: NodeJS.ProcessEnv = process.env,
 	repository?: CredentialSlotRepository,
+	activeName?: string,
 ): Promise<CredentialAccountSummary[]> {
-	return summarizeCredentialAccounts(
+	const accounts = await summarizeCredentialAccounts(
 		provider,
 		storage.get(provider),
 		env,
 		repository ?? credentialPoolRepository(storage),
+	);
+	if (normalizeProviderId(provider) !== "chatgpt-subscription") return accounts;
+	// `active` is additive: present only on the account a request actually used, so other summaries keep their shape.
+	return accounts.map((account) =>
+		account.name === activeName && !account.blocked && !account.signedOut && !account.unused
+			? { ...account, active: true }
+			: account,
 	);
 }
 
@@ -313,6 +344,15 @@ async function summarizeInStoredOrder(
 			const applicable = applicableStoredState(persisted, revisions);
 			summaries.push({
 				name: slot.name,
+				...(normalizeProviderId(provider) === "chatgpt-subscription" && credential.type === "oauth"
+					? {
+							route: slot.route === "siwc" ? ("siwc" as const) : ("legacy" as const),
+							...(slot.route === "siwc" && typeof slot.planUsageEnabled === "boolean"
+								? { planUsageEnabled: slot.planUsageEnabled }
+								: {}),
+							...(slot.signedOut === true ? { signedOut: true } : {}),
+						}
+					: {}),
 				...(displayName === undefined ? {} : { displayName }),
 				source: slot.source ?? "login",
 				...slotBlocked(provider, slot, applicable, now),
@@ -497,6 +537,8 @@ export async function signOutClaudeCliSlotsForLogout(
 	provider: string,
 	env: NodeJS.ProcessEnv = process.env,
 	signal?: AbortSignal,
+	/** Sign out only this stored account (a one-account logout); every account when absent. */
+	slotName?: string,
 ): Promise<readonly string[]> {
 	if (normalizeProviderId(provider) !== "anthropic-subscription") return [];
 	const credential = await storage.read(provider);
@@ -509,6 +551,7 @@ export async function signOutClaudeCliSlotsForLogout(
 		// account never leaves an earlier one stored without its dir.
 		for (const slot of listSlots(credential)) {
 			if (stringField(slot, "store") !== "claude-cli") continue;
+			if (slotName !== undefined && slot.name !== slotName) continue;
 			signal?.throwIfAborted();
 			const notice = await signOutAndDropSlot(storage, provider, slot.name, env, repo, signal);
 			dropped = true;
