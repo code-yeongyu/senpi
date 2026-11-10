@@ -33,20 +33,10 @@ export const generateImageTool = defineTool<typeof Params, GenerateImageDetails>
 		"Generate or edit an image with OpenAI gpt-image-2.6 (Sunburst by default, the most capable; Flare when speed matters more than quality; an endpoint without 2.6 falls back to 2.5) and save it as a png, jpeg, or webp file, optionally with a transparent background. Pass reference_image_paths to edit or reference existing images. Generate directly when the request is clear instead of asking for confirmation. Returns the saved file paths.",
 	promptSnippet:
 		"Generate or edit images from prompts and optional reference images, saving them as png/jpeg/webp files.",
-	// Deferred: the schema costs ~1K prompt tokens on every request and the bundled imagegen skill
-	// names the tool, so a by-name call activates it on first use instead of shipping it resident.
-	exposure: "search",
-	searchGroup: "imagegen",
-	searchKeywords: [
-		"generate image",
-		"image generation",
-		"edit image",
-		"create a picture",
-		"illustration",
-		"mockup",
-		"gpt-image",
-		"transparent png",
-	],
+	// Eval-only, like bash (senpi#6269): whenever an eval tool is registered the model never sees
+	// this ~1K-token schema and calls `tool.generate_image({ prompt: "..." })` inside a cell instead;
+	// without an eval tool it is an ordinary direct tool. The bundled imagegen skill explains the call.
+	exposure: "eval",
 	parameters: Params,
 	async execute(toolCallId, params, signal, _onUpdate, ctx: ExtensionContext) {
 		const size = params.size ?? "auto";

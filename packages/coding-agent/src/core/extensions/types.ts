@@ -1008,6 +1008,8 @@ export interface ToolPermissionRequest {
 	readonly patterns: readonly string[];
 	/** Patterns an "always" approval of this call records. */
 	readonly always: readonly string[];
+	/** An `ask` decision for this call is approved without a prompt; an `allow` or `deny` rule still decides first. */
+	readonly autoApproveAsk?: true;
 }
 
 /**
@@ -3441,6 +3443,8 @@ export interface ProviderChatModelConfig extends ProviderModelConfigBase {
 	recoverTextToolCalls?: boolean;
 	/** Maps pi thinking levels to provider/model-specific values; null marks a level unsupported. */
 	thinkingLevelMap?: Model<Api>["thinkingLevelMap"];
+	/** The model's own default thinking level, applied before the configured default (senpi#2196). */
+	defaultThinkingLevel?: Model<Api>["defaultThinkingLevel"];
 	/** Best-effort prompt cache lifetime in seconds per retention tier (catalog metadata). */
 	promptCache?: Model<Api>["promptCache"];
 	/** Maximum context window size in tokens. */

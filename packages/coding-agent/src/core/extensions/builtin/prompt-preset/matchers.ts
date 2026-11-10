@@ -220,10 +220,17 @@ export function isGrok47Model(model: ModelWithPromptPresetMetadata): boolean {
 }
 
 // Claude Mythos shares each Fable release's prompting guide ("Prompting Claude
-// Fable 5.1" covers Fable 5.1 and Mythos 5.1; "Prompting Claude Fable 5"
-// covers Fable 5 and Mythos 5), so Mythos ids route to the matching Fable preset.
+// Fable 5.2" covers Fable 5.2 and Mythos 5.2, "Prompting Claude Fable 5.1" covers
+// Fable 5.1 and Mythos 5.1; "Prompting Claude Fable 5" covers Fable 5 and Mythos 5),
+// so Mythos ids route to the matching Fable preset.
+// The minor version must end at the 2: a dated Fable 5 id (claude-fable-5-20260601) also starts with "fable-5-2".
+const CLAUDE_FABLE_52_PATTERN = /(?:fable|mythos)-5[.-]2(?!\d)/;
 export const CLAUDE_FABLE_51_MARKERS = ["fable-5-1", "fable-5.1", "mythos-5-1", "mythos-5.1"] as const;
 export const CLAUDE_FABLE_5_MARKERS = ["fable-5", "mythos-5"] as const;
+
+export function isClaudeFable52Model(modelId: string): boolean {
+	return CLAUDE_FABLE_52_PATTERN.test(normalizeModelId(modelId));
+}
 
 export function isClaudeFable51Model(modelId: string): boolean {
 	const normalized = normalizeModelId(modelId);

@@ -148,6 +148,16 @@ export function createSessionTurnAttempt(
 				if (attemptBookkeeping.get(entry) === bookkeeping) attemptBookkeeping.delete(entry);
 				markBookkept();
 			};
+			// An abort releases the pump promptly (senpi#2974): while the consumer is stalled, the pump waits
+			// on writable(); without this the abort grace timer fires first and the session ends as
+			// abort_uncertain before the interrupt receipt is read and the keep-or-close decision applies.
+			const abortReleased =
+				signal === undefined
+					? undefined
+					: new Promise<void>((resolve) => {
+							if (signal.aborted) resolve();
+							else signal.addEventListener("abort", () => resolve(), { once: true });
+						});
 			const completion = submitSessionTurn(sessionRegistry, entry, {
 				message,
 				signal,
@@ -155,7 +165,8 @@ export function createSessionTurnAttempt(
 					recordAssistantUuid(entry, hashes.length, sdkMessage);
 					queue.push(sdkMessage);
 				},
-				writable: () => queue.writable(),
+				writable: () =>
+					abortReleased === undefined ? queue.writable() : Promise.race([queue.writable(), abortReleased]),
 			});
 			void completion.then(
 				() => queue.close(),

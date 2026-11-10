@@ -1,5 +1,23 @@
 # changes.md — dynamic-prompt
 
+## 2026-11-09 - Prompt builder carries a provider-native search signal (senpi#6264)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/build.ts`: `BuildDynamicSystemPromptOptions` and `DynamicPromptCoreContext` gain an optional `nativeSearchAvailable` flag, threaded into `corePrompt` so a preset can tell whether the session can search through a provider-native search tool even when the builtin `web_search` tool is not selected (senpi#2935).
+
+### Why
+
+- The Haiku 5.5 preset gates its search-grounding sentence on the active tool list, which never contains a provider-native search tool; the flag is the seam that lets the preset see it.
+
+### Why an extension could not handle it
+
+- The signal crosses the builder/preset boundary: the preset extension computes it from the model, the builder carries it, and the preset core reads it. No single extension event sees all three.
+
+### Expected merge conflict zones
+
+- LOW: the `corePrompt` call site in `buildDynamicSystemPromptParts` and the two option interfaces.
+
 ## 2026-11-03 - Full shared sections for the Opus and Fable presets (senpi#5665)
 
 ### What changed
