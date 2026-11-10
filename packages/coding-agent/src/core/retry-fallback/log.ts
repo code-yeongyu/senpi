@@ -1,7 +1,7 @@
-import { closeSync, fchmodSync, mkdirSync, openSync, writeSync } from "node:fs";
+import { closeSync, existsSync, fchmodSync, mkdirSync, openSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { rotateLogIfNeeded } from "../log-file-rotation.ts";
-import { redactSecrets } from "../sensitive-output.ts";
+import { redactSecrets, redactSensitiveTokenValues } from "../sensitive-output.ts";
 
 const DEFAULT_MAX_BYTES = 5 * 1024 * 1024;
 const MAX_STRING_LENGTH = 200;
@@ -26,6 +26,12 @@ export function createFallbackLogger(agentDir: string, options: FallbackLoggerOp
 	const filePath = join(agentDir, "logs", "fallback.log");
 	const maxBytes = validMaxBytes(options.maxBytes);
 	let reportedWriteFailure = false;
+	try {
+		retireUnsharedRegistryGenerations(filePath);
+	} catch (error) {
+		reportedWriteFailure = true;
+		console.error("Unable to remove earlier retry fallback debug log generations", error);
+	}
 
 	function log(level: "debug" | "info" | "warn", event: string, data?: Record<string, unknown>): void {
 		try {
@@ -44,6 +50,20 @@ export function createFallbackLogger(agentDir: string, options: FallbackLoggerOp
 		info: (event, data) => log("info", event, data),
 		warn: (event, data) => log("warn", event, data),
 	};
+}
+
+/**
+ * Generations written before every engine copy in a process shared one resolved-value registry (omo#12965) are
+ * removed once per agent dir, the first time an engine with the shared registry starts on it; the marker makes every
+ * later start leave the logs alone.
+ */
+function retireUnsharedRegistryGenerations(filePath: string): void {
+	const marker = join(dirname(filePath), ".fallback-log-v2");
+	if (existsSync(marker)) return;
+	rmSync(`${filePath}.1`, { force: true });
+	rmSync(filePath, { force: true });
+	mkdirSync(dirname(filePath), { recursive: true, mode: 0o700 });
+	writeFileSync(marker, "", { mode: 0o600 });
 }
 
 function validMaxBytes(value: number | undefined): number {
@@ -73,7 +93,7 @@ function formatLine(
 
 function writeLine(filePath: string, line: string, maxBytes: number): void {
 	mkdirSync(dirname(filePath), { recursive: true, mode: 0o700 });
-	const text = `${line}\n`;
+	const text = `${redactSensitiveTokenValues(line, "[redacted]")}\n`;
 	rotateLogIfNeeded(filePath, Buffer.byteLength(text), maxBytes);
 	const descriptor = openSync(filePath, "a", 0o600);
 	try {
@@ -86,10 +106,10 @@ function writeLine(filePath: string, line: string, maxBytes: number): void {
 
 function serializeValue(value: unknown, seen: WeakSet<object>): unknown {
 	if (typeof value === "string") return safeText(value);
-	if (typeof value === "bigint") return value.toString();
+	if (typeof value === "bigint") return safeText(value.toString());
 	if (typeof value === "number" || typeof value === "boolean" || value === null) return value;
 	if (typeof value === "undefined") return undefined;
-	if (typeof value === "function" || typeof value === "symbol") return String(value);
+	if (typeof value === "function" || typeof value === "symbol") return safeText(String(value));
 	if (seen.has(value)) return "[Circular]";
 	seen.add(value);
 	if (Array.isArray(value)) return value.map((item) => serializeValue(item, seen) ?? null);
@@ -97,7 +117,7 @@ function serializeValue(value: unknown, seen: WeakSet<object>): unknown {
 	for (const [key, item] of safeEntries(value)) {
 		if (!BLOCKED_KEY.test(key)) {
 			const safeValue = serializeValue(item, seen);
-			if (safeValue !== undefined) result[key] = safeValue;
+			if (safeValue !== undefined) result[safeText(key)] = safeValue;
 		}
 	}
 	return result;

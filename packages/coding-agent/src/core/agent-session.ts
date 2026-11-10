@@ -389,6 +389,7 @@ import {
 	probeBackSchedule,
 } from "./retry-fallback/hint-policy.ts";
 import { createFallbackLogger } from "./retry-fallback/log.ts";
+import { redactAssistantErrorText } from "./assistant-error-redaction.ts";
 import {
 	createModelConfigErrorReporter,
 	isModelConfigFailure,
@@ -3689,6 +3690,7 @@ export class AgentSession {
 
 	/** Internal handler for agent events - shared by subscribe and reconnect */
 	private _handleAgentEvent = (event: AgentEvent, signal: AbortSignal): void => {
+		redactAssistantErrorText(event);
 		let queuedEvent: AgentEvent = event;
 		let pendingMessage: AgentMessage | undefined;
 		// Lifecycle events this event raises are delivered just before it, in the same queue (LifecycleEventSequencer).
