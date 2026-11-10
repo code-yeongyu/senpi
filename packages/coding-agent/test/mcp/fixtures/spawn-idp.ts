@@ -10,6 +10,7 @@ export interface IdpLog {
 	registerHits: number;
 	discoveryHits: number;
 	familyInvalidated: boolean;
+	registrations: { clientId: string; redirectUris: string[] }[];
 }
 
 export interface IdpFixture {
