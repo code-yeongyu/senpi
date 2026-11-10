@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
+import type { RpcCommand } from "../../../src/modes/rpc/rpc-types.ts";
 import { attachmentRig } from "../rpc-attachment-support.ts";
 
 // senpi#6245: an unattached connection cannot put input into a session, however its clientMessageId is chosen. The
@@ -22,7 +23,11 @@ it.each([
 	["the retired grace switch set to 0", "0"],
 ] as const)("refuses an unattached prompt carrying a chosen clientMessageId (%s)", async (_label, flag) => {
 	vi.stubEnv("SENPI_RPC_REQUIRE_ATTACH", flag);
-	await using rig = await attachmentRig();
+	// The session's worker binding: a command the gate let through is routed here, clientMessageId and all.
+	const routed: RpcCommand[] = [];
+	await using rig = await attachmentRig(async (command) => {
+		routed.push(command);
+	});
 	const ref = await rig.session();
 	const inputs = [
 		{ type: "prompt", message: "forged", clientMessageId: FORGED },
@@ -30,11 +35,11 @@ it.each([
 		{ type: "steer", message: "forged", clientMessageId: `${FORGED}-s` },
 		{ type: "follow_up", message: "forged", clientMessageId: `${FORGED}-f` },
 	];
+	const replies: Awaited<ReturnType<typeof rig.send>>[] = [];
 	for (const [index, input] of inputs.entries()) {
 		const command = { ...input, id: `forge-${index}`, sessionId: ref.sessionId };
-		expect(await rig.send("stranger", command as Parameters<typeof rig.send>[1]), input.type).toMatchObject(
-			NOT_ATTACHED,
-		);
+		replies.push(await rig.send("stranger", command as Parameters<typeof rig.send>[1]));
 	}
-	expect(JSON.stringify(rig.records())).not.toContain(FORGED);
+	expect(routed.map((command) => command.type)).toEqual([]);
+	for (const [index, input] of inputs.entries()) expect(replies[index], input.type).toMatchObject(NOT_ATTACHED);
 });

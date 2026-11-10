@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { hostInstanceId } from "../../src/modes/rpc/protocol-identity.ts";
+import type { RpcCommand } from "../../src/modes/rpc/rpc-types.ts";
 import { opened } from "./rpc-inprocess-host-metrics.ts";
 import { createInProcessRig } from "./rpc-inprocess-host-support.ts";
 
@@ -12,14 +13,15 @@ interface SessionRef {
 	readonly expectedHostInstance: string;
 }
 
-export async function attachmentRig(): Promise<
+/** `handle` is the sessions' worker binding: every command the host routed into a session reaches it. */
+export async function attachmentRig(handle?: (command: RpcCommand) => Promise<void>): Promise<
 	ReturnType<typeof createInProcessRig> & {
 		readonly dir: string;
 		session(holds?: number): Promise<SessionRef>;
 	}
 > {
 	const dir = await mkdtemp(join(tmpdir(), "rpc-attachment-"));
-	const rig = createInProcessRig(dir);
+	const rig = createInProcessRig(dir, undefined, handle);
 	return {
 		...rig,
 		dir,
