@@ -234,6 +234,12 @@ describe("Python permission interposition", () => {
 			"sqlite3.connect('file:subject?mode=ro', uri=True)",
 		],
 		["urllib.parse", "unquote", "lambda *a: ':memory:'", "sqlite3.connect('file:subject?mode=ro', uri=True)"],
+		[
+			"urllib.parse",
+			"unquote_plus",
+			"lambda s, **k: 'memory' if s == 'ro' else s",
+			"sqlite3.connect('file:subject?mode=ro', uri=True)",
+		],
 		["sqlite3", "SQLITE_ATTACH", "-1", "sqlite3.connect(':memory:').execute(\"ATTACH ':memory:' AS attached\")"],
 		["sqlite3", "SQLITE_DENY", "0", "sqlite3.connect(':memory:').execute(\"ATTACH ':memory:' AS attached\")"],
 		["sqlite3", "SQLITE_OK", "1", "sqlite3.connect(':memory:').execute('SELECT 42'); open('subject')"],
