@@ -1,3 +1,21 @@
+## 2026-11-10 - Refuse speculative host sessions on terminal endpoints (senpi#6344)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-control-rpc-commands.ts` answers `park_session` and `claim_session` with `multi_session_disabled`.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/session-control-rpc-commands.ts` serves a terminal that owns one session and cannot build or claim the multi-session host's speculative pool.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/session-control-rpc-commands.ts` owns the terminal endpoint's host-command boundary.
+
+### Expected merge conflict zones
+
+- LOW: the command list and switch in `packages/coding-agent/src/modes/interactive/session-control-rpc-commands.ts`.
+
 ## 2026-11-08 - A remote delivery leads with its engine-stamped device (senpi#6233)
 
 ### What changed
