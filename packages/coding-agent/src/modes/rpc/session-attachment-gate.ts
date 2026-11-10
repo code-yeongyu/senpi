@@ -28,6 +28,7 @@ export const ATTACH_GATE_EXEMPT: ReadonlySet<RpcCommand["type"]> = new Set<RpcCo
 	"get_loaded_surfaces",
 	"get_project_trust",
 	"get_project_settings",
+	"read_project_file",
 	"get_available_models",
 	"get_available_thinking_levels",
 	"get_fast_mode",

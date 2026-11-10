@@ -21,7 +21,9 @@ import { BASELINE_OPTIONS, BASELINE_SURFACES, WORKSTATION_FACTS } from "./prompt
 
 // senpi#5665: the Opus and Fable presets render the shared sections as they were before the senpi#5335
 // diet (main 037918157); every other preset and the default prompt render them as on main 836fe1c75.
-// Each expected value is the sha256 of the prompt rendered at that source commit.
+// Each expected value is the sha256 of the prompt rendered at that source commit, re-pinned where a later
+// change moved the tool surface: senpi#6272 made generate_image eval-only, so the eval variants name
+// tool.generate_image in the eval-only paragraph and the no-eval variants list it as a direct tool.
 
 vi.mock("../../src/core/dynamic-prompt/workstation.ts", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("../../src/core/dynamic-prompt/workstation.ts")>();
@@ -91,12 +93,12 @@ const PRESET_ROWS: ReadonlyArray<{
 		preset: "claude-fable-5-2",
 		source: "037918157",
 		hashes: {
-			"terminal:0": "00f34799a946a2767fb596dc08f7ad434728d3c5f6cc4ca30d099f981636a960",
-			"terminal:1": "1f38f2d99e508b0a295989c168fef1ebe03bffbca89a9ea2906e506319e63768",
-			"app:0": "3e5385f56ab7e54697d8129e5166ca8cac597e1761377d881829ec573ff49ef8",
-			"app:1": "e596d8930d80feffb7296168b5cab1f338739864617914a60dda553ddeb81440",
-			"chat:0": "48636bb52dcc918840cfb13c2fb20457d393a9a3a2143db2c48ab7ae0473255c",
-			"chat:1": "63d95b3f02ca02790829c24f443049aa7e6a0d99584f6848b180693e4e4b8286",
+			"terminal:0": "a05c190f2677471e94bb350ea0b5aa892ae82bcf4622b3af64593b80d7f3d3b6",
+			"terminal:1": "e6e61e28596280861e22747d65e437c780f6358da5ace1f40ccf83c2a0cbf0e7",
+			"app:0": "db648315cafb89f487bd2131aabd40fe6f3b220d360a0106c93242704120a3da",
+			"app:1": "b742e95956dc56413fbf802106bcc1dcc4bf4051fa18bec9bce276c5f0668c97",
+			"chat:0": "36baefcc09e5c0883e64fae4964d9741bbe8f228e60b559482d8ffc57f3a888e",
+			"chat:1": "cf3f0beb52c2dc915081182f7329c443607096444f997f2e9e6356dc6abf6ae8",
 		},
 	},
 	{
@@ -230,7 +232,7 @@ const REQUEST_ROWS: ReadonlyArray<{
 		modelId: "claude-opus-5.5",
 		source: "037918157",
 		hashes: {
-			"eval-false": "6062c59ca33d4a86c569e4c5ddae72b2ca8cd9c333b436cc16159cbd8e8434b3",
+			"eval-false": "ad9fbd68544411a17c0d9cbe84fc61960d0668da1d815d2827469b8529b893e0",
 			"eval-true": "af018bca45e3929c2569ad614af7360c0851fe459e5a839f4482618903ddfcac",
 			"app-eval-true": "872fa2668a1b72431c3f0778621cc10600e61c9bbbef7f1e1b1f5cd1b8302fc8",
 			"search-eval-true": "49a44daf4b2f0c229872d0bd35ae9519e27cfb92c365fa3210941eaa724a04f0",
@@ -240,7 +242,7 @@ const REQUEST_ROWS: ReadonlyArray<{
 		modelId: "claude-fable-5.1",
 		source: "037918157",
 		hashes: {
-			"eval-false": "a0a79952bb4d6f747f5b231911f33cd193a07d0eb1022033f3e9c940ac4f7a7d",
+			"eval-false": "22f67f12c7f453e6266137cf4181bc7b8ca935630977f370c12c6c32f937831e",
 			"eval-true": "738189bb3b74c5d2a45ace1724980764fce4cba5b23b3edda142036e1a326352",
 			"app-eval-true": "82601ac62d76c2b689f8a6574cffc6a6f6af2fdef73285c425f17ca636e36825",
 			"search-eval-true": "00127b732e440a7fe8028a05a8477c23db1600724e4c0d0856bca95f38bf23e8",
@@ -250,7 +252,7 @@ const REQUEST_ROWS: ReadonlyArray<{
 		modelId: "claude-opus-4-7",
 		source: "037918157",
 		hashes: {
-			"eval-false": "b48623ebb212503a494318888bdb5c5829dc907a5557eb8f5bdf037f87f824a5",
+			"eval-false": "3a82a8f9c1a9f1086c36c9632ba83bd8e9e59bf99b66eb52247f287d88a25f77",
 			"eval-true": "1531bf645c0f9e853923791abc6da9a35de80770f80913e83cfd54aa563b6a91",
 			"app-eval-true": "95f3bb6a3a03eccf8454e25dce3f36a4c29bafe4e4735eaa21c3dc89424ba98f",
 			"search-eval-true": "b68de6ed312c6cc7162202d5dd58a1b72269b8a569c708c5dcb2da73ac484e44",
@@ -284,9 +286,9 @@ const REQUEST_ROWS: ReadonlyArray<{
 		source: "836fe1c75",
 		hashes: {
 			"eval-false": "a10e1b0b04d245727a685002b443dee4830986f44a103f4e796ec83ede248537",
-			"eval-true": "099df65375783d192416434ba54c46e1b074b3a27d214cb9ddb271097783d623",
-			"app-eval-true": "0c152593a23af17fa90558f8c3ec966c01b042ab6f4637d31ff46f8747856bbf",
-			"search-eval-true": "917340703093cd0a38f3d3c642f1482c0ac2ecafdca78b008cac385fc6ce7fbe",
+			"eval-true": "eab7a8acec54fb9b0632cb9084ce7d5905385e5e9aff9ba119a279caa78d8323",
+			"app-eval-true": "58dd79e0a465dfb8d1a3c5841df3a5b7969fb030e0ce09b0db455867e2fecb68",
+			"search-eval-true": "aaa8da696a673eab8c9caf56100e70719b1b42d8efd9fbc25a88c603fda5e1dc",
 		},
 	},
 ];

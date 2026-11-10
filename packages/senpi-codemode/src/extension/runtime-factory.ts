@@ -27,6 +27,7 @@ import { processRuntimeInfo } from "../kernels/js/process-worker.ts";
 import { sessionEnvironmentFrom } from "../kernels/session-env.ts";
 import { resolveSessionArtifactsDir } from "../output/streaming-output.ts";
 import type { EnabledEvalLanguages, EvalLanguage, EvalRuntimes } from "../tool/types.ts";
+import { reachableToolNames } from "./reachable-tools.ts";
 import { jsRuntimeInfo, runtimesFromAvailability } from "./runtime-info.ts";
 import {
 	type CodemodeSessionManager,
@@ -90,7 +91,7 @@ export async function createRuntime(
 	const enabledLanguages = enabledLanguagesFrom(settings, availability);
 	const jsProcessIsolation = resolveJsIsolation(settings) === "process";
 	const artifacts = resolveSessionArtifactsDir(ctx.sessionManager.getSessionFile());
-	const activeTools = new Set(pi.getActiveTools());
+	const activeTools = reachableToolNames(pi);
 	const executeTool = createExecuteTool(pi, activeTools);
 	const create = options.createSessionManager ?? createCodemodeSessionManager;
 	const sessionId = sessionIdFrom(event);
@@ -166,7 +167,7 @@ export function createExecuteTool(pi: CodemodeRuntimeAPI, activeTools?: Readonly
 	const executeTool: AgentExecuteTool = (toolName, params, executeOptions) =>
 		pi.executeTool(toolName, params, { ...executeOptions, activateInactiveTool: true });
 	return Object.assign(executeTool, {
-		isToolAvailable: (name: string): boolean => activeTools?.has(name) ?? pi.getActiveTools().includes(name),
+		isToolAvailable: (name: string): boolean => (activeTools ?? reachableToolNames(pi)).has(name),
 	});
 }
 
