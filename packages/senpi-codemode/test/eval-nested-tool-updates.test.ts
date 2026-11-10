@@ -7,6 +7,7 @@ import { defaultCodemodeSettings } from "../src/config/settings.ts";
 import { createCodemodeSessionManager } from "../src/extension/session-manager.ts";
 import { createInterpreterDetector, getInterpreterAvailability } from "../src/interpreters/detect.ts";
 import { createEvalTool } from "../src/tool/eval-tool.ts";
+import { NestedToolOutput } from "../src/tool/nested-tool-output.ts";
 import type { EvalLanguage, EvalToolDetails } from "../src/tool/types.ts";
 import { fakeExtensionContext } from "./eval/fakes.ts";
 
@@ -143,8 +144,34 @@ describe("Given a cell that awaits a nested tool streaming partial results (#616
 				expect(settled.details.cells?.[0]?.output).not.toContain("tick-");
 				const ticksSeen = new Set(updates.flatMap((update) => update.text.match(/tick-\d/g) ?? []));
 				expect([...ticksSeen].sort()).toEqual(["tick-1", "tick-2", "tick-3"]);
+				// #6257: once the last tick is live, no update may show the running cell with neither the ticks nor
+				// the cell's own output (a settled nested call is replaced by the next real update, never by a blank).
+				const lastTick = updates.findIndex((update) => update.text.includes(`tick-${TICKS}`));
+				const blanks = updates
+					.slice(lastTick)
+					.filter((update) => !update.text.includes(`tick-${TICKS}`) && !update.text.includes("ticker done"));
+				expect(blanks).toEqual([]);
 			},
 			120_000,
 		);
 	}
+});
+
+describe("Given a cell that settles many nested tool calls without printing (#6257 review)", () => {
+	it("When each call settles, then the live view holds only the newest settled call's output", () => {
+		const nested = new NestedToolOutput();
+		const callOutput = (call: number) => `call-${call}-start\n${"x".repeat(60 * 1024)}\ncall-${call}-end`;
+		for (let call = 1; call <= 200; call++) {
+			const callId = `call-${call}`;
+			nested.update(callId, partial(callOutput(call)));
+			nested.drop(callId);
+		}
+
+		const live = nested.appendTo("");
+		expect(live).toContain("call-200-end");
+		expect(live).not.toContain("call-199-end");
+		expect(live.length).toBeLessThanOrEqual(callOutput(200).length);
+		expect(nested.releaseSettled()).toBe(true);
+		expect(nested.appendTo("")).toBe("");
+	});
 });

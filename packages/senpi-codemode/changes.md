@@ -1,3 +1,39 @@
+## 2026-11-09 - Hide the console window for codemode installer and kernel spawns on Windows (senpi#3965)
+
+### What changed
+
+- `packages/senpi-codemode/src/environments/js-installer.ts`: the installer spawn (npm/pnpm) now passes `windowsHide: true`.
+- `packages/senpi-codemode/src/environments/py-installer.ts`: the interpreter spawn (python/pip) now passes `windowsHide: true`.
+- `packages/senpi-codemode/src/kernels/shared/subprocess-process.ts`: the default kernel subprocess spawn now passes `windowsHide: true`.
+
+### Why
+
+- Installers, interpreters, and kernel children can all be console-subsystem exes on Windows; without `windowsHide` each start flashed a console window.
+
+### Why an extension could not handle it
+
+- The spawns are the codemode package's own environment/kernel lifecycle, not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: one options line in each of three codemode files.
+
+## 2026-11-09 - A settled nested tool's lines stay in the eval live update until the cell replaces them (senpi#6257)
+
+### What changed
+
+- `src/tool/nested-tool-output.ts`: `drop()` keeps the settled call's last text as the one held text (only the newest settled call is held, so a cell that settles many calls without printing keeps one tail); a live call's next text, `releaseSettled()` and `clear()` remove it; `appendTo`/`appendLines` show it before the live calls.
+- `src/tool/cell-runtime.ts`: the cell's own output chunk releases held nested lines before it is appended; `nestedToolSettled` no longer emits an update of its own (settling changes nothing on screen). `#finish` still clears everything, so the cell's result never contains nested output.
+- `test/eval-nested-tool-updates.test.ts`: 200 settled calls without cell output leave only the last call's tail held; after the last nested tick is live, no update may show the running cell with neither the ticks nor the cell's own output.
+
+### Why
+
+When a nested tool that streamed lines settled, the cell emitted one live update showing only its header (the throttled update scheduled by the last tick, or the settle itself), about 10 ms before the cell's own output or completion. Clients rendering every update showed the lines, an empty running cell for one frame, then the lines again (a desktop client measured the blank at 50-103 ms in 4 of 5 runs).
+
+### Expected merge conflict zones
+
+- LOW: `nested-tool-output.ts` and `cell-runtime.ts` (`nestedToolSettled`, `dropNestedTool`, the collector's `onChunk`).
+
 ## 2026-11-06 - JavaScript kernel defaults to process isolation on bun hosts (senpi#6095)
 
 ### What changed

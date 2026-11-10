@@ -1,3 +1,47 @@
+## 2026-11-10 - Bundled Claude Agent SDK 0.3.321 (senpi#3893)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` 0.3.306 -> 0.3.321. `bun.lock`, `package-lock.json`, `install-lock/` and the SDK platform lock are regenerated with the repository scripts.
+
+### Why
+
+- Claude Code 2.1.321, bundled by SDK 0.3.321, is the first build whose model table knows `claude-fable-5-2` / `claude-mythos-5-2`. The omo#8700 regression requires the bundled Claude Code to embed every Claude model senpi promotes.
+
+### Why an extension could not handle it
+
+- The SDK is a pinned dependency of the coding-agent package.
+
+### Expected merge conflict zones
+
+- The single dependency line in `packages/coding-agent/package.json`, `bun.lock`, `package-lock.json` and `install-lock/package-lock.json`.
+
+## 2026-11-09 - A terminal-held session admits a relayed peer-agent message (senpi#6294)
+
+### What changed
+
+- `src/modes/interactive/session-control-peer-commands.ts` (new): `set_client_info` on a terminal's control endpoint now records the remote device a connection speaks for (`remoteOrigin`, validated and fixed once declared, exactly as on the RPC host) beside its roles; `admit_external_message` runs the RPC host's `admitExternalMessage` on the terminal's session, taking the device from the connection and never from the record.
+- `src/modes/interactive/session-control-rpc-commands.ts`: lists `admit_external_message` (so `get_protocol_info.commands` includes it), checks the record with the RPC host's `admitExternalMessageFieldError`, and routes it and `set_client_info` to the new file. Before this a terminal answered `unsupported`, so an agent on another device could reach a session only when it ran under the RPC host.
+- `test/suite/regressions/6294-tui-admit-external-message.test.ts`: on the terminal endpoint, a remote delivery carries the device in `details.remote_origin` only; a repeated id is `already_admitted`; a remote `command_line` sender, a record naming its own origin, and a chain over the limit are refused with the RPC host's codes (the chain guard first); a local delivery has no remote origin.
+
+## 2026-11-08 - Inbound sample for `admit_external_message` (senpi#6233)
+
+### What changed
+
+- `packages/coding-agent/scripts/rpc-inbound-samples.ts`: one sample record for the new method; the shared fixture is regenerated.
+
+### Why
+
+The sample table is exhaustive over the inbound record types (#6233).
+
+### Why an extension could not handle it
+
+The sample table is the engine's own method list.
+
+### Expected merge conflict zones
+
+- LOW: one table entry.
+
 ## 2026-11-07 - Presenter tests count EPIPE as the host closing the channel (senpi#6161)
 
 ### What changed

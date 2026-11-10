@@ -1,3 +1,21 @@
+## 2026-11-09 - Hide the console window for MCP diagnostic commands on Windows (senpi#3965)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/diagnose.ts`: `execFileForDiagnostics` now passes `windowsHide: true`.
+
+### Why
+
+- An MCP server command can be any console-subsystem exe on Windows; diagnostics must never flash its console window.
+
+### Why an extension could not handle it
+
+- The spawn is the MCP client's own diagnostic helper, not a replaceable extension surface.
+
+### Expected merge conflict zones
+
+- LOW: one options line in the diagnostic helper.
+
 ## 2026-11-07 - Session-less MCP status reads get no peer data; server snapshots gain optional session scoping (senpi#3001)
 
 ### What changed

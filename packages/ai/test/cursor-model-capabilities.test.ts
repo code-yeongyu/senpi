@@ -62,6 +62,10 @@ describe("cursor model capabilities", () => {
 		expect(kimi?.maxWindow).toBeUndefined();
 	});
 
+	it("serves Fable 5.2 with the Fable 5.1 capability, not the 256k default", () => {
+		expect(getCursorCapabilityForBase("claude-fable-5-2")).toEqual(getCursorCapabilityForBase("claude-fable-5-1"));
+	});
+
 	it("resolves a variant id to its base capability with the same window", () => {
 		expect(getCursorBaseIdForVariant("kimi-k3-max")).toBe("kimi-k3");
 		expect(getCursorBaseIdForVariant("claude-fable-5-thinking-xhigh")).toBe("claude-fable-5");

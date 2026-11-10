@@ -21,6 +21,28 @@ Background sessions are NEVER killed by `timeout` (they live until they exit or 
 call `kill_bash`), even though the bash-timeout extension injects a default `timeout`
 into every `bash` call. Foreground calls behave like the classic `bash` tool.
 
+### Long-running background sessions
+
+A background session that is still running (started with `run_in_background`, or a
+foreground command that auto-detached) is reported once it has run 10 minutes, then
+every 30 minutes after that (10, 40, 70, ... minutes). Each report names the session's
+`bash_id` and its command or label, says how long it has been running, and gives the
+call that stops it (`kill_bash({ bash_id })`). It reaches the agent like a completion
+notice (subject to `notify`), shows in the TUI, and goes to RPC clients as the
+`terminal_background_age` event ([RPC](rpc.md#background-session-age)). A report that came
+due while the machine slept is sent once, not once per missed interval.
+
+Nothing is stopped automatically by default. To stop long sessions at a set age, opt in
+with the `terminal.backgroundAutoReapMinutes` setting, or per call with the `bash`
+parameter `auto_reap_minutes` (which wins over the setting; `0` turns it off for that
+call). At that age the session is stopped the way `kill_bash` stops it (TERM to its
+process group, then KILL after a grace), its completion notice says it was stopped
+automatically, and a `terminal_background_age` event with `kind: "reaped"` is sent.
+It counts as reaped only once that stop has really ended the session. If the stop fails
+or the session survives it, one notice (and a `kind: "reap_failed"` event) says
+auto-reap failed and why; the session keeps running, its age reports go on, and the
+auto-reap does not retry.
+
 Background sessions and monitors also survive a session reload (`/reload`): existing
 `bash_N` ids stay addressable, watchers keep injecting events, and completion
 notifications keep arriving. Quitting or switching sessions still tears everything down.
@@ -214,7 +236,8 @@ Configure the suite under `terminal` in `settings.json` (global
     "scrollback": 10000,
     "maxSessions": 32,
     "timeoutAction": "background",
-    "notify": "wake"
+    "notify": "wake",
+    "backgroundAutoReapMinutes": 120
   }
 }
 ```
@@ -223,6 +246,7 @@ Configure the suite under `terminal` in `settings.json` (global
 - `scrollback` — xterm scrollback lines per session (default 10000).
 - `maxSessions` — concurrent sessions before least-recently-used exited sessions are pruned (default 32).
 - `timeoutAction` — fate of a foreground timeout (default `background`).
+- `backgroundAutoReapMinutes` — stop a background session once it has run this many minutes (default unset: never). A whole number of minutes of at least 1 turns it on; `0` or any other value leaves it off. The `bash` parameter `auto_reap_minutes` overrides it per call.
 - `notify` — async completion behavior: `wake` (wake an idle interactive agent once), `next-turn`, or `off` (default `wake`). Non-interactive `-p` / `--print` / `--mode json` runs never wake.
 - `killGuard` — `on` (default) or `off`, read from the global settings file only (a project value is ignored). While on, an agent command or eval cell that would signal every process (`kill -1`, a `pkill` pattern such as `a||b`, `.*` or one letter), a protected process (pid 1, the agent, its ancestors, the user's service manager) or a process group holding one is refused before it runs with a `[senpi:kill-guard]` message naming the rule and a narrow alternative. Narrow kills by pid, exact name (`pkill -x`) or anchored pattern run as before. Values only known when a command runs (`pkill -f "$P"`, `xargs kill`, a script's `kill $PID`) are judged then: on macOS and Linux every agent shell, monitor and eval kernel gets `kill`, `pkill` and `killall` shims first on `PATH` (in `<agent dir>/kill-guard/<version>/`) and a `BASH_ENV` that wraps bash's builtin `kill`, chaining any `BASH_ENV` you already set; an interactive bash the agent starts gets the same wrapper from a `PROMPT_COMMAND` hook before its first prompt, after your startup files, and your own `PROMPT_COMMAND` still runs after it; a refused command exits 126 with the same message. This also judges what the agent types into a running shell with `bash_input` (edited, recalled or history-expanded lines included), because the shell judges the line it actually runs. Builtin `kill` in dash or zsh, in `bash --posix -c` and in `bash -i -c`, in an interactive bash whose startup files replace `PROMPT_COMMAND`, and a `kill` named by absolute path, are judged only from the command text. A command you type yourself with `!` is never judged and gets no shims. `off` restores the unguarded behavior (no shims, no `BASH_ENV`, `PROMPT_COMMAND` left as you set it) and shows one notice per session.
 

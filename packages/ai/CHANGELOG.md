@@ -12,6 +12,62 @@
 
 ### Removed
 
+## [2026.11.10] - 2026-11-10
+
+### Breaking Changes
+
+### Added
+
+- Claude Fable 5.2 (`claude-fable-5-2`) is in the generated model catalog for anthropic, amazon-bedrock, openrouter, vercel-ai-gateway, opencode and venice with its release specs: 1M context window, 128k max output, $8/$40 pricing with cache reads at $0.20/MTok, adaptive-only thinking, and Opus 5 as the permitted refusal-fallback target ([#6309](https://github.com/code-yeongyu/senpi/pull/6309))
+
+### Changed
+
+### Fixed
+
+- Array and object tool arguments that arrive as their JSON text are decoded to the declared structure instead of being wrapped into a one-element array of that text, so every parallel `generate_image` call in a turn gets its `reference_image_paths` ([#6266](https://github.com/code-yeongyu/senpi/pull/6266))
+- ChatGPT subscription models no longer report a fixed prompt-cache TTL: OpenAI keeps a signed-in ChatGPT user's cache with no expiry, so `resolvePromptCacheLifetime()` returns `best-effort` and the handoff hint no longer says the cache expired after 30 idle minutes ([#6292](https://github.com/code-yeongyu/senpi/pull/6292), closes [#6290](https://github.com/code-yeongyu/senpi/issues/6290); reported by @jamestesting)
+- `cacheRetention: "long"` on OpenAI GPT-5.6+ Responses requests sends `prompt_cache_options.ttl: "12h"` and resolves a 12-hour lifetime; it previously sent the default `"30m"` ([#6292](https://github.com/code-yeongyu/senpi/pull/6292))
+
+### Removed
+
+## [2026.11.9-2] - 2026-11-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.9] - 2026-11-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.6-3] - 2026-11-08
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- The bundled catalog drops the Fireworks models upstream retired (`gpt-oss-120b`, `inkling`, `nemotron-3-ultra-nvfp4`, `nemotron-lightning-3p5-30b-a3b`), and the Fireworks tests no longer depend on which rows upstream still ships, so a release that regenerates the catalog after such a retirement passes its tests ([#6209](https://github.com/code-yeongyu/senpi/pull/6209), fixes #6207)
+
+### Removed
+
 ## [2026.11.6-2] - 2026-11-07
 
 ### Breaking Changes
