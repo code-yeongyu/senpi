@@ -316,6 +316,13 @@ describe("senpi#5632: delegated connections are decided by the engine's own clas
 		const request = await asked;
 		const delegated = await host.proven();
 		expect(await declare(delegated, FORWARDABLE)).toMatchObject({ success: true });
+		// senpi#6245: an unattached connection is refused at the gate; attached, the secret check itself must refuse it.
+		const { sessionId: durableSessionId } = (await raiser.send({ type: "get_state", sessionId })).data as {
+			sessionId: string;
+		};
+		expect(await delegated.send({ type: "attach_session", sessionId, durableSessionId })).toMatchObject({
+			success: true,
+		});
 		const answer = {
 			type: "extension_ui_response",
 			sessionId,

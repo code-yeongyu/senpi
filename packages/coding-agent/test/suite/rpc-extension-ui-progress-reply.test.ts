@@ -122,7 +122,10 @@ describe("extension_ui_progress reply (senpi#5761)", () => {
 		const id = String((await raised).id);
 		const sender = rig.client("sender");
 		await sender.request({ type: "set_client_info", width: 80, capabilities: ["interactive_user"] });
-		await sender.request({ type: "attach_session", sessionId });
+		const durableSessionId = (opened.state as { sessionId: string }).sessionId;
+		expect(await sender.request({ type: "attach_session", sessionId, durableSessionId })).toMatchObject({
+			success: true,
+		});
 		const replied = sender.waitFor((r) => r.type === "response" && r.id === id);
 		const line = JSON.stringify({
 			type: "extension_ui_progress",

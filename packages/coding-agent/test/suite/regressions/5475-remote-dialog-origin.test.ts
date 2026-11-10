@@ -17,6 +17,7 @@ async function prepared() {
 	const observer = rig.client("observer");
 	const opened = dataOf(await owner.request({ type: "open_session", cwd: rig.cwd, retain_on_disconnect: true }));
 	const sessionId = String(opened.sessionId);
+	const durableSessionId = (opened.state as { sessionId: string }).sessionId;
 	const cancel = new AbortController();
 	const api = [...rig.extensionApis.values()][0];
 	if (!api) throw new Error("missing extension API");
@@ -28,7 +29,7 @@ async function prepared() {
 		},
 	});
 	await observer.request({ type: "subscribe_sessions", mirror: "all", dialogs: true, observe: true });
-	return { rig, owner, remote, observer, sessionId, cancel };
+	return { rig, owner, remote, observer, sessionId, durableSessionId, cancel };
 }
 
 const raisedTo = (client: RawClient, method: string): Promise<WireRecord> =>
@@ -37,9 +38,12 @@ const mirrored = (observer: RawClient, method: string, from: number): Promise<Wi
 	observer.waitFor((r) => r.type === "ui_request_pending" && r.method === method && observer.inbox.indexOf(r) >= from);
 
 it("labels a remote connection's dialogs with its declared origin, on the frame and on the mirror", async () => {
-	const { rig, remote, observer, sessionId, cancel } = await prepared();
+	const { rig, remote, observer, sessionId, durableSessionId, cancel } = await prepared();
 	await using _rig = rig;
 	expect(await remote.request({ type: "set_client_info", width: 80, remoteOrigin: ORIGIN })).toMatchObject({
+		success: true,
+	});
+	expect(await remote.request({ type: "attach_session", sessionId, durableSessionId })).toMatchObject({
 		success: true,
 	});
 	const from = observer.inbox.length;

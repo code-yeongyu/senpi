@@ -42,7 +42,20 @@ async function quietSession(label: string, handler: (turn: () => FakeTurn) => Ha
 	turn().start();
 	turn().finish();
 	await rig.drop("conn-a");
-	return { rig, sessionId: session.sessionId, sessionPath: session.state.sessionFile, turn };
+	return {
+		rig,
+		sessionId: session.sessionId,
+		durableSessionId: session.state.sessionId,
+		sessionPath: session.state.sessionFile,
+		turn,
+	};
+}
+
+/** senpi#6245: conn-b must hold an attachment before it can put work on the session. */
+async function attachConnB(rig: Rig, sessionId: string, durableSessionId: string): Promise<void> {
+	expect(
+		await rig.send("conn-b", { type: "attach_session", id: "attach-b", sessionId, durableSessionId }),
+	).toMatchObject({ success: true });
 }
 
 async function release(rig: Rig, sessionId: string, interrupt?: boolean): Promise<Record<string, unknown>> {
@@ -51,6 +64,8 @@ async function release(rig: Rig, sessionId: string, interrupt?: boolean): Promis
 		id: `rel-${Math.random()}`,
 		sessionId,
 		reason: "takeover",
+		// The host's takeover forces past conn-b's attachment; with no other attachment, force changes nothing.
+		force: true,
 		...(interrupt ? { interrupt } : {}),
 	});
 	await rig.settle();
@@ -80,8 +95,9 @@ describe("release_session refuses a session that is not quiet", () => {
 	it("refuses while a user bash runs, then hands over once it ended, with nothing after session_released", async () => {
 		// Given: a user bash in flight on another connection.
 		const { started, markStarted } = commandStart();
-		const { rig, sessionId, sessionPath, turn } = await quietSession("bash", runsBash(markStarted));
+		const { rig, sessionId, durableSessionId, sessionPath, turn } = await quietSession("bash", runsBash(markStarted));
 		await using _rig = rig;
+		await attachConnB(rig, sessionId, durableSessionId);
 		const bashReply = rig.send("conn-b", { type: "bash", id: "b1", sessionId, command: "sleep 3" });
 		await started;
 		const before = entryKinds(sessionPath);
@@ -90,7 +106,7 @@ describe("release_session refuses a session that is not quiet", () => {
 		expect(await release(rig, sessionId)).toMatchObject({
 			success: false,
 			error: "session_busy",
-			errorData: { attachments: 0, busy: ["bash", "request"] },
+			errorData: { attachments: 1, busy: ["bash", "request"] },
 		});
 		expect(entryKinds(sessionPath)).toEqual(before);
 		expect(await rig.list()).toEqual([expect.objectContaining({ sessionId, status: "open" })]);
@@ -111,8 +127,12 @@ describe("release_session refuses a session that is not quiet", () => {
 	it("with interrupt, aborts the bash, waits for it to be recorded, then releases", async () => {
 		// Given: a user bash in flight on another connection.
 		const { started, markStarted } = commandStart();
-		const { rig, sessionId, sessionPath } = await quietSession("bash-interrupt", runsBash(markStarted));
+		const { rig, sessionId, durableSessionId, sessionPath } = await quietSession(
+			"bash-interrupt",
+			runsBash(markStarted),
+		);
 		await using _rig = rig;
+		await attachConnB(rig, sessionId, durableSessionId);
 		const bashReply = rig.send("conn-b", { type: "bash", id: "b1", sessionId, command: "sleep 3" });
 		await started;
 
@@ -138,7 +158,7 @@ describe("release_session refuses a session that is not quiet", () => {
 		// Given: a prompt whose command was routed and answered, but whose preflight has not started the run.
 		let finishPrompt: (() => void) | undefined;
 		const prompts = new Set<Promise<unknown>>();
-		const { rig, sessionId, sessionPath, turn } = await quietSession(
+		const { rig, sessionId, durableSessionId, sessionPath, turn } = await quietSession(
 			"prompt-first",
 			(turnOf) => async (command) => {
 				if (command.type !== "prompt") return;
@@ -155,6 +175,7 @@ describe("release_session refuses a session that is not quiet", () => {
 			{ pendingPrompts: () => [...prompts] },
 		);
 		await using _rig = rig;
+		await attachConnB(rig, sessionId, durableSessionId);
 		await rig.send("conn-b", { type: "prompt", id: "p1", sessionId, message: "race" });
 		const before = entryKinds(sessionPath);
 
@@ -179,13 +200,14 @@ describe("release_session refuses a session that is not quiet", () => {
 		// Given: a prompt command still inside its handler.
 		let unblock: (() => void) | undefined;
 		const { started, markStarted } = commandStart();
-		const { rig, sessionId } = await quietSession("prompt-in-flight", () => async (command) => {
+		const { rig, sessionId, durableSessionId } = await quietSession("prompt-in-flight", () => async (command) => {
 			if (command.type !== "prompt") return;
 			const blocked = new Promise<void>((resolve) => (unblock = resolve));
 			markStarted();
 			await blocked;
 		});
 		await using _rig = rig;
+		await attachConnB(rig, sessionId, durableSessionId);
 		const promptReply = rig.send("conn-b", { type: "prompt", id: "p1", sessionId, message: "race" });
 		await started;
 
@@ -202,20 +224,31 @@ describe("release_session refuses a session that is not quiet", () => {
 	it("when the release wins the race, the prompt routed after it is refused and never reaches the session", async () => {
 		// Given: a quiet session and a binding that records every prompt it is handed.
 		const handled: string[] = [];
-		const { rig, sessionId, sessionPath } = await quietSession("release-first", () => async (command) => {
-			handled.push(command.type);
-		});
+		const { rig, sessionId, durableSessionId, sessionPath } = await quietSession(
+			"release-first",
+			() => async (command) => {
+				handled.push(command.type);
+			},
+		);
 		await using _rig = rig;
+		await attachConnB(rig, sessionId, durableSessionId);
 
 		// When: the release and a prompt on another connection are dispatched in the same tick, release first.
-		const releaseReply = rig.router.handle({ type: "release_session", id: "r1", sessionId, reason: "takeover" });
+		const releaseReply = rig.router.handle({
+			type: "release_session",
+			id: "r1",
+			sessionId,
+			reason: "takeover",
+			force: true,
+		});
 		const promptReply = rig.send("conn-b", { type: "prompt", id: "p1", sessionId, message: "race" });
 
 		// Then: only one of them succeeds - the release - and nothing follows session_released.
 		expect(await releaseReply).toMatchObject({ success: true, data: { released: true } });
+		// The release claims every attachment first, so conn-b's prompt can also meet the attach gate (senpi#6245).
 		expect(await promptReply).toMatchObject({
 			success: false,
-			error: expect.stringMatching(/session_closing|unknown_session/),
+			error: expect.stringMatching(/session_closing|unknown_session|session_not_attached/),
 		});
 		expect(handled).toEqual([]);
 		await rig.settle();
