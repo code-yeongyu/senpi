@@ -1,3 +1,24 @@
+## 2026-11-09 - Eval-exposed tools stay reachable for agent(), output() and the kernel preludes (senpi#6276)
+
+### What changed
+
+- `src/extension/reachable-tools.ts` (new): `reachableToolNames(pi)` = `pi.getActiveTools()` plus every `pi.getAllTools()` entry whose `exposure` is `"eval"`.
+- `src/extension/runtime-factory.ts`: `spawns` and `createExecuteTool(...).isToolAvailable` read the reachable set instead of the active list.
+- `src/extension/kernel-preludes.ts`: `activeKernelPreludes` keeps the kernel prelude of a reachable (active or eval-exposed) tool.
+- `src/bridges/schema-bridge.ts`: `EvalSchemaToolInfo.exposure` (optional), the field the host's `getAllTools()` already reports.
+
+### Why
+
+- The session withholds an eval-exposed tool from the model whenever eval is registered, so it is absent from the active list while `executeTool` still reaches it. With the task tool family declaring `exposure: "eval"` (Q 2026-11-09, the omo plugin), `agent()`/`output()` threw `AgentUnavailableError`, the eval prompt lost its spawn helpers and the tool's kernel prelude vanished.
+
+### Why an extension could not handle it
+
+- This is the codemode extension itself.
+
+### Expected merge conflict zones
+
+- LOW: the `activeTools` lines of `createRuntime` and `createExecuteTool` in `runtime-factory.ts`.
+
 ## 2026-11-09 - Hide the console window for codemode installer and kernel spawns on Windows (senpi#3965)
 
 ### What changed

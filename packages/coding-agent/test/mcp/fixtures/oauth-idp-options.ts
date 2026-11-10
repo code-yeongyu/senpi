@@ -16,11 +16,14 @@ export interface IdpOptions {
 	 * exact-matching authorization servers (django-oauth-toolkit, Neon) do (senpi#6327).
 	 */
 	strictRedirectUris: boolean;
+	readonly refreshScope?: string;
+	readonly omitRefreshScope: boolean;
 }
 
 export function parseIdpOptions(argv: string[]): IdpOptions {
 	const expireIndex = argv.indexOf("--expire-access");
 	const expireAccessSec = expireIndex >= 0 ? Number.parseInt(argv[expireIndex + 1] ?? "3600", 10) : 3600;
+	const scopeIndex = argv.indexOf("--refresh-scope");
 	return {
 		noS256: argv.includes("--no-s256"),
 		rotateRefresh: argv.includes("--rotate-refresh"),
@@ -31,6 +34,8 @@ export function parseIdpOptions(argv: string[]): IdpOptions {
 		iss: parseIssMode(argv),
 		issSupported: argv.includes("--iss-supported"),
 		strictRedirectUris: argv.includes("--strict-redirect"),
+		refreshScope: scopeIndex >= 0 ? argv[scopeIndex + 1] : undefined,
+		omitRefreshScope: argv.includes("--omit-refresh-scope"),
 	};
 }
 

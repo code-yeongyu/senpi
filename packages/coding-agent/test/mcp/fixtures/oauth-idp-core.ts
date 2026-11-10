@@ -37,6 +37,7 @@ interface RefreshToken {
 export interface RequestLogEntry {
 	method: string;
 	path: string;
+	rpcMethod?: string;
 	grantType?: string;
 	resource?: string;
 	note?: string;
@@ -71,9 +72,11 @@ export class IdpState {
 		return expiresAt !== undefined && expiresAt > Date.now();
 	}
 
-	protectedResourceMetadata(): HttpReply {
+	protectedResourceMetadata(resource?: string): HttpReply {
 		this.discoveryHits++;
-		return { status: 200, body: { resource: `${this.baseUrl}/mcp`, authorization_servers: [this.baseUrl] } };
+		const protectedResource = new URL("/mcp", this.baseUrl);
+		if (resource !== undefined) protectedResource.searchParams.set("resource", resource);
+		return { status: 200, body: { resource: protectedResource.href, authorization_servers: [this.baseUrl] } };
 	}
 
 	authorizationServerMetadata(kind: "oauth" | "oidc"): HttpReply {
@@ -213,9 +216,17 @@ export class IdpState {
 		}
 		if (this.options.rotateRefresh) record.used = true;
 		const resource = params.get("resource") ?? record.resource;
+		const body = this.#issueTokens(
+			record.family,
+			record.scope,
+			resource,
+			this.options.rotateRefresh ? undefined : token,
+		);
+		if (this.options.omitRefreshScope) delete body.scope;
+		else if (this.options.refreshScope !== undefined) body.scope = this.options.refreshScope;
 		return {
 			status: 200,
-			body: this.#issueTokens(record.family, record.scope, resource, this.options.rotateRefresh ? undefined : token),
+			body,
 		};
 	}
 
