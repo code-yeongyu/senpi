@@ -1,7 +1,7 @@
 import type { BuildDynamicSystemPromptOptions, DynamicSystemPromptPart } from "../../../dynamic-prompt/build.ts";
 import { buildClaudeFable5Prompt } from "./claude-fable-5.ts";
 import { buildClaudeFable51Prompt } from "./claude-fable-5-1.ts";
-import { buildClaudeFable55Prompt } from "./claude-fable-5-5.ts";
+import { buildClaudeFable52Prompt } from "./claude-fable-5-2.ts";
 import { buildClaudeHaiku55Prompt } from "./claude-haiku-5-5.ts";
 import { buildClaudeOpus45Prompt } from "./claude-opus-4-5.ts";
 import { buildClaudeOpus46Prompt } from "./claude-opus-4-6.ts";
@@ -136,8 +136,8 @@ function renderPreset(
 			return { name, prompt: buildKimiK26Prompt(options) };
 		case "claude-fable-5-1":
 			return { name, prompt: buildClaudeFable51Prompt(options) };
-		case "claude-fable-5-5":
-			return { name, prompt: buildClaudeFable55Prompt(options) };
+		case "claude-fable-5-2":
+			return { name, prompt: buildClaudeFable52Prompt(options) };
 		case "claude-fable-5":
 			return { name, prompt: buildClaudeFable5Prompt(options) };
 		case "claude-opus-5-5":
