@@ -15,6 +15,7 @@ import {
 	credentialsMatchIssuer,
 	validatedAuthorizationServerIssuer,
 } from "./oauth-issuer.ts";
+import { registrationNamesRedirect, withRegistration } from "./registered-redirect.ts";
 import type { McpStoredAuth, McpTokenStore } from "./token-store.ts";
 
 // Buffer before absolute token expiry at which a refresh is considered due.
@@ -25,6 +26,8 @@ export interface McpOAuthProviderOptions {
 	serverUrl: string;
 	store: McpTokenStore;
 	redirectUrl?: string | URL;
+	/** This flow sends an authorize request: reuse only a stored registration naming `redirectUrl` (senpi#6327). */
+	requireRegisteredRedirect?: boolean;
 	scopes?: string[];
 	clientId?: string;
 	clientMetadataUrl?: string;
@@ -172,7 +175,9 @@ export class McpOAuthProvider implements OAuthClientProvider {
 	clientInformation(): OAuthClientInformationMixed | undefined {
 		if (this.#options.clientId !== undefined) return { client_id: this.#options.clientId };
 		if (this.#options.clientMetadataUrl !== undefined) return { client_id: this.#options.clientMetadataUrl };
-		return this.#store.read()?.clientInfo;
+		const stored = this.#store.read()?.clientInfo;
+		if (this.#options.requireRegisteredRedirect !== true) return stored;
+		return registrationNamesRedirect(stored, this.#options.redirectUrl) ? stored : undefined;
 	}
 
 	async saveClientInformation(info: OAuthClientInformationFull): Promise<void> {
@@ -181,7 +186,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
 			discovery === undefined
 				? info.issuer && canonicalAuthorizationServerIssuer(info.issuer)
 				: validatedAuthorizationServerIssuer(discovery, this.serverName);
-		await this.#store.update((current) => ({ ...(current ?? {}), clientInfo: { ...info, issuer } }));
+		await this.#store.update((current) => withRegistration(current, { ...info, issuer }));
 	}
 
 	async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {

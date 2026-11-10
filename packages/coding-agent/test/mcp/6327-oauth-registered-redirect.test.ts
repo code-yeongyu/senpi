@@ -136,20 +136,22 @@ describe("MCP OAuth registers the redirect URI it authorizes with (senpi#6327)",
 		expect(store.read()?.accessToken).toMatch(/^SENTINEL_AT_/);
 	});
 
-	it("a flow that replaces a registration never presents the replaced client's grant", async () => {
-		// Given: a registration for port 1 with the grant issued to it.
+	it("a flow that replaces a registration never presents the replaced client's refresh token", async () => {
+		// Given: a registration for port 1 with the attributed grant issued to it.
 		const { deps, store } = await harness();
 		const stale = { client_id: "dcr-stale", redirect_uris: ["http://127.0.0.1:1/callback"] };
-		await store.update(() => ({ clientInfo: stale, accessToken: "AT-stale", refreshToken: "RT-stale" }));
+		const grant = { accessToken: "AT-stale", refreshToken: "RT-stale", issuer: "https://as.example" };
+		await store.update(() => ({ clientInfo: stale, ...grant }));
+		expect(provider(deps).tokens()?.refresh_token).toBe("RT-stale");
 		const flow = provider(deps, "http://127.0.0.1:2/callback");
 
 		// When: the flow for port 2 asks for its client and registers a new one.
 		expect(flow.clientInformation()).toBeUndefined();
 		await flow.saveClientInformation({ client_id: "dcr-fresh", redirect_uris: ["http://127.0.0.1:2/callback"] });
 
-		// Then: the stale grant is gone with its client, so the SDK cannot refresh it under the new client_id.
+		// Then: the refresh token left with its client, so the SDK cannot present it under the new client_id.
 		expect(flow.clientInformation()?.client_id).toBe("dcr-fresh");
-		expect(flow.tokens()).toBeUndefined();
+		expect(flow.tokens()?.refresh_token).toBeUndefined();
 		expect(store.read()?.refreshToken).toBeUndefined();
 	});
 
