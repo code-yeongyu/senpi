@@ -1623,6 +1623,7 @@ export function createRpcConnectionHandler(
 				const peer = {
 					origin: connectionRoles.originOf(currentConnectionId()),
 					connectionOrigin: connectionOrigin(),
+					peerAgent: connectionRoles.grantedByForwarder(currentConnectionId(), "peer_agent"),
 				};
 				const answer = admitExternalMessage(session, command, peer);
 				if (!answer.ok) {

@@ -1,3 +1,80 @@
+## 2026-11-10 - A host child receives its supervisor's adopted engine trust generation (senpi#6312)
+
+### What changed
+
+- `packages/coding-agent/src/engine-trust/hand-off.ts`: `adoptedEngineTrustHandOff()` is the former private `trustHandOff()` of `host-spawn-environment.ts`, moved and exported (also from `engine-trust/index.ts`): the adopted generation's hand-off, or nothing when this process adopted none.
+- `packages/coding-agent/src/modes/rpc/host-spawn-environment.ts`: `initialHostEnvironment` and `successorHostEnvironment` spread `adoptedEngineTrustHandOff()`; behavior unchanged.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-launch.ts`: `HostChildOptions.trustHandOff` is required and `hostChildEnvironment` spreads it after `process.env`. `loadHostChildTrustHandOff()` builds it through the same `adoptedEngineTrustHandOff()`, loading `engine-trust/adopted.ts` and, only after an adoption, `engine-trust/hand-off.ts` lazily.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: the supervisor passes `trustHandOff: await loadHostChildTrustHandOff()` to `spawnHostChild`.
+
+### Why
+
+- A supervisor started by `initialHostEnvironment` or `successorHostEnvironment` adopts the hand-off marker, and the adopter's restore deletes the marker and the closure from its `process.env`. `hostChildEnvironment` built only from `process.env`, so the host child arrived with no marker, imported trust again and re-exec'd. The exec closed every inherited descriptor above stdio, including the startup pipe (senpi#4602): the child never reported `host_bootstrap` and the supervisor failed with `internal_ready reported before its phase was granted` (omo#12951).
+- The lazy load keeps the supervisor's static graph unchanged (79 modules). A static import of the hand-off measured 179 (95 of them zod), and a static import of `host-spawn-environment.ts` reaches the forbidden `@earendil-works/pi-ai` barrel through `host-daemon-env.ts`.
+
+### Why an extension could not handle it
+
+- The host child's environment is built by the lifecycle supervisor before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `HostChildOptions` and the `hostChildEnvironment` return literal in `host-lifecycle-launch.ts`; the `spawnHostChild` call in `host-lifecycle.ts`.
+
+## 2026-11-09 - An applied close_session carries its authority receipt (senpi#6280)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-event-writer-lifecycle.ts`: `reserveCloseResponse()`'s `complete()` stamps the close command's own reply with `withReceipt()` before handing it to `closeSession()` (the finalizer) or `appendClosedResponse()` (a non-finalizer close). The reservation counts the stamped reply's bytes. Host-driven closes (idle eviction, host shutdown, worker failure) still pass their reply to `closeSession()` unstamped, because they can run inside an unrelated command and must not carry that command's receipt.
+
+### Why
+
+- On a role-bound (host-mode) delegated connection, every response to a `relayExec`-numbered record carries the `authority` receipt, and a forwarder settles exec-numbered forwards by it. The applied close is written by the writer itself instead of being returned through dispatch, so it skipped `withReceipt()`: the session closed, but the forwarder never saw the answer and timed out at its deadline (senpi#6280).
+
+### Why an extension could not handle it
+
+- The close reply is written by the RPC host's session event writer; no extension sees or can rewrite host wire replies.
+
+### Expected merge conflict zones
+
+- LOW: the `withReceipt` import and the `bytes` computation and `complete()` body of `reserveCloseResponse()` in `session-event-writer-lifecycle.ts`.
+
+## 2026-11-09 - Hide the console window for the hand-run git probe on Windows (senpi#3965)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/hand-run-local-repo.ts`: the `git config` execFile now passes `windowsHide: true`.
+
+### Why
+
+- `git` is a console-subsystem exe on Windows; the probe flashed a console window on every hand run.
+
+### Why an extension could not handle it
+
+- The probe is RPC mode's own repository inspection, not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: one options line in the probe.
+
+## 2026-11-08 - A failed host-token mint retries before the cached token expires (senpi#5919)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/secret-host-token.ts`: the failed-mint retry wait is now capped at 1 s before the cached token's `exp` (`RETRY_BEFORE_EXP_MS`), so the 5 s floor can no longer push the attempt past expiry; the cap keeps a 250 ms minimum wait (`RETRY_MIN_WAIT_MS`) so a failure in the last second cannot arm the next retry at 0 ms and hammer a failing issuer back-to-back until `exp`; without a valid cached token the retry stays at the 60 s bound.
+- `packages/coding-agent/test/suite/regressions/issue-5919-short-life-retry.test.ts`: new. A 4 s token whose re-mint fails at two thirds of its lifetime retries within the remaining ~3 s instead of waiting the 5 s floor; a second case drives a 3 s token with every re-mint failing and asserts retries stay at least 250 ms apart with a bounded mint count through `exp`. The test clock is faked and pinned to a whole second so the armed refresh cannot slip under its bound.
+
+### Why
+
+- With under ~5 s of token life left, the retry was armed at the 5 s floor and landed up to ~5 s after `exp`, leaving the sealed route without a host token for that window (senpi#5919).
+
+### Why an extension could not handle it
+
+- The retry timer is owned by the host-token cache itself; no extension schedules or observes it.
+
+### Expected merge conflict zones
+
+- LOW: the failure branch of `mint` in `secret-host-token.ts`.
+
 ## 2026-11-08 - A relayed delivery reads like a same-machine delivery; the device stays in metadata (senpi#6250)
 
 ### What changed
