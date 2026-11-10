@@ -5,7 +5,10 @@
  * - the dispatch ledger refuses by generation. A call held across an eviction is refused before the
  *   tool runs, so a tool that ignores its abort signal still produces no effect for a discarded instance;
  * - a committed-but-unrun tool call is recovered through the public tool pipeline, so a resumed call
- *   fires the same hooks, events and result transformation as a live one, under the same abort signal.
+ *   runs the same `beforeToolCall`/`afterToolCall` hooks (so `tool_call`/`tool_result`) and result
+ *   transformation as a live one, under an abort signal a stop can cancel. It is not a full live run: it
+ *   emits no `tool_execution_update` and no `turn_start`/`turn_end`, and runs pending calls one at a
+ *   time whatever the agent's tool execution mode.
  */
 import { type AgentMessage, type AgentTool, type AgentToolCall, runToolCall } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
@@ -151,23 +154,31 @@ export interface ToolRecoveryOptions {
 	readonly onResult: (message: AgentMessage) => void;
 }
 
+/** How a recovery run ended: `stopped` means a stop aborted it, and the model is owed no continuation. */
+export interface ToolRecovery {
+	readonly ran: number;
+	readonly stopped: boolean;
+}
+
 /**
- * Runs the committed step's unrun tool calls on the rebuilt instance and returns how many ran.
+ * Runs the committed step's unrun tool calls on the rebuilt instance.
  *
  * The lifecycle run is what makes this the real pipeline rather than a replay: it owns the abort
  * signal a concurrent stop uses and the active run `processEvents` requires, while `runToolCall`
  * keeps argument preparation, `beforeToolCall`, execution and `afterToolCall` in one order with a
  * live dispatch. The result therefore carries the hooks' own content, `isError` and `details`.
  */
-export async function recoverPendingToolCalls(options: ToolRecoveryOptions): Promise<number> {
+export async function recoverPendingToolCalls(options: ToolRecoveryOptions): Promise<ToolRecovery> {
 	const { instance, assistantMessage, alreadyRan, now, onResult } = options;
 	const pending = assistantMessage.content.filter(
 		(block): block is AgentToolCall => block.type === "toolCall" && !alreadyRan.has(block.id),
 	);
-	if (pending.length === 0) return 0;
+	if (pending.length === 0) return { ran: 0, stopped: false };
 	const agent = instance.agent;
 	const internals = agent as unknown as RecoveringAgent;
+	let runSignal: AbortSignal | undefined;
 	await internals.runWithLifecycle(async (signal) => {
+		runSignal = signal;
 		for (const call of pending) {
 			await internals.processEvents({
 				type: "tool_execution_start",
@@ -213,5 +224,7 @@ export async function recoverPendingToolCalls(options: ToolRecoveryOptions): Pro
 			onResult(result);
 		}
 	});
-	return pending.length;
+	// Read once the run has finished, not inside it: a stop that lands after the last tool, or an executor
+	// that throws after a stop, still counts as a stop.
+	return { ran: pending.length, stopped: runSignal?.aborted === true };
 }
