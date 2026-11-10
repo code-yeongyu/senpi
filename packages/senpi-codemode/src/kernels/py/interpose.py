@@ -78,7 +78,21 @@ def install(check, enforcing, refuse, runtime):
     isabs = capture(isabs, os=path_os)
     quote = capture(quote)
     resolve_name = capture(resolve_name)
-    urlsplit, parse_qs, unquote = capture(urlsplit), capture(parse_qs), capture(unquote)
+    # urllib.parse helpers call each other through their module globals (on 3.11
+    # parse_qs -> parse_qsl -> unquote(..., encoding=)), so one captured entry
+    # point is not enough: rebind every helper defined there to one private
+    # snapshot of the module namespace, then take the entry points from it.
+    def capture_module(module):
+        namespace = vars(module)
+        snapshot = {**namespace, "__builtins__": __builtins__}
+        for name, value in namespace.items():
+            if isinstance(value, function_type) and value.__globals__ is namespace:
+                captured = function_type(value.__code__, snapshot, value.__name__, value.__defaults__, value.__closure__)
+                captured.__kwdefaults__ = value.__kwdefaults__
+                snapshot[name] = captured
+        return snapshot
+    url_parse = capture_module(urllib.parse)
+    urlsplit, parse_qs, unquote = url_parse["urlsplit"], url_parse["parse_qs"], url_parse["unquote"]
     grants = {}
     modules = sys.modules
     # The interpreter's own registries, never replaced: CPython's C-level import
