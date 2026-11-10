@@ -1,3 +1,35 @@
+## 2026-11-10 - Claim an invisible, already-built host session (senpi#6344)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-park-ledger.ts` and `packages/coding-agent/src/modes/rpc/session-router-park.ts` own up to four speculative profiles, coalesce builds, expire ready parks after 60 seconds, consume them once, and replace successful claims in the background.
+- `packages/coding-agent/src/modes/rpc/host-park-ledger.ts` reserves scheduled replacements against the same cap, so another profile cannot steal a claimed profile's replacement slot before its background build starts. An explicit park for that reserved profile consumes its scheduled timer rather than building twice.
+- `packages/coding-agent/src/modes/rpc/session-router-open.ts` builds every park through the existing open, without an owner or reply. `packages/coding-agent/src/modes/rpc/session-router-open-result.ts` shares its connection barrier, capabilities, ownership, publication and exact success payload with claims.
+- `packages/coding-agent/src/modes/rpc/session-registry.ts`, `packages/coding-agent/src/modes/rpc/session-status-source.ts` and `packages/coding-agent/src/modes/rpc/session-binding.ts` keep speculative entries out of public metadata, events, counts and durable identity checks. Claim promotes the existing runtime; `packages/coding-agent/src/modes/rpc/session-registry-attach.ts` shares its live profile application.
+- `packages/coding-agent/src/modes/rpc/session-router-context.ts`, `packages/coding-agent/src/modes/rpc/session-router-close.ts` and `packages/coding-agent/src/modes/rpc/session-router-occupancy.ts` own speculative teardown independently of durable handover parks. Drain and stop fence builds and replacements before waiting for disposal.
+- `packages/coding-agent/src/modes/rpc/session-connection-context.ts` lets host-owned construction leave the asking connection's transport and delegation scope. A claim configures its prebuilt binding with the opener's capabilities through the existing capability replacement helper.
+- `packages/coding-agent/src/modes/rpc/rpc-host-command-types.ts`, `packages/coding-agent/src/modes/rpc/method-classes-schema-host.ts`, `packages/coding-agent/src/modes/rpc/host-capabilities.ts` and `packages/coding-agent/src/modes/rpc/host-observe-request.ts` carry the capability-gated commands. The corresponding response, routing and delivery paths preserve the ordinary open payload and delegated retention semantics.
+- Review fixes: the first park can create `extensions/goal/no-session`; configuration watching now rearms a newly created extensions directory without reloading every live session for that container alone. This prevents the reload output cascade that stalled and closed the delegated opener's socket. `packages/coding-agent/src/modes/rpc/session-router-park.ts` returns `claimed: false` for `attended: false`, `packages/coding-agent/docs/rpc.md` describes attended construction, and `packages/coding-agent/src/modes/rpc/session-router-occupancy.ts` logs a rejected post-close drain sweep.
+- Suite fixes: remove only `session-router-open.ts#open` from the unused-export baseline now that speculative construction calls it. The routing test supplies the registry's required `peek` lookup. Attach/reclaim shutdown tests wait for the held teardown to begin before capturing state, so the shutdown's own close claim cannot be mistaken for mutation by a refused request; their wire-code and no-new-attachment assertions remain intact.
+- The legacy admission golden changes only `get_protocol_info.method_classes`: `claim_session` and `park_session` are advertised as `device_admin`, with the corresponding digest. Discovery must describe the complete method table even without an admission ID; existing method classifications, request bytes, session frames and subscription frames stay pinned. No golden normalization or production lifecycle behavior changes.
+
+### Why
+
+- Warm loads services but leaves runtime construction on the caller's open path. A ready claim reuses the already-built runtime and binding. A miss never builds or waits for a build.
+- Speculation must not look like user work, hold idle exit open, collide with a durable identity, or reappear in a successor. Build-only options and compact admissions miss rather than introducing alternative construction or admission paths.
+- `packages/coding-agent/src/modes/rpc/session-router-open.ts` preserves the host context merge, session kind, media setup and binding that the second successor-open path previously skipped in senpi#3368.
+
+- A park is built attended (no `unattended` hold), so a claimed session's lifecycle matches an ordinary open (`done`, no holds, not paused) and nothing held is persisted to its file (#6350 review). A park being claimed or closed answers `full`, not `already_parked`; a park close that fails during drain is logged and the drain sweep still runs.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/session-registry.ts` and `packages/coding-agent/src/modes/rpc/session-router-open.ts` own registry visibility, connection ownership, lifecycle teardown and the host's open response before a caller has a session.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/modes/rpc/session-router-open.ts`, `packages/coding-agent/src/modes/rpc/session-registry.ts`, `packages/coding-agent/src/modes/rpc/session-binding.ts` and `packages/coding-agent/src/modes/rpc/connection-handler.ts`.
+- LOW: the new park modules, registry option shapes, host command schemas, capability list and observation predicate.
+
 ## 2026-11-10 - admit_external_message marks an agent's relayed delivery as a peer turn (senpi#6305)
 
 ### What changed

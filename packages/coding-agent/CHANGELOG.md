@@ -12,6 +12,26 @@
 
 ### Removed
 
+## [2026.11.10-2] - 2026-11-10
+
+### Breaking Changes
+
+### Added
+
+- In-process multi-session RPC hosts advertise `park_claim`: `park_session` prepares an invisible runtime for a cwd, kind and context, and `claim_session` opens it without rebuilding. Parks expire and never survive the host; unsupported options and missing parks return `claimed: false` for a normal open ([#6344](https://github.com/code-yeongyu/senpi/issues/6344)).
+
+### Changed
+
+- Fable 5.2 now opens its Scope structure paragraph with the prompting guide's codebase-ownership sentence instead of the smallest-change instruction. Every other preset keeps its existing wording ([#6360](https://github.com/code-yeongyu/senpi/pull/6360), fixes [#6356](https://github.com/code-yeongyu/senpi/issues/6356)).
+
+### Fixed
+
+- A refused non-delivery message on the engine-turn pause path is now recorded and dropped from context like any other transcript write failure, and a listener throwing after a successful custom-message write no longer settles the delivery as failed ([#6284](https://github.com/code-yeongyu/senpi/pull/6284))
+- Offered MCP tools remain callable across successful OAuth refreshes that prove the same grant, client, resource and granted scope. Authorization replacement still retires offers and consent; retired catalog work cannot publish stale metadata ([#6366](https://github.com/code-yeongyu/senpi/pull/6366), fixes [#2861](https://github.com/code-yeongyu/senpi/issues/2861)).
+- Stabilized command-hook timeout and cancellation tests with atomic PID publication and independent process-lifetime exit observation ([#6368](https://github.com/code-yeongyu/senpi/pull/6368)).
+
+### Removed
+
 ## [2026.11.10-1] - 2026-11-10
 
 ### Breaking Changes

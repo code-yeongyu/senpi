@@ -1,9 +1,9 @@
 {
 	"methodClassesVersion": 1,
-	"methodClassesDigest": "62f1fd2318255fb0f1b7fad0141a9be6b8745542b36c6417c3a1777a7717f636",
+	"methodClassesDigest": "bca41dd6cac2eff3dc82c24d763e4143d90f44ee75920da9bca1c2c8a98c5156",
 	"sampleId": "00000000-0000-7000-8000-000000000000",
 	"samplePathRoot": "/nonexistent/senpi-rpc-inbound-sample",
-	"methodCount": 126,
+	"methodCount": 128,
 	"methods": [
 		{
 			"method": "abort",
@@ -180,6 +180,16 @@
 			"connectionLocal": false,
 			"sample": {
 				"type": "check_reload_veto"
+			}
+		},
+		{
+			"method": "claim_session",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "claim_session",
+				"cwd": "/nonexistent/senpi-rpc-inbound-sample/cwd"
 			}
 		},
 		{
@@ -805,6 +815,16 @@
 			"connectionLocal": false,
 			"sample": {
 				"type": "open_session"
+			}
+		},
+		{
+			"method": "park_session",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "park_session",
+				"cwd": "/nonexistent/senpi-rpc-inbound-sample/cwd"
 			}
 		},
 		{

@@ -1,3 +1,22 @@
+## 2026-11-10 - Fable 5.2 uses the guide's codebase-ownership sentence (senpi#6360, fixes #6356)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-fable-5-2.ts`: the Scope structure paragraph opens with the exact ownership sentence from "Say who owns the code" in Anthropic's Fable 5.2 prompting guide, replacing the whole smallest-change sentence at the owner's request. The standalone discipline against hypothetical helpers and internal defensive checks remains, and the paragraph's other sentences are unchanged. The header rationale and preset documentation now describe that choice.
+- The rendered-prompt regression checks the exact guide sentence and absence of the old opening. Only Fable 5.2's six Native baseline hashes and six corresponding shared-sections hashes are recaptured; every other preset and shared section is unchanged.
+
+### Why
+
+- Without ownership framing, the guide reports that Fable 5.2 acts as a guest: it adds parallel code, leaves duplicates in place, and only mentions nearby bugs. The owner's order replaces the smallest-change instruction with the guide's ownership framing.
+
+### Why an extension could not handle it
+
+- This is the prompt-preset extension's own Fable 5.2 core text.
+
+### Expected merge conflict zones
+
+- LOW: the Fable 5.2 Scope structure paragraph, header comment, documentation line, and its baseline hash rows.
+
 ## 2026-11-10 - Claude Fable 5.2 preset from the Fable 5.2 prompting guide (senpi#6314)
 
 ### What changed

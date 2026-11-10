@@ -269,6 +269,8 @@ export interface RpcConnectionHandler {
 	 * extension UI context is installed (used by tests that drive ctx.ui directly).
 	 */
 	readonly ready: Promise<void>;
+	/** Complete a prebuilt binding with the capabilities its opener supplied. */
+	setClientCapabilities(capabilities: readonly string[]): void;
 	/** Feed one inbound JSONL line (command or extension_ui_response). */
 	handleInputLine(line: string): Promise<void>;
 	/**
@@ -1381,7 +1383,9 @@ export function createRpcConnectionHandler(
 								// Client flags cannot advertise a host guard this classic binding does not run, nor a tool runtime.
 								...advertisedCompactCapabilities(options.capabilities ?? [], false).filter(
 									(capability) =>
-										capability !== SESSION_HELD_CAPABILITY && !isHostOwnedToolRuntimeCapability(capability),
+										capability !== SESSION_HELD_CAPABILITY &&
+										capability !== "park_claim" &&
+										!isHostOwnedToolRuntimeCapability(capability),
 								),
 							]),
 						],
@@ -1390,7 +1394,9 @@ export function createRpcConnectionHandler(
 					},
 				};
 			case "open_session":
-				return error(id, "open_session", "multi_session_disabled");
+			case "park_session":
+			case "claim_session":
+				return error(id, command.type, "multi_session_disabled");
 
 			// =================================================================
 			// Prompting
@@ -2616,6 +2622,10 @@ export function createRpcConnectionHandler(
 		},
 		pendingPrompts() {
 			return [...promptCalls];
+		},
+		setClientCapabilities(capabilities) {
+			replaceClientCapabilities([...capabilities]);
+			refreshGrantPresentation();
 		},
 		isShutdownRequested() {
 			return shutdownRequested;

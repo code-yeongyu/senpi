@@ -240,6 +240,9 @@ export const RPC_METHOD_CLASS = {
 	// thread by id; device_admin when the record names a host path, a permission preset or a tool environment
 	new_session: { classify: newSessionClass, version: 1 },
 	open_session: { classify: openSessionClass, version: 2 },
+	// Both commands require a cwd; claim has the same device authority as a cwd-naming open.
+	claim_session: "device_admin",
+	park_session: "device_admin",
 	resume_session: "thread",
 	fork: "thread",
 	clone: "thread",
