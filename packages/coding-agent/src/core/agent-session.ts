@@ -301,10 +301,13 @@ import { customTurnOrigin, type InputOrigin, inputAttributionOf, inputOriginOf }
 import {
 	type ConnectionOrigin,
 	copyInputTurnMark,
+	endTurnContinuation,
 	hasInputTurnMark,
 	inputTurnMark,
 	markInputTurnOrigin,
 	noteRunStart,
+	noteTurnContinuation,
+	recordIsDelegated,
 	noteUserMessageStart,
 } from "./turn-origin.ts";
 import { releaseDecisionPreset } from "./permission-decision.ts";
@@ -7273,6 +7276,7 @@ export class AgentSession {
 		if (input.source !== undefined) this._userInputSources.set(message, input.source);
 		// Restored input with no source keeps no mark: an unmarked turn is engine work, never a trusted origin.
 		if (input.source !== undefined) markInputTurnOrigin(message, inputTurnMark(input));
+		else if (recordIsDelegated()) markInputTurnOrigin(message, "delegated");
 		if (input.inputId !== undefined) this._queuedInputDispositions.track(message, input.inputId);
 		this._queuedMessages.set(queuedId, message);
 		if (this._promptStartPending && this._skipNextPostCompactionAssistantCheck) {
@@ -7711,6 +7715,9 @@ export class AgentSession {
 		} satisfies CustomMessage;
 		// A delivery that found a run already streaming becomes a steer or follow-up: it keeps the origin it was admitted with.
 		copyInputTurnMark(message, appMessage);
+		// senpi#6342: a custom message a cross-account record's own handling sends carries that origin wherever it waits
+		// (joining a streaming run, parked behind a compaction, held for the next turn), so the turn it opens still asks.
+		if (!hasInputTurnMark(appMessage) && recordIsDelegated()) markInputTurnOrigin(appMessage, "delegated");
 		if (this._sizesOnlyStartup && options?.triggerTurn === true) {
 			// Size inspection makes no model call (#3483): keep the message for a turn that never starts.
 			this._pendingNextTurnMessages.push(appMessage);
@@ -11717,6 +11724,7 @@ export class AgentSession {
 	private async _continueAgentAfterCurrentRun(
 		options: AgentContinuationOptions = {},
 		retryTimeoutMs?: number,
+		keepsTurnOrigin = false,
 	): Promise<"continued" | "taken-over"> {
 		await this.agent.waitForIdle();
 		try {
@@ -11744,6 +11752,7 @@ export class AgentSession {
 
 			await runBoundedRetryContinuation({
 				continueRun: async () => {
+					if (keepsTurnOrigin) noteTurnContinuation(this.sessionManager);
 					if (this._continueWithQueuedInput) {
 						// Joined input of a start that never ran: the transcript tail may be anything, even empty.
 						this._continueWithQueuedInput = false;
@@ -11790,6 +11799,7 @@ export class AgentSession {
 			}
 			throw error;
 		} finally {
+			endTurnContinuation(this.sessionManager);
 			this._scheduledContinuationRecompacted = false;
 			this._continueWithQueuedInput = false;
 		}
@@ -11827,13 +11837,14 @@ export class AgentSession {
 		options: AgentContinuationOptions = {},
 		retryContinuation = false,
 		retryTimeoutMs?: number,
+		keepsTurnOrigin = retryContinuation,
 	): void {
 		// Tool hooks wait for queued message persistence, so continue() cannot run inside this event promise.
 		const currentEventQueue = this._agentEventQueue;
 		const finishContinuationWork = this._sessionWorkBarrier.begin();
 		const continueAfterEvent = async (): Promise<void> => {
 			try {
-				const outcome = await this._continueAgentAfterCurrentRun(options, retryTimeoutMs);
+				const outcome = await this._continueAgentAfterCurrentRun(options, retryTimeoutMs, keepsTurnOrigin);
 				if (retryContinuation && outcome === "taken-over") {
 					DEFERRED_RETRY_QUEUE_OWNERS.delete(this);
 				}
@@ -11983,7 +11994,8 @@ export class AgentSession {
 				// continue from the turn they failed to answer, so strip the whole run.
 				this._stripTrailingFailedAssistants();
 
-				this._scheduleContinuationAfterCurrentEvent();
+				// The recovery run repeats this turn, so it keeps the turn's origin.
+				this._scheduleContinuationAfterCurrentEvent({}, false, undefined, true);
 				return true;
 			} else if (this.pendingMessageCount > 0) {
 				this._scheduleContinuationAfterCurrentEvent();

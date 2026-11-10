@@ -22,6 +22,7 @@ import {
 	DETACH_CONNECTION_CAPABILITY,
 	DURABLE_SESSION_ID_CAPABILITY,
 	PEER_AGENT_ROLE_CAPABILITY,
+	SAME_ACCOUNT_DELEGATION_CAPABILITY,
 	ENTRIES_TAIL_CAPABILITY,
 	EVAL_CELLS_CAPABILITY,
 	MEDIA_PLACEHOLDERS_CAPABILITY,
@@ -128,6 +129,8 @@ export function multiSessionHostCapabilities(options: {
 			DELEGATION_ROLES_CAPABILITY,
 			// ...and may carry the forwarder-granted `peer_agent` role on such a connection (senpi#6305).
 			PEER_AGENT_ROLE_CAPABILITY,
+			// ...and lets the forwarder state a device is the host's own account, whose turns then ask nothing extra.
+			SAME_ACCOUNT_DELEGATION_CAPABILITY,
 			// Only a multi-session host keeps sessions loaded that a client can ask it to free.
 			UNLOAD_SESSION_CAPABILITY,
 			// Only a multi-session host owns a move ledger and the hosted-session list export checks against.

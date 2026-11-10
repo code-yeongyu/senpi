@@ -87,7 +87,8 @@ import { remoteOriginDeclaration, remoteOriginField } from "./remote-origin.ts";
 import { advertisedCompactCapabilities, sessionDeclaration } from "./compact-negotiation.ts";
 import type { ConnectionOrigin } from "../../core/turn-origin.ts";
 import { commandAuthority } from "./command-authority.ts";
-import { noteDelegatedRecord } from "./delegated-drive-origin.ts";
+import { runInRecordScope } from "../../core/turn-origin.ts";
+import { recordTurnOrigin } from "./delegated-drive-origin.ts";
 import { ConnectionRoles, DELEGATION_INCARNATION_STALE, roleConnection } from "./connection-roles.ts";
 import {
 	ACCOUNT_RESET_CAPABILITY,
@@ -428,6 +429,10 @@ export function createRpcConnectionHandler(
 	const hasRole = (role: string): boolean => connectionRoles.has(currentConnectionId(), role);
 	const connectionOrigin = (): ConnectionOrigin =>
 		connectionRoles.isDelegated(currentConnectionId()) ? "delegated" : "local";
+	// senpi#6342: a turn follows this machine's own setting; only a device the forwarder did not state is the same account
+	// counts as delegated for the permission rule.
+	const turnOrigin = (): ConnectionOrigin =>
+		connectionOrigin() === "delegated" && !connectionRoles.sameAccount(currentConnectionId()) ? "delegated" : "local";
 	const routingSessionId = options.sessionId;
 	// True only while THIS connection's own command drives a replacement; the issuer
 	// already learns the new identity from its command response.
@@ -1342,7 +1347,6 @@ export function createRpcConnectionHandler(
 		requestContext?: ExtensionRpcRequestContext,
 	): Promise<RpcResponse | undefined> => {
 		const id = command.id;
-		noteDelegatedRecord(command, connectionOrigin(), session.sessionManager);
 
 		switch (command.type) {
 			case "get_protocol_info":
@@ -1413,7 +1417,7 @@ export function createRpcConnectionHandler(
 					session,
 					command,
 					{ output, promptCalls },
-					{ interactiveUser: hasRole(INTERACTIVE_USER_CAPABILITY), connectionOrigin: connectionOrigin() },
+					{ interactiveUser: hasRole(INTERACTIVE_USER_CAPABILITY), connectionOrigin: turnOrigin() },
 				);
 				promptCalls.add(admission);
 				void admission.finally(() => promptCalls.delete(admission));
@@ -1498,7 +1502,7 @@ export function createRpcConnectionHandler(
 					session,
 					command,
 					{ output, promptCalls },
-					{ interactiveUser: hasRole(INTERACTIVE_USER_CAPABILITY), connectionOrigin: connectionOrigin() },
+					{ interactiveUser: hasRole(INTERACTIVE_USER_CAPABILITY), connectionOrigin: turnOrigin() },
 				);
 				return undefined;
 			}
@@ -1630,7 +1634,7 @@ export function createRpcConnectionHandler(
 				const peer = {
 					origin: connectionRoles.originOf(currentConnectionId()),
 					connectionOrigin: connectionOrigin(),
-					peerAgent: connectionRoles.grantedByForwarder(currentConnectionId(), "peer_agent"),
+					turnOrigin: turnOrigin(),
 				};
 				const answer = admitExternalMessage(session, command, peer);
 				if (!answer.ok) {
@@ -2550,7 +2554,10 @@ export function createRpcConnectionHandler(
 			return;
 		}
 		try {
-			const response = await handleCommand(command, requestContext);
+			// senpi#6342: the record's own handling, and the first run it starts, run under the record's origin.
+			const response = await runInRecordScope(recordTurnOrigin(command, turnOrigin()), () =>
+				handleCommand(command, requestContext),
+			);
 			if (response) {
 				output(response);
 				await waitForRpcBackpressure();
