@@ -11,7 +11,7 @@
 
 import type { RpcMethodClass } from "./method-classes.ts";
 
-export const RPC_RULE_DATA_VERSION = 1;
+const RPC_RULE_DATA_VERSION = 1;
 
 export interface RpcMethodClassRuleData {
 	readonly version: typeof RPC_RULE_DATA_VERSION;

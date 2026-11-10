@@ -17,7 +17,14 @@ import { RULE_FIXTURES } from "./method-class-rule-fixtures.ts";
 
 type Wire = Record<string, unknown>;
 
-const CLASSES: ReadonlySet<unknown> = new Set(["observe", "drive", "answer", "thread", "device_admin", "connection_local"]);
+const CLASSES: ReadonlySet<unknown> = new Set([
+	"observe",
+	"drive",
+	"answer",
+	"thread",
+	"device_admin",
+	"connection_local",
+]);
 
 function evaluate(rule: unknown, record: Wire): unknown {
 	if (typeof rule !== "object" || rule === null) return undefined;
@@ -80,7 +87,8 @@ describe("rule data (senpi#6318)", () => {
 		for (const type of Object.keys(published)) expect([type, Object.hasOwn(versions, type)]).toEqual([type, true]);
 		for (const [key, cases] of Object.entries(RULE_FIXTURES)) {
 			const type = typeOf(key);
-			for (const [, fields] of cases) expect([type, published[type]]).toEqual([type, answer({ ...fields, type }).rule_data]);
+			for (const [, fields] of cases)
+				expect([type, published[type]]).toEqual([type, answer({ ...fields, type }).rule_data]);
 		}
 	});
 
