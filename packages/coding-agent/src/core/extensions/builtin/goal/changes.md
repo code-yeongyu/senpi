@@ -1,3 +1,25 @@
+## 2026-11-09 - A crashed goal-continuation stop recovers its session entries on reopen (senpi#3015)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/store.ts`: `recordGoalContinuationStopped()` captures the denied-continuation payload (deny reason plus consecutive/unattended/no-progress counters) as `Goal.continuationStoppedDetail` alongside the `continuationStoppedAt` claim, and clears the detail wherever the claim is cleared.
+- `packages/coding-agent/src/core/extensions/builtin/goal/types.ts`: new `GoalContinuationStoppedDetail` type and the optional `continuationStoppedDetail` field on `Goal`.
+- `packages/coding-agent/src/core/extensions/builtin/goal/persistence.ts`: `sanitizeContinuationState()` drops a malformed detail and never keeps a detail past its claim.
+- `packages/coding-agent/src/core/extensions/builtin/goal/lifecycle-helpers.ts`: new `recoverMissingGoalContinuationStop()`, which re-appends a missing `goal-continuation-stopped` entry once from the captured payload, plus the matching `engine-paused` entry for `stale`/`repetition` stops; append failures are logged, never thrown.
+- `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: the `session_start` handler runs the recovery right after loading the goal.
+
+### Why
+
+- The stop claim and the session entries are two separate writes, so a crash between them leaves the claim recorded without the entry. The same stale decision never emits again, because the claim makes it "already stopped", so that one stop never reaches the session or the RPC clients (senpi#3015).
+
+### Why an extension could not handle it
+
+- The claim, the goal-file lock, and the session-start load all live in the goal builtin and core session lifecycle; no public extension hook runs at goal load with access to the claim payload.
+
+### Expected merge conflict zones
+
+- LOW: the added `continuationStoppedDetail` field and the one recovery call in the `session_start` handler; the claim sites in `store.ts` are additive.
+
 ## 2026-11-08 - A Stop-held session pauses its goal and freezes the elapsed counter (senpi#6172)
 
 ### What changed

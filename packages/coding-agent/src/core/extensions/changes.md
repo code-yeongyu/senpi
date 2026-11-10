@@ -1,3 +1,21 @@
+## 2026-11-10 - `ToolPermissionRequest` carries `autoApproveAsk` (senpi#6305)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ToolPermissionRequest` gains an optional `autoApproveAsk: true`, so a tool's own `permissionParser` can have an `ask` decision for one call approved without a prompt while `allow` and `deny` rules still match its request.
+
+### Why
+
+An omo reply to the agent that messaged the run must not wait on an approval nobody can give, but a user's `deny` rule for that tool must still apply; returning no request at all dropped the deny (oh-my-openagent#12954 review).
+
+### Why an extension could not handle it
+
+The extension tool contract is this type; the permission system reads only the fields it declares.
+
+### Expected merge conflict zones
+
+- None: one additive optional field.
+
 ## 2026-11-09 - Provider model configs can declare a default thinking level (senpi#6270)
 
 ### What changed
