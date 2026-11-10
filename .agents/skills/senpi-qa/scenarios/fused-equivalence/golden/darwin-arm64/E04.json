@@ -623,7 +623,7 @@
       },
       {
        "role": "tool",
-       "content": "qa:42",
+       "content": "post-mutated:{\"value\":42}",
        "tool_call_id": "<id:1>"
       },
       {
@@ -2323,7 +2323,7 @@
    ],
    "tree": {
     "trace.log": {
-     "text": "shim\nhook1(number)\nhook2(42)\nshim\nhook1(number)\nhook2(7)\nbody(42)\n"
+     "text": "shim\npre({\"value\":42})\nhook1(number)\nhook2(42)\nshim\npre({\"value\":7})\nhook1(number)\nhook2(7)\nbody(42)\npost({\"value\":42})\n"
     }
    },
    "extra": []
@@ -3115,8 +3115,19 @@
       "toolCallId": "<id:6>",
       "extensionPath": "<builtin:hooks>",
       "startedAt": "<ts:events.startedAt:8>",
+      "phase": "update",
+      "statusMessage": ".senpi/eq-node .senpi/eq-hook.mjs pre trace.log"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "<id:6>:PreToolUse:3",
+      "hookName": "PreToolUse",
+      "toolName": "qa",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:hooks>",
+      "startedAt": "<ts:events.startedAt:9>",
       "phase": "end",
-      "statusMessage": "running hooks",
+      "statusMessage": ".senpi/eq-node .senpi/eq-hook.mjs pre trace.log",
       "completedAt": "<ts:events.completedAt:4>",
       "status": "completed"
      },
@@ -3127,7 +3138,7 @@
       "toolName": "qa",
       "toolCallId": "<id:6>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:events.startedAt:9>",
+      "startedAt": "<ts:events.startedAt:10>",
       "phase": "start",
       "statusMessage": "matching project rules"
      },
@@ -3138,7 +3149,7 @@
       "toolName": "qa",
       "toolCallId": "<id:6>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:events.startedAt:10>",
+      "startedAt": "<ts:events.startedAt:11>",
       "phase": "end",
       "statusMessage": "matching project rules",
       "completedAt": "<ts:events.completedAt:5>",
@@ -3151,7 +3162,7 @@
       "toolName": "qa",
       "toolCallId": "<id:6>",
       "extensionPath": "<builtin:bash-timeout>",
-      "startedAt": "<ts:events.startedAt:11>",
+      "startedAt": "<ts:events.startedAt:12>",
       "phase": "start",
       "statusMessage": "applying bash timeout"
      },
@@ -3162,7 +3173,7 @@
       "toolName": "qa",
       "toolCallId": "<id:6>",
       "extensionPath": "<builtin:bash-timeout>",
-      "startedAt": "<ts:events.startedAt:12>",
+      "startedAt": "<ts:events.startedAt:13>",
       "phase": "end",
       "statusMessage": "applying bash timeout",
       "completedAt": "<ts:events.completedAt:6>",
@@ -3175,7 +3186,7 @@
       "toolName": "qa",
       "toolCallId": "<id:6>",
       "extensionPath": "<builtin:terminal>",
-      "startedAt": "<ts:events.startedAt:13>",
+      "startedAt": "<ts:events.startedAt:14>",
       "phase": "start",
       "statusMessage": "running terminal"
      },
@@ -3186,7 +3197,7 @@
       "toolName": "qa",
       "toolCallId": "<id:6>",
       "extensionPath": "<builtin:terminal>",
-      "startedAt": "<ts:events.startedAt:14>",
+      "startedAt": "<ts:events.startedAt:15>",
       "phase": "end",
       "statusMessage": "running terminal",
       "completedAt": "<ts:events.completedAt:7>",
@@ -3199,7 +3210,7 @@
       "toolName": "qa",
       "toolCallId": "<id:6>",
       "extensionPath": "<builtin:compaction>",
-      "startedAt": "<ts:events.startedAt:15>",
+      "startedAt": "<ts:events.startedAt:16>",
       "phase": "start",
       "statusMessage": "checking compaction state"
      },
@@ -3210,7 +3221,7 @@
       "toolName": "qa",
       "toolCallId": "<id:6>",
       "extensionPath": "<builtin:compaction>",
-      "startedAt": "<ts:events.startedAt:16>",
+      "startedAt": "<ts:events.startedAt:17>",
       "phase": "end",
       "statusMessage": "checking compaction state",
       "completedAt": "<ts:events.completedAt:8>",
@@ -3223,7 +3234,7 @@
       "toolName": "qa",
       "toolCallId": "<id:6>",
       "extensionPath": "<builtin:mcp>",
-      "startedAt": "<ts:events.startedAt:17>",
+      "startedAt": "<ts:events.startedAt:18>",
       "phase": "start",
       "statusMessage": "running mcp"
      },
@@ -3234,7 +3245,7 @@
       "toolName": "qa",
       "toolCallId": "<id:6>",
       "extensionPath": "<builtin:mcp>",
-      "startedAt": "<ts:events.startedAt:18>",
+      "startedAt": "<ts:events.startedAt:19>",
       "phase": "end",
       "statusMessage": "running mcp",
       "completedAt": "<ts:events.completedAt:9>",
@@ -3247,7 +3258,7 @@
       "toolName": "qa",
       "toolCallId": "<id:6>",
       "extensionPath": "<repo>/.agents/skills/senpi-qa/scenarios/fused-equivalence/fixtures/e04/qa-extension.mjs",
-      "startedAt": "<ts:events.startedAt:19>",
+      "startedAt": "<ts:events.startedAt:20>",
       "phase": "start",
       "statusMessage": "running qa-extension"
      },
@@ -3258,7 +3269,7 @@
       "toolName": "qa",
       "toolCallId": "<id:6>",
       "extensionPath": "<repo>/.agents/skills/senpi-qa/scenarios/fused-equivalence/fixtures/e04/qa-extension.mjs",
-      "startedAt": "<ts:events.startedAt:20>",
+      "startedAt": "<ts:events.startedAt:21>",
       "phase": "end",
       "statusMessage": "running qa-extension",
       "completedAt": "<ts:events.completedAt:10>",
@@ -3271,7 +3282,7 @@
       "toolName": "qa",
       "toolCallId": "<id:6>",
       "extensionPath": "<repo>/.agents/skills/senpi-qa/scenarios/fused-equivalence/fixtures/e04/block-extension.mjs",
-      "startedAt": "<ts:events.startedAt:21>",
+      "startedAt": "<ts:events.startedAt:22>",
       "phase": "start",
       "statusMessage": "running block-extension"
      },
@@ -3282,7 +3293,7 @@
       "toolName": "qa",
       "toolCallId": "<id:6>",
       "extensionPath": "<repo>/.agents/skills/senpi-qa/scenarios/fused-equivalence/fixtures/e04/block-extension.mjs",
-      "startedAt": "<ts:events.startedAt:22>",
+      "startedAt": "<ts:events.startedAt:23>",
       "phase": "end",
       "statusMessage": "running block-extension",
       "completedAt": "<ts:events.completedAt:11>",
@@ -3339,7 +3350,7 @@
       "toolName": "qa",
       "toolCallId": "<id:7>",
       "extensionPath": "<builtin:loop-guard>",
-      "startedAt": "<ts:events.startedAt:23>",
+      "startedAt": "<ts:events.startedAt:24>",
       "phase": "start",
       "statusMessage": "running loop-guard"
      },
@@ -3350,7 +3361,7 @@
       "toolName": "qa",
       "toolCallId": "<id:7>",
       "extensionPath": "<builtin:loop-guard>",
-      "startedAt": "<ts:events.startedAt:24>",
+      "startedAt": "<ts:events.startedAt:25>",
       "phase": "end",
       "statusMessage": "running loop-guard",
       "completedAt": "<ts:events.completedAt:12>",
@@ -3363,7 +3374,7 @@
       "toolName": "qa",
       "toolCallId": "<id:7>",
       "extensionPath": "<builtin:moved-path-guard>",
-      "startedAt": "<ts:events.startedAt:25>",
+      "startedAt": "<ts:events.startedAt:26>",
       "phase": "start",
       "statusMessage": "running moved-path-guard"
      },
@@ -3374,7 +3385,7 @@
       "toolName": "qa",
       "toolCallId": "<id:7>",
       "extensionPath": "<builtin:moved-path-guard>",
-      "startedAt": "<ts:events.startedAt:26>",
+      "startedAt": "<ts:events.startedAt:27>",
       "phase": "end",
       "statusMessage": "running moved-path-guard",
       "completedAt": "<ts:events.completedAt:13>",
@@ -3387,7 +3398,7 @@
       "toolName": "qa",
       "toolCallId": "<id:7>",
       "extensionPath": "<builtin:kill-guard>",
-      "startedAt": "<ts:events.startedAt:27>",
+      "startedAt": "<ts:events.startedAt:28>",
       "phase": "start",
       "statusMessage": "running kill-guard"
      },
@@ -3398,7 +3409,7 @@
       "toolName": "qa",
       "toolCallId": "<id:7>",
       "extensionPath": "<builtin:kill-guard>",
-      "startedAt": "<ts:events.startedAt:28>",
+      "startedAt": "<ts:events.startedAt:29>",
       "phase": "end",
       "statusMessage": "running kill-guard",
       "completedAt": "<ts:events.completedAt:14>",
@@ -3411,7 +3422,7 @@
       "toolName": "qa",
       "toolCallId": "<id:7>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:events.startedAt:29>",
+      "startedAt": "<ts:events.startedAt:30>",
       "phase": "start",
       "statusMessage": "running hooks"
      },
@@ -3422,9 +3433,20 @@
       "toolName": "qa",
       "toolCallId": "<id:7>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:events.startedAt:30>",
+      "startedAt": "<ts:events.startedAt:31>",
+      "phase": "update",
+      "statusMessage": ".senpi/eq-node .senpi/eq-hook.mjs pre trace.log"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "<id:7>:PreToolUse:14",
+      "hookName": "PreToolUse",
+      "toolName": "qa",
+      "toolCallId": "<id:7>",
+      "extensionPath": "<builtin:hooks>",
+      "startedAt": "<ts:events.startedAt:32>",
       "phase": "end",
-      "statusMessage": "running hooks",
+      "statusMessage": ".senpi/eq-node .senpi/eq-hook.mjs pre trace.log",
       "completedAt": "<ts:events.completedAt:15>",
       "status": "completed"
      },
@@ -3435,7 +3457,7 @@
       "toolName": "qa",
       "toolCallId": "<id:7>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:events.startedAt:31>",
+      "startedAt": "<ts:events.startedAt:33>",
       "phase": "start",
       "statusMessage": "matching project rules"
      },
@@ -3446,7 +3468,7 @@
       "toolName": "qa",
       "toolCallId": "<id:7>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:events.startedAt:32>",
+      "startedAt": "<ts:events.startedAt:34>",
       "phase": "end",
       "statusMessage": "matching project rules",
       "completedAt": "<ts:events.completedAt:16>",
@@ -3459,7 +3481,7 @@
       "toolName": "qa",
       "toolCallId": "<id:7>",
       "extensionPath": "<builtin:bash-timeout>",
-      "startedAt": "<ts:events.startedAt:33>",
+      "startedAt": "<ts:events.startedAt:35>",
       "phase": "start",
       "statusMessage": "applying bash timeout"
      },
@@ -3470,7 +3492,7 @@
       "toolName": "qa",
       "toolCallId": "<id:7>",
       "extensionPath": "<builtin:bash-timeout>",
-      "startedAt": "<ts:events.startedAt:34>",
+      "startedAt": "<ts:events.startedAt:36>",
       "phase": "end",
       "statusMessage": "applying bash timeout",
       "completedAt": "<ts:events.completedAt:17>",
@@ -3483,7 +3505,7 @@
       "toolName": "qa",
       "toolCallId": "<id:7>",
       "extensionPath": "<builtin:terminal>",
-      "startedAt": "<ts:events.startedAt:35>",
+      "startedAt": "<ts:events.startedAt:37>",
       "phase": "start",
       "statusMessage": "running terminal"
      },
@@ -3494,7 +3516,7 @@
       "toolName": "qa",
       "toolCallId": "<id:7>",
       "extensionPath": "<builtin:terminal>",
-      "startedAt": "<ts:events.startedAt:36>",
+      "startedAt": "<ts:events.startedAt:38>",
       "phase": "end",
       "statusMessage": "running terminal",
       "completedAt": "<ts:events.completedAt:18>",
@@ -3507,7 +3529,7 @@
       "toolName": "qa",
       "toolCallId": "<id:7>",
       "extensionPath": "<builtin:compaction>",
-      "startedAt": "<ts:events.startedAt:37>",
+      "startedAt": "<ts:events.startedAt:39>",
       "phase": "start",
       "statusMessage": "checking compaction state"
      },
@@ -3518,7 +3540,7 @@
       "toolName": "qa",
       "toolCallId": "<id:7>",
       "extensionPath": "<builtin:compaction>",
-      "startedAt": "<ts:events.startedAt:38>",
+      "startedAt": "<ts:events.startedAt:40>",
       "phase": "end",
       "statusMessage": "checking compaction state",
       "completedAt": "<ts:events.completedAt:19>",
@@ -3531,7 +3553,7 @@
       "toolName": "qa",
       "toolCallId": "<id:7>",
       "extensionPath": "<builtin:mcp>",
-      "startedAt": "<ts:events.startedAt:39>",
+      "startedAt": "<ts:events.startedAt:41>",
       "phase": "start",
       "statusMessage": "running mcp"
      },
@@ -3542,7 +3564,7 @@
       "toolName": "qa",
       "toolCallId": "<id:7>",
       "extensionPath": "<builtin:mcp>",
-      "startedAt": "<ts:events.startedAt:40>",
+      "startedAt": "<ts:events.startedAt:42>",
       "phase": "end",
       "statusMessage": "running mcp",
       "completedAt": "<ts:events.completedAt:20>",
@@ -3555,7 +3577,7 @@
       "toolName": "qa",
       "toolCallId": "<id:7>",
       "extensionPath": "<repo>/.agents/skills/senpi-qa/scenarios/fused-equivalence/fixtures/e04/qa-extension.mjs",
-      "startedAt": "<ts:events.startedAt:41>",
+      "startedAt": "<ts:events.startedAt:43>",
       "phase": "start",
       "statusMessage": "running qa-extension"
      },
@@ -3566,7 +3588,7 @@
       "toolName": "qa",
       "toolCallId": "<id:7>",
       "extensionPath": "<repo>/.agents/skills/senpi-qa/scenarios/fused-equivalence/fixtures/e04/qa-extension.mjs",
-      "startedAt": "<ts:events.startedAt:42>",
+      "startedAt": "<ts:events.startedAt:44>",
       "phase": "end",
       "statusMessage": "running qa-extension",
       "completedAt": "<ts:events.completedAt:21>",
@@ -3579,7 +3601,7 @@
       "toolName": "qa",
       "toolCallId": "<id:7>",
       "extensionPath": "<repo>/.agents/skills/senpi-qa/scenarios/fused-equivalence/fixtures/e04/block-extension.mjs",
-      "startedAt": "<ts:events.startedAt:43>",
+      "startedAt": "<ts:events.startedAt:45>",
       "phase": "start",
       "statusMessage": "running block-extension"
      },
@@ -3590,7 +3612,7 @@
       "toolName": "qa",
       "toolCallId": "<id:7>",
       "extensionPath": "<repo>/.agents/skills/senpi-qa/scenarios/fused-equivalence/fixtures/e04/block-extension.mjs",
-      "startedAt": "<ts:events.startedAt:44>",
+      "startedAt": "<ts:events.startedAt:46>",
       "phase": "end",
       "statusMessage": "running block-extension",
       "completedAt": "<ts:events.completedAt:22>",
@@ -3654,7 +3676,7 @@
       "toolName": "qa",
       "toolCallId": "<id:6>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:events.startedAt:45>",
+      "startedAt": "<ts:events.startedAt:47>",
       "phase": "start",
       "statusMessage": "running hooks"
      },
@@ -3665,9 +3687,20 @@
       "toolName": "qa",
       "toolCallId": "<id:6>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:events.startedAt:46>",
+      "startedAt": "<ts:events.startedAt:48>",
+      "phase": "update",
+      "statusMessage": ".senpi/eq-node .senpi/eq-hook.mjs post trace.log"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "<id:6>:PostToolUse:22",
+      "hookName": "PostToolUse",
+      "toolName": "qa",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:hooks>",
+      "startedAt": "<ts:events.startedAt:49>",
       "phase": "end",
-      "statusMessage": "running hooks",
+      "statusMessage": ".senpi/eq-node .senpi/eq-hook.mjs post trace.log",
       "completedAt": "<ts:events.completedAt:23>",
       "status": "completed"
      },
@@ -3678,7 +3711,7 @@
       "toolName": "qa",
       "toolCallId": "<id:6>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:events.startedAt:47>",
+      "startedAt": "<ts:events.startedAt:50>",
       "phase": "start",
       "statusMessage": "matching project rules"
      },
@@ -3689,7 +3722,7 @@
       "toolName": "qa",
       "toolCallId": "<id:6>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:events.startedAt:48>",
+      "startedAt": "<ts:events.startedAt:51>",
       "phase": "end",
       "statusMessage": "matching project rules",
       "completedAt": "<ts:events.completedAt:24>",
@@ -3702,7 +3735,7 @@
       "toolName": "qa",
       "toolCallId": "<id:6>",
       "extensionPath": "<builtin:gpt-apply-patch>",
-      "startedAt": "<ts:events.startedAt:49>",
+      "startedAt": "<ts:events.startedAt:52>",
       "phase": "start",
       "statusMessage": "running gpt-apply-patch"
      },
@@ -3713,7 +3746,7 @@
       "toolName": "qa",
       "toolCallId": "<id:6>",
       "extensionPath": "<builtin:gpt-apply-patch>",
-      "startedAt": "<ts:events.startedAt:50>",
+      "startedAt": "<ts:events.startedAt:53>",
       "phase": "end",
       "statusMessage": "running gpt-apply-patch",
       "completedAt": "<ts:events.completedAt:25>",
@@ -3726,7 +3759,7 @@
       "toolName": "qa",
       "toolCallId": "<id:6>",
       "extensionPath": "<builtin:nested-agents-md>",
-      "startedAt": "<ts:events.startedAt:51>",
+      "startedAt": "<ts:events.startedAt:54>",
       "phase": "start",
       "statusMessage": "running nested-agents-md"
      },
@@ -3737,7 +3770,7 @@
       "toolName": "qa",
       "toolCallId": "<id:6>",
       "extensionPath": "<builtin:nested-agents-md>",
-      "startedAt": "<ts:events.startedAt:52>",
+      "startedAt": "<ts:events.startedAt:55>",
       "phase": "end",
       "statusMessage": "running nested-agents-md",
       "completedAt": "<ts:events.completedAt:26>",
@@ -3750,7 +3783,7 @@
       "toolName": "qa",
       "toolCallId": "<id:6>",
       "extensionPath": "<builtin:rules>",
-      "startedAt": "<ts:events.startedAt:53>",
+      "startedAt": "<ts:events.startedAt:56>",
       "phase": "start",
       "statusMessage": "running rules"
      },
@@ -3761,7 +3794,7 @@
       "toolName": "qa",
       "toolCallId": "<id:6>",
       "extensionPath": "<builtin:rules>",
-      "startedAt": "<ts:events.startedAt:54>",
+      "startedAt": "<ts:events.startedAt:57>",
       "phase": "end",
       "statusMessage": "running rules",
       "completedAt": "<ts:events.completedAt:27>",
@@ -3774,7 +3807,7 @@
       "toolName": "qa",
       "toolCallId": "<id:6>",
       "extensionPath": "<builtin:goal>",
-      "startedAt": "<ts:events.startedAt:55>",
+      "startedAt": "<ts:events.startedAt:58>",
       "phase": "start",
       "statusMessage": "running goal"
      },
@@ -3785,7 +3818,7 @@
       "toolName": "qa",
       "toolCallId": "<id:6>",
       "extensionPath": "<builtin:goal>",
-      "startedAt": "<ts:events.startedAt:56>",
+      "startedAt": "<ts:events.startedAt:59>",
       "phase": "end",
       "statusMessage": "running goal",
       "completedAt": "<ts:events.completedAt:28>",
@@ -3828,7 +3861,7 @@
        "content": [
         {
          "type": "text",
-         "text": "qa:42"
+         "text": "post-mutated:{\"value\":42}"
         }
        ],
        "details": {}
@@ -3844,7 +3877,7 @@
        "content": [
         {
          "type": "text",
-         "text": "qa:42"
+         "text": "post-mutated:{\"value\":42}"
         }
        ],
        "details": {},
@@ -3861,7 +3894,7 @@
        "content": [
         {
          "type": "text",
-         "text": "qa:42"
+         "text": "post-mutated:{\"value\":42}"
         }
        ],
        "details": {},
@@ -3883,7 +3916,7 @@
         "content": [
          {
           "type": "text",
-          "text": "qa:42"
+          "text": "post-mutated:{\"value\":42}"
          }
         ],
         "details": {},
@@ -4008,7 +4041,7 @@
         "content": [
          {
           "type": "text",
-          "text": "qa:42"
+          "text": "post-mutated:{\"value\":42}"
          }
         ],
         "details": {},
@@ -4424,7 +4457,7 @@
         "content": [
          {
           "type": "text",
-          "text": "qa:42"
+          "text": "post-mutated:{\"value\":42}"
          }
         ],
         "details": {},
@@ -5024,7 +5057,7 @@
       "content": [
        {
         "type": "text",
-        "text": "qa:42"
+        "text": "post-mutated:{\"value\":42}"
        }
       ],
       "details": {},
