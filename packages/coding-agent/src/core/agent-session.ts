@@ -301,10 +301,12 @@ import { customTurnOrigin, type InputOrigin, inputAttributionOf, inputOriginOf }
 import {
 	type ConnectionOrigin,
 	copyInputTurnMark,
+	endTurnContinuation,
 	hasInputTurnMark,
 	inputTurnMark,
 	markInputTurnOrigin,
 	noteRunStart,
+	noteTurnContinuation,
 	noteUserMessageStart,
 } from "./turn-origin.ts";
 import { releaseDecisionPreset } from "./permission-decision.ts";
@@ -11724,6 +11726,7 @@ export class AgentSession {
 
 			await runBoundedRetryContinuation({
 				continueRun: async () => {
+					noteTurnContinuation(this.sessionManager);
 					if (this._continueWithQueuedInput) {
 						// Joined input of a start that never ran: the transcript tail may be anything, even empty.
 						this._continueWithQueuedInput = false;
@@ -11770,6 +11773,7 @@ export class AgentSession {
 			}
 			throw error;
 		} finally {
+			endTurnContinuation(this.sessionManager);
 			this._scheduledContinuationRecompacted = false;
 			this._continueWithQueuedInput = false;
 		}

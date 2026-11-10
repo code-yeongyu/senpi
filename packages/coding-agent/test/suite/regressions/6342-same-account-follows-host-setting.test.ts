@@ -1,3 +1,4 @@
+import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionFactory } from "../../../src/core/extensions/types.ts";
 import { attach, type DelegatedHost, declare, type Peer } from "../rpc-delegated-host-support.ts";
@@ -27,6 +28,15 @@ const engineFollowUp: ExtensionFactory = (pi) => {
 	});
 };
 
+const engineCustomTurn: ExtensionFactory = (pi) => {
+	pi.registerCommand("engine-turn", {
+		description: "starts an engine custom-message turn",
+		handler: async () => {
+			pi.sendMessage({ customType: "engine-work", content: "engine work", display: true }, { triggerTurn: true });
+		},
+	});
+};
+
 let host: DelegatedHost | undefined;
 afterEach(async () => {
 	armed = false;
@@ -42,7 +52,7 @@ async function sameAccountPeer(target: DelegatedHost, roles?: readonly string[])
 }
 
 async function setup(connect: (target: DelegatedHost) => Promise<Peer>) {
-	host = await permissionHost([engineFollowUp], { embedderPreset: true });
+	host = await permissionHost([engineFollowUp, engineCustomTurn], { embedderPreset: true });
 	const local = await host.proven();
 	const session = await open(local);
 	const remote = await connect(host);
@@ -95,6 +105,29 @@ describe("a turn follows the receiving machine's own setting", () => {
 		);
 		expect(localCall).toEqual(RAN);
 		expect(engineCall).toEqual(RAN);
+	}, 120_000);
+
+	it("keeps asking on the retried run of a cross-account device's prompt", async () => {
+		const { remote, id } = await setup(remotePeer);
+		host?.faux.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
+			fauxAssistantMessage([fauxToolCall("read", { path: "probe.txt" }, { id: "probe-retried" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("done"),
+		]);
+		expect(await calls(remote, id, 1, () => remote.send({ type: "prompt", sessionId: id, message: "go" }))).toEqual([
+			{ asked: ASKED, ran: false },
+		]);
+	}, 120_000);
+
+	it("leaves no origin behind from a cross-account record that starts no run", async () => {
+		const { local, remote, id } = await setup(remotePeer);
+		const refused = await remote.send({ type: "set_thinking_level", sessionId: id, level: "low", scope: "turn" });
+		expect(refused).toMatchObject({ success: false });
+		expect(
+			await calls(local, id, 1, () => local.send({ type: "prompt", sessionId: id, message: "/engine-turn" })),
+		).toEqual([RAN]);
 	}, 120_000);
 
 	it("runs a same-account device's prompt on the host setting", async () => {

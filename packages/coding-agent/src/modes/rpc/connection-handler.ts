@@ -87,6 +87,7 @@ import { remoteOriginDeclaration, remoteOriginField } from "./remote-origin.ts";
 import { advertisedCompactCapabilities, sessionDeclaration } from "./compact-negotiation.ts";
 import type { ConnectionOrigin } from "../../core/turn-origin.ts";
 import { commandAuthority } from "./command-authority.ts";
+import { dropDelegatedRun } from "../../core/turn-origin.ts";
 import { noteDelegatedRecord } from "./delegated-drive-origin.ts";
 import { ConnectionRoles, DELEGATION_INCARNATION_STALE, roleConnection } from "./connection-roles.ts";
 import {
@@ -2533,7 +2534,9 @@ export function createRpcConnectionHandler(
 			return;
 		}
 		try {
-			const response = await handleCommand(command, requestContext);
+			const response = await handleCommand(command, requestContext).finally(() =>
+				dropDelegatedRun(session.sessionManager),
+			);
 			if (response) {
 				output(response);
 				await waitForRpcBackpressure();

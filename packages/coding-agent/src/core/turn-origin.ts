@@ -14,6 +14,7 @@ export type ConnectionOrigin = "local" | "delegated";
 const inputMarks = new WeakMap<object, InputTurnMark>();
 const currentOrigins = new WeakMap<object, TurnOrigin>();
 const delegatedRuns = new WeakSet<object>();
+const continuingTurns = new WeakSet<object>();
 
 /** The mark an input gets where it is created: explicit for client records, `local` for the TUI, else `engine`. */
 export function inputTurnMark(input: {
@@ -46,7 +47,17 @@ export function hasInputTurnMark(message: object): boolean {
  * that opens a turn sets its origin, a steer keeps it.
  */
 export function noteRunStart(sessionManager: object): void {
-	currentOrigins.set(sessionManager, delegatedRuns.delete(sessionManager) ? "delegated" : "engine");
+	if (delegatedRuns.delete(sessionManager)) currentOrigins.set(sessionManager, "delegated");
+	else if (!continuingTurns.has(sessionManager)) currentOrigins.set(sessionManager, "engine");
+}
+
+/** A retry or recovery run repeats the turn it continues, so it keeps that turn's origin until the continuation ends. */
+export function noteTurnContinuation(sessionManager: object): void {
+	continuingTurns.add(sessionManager);
+}
+
+export function endTurnContinuation(sessionManager: object): void {
+	continuingTurns.delete(sessionManager);
 }
 
 export function noteUserMessageStart(sessionManager: object, message: object): void {
@@ -58,6 +69,11 @@ export function noteUserMessageStart(sessionManager: object, message: object): v
 /** A cross-account device's record that can act on the session's work: the next run it starts counts as delegated, once. */
 export function noteDelegatedRun(sessionManager: object): void {
 	delegatedRuns.add(sessionManager);
+}
+
+/** Drops a mark its record left unused: a command that started no run leaves no origin behind. */
+export function dropDelegatedRun(sessionManager: object): void {
+	delegatedRuns.delete(sessionManager);
 }
 
 /** Whether the deciding turn counts as delegated-origin: a cross-account device started this turn or this run. */
