@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2026.11.10-1] - 2026-11-10
 
 ### Breaking Changes
 
@@ -9,6 +9,8 @@
 ### Changed
 
 ### Fixed
+
+- `agent()`, `output()` and the eval prompt's spawn helpers keep working when the task tools are eval-only (`exposure: "eval"`, withheld from the model while eval exists), and an eval-only tool's kernel prelude stays loaded ([#6276](https://github.com/code-yeongyu/senpi/pull/6276))
 
 ### Removed
 
