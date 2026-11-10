@@ -9,7 +9,7 @@ import { ensureMcpToolCallConnection } from "./health.ts";
 import { createMcpInvocationResolver } from "./invocation.ts";
 import type { McpConnectionEntry } from "./service-types.ts";
 import type { McpRequestOrigin } from "./request-origin.ts";
-import { connectAndRefreshMcpCatalog } from "./startup-race.ts";
+import { connectAndRefreshMcpCatalog, prepareMcpAuthentication } from "./startup-race.ts";
 
 type McpToolRegistrar = Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool">;
 
@@ -51,10 +51,18 @@ export async function registerMcpServiceDirectTools(
 				servesSession: options.servesSession,
 				isCurrent: () => entry.isCurrent?.() !== false && options.isCurrent?.(entry) !== false,
 				ready: async () => {
-					await ensureMcpToolCallConnection(
-						entry.connection,
-						() => entry.authPlan?.refresh?.ensureFresh().then(() => undefined) ?? Promise.resolve(),
-					);
+					if (!(await prepareMcpAuthentication(entry))) return;
+					if (entry.isCurrent?.() === false || options.isCurrent?.(entry) === false) return;
+					if (entry.credentialsCurrent?.() === false) {
+						await entry.onCredentialsChanged?.();
+						return;
+					}
+					await ensureMcpToolCallConnection(entry.connection);
+					if (entry.isCurrent?.() === false || options.isCurrent?.(entry) === false) return;
+					if (entry.credentialsCurrent?.() === false) {
+						await entry.onCredentialsChanged?.();
+						return;
+					}
 					await connectAndRefreshMcpCatalog(entry, serverConfig);
 					await entry.startupCatalogClaim?.settled();
 					if (entry.isCurrent?.() === false || options.isCurrent?.(entry) === false) return;
