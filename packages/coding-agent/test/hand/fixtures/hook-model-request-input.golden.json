@@ -1,0 +1,23 @@
+{
+	"payload": {
+		"model": "probe-model-upstream",
+		"max_tokens": 1024,
+		"stream": true,
+		"system": [{ "type": "text", "text": "You are a probe." }],
+		"messages": [{ "role": "user", "content": [{ "type": "text", "text": "hello from the probe" }] }],
+		"metadata": { "user_id": "probe-user" }
+	},
+	"model": {
+		"id": "probe-model",
+		"name": "Probe Model",
+		"api": "anthropic-messages",
+		"provider": "probe-provider",
+		"baseUrl": "https://probe.invalid/v1",
+		"reasoning": true,
+		"input": ["text", "image"],
+		"cost": { "input": 3, "output": 15, "cacheRead": 0.3, "cacheWrite": 3.75 },
+		"contextWindow": 200000,
+		"maxTokens": 64000,
+		"upstreamModelId": "probe-model-upstream"
+	}
+}

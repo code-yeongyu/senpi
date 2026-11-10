@@ -1,3 +1,146 @@
+## 2026-11-10 - Claim an invisible, already-built host session (senpi#6344)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-park-ledger.ts` and `packages/coding-agent/src/modes/rpc/session-router-park.ts` own up to four speculative profiles, coalesce builds, expire ready parks after 60 seconds, consume them once, and replace successful claims in the background.
+- `packages/coding-agent/src/modes/rpc/host-park-ledger.ts` reserves scheduled replacements against the same cap, so another profile cannot steal a claimed profile's replacement slot before its background build starts. An explicit park for that reserved profile consumes its scheduled timer rather than building twice.
+- `packages/coding-agent/src/modes/rpc/session-router-open.ts` builds every park through the existing open, without an owner or reply. `packages/coding-agent/src/modes/rpc/session-router-open-result.ts` shares its connection barrier, capabilities, ownership, publication and exact success payload with claims.
+- `packages/coding-agent/src/modes/rpc/session-registry.ts`, `packages/coding-agent/src/modes/rpc/session-status-source.ts` and `packages/coding-agent/src/modes/rpc/session-binding.ts` keep speculative entries out of public metadata, events, counts and durable identity checks. Claim promotes the existing runtime; `packages/coding-agent/src/modes/rpc/session-registry-attach.ts` shares its live profile application.
+- `packages/coding-agent/src/modes/rpc/session-router-context.ts`, `packages/coding-agent/src/modes/rpc/session-router-close.ts` and `packages/coding-agent/src/modes/rpc/session-router-occupancy.ts` own speculative teardown independently of durable handover parks. Drain and stop fence builds and replacements before waiting for disposal.
+- `packages/coding-agent/src/modes/rpc/session-connection-context.ts` lets host-owned construction leave the asking connection's transport and delegation scope. A claim configures its prebuilt binding with the opener's capabilities through the existing capability replacement helper.
+- `packages/coding-agent/src/modes/rpc/rpc-host-command-types.ts`, `packages/coding-agent/src/modes/rpc/method-classes-schema-host.ts`, `packages/coding-agent/src/modes/rpc/host-capabilities.ts` and `packages/coding-agent/src/modes/rpc/host-observe-request.ts` carry the capability-gated commands. The corresponding response, routing and delivery paths preserve the ordinary open payload and delegated retention semantics.
+- Review fixes: the first park can create `extensions/goal/no-session`; configuration watching now rearms a newly created extensions directory without reloading every live session for that container alone. This prevents the reload output cascade that stalled and closed the delegated opener's socket. `packages/coding-agent/src/modes/rpc/session-router-park.ts` returns `claimed: false` for `attended: false`, `packages/coding-agent/docs/rpc.md` describes attended construction, and `packages/coding-agent/src/modes/rpc/session-router-occupancy.ts` logs a rejected post-close drain sweep.
+- Suite fixes: remove only `session-router-open.ts#open` from the unused-export baseline now that speculative construction calls it. The routing test supplies the registry's required `peek` lookup. Attach/reclaim shutdown tests wait for the held teardown to begin before capturing state, so the shutdown's own close claim cannot be mistaken for mutation by a refused request; their wire-code and no-new-attachment assertions remain intact.
+- The legacy admission golden changes only `get_protocol_info.method_classes`: `claim_session` and `park_session` are advertised as `device_admin`, with the corresponding digest. Discovery must describe the complete method table even without an admission ID; existing method classifications, request bytes, session frames and subscription frames stay pinned. No golden normalization or production lifecycle behavior changes.
+
+### Why
+
+- Warm loads services but leaves runtime construction on the caller's open path. A ready claim reuses the already-built runtime and binding. A miss never builds or waits for a build.
+- Speculation must not look like user work, hold idle exit open, collide with a durable identity, or reappear in a successor. Build-only options and compact admissions miss rather than introducing alternative construction or admission paths.
+- `packages/coding-agent/src/modes/rpc/session-router-open.ts` preserves the host context merge, session kind, media setup and binding that the second successor-open path previously skipped in senpi#3368.
+
+- A park is built attended (no `unattended` hold), so a claimed session's lifecycle matches an ordinary open (`done`, no holds, not paused) and nothing held is persisted to its file (#6350 review). A park being claimed or closed answers `full`, not `already_parked`; a park close that fails during drain is logged and the drain sweep still runs.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/session-registry.ts` and `packages/coding-agent/src/modes/rpc/session-router-open.ts` own registry visibility, connection ownership, lifecycle teardown and the host's open response before a caller has a session.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/modes/rpc/session-router-open.ts`, `packages/coding-agent/src/modes/rpc/session-registry.ts`, `packages/coding-agent/src/modes/rpc/session-binding.ts` and `packages/coding-agent/src/modes/rpc/connection-handler.ts`.
+- LOW: the new park modules, registry option shapes, host command schemas, capability list and observation predicate.
+
+## 2026-11-10 - admit_external_message marks an agent's relayed delivery as a peer turn (senpi#6305)
+
+### What changed
+
+- `admit-external-message-command.ts`: `deliveryTurnMark` returns `peer` only when the connection is delegated and the forwarder granted it `peer_agent` (`ConnectionRoles.grantedByForwarder`, read from the live authority word, never from the record or a client claim); the record's `sender.kind` of `agent` is only a consistency check.
+- `connection-authority.ts`, `delegation-declaration.ts`, `connection-roles.ts`: `peer_agent` is a third host-mode role (word bit 2; retired moves to bit 3 and the epoch field to 28 bits), declarable only in `declare_delegation`, never claimable with `set_client_info`, and ignored on a legacy-mode delegation.
+- `custom-capability.ts`, `host-capabilities.ts`: hosts advertise `peer_agent_role_v1`, so a forwarder declares the role only to an engine that understands it. A steer still joins the running turn; every other delivery keeps the connection's origin, so a non-agent or sender-less delivery from a remote device still asks.
+- `test/suite/regressions/6305-peer-delivery-receiver-preset.test.ts`: on a host whose default preset is `full-access`, an agent's delivery from a remote device's connection runs its gated call without asking, while an `external` sender and a delivery with no sender still ask.
+
+## 2026-11-09 - RPC clients read and edit the workspace's instruction files (senpi#6297)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/project-file-path.ts`: new. The allowlist (`AGENTS.md`/`CLAUDE.md` at any depth, `.omo/rules/**`; canonical relative paths only, never through `.git` or `node_modules`) and the resolution that walks the path segment by segment with `lstat` from the real workspace root, refusing any symlink or non-folder on the way; missing parent folders are created one at a time and re-checked.
+- `packages/coding-agent/src/modes/rpc/project-file-commands.ts`: new. `read_project_file` (opens with `O_NOFOLLOW`, a missing file is `exists: false`) and `write_project_file` (trust-gated, `ifEtag` required with `null` to create, sha256 etag compare, temp file + rename, one write at a time per file); 512 KiB cap, under the host's 1,000,000-character message limit.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the two cases, refusals with `errorData`.
+- `packages/coding-agent/src/modes/rpc/rpc-session-command-types.ts`, `rpc-read-response-types.ts`, `rpc-mutation-response-types.ts`: the wire types.
+- `packages/coding-agent/src/modes/rpc/rpc-error-types.ts`: `project_file_not_allowed`, `project_file_conflict`, `project_file_too_large`, `project_file_write_failed`.
+- `packages/coding-agent/src/modes/rpc/method-classes.ts`: both verbs `device_admin` (the digest moves).
+- `packages/coding-agent/src/modes/rpc/method-classes-schema-session.ts`: their inbound schemas.
+- `packages/coding-agent/src/modes/rpc/session-attachment-gate.ts`, `session-command-activity.ts`: `read_project_file` joins the read allow-lists.
+
+### Why
+
+- A client driving an engine on another machine (a desktop app's remote workspace) has no filesystem there, so it could not edit Rules at all; one engine verb gives local and remote clients the same edit path.
+
+### Why an extension could not handle it
+
+- The RPC method-class table, the inbound schemas and the attachment gate are core; an extension request is not classed per method for a remote caller.
+
+### Expected merge conflict zones
+
+- LOW: the `set_project_setting` neighbourhood in `connection-handler.ts`, `method-classes.ts`, the schema table and the error-code union.
+
+## 2026-11-10 - A host child receives its supervisor's adopted engine trust generation (senpi#6312)
+
+### What changed
+
+- `packages/coding-agent/src/engine-trust/hand-off.ts`: `adoptedEngineTrustHandOff()` is the former private `trustHandOff()` of `host-spawn-environment.ts`, moved and exported (also from `engine-trust/index.ts`): the adopted generation's hand-off, or nothing when this process adopted none.
+- `packages/coding-agent/src/modes/rpc/host-spawn-environment.ts`: `initialHostEnvironment` and `successorHostEnvironment` spread `adoptedEngineTrustHandOff()`; behavior unchanged.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-launch.ts`: `HostChildOptions.trustHandOff` is required and `hostChildEnvironment` spreads it after `process.env`. `loadHostChildTrustHandOff()` builds it through the same `adoptedEngineTrustHandOff()`, loading `engine-trust/adopted.ts` and, only after an adoption, `engine-trust/hand-off.ts` lazily.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: the supervisor passes `trustHandOff: await loadHostChildTrustHandOff()` to `spawnHostChild`.
+
+### Why
+
+- A supervisor started by `initialHostEnvironment` or `successorHostEnvironment` adopts the hand-off marker, and the adopter's restore deletes the marker and the closure from its `process.env`. `hostChildEnvironment` built only from `process.env`, so the host child arrived with no marker, imported trust again and re-exec'd. The exec closed every inherited descriptor above stdio, including the startup pipe (senpi#4602): the child never reported `host_bootstrap` and the supervisor failed with `internal_ready reported before its phase was granted` (omo#12951).
+- The lazy load keeps the supervisor's static graph unchanged (79 modules). A static import of the hand-off measured 179 (95 of them zod), and a static import of `host-spawn-environment.ts` reaches the forbidden `@earendil-works/pi-ai` barrel through `host-daemon-env.ts`.
+
+### Why an extension could not handle it
+
+- The host child's environment is built by the lifecycle supervisor before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `HostChildOptions` and the `hostChildEnvironment` return literal in `host-lifecycle-launch.ts`; the `spawnHostChild` call in `host-lifecycle.ts`.
+
+## 2026-11-09 - An applied close_session carries its authority receipt (senpi#6280)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-event-writer-lifecycle.ts`: `reserveCloseResponse()`'s `complete()` stamps the close command's own reply with `withReceipt()` before handing it to `closeSession()` (the finalizer) or `appendClosedResponse()` (a non-finalizer close). The reservation counts the stamped reply's bytes. Host-driven closes (idle eviction, host shutdown, worker failure) still pass their reply to `closeSession()` unstamped, because they can run inside an unrelated command and must not carry that command's receipt.
+
+### Why
+
+- On a role-bound (host-mode) delegated connection, every response to a `relayExec`-numbered record carries the `authority` receipt, and a forwarder settles exec-numbered forwards by it. The applied close is written by the writer itself instead of being returned through dispatch, so it skipped `withReceipt()`: the session closed, but the forwarder never saw the answer and timed out at its deadline (senpi#6280).
+
+### Why an extension could not handle it
+
+- The close reply is written by the RPC host's session event writer; no extension sees or can rewrite host wire replies.
+
+### Expected merge conflict zones
+
+- LOW: the `withReceipt` import and the `bytes` computation and `complete()` body of `reserveCloseResponse()` in `session-event-writer-lifecycle.ts`.
+
+## 2026-11-09 - Hide the console window for the hand-run git probe on Windows (senpi#3965)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/hand-run-local-repo.ts`: the `git config` execFile now passes `windowsHide: true`.
+
+### Why
+
+- `git` is a console-subsystem exe on Windows; the probe flashed a console window on every hand run.
+
+### Why an extension could not handle it
+
+- The probe is RPC mode's own repository inspection, not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: one options line in the probe.
+
+## 2026-11-08 - A failed host-token mint retries before the cached token expires (senpi#5919)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/secret-host-token.ts`: the failed-mint retry wait is now capped at 1 s before the cached token's `exp` (`RETRY_BEFORE_EXP_MS`), so the 5 s floor can no longer push the attempt past expiry; the cap keeps a 250 ms minimum wait (`RETRY_MIN_WAIT_MS`) so a failure in the last second cannot arm the next retry at 0 ms and hammer a failing issuer back-to-back until `exp`; without a valid cached token the retry stays at the 60 s bound.
+- `packages/coding-agent/test/suite/regressions/issue-5919-short-life-retry.test.ts`: new. A 4 s token whose re-mint fails at two thirds of its lifetime retries within the remaining ~3 s instead of waiting the 5 s floor; a second case drives a 3 s token with every re-mint failing and asserts retries stay at least 250 ms apart with a bounded mint count through `exp`. The test clock is faked and pinned to a whole second so the armed refresh cannot slip under its bound.
+
+### Why
+
+- With under ~5 s of token life left, the retry was armed at the 5 s floor and landed up to ~5 s after `exp`, leaving the sealed route without a host token for that window (senpi#5919).
+
+### Why an extension could not handle it
+
+- The retry timer is owned by the host-token cache itself; no extension schedules or observes it.
+
+### Expected merge conflict zones
+
+- LOW: the failure branch of `mint` in `secret-host-token.ts`.
+
 ## 2026-11-08 - A relayed delivery reads like a same-machine delivery; the device stays in metadata (senpi#6250)
 
 ### What changed

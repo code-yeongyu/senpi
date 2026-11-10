@@ -1,4 +1,3 @@
-import { FABLE55_LAUNCH } from "@earendil-works/pi-ai/utils/fable55-launch";
 import type { FallbackChains } from "./chains.ts";
 
 export interface ProviderRetrySettings {
@@ -48,8 +47,8 @@ export interface ResolvedRetryFallbackSettings {
  * `claude-opus-4-8` or `claude-opus-4-6` (senpi#3727).
  */
 export const DEFAULT_FALLBACK_CHAINS: FallbackChains = {
-	...(FABLE55_LAUNCH.released ? { [FABLE55_LAUNCH.modelId]: ["claude-opus-5-5", "claude-opus-5"] } : {}),
 	// Rungs carry no explicit level so fallback inherits the session's current thinking effort (senpi#4103).
+	"claude-fable-5-2": ["claude-opus-5-5", "claude-opus-5"],
 	"claude-fable-5-1": ["claude-opus-5-5", "claude-opus-5"],
 	"claude-fable-5": ["claude-opus-5-5", "claude-opus-5"],
 	"claude-opus-5-5": ["claude-opus-5"],

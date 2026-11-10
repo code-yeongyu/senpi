@@ -18,7 +18,7 @@ export interface Principal {
 }
 
 /** The connection roles a host-mode declaration may carry (omo-relay-daemon#307). */
-const DECLARABLE_ROLES: ReadonlySet<string> = new Set(["interactive_user", "task_parent"]);
+const DECLARABLE_ROLES: ReadonlySet<string> = new Set(["interactive_user", "task_parent", "peer_agent"]);
 
 export interface Declaration {
 	readonly principal: Principal;

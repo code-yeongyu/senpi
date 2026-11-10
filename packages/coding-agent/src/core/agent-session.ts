@@ -527,6 +527,7 @@ function evalHelperCall(name: string): string {
 	if (name === "grep" || name === "glob") return `tool.${name}({ pattern: "...", path: "..." })`;
 	if (name === "workflow") return `tool.${name}({ action: "..." })`;
 	if (name === "monitor") return `tool.monitor({ description: "...", command: "...", filter: "..." })`;
+	if (name === "generate_image") return `tool.generate_image({ prompt: "..." })`;
 	return `tool.${name}({ ... })`;
 }
 /**
@@ -8454,7 +8455,7 @@ export class AgentSession {
 	}
 
 	/**
-	 * A refused engine turn still records its message and settles a cross-session delivery it carries. A delivery
+	 * A refused engine turn still records its message and settles a cross-session delivery it carries. A message
 	 * whose entry the file refuses leaves the context too: its sender redelivers it, and it must not appear twice.
 	 */
 	private _recordRefusedEngineTurnMessage(appMessage: CustomMessage): void {
@@ -8462,11 +8463,16 @@ export class AgentSession {
 			this._appendCustomMessage(appMessage);
 			this.externalAdmission.observePersisted(appMessage);
 		} catch (error) {
-			if (deliveryIdOf(appMessage) !== undefined) {
-				const index = this.agent.state.messages.lastIndexOf(appMessage);
-				if (index >= 0) this.agent.state.messages.splice(index, 1);
-			}
-			this.externalAdmission.observeRefused(appMessage, error instanceof Error ? error.message : String(error));
+			// The session file refused the entry: the message leaves the context too, so the context matches the
+			// file, and the failure follows the same contract as the main persistence path — it is recorded,
+			// logged, and emitted (senpi#2972). This holds for non-delivery messages as well as deliveries.
+			const errorMessage = error instanceof Error ? error.message : String(error);
+			const index = this.agent.state.messages.lastIndexOf(appMessage);
+			if (index >= 0) this.agent.state.messages.splice(index, 1);
+			this._transcriptWriteFailures.record(appMessage, error);
+			this._sessionLogger.warn("transcript_write_failed", { role: appMessage.role, error: errorMessage });
+			this._emit({ type: "transcript_write_failed", role: appMessage.role, errorMessage });
+			this.externalAdmission.observeRefused(appMessage, errorMessage);
 			this._takePersistWatcher(appMessage)?.failed(error);
 		}
 	}
@@ -8569,12 +8575,26 @@ export class AgentSession {
 			appMessage.details,
 			{ recoveryOwner: recoveryCarrier(start) },
 		);
-		this._emitEntryAppended(entryId);
+		// The entry is written: only a failure of the write itself counts as refused. Bookkeeping (ticket,
+		// watcher settlement, revision) runs before any notification, and each notification is guarded on its
+		// own, so a throwing listener can neither leave a persisted delivery unsettled nor suppress a later
+		// notification (senpi#2972).
 		this._recordWrittenTicket(appMessage, entryId);
 		this._takePersistWatcher(appMessage)?.persisted(entryId);
 		this._incrementMessageRevision();
-		this._emit(start);
-		this._emit({ type: "message_end", message: appMessage });
+		const notify = (emit: () => void): void => {
+			try {
+				emit();
+			} catch (error) {
+				this._sessionLogger.warn("custom_message_listener_failed", {
+					customType: appMessage.customType,
+					error: error instanceof Error ? error.message : String(error),
+				});
+			}
+		};
+		notify(() => this._emitEntryAppended(entryId));
+		notify(() => this._emit(start));
+		notify(() => this._emit({ type: "message_end", message: appMessage }));
 	}
 
 	private _flushPendingCustomMessages(): void {
@@ -14564,7 +14584,43 @@ export class AgentSession {
 		const estimate = branchEntries.some((entry) => entry.type === "context_edit")
 			? estimateProjectedContextTokens(this.sessionManager.buildSessionProjection(), branchEntries)
 			: estimateContextTokens(messages);
+		// A model switch after the last reported usage invalidates that usage: it was
+		// counted with the previous model's tokenizer, so showing it against the new
+		// model's window misstates the context (oh-my-openagent#11684). Fall back to
+		// the content estimate, like the compaction and context-edit paths above.
+		if (estimate.lastUsageIndex !== null && this._isUsageStaleAfterModelChange(branchEntries)) {
+			return { tokens: messages.reduce((sum, message) => sum + estimateTokens(message), 0), reported: false };
+		}
 		return { tokens: estimate.tokens, reported: estimate.usageTokens > 0 };
+	}
+
+	/**
+	 * Whether the latest reported usage predates the latest model switch: no
+	 * assistant message after the switch reported usage, so the last reported
+	 * figure belongs to the previous model's tokenizer. Assistant messages are
+	 * appended to the branch only once they stop streaming (a pending assistant
+	 * message is rejected), so a switch that lands mid-turn still precedes the
+	 * message entry carrying the new model's usage.
+	 */
+	private _isUsageStaleAfterModelChange(branchEntries: readonly SessionEntry[]): boolean {
+		let latestModelChangeIndex = -1;
+		for (let i = branchEntries.length - 1; i >= 0; i--) {
+			if (branchEntries[i].type === "model_change") {
+				latestModelChangeIndex = i;
+				break;
+			}
+		}
+		if (latestModelChangeIndex === -1) return false;
+		for (let i = branchEntries.length - 1; i > latestModelChangeIndex; i--) {
+			const entry = branchEntries[i];
+			if (entry.type === "message" && entry.message.role === "assistant") {
+				const assistant = entry.message;
+				if (assistant.stopReason !== "aborted" && assistant.stopReason !== "error") {
+					if (calculateContextTokens(assistant.usage) > 0) return false;
+				}
+			}
+		}
+		return true;
 	}
 
 	/**

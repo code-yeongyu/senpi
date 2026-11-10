@@ -853,6 +853,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 						cwd: this.cwd,
 						agentDir: this.agentDir,
 						...this.settingsManager.getSettings().contextFiles,
+						// senpi#5567: user settings only; a project's settings never redirect the global file.
+						globalPath: this.settingsManager.getGlobalContextFilePath(),
 					}),
 		};
 		const resolvedAgentsFiles = this.agentsFilesOverride ? this.agentsFilesOverride(agentsFiles) : agentsFiles;

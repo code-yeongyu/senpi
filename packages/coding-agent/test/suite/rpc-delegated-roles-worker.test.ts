@@ -90,10 +90,10 @@ function detached(session: OpenedSession): Promise<WireRecord> {
 }
 
 /**
- * The word's packing is the cross-thread contract (`epoch << 3 | retired << 2 | mask`); it is read here rather than
+ * The word's packing is the cross-thread contract (`epoch << 4 | retired << 3 | mask`); it is read here rather than
  * imported, so this file still loads on a base without the module and its product rows fail for their own reason.
  */
-const wordState = (word: number) => ({ epoch: word >>> 3, retired: (word & 4) !== 0, mask: word & 3 });
+const wordState = (word: number) => ({ epoch: word >>> 4, retired: (word & 8) !== 0, mask: word & 7 });
 
 /** Mechanism check (class K at main): the peer's current authority word on the host. */
 function wordOf(peer: Peer): Int32Array {

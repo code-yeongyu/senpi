@@ -274,7 +274,7 @@ export function createHostCore(
 		}
 		const command = parsed as RpcCommand;
 		const response = await gate.dispatch(
-			command.type === "open_session" &&
+			(command.type === "open_session" || command.type === "claim_session") &&
 				(delegated
 					? command.retain_on_disconnect !== true
 					: machineOwned && command.retain_on_disconnect === undefined)

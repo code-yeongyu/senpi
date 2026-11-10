@@ -80,80 +80,85 @@ export async function refreshMcpToolsOnListChanged(
 		entry.connection.state === "connected";
 	// The startup connect that still owns registration registers its refreshed catalog itself.
 	if (connectOnly && entry.startupCatalogClaim?.ownsRegistration() === true) return;
-	const registeredCatalog = entry.cachedCatalog;
-	if (entry.connection instanceof SharedMcpLease) {
-		const refreshed = await entry.connection.catalog();
-		if (!ownsCatalog()) return;
-		entry.cachedCatalog = refreshed;
-	}
-	const catalog = await collectToolCatalog(entry.name, entry.connection, server.config, {
-		agentDir: entry.agentDir,
-		outputGuard: config.settings.outputGuard,
-	});
-	if (!ownsCatalog()) return;
-	const newNames = mapMcpCatalogNames(catalog).map(({ name }) => name);
-	// Before the first refresh, the registered names are the catalog the startup pass registered.
-	const knownNames =
-		entry.knownToolNames ??
-		(registeredCatalog === undefined
-			? newNames
-			: mapMcpCatalogNames(
-					cachedToolsToCatalogEntries(
-						entry.name,
-						registeredCatalog,
-						entry.connection,
-						server.config.requestTimeoutMs,
-						async () => {},
-					),
-				).map(({ name }) => name));
-	const diff = diffMcpToolNames(knownNames, newNames);
-	const identity = mcpRegistrationIdentity(catalog, entry.cachedCatalog);
-	const initial = targets();
-	const stale = connectOnly ? initial.filter((target) => target.registeredIdentity() !== identity) : initial;
-	if (stale.length > 0) {
-		// Registration reads entry.cachedCatalog. A shared lease refreshed it above; nothing else
-		// refreshes a non-shared connection's catalog after its startup connect (#2188).
-		if (!(entry.connection instanceof SharedMcpLease)) {
-			const refreshed = await collectServerCatalogForCache(
-				entry.connection,
-				server.config,
-				entry.generationHash ?? entry.configHash,
-				entry.credentialIdentity,
-			);
+	try {
+		const registeredCatalog = entry.cachedCatalog;
+		if (entry.connection instanceof SharedMcpLease) {
+			const refreshed = await entry.connection.catalog();
 			if (!ownsCatalog()) return;
 			entry.cachedCatalog = refreshed;
-			await writeMcpCachedServer(entry.agentDir, entry.name, refreshed, ownsCatalog);
 		}
+		const catalog = await collectToolCatalog(entry.name, entry.connection, server.config, {
+			agentDir: entry.agentDir,
+			outputGuard: config.settings.outputGuard,
+		});
 		if (!ownsCatalog()) return;
-		// Tombstone removed tools BEFORE re-registration so the subsequent
-		// setActiveTools (which excludes them) leaves the tombstones inactive.
-		const seen = new Set<object>(initial.map((target) => target.pi));
-		const failures: unknown[] = [];
-		let pending: readonly McpToolsRefreshTarget[] = stale;
-		while (pending.length > 0) {
-			for (const target of pending) {
+		const newNames = mapMcpCatalogNames(catalog).map(({ name }) => name);
+		// Before the first refresh, the registered names are the catalog the startup pass registered.
+		const knownNames =
+			entry.knownToolNames ??
+			(registeredCatalog === undefined
+				? newNames
+				: mapMcpCatalogNames(
+						cachedToolsToCatalogEntries(
+							entry.name,
+							registeredCatalog,
+							entry.connection,
+							server.config.requestTimeoutMs,
+							async () => {},
+						),
+					).map(({ name }) => name));
+		const diff = diffMcpToolNames(knownNames, newNames);
+		const identity = mcpRegistrationIdentity(catalog, entry.cachedCatalog);
+		const initial = targets();
+		const stale = connectOnly ? initial.filter((target) => target.registeredIdentity() !== identity) : initial;
+		if (stale.length > 0) {
+			// Registration reads entry.cachedCatalog. A shared lease refreshed it above; nothing else
+			// refreshes a non-shared connection's catalog after its startup connect (#2188).
+			if (!(entry.connection instanceof SharedMcpLease)) {
+				const refreshed = await collectServerCatalogForCache(
+					entry.connection,
+					server.config,
+					entry.generationHash ?? entry.configHash,
+					entry.credentialIdentity,
+				);
 				if (!ownsCatalog()) return;
-				try {
-					for (const removed of diff.removed)
-						target.pi.registerTool(buildMcpTombstoneDefinition(removed, entry.name));
-					await target.register();
-				} catch (error) {
-					failures.push(error);
-				}
+				entry.cachedCatalog = refreshed;
+				await writeMcpCachedServer(entry.agentDir, entry.name, refreshed, ownsCatalog);
 			}
-			// A session that attached during this refresh registered the catalog cached before it.
-			pending = targets().filter((target) => !seen.has(target.pi));
-			for (const target of pending) seen.add(target.pi);
+			if (!ownsCatalog()) return;
+			// Tombstone removed tools BEFORE re-registration so the subsequent
+			// setActiveTools (which excludes them) leaves the tombstones inactive.
+			const seen = new Set<object>(initial.map((target) => target.pi));
+			const failures: unknown[] = [];
+			let pending: readonly McpToolsRefreshTarget[] = stale;
+			while (pending.length > 0) {
+				for (const target of pending) {
+					if (!ownsCatalog()) return;
+					try {
+						for (const removed of diff.removed)
+							target.pi.registerTool(buildMcpTombstoneDefinition(removed, entry.name));
+						await target.register();
+					} catch (error) {
+						failures.push(error);
+					}
+				}
+				// A session that attached during this refresh registered the catalog cached before it.
+				pending = targets().filter((target) => !seen.has(target.pi));
+				for (const target of pending) seen.add(target.pi);
+			}
+			if (failures.length > 0) {
+				entry.knownToolNames = newNames;
+				entry.lastListChangedDelta = formatMcpListChangedDelta(diff);
+				throw new AggregateError(
+					failures,
+					`MCP ${entry.name} tool refresh failed in ${failures.length} of ${seen.size} session(s)`,
+				);
+			}
 		}
-		if (failures.length > 0) {
-			entry.knownToolNames = newNames;
-			entry.lastListChangedDelta = formatMcpListChangedDelta(diff);
-			throw new AggregateError(
-				failures,
-				`MCP ${entry.name} tool refresh failed in ${failures.length} of ${seen.size} session(s)`,
-			);
-		}
+		entry.knownToolNames = newNames;
+		entry.lastListChangedDelta = formatMcpListChangedDelta(diff);
+	} catch (error) {
+		if (!ownsCatalog()) return;
+		throw error;
 	}
-	entry.knownToolNames = newNames;
-	entry.lastListChangedDelta = formatMcpListChangedDelta(diff);
 }

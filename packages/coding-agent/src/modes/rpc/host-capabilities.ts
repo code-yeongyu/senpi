@@ -21,6 +21,7 @@ import {
 	DELEGATION_ROLES_CAPABILITY,
 	DETACH_CONNECTION_CAPABILITY,
 	DURABLE_SESSION_ID_CAPABILITY,
+	PEER_AGENT_ROLE_CAPABILITY,
 	ENTRIES_TAIL_CAPABILITY,
 	EVAL_CELLS_CAPABILITY,
 	MEDIA_PLACEHOLDERS_CAPABILITY,
@@ -41,6 +42,7 @@ import {
 	SESSION_STATUS_CAPABILITY,
 	TOOL_BARRIER_CAPABILITY,
 	WARM_CAPABILITY,
+	PARK_CLAIM_CAPABILITY,
 } from "./custom-capability.ts";
 import { EFFECT_LEDGER_CAPABILITY } from "./effect-record.ts";
 import { SESSION_MODEL_SCOPE_CAPABILITY } from "./rpc-session-command-types.ts";
@@ -70,6 +72,7 @@ export const SET_PERMISSION_PRESET_CAPABILITY = "set_permission_preset_v1";
  */
 export function multiSessionHostCapabilities(options: {
 	readonly warm: boolean;
+	readonly parkClaim?: boolean;
 	readonly toolRuntime: ToolRuntimeKind;
 	readonly negotiated: readonly string[];
 	readonly mcpPresenters?: boolean;
@@ -123,6 +126,8 @@ export function multiSessionHostCapabilities(options: {
 			DELEGATED_CONNECTION_CAPABILITY,
 			// ...and decides a host-mode connection's roles per incarnation, with receipts (omo-relay-daemon#307).
 			DELEGATION_ROLES_CAPABILITY,
+			// ...and may carry the forwarder-granted `peer_agent` role on such a connection (senpi#6305).
+			PEER_AGENT_ROLE_CAPABILITY,
 			// Only a multi-session host keeps sessions loaded that a client can ask it to free.
 			UNLOAD_SESSION_CAPABILITY,
 			// Only a multi-session host owns a move ledger and the hosted-session list export checks against.
@@ -154,11 +159,13 @@ export function multiSessionHostCapabilities(options: {
 			AUTO_PERMISSION_PRESET_CAPABILITY,
 			// Only an in-process runtime shares the loop a warm loads into (senpi#2314).
 			...(options.warm ? [WARM_CAPABILITY] : []),
+			...(options.parkClaim ? [PARK_CLAIM_CAPABILITY] : []),
 			...toolRuntimeCapabilities(options.toolRuntime),
 			// The host alone says where tool work runs; a negotiated copy would make two answers.
 			...options.negotiated.filter(
 				(capability) =>
 					capability !== "mcp_form_presenter_v1" &&
+					capability !== PARK_CLAIM_CAPABILITY &&
 					// RULING-111 (LEAK-E): only the compact negotiation owns these names; flag off echoes them as main does.
 					(!compactUpdatesEnabled() ||
 						(capability !== "compact_message_updates_v1" && capability !== "compact_events")) &&
