@@ -37,6 +37,21 @@ it("claims the already built runtime, with ordinary open ownership and reply, th
 	expect(await host.request({ type: "claim_session", ...profile })).toMatchObject({ data: { sessionId: "rpc-2" } });
 });
 
+it("hands out a claimed session in the same lifecycle as an ordinary open, never held (#6350 review)", async () => {
+	await using host = await parkClaimHost();
+	const opened = await host.request({ type: "open_session", cwd: host.cwd });
+	await host.request({ type: "park_session", cwd: host.cwd, context: { lane: "parked" } });
+	const claimed = await host.request({ type: "claim_session", cwd: host.cwd, context: { lane: "parked" } });
+	const lifecycleOf = (response: unknown) => {
+		const { state, holds, runPaused } = (
+			response as { data: { state: { lifecycle: { state: string; holds: unknown[]; runPaused: boolean } } } }
+		).data.state.lifecycle;
+		return { state, holds, runPaused };
+	};
+	expect(lifecycleOf(claimed)).toEqual(lifecycleOf(opened));
+	expect(lifecycleOf(claimed)).toEqual({ state: "done", holds: [], runPaused: false });
+});
+
 it("matches canonical context order and kind, and never builds on a miss", async () => {
 	await using host = await parkClaimHost();
 	await host.request({ type: "park_session", cwd: host.cwd, kind: "worker", context: { b: "2", a: "1" } });

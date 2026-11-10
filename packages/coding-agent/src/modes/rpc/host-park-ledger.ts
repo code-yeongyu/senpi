@@ -28,10 +28,12 @@ export class HostParkLedger {
 
 	async park(key: string, build: () => Promise<OpenRpcSession>): Promise<"parked" | "already_parked" | "full"> {
 		const existing = this.parks.get(key);
-		if (existing) {
+		if (existing && !existing.claim && !existing.closing) {
 			await existing.ready;
 			return "already_parked";
 		}
+		// A park being claimed or closed is on its way out; the replacement scheduled after it builds the next.
+		if (existing) return "full";
 		const replacement = this.replacements.get(key);
 		if (replacement !== undefined) {
 			clearTimeout(replacement);

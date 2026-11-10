@@ -33,7 +33,7 @@ async function buildPark(host: RouterContext, command: ParkCommand): Promise<Ope
 	const response = await outsideCommand(() =>
 		host.writer.connectionContext.outside(() =>
 			withoutOpenTiming(() =>
-				open(host, { ...command, type: "open_session", attended: false }, undefined, {
+				open(host, { ...command, type: "open_session" }, undefined, {
 					reply: false,
 					park: (result) => {
 						opened = result;
