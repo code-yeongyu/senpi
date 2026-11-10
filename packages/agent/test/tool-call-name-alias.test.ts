@@ -8,7 +8,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it, vi } from "vitest";
-import { agentLoop } from "../src/agent-loop.ts";
+import { agentLoop } from "../src/index.ts";
 import type { AgentContext, AgentLoopConfig, AgentTool } from "../src/types.ts";
 
 type SuccessfulAssistantMessage = AssistantMessage & {

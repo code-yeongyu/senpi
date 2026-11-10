@@ -1,10 +1,10 @@
 import { isAbsolute } from "node:path";
 import { assertValidSessionId } from "../../core/session-manager.ts";
-import { createRegistryWarm, type HostWarm } from "./host-warm.ts";
+import { createRegistryWarm, type HostWarm, waitForWarms } from "./host-warm.ts";
 import { refreshesSessionActivity } from "./session-command-activity.ts";
 import { publishedSessionContext } from "./session-context-patch.ts";
 import { attachLiveSession, markPathAttached } from "./session-live-attachment.ts";
-import { type PendingClaims, syncRuntimeMetadata } from "./session-registry-claims.ts";
+import { beginPendingClaim, type PendingClaims, syncRuntimeMetadata } from "./session-registry-claims.ts";
 import { openRegistrySession } from "./session-registry-open.ts";
 
 import {
@@ -45,6 +45,7 @@ export class RpcSessionRegistry {
 	readonly closeGraceMs: number;
 	/** Present only when the runtime factory can build a session's services alone (`host-warm.ts`). */
 	readonly warm?: HostWarm;
+	private readonly warmsInFlight?: (cwd: string) => Promise<void> | undefined;
 
 	/** The agent directory this host keeps its sessions (and session-move folders) under. */
 	get agentDir(): string {
@@ -52,11 +53,14 @@ export class RpcSessionRegistry {
 	}
 
 	constructor(options: RpcSessionRegistryOptions) {
-		if (options.createRuntime.prepare)
-			this.warm = createRegistryWarm(options.createRuntime.prepare, {
+		if (options.createRuntime.prepare) {
+			const warming = createRegistryWarm(options.createRuntime.prepare, {
 				agentDir: options.agentDir,
 				...(options.mcpRegistry !== undefined ? { mcpRegistry: options.mcpRegistry } : {}),
 			});
+			this.warm = warming.warm;
+			this.warmsInFlight = warming.inFlight;
+		}
 		this.options =
 			options.mcpRegistry === undefined
 				? options
@@ -77,8 +81,16 @@ export class RpcSessionRegistry {
 				return deleted;
 			},
 			releaseReservation: async (key) => {
-				await this.options.pathReservations?.release(key);
-				this.reservations.delete(key);
+				// Close may finish at its grace deadline before removal settles. Keep
+				// that work visible to reopen even after the closing entry is gone. A failed removal
+				// still gives the path back: no entry is left to ever release it later.
+				const settle = beginPendingClaim(this.pendingClaims, key);
+				try {
+					await this.options.pathReservations?.release(key);
+				} finally {
+					this.reservations.delete(key);
+					settle();
+				}
 			},
 			markDetached: (key) => this.options.pathReservations?.setAttached(key, false),
 			now: () => this.now(),
@@ -97,6 +109,16 @@ export class RpcSessionRegistry {
 	}
 
 	openSession(requested: RpcSessionLaunchProfile, options?: RpcSessionOpenOptions): Promise<OpenRpcSession> {
+		// A warm in flight (the boot load of senpi#6147 included) loads on this loop and yields it between modules
+		// (senpi#6199): an open builds its runtime after the warms of ITS cwd that are loading when it arrives, so
+		// its factories never run beside that load. Other cwds and later warms are not waited on, and the wait is
+		// bounded by `closeGraceMs` like the closing-reservation wait.
+		const warming = this.warmsInFlight?.(requested.cwd);
+		if (warming === undefined) return this.openNow(requested, options);
+		return waitForWarms(warming, this.closeGraceMs, requested.cwd).then(() => this.openNow(requested, options));
+	}
+
+	private openNow(requested: RpcSessionLaunchProfile, options?: RpcSessionOpenOptions): Promise<OpenRpcSession> {
 		return openRegistrySession(
 			{
 				entries: this.entries,

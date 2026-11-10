@@ -49,6 +49,9 @@ export interface SessionRelocationHost {
 	request(request: RelocationRequest, signal?: AbortSignal): Promise<RelocationRequestResult>;
 }
 
+/** The builtin tools the agent asks a host through; a run ends only after each such call has handed back its answer. */
+export const RELOCATION_TOOL_NAMES: readonly string[] = ["list_relocation_targets", "relocate_session"];
+
 export const RELOCATION_NOT_OFFERED: RelocationUnavailable = {
 	status: "unavailable",
 	reason: "not_offered",

@@ -5,6 +5,8 @@ export interface SessionHolder {
 	readonly cwd: string | undefined;
 	readonly host_socket?: string;
 	readonly host_instance?: string;
+	/** The record is held, but its owner's start time could not be read, so its identity is unverified. */
+	readonly unproven?: true;
 }
 
 /** Public RPC identity, supplied by the host rather than the client's opaque context. */

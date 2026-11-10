@@ -25,10 +25,16 @@ const Params = Type.Object(
 	{
 		query: Type.String({ minLength: 2, description: "The search query to use" }),
 		allowed_domains: Type.Optional(
-			Type.Array(Type.String(), { description: "Only include search results from these domains" }),
+			Type.Array(Type.String(), {
+				description:
+					"Only include search results from these domains. Cannot be combined with a non-empty blocked_domains.",
+			}),
 		),
 		blocked_domains: Type.Optional(
-			Type.Array(Type.String(), { description: "Never include search results from these domains" }),
+			Type.Array(Type.String(), {
+				description:
+					"Never include search results from these domains. Cannot be combined with a non-empty allowed_domains.",
+			}),
 		),
 		max_results: Type.Optional(
 			Type.Integer({
@@ -91,11 +97,13 @@ export function createWebSearchTool(getConfig: ConfigProvider, options: WebSearc
 
 	return defineTool<typeof Params, SearchRenderDetails>({
 		name: "web_search",
+		runs: "brain",
 		workspaceEffect: "read",
 		label: "Web Search",
 		description: "Search the web for current information and return source URLs for citation.",
 		promptSnippet: "Search the web for current information, documentation, news, or external facts.",
 		promptGuidelines: [WEB_SEARCH_CITE_GUIDELINE],
+		fullPromptGuidelines: ["After using web_search, cite relevant returned URLs in the final answer."],
 		parameters: Params,
 		async execute(_toolCallId, params, signal, onUpdate, ctx: ExtensionContext) {
 			if (params.allowed_domains?.length && params.blocked_domains?.length) {

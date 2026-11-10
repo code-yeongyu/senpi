@@ -1,25 +1,11 @@
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it, vi } from "vitest";
-import type { AgentToolUpdateCallback, ExtensionAPI, ExtensionContext, ExtensionFactory } from "../src/index.ts";
-import { createHarness } from "./suite/harness.ts";
+import type { AgentToolUpdateCallback, ExtensionContext } from "../src/index.ts";
+import { createExecuteToolHarness } from "./helpers/execute-tool-harness.ts";
 
 vi.mock("@code-yeongyu/senpi", async () => await import("../src/index.ts"));
 const { marshalToolResult } = await import("../../senpi-codemode/src/tool/image.ts");
-
-function createExecuteToolHarness(factory: (pi: ExtensionAPI) => void) {
-	let api: ExtensionAPI | undefined;
-	const extensionFactories: ExtensionFactory[] = [
-		(pi) => {
-			api = pi;
-			factory(pi);
-		},
-	];
-	return createHarness({ extensionFactories }).then((harness) => ({
-		...harness,
-		api: api as ExtensionAPI,
-	}));
-}
 
 describe("pi.executeTool", () => {
 	it("rejects unknown and inactive tools with typed errors", async () => {

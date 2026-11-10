@@ -10,6 +10,7 @@ import {
 	type ChromeKillPlan,
 	parseWindowsProcessRows,
 	WINDOWS_PROCESS_ROWS,
+	type WindowsProcessRow,
 } from "./windows-chrome-tree.ts";
 
 // Bun launches its Chrome with exactly this default flag run (see `Bun.WebView` backend docs);
@@ -33,11 +34,26 @@ function positivePids(texts: readonly string[]): number[] {
 	return texts.map(Number).filter((pid) => Number.isInteger(pid) && pid > 0);
 }
 
+async function windowsProcessRows(): Promise<WindowsProcessRow[]> {
+	return parseWindowsProcessRows(
+		await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_PROCESS_ROWS]),
+	);
+}
+
 // Bun's Chrome browsers and every process under them, from one CIM listing (see windows-chrome-tree.ts
 // for why a recorded parent pid alone is not proof of parentage).
 async function windowsBunChromeKillPlan(): Promise<ChromeKillPlan> {
-	const stdout = await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_PROCESS_ROWS]);
-	return bunChromeKillPlan(parseWindowsProcessRows(stdout), process.pid);
+	return bunChromeKillPlan(await windowsProcessRows(), process.pid);
+}
+
+// Every process of Bun's Chrome tree; the browser root also names the profile Bun made for it.
+async function windowsBunChromeBrowsers(): Promise<BunChromeBrowser[]> {
+	const rows = await windowsProcessRows();
+	const profiles = new Map(rows.map((row) => [row.pid, row.profileDir]));
+	return bunChromeKillPlan(rows, process.pid).kill.map((pid) => {
+		const profileDir = profiles.get(pid);
+		return profileDir === undefined ? { pid } : { pid, profileDir };
+	});
 }
 
 // A refused kill is written to the CI readiness log, so a wrong adoption shows up as a line instead of a dead runner.
@@ -60,17 +76,19 @@ async function windowsListedPids(): Promise<Set<number>> {
 /**
  * Windows reports a terminated process as gone to `process.kill(pid, 0)` while the process object
  * still exists (Bun holds its child's handle until it reaps it), so the wait is on the process list.
+ * Resolves whether every pid left the list before the bound.
  */
-async function waitForWindowsRemoval(pids: readonly number[]): Promise<void> {
+async function waitForWindowsRemoval(pids: readonly number[]): Promise<boolean> {
 	const deadline = Date.now() + EXIT_DEADLINE_MS;
 	for (;;) {
 		const listed = await windowsListedPids();
-		if (!pids.some((pid) => listed.has(pid)) || Date.now() >= deadline) return;
+		const gone = !pids.some((pid) => listed.has(pid));
+		if (gone || Date.now() >= deadline) return gone;
 		await new Promise((resolve) => setTimeout(resolve, EXIT_POLL_MS));
 	}
 }
 
-/** A browser Bun launched; `profileDir` is the temp profile Bun made for it (macOS and Linux only). */
+/** A Bun Chrome process; a browser names the temp profile Bun made for it in `profileDir`. */
 export interface BunChromeBrowser {
 	readonly pid: number;
 	readonly profileDir?: string;
@@ -88,6 +106,11 @@ async function posixBunChromeBrowsers(): Promise<BunChromeBrowser[]> {
 		browsers.push(profileDir === undefined ? { pid } : { pid, profileDir });
 	}
 	return browsers;
+}
+
+/** Bun's running Chrome: its browsers, and on Windows every process of their tree. */
+export function listBunChromeBrowsers(): Promise<BunChromeBrowser[]> {
+	return process.platform === "win32" ? windowsBunChromeBrowsers() : posixBunChromeBrowsers();
 }
 
 function alive(pid: number): boolean {
@@ -133,14 +156,16 @@ export async function settleDeadBunChrome(): Promise<void> {
 // Windows has no WebKit backend, so `closeAll()` can only end Chrome, but it returns while the
 // browser and its helpers still run (measured: the whole tree alive 250 ms later, part of it after
 // 1.25 s), and a Chrome launched meanwhile finds the profile locked ("Chrome process closed the
-// pipe"). So the tree is listed first, ended as a whole, and awaited.
-async function killWindowsBunChromeTree(webViewClass: NativeWebViewClass): Promise<void> {
+// pipe"). So the tree is listed first, ended as a whole, and awaited. Resolves true once it is gone; a plan
+// that refused to kill (it adopted a protected process) never counts as gone.
+async function killWindowsBunChromeTree(webViewClass: NativeWebViewClass): Promise<boolean> {
 	const plan = await windowsBunChromeKillPlan();
 	webViewClass.closeAll();
 	const running = plan.kill.filter(alive);
 	if (running.length > 0) await run("taskkill", ["/F", ...running.flatMap((pid) => ["/PID", String(pid)])]);
-	await waitForWindowsRemoval(plan.kill);
+	const gone = await waitForWindowsRemoval(plan.kill);
 	logSkippedKills(plan);
+	return gone && plan.skipped.length === 0;
 }
 
 /** The process and timing boundary of a retirement; tests substitute it. */
@@ -152,7 +177,8 @@ export interface ChromeRetireSeams {
 	readonly deadline: (ms: number) => AttachDeadline;
 	/** Sends CDP `Browser.close`; resolves false once that failed (see `requestBrowserClose`). */
 	readonly requestClose: (webViewClass: NativeWebViewClass) => Promise<boolean>;
-	readonly killWindowsTree: (webViewClass: NativeWebViewClass) => Promise<void>;
+	/** Ends Bun's Chrome tree on Windows; resolves true once no process of it is left. */
+	readonly killWindowsTree: (webViewClass: NativeWebViewClass) => Promise<boolean>;
 	readonly removeProfile: (dir: string) => Promise<void>;
 }
 
@@ -168,10 +194,7 @@ function defaultChromeRetireSeams(): ChromeRetireSeams {
 	const platform = process.platform;
 	return {
 		platform,
-		listBrowsers:
-			platform === "win32"
-				? async () => (await windowsBunChromeKillPlan()).kill.map((pid) => ({ pid }))
-				: posixBunChromeBrowsers,
+		listBrowsers: platform === "win32" ? windowsBunChromeBrowsers : posixBunChromeBrowsers,
 		alive,
 		signal: signalQuietly,
 		deadline: timedDeadline,
@@ -216,6 +239,10 @@ async function endBySignal(pids: readonly number[], seams: ChromeRetireSeams): P
 	await exitedBefore(left, EXIT_DEADLINE_MS, seams);
 }
 
+async function removeProfiles(browsers: readonly BunChromeBrowser[], seams: ChromeRetireSeams): Promise<void> {
+	for (const browser of browsers) if (browser.profileDir) await seams.removeProfile(browser.profileDir);
+}
+
 /**
  * Ends the Chrome Bun spawned once no proxied view needs it; the next Chrome-backed view respawns it.
  * Chrome is first asked to quit over CDP `Browser.close` (senpi#4174: only a graceful quit lets macOS
@@ -234,11 +261,11 @@ export async function retireBunChrome(
 	const running = pids.filter(seams.alive);
 	if (running.length > 0) await quitGracefully(webViewClass, running, seams);
 	if (seams.platform === "win32") {
-		await seams.killWindowsTree(webViewClass);
+		if (await seams.killWindowsTree(webViewClass)) await removeProfiles(browsers, seams);
 		return;
 	}
 	if (seams.platform !== "darwin") webViewClass.closeAll();
 	await endBySignal(pids, seams);
 	if (pids.some(seams.alive)) return;
-	for (const browser of browsers) if (browser.profileDir) await seams.removeProfile(browser.profileDir);
+	await removeProfiles(browsers, seams);
 }

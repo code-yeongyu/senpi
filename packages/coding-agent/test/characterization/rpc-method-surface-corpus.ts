@@ -12,7 +12,7 @@ export type Opened = { sessionId: string; state: { sessionFile: string } };
 export const NO_ID = "00000000-0000-7000-8000-000000000000";
 /** Host commands carry no `sessionId` routing envelope; every other method is routed to the fresh session. */
 const HOST_METHODS = new Set(
-	"get_protocol_info open_session close_session release_session unload_session detach_connection get_subscription_limits list_sessions subscribe_sessions unsubscribe_sessions set_session_context warm attach_session release_attachment reclaim_session move_session".split(
+	"get_protocol_info open_session close_session release_session unload_session detach_connection get_subscription_limits list_sessions subscribe_sessions unsubscribe_sessions set_session_context warm attach_session release_attachment reclaim_session move_session list_hands select_hand".split(
 		" ",
 	),
 );
@@ -23,13 +23,13 @@ const HOST_METHODS = new Set(
  * keys, or `no:<errorCode>:<error>`. A method added to or removed from `RpcCommand` fails tsc here.
  */
 export const TODAY: { readonly [M in RpcCommand["type"]]: string } = {
-	get_recovery_page: "no::Unknown command: get_recovery_page",
-	release_recovery: "no::Unknown command: release_recovery",
-	cancel_attempt: "no::Unknown command: cancel_attempt",
-	reset_stream: "no::Unknown command: reset_stream",
+	get_recovery_page: "no:feature_disabled:feature_disabled",
+	release_recovery: "no:feature_disabled:feature_disabled",
+	cancel_attempt: "no:feature_disabled:feature_disabled",
+	reset_stream: "no:feature_disabled:feature_disabled",
 	get_protocol_info:
 		"ok{agentDir,capabilities,engineOrdinal,engineVersion,generation,instanceId,launch_profile,memory_pressure,method_classes,mode,path_identity_resolver,protocolVersion,serverVersion}",
-	open_session: "ok{sessionId,state}",
+	open_session: "ok{permissionPreset,permissionPresetSource,permissionPresetStatus,sessionId,state}",
 	close_session: '{"sessionId":"$SID"} => ok{}',
 	release_session: '{"sessionId":"$SID","reason":"takeover"} => ok{attachments,dropped,released,session_path}',
 	unload_session: '{"sessionId":"$SID"} => ok{outcome,sessionPath}',
@@ -44,10 +44,12 @@ export const TODAY: { readonly [M in RpcCommand["type"]]: string } = {
 	attach_session:
 		'{"sessionId":"$SID","durableSessionId":"$NO"} => no:session_identity_mismatch:session_identity_mismatch',
 	release_attachment: '{"sessionId":"$SID"} => ok{deferred}',
+	list_hands: "no::hand_selection_unsupported",
+	select_hand: '{"sessionId":"$SID","device":null} => no::hand_selection_unsupported',
 	reclaim_session:
 		'{"sessionPath":"$PATH","durableSessionId":"$NO","expectedHostInstance":"$NO"} => no:session_identity_mismatch:session_identity_mismatch',
 	move_session: '{"op":"status","moveId":"$NO"} => ok{reason,state}',
-	prompt: '{"message":"Hello."} => ok{disposition}',
+	prompt: '{"message":"Hello."} => ok{disposition,turnId}',
 	release_tool_barrier: '{"barrierId":"$NO"} => ok{released}',
 	send_custom_message: '{"customType":"x14","content":"note","display":false} => ok',
 	continue_from_leaf: "no:nothing_to_continue:There is nothing to continue: the session has no messages yet.",
@@ -75,8 +77,10 @@ export const TODAY: { readonly [M in RpcCommand["type"]]: string } = {
 	abort_branch_summary: "ok",
 	new_session: "ok{cancelled}",
 	wake: "ok{admitted}",
+	admit_external_message:
+		'{"deliveryId":"$NO","text":"X14 delivery.","deliverAs":"followUp","whenIdle":"queue"} => ok{kind,turnId}',
 	get_state:
-		"ok{answeredUiRequests,autoCompactionEnabled,contextUsage,cwd,entries,fastMode,favoriteModels,followUp,followUpMode,holds,isBashRunning,isCompacting,isStreaming,lifecycle,messageCount,model,ordered,pause,paused,pausedHeldInputCount,pausedNoticeCount,pendingDialogs,pendingMessageCount,pendingModelSwitch,pendingQuestions,projectTrusted,retryAttempt,runPaused,scopedModels,sessionFile,sessionId,sessionModelThinkingLevels,steering,steeringMode,thinkingLevel,thinkingLevelSource,usageTotals}",
+		"ok{answeredUiRequests,autoCompactionEnabled,contextUsage,cwd,effectivePermissionPreset,entries,fastMode,favoriteModels,followUp,followUpMode,holds,isBashRunning,isCompacting,isStreaming,lifecycle,messageCount,model,ordered,pause,paused,pausedHeldInputCount,pausedNoticeCount,pendingDialogs,pendingMessageCount,pendingModelSwitch,pendingQuestions,permissionPreset,permissionPresetSource,permissionPresetStatus,projectTrusted,retryAttempt,runPaused,scopedModels,sessionFile,sessionId,sessionModelThinkingLevels,steering,steeringMode,thinkingLevel,thinkingLevelSource,usageTotals}",
 	get_snapshot: '{"tail":0} => ok{entries,history_truncated,markerId,next_before,state}',
 	request_self_settle: "ok{epoch,humanInputRevision,reason,recorded}",
 	get_effect_status: '{"effectId":"$NO"} => ok{found,searched}',
@@ -97,6 +101,8 @@ export const TODAY: { readonly [M in RpcCommand["type"]]: string } = {
 	set_follow_up_mode: '{"mode":"all"} => ok',
 	compact: "no::Nothing to compact (session too small)",
 	set_auto_compaction: '{"enabled":false} => ok',
+	set_permission_preset:
+		'{"permissionPreset":"ask"} => ok{permissionPreset,permissionPresetSource,permissionPresetStatus}',
 	set_auto_retry: '{"enabled":false} => ok',
 	abort_retry: "ok",
 	set_retry_fallback:
@@ -130,6 +136,11 @@ export const TODAY: { readonly [M in RpcCommand["type"]]: string } = {
 	get_media: '{"toolCallId":"$NO","contentIndex":0} => no:media_not_found:media_not_found',
 	get_commands: "ok{commands}",
 	get_loaded_surfaces: "ok{extensions,mcpServers}",
+	get_project_trust: "ok{choices,cwd,locked,projectTrusted,requiresTrust,saved}",
+	set_project_trust: '{"choice":"trust"} => ok{choices,cwd,locked,projectTrusted,requiresTrust,saved}',
+	get_project_settings: "ok{cwd,error,exists,path,projectTrusted,settings}",
+	set_project_setting:
+		'{"key":"1x14","value":true} => no:invalid_argument:set_project_setting requires an identifier \'key\' and a JSON \'value\' (null removes the key).',
 	extension_request: '{"name":"x14-none"} => no::Unknown extension RPC request: x14-none',
 	"eval_cells.list": "ok:object",
 	"eval_cells.peek": '{"cellId":"$NO"} => no:eval_cell_not_found:Unknown detached eval cell "<uuid>"',
@@ -143,6 +154,8 @@ export const TODAY: { readonly [M in RpcCommand["type"]]: string } = {
 	get_provider_accounts: '{"provider":"x14-none"} => ok{accounts,ordered}',
 	account_pin: '{"provider":"x14-none","name":null} => no::No stored credential for provider: x14-none',
 	account_remove: '{"provider":"x14-none","name":"x14"} => no::Provider account not found: x14',
+	account_reset:
+		'{"provider":"x14-none","name":"x14"} => no:account_not_found:Provider account not found. Refresh the account list.',
 	account_order: '{"provider":"x14-none","names":null} => no::No stored credential for provider: x14-none',
 	test_provider_account: '{"provider":"x14-none","name":"x14"} => no::unsupported_provider',
 	set_client_info: '{"width":80} => ok',

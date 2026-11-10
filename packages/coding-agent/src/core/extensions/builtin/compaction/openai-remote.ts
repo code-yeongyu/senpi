@@ -106,7 +106,10 @@ type OpenAiRemoteCompactionContext = {
 	getSystemPrompt(): string;
 	model: Model<Api> | undefined;
 	modelRegistry: {
-		getApiKeyAndHeaders(model: Model<Api>): Promise<
+		getApiKeyAndHeaders(
+			model: Model<Api>,
+			options?: { sessionId?: string },
+		): Promise<
 			| {
 					ok: true;
 					apiKey?: string;
@@ -583,7 +586,7 @@ export async function runOpenAiRemoteCompaction(
 		return undefined;
 	}
 
-	const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+	const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model, { sessionId: ctx.sessionManager.getSessionId() });
 	if (!auth.ok) {
 		emit?.({
 			version: 1,
@@ -683,6 +686,7 @@ export async function runOpenAiRemoteCompaction(
 		return undefined;
 	}
 
+	const siwc = requestModel.api === "openai-responses" && requestModel.compat?.siwc === true;
 	if (supportsOpenAiResponsesRemoteCompactionV2(requestModel)) {
 		// The v2 beta header is request-local, so the checkpoint keeps the origin every later
 		// turn presents; fingerprinting it made replay refuse every v2 checkpoint (senpi#2378).
@@ -707,7 +711,7 @@ export async function runOpenAiRemoteCompaction(
 			describeTimeout: (waitedMs) =>
 				timedOut(
 					waitedMs,
-					requestModel.api === "openai-codex-responses"
+					requestModel.api === "openai-codex-responses" || siwc
 						? "local-summary"
 						: supportsOpenAiResponsesWebSocket(requestModel)
 							? "websocket"
@@ -715,6 +719,22 @@ export async function runOpenAiRemoteCompaction(
 				),
 		});
 		if (result || requestModel.api === "openai-codex-responses") return result;
+	}
+
+	// SIWC permits only streaming /responses; unavailable v2 falls back to the local summary.
+	if (siwc) {
+		// A v2 attempt that ran already reported its own outcome; only the skipped attempt is reported here.
+		if (!supportsOpenAiResponsesRemoteCompactionV2(requestModel)) {
+			emit?.({
+				version: 1,
+				action: "remote_fallback",
+				route: "builtin.compaction.openai_remote",
+				requestId: event.requestId,
+				modelId: requestModel.id,
+				reason: "siwc-remote-compaction-v2-unsupported",
+			});
+		}
+		return undefined;
 	}
 
 	if (supportsOpenAiResponsesWebSocket(requestModel) && !remoteBudgetExhausted("websocket")) {

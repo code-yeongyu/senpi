@@ -3,6 +3,7 @@
 import { getShellEnv } from "../../../../utils/shell.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import {
+	TERMINAL_BACKGROUND_AGE_EVENT,
 	TERMINAL_MONITOR_ENDED_EVENT,
 	TERMINAL_MONITOR_STATE_EVENT,
 	WAKE_SOURCE_STATE_EVENT,
@@ -12,7 +13,7 @@ import { tapBackgroundSession, untapBackgroundSession } from "./job-widget-tap.t
 import type { MonitorNotifier } from "./monitor-notify.ts";
 import { removeMonitorStateDir, terminalStateDir } from "./monitor-state-dir.ts";
 import type { MonitorStatusTicker } from "./monitor-status-ticker.ts";
-import type { TerminalNotifier } from "./notify.ts";
+import { describeBackgroundAge, type TerminalNotifier } from "./notify.ts";
 import type { PersistenceState } from "./restore-session.ts";
 import { type TerminalEventSinks, TerminalSessionBundle } from "./session-bundle.ts";
 import type { ResolvedTerminalSettings } from "./settings.ts";
@@ -127,6 +128,16 @@ export function bundleSinks(pi: ExtensionAPI, state: TerminalExtensionState): Te
 			}
 			record();
 		},
+		onBackgroundAge: (event) => {
+			pi.events?.emit(TERMINAL_BACKGROUND_AGE_EVENT, event);
+			pi.rpc?.emit(TERMINAL_BACKGROUND_AGE_EVENT, event);
+			withTerminalContext(
+				() => state.ctx?.ui?.notify?.(describeBackgroundAge(event), event.kind === "running" ? "info" : "warning"),
+				retire,
+			);
+			// A reap reaches the model through the session's completion notice, which names the reap.
+			if (event.kind !== "reaped") state.notifier?.notifyAge(event);
+		},
 		onBackgroundExit: (id, runtime) => {
 			state.recordedBackgroundIds.delete(id);
 			if (state.manifestWriter) void state.manifestWriter.recordBackgroundExit(id);
@@ -172,6 +183,9 @@ export function buildToolContext(pi: ExtensionAPI, state: TerminalExtensionState
 		get maxDurableMonitors() {
 			return state.settings.maxDurableMonitors;
 		},
+		get backgroundAutoReapMinutes() {
+			return state.settings.backgroundAutoReapMinutes;
+		},
 		get monitorRegistry() {
 			return requireBundle().monitors;
 		},
@@ -179,8 +193,17 @@ export function buildToolContext(pi: ExtensionAPI, state: TerminalExtensionState
 		getSessionContext: () => state.ctx,
 		// Exit listeners registered before a reload reach the post-reload owner through the
 		// shared bundle, so this must dispatch via the bundle, never the instance notifier.
-		onBackgroundStart: (id: string, description: string, startedAtMs: number, command?: string) => {
-			state.bundle?.notifyBackgroundStart(id, description, startedAtMs);
+		onBackgroundStart: (
+			id: string,
+			description: string,
+			startedAtMs: number,
+			command?: string,
+			autoReapMinutes?: number,
+		) => {
+			state.bundle?.notifyBackgroundStart(id, description, startedAtMs, {
+				...(command === undefined ? {} : { command }),
+				...(autoReapMinutes === undefined ? {} : { autoReapMinutes }),
+			});
 			const runtime = state.bundle?.manager.get(id);
 			if (runtime) {
 				const key = withTerminalContext(
@@ -196,6 +219,9 @@ export function buildToolContext(pi: ExtensionAPI, state: TerminalExtensionState
 		onSessionInput: (id: string) => untapBackgroundSession(state.bundle?.manager.get(id)),
 		onBackgroundExit: (id: string, runtime: TerminalExitView) => {
 			state.bundle?.notifyBackgroundExit(id, runtime);
+		},
+		onBackgroundReapFailed: (id: string, autoReapMinutes: number, reason: string) => {
+			state.bundle?.notifyBackgroundReapFailed(id, autoReapMinutes, reason);
 		},
 		onMonitorRearmed: (id: string) => state.monitorNotifier?.rearm(id),
 		onMonitorsResumed: (ids: readonly string[]) => state.monitorNotifier?.resume(ids),

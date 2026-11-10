@@ -10,11 +10,11 @@ import type {
 } from "../../../src/modes/rpc/compact-recovery-types.ts";
 import { type FrozenRef, TransferStaging } from "../../../src/modes/rpc/compact-transfer-staging.ts";
 import { SessionAcceptanceLane } from "../../../src/modes/rpc/session-acceptance-lane.ts";
-import { RpcSessionRegistry, type RpcSessionEntry } from "../../../src/modes/rpc/session-registry.ts";
 import { dataOf, type RawClient, statusHost, type WireRecord } from "../rpc-session-status-support.ts";
 import { spoolRoot } from "../compact-storage-support.ts";
 import { FLAG } from "./4272-construction-host-support.ts";
 import { specDigest } from "./4272-frozen-bytes-support.ts";
+import { observeInProcessOpens } from "../rpc-in-process-entry-support.ts";
 
 // Part of #4272 (S13, R4.B6, RULING-65 S13-Q1/Q2 = A, RULING-63 acceptance): an ordinary event whose record is larger
 // than F reaches a peer that selected compact events as a bounded envelope naming an event lease at the event's accepted
@@ -55,13 +55,11 @@ const oversized = (callId: string, text: string) => ({
 async function compactHost() {
 	vi.stubEnv(FLAG, "1");
 	const host = await statusHost();
-	const admissions = vi.spyOn(RpcSessionRegistry.prototype, "getForCommand");
+	const admissions = observeInProcessOpens(host);
 	const plain = host.client("plain");
 	const routing = String(dataOf(await plain.request({ type: "open_session", cwd: host.cwd })).sessionId);
-	const entry = admissions.mock.results.findLast((result) => result.type === "return")?.value as
-		| RpcSessionEntry
-		| undefined;
-	admissions.mockRestore();
+	const entry = admissions.entryFor(routing);
+	admissions.restore();
 	const lane = entry?.acceptance ?? expect.unreachable("no real acceptance lane with the flag on");
 	const pi = [...host.extensionApis.values()].at(-1) ?? expect.unreachable("no session extension API");
 	const compact = host.client("compact");
@@ -304,7 +302,9 @@ it("T6 X06 golden: with the flag off a compact_events peer receives the complete
 		const lease = { id: "event:socket-1:1", admissionId: "attach-1" } as LeaseRef;
 		expect(await release(compact, routing, lease)).toMatchObject({
 			success: false,
-			error: "Unknown command: release_recovery",
+			error: "feature_disabled",
+			errorCode: "feature_disabled",
+			errorData: { feature: "compact_updates" },
 		});
 	} finally {
 		await host[Symbol.asyncDispose]();

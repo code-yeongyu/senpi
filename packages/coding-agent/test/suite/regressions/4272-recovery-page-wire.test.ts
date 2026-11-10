@@ -281,7 +281,9 @@ it("golden: with the flag off, get_recovery_page and the legacy read commands an
 		type: "response",
 		command: "get_recovery_page",
 		success: false,
-		error: "Unknown command: get_recovery_page",
+		error: "feature_disabled",
+		errorCode: "feature_disabled",
+		errorData: { feature: "compact_updates" },
 		sessionId,
 	});
 	const entries = await client.request({ type: "get_entries", sessionId });

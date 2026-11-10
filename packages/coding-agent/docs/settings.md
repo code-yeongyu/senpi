@@ -481,6 +481,7 @@ unknown (e.g. Google models) or caching is off, no budget applies and timeout be
 |---------|------|---------|-------------|
 | `promptCache.cacheAwareTimeouts` | boolean | `true` | Cap foreground tool waits at the model's prompt-cache TTL minus the safety buffer; `false` restores the fixed legacy ceilings |
 | `promptCache.safetyBufferSeconds` | number | `30` | Headroom subtracted from the cache TTL (a 5m TTL yields a 270s ceiling). If it consumes the whole TTL, no budget applies |
+| `promptCache.sessionAffinity` | boolean | `true` | Send a stable per-session key on Anthropic Messages requests (`metadata.user_id`, plus the session-affinity header where the model's compat sends one) so a gateway that spreads requests over several accounts keeps one session on one account and its prompt cache. The key is an HMAC of the session id under a random per-install salt: it never carries the session id or any account or user identity. `false` restores the earlier behavior: no `metadata.user_id`, and a model whose compat sends the affinity header sends the session id there as before. A model whose compat sets `sendSessionAffinityHeaders: false` sends neither |
 | `promptCache.goalBackstopMaxSeconds` | number | `270` | Longest a goal parked on live wake sources (terminal monitors, background sessions, detached `eval` cells, task children) waits before it re-checks with a full turn, clamped to 1..3600. The default lands inside the 5m cache TTL; raise it toward `3570` to trade re-check frequency for cost on a wait you trust |
 
 A foreground `bash` command still running at the budget is handed to a live background session
@@ -655,6 +656,12 @@ This is the default and has no setting. Tools may declare `exposure: "eval"` to 
 | `turn_max_runtime_ms` | number | `21600000` | Hard cap on one turn's runtime from prompt accept; `0` disables |
 
 When a limit is reached the session pauses with a notice instead of starting another turn; any message you send continues it, because only turns since your last message count.
+
+### Thread Chains
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `threads.chainCountLimit` | number | unset | Hops a thread chain may make (session A prompts B, B prompts A, ...) before the next thread call is refused with `chain_count_limit`; a chain that comes back to a session it already visited is allowed. Unset (the default) means unlimited. There is no cost limit. Read when RPC input arrives with a `chainCount` (a thread call from another session; see `rpc.md`) |
 
 ### Ask User
 
