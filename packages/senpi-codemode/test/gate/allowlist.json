@@ -1,6 +1,12 @@
 {
 	"version": 1,
 	"nodes": {
+		"senpi#6334": {
+			"additions": [
+				"legacyContracts/test/js-kernel-host-registry-slot.test.ts/JavaScript kernel realm Given the host realm holds the redaction registry slot when a cell looks for it then the cell cannot see it"
+			],
+			"reason": "senpi#6334 (omo#12965 stopgap): the JavaScript kernel realm contract in test/js-kernel-host-registry-slot.test.ts pins that a cell cannot see the host realm's redaction registry slot. It is a new contract case and the only measured key this PR adds; no prompt cell moves and the baseline is unchanged."
+		},
 		"senpi#6259": {
 			"additions": [
 				"legacyContracts/test/eval-nested-tool-updates.test.ts/Given a cell that settles many nested tool calls without printing (#6257 review) When each call settles, then the live view holds only the newest settled call's output"
