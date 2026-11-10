@@ -269,18 +269,22 @@ export function streamWithCredentialRotation(
 			);
 			if (written !== STORE_BUSY) emitProviderAccountsChanged(sources.providerId);
 			const blockedUntil = written === STORE_BUSY ? undefined : written?.blockedUntil;
-			appendCredentialBlockLog(sources.repository.blockLogPath(), {
-				at: new Date(now()).toISOString(),
-				provider: sources.providerId,
-				slot: slot.name,
-				reason: block.reason,
-				...(blockedUntil === undefined ? {} : { blockedUntil: new Date(blockedUntil).toISOString() }),
-				...(block.reason === "rate_limit" && block.resetSource !== undefined
-					? { resetSource: block.resetSource }
-					: {}),
-				...(block.reason === "rate_limit" && block.modelFamily !== undefined ? { model: block.modelFamily } : {}),
-				...(error === undefined ? {} : { excerpt: redactBlockExcerpt(credentialFailureText(error)) }),
-			});
+			const blockLogPath = sources.repository.blockLogPath?.();
+			if (blockLogPath !== undefined)
+				appendCredentialBlockLog(blockLogPath, {
+					at: new Date(now()).toISOString(),
+					provider: sources.providerId,
+					slot: slot.name,
+					reason: block.reason,
+					...(blockedUntil === undefined ? {} : { blockedUntil: new Date(blockedUntil).toISOString() }),
+					...(block.reason === "rate_limit" && block.resetSource !== undefined
+						? { resetSource: block.resetSource }
+						: {}),
+					...(block.reason === "rate_limit" && block.modelFamily !== undefined
+						? { model: block.modelFamily }
+						: {}),
+					...(error === undefined ? {} : { excerpt: redactBlockExcerpt(credentialFailureText(error)) }),
+				});
 		},
 		now,
 	});

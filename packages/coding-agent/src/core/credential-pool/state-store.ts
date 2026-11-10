@@ -5,7 +5,6 @@ import { extractChatGptSubscriptionAccountId } from "@earendil-works/pi-ai/utils
 import { z } from "zod";
 import { getAgentDir } from "../../config.ts";
 import { CredentialStoreBusyError, FILE_STORAGE_LOCK_RETRY_BUDGET_MS } from "../lockfile-policy.ts";
-import { BLOCK_LOG_FILENAME } from "./block-log.ts";
 import { acquireStateFileLock, readStateFile, writeStateFileAtomic } from "./state-file.ts";
 
 export const CREDENTIAL_POOL_STATE_FILENAME = "credential-pool-state.json";
@@ -78,6 +77,9 @@ const documentSchema = z.looseObject({
 });
 
 export type CredentialPoolStateDocument = z.infer<typeof documentSchema>;
+
+/** The local block log (senpi#3216), kept beside the state file. */
+export const BLOCK_LOG_FILENAME = "credential-pool-blocks.jsonl";
 
 export function credentialPoolStatePath(agentDir: string = getAgentDir()): string {
 	return join(agentDir, CREDENTIAL_POOL_STATE_FILENAME);

@@ -20,7 +20,6 @@ export type CredentialBlockLogEntry = {
 	readonly excerpt?: string;
 };
 
-export const BLOCK_LOG_FILENAME = "credential-pool-blocks.jsonl";
 /** The log rolls over to one `.1` generation past this size, so it stays bounded on a busy machine. */
 export const BLOCK_LOG_MAX_BYTES = 256 * 1024;
 const EXCERPT_MAX_CHARS = 240;
