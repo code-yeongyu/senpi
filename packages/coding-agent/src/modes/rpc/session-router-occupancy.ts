@@ -22,7 +22,10 @@ export function beginDrain(host: RouterContext): void {
 		.catch((cause: unknown) => {
 			process.stderr.write(`senpi rpc park close failed during drain: ${String(cause)}\n`);
 		})
-		.then(() => sweepDrain(host));
+		.then(() => sweepDrain(host))
+		.catch((cause: unknown) => {
+			process.stderr.write(`senpi rpc drain sweep failed after park close: ${String(cause)}\n`);
+		});
 	stopSweep(host);
 	// Armed BEFORE the first pass, so a pass that fails is retried instead of ending the drain
 	// (senpi#2285). Unref'd: a draining host must never be the reason the event loop stays open.

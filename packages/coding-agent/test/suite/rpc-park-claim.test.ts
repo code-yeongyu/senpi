@@ -137,6 +137,7 @@ it.each([
 	{ durableSessionId: "12345678-1234-4123-8123-123456789abc" },
 	{ expectedHostInstance: "park-host" },
 	{ admissionId: "compact-attempt" },
+	{ attended: false as const }, // senpi#6344: construction fixes attendance before a claim.
 	{ env: { OMOCAT_LANE: "other" } },
 	{ spawnedBy: { parentSessionId: "parent", rootSessionId: "root", taskId: "task" } },
 ])("leaves the park available when claim cannot apply %j after construction", async (options) => {

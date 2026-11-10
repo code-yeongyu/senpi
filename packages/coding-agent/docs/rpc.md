@@ -2791,12 +2791,12 @@ after 60 seconds; repeating `park_session` does not extend its lifetime.
 Claim accepts the open options. `retain_on_disconnect`, model/provider, thinking level, permission preset,
 prompt surface and browser engine apply through the same live operations used by ordinary session commands or
 attach-on-open. A requested `sessionPath`, `durableSessionId`, `expectedHostInstance`, `spawnedBy`, `env`,
-`auto_title`, `retryFallback`, or an unpaired provider/model choice returns `claimed: false`
+`auto_title`, `retryFallback`, `attended: false`, or an unpaired provider/model choice returns `claimed: false`
 without consuming the park. Compact admissions (`admissionId`,
 `retry`, or a connection that selected compact transport) also miss, so the caller uses the existing `open_session`
 admission contract. Invalid applicable options receive their ordinary error response.
 
-Parks run the existing open implementation without an owner or reply. They start unattended, in memory, and acquire
+Parks run the existing open implementation without an owner or reply. They start attended, in memory, and acquire
 their persistent file and file hold only when claimed. Until then they appear in no session listing, status stream,
 `session_opened` event, session-list file, hosted export, durable-id collision check, attachment count or zero-session
 trim count. Build timing is dropped. `park_session` never makes its connection an idle-exit attachment; a claim does.

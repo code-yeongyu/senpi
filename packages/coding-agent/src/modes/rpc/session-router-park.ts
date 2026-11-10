@@ -96,6 +96,7 @@ async function claimReady(
 		command.durableSessionId !== undefined ||
 		command.expectedHostInstance !== undefined ||
 		command.admissionId !== undefined ||
+		command.attended === false ||
 		command.retry !== undefined ||
 		(command.provider !== undefined) !== (command.modelId !== undefined) ||
 		command.spawnedBy !== undefined ||
