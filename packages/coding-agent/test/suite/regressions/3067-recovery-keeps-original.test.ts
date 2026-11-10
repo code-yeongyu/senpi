@@ -165,7 +165,7 @@ it.each(["immediate", "deferred"] as const)(
 			).toBeLessThan(logged.findIndex((line) => line.includes("injected before child SIGTERM")));
 		} finally {
 			read.resolve();
-			child.exitCode = 0;
+			Object.defineProperty(child, "exitCode", { value: 0 });
 			child.emit("exit", 0, null);
 			await Promise.race([stopped, deadline]).catch(() => {});
 			vi.useRealTimers();
