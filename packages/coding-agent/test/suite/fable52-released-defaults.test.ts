@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { resolvePresetName } from "../../src/core/extensions/builtin/prompt-preset/contract.ts";
 import { OBSERVED_CLAUDE_CODE_MODEL_FLOORS } from "../../src/core/extensions/builtin/anthropic-subscription/executable-model-support.ts";
 import { RECOMMENDED_DEFAULT_MODELS } from "../../src/core/extensions/builtin/recommended-models/index.ts";
 import { DEFAULT_FALLBACK_CHAINS } from "../../src/core/retry-fallback/settings.ts";
@@ -15,6 +16,16 @@ describe("Claude Fable 5.2 is the released Fable default", () => {
 	it("fills the Fable slot of the recommended ladder at xhigh on the Claude lanes", () => {
 		expect(RECOMMENDED_DEFAULT_MODELS[1]).toEqual(["claude-fable-5-2", "xhigh", CLAUDE_PROVIDERS]);
 	});
+
+	// The new Fable default must not fall back to the generic Fable 5 prompt (review of #6309).
+	it.each(["claude-fable-5-2", "claude-mythos-5-2"])(
+		"routes %s to a Fable 5.2 preset, never the generic Fable 5 one",
+		(modelID) => {
+			const preset = resolvePresetName({ providerID: "anthropic", modelID });
+			expect(preset).not.toBe("claude-fable-5");
+			expect(preset).toBe("claude-fable-5-2");
+		},
+	);
 
 	it("ships a bare Opus-only fallback chain for Fable 5.2", () => {
 		expect(DEFAULT_FALLBACK_CHAINS["claude-fable-5-2"]).toEqual(["claude-opus-5-5", "claude-opus-5"]);
