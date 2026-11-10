@@ -6069,6 +6069,13 @@
 			],
 			"reason": "senpi#6181 (follow-up to #6168): #6168 streamed nested tool partial results into the eval cell's live update and added four modules (src/extension/cell-tool-updates.ts, src/tool/bridge-cell-binding.ts, src/tool/nested-tool-call.ts, src/tool/nested-tool-output.ts, measured in the extension and firstKernel import graphs) plus the js/py/rb/jl contract titles of test/eval-nested-tool-updates.test.ts, without an allowlist node, so codemode-gate failed on main. Reviewed additions only; no prompt cell, schema or existing measurement moves.",
 			"changes": []
+		},
+		"senpi#6315": {
+			"additions": [
+				"legacyContracts/test/bun-skill-contribution.test.ts/bun skill assets qualifies process.execPath as a Bun launcher: standalone Bun only, PATH shim in a compiled host (omo#12569)"
+			],
+			"reason": "senpi#6315 (catch-up for #6232): #6232 added the bun-skill-contribution contract case ('bun skill assets qualifies process.execPath as a Bun launcher', omo#12569) without listing it here, so codemode-gate reported it as an unreviewed addition on every PR based on main at or after bb2a3ca52b. This lists that one reviewed case; the baseline is unchanged.",
+			"changes": []
 		}
 	}
 }
