@@ -64,6 +64,23 @@ describe.skipIf(runningAsRoot)("#6287 seeding default extensions into a read-onl
 		expect(resourceLoader.getExtensions().errors).toEqual([]);
 	});
 
+	it("#given a generated shim whose target is another live engine install and a read-only extensions dir #when resources load #then that install's module is what loads", async () => {
+		const otherInstall = join(tempDir, "other-install", "dist", "core", "extensions", "builtin", "diff.js");
+		mkdirSync(join(otherInstall, ".."), { recursive: true });
+		writeFileSync(otherInstall, "export default function otherInstallDiff() {}\n");
+		const stale = `${GENERATED_SHIM_BANNER}export { default } from ${JSON.stringify(`file://${otherInstall}`)};\n`;
+		writeFileSync(join(extensionsDir, "diff.js"), stale);
+		chmodSync(join(extensionsDir, "diff.js"), 0o444);
+		chmodSync(extensionsDir, 0o555);
+
+		const resourceLoader = loader();
+		await resourceLoader.reload();
+
+		expect(resourceLoader.getExtensions().errors).toEqual([]);
+		expect(seededDefaultsLoaded(resourceLoader)).toEqual([join(extensionsDir, "diff.js")]);
+		expect(readFileSync(join(extensionsDir, "diff.js"), "utf-8")).toBe(stale);
+	});
+
 	it("#given no seeded shims and a read-only extensions dir #when resources load #then loading succeeds", async () => {
 		chmodSync(extensionsDir, 0o555);
 
@@ -71,5 +88,14 @@ describe.skipIf(runningAsRoot)("#6287 seeding default extensions into a read-onl
 		await resourceLoader.reload();
 
 		expect(resourceLoader.getExtensions().errors).toEqual([]);
+		// Nothing could be seeded, so no default extension loads from the agent dir.
+		expect(seededDefaultsLoaded(resourceLoader)).toEqual([]);
 	});
+
+	function seededDefaultsLoaded(resourceLoader: DefaultResourceLoader): string[] {
+		return resourceLoader
+			.getExtensions()
+			.extensions.map((extension) => extension.path)
+			.filter((path) => path.startsWith(extensionsDir));
+	}
 });

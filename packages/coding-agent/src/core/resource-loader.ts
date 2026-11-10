@@ -275,8 +275,9 @@ function getGlobalDefaultExtensionModulePath(extensionId: (typeof globalDefaultE
 	);
 }
 
-// A write-denied agent dir (a sandboxed review child, senpi#6287) keeps whatever shims are already there; the
-// default extensions still load from the engine's own builtins. Any other error is a real failure.
+// A write-denied agent dir (a sandboxed review child, senpi#6287) is left as it is: a missing default
+// extension shim is not seeded, so that default does not load, and a stale shim keeps loading whatever it
+// points at. Startup survives either way; any other error is a real failure.
 function seedWritable(write: () => void): boolean {
 	try {
 		write();
