@@ -621,14 +621,15 @@ export async function createReferenceDriver(
 		// must never overtake a committed step's tool work. A production session driver is checked against
 		// this rule; the hand still dedupes a recovered call by (sessionId, toolCallId).
 		const recovery = await recoverCommittedTools(next);
-		// #6249: a stop during recovery ends the step. Its aborted results are committed, and nothing is dialed
-		// after it, exactly as a stop of a live step never redials.
-		if (recovery.stopped) return;
 		const pending = inbox.filter((entry) => entry.consumedBy === undefined);
 		for (const entry of pending) {
 			if (entry.kind === "steering") await next.session.steer(entry.text);
 			else await next.session.followUp(entry.text);
 		}
+		// #6249: a stop during recovery ends the step. Its aborted results are committed and nothing is dialed
+		// after it, exactly as a stop of a live step never redials. Queued input is still handed to the rebuilt
+		// instance above, so it waits there for the next prompt, as it does after a live stop.
+		if (recovery.stopped) return;
 		// Re-admission: history ending in input the model has not answered (no committed row) dials again,
 		// and so does a recovered tool result, which the model owes an answer to.
 		if (

@@ -176,8 +176,9 @@ export async function recoverPendingToolCalls(options: ToolRecoveryOptions): Pro
 	if (pending.length === 0) return { ran: 0, stopped: false };
 	const agent = instance.agent;
 	const internals = agent as unknown as RecoveringAgent;
-	let stopped = false;
+	let runSignal: AbortSignal | undefined;
 	await internals.runWithLifecycle(async (signal) => {
+		runSignal = signal;
 		for (const call of pending) {
 			await internals.processEvents({
 				type: "tool_execution_start",
@@ -222,7 +223,8 @@ export async function recoverPendingToolCalls(options: ToolRecoveryOptions): Pro
 			await internals.processEvents({ type: "message_end", message: result });
 			onResult(result);
 		}
-		stopped = signal.aborted;
 	});
-	return { ran: pending.length, stopped };
+	// Read once the run has finished, not inside it: a stop that lands after the last tool, or an executor
+	// that throws after a stop, still counts as a stop.
+	return { ran: pending.length, stopped: runSignal?.aborted === true };
 }
