@@ -1,6 +1,12 @@
 {
 	"version": 1,
 	"nodes": {
+		"senpi#6232": {
+			"additions": [
+				"legacyContracts/test/bun-skill-contribution.test.ts/bun skill assets qualifies process.execPath as a Bun launcher: standalone Bun only, PATH shim in a compiled host (omo#12569)"
+			],
+			"reason": "senpi#6232 (omo#12569; recorded by #6315): a contract test that the bun skill qualifies process.execPath as a Bun launcher only for standalone Bun, while a compiled host resolves through its PATH shim. It reached main without this node, which failed codemode-gate for every later PR. No prompt cell moves."
+		},
 		"senpi#6259": {
 			"additions": [
 				"legacyContracts/test/eval-nested-tool-updates.test.ts/Given a cell that settles many nested tool calls without printing (#6257 review) When each call settles, then the live view holds only the newest settled call's output"
