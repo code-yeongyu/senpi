@@ -229,6 +229,12 @@ const SURFACE_AND_ACCOUNT_SCHEMAS = {
 	set_project_trust: session("set_project_trust", { choice: literals("trust", "trust_parent", "do_not_trust") }),
 	get_project_settings: session("get_project_settings", {}),
 	set_project_setting: session("set_project_setting", { key: Id, value: Type.Unknown() }),
+	read_project_file: session("read_project_file", { path: PathStr }),
+	write_project_file: session("write_project_file", {
+		path: PathStr,
+		content: Str,
+		ifEtag: Type.Union([Id, Type.Null()]),
+	}),
 	extension_request: session("extension_request", { name: Id, data: Opt(Type.Unknown()) }),
 	"eval_cells.list": session("eval_cells.list", {}),
 	"eval_cells.peek": session("eval_cells.peek", { cellId: Id, tailBytes: OptNum }),
