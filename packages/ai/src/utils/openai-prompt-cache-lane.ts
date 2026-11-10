@@ -1,4 +1,3 @@
-import { normalizeProviderId } from "../legacy-provider-ids.ts";
 import type { Api, CacheRetention, Model, OpenAIResponsesCompat } from "../types.ts";
 
 /**
@@ -16,10 +15,10 @@ export type OpenAIPromptCacheLane = "chatgpt-subscription" | "api-long" | "api-e
 /** GPT-5.6 and later (`gpt-5.6-*`, `gpt-5.10`, `gpt-6-*`, `gpt-7`, ...). */
 const OPENAI_EXTENDED_CACHE_MODEL_ID = /^gpt-(?:5\.(?:[6-9]|\d{2,})|(?:[6-9]|\d{2,})(?:\.\d+)?)(?:-|$)/i;
 
-const CHATGPT_SUBSCRIPTION_PROVIDER = "chatgpt-subscription";
-
-/** Hosts that serve signed-in ChatGPT usage: the Codex backend, and the API host Sign in with ChatGPT routes to. */
-const CHATGPT_SUBSCRIPTION_HOSTS: ReadonlySet<string> = new Set(["chatgpt.com", "api.openai.com"]);
+/** The Codex backend serves only signed-in ChatGPT usage, whatever provider id a models.json entry gives it. */
+const CHATGPT_CODEX_BACKEND_HOST = "chatgpt.com";
+/** Sign in with ChatGPT routes plan usage to the API host, so only the `siwc` compat flag tells it from an API key. */
+const SIWC_HOST = "api.openai.com";
 
 function hostnameOf(baseUrl: string): string | undefined {
 	try {
@@ -34,12 +33,9 @@ function responsesCompat(model: Model<Api>): OpenAIResponsesCompat | undefined {
 }
 
 function isChatGptSubscription(model: Model<Api>): boolean {
-	if (model.api !== "openai-codex-responses" && model.api !== "openai-responses") return false;
 	const host = hostnameOf(model.baseUrl);
-	if (host === undefined || !CHATGPT_SUBSCRIPTION_HOSTS.has(host)) return false;
-	return (
-		normalizeProviderId(model.provider) === CHATGPT_SUBSCRIPTION_PROVIDER || responsesCompat(model)?.siwc === true
-	);
+	if (model.api === "openai-codex-responses") return host === CHATGPT_CODEX_BACKEND_HOST;
+	return model.api === "openai-responses" && host === SIWC_HOST && responsesCompat(model)?.siwc === true;
 }
 
 /**

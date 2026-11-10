@@ -191,6 +191,23 @@ describe("OpenAI 12-hour API cache and the ChatGPT subscription cache (#6290)", 
 		expect(resolvePromptCacheLifetime(legacyId)).toEqual({ kind: "best-effort" });
 	});
 
+	// senpi#6296: the Codex backend serves only signed-in usage, so its host alone decides the lane.
+	it("classifies a models.json provider of any id on the Codex backend host as the subscription", () => {
+		const custom = createModel("openai-codex-responses", {
+			id: "gpt-6-sol",
+			provider: "my-codex",
+			baseUrl: "https://chatgpt.com/backend-api",
+		});
+		const apiKeyOnApiHost = createModel("openai-responses", {
+			id: "gpt-6-sol",
+			provider: "chatgpt-subscription",
+			baseUrl: "https://api.openai.com/v1",
+		});
+
+		expect(resolvePromptCacheLifetime(custom)).toEqual({ kind: "best-effort" });
+		expect(resolvePromptCacheLifetime(apiKeyOnApiHost)).toEqual({ kind: "ttl", ttlSeconds: 1800 });
+	});
+
 	it("lets disabled retention win on the subscription lane", () => {
 		const model = { ...catalogModel("chatgpt-subscription", "gpt-6-sol"), cacheRetention: "none" as const };
 
