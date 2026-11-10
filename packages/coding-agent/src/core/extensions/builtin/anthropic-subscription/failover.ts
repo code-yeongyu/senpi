@@ -18,6 +18,8 @@ export const DEFAULT_RATE_LIMIT_BLOCK_MS = 60_000;
 /** Same-account retries per turn for a transient failure (overload, network, server error); it never rotates. */
 export const TRANSIENT_RETRIES_PER_TURN = 2;
 export const TRANSIENT_RETRY_DELAY_MS = 1_000;
+/** A transient same-account retry waits the server's `retry-after` only up to this long; a longer hint falls back to the doubling delay so a stalled turn fails and session-level retry takes over (senpi#2987). */
+export const TRANSIENT_RETRY_AFTER_CAP_MS = 30_000;
 export const TURN_RETRY_SUPPRESSION_PREFIX = "senpi:no-turn-retry:";
 
 type RecordValue = Record<string, unknown>;
@@ -268,6 +270,13 @@ function isTransient(classification: SdkErrorClassification): boolean {
 	return classification.kind === "overloaded" || classification.kind === "other";
 }
 
+/** The in-place wait for a transient retry: the server's `retry-after` when present and within the cap, else the doubling backoff (senpi#2987). */
+function transientRetryDelayMs(error: unknown, transientRetriesUsed: number): number {
+	const hinted = retryAfterMs(error);
+	if (hinted !== undefined && hinted <= TRANSIENT_RETRY_AFTER_CAP_MS) return hinted;
+	return TRANSIENT_RETRY_DELAY_MS * 2 ** transientRetriesUsed;
+}
+
 function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
 	return new Promise((resolve, reject) => {
 		if (signal?.aborted) {
@@ -419,9 +428,11 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 			// model fallback take over. It never blocks or rotates the account: moving to another
 			// account writes the whole conversation to a cold prompt cache, and a persisted block would
 			// move every other session off a healthy account too (senpi#2891, senpi#3466).
+			// The in-place wait honors the server's `retry-after` when it is present and within the
+			// cap, so a short server-directed pause is respected instead of the fixed backoff (senpi#2987).
 			if (isTransient(classification)) {
 				if (visibleDeltaEmitted || transientRetriesUsed >= TRANSIENT_RETRIES_PER_TURN) throw classified;
-				const delayMs = TRANSIENT_RETRY_DELAY_MS * 2 ** transientRetriesUsed;
+				const delayMs = transientRetryDelayMs(error, transientRetriesUsed);
 				transientRetriesUsed += 1;
 				try {
 					await (options.sleep ?? abortableSleep)(delayMs, options.signal);

@@ -20,7 +20,8 @@ import { dedupeUltraworkBlocks } from "./prompt-directive-dedupe.ts";
 import { refusalError } from "./refusal.ts";
 import { getSdkBoundary, loadClaudeAgentSdk, type SdkQueryHandle } from "./sdk-boundary.ts";
 import { type ContinuityObservation, emitContinuityObservation } from "./session-observability.ts";
-import { forgetBinding } from "./session-reattach.ts";
+import { getBinding, forgetBinding } from "./session-reattach.ts";
+import { getSession } from "./session-registry.ts";
 import { requireAnthropicSubscriptionCwd } from "./session-cwd.ts";
 import { residentSessionMessages } from "./session-stream.ts";
 import {
@@ -190,6 +191,16 @@ export function streamAnthropicSubscription(
 						sessionId: affinityKey,
 						model: model.id,
 						pinnedAccount: getSessionClaudeAccountPin(options?.sessionId),
+						// A summary (or any other non-main request) belongs to the same
+						// session: prefer the live session's account, or a restored
+						// binding's, exactly like the resident path does (senpi#2987).
+						...(options?.sessionId === undefined
+							? {}
+							: {
+									preferredAccount:
+										getSession(options.sessionId)?.accountName ??
+										getBinding(options.sessionId)?.accountName,
+								}),
 						onQuery: (query) => {
 							sdkQuery = query;
 							if (wasAborted) requestAbort();
