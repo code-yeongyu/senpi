@@ -1,0 +1,71 @@
+<!-- changes-log: packages/coding-agent/src/modes/rpc/changes.md -->
+## 2026-11-10 - Claim an invisible, already-built host session (senpi#6344)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-park-ledger.ts` and `packages/coding-agent/src/modes/rpc/session-router-park.ts` own up to four speculative profiles, coalesce builds, expire ready parks after 60 seconds, consume them once, and replace successful claims in the background.
+- `packages/coding-agent/src/modes/rpc/session-router-open.ts` builds every park through the existing open, without an owner or reply. `packages/coding-agent/src/modes/rpc/session-router-open-result.ts` shares its connection barrier, capabilities, ownership, publication and exact success payload with claims.
+- `packages/coding-agent/src/modes/rpc/session-registry.ts`, `packages/coding-agent/src/modes/rpc/session-status-source.ts` and `packages/coding-agent/src/modes/rpc/session-binding.ts` keep speculative entries out of public metadata, events, counts and durable identity checks. Claim promotes the existing runtime; `packages/coding-agent/src/modes/rpc/session-registry-attach.ts` shares its live profile application.
+- `packages/coding-agent/src/modes/rpc/session-router-context.ts`, `packages/coding-agent/src/modes/rpc/session-router-close.ts` and `packages/coding-agent/src/modes/rpc/session-router-occupancy.ts` own speculative teardown independently of durable handover parks. Drain and stop fence builds and replacements before waiting for disposal.
+- `packages/coding-agent/src/modes/rpc/session-connection-context.ts` lets host-owned construction leave the asking connection's transport and delegation scope. A claim configures its prebuilt binding with the opener's capabilities through the existing capability replacement helper.
+- `packages/coding-agent/src/modes/rpc/rpc-host-command-types.ts`, `packages/coding-agent/src/modes/rpc/method-classes-schema-host.ts`, `packages/coding-agent/src/modes/rpc/host-capabilities.ts` and `packages/coding-agent/src/modes/rpc/host-observe-request.ts` carry the capability-gated commands. The corresponding response, routing and delivery paths preserve the ordinary open payload and delegated retention semantics.
+
+### Why
+
+- Warm loads services but leaves runtime construction on the caller's open path. A ready claim reuses the already-built runtime and binding. A miss never builds or waits for a build.
+- Speculation must not look like user work, hold idle exit open, collide with a durable identity, or reappear in a successor. Build-only options and compact admissions miss rather than introducing alternative construction or admission paths.
+- `packages/coding-agent/src/modes/rpc/session-router-open.ts` preserves the host context merge, session kind, media setup and binding that the second successor-open path previously skipped in senpi#3368.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/session-registry.ts` and `packages/coding-agent/src/modes/rpc/session-router-open.ts` own registry visibility, connection ownership, lifecycle teardown and the host's open response before a caller has a session.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/modes/rpc/session-router-open.ts`, `packages/coding-agent/src/modes/rpc/session-registry.ts`, `packages/coding-agent/src/modes/rpc/session-binding.ts` and `packages/coding-agent/src/modes/rpc/connection-handler.ts`.
+- LOW: the new park modules, registry option shapes, host command schemas, capability list and observation predicate.
+
+<!-- changes-log: packages/coding-agent/src/core/changes.md -->
+## 2026-11-10 - Promote a speculative in-memory session without rebuilding it (senpi#6344)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: `enablePersistence()` allocates the existing in-memory session's default file asynchronously, preserving its identity and buffered transcript.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `persistSession()` promotes that manager and acquires the existing runtime file hold.
+- `packages/coding-agent/src/core/open-timing.ts`: `withoutOpenTiming()` drops speculative build timing across its asynchronous construction scope.
+
+### Why
+
+- A parked runtime must hold no session-list file or file lease until a caller claims it. Rebuilding to gain persistence would defeat the claim's purpose. A crash before claim leaves no durable transcript to restore.
+- `packages/coding-agent/src/core/session-manager.ts` preserves the buffered identity and entries; `packages/coding-agent/src/core/agent-session-runtime.ts` acquires the same file hold as ordinary construction; `packages/coding-agent/src/core/open-timing.ts` prevents unclaimed builds from being charged to a caller.
+
+### Why an extension could not handle it
+
+- Persistence and writer registration belong to `packages/coding-agent/src/core/session-manager.ts`; the file hold belongs to `packages/coding-agent/src/core/agent-session-runtime.ts`; construction timing belongs to `packages/coding-agent/src/core/open-timing.ts`.
+
+### Expected merge conflict zones
+
+- LOW: the persistence accessor area in `packages/coding-agent/src/core/session-manager.ts`, the file-hold methods in `packages/coding-agent/src/core/agent-session-runtime.ts`, and timer creation in `packages/coding-agent/src/core/open-timing.ts`.
+
+<!-- changes-log: packages/coding-agent/src/modes/interactive/changes.md -->
+## 2026-11-10 - Refuse speculative host sessions on terminal endpoints (senpi#6344)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-control-rpc-commands.ts` answers `park_session` and `claim_session` with `multi_session_disabled`.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/session-control-rpc-commands.ts` serves a terminal that owns one session and cannot build or claim the multi-session host's speculative pool.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/session-control-rpc-commands.ts` owns the terminal endpoint's host-command boundary.
+
+### Expected merge conflict zones
+
+- LOW: the command list and switch in `packages/coding-agent/src/modes/interactive/session-control-rpc-commands.ts`.
+
+<!-- changes-log: packages/coding-agent/CHANGELOG.md -->
+### Added
+- In-process multi-session RPC hosts advertise `park_claim`: `park_session` prepares an invisible runtime for a cwd, kind and context, and `claim_session` opens it without rebuilding. Parks expire and never survive the host; unsupported options and missing parks return `claimed: false` for a normal open ([#6344](https://github.com/code-yeongyu/senpi/issues/6344)).

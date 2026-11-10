@@ -55,6 +55,8 @@ it("exempts exactly the reviewed commands from the attach gate", () => {
 			"list_sessions",
 			"memory_report",
 			"open_session",
+			"park_session",
+			"claim_session",
 			"reclaim_session",
 			"resolve_path",
 			"subscribe_sessions",

@@ -2758,6 +2758,55 @@ context - inside a provider scope of their own, then drops them.
 Probe `warm` in `get_protocol_info` capabilities before sending it: an older host answers an unknown command with an
 error.
 
+### Parking and claiming a built session (`park_claim`)
+
+An in-process multi-session host advertises `park_claim`. A caller that knows the next session's profile can
+build it ahead of time:
+
+```json
+{"id":"p1","type":"park_session","cwd":"/abs/project","kind":"worker","context":{"role":"child"}}
+{"id":"p1","type":"response","command":"park_session","success":true,"data":{"state":"parked"}}
+{"id":"c1","type":"claim_session","cwd":"/abs/project","kind":"worker","context":{"role":"child"},"retain_on_disconnect":true}
+```
+
+A successful claim has exactly the `open_session` success payload (`sessionId`, `state`, permission-mode fields
+and, where available, `presence`), with `command: "claim_session"`. It takes the opener's normal connection
+capabilities, attachment, ownership and retention policy. No runtime is built in the claim request.
+When no ready park matches, or an option requires a fresh open, the response is:
+
+```json
+{"id":"c1","type":"response","command":"claim_session","success":true,"data":{"claimed":false}}
+```
+
+Send a normal `open_session` after that miss. A claim does not wait for an in-flight park. A ready park is consumed
+once; concurrent claims cannot receive the same session. After a successful claim, the host schedules a replacement
+for that profile in the background.
+
+Both commands require an absolute `cwd`. `kind` defaults to `interactive`; `context` has the same validation and
+host-identity merge as `open_session`, and its key order does not affect matching. Repeated parks of the same profile
+share one build or answer `state: "already_parked"`. Each host holds at most four speculative profiles, including
+builds in flight; another profile answers `state: "full"`. This cap never limits ordinary opens. A ready park expires
+after 60 seconds; repeating `park_session` does not extend its lifetime.
+
+Claim accepts the open options. `retain_on_disconnect`, model/provider, thinking level, permission preset,
+prompt surface and browser engine apply through the same live operations used by ordinary session commands or
+attach-on-open. A requested `sessionPath`, `durableSessionId`, `expectedHostInstance`, `spawnedBy`, `env`,
+`auto_title`, or `retryFallback` returns `claimed: false` without consuming the park. Compact admissions (`admissionId`,
+`retry`, or a connection that selected compact transport) also miss, so the caller uses the existing `open_session`
+admission contract. Invalid applicable options receive their ordinary error response.
+
+Parks run the existing open implementation without an owner or reply. They start unattended, in memory, and acquire
+their persistent file and file hold only when claimed. Until then they appear in no session listing, status stream,
+`session_opened` event, session-list file, hosted export, durable-id collision check, attachment count or zero-session
+trim count. Build timing is dropped. `park_session` never makes its connection an idle-exit attachment; a claim does.
+Both methods are `device_admin` in the method-class table because they require a host cwd.
+
+Expiry, drain, handoff and stop dispose parks without a public terminal record or a handover entry. Builds already
+in flight are closed when they finish; a stopped host never schedules replacements. Parks have no persistent
+transcript to survive a crash, and no successor reopens them. Worker-isolate hosts do not advertise `park_claim` and
+answer `park_claim_unsupported`; classic RPC and terminal single-session endpoints answer `multi_session_disabled`.
+Probe the capability before sending either command.
+
 ### Delegated connections (`declare_delegation`)
 
 A client that forwards records on behalf of someone else (a relay host forwarding a remote viewer) declares it, and

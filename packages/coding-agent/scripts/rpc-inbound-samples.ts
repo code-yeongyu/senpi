@@ -40,6 +40,8 @@ type RpcInboundSampleTable = { readonly [K in RpcMethodType]: RpcInboundRecordOf
 export const RPC_INBOUND_SAMPLES = {
 	get_protocol_info: { type: "get_protocol_info" },
 	open_session: { type: "open_session" },
+	park_session: { type: "park_session", cwd: `${SAMPLE_PATH_ROOT}/cwd` },
+	claim_session: { type: "claim_session", cwd: `${SAMPLE_PATH_ROOT}/cwd` },
 	close_session: { type: "close_session", sessionId: SAMPLE_ID },
 	move_session: { type: "move_session", op: "status", moveId: SAMPLE_ID },
 	release_session: { type: "release_session", sessionId: SAMPLE_ID, reason: "takeover" },

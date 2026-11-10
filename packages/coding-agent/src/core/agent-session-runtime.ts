@@ -200,6 +200,12 @@ export class AgentSessionRuntime {
 		this._sessionHold = undefined;
 	}
 
+	/** A speculative host session becomes durable only when a caller claims its already-built runtime. */
+	async persistSession(): Promise<void> {
+		await this.session.sessionManager.enablePersistence();
+		this._sessionHold ??= holdActiveSession(this.session.sessionManager, false, this._launchProfile?.holderEndpoint);
+	}
+
 	get services(): AgentSessionServices {
 		return this._services;
 	}

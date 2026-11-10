@@ -129,6 +129,8 @@ export const AUTO_TITLE_PER_SESSION_CAPABILITY = "auto_title_per_session";
  * cwd, kind and context needs without opening a session. Advertised only by an in-process runtime.
  */
 export const WARM_CAPABILITY = "warm";
+/** HOST capability: invisible speculative sessions and single-use claim, in-process registries only. */
+export const PARK_CLAIM_CAPABILITY = "park_claim";
 
 /**
  * HOST capability: this host honors `open_session.durableSessionId`, so a caller that already
