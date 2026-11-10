@@ -40,7 +40,12 @@ export function parseProjectFilePath(input: string): ProjectFilePath | undefined
 }
 
 export type ResolvedProjectFile =
-	| { readonly ok: true; readonly absolute: string; readonly exists: boolean; readonly missingFolders: readonly string[] }
+	| {
+			readonly ok: true;
+			readonly absolute: string;
+			readonly exists: boolean;
+			readonly missingFolders: readonly string[];
+	  }
 	| { readonly ok: false };
 
 function isMissing(error: unknown): boolean {

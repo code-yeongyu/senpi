@@ -4,7 +4,16 @@
  * machine it has no filesystem access to (desktop#6333). Records go through the multi-session host's own dispatch on
  * the in-process registry with a faux provider; the project carries a project skill, so trust gates it.
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxProvider } from "@earendil-works/pi-ai/compat";
@@ -96,7 +105,13 @@ describe("project file verbs: classes and wire shape", () => {
 	it("classes both verbs as device_admin", () => {
 		expect(classifyRpcMethod({ type: "read_project_file", sessionId: "a", path: "AGENTS.md" })).toBe("device_admin");
 		expect(
-			classifyRpcMethod({ type: "write_project_file", sessionId: "a", path: "AGENTS.md", content: "", ifEtag: null }),
+			classifyRpcMethod({
+				type: "write_project_file",
+				sessionId: "a",
+				path: "AGENTS.md",
+				content: "",
+				ifEtag: null,
+			}),
 		).toBe("device_admin");
 	});
 });
@@ -149,7 +164,12 @@ describe("write_project_file", () => {
 		expect(createOverExisting).toMatchObject({ success: false, errorCode: "project_file_conflict" });
 		expect(readFileSync(join(host.cwd, "AGENTS.md"), "utf8")).toBe("two\n");
 
-		const noEtag = await host.send({ type: "write_project_file", sessionId: host.sessionId, path: "AGENTS.md", content: "x" });
+		const noEtag = await host.send({
+			type: "write_project_file",
+			sessionId: host.sessionId,
+			path: "AGENTS.md",
+			content: "x",
+		});
 		expect(noEtag).toMatchObject({ success: false, errorCode: "invalid_argument" });
 	});
 
@@ -206,7 +226,10 @@ describe("project file verbs: only allowlisted paths inside the workspace", () =
 		const host = await startHost();
 		await host.trust();
 		expect(await host.read(path)).toMatchObject({ success: false, errorCode: "project_file_not_allowed" });
-		expect(await host.write(path, "x", null)).toMatchObject({ success: false, errorCode: "project_file_not_allowed" });
+		expect(await host.write(path, "x", null)).toMatchObject({
+			success: false,
+			errorCode: "project_file_not_allowed",
+		});
 	});
 
 	it("refuses a non-string path as invalid_argument", async () => {
