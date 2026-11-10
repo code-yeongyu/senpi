@@ -84,7 +84,10 @@ describe("a remote device's delivery and the receiving session's preset", () => 
 	it("keeps asking once the forwarder narrows peer_agent away", async () => {
 		const narrowed = async (target: DelegatedHost) => {
 			const peer = await peerAgent(target);
-			expect(await declare(peer, GRANT, DEVICE, { roles: [] })).toMatchObject({ success: true, data: { roles: [] } });
+			expect(await declare(peer, GRANT, DEVICE, { roles: [] })).toMatchObject({
+				success: true,
+				data: { roles: [] },
+			});
 			return peer;
 		};
 		const [call] = await deliver(narrowed, AGENT);

@@ -73,6 +73,9 @@ export function attachmentGate(host: RouterContext, command: RpcCommand): RpcRes
 	)
 		return undefined;
 	if (host.sessionsByConnection.get(owner)?.has(command.sessionId)) return undefined;
+	// senpi#6305: the forwarder's peer lane delivers an agent's message without ever attaching; only its admit passes.
+	if (command.type === "admit_external_message" && host.connectionRoles.grantedByForwarder(owner, "peer_agent"))
+		return undefined;
 	if (process.env.SENPI_RPC_REQUIRE_ATTACH === "1")
 		return error(command.id, command.type, "session_not_attached", {
 			reason: "this connection is not attached to that session",
