@@ -13,10 +13,12 @@ import type { EventPageAnswer, RecoveryPageAnswer } from "./compact-recovery-req
 import type { ThinkingLevelSource } from "../../core/session-thinking-memory.ts";
 
 import type { EffectStatus } from "./effect-record.ts";
+import type { RpcProjectSettings, RpcProjectTrust } from "./project-workspace-commands.ts";
 import type { RpcSlashCommand } from "./rpc-command-surface.ts";
 import type { RpcEvalCell, RpcEvalCellSnapshot } from "./rpc-result-types.ts";
 import type {
 	RpcAuthProvider,
+	RpcAuthStoreError,
 	RpcLoadedExtension,
 	RpcLoadedMcpServer,
 	RpcProviderAccount,
@@ -147,6 +149,8 @@ export type RpcReadResponse =
 			success: true;
 			data: { extensions: RpcLoadedExtension[]; mcpServers: RpcLoadedMcpServer[] };
 	  }
+	| { id?: string; type: "response"; command: "get_project_trust"; success: true; data: RpcProjectTrust }
+	| { id?: string; type: "response"; command: "get_project_settings"; success: true; data: RpcProjectSettings }
 	| { id?: string; type: "response"; command: "eval_cells.list"; success: true; data: RpcEvalCell[] }
 	| {
 			id?: string;
@@ -160,7 +164,7 @@ export type RpcReadResponse =
 			type: "response";
 			command: "get_auth_providers";
 			success: true;
-			data: { providers: RpcAuthProvider[] };
+			data: { providers: RpcAuthProvider[]; storeError?: RpcAuthStoreError };
 	  }
 	| {
 			id?: string;

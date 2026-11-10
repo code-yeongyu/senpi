@@ -1,3 +1,23 @@
+## 2026-11-05 - GPT Image 2.6 entries in the static OpenAI image catalog (senpi#5821, fixes #5820)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: `OPENAI_IMAGE_MODELS` gains `gpt-image-2.6-sunburst` and `gpt-image-2.6-flare` (released 2026-11-04) ahead of the 2.5 pair, with the same rates ($5 text input / $8 image input / $30 image output / $1.25 cached input per 1M tokens) and text plus image inputs; the source comment cites both model pages. `src/providers/data/openai.json` and its manifest entry are regenerated; no other provider file changes in this PR.
+- `packages/ai/src/api/openai-images-params.ts`: `OpenAIImagesOptions.complexity` (`low` | `medium` | `high`) is forwarded as the GPT Image 2.6 `complexity` request field when set, on generations and edits alike.
+- `packages/ai/src/utils/provider-error.ts`: `isModelConfigError` also matches an OpenAI-compatible gateway's image allowlist reply, "Model <id> is not supported on /v1/images/…", while an option error such as "Transparent background is not supported for this model" stays unmatched.
+
+### Why
+
+- OpenAI released GPT Image 2.6 Sunburst and Flare with a new `complexity` planning control, and gateways lag the release: one answers HTTP 400 with the allowlist text above, so callers need to recognize it as "this route does not serve the model".
+
+### Why an extension could not handle it
+
+- The static image catalog, the Images adapter's request builder, and the shared model-config classifier are package internals that every image caller reads.
+
+### Expected merge conflict zones
+
+- LOW: the head of `OPENAI_IMAGE_MODELS` in `generate-models.ts`, the option spread at the end of `buildParams()`, and the `MODEL_CONFIG_ERROR` pattern.
+
 ## 2026-11-01 - Credential-shaped test fixtures are built from parts at runtime (senpi#5310)
 
 ### What changed

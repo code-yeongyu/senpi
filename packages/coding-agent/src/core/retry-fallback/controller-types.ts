@@ -15,12 +15,19 @@ export interface ActiveFallbackState {
 	pinnedByBilling: boolean;
 	/** Derived OR of the two provenance flags - the only field consumers read. */
 	pinned: boolean;
+	/** The original provider's login id when the episode began; a sign-in moves it and releases a billing pin (senpi#4099). */
+	recoveryRevision?: string;
 }
 
 export type FallbackReason = "transient" | "refusal" | "hard-error" | "billing";
 /** Absent: the original recovered after its cooldown. `fallback-unusable`: the fallback itself could not serve. */
 export type FallbackRevertCause = "fallback-unusable";
 export type CircuitFailure = { errorMessage?: string; retryAfterMs?: number };
+/** A rung the switch refused during a fallback walk: its selector and the guard's message. */
+export interface FallbackRungRefusal {
+	readonly model: string;
+	readonly detail: string;
+}
 
 export interface FallbackSettings {
 	modelFallback: boolean;
@@ -57,8 +64,20 @@ export interface RetryFallbackControllerDeps {
 					reason: FallbackReason;
 					limit?: UsageLimitScope;
 			  }
-			| { type: "retry_fallback_reverted"; from: string; to: string; cause?: FallbackRevertCause },
+			| { type: "retry_fallback_reverted"; from: string; to: string; cause?: FallbackRevertCause }
+			| {
+					type: "usage_limit_scope_probe";
+					provider: string;
+					heldFamily: string;
+					probeFamily: string;
+					outcome: "served" | "widened";
+			  },
 	): void;
 	getCurrentSelector(): { model: Model<Api>; thinkingLevel?: ThinkingLevel } | undefined;
 	isAuthAvailable(provider: string): boolean;
+	/**
+	 * The `loginId` the last sign-in stored for `provider` ("" when none did), never key material;
+	 * `undefined` when it cannot be read. Only a sign-in writes a new id; a token refresh keeps it or drops it to "" (senpi#4099).
+	 */
+	recoveryRevision?(provider: string): Promise<string | undefined>;
 }

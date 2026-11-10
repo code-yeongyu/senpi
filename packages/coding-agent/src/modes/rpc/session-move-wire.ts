@@ -4,6 +4,8 @@ import type { MoveAnswer } from "../../core/session-move/move-ledger.ts";
 export const MOVE_SESSION_CAPABILITY = "move_session";
 /** Capability: `move_session` answers op `revoke`, which seals a copy this host imported (senpi#4003). */
 export const MOVE_SESSION_REVOKE_CAPABILITY = "move_session_revoke";
+/** Capability: `move_session` answers op `copy`, which copies a session into a new one under a given id (senpi#5889). */
+export const MOVE_SESSION_COPY_CAPABILITY = "move_session_copy";
 
 /** A `move_session` request whose fields do not parse (op, move id, paths, answer). */
 export const RPC_ERROR_INVALID_MOVE_REQUEST = "invalid_move_request";
@@ -17,7 +19,8 @@ export const RPC_ERROR_MOVE_FAILED = "move_failed";
 /**
  * Drives one step of moving a session between devices. The transport carries bundles and answers between hosts; every
  * decision about the session file is taken here. Sender: `export` (after `release_session` reason `move`) and
- * `finish`. Receiver: `prepare`, `cancel`, `import`, `status`, and `revoke` once the sender took the session back.
+ * `finish`. Receiver: `prepare`, `cancel`, `import`, `status`, and `revoke` once the sender took the session back. Either
+ * side: `copy`, a new writable session from one that is read-only here.
  */
 export type RpcMoveSessionCommand = { id?: string; type: "move_session" } & (
 	| { op: "prepare"; moveId: string }
@@ -27,6 +30,7 @@ export type RpcMoveSessionCommand = { id?: string; type: "move_session" } & (
 	| { op: "import"; bundleDir: string; cwd: string; from?: string }
 	| { op: "finish"; sessionPath: string; moveId: string; answer: MoveAnswer }
 	| { op: "revoke"; sessionPath: string; moveId: string }
+	| { op: "copy"; sessionPath: string; sessionId: string; sessionDir?: string }
 );
 
 /** The receiver's record of a move as a client sees it; `expires_at` while it waits for the bundle. */

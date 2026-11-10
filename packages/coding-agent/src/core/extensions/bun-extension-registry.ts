@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { dirname, isAbsolute } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { loadInTurn } from "./bun-extension-load-turns.ts";
 import { publishRuntimeMetadata } from "./extension-runtime-module.ts";
 
 export type ModuleSource = { readonly contents: string; readonly loader: "js" };
@@ -25,7 +26,7 @@ declare const Bun: {
 			): void;
 			onLoad(
 				options: { readonly filter: RegExp; readonly namespace: string },
-				load: (args: { readonly path: string }) => ModuleSource,
+				load: (args: { readonly path: string }) => ModuleSource | Promise<ModuleSource>,
 			): void;
 		}) => void;
 	}): void;
@@ -66,6 +67,10 @@ function splitModuleId(id: string): { readonly generation: string; readonly file
 }
 const graphs = new Map<string, WeakRef<ExtensionGraph>>();
 const collected = new FinalizationRegistry<string>((generation) => graphs.delete(generation));
+// Bun serves an import()'s modules one loop turn at a time (senpi#6199) and its loader keeps no reference to the graph
+// serving them: a graph whose importer was already dropped was collected between two loads and failed the import as
+// disposed (senpi#6208). A graph is held strongly while any import it serves is in flight.
+const importing = new Map<ExtensionGraph, number>();
 let nextGeneration = 0;
 let installed = false;
 let pluginRegistrations = 0;
@@ -163,7 +168,7 @@ function installRegistry(virtualModules: Readonly<Record<string, Readonly<Record
 				builder.onLoad({ filter: /.*/, namespace: extensionNamespace }, ({ path }) => {
 					const parsed = splitModuleId(path);
 					if (parsed === undefined) throw new ExtensionModuleIdError(path);
-					return graphFor(parsed.generation).load(parsed.filename);
+					return loadInTurn(() => graphFor(parsed.generation).load(parsed.filename));
 				});
 				installed = true;
 			},
@@ -181,6 +186,16 @@ export function registerExtensionGraph(
 	collected.register(graph, generation, graph);
 	return {
 		generation,
+		async holdDuring<T>(pending: Promise<T>): Promise<T> {
+			importing.set(graph, (importing.get(graph) ?? 0) + 1);
+			try {
+				return await pending;
+			} finally {
+				const remaining = (importing.get(graph) ?? 1) - 1;
+				if (remaining === 0) importing.delete(graph);
+				else importing.set(graph, remaining);
+			}
+		},
 		dispose() {
 			graphs.delete(generation);
 			collected.unregister(graph);

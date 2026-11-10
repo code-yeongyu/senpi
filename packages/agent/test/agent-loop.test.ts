@@ -8,7 +8,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it, vi } from "vitest";
-import { agentLoop, agentLoopContinue, runAgentLoop, runToolCall } from "../src/agent-loop.ts";
+import { agentLoop, agentLoopContinue, runAgentLoop, runToolCall } from "../src/index.ts";
 import type { CustomMessage } from "../src/harness/messages.ts";
 import { setDefaultStreamFn } from "../src/index.ts";
 import type {
@@ -1651,6 +1651,69 @@ describe("agentLoop with AgentMessage", () => {
 		expect(turnToolResultIds).toEqual(["tool-1", "tool-2"]);
 	});
 
+	// senpi#6265: four parallel generate_image-shaped calls in one turn, call 1 with a real array and
+	// calls 2-4 with the array's JSON text (the observed wire). Every call must run with its paths.
+	it("runs every parallel call with its declared array argument (#6265)", async () => {
+		const toolSchema = Type.Object({
+			prompt: Type.String(),
+			reference_image_paths: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1, maxItems: 5 })),
+		});
+		const received = new Map<string, unknown>();
+		const tool: AgentTool<typeof toolSchema, undefined> = {
+			name: "generate_image",
+			label: "Generate image",
+			description: "Image tool",
+			parameters: toolSchema,
+			async execute(toolCallId, params) {
+				received.set(toolCallId, params.reference_image_paths);
+				return { content: [{ type: "text", text: "ok" }], details: undefined };
+			},
+		};
+		const intended = [
+			["/refs/a.png", "/refs/b.png"],
+			["/refs/c.png"],
+			["/refs/d.png", "/refs/e.png"],
+			["/refs/f.png"],
+		];
+		const toolCalls: AgentToolCall[] = intended.map((paths, index) => ({
+			type: "toolCall",
+			id: `tool-${index + 1}`,
+			name: "generate_image",
+			arguments: {
+				prompt: `image ${index + 1}`,
+				reference_image_paths: index === 0 ? paths : JSON.stringify(paths),
+			},
+		}));
+
+		let callIndex = 0;
+		const stream = agentLoop(
+			[createUserMessage("four images")],
+			{ messages: [], tools: [tool] },
+			{ model: createModel(), convertToLlm: identityConverter, toolExecution: "parallel" },
+			undefined,
+			() => {
+				const mockStream = new MockAssistantStream();
+				queueMicrotask(() => {
+					const message =
+						callIndex === 0
+							? createAssistantMessage(toolCalls, "toolUse")
+							: createAssistantMessage([{ type: "text", text: "done" }]);
+					mockStream.push({ type: "done", reason: callIndex === 0 ? "toolUse" : "stop", message });
+					callIndex++;
+				});
+				return mockStream;
+			},
+		);
+
+		const failed: string[] = [];
+		for await (const event of stream) {
+			if (event.type === "tool_execution_end" && event.isError) failed.push(event.toolCallId);
+		}
+
+		expect(failed).toEqual([]);
+		expect(toolCalls.map((toolCall) => received.get(toolCall.id))).toEqual(intended);
+	});
+
 	it("should inject queued messages after all tool calls complete", async () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		const executed: string[] = [];
@@ -1972,9 +2035,11 @@ describe("agentLoop with AgentMessage", () => {
 					parallelFastObserved = true;
 				}
 				executionOrder.push(`fast:${params.value}`);
-				if (params.value === "b") {
-					await fastDone;
-				}
+				if (params.value === "c") releaseFast?.();
+				// b runs until c has started, so the overlap is observed without a timer; a scheduler that ran the two
+				// one after the other reaches the bound with c not yet started and fails the parallel assertion.
+				if (params.value === "b")
+					await Promise.race([fastDone, new Promise<void>((resolve) => setTimeout(resolve, 5_000))]);
 				activeFastTools--;
 				return {
 					content: [{ type: "text", text: `fast: ${params.value}` }],
@@ -2010,7 +2075,6 @@ describe("agentLoop with AgentMessage", () => {
 					);
 					mockStream.push({ type: "done", reason: "toolUse", message });
 					setTimeout(() => releaseSlow?.(), 20);
-					setTimeout(() => releaseFast?.(), 40);
 				} else {
 					const message = createAssistantMessage([{ type: "text", text: "done" }]);
 					mockStream.push({ type: "done", reason: "stop", message });
@@ -2043,10 +2107,13 @@ describe("agentLoop with AgentMessage", () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		let firstResolved = false;
 		let parallelObserved = false;
-		let releaseFirst: (() => void) | undefined;
-		const firstDone = new Promise<void>((resolve) => {
-			releaseFirst = resolve;
+		let secondStarted: (() => void) | undefined;
+		const second = new Promise<void>((resolve) => {
+			secondStarted = resolve;
 		});
+		// The first call runs until the second has started, so the test sees overlap without depending on a timer; a
+		// scheduler that ran them one after the other would reach the bound with the second call not yet started.
+		const overlapBound = new Promise<void>((resolve) => setTimeout(resolve, 5_000));
 
 		const tool: AgentTool<typeof toolSchema, { value: string }> = {
 			name: "echo",
@@ -2056,11 +2123,12 @@ describe("agentLoop with AgentMessage", () => {
 			executionMode: "parallel",
 			async execute(_toolCallId, params) {
 				if (params.value === "first") {
-					await firstDone;
+					await Promise.race([second, overlapBound]);
 					firstResolved = true;
 				}
-				if (params.value === "second" && !firstResolved) {
-					parallelObserved = true;
+				if (params.value === "second") {
+					if (!firstResolved) parallelObserved = true;
+					secondStarted?.();
 				}
 				return {
 					content: [{ type: "text", text: `echoed: ${params.value}` }],
@@ -2093,7 +2161,6 @@ describe("agentLoop with AgentMessage", () => {
 						"toolUse",
 					);
 					mockStream.push({ type: "done", reason: "toolUse", message });
-					setTimeout(() => releaseFirst?.(), 20);
 				} else {
 					const message = createAssistantMessage([{ type: "text", text: "done" }]);
 					mockStream.push({ type: "done", reason: "stop", message });

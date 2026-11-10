@@ -47,6 +47,75 @@ export async function foreignSessionHolders(
 }
 
 /** One terminal-safe line; cwd can contain newlines or escape sequences. */
+export function describeSessionHolders(holders: readonly SessionHolder[]): string {
+	return holders
+		.map(({ pid, cwd }) => `pid ${pid}${cwd === undefined ? "" : ` in ${JSON.stringify(cwd)}`}`)
+		.join("; ");
+}
+
+export const SESSION_HOLDER_LOOKUP_FAILED = "Unable to inspect session holders; continuing without holder information.";
+
+/** Live foreign holders of `sessionFile` before an interactive resume switches onto it; a failed lookup stays advisory. */
+export async function checkSessionHolders(
+	sessionFile: string,
+): Promise<{ readonly holders: readonly SessionHolder[] } | { readonly lookupFailed: true }> {
+	try {
+		return { holders: await foreignSessionHolders(sessionFile, undefined, { markUnproven: true }) };
+	} catch {
+		return { lookupFailed: true };
+	}
+}
+
+const HOLDER_EXIT_POLL_MS = 100;
+
+/**
+ * Why taking over is not offered, or `undefined` when it is: a holder whose identity is unverified could be a
+ * reused pid, and a holder inside a multi-session host would take every other session of that host down with it.
+ */
+export function takeOverRefusal(holders: readonly SessionHolder[], retry = "then /resume again"): string | undefined {
+	if (holders.some((holder) => holder.host_instance !== undefined))
+		return `It is open in a multi-session host; close it there, ${retry}.`;
+	if (holders.some((holder) => holder.unproven === true))
+		return `The other process could not be verified; quit it there, ${retry}.`;
+	return undefined;
+}
+
+/**
+ * Explicit take-over of a session another live process holds (senpi#5744). The holder set is read again right
+ * before signalling and intersected with the pids the person confirmed; only verified, single-session holders are
+ * asked to exit (SIGTERM). Then it waits until none of them holds the file. Returns false when a confirmed holder
+ * can no longer be signalled safely, is still there at the deadline, or another process holds the session by then.
+ */
+export async function stopSessionHolders(
+	sessionFile: string,
+	confirmed: readonly SessionHolder[],
+	timeoutMs = 10_000,
+): Promise<boolean> {
+	const confirmedPids = new Set(confirmed.map(({ pid }) => pid));
+	const current = (await foreignSessionHolders(sessionFile, undefined, { markUnproven: true })).filter(({ pid }) =>
+		confirmedPids.has(pid),
+	);
+	if (takeOverRefusal(current) !== undefined) return false;
+	for (const { pid } of current) {
+		try {
+			process.kill(pid, "SIGTERM");
+		} catch (cause) {
+			if (errorCode(cause) !== "ESRCH") throw cause;
+		}
+	}
+	const stopping = new Set(current.map(({ pid }) => pid));
+	const deadline = Date.now() + timeoutMs;
+	for (;;) {
+		const holders = await foreignSessionHolders(sessionFile);
+		// Done only when nobody holds the session: another process that opened it meanwhile is a second writer too.
+		if (!holders.some(({ pid }) => stopping.has(pid))) return holders.length === 0;
+		if (Date.now() >= deadline) return false;
+		// A foreign process offers no exit event to await; its holder record is the only signal.
+		await new Promise((resolve) => setTimeout(resolve, HOLDER_EXIT_POLL_MS));
+	}
+}
+
+/** The post-switch advisory line, or `undefined` when no other process holds the session. */
 export async function sessionHolderWarning(
 	sessionFile: string | undefined,
 	sessionId?: string,
@@ -55,9 +124,8 @@ export async function sessionHolderWarning(
 	try {
 		holders = await foreignSessionHolders(sessionFile, sessionId);
 	} catch {
-		return "Unable to inspect session holders; continuing without holder information.";
+		return SESSION_HOLDER_LOOKUP_FAILED;
 	}
 	if (holders.length === 0) return undefined;
-	const who = holders.map(({ pid, cwd }) => `pid ${pid}${cwd === undefined ? "" : ` in ${JSON.stringify(cwd)}`}`);
-	return `This session is also open in another process (${who.join("; ")}). Concurrent writes may corrupt its history; quit the other process before continuing.`;
+	return `This session is also open in another process (${describeSessionHolders(holders)}). Concurrent writes may corrupt its history; quit the other process before continuing.`;
 }

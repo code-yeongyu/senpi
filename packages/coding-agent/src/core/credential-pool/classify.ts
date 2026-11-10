@@ -39,6 +39,8 @@ export type CredentialBlock =
 			reason: "rate_limit";
 			cooldownMs: number;
 			retryAfterWasCapped: boolean;
+			/** SIWC quota pause: cooldown is a probe policy, not the provider's reset time. */
+			usageLimit?: true;
 			/** Set when the limit names the one model family it binds ("Fable limit"). */
 			modelFamily?: string;
 	  };
@@ -144,6 +146,25 @@ const AUTH_ERROR_CODES: ReadonlySet<string> = new Set([
 ]);
 const MAX_CAUSE_LINKS = 16;
 const ACCOUNT_SCOPED_403_TEXT = /account|credential|token|api[ _-]?key|organization|subscription/i;
+// A refusal scoped to one model the account's plan does not include (senpi#3972): the vendor names
+// the model and the entitlement gap ("Your subscription does not include access to model-a",
+// "model GLM-5.3 is not available on this plan"). That is a verdict on the model, not on the
+// credential — blocking the slot would poison every other model on the same provider (#2081 class).
+// Every pattern is anchored on plan/subscription entitlement wording, so an account-wide refusal
+// that merely mentions a model ("Access to model gpt-x denied: your account is not enabled",
+// "your API key was disabled") still blocks the slot.
+const MODEL_SCOPED_REFUSAL_TEXT = [
+	// "does not include access to model-a", "does not include model GLM-5.3", "not entitled to use model X".
+	/(?:does not include(?: access to)?|not entitled to(?: use)?|no access to)[^.]{0,60}?\bmodel\b/i,
+	// "model-a is not available", "model X not included in your plan" — the plan/subscription
+	// anchor at the end is what keeps account-wide "model ... not enabled" refusals out.
+	// The windows are `.` (not `[^.]`): a model id such as GLM-5.3 carries a period, and a
+	// `[^.]` window can never reach the "is not available" past it.
+	/\bmodel\b.{0,80}?\b(?:is not|not|no)\b.{0,40}?\b(?:available|included|entitled|enabled|accessible)\b.{0,40}?\b(?:plan|subscription)\b/i,
+	// The real z.ai refusal names no model at all: "Your current subscription plan does not yet
+	// include access to GLM-5.3" ("yet" in the middle, no word "model").
+	/(?:plan|subscription)[^.]{0,30}?\bdoes not\b[^.]{0,20}?\binclude access to\b/i,
+];
 const RATE_LIMIT_TEXT = /rate[ _-]?limit|too many requests|resource_exhausted/i;
 const BILLING_TEXT =
 	/billing|credits?[ _-]?(?:required|exhausted|balance)|insufficient[ _-]?(?:funds|quota|credit)|payment[ _-]?required|quota[ _-]?exhausted/i;
@@ -301,6 +322,7 @@ export function classifyCredentialFailure(
 				kind: "failover",
 				block: {
 					reason: "rate_limit",
+					usageLimit: true,
 					...rateLimitCooldown(failureCount, undefined, {
 						baseMs: context.cooldownBaseMs,
 						capMs: Math.min(context.cooldownCapMs ?? COOLDOWN_CAP_MS, 30 * 60_000),
@@ -362,6 +384,10 @@ export function classifyCredentialFailure(
 		return { kind: "failover", block: { reason: "auth_error" } };
 	}
 	if (status === 403 && !limitText) {
+		// A model-scoped refusal fails the request and leaves the slot healthy, so the next model on
+		// the same provider is still attempted (senpi#3972). The vendor's own message already names
+		// the model and the reason; the classifier's job is only to not poison the slot for it.
+		if (MODEL_SCOPED_REFUSAL_TEXT.some((pattern) => pattern.test(text))) return { kind: "fail_request" };
 		return ACCOUNT_SCOPED_403_TEXT.test(text)
 			? { kind: "failover", block: { reason: "auth_error" } }
 			: { kind: "fail_request" };
@@ -373,6 +399,13 @@ export function classifyCredentialFailure(
 	// Overflow prose is excluded (`usageLimit` above) because this branch runs
 	// before the overflow branch below.
 	if (status === 429 || limitText) {
+		// A model-scoped refusal can also arrive as 429, not 403 (z.ai error code 1311 is the
+		// plan-entitlement refusal with a 429 status): it is a verdict on the model, not a
+		// throttle, so it fails the request instead of cooling the slot down. A structured
+		// limit code still outranks the prose, so this only applies when no code proved a limit.
+		if (codedLimit === undefined && MODEL_SCOPED_REFUSAL_TEXT.some((pattern) => pattern.test(text))) {
+			return { kind: "fail_request" };
+		}
 		const nowMs = context.nowMs ?? Date.now();
 		// A spent account is out until its reset time, so that time (a reset
 		// header, a reset field or reset prose) floors its cooldown; without one,

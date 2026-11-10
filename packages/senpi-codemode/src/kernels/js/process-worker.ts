@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { accessSync, constants } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { KernelToHostMessage } from "../../bridge/protocol.ts";
 import { isKernelToHostMessage, parseBridgeJsonLine, validateBridgeMessage } from "../../bridge/protocol.ts";
@@ -9,7 +9,10 @@ import type { EvalRuntimeInfo } from "../../tool/types.ts";
 import { type CodemodeRuntimeAssetEnvironment, requireCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
 import { type SubprocessLike, SubprocessProcess, spawnSubprocess } from "../shared/subprocess-process.ts";
 import type { WorkerLike } from "./inline-worker.ts";
+import { runtimeNameOf } from "./runtime-name.ts";
 import { JavaScriptWorkerExitedError } from "./worker-host.ts";
+
+export { runtimeNameOf } from "./runtime-name.ts";
 
 const PROCESS_CLOSE_GRACE_MS = 2_000;
 
@@ -97,12 +100,6 @@ export function processRuntimeInfo(searchPath: string | undefined): EvalRuntimeI
 	if (command === process.execPath || name === undefined) return undefined;
 	const version = execFileSync(command, ["--version"], { encoding: "utf8", timeout: 5_000 }).trim().replace(/^v/, "");
 	return { name, version, path: command, isolation: "process" };
-}
-
-/** "bun" or "node" from an executable path; undefined for anything else (a compiled senpi binary, for one). */
-export function runtimeNameOf(command: string): "bun" | "node" | undefined {
-	const name = basename(command).replace(/\.(exe|cmd|bat)$/i, "");
-	return name === "bun" || name === "node" ? name : undefined;
 }
 
 function isExecutable(path: string): boolean {
