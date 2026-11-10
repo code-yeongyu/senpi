@@ -71,6 +71,26 @@ describe("a remote device's delivery and the receiving session's preset", () => 
 		expect(call).toEqual({ asked: ASKED, ran: false });
 	}, 120_000);
 
+	it("keeps asking on a host-mode delegation the forwarder declared without peer_agent", async () => {
+		const withoutRole = async (target: DelegatedHost) => {
+			const peer = await target.proven();
+			expect(await declare(peer, GRANT, DEVICE, { roles: [] })).toMatchObject({ success: true });
+			return peer;
+		};
+		const [call] = await deliver(withoutRole, AGENT);
+		expect(call).toEqual({ asked: ASKED, ran: false });
+	}, 120_000);
+
+	it("keeps asking once the forwarder narrows peer_agent away", async () => {
+		const narrowed = async (target: DelegatedHost) => {
+			const peer = await peerAgent(target);
+			expect(await declare(peer, GRANT, DEVICE, { roles: [] })).toMatchObject({ success: true, data: { roles: [] } });
+			return peer;
+		};
+		const [call] = await deliver(narrowed, AGENT);
+		expect(call).toEqual({ asked: ASKED, ran: false });
+	}, 120_000);
+
 	it("keeps asking on a peer_agent connection whose delivery names no sender", async () => {
 		const [call] = await deliver(peerAgent, undefined);
 		expect(call).toEqual({ asked: ASKED, ran: false });

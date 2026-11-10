@@ -65,7 +65,7 @@ export function samePrincipal(a: Principal, b: Principal): boolean {
 
 function parseRoles(value: unknown): ReadonlySet<string> | undefined | string {
 	if (value === undefined) return undefined;
-	const invalid = "roles holds each of interactive_user, task_parent at most once";
+	const invalid = "roles holds each of interactive_user, task_parent, peer_agent at most once";
 	if (!Array.isArray(value)) return invalid;
 	const roles = new Set<string>();
 	for (const entry of value) {
