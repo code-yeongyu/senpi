@@ -128,7 +128,7 @@ describe("review accounting regressions (#3483)", () => {
 		// Given: main 89ecd50ca0 on the fixed facts above, refreshed for #4043's punctuation rewrite; claude-opus-4-8
 		// renders the full shared sections, so the bytes are main 037918157's again (senpi#5665), re-pinned for the
 		// senpi#6358 ownership rule.
-		const expected = "a2e75bca23fc22dcab08fe11077a3e89000edc9cca8f06c508354ebef24774de";
+		const expected = "3a6eb45761f9b96fe1337cd3c5753447e508e3cc82e80ac14fd57ee29ab00af5";
 		// When
 		const { prompt } = presets.buildPreset("claude-opus-4-8", realisticOptions);
 		// Then: a byte-identity golden, not a size assertion.

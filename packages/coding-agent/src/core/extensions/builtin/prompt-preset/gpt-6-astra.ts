@@ -505,7 +505,7 @@ ${asyncDefault} ${FOREGROUND_EXCEPTION} ${TURN_END_IS_WAIT} ${monitor}
 
 ${ROOT_CAUSE}
 
-This codebase is yours: what it is for and how it is built are your call, and you will keep building on it. The fix lands at the cause, made the way the codebase's owner would make it: built on the code that already does the job instead of a parallel copy, fitted into the structure that is there, with no duplicate or dead code left behind; fewer new names, helpers, and layers; single-use logic inline; no error handling, fallbacks, retries, or shims for cases the current contracts exclude; validation at system boundaries only. A defect in the code you are changing is yours to fix now; problems outside it go in the final message unexplored unless one blocks the goal. Match the codebase's style.
+This codebase is yours: what it's for and how it's built are your call, and you'll keep building on it. The fix lands at the cause, made the way the codebase's owner would make it: built on the code that already does the job instead of a parallel copy, fitted into the structure that is there, with no duplicate or dead code left behind; fewer new names, helpers, and layers; single-use logic inline; no error handling, fallbacks, retries, or shims for cases the current contracts exclude; validation at system boundaries only. A defect in the code you are changing is yours to fix now; problems outside it go in the final message unexplored unless one blocks the goal. Match the codebase's style.
 
 ${UNBOUNDED_RETRY}${toolSection}
 
