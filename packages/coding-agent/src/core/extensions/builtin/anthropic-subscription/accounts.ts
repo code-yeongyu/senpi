@@ -41,9 +41,6 @@ export type ClaudeCliAccountCheck = {
 	model: string;
 	outcome: "ok" | "failed";
 	reason?: string;
-	/** Provider diagnostics, redacted before they enter the credential store. */
-	message?: string;
-	status?: number;
 	at: number;
 };
 
@@ -146,14 +143,9 @@ function storedSlots(credential: AnthropicSubscriptionCredential): AccountSlot[]
  * shows or counts an account the others hide. Takes `object`: the generic listing passes raw pool slots.
  */
 export function isListedStoredSlot(slot: object): boolean {
-	const candidate = slot as { name?: unknown; store?: unknown; signInRequired?: unknown };
+	const candidate = slot as { name?: unknown; store?: unknown };
 	const name = candidate.name;
-	return (
-		candidate.store === "claude-cli" &&
-		typeof name === "string" &&
-		name.trim() !== "" &&
-		!(name === "default" && candidate.signInRequired === "legacy_sign_in_retired")
-	);
+	return candidate.store === "claude-cli" && typeof name === "string" && name.trim() !== "";
 }
 
 /**

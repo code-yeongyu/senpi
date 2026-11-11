@@ -51,14 +51,11 @@ export function withCheck(
 	credential: AnthropicSubscriptionCredential,
 	name: string,
 	check: ClaudeCliAccountCheck,
-	dirId: string,
 ): AnthropicSubscriptionCredential {
 	return {
 		...credential,
 		accounts: (credential.accounts ?? []).map((candidate) =>
-			candidate.name === name && candidate.store === "claude-cli" && candidate.dirId === dirId
-				? { ...candidate, check }
-				: candidate,
+			candidate.name === name && candidate.store === "claude-cli" ? { ...candidate, check } : candidate,
 		),
 	};
 }

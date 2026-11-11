@@ -49,25 +49,16 @@ function record(value: unknown): Record<string, unknown> | undefined {
 		: undefined;
 }
 
-/** `String()` throws for a null-prototype object or a throwing `toString`; the classifiers must never throw. */
-function safeString(value: unknown): string {
-	try {
-		return String(value);
-	} catch {
-		return Object.prototype.toString.call(value);
-	}
-}
-
-export function errorText(error: unknown): string {
+function errorText(error: unknown): string {
 	if (typeof error === "string") return error;
+	if (error instanceof Error) return error.message;
 	const value = record(error);
-	if (!value) return safeString(error);
+	if (!value) return String(error);
 	const message = value.message;
 	if (typeof message === "string") return message;
-	if (error instanceof Error) return safeString(message);
 	const code = value.error;
 	if (typeof code === "string") return code;
-	return safeString(error);
+	return String(error);
 }
 
 export function isExtraUsageExhausted(error: unknown): boolean {
