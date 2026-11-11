@@ -4,10 +4,10 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 // Architecture contract: machine-ops sits below the agent engine. A remote executor pins it without pulling in
-// packages/agent or packages/coding-agent, so its sources may import only node/bun builtins, the pty package and
-// themselves.
+// packages/agent or packages/coding-agent, so its sources may import only node/bun builtins, the pty package, the
+// zero-dependency realm-registry helper (omo#12965: the file-mutation queue is one per realm) and themselves.
 const SRC = fileURLToPath(new URL("../src", import.meta.url));
-const ALLOWED = [/^node:/, /^bun:/, /^@earendil-works\/pi-pty$/, /^\.\.?\//];
+const ALLOWED = [/^node:/, /^bun:/, /^@earendil-works\/pi-pty$/, /^@earendil-works\/pi-realm-registry$/, /^\.\.?\//];
 
 function sourceFiles(dir: string): string[] {
 	return readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
@@ -57,7 +57,7 @@ const FORBIDDEN_FORMS: readonly (readonly [string, string])[] = [
 ];
 
 describe("machine-ops dependency boundary", () => {
-	it("imports nothing outside node/bun builtins, the pty package and itself", () => {
+	it("imports nothing outside node/bun builtins, the pty package, the realm-registry helper and itself", () => {
 		const found = sourceFiles(SRC).flatMap((file) =>
 			offenders(readFileSync(file, "utf8")).map((specifier) => `${file}: ${specifier}`),
 		);
@@ -84,6 +84,9 @@ describe("machine-ops dependency boundary", () => {
 		const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
 			dependencies?: Record<string, string>;
 		};
-		expect(Object.keys(manifest.dependencies ?? {})).toEqual(["@earendil-works/pi-pty"]);
+		expect(Object.keys(manifest.dependencies ?? {})).toEqual([
+			"@earendil-works/pi-pty",
+			"@earendil-works/pi-realm-registry",
+		]);
 	});
 });

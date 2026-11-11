@@ -95,6 +95,7 @@
 		"@earendil-works/pi-ai": "^2026.11.10-3",
 		"@earendil-works/pi-client": "^2026.11.10-3",
 		"@earendil-works/pi-protocol": "^2026.11.10-3",
+		"@earendil-works/pi-realm-registry": "^2026.11.10-3",
 		"@earendil-works/pi-tui": "^2026.11.10-3",
 		"@silvia-odwyer/photon-node": "0.3.4",
 		"ajv": "8.20.0",

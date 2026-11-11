@@ -1,0 +1,45 @@
+{
+	"name": "@earendil-works/pi-realm-registry",
+	"version": "2026.11.10-3",
+	"description": "One pinned, versioned registry instance per JavaScript realm, shared by every copy of senpi's engine modules",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist",
+		"!dist/**/*.map",
+		"README.md"
+	],
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"build": "tsc -p tsconfig.build.json",
+		"test": "node ../../scripts/run-tests.mjs vitest --run",
+		"prepublishOnly": "npm run clean && npm run build"
+	},
+	"keywords": [
+		"senpi",
+		"realm",
+		"registry"
+	],
+	"author": "Earendil Works",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/code-yeongyu/senpi.git",
+		"directory": "packages/realm-registry"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"devDependencies": {
+		"@types/node": "26.6.2",
+		"vitest": "5.0.1"
+	},
+	"private": true
+}
