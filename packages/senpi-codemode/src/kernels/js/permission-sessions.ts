@@ -24,18 +24,21 @@ function pendingOf(handle: PermissionSessionHandle): Promise<void> | undefined |
 	return pending === undefined || pending instanceof Promise ? pending : "unreadable";
 }
 
-/** A session whose handle this copy cannot read is dead: its kernels refuse instead of running unrevocable. */
+/**
+ * A session whose handle this copy cannot read is dead: its kernels refuse instead of running unrevocable. The view
+ * has one shape for every handle, so nothing a holder assigns can make an unreadable one read live.
+ */
 function sessionView(handle: unknown): PermissionSession {
-	if (!isPermissionSessionHandle(handle)) return { dead: true, pending: undefined };
+	const readable = isPermissionSessionHandle(handle) ? handle : undefined;
 	return {
 		get dead() {
-			return handle.dead() !== false || pendingOf(handle) === "unreadable";
+			return readable === undefined || readable.dead() !== false || pendingOf(readable) === "unreadable";
 		},
 		set dead(value: boolean) {
-			if (value) handle.markDead();
+			if (value) readable?.markDead();
 		},
 		get pending() {
-			const pending = pendingOf(handle);
+			const pending = readable === undefined ? undefined : pendingOf(readable);
 			return pending === "unreadable" ? undefined : pending;
 		},
 	};

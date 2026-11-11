@@ -37,6 +37,9 @@ describe("codemode cell authority handed back by another version's registry (omo
 			const session = sessions.registerPermissionKernel(sessionId, { revoke: () => {}, retire: async () => {} });
 
 			expect({ dead: session.dead, pending: session.pending }).toEqual({ dead: true, pending: undefined });
+			// Nothing revives it: the view of a handle this copy cannot read offers no way back either.
+			session.dead = false;
+			expect(session.dead).toBe(true);
 		},
 	);
 
