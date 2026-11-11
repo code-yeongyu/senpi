@@ -89,15 +89,15 @@ export class MoveLedger {
 
 	/**
 	 * Refuses an import into a folder other than the one a ready move was readied for, before the import's own
-	 * repository check can answer that folder's repository instead (senpi#6435). It writes nothing: the move stays
-	 * ready for the folder it was readied for, and `beginReceive` decides again under the lock.
+	 * repository check can answer that folder's repository instead (senpi#6435). It writes nothing and takes no lock:
+	 * a record is replaced whole, so one read of it is consistent, and an import must not wait here behind another
+	 * import's commit of the same move (senpi#6413). `beginReceive` decides again under the lock.
 	 */
-	requireReadiedFor(moveId: MoveId, cwd: string): Promise<void> {
-		return this.locked(moveId, async () => {
-			const [record, landing] = await Promise.all([this.read(moveId), this.landing(moveId)]);
-			if (record?.state === "ready" && landing.cwd !== undefined && landing.cwd !== cwd)
-				throw new MoveFencedError(moveId, record, heldElsewhere(landing));
-		});
+	async requireReadiedFor(moveId: MoveId, cwd: string): Promise<void> {
+		const stored = await this.raw(moveId);
+		const [record, landing] = [parseRecord(stored), parseLanding(stored)];
+		if (record?.state === "ready" && landing.cwd !== undefined && landing.cwd !== cwd)
+			throw new MoveFencedError(moveId, record, heldElsewhere(landing));
 	}
 
 	/**
