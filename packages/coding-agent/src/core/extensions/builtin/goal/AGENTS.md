@@ -16,7 +16,8 @@ goal per thread, re-engages the agent via hidden continuation prompts. 34 `.ts` 
 - **Continuation**: `monitor-continuation.ts` (603 LOC — timers, wake sources, direct-input
   holds, cache-warm scheduling, admission, recovery, disposal) plus `continuation.ts`,
   `lifecycle-helpers.ts`, `direct-input-lifecycle.ts`, `agent-end-continuation.ts`,
-  `continuation-recovery.ts`, `reload-reengagement.ts`.
+  `continuation-recovery.ts`, `reload-reengagement.ts`, `session-start-continuation.ts`
+  (trailing-continuation read plus the wake a goal gets when its session opens).
 - **Prompt/format**: `prompt.ts` (untrusted-objective + completion audit), `format.ts`,
   `todo-gate.ts`, `todo-owed-backstop.ts` (no-goal turn-end backstop), `last-assistant-message.ts`,
   `terminal-provider-error.ts`.
@@ -50,13 +51,26 @@ queues one guarded `providerRecovery` continuation after `agent_settled`, except
 first hit. The auth block is mechanical (a new user message resumes after the user fixes the
 login); the policy block is not. `fallbackExhausted` replaces recovery only after limit-shaped
 ladder exhaustion (senpi#3709): one `providerRetry` at the soonest future reset, plus 1 s
-(no 6 h cap), or after 1 s if all collected resets passed. Without a collected reset it parks
-until input. Outage-only exhaustion retains immediate recovery and provider backoff. A terminal
-*system* error preserves the active Goal: schedule the live monitor wait, or queue a guarded
-hidden `systemRecovery` continuation after `agent_settled` (staging preserves late user
+(no 6 h cap). Outage-only exhaustion retains immediate recovery and provider backoff.
+
+A refusal for a usage or rate limit (`isLimitRefusal`: a `rate_limit`/`quota` diagnostic or a
+status-only 429) and every limit-exhausted ladder is a **limit wait** (senpi#4085). The refused
+turn ran no model work, so its wake neither counts toward nor is denied by the consecutive cap
+and the no-progress guard. Each re-check waits for the stated reset (a lane refusal's wake is
+capped at 6 h, an exhausted ladder's is not) but never less than the provider backoff, 15 s
+doubling to 30 min; a ladder that named no reset waits the backoff alone and no longer parks
+until input. After `GOAL_LIMIT_WAIT_WAKE_LIMIT` (48) re-checks in a row the goal stays `active`
+but parks (`goal_limit_wait_parked`) until a sign-in, an account block reset or input.
+`accounts_changed` with a `login`/`reset` remedy fires an armed or parked limit wait at once.
+
+A terminal *system* error preserves the active Goal: schedule the live monitor wait, or queue a
+guarded hidden `systemRecovery` continuation after `agent_settled` (staging preserves late user
 cancellation; canceling releases the single-flight latch for `/goal resume`). Intentional
 blocks — user interrupt or a model-declared `update_goal` block — stay non-recoverable.
-Resuming with 8+ trailing continuation entries suppresses session-start auto-resume. On
+Resuming with 8+ trailing continuation entries whose turn ran suppresses session-start
+auto-resume (startup, resume and reload alike). A continuation the provider refused for a limit
+is not one of them, and a session opened in the middle of a limit wait re-checks that limit with
+a wake that spends no continuation budget (`session-start-continuation.ts`, senpi#4085). On
 `session_start` reason `resume`, an idle TUI session with a stopped-but-unfinished goal
 (`paused`/`blocked`) prompts first (`isResumeOfStoppedGoal`); accepting flips to `active` as
 a `"user"` mutation. `active`/`complete` never prompt, except an `active` goal reopened over an

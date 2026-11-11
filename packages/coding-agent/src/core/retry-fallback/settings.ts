@@ -37,11 +37,14 @@ export interface ResolvedRetryFallbackSettings {
  * follows Fable 5 whichever provider serves it - the builtin Anthropic provider, the
  * Anthropic Subscription extension, a gateway, or Bedrock.
  *
- * The ladder never leaves the Anthropic Opus family. The previous shipped default was
- * removed because it led with cross-family rungs (`k3`, `kimi-k3`), which moved a Claude
- * session onto another vendor mid-turn and could rank a guaranteed-refusal OAuth lane
- * first; a same-family step-down carries neither problem. There is still deliberately no
- * wildcard lane.
+ * The ladder never leaves Anthropic. The previous shipped default was removed because it
+ * led with cross-family rungs (`k3`, `kimi-k3`), which moved a Claude session onto another
+ * vendor mid-turn and could rank a guaranteed-refusal OAuth lane first; an Anthropic-only
+ * ladder carries neither problem. There is still deliberately no wildcard lane.
+ *
+ * Opus 5.5 steps to Fable 5.2 before Opus 5: Anthropic meters Opus on its own quota window,
+ * so a rate limit on Opus 5.5 also holds every other Opus rung on that account or gateway
+ * pool (senpi#6385).
  *
  * Rungs stay on current-generation Opus: a Claude session must never step down to
  * `claude-opus-4-8` or `claude-opus-4-6` (senpi#3727).
@@ -51,7 +54,7 @@ export const DEFAULT_FALLBACK_CHAINS: FallbackChains = {
 	"claude-fable-5-2": ["claude-opus-5-5", "claude-opus-5"],
 	"claude-fable-5-1": ["claude-opus-5-5", "claude-opus-5"],
 	"claude-fable-5": ["claude-opus-5-5", "claude-opus-5"],
-	"claude-opus-5-5": ["claude-opus-5"],
+	"claude-opus-5-5": ["claude-fable-5-2", "claude-opus-5"],
 };
 
 function cloneDefaultFallbackChains(): Record<string, readonly string[]> {

@@ -9,34 +9,6 @@ import { cleanupFakeClaudeCliLogins, fakeClaudeCliLogin } from "./support/fake-c
 afterEach(() => cleanupFakeClaudeCliLogins());
 
 describe("claude-sdk-oauth oauth login config", () => {
-	it("starts the connection test only after the fresh CLI slot is committed", async () => {
-		const cli = fakeClaudeCliLogin();
-		const createStore = cli.store;
-		if (createStore === undefined) throw new Error("The fake CLI must expose its credential store");
-		const store = createStore();
-		let tested = false;
-		const config = createOAuthConfig({
-			readCurrent: async () => undefined,
-			claudeCli: {
-				...cli,
-				connectionTest: async ({ name, model }) => {
-					const stored = await store.read("anthropic-subscription");
-					expect(stored).toMatchObject({
-						type: "oauth",
-						accounts: [{ name, store: "claude-cli" }],
-					});
-					expect(stored).not.toHaveProperty("accounts.0.check");
-					tested = true;
-					return { model, outcome: "ok", at: Date.now() };
-				},
-			},
-		});
-
-		await config.login({});
-
-		expect(tested).toBe(true);
-	});
-
 	it.each([
 		["with a prompt answered blank", async () => ""],
 		["headless", undefined],

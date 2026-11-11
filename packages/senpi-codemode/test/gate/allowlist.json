@@ -6095,6 +6095,14 @@
 			],
 			"reason": "senpi#6276 (catch-up): #6276 kept eval-exposed tools reachable for agent(), output() and the kernel preludes, adding src/extension/reachable-tools.ts (loaded by the extension and the first kernel) and five contract cases (test/extension.test.ts, test/reachable-tools.test.ts) without listing them here, so codemode-gate failed on main from 749ae14d9b. This lists those 7 reviewed additions; the baseline is unchanged.",
 			"changes": []
+		},
+		"senpi#6391": {
+			"additions": [
+				"legacyContracts/test/6391-show-html-page-top-level-only.test.ts/senpi#6391: show_html_page from an eval cell is refused before it runs, with an error that tells the model to call it directly",
+				"legacyContracts/test/6391-show-html-page-top-level-only.test.ts/senpi#6391: show_html_page from an eval cell leaves other tools callable from a cell"
+			],
+			"reason": "senpi#6391 (catch-up for #6393): #6393 made eval refuse show_html_page from a cell (the desktop never renders a page shown from inside eval) and added two contract cases in test/6391-show-html-page-top-level-only.test.ts without listing them here, so codemode-gate failed on main from c330760b63. This lists those 2 reviewed additions; the baseline is unchanged.",
+			"changes": []
 		}
 	}
 }
