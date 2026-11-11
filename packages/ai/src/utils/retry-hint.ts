@@ -254,7 +254,10 @@ export function parseRetryAfterMsMarker(message: string): number | undefined {
 
 // A reset written as a wall clock: "resets 12am (Asia/Seoul)", "resets Oct 2, 9am", "try again at 12:00 AM".
 // Shared with the credential pool (reset-time.ts) so both read the text the same way (senpi#1771). Milliseconds
-// from `nowMs` to the next such moment, or undefined; a time with no zone reads in the host's local zone.
+// from `nowMs` to the next such moment, or undefined.
+// Zone rule (senpi#5097): a time with no zone reads in the host's local zone, for every caller, as the user's own
+// clock. A reset in another zone is read correctly only when the text names it ("(UTC)", "(Asia/Seoul)"); a
+// zone-less time far from the truth only makes the hint long, and long hints already defer or fail over.
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 
 const CLOCK_RE =

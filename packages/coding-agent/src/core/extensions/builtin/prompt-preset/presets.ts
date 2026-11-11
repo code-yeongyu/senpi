@@ -1,7 +1,7 @@
 import type { BuildDynamicSystemPromptOptions, DynamicSystemPromptPart } from "../../../dynamic-prompt/build.ts";
 import { buildClaudeFable5Prompt } from "./claude-fable-5.ts";
 import { buildClaudeFable51Prompt } from "./claude-fable-5-1.ts";
-import { buildClaudeFable55Prompt } from "./claude-fable-5-5.ts";
+import { buildClaudeFable52Prompt } from "./claude-fable-5-2.ts";
 import { buildClaudeHaiku55Prompt } from "./claude-haiku-5-5.ts";
 import { buildClaudeOpus45Prompt } from "./claude-opus-4-5.ts";
 import { buildClaudeOpus46Prompt } from "./claude-opus-4-6.ts";
@@ -12,6 +12,7 @@ import { buildClaudeOpus55Prompt } from "./claude-opus-5-5.ts";
 import { buildClaudeSonnet55Prompt } from "./claude-sonnet-5-5.ts";
 import {
 	type ResolvedPresetName as ContractResolvedPresetName,
+	presetSharedSections,
 	resolvePresetName as resolveContractPresetName,
 } from "./contract.ts";
 import { buildDeepseekV41FlashPrompt } from "./deepseek-v4-1-flash.ts";
@@ -69,6 +70,7 @@ export function buildPreset(name: ResolvedPresetName, options: BuildDynamicSyste
 	let parts: readonly DynamicSystemPromptPart[] = [];
 	const preset = renderPreset(name, {
 		...options,
+		sharedSections: presetSharedSections(name),
 		onParts: (composed) => {
 			parts = composed.map((part) => ({
 				...part,
@@ -134,8 +136,8 @@ function renderPreset(
 			return { name, prompt: buildKimiK26Prompt(options) };
 		case "claude-fable-5-1":
 			return { name, prompt: buildClaudeFable51Prompt(options) };
-		case "claude-fable-5-5":
-			return { name, prompt: buildClaudeFable55Prompt(options) };
+		case "claude-fable-5-2":
+			return { name, prompt: buildClaudeFable52Prompt(options) };
 		case "claude-fable-5":
 			return { name, prompt: buildClaudeFable5Prompt(options) };
 		case "claude-opus-5-5":
@@ -161,8 +163,10 @@ function withDefaults(options: Partial<BuildDynamicSystemPromptOptions> = {}): B
 	return {
 		cwd: options.cwd ?? "",
 		selectedTools: options.selectedTools ?? [],
+		...(options.nativeSearchAvailable === undefined ? {} : { nativeSearchAvailable: options.nativeSearchAvailable }),
 		toolSnippets: options.toolSnippets ?? {},
 		promptGuidelines: options.promptGuidelines ?? [],
+		...(options.fullToolPrompt === undefined ? {} : { fullToolPrompt: options.fullToolPrompt }),
 		contextFiles: options.contextFiles ?? [],
 		skills: options.skills ?? [],
 		surface: options.surface ?? "terminal",

@@ -1,3 +1,163 @@
+## 2026-11-10 - Fable 5.2 uses the guide's codebase-ownership sentence (senpi#6360, fixes #6356)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-fable-5-2.ts`: the Scope structure paragraph opens with the exact ownership sentence from "Say who owns the code" in Anthropic's Fable 5.2 prompting guide, replacing the whole smallest-change sentence at the owner's request. The standalone discipline against hypothetical helpers and internal defensive checks remains, and the paragraph's other sentences are unchanged. The header rationale and preset documentation now describe that choice.
+- The rendered-prompt regression checks the exact guide sentence and absence of the old opening. Only Fable 5.2's six Native baseline hashes and six corresponding shared-sections hashes are recaptured; every other preset and shared section is unchanged.
+
+### Why
+
+- Without ownership framing, the guide reports that Fable 5.2 acts as a guest: it adds parallel code, leaves duplicates in place, and only mentions nearby bugs. The owner's order replaces the smallest-change instruction with the guide's ownership framing.
+
+### Why an extension could not handle it
+
+- This is the prompt-preset extension's own Fable 5.2 core text.
+
+### Expected merge conflict zones
+
+- LOW: the Fable 5.2 Scope structure paragraph, header comment, documentation line, and its baseline hash rows.
+
+## 2026-11-10 - Claude Fable 5.2 preset from the Fable 5.2 prompting guide (senpi#6314)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-fable-5-2.ts`: new standalone preset, a copy of the tuned Fable 5.1 core changed at six sentences per Anthropic's "Prompting Claude Fable 5.2" guide: ordinary obstacles against deliberate blockers in Scope, two more text-only turn endings in the last-paragraph check, the retry hard limit scoped to repeating an undiagnosed failure, building on existing code instead of a parallel copy, cost-first delegation, and a plain-writing rule in place of the mannered-prose sentence.
+- `matchers.ts`, `contract.ts`, `presets.ts`, `settings.ts`: Fable 5.2 / Mythos 5.2 ids resolve to `claude-fable-5-2` before Fable 5.1 and the generic `fable-5` matcher; a dated Fable 5 id stays on Fable 5. The provisional `claude-fable-5-5` preset is removed.
+
+### Why
+
+- `claude-fable-5-2` fell through to the Fable 5 core, the oldest Fable prompt, with none of the 5.1 repairs or the 5.2 guide's findings.
+
+### Why an extension could not handle it
+
+- This is the prompt-preset extension itself.
+
+### Expected merge conflict zones
+
+- LOW: the Fable matcher order in `contract.ts` and `matchers.ts`, and the `claude-fable-5-2` rows in `prompt-presets-native-baseline.json`.
+
+## 2026-11-09 - Haiku 5.5 search-grounding sentence renders for Anthropic-native search (senpi#6264)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-haiku-5-5.ts`: `buildSearchGroundingLine` renders the training-data-cutoff sentence when the builtin `web_search` tool is active OR `nativeSearchAvailable` is set (senpi#2935).
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/index.ts`: the preset extension computes `nativeSearchAvailable` from the model (`supportsNativeAnthropicWebSearch(model) && isAnthropicWebSearchEnabled()`, the same two checks the `anthropic-web-search` extension uses) on `before_agent_start` and `model_select`.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/presets.ts`: `withDefaults` preserves the flag.
+
+### Why
+
+- A Haiku 5.5 session that can search only through Anthropic-native web search never got the grounding reminder, even though the model can search; the guide's nudge applies whenever the model can search, not only when the builtin tool is mounted.
+
+### Why an extension could not handle it
+
+- The preset is itself the extension that owns this prompt text; the fix is a gate change inside it, plus a builder seam for the native-search signal.
+
+### Expected merge conflict zones
+
+- LOW: the grounding gate in `claude-haiku-5-5.ts` and `eventOptionsToBuilderInput` in `index.ts` (the in-flight language fix #5516 touches the same preset file in nearby but non-overlapping lines).
+
+## 2026-11-03 - Opus and Fable presets declare full shared sections (senpi#5665)
+
+### What changed
+
+- Reverts #5199 (the `packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-opus-5-5.ts` / `packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-fable-5-1.ts` core trims): both cores are back to their 037918157 text.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/contract.ts`: `presetSharedSections(name)`. A preset declares `sharedSections: "full" | "diet"` (default `diet`); the Opus and Fable presets declare `full`: claude-fable-5, claude-fable-5-1, claude-fable-5-5, claude-opus-5-5, claude-opus-5, claude-opus-4-5..4-8. gpt-6-astra, Sonnet, Haiku and every other preset stay `diet`.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/presets.ts`: `buildPreset` passes the declared `sharedSections` to the builder, and `withDefaults` keeps `fullToolPrompt`; `index.ts` forwards `fullToolPrompt` from the session options.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/active-preset.ts`: `resolveActivePresetName(ctx)` (the logic `index.ts` used for the header) and `activeSharedSections(ctx)`, which the terminal, todotools, websearch and bash-timeout extensions read.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/execution-tooling.ts`: each rule keeps its pre-#5342 `fullDirective`; `sharedSections` selects it.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-fable-5.ts`, `claude-fable-5-1.ts`, `claude-opus-5.ts`, `claude-opus-5-5.ts`, `claude-opus-4-5.ts`, `claude-opus-4-6.ts`, `claude-opus-4-7.ts`, `claude-opus-4-8.ts`: pass the declared `sharedSections` to the shared builders. Every Opus/Fable preset prompt is byte-identical to main 037918157 again; every other preset to main 836fe1c75.
+
+### Why
+
+- A beta tester reported that Opus 5.5 got slower and less capable after the senpi#5335 diet (#5342) shipped. Q's order: revert the diet only for the Fable and Opus presets; every other model keeps it.
+
+### Why an extension could not handle it
+
+- The text lives in builtin prompt generators, builtin tool definitions, and builtin extension prompt hooks, and the preset that selects the wording is a builtin extension.
+
+### Expected merge conflict zones
+
+- LOW: `FULL_SHARED_SECTION_PRESETS`, the preset builders' shared-builder calls, and their native-baseline lines.
+
+## 2026-10-31 - Opus 5.5 and Fable 5.1 cores drop generic harness rules and duplicate lines (senpi#5199, fixes #5198)
+
+### What changed
+
+- `claude-opus-5-5.ts`, `claude-fable-5-1.ts`: the git-commit hard limit, the ASCII-only style clause, the specialized-search line, and the `waitForAnswer` parenthetical are removed from both cores. Opus 5.5 also states its scope rule once (Fable 5.1 wording) and drops lines another section already owns: the execution-tooling "extra read is cheap" rationale, the "Should pass" and "verify by default" lines, the fourth hard limit's tail, Style's "Act, then report", and the surgical-edit sentence (documented for Fable 5.1 only). `claude-fable-5-5` renders the 5.1 core and moves with it.
+- `test/suite/prompt-presets-native-baseline.json`: the 18 `claude-opus-5-5:*`, `claude-fable-5-1:*`, `claude-fable-5-5:*` hashes are recaptured; no other hash changes.
+- Size (o200k, 11 tools / no tools, terminal): Opus 5.5 2179 -> 2003 / 1870 -> 1725; Fable 5.1 1893 -> 1828 / 1584 -> 1550.
+
+### Why
+
+- The owner's rule: a model preset tunes OmO's own core for the model; generic coding-harness rules and lines with no guide section, trace, or issue behind them do not belong, and each rule has one home.
+
+### Why an extension could not handle it
+
+- Preset prompts are builtin extension code.
+
+### Expected merge conflict zones
+
+- LOW: `claude-opus-5-5.ts`, `claude-fable-5-1.ts`, and their native-baseline lines.
+
+## 2026-11-01 - System prompt diet, shared modules (senpi#5335)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/execution-tooling.ts`: the Claude routing rule drops the "nearly free / stale assumption" aside, and both dialects drop "A result that hides a failed item or a truncated tail is not evidence" (the eval description states it).
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/glm-5.ts`: `GLM5_TUNING` drops the waitForAnswer parenthetical the ask_user_question schema states.
+- Terse pass: the Claude dialect of `packages/coding-agent/src/core/extensions/builtin/prompt-preset/execution-tooling.ts` and `GLM5_TUNING` in `packages/coding-agent/src/core/extensions/builtin/prompt-preset/glm-5.ts` render the terse wording (Kimi dialect unchanged).
+
+### Why
+
+- senpi#5335.
+
+### Why an extension could not handle it
+
+- These are preset modules.
+
+### Expected merge conflict zones
+
+- LOW: the touched directive strings.
+
+## 2026-11-02 - gpt-6-astra core: terse, no Verification, tool list or file-operations block (senpi#5390)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts`: `## Verification` removed; `stop-checks` in `## Stop Goal` names the checks up front, runs them once and never re-verifies verified results. `## File operations` and the tool list leave the core; `## Tool Guidelines` stays. `## Writing` is codex's gpt-6-astra "Writing style" verbatim. `root-cause` opens `## Scope and Recovery`. Tool-bound rules carry `requiresTool` and render only when the session has the tool. Every other directive is restated tersely. o200k 4,355 -> 3,674 on a real first-turn tool set.
+
+### Why
+
+Q (2026-11-02) asked to replace the Astra prompt after comparing it with the Codex CLI request for the same model: drop the blocks that cost tokens without earning them, take Codex's writing section, and steer the model to diagnose root causes.
+
+### Why an extension could not handle it
+
+This is the preset's own core text.
+
+### Expected merge conflict zones
+
+`gpt-6-astra.ts` rule constants and `buildGpt6AstraCore`; the `gpt-6-astra:*` hashes in `test/suite/prompt-presets-native-baseline.json`.
+
+## 2026-10-31 - DeepSeek V4.1 Flash full-core rewrite (senpi#5195, fixes #5194)
+
+### What changed
+
+- `deepseek-v4-1-flash.ts`: the preset passes `corePrompt` instead of rendering the shared core. The core states every fork contract once in a compressed register (RFC 2119 keywords, a `<critical>` block for the hard limits): routing line and binding stop condition on terminal, the app/chat variants through `terminalOrApp`, `buildHandoffSection` (its language rule kept; chat keeps `CHAT_REPLY_RULE`), `buildTestDisciplineSection`, `APP_UNRUN_CHECK_RULE`, and the claude-dialect execution tooling. The OmO voice of the shared core is kept (senior-engineer bar, scope fidelity, opinions, the user's call is final, no hedging); the identity names the model. The git-commit hard limit is dropped at the owner's request, and the unread-code/unrun-command hard limit is kept.
+- `DEEPSEEK_V41_FLASH_RULES` (new typed rule data): `injected-directive-authority`, `settled-reading`, `missing-info`, `todo-discipline` carry the V4 Flash-line repairs from `deepseek-v4.ts` in compressed form (`carriedFrom`); `background-wait` is new. `todo-discipline` renders only with `todo`, `background-wait` only with `task`. The Pro-only `reasoning-aim` is not carried.
+- `test/suite/prompt-presets-deepseek-v4-1-flash.test.ts`: the no-V4-rule pin is replaced by rule-table checks (each rule once, in its owning section; tool-bound rules gated; every V4 Flash-line repair carried, no Pro-only one). `prompt-presets-native-baseline.json`: the six `deepseek-v4-1-flash:*` hashes are recaptured; no other hash changes.
+- Size (o200k, 11 tools / no tools): terminal 2167 -> 1982 / 1782 -> 1507, app 2184 -> 2011 / 1799 -> 1536, chat 1987 -> 1825 / 1602 -> 1350.
+
+### Why
+
+- The owner asked for V4.1 to be tuned rather than left on the shared core, with the V4 repairs carried over and oh-my-pi's compressed register and `<critical>` tags as the style reference. DeepSeek's own harness tells the model to end its turn when only waiting on background work remains, and DeepSeek tuned V4.1-Flash-1017 for that harness (api-docs.deepseek.com/updates, 2026-10-17); `background-wait` adopts that stance. The 2026-09-11 decision (no V4 rules on a re-trained model) is reversed by the owner; the behavior change is unmeasured on live V4.1 traces.
+
+### Why an extension could not handle it
+
+- Preset prompts are builtin extension code.
+
+### Expected merge conflict zones
+
+- LOW: `deepseek-v4-1-flash.ts` (whole file), the `deepseek-v4-1-flash:*` lines of the native baseline.
+
 ## 2026-10-24 - Kimi K3.1 prompt preset, copied from K3 (senpi#4184)
 
 ### What changed

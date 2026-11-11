@@ -1,5 +1,30 @@
 # Permission System Builtin Extension
 
+## 2026-11-10 - A tool-owned permission request keeps autoApproveAsk (senpi#6305)
+
+### What changed
+
+- `parsers.ts`: `toolOwnedPermissionRequests` passes a tool's `autoApproveAsk` through instead of dropping it, so a tool can ask the system to approve an `ask` decision for a call while `allow` and `deny` rules still match its request (an omo reply to the peer that messaged the run, oh-my-openagent#12954). `ToolPermissionRequest` (`core/extensions/types.ts`) declares the field.
+
+## 2026-11-08 - The preset is read per decision through the core override (senpi#6206)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/preset-registry.ts`: `registerDecisionPresetOverride` / `readDecisionPresetOverride`.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts`: the preset the rules load from is the override when the core sets one; an invalid `--permission-preset` keeps refusing every call (#2617).
+
+### Why
+
+- The delegated default and child inheritance decide per gated call, from state only the core has (remote approval-mode work, tracked privately).
+
+### Why an extension could not handle it
+
+- This is the builtin permission extension itself; the override is how the core feeds it.
+
+### Expected merge conflict zones
+
+- LOW: `loadPermissionRules` and `followPresetFlag`.
+
 ## 2026-10-29 - Confirm paths on every measured local filesystem type (senpi#4790)
 
 ### What changed

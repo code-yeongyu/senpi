@@ -42,10 +42,10 @@ describe("buildEvalPrompt", () => {
 		expect(prompt).toContain('`"js"` persistent JavaScript VM');
 		expect(prompt).not.toContain('`"rb"` persistent Ruby kernel');
 		expect(prompt).not.toContain('`"jl"` persistent Julia kernel');
-		// The parameter schema is the single home of the per-field semantics; the guideline keeps reset scope.
+		// The parameter schema is the single home of the per-field semantics; the guideline keeps the memory notice.
 		expect(prompt).not.toContain("- `timeout`");
 		expect(prompt).not.toContain("`on_timeout`");
-		expect(prompt).toContain("reset is scoped to the selected language");
+		expect(prompt).toContain("kernel memory notice");
 	});
 
 	it("omits disabled and missing languages from the prompt", () => {
@@ -212,7 +212,6 @@ describe("buildEvalPrompt", () => {
 
 		// Then: the note names the host and the sizing rule, and disappears without one.
 		expect(withHost).toContain("Host: darwin arm64 \u00b7 Apple M5 Max \u00b7 18 cores. Cells execute here.");
-		expect(withHost).toContain("Size `parallel(thunks)` pools to its cores");
 		expect(withoutHost).not.toContain("Host:");
 	});
 

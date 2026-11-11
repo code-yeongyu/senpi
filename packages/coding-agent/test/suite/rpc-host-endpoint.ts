@@ -1,4 +1,3 @@
-import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 import { z } from "zod";
 
@@ -38,12 +37,24 @@ const recordSchema = z
 	.passthrough();
 export type WorkerHostRecord = z.infer<typeof recordSchema>;
 
-export function endpoint(input: Readable, output: Writable, diagnostic: () => string) {
+export const RPC_RESPONSE_TIMEOUT_MS = 30_000;
+
+export function endpoint(
+	input: Readable,
+	output: Writable,
+	diagnostic: () => string,
+	openTimeoutMs = RPC_RESPONSE_TIMEOUT_MS,
+) {
 	let serial = 0;
 	const records: WorkerHostRecord[] = [];
 	const listeners = new Set<{ accept: (record: WorkerHostRecord) => void; reject: (error: Error) => void }>();
-	const lines = createInterface({ input });
-	lines.on("line", (line) => {
+	let buffered = "";
+	let terminalError: Error | undefined;
+	const fail = (error: Error) => {
+		terminalError ??= error;
+		for (const listener of [...listeners]) listener.reject(terminalError);
+	};
+	const acceptLine = (line: string) => {
 		try {
 			const record = recordSchema.parse(JSON.parse(line));
 			records.push(record);
@@ -53,8 +64,29 @@ export function endpoint(input: Readable, output: Writable, diagnostic: () => st
 			const error = cause instanceof Error ? cause : new Error(String(cause));
 			for (const listener of [...listeners]) listener.reject(error);
 		}
-	});
-	function wait(predicate: (record: WorkerHostRecord) => boolean, ms = 30_000): Promise<WorkerHostRecord> {
+	};
+	const onData = (chunk: string) => {
+		buffered += chunk;
+		let newline = buffered.indexOf("\n");
+		while (newline !== -1) {
+			const line = buffered.slice(0, newline);
+			buffered = buffered.slice(newline + 1);
+			acceptLine(line);
+			newline = buffered.indexOf("\n");
+		}
+	};
+	const onEnd = () => fail(new Error(`RPC stream closed before expected record; ${diagnostic()}`));
+	input.setEncoding("utf8");
+	input.on("data", onData);
+	input.on("end", onEnd);
+	input.on("close", onEnd);
+	input.on("error", fail);
+	output.on("error", fail);
+	function wait(
+		predicate: (record: WorkerHostRecord) => boolean,
+		ms = RPC_RESPONSE_TIMEOUT_MS,
+	): Promise<WorkerHostRecord> {
+		if (terminalError) return Promise.reject(terminalError);
 		return new Promise((resolveRecord, reject) => {
 			const finish = () => {
 				clearTimeout(timer);
@@ -93,13 +125,21 @@ export function endpoint(input: Readable, output: Writable, diagnostic: () => st
 		},
 		request(command: Record<string, unknown>, ms?: number) {
 			const id = `worker-test-${++serial}`;
-			const response = wait((record) => record.type === "response" && record.id === id, ms);
+			const response = wait(
+				(record) => record.type === "response" && record.id === id,
+				ms ?? (command.type === "open_session" ? openTimeoutMs : RPC_RESPONSE_TIMEOUT_MS),
+			);
 			output.write(`${JSON.stringify({ ...command, id })}\n`);
 			return response;
 		},
 		dispose() {
 			for (const listener of [...listeners]) listener.reject(new Error("Test endpoint disposed"));
-			lines.close();
+			input.off("data", onData);
+			input.off("end", onEnd);
+			input.off("close", onEnd);
+			input.off("error", fail);
+			output.off("error", fail);
+			buffered = "";
 		},
 	};
 }

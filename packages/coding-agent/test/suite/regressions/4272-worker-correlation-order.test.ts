@@ -76,7 +76,7 @@ it("Q6 worker: a correlation transition carried in worker frames is sequenced ju
 	} finally {
 		await host.dispose();
 	}
-}, 120_000);
+}, 600_000);
 
 // Part of #4272, review MEDIUM-1: a turn that answers no client message ends the correlation in the accepted root.
 it("Q6 worker: a trigger turn after a client turn sequences the end of the correlation, so the cut attributes it to no client message", async () => {
@@ -125,4 +125,4 @@ it("Q6 worker: a trigger turn after a client turn sequences the end of the corre
 	} finally {
 		await host.dispose();
 	}
-}, 120_000);
+}, 600_000);

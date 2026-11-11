@@ -12,7 +12,10 @@ import {
 } from "./ledger-types.ts";
 
 const advance = (entry: ExecutionEntry, progress: ExecutionProgress): LedgerReply => applied({ ...entry, progress });
-const settle = (entry: ExecutionEntry, reason: Exclude<ExecutionOutcome["reason"], "result">): LedgerReply =>
+const settle = (
+	entry: ExecutionEntry,
+	reason: Exclude<ExecutionOutcome["reason"], "result" | "blocked">,
+): LedgerReply =>
 	advance(entry, {
 		state: "settled",
 		outcome: { reason, hooksRan: entry.effectPossible, uncertain: entry.effectPossible || entry.bodyDispatched },
@@ -31,6 +34,7 @@ function authorized(entry: ExecutionEntry, { actor, event }: ExecutionCommand): 
 		case "prepare":
 		case "effect":
 		case "freeze":
+		case "block":
 		case "dispatch":
 		case "result":
 		case "expire":
@@ -103,6 +107,13 @@ export function transitionExecution(entry: ExecutionEntry, command: ExecutionCom
 			}
 			return "call" in progress && progress.call.digest === event.call.digest
 				? replayed(entry)
+				: refused("invalid_transition");
+		case "block":
+			return progress.state === "preparing"
+				? advance(entry, {
+						state: "settled",
+						outcome: { reason: "blocked", value: event.value, hooksRan: entry.effectPossible, uncertain: false },
+					})
 				: refused("invalid_transition");
 		case "consent":
 			return progress.state === "prepared_awaiting_consent"

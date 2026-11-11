@@ -1,0 +1,60 @@
+diff --git a/packages/agent/src/execution/prepared/pipeline-prepared.ts b/packages/agent/src/execution/prepared/pipeline-prepared.ts
+index b3c1df7ef1..d28b2a7f23 100644
+--- a/packages/agent/src/execution/prepared/pipeline-prepared.ts
++++ b/packages/agent/src/execution/prepared/pipeline-prepared.ts
+@@ -1,6 +1,12 @@
+ import type { AgentToolCallOutcome, BatchStoreFactory } from "../../types.ts";
+ import type { ToolHost } from "../tool-host.ts";
+-import { createToolResultMessage, emitToolResultMessage, shouldTerminateToolBatch } from "../tool-outcome-events.ts";
++import {
++	createErrorToolResult,
++	createToolResultMessage,
++	emitToolExecutionEnd,
++	emitToolResultMessage,
++	shouldTerminateToolBatch,
++} from "../tool-outcome-events.ts";
+ import type { ToolResultMessage } from "@earendil-works/pi-ai";
+ import type { PreparationSource } from "./executor-pipeline.ts";
+ import { runPreparedBatch } from "./pipeline-prepared-batch.ts";
+@@ -15,23 +21,25 @@ export function createPreparedToolHost(source: PreparationSource, openStore: Bat
+ 		async execute(call, options) {
+ 			const { emit, signal, recordWitness, local } = options;
+ 			if (local === undefined) throw new Error("the prepared pipeline runs only in the loop's own process");
+-			if (recordWitness) {
+-				for (const raw of call.calls) {
+-					const pending = recordWitness({ pipeline: "prepared", toolCallId: raw.id });
+-					if (pending) await pending;
+-				}
+-			}
++			// MUTANT (EQ bypass-executor): each call runs its tool directly, never through the prepared executor, so no
++			// prepared receipt is recorded. The EQ witness check must fail.
++			void recordWitness;
++			void runPreparedBatch;
++			void source;
++			void openStore;
+ 			const batch = (calls: typeof call.calls) =>
+-				runPreparedBatch({
+-					source,
+-					openStore,
+-					calls,
+-					scope: call.scope,
+-					context: local.context,
+-					assistantMessage: local.assistantMessage,
+-					emit,
+-					...(signal === undefined ? {} : { signal }),
+-				});
++				Promise.all(
++					calls.map(async (raw): Promise<AgentToolCallOutcome> => {
++						const tool = local.context.tools?.find((candidate) => candidate.name === raw.name);
++						const result =
++							tool === undefined
++								? createErrorToolResult(`Tool ${raw.name} not found`)
++								: await tool.execute(raw.id, raw.arguments, signal);
++						const outcome = { toolCall: raw, result, isError: tool === undefined };
++						await emitToolExecutionEnd(outcome, emit);
++						return outcome;
++					}),
++				);
+ 			const outcomes: AgentToolCallOutcome[] = [];
+ 			const messages: ToolResultMessage[] = [];
+ 			const report = async (finished: readonly AgentToolCallOutcome[]): Promise<void> => {

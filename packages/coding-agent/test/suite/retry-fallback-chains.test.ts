@@ -162,8 +162,8 @@ describe("fallback chain selectors", () => {
 		expect(resolved.chains["*"]).toBeUndefined();
 	});
 
-	it("ships the fable family an opus-only ladder led by Opus 5.5 at max", () => {
-		const ladder = ["claude-opus-5-5:max", "claude-opus-5:max"];
+	it("ships the fable family an opus-only ladder led by Opus 5.5 without overriding thinking effort", () => {
+		const ladder = ["claude-opus-5-5", "claude-opus-5"];
 		const resolved = resolveRetryFallbackSettings(undefined);
 
 		expect(resolved.chains["claude-fable-5-1"]).toEqual(ladder);
@@ -171,16 +171,16 @@ describe("fallback chain selectors", () => {
 		expect(resolved.modelFallback).toBe(true);
 	});
 
-	it("ships Opus 5.5 its own same-family step-down ladder", () => {
+	it("ships Opus 5.5 a step off the Opus quota before Opus 5, without overriding thinking effort (senpi#6385)", () => {
 		const resolved = resolveRetryFallbackSettings(undefined);
 
-		expect(resolved.chains["claude-opus-5-5"]).toEqual(["claude-opus-5:max"]);
+		expect(resolved.chains["claude-opus-5-5"]).toEqual(["claude-fable-5-2", "claude-opus-5"]);
 	});
 
-	it("keeps every shipped rung inside the anthropic opus family", () => {
+	it("keeps every shipped rung on a bare anthropic claude model", () => {
 		for (const entries of Object.values(DEFAULT_FALLBACK_CHAINS)) {
 			expect(entries.length).toBeGreaterThan(0);
-			for (const entry of entries) expect(entry.startsWith("claude-opus-")).toBe(true);
+			for (const entry of entries) expect(entry).toMatch(/^claude-(?:opus|fable)-[0-9]/);
 		}
 	});
 

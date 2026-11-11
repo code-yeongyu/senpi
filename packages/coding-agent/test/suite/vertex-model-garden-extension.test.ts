@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Api, AuthContext, Model } from "@earendil-works/pi-ai";
 import { normalizeContext } from "@earendil-works/pi-ai/utils/transcript";
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
+import { VERTEX_MODEL_GARDEN_MODELS } from "../../src/core/extensions/builtin/vertex-model-garden/models.ts";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import {
@@ -375,5 +377,106 @@ describe("vertex-garden automatic default selection", () => {
 		expect(result.model?.provider).toBe("google-vertex");
 		expect(result.model?.id).toBe(defaultModelPerProvider["google-vertex"]);
 		expect(result.provenance).toBe("provider-default");
+	});
+});
+
+describe("vertex-garden thinking toggle", () => {
+	function gardenModel(id: string): Model<"openai-completions"> {
+		const config = VERTEX_MODEL_GARDEN_MODELS.find((entry) => entry.id === id);
+		if (!config || config.type === "image" || config.type === "classifier") {
+			throw new Error(`vertex-garden chat config missing for ${id}`);
+		}
+		return {
+			...model("openai-completions", id, "vertex-garden"),
+			thinkingLevelMap: config.thinkingLevelMap,
+			compat: config.compat,
+		} as Model<"openai-completions">;
+	}
+
+	const frames = (withReasoning: boolean) => {
+		const chunk = (delta: object, finish_reason: string | null = null) =>
+			`data: ${JSON.stringify({
+				id: "t1",
+				object: "chat.completion.chunk",
+				choices: [{ index: 0, delta, ...(finish_reason ? { finish_reason } : {}) }],
+			})}\n\n`;
+		return [
+			...(withReasoning ? [chunk({ role: "assistant", reasoning_content: "REASONING_MARKER" })] : []),
+			chunk({ role: "assistant", content: "TOGGLE_FINAL_MARKER" }),
+			chunk({}, "stop"),
+			"data: [DONE]\n\n",
+		].join("");
+	};
+
+	it.each([
+		["zai-org/glm-5.2-maas", "enable_thinking"],
+		["deepseek-ai/deepseek-v4.1-flash-maas", "thinking"],
+	] as const)(
+		"#given %s #when thinking is on #then only its own chat-template flag is sent true",
+		async (id, flag) => {
+			const captured: Captured[] = [];
+			const result = await streamVertexModelGarden(
+				gardenModel(id),
+				context,
+				{ fetch: capturingFetch(() => sse([frames(true)]), captured), reasoning: "medium" },
+				access,
+			).result();
+
+			expect(captured).toHaveLength(1);
+			expect(captured[0].body.chat_template_kwargs).toEqual({ [flag]: true });
+			expect(captured[0].body.reasoning_effort).toBeUndefined();
+			expect(captured[0].body.thinking).toBeUndefined();
+			expect(result.stopReason).not.toBe("error");
+			expect(result.content.some((part) => part.type === "thinking")).toBe(true);
+		},
+	);
+
+	it.each([
+		["zai-org/glm-5.2-maas", "enable_thinking"],
+		["deepseek-ai/deepseek-v4.1-flash-maas", "thinking"],
+	] as const)("#given %s #when thinking is off #then its own flag is sent false", async (id, flag) => {
+		const captured: Captured[] = [];
+		const result = await streamVertexModelGarden(
+			gardenModel(id),
+			context,
+			{ fetch: capturingFetch(() => sse([frames(false)]), captured) },
+			access,
+		).result();
+
+		expect(captured).toHaveLength(1);
+		expect(captured[0].body.chat_template_kwargs).toEqual({ [flag]: false });
+		expect(result.stopReason).not.toBe("error");
+		expect(result.content.some((part) => part.type === "thinking")).toBe(false);
+	});
+
+	it.each(["zai-org/glm-5.2-maas", "deepseek-ai/deepseek-v4.1-flash-maas"])(
+		"#given %s #when registered #then exactly off and medium are steerable",
+		(id) => {
+			const levels = getSupportedThinkingLevels(gardenModel(id));
+			expect(levels).toHaveLength(2);
+			expect(levels).toContain("off");
+			expect(levels).toContain("medium");
+		},
+	);
+
+	it("#given Vertex ADC #when the provider is registered #then each model carries its own Vertex default level", async () => {
+		const adc = await createGoogleAdcFixture({ quotaProjectId: "adc-quota-project" });
+		try {
+			vi.stubEnv("GOOGLE_APPLICATION_CREDENTIALS", adc.path);
+			vi.stubEnv("GOOGLE_CLOUD_PROJECT", "adc-user-project");
+			const runtime = await runtimeWithGarden();
+			const defaults = new Map(
+				runtime
+					.getAvailableSnapshot()
+					.filter((available) => available.provider === VERTEX_MODEL_GARDEN_PROVIDER_ID)
+					.map((available) => [available.id, available.defaultThinkingLevel]),
+			);
+			// GLM 5.2 thinks by default on Vertex; DeepSeek V4.1 Flash does not (live-verified 2026-11-09).
+			expect(defaults.get("zai-org/glm-5.2-maas")).toBe("medium");
+			expect(defaults.get("deepseek-ai/deepseek-v4.1-flash-maas")).toBe("off");
+		} finally {
+			vi.unstubAllEnvs();
+			await adc.close();
+		}
 	});
 });

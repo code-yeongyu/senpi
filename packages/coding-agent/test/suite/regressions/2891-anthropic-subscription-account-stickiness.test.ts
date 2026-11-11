@@ -159,9 +159,7 @@ describe("senpi#2891 a session stays on its account unless the account cannot se
 		const store = await storeWithPool();
 
 		// when the turn runs
-		const failure = await runTurn(store, 10_000, home, () => "HTTP 529 overloaded").catch(
-			(error: unknown) => error,
-		);
+		const failure = await runTurn(store, 10_000, home, () => "HTTP 529 overloaded").catch((error: unknown) => error);
 
 		// then only the session's account is retried, and no other account is touched
 		expect(failure).toBeInstanceOf(FailedTurnError);

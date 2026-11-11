@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import {
 	type ClaudeAccountCommandDeps,
@@ -15,6 +15,7 @@ import {
 import { selectAccount } from "../../src/core/extensions/builtin/anthropic-subscription/affinity.ts";
 import type { AnthropicSubscriptionProviderSettings } from "../../src/core/extensions/builtin/anthropic-subscription/settings.ts";
 import type { ExtensionAPI, ExtensionCommandContext, RegisteredCommand } from "../../src/core/extensions/types.ts";
+import { subscriptionLimits } from "../../src/core/subscription-limits/limit-store.ts";
 import { cliSlot } from "../support/claude-cli-test-slots.ts";
 
 const PROVIDER_ID = "anthropic-subscription";
@@ -91,24 +92,88 @@ function command(harness: CommandHarness): Command {
 }
 
 describe("/claude-account", () => {
-	it("lists account slots with source, blocked state, pin state, and the current affinity pick", async () => {
+	// vitest.config.ts sets unstubEnvs, so a stubbed TZ is restored (or deleted) after each test.
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	// senpi#6288: one block per account, aligned rows, relative times with a short local clock, no ISO stamps.
+	it("lists each account as a readable block with status, limit windows, pin and next-turn tags", async () => {
+		vi.stubEnv("TZ", "UTC");
+		const now = Date.UTC(2026, 10, 9, 12, 0); // Monday
+		vi.useFakeTimers({ now, toFake: ["Date"] });
+		const hour = 3_600_000;
 		const storage = AuthStorage.inMemory({
-			[PROVIDER_ID]: credential(slot("alpha"), {
-				...slot("bravo"),
-				blockedUntil: Date.now() + 60_000,
-				blockReason: "rate_limit",
-			}),
+			[PROVIDER_ID]: credential(
+				cliSlot("alpha", { displayName: "Personal" }),
+				cliSlot("bravo", { blockedUntil: now + 3 * hour, blockReason: "rate_limit" }),
+				cliSlot("charlie", { modelBlocks: { fable: { blockedUntil: now + 26 * hour } } }),
+			),
 		});
+		const at = (offset: number) => new Date(now + offset).toISOString();
+		subscriptionLimits.record(PROVIDER_ID, "alpha", [
+			{ id: "w:5h", label: "5h", usedPercent: 72.4, resetsAt: at(2 * hour) },
+			{ id: "w:7d", label: "7d", usedPercent: 31, resetsAt: at(72 * hour) },
+		]);
+		subscriptionLimits.record(PROVIDER_ID, "bravo", [
+			{ id: "w:5h", label: "5h", usedPercent: 100, resetsAt: at(3 * hour) },
+		]);
 		const { ctx, notices } = createContext(storage);
 		const harness = createHarness(undefined, { pinnedAccount: "alpha" });
 
 		await command(harness).handler("", ctx);
 
+		expect(notices.at(-1)?.message).toBe(
+			[
+				"Anthropic Subscription accounts (3)",
+				"",
+				"Personal (alpha)  [pinned in settings, next turn]",
+				"  status   available",
+				"  5h        72% used, resets in 2 h (2:00 PM)",
+				"  7d        31% used, resets in 3 d (Thu 12:00 PM)",
+				"  updated  just now",
+				"",
+				"bravo",
+				"  status   rate limited, retry in 3 h (3:00 PM)",
+				"  5h       100% used, resets in 3 h (3:00 PM)",
+				"  updated  just now",
+				"",
+				"charlie",
+				"  status   fable blocked, retry in 1 d 2 h (Tue 2:00 PM)",
+				"  limits   not reported yet",
+				"",
+				"Manage: /claude-account add | pin <id> | unpin | unblock <id> | remove <id>",
+			].join("\n"),
+		);
+	});
+
+	it("names a pin that matches no account and an unavailable next-turn pick below the list", async () => {
+		const storage = AuthStorage.inMemory({ [PROVIDER_ID]: credential(slot("alpha")) });
+		const { ctx, notices } = createContext(storage);
+		const harness = createHarness(undefined, { pinnedAccount: "gone", accountFallback: false });
+
+		await command(harness).handler("", ctx);
+
 		const output = notices.at(-1)?.message ?? "";
-		expect(output).toContain("alpha | login | available | pinned | affinity pick");
-		expect(output).toContain("bravo | login | blocked until");
-		expect(output).toContain("Pinned account: alpha (settings)");
-		expect(output).toContain("Affinity pick: alpha");
+		expect(output).toContain("Pinned account: gone (settings) - not in this list");
+		expect(output).toMatch(/^Next turn: unavailable - .+/m);
+		expect(output).not.toContain("[pinned");
+	});
+
+	it("keeps naming the configured pin when no account is stored", async () => {
+		const storage = AuthStorage.inMemory({});
+		const { ctx, notices } = createContext(storage);
+		const harness = createHarness(undefined, { pinnedAccount: "gone" });
+
+		await command(harness).handler("", ctx);
+
+		expect(notices.at(-1)?.message).toBe(
+			[
+				"Anthropic Subscription accounts: none",
+				"Pinned account: gone (settings) - not in this list",
+				"Add one with /claude-account add.",
+			].join("\n"),
+		);
 	});
 
 	it("persists a pin that deterministically overrides HRW selection", async () => {

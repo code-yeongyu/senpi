@@ -24,7 +24,7 @@ import {
 	statSync,
 	writeFileSync,
 } from "fs";
-import { appendFile, type FileHandle, open, readdir, rm } from "fs/promises";
+import { appendFile, type FileHandle, mkdir, open, readdir, rm } from "fs/promises";
 import { basename, join, resolve } from "path";
 import { StringDecoder } from "string_decoder";
 import { APP_NAME, getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
@@ -33,6 +33,7 @@ import { EventLoopSlicer, mapInSlices } from "./event-loop-slicer.ts";
 import { projectRetainedMessages } from "./extensions/builtin/compaction/retained-message-projection.ts";
 import { resolveMovedPath } from "./extensions/builtin/moved-path-guard/resolve.ts";
 import type { InputSource } from "./extensions/types.ts";
+import { SessionFileCallKeys } from "./session-file-call-keys.ts";
 import type { RecoveryCarrier } from "./session-recovery-identity.ts";
 import type { ModelChangeOrigin, ModelChangeSource } from "./model-change-origin.ts";
 import { sessionCwdMatcher } from "./moved-session-cwd.ts";
@@ -52,7 +53,13 @@ import {
 	terminateFinalSessionLine,
 } from "./session-entry-file.ts";
 import { materializeSessionEntries } from "./session-entry-materializer.ts";
-import { captureAndCloseFileIdentity, captureFileIdentity, loadedFileIdentities } from "./session-file-identity.ts";
+import {
+	BaseContentHash,
+	captureAndCloseFileIdentity,
+	captureFileIdentity,
+	loadedContentFingerprints,
+	loadedFileIdentities,
+} from "./session-file-identity.ts";
 import { replaceFileAtomically } from "./session-file-replace.ts";
 import { type HistoryReducer, HistoryReductions } from "./session-history-reduce.ts";
 import type { SpawnedBy } from "./session-lifecycle-types.ts";
@@ -68,9 +75,17 @@ import {
 } from "./session-transcript-journal.ts";
 import { branchFlow, compactionFlow, contextEditFlow, ownedFlowMessage } from "./session-transcript-flows.ts";
 import { TranscriptFile } from "./session-transcript-file.ts";
+import type { SessionOwnership } from "./session-move/ownership.ts";
 import { SessionWriteGuard } from "./session-move/write-guard.ts";
 import { type ResidentStoreStats, ResidentStringStore } from "./session-resident-store.ts";
 import { SessionWriteFence } from "./session-write-fence.ts";
+import {
+	DurableSessionBinding,
+	type DurableStoreBinding,
+	type ProjectionWarning,
+	storeKeyOf,
+} from "./session-store/durable-binding.ts";
+import type { StoredEntry } from "@earendil-works/pi-agent-core";
 import {
 	discardFailedFirstFlush,
 	discardFailedFirstFlushAsync,
@@ -1183,6 +1198,11 @@ export class SessionManager {
 	private persist: boolean;
 	private readonly writeGuard = new SessionWriteGuard();
 	private readonly writeFence = new SessionWriteFence();
+	// S20b: set by bindDurableStore; every write then commits to the store before its JSONL projection.
+	private durable: DurableSessionBinding | undefined;
+	private bindPending = false;
+	private bindRaced = false;
+	private readonly projectionWarningListeners = new Set<(warning: ProjectionWarning) => void>();
 	private flushed: boolean = false;
 	private headerWrite: Promise<void> | undefined;
 	// The file persistHeaderNow() created in this process; only it may be discarded on close (senpi#3263).
@@ -1210,6 +1230,7 @@ export class SessionManager {
 	private transcriptBytes = new WeakMap<FileEntry, string>();
 	private readonly capturesTranscriptBase = compactUpdatesEnabled();
 	private residentStore = new ResidentStringStore();
+	private readonly callKeys = new SessionFileCallKeys();
 	private mirrorTrimmed = false;
 	// Set while a navigation to an entry outside the mirror reloads the whole file into it.
 	private loadingFullMirror = false;
@@ -1386,6 +1407,8 @@ export class SessionManager {
 	/** Points this manager at `sessionFile`; the path when it exists, undefined when a new session was started there. */
 	private _beginSessionFile(sessionFile: string, newSessionOptions?: NewSessionOptions): string | undefined {
 		const resolvedFile = resolvePath(sessionFile);
+		// A reload of the bound file keeps its binding; any other file ends it.
+		if (this.sessionFile !== resolvedFile) this.durable = undefined;
 		if (this.persist) {
 			reserveSessionWrite(resolvedFile);
 			this.writeFence.opened(resolvedFile);
@@ -1398,6 +1421,7 @@ export class SessionManager {
 		this.mirrorTrimmed = false;
 		this.trimmedIds.clear();
 		this.residentStore.clear();
+		this.callKeys.clear();
 		if (existsSync(resolvedFile)) {
 			// This process opens the session for append; a final line torn by an interrupted write is set aside now
 			// (senpi#4295: every open path, `-c` included), never from read-only loadEntriesFromFile callers.
@@ -1446,6 +1470,7 @@ export class SessionManager {
 		// adopts a fresh id in memory instead of creating a replacement session file
 		// (which `_loadEntries`' header-less branch would do for ingested entries).
 		this.fileEntries = entries;
+		this.callKeys.adopt(entries);
 
 		const header = this.fileEntries.find((e) => e.type === "session") as SessionHeader | undefined;
 		this.sessionId = header?.id ?? createSessionId();
@@ -1475,6 +1500,7 @@ export class SessionManager {
 	}
 
 	newSession(options?: NewSessionOptions): string | undefined {
+		this.durable = undefined;
 		const timestamp = this._resetToNewSession(options);
 		this.ownedHeaderFile = undefined;
 		if (this.persist) {
@@ -1508,6 +1534,7 @@ export class SessionManager {
 			...(options?.spawnedBy ? { spawnedBy: options.spawnedBy } : {}),
 		};
 		this.fileEntries = [header];
+		this.callKeys.clear();
 		this.transcriptFile.reset();
 		this.transcriptBytes = new WeakMap();
 		this.historyGeneration++;
@@ -1542,8 +1569,10 @@ export class SessionManager {
 	private _loadEntries(entries: FileEntry[], options?: NewSessionOptions): void {
 		const header = entries.find((e) => e.type === "session") as SessionHeader | undefined;
 
+		// Ingested entries load like a file's: their persisted call keys go to the side table (RULING-127 (c)).
 		if (header) {
 			this.fileEntries = entries;
+			this.callKeys.adopt(entries);
 			this.sessionId = header.id;
 
 			if (migrateToCurrentVersion(this.fileEntries)) {
@@ -1551,6 +1580,7 @@ export class SessionManager {
 			}
 		} else {
 			this.newSession(options);
+			this.callKeys.adopt(entries);
 			this.fileEntries = this.fileEntries.concat(entries);
 		}
 
@@ -1627,11 +1657,27 @@ export class SessionManager {
 		this.writeGuard.assertRewritable(this.fileEntries, this.sessionFile);
 		this.writeFence.assertOwned(this.sessionFile);
 		reserveSessionWrite(this.sessionFile);
-		replaceFileAtomically(
-			this.sessionFile,
-			this._serializedFileEntries(),
-			this.capturesTranscriptBase ? (identity) => this._captureTranscriptBase(identity, this.fileEntries) : undefined,
-		);
+		const durable = this.durable;
+		if (this.bindPending) this.bindRaced = true;
+		if (durable) {
+			durable.commitRewrite(this._headerLine(), this._storedEntries(this.fileEntries));
+			if (durable.projectionStale()) {
+				durable.scheduleRepair(this.sessionFile);
+				return;
+			}
+		}
+		try {
+			replaceFileAtomically(
+				this.sessionFile,
+				this._serializedFileEntries(),
+				this.capturesTranscriptBase ? (identity) => this._captureTranscriptBase(identity, this.fileEntries) : undefined,
+			);
+		} catch (error) {
+			if (!durable) throw error;
+			durable.projectionFailed(this.sessionFile, error);
+			return;
+		}
+		durable?.recordWhole(this.sessionFile);
 	}
 
 	/** Wire the owning reader/writer's capture; until it lands snapshots use the bounded accepted tail. */
@@ -1692,7 +1738,7 @@ export class SessionManager {
 	private _transcriptEntryBytes(entry: FileEntry): string {
 		const cached = this.transcriptBytes.get(entry);
 		if (cached !== undefined) return cached;
-		const bytes = JSON.stringify(this.residentStore.materialize(entry));
+		const bytes = JSON.stringify(this.callKeys.decorate(this.residentStore.materialize(entry)));
 		if (
 			this.persist &&
 			this.capturesTranscriptBase &&
@@ -1704,15 +1750,32 @@ export class SessionManager {
 	}
 
 	private *_serializedFileEntries(): Generator<string> {
+		const content = this.capturesTranscriptBase ? new BaseContentHash() : undefined;
 		for (const entry of this.fileEntries) {
 			const bytes = this._transcriptEntryBytes(entry);
 			if (this.capturesTranscriptBase && !this.transcriptFile.unavailable) this.transcriptBytes.set(entry, bytes);
+			content?.line(bytes);
 			yield `${bytes}\n`;
 		}
+		if (content) loadedContentFingerprints.set(this.fileEntries, content.digest());
 	}
 
 	isPersisted(): boolean {
 		return this.persist;
+	}
+
+	/** Give an unclaimed in-memory session its first file without rebuilding or changing its identity. */
+	async enablePersistence(): Promise<void> {
+		if (this.persist) return;
+		const dir = getDefaultSessionDirPath(this.cwd);
+		await mkdir(dir, { recursive: true });
+		const header = this.fileEntries[0] as SessionHeader;
+		const path = join(dir, `${header.timestamp.replace(/[:.]/g, "-")}_${this.sessionId}.jsonl`);
+		reserveSessionWrite(path);
+		this.sessionDir = dir;
+		this.sessionFile = path;
+		this.persist = true;
+		registerSessionWriter(this);
 	}
 
 	getCwd(): string {
@@ -1733,6 +1796,14 @@ export class SessionManager {
 
 	getSessionFile(): string | undefined {
 		return this.sessionFile;
+	}
+
+	/** Who may write this file now, from the same fold every persisted write is checked against. */
+	getOwnership(): SessionOwnership {
+		// A session that persists nothing never reaches the write guard (`_persist` returns first), so ownership must
+		// not refuse it either: admission and the write path answer the same (senpi#5922).
+		if (!this.persist || !this.sessionFile) return { writable: true };
+		return this.writeGuard.ownership(this.fileEntries);
 	}
 
 	/**
@@ -1757,7 +1828,24 @@ export class SessionManager {
 	persistHeaderNow(): Promise<void> {
 		if (!this.persist || !this.sessionFile || this.flushed) return this.headerWrite ?? this.transcriptFile.ready;
 		const sessionFile = this.sessionFile;
-		this.headerWrite ??= this._writeHeaderAsync(sessionFile).finally(() => {
+		const durable = this.durable;
+		if (this.bindPending) this.bindRaced = true;
+		if (durable && this.headerWrite === undefined) {
+			try {
+				durable.commitRewrite(this._headerLine(), this._storedEntries(this.fileEntries));
+			} catch (error) {
+				return Promise.reject(error);
+			}
+		}
+		// Bound: the store already took the header; a failed file write is a projection warning, never the caller's error.
+		this.headerWrite ??= (
+			durable
+				? this._writeHeaderAsync(sessionFile).then(
+						() => durable.recordWhole(sessionFile),
+						(error: unknown) => durable.projectionFailed(sessionFile, error),
+					)
+				: this._writeHeaderAsync(sessionFile)
+		).finally(() => {
 			this.headerWrite = undefined;
 		});
 		return this.headerWrite;
@@ -1878,21 +1966,40 @@ export class SessionManager {
 		this.writeGuard.assertWritable(this.fileEntries, entry, this.sessionFile);
 		this.writeFence.assertOwned(this.sessionFile);
 		reserveSessionWrite(this.sessionFile);
+		// S20b: while bound, the store takes each entry first (a refusal throws here, nothing taken); today's file write
+		// below is then its projection, and a failure there is a projection warning, never the caller's error.
+		const durable = this.durable;
+		if (this.bindPending) this.bindRaced = true;
 
 		if (this.flushed) {
-			if (this.tailMayBeTorn) {
-				const recovery = truncateToLastCompleteLine(this.sessionFile, this.tornTailCause);
-				this.tailMayBeTorn = false;
-				if (recovery !== undefined) this._reportRecovery(recovery);
+			// Bound: the store takes the entry before any file work; a refusal throws here and nothing was taken.
+			const bound = durable ? this._commitBoundAppend(durable, entry) : undefined;
+			if (durable && bound && durable.projectionStale()) {
+				durable.scheduleRepair(this.sessionFile);
+				return bound.line;
 			}
-			const bytes = this._transcriptEntryBytes(entry);
+			if (this.tailMayBeTorn) {
+				try {
+					const recovery = truncateToLastCompleteLine(this.sessionFile, this.tornTailCause);
+					this.tailMayBeTorn = false;
+					if (recovery !== undefined) this._reportRecovery(recovery);
+				} catch (error) {
+					if (!durable || !bound) throw error;
+					durable.projectionFailed(this.sessionFile, error);
+					return bound.line;
+				}
+			}
+			const bytes = bound?.line ?? this._transcriptEntryBytes(entry);
 			try {
 				appendFileSync(this.sessionFile, `${bytes}\n`);
 			} catch (error) {
 				this.tailMayBeTorn = true;
 				this.tornTailCause = sessionRecoveryCause(error);
-				throw error;
+				if (!durable || !bound) throw error;
+				durable.projectionFailed(this.sessionFile, error);
+				return bytes;
 			}
+			if (durable && bound) durable.projected(this.sessionFile, bound);
 			return bytes;
 		}
 
@@ -1900,13 +2007,29 @@ export class SessionManager {
 		// written (#10000: the prompt reaches disk even if the first turn never completes).
 		const durableLifecycle = entry.type === "custom" && LIFECYCLE_ENTRY_TYPES.has(entry.customType);
 		if (!isConversationEntry(entry) && !durableLifecycle && !this._hasConversation()) return;
+		if (this.headerWrite && durableLifecycle) {
+			throw new Error("Lifecycle append requires the pending session header write to finish");
+		}
+		if (durable) {
+			durable.commitRewrite(this._headerLine(), this._storedEntries([...this.fileEntries, entry]));
+			if (durable.projectionStale()) {
+				this.flushed = true;
+				durable.scheduleRepair(this.sessionFile);
+				return this._transcriptEntryBytes(entry);
+			}
+		}
 
 		// An asynchronous header write owns the file until it finishes, and appends this entry.
-		if (this.headerWrite) {
-			if (durableLifecycle) throw new Error("Lifecycle append requires the pending session header write to finish");
-			return;
+		if (this.headerWrite) return;
+		let fd: number;
+		try {
+			fd = openSync(this.sessionFile, "wx");
+		} catch (error) {
+			if (!durable) throw error;
+			this.flushed = true;
+			durable.projectionFailed(this.sessionFile, error);
+			return this._transcriptEntryBytes(entry);
 		}
-		const fd = openSync(this.sessionFile, "wx");
 		let bytes: string | undefined;
 		try {
 			for (const e of [...this.fileEntries, entry]) {
@@ -1915,7 +2038,17 @@ export class SessionManager {
 				if (e === entry) bytes = serialized;
 			}
 		} catch (error) {
-			discardFailedFirstFlush(this.sessionFile, fd, error);
+			if (!durable) discardFailedFirstFlush(this.sessionFile, fd, error);
+			// Bound: the store holds every entry, so the half-written file is discarded and the failure is a warning.
+			let failure: unknown = error;
+			try {
+				discardFailedFirstFlush(this.sessionFile, fd, error);
+			} catch (discarded) {
+				failure = discarded;
+			}
+			this.flushed = true;
+			durable.projectionFailed(this.sessionFile, failure);
+			return this._transcriptEntryBytes(entry);
 		}
 		if (this.capturesTranscriptBase) this._captureTranscriptBase(captureAndCloseFileIdentity(fd, this.sessionFile));
 		else closeSync(fd);
@@ -1923,7 +2056,88 @@ export class SessionManager {
 		if (!this.capturesTranscriptBase) this.transcriptBytes = new WeakMap();
 		// Lifecycle bookkeeping created this file before any conversation, so an empty session can still discard it.
 		if (!isConversationEntry(entry) && !this._hasConversation()) this.ownedHeaderFile = this.sessionFile;
+		durable?.recordWhole(this.sessionFile);
 		return bytes;
+	}
+
+	private _commitBoundAppend(durable: DurableSessionBinding, entry: SessionEntry): StoredEntry {
+		const stored = { key: storeKeyOf(entry.id), line: this._transcriptEntryBytes(entry) };
+		durable.commitAppend([stored]);
+		return stored;
+	}
+
+	/**
+	 * S20b: binds this session to the durable store (opt-in; the Bun default is S21b). From here every write commits to
+	 * the store first and the JSONL is its projection. Ends when this manager switches to another session file.
+	 */
+	async bindDurableStore(binding: DurableStoreBinding): Promise<void> {
+		const sessionFile = this.sessionFile;
+		if (!this.persist || sessionFile === undefined) {
+			throw new Error("only a persisted session with a file path can be bound to the durable store");
+		}
+		this.bindPending = true;
+		this.bindRaced = false;
+		let opened: Awaited<ReturnType<typeof DurableSessionBinding.open>>;
+		try {
+			opened = await DurableSessionBinding.open(
+				binding,
+				sessionFile,
+				this.sessionId,
+				this._headerLine(),
+				(warning) => {
+					for (const listener of this.projectionWarningListeners) listener(warning);
+				},
+				{
+					beforeWrite: (path) => {
+						this.writeFence.assertOwned(path);
+						reserveSessionWrite(path);
+					},
+					afterReplace: (_path, identity) => {
+						if (this.capturesTranscriptBase) this._captureTranscriptBase(Promise.resolve(identity), this.fileEntries);
+					},
+				},
+			);
+		} finally {
+			this.bindPending = false;
+		}
+		if (this.sessionFile !== sessionFile) {
+			throw new Error(`the session moved to another file while it was being bound: ${sessionFile} was not bound`);
+		}
+		const { session, reprojected } = opened;
+		// Writes that landed while the bind was pending went to the file unbound: the store takes the session as this
+		// manager holds it, and a file the bind reprojected from the older store image is reprojected again from it.
+		if (this.bindRaced) {
+			session.commitRewrite(this._headerLine(), this._storedEntries(this.fileEntries));
+			if (reprojected) session.markProjectionStale(sessionFile);
+		} else if (reprojected) {
+			this.reloadFromDisk();
+		}
+		this.durable = session;
+	}
+
+	/** Resolves once the durable binding's deferred projection work (ledger records, reprojection) has run. */
+	settleDurableProjection(): Promise<void> {
+		return this.durable?.settled() ?? Promise.resolve();
+	}
+
+	/** Every projection write that failed after its store commit, one warning per failed write. */
+	onProjectionWarning(listener: (warning: ProjectionWarning) => void): () => void {
+		this.projectionWarningListeners.add(listener);
+		return () => {
+			this.projectionWarningListeners.delete(listener);
+		};
+	}
+
+	private _headerLine(): string {
+		const header = this.fileEntries.find((entry) => entry.type === "session");
+		if (header === undefined) throw new Error("the session has no header to bind");
+		return this._transcriptEntryBytes(header);
+	}
+
+	private _storedEntries(entries: readonly FileEntry[]): { key: string; line: string }[] {
+		return entries.flatMap((entry) =>
+			entry.type === "session" ? [] : [{ key: storeKeyOf(entry.id), line: this._transcriptEntryBytes(entry) }],
+		);
 	}
 
 	private _appendEntry(
@@ -1944,6 +2158,8 @@ export class SessionManager {
 			this.transcriptJournal.record({
 				kind: "append",
 				id: residentEntry.id,
+				type: residentEntry.type,
+				parentId: residentEntry.parentId,
 				entry: serialized,
 				persistence: this._transcriptPersistence(),
 				...(recoveryOwner ? { owningMessageId: recoveryOwner.messageId, recoveryEpoch: recoveryOwner.epoch } : {}),
@@ -2012,7 +2228,7 @@ export class SessionManager {
 		// when an evicted blob is needed by a branch or read operation.
 		if (missingResidentString && this.sessionFile) {
 			const persisted = loadEntriesFromFile(this.sessionFile).find((candidate) => candidate.id === entry.id);
-			if (persisted) return persisted as SessionEntry;
+			if (persisted) return this.callKeys.strip(persisted) as SessionEntry;
 		}
 		if (materialized.type === "message") {
 			const order = this.entryOrdersById.get(materialized.id);
@@ -2070,9 +2286,19 @@ export class SessionManager {
 	 */
 	appendOwnedMessage(
 		message: Message | CustomMessage | BashExecutionMessage,
-		options?: { readonly inputSource?: InputSource | undefined; readonly recoveryOwner?: RecoveryCarrier },
+		options?: {
+			readonly inputSource?: InputSource | undefined;
+			readonly recoveryOwner?: RecoveryCarrier;
+			/** The message's bridge-started calls, content index to the key minted with their start (RULING-127 (b)). */
+			readonly bridgedCalls?: ReadonlyMap<number, string>;
+		},
 	): string {
-		return this._appendMessage(message, true, options?.inputSource, options?.recoveryOwner);
+		return this._appendMessage(message, true, options?.inputSource, options?.recoveryOwner, options?.bridgedCalls);
+	}
+
+	/** `entry` as the session file holds it: its persisted call keys back in place (RULING-127 (c)). */
+	persistedEntry(entry: SessionEntry): FileEntry {
+		return this.callKeys.decorate(entry);
 	}
 
 	private _appendMessage(
@@ -2080,6 +2306,7 @@ export class SessionManager {
 		owned: boolean,
 		inputSource?: InputSource,
 		recoveryOwner?: RecoveryCarrier,
+		bridgedCalls?: ReadonlyMap<number, string>,
 	): string {
 		const entry: SessionMessageEntry = {
 			type: "message",
@@ -2089,6 +2316,8 @@ export class SessionManager {
 			message,
 			...(inputSource === undefined ? {} : { inputSource }),
 		};
+		if (message.role === "assistant") this.callKeys.recordAssistant(entry, recoveryOwner?.messageId, bridgedCalls);
+		if (message.role === "toolResult") this.callKeys.recordResult(entry, this.leafId, (id) => this.byId.get(id));
 		this._appendEntry(entry, owned ? message : undefined, recoveryOwner);
 		const order = this.entryOrdersById.get(entry.id);
 		if (order !== undefined) {
@@ -2890,8 +3119,10 @@ export class SessionManager {
 		return materialized;
 	}
 
+	/** The file's whole history, its persisted call keys taken out like a load does (RULING-126 (1a)). */
 	private _loadFullHistoryEntries(): FileEntry[] {
-		return this.sessionFile ? sessionEntryLoader(this.sessionFile) : this.fileEntries;
+		if (!this.sessionFile) return this.fileEntries;
+		return sessionEntryLoader(this.sessionFile).map((entry) => this.callKeys.strip(entry));
 	}
 
 	/**
@@ -3112,6 +3343,8 @@ export class SessionManager {
 			}
 			this.mirrorTrimmed = false;
 			this.trimmedIds.clear();
+			// The branch is a new session: the original's binding never takes its writes (it is imported on a durable open).
+			this.durable = undefined;
 			this.sessionId = newSessionId;
 			this.sessionFile = newSessionFile;
 			this.fileEntries = [header, ...branchedEntries.map((entry) => this.residentStore.externalize(entry))];
@@ -3227,12 +3460,18 @@ export class SessionManager {
 	 */
 	static continueRecent(cwd: string, sessionDir?: string): SessionManager {
 		const dir = sessionDir ? normalizePath(sessionDir) : getDefaultSessionDir(cwd);
-		const filterCwd = sessionDir !== undefined && dir !== getDefaultSessionDirPath(cwd);
-		const mostRecent = findMostRecentSession(dir, filterCwd ? cwd : undefined);
+		const mostRecent = SessionManager.recentSessionFile(cwd, sessionDir);
 		if (mostRecent) {
 			return new SessionManager(cwd, dir, mostRecent, true);
 		}
 		return new SessionManager(cwd, dir, undefined, true);
+	}
+
+	/** The file `continueRecent` would open, found without loading it (loading can migrate and rewrite the file). */
+	static recentSessionFile(cwd: string, sessionDir?: string): string | null {
+		const dir = sessionDir ? normalizePath(sessionDir) : getDefaultSessionDir(cwd);
+		const filterCwd = sessionDir !== undefined && dir !== getDefaultSessionDirPath(cwd);
+		return findMostRecentSession(dir, filterCwd ? cwd : undefined);
 	}
 
 	/** Create an in-memory session (no file persistence), optionally from entries held outside the filesystem. */

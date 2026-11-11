@@ -5,9 +5,16 @@ import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { endpoint, type WorkerHostRecord } from "./rpc-host-endpoint.ts";
+import { SESSION_WORKER_LIMITS } from "../../src/modes/rpc/session-worker-protocol.ts";
+import { STARTUP_PHASE_ALLOWANCE_MS } from "../../src/modes/rpc/host-startup-policy.ts";
+import { endpoint, RPC_RESPONSE_TIMEOUT_MS, type WorkerHostRecord } from "./rpc-host-endpoint.ts";
 
 export type { WorkerHostRecord };
+
+export const HOST_READY_TIMEOUT_MS = STARTUP_PHASE_ALLOWANCE_MS.opaque_host;
+// Wait for the existing worker opening decision and delivery of its response.
+// Host cold loading has its own readiness exchange, outside this response clock.
+export const WORKER_OPEN_TIMEOUT_MS = SESSION_WORKER_LIMITS.openMs + RPC_RESPONSE_TIMEOUT_MS;
 
 // Keep native-entry rescue live when a registry test controls the host request clock.
 const fifoSetTimeout = setTimeout;
@@ -45,7 +52,16 @@ type HostSessionRuntime = "in-process" | "worker" | "cli-default";
 
 export async function startWorkerHost(
 	extensionSource?: string,
-	options: { socket?: boolean; node?: boolean; preload?: string; sessionRuntime?: HostSessionRuntime } = {},
+	options: {
+		socket?: boolean;
+		node?: boolean;
+		preload?: string;
+		sessionRuntime?: HostSessionRuntime;
+		/** Wait for the host's exact readiness reply before starting session-operation clocks. */
+		waitForReady?: boolean;
+		/** Extra host environment, e.g. a rollout flag the host reads at startup. */
+		env?: Readonly<Record<string, string>>;
+	} = {},
 ) {
 	// Worker by default: every rpc-worker-* suite asserts worker-isolate behavior, and a
 	// socket host otherwise defaults to the in-process runtime.
@@ -97,6 +113,7 @@ export async function startWorkerHost(
 				SENPI_OFFLINE: "1",
 				SENPI_RPC_CLOSE_GRACE_MS: "100",
 				...(useNode ? { SENPI_RUNTIME: "node" } : {}),
+				...options.env,
 			},
 			stdio: ["pipe", "pipe", "pipe"],
 		},
@@ -117,7 +134,8 @@ export async function startWorkerHost(
 		stderr = (stderr + chunk.toString()).slice(-16000);
 		if (stderr.includes("senpi rpc listening on")) listening?.();
 	});
-	const stdio = endpoint(child.stdout, child.stdin, () => stderr);
+	const openTimeoutMs = options.waitForReady ? WORKER_OPEN_TIMEOUT_MS : RPC_RESPONSE_TIMEOUT_MS;
+	const stdio = endpoint(child.stdout, child.stdin, () => stderr, openTimeoutMs);
 	const connections: Array<{ dispose(): void }> = [];
 	const dispose = async () => {
 		if (options.preload)
@@ -134,15 +152,23 @@ export async function startWorkerHost(
 		await rm(scratch, { recursive: true, force: true });
 		if (options.preload) process.stderr.write(`PRESSURE_REMOVED ${scratch}\n`);
 	};
-	if (options.socket) {
+	if (options.socket || options.waitForReady) {
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		try {
-			await Promise.race([
-				ready,
-				new Promise<never>((_resolve, reject) => {
-					timer = setTimeout(() => reject(new Error(`Listener deadline: ${stderr}`)), 30_000);
-				}),
-			]);
+			if (options.socket) {
+				await Promise.race([
+					ready,
+					new Promise<never>((_resolve, reject) => {
+						timer = setTimeout(
+							() => reject(new Error(`Listener deadline: ${stderr}`)),
+							options.waitForReady ? HOST_READY_TIMEOUT_MS : RPC_RESPONSE_TIMEOUT_MS,
+						);
+					}),
+				]);
+			} else {
+				const started = await stdio.request({ type: "get_protocol_info" }, HOST_READY_TIMEOUT_MS);
+				if (!started.success) throw new Error(`Host readiness failed: ${started.error ?? stderr}`);
+			}
 		} catch (cause) {
 			await dispose();
 			throw cause;
@@ -162,7 +188,7 @@ export async function startWorkerHost(
 		stderrText: () => stderr,
 		async connect() {
 			const socket = createConnection(socketPath);
-			const wire = endpoint(socket, socket, () => stderr);
+			const wire = endpoint(socket, socket, () => stderr, openTimeoutMs);
 			connections.push({
 				dispose: () => {
 					wire.dispose();
@@ -180,6 +206,6 @@ export async function startWorkerHost(
  * `--listen` host selects: every session runs IN the host process (no worker isolate,
  * no worker cap). Pass `sessionRuntime` to `startWorkerHost` to pin one explicitly.
  */
-export function startInProcessHost(extensionSource?: string) {
-	return startWorkerHost(extensionSource, { socket: true, sessionRuntime: "cli-default" });
+export function startInProcessHost(extensionSource?: string, env?: Readonly<Record<string, string>>) {
+	return startWorkerHost(extensionSource, { socket: true, sessionRuntime: "cli-default", ...(env && { env }) });
 }

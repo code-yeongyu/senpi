@@ -208,3 +208,191 @@ describe("validateToolArguments", () => {
 		}
 	});
 });
+
+// senpi#6265: in a turn of parallel tool calls the model sent the first call's array as a JSON
+// array and the later calls' arrays as the array's JSON text. Value.Convert wrapped that text
+// into a one-element array, so every later call validated and then ran with the JSON text as
+// its only path (ENOENT on `["/abs/ref.png"]`).
+describe("validateToolArguments JSON-encoded structured arguments (#6265)", () => {
+	const referencePaths = Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1, maxItems: 5 }));
+	const imageTool: Tool = {
+		name: "generate_image",
+		description: "Image tool",
+		parameters: Type.Object({ prompt: Type.String(), reference_image_paths: referencePaths }),
+	};
+	const intended = [["/refs/a.png", "/refs/b.png"], ["/refs/c.png"], ["/refs/d.png", "/refs/e.png"], ["/refs/f.png"]];
+	// The observed turn: call 1 carries a real array, calls 2-4 carry the array's JSON text.
+	const turn: ToolCall[] = intended.map((paths, index) => ({
+		type: "toolCall",
+		id: `call-${index + 1}`,
+		name: "generate_image",
+		arguments: { prompt: `image ${index + 1}`, reference_image_paths: index === 0 ? paths : JSON.stringify(paths) },
+	}));
+
+	it("gives every parallel call in a turn its declared array, whichever encoding the call used", () => {
+		expect(turn.map((toolCall) => validateToolArguments(imageTool, toolCall).reference_image_paths)).toEqual(
+			intended,
+		);
+	});
+
+	it("decodes JSON-encoded arrays and objects for serialized plain JSON schemas", () => {
+		const arrayCall = createToolCallWithPlainSchema(
+			{ type: "array", items: { type: "string" } } as Tool["parameters"],
+			'["/refs/a.png","/refs/b.png"]',
+		);
+		const objectCall = createToolCallWithPlainSchema(
+			{ type: "object", properties: { paths: { type: "array", items: { type: "string" } } } } as Tool["parameters"],
+			'{"paths":["/refs/a.png"]}',
+		);
+
+		expect(validateToolArguments(arrayCall.tool, arrayCall.toolCall)).toEqual({
+			value: ["/refs/a.png", "/refs/b.png"],
+		});
+		expect(validateToolArguments(objectCall.tool, objectCall.toolCall)).toEqual({
+			value: { paths: ["/refs/a.png"] },
+		});
+	});
+
+	it("decodes JSON-encoded structures nested inside arrays and objects", () => {
+		const tool: Tool = {
+			name: "batch",
+			description: "Batch tool",
+			parameters: Type.Object({
+				jobs: Type.Array(Type.Object({ paths: Type.Array(Type.String()) })),
+			}),
+		};
+		const toolCall: ToolCall = {
+			type: "toolCall",
+			id: "call-1",
+			name: "batch",
+			arguments: { jobs: [{ paths: '["/refs/a.png"]' }, '{"paths":["/refs/b.png"]}'] as unknown as JsonValue },
+		};
+
+		expect(validateToolArguments(tool, toolCall)).toEqual({
+			jobs: [{ paths: ["/refs/a.png"] }, { paths: ["/refs/b.png"] }],
+		});
+	});
+
+	it("leaves strings alone where the schema accepts a string or the text is not that structure", () => {
+		const stringTool: Tool = {
+			name: "echo",
+			description: "Echo tool",
+			parameters: Type.Object({
+				text: Type.String(),
+				either: Type.Union([Type.String(), Type.Array(Type.String())]),
+				paths: Type.Array(Type.String()),
+			}),
+		};
+		const toolCall: ToolCall = {
+			type: "toolCall",
+			id: "call-1",
+			name: "echo",
+			arguments: { text: '["kept"]', either: '["kept"]', paths: "/refs/single.png" as unknown as JsonValue },
+		};
+
+		// A bare single path keeps the existing Value.Convert wrap; only array/object JSON text is decoded.
+		expect(validateToolArguments(stringTool, toolCall)).toEqual({
+			text: '["kept"]',
+			either: '["kept"]',
+			paths: ["/refs/single.png"],
+		});
+	});
+
+	it("does not rewrite the provider's tool call arguments", () => {
+		const [, second] = turn;
+		if (!second) throw new Error("fixture turn has a second call");
+		const before = structuredClone(second.arguments);
+
+		validateToolArguments(imageTool, second);
+
+		expect(second.arguments).toEqual(before);
+	});
+});
+
+describe("validateToolArguments discriminated unions (#5141)", () => {
+	const runProperties = {
+		action: Type.Optional(
+			Type.Union([Type.Literal("run"), Type.Literal("list"), Type.Literal("peek"), Type.Literal("stop")]),
+		),
+		language: Type.Optional(Type.Union([Type.Literal("js"), Type.Literal("py")])),
+		code: Type.Optional(Type.String()),
+		summary: Type.Optional(Type.String()),
+		timeout: Type.Optional(Type.Number({ minimum: 1 })),
+		cell_id: Type.Optional(Type.String({ minLength: 1 })),
+	};
+	const unionTool: Tool = {
+		name: "runner",
+		description: "Discriminated union tool",
+		parameters: Type.Unsafe(
+			Type.Object(runProperties, {
+				anyOf: [
+					Type.Object(
+						{ ...runProperties, action: Type.Optional(Type.Literal("run")) },
+						{ required: ["language", "code", "summary"] },
+					),
+					Type.Object({ action: Type.Literal("list") }),
+					Type.Object(
+						{ action: Type.Union([Type.Literal("peek"), Type.Literal("stop")]), cell_id: runProperties.cell_id },
+						{ required: ["action", "cell_id"] },
+					),
+				],
+			}),
+		),
+	};
+
+	function errorLines(tool: Tool, args: Record<string, JsonValue>): string[] {
+		const toolCall: ToolCall = { type: "toolCall", id: "tool-1", name: tool.name, arguments: args };
+		try {
+			validateToolArguments(tool, toolCall);
+		} catch (error) {
+			const message = (error as Error).message;
+			return (
+				message
+					.split("\n\nReceived arguments:")[0]
+					?.split("\n")
+					.filter((line) => line.startsWith("  - ")) ?? []
+			);
+		}
+		throw new Error("expected validation to fail");
+	}
+
+	it("reports only the default branch when the discriminator is omitted", () => {
+		const lines = errorLines(unionTool, { code: "1", summary: "s" });
+		expect(lines).toEqual([
+			'  - for action "run" (default when action is omitted): language: must have required properties language',
+		]);
+	});
+
+	it("reports only the selected branch when the discriminator is given", () => {
+		expect(errorLines(unionTool, { action: "peek" })).toEqual([
+			'  - for action "peek": cell_id: must have required properties cell_id',
+		]);
+		expect(errorLines(unionTool, { action: "list", timeout: "soon" })).toEqual([
+			'  - for action "list": timeout: must be number',
+		]);
+	});
+
+	it("names the allowed values for an unknown discriminator value", () => {
+		expect(errorLines(unionTool, { action: "peak", cell_id: "x" })).toEqual([
+			'  - action: must be one of "run", "list", "peek", "stop" (received "peak")',
+		]);
+	});
+
+	it("keeps the full error list for a union without a const discriminator", () => {
+		const tool: Tool = {
+			name: "plain",
+			description: "Plain union tool",
+			parameters: Type.Unsafe(
+				Type.Object(
+					{ a: Type.Optional(Type.String()), b: Type.Optional(Type.String()) },
+					{ anyOf: [Type.Object({ a: Type.String() }), Type.Object({ b: Type.String() })] },
+				),
+			),
+		};
+		expect(errorLines(tool, {})).toEqual([
+			"  - a: must have required properties a",
+			"  - b: must have required properties b",
+			"  - root: must match a schema in anyOf",
+		]);
+	});
+});

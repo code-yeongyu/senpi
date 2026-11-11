@@ -1,4 +1,3 @@
-import { FABLE55_LAUNCH } from "@earendil-works/pi-ai/utils/fable55-launch";
 import type { FallbackChains } from "./chains.ts";
 
 export interface ProviderRetrySettings {
@@ -38,21 +37,24 @@ export interface ResolvedRetryFallbackSettings {
  * follows Fable 5 whichever provider serves it - the builtin Anthropic provider, the
  * Anthropic Subscription extension, a gateway, or Bedrock.
  *
- * The ladder never leaves the Anthropic Opus family. The previous shipped default was
- * removed because it led with cross-family rungs (`k3`, `kimi-k3`), which moved a Claude
- * session onto another vendor mid-turn and could rank a guaranteed-refusal OAuth lane
- * first; a same-family step-down carries neither problem. There is still deliberately no
- * wildcard lane.
+ * The ladder never leaves Anthropic. The previous shipped default was removed because it
+ * led with cross-family rungs (`k3`, `kimi-k3`), which moved a Claude session onto another
+ * vendor mid-turn and could rank a guaranteed-refusal OAuth lane first; an Anthropic-only
+ * ladder carries neither problem. There is still deliberately no wildcard lane.
+ *
+ * Opus 5.5 steps to Fable 5.2 before Opus 5: Anthropic meters Opus on its own quota window,
+ * so a rate limit on Opus 5.5 also holds every other Opus rung on that account or gateway
+ * pool (senpi#6385).
  *
  * Rungs stay on current-generation Opus: a Claude session must never step down to
  * `claude-opus-4-8` or `claude-opus-4-6` (senpi#3727).
  */
 export const DEFAULT_FALLBACK_CHAINS: FallbackChains = {
-	...(FABLE55_LAUNCH.released ? { [FABLE55_LAUNCH.modelId]: ["claude-opus-5-5:max", "claude-opus-5:max"] } : {}),
-	// Every rung is `:max`: Opus 5.5 is recommended at max.
-	"claude-fable-5-1": ["claude-opus-5-5:max", "claude-opus-5:max"],
-	"claude-fable-5": ["claude-opus-5-5:max", "claude-opus-5:max"],
-	"claude-opus-5-5": ["claude-opus-5:max"],
+	// Rungs carry no explicit level so fallback inherits the session's current thinking effort (senpi#4103).
+	"claude-fable-5-2": ["claude-opus-5-5", "claude-opus-5"],
+	"claude-fable-5-1": ["claude-opus-5-5", "claude-opus-5"],
+	"claude-fable-5": ["claude-opus-5-5", "claude-opus-5"],
+	"claude-opus-5-5": ["claude-fable-5-2", "claude-opus-5"],
 };
 
 function cloneDefaultFallbackChains(): Record<string, readonly string[]> {
@@ -83,11 +85,12 @@ function isStringArray(value: unknown): value is string[] {
  * Cross-scope replacement (global vs project) stays wholesale and is handled by
  * `deepMergeSettings`; this only resolves defaults against the merged result.
  */
-function resolveFallbackChains(value: unknown): FallbackChains {
-	if (value === undefined || !isPlainObject(value)) return cloneDefaultFallbackChains();
-	const chains: Record<string, readonly string[]> = cloneDefaultFallbackChains();
+function resolveFallbackChains(value: unknown, sessionPolicy: boolean): FallbackChains {
+	const base = (): Record<string, readonly string[]> => (sessionPolicy ? {} : cloneDefaultFallbackChains());
+	if (value === undefined || !isPlainObject(value)) return base();
+	const chains = base();
 	for (const [key, entries] of Object.entries(value)) {
-		if (!isStringArray(entries)) return cloneDefaultFallbackChains();
+		if (!isStringArray(entries)) return base();
 		// An empty list stays in the map as a tombstone: canonicalization needs it to
 		// suppress the expanded default for that family or provider variant, and
 		// dropping it here would let the shipped default reappear after expansion.
@@ -96,10 +99,18 @@ function resolveFallbackChains(value: unknown): FallbackChains {
 	return chains;
 }
 
-export function resolveRetryFallbackSettings(settings: RetrySettings | undefined): ResolvedRetryFallbackSettings {
+/**
+ * `sessionPolicy`: the chains were supplied by the session's opener (`open_session.retryFallback`,
+ * `set_retry_fallback`), so they are the session's whole policy and the shipped defaults are not merged
+ * back under them (senpi#4673). Settings-file chains still layer over the defaults.
+ */
+export function resolveRetryFallbackSettings(
+	settings: RetrySettings | undefined,
+	options: { readonly sessionPolicy?: boolean } = {},
+): ResolvedRetryFallbackSettings {
 	return {
 		modelFallback: typeof settings?.modelFallback === "boolean" ? settings.modelFallback : true,
-		chains: resolveFallbackChains(settings?.fallbackChains),
+		chains: resolveFallbackChains(settings?.fallbackChains, options.sessionPolicy === true),
 		revertPolicy: settings?.fallbackRevertPolicy === "never" ? "never" : "cooldown-expiry",
 	};
 }

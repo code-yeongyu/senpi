@@ -1,3 +1,243 @@
+## 2026-11-10 - show_html_page says what the host did with the page (senpi#6273)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts`: the result text depends on the session's prompt surface (`ctx.getSystemPromptOptions().surface`, else `SENPI_PROMPT_SURFACE`). On `app`, the surface the OmO desktop opens every session it renders with, it says the page was shown to the reader inline above the reply and where the copy is saved. On every other surface (terminal, chat, none named) it says the page was written to the path and not displayed in this interface. The "Open it in the desktop to see it rendered with your theme" sentence is gone. The description says the same: inline in the OmO desktop thread, elsewhere only saved to a file, and the result says which.
+
+### Why
+
+- In a desktop thread the page renders inline, but the result told the model to open the file in the desktop, so the model reported that the page was not shown. The result stays in the thread, so later turns sometimes refused to call the tool at all (senpi#6273).
+
+### Why an extension could not handle it
+
+- `show_html_page` is this builtin's own tool; its result text is defined here. The host signal is the existing `promptSurface`, no new capability.
+
+### Expected merge conflict zones
+
+- LOW: the result `text` and the end of the description in `html-render/tool.ts`.
+
+## 2026-11-10 - Recommended Fable slot is Fable 5.2 (senpi#3893)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`: the Fable slot of `RECOMMENDED_DEFAULT_MODELS` is `claude-fable-5-2` at `xhigh` on the same Claude lanes. The launch-flag lookup is removed.
+
+### Why
+
+- Fable 5.2 is the released Fable model.
+
+### Why an extension could not handle it
+
+- This is the builtin's own shipped list.
+
+### Expected merge conflict zones
+
+- LOW: the Fable row of `RECOMMENDED_DEFAULT_MODELS`.
+
+## 2026-11-09 - vertex-garden per-model thinking toggles (senpi#6270)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/vertex-model-garden/models.ts`: each garden model declares `thinkingFormat: "chat-template"` with its own flag (GLM 5.2 `enable_thinking`, DeepSeek V4.1 Flash `thinking`), a two-level `thinkingLevelMap` (off, medium), and its live-verified Vertex default (GLM `medium`, DeepSeek `off`).
+
+### Why
+
+- Live probes against the global OpenAPI endpoint (2026-11-09) showed the endpoint toggles thinking per model through `chat_template_kwargs` and silently ignores a wrong flag name, so the previous "accepts no thinking parameters" registration hid a control both models support and risked sending one model's flag to the other.
+
+### Why an extension could not handle it
+
+- It is the extension's own model registration; only the default-level declaration needed the `types.ts` companion entry above.
+
+### Expected merge conflict zones
+
+- LOW: the `garden()` helper and the two model entries; the `NO_THINKING_CONTROLS` block is replaced outright.
+
+## 2026-11-08 - terminal_background_age event (senpi#6201)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/monitor-state-event.ts`: `TERMINAL_BACKGROUND_AGE_EVENT` (`terminal_background_age`) and its payload `TerminalBackgroundAgeEvent` (`kind` running|reaped|reap_failed, `id`, `description`, `command?`, `startedAtMs`, `ageMs`, `ageMinutes`, `autoReapMinutes`, `reason?`, `stop`).
+
+### Why
+
+- RPC drivers need a typed event they can act on when a background session runs long (senpi#6201).
+
+### Why an extension could not handle it
+
+- The event name and payload are the shared cross-extension seam, like the other terminal events in this file.
+
+### Expected merge conflict zones
+
+- LOW: the constant block at the top of `monitor-state-event.ts`.
+
+## 2026-11-08 - ask-user refuses escape residue in question text once (oh-my-openagent#12797)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/escape-residue.ts` (new): `findEscapeResidue` finds `\uXXXX` escapes left in question, header and option text, both literal ones and ones whose backslash was dropped (`ub0b4`), with guards against hex-like ids and quoted code (fenced blocks, double-backtick and single-backtick spans are blanked before the check); `AskUserEscapeResidueError` is the typed tool error. `EscapeResidueRetry` with `refuseEscapeResidue` and `endEscapeResidueTurn` scopes the one refusal to assistant turns.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: before a card opens, a call whose text holds escape residue is refused with `AskUserEscapeResidueError`, which asks the model to re-call with raw UTF-8 text. Every residue call in one turn is refused, since parallel calls of one assistant message run in that turn; residue calls in a later turn open as written and the user gets a warning notice. Any call made while the retry is open uses it up, so after a clean re-call the next residue set is refused once again. `AskUserState.escapeResidue` carries the bound.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/extension.ts`, `packages/coding-agent/src/core/extensions/builtin/ask-user/resume.ts`: the new state starts fresh and resets on `session_start` and `agent_end`; `turn_end` closes a refusal turn and opens the retry.
+
+### Why
+
+- Models sometimes write non-ASCII tool-call text as `\uXXXX` escapes and drop the backslash, so a Korean card showed `ub0b4 Tailscale 쓰기` for `내 Tailscale 쓰기` (oh-my-openagent#12797). The JSON is valid, so parsing cannot catch it; only the text can.
+- A per-call flag let one of two parallel residue calls open unrefused and then refused its re-call; a turn-scoped bound refuses each set once and never refuses a re-call.
+
+### Why an extension could not handle it
+
+- The check belongs to the ask-user builtin's own argument handling; it is a fork-only builtin, not an upstream path.
+
+### Expected merge conflict zones
+
+- LOW: `AskUserState` and the `execute` path just before `startQuestion` in `tool.ts`; the `turn_end` and `agent_end` handlers in `extension.ts`.
+
+## 2026-10-30 - ChatGPT account route and plan states (part of senpi#5003)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/gpt-account.ts`: renders registration route, disabled plan permission and signed-out states, with a ChatGPT Settings > Usage link.
+
+### Why
+
+- The account command must explain when ChatGPT plan usage is unavailable.
+
+### Why an extension could not handle it
+
+- This is the existing account extension.
+
+### Expected merge conflict zones
+
+- The account-list renderer.
+
+## 2026-11-03 - Dangling ask-user questions restore on startup opens (senpi#5700, fixes #4764)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/resume.ts`: `resumeDanglingQuestion` now also runs when the `session_start` reason is `startup`. A restarted CLI opening an existing session file arrives with that reason (the initial runtime passes no explicit event), so the dangling question is restored exactly like on the `switch_session` resume path. Diagnostic sizes-only startup still restores nothing.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/resume.ts`: a `startup` restore runs only when `ctx.hasUI` is true. A headless startup (print mode, `-p` / `--mode json`) has no question UI, so restoring there would settle the question as `orphaned-after-restart`, start an unasked model turn, and write the `ask-user:resumed` marker so a later interactive open could never re-ask it; headless startup now restores nothing and writes no marker. The sizes-only early return also holds on `resume`. CLI `--fork <file>` also arrives as `startup` with copied branch entries, so a fork re-presents the source's dangling question, unlike runtime `/fork` (reason `fork`, excluded); the event carries no signal telling a forked startup from a plain restart, so this divergence is documented, not filtered.
+- `packages/coding-agent/test/suite/ask-user-resume.test.ts` (new cases): a dangling question is re-presented once on `startup` (and not twice on a second start); sizes-only startup and sizes-only resume restore nothing; headless (no-UI) startup restores nothing and writes no marker.
+
+### Why
+
+- After a crash, the path a user most often takes is a restarted CLI with `--session <file>`, but only the running-client `switch_session` path restored the dangling question; the restarted CLI left the call unanswered until the next request gave it the interrupted-call placeholder. A fresh session has no branch entries, so including `startup` restores nothing there.
+
+### Why an extension could not handle it
+
+- The reason filter lives in the builtin ask-user extension itself; an external extension cannot change which `session_start` reasons the builtin restores on.
+
+### Expected merge conflict zones
+
+- LOW: the reason and `hasUI` guards in `resumeDanglingQuestion` and the ask-user resume test cases.
+
+## 2026-10-30 - Keep SIWC ID-token hints out of account notices (senpi#5046)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/oauth-login-interaction.ts` removes ID-token hints from printable authorization URLs while sending the original hinted URL to the TUI browser launcher.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/oauth-login-interaction.ts` sends notices to terminal and RPC consumers that may retain their text.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/oauth-login-interaction.ts` is the shared account-login relay used by those extensions.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/oauth-login-interaction.ts`: auth_url relay.
+
+## 2026-11-02 - Shell tool hooks refuse calls on a runtime without a session (senpi#5483)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/hooks/index.ts`: on a runtime without a session, the `tool_call` handler refuses the call when any PreToolUse or PostToolUse hook is configured and passes it through when none is; the `tool_result` handler does nothing there. Sessions are unchanged.
+
+### Why
+
+- Tool hooks get the session's ID in their input, which a hand does not have; running the tool past configured hooks would skip them. Forwarding them to the session's process is the two-sided forwarding change.
+
+### Why an extension could not handle it
+
+- This is the builtin hooks extension itself.
+
+### Expected merge conflict zones
+
+- LOW: the top of the `tool_call` and `tool_result` handlers.
+
+## 2026-10-27 - look_at authenticates as the session's account (senpi#3924)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/look-at/runner.ts`: `getApiKeyAndHeaders` receives the session id.
+
+### Why
+
+- A pooled provider's flat entry is not an account. For a provider-managed pool it is the `<provider>-managed` sentinel with `expires: 0`, so a request that resolved it without a slot sent the sentinel to the token endpoint: every compaction on a pooled `chatgpt-subscription` failed with a 401 while the session's own turns, leased on the pinned slot, kept working.
+
+### Why an extension could not handle it
+
+- The builtin is the caller.
+
+### Expected merge conflict zones
+
+- LOW: the `getApiKeyAndHeaders` call.
+
+## 2026-11-01 - service-tier shares the -fast pairing rule with the fallback controller (senpi#5312)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: `findBaseModel` / `findFastModel` and the compatibility check move to `core/fast-model-pair.ts` and are imported; behavior is unchanged.
+
+### Why
+
+- The fallback controller needs the same pairing to let a `-fast`-keyed chain govern the base model the extension swapped in; one definition keeps the two from drifting.
+
+### Why an extension could not handle it
+
+- The controller is core; the rule had to live in a module both sides import.
+
+### Expected merge conflict zones
+
+- LOW: the import block and the removed helper block near the top of `service-tier.ts`.
+
+## 2026-10-30 - Fallback display comment follows first-party bare expansion (senpi#5050)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/model-fallback/settings.ts`: the `displayLookup` comment now says a bare default expands across the vendor's first-party providers. No behavior change.
+
+### Why
+
+- The comment described the removed every-provider expansion.
+
+### Why an extension could not handle it
+
+- Comment-only edit to an existing builtin extension.
+
+### Expected merge conflict zones
+
+- LOW: the `displayLookup` doc comment.
+
+## 2026-10-30 - First-class private secret input (senpi#5108)
+
+### What changed
+
+- Covered files: `packages/coding-agent/src/core/extensions/builtin/oauth-login-interaction.ts`.
+- The built-in OAuth interaction maps typed secret prompts to guarded input only on capable host contexts, preserving legacy calls on older hosts.
+
+### Why
+
+- Extension input previously exposed credentials through ordinary dialogs and RPC answer paths.
+
+### Why an extension could not handle it
+
+- Connection authorization, transport publication, host lifecycle and terminal focus are owned by the engine.
+
+### Expected merge conflict zones
+
+- MEDIUM: extension UI contracts, RPC binding/worker dispatch and interactive dialog lifecycle.
+
 ## 2026-10-29 - Job widgets: review follow-ups to P1, P3 and P4
 
 ### What changed

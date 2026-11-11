@@ -9,10 +9,10 @@ import { collectAllPages } from "./expose/pagination.ts";
 import type { McpOutputArtifacts } from "./guard/output-guard.ts";
 import type { McpEnsureFreshAuth } from "./health.ts";
 import type { McpInvocationResolver } from "./invocation.ts";
-import type { McpRequestOrigin } from "./request-origin.ts";
+import type { McpRequestOriginFor } from "./request-origin.ts";
 
 export interface McpToolCatalogEntry {
-	requestOrigin?: () => McpRequestOrigin | undefined;
+	requestOrigin?: McpRequestOriginFor;
 	server: string;
 	tool: string;
 	schema: ListedTool["inputSchema"];
@@ -41,8 +41,9 @@ export async function collectToolCatalog(
 	config: McpServerDeclaredConfig,
 	options: McpToolCatalogOptions = {},
 ): Promise<McpToolCatalogEntry[]> {
+	const client = connection.client;
 	const result = await collectAllPages<ListedTool>((cursor) =>
-		listMcpTools(connection.client, cursor === undefined ? {} : { cursor }, { timeout: config.requestTimeoutMs }),
+		listMcpTools(client, cursor === undefined ? {} : { cursor }, { timeout: config.requestTimeoutMs }),
 	);
 	return result.items.map((tool) => ({
 		requestOrigin: options.requestOrigin,
@@ -57,7 +58,7 @@ export async function collectToolCatalog(
 		requestTimeoutMs: config.requestTimeoutMs,
 		schema: tool.inputSchema,
 		outputSchema: tool.outputSchema,
-		modern: isModernMcpClient(connection.client),
+		modern: isModernMcpClient(client),
 		server,
 		tool: tool.name,
 	}));

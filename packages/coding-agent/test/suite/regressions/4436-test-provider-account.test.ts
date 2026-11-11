@@ -292,6 +292,28 @@ describe("senpi#4436 test_provider_account re-tests one Claude CLI account", () 
 		expect(work).toMatchObject({ ...elsewhere, check: { outcome: "ok" } });
 	});
 
+	it("a sign-in that replaces the account during the test gets no stale check", async () => {
+		const lane = await startLane({
+			turn: "auth_error",
+			duringTurn: async (store) => {
+				await store.modify(SCRIPTED_PROVIDER, async (current) => {
+					const credential = current as AnthropicSubscriptionCredential;
+					return {
+						...credential,
+						accounts: (credential.accounts ?? []).map((slot) =>
+							slot.name === "work" ? cliSlot("work", OTHER_DIR_ID) : slot,
+						),
+					};
+				});
+			},
+		});
+		await lane.send({ type: "test_provider_account", provider: SCRIPTED_PROVIDER, name: "work" });
+
+		const work = (await lane.slots()).find((slot) => slot.name === "work");
+		expect(work).toMatchObject({ dirId: OTHER_DIR_ID });
+		expect(work).not.toHaveProperty("check");
+	});
+
 	it("an unknown account answers unknown_account and another provider unsupported_provider, with no turn", async () => {
 		const lane = await startLane({ turn: "ok" });
 		const unknown = await lane.send({ type: "test_provider_account", provider: SCRIPTED_PROVIDER, name: "nope" });

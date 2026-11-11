@@ -1,12 +1,11 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { readFile, realpath, stat } from "node:fs/promises";
-import { homedir } from "node:os";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import lockfile from "proper-lockfile";
-import { CONFIG_DIR_NAME } from "../config.ts";
-import { canonicalizePath, canonicalizePathStrict, resolvePath } from "../utils/paths.ts";
+import { canonicalizePathStrict, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
-import { bundledBuiltinExtensions } from "./bundled-resources.ts";
+
+export { hasTrustRequiringProjectResources, projectAgentsSkillDirs } from "./trust-requiring-resources.ts";
 
 export type ProjectTrustDecision = boolean | null;
 
@@ -28,64 +27,6 @@ export interface ProjectTrustOption {
 }
 
 type TrustFile = Record<string, boolean | null | undefined>;
-
-const TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES = [
-	"settings.json",
-	"mcp.json",
-	"extensions",
-	"skills",
-	"prompts",
-	"themes",
-	"SYSTEM.md",
-	"APPEND_SYSTEM.md",
-] as const;
-
-const LEGACY_PROJECT_CONFIG_DIR_NAME = ".pi";
-
-/**
- * A project codemode file that sets any setting naming an executable (the codemode package's
- * `executable-settings.json` list, today `languages.pyInterpreter`) makes the session run that executable at start,
- * so it asks for a trust decision. A file the check cannot read is treated like a project `mcp.json`, whose mere
- * presence asks; so is any file when the list itself cannot be read.
- */
-function projectCodemodeNamesExecutable(configDir: string): boolean {
-	const path = join(configDir, "codemode.json");
-	if (!existsSync(path)) return false;
-	const executableSettings = codemodeExecutableSettings();
-	if (executableSettings === undefined) return true;
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(stripBom(readFileSync(path, "utf8")));
-	} catch {
-		return true;
-	}
-	return executableSettings.some((settingPath) => valueAtPath(parsed, settingPath) !== undefined);
-}
-
-function codemodeExecutableSettings(): readonly string[] | undefined {
-	const codemode = bundledBuiltinExtensions.find((extension) => extension.id === "codemode");
-	try {
-		const packageJson = codemode?.resolvePackage();
-		if (packageJson === undefined) return undefined;
-		const list: unknown = JSON.parse(
-			readFileSync(join(dirname(packageJson), "src", "config", "executable-settings.json"), "utf8"),
-		);
-		if (typeof list !== "object" || list === null) return undefined;
-		const paths: unknown = Reflect.get(list, "projectExecutableSettings");
-		return Array.isArray(paths) && paths.every((entry) => typeof entry === "string") ? paths : undefined;
-	} catch {
-		return undefined;
-	}
-}
-
-function valueAtPath(value: unknown, path: string): unknown {
-	let current: unknown = value;
-	for (const key of path.split(".")) {
-		if (typeof current !== "object" || current === null) return undefined;
-		current = Reflect.get(current, key);
-	}
-	return current;
-}
 
 function normalizeCwd(cwd: string): string {
 	const resolved = resolvePath(cwd);
@@ -235,73 +176,6 @@ function withTrustFileLock<T>(path: string, fn: () => T): T {
 	}
 }
 
-/** True when `dir` is the user's home or a folder above it: never a project (#2465). */
-function isHomeOrAboveDir(dir: string, homeDir: string): boolean {
-	return dir === homeDir || homeDir.startsWith(dir.endsWith(sep) ? dir : `${dir}${sep}`);
-}
-
-/** The nearest folder at or above `dir` that holds `.git`, as spelled; undefined outside a repository. */
-function findGitRepoRoot(dir: string): string | undefined {
-	let currentDir = dir;
-	while (!existsSync(join(currentDir, ".git"))) {
-		const parentDir = dirname(currentDir);
-		if (parentDir === currentDir) return undefined;
-		currentDir = parentDir;
-	}
-	return currentDir;
-}
-
-/**
- * The project `.agents/skills` directories for `cwd`, nearest first: one per folder from cwd up to
- * the git root (or the filesystem root), stopping below the user's home. Home and every folder
- * above it are never a project; `~/.agents/skills` is the user's own global skills. The ONE walk
- * both the trust check and the loader use, over the same spelling and the same git root (#3420
- * review): paths stay as spelled (resources are compared as strings), and each folder's real path
- * decides whether it is home or above, so a symlink can't carry the walk past home either way.
- */
-export function projectAgentsSkillDirs(cwd: string): string[] {
-	const homeDir = canonicalizePath(resolvePath(process.env.HOME || homedir()));
-	const startDir = resolvePath(cwd);
-	const gitRepoRoot = findGitRepoRoot(startDir);
-	const dirs: string[] = [];
-	let currentDir = startDir;
-	while (!isHomeOrAboveDir(canonicalizePath(currentDir), homeDir)) {
-		dirs.push(join(currentDir, ".agents", "skills"));
-		if (currentDir === gitRepoRoot) break;
-		const parentDir = dirname(currentDir);
-		if (parentDir === currentDir) break;
-		currentDir = parentDir;
-	}
-	return dirs;
-}
-
-/**
- * Returns true when cwd has project-local resources that must be gated by
- * project trust: trust-requiring entries under the project config dir or the
- * legacy cwd/.pi dir (whose resources are also discovered), or a project
- * `.agents/skills` (`projectAgentsSkillDirs`, the same walk the loader uses).
- * The user's home and every folder above it are never a project: their config
- * dirs and .agents/skills are the user's own global resources (#2465).
- */
-export function hasTrustRequiringProjectResources(cwd: string): boolean {
-	const homeDir = canonicalizePath(resolvePath(process.env.HOME || homedir()));
-	const currentDir = canonicalizePath(resolvePath(cwd));
-
-	if (!isHomeOrAboveDir(currentDir, homeDir)) {
-		const configDirs = [join(currentDir, CONFIG_DIR_NAME), join(currentDir, LEGACY_PROJECT_CONFIG_DIR_NAME)];
-		if (
-			configDirs.some((configDir) =>
-				TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES.some((entry) => existsSync(join(configDir, entry))),
-			)
-		) {
-			return true;
-		}
-		if (projectCodemodeNamesExecutable(join(currentDir, CONFIG_DIR_NAME))) return true;
-	}
-
-	return projectAgentsSkillDirs(cwd).some((dir) => existsSync(dir));
-}
-
 export class ProjectTrustStore {
 	private trustPath: string;
 
@@ -379,7 +253,7 @@ async function entryKind(path: string): Promise<"directory" | "file" | undefined
  * As in git, a worktree folder deleted without `git worktree prune` keeps its admin record, so a folder
  * recreated at that path with a `.git` file the record points back at is that worktree again.
  */
-export async function linkedWorktreeMainCheckoutDir(cwd: string): Promise<string | undefined> {
+async function linkedWorktreeMainCheckoutDir(cwd: string): Promise<string | undefined> {
 	const dir = (await realPathOf(resolvePath(cwd))) ?? resolvePath(cwd);
 	let checkoutRoot = dir;
 	let markerKind = await entryKind(join(checkoutRoot, ".git"));

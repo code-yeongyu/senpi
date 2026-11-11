@@ -1,11 +1,18 @@
 import { expect } from "vitest";
 import type { RecoveryCheckpoints } from "../../../src/modes/rpc/compact-recovery-state.ts";
 import type { RecoveryAdmission } from "../../../src/modes/rpc/compact-recovery-types.ts";
-import { SessionAcceptanceLane } from "../../../src/modes/rpc/session-acceptance-lane.ts";
+import { type FrozenAcceptedRoot, SessionAcceptanceLane } from "../../../src/modes/rpc/session-acceptance-lane.ts";
 import { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.ts";
 import { type HeldPeer, LaneProducer, usage } from "./4272-legacy-view-support.ts";
 
 export const start = { role: "assistant", content: [], api: "faux", provider: "faux", model: "fixture", usage };
+
+/**
+ * The structured bytes of the cut's own store (where S09 catalogs live), read under a live root: `lane.storageStatus()`
+ * reports the settled-messages store, a different `CompactContentStore`, so it never sees a catalog owner.
+ */
+export const cutStructuredBytes = (lane: SessionAcceptanceLane, root: FrozenAcceptedRoot) =>
+	lane.cutStorage(root, async (store) => store.status().structuredBytes);
 
 /** A producer streaming one assistant message with an open text block on `sessionId` (`s` by default). */
 export function streaming(writer: SessionEventWriter, lane: SessionAcceptanceLane, sessionId = "s"): LaneProducer {

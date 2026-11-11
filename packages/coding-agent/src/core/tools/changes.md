@@ -1,5 +1,141 @@
 # core/tools changes
 
+## 2026-11-05 - `read` and `grep` descriptions state folding and page caps (senpi#5998)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/read.ts`: the description adds that a `.js` or `.json` file of 100+ lines read without offset/limit may come back folded, with markers that are not source and a footer of ranges to reread.
+- `packages/coding-agent/src/core/tools/grep/index.ts`: the description adds the defaults (limit 100 matches per page, timeoutMs 30000), the min(20, limit) files-per-page and 20-matches-per-file (200 for one file) caps, and that skip is ignored for a single file.
+
+### Why
+
+- The default read folder and the grep page caps already ran; the descriptions left them out, so an agent took a folded view for the whole file and expected `limit` to raise the per-file cap (senpi#5995).
+
+### Why an extension could not handle it
+
+- The descriptions live on the built-in tool definitions in this directory.
+
+### Expected merge conflict zones
+
+- LOW: the `description` strings in `read.ts` and `grep/index.ts`.
+
+## 2026-11-03 - Multi-file mutation slots are taken once per file and in one order (senpi#5691)
+
+### What changed
+
+- `packages/machine-ops/src/files/mutation-queue.ts` (`@code-yeongyu/senpi-machine-ops`, re-exported from `packages/coding-agent/src/core/tools/file-mutation-queue.ts`): adds `withFileMutationQueues(filePaths, fn)`. It keys every path as the queue does (realpath, case-folded), takes one slot per file, and takes the slots in key order. The hand's device-file rename and the `apply_patch` builtin use it.
+
+### Why
+
+- Nesting two `withFileMutationQueue` calls waits forever when both paths name one file (`a.md` and `./a.md`, a case-only alias, a symlink). Two operations over the same files in swapped order can also wait on each other. `apply_patch` deduplicated and sorted by raw path string, so an alias inside one patch deadlocked it.
+
+### Why an extension could not handle it
+
+- The slot keys and the queue are private to this module; only the module can order and deduplicate by the key it uses.
+
+### Expected merge conflict zones
+
+- LOW: `packages/machine-ops/src/files/mutation-queue.ts`, next to `withFileMutationQueue`.
+
+## 2026-11-03 - Built-in file and shell tools run on the shared machine-ops layer (senpi#5592)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/read.ts`, `packages/coding-agent/src/core/tools/write.ts`, `packages/coding-agent/src/core/tools/edit.ts`, `packages/coding-agent/src/core/tools/ls.ts`: the default `ReadOperations`, `WriteOperations`, `EditOperations` and `LsOperations` call `MachineOps.files` (`read`, `write`, `edit`'s read/write, `stat`, `list`) through a `ToolMachine` (new `machine` option). Caller-supplied `operations` still win, and `serverPinned` and the write baseline still key on them. Rendering, truncation and error text are unchanged: filesystem errors pass through the layer as the same `fs` errors.
+- `packages/coding-agent/src/core/tools/find.ts`: the default fd search runs as `MachineOps.files.glob` (same fd arguments, `.gitignore` handling, limit notice and error text); custom `FindOperations.glob` is unchanged.
+- `packages/coding-agent/src/core/tools/bash.ts`, `packages/coding-agent/src/core/tools/powershell.ts`: `createLocalShellOperations` runs the shell through `MachineOps.process.exec` (own process group, same abort/timeout/stream-callback handling, same detached-group tracking via `onSpawn`/`onExit`). The tool path records no scope token: it writes nothing under the agent dir and the command's environment is exactly `getShellEnv()`, as before. `createLocalBashOperations` and `createLocalPowerShellOperations` take an optional machine.
+- `packages/coding-agent/src/core/tools/index.ts`: `ToolsOptions` gains `machineOps` and `machinePolicy` (typed `ToolPathPolicy`: only `beforeOp`; `filesystem` and `afterOp` are compile errors because the tool path would ignore them); `createAllToolDefinitions`, `createCodingTools` and `createReadOnlyTools` pass one `ToolMachine` to every tool. With a `machinePolicy.beforeOp`, each tool call runs it exactly once before any effect, and a denial throws its reason; without one the tools keep their exact timing (no added await).
+- `packages/coding-agent/src/core/tools/file-mutation-queue.ts`, `packages/coding-agent/src/core/tools/filesystem-policy.ts`, `packages/coding-agent/src/core/tools/bounded-realpath.ts`: re-export the implementations that moved to `@code-yeongyu/senpi-machine-ops`. The package carries its own copies of the open-free realpath walker and `waitForChildProcess`; `src/utils/paths.ts` and `src/utils/child-process.ts` keep theirs because release scripts and worker bundles load them from source without a package build.
+- New `packages/coding-agent/src/core/tools/machine.ts`: the process-wide local `MachineOps` (no `stateDir`, so no disk state; in-process PTY holder, `killProcessTree`, fd via `ensureTool`) and `createToolMachine`.
+- `packages/coding-agent/src/core/tools/grep/index.ts`: the path probe uses `MachineOps.files.stat`; the search engine is unchanged.
+
+### Why
+
+- A remote machine executor and the agent's own tools must share one implementation of file and process operations, their limits and their permission checks. The shared layer is the new engine-free workspace package `packages/machine-ops` (`@code-yeongyu/senpi-machine-ops`), which imports nothing from `packages/agent` or `packages/coding-agent`.
+
+### Why an extension could not handle it
+
+- The built-in tools' default operations live in core; an extension can replace a tool but cannot change the default implementation behind `ReadOperations`, `WriteOperations`, `EditOperations`, `LsOperations` or `createLocalBashOperations`.
+
+### Expected merge conflict zones
+
+- MEDIUM: the default-operations blocks and the start of `execute` in `read.ts`, `write.ts`, `edit.ts`, `ls.ts`, `find.ts`; `createLocalShellOperations` in `bash.ts`; `createAllToolDefinitions` in `index.ts`.
+
+## 2026-11-03 - Full-section guidelines for the built-in tools (senpi#5665)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/bash.ts`, `powershell.ts`, `edit.ts`, `read.ts`, `write.ts`, `grep/index.ts`: each `*ToolSystemPromptContribution` keeps its pre-#5342 `fullGuidelines` beside the diet `guidelines`, exposed as `fullPromptGuidelines` (`ShellToolConfig.fullPromptGuidelines` for the shell tools).
+
+### Why
+
+- A beta tester reported that Opus 5.5 got slower and less capable after the senpi#5335 diet (#5342) shipped. Q's order: revert the diet only for the Fable and Opus presets; every other model keeps it.
+
+### Why an extension could not handle it
+
+- The text lives in builtin prompt generators, builtin tool definitions, and builtin extension prompt hooks, and the preset that selects the wording is a builtin extension.
+
+### Expected merge conflict zones
+
+- LOW: the contribution constants and the definitions' prompt fields.
+
+## 2026-11-01 - System prompt diet, shared modules (senpi#5335)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/edit.ts`: the four guideline bullets (all restated by the `edits[]` schema) become one: "Put every change to one file into a single edit call."
+- `packages/coding-agent/src/core/tools/grep/index.ts`: the grep guideline is dropped; `getEvalOnlyGrepGuideline` carries the merged rule.
+- `packages/coding-agent/src/core/tools/bash.ts`, `packages/coding-agent/src/core/tools/powershell.ts`: the PI_* guideline reads "PI_* environment variables carry the current model and session details."
+- Terse pass: `packages/coding-agent/src/core/tools/read.ts`, `packages/coding-agent/src/core/tools/write.ts`, `packages/coding-agent/src/core/tools/edit.ts`, `packages/coding-agent/src/core/tools/bash.ts`, and `packages/coding-agent/src/core/tools/powershell.ts` shorten their guideline wording.
+
+### Why
+
+- senpi#5335: tool guidelines restated the tool schema.
+
+### Why an extension could not handle it
+
+- Tool guidelines are defined on the core tool definitions.
+
+### Expected merge conflict zones
+
+- LOW: the `guidelines` arrays of the four tools.
+
+## 2026-10-31 - Agent-shell results carry the engine trust status under a fallback (senpi#5241)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/bash.ts`: the non-zero exit result calls `annotateShellTrust` (`engine-trust/shell-trust.ts`). Under an adopted fallback generation it adds `trust` (`status` from the adopted record, plus a heuristic `hint` with the matched pattern id when the output looks like a certificate verification error) to `details` and `structuredContent`, and appends one fixed catalog line for the model only when a hint is present. `BashToolDetails` gains the optional `trust` field. The success `outputSchema` and every result without a fallback are unchanged.
+
+### Why
+
+- omo#10762 design 6.7: an agent-shell command can fail TLS verification under a degraded certificate import while the engine's own requests succeed. The status must come from the adopted record, never from command output, which can forge any footer or trust line (design M16).
+
+### Why an extension could not handle it
+
+- The adopted trust record and the structured bash result are both built inside the core tool's result path. An extension sees the result after it is built and has no trusted view of the exit status and full output together.
+
+### Expected merge conflict zones
+
+- LOW: the `exitCode !== 0` branch of `createShellToolDefinition`'s execute, and the `BashToolDetails` interface.
+
+## 2026-11-02 - read can ignore the context model on a runtime without a session (senpi#5413)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/read.ts`: new `ReadToolOptions.contextModel` (default `true`). When `false`, `read` does not read `ctx.model`: no model-specific image note, and the image resize profile falls back to `resizeOptions`, as it already does when no execution context is passed.
+
+### Why
+
+- A runtime that owns no session (`bootstrapRuntime()` without a `sessionManager`, senpi#5223) refuses its loop-side context members by name, `model` included, so `read` threw on every call there. That runtime is how a tool-execution-only process will run the built-in tools (brain/hand split).
+
+### Why an extension could not handle it
+
+- `read` is a core built-in tool; how it reads its execution context is decided inside its definition.
+
+### Expected merge conflict zones
+
+- LOW: the `ReadToolOptions` property list and the two `model` reads in `createReadToolDefinition`'s image branch.
+
 ## 2026-10-27 - The core bash tool applies the session's caller env (fixes senpi#4381)
 
 ### What changed

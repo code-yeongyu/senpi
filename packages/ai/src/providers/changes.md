@@ -1,3 +1,111 @@
+## 2026-10-30 - Selected SIWC account lifecycle (part of #5003)
+
+### What changed
+
+- `packages/ai/src/providers/chatgpt-subscription.ts` routes reauthorization directly by the selected credential and dispatches revocation to the matching OAuth flow.
+
+### Why
+
+- Returning SIWC accounts must reuse their issued registration and cannot switch to legacy during reauthorization. Sign-out must reach the SIWC revocation hook.
+
+### Why an extension could not handle it
+
+- Provider composition owns credential-route dispatch before terminal or RPC interaction.
+
+### Expected merge conflict zones
+
+- The ChatGPT subscription OAuth login, refresh and revoke object.
+
+## 2026-10-30 - Shared ChatGPT sign-in route choice (part of senpi#5003)
+
+### What changed
+
+- `packages/ai/src/providers/chatgpt-subscription.ts`: offers Continue with ChatGPT first and preserves a legacy sign-in choice through the existing OAuth interaction.
+
+### Why
+
+- Terminal and RPC login clients need the same SIWC-first route selection without removing sign-in for existing users.
+
+### Why an extension could not handle it
+
+- The existing provider owns the OAuth login implementation shared by those clients.
+
+### Expected merge conflict zones
+
+- The ChatGPT Subscription OAuth login function, alongside W3 reauthorization integration.
+
+## 2026-10-30 - Register SIWC on the existing ChatGPT provider (part of senpi#5003)
+
+### What changed
+
+- `packages/ai/src/providers/chatgpt-subscription.ts`: new sign-ins use the validated SIWC flow, receive a saved SIWC route and expose the Continue with ChatGPT label.
+
+### Why
+
+- `packages/ai/src/providers/chatgpt-subscription.ts`: option A keeps new and legacy ChatGPT accounts in one provider and one pool.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/providers/chatgpt-subscription.ts`: CLI/TUI auth enumeration uses this builtin provider.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/providers/chatgpt-subscription.ts`: OAuth login registration.
+
+## 2026-10-30 - Dispatch ChatGPT slots by their saved route (part of senpi#5003)
+
+### What changed
+
+- `packages/ai/src/providers/chatgpt-subscription.ts`: derive SIWC public Responses auth and dispatch with `compat.siwc`, preserving exact upstream model aliases and the unchanged legacy adapter. Select the permitted `web_search` tool type so the default search extension does not inject the unsupported preview variant.
+
+### Why
+
+- `packages/ai/src/providers/chatgpt-subscription.ts`: one provider must serve both existing Codex sessions and new public-API sessions.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/providers/chatgpt-subscription.ts`: the builtin provider owns OAuth derivation and adapter selection.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/providers/chatgpt-subscription.ts`: OAuth registration and API map.
+
+## 2026-10-31 - Fall back to env when stored google-vertex location is empty (senpi#5135)
+
+### What changed
+
+- `packages/ai/src/providers/google-vertex.ts`: use `||` instead of `??` when reading `credential?.env?.GOOGLE_CLOUD_LOCATION`, `GOOGLE_CLOUD_PROJECT`, and `GOOGLE_APPLICATION_CREDENTIALS` so an empty stored string falls back to ambient environment variables.
+
+### Why
+
+- senpi#2961: an empty stored location or project in user settings blocked env fallback, causing Vertex authentication to fail.
+
+### Why an extension could not handle it
+
+- Vertex provider authentication resolution is built into the core AI provider factory.
+
+### Expected merge conflict zones
+
+- LOW: `vertexAuth.resolve` in `packages/ai/src/providers/google-vertex.ts`.
+
+## 2026-10-30 - ChatGPT Subscription reports the signed-in account (senpi#5009)
+
+### What changed
+
+- `packages/ai/src/providers/chatgpt-subscription.ts`: the provider's lazy OAuth declares `accountIdentity` from the access token.
+
+### Why
+
+- oh-my-openagent#9633: login dedupe needs the identity without loading the Node-only flow module.
+
+### Why an extension could not handle it
+
+- The builtin provider definition owns its OAuth surface.
+
+### Expected merge conflict zones
+
+- LOW: the `lazyOAuth({...})` call in `chatgptSubscriptionProvider`.
+
 ## 2026-10-27 - The Anthropic provider comment names the CLI sign-in (senpi#4436, S7)
 
 ### What changed

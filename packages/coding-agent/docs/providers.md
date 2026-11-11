@@ -29,8 +29,8 @@ independent server-tool error contract; its model errors remain with core
 retry rather than receiving unsupported function-tool definitions.
 Standalone summaries, session titles and default projections exclude only server-search tools, not client function declarations. Tool-less requests do not gain empty tool arrays. Cache-friendly compaction and keepalive retain the exact main-turn payload transform, tools and include fields.
 
-Anthropic Messages supports `web_search_20250305`. The direct Anthropic API and
-Claude OAuth retain main's default-on behavior. Anthropic-compatible gateways
+Anthropic Messages supports `web_search_20250305`. The direct Anthropic API
+retains main's default-on behavior. Anthropic-compatible gateways
 must explicitly declare search and replay support. For example, merge this override into your existing provider entry,
 keeping its current credential configuration:
 
@@ -55,7 +55,7 @@ the assistant blocks and their `encrypted_content` to be replayed unchanged.
 
 | Route | In-turn tool / API | Capability and replay contract |
 | --- | --- | --- |
-| Direct Anthropic API / Claude OAuth | `web_search_20250305`, Messages | Default-on (unchanged from main); `compat.supportsWebSearch: false` opts out. No new direct-endpoint probe is claimed here. |
+| Direct Anthropic API | `web_search_20250305`, Messages | Default-on (unchanged from main); `compat.supportsWebSearch: false` opts out. No new direct-endpoint probe is claimed here. |
 | Anthropic-compatible gateways, including ccapi | `web_search_20250305`, Messages | Opt-in `compat.supportsWebSearch: true`. ccapi search and encrypted-result replay verified live. |
 | OpenAI API / Azure | `web_search_preview`, Responses | Default-on (unchanged from main). Custom Responses endpoints remain opt-in `compat.supportsWebSearchPreview: true`. The current `web_search` name is also supported. |
 | ChatGPT/Codex subscription | `web_search`, Codex Responses | First-party subscription default, except Spark; custom endpoints require opt-in. Real search and output-item replay verified. |
@@ -126,6 +126,7 @@ Use `/logout` to clear credentials. Tokens are stored in `~/.senpi/agent/auth.js
 Anthropic subscription auth is active for Claude Pro/Max accounts. Third-party harness usage draws from [extra usage](https://claude.ai/settings/usage) and is billed per token, not against Claude plan limits.
 
 - Sign in with `/login anthropic-subscription` (see [Anthropic Subscription](#anthropic-subscription)). senpi has no Claude sign-in of its own: the bundled Claude Code CLI runs `claude auth login` and keeps the login in its own credential store.
+- The plain `anthropic` provider takes Anthropic API keys only. A Claude OAuth token (`sk-ant-oat...`) given to it as a key, through `/login anthropic`, `ANTHROPIC_API_KEY`, `ANTHROPIC_OAUTH_TOKEN` or a `models.json` `apiKey`, is refused before any request is sent, with an error that points at `/login anthropic-subscription`. senpi does not send Claude subscription tokens to the Anthropic API directly and does not present itself as Claude Code.
 
 ### Anthropic Subscription
 
@@ -485,11 +486,45 @@ behavior per provider in `models.json`:
 {
   "providers": {
     "openai": {
-      "credentials": { "rotation": true, "affinity": true, "cooldownBaseMs": 60000 }
+      "credentials": {
+        "rotation": true,
+        "affinity": true,
+        "accountStrategy": "cache-affine",
+        "cooldownBaseMs": 60000
+      }
     }
   }
 }
 ```
+
+`credentials.accountStrategy` chooses how new sessions select an account for that provider:
+
+- `"cache-affine"` (default) keeps the existing session-affine rendezvous order, with the user's stored account order taking precedence.
+- `"fill-first"` uses the user's stored account order, followed by the remaining accounts in their stored order, and selects the first usable account.
+- `"round-robin"` assigns consecutive new affinity keys to consecutive accounts. A session retains its chosen account until a block or the headroom preference requires another account. The cursor and choices are held in memory for the life of the process.
+
+An explicitly configured strategy takes precedence over the legacy `affinity` toggle.
+Without `accountStrategy`, an existing `affinity: false` configuration keeps its behavior.
+Unknown strategy values produce a configuration error naming `accountStrategy`.
+
+The Claude subscription lane owns its account selection separately. Set its strategy in
+`settings.json`, under `anthropicSubscriptionProvider`, instead of its `models.json` credential policy:
+
+```json
+{
+  "anthropicSubscriptionProvider": {
+    "accountStrategy": "round-robin"
+  }
+}
+```
+
+Project settings override global settings. The same three values and default apply.
+Claude also retains a usable resident session's account to preserve its prompt cache.
+
+All three strategies prefer accounts whose reported subscription windows are below 95% usage.
+Missing usage data and windows whose reset time has passed do not cause a skip. If every usable
+account is near its limit, the normal choice still receives the request. An explicit account pin
+always wins, and Claude's `accountFallback: false` still prevents automatic account switching.
 
 API key credentials can also include provider-scoped environment values. These values are used before process environment variables when resolving the credential key, provider/model headers, and provider configuration such as Cloudflare account IDs, Azure OpenAI settings, Vertex project/location, Bedrock settings, `PI_CACHE_RETENTION`, and `HTTP_PROXY`/`HTTPS_PROXY`.
 
