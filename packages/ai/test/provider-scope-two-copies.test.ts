@@ -87,24 +87,31 @@ describe("T-B provider strict mode and scope across two pi-ai copies (omo#12965)
 		a.api.unregisterApiProviders("x12965-only-a");
 	});
 
-	it("loads a copy evaluated while strict mode is on, outside and inside a scope, and registers its built-ins globally (control)", async () => {
-		const a = await nextCopy(nodeCopy);
-		a.scope.setProviderScopeStrictMode(true);
-		restore = () => a.scope.setProviderScopeStrictMode(false);
-		vi.resetModules();
-		const outside = await import("../src/compat.ts");
-		const inScope = new a.scope.ProviderScope();
-		vi.resetModules();
-		const inside = await a.scope.runWithProviderScope(inScope, () => import("../src/compat.ts"));
+	// Two cold evaluations of the whole compat graph are this case's cost, not its subject: its own budget is the bound.
+	it(
+		"loads a copy evaluated while strict mode is on, outside and inside a scope, and registers its built-ins globally (control)",
+		{
+			timeout: 180_000,
+		},
+		async () => {
+			const a = await nextCopy(nodeCopy);
+			a.scope.setProviderScopeStrictMode(true);
+			restore = () => a.scope.setProviderScopeStrictMode(false);
+			vi.resetModules();
+			const outside = await import("../src/compat.ts");
+			const inScope = new a.scope.ProviderScope();
+			vi.resetModules();
+			const inside = await a.scope.runWithProviderScope(inScope, () => import("../src/compat.ts"));
 
-		const builtins = await a.scope.runWithProviderScope(new a.scope.ProviderScope(), async () => ({
-			outside: outside.getApiProvider("anthropic-messages"),
-			inside: inside.getApiProvider("anthropic-messages"),
-		}));
-		expect(builtins.outside).toBeDefined();
-		expect(builtins.inside).toBeDefined();
-		expect(inScope.overlay.size).toBe(0);
-	});
+			const builtins = await a.scope.runWithProviderScope(new a.scope.ProviderScope(), async () => ({
+				outside: outside.getApiProvider("anthropic-messages"),
+				inside: inside.getApiProvider("anthropic-messages"),
+			}));
+			expect(builtins.outside).toBeDefined();
+			expect(builtins.inside).toBeDefined();
+			expect(inScope.overlay.size).toBe(0);
+		},
+	);
 
 	it("(payload) reads an ill-typed scope as a closed scope and a non-boolean strict mode as on", async () => {
 		const b = await nextCopy(registryOnlyCopy);
