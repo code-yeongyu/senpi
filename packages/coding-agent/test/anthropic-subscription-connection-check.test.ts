@@ -257,6 +257,8 @@ describe("legacy default subscription cleanup (desktop#6445)", () => {
 		expect(migrated.data["anthropic-subscription"]).not.toHaveProperty("slotState.default");
 		expect(signOutLegacyClaudeLogins(migrated.data).migrated).toBe(false);
 		const real = { ...stale, accounts: [{ ...old, name: "default" }, personal] };
-		expect(signOutLegacyClaudeLogins({ "anthropic-subscription": real }).data["anthropic-subscription"]).toEqual(real);
+		expect(signOutLegacyClaudeLogins({ "anthropic-subscription": real }).data["anthropic-subscription"]).toEqual(
+			real,
+		);
 	});
 });
