@@ -55,7 +55,7 @@ export type {
 export type { OpenAICompletionsOptions } from "./api/openai-completions.ts";
 export type { OpenAIResponsesOptions } from "./api/openai-responses.ts";
 export { isOpenAIResponsesPromptCacheModel } from "./api/openai-responses-prompt-cache.ts";
-export { convertResponsesMessages } from "./api/openai-responses-shared.ts";
+export { convertResponsesMessages, ULTRAFAST_DOCUMENTED_MODEL_IDS } from "./api/openai-responses-shared.ts";
 export type { PiMessagesEvent, PiMessagesOptions, PiMessagesRewriteImpact } from "./api/pi-messages.ts";
 export {
 	type WarmPromptCacheOptions,
@@ -147,6 +147,7 @@ export {
 	isAnthropicApiBaseUrl,
 	PROMPT_CACHE_TTL_LONG_SECONDS,
 	PROMPT_CACHE_TTL_OPENAI_EXTENDED_SECONDS,
+	PROMPT_CACHE_TTL_OPENAI_LONG_SECONDS,
 	PROMPT_CACHE_TTL_SHORT_SECONDS,
 	type PromptCacheLifetime,
 	resolvePromptCacheLifetime,

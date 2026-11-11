@@ -139,7 +139,7 @@ Use quick-set in non-TUI modes; the no-argument menu requires interactive UI. Pa
 
 Senpi ships built-in extensions that inject provider-native server tools when the active model supports them. These run as ordinary extensions internally but are always loaded and require no user configuration beyond having valid credentials.
 
-**openai-image-gen** injects the OpenAI Responses `image_generation` server tool when the model uses `openai-responses` on `api.openai.com`. It arbitrates against the client-side `generate_image` function tool so exactly one image surface is offered per request. A `message_end` handler decodes completed image results, writes them to `generated-images/`, and replaces the provider-native block with a text path reference before session persistence, so base64 payloads never reach the session file. Set `PI_OPENAI_IMAGE_GEN=false` to force the client tool path. Azure Responses endpoints default to the client tool unless `compat.supportsImageGeneration` opts in.
+**openai-image-gen** injects the OpenAI Responses `image_generation` server tool when the model uses `openai-responses` on `api.openai.com`. It arbitrates against the client-side `generate_image` function tool so exactly one image surface is offered per request. `generate_image` itself is eval-only like `bash` (`exposure: "eval"`): whenever an `eval` tool is registered it is withheld from the model's direct tool list and called as `tool.generate_image({ prompt: "..." })` inside a cell; without an eval tool it is an ordinary direct tool. A `message_end` handler decodes completed image results, writes them to `generated-images/`, and replaces the provider-native block with a text path reference before session persistence, so base64 payloads never reach the session file. Set `PI_OPENAI_IMAGE_GEN=false` to force the client tool path. Azure Responses endpoints default to the client tool unless `compat.supportsImageGeneration` opts in.
 
 **openai-web-search** injects the OpenAI Responses `web_search_preview` server tool following the same pattern: credential-gated, stripped on unsupported endpoints, arbitrated against its client-side counterpart.
 
@@ -1074,6 +1074,16 @@ pi.on("before_provider_request", (event, ctx) => {
 ```
 
 This is mainly useful for debugging provider serialization and cache behavior.
+
+`before_provider_request`, `provider_stream_event` and `after_provider_response` handlers can declare the providers whose requests or streams they read or change:
+
+```typescript
+pi.on("before_provider_request", (event) => ({ ...event.payload, metadata: { tag: "x" } }), {
+  providers: ["anthropic"],
+});
+```
+
+The declaration does not filter dispatch: the handler still receives every event. A device serving a hosted session advertises it, so the hosted side knows which providers' calls need that device's hooks. A handler without `providers` counts as touching every provider. The value must be a non-empty array of provider ids; anything else throws at registration, also for a handler whose `runs` side does not register it. Every other event ignores `providers`.
 
 #### after_provider_response
 

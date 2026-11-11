@@ -71,6 +71,7 @@ import {
 	processResponsesStream,
 	resolveResponsesDeferredToolsMode,
 	resolveResponsesToolPlacement,
+	ULTRAFAST_DOCUMENTED_MODEL_IDS,
 } from "./openai-responses-shared.ts";
 import { buildBaseOptions, clampMaxForOpenAI, OPENAI_RESPONSES_RESERVED_BODY_KEYS } from "./simple-options.ts";
 import { startWebSocketLiveness } from "./websocket-liveness.ts";
@@ -185,7 +186,7 @@ function getPromptCacheOptions(
 ): OpenAIPromptCacheOptionsPayload | undefined {
 	if (!compat.supportsExplicitPromptCacheMode) return undefined;
 	if (cacheRetention === "none") return { mode: "explicit" };
-	if (cacheRetention === "long" && compat.supportsLongCacheRetention) return { ttl: "30m" };
+	if (cacheRetention === "long" && compat.supportsLongCacheRetention) return { ttl: "12h" };
 	return undefined;
 }
 
@@ -1215,7 +1216,7 @@ function getServiceTierCostMultiplier(
 		case "ultrafast":
 			// OpenAI prices GPT-6 Astra and GPT-6.1 Sol Ultrafast at 6x Standard on every
 			// token class and context tier. Any other model keeps its base rate.
-			return ["gpt-6-astra", "gpt-6.1-sol"].includes(model.upstreamModelId ?? model.id) ? 6 : 1;
+			return ULTRAFAST_DOCUMENTED_MODEL_IDS.has(model.upstreamModelId ?? model.id) ? 6 : 1;
 		case "flex":
 			return 0.5;
 		case "priority":

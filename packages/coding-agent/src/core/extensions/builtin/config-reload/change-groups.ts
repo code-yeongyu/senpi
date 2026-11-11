@@ -19,8 +19,14 @@ export function groupChangedPaths(
 		for (const activeTarget of targets) {
 			if (!targetMatchesPath(activeTarget.target, path)) continue;
 			matched = true;
-			// The project container only rearms discovery; newly discovered config files carry the change.
-			if (activeTarget.target.id === "builtin-project-presence" && rearmedContainers.includes(resolve(path)))
+			// Discovery containers only rearm their watches; discovered files carry the change.
+			// An extensions directory may contain only runtime state (e.g. a park's goal/no-session).
+			if (
+				rearmedContainers.includes(resolve(path)) &&
+				(activeTarget.target.id === "builtin-project-presence" ||
+					activeTarget.target.id === "builtin-global-extensions" ||
+					activeTarget.target.id === "builtin-project-extensions")
+			)
 				continue;
 			const group = groups.get(activeTarget.registrationId) ?? [];
 			if (!group.includes(path)) group.push(path);

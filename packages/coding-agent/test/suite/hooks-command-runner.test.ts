@@ -1,7 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runCommandHook, selectCommandForPlatform } from "../../src/core/extensions/builtin/hooks/command-runner.ts";
 import type {
@@ -9,6 +8,7 @@ import type {
 	HookInputWire,
 	HookSourceMetadata,
 } from "../../src/core/extensions/builtin/hooks/types.ts";
+import { createCommandProcessFixture } from "./hooks-command-process-fixtures.ts";
 
 const SOURCE: HookSourceMetadata = {
 	discoveredAt: "pre-session",
@@ -47,20 +47,6 @@ function createTempDir(name: string): string {
 	const dir = join(realpathSync(tmpdir()), `senpi-hooks-${name}-${process.pid}-${Date.now()}`);
 	tempDirs.push(dir);
 	return dir;
-}
-
-async function waitForProcessExit(pid: number): Promise<void> {
-	const deadline = Date.now() + 2_000;
-	while (Date.now() < deadline) {
-		try {
-			process.kill(pid, 0);
-		} catch (error) {
-			if (error instanceof Error && "code" in error && error.code === "ESRCH") return;
-			throw error;
-		}
-		await delay(10);
-	}
-	throw new Error(`process ${pid} is still running`);
 }
 
 describe("builtin hooks command runner", () => {
@@ -128,30 +114,24 @@ describe("builtin hooks command runner", () => {
 		// Given
 		const cwd = createTempDir("timeout");
 		mkdirSync(cwd, { recursive: true });
-		const pidPath = join(cwd, "child.pid");
-		const scriptPath = join(cwd, "hang.mjs");
-		writeFileSync(
-			scriptPath,
-			[
-				"import { writeFileSync } from 'node:fs';",
-				`writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));`,
-				"setInterval(() => {}, 1000);",
-			].join("\n"),
-		);
+		// senpi#6367: start the timeout only after atomic PID publication and readiness.
+		const fixture = await createCommandProcessFixture(cwd);
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const input: HookInputWire = { cwd, event: "SessionStart", sessionId: "s1" };
+		const running = runCommandHook(createHandler(fixture.command, { timeout: 1 }), input, { cwd });
+		const { ready, closed } = await fixture.started;
+		const completed = Promise.all([running, closed]);
+		await ready;
 
 		// When
-		const result = await runCommandHook(createHandler(`${process.execPath} ${scriptPath}`, { timeout: 1 }), input, {
-			cwd,
-		});
+		await vi.advanceTimersByTimeAsync(1_000);
+		const [result] = await completed;
 
 		// Then
 		expect(result.timedOut).toBe(true);
 		expect(result.aborted).toBe(false);
 		expect(result.exitCode).toBeNull();
 		expect(result.timeoutSeconds).toBe(1);
-		expect(existsSync(pidPath)).toBe(true);
-		await waitForProcessExit(Number(readFileSync(pidPath, "utf8")));
 	});
 
 	it("rejects invalid timeout values before starting a command", async () => {
@@ -170,35 +150,26 @@ describe("builtin hooks command runner", () => {
 		// Given
 		const cwd = createTempDir("abort");
 		mkdirSync(cwd, { recursive: true });
-		const pidPath = join(cwd, "child.pid");
-		const scriptPath = join(cwd, "abortable.mjs");
-		writeFileSync(
-			scriptPath,
-			[
-				"import { writeFileSync } from 'node:fs';",
-				`writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));`,
-				"setInterval(() => {}, 1000);",
-			].join("\n"),
-		);
+		// senpi#6367: file existence alone can expose an empty, not-yet-written PID.
+		const fixture = await createCommandProcessFixture(cwd);
 		const controller = new AbortController();
 		const input: HookInputWire = { cwd, event: "UserPromptSubmit", prompt: "hello" };
-		const running = runCommandHook(createHandler(`${process.execPath} ${scriptPath}`), input, {
+		const running = runCommandHook(createHandler(fixture.command), input, {
 			cwd,
 			signal: controller.signal,
 		});
+		const { ready, closed } = await fixture.started;
+		const completed = Promise.all([running, closed]);
+		await ready;
 
 		// When
-		while (!existsSync(pidPath)) {
-			await delay(10);
-		}
 		controller.abort();
-		const result = await running;
+		const [result] = await completed;
 
 		// Then
 		expect(result.aborted).toBe(true);
 		expect(result.timedOut).toBe(false);
 		expect(result.exitCode).toBeNull();
-		await waitForProcessExit(Number(readFileSync(pidPath, "utf8")));
 	});
 
 	it("caps stdout and stderr in memory before concatenation", async () => {

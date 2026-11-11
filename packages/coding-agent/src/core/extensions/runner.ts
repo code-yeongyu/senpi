@@ -498,6 +498,15 @@ function snapshotEventHandlers(extensions: Extension[], event: ExtensionEvent["t
 	return extensions.map((ext) => ({ ext, handlers: ext.handlers.get(event)?.slice() ?? [] }));
 }
 
+/**
+ * A hand's dispatch of a hosted loop's request hooks (CK21): only the extensions `only` accepts, with the effective
+ * model the loop sent and no headers (they never leave the loop's side).
+ */
+export interface HandRequestHookDispatch {
+	readonly only: (extensionPath: string) => boolean;
+	readonly model?: Model<Api>;
+}
+
 /** `before_agent_start` dispatch order: every handler in load order, then the `runLast` ones (senpi#4448). */
 function beforeAgentStartDispatchOrder(extensions: Extension[]) {
 	const snapshot = snapshotEventHandlers(extensions, "before_agent_start");
@@ -2620,12 +2629,18 @@ export class ExtensionRunner {
 		payload: unknown,
 		excludeExtensionPath?: string,
 		request?: { model: Model<Api>; headers: ProviderHeaders },
+		hand?: HandRequestHookDispatch,
 	): Promise<unknown> {
 		let currentPayload = payload;
 
-		const requestHandlers = this.dropsLoopEvent("before_provider_request")
-			? []
-			: snapshotEventHandlers(this.extensions, "before_provider_request");
+		// A hand running a hosted loop's request hooks (CK21) names whose handlers run; it has no loop of its own, so the
+		// sessionless drop does not apply to that explicit dispatch. Every other caller keeps the dispatch it had.
+		const requestHandlers =
+			hand !== undefined
+				? snapshotEventHandlers(this.extensions, "before_provider_request").filter(({ ext }) => hand.only(ext.path))
+				: this.dropsLoopEvent("before_provider_request")
+					? []
+					: snapshotEventHandlers(this.extensions, "before_provider_request");
 		for (const { ext, handlers } of requestHandlers) {
 			if (ext.path === excludeExtensionPath) continue;
 			for (const handler of handlers) {
@@ -2634,6 +2649,7 @@ export class ExtensionRunner {
 						type: "before_provider_request",
 						payload: currentPayload,
 						...(request ? { model: request.model, headers: request.headers } : {}),
+						...(hand?.model === undefined ? {} : { model: hand.model }),
 					};
 					const handlerResult = await handler(event, this.createContext(ext.path));
 					if (handlerResult !== undefined) {

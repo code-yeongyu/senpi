@@ -533,9 +533,10 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 
 		it.each([
 			["gpt-4o-mini", "24h", undefined],
-			["gpt-6-astra", undefined, { ttl: "30m" }],
-			["gpt-6-sol", undefined, { ttl: "30m" }],
-			["gpt-6-luna", undefined, { ttl: "30m" }],
+			// senpi#6290: "long" buys the longest documented lifetime; "30m" is the default and bought nothing.
+			["gpt-6-astra", undefined, { ttl: "12h" }],
+			["gpt-6-sol", undefined, { ttl: "12h" }],
+			["gpt-6-luna", undefined, { ttl: "12h" }],
 		] as const)("should use the supported long cache field for %s", async (modelId, retention, cacheOptions) => {
 			const model = getModel("openai", modelId);
 			let capturedPayload: OpenAIResponsesCachePayload | undefined;

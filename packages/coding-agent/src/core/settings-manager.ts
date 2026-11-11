@@ -1091,6 +1091,15 @@ export class SettingsManager {
 		return structuredClone(this.projectSettings);
 	}
 
+	/**
+	 * `contextFiles.globalPath` from the user's own layers only: session overrides, then global
+	 * settings. A project's `.senpi/settings.json` never redirects the user's global context file
+	 * (senpi#5567), so the project layer is deliberately skipped.
+	 */
+	getGlobalContextFilePath(): string | undefined {
+		return this.runtimeOverrides.contextFiles?.globalPath ?? this.globalSettings.contextFiles?.globalPath;
+	}
+
 	/** The project settings file at `path` as stored: parsed and migrated like a load, but never gated by trust. */
 	readProjectSettingsFile(path: string): ProjectSettingsFile {
 		let content: string | undefined;

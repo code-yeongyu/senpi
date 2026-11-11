@@ -2758,6 +2758,56 @@ context - inside a provider scope of their own, then drops them.
 Probe `warm` in `get_protocol_info` capabilities before sending it: an older host answers an unknown command with an
 error.
 
+### Parking and claiming a built session (`park_claim`)
+
+An in-process multi-session host advertises `park_claim`. A caller that knows the next session's profile can
+build it ahead of time:
+
+```json
+{"id":"p1","type":"park_session","cwd":"/abs/project","kind":"worker","context":{"role":"child"}}
+{"id":"p1","type":"response","command":"park_session","success":true,"data":{"state":"parked"}}
+{"id":"c1","type":"claim_session","cwd":"/abs/project","kind":"worker","context":{"role":"child"},"retain_on_disconnect":true}
+```
+
+A successful claim has exactly the `open_session` success payload (`sessionId`, `state`, permission-mode fields
+and, where available, `presence`), with `command: "claim_session"`. It takes the opener's normal connection
+capabilities, attachment, ownership and retention policy. No runtime is built in the claim request.
+When no ready park matches, or an option requires a fresh open, the response is:
+
+```json
+{"id":"c1","type":"response","command":"claim_session","success":true,"data":{"claimed":false}}
+```
+
+Send a normal `open_session` after that miss. A claim does not wait for an in-flight park. A ready park is consumed
+once; concurrent claims cannot receive the same session. After a successful claim, the host schedules a replacement
+for that profile in the background.
+
+Both commands require an absolute `cwd`. `kind` defaults to `interactive`; `context` has the same validation and
+host-identity merge as `open_session`, and its key order does not affect matching. Repeated parks of the same profile
+share one build or answer `state: "already_parked"`. Each host holds at most four speculative profiles, including
+builds in flight and scheduled replacements; another profile answers `state: "full"`. This cap never limits ordinary opens. A ready park expires
+after 60 seconds; repeating `park_session` does not extend its lifetime.
+
+Claim accepts the open options. `retain_on_disconnect`, model/provider, thinking level, permission preset,
+prompt surface and browser engine apply through the same live operations used by ordinary session commands or
+attach-on-open. A requested `sessionPath`, `durableSessionId`, `expectedHostInstance`, `spawnedBy`, `env`,
+`auto_title`, `retryFallback`, `attended: false`, or an unpaired provider/model choice returns `claimed: false`
+without consuming the park. Compact admissions (`admissionId`,
+`retry`, or a connection that selected compact transport) also miss, so the caller uses the existing `open_session`
+admission contract. Invalid applicable options receive their ordinary error response.
+
+Parks run the existing open implementation without an owner or reply. They start attended, in memory, and acquire
+their persistent file and file hold only when claimed. Until then they appear in no session listing, status stream,
+`session_opened` event, session-list file, hosted export, durable-id collision check, attachment count or zero-session
+trim count. Build timing is dropped. `park_session` never makes its connection an idle-exit attachment; a claim does.
+Both methods are `device_admin` in the method-class table because they require a host cwd.
+
+Expiry, drain, handoff and stop dispose parks without a public terminal record or a handover entry. Builds already
+in flight are closed when they finish; a stopped host never schedules replacements. Parks have no persistent
+transcript to survive a crash, and no successor reopens them. Worker-isolate hosts do not advertise `park_claim` and
+answer `park_claim_unsupported`; classic RPC and terminal single-session endpoints answer `multi_session_disabled`.
+Probe the capability before sending either command.
+
 ### Delegated connections (`declare_delegation`)
 
 A client that forwards records on behalf of someone else (a relay host forwarding a remote viewer) declares it, and
@@ -3999,7 +4049,7 @@ in the following effect-based read allow-list:
 
 `get_state`, `get_messages`, `get_entries`, `get_tree`, `get_fork_messages`,
 `get_last_assistant_text`, `get_media`, `get_commands`, `get_loaded_surfaces`, `get_project_trust`,
-`get_project_settings`, `get_available_models`, `get_available_thinking_levels`, `get_fast_mode`, `get_session_stats`,
+`get_project_settings`, `read_project_file`, `get_available_models`, `get_available_thinking_levels`, `get_fast_mode`, `get_session_stats`,
 `get_pending_inputs`, `get_steering_messages`, `get_follow_up_messages`, `get_auth_providers`,
 `get_provider_accounts`, `resolve_path`, `memory_report`, `eval_cells.list`, `eval_cells.peek`,
 and `check_reload_veto`.
@@ -6233,6 +6283,59 @@ existing file does not parse (nothing is written), and `project_settings_write_f
 `get_project_trust` is an `observe` read; `set_project_trust`, `get_project_settings` and `set_project_setting`
 are `device_admin` (a saved trust decision decides whether project code runs on the device, and the settings
 commands read and write a file in the session's folder).
+
+#### read_project_file
+
+Reads one of the workspace's instruction files: `AGENTS.md` or `CLAUDE.md` at the session's folder or in any folder
+below it, or a file under `.omo/rules/`. Reading runs nothing, so it works while the project is untrusted.
+
+```json
+{"type": "read_project_file", "path": "AGENTS.md"}
+```
+
+```json
+{
+  "type": "response",
+  "command": "read_project_file",
+  "success": true,
+  "data": {
+    "cwd": "/home/user/project",
+    "path": "AGENTS.md",
+    "exists": true,
+    "content": "# Project rules\n",
+    "etag": "sha256-…",
+    "projectTrusted": true
+  }
+}
+```
+
+`path` is relative to the session's folder, `/`-separated and canonical: no empty, `.` or `..` segment, no `\\`, `:`
+or NUL, and never through `.git` or `node_modules`. A file that does not exist yet is a success with `exists: false`
+and `content`/`etag` `null`. `etag` is an opaque version of the stored bytes: compare it, never parse it.
+Errors: `invalid_argument` when `path` is not a string, `project_file_not_allowed` (`errorData: { path }`) for any
+other path, or when a folder on the way or the file itself is a symlink or not a regular file and folder, and
+`project_file_too_large` (`errorData: { limitBytes }`) for a stored file over 512 KiB.
+
+#### write_project_file
+
+Replaces (or creates) one of the files `read_project_file` reads, naming the version it replaces.
+
+```json
+{"type": "write_project_file", "path": "AGENTS.md", "content": "# Project rules\n", "ifEtag": "sha256-…"}
+```
+
+`ifEtag` is required: the `etag` last read, or `null` to create a file that must not exist yet. Missing parent
+folders are created. The file lands by a temporary file and a rename, so a reader never sees a partial write, and
+writes to one file are applied one at a time. The response carries the same `data` as `read_project_file`, read
+after the write. The session reads its instruction files when they are next loaded (a new session or `reload`).
+Errors: `invalid_argument` when `content` is not a string or `ifEtag` is neither a string nor `null`,
+`project_not_trusted` while the project is untrusted, `project_file_not_allowed` as for `read_project_file`,
+`project_file_too_large` (`errorData: { limitBytes }`) for content over 512 KiB or a stored file over 512 KiB (its
+version cannot be checked without reading it), `project_file_conflict` when
+`ifEtag` is not the file's current version (`errorData: { currentEtag, exists }`; nothing is written; read again
+and retry), and `project_file_write_failed` when the write fails (permissions, disk).
+
+Both are `device_admin`: they read and write a file in the session's folder.
 
 ### extension_request
 

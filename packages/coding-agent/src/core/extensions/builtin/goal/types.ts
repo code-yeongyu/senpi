@@ -12,6 +12,14 @@ export type GoalStoreRef = {
 export type GoalAccountingMode = "active" | "activeOrBlocked" | "activeOrComplete";
 export type GoalUpdateSource = "model" | "user";
 
+/** Deny reason + counters captured with a stop claim, so a later session start can re-append the stop entries if the process died between the claim and the append (senpi#3015). */
+export type GoalContinuationStoppedDetail = {
+	reason: "cap" | "stale" | "repetition" | "length-exhausted" | "no-progress" | "context-overflow";
+	consecutiveContinuations: number;
+	unattendedContinuations: number;
+	noProgressContinuations: number;
+};
+
 export type Goal = {
 	id: string;
 	threadId: string;
@@ -26,6 +34,8 @@ export type Goal = {
 	lastContinuationSignature?: string;
 	/** Durable claim for a stopped continuation; cleared by input, resume, or a delivered continuation. */
 	continuationStoppedAt?: number;
+	/** Stop-publication payload captured with the claim; cleared together with it. */
+	continuationStoppedDetail?: GoalContinuationStoppedDetail;
 	createdAt: number;
 	updatedAt: number;
 	lastStartedAt?: number;

@@ -64,13 +64,14 @@ export function buildOpeningEntry(input: {
 	openCompletion.catch(() => {});
 	const entry: RpcSessionEntry = {
 		state: "opening",
+		...(options?.speculative ? { speculative: true } : {}),
 		scope: new ProviderScope(),
 		profile: storedProfile,
 		...sessionIdentity(storedProfile),
 		sessionPath,
 		reservationKey: sessionPath,
 		cwd: storedProfile.cwd,
-		attachments: 1,
+		attachments: options?.speculative ? 0 : 1,
 		retainOnDisconnect: options?.retainOnDisconnect === true,
 		lastCommandAt: input.now,
 		lifecycleMutex: Promise.resolve(),

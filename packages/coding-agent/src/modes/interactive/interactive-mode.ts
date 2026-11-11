@@ -100,6 +100,11 @@ import { collectEntriesForBranchSummary } from "../../core/compaction/branch-sum
 import { findExtensionStackMatches } from "../../core/crash-log.ts";
 import { AssistantEditError, assistantTextEquals } from "../../core/edited-assistant-message.ts";
 import { subscribeProviderAccountEvents } from "../../core/extensions/builtin/anthropic-subscription/account-events.ts";
+import {
+	getSessionClaudeAccountPin,
+	resolveClaudeAccountPin,
+} from "../../core/extensions/builtin/anthropic-subscription/account-command.ts";
+import { loadAnthropicSubscriptionProviderSettingsFromDisk } from "../../core/extensions/builtin/anthropic-subscription/settings.ts";
 import { formatAccountFailoverNotice } from "./account-failover-notice.ts";
 import {
 	askUserAnswerDisplayText,
@@ -1323,7 +1328,18 @@ export class InteractiveMode {
 		this.footerDataProvider = new FooterDataProvider(this.sessionManager.getCwd());
 		this.footer = this.chrome
 			? this.chrome.createFooter(this.session, this.footerDataProvider)
-			: new FooterComponent(this.session, this.footerDataProvider);
+			: new FooterComponent(this.session, this.footerDataProvider, {
+					// CLI > settings > stored pin, resolved per render so a
+					// mid-session /claude-account pin or settings change is
+					// picked up (senpi#5983); the stored pin stays the
+					// fallback inside accountFooterSuffix.
+					resolveAccountPin: (sessionId) =>
+						resolveClaudeAccountPin(
+							getSessionClaudeAccountPin(sessionId),
+							loadAnthropicSubscriptionProviderSettingsFromDisk(this.sessionManager.getCwd()).pinnedAccount,
+							undefined,
+						),
+				});
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
 		this.footerContainer = new Container();
 		this.footerContainer.addChild(this.footer);

@@ -1,5 +1,24 @@
 # config-reload Extension Changes
 
+## 2026-11-10 - Rearm extension discovery without reloading for runtime directories (senpi#6344)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/change-groups.ts` treats newly created global and project extensions containers like the existing project discovery container: rearm their watches, then classify the discovered files. Runtime state alone does not request a reload.
+- `packages/coding-agent/test/suite/config-reload-extension.test.ts` covers runtime state creating the extensions directory as well as writing beneath an existing one, and proves a subsequent real extension entry still reloads.
+
+### Why
+
+- A speculative in-memory park's goal migration creates `extensions/goal/no-session`. Reporting the enclosing directory as configuration made roughly 200 existing sessions reload together in the delegated-connection sweep, filling the opener's output queue until the socket stalled and closed.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/change-groups.ts` owns the builtin watcher's distinction between discovery containers and reload-worthy files.
+
+### Expected merge conflict zones
+
+- LOW: the presence-container exclusion in `packages/coding-agent/src/core/extensions/builtin/config-reload/change-groups.ts`.
+
 ## 2026-10-30 - The watch worker keeps one batch per subscription in flight (senpi#4999)
 
 ### What changed
