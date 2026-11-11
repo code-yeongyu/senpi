@@ -95,8 +95,6 @@ export type CredentialAccountCheck = {
 	readonly model: string;
 	readonly outcome: "ok" | "failed";
 	readonly reason?: string;
-	readonly message?: string;
-	readonly status?: number;
 	readonly at: number;
 };
 
@@ -118,16 +116,7 @@ function storedCheck(slot: object): CredentialAccountCheck | undefined {
 	const at = numberField(check, "at");
 	if (model === undefined || at === undefined || (outcome !== "ok" && outcome !== "failed")) return undefined;
 	const reason = stringField(check, "reason");
-	const message = stringField(check, "message");
-	const status = numberField(check, "status");
-	return {
-		model,
-		outcome,
-		...(reason === undefined ? {} : { reason }),
-		...(message === undefined ? {} : { message }),
-		...(status === undefined ? {} : { status }),
-		at,
-	};
+	return { model, outcome, ...(reason === undefined ? {} : { reason }), at };
 }
 
 /** The listing fields of a stored `claude-cli` slot, read defensively: auth.json is a trust boundary. */
