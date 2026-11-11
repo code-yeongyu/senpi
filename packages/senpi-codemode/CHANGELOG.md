@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2026.11.11] - 2026-11-11
 
 ### Breaking Changes
 
@@ -9,6 +9,9 @@
 ### Changed
 
 ### Fixed
+
+- The Python sqlite permission guard no longer depends on `urllib.parse`, which cell code could rebind to crash the guard (Python 3.11) or bypass a read-only check (#6376). A `%00` inside the URI can no longer make the guard skip the check while SQLite opens the real file.
+- `show_html_page` called from an eval cell is refused with an error that says to call it directly; before, the page never reached the reader while the tool reported it as shown ([#6393](https://github.com/code-yeongyu/senpi/pull/6393))
 
 ### Removed
 
