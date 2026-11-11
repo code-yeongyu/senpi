@@ -1,6 +1,4 @@
 import { MANUAL_CONTINUE_CUSTOM_TYPE } from "../../../manual-continue.ts";
-import { GOAL_CONTINUATION_MESSAGE_TYPE } from "../../../messages.ts";
-import type { SessionEntry } from "../../../session-manager.ts";
 import {
 	buildDeadlineStopNotice,
 	type DeadlineStopData,
@@ -21,12 +19,12 @@ import { goalLifecycleChanged, registerGoalLifecycleCollector } from "./lifecycl
 import {
 	GOAL_STALE_STOP_NOTICE,
 	isResumeOfStoppedGoal,
-	queueGoalContinuation,
 	recoverMissingGoalContinuationStop,
 } from "./lifecycle-helpers.ts";
 import { GOAL_CONTINUATION_SCHEDULED_EVENT, MonitorAwareGoalContinuation } from "./monitor-continuation.ts";
 import { reengageGoalAfterReload } from "./reload-reengagement.ts";
 import { registerGoalFireNowRequest } from "./rpc-wait-surface.ts";
+import { queueGoalContinuation, readTrailingGoalContinuations } from "./session-start-continuation.ts";
 import { isStaleExtensionContextError } from "./stale-context.ts";
 import { interruptedRunHeld, markStopPaused, markStopResumed, pausedByStop, stopHoldLive } from "./stop-pause.ts";
 import { accountGoalUsage, migrateLegacyGoal, readGoal, updateGoal } from "./store.ts";
@@ -240,15 +238,15 @@ export default function goalExtension(pi: ExtensionAPI): void {
 				ctx,
 				goal,
 				monitor: monitorContinuation,
-				countTrailingContinuations: () => countTrailingGoalContinuationEntries(ctx.sessionManager.getBranch()),
-				queueContinuation: () => queueGoalContinuationForCurrentSession(pi, ctx, goal),
+				readTrailingContinuations: () => readTrailingGoalContinuations(ctx.sessionManager.getBranch()),
+				queueContinuation: (limitWait) => queueGoalContinuationForCurrentSession(pi, ctx, goal, limitWait),
 			});
 		} else if (goal) {
 			// Migration-lite admission: a resumed session carrying a trailing flood of
 			// historical continuations must not reignite on load. Skip the auto-queue,
 			// leave the goal active (no status rewrite), and tell the user how to resume.
-			const trailingContinuations = countTrailingGoalContinuationEntries(ctx.sessionManager.getBranch());
-			if (trailingContinuations >= GOAL_CONTINUATION_CAP) {
+			const trailing = readTrailingGoalContinuations(ctx.sessionManager.getBranch());
+			if (trailing.counted >= GOAL_CONTINUATION_CAP) {
 				// The load-time flood suppression parks the goal without rewriting its
 				// status, so the only resume signal left is the user's next message.
 				// Arm the one-shot latch the direct-input lifecycle fires when that
@@ -256,11 +254,11 @@ export default function goalExtension(pi: ExtensionAPI): void {
 				// and the resumed session sits idle until the goal is recreated.
 				directInputLifecycle.armSuppressedLoadResume();
 				ctx.ui.notify(
-					`Goal auto-continuation suppressed for this resumed session (${trailingContinuations} historical continuations). Send a message to resume.`,
+					`Goal auto-continuation suppressed for this resumed session (${trailing.counted} historical continuations). Send a message to resume.`,
 					"info",
 				);
 			} else {
-				await queueGoalContinuationForCurrentSession(pi, ctx, goal);
+				await queueGoalContinuationForCurrentSession(pi, ctx, goal, trailing.waitingOutLimit);
 			}
 		}
 	});
@@ -461,12 +459,14 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		extensionApi: ExtensionAPI,
 		ctx: ExtensionContext,
 		goal: Goal,
+		limitWait = false,
 	): Promise<void> {
 		const continuedGoal = await queueGoalContinuation(extensionApi, ctx, goal, {
 			continuationPending,
 			markContinuationPending: () => {
 				continuationPending = true;
 			},
+			limitWait,
 		});
 		if (continuedGoal === null) {
 			clearAgentGoalAccounting();
@@ -588,22 +588,6 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		}
 		return goal;
 	}
-}
-
-/**
- * Counts goal-continuation entries queued since the most recent real user message
- * in the current branch (mirrors the todo-gate / todo-bridge backward branch read).
- * A real user message is the only reset: the assistant turns in between are exactly
- * the unattended loop this admission guard exists to stop.
- */
-function countTrailingGoalContinuationEntries(entries: readonly SessionEntry[]): number {
-	let count = 0;
-	for (let index = entries.length - 1; index >= 0; index--) {
-		const entry = entries[index];
-		if (entry?.type === "message" && entry.message.role === "user") break;
-		if (entry?.type === "custom_message" && entry.customType === GOAL_CONTINUATION_MESSAGE_TYPE) count += 1;
-	}
-	return count;
 }
 
 function goalStoreRef(ctx: ExtensionContext): GoalStoreRef {

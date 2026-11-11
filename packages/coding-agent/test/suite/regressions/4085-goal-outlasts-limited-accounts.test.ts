@@ -48,10 +48,15 @@ function refusal(resetsAt: number | undefined, statusOnly = false): AgentMessage
 	};
 }
 
+const openSessions: Array<() => Promise<void>> = [];
+
 async function goalSession(thread: string) {
 	const notices: string[] = [];
 	const harness = createGoalHarness();
 	const ctx = await makeGoalContext(notices, thread);
+	// A goal listens on the process-wide account event bus until its session shuts down, so a case left open would
+	// also be woken by the account events of every later case.
+	openSessions.push(() => runGoalHandlers(harness.handlers, "session_shutdown", { type: "session_shutdown" }, ctx));
 	await runGoalHandlers(harness.handlers, "session_start", { type: "session_start", reason: "new" }, ctx);
 	await harness.tools
 		.get("create_goal")
@@ -83,6 +88,7 @@ function lastTimerState(harness: GoalHarness): unknown {
 
 describe("a goal outlasts accounts that stay limited (senpi#4085)", () => {
 	afterEach(async () => {
+		for (const shutdown of openSessions.splice(0)) await shutdown();
 		vi.useRealTimers();
 		await cleanupGoalMonitorTempDirs();
 	});
