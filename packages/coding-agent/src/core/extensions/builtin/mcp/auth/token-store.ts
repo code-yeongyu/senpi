@@ -44,6 +44,9 @@ export interface McpStoredAuth {
 	resource?: string;
 	// Absolute expiry (epoch ms) derived from tokens.expires_in at save time.
 	expiresAt?: number;
+	// Lifetime (ms) the authorization server granted with expiresAt (tokens.expires_in). Bounds the refresh leeway of
+	// a short-lived access token; absent on records saved before it existed.
+	tokenLifetimeMs?: number;
 	// Authorization server that issued accessToken/refreshToken (senpi#2940). The refresh token is only ever
 	// presented to this server; a record without it binds to discoveryState.authorizationServerUrl.
 	issuer?: string;

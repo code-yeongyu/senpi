@@ -87,12 +87,14 @@ export function storedAuthToTokens(record: McpStoredAuth | undefined, now = Date
 
 /** Maps one response; the caller decides which preceding fields it is entitled to inherit. */
 export function mergeTokensIntoStoredAuth(current: McpStoredAuth, tokens: OAuthTokens): McpStoredAuth {
+	const tokenLifetimeMs = tokens.expires_in === undefined ? undefined : tokens.expires_in * 1000;
 	return {
 		...current,
 		accessToken: tokens.access_token,
 		refreshToken: tokens.refresh_token ?? current.refreshToken,
 		scope: normalizeGrantedScope(tokens.scope),
-		expiresAt: tokens.expires_in === undefined ? undefined : Date.now() + tokens.expires_in * 1000,
+		expiresAt: tokenLifetimeMs === undefined ? undefined : Date.now() + tokenLifetimeMs,
+		tokenLifetimeMs,
 		issuer: tokens.issuer ?? current.issuer,
 	};
 }
