@@ -115,6 +115,68 @@ const cases = [
 		expected: "[repeat](https://example.com)",
 	},
 	{
+		name: "bare URL with inline math",
+		source: "See https://example.com and $x^2$.",
+		visible: ["See https://example.com and x²."],
+		end: [31, 1],
+		expected: "See https://example.com and $x^2$.",
+	},
+	{
+		name: "angle URL autolink",
+		source: "<https://example.com>",
+		end: [19, 1],
+		expected: "<https://example.com>",
+	},
+	{
+		name: "partial angle URL autolink",
+		source: "<https://example.com>",
+		start: [9, 1],
+		end: [15, 1],
+		expected: "example",
+	},
+	{
+		name: "email autolinks",
+		source: "<me@example.com> and you@example.com",
+		end: [35, 1],
+		expected: "<me@example.com> and you@example.com",
+	},
+	{
+		name: "www autolink with generated URL suffix",
+		source: "www.example.com",
+		visible: ["www.example.com (http://www.example.com)"],
+		end: [40, 1],
+		expected: "www.example.com",
+	},
+	{
+		name: "partial converted parenthesized math",
+		source: "See \\(x^2+1\\).",
+		visible: ["See x²+1."],
+		start: [5, 1],
+		end: [6, 1],
+		expected: "\\(x^2+1\\)",
+	},
+	{
+		name: "partial unchanged inline math body",
+		source: "See $abc$.",
+		start: [6, 1],
+		end: [7, 1],
+		expected: "bc",
+	},
+	{
+		name: "block math between paragraphs",
+		source: "Before\n\n$$\r\nx^2\r\n$$\n\nAfter",
+		visible: ["Before", "", "x²", "", "After"],
+		end: [5, 5],
+		expected: "Before\n\n$$\r\nx^2\r\n$$\n\nAfter",
+	},
+	{
+		name: "partial converted block without block terminators",
+		source: "$$\nx^2+1\n$$\n\nAfter",
+		start: [1, 1],
+		end: [2, 1],
+		expected: "$$\nx^2+1\n$$",
+	},
+	{
 		name: "complete image",
 		source: '![diagram](https://example.com/image.png "title")',
 		end: [7, 1],
@@ -185,6 +247,15 @@ for (const fixture of cases) {
 		tui.addChild(new Markdown(fixture.source, 0, 0, defaultMarkdownTheme));
 		try {
 			await terminal.frame(() => tui.start());
+			if ("visible" in fixture) {
+				assert.deepEqual(
+					terminal
+						.getViewport()
+						.slice(0, fixture.visible.length)
+						.map((line) => line.trimEnd()),
+					fixture.visible,
+				);
+			}
 			const [x, y] = "start" in fixture ? fixture.start : [1, 1];
 			const [endX, endY] = fixture.end;
 			await terminal.frame(() => {
@@ -193,6 +264,7 @@ for (const fixture of cases) {
 				terminal.sendInput(`\x1b[<0;${endX};${endY}m`);
 			});
 			assert.deepEqual(copied, [fixture.expected], JSON.stringify(terminal.getViewport()));
+			assert.ok(!terminal.getViewport().some((line) => line.includes("Original source unavailable")));
 		} finally {
 			tui.stop();
 		}
@@ -300,33 +372,60 @@ it("preserves retained Box provenance through a direct ScrollView child", async 
 	}
 });
 
-it("reports source unavailable without invoking clipboard for a changed display transform", async () => {
-	const terminal = new FrameTerminal(60, 5);
-	const copied: string[] = [];
-	const tui = new TuiAltScreen(terminal, undefined, undefined, {
-		copySelection: async (text) => {
-			copied.push(text);
-			return true;
-		},
-	});
-	tui.addChild(
-		new Markdown("original", 0, 0, defaultMarkdownTheme, undefined, {
-			transform: () => "**changed**",
-		}),
-	);
-	try {
-		await terminal.frame(() => tui.start());
-		await terminal.frame(() => {
-			terminal.sendInput("\x1b[<0;1;1M");
-			terminal.sendInput("\x1b[<32;7;1M");
-			terminal.sendInput("\x1b[<0;7;1m");
+for (const { name, source, transform, end, expected } of [
+	{
+		name: "opaque replacement",
+		source: "original",
+		transform: () => "**changed**",
+		end: "7;1",
+		expected: "changed",
+	},
+	{
+		name: "unchanged prose next to a transformed block",
+		source: "a **b**\n\n```mermaid\nflowchart LR\nA --> B\n```",
+		transform: (text: string) => text.replace(/```mermaid[\s\S]*```/, "A → B"),
+		end: "3;1",
+		expected: "a b",
+	},
+	{
+		name: "prose and a transformed block in the same drag",
+		source: "a **b**\n\n```mermaid\nflowchart LR\nA --> B\n```",
+		transform: (text: string) => text.replace(/```mermaid[\s\S]*```/, "A → B"),
+		end: "5;3",
+		expected: "a b\n\nA → B",
+	},
+	{
+		name: "a no-op display transform",
+		source: "a **b**",
+		transform: (text: string) => text,
+		end: "3;1",
+		expected: "a **b**",
+	},
+]) {
+	it(`copies ${name} through public mouse input`, async () => {
+		const terminal = new FrameTerminal(60, 5);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
 		});
-		assert.deepEqual(copied, []);
-		assert.ok(terminal.getViewport().some((line) => line.includes("Original source unavailable")));
-	} finally {
-		tui.stop();
-	}
-});
+		tui.addChild(new Markdown(source, 0, 0, defaultMarkdownTheme, undefined, { transform }));
+		try {
+			await terminal.frame(() => tui.start());
+			await terminal.frame(() => {
+				terminal.sendInput("\x1b[<0;1;1M");
+				terminal.sendInput(`\x1b[<32;${end}M`);
+				terminal.sendInput(`\x1b[<0;${end}m`);
+			});
+			assert.deepEqual(copied, [expected], JSON.stringify(terminal.getViewport()));
+			assert.ok(!terminal.getViewport().some((line) => line.includes("Original source unavailable")));
+		} finally {
+			tui.stop();
+		}
+	});
+}
 
 it("uses current source after identical rendering, streaming updates, and resize", async () => {
 	const terminal = new FrameTerminal(60, 8);

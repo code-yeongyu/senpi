@@ -345,7 +345,9 @@ In fullscreen mode, unhandled wheel input scrolls the nearest `ScrollView`; unha
 
 Fullscreen Markdown selection keeps the normal rendered appearance and copies the corresponding original Markdown. Selecting a complete formatted construct retains its syntax; selecting inside it copies only that source fragment. Original line breaks are preserved and visual wrapping adds no clipboard line breaks. `fullscreenCopyOnSelect` controls automatic copying; with it disabled, `Ctrl+X` copies the active selection.
 
-If a display transform cannot be mapped to the original source, or a wrapped-table selection skips source content, copying reports that the original source is unavailable and leaves the clipboard intact. Use application-owned fullscreen selection for original-Markdown copying; the terminal's selection-bypass gesture copies its screen text.
+Selecting any part of a formula converted to Unicode copies the whole original formula, including its delimiters. If the formula body renders unchanged, selecting inside it copies only that source fragment.
+
+If a display transform changes a Markdown component, selecting its text copies rendered text for the entire drag, including line breaks from visual wrapping. This also applies to unchanged prose beside a transformed block such as a Mermaid diagram. A selection with invalid source mapping, such as a wrapped-table selection that skips source content, still reports that the original source is unavailable and leaves the clipboard intact. The terminal's selection-bypass gesture copies its screen text.
 
 Custom components that copy rendered arrays or add ASCII left padding can preserve selection metadata with `copyLineSources`. Preserve the visible text when carrying its metadata. Returned arrays are source snapshots: if provenance changes, publish a new array even when its text looks identical. Do not replace metadata on an array that a retained frame may still use:
 

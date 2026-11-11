@@ -1414,13 +1414,11 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			rows.push({ row, ...this.getSelectionColumns(sourceLines[row] ?? "", row, selection) });
 		}
 		const original = resolveSourceSelection(sourceLines, rows);
-		if (original) {
-			if ("unavailable" in original) {
-				this.selectionSourceUnavailable = true;
-				return undefined;
-			}
-			return original.text || undefined;
+		if (original && "unavailable" in original) {
+			this.selectionSourceUnavailable = true;
+			return undefined;
 		}
+		if (original && "text" in original) return original.text || undefined;
 		const lines: string[] = [];
 		for (let row = selection.start.row; row <= selection.end.row; row++) {
 			const line = sourceLines[row] ?? "";

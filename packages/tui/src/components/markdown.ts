@@ -69,6 +69,22 @@ function isLatexToken(token: Token): token is LatexToken {
 	);
 }
 
+function formulaRanges(token: LatexToken, rendered: string): SourceRanges {
+	const source = tokenSource(token);
+	if (!source) return repeatedRange(null, rendered.length);
+	const { raw, text } = source;
+	const end = raw.text.trimEnd().length;
+	if (raw.text === rendered) return raw.ranges;
+	if (raw.text.trim() === rendered) {
+		return sliceRanges(raw.ranges, raw.text.length - raw.text.trimStart().length, end);
+	}
+	if (text?.text === rendered) return text.ranges;
+	// A converted glyph has no reliable character-level correspondence to TeX.
+	const first = rangeAt(raw.ranges, 0);
+	const last = rangeAt(raw.ranges, end - 1);
+	return repeatedRange(first && last ? { start: first.start, end: last.end } : null, rendered.length);
+}
+
 function previousRawCharacter(tokens: Token[]): string | undefined {
 	const raw = tokens[tokens.length - 1]?.raw;
 	return raw ? Array.from(raw).at(-1) : undefined;
@@ -657,10 +673,10 @@ export class Markdown implements Component {
 			);
 		}
 		if (text !== this.text) {
-			const unavailableDocument = { text: this.text, enclosures: [] };
+			const transformedDocument = { text: this.text, enclosures: [] };
 			setLineSources(
 				result,
-				result.map(() => ({ document: unavailableDocument, ranges: emptyRanges, unavailable: true })),
+				result.map(() => ({ document: transformedDocument, ranges: emptyRanges, renderedFallback: true })),
 			);
 		} else if (!this.collectSources) {
 			// Capture values, not this component. Old cached frames must retain their own source.
@@ -752,6 +768,8 @@ export class Markdown implements Component {
 				"link",
 				"image",
 				"escape",
+				"latex_inline",
+				"latex_block",
 				"table",
 				"blockquote",
 			].includes(token.type)
@@ -760,7 +778,8 @@ export class Markdown implements Component {
 		if (enclosedTokens.has(token)) return;
 		const source = tokenSource(token)?.raw;
 		if (!source) return;
-		const rawEnd = source.text.replace(/\n+$/, "").length;
+		const rawEnd =
+			token.type === "latex_block" ? source.text.trimEnd().length : source.text.replace(/\n+$/, "").length;
 		const start = rangeAt(source.ranges, 0)?.start;
 		const end = rangeAt(source.ranges, rawEnd - 1)?.end;
 		if (start === undefined || end === undefined) return;
@@ -980,6 +999,7 @@ export class Markdown implements Component {
 				if (isLatexToken(token)) {
 					const formula = this.options.renderLatex === false ? token.raw.trim() : latexToUnicode(token.text);
 					lines.push(styleContext ? styleContext.applyText(formula) : this.applyDefaultStyle(formula));
+					if (inlineRanges) inlineRanges.push(formulaRanges(token, stripTerminalSequences(lines[0])));
 					if (nextTokenType && nextTokenType !== "space") {
 						lines.push("");
 					}
@@ -1281,7 +1301,11 @@ export class Markdown implements Component {
 					break;
 
 				case "link": {
-					const linkText = this.renderInlineTokens(token.tokens || [], resolvedStyleContext, childRanges);
+					const linkText = this.renderInlineTokens(
+						token.tokens || [],
+						resolvedStyleContext,
+						token.autolink ? undefined : childRanges,
+					);
 					const styledLink = this.theme.link(this.theme.underline(linkText));
 					if (getCapabilities().hyperlinks) {
 						// OSC 8: render as a clickable hyperlink. The URL is not printed inline,
@@ -1344,7 +1368,16 @@ export class Markdown implements Component {
 					: source?.raw.text === rendered
 						? source.raw.ranges
 						: repeatedRange(null, rendered.length);
-			if (token.type === "link" && mapped.length < rendered.length && source?.href) {
+			if (token.type === "latex_inline" && isLatexToken(token)) {
+				mapped = formulaRanges(token, rendered);
+			} else if (token.type === "link" && token.autolink && source?.text && rendered.startsWith(source.text.text)) {
+				// Marked's synthetic label has no child lexer location. A visible
+				// suffix such as " (http://www.example.com)" is presentation only.
+				mapped = concatRanges([
+					source.text.ranges,
+					repeatedRange(undefined, rendered.length - source.text.ranges.length),
+				]);
+			} else if (token.type === "link" && mapped.length < rendered.length && source?.href) {
 				mapped = concatRanges([
 					mapped,
 					repeatedRange(undefined, 2),

@@ -21,6 +21,7 @@ export interface SourceLine {
 	readonly sourceRow?: number;
 	readonly columnOffset?: number;
 	readonly unavailable?: boolean;
+	readonly renderedFallback?: boolean;
 }
 
 // Undefined rows retain rendered plain text; null rows are known layout padding.
@@ -63,7 +64,7 @@ export function copyLineSources(from: readonly string[], to: string[], rowOffset
 	return to;
 }
 
-type SourceSelection = { readonly text: string } | { readonly unavailable: true };
+type SourceSelection = { readonly text: string } | { readonly unavailable: true } | { readonly renderedFallback: true };
 
 /**
  * Resolve the exact source interval of each selected Markdown document. Enclosures are included
@@ -116,6 +117,7 @@ export function resolveSourceSelection(
 	let active: { document: SourceDocument; start: number; end: number; selected: SourceRange[] } | undefined;
 	let usedSource = false;
 	let unavailable = false;
+	let renderedFallback = false;
 	const flush = () => {
 		if (!active) return;
 		let { start, end } = active;
@@ -182,6 +184,7 @@ export function resolveSourceSelection(
 			const width = visibleWidth(segment);
 			if (column < selection.end && column + width > selection.start) {
 				if (line.unavailable && segment.trim()) return { unavailable: true };
+				if (line.renderedFallback && segment.trim()) renderedFallback = true;
 				unitStart = Math.min(unitStart, index);
 				unitEnd = index + segment.length;
 			}
@@ -199,5 +202,7 @@ export function resolveSourceSelection(
 		}
 	}
 	flush();
-	return unavailable ? { unavailable: true } : usedSource ? { text: pieces.join("\n") } : undefined;
+	if (unavailable) return { unavailable: true };
+	if (renderedFallback) return { renderedFallback: true };
+	return usedSource ? { text: pieces.join("\n") } : undefined;
 }

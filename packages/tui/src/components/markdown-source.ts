@@ -123,6 +123,12 @@ function normalizedText(token: Token, raw: MappedText): MappedText | undefined {
 		case "html":
 		case "latex_literal":
 			return sliceSource(raw, 0, token.text.length);
+		case "latex_inline":
+		case "latex_block": {
+			const formula = trim(raw);
+			const delimiter = token.type === "latex_block" || formula.text.startsWith("\\") ? 2 : 1;
+			return trim(sliceSource(formula, delimiter, -delimiter));
+		}
 		case "heading": {
 			if (/^ {0,3}#{1,6}(?:\s|$)/.test(raw.text)) {
 				const prefix = /^ {0,3}#{1,6}(?:\s+|$)/.exec(raw.text)?.[0].length ?? 0;
@@ -151,6 +157,9 @@ function normalizedText(token: Token, raw: MappedText): MappedText | undefined {
 		case "link":
 		case "image": {
 			const prefix = raw.text.startsWith("![") ? 2 : raw.text.startsWith("[") || raw.text.startsWith("<") ? 1 : 0;
+			if (token.type === "link" && token.autolink) {
+				return sliceSource(raw, prefix, prefix + token.text.length);
+			}
 			// Marked unescapes bracket escapes in labels before inline lexing.
 			const text = remove(sliceSource(raw, prefix), /\\(?=[[\]])/g);
 			return sliceSource(text, 0, token.text.length);
