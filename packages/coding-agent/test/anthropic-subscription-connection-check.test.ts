@@ -34,8 +34,13 @@ const old = {
 describe("Claude subscription account checks (desktop#6444)", () => {
 	it("keeps the provider status and message while redacting credentials", async () => {
 		const token = `sk-ant-oat01-${"x".repeat(80)}`;
-		lane.mockImplementation(async function* () {
-			throw Object.assign(new Error(`Model access denied; Bearer ${token}`), { status: 403 });
+		lane.mockReturnValue({
+			async next() {
+				throw Object.assign(new Error(`Model access denied; Bearer ${token}`), { status: 403 });
+			},
+			[Symbol.asyncIterator]() {
+				return this;
+			},
 		});
 
 		const check = await runClaudeCliConnectionTest(input);
