@@ -41,6 +41,9 @@ export type ClaudeCliAccountCheck = {
 	model: string;
 	outcome: "ok" | "failed";
 	reason?: string;
+	/** Provider diagnostics, redacted before they enter the credential store. */
+	message?: string;
+	status?: number;
 	at: number;
 };
 
