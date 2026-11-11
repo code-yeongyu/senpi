@@ -33,6 +33,24 @@ export async function waitForActiveTurn(
 	}
 }
 
+/** The CLI bounds `setModel` itself, so only an abort cuts the switch wait short. */
+const unboundedWait = (): (() => void) => () => {};
+
+/**
+ * Holds a new attempt until the live model switch `model_select` started has settled, so a prompt sent right after
+ * `set_model` runs on the selected model and continuity reads the confirmed `modelId` (senpi#6411).
+ */
+export async function waitForModelSwitch(
+	entry: AnthropicSubscriptionSessionEntry,
+	signal: AbortSignal | undefined,
+): Promise<void> {
+	const pending = entry.pendingModelSwitch;
+	if (!pending) return;
+	if ((await waitForTurnAdmission(entry.senpiSessionId, pending, signal, unboundedWait)) === "aborted") {
+		throw new Error("Anthropic Subscription turn aborted while waiting for the model switch");
+	}
+}
+
 function successfulTurn(messages: readonly SDKMessage[]): boolean {
 	return messages.some(
 		(message) =>
