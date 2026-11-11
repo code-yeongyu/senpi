@@ -26,6 +26,11 @@ interface DecisionRecord {
 
 /** Live decision sessions of every engine copy in this realm: `liveSessions` before omo#12965. */
 interface DecisionSessions {
+	/**
+	 * Replaces the record bound under `id`. More than one binder can hold an id: a session is bound again by its runtime
+	 * and on each preset change, a second session can be live on the same session file, and a closed session's dispose
+	 * can still be pending when its file is reopened. The displaced binder's `release` then deletes nothing.
+	 */
 	bind(id: string, record: DecisionRecord): void;
 	/** Deletes only when `record` is the one bound under `id`. */
 	release(id: string, record: DecisionRecord): void;

@@ -65,10 +65,25 @@ export function setProviderScopeStrictMode(enabled: boolean): void {
 	setImagesProviderScopeStrictMode(enabled);
 }
 
-/** The scope the caller is running in, or undefined outside any scope. */
+/** The scope the caller is running in cannot be read: another pi-ai copy in the realm shaped it differently. */
+class ProviderScopeUnreadableError extends Error {
+	readonly code = "PI_PROVIDER_SCOPE_UNREADABLE";
+	constructor() {
+		super("The active provider scope cannot be read: another pi-ai copy in this process shaped it differently.");
+		this.name = "ProviderScopeUnreadableError";
+	}
+}
+
+/**
+ * The scope the caller is running in, or undefined outside any scope. A scope this copy cannot read refuses
+ * (`code: "PI_PROVIDER_SCOPE_UNREADABLE"`): it is never taken for "no scope", which would let a caller inside a
+ * session go on unscoped (omo#12965).
+ */
 export function activeProviderScope(): ProviderScope | undefined {
 	const scope: unknown = providerScopes.current();
-	return isProviderScope(scope) ? scope : undefined;
+	if (scope === undefined) return undefined;
+	if (!isProviderScope(scope)) throw new ProviderScopeUnreadableError();
+	return scope;
 }
 
 export function runWithProviderScope<T>(scope: ProviderScope, fn: () => T): T {
