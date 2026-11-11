@@ -189,9 +189,11 @@ describe("goal blocks on a terminal provider auth rejection (#2293)", () => {
 		expect(setup.harness.sent).toHaveLength(1);
 		expect(setup.harness.sent[0]?.message.customType).toBe("goal-continuation");
 		expect(setup.notices).toEqual([]);
+		// A wake that waits out a structured limit spends no continuation budget (senpi#4085); an outage still does.
+		const limitWait = message.providerDiagnostic?.category === "rate_limit";
 		expect(await readGoal(goalStoreRef(setup.ctx.sessionManager, setup.ctx.cwd))).toMatchObject({
 			status: "active",
-			consecutiveContinuations: 1,
+			consecutiveContinuations: limitWait ? 0 : 1,
 		});
 	});
 

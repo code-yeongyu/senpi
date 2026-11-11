@@ -1,5 +1,6 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { deadlineStopPendingSinceLastTurn } from "../../../turn-deadline.ts";
+import { subscribeProviderAccountEvents } from "../anthropic-subscription/account-events.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { isHumanInputMonitorNotification, type WakeSourceStateItem } from "../monitor-state-event.ts";
 import {
@@ -56,6 +57,7 @@ import { findParkedGoalWait, type ParkedGoalWait } from "./parked-wait.ts";
 import { buildContinuationPrompt, buildGoalStallNotice, buildTruncationRecoveryPrompt } from "./prompt.ts";
 import {
 	exhaustedLadderResumeDelayMs,
+	isLimitRefusal,
 	PROVIDER_RETRY_BASE_MS,
 	providerRetryAt,
 	providerRetryDelayMs,
@@ -126,6 +128,8 @@ export class MonitorAwareGoalContinuation {
 	#pendingProviderRecovery: ProviderRecoveryOptions | undefined;
 	#providerRetryAttempts = 0;
 	#providerRetryDelayMs: number | undefined;
+	/** The armed provider retry waits out a usage or rate limit, so its wake spends no continuation budget (senpi#4085). */
+	#limitWait = false;
 
 	constructor(
 		pi: ExtensionAPI,
@@ -138,6 +142,20 @@ export class MonitorAwareGoalContinuation {
 		this.#markContinuationPending = markContinuationPending;
 		this.#waitTicker = waitTicker;
 		this.#subscribeToChannelState();
+		// A login or an explicit block reset can end the wait early: re-check the provider now (senpi#4085).
+		this.#channelStateUnsubscribers.push(
+			subscribeProviderAccountEvents((event) => {
+				if (event.type === "accounts_changed" && event.remedy !== undefined) this.#wakeLimitWait();
+			}),
+		);
+	}
+
+	#wakeLimitWait(): void {
+		const goal = this.#goal;
+		if (!this.#limitWait || this.#scheduledContinuationKind !== "providerRetry" || goal === null) return;
+		this.#cancelTimer();
+		this.#providerRetryDelayMs = 0;
+		this.#schedule(goal, "providerRetry");
 	}
 
 	start(ctx: ExtensionContext): void {
@@ -154,6 +172,7 @@ export class MonitorAwareGoalContinuation {
 	async afterAgentEnd(options: AgentEndOptions): Promise<Goal | null> {
 		if (options.goal?.id !== this.#goal?.id) this.#resetContinuationState();
 		this.#providerRetryAttempts = 0;
+		this.#limitWait = false;
 		this.#ctx = options.ctx;
 		this.#goal = options.goal;
 		this.#lastAgentEndMessages = options.messages;
@@ -280,6 +299,7 @@ export class MonitorAwareGoalContinuation {
 			return undefined;
 		}
 		this.#providerRetryAttempts += 1;
+		this.#limitWait = isLimitRefusal(pendingProvider.messages);
 		const now = Date.now();
 		const retryAt = providerRetryAt(pendingProvider.messages, now);
 		const delayMs = providerRetryDelayMs(this.#providerRetryAttempts, retryAt, now);
@@ -310,8 +330,13 @@ export class MonitorAwareGoalContinuation {
 		const goal = this.#goal;
 		if (goal?.status !== "active") return undefined;
 		this.#cancelTimer();
-		if (resumeAt === undefined) return goal;
-		this.#providerRetryDelayMs = exhaustedLadderResumeDelayMs(resumeAt, Date.now());
+		this.#limitWait = true;
+		this.#providerRetryAttempts += 1;
+		// No failure named a reset: re-check on the provider backoff (15 s doubling to 30 min) rather than wait for input.
+		this.#providerRetryDelayMs =
+			resumeAt === undefined
+				? providerRetryDelayMs(this.#providerRetryAttempts + 1, undefined, Date.now())
+				: exhaustedLadderResumeDelayMs(resumeAt, Date.now());
 		this.#schedule(goal, "providerRetry");
 		return goal;
 	}
@@ -608,7 +633,10 @@ export class MonitorAwareGoalContinuation {
 		path: GoalContinuationPath,
 		messages: readonly AgentMessage[],
 	): Promise<GoalContinuationAdmission> {
-		const input = this.#buildVerdictInput(ctx, goal, path, messages);
+		const input = {
+			...this.#buildVerdictInput(ctx, goal, path, messages),
+			...(path === "providerRecovery" && this.#limitWait ? { limitWait: true } : {}),
+		};
 		const verdict = evaluateGoalContinuation({ goal, ...input });
 		const admittedGoal = await admitAndQueueGoalContinuation(this.#pi, ctx, goal, {
 			input,
@@ -852,6 +880,7 @@ export class MonitorAwareGoalContinuation {
 		this.#pendingSystemRecovery = undefined;
 		this.#pendingProviderRecovery = undefined;
 		this.#providerRetryAttempts = 0;
+		this.#limitWait = false;
 		this.#consecutiveLengthRecoveries.clear();
 		this.#recentNormalizedOutputHashes = [];
 		this.#recentToolEffects = [];

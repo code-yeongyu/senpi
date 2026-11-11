@@ -38,6 +38,12 @@ export function providerRetryAt(messages: readonly AgentMessage[], now: number):
 	return instants.length === 0 ? undefined : Math.min(...instants);
 }
 
+/** The turn ended on a provider refusing for a usage or rate limit, not on an outage (senpi#4085). */
+export function isLimitRefusal(messages: readonly AgentMessage[]): boolean {
+	const category = lastAssistantMessage(messages)?.providerDiagnostic?.category;
+	return category === "rate_limit" || category === "quota";
+}
+
 /**
  * How long to wait before the `attempt`-th consecutive provider-recovery
  * continuation (senpi#3264). A stated unblock time is the wake; otherwise the
