@@ -1,8 +1,9 @@
 import { defaultModelPerProvider } from "../../../model-resolver.ts";
+import { redactSecrets } from "../../../sensitive-output.ts";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./account-management.ts";
 import type { ClaudeCliAccountCheck } from "./accounts.ts";
 import { queryWithAuthLane } from "./auth-lane.ts";
-import { classifySdkError, sdkAssistantFailure, sdkResultFailure } from "./errors.ts";
+import { classifySdkError, errorText, sdkAssistantFailure, sdkResultFailure } from "./errors.ts";
 import { refusalError } from "./refusal.ts";
 import { getSdkBoundary, loadClaudeAgentSdk, type SdkQueryHandle } from "./sdk-boundary.ts";
 import type { AnthropicSubscriptionProviderSettings } from "./settings.ts";
@@ -45,12 +46,24 @@ export async function runClaudeCliConnectionTest(input: ClaudeCliConnectionTestI
 	let handle: SdkQueryHandle | undefined;
 	const closeOnAbort = () => handle?.close();
 	signal.addEventListener("abort", closeOnAbort, { once: true });
-	const finish = (outcome: "ok" | "failed", reason?: string): ClaudeCliAccountCheck => ({
-		model: input.model,
-		outcome,
-		...(reason === undefined ? {} : { reason }),
-		at: now(),
-	});
+	const finish = (
+		outcome: "ok" | "failed",
+		reason?: string,
+		error?: unknown,
+		providerStatus?: unknown,
+	): ClaudeCliAccountCheck => {
+		const status =
+			providerStatus ??
+			(error !== null && typeof error === "object" && "status" in error ? error.status : undefined);
+		return {
+			model: input.model,
+			outcome,
+			...(reason === undefined ? {} : { reason }),
+			...(error === undefined ? {} : { message: redactSecrets(errorText(error)) }),
+			...(typeof status === "number" ? { status } : {}),
+			at: now(),
+		};
+	};
 	try {
 		await loadClaudeAgentSdk();
 		const messages = queryWithAuthLane({
@@ -84,14 +97,26 @@ export async function runClaudeCliConnectionTest(input: ClaudeCliConnectionTestI
 					: message.type === "result"
 						? sdkResultFailure(message)
 						: undefined);
-			if (failure) throw failure;
+			if (failure)
+				return finish(
+					"failed",
+					classifySdkError(failure).kind,
+					failure,
+					message.type === "result" && "api_error_status" in message ? message.api_error_status : undefined,
+				);
 			if (message.type === "result") return finish("ok");
 		}
-		return finish("failed", signal.aborted ? (deadline.aborted ? "timeout" : "cancelled") : "no_result");
+		return signal.aborted
+			? finish(
+					"failed",
+					deadline.aborted ? "timeout" : "cancelled",
+					deadline.aborted ? "Connection test timed out." : "Connection test was cancelled.",
+				)
+			: finish("failed", "no_result", "Claude Code ended the connection test without a result.");
 	} catch (error) {
-		if (deadline.aborted) return finish("failed", "timeout");
-		if (input.signal?.aborted) return finish("failed", "cancelled");
-		return finish("failed", classifySdkError(error).kind);
+		if (deadline.aborted) return finish("failed", "timeout", "Connection test timed out.");
+		if (input.signal?.aborted) return finish("failed", "cancelled", "Connection test was cancelled.");
+		return finish("failed", classifySdkError(error).kind, error);
 	} finally {
 		signal.removeEventListener("abort", closeOnAbort);
 	}

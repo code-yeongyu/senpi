@@ -49,7 +49,7 @@ function record(value: unknown): Record<string, unknown> | undefined {
 		: undefined;
 }
 
-function errorText(error: unknown): string {
+export function errorText(error: unknown): string {
 	if (typeof error === "string") return error;
 	if (error instanceof Error) return error.message;
 	const value = record(error);
