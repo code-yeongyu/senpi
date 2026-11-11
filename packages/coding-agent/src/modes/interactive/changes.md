@@ -1,3 +1,21 @@
+## 2026-11-11 - Thinking-level changes leave the transcript in place (doriterm#2101)
+
+### What changed
+
+- `interactive-mode.ts`: `thinking_level_changed` updates the footer and editor border without adding a "Thinking level" chat row. The session still persists and emits the thinking-level change.
+
+### Why
+
+- Adding a status row and spacer moved the startup transcript when Shift+Tab changed effort. The footer already displays the selected effort and shortcut.
+
+### Why an extension could not handle it
+
+- The built-in session-event handler appended the row before extensions could change the rendered transcript.
+
+### Expected merge conflict zones
+
+- LOW: the `thinking_level_changed` case in `interactive-mode.ts`.
+
 ## 2026-11-08 - The footer names the serving account when the pin is blocked (senpi#5983, fixes #5983)
 
 ### What changed
