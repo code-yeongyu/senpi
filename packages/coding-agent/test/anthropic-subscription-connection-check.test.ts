@@ -98,7 +98,9 @@ describe("legacy default subscription cleanup (desktop#6445)", () => {
 		});
 
 		expect(migrated.migrated).toBe(true);
-		expect(migrated.data["anthropic-subscription"]?.accounts).toEqual([]);
+		const result = migrated.data["anthropic-subscription"];
+		if (result?.type !== "oauth") throw new Error("Expected the migrated subscription credential");
+		expect(result.accounts).toEqual([]);
 	});
 
 	it("drops an already migrated legacy default and its pin but keeps a real CLI account named default", () => {
@@ -112,7 +114,9 @@ describe("legacy default subscription cleanup (desktop#6445)", () => {
 
 		const migrated = signOutLegacyClaudeLogins({ "anthropic-subscription": credential });
 
-		expect(migrated.data["anthropic-subscription"]?.accounts).toEqual([credential.accounts[1]]);
+		const result = migrated.data["anthropic-subscription"];
+		if (result?.type !== "oauth") throw new Error("Expected the migrated subscription credential");
+		expect(result.accounts).toEqual([credential.accounts[1]]);
 		expect(migrated.data["anthropic-subscription"]).not.toHaveProperty("pinned");
 		const real = { ...credential, accounts: [{ ...old, name: "default" }] };
 		expect(signOutLegacyClaudeLogins({ "anthropic-subscription": real }).data["anthropic-subscription"]).toEqual(

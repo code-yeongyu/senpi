@@ -1,6 +1,10 @@
 import { projectSlot } from "@earendil-works/pi-ai/auth/pool/slots";
 import { afterEach, describe, expect, it } from "vitest";
-import { listAccounts, SENTINEL_OAUTH_FIELDS } from "../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
+import {
+	listAccounts,
+	normalizeCredential,
+	SENTINEL_OAUTH_FIELDS,
+} from "../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
 import { createOAuthConfig } from "../src/core/extensions/builtin/anthropic-subscription/oauth-login.ts";
 import { authContext } from "./support/anthropic-subscription-provider.ts";
 import { cliSlot } from "./support/claude-cli-test-slots.ts";
@@ -11,7 +15,9 @@ afterEach(() => cleanupFakeClaudeCliLogins());
 describe("claude-sdk-oauth oauth login config", () => {
 	it("starts the connection test only after the fresh CLI slot is committed", async () => {
 		const cli = fakeClaudeCliLogin();
-		const store = cli.store();
+		const createStore = cli.store;
+		if (createStore === undefined) throw new Error("The fake CLI must expose its credential store");
+		const store = createStore();
 		let tested = false;
 		const config = createOAuthConfig({
 			readCurrent: async () => undefined,
@@ -19,7 +25,9 @@ describe("claude-sdk-oauth oauth login config", () => {
 				...cli,
 				connectionTest: async ({ name, model }) => {
 					const stored = await store.read("anthropic-subscription");
-					const slot = stored?.accounts?.find((candidate) => candidate.name === name);
+					const credential = normalizeCredential(stored);
+					if (credential === undefined) throw new Error("The fresh OAuth credential was not committed");
+					const slot = credential.accounts?.find((candidate) => candidate.name === name);
 					expect(slot).toMatchObject({ name, store: "claude-cli" });
 					expect(slot).not.toHaveProperty("check");
 					tested = true;
