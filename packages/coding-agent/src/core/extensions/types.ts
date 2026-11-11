@@ -2648,6 +2648,12 @@ export interface ExtensionAPI {
 	 * of a shared host and still gate itself per session.
 	 */
 	readonly sessionContext: SessionContext;
+	/**
+	 * The engine this extension is running in: the namespace the loader serves for `@code-yeongyu/senpi`. An extension
+	 * that needs the running engine's exports reads them here instead of importing that specifier, because on some
+	 * runtimes its own import evaluates a second copy of the engine (omo#12965). Read-only; it adds no authority.
+	 */
+	readonly engine: typeof import("../../index.ts");
 
 	// =========================================================================
 	// Event Subscription

@@ -1,3 +1,4 @@
+import { hasFunctions, realmRegistry } from "@earendil-works/pi-realm-registry";
 import { parsePermissionPresetName } from "./extensions/builtin/permission-system/cli.ts";
 import { registerDecisionPresetOverride } from "./extensions/builtin/permission-system/preset-registry.ts";
 import type { PermissionPresetName } from "./extensions/builtin/permission-system/types.ts";
@@ -13,7 +14,42 @@ export interface DecisionSession {
 	readonly recordedPreset: () => string | undefined;
 }
 
-const liveSessions = new Map<string, DecisionSession>();
+/**
+ * A live session's decision record as every engine copy in the realm sees it (omo#12965). It is built by the copy
+ * that owns the session, so the record answers with that copy's own turn origin and settings; another copy only calls
+ * it and validates the answer. `visitedIds` carries the sessions already on the chain, so a `spawnedBy` loop through
+ * any number of copies ends.
+ */
+interface DecisionRecord {
+	effectivePreset(visitedIds: readonly string[]): unknown;
+}
+
+/** Live decision sessions of every engine copy in this realm: `liveSessions` before omo#12965. */
+interface DecisionSessions {
+	bind(id: string, record: DecisionRecord): void;
+	/** Deletes only when `record` is the one bound under `id`. */
+	release(id: string, record: DecisionRecord): void;
+	get(id: string): unknown;
+}
+
+const decisionSessions = realmRegistry(
+	"@code-yeongyu/senpi/decision-sessions/v1",
+	(): DecisionSessions => {
+		const records = new Map<string, DecisionRecord>();
+		return {
+			bind: (id, record) => {
+				records.set(id, record);
+			},
+			release: (id, record) => {
+				if (records.get(id) === record) records.delete(id);
+			},
+			get: (id) => records.get(id),
+		};
+	},
+	(value): value is DecisionSessions => hasFunctions(value, ["bind", "release", "get"]),
+);
+/** The record this copy bound for each session manager, so only this copy's binder releases it. */
+const boundRecords = new WeakMap<DecisionSessionManager, DecisionRecord>();
 
 /**
  * Binds the remote approval-mode rule to one live session, evaluated at EACH gated decision:
@@ -24,34 +60,54 @@ const liveSessions = new Map<string, DecisionSession>();
  * 3. a child (`spawnedBy`) follows its live parent's mode for the parent's current turn; a child whose parent is not
  *    live in this process asks, unless the operator named a preset for it with the launch flag;
  * 4. anything else keeps the host's own default (no override).
+ * The live parent may belong to any engine copy in this realm: the decision sessions are a realm registry.
  */
 export function bindDecisionPreset(session: DecisionSession): void {
-	liveSessions.set(session.sessionManager.getSessionId(), session);
-	registerDecisionPresetOverride(session.sessionManager, () => decisionPreset(session, new Set()));
+	const record: DecisionRecord = Object.freeze({
+		effectivePreset: (visitedIds: readonly string[]) => effectivePresetOf(session, visitedIds),
+	});
+	boundRecords.set(session.sessionManager, record);
+	decisionSessions.bind(session.sessionManager.getSessionId(), record);
+	registerDecisionPresetOverride(session.sessionManager, () => decisionPreset(session, []));
 }
 
 export function releaseDecisionPreset(sessionManager: DecisionSessionManager): void {
-	const id = sessionManager.getSessionId();
-	if (liveSessions.get(id)?.sessionManager === sessionManager) liveSessions.delete(id);
+	const record = boundRecords.get(sessionManager);
+	if (record === undefined) return;
+	boundRecords.delete(sessionManager);
+	decisionSessions.release(sessionManager.getSessionId(), record);
 }
 
-function decisionPreset(session: DecisionSession, visited: Set<DecisionSession>): PermissionPresetName | undefined {
+function decisionPreset(session: DecisionSession, visitedIds: readonly string[]): PermissionPresetName | undefined {
 	if (session.namedPreset() !== undefined) return undefined;
 	if (decidingTurnIsDelegated(session.sessionManager)) return delegatedPreset(session);
 	const parentId = session.sessionManager.getHeader()?.spawnedBy?.parentSessionId;
 	if (parentId === undefined) return undefined;
-	const parent = liveSessions.get(parentId);
+	const parent = decisionSessions.get(parentId);
 	if (parent === undefined) return session.launchFlagNamed() ? undefined : "ask";
+	const ownId = session.sessionManager.getSessionId();
 	// A `spawnedBy` loop (only a crafted session file can make one) has no parent to follow: it asks.
-	if (visited.has(parent) || parent === session) return "ask";
-	visited.add(session);
-	return effectivePresetOf(parent, visited);
+	if (parentId === ownId || visitedIds.includes(parentId)) return "ask";
+	return parentPreset(parent, [...visitedIds, ownId]);
 }
 
-function effectivePresetOf(session: DecisionSession, visited: Set<DecisionSession>): PermissionPresetName | undefined {
+/**
+ * Reads a parent's record, which another engine copy may have built: an unknown preset name (a newer copy's) or a
+ * malformed record asks; `undefined` keeps the host's own default, as the parent itself does.
+ */
+function parentPreset(parent: unknown, visitedIds: readonly string[]): PermissionPresetName | undefined {
+	const effectivePreset =
+		typeof parent === "object" && parent !== null ? Reflect.get(parent, "effectivePreset") : undefined;
+	if (typeof effectivePreset !== "function") return "ask";
+	const preset: unknown = Reflect.apply(effectivePreset, parent, [visitedIds]);
+	if (preset === undefined) return undefined;
+	return (typeof preset === "string" ? parsePermissionPresetName(preset) : undefined) ?? "ask";
+}
+
+function effectivePresetOf(session: DecisionSession, visitedIds: readonly string[]): PermissionPresetName | undefined {
 	const named = session.namedPreset();
 	if (named !== undefined) return parsePermissionPresetName(named);
-	return decisionPreset(session, visited);
+	return decisionPreset(session, visitedIds);
 }
 
 function delegatedPreset(session: DecisionSession): PermissionPresetName {

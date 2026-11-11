@@ -1,46 +1,55 @@
+import {
+	cellAuthority,
+	isPermissionSessionHandle,
+	type PermissionSessionHandle,
+} from "../shared/cell-authority-registry.ts";
+
 interface SessionKernel {
 	revoke(): void;
 	retire(): Promise<void>;
 }
 
+/**
+ * One session's permission state as a kernel bound to it sees it. The state is shared by every codemode copy in the
+ * realm (omo#12965): a session one copy marked dead, or is revoking, reads so in every copy.
+ */
 export interface PermissionSession {
 	dead: boolean;
-	pending?: Promise<void>;
-	readonly kernels: Set<SessionKernel>;
+	readonly pending: Promise<void> | undefined;
 }
 
-const sessions = new Map<string, PermissionSession>();
+/** The revocation in flight, `undefined` for none, `"unreadable"` for a value another copy shaped differently. */
+function pendingOf(handle: PermissionSessionHandle): Promise<void> | undefined | "unreadable" {
+	const pending: unknown = handle.pending();
+	return pending === undefined || pending instanceof Promise ? pending : "unreadable";
+}
+
+/** A session whose handle this copy cannot read is dead: its kernels refuse instead of running unrevocable. */
+function sessionView(handle: unknown): PermissionSession {
+	if (!isPermissionSessionHandle(handle)) return { dead: true, pending: undefined };
+	return {
+		get dead() {
+			return handle.dead() !== false || pendingOf(handle) === "unreadable";
+		},
+		set dead(value: boolean) {
+			if (value) handle.markDead();
+		},
+		get pending() {
+			const pending = pendingOf(handle);
+			return pending === "unreadable" ? undefined : pending;
+		},
+	};
+}
 
 export function registerPermissionKernel(sessionId: string, kernel: SessionKernel): PermissionSession {
-	let session = sessions.get(sessionId);
-	if (!session) {
-		session = { dead: false, kernels: new Set() };
-		sessions.set(sessionId, session);
-	}
-	session.kernels.add(kernel);
-	return session;
+	return sessionView(cellAuthority.registerKernel(sessionId, kernel));
 }
 
 export function unregisterPermissionKernel(sessionId: string, kernel: SessionKernel): void {
-	const session = sessions.get(sessionId);
-	if (!session) return;
-	session.kernels.delete(kernel);
-	if (!session.dead && !session.pending && session.kernels.size === 0) sessions.delete(sessionId);
+	cellAuthority.unregisterKernel(sessionId, kernel);
 }
 
-/** All words go DEAD synchronously, before retirement or another admission can run. */
+/** All words go DEAD synchronously, before retirement or another admission can run, in every copy's kernels. */
 export function revokeSessionKernels(sessionId: string): Promise<void> {
-	const session = sessions.get(sessionId);
-	if (!session) return Promise.resolve();
-	if (session.pending) return session.pending;
-	const kernels = [...session.kernels];
-	for (const kernel of kernels) kernel.revoke();
-	const pending = Promise.all(kernels.map((kernel) => kernel.retire())).then(() => {});
-	session.pending = pending;
-	void pending
-		.finally(() => {
-			if (session.pending === pending) session.pending = undefined;
-		})
-		.catch(() => {});
-	return pending;
+	return cellAuthority.revoke(sessionId);
 }
