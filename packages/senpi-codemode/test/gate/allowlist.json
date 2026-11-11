@@ -5,7 +5,8 @@
 			"additions": [
 				"legacyContracts/test/eval-render-nested-height.test.ts/eval nested calls keep a stable height while the cell runs (senpi#6390) Given nested calls of different heights sliding through the collapsed window, the running block never shrinks",
 				"legacyContracts/test/eval-render-nested-height.test.ts/eval nested calls keep a stable height while the cell runs (senpi#6390) Given a completed cell, the block returns to its natural height",
-				"legacyContracts/test/eval-render-nested-height.test.ts/eval nested calls keep a stable height while the cell runs (senpi#6390) Given the row is collapsed again after expanding, the floor from the expanded view does not stay"
+				"legacyContracts/test/eval-render-nested-height.test.ts/eval nested calls keep a stable height while the cell runs (senpi#6390) Given the row is collapsed again after expanding, the floor from the expanded view does not stay",
+				"legacyContracts/test/eval-render-nested-height.test.ts/eval nested calls keep a stable height while the cell runs (senpi#6390) Given a streaming call that is collapsed again after expanding, its row drops back to the collapsed height"
 			],
 			"reason": "senpi#6406 (Fixes #6390): a running eval row keeps a height floor so nested calls sliding through the collapsed window cannot shrink it. These are the three contract titles of the new test/eval-render-nested-height.test.ts; no prompt cell or import graph moves and the baseline is unchanged.",
 			"changes": []

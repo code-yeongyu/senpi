@@ -1,9 +1,9 @@
 import type { AgentToolResult } from "@code-yeongyu/senpi";
 import { describe, expect, it } from "vitest";
-import { renderEvalResult } from "../src/tool/render.ts";
+import { renderEvalCall, renderEvalResult } from "../src/tool/render.ts";
 import type { EvalComponent } from "./eval-render-fixtures.ts";
 import type { EvalToolCallSummary, EvalToolDetails } from "../src/tool/types.ts";
-import { plainTheme, resultContext } from "./eval-render-fixtures.ts";
+import { callContext, plainTheme, resultContext } from "./eval-render-fixtures.ts";
 
 const STARTED_AT = 1_700_000_000_000;
 const WIDTH = 80;
@@ -73,5 +73,22 @@ describe("eval nested calls keep a stable height while the cell runs (senpi#6390
 		let last = render(12, "running", undefined, true).component;
 		last = render(12, "running", last, false).component;
 		expect(last.render(WIDTH).length).toBe(render(12, "running", undefined, false).height);
+	});
+
+	it("Given a streaming call that is collapsed again after expanding, its row drops back to the collapsed height", () => {
+		const code = Array.from({ length: 20 }, (_, index) => `const line${index} = ${index};`).join("\n");
+		const args = { language: "js" as const, code, summary: "twenty lines" };
+		const draw = (expanded: boolean, last: EvalComponent | undefined) => {
+			const component = renderEvalCall(
+				args,
+				plainTheme(),
+				callContext({ expanded, ...(last === undefined ? {} : { lastComponent: last }) }),
+			);
+			return { component, height: component.render(WIDTH).length };
+		};
+		const collapsedHeight = draw(false, undefined).height;
+		const expanded = draw(true, undefined);
+		expect(expanded.height).toBeGreaterThan(collapsedHeight);
+		expect(draw(false, expanded.component).height).toBe(collapsedHeight);
 	});
 });
