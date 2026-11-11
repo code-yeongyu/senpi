@@ -174,7 +174,8 @@ describe("an exhausted fallback ladder resumes the goal at the soonest known res
 		expect(harness.getPendingResponseCount()).toBe(0);
 	});
 
-	it("resumes after one second when every collected reset passed before settlement", async () => {
+	// senpi#4085: a limit wait never re-checks sooner than the provider backoff floor (15 s), even for a reset already past.
+	it("resumes at the backoff floor when every collected reset passed before settlement", async () => {
 		vi.useFakeTimers({ now: NOW });
 		const settled: AgentSettledEvent[] = [];
 		const harness = await goalOnLadder(
@@ -195,10 +196,10 @@ describe("an exhausted fallback ladder resumes the goal at the soonest known res
 		await harness.session.prompt("start");
 		expect(runsAfterExhaustion(harness)).toBe(0);
 		expect(settled.at(-1)?.fallbackExhausted).toEqual({ resumeAt: NOW + 1_000 });
-		await advanceTo(NOW + 2_999);
+		await advanceTo(NOW + 16_999);
 		expect(runsAfterExhaustion(harness)).toBe(0);
 		const resumed = waitForSettles(harness, 2);
-		await advanceTo(NOW + 3_000);
+		await advanceTo(NOW + 17_000);
 		await resumed;
 		expect(runsAfterExhaustion(harness)).toBe(1);
 		expect(harness.getPendingResponseCount()).toBe(0);

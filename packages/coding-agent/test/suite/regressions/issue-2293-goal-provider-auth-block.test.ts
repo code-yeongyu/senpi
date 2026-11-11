@@ -186,11 +186,20 @@ describe("goal blocks on a terminal provider auth rejection (#2293)", () => {
 
 		await endTurn(setup, { type: "agent_end", messages: [message], willRetry: false });
 
-		expect(setup.harness.sent).toHaveLength(1);
-		expect(setup.harness.sent[0]?.message.customType).toBe("goal-continuation");
-		expect(setup.notices).toEqual([]);
-		// A wake that waits out a structured limit spends no continuation budget (senpi#4085); an outage still does.
+		// A structured limit is re-checked on the provider backoff and spends no continuation budget (senpi#4085);
+		// an outage still recovers at once and counts.
 		const limitWait = message.providerDiagnostic?.category === "rate_limit";
+		if (limitWait) {
+			expect(setup.harness.sent).toHaveLength(0);
+			expect(
+				setup.harness.events.emitted.filter((event) => event.channel === "goal_continuation_timer_state").at(-1)
+					?.data,
+			).toMatchObject({ armed: true, kind: "providerRetry" });
+		} else {
+			expect(setup.harness.sent).toHaveLength(1);
+			expect(setup.harness.sent[0]?.message.customType).toBe("goal-continuation");
+			expect(setup.notices).toEqual([]);
+		}
 		expect(await readGoal(goalStoreRef(setup.ctx.sessionManager, setup.ctx.cwd))).toMatchObject({
 			status: "active",
 			consecutiveContinuations: limitWait ? 0 : 1,

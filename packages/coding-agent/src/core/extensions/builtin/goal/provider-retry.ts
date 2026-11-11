@@ -38,6 +38,14 @@ export function providerRetryAt(messages: readonly AgentMessage[], now: number):
 	return instants.length === 0 ? undefined : Math.min(...instants);
 }
 
+/** Re-checks of a limit that never clears before the goal parks until a sign-in, a block reset or input (senpi#4085). */
+export const GOAL_LIMIT_WAIT_WAKE_LIMIT = 48;
+
+/** The shortest wait before the `attempt`-th limit re-check: the provider backoff, 15 s doubling to 30 min. */
+export function limitWaitFloorMs(attempt: number): number {
+	return Math.min(PROVIDER_RETRY_CAP_MS, PROVIDER_RETRY_BASE_MS * 2 ** (Math.max(1, attempt) - 1));
+}
+
 /**
  * The turn ended on a provider refusing for a usage or rate limit, not on an outage (senpi#4085). An OpenAI-compatible
  * adapter reports a bare 429 as a status-only diagnostic (`unknown` + 429); that status is still a limit.

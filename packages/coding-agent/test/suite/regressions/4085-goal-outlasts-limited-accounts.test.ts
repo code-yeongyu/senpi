@@ -101,8 +101,8 @@ describe("a goal outlasts accounts that stay limited (senpi#4085)", () => {
 					shape === "exhausted ladder" ? { resumeAt: resetsAt } : undefined,
 				);
 				const sent = waitForSentCount(harness, wake);
-				// A status-only 429 names no reset, so the goal re-checks on the provider backoff (capped at 30 min).
-				await vi.advanceTimersByTimeAsync(statusOnly ? 30 * MINUTE + 1_001 : MINUTE + 1_001);
+				// Every re-check waits at least the provider backoff, which doubles from 15 s to its 30-minute cap.
+				await vi.advanceTimersByTimeAsync(30 * MINUTE + 1_001);
 				await sent;
 			}
 
@@ -134,6 +134,41 @@ describe("a goal outlasts accounts that stay limited (senpi#4085)", () => {
 		expect(harness.sent).toHaveLength(1);
 		expect(lastTimerState(harness)).toMatchObject({ armed: false });
 	});
+
+	it("never re-checks a limit sooner than the provider backoff, even when the reset it names is seconds away", async () => {
+		vi.useFakeTimers({ now: NOW });
+		const { harness, refusedTurn } = await goalSession("thread-4085-floor");
+
+		await refusedTurn(refusal(Date.now() + 1_000));
+
+		const armed = lastTimerState(harness) as { armed?: boolean; kind?: string; dueAtMs?: number } | undefined;
+		expect(armed).toMatchObject({ armed: true, kind: "providerRetry" });
+		expect(armed?.dueAtMs).toBeGreaterThanOrEqual(NOW + 15_000);
+	});
+
+	it("parks a limit that never clears after a bounded number of re-checks, and a login wakes it again", async () => {
+		vi.useFakeTimers({ now: NOW });
+		const { harness, refusedTurn, status } = await goalSession("thread-4085-ceiling");
+		const ceiling = 48;
+
+		for (let wake = 1; wake <= ceiling; wake++) {
+			await refusedTurn(refusal(Date.now() + 1_000));
+			const sent = waitForSentCount(harness, wake);
+			await vi.advanceTimersByTimeAsync(30 * MINUTE + 1_001);
+			await sent;
+		}
+		await refusedTurn(refusal(Date.now() + 1_000));
+		await vi.advanceTimersByTimeAsync(7 * 24 * 60 * MINUTE);
+
+		expect(harness.sent).toHaveLength(ceiling);
+		expect((await status())?.goal?.status).toBe("active");
+		expect(harness.events.emitted.some((event) => event.channel === "goal_limit_wait_parked")).toBe(true);
+
+		const woke = waitForSentCount(harness, ceiling + 1);
+		emitProviderAccountsChanged("anthropic-subscription", "login");
+		await vi.advanceTimersByTimeAsync(1_001);
+		await woke;
+	}, 60_000);
 
 	it("does not wake on an account change that is not a remedy", async () => {
 		vi.useFakeTimers({ now: NOW });
