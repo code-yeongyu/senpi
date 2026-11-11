@@ -129,15 +129,16 @@ export async function importMovedSession(
 	// receiving and a re-run accepts it. `fail` asks this under the move's lock, where an overlapping commit cannot race it.
 	const landed = async (): Promise<boolean> =>
 		(await pathExists(target)) && (await movedInFor(target, manifest.moveId));
-	if (await landed()) {
-		// The rename already committed; a crash or a failed write may have lost `accepted`, and the file is the authority.
+	// The rename already committed; a crash or a failed write may have lost `accepted`, and the file is the authority.
+	const confirmLanded = async (): Promise<{ readonly sessionFile: string }> => {
 		await options.ledger.confirmLanded(
 			manifest.moveId,
 			target,
 			(await importOutcome(target, manifest.moveId)) === "revoked",
 		);
 		return { sessionFile: target };
-	}
+	};
+	if (await landed()) return confirmLanded();
 	try {
 		await verifyBundle(options.bundleDir, manifest);
 	} catch (error) {
@@ -150,7 +151,13 @@ export async function importMovedSession(
 		if (!(await landed())) await options.ledger.decline(manifest.moveId, "repository");
 		throw new MoveRefusedError(targetCwd, manifest.sourceCwd);
 	}
-	await options.ledger.beginReceive(manifest.moveId, target);
+	try {
+		await options.ledger.beginReceive(manifest.moveId, target);
+	} catch (error) {
+		// Another import of this move may have landed the file since this one looked for it: then the file answers.
+		if (error instanceof MoveFencedError && (await landed())) return confirmLanded();
+		throw error;
+	}
 	moveStep("import:received");
 	const staging = join(sessionDir, ".move-staging", encodeURIComponent(manifest.moveId));
 	try {
@@ -169,6 +176,7 @@ export async function importMovedSession(
 		await rm(staging, { recursive: true, force: true });
 		return { sessionFile };
 	} catch (error) {
+		if (error instanceof MoveFencedError && (await landed())) return confirmLanded();
 		if (!(error instanceof MoveFencedError))
 			await options.ledger.fail(
 				manifest.moveId,
