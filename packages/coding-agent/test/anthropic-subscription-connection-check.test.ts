@@ -15,7 +15,10 @@ vi.mock("../src/core/extensions/builtin/anthropic-subscription/sdk-boundary.ts",
 	getSdkBoundary: () => ({ query: vi.fn() }),
 }));
 
-afterEach(() => vi.clearAllMocks());
+afterEach(() => {
+	vi.clearAllMocks();
+	vi.restoreAllMocks();
+});
 
 const input = {
 	name: "work",
@@ -168,6 +171,62 @@ describe("Claude subscription account checks (desktop#6444)", () => {
 
 		expect(check.message?.length).toBe(STORED_CHECK_MESSAGE_MAX_CHARS);
 		expect(check.message?.startsWith("<html>")).toBe(true);
+	});
+
+	it("never ends the capped message on half of a surrogate pair", async () => {
+		const text = `${"x".repeat(STORED_CHECK_MESSAGE_MAX_CHARS - 2)}\u{1F600}${"y".repeat(STORED_CHECK_MESSAGE_MAX_CHARS)}`;
+		lane.mockReturnValue({
+			async next() {
+				throw new Error(text);
+			},
+			[Symbol.asyncIterator]() {
+				return this;
+			},
+		});
+
+		const check = await runClaudeCliConnectionTest(input);
+
+		expect(check.message?.isWellFormed()).toBe(true);
+		expect(check.message?.endsWith("x…")).toBe(true);
+	});
+
+	it("reports timeout, not the SDK's late error, when the deadline fired first", async () => {
+		vi.spyOn(AbortSignal, "timeout").mockReturnValue(AbortSignal.abort(new DOMException("deadline", "TimeoutError")));
+		lane.mockReturnValue({
+			close() {},
+			async *[Symbol.asyncIterator]() {
+				yield { type: "result", subtype: "error_during_execution", is_error: true, errors: ["stream closed"] };
+			},
+		});
+
+		expect(await runClaudeCliConnectionTest(input)).toMatchObject({ outcome: "failed", reason: "timeout" });
+	});
+
+	it("reports timeout when both the deadline and the caller's cancel fired", async () => {
+		vi.spyOn(AbortSignal, "timeout").mockReturnValue(AbortSignal.abort(new DOMException("deadline", "TimeoutError")));
+		lane.mockReturnValue({
+			close() {},
+			async *[Symbol.asyncIterator]() {
+				yield { type: "result", subtype: "error_during_execution", is_error: true, errors: ["stream closed"] };
+			},
+		});
+
+		expect(await runClaudeCliConnectionTest({ ...input, signal: AbortSignal.abort() })).toMatchObject({
+			outcome: "failed",
+			reason: "timeout",
+		});
+	});
+
+	it("reports cancelled, not no_result, when the stream ends after the caller cancelled", async () => {
+		lane.mockReturnValue({
+			close() {},
+			async *[Symbol.asyncIterator]() {},
+		});
+
+		expect(await runClaudeCliConnectionTest({ ...input, signal: AbortSignal.abort() })).toMatchObject({
+			outcome: "failed",
+			reason: "cancelled",
+		});
 	});
 
 	it("does not stamp an old credential's failed test onto a fresh login", () => {
