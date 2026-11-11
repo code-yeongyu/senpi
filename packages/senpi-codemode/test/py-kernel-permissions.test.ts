@@ -236,6 +236,18 @@ describe("Python permission interposition", () => {
 		["urllib.parse", "unquote", "lambda *a: ':memory:'", "sqlite3.connect('file:subject?mode=ro', uri=True)"],
 		[
 			"urllib.parse",
+			"SplitResult",
+			"lambda *a: type('URI', (), {'path': ':memory:', 'query': '', 'fragment': ''})()",
+			"urllib.parse.urlsplit('file:subject?mode=ro'); sqlite3.connect('file:subject?mode=ro', uri=True)",
+		],
+		[
+			"urllib.parse.SplitResult",
+			"path",
+			"property(lambda self: ':memory:')",
+			"sqlite3.connect('file:subject?mode=ro', uri=True)",
+		],
+		[
+			"urllib.parse",
 			"unquote_plus",
 			"lambda s, **k: 'memory' if s == 'ro' else s",
 			"sqlite3.connect('file:subject?mode=ro', uri=True)",
