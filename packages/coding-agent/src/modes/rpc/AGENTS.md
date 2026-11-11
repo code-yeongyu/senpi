@@ -24,6 +24,9 @@ session-extension-ui-requests.ts                            Session wiring
 host-session-control.ts   `registerControlEndpoint` on a host session + the `wake` command (drain passes)
 session-release.ts        `release_session`: hand a session to a local runtime (bookkeeping entry, park teardown)
 session-release-interrupt.ts  An `interrupt` release: take queued input (`dropped`), abort, bounded settle
+session-release-busy.ts   What makes a session too busy to release: the signals, their refusal code and data
+session-release-export.ts The export a `release_session` reason `move` carries: its request, read before anything is
+                          sealed, and the export run after the release answered, which never changes that answer
 session-attribution.ts    AsyncLocalStorage {sessionId, tool} the stall watchdog blames by
 loop-lag-watchdog.ts      200 ms drift probe -> stderr line + `host_stalled` record
 host-memory-sampler.ts    30 s footprint sampler (core/process-footprint.ts) -> `host_memory_pressure`; halves the idle window
