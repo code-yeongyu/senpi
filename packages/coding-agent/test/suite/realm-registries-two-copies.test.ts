@@ -164,6 +164,27 @@ describe("T-A decision sessions and the delegated record scope across two engine
 		b.decision.releaseDecisionPreset(child.sessionManager);
 	});
 
+	it("(7) a second session takes an id a live session holds, and the first session's later release leaves it bound", async () => {
+		const [a, b] = await twoCopies(decisionModules);
+		const first = decisionStub("x12965-a7-parent", { named: () => "read-only" });
+		const second = decisionStub("x12965-a7-parent", { named: () => "full-access" });
+		const child = decisionStub("x12965-a7-child", { parent: "x12965-a7-parent" });
+		a.decision.bindDecisionPreset(first);
+		b.decision.bindDecisionPreset(child);
+		const sessions = registryAt("@code-yeongyu/senpi/decision-sessions/v1");
+
+		// A second session takes the id while the first is still live; the first one's later release must not unbind it.
+		a.decision.bindDecisionPreset(second);
+		expect(b.presets.readDecisionPresetOverride(child.sessionManager)).toBe("full-access");
+		a.decision.releaseDecisionPreset(first.sessionManager);
+		expect(sessions.get("x12965-a7-parent" as never)).toBeDefined();
+		expect(b.presets.readDecisionPresetOverride(child.sessionManager)).toBe("full-access");
+
+		a.decision.releaseDecisionPreset(second.sessionManager);
+		expect(sessions.get("x12965-a7-parent" as never)).toBeUndefined();
+		b.decision.releaseDecisionPreset(child.sessionManager);
+	});
+
 	it("(6) a preset name a newer copy returns that this copy does not know asks, and so does a malformed record", async () => {
 		const [, b] = await twoCopies(decisionModules);
 		const sessions = registryAt("@code-yeongyu/senpi/decision-sessions/v1");

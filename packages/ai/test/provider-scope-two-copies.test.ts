@@ -130,4 +130,25 @@ describe("T-B provider strict mode and scope across two pi-ai copies (omo#12965)
 			registry.run({ state: "active", overlay: new Map() }, () => b.images.getImagesApiProvider("x12965-ill-typed")),
 		).toThrow("Provider scope is closed");
 	});
+
+	it("(payload) refuses to name the active scope when it cannot read it, and reads no scope as none", async () => {
+		const node = await nextCopy(nodeCopy);
+		const registry = Reflect.get(globalThis, Symbol.for("@code-yeongyu/senpi/provider-scope/v1")) as {
+			run: (scope: unknown, fn: () => unknown) => unknown;
+		};
+
+		expect(node.scope.activeProviderScope()).toBeUndefined();
+		expect(() => registry.run({ state: "active" }, () => node.scope.activeProviderScope())).toThrow(
+			expect.objectContaining({ name: "ProviderScopeUnreadableError", code: "PI_PROVIDER_SCOPE_UNREADABLE" }),
+		);
+	});
+
+	it("offers no export that installs a per-copy scope lookup", async () => {
+		const b = await nextCopy(registryOnlyCopy);
+		const installers = [...Object.keys(b.api), ...Object.keys(b.images)].filter((name) =>
+			/^install.*ScopeAccessor$/.test(name),
+		);
+
+		expect(installers).toEqual([]);
+	});
 });

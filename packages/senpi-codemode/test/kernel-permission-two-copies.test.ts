@@ -227,6 +227,13 @@ describe("which session answers for a cross-session invoker (omo#12965)", () => 
 		});
 	});
 
+	it("keeps the id the dispatcher stamped when the hook's answer carries a session id", async () => {
+		expect(await answer("x12965-hook-id", [], () => ({ ...hookSession, sessionId: "x12965-someone-else" }))).toEqual({
+			sessionId: "x12965-hook-id",
+			...hookSession,
+		});
+	});
+
 	it.each([
 		["null", () => null],
 		["undefined", () => undefined],
