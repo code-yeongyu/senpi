@@ -3973,6 +3973,8 @@ names a valid preset.
 
 `open_session.cwd` is the folder the session works in: its tools run there and its project files are read from there. An open that names one works in it. An open that names none and a `sessionPath` at which a session file exists works in the folder that file's header names, as `--session` does; the host maps a folder the desktop moved to where it lives now. A header folder that is not on this host refuses the open with `open_failed` (`Stored session working directory does not exist: <folder>`): the session is never opened in the host's own folder instead. Name a `cwd` to open it somewhere else. Any other open without `cwd` (no `sessionPath`, a `sessionPath` no file is at yet, or a file whose header names no folder) works in the folder the host was started in. An open that attaches to a session this host already holds leaves its folder as it is.
 
+An open that names no folder never falls back to the host's own for a session file it could not read: a file that exists but cannot be read, and a moved-path probe whose step timed out, refuse the open (`open_failed`) instead. A `cwd` of `null` means no folder was named, as the host's launch profile already reads it.
+
 Hosts that do this advertise `open_session_header_cwd`. A host without it opens every `sessionPath` that names no `cwd` in its own folder, so a client that reopens a session by path on such a host must pass the folder.
 
 ### Live-only attachment and scoped release

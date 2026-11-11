@@ -136,6 +136,40 @@ describe.each<[string, { readonly workers?: boolean }]>([
 		expect(readFileSync(file)).toEqual(bytes);
 	});
 
+	it("#given a file whose header names folder A #when open_session sends cwd null with the path #then the session works in A, as an open with no cwd does", async () => {
+		const a = folder("project-null");
+		const file = sessionFile(join(host.scratch, "sessions", "null-cwd.jsonl"), a);
+
+		const opened = await peer.send({ type: "open_session", sessionPath: file, cwd: null });
+
+		expect(opened).toMatchObject({ success: true });
+		expect((opened.data as Opened).state.cwd).toBe(a);
+	});
+
+	it("#given a file whose first line is blank before its header #when open_session names it and no cwd #then the session works in the header's folder, as the session manager opens it", async () => {
+		const a = folder("project-blank-line");
+		const file = sessionFile(join(host.scratch, "sessions", "blank-first-line.jsonl"), a);
+		writeFileSync(file, `\n${readFileSync(file, "utf8")}`);
+
+		const opened = await peer.send({ type: "open_session", sessionPath: file });
+
+		expect(opened).toMatchObject({ success: true });
+		expect((opened.data as Opened).state.cwd).toBe(a);
+	});
+
+	it("#given a path that exists but cannot be read as a session file #when open_session names it and no cwd #then the open is refused instead of falling back to the host's folder", async () => {
+		const unreadable = join(host.scratch, "sessions", "unreadable.jsonl");
+		mkdirSync(unreadable, { recursive: true });
+
+		const refused = await peer.send({ type: "open_session", sessionPath: unreadable });
+
+		expect(refused).toMatchObject({ success: false });
+		const { sessions } = (await peer.send({ type: "list_sessions" })).data as {
+			sessions: Array<{ sessionPath?: string; status: string; cwd: string }>;
+		};
+		expect(sessions.filter((row) => row.sessionPath === unreadable && row.cwd === host.cwd)).toEqual([]);
+	});
+
 	it.each<[string, "newSessions" | "oldSessions"]>([
 		["by the path the file is at", "newSessions"],
 		["by the path the file had before the desktop moved it", "oldSessions"],
