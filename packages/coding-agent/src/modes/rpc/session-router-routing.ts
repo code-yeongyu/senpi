@@ -94,10 +94,21 @@ function admitted(host: RouterContext, command: RpcCommand): Promise<RpcResponse
 	);
 }
 
-/** Attachments held by connections other than the caller: every one of the caller's own holds is excluded. */
+/**
+ * Attachments held by OTHER clients (senpi#6443): every hold of every connection of the caller's own client is
+ * excluded, not only the asking connection's. One client holds a session through more than one connection of its own
+ * (a second connection for an automated send), and counting those as another client's refuses an unload for nobody.
+ * A connection that declared no `client_id` is its own client, which is the rule as it was.
+ */
 function otherAttachments(host: RouterContext, caller: string | undefined, sessionId: string): number {
-	const own = caller === undefined ? 0 : (host.sessionsByConnection.get(caller)?.get(sessionId) ?? 0);
-	return Math.max(0, (host.registry.peek(sessionId)?.attachments ?? 0) - own);
+	const total = host.registry.peek(sessionId)?.attachments ?? 0;
+	if (caller === undefined) return Math.max(0, total);
+	const client = host.clientIds.get(caller);
+	let own = 0;
+	for (const [connection, held] of host.sessionsByConnection)
+		if (connection === caller || (client !== undefined && host.clientIds.get(connection) === client))
+			own += held.get(sessionId) ?? 0;
+	return Math.max(0, total - own);
 }
 
 export async function dispatch(

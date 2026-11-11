@@ -70,6 +70,9 @@ export async function unloadSession(port: SessionUnloadPort, command: UnloadSess
 		);
 	const first = loaded(port, command.sessionId);
 	if ("reason" in first) return answer(command, refused(first));
+	// Before the effect ledger: a dry run records nothing, so its effectId stays free for the real call.
+	if (command.dryRun === true)
+		return dryRunAnswer(command, blockers(port, command, first.session, first.durableSessionId));
 	const { effectId } = command;
 	if (effectId !== undefined) {
 		const begun = await beginEffect({ session: first.session, by: port.by, sessionId: command.sessionId }, "unload", {
@@ -118,6 +121,18 @@ async function claimAndUnload(port: SessionUnloadPort, command: UnloadSessionCom
 		outcome: "unloaded",
 		sessionPath: ready.sessionPath,
 		...(effect === undefined ? {} : effectAnswer(effect, command.sessionId)),
+	});
+}
+
+/** What the real call would do now, from the same blockers, in the same order: it refuses on the first standing one. */
+function dryRunAnswer(command: UnloadSessionCommand, blocked: readonly Refusal[]): RpcResponse {
+	const stops = (refusal: Refusal) => interruptible(refusal) && command.interrupt === true;
+	const standing = blocked.filter((refusal) => !stops(refusal));
+	const first = standing[0];
+	return answer(command, {
+		...(first === undefined ? { outcome: "ready" as const } : refused(first)),
+		blockers: standing,
+		interruptible: blocked.filter(stops),
 	});
 }
 
@@ -227,5 +242,6 @@ function refused(refusal: Refusal): RpcUnloadAnswer {
 }
 
 function answer(command: UnloadSessionCommand, data: RpcUnloadAnswer): RpcResponse {
-	return { id: command.id, type: "response", command: "unload_session", success: true, data };
+	const marked = command.dryRun === true ? { ...data, dry_run: true as const } : data;
+	return { id: command.id, type: "response", command: "unload_session", success: true, data: marked };
 }

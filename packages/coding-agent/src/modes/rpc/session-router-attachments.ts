@@ -122,6 +122,7 @@ async function releaseConnectionHolds(host: RouterContext, connectionId: string)
 	);
 	if (opens) await Promise.all([...opens]);
 	host.releasedConnections.delete(connectionId);
+	host.clientIds.delete(connectionId);
 	return [...deferred];
 }
 

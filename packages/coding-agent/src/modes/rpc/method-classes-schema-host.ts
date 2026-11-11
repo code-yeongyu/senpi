@@ -95,6 +95,7 @@ export const HOST_RECORD_SCHEMAS = {
 		clearQueue: OptBool,
 		children: Opt(literals("refuse", "detach")),
 		force: OptBool,
+		dryRun: OptBool,
 	}),
 	detach_connection: command("detach_connection", {}),
 	get_subscription_limits: command("get_subscription_limits", { observe: OptBool }),

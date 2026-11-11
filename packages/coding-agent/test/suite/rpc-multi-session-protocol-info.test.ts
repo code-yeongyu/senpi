@@ -64,6 +64,8 @@ describe("multi-session RPC protocol info", () => {
 					"peer_agent_role_v1",
 					"same_account_delegation_v1",
 					"unload_session",
+					"unload_session_dry_run",
+					"client_identity",
 					"move_session",
 					"move_session_revoke",
 					"move_session_copy",

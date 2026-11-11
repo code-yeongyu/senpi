@@ -254,6 +254,7 @@ const SURFACE_AND_ACCOUNT_SCHEMAS = {
 	set_client_info: session("set_client_info", {
 		width: Type.Integer({ minimum: 1, maximum: 100_000 }),
 		capabilities: Opt(Strings),
+		client_id: Opt(Type.String({ minLength: 1, maxLength: 256 })),
 		remoteOrigin: Opt(Type.Object({ deviceId: Id, deviceName: OptId }, { additionalProperties: false })),
 	}),
 };

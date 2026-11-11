@@ -33,6 +33,59 @@ describe("unload counts only other connections", () => {
 		}
 	}, 60_000);
 
+	it("counts a client's own second connection as its own, not as another client (senpi#6443)", async () => {
+		const host = await startWorkerHost(undefined, { socket: true, sessionRuntime });
+		try {
+			const main = await host.connect();
+			const second = await host.connect();
+			for (const connection of [main, second])
+				expect(
+					await connection.request({ type: "set_client_info", width: 80, client_id: "one-client" }),
+				).toMatchObject({ success: true });
+			const opened = await main.request({ type: "open_session", cwd: host.cwd, retain_on_disconnect: true });
+			const sessionId = opened.data?.sessionId;
+			const sessionPath = opened.data?.state?.sessionFile;
+			expect(await second.request({ type: "open_session", cwd: host.cwd, sessionPath })).toMatchObject({
+				success: true,
+				data: { sessionId, attached: true },
+			});
+
+			const dry = await main.request({ type: "unload_session", sessionId, dryRun: true });
+			const unloaded = await main.request({ type: "unload_session", sessionId });
+
+			expect(dry, JSON.stringify(dry)).toMatchObject({ data: { dry_run: true, outcome: "ready", blockers: [] } });
+			expect(unloaded, JSON.stringify(unloaded)).toMatchObject({ data: { outcome: "unloaded" } });
+		} finally {
+			await host.dispose();
+		}
+	}, 60_000);
+
+	it("counts a connection that named another client, and one that named none, as another client (senpi#6443)", async () => {
+		const host = await startWorkerHost(undefined, { socket: true, sessionRuntime });
+		try {
+			const main = await host.connect();
+			const stranger = await host.connect();
+			const unnamed = await host.connect();
+			await main.request({ type: "set_client_info", width: 80, client_id: "one-client" });
+			await stranger.request({ type: "set_client_info", width: 80, client_id: "another-client" });
+			const opened = await main.request({ type: "open_session", cwd: host.cwd, retain_on_disconnect: true });
+			const sessionId = opened.data?.sessionId;
+			const sessionPath = opened.data?.state?.sessionFile;
+			await stranger.request({ type: "open_session", cwd: host.cwd, sessionPath });
+
+			const named = await main.request({ type: "unload_session", sessionId, dryRun: true });
+			await unnamed.request({ type: "open_session", cwd: host.cwd, sessionPath });
+			const both = await main.request({ type: "unload_session", sessionId, dryRun: true });
+
+			expect(named, JSON.stringify(named)).toMatchObject({
+				data: { dry_run: true, outcome: "refused", reason: "attached", detail: "1 other client(s) attached" },
+			});
+			expect(both, JSON.stringify(both)).toMatchObject({ data: { detail: "2 other client(s) attached" } });
+		} finally {
+			await host.dispose();
+		}
+	}, 60_000);
+
 	it("still refuses unload while another connection holds the session", async () => {
 		const host = await startWorkerHost(undefined, { socket: true, sessionRuntime });
 		try {

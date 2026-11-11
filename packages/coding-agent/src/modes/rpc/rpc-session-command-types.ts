@@ -368,6 +368,12 @@ export type RpcSessionCommand =
 			type: "set_client_info";
 			width: number;
 			capabilities?: string[];
+			/**
+			 * Who this client is, the same on every connection it opens (senpi#6443): an opaque string of 1-256
+			 * characters, compared byte for byte and never shown to a model. Holds of connections that share it are
+			 * this caller's own, for the `attached` refusal and the unload dry run. Capability `client_identity`.
+			 */
+			client_id?: string;
 			/** Declared by a relay forwarder for the remote device this connection speaks for (senpi#5475). */
 			remoteOrigin?: RpcRemoteOrigin;
 	  };
