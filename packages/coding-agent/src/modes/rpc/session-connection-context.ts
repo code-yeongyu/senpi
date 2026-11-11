@@ -1,10 +1,13 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { DelegationDescriptor } from "./delegation-record.ts";
 import type { ExtensionOwner, ExtensionOwnerIdentity, ExtensionTransportOwner } from "./extension-owner.ts";
 
 interface CapturedConnection {
 	readonly id: string;
 	readonly owner: ExtensionTransportOwner | undefined;
 	readonly binding?: ExtensionOwner;
+	/** The delegation this line saw when it started (omo-relay-daemon#307): bind/command carry it, never a later lookup. */
+	readonly delegation?: DelegationDescriptor;
 }
 
 /** Capture registrations before awaits; a routing string is never an incarnation. */
@@ -13,12 +16,32 @@ export class SessionConnectionContext {
 
 	private readonly ownerOf: (id: string) => ExtensionTransportOwner | undefined;
 
-	constructor(ownerOf: (id: string) => ExtensionTransportOwner | undefined) {
+	private readonly delegationOf: (id: string) => DelegationDescriptor | undefined;
+
+	constructor(
+		ownerOf: (id: string) => ExtensionTransportOwner | undefined,
+		delegationOf: (id: string) => DelegationDescriptor | undefined = () => undefined,
+	) {
 		this.ownerOf = ownerOf;
+		this.delegationOf = delegationOf;
 	}
 
 	run<T>(id: string, task: () => T): T {
-		return this.storage.run({ id, owner: this.ownerOf(id) }, task);
+		const delegation = this.delegationOf(id);
+		return this.storage.run(
+			{ id, owner: this.ownerOf(id), ...(delegation === undefined ? {} : { delegation }) },
+			task,
+		);
+	}
+
+	/** Host-owned background construction has no requesting transport or inherited delegation. */
+	outside<T>(task: () => T): T {
+		return this.storage.exit(task);
+	}
+
+	/** The delegation the running line captured at its start, or undefined for a connection that never declared. */
+	get delegation(): DelegationDescriptor | undefined {
+		return this.storage.getStore()?.delegation;
 	}
 
 	/**

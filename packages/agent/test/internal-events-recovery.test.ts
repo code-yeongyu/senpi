@@ -8,7 +8,7 @@ import {
 	type AssistantMessageEvent,
 } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { Agent } from "../src/agent.ts";
+import { Agent } from "../src/index.ts";
 import { withEmptyAssistantRecovery } from "../src/empty-assistant-recovery.ts";
 import { createInternalAgentChannel, type OrderedAgentRecord } from "../src/internal-events.ts";
 import {

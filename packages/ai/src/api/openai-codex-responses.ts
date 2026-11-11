@@ -82,6 +82,7 @@ import {
 	processResponsesStream,
 	resolveResponsesDeferredToolsMode,
 	resolveResponsesToolPlacement,
+	ULTRAFAST_DOCUMENTED_MODEL_IDS,
 } from "./openai-responses-shared.ts";
 import {
 	applyExtraBody,
@@ -529,7 +530,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 				startEmitted = true;
 				stream.push({ type: "start", partial: output });
 			}
-			await processStream(response, output, stream, model, grammarToolInputProperties, options);
+			await processStream(response, output, stream, model, grammarToolInputProperties, options, body.service_tier);
 
 			if (options?.signal?.aborted) {
 				throw new Error("Request was aborted");
@@ -683,7 +684,7 @@ function getServiceTierCostMultiplier(
 	// The 2x / 6x figures are the purchased-credit and API rates; the openai-responses lane keeps those.
 	switch (serviceTier) {
 		case "ultrafast":
-			return ["gpt-6-astra", "gpt-6.1-sol"].includes(model.upstreamModelId ?? model.id) ? 8 : 1;
+			return ULTRAFAST_DOCUMENTED_MODEL_IDS.has(model.upstreamModelId ?? model.id) ? 8 : 1;
 		case "flex":
 			return 0.5;
 		case "priority":
@@ -709,20 +710,23 @@ function applyServiceTierPricing(
 	usage.cost.total = usage.cost.input + usage.cost.output + usage.cost.cacheRead + usage.cost.cacheWrite;
 }
 
+/**
+ * The tier a Codex turn was served at. The backend echoes `service_tier:
+ * "default"` or `"auto"` on turns it serves at the sent tier, so a `default`,
+ * `auto` or absent echo carries no information and, like an absent one,
+ * resolves to the tier that was sent. Any other echo (`flex`, `priority`,
+ * `fast`, `ultrafast`, `scale`) is authoritative. The echo cannot reveal a
+ * genuine downgrade, so a downgraded turn is recorded at the sent tier.
+ * Port of the oh-my-pi v18.8.1 fix (204b8f3); senpi#2890.
+ */
 function resolveCodexServiceTier(
 	responseServiceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast" | undefined,
 	requestServiceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast" | undefined,
 ): ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast" | undefined {
-	if (
-		responseServiceTier === "default" &&
-		(requestServiceTier === "flex" ||
-			requestServiceTier === "priority" ||
-			requestServiceTier === "fast" ||
-			requestServiceTier === "ultrafast")
-	) {
+	if (responseServiceTier === undefined || responseServiceTier === "default" || responseServiceTier === "auto") {
 		return requestServiceTier;
 	}
-	return responseServiceTier ?? requestServiceTier;
+	return responseServiceTier;
 }
 
 function resolveCodexUrl(baseUrl?: string): string {
@@ -751,6 +755,10 @@ async function processStream(
 	model: Model<"openai-codex-responses">,
 	grammarToolInputProperties: ReadonlyMap<string, string>,
 	options?: OpenAICodexResponsesOptions,
+	// The tier the request body actually carried after `onPayload` (senpi#2890):
+	// a payload hook such as `/fast` may set `service_tier` without it ever
+	// appearing in `options.serviceTier`, and pricing must fall back to it.
+	sentServiceTier?: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast",
 ): Promise<void> {
 	await processResponsesStream(
 		mapCodexEvents(parseSSE(response, options?.signal), output, model, options?.onProviderStreamEvent),
@@ -758,7 +766,7 @@ async function processStream(
 		stream,
 		model,
 		{
-			serviceTier: options?.serviceTier,
+			serviceTier: sentServiceTier,
 			grammarToolInputProperties,
 			resolveServiceTier: resolveCodexServiceTier,
 			applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
@@ -1660,7 +1668,10 @@ async function processWebSocketStream(
 					stream,
 					model,
 					{
-						serviceTier: options?.serviceTier,
+						// Price against the tier the frame just sent (senpi#2890, port of
+						// oh-my-pi v18.8.1 6428580): `onPayload` may rewrite `service_tier`,
+						// and the requested option no longer describes what went out.
+						serviceTier: requestBody.service_tier,
 						grammarToolInputProperties,
 						resolveServiceTier: resolveCodexServiceTier,
 						applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),

@@ -1,3 +1,185 @@
+## 2026-11-10 - Export the shared Ultrafast documented-model list (senpi#2978)
+
+### What changed
+
+- `packages/ai/src/index.ts`: re-exports `ULTRAFAST_DOCUMENTED_MODEL_IDS` from `./api/openai-responses-shared.ts` so the selection warning in coding-agent reads the same list as the pricing adapters.
+
+### Why
+
+- The warning policy lives in another package and needs the same single list (senpi#2978 item 2).
+
+### Why an extension could not handle it
+
+- The list is a package export, not extension behavior.
+
+### Expected merge conflict zones
+
+- LOW: the one added export line only.
+
+## 2026-11-10 - Cursor capability row for Claude Fable 5.2 (senpi#3893)
+
+### What changed
+
+- `packages/ai/src/cursor/capability-table.ts`: `claude-fable-5-2` takes the same served shape as `claude-fable-5-1` (300k default context, 1M max, thinking/context/effort parameters, low..max levels) until a live AvailableModels capture lists it.
+
+### Why
+
+- Without a row a Cursor-served Fable 5.2 would fall to the 256k default with no effort or thinking controls.
+
+### Why an extension could not handle it
+
+- The capability table is the provider's own static data, read before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the post-2026-10-18 family block of `CURSOR_MODEL_CAPABILITIES`.
+
+## 2026-11-09 - Export the OpenAI 12-hour prompt-cache TTL constant (senpi#6292, closes #6290)
+
+### What changed
+
+- `packages/ai/src/index.ts`: exports `PROMPT_CACHE_TTL_OPENAI_LONG_SECONDS`.
+- `packages/ai/src/openai-responses-compat.ts`: the `supportsLongCacheRetention` doc names `"12h"` on GPT-5.6+.
+
+### Why
+
+- Callers that read the lifetime can compare against the new 12-hour lane.
+
+### Why an extension could not handle it
+
+- Package root exports.
+
+### Expected merge conflict zones
+
+- LOW: one export line and one doc comment.
+
+## 2026-11-05 - Login forwards the reauthorized account name (part of #5003)
+
+### What changed
+
+- `packages/ai/src/models.ts`: `Models.login` passes `LoginOptions.reauthorizeSlot` to `appendLoginSlot`.
+- `Models.login` rethrows `ReauthorizeAccountMismatchError` unwrapped, so the user sees why nothing changed.
+
+### Why
+
+- So a reauthorization restores the selected account instead of adding a copy.
+
+### Why an extension could not handle it
+
+- `Models.login` owns the credential write for every provider.
+
+### Expected merge conflict zones
+
+- The `appendLoginSlot` call inside `Models.login`.
+
+## 2026-11-06 - The warming-eligibility helper is exported from the package root (senpi#1248)
+
+### What changed
+
+- `packages/ai/src/index.ts`: re-exports `supportsAnthropicCacheWarming` from `./utils/prompt-cache-ttl.ts`, so the builtin keep-alive in `packages/coding-agent` decides warmth eligibility with the same helper its warm request uses.
+
+### Why
+
+- Two independent host checks let the keep-alive pre-flight disagree with `warmPromptCache`: one warmed a host the other refused, which is how an Anthropic-compatible gateway stayed cold while its requests carried `cache_control` (senpi#1248).
+
+### Why an extension could not handle it
+
+- A root barrel export is package surface, outside any extension.
+
+### Expected merge conflict zones
+
+- LOW: one name in the `prompt-cache-ttl` export list.
+
+## 2026-10-30 - Carry credential-selected chat transport into dispatch (part of senpi#5003)
+
+### What changed
+
+- `packages/ai/src/models.ts`: apply an optional credential-selected chat API alongside its base URL.
+
+### Why
+
+- `packages/ai/src/models.ts`: a model's catalog API cannot choose the route of the selected account.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/models.ts`: auth resolution and provider dispatch are shared core operations.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/models.ts`: `applyAuth`.
+
+## 2026-10-30 - Add an explicit credential-route switch for SIWC (senpi#5003 W8)
+
+### What changed
+
+- `packages/ai/src/types.ts`: add optional `OpenAIResponsesCompat.siwc`. The provider integration sets it on the model for a selected SIWC credential route; it defaults to false.
+
+### Why
+
+- `packages/ai/src/types.ts`: SIWC placement is still separate work. Provider IDs and token prefixes cannot identify the selected route without guessing.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/types.ts`: the exported compatibility contract must carry the route to the Responses adapter.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/types.ts`: the fork's `OpenAIResponsesCompat` extension.
+
+## 2026-10-30 - Keep retained SIWC hints out of CLI output (senpi#5046)
+
+### What changed
+
+- `packages/ai/src/cli.ts` prints a hint-free authorization URL through the new browser-safe `packages/ai/src/utils/oauth-url.ts` helper.
+
+### Why
+
+- `packages/ai/src/cli.ts` must not log retained ID tokens inside authorization URLs.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/cli.ts` owns its authorization URL console output.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/cli.ts`: auth_url output; `packages/ai/src/utils/oauth-url.ts`: new helper.
+
+## 2026-10-30 - Session-affinity key option for Anthropic Messages (senpi#2553)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `StreamOptions` gains `sessionAffinityKey?: string`, an opaque routing key that Anthropic Messages sends in its session-affinity header instead of `sessionId`.
+
+### Why
+
+- A gateway that spreads requests over several upstream accounts needs a stable per-session key to keep one session on one account and its prompt cache; the header carried the raw session id, and only for named gateways (senpi#2553).
+
+### Why an extension could not handle it
+
+- The affinity header is built inside the Anthropic client construction from the session id; no hook replaces that value without also changing `sessionId`, which keys per-session caches and resource cleanup.
+
+### Expected merge conflict zones
+
+- LOW: the `sessionId` doc block in `StreamOptions`.
+
+## 2026-10-27 - Models.login stamps a login id that refreshes never mint (senpi#4099)
+
+### What changed
+
+- `packages/ai/src/models.ts`: `Models.login` stamps the credential it commits through `stampLogin(appendLoginSlot(...))`, so every sign-in stores a fresh `loginId`.
+
+### Why
+
+- Retry fallback needs a durable "someone signed in" signal that a token refresh never produces (senpi#4099). The material HMAC moves on every refresh.
+
+### Why an extension could not handle it
+
+- Extension login flows commit through `Models.login`, and only that write path knows a sign-in happened.
+
+### Expected merge conflict zones
+
+- The `appendLoginSlot` call inside `Models.login`'s `modify`.
+
 ## 2026-10-30 - Stable SIWC host identity and app name (senpi#5014, part of #5003)
 
 ### What changed

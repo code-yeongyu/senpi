@@ -1,11 +1,71 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { openaiChatGPTOAuth } from "../src/auth/oauth/openai-chatgpt.ts";
+import { createServer, get, type Server } from "node:http";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
+import { createOpenAIChatGPTOAuth, openaiChatGPTOAuth } from "../src/auth/oauth/openai-chatgpt.ts";
+import { OpenAIIdTokenValidationError } from "../src/auth/oauth/openai-id-token.ts";
+import { resolveProviderAuth } from "../src/auth/resolve.ts";
 import type { OAuthCredential, ProviderAuthInteraction } from "../src/auth/types.ts";
+import { createModels, createProvider } from "../src/models.ts";
+import {
+	classifyOAuthRefreshFailure,
+	isOAuthRefreshUnavailableError,
+	OAuthClientConfigurationError,
+	OAuthReauthorizationRequiredError,
+	OAuthTokenEndpointError,
+} from "../src/utils/oauth-refresh-error.ts";
 
 const TOKEN_URL = "https://auth.openai.com/api/accounts/oauth/token";
 const REQUIRED_SCOPE = "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct";
 const neverAbortedSignal = new AbortController().signal;
 const DEVICE_ID = "e61bbe28-07ef-466d-8e5d-a344f94ab305";
+const ISSUER = "https://auth.openai.com";
+const JWKS_URL = `${ISSUER}/test-jwks`;
+const loopbackFetch = fetch;
+let signingKey: CryptoKey;
+let publicKey: JsonWebKey;
+let pendingNonce = "";
+
+beforeAll(async () => {
+	const pair = await crypto.subtle.generateKey(
+		{ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+		true,
+		["sign", "verify"],
+	);
+	signingKey = pair.privateKey;
+	publicKey = await crypto.subtle.exportKey("jwk", pair.publicKey);
+});
+
+async function signedIdToken(claims: Record<string, unknown> = {}, badSignature = false): Promise<string> {
+	const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+	const input = `${encode({ alg: "RS256", kid: "test-key" })}.${encode({
+		iss: ISSUER,
+		aud: "oaiapp_issued",
+		exp: Math.floor(Date.now() / 1000) + 3600,
+		nonce: pendingNonce,
+		sub: "test-subject",
+		email: "user@example.test",
+		...claims,
+	})}`;
+	const signature = new Uint8Array(
+		await crypto.subtle.sign("RSASSA-PKCS1-v1_5", signingKey, new TextEncoder().encode(input)),
+	);
+	if (badSignature) signature[0] ^= 1;
+	return `${input}.${Buffer.from(signature).toString("base64url")}`;
+}
+
+async function listenOnAssignedPort(server: Server): Promise<number> {
+	await new Promise<void>((resolve, reject) => {
+		server.once("error", reject);
+		server.listen(0, "127.0.0.1", resolve);
+	});
+	const address = server.address();
+	if (!address || typeof address === "string") throw new Error("Expected a TCP listener");
+	return address.port;
+}
+
+async function closeServer(server: Server): Promise<void> {
+	await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+}
 
 function jsonResponse(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -21,10 +81,21 @@ function tokenResponse(scope = REQUIRED_SCOPE) {
 	};
 }
 
-function stubTokenEndpoint(response: unknown, inspect?: (body: URLSearchParams) => void) {
+function stubTokenEndpoint(
+	response: unknown,
+	inspect?: (body: URLSearchParams) => void,
+	claims?: Record<string, unknown>,
+	badSignature = false,
+) {
 	const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-		expect(input instanceof Request ? input.url : String(input)).toBe(TOKEN_URL);
+		const url = input instanceof Request ? input.url : String(input);
+		if (url === `${ISSUER}/.well-known/openid-configuration`) return jsonResponse({ jwks_uri: JWKS_URL });
+		if (url === JWKS_URL) return jsonResponse({ keys: [{ ...publicKey, kid: "test-key", alg: "RS256" }] });
+		expect(url).toBe(TOKEN_URL);
 		inspect?.(new URLSearchParams(String(init?.body)));
+		if (typeof response === "object" && response !== null && "id_token" in response) {
+			return jsonResponse({ ...response, id_token: await signedIdToken(claims, badSignature) });
+		}
 		return jsonResponse(response);
 	});
 	vi.stubGlobal("fetch", fetchMock);
@@ -33,14 +104,22 @@ function stubTokenEndpoint(response: unknown, inspect?: (body: URLSearchParams) 
 
 function loginInteraction(options?: {
 	callbackClientId?: string;
+	callbackError?: string;
+	callbackState?: string;
+	callbackTransport?: "manual" | "loopback";
 	onAuthorize?: (url: URL) => void;
+	onCallback?: (url: URL) => void;
 }): ProviderAuthInteraction {
 	let authorizeUrl: URL | undefined;
 	return {
 		signal: neverAbortedSignal,
 		notify: (event) => {
+			if (event.type === "info" && options?.callbackTransport === "loopback") {
+				throw new Error(`Loopback test listener unavailable: ${event.message}`);
+			}
 			if (event.type !== "auth_url") return;
 			authorizeUrl = new URL(event.url);
+			pendingNonce = authorizeUrl.searchParams.get("nonce") ?? "";
 			options?.onAuthorize?.(authorizeUrl);
 		},
 		prompt: async (prompt) => {
@@ -48,8 +127,27 @@ function loginInteraction(options?: {
 			if (!authorizeUrl) throw new Error("Authorization URL was not emitted before the callback prompt");
 			const callback = new URL(authorizeUrl.searchParams.get("redirect_uri") ?? "");
 			callback.searchParams.set("code", "authorization-code");
-			callback.searchParams.set("state", authorizeUrl.searchParams.get("state") ?? "");
+			callback.searchParams.set("state", options?.callbackState ?? authorizeUrl.searchParams.get("state") ?? "");
+			if (options?.callbackError) {
+				callback.searchParams.delete("code");
+				callback.searchParams.set("error", options.callbackError);
+			}
 			if (options?.callbackClientId) callback.searchParams.set("client_id", options.callbackClientId);
+			options?.onCallback?.(callback);
+			if (options?.callbackTransport === "loopback") {
+				const expectedState = authorizeUrl.searchParams.get("state") ?? "";
+				return new Promise<string>((_resolve, reject) => {
+					prompt.signal?.addEventListener("abort", () => reject(new Error("Prompt cancelled")), { once: true });
+					void (async () => {
+						if (options.callbackState) {
+							const invalid = await loopbackFetch(callback);
+							expect(invalid.status).toBe(400);
+							callback.searchParams.set("state", expectedState);
+						}
+						await loopbackFetch(callback);
+					})().catch(reject);
+				});
+			}
 			return callback.toString();
 		},
 	};
@@ -67,8 +165,17 @@ function connectedCredential(): OAuthCredential {
 }
 
 describe("OpenAI ChatGPT OAuth", () => {
+	let preferredCallbackPort: number;
+
+	beforeEach(async () => {
+		const reservation = createServer();
+		preferredCallbackPort = await listenOnAssignedPort(reservation);
+		await closeServer(reservation);
+	});
+
 	afterEach(() => {
 		vi.unstubAllGlobals();
+		vi.restoreAllMocks();
 	});
 
 	it("registers a user-owned client and stores its issued ID and granted scopes", async () => {
@@ -85,14 +192,18 @@ describe("OpenAI ChatGPT OAuth", () => {
 					authorizeUrl = url;
 				},
 			}),
-			{ getDeviceId: () => DEVICE_ID, appName: "Configured Agent" },
+			{ getDeviceId: () => DEVICE_ID, preferredCallbackPort, appName: "Configured Agent" },
 		);
 
 		expect(authorizeUrl?.searchParams.get("client_id")).toBe("dynamic_agent_client");
 		expect(authorizeUrl?.searchParams.get("agent_name_hint")).toBe("Configured Agent");
 		expect(authorizeUrl?.searchParams.get("ext_agent_host_id")).toBe(`urn:uuid:${DEVICE_ID}`);
 		expect(authorizeUrl?.searchParams.get("scope")).toBe(REQUIRED_SCOPE);
-		expect(authorizeUrl?.searchParams.get("redirect_uri")).toBe("http://127.0.0.1:1455/auth/callback");
+		expect(authorizeUrl?.searchParams.has("prompt")).toBe(false);
+		expect(authorizeUrl?.searchParams.has("force_reconsent")).toBe(false);
+		const redirectUri = `http://127.0.0.1:${preferredCallbackPort}/auth/callback`;
+		expect(authorizeUrl?.searchParams.get("redirect_uri")).toBe(redirectUri);
+		expect(exchangeBody?.get("redirect_uri")).toBe(redirectUri);
 		expect(authorizeUrl?.searchParams.get("resource")).toBe("https://api.openai.com/v1");
 		expect(authorizeUrl?.searchParams.get("code_challenge_method")).toBe("S256");
 		expect(exchangeBody?.get("client_id")).toBe("oaiapp_issued");
@@ -105,14 +216,248 @@ describe("OpenAI ChatGPT OAuth", () => {
 			refresh: "refresh-token",
 			clientId: "oaiapp_issued",
 			scopes: REQUIRED_SCOPE.split(" "),
+			subject: "test-subject",
+			email: "user@example.test",
+			issuer: ISSUER,
 		});
+		expect(credential.idToken).toEqual(expect.stringMatching(/^[^.]+\.[^.]+\.[^.]+$/));
 	});
+
+	it.each([
+		["bad signature", {}, true],
+		["wrong issuer", { iss: "https://other.example.test" }, false],
+		["wrong audience", { aud: "oaiapp_other" }, false],
+		["wrong audience array", { aud: ["oaiapp_other"] }, false],
+		["expired token", { exp: 0 }, false],
+		["missing expiration", { exp: undefined }, false],
+		["wrong nonce", { nonce: "another-attempt" }, false],
+		["missing subject", { sub: "" }, false],
+	] as const)("rejects an ID token with %s before returning credentials", async (_name, claims, badSignature) => {
+		stubTokenEndpoint(tokenResponse(), undefined, claims, badSignature);
+		await expect(
+			openaiChatGPTOAuth.login(loginInteraction({ callbackClientId: "oaiapp_issued" }), {
+				getDeviceId: () => DEVICE_ID,
+			}),
+		).rejects.toMatchObject({ name: "OpenAIIdTokenValidationError" });
+	});
+
+	// #5003 W3: the selected registration, not email, binds a returning sign-in.
+	it.each([
+		[undefined, "manual"],
+		["oaiapp_existing", "manual"],
+		[undefined, "loopback"],
+		["oaiapp_existing", "loopback"],
+	] as const)("reauthorizes with callback client %s over %s", async (callbackClientId, callbackTransport) => {
+		const existing = {
+			...connectedCredential(),
+			subject: "test-subject",
+			email: "saved@example.test",
+			idToken: "retained-id-token",
+		};
+		let authorizeUrl: URL | undefined;
+		let exchangeBody: URLSearchParams | undefined;
+		stubTokenEndpoint(
+			tokenResponse(),
+			(body) => {
+				exchangeBody = body;
+			},
+			{ aud: existing.clientId },
+		);
+		const options = { getDeviceId: () => DEVICE_ID, reauthorize: existing };
+		const credential = await openaiChatGPTOAuth.login(
+			loginInteraction({
+				callbackClientId,
+				callbackTransport,
+				onAuthorize: (url) => {
+					authorizeUrl = url;
+				},
+			}),
+			options,
+		);
+		expect(authorizeUrl?.searchParams.get("client_id")).toBe(existing.clientId);
+		expect(authorizeUrl?.searchParams.get("id_token_hint")).toBe(existing.idToken);
+		expect(authorizeUrl?.searchParams.get("login_hint")).toBe(existing.email);
+		expect(authorizeUrl?.searchParams.get("ext_agent_host_id")).toBe(`urn:uuid:${DEVICE_ID}`);
+		expect(authorizeUrl?.searchParams.has("agent_name_hint")).toBe(false);
+		expect(exchangeBody?.get("client_id")).toBe(existing.clientId);
+		expect(credential).toMatchObject({ clientId: existing.clientId, subject: existing.subject });
+	});
+
+	it.each(["manual", "loopback"] as const)(
+		"rejects another callback client over %s before exchange",
+		async (callbackTransport) => {
+			const fetchMock = stubTokenEndpoint(tokenResponse());
+			const options = {
+				getDeviceId: () => DEVICE_ID,
+				reauthorize: { ...connectedCredential(), subject: "test-subject" },
+			};
+			await expect(
+				openaiChatGPTOAuth.login(
+					loginInteraction({ callbackClientId: "oaiapp_other", callbackTransport }),
+					options,
+				),
+			).rejects.toMatchObject({ name: "OpenAIReauthorizationError", code: "client_mismatch" });
+			expect(fetchMock).not.toHaveBeenCalled();
+		},
+	);
+
+	it("keeps the stored account untouched when the newly verified subject differs", async () => {
+		const credentials = new InMemoryCredentialStore();
+		const existing = { ...connectedCredential(), subject: "selected-subject", email: "user@example.test" };
+		await credentials.modify("test-siwc", async () => existing);
+		const before = structuredClone(await credentials.read("test-siwc"));
+		const models = createModels({ credentials });
+		models.setProvider(
+			createProvider({
+				id: "test-siwc",
+				auth: { oauth: openaiChatGPTOAuth },
+				models: [],
+				api: {
+					stream: () => {
+						throw new Error("No inference in OAuth tests");
+					},
+					streamSimple: () => {
+						throw new Error("No inference in OAuth tests");
+					},
+				},
+			}),
+		);
+		stubTokenEndpoint(tokenResponse(), undefined, { aud: existing.clientId, sub: "other-subject" });
+		const options = { getDeviceId: () => DEVICE_ID, reauthorize: existing };
+		await expect(
+			models.login("test-siwc", "oauth", loginInteraction({ callbackClientId: existing.clientId }), options),
+		).rejects.toMatchObject({ name: "OpenAIReauthorizationError", code: "subject_mismatch" });
+		expect(await credentials.read("test-siwc")).toEqual(before);
+	});
+
+	it("reauthorizes a signed-out registration without retained hints", async () => {
+		const existing = { ...connectedCredential(), subject: "test-subject" };
+		stubTokenEndpoint(tokenResponse(), undefined, { aud: existing.clientId });
+		const options = { getDeviceId: () => DEVICE_ID, reauthorize: existing };
+		await expect(
+			openaiChatGPTOAuth.login(
+				loginInteraction({
+					onAuthorize: (url) => {
+						expect(url.searchParams.get("client_id")).toBe(existing.clientId);
+						expect(url.searchParams.has("id_token_hint")).toBe(false);
+						expect(url.searchParams.has("login_hint")).toBe(false);
+						expect(url.searchParams.has("agent_name_hint")).toBe(false);
+					},
+				}),
+				options,
+			),
+		).resolves.toMatchObject({ subject: existing.subject });
+	});
+
+	it.each([
+		{ clientId: undefined, subject: "test-subject" },
+		{ clientId: "dynamic_agent_client", subject: "test-subject" },
+		{ clientId: "oaiapp_existing", subject: undefined },
+	])("rejects an incomplete saved identity before authorization", async (identity) => {
+		const notify = vi.fn();
+		const options = { getDeviceId: () => DEVICE_ID, reauthorize: { ...connectedCredential(), ...identity } };
+		await expect(openaiChatGPTOAuth.login({ ...loginInteraction(), notify }, options)).rejects.toMatchObject({
+			name: "OpenAIReauthorizationError",
+			code: "invalid_account",
+		});
+		expect(notify).not.toHaveBeenCalled();
+	});
+
+	it("uses injected fetch and clock, accepts audience arrays, and expires its discovery and JWKS cache", async () => {
+		let now = 1_900_000_000_000;
+		let rawIdToken = "";
+		const fetchMock = vi.fn(async (url: string) => {
+			if (url === `${ISSUER}/.well-known/openid-configuration`) return jsonResponse({ jwks_uri: JWKS_URL });
+			if (url === JWKS_URL) return jsonResponse({ keys: [{ ...publicKey, kid: "test-key", alg: "RS256" }] });
+			expect(url).toBe(TOKEN_URL);
+			rawIdToken = await signedIdToken({ aud: ["other-client", "oaiapp_issued"], exp: now / 1000 + 3600 });
+			return jsonResponse({ ...tokenResponse(), id_token: rawIdToken });
+		});
+		const flow = createOpenAIChatGPTOAuth({ fetch: fetchMock, now: () => now });
+		const login = () =>
+			flow.login(loginInteraction({ callbackClientId: "oaiapp_issued" }), { getDeviceId: () => DEVICE_ID });
+		const credential = await login();
+		expect(credential).toMatchObject({
+			subject: "test-subject",
+			email: "user@example.test",
+			issuer: ISSUER,
+			clientId: "oaiapp_issued",
+			idToken: rawIdToken,
+			expires: now + (3600 - 180) * 1000,
+		});
+		await login();
+		expect(fetchMock.mock.calls.filter(([url]) => url === JWKS_URL)).toHaveLength(1);
+		expect(fetchMock.mock.calls.filter(([url]) => url.endsWith("openid-configuration"))).toHaveLength(1);
+		now += 5 * 60 * 1000;
+		await login();
+		expect(fetchMock.mock.calls.filter(([url]) => url === JWKS_URL)).toHaveLength(2);
+		expect(fetchMock.mock.calls.filter(([url]) => url.endsWith("openid-configuration"))).toHaveLength(2);
+	});
+
+	it("rejects expiration at the injected clock boundary", async () => {
+		const now = 1_900_000_000_000;
+		const fetchMock = stubTokenEndpoint(tokenResponse(), undefined, { exp: now / 1000 });
+		const flow = createOpenAIChatGPTOAuth({ fetch: fetchMock, now: () => now });
+		await expect(
+			flow.login(loginInteraction({ callbackClientId: "oaiapp_issued" }), { getDeviceId: () => DEVICE_ID }),
+		).rejects.toBeInstanceOf(OpenAIIdTokenValidationError);
+	});
+
+	it("reloads JWKS once for an unfamiliar signing key", async () => {
+		let keyRequests = 0;
+		const flow = createOpenAIChatGPTOAuth({
+			fetch: async (url) => {
+				if (url.endsWith("openid-configuration")) return jsonResponse({ jwks_uri: JWKS_URL });
+				if (url === JWKS_URL) {
+					keyRequests++;
+					return jsonResponse({ keys: keyRequests === 1 ? [] : [{ ...publicKey, kid: "test-key" }] });
+				}
+				expect(url).toBe(TOKEN_URL);
+				return jsonResponse({ ...tokenResponse(), id_token: await signedIdToken() });
+			},
+		});
+		await expect(
+			flow.login(loginInteraction({ callbackClientId: "oaiapp_issued" }), { getDeviceId: () => DEVICE_ID }),
+		).resolves.toMatchObject({ subject: "test-subject" });
+		expect(keyRequests).toBe(2);
+	});
+
+	it.each(["discovery failure", "JWKS failure", "unknown key"])(
+		"rejects %s without returning credentials",
+		async (failure) => {
+			const flow = createOpenAIChatGPTOAuth({
+				fetch: async (url) => {
+					if (url.endsWith("openid-configuration")) {
+						return failure === "discovery failure" ? jsonResponse({}, 503) : jsonResponse({ jwks_uri: JWKS_URL });
+					}
+					if (url === JWKS_URL) return jsonResponse({ keys: [] }, failure === "JWKS failure" ? 503 : 200);
+					expect(url).toBe(TOKEN_URL);
+					return jsonResponse({ ...tokenResponse(), id_token: await signedIdToken() });
+				},
+			});
+			await expect(
+				flow.login(loginInteraction({ callbackClientId: "oaiapp_issued" }), { getDeviceId: () => DEVICE_ID }),
+			).rejects.toBeInstanceOf(OpenAIIdTokenValidationError);
+		},
+	);
+
+	it.each(["", "not-a-jwt", "e30.e30.e30", "%%%.e30.e30"])(
+		"rejects malformed ID token %j with a typed error",
+		async (idToken) => {
+			const flow = createOpenAIChatGPTOAuth({
+				fetch: async () => jsonResponse({ ...tokenResponse(), id_token: idToken }),
+			});
+			await expect(
+				flow.login(loginInteraction({ callbackClientId: "oaiapp_issued" }), { getDeviceId: () => DEVICE_ID }),
+			).rejects.toBeInstanceOf(OpenAIIdTokenValidationError);
+		},
+	);
 
 	// senpi#5003: a host keeps its identity across account registrations.
 	it("reuses the installation host ID across two sign-ins", async () => {
 		const hostIds: (string | null)[] = [];
-		stubTokenEndpoint(tokenResponse());
 		for (const clientId of ["oaiapp_first", "oaiapp_second"]) {
+			stubTokenEndpoint(tokenResponse(), undefined, { aud: clientId });
 			await openaiChatGPTOAuth.login(
 				loginInteraction({
 					callbackClientId: clientId,
@@ -127,20 +472,238 @@ describe("OpenAI ChatGPT OAuth", () => {
 	it("rejects registration without an issued client ID", async () => {
 		const fetchMock = stubTokenEndpoint(tokenResponse());
 
-		await expect(openaiChatGPTOAuth.login(loginInteraction(), { getDeviceId: () => DEVICE_ID })).rejects.toThrow(
-			"registration callback did not contain an issued client ID",
-		);
+		await expect(
+			openaiChatGPTOAuth.login(loginInteraction(), { getDeviceId: () => DEVICE_ID, preferredCallbackPort }),
+		).rejects.toThrow("registration callback did not contain an issued client ID");
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
-	it("rejects a token response that did not grant direct token use", async () => {
+	// senpi#5003 W4: exercise real binding, not a mocked listener choosing its own port.
+	it("receives the browser callback on a free port when the preferred port is occupied", async () => {
+		const occupied = createServer();
+		const occupiedPort = await listenOnAssignedPort(occupied);
+		let redirectUri = "";
+		let exchangeBody: URLSearchParams | undefined;
+		stubTokenEndpoint(
+			tokenResponse(),
+			(body) => {
+				exchangeBody = body;
+			},
+			{ aud: "oaiapp_browser" },
+		);
+		let resolveResponse!: (status: number | undefined) => void;
+		const responseStatus = new Promise<number | undefined>((resolve) => {
+			resolveResponse = resolve;
+		});
+		let authorizeUrl: URL | undefined;
+		try {
+			await openaiChatGPTOAuth.login(
+				{
+					signal: neverAbortedSignal,
+					notify: (event) => {
+						if (event.type !== "auth_url") return;
+						authorizeUrl = new URL(event.url);
+						pendingNonce = authorizeUrl.searchParams.get("nonce") ?? "";
+						redirectUri = authorizeUrl.searchParams.get("redirect_uri") ?? "";
+						const redirect = new URL(redirectUri);
+						expect(redirect.hostname).toBe("127.0.0.1");
+						expect(redirect.pathname).toBe("/auth/callback");
+						expect(redirect.port).not.toBe(String(occupiedPort));
+						expect(Number(redirect.port)).toBeGreaterThan(0);
+					},
+					prompt: (prompt) =>
+						new Promise<string>((_resolve, reject) => {
+							prompt.signal?.addEventListener("abort", () => reject(new Error("Prompt cancelled")), {
+								once: true,
+							});
+							const callback = new URL(redirectUri);
+							callback.search = new URLSearchParams({
+								code: "browser-code",
+								state: authorizeUrl?.searchParams.get("state") ?? "",
+								client_id: "oaiapp_browser",
+							}).toString();
+							get(callback, (response) => {
+								response.resume();
+								resolveResponse(response.statusCode);
+							}).on("error", reject);
+						}),
+				},
+				{ getDeviceId: () => DEVICE_ID, preferredCallbackPort: occupiedPort },
+			);
+			expect(await responseStatus).toBe(200);
+			expect(exchangeBody?.get("redirect_uri")).toBe(redirectUri);
+			expect(exchangeBody?.get("code")).toBe("browser-code");
+			expect(exchangeBody?.get("client_id")).toBe("oaiapp_browser");
+		} finally {
+			await closeServer(occupied);
+		}
+	});
+
+	it.each(["/auth/callback", "/callback"])(
+		"validates the pasted fallback URI with path %s when the preferred port is occupied",
+		async (path) => {
+			const occupied = createServer();
+			const occupiedPort = await listenOnAssignedPort(occupied);
+			let redirectUri = "";
+			let exchangeBody: URLSearchParams | undefined;
+			const fetchMock = stubTokenEndpoint(tokenResponse(), (body) => {
+				exchangeBody = body;
+			});
+			try {
+				const login = openaiChatGPTOAuth.login(
+					loginInteraction({
+						callbackClientId: "oaiapp_issued",
+						onAuthorize: (url) => {
+							redirectUri = url.searchParams.get("redirect_uri") ?? "";
+							expect(new URL(redirectUri).port).not.toBe(String(occupiedPort));
+						},
+						onCallback: (url) => {
+							url.pathname = path;
+						},
+					}),
+					{ getDeviceId: () => DEVICE_ID, preferredCallbackPort: occupiedPort },
+				);
+				if (path === "/auth/callback") {
+					await expect(login).resolves.toMatchObject({ clientId: "oaiapp_issued" });
+					expect(exchangeBody?.get("redirect_uri")).toBe(redirectUri);
+				} else {
+					await expect(login).rejects.toThrow("The pasted callback URL must start with");
+					expect(fetchMock).not.toHaveBeenCalled();
+				}
+			} finally {
+				await closeServer(occupied);
+			}
+		},
+	);
+
+	it("keeps a verified sign-in without direct scope but refuses request auth", async () => {
 		stubTokenEndpoint(tokenResponse("openid profile email offline_access resource.invoke"));
 
+		const credential = await openaiChatGPTOAuth.login(loginInteraction({ callbackClientId: "oaiapp_issued" }), {
+			getDeviceId: () => DEVICE_ID,
+		});
+		expect(credential).toMatchObject({
+			subject: "test-subject",
+			clientId: "oaiapp_issued",
+			access: "access-token",
+			refresh: "refresh-token",
+			planUsageEnabled: false,
+		});
+		expect(credential.idToken).toBeTruthy();
+		await expect(openaiChatGPTOAuth.toAuth(credential)).rejects.toMatchObject({
+			name: "OpenAIPlanUsageNotEnabledError",
+			code: "plan_usage_not_enabled",
+			recovery: ["enable_plan_usage", "use_api_key"],
+		});
+	});
+
+	it.each(["manual", "loopback"] as const)(
+		"stops a state-validated consent decline on the %s callback without exchanging",
+		async (transport) => {
+			const fetchToken = vi.fn();
+			const flow = createOpenAIChatGPTOAuth({ fetch: fetchToken });
+			await expect(
+				flow.login(
+					loginInteraction({
+						callbackError: "access_denied",
+						callbackTransport: transport === "loopback" ? transport : undefined,
+					}),
+					{ getDeviceId: () => DEVICE_ID },
+				),
+			).rejects.toMatchObject({ name: "OpenAIConsentDeclinedError", code: "consent_declined" });
+			expect(fetchToken).not.toHaveBeenCalled();
+		},
+	);
+
+	it("validates state before classifying a pasted consent decline", async () => {
+		const fetchToken = vi.fn();
+		const flow = createOpenAIChatGPTOAuth({ fetch: fetchToken });
 		await expect(
-			openaiChatGPTOAuth.login(loginInteraction({ callbackClientId: "oaiapp_issued" }), {
+			flow.login(loginInteraction({ callbackError: "access_denied", callbackState: "wrong-state" }), {
 				getDeviceId: () => DEVICE_ID,
+				preferredCallbackPort,
 			}),
-		).rejects.toThrow("grant did not include chatgpt.tokens.use.direct");
+		).rejects.toThrow("OAuth state mismatch");
+		expect(fetchToken).not.toHaveBeenCalled();
+	});
+
+	it("ignores an unrelated loopback decline until a state-matching callback arrives", async () => {
+		const fetchToken = vi.fn();
+		const flow = createOpenAIChatGPTOAuth({ fetch: fetchToken });
+		await expect(
+			flow.login(
+				loginInteraction({
+					callbackError: "access_denied",
+					callbackState: "wrong-state",
+					callbackTransport: "loopback",
+				}),
+				{ getDeviceId: () => DEVICE_ID },
+			),
+		).rejects.toMatchObject({ code: "consent_declined" });
+		expect(fetchToken).not.toHaveBeenCalled();
+	});
+
+	it("requests explicit plan consent with the saved client ID and complete scopes", async () => {
+		let authorizeUrl: URL | undefined;
+		stubTokenEndpoint(tokenResponse(), (body) => expect(body.get("client_id")).toBe("oaiapp_issued"));
+		const credential = await openaiChatGPTOAuth.login(
+			loginInteraction({ onAuthorize: (url) => (authorizeUrl = url) }),
+			{ getDeviceId: () => DEVICE_ID, planUsageConsent: { clientId: "oaiapp_issued" } },
+		);
+		expect(authorizeUrl?.searchParams.get("client_id")).toBe("oaiapp_issued");
+		expect(authorizeUrl?.searchParams.get("scope")).toBe(REQUIRED_SCOPE);
+		expect(authorizeUrl?.searchParams.get("prompt")).toBe("consent");
+		expect(authorizeUrl?.searchParams.has("force_reconsent")).toBe(false);
+		expect(credential.planUsageEnabled).toBe(true);
+		expect(await openaiChatGPTOAuth.toAuth(credential)).toEqual({ apiKey: "access-token" });
+	});
+
+	it("rejects a different issued client ID during explicit consent", async () => {
+		const fetchToken = vi.fn();
+		const flow = createOpenAIChatGPTOAuth({ fetch: fetchToken });
+		await expect(
+			flow.login(loginInteraction({ callbackClientId: "oaiapp_other" }), {
+				getDeviceId: () => DEVICE_ID,
+				planUsageConsent: { clientId: "oaiapp_issued" },
+			}),
+		).rejects.toThrow("client ID mismatch");
+		expect(fetchToken).not.toHaveBeenCalled();
+	});
+
+	it.each(["", "dynamic_agent_client"])("rejects consent without an issued client ID (%s)", async (clientId) => {
+		await expect(
+			openaiChatGPTOAuth.login(loginInteraction(), {
+				getDeviceId: () => DEVICE_ID,
+				planUsageConsent: { clientId },
+			}),
+		).rejects.toThrow("requires the saved issued client ID");
+	});
+
+	it("accepts an older direct-scope credential without the optional plan flag", async () => {
+		expect(await openaiChatGPTOAuth.toAuth(connectedCredential())).toEqual({ apiKey: "old-access" });
+	});
+
+	it("refuses a credential explicitly marked disabled despite retained scopes", async () => {
+		await expect(
+			openaiChatGPTOAuth.toAuth({ ...connectedCredential(), planUsageEnabled: false }),
+		).rejects.toMatchObject({ code: "plan_usage_not_enabled" });
+	});
+
+	it.each([false, undefined])("refuses missing direct scope even with plan flag %s", async (planUsageEnabled) => {
+		await expect(
+			openaiChatGPTOAuth.toAuth({ ...connectedCredential(), scopes: ["openid"], planUsageEnabled }),
+		).rejects.toMatchObject({ code: "plan_usage_not_enabled" });
+	});
+
+	it("rechecks plan permission on refresh in both directions", async () => {
+		stubTokenEndpoint(tokenResponse("openid profile email"));
+		const disabled = await openaiChatGPTOAuth.refresh(connectedCredential(), neverAbortedSignal);
+		expect(disabled.planUsageEnabled).toBe(false);
+		await expect(openaiChatGPTOAuth.toAuth(disabled)).rejects.toMatchObject({ code: "plan_usage_not_enabled" });
+		stubTokenEndpoint(tokenResponse());
+		const enabled = await openaiChatGPTOAuth.refresh(disabled, neverAbortedSignal);
+		expect(enabled.planUsageEnabled).toBe(true);
+		expect(await openaiChatGPTOAuth.toAuth(enabled)).toEqual({ apiKey: "access-token" });
 	});
 
 	it("requires a device ID before starting authorization", async () => {
@@ -170,29 +733,269 @@ describe("OpenAI ChatGPT OAuth", () => {
 		);
 	});
 
-	it("refreshes with the credential's issued client ID and stores replacement scopes", async () => {
-		let refreshBody: URLSearchParams | undefined;
-		stubTokenEndpoint({ ...tokenResponse(), access_token: "new-access", refresh_token: "new-refresh" }, (body) => {
-			refreshBody = body;
+	it.each(["oaiapp_existing", "oaiapp_second"])(
+		"refreshes and atomically persists the token set for %s",
+		async (clientId) => {
+			const now = 1_800_000_000_000;
+			vi.spyOn(Date, "now").mockReturnValue(now);
+			const store = new InMemoryCredentialStore();
+			await store.modify("siwc-fixture", async () => ({ ...connectedCredential(), clientId }));
+			let refreshBody: URLSearchParams | undefined;
+			const scope = "resource.invoke chatgpt.tokens.use.direct";
+			stubTokenEndpoint(
+				{ ...tokenResponse(scope), access_token: "new-access", refresh_token: "new-refresh" },
+				(body) => {
+					refreshBody = body;
+				},
+			);
+
+			const result = await resolveProviderAuth({ id: "siwc-fixture", auth: { oauth: openaiChatGPTOAuth } }, store, {
+				env: async () => undefined,
+				fileExists: async () => false,
+			});
+			expect(result?.auth.apiKey).toBe("new-access");
+
+			expect(refreshBody?.get("grant_type")).toBe("refresh_token");
+			expect(refreshBody?.get("client_id")).toBe(clientId);
+			expect(refreshBody?.get("refresh_token")).toBe("old-refresh");
+			expect(refreshBody?.get("resource")).toBe("https://api.openai.com/v1");
+			expect(refreshBody?.has("scope")).toBe(false);
+			expect(await store.read("siwc-fixture")).toEqual({
+				type: "oauth",
+				access: "new-access",
+				refresh: "new-refresh",
+				expires: now + (3600 - 180) * 1000,
+				clientId,
+				scopes: scope.split(" "),
+				// W2 records whether the granted scopes allow direct token use.
+				planUsageEnabled: true,
+			});
+		},
+	);
+
+	// #5003: recovery is driven by the OAuth code, never diagnostic prose.
+	it.each([
+		{
+			shape: "RFC 6749 error string",
+			body: JSON.stringify({ error: "invalid_grant" }),
+			status: 400,
+			expected: OAuthReauthorizationRequiredError,
+			classification: "permanent",
+		},
+		{
+			shape: "error object code",
+			body: JSON.stringify({ error: { code: "refresh_token_expired" } }),
+			status: 400,
+			expected: OAuthReauthorizationRequiredError,
+			classification: "permanent",
+		},
+		{
+			shape: "error object type",
+			body: JSON.stringify({ error: { type: "invalid_client" } }),
+			status: 400,
+			expected: OAuthClientConfigurationError,
+			classification: "permanent",
+		},
+		{
+			shape: "error object code before type",
+			body: JSON.stringify({ error: { code: "refresh_token_reused", type: "invalid_request_error" } }),
+			status: 400,
+			expected: OAuthReauthorizationRequiredError,
+			classification: "permanent",
+		},
+		{
+			shape: "nested error string",
+			body: JSON.stringify({ error: { error: "invalid_client" } }),
+			status: 400,
+			expected: OAuthClientConfigurationError,
+			classification: "permanent",
+		},
+		{
+			shape: "nested error object",
+			body: JSON.stringify({ error: { error: { code: "invalid_refresh_token" } } }),
+			status: 400,
+			expected: OAuthReauthorizationRequiredError,
+			classification: "permanent",
+		},
+		{
+			shape: "top-level code",
+			body: JSON.stringify({ code: "invalid_client" }),
+			status: 400,
+			expected: OAuthClientConfigurationError,
+			classification: "permanent",
+		},
+		{
+			shape: "diagnostic-only code",
+			body: JSON.stringify({ error_description: "invalid_grant" }),
+			status: 400,
+			expected: OAuthTokenEndpointError,
+			classification: "permanent",
+		},
+		{
+			shape: "non-JSON terminal response",
+			body: "invalid_client",
+			status: 400,
+			expected: OAuthTokenEndpointError,
+			classification: "permanent",
+		},
+		{
+			shape: "empty terminal response",
+			body: "",
+			status: 400,
+			expected: OAuthTokenEndpointError,
+			classification: "permanent",
+		},
+		{
+			shape: "nested code on transient server response",
+			body: JSON.stringify({ error: { code: "invalid_grant" } }),
+			status: 503,
+			expected: OAuthTokenEndpointError,
+			classification: "transient",
+		},
+		{
+			shape: "non-JSON transient response",
+			body: "<html>unavailable</html>",
+			status: 500,
+			expected: OAuthTokenEndpointError,
+			classification: "transient",
+		},
+		{
+			shape: "empty transient response",
+			body: "",
+			status: 429,
+			expected: OAuthTokenEndpointError,
+			classification: "transient",
+		},
+	])("classifies refresh response $shape", async ({ body, status, expected, classification }) => {
+		// Given a token endpoint response in a supported wire shape.
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => new Response(body, { status })),
+		);
+
+		// When the saved session refreshes.
+		const error = await openaiChatGPTOAuth
+			.refresh(connectedCredential(), neverAbortedSignal)
+			.catch((error: unknown) => error);
+
+		// Then only machine-readable codes select recovery, after the status rule.
+		expect(error).toBeInstanceOf(expected);
+		expect(error instanceof Error && error.constructor).toBe(expected);
+		expect(error).toHaveProperty("status", status);
+		expect(classifyOAuthRefreshFailure(error)).toBe(classification);
+	});
+
+	it.each([
+		"invalid_grant",
+		"invalid_refresh_token",
+		"token_expired",
+		"refresh_token_expired",
+		"refresh_token_invalidated",
+		"refresh_token_reused",
+	])("requires reauthorization on refresh code %s", async (code) => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => jsonResponse({ error: code, error_description: "opaque" }, 400)),
+		);
+		const error = await openaiChatGPTOAuth
+			.refresh(connectedCredential(), neverAbortedSignal)
+			.catch((error: unknown) => error);
+		expect(error).toBeInstanceOf(OAuthReauthorizationRequiredError);
+		expect(error).toMatchObject({
+			name: "OAuthReauthorizationRequiredError",
+			code,
+			status: 400,
+			oauthError: code,
+			credentialRefused: true,
 		});
+		expect(classifyOAuthRefreshFailure(error)).toBe("permanent");
+	});
 
-		const before = Date.now();
-		const credential = await openaiChatGPTOAuth.refresh(connectedCredential(), neverAbortedSignal);
+	it("reports invalid_client as configuration rather than reauthorization", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => jsonResponse({ error: "invalid_client" }, 400)),
+		);
+		const error = await openaiChatGPTOAuth
+			.refresh(connectedCredential(), neverAbortedSignal)
+			.catch((error: unknown) => error);
+		expect(error).toBeInstanceOf(OAuthClientConfigurationError);
+		expect(error).toMatchObject({
+			name: "OAuthClientConfigurationError",
+			code: "invalid_client",
+			status: 400,
+			oauthError: "invalid_client",
+			credentialRefused: false,
+		});
+		expect(classifyOAuthRefreshFailure(error)).toBe("permanent");
+	});
 
-		// expires_in is 3600 seconds; the credential expires 3 minutes early so it is refreshed in time.
-		expect(credential.expires).toBeGreaterThanOrEqual(before + (3600 - 180) * 1000);
-		expect(credential.expires).toBeLessThanOrEqual(Date.now() + (3600 - 180) * 1000);
+	it.each(["network", 500, 503, 599] as const)(
+		"preserves credentials on a transient %s refresh failure",
+		async (failure) => {
+			const stored = connectedCredential();
+			const store = new InMemoryCredentialStore();
+			await store.modify("siwc-fixture", async () => stored);
+			vi.spyOn(console, "warn").mockImplementation(() => {});
+			vi.stubGlobal(
+				"fetch",
+				vi.fn(async () => {
+					if (failure === "network") throw Object.assign(new TypeError("opaque"), { code: "ECONNRESET" });
+					return jsonResponse({ error: "invalid_grant" }, failure);
+				}),
+			);
+			await expect(
+				resolveProviderAuth({ id: "siwc-fixture", auth: { oauth: openaiChatGPTOAuth } }, store, {
+					env: async () => undefined,
+					fileExists: async () => false,
+				}),
+			).rejects.toSatisfy(isOAuthRefreshUnavailableError);
+			expect(await store.read("siwc-fixture")).toEqual(stored);
+		},
+	);
 
-		expect(refreshBody?.get("grant_type")).toBe("refresh_token");
-		expect(refreshBody?.get("client_id")).toBe("oaiapp_existing");
-		expect(refreshBody?.get("refresh_token")).toBe("old-refresh");
-		expect(refreshBody?.get("resource")).toBe("https://api.openai.com/v1");
-		expect(refreshBody?.has("scope")).toBe(false);
-		expect(credential).toMatchObject({
-			access: "new-access",
-			refresh: "new-refresh",
-			clientId: "oaiapp_existing",
-			scopes: REQUIRED_SCOPE.split(" "),
+	it.each([JSON.stringify({ error: "unknown_error", error_description: "invalid_grant" }), "invalid_client"])(
+		"does not infer recovery from diagnostic text: %s",
+		async (responseBody) => {
+			vi.stubGlobal(
+				"fetch",
+				vi.fn(async () => new Response(responseBody, { status: 400 })),
+			);
+			const error = await openaiChatGPTOAuth
+				.refresh(connectedCredential(), neverAbortedSignal)
+				.catch((error: unknown) => error);
+			expect(error).toBeInstanceOf(OAuthTokenEndpointError);
+			expect(error).not.toBeInstanceOf(OAuthReauthorizationRequiredError);
+			expect(error).not.toBeInstanceOf(OAuthClientConfigurationError);
+		},
+	);
+
+	it("does not classify an authorization-code invalid_grant as an expired renewable session", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => jsonResponse({ error: "invalid_grant" }, 400)),
+		);
+		const error = await openaiChatGPTOAuth
+			.login(loginInteraction({ callbackClientId: "oaiapp_issued" }), { getDeviceId: () => DEVICE_ID })
+			.catch((error: unknown) => error);
+		expect(error).toBeInstanceOf(OAuthTokenEndpointError);
+		expect(error).not.toBeInstanceOf(OAuthReauthorizationRequiredError);
+	});
+
+	it("preserves the validated identity and retained ID token across refresh", async () => {
+		stubTokenEndpoint(tokenResponse());
+		const credential = {
+			...connectedCredential(),
+			subject: "existing-subject",
+			email: "existing@example.test",
+			issuer: ISSUER,
+			idToken: "previous-validated-id-token",
+		};
+		expect(await openaiChatGPTOAuth.refresh(credential, neverAbortedSignal)).toMatchObject({
+			subject: credential.subject,
+			email: credential.email,
+			issuer: credential.issuer,
+			idToken: credential.idToken,
 		});
 	});
 });

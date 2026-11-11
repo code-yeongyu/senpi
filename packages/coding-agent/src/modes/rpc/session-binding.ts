@@ -7,6 +7,7 @@ import {
 	recoveryCarrier,
 	setSessionRecoveryEpoch,
 } from "../../core/session-recovery-identity.ts";
+import { executionCallKey } from "../../core/session-call-keys.ts";
 import { CanonicalPairing, carryCanonical } from "./compact-canonical-pairing.ts";
 import type { CanonicalRecord, CanonicalUnit } from "./compact-lane-transitions.ts";
 import { CompactProducerStamp } from "./compact-producer-stamp.ts";
@@ -25,6 +26,7 @@ import { structuredLaneEnabled } from "./structured-session-records.ts";
 /** A session-owned adapter around the classic command and extension-UI wiring. */
 export interface RpcSessionBinding {
 	handle(command: object): Promise<void>;
+	setClientCapabilities?(capabilities: readonly string[]): void;
 	cancelPendingExtensionUiRequests?(): void;
 	/** A connection of the shared host left this session (`close_session`, a dropped or detached connection). */
 	connectionDetached?(connectionId: string): void;
@@ -70,6 +72,7 @@ export async function createRpcSessionBinding(
 		return carrier && record && firstOrdinal !== undefined ? { record, carrier, ordinal, firstOrdinal } : undefined;
 	};
 	const enqueueRecord = (record: object): void => {
+		if (entry.speculative) return;
 		toolSpans.observe(record);
 		const canonical = pairing?.take(record);
 		const refused = pairing?.refused(record) === true;
@@ -82,7 +85,7 @@ export async function createRpcSessionBinding(
 		} else if (lane) {
 			lane.applyTranscript(journaled?.drainTranscript() ?? []);
 			const carrier = recoveryCarrier(record);
-			lane.accept(record, carrier, unit(carrier, canonical, record), refused);
+			lane.accept(record, carrier, unit(carrier, canonical, record), refused, executionCallKey(record));
 		} else carryCanonical(record, canonical, refused);
 		enqueueLegacyRecord(writer, sessionId, record);
 	};
@@ -128,6 +131,7 @@ export async function createRpcSessionBinding(
 			writeInScope(record);
 		};
 		const writeStructuredInScope = bindToProviderScope((record: object) => {
+			if (entry.speculative) return;
 			writer.structuredLanes.accept(sessionId, record);
 			const control = pairing?.structured(record);
 			if (control && lane) lane.acceptControl(unit(control.carrier, control.record));
@@ -169,12 +173,14 @@ export async function createRpcSessionBinding(
 				rpcOwnersByConnection.clear();
 			},
 			publishLoadedSurfacesChanged: (previous, digest) => {
-				if (entry.scope.state !== "closed") writer.publishLoadedSurfacesChanged(sessionId, previous, digest);
+				if (!entry.speculative && entry.scope.state !== "closed")
+					writer.publishLoadedSurfacesChanged(sessionId, previous, digest);
 			},
 			...options,
 			workerSecurityBridge: writer.workerSecurityBridge,
-			secretInputRoute: writer.secretInputRoute(sessionId),
+			secretInputRoute: writer.secretInputRoute(sessionId, true),
 			grantDialogSettled: (id) => writer.settleGrantDialog(sessionId, id),
+			grantDialogRaised: (id, title) => writer.noticeGrantDialog(sessionId, id, title),
 			bindSecurityPresentation: (session, ui) =>
 				writer.bindSecurityPresentations(sessionId, session.sessionId, session.securityNotices, ui),
 			bindMcpForms: (session, ui) =>
@@ -191,6 +197,8 @@ export async function createRpcSessionBinding(
 	});
 	await handler.ready;
 	return {
+		setClientCapabilities: (capabilities) =>
+			runWithProviderScope(entry.scope, () => handler.setClientCapabilities(capabilities)),
 		handle: (command) => {
 			if (writer.handleMcpForm(command)) return Promise.resolve();
 			const invoke = () => runWithProviderScope(entry.scope, () => handler.handleInputLine(JSON.stringify(command)));

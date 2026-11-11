@@ -54,6 +54,12 @@ const grepBytes = (host) => Buffer.from(`senpi_grep addon bytes for ${host}\n`);
 
 // Runs the producer's Stage artifact step for one matrix row against a napi output dir that
 // holds BOTH addons with distinct bytes, and returns the staged artifact directory.
+const windowsTargets = [
+	{ host: "win32-x64", platform: "win32", arch: "x64", napi: "x86_64-pc-windows-msvc", rust: "x86_64-pc-windows-msvc", built: "win32-x64-msvc" },
+	{ host: "win32-arm64", platform: "win32", arch: "arm64", napi: "aarch64-pc-windows-msvc", rust: "aarch64-pc-windows-msvc", built: "win32-arm64-msvc" },
+];
+const secretBytes = (host) => Buffer.from(`senpi_socket_secret addon bytes for ${host}\n`);
+
 function stageArtifact(root, target, producerScript = stepRunBlock(producerWorkflow, "Stage artifact")) {
 	const runnerTemp = join(root, "runner", target.host);
 	const outputDir = join(runnerTemp, "native-prebuild-output", target.built);
@@ -61,6 +67,9 @@ function stageArtifact(root, target, producerScript = stepRunBlock(producerWorkf
 	// napi writes the grep addon first in sort order, which is what made an index-based copy wrong.
 	writeFileSync(join(outputDir, `senpi_grep.${target.built}.node`), grepBytes(target.host));
 	writeFileSync(join(outputDir, `senpi_pty.${target.built}.node`), ptyBytes(target.host));
+	if (target.platform === "win32" && target.withSecret !== false) {
+		writeFileSync(join(outputDir, `senpi_socket_secret.${target.built}.node`), secretBytes(target.host));
+	}
 	const script = producerScript.replaceAll("${{ matrix.artifact }}", `native-prebuild-${target.host}`);
 	const result = runBash(script, {
 		cwd: root,
@@ -180,6 +189,63 @@ describe("native prebuild staging (producer -> download -> pty package)", () => 
 			const staged = readFileSync(join(swappedDir, "native/prebuilds", target.host, `senpi_pty.${target.host}.node`));
 			assert.notDeepEqual(staged, ptyBytes(target.host), "swapped producer must not pass as the PTY addon");
 			assert.deepEqual(staged, grepBytes(target.host));
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+});
+
+// sisyphuslabs/omo-desktop-app#4199: Windows rows also build the socket-secret bridge, which has no fallback.
+describe("socket-secret bridge staging (Windows rows -> coding-agent package)", () => {
+	it("stages each Windows bridge where the loader and the publish step look", () => {
+		const root = mkdtempSync(join(tmpdir(), "senpi-secret-staging-"));
+		try {
+			const artifactDirs = [];
+			for (const target of windowsTargets) {
+				const { result, artifactDir } = stageArtifact(root, target);
+				assert.equal(result.status, 0, `${target.host}: ${result.stderr}`);
+				const staged = join(artifactDir, "native/socket-secret/prebuilds", target.host, `senpi_socket_secret.${target.host}.node`);
+				assert.deepEqual(readFileSync(staged), secretBytes(target.host));
+				const manifest = readFileSync(join(artifactDir, "manifest.txt"), "utf8");
+				assert.match(manifest, new RegExp(`^file_senpi_socket_secret=senpi_socket_secret\\.${target.built}\\.node$`, "m"));
+				artifactDirs.push(artifactDir);
+			}
+			const checkout = join(root, "checkout");
+			mkdirSync(join(checkout, "packages/coding-agent"), { recursive: true });
+			mergeArtifacts(artifactDirs, join(checkout, "packages/pty/.native-prebuild-artifacts"));
+			const consumer = runBash(stepRunBlock(consumerWorkflow, "Stage the socket-secret bridge into the coding-agent package"), { cwd: checkout, env: {} });
+			assert.equal(consumer.status, 0, consumer.stderr);
+			for (const target of windowsTargets) {
+				const file = join(checkout, "packages/coding-agent/native/socket-secret/prebuilds", target.host, `senpi_socket_secret.${target.host}.node`);
+				assert.deepEqual(readFileSync(file), secretBytes(target.host));
+			}
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("fails a Windows row whose napi output lacks the bridge", () => {
+		const root = mkdtempSync(join(tmpdir(), "senpi-secret-missing-"));
+		try {
+			const { result } = stageArtifact(root, { ...windowsTargets[0], withSecret: false });
+			assert.notEqual(result.status, 0);
+			assert.match(result.stdout + result.stderr, /expected 3 \.node files/);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("blocks the publish when only one Windows bridge was downloaded", () => {
+		const root = mkdtempSync(join(tmpdir(), "senpi-secret-partial-"));
+		try {
+			const { result, artifactDir } = stageArtifact(root, windowsTargets[0]);
+			assert.equal(result.status, 0, result.stderr);
+			const checkout = join(root, "checkout");
+			mkdirSync(join(checkout, "packages/coding-agent"), { recursive: true });
+			mergeArtifacts([artifactDir], join(checkout, "packages/pty/.native-prebuild-artifacts"));
+			const consumer = runBash(stepRunBlock(consumerWorkflow, "Stage the socket-secret bridge into the coding-agent package"), { cwd: checkout, env: {} });
+			assert.notEqual(consumer.status, 0);
+			assert.match(consumer.stdout + consumer.stderr, /missing socket-secret bridge for win32-arm64/);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}

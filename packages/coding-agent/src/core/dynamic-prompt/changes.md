@@ -1,5 +1,43 @@
 # changes.md — dynamic-prompt
 
+## 2026-11-09 - Prompt builder carries a provider-native search signal (senpi#6264)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/build.ts`: `BuildDynamicSystemPromptOptions` and `DynamicPromptCoreContext` gain an optional `nativeSearchAvailable` flag, threaded into `corePrompt` so a preset can tell whether the session can search through a provider-native search tool even when the builtin `web_search` tool is not selected (senpi#2935).
+
+### Why
+
+- The Haiku 5.5 preset gates its search-grounding sentence on the active tool list, which never contains a provider-native search tool; the flag is the seam that lets the preset see it.
+
+### Why an extension could not handle it
+
+- The signal crosses the builder/preset boundary: the preset extension computes it from the model, the builder carries it, and the preset core reads it. No single extension event sees all three.
+
+### Expected merge conflict zones
+
+- LOW: the `corePrompt` call site in `buildDynamicSystemPromptParts` and the two option interfaces.
+
+## 2026-11-03 - Full shared sections for the Opus and Fable presets (senpi#5665)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/types.ts`: new `SharedSections` type (`"full" | "diet"`).
+- `packages/coding-agent/src/core/dynamic-prompt/build.ts`: `BuildDynamicSystemPromptOptions` gains `sharedSections` and `fullToolPrompt` (every tool snippet plus each tool's full guidelines); `DynamicPromptCoreContext` gains `sharedSections`, and every default section builder receives it.
+- `packages/coding-agent/src/core/dynamic-prompt/identity.ts`, `intent-gate.ts`, `working-task.ts`, `verification.ts`, `policies.ts`, `handoff.ts`, `style.ts`, `tool-section.ts`: each keeps its pre-#5342 wording beside the diet wording and renders it for `sharedSections: "full"`; `TEST_DISCIPLINE_RULES` carries a `fullDirective` per rule and `handoff.ts` exports `FULL_HANDOFF_LANGUAGE_RULE`. `diet` output is byte-identical to main 836fe1c75.
+
+### Why
+
+- A beta tester reported that Opus 5.5 got slower and less capable after the senpi#5335 diet (#5342) shipped. Q's order: revert the diet only for the Fable and Opus presets; every other model keeps it.
+
+### Why an extension could not handle it
+
+- The text lives in builtin prompt generators, builtin tool definitions, and builtin extension prompt hooks, and the preset that selects the wording is a builtin extension.
+
+### Expected merge conflict zones
+
+- LOW: the section builders' option objects and any later wording edit to the same lines.
+
 ## 2026-11-01 - System prompt diet, shared modules (senpi#5335)
 
 ### What changed

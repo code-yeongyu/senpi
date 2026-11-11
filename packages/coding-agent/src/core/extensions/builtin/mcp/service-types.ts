@@ -80,6 +80,8 @@ export type McpWireStatusSnapshot = {
 
 export type McpSessionContext = Pick<ExtensionContext, "cwd" | "isProjectTrusted"> & {
 	ui?: ExtensionUIContext;
+	/** False on a context whose host offers no UI: its `ui` never collects a form (print mode, headless hosts). */
+	hasUI?: boolean;
 	mode?: ExtensionContext["mode"];
 	/**
 	 * Session history access, present on the real ExtensionContext. Only

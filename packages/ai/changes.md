@@ -1,3 +1,42 @@
+## 2026-11-10 - Claude Fable 5.2 is a released model (senpi#3893)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: no longer imports the provisional Fable 5.5 launch-constant module, and that module under `src/utils/` is deleted (its last consumer, the prompt preset, stopped importing it in #6314). `ANTHROPIC_ALLOWED_FALLBACK_MODELS` names `claude-fable-5-2` (Opus 4.8 / Opus 5, the published refusal-fallback targets) in place of the provisional launch id. The Fable/Mythos mid-conversation effort and system/tool-change patterns match `5-2` / `5.2`. The adaptive-only and adaptive-thinking predicates name the `mythos-5` family in place of the provisional id.
+- `src/providers/data/`: strict regeneration. `claude-fable-5-2` lands in anthropic, amazon-bedrock (`anthropic.`, `us.`, `global.`), openrouter, vercel-ai-gateway, opencode and venice with the models.dev price and limits and the same compat set as Fable 5.1. The same run carries current upstream drift (openrouter, opencode, opencode-go, bedrock, vercel, google, opengateway rows and prices).
+
+### Why
+
+- The provisional `claude-fable-5-5` launch shipped on 2026-11-09 as Claude Fable 5.2. The launch block's provisional id no longer names a real model, so the generator routes the released id directly.
+
+### Why an extension could not handle it
+
+- Catalog generation runs before any extension loads; the generator's per-model compat and fallback tables are the only place these facts live.
+
+### Expected merge conflict zones
+
+- MEDIUM: `ANTHROPIC_ALLOWED_FALLBACK_MODELS` and the Anthropic compat predicates in `generate-models.ts`; LOW: the regenerated `src/providers/data/*.json` snapshots.
+
+## 2026-11-05 - GPT Image 2.6 entries in the static OpenAI image catalog (senpi#5821, fixes #5820)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: `OPENAI_IMAGE_MODELS` gains `gpt-image-2.6-sunburst` and `gpt-image-2.6-flare` (released 2026-11-04) ahead of the 2.5 pair, with the same rates ($5 text input / $8 image input / $30 image output / $1.25 cached input per 1M tokens) and text plus image inputs; the source comment cites both model pages. `src/providers/data/openai.json` and its manifest entry are regenerated; no other provider file changes in this PR.
+- `packages/ai/src/api/openai-images-params.ts`: `OpenAIImagesOptions.complexity` (`low` | `medium` | `high`) is forwarded as the GPT Image 2.6 `complexity` request field when set, on generations and edits alike.
+- `packages/ai/src/utils/provider-error.ts`: `isModelConfigError` also matches an OpenAI-compatible gateway's image allowlist reply, "Model <id> is not supported on /v1/images/…", while an option error such as "Transparent background is not supported for this model" stays unmatched.
+
+### Why
+
+- OpenAI released GPT Image 2.6 Sunburst and Flare with a new `complexity` planning control, and gateways lag the release: one answers HTTP 400 with the allowlist text above, so callers need to recognize it as "this route does not serve the model".
+
+### Why an extension could not handle it
+
+- The static image catalog, the Images adapter's request builder, and the shared model-config classifier are package internals that every image caller reads.
+
+### Expected merge conflict zones
+
+- LOW: the head of `OPENAI_IMAGE_MODELS` in `generate-models.ts`, the option spread at the end of `buildParams()`, and the `MODEL_CONFIG_ERROR` pattern.
+
 ## 2026-11-01 - Credential-shaped test fixtures are built from parts at runtime (senpi#5310)
 
 ### What changed

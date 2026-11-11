@@ -82,8 +82,8 @@
       ".agents/skills/senpi-qa/scripts/lib/anthropic-subscription-spike-support.mjs": ["LIVE_GATE", "redactSecrets", "stripCredentialEnvironment"],
       // pre-existing at origin main aceb1cc1d9: unused export toolUseSseBody (run-by-path entry, newly export-checked)
       ".agents/skills/senpi-qa/scripts/lib/anthropic-subscription-toolless-compact-server.mjs": ["toolUseSseBody"],
-      // pre-existing at origin main aceb1cc1d9: unused exports APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_SESSION_DIR, realAgentDir, scrubSandboxEnv, freePort, inspectProcess, OwnedSignalRefusedError, dateStamp, readJsonl (run-by-path entry, newly export-checked)
-      ".agents/skills/senpi-qa/scripts/lib/common.mjs": ["APP_NAME", "CONFIG_DIR_NAME", "ENV_AGENT_DIR", "ENV_SESSION_DIR", "OwnedSignalRefusedError", "dateStamp", "freePort", "inspectProcess", "readJsonl", "realAgentDir", "scrubSandboxEnv"],
+      // pre-existing at origin main aceb1cc1d9: unused exports APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_SESSION_DIR, realAgentDir, freePort, inspectProcess, OwnedSignalRefusedError, dateStamp, readJsonl (run-by-path entry, newly export-checked)
+      ".agents/skills/senpi-qa/scripts/lib/common.mjs": ["APP_NAME", "CONFIG_DIR_NAME", "ENV_AGENT_DIR", "ENV_SESSION_DIR", "OwnedSignalRefusedError", "dateStamp", "freePort", "inspectProcess", "readJsonl", "realAgentDir"],
       // pre-existing at origin main aceb1cc1d9: unused export runTextToolLeakCommand (run-by-path entry, newly export-checked)
       ".agents/skills/senpi-qa/scripts/lib/mock-loop-text-leak.mjs": ["runTextToolLeakCommand"],
       // pre-existing at origin main aceb1cc1d9: unused export inspectProcess (run-by-path entry, newly export-checked)
@@ -192,8 +192,8 @@
       "packages/ai/src/auth/oauth/devin-token.ts": ["DEVIN_API_ENDPOINT", "DEVIN_FALLBACK_EXPIRY_MS", "DEVIN_TOKEN_URL", "devinCredential"],
       // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_KIMI_CODE_REGION, KIMI_CODE_REGION_PROFILES, isKimiCodeRegion
       "packages/ai/src/auth/oauth/kimi-region.ts": ["DEFAULT_KIMI_CODE_REGION", "KIMI_CODE_REGION_PROFILES", "isKimiCodeRegion"],
-      // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_SLOT_NAME, assertValidSlotName, DISPLAY_NAME_MAX_COLUMNS
-      "packages/ai/src/auth/pool/slots.ts": ["DEFAULT_SLOT_NAME", "DISPLAY_NAME_MAX_COLUMNS", "assertValidSlotName"],
+      // pre-existing at origin main aceb1cc1d9: unused exports assertValidSlotName, DISPLAY_NAME_MAX_COLUMNS
+      "packages/ai/src/auth/pool/slots.ts": ["DISPLAY_NAME_MAX_COLUMNS", "assertValidSlotName"],
       // pre-existing at origin main aceb1cc1d9: unused exports ALIBABA_TOKEN_PLAN_IMAGE_MODELS, ALIBABA_TOKEN_PLAN_CLASSIFIER_MODELS
       "packages/ai/src/providers/alibaba-token-plan.models.ts": ["ALIBABA_TOKEN_PLAN_CLASSIFIER_MODELS", "ALIBABA_TOKEN_PLAN_IMAGE_MODELS"],
       // pre-existing at origin main aceb1cc1d9: unused exports AMAZON_BEDROCK_IMAGE_MODELS, AMAZON_BEDROCK_CLASSIFIER_MODELS
@@ -502,8 +502,9 @@
       "packages/coding-agent/scripts/qa-rpc-socket/lib/offload-workload.mjs": ["workload"],
       // pre-existing at origin main aceb1cc1d9: unused export parseInject (entry, newly export-checked)
       "packages/coding-agent/scripts/qa-rpc-socket/lib/qa-args.mjs": ["parseInject"],
-      // pre-existing at origin main aceb1cc1d9: unused exports sandboxHostEnv, QA_READINESS_TIMEOUT_MS, qaHostLaunch (entry, newly export-checked)
-      "packages/coding-agent/scripts/qa-rpc-socket/lib/qa-host.mjs": ["QA_READINESS_TIMEOUT_MS", "qaHostLaunch", "sandboxHostEnv"],
+      // pre-existing at origin main aceb1cc1d9: unused exports QA_READINESS_TIMEOUT_MS, qaHostLaunch (entry, newly export-checked);
+      // sandboxHostEnv left this list when scripts/bench-open-session.ts began importing it (senpi#6260)
+      "packages/coding-agent/scripts/qa-rpc-socket/lib/qa-host.mjs": ["QA_READINESS_TIMEOUT_MS", "qaHostLaunch"],
       // pre-existing at origin main aceb1cc1d9: unused export REQUIREMENT_CAPABILITIES (entry, newly export-checked)
       "packages/coding-agent/scripts/qa-rpc-socket/lib/qa-scenarios.mjs": ["REQUIREMENT_CAPABILITIES"],
       // pre-existing at origin main aceb1cc1d9: unused export connectSocket (entry, newly export-checked)
@@ -721,8 +722,6 @@
       "packages/coding-agent/src/core/extensions/builtin/loop/tools.ts": ["BLANK_REASON_ERROR", "FIXED_TICK_ERROR", "MAX_WAKEUP_DELAY_SECONDS", "MIN_WAKEUP_DELAY_SECONDS", "MISSING_DELAY_ERROR", "MISSING_PROMPT_ERROR", "NON_INTEGER_DELAY_ERROR", "NOOP_WITH_STOP_ERROR", "NO_ACTIVE_DYNAMIC_LOOP_ERROR", "SCHEDULE_WAKEUP_DESCRIPTION"],
       // pre-existing at origin main aceb1cc1d9: unused exports LOOP_KINDS
       "packages/coding-agent/src/core/extensions/builtin/loop/types.ts": ["LOOP_KINDS"],
-      // pre-existing at origin main aceb1cc1d9: unused exports tokenExpiresAt, freezeGrantAttribution
-      "packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-provider.ts": ["freezeGrantAttribution", "tokenExpiresAt"],
       // pre-existing at origin main aceb1cc1d9: unused exports isTokenStale
       "packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-refresh.ts": ["isTokenStale"],
       // pre-existing at origin main aceb1cc1d9: unused exports assertAuthorizable
@@ -981,8 +980,8 @@
       "packages/coding-agent/src/core/session-summary-index.ts": ["SESSION_SUMMARY_INDEX_MAX_BYTES"],
       // pre-existing at origin main aceb1cc1d9: unused exports modelThinkingKey, deriveSessionModelThinkingLevels
       "packages/coding-agent/src/core/session-thinking-memory.ts": ["deriveSessionModelThinkingLevels", "modelThinkingKey"],
-      // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_PROVIDER_STREAM_RETRY_TIMEOUT_MS, resolveSettingsSource
-      "packages/coding-agent/src/core/settings-manager.ts": ["DEFAULT_PROVIDER_STREAM_RETRY_TIMEOUT_MS", "resolveSettingsSource"],
+      // pre-existing at origin main aceb1cc1d9: unused export DEFAULT_PROVIDER_STREAM_RETRY_TIMEOUT_MS (resolveSettingsSource is used by webfetch's signed-in-hosts.ts since #5962)
+      "packages/coding-agent/src/core/settings-manager.ts": ["DEFAULT_PROVIDER_STREAM_RETRY_TIMEOUT_MS"],
       // pre-existing at origin main aceb1cc1d9: unused exports shannonBitsPerChar, readsAsWords, looksGenerated, joinedLooksGenerated
       "packages/coding-agent/src/core/share/share-entropy.ts": ["joinedLooksGenerated", "looksGenerated", "readsAsWords", "shannonBitsPerChar"],
       // pre-existing at origin main aceb1cc1d9: unused exports prepareShare, describeShare
@@ -1071,8 +1070,6 @@
       "packages/coding-agent/src/modes/interactive/components/ask-user-question-state.ts": ["DISMISS_NOTICE", "PARTIAL_SUBMIT_NOTICE"],
       // pre-existing at origin main aceb1cc1d9: unused exports RESUME_FALLBACK_DIAGNOSTIC_TYPE
       "packages/coding-agent/src/modes/interactive/components/continuity-notice.ts": ["RESUME_FALLBACK_DIAGNOSTIC_TYPE"],
-      // pre-existing at origin main aceb1cc1d9: unused exports elideHead
-      "packages/coding-agent/src/modes/interactive/components/footer-layout.ts": ["elideHead"],
       // pre-existing at origin main aceb1cc1d9: unused exports DaxnutsComponent, FavoriteModelsSelectorComponent, FirstTimeSetupComponent, TrustSelectorComponent
       "packages/coding-agent/src/modes/interactive/components/index.ts": ["DaxnutsComponent", "FavoriteModelsSelectorComponent", "FirstTimeSetupComponent", "TrustSelectorComponent"],
       // pre-existing at origin main aceb1cc1d9: unused exports formatAuthSelectorProviderStatus
@@ -1115,8 +1112,6 @@
       "packages/coding-agent/src/modes/rpc/host-handover-wire.ts": ["handoverWire"],
       // pre-existing at origin main aceb1cc1d9: unused exports RPC_SESSION_IDLE_EVICTION_MS_ENV, RPC_HOST_EMPTY_EXIT_MS_ENV, DEFAULT_SESSION_IDLE_EVICTION_MS, DEFAULT_HOST_EMPTY_EXIT_MS
       "packages/coding-agent/src/modes/rpc/host-idle-policy.ts": ["DEFAULT_HOST_EMPTY_EXIT_MS", "DEFAULT_SESSION_IDLE_EVICTION_MS", "RPC_HOST_EMPTY_EXIT_MS_ENV", "RPC_SESSION_IDLE_EVICTION_MS_ENV"],
-      // pre-existing at origin main aceb1cc1d9: unused exports OWNER_EXIT_GRACE_MS
-      "packages/coding-agent/src/modes/rpc/host-lifecycle-activity.ts": ["OWNER_EXIT_GRACE_MS"],
       // pre-existing at origin main aceb1cc1d9: parseColdStart: declared here, reported because the host-lifecycle.ts entry re-exports it and nothing imports it (newly export-checked; the file stays checked)
       "packages/coding-agent/src/modes/rpc/host-lifecycle-policy.ts": ["parseColdStart"],
       // pre-existing at origin main aceb1cc1d9: unused exports CHILD_STOP_TIMEOUT_MS, childExited, waitForChildExit
@@ -1129,8 +1124,8 @@
       "packages/coding-agent/src/modes/rpc/host-session-detach.ts": ["DETACH_ACK_TIMEOUT_MS"],
       // pre-existing at origin main aceb1cc1d9: unused exports STALE_ENGINE_GRACE_MS
       "packages/coding-agent/src/modes/rpc/host-stale-engine.ts": ["STALE_ENGINE_GRACE_MS"],
-      // pre-existing at origin main aceb1cc1d9: unused exports STALL_REFUSAL_WINDOW_MS_ENV, DEFAULT_STALL_REFUSAL_WINDOW_MS, DEFAULT_CHILD_STALLED_STOP_MAX_MS, readStallEvidence
-      "packages/coding-agent/src/modes/rpc/host-stalled-evidence.ts": ["DEFAULT_CHILD_STALLED_STOP_MAX_MS", "DEFAULT_STALL_REFUSAL_WINDOW_MS", "STALL_REFUSAL_WINDOW_MS_ENV", "readStallEvidence"],
+      // pre-existing at origin main aceb1cc1d9: unused exports STALL_REFUSAL_WINDOW_MS_ENV, DEFAULT_STALL_REFUSAL_WINDOW_MS, readStallEvidence (DEFAULT_CHILD_STALLED_STOP_MAX_MS gained its first consumer in senpi#5168)
+      "packages/coding-agent/src/modes/rpc/host-stalled-evidence.ts": ["DEFAULT_STALL_REFUSAL_WINDOW_MS", "STALL_REFUSAL_WINDOW_MS_ENV", "readStallEvidence"],
       // pre-existing at origin main aceb1cc1d9: unused exports STOP_INTENT_MAX_AGE_MS, clearStopIntent, DRAIN_REQUEST_WATCHED_POLL_MS, readDrainRequest
       "packages/coding-agent/src/modes/rpc/host-stop-intent.ts": ["DRAIN_REQUEST_WATCHED_POLL_MS", "STOP_INTENT_MAX_AGE_MS", "clearStopIntent", "readDrainRequest"],
       // pre-existing at origin main aceb1cc1d9: unused exports readLiveStartTime
@@ -1165,14 +1160,12 @@
       "packages/coding-agent/src/modes/rpc/session-router-close.ts": ["createFinalization"],
       // pre-existing at origin main aceb1cc1d9: unused exports parkForHandoff, evictIdleSession
       "packages/coding-agent/src/modes/rpc/session-router-occupancy.ts": ["evictIdleSession", "parkForHandoff"],
-      // pre-existing at origin main aceb1cc1d9: unused exports open
-      "packages/coding-agent/src/modes/rpc/session-router-open.ts": ["open"],
       // pre-existing at origin main aceb1cc1d9: unused exports dispatch, setSessionContext
       "packages/coding-agent/src/modes/rpc/session-router-routing.ts": ["dispatch", "setSessionContext"],
       // pre-existing at origin main aceb1cc1d9: unused exports DETACHED_RETIREMENT_GRACE_MS
       "packages/coding-agent/src/modes/rpc/session-sweep.ts": ["DETACHED_RETIREMENT_GRACE_MS"],
-      // pre-existing at origin main aceb1cc1d9: unused exports SOCKET_IDENTITY_WAIT_MS, lsofSocketHolders
-      "packages/coding-agent/src/modes/rpc/socket-ownership.ts": ["SOCKET_IDENTITY_WAIT_MS", "lsofSocketHolders"],
+      // pre-existing at origin main aceb1cc1d9: unused export SOCKET_IDENTITY_WAIT_MS
+      "packages/coding-agent/src/modes/rpc/socket-ownership.ts": ["SOCKET_IDENTITY_WAIT_MS"],
       // pre-existing at origin main aceb1cc1d9: unused exports SOCKET_CUT_GRACE_MS
       "packages/coding-agent/src/modes/rpc/socket-sink.ts": ["SOCKET_CUT_GRACE_MS"],
       // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_LAUNCH_SLOTS
@@ -1402,6 +1395,8 @@
       // pre-existing at origin main aceb1cc1d9: unused export default (run-by-path entry, newly export-checked)
       "scripts/oxlint/copy.mjs": ["default"],
       // pre-existing at origin main aceb1cc1d9: unused export default (run-by-path entry, newly export-checked)
+      // jsPlugins entry loaded by oxlint from .oxlintrc.json, not imported (same shape as copy.mjs above)
+      "scripts/oxlint/egress.mjs": ["default"],
       "scripts/oxlint/model-type-comparison.ts": ["default"],
       // pre-existing at origin main aceb1cc1d9: unused export pinSenpiPeerDependency (run-by-path entry, newly export-checked)
       "scripts/publish-manifest.mjs": ["pinSenpiPeerDependency"],
@@ -1550,6 +1545,7 @@
         // Bundled as separate entries or started by path (build-coding-agent-bundle.mjs, worker URLs, child spawns).
         "src/modes/rpc/host-supervisor-entry.ts",
         "src/modes/rpc/session-worker.ts",
+        "src/modes/rpc/loopless-worker.ts",
         "src/modes/rpc/host-lifecycle.ts",
         "src/modes/rpc/tool-child/module-job-worker.ts",
         "src/tool-child-main.ts",
@@ -1562,6 +1558,7 @@
         "src/experimental/mini/main.ts",
         // QA drivers and benchmarks run by path.
         "scripts/**/*.mjs",
+        "scripts/bench-open-session.ts",
         "bench/*.ts",
         // Example extensions are loaded by path (`senpi -e <file>`), never imported. The examples with
         // their own package.json are separate workspaces.

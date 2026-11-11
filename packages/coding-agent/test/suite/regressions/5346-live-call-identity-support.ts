@@ -3,10 +3,10 @@ import { join } from "node:path";
 import { type AssistantMessage, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { expect, vi } from "vitest";
-import { type RpcSessionEntry, RpcSessionRegistry } from "../../../src/modes/rpc/session-registry.ts";
 import { dataOf, type RawClient, statusHost, type WireRecord } from "../rpc-session-status-support.ts";
 import { EVENT_SAFETY_MS } from "./4272-worker-acceptance-support.ts";
 import { FLAG, liveLines, reconnect, recoveredRows } from "./5331-live-identity-support.ts";
+import { observeInProcessOpens } from "../rpc-in-process-entry-support.ts";
 
 // senpi#5346 (RULING-123): one real host, a legacy opener and a `compact_events` peer on one session. Prompt A reads a
 // file as toolCallId `reused` and its tool result write is refused, so the call keeps a settled row. A PreToolUse hook
@@ -52,13 +52,11 @@ export async function callRun(flag: "1" | "0") {
 	vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-11-01T00:00:00.000Z") });
 	const host = await statusHost();
 	await writeFile(join(host.cwd, "note.txt"), "note body\n");
-	const admissions = vi.spyOn(RpcSessionRegistry.prototype, "getForCommand");
+	const admissions = observeInProcessOpens(host);
 	const legacy = host.client("legacy");
 	const routing = String(dataOf(await legacy.request({ type: "open_session", cwd: host.cwd })).sessionId);
-	const entry = admissions.mock.results.findLast((result) => result.type === "return")?.value as
-		| RpcSessionEntry
-		| undefined;
-	admissions.mockRestore();
+	const entry = admissions.entryFor(routing);
+	admissions.restore();
 	const session = entry?.runtime?.session ?? expect.unreachable("no in-process session");
 	const compact = host.client("compact");
 	host.writer.setConnectionCapabilities("compact", ["compact_events"]);

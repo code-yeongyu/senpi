@@ -1,10 +1,10 @@
-import { buildRpcSessionState } from "./connection-handler.ts";
 import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
+import { startOpenTimer } from "../../core/open-timing.ts";
 import { compactOpen, type OpenAcceptance } from "./compact-open-admission.ts";
 import { CompactAdmissionError } from "./compact-admission-error.ts";
 import { runAdmissionProducer } from "./compact-admission-producer.ts";
 
-import { clearHandoverParkedSession, type HandoverParkedEntry } from "./host-handover-parked.ts";
+import type { HandoverParkedEntry } from "./host-handover-parked.ts";
 import { parkedOpenCommand } from "./host-handover-parked-open.ts";
 
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
@@ -17,7 +17,10 @@ import type { RouterContext } from "./session-router-context.ts";
 import { code, detail, error } from "./session-router-errors.ts";
 import { sweepDrain } from "./session-router-occupancy.ts";
 import { invalidSpawnedBy, validatedOpenProfile } from "./session-router-open-profile.ts";
+import { holdOpenConnection, ownOpen, publishOpen, replyOpen } from "./session-router-open-result.ts";
+import { closePark } from "./session-router-park.ts";
 import { relocationConnection } from "./session-router-relocation.ts";
+import { syncRetainedRecord } from "./session-router-residency.ts";
 import { liveToolMediaScope, toolMediaPersister } from "./tool-media-store.ts";
 
 export function openWithBarrier(
@@ -37,17 +40,11 @@ function openPhysicalWithBarrier(
 ): Promise<RpcResponse | undefined> {
 	const owner = host.writer.currentConnection();
 	if (owner === undefined) return open(host, command);
-	let resolveBarrier!: () => void;
-	const barrier = new Promise<void>((resolve) => {
-		resolveBarrier = resolve;
-	});
-	const opens = host.opensByConnection.get(owner) ?? new Set<Promise<void>>();
 	// Every open already accepted anywhere on this host, not just on this connection: the
 	// in-process runtime serves them on ONE loop, so the wait this caller faces is the total.
 	let inFlight = 0;
 	for (const pending of host.opensByConnection.values()) inFlight += pending.size;
-	opens.add(barrier);
-	host.opensByConnection.set(owner, opens);
+	const releaseBarrier = holdOpenConnection(host, owner);
 	// Before the open reaches the loop: a client that later hits its deadline can then say
 	// where it was queued instead of reporting a bare timeout (senpi#1844).
 	if (command.id !== undefined)
@@ -61,29 +58,7 @@ function openPhysicalWithBarrier(
 	// A late open's physical session is released by its admission (the accept/rollback path, 4272-admission-
 	// abandonment), so the late response itself owns nothing to release here.
 	const opened = signal === undefined ? start() : runAdmissionProducer(signal, start, async () => {});
-	// A manual reopen-by-path supersedes the handover auto-reopen for that session: clear its
-	// record entry, or a later generation would reopen a second copy (MEDIUM-1, senpi#3282 review).
-	// Cleared only after the open SUCCEEDS (MEDIUM-A): if the open fails - a session_path_in_use
-	// during a handover, or a bad profile - the entry must stay so a later generation can still
-	// reopen the session. open() resolves `undefined` on success (the response is written through
-	// the writer) and an RpcResponse only on failure, so success is `response === undefined`.
-	if (command.sessionPath !== undefined && host.handoverParkedDir !== undefined) {
-		const dir = host.handoverParkedDir;
-		const sessionPath = command.sessionPath;
-		void opened.then(
-			(response) => {
-				if (response === undefined) void clearHandoverParkedSession(dir, sessionPath).catch(() => {});
-			},
-			() => {
-				// A rejection means the open failed before producing a response; the entry stays.
-			},
-		);
-	}
-	return opened.finally(() => {
-		resolveBarrier();
-		opens.delete(barrier);
-		if (opens.size === 0) host.opensByConnection.delete(owner);
-	});
+	return opened.finally(releaseBarrier);
 }
 
 /**
@@ -109,16 +84,20 @@ export async function open(
 		readonly signal?: AbortSignal;
 		readonly defaults?: boolean;
 		readonly contextOverlay?: HandoverParkedEntry["contextOverlay"];
+		/** An invisible speculative open, published only when its ledger hands it to a caller. */
+		readonly park?: (opened: OpenRpcSession) => void;
 	},
 ): Promise<RpcResponse | undefined> {
 	const profile = validatedOpenProfile(host, command, options);
 	if ("type" in profile) return profile;
 	let opened: OpenRpcSession | undefined;
+	const timer = startOpenTimer(`host-open:${command.id ?? "-"}`);
 	const assertSessionNotHeld = sessionHeldCheck(
 		(observedStarts) => host.registry.holderPids?.(observedStarts) ?? Promise.resolve([]),
 	);
 	try {
 		await assertSessionNotHeld(command.sessionPath);
+		timer.mark("held_check");
 		options?.signal?.throwIfAborted();
 		if (invalidSpawnedBy(command)) return error(command.id, "open_session", "invalid_spawned_by");
 		const ancestry = command.spawnedBy;
@@ -128,8 +107,10 @@ export async function open(
 			{
 				retainOnDisconnect: command.retain_on_disconnect === true,
 				attachOnly: command.expectedHostInstance !== undefined,
+				...(options?.park ? { speculative: true } : {}),
 			},
 		);
+		timer.mark("registry_open");
 		options?.signal?.throwIfAborted();
 		const openedSession = opened;
 		if (host.writer.isSessionSealed(openedSession.sessionId)) {
@@ -152,6 +133,7 @@ export async function open(
 			entry.runtime?.session.sessionFile ?? state?.sessionFile ?? entry.sessionPath,
 			entry.runtime?.session.sessionId ?? state?.sessionId ?? entry.durableSessionId,
 		);
+		timer.mark("held_recheck");
 		host.writer.setSessionKind(openedSession.sessionId, entry.kind);
 		host.writer.setSessionMedia(
 			openedSession.sessionId,
@@ -162,23 +144,7 @@ export async function open(
 		const lane = entry.acceptance ?? entry.worker?.acceptance;
 		if (lane) host.writer.registerAcceptance(openedSession.sessionId, lane);
 		if (options?.accept) await options.accept(openedSession);
-		if (owner !== undefined) {
-			if (!host.writer.hasRegisteredConnectionCapabilities(owner))
-				host.writer.setConnectionCapabilities(
-					owner,
-					host.pendingCapabilities.get(owner) ?? host.connectionOptions?.capabilities ?? [],
-				);
-			host.writer.attachConnectionToSession(owner, openedSession.sessionId, options?.accept !== undefined);
-		}
-		// A client that dies without close_session (terminal closed, SIGKILL, dropped
-		// SSH) still holds this handle's attachment and its path reservation. Remember
-		// which connection owns it so releaseConnection() can close exactly that.
-		if (owner !== undefined) {
-			const owned = host.sessionsByConnection.get(owner) ?? new Map<string, number>();
-			owned.set(openedSession.sessionId, (owned.get(openedSession.sessionId) ?? 0) + 1);
-			host.sessionsByConnection.set(owner, owned);
-			host.attachOrder.attached(openedSession.sessionId, owner);
-		}
+		ownOpen(host, openedSession, owner, options?.accept !== undefined);
 		if (!host.bindings.has(openedSession.sessionId)) {
 			host.bindings.set(
 				openedSession.sessionId,
@@ -186,7 +152,10 @@ export async function open(
 					openedSession.sessionId,
 					entry,
 					host.writer,
-					() => void close(host, { type: "close_session", sessionId: openedSession.sessionId }),
+					() =>
+						void (entry.speculative
+							? closePark(host, openedSession)
+							: close(host, { type: "close_session", sessionId: openedSession.sessionId })),
 					{
 						...host.connectionOptions,
 						capabilities:
@@ -208,6 +177,7 @@ export async function open(
 					},
 				),
 			);
+			timer.mark("binding");
 			if (entry.worker) entry.worker.bindingReady = true;
 			// Wake the drain sweep the moment a session settles, so a handoff parks it
 			// without waiting for the next timer tick. Both hooks are OPTIONAL: an
@@ -232,41 +202,23 @@ export async function open(
 				});
 		}
 		options?.signal?.throwIfAborted();
-		if (opened.attached) host.writer.status.publish(openedSession.sessionId, "attach", "client");
-		else {
-			host.writer.publishSessionOpened({
-				type: "session_opened",
-				sessionId: openedSession.sessionId,
-				durableSessionId: openedSession.durableSessionId,
-				...(openedSession.sessionPath !== undefined ? { sessionPath: openedSession.sessionPath } : {}),
-				kind: entry.kind,
-				cwd: entry.cwd,
-				context: entry.context,
-			});
-			host.writer.status.publish(openedSession.sessionId, "open", "client");
+		if (options?.park) {
+			options.park(openedSession);
+			return undefined;
 		}
+		publishOpen(host, openedSession, entry);
 		if (!options?.accept && !host.draining && owner !== undefined && host.releasedConnections.has(owner)) {
 			releaseOwnerAttachment(host, owner, openedSession.sessionId);
 			await releaseOwnedSession(host, openedSession.sessionId);
 		}
+		// After the open SUCCEEDS (MEDIUM-A): a failed open keeps any record entry, so a later start
+		// still reopens that session.
+		await syncRetainedRecord(host, openedSession.sessionId, command.sessionPath);
 		if (options?.accept) {
 			return undefined;
 		}
-		const replyState =
-			entry.worker?.snapshot?.state ?? (entry.runtime ? buildRpcSessionState(entry.runtime.session) : undefined);
-		if (!replyState) throw new Error("Session state was not created");
-		if (options?.reply !== false)
-			host.writer.enqueue(opened.sessionId, {
-				id: command.id,
-				type: "response",
-				command: "open_session",
-				success: true,
-				data: {
-					sessionId: opened.sessionId,
-					state: replyState,
-					...(opened.attached ? { attached: true } : {}),
-				},
-			});
+		timer.mark("reply");
+		replyOpen(host, opened, entry, command, options?.reply !== false);
 		return undefined;
 	} catch (cause) {
 		if (opened) {
@@ -274,7 +226,7 @@ export async function open(
 			// rollback, and only while the registry still holds the live entry, so only that
 			// rollback owes its subscribers the terminal record; an attach rollback, or one whose
 			// entry is already gone, never announced the session in the first place (#3198 review, L1).
-			if (!opened.attached && !options?.signal?.aborted) {
+			if (!options?.park && !opened.attached && !options?.signal?.aborted) {
 				const entry = host.registry.peek(opened.sessionId);
 				if (entry?.runtime !== undefined || entry?.worker !== undefined)
 					host.writer.sealRolledBackOpen(opened.sessionId, entry.sessionPath);

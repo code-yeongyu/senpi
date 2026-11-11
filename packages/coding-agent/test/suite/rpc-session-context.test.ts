@@ -1,9 +1,6 @@
-import { once } from "node:events";
 import { mkdir, rm, writeFile } from "node:fs/promises";
-import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect, it } from "vitest";
 import { z } from "zod";
@@ -14,6 +11,7 @@ import {
 	PROBE_EXTENSION,
 	responseData,
 } from "./rpc-session-context-support.ts";
+import { rawClient } from "./rpc-raw-socket-client.ts";
 import { startInProcessHost } from "./rpc-worker-host-support.ts";
 
 it("gives each session's extension exactly the kind and context that opened it", async () => {
@@ -236,53 +234,6 @@ it("carries kind and context across a real socket host", async () => {
 		await host.dispose();
 	}
 }, 600_000);
-
-// The shared endpoint schema types `data.state` as a session snapshot and `message` as text; a warm and a model
-// turn send neither, so this case reads the socket's JSON lines itself.
-type RawRecord = Record<string, unknown> & { id?: string; type?: string; sessionId?: string };
-async function rawClient(socketPath: string) {
-	const socket = createConnection(socketPath);
-	await once(socket, "connect", { signal: AbortSignal.timeout(10_000) });
-	const records: RawRecord[] = [];
-	const waiters = new Set<(record: RawRecord) => void>();
-	createInterface({ input: socket }).on("line", (line) => {
-		const record = z.record(z.string(), z.unknown()).parse(JSON.parse(line)) as RawRecord;
-		records.push(record);
-		for (const waiter of [...waiters]) waiter(record);
-	});
-	let serial = 0;
-	const wait = (predicate: (record: RawRecord) => boolean, ms = 60_000): Promise<RawRecord> =>
-		new Promise((resolve, reject) => {
-			const seen = records.find(predicate);
-			if (seen) return resolve(seen);
-			const timer = setTimeout(() => {
-				waiters.delete(waiter);
-				reject(new Error(`deadline waiting on the socket: ${String(predicate).slice(0, 120)}`));
-			}, ms);
-			const waiter = (record: RawRecord): void => {
-				if (!predicate(record)) return;
-				clearTimeout(timer);
-				waiters.delete(waiter);
-				resolve(record);
-			};
-			waiters.add(waiter);
-		});
-	return {
-		wait,
-		send(command: Record<string, unknown>): void {
-			socket.write(`${JSON.stringify(command)}\n`);
-		},
-		async request(command: Record<string, unknown>): Promise<RawRecord> {
-			const id = `raw-${++serial}`;
-			const response = wait((record) => record.type === "response" && record.id === id);
-			socket.write(`${JSON.stringify({ ...command, id })}\n`);
-			return response;
-		},
-		close(): void {
-			socket.destroy();
-		},
-	};
-}
 
 it("applies each session's permission preset on a warmed socket host (#2461)", async () => {
 	// Given: a socket host whose sessions load a faux model scripted to read a file outside the project.

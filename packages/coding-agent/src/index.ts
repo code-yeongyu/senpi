@@ -1,6 +1,12 @@
 // Core session management
 export { SecretInputUnavailableError, type SecretInputUnavailableReason } from "./core/extensions/secret-input.ts";
 export type { RpcSecretInputSettledEvent } from "./modes/rpc/rpc-types.ts";
+export type {
+	PresenterAccountAuthority,
+	PresenterAttestation,
+	PresenterAttestationRefusal,
+	PresenterAttestationResult,
+} from "./modes/rpc/mcp-presenter-account.ts";
 
 export { sanitizeTerminalLabel, visibleWidth } from "@earendil-works/pi-tui";
 export { type Args, parseArgs } from "./cli/args.ts";
@@ -197,6 +203,7 @@ export type {
 	ModelSelectSource,
 	NormalizedBuildSystemPromptOptions,
 	PowerShellToolCallEvent,
+	ProgramStatus,
 	ProjectTrustContext,
 	ProjectTrustEvent,
 	ProjectTrustEventDecision,
@@ -498,6 +505,16 @@ export {
 	type ReadClassifier,
 	registerReadClassifier,
 } from "./core/tools/read-classifiers.ts";
+export {
+	registerRpcRemoteSource,
+	type RpcRemoteHandlers,
+	type RpcRemoteOpenOptions,
+	type RpcRemoteSettledTurn,
+	type RpcRemoteSource,
+	type RpcRemoteState,
+	type RpcRemoteSubscription,
+	type RpcRemoteTarget,
+} from "./core/extensions/builtin/terminal/rpc-remote-source.ts";
 export {
 	hasTrustRequiringProjectResources,
 	type ProjectTrustDecision,

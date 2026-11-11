@@ -30,6 +30,8 @@ type RpcCommandBody =
 			id?: string;
 			type: "open_session";
 			admissionId?: string;
+			/** A C4.4 resend of `admissionId` (RULING-125, docs/rpc.md "Admission retries"); ignored with the flag off. */
+			retry?: true;
 			/** An observational/unattended open; attaching never releases an existing hold. */
 			attended?: false;
 			spawnedBy?: import("../../core/session-lifecycle-types.ts").SpawnedBy;
@@ -191,6 +193,20 @@ type RpcCommandBody =
 	  }
 	| {
 			id?: string;
+			/** The hands a headless engine can run a session's tools on (R4); capability `hand_selection`. */
+			type: "list_hands";
+			/** Also answer this session's recorded hand as `selected` (`null` = local). */
+			sessionId?: string;
+	  }
+	| {
+			id?: string;
+			/** Records which hand runs this session's tools; `null` returns them to this process (R4). */
+			type: "select_hand";
+			sessionId: string;
+			device: string | null;
+	  }
+	| {
+			id?: string;
 			/**
 			 * Subscribe this connection to `session_status` records (docs/rpc.md, "Session status stream"). The
 			 * answer carries a snapshot at `seq: 0`; every later record of the subscription is strictly +1.
@@ -199,6 +215,8 @@ type RpcCommandBody =
 			 */
 			type: "subscribe_sessions";
 			admissionId?: string;
+			/** A C4.4 resend of `admissionId` (RULING-125, docs/rpc.md "Admission retries"); ignored with the flag off. */
+			retry?: true;
 			/** `"all"` (default), routing/durable ids or paths, or the children of one durable session id. */
 			sessions?: "all" | { ids: string[] } | { childrenOf: string };
 			/** Include `kind: "worker"` sessions (default: true for `childrenOf`, false otherwise). */
@@ -244,7 +262,22 @@ type RpcCommandBody =
 	  };
 
 /** Compact callers may identify their own admission on any correlated session request. */
-export type RpcCommand = RpcCommandBody & { readonly admissionId?: string };
+export type RpcCommand = (
+	| RpcCommandBody
+	| {
+			id?: string;
+			/** Build one invisible session for later claim; never an attachment. Requires `park_claim`. */
+			type: "park_session";
+			cwd: string;
+			kind?: SessionKind;
+			context?: Record<string, string>;
+	  }
+	| (Omit<Extract<RpcCommandBody, { type: "open_session" }>, "type" | "cwd"> & {
+			/** Consume one ready park. A miss returns `claimed: false` and never builds a session. */
+			type: "claim_session";
+			cwd: string;
+	  })
+) & { readonly admissionId?: string };
 
 /** Stdin records: session/host commands plus extension-UI replies and progress, and host-request answers. */
 export type RpcInboundRecord = RpcCommand | RpcExtensionUIResponse | RpcExtensionUIProgress | RpcHostResponse;

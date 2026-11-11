@@ -30,6 +30,8 @@ export type FooterSessionOptions = {
 	/** Credential the footer's account segment reads; defaults to none. */
 	credential?: { type: "oauth"; access: string; refresh: string; expires: number } & Record<string, unknown>;
 	sessionId?: string;
+	/** A switch held until the next message compacts for it (senpi#1873); defaults to none. */
+	pendingModelSwitch?: { id: string; provider?: string };
 };
 
 export function createFooterSession(options: FooterSessionOptions): AgentSession {
@@ -91,6 +93,16 @@ export function createFooterSession(options: FooterSessionOptions): AgentSession
 		},
 		getContextUsage: () => ({ contextWindow: 200_000, percent: 12.3 }),
 		isFastModeActive: () => options.fastModeActive ?? false,
+		pendingModelSwitch: options.pendingModelSwitch
+			? {
+					model: {
+						id: options.pendingModelSwitch.id,
+						provider: options.pendingModelSwitch.provider ?? "test",
+						contextWindow: 128_000,
+						reasoning: false,
+					},
+				}
+			: undefined,
 		modelRuntime: {
 			isUsingOAuth: () => false,
 			isUsingSubscription: () => false,

@@ -215,6 +215,12 @@ export {
 export { sanitizeTerminalLabel, shortenImagePath } from "./terminal-text.ts";
 export { copyLineSources } from "./selection-source.ts";
 export {
+	encodeProgramStatus,
+	type ProgramStatus,
+	type ProgramStatusKind,
+	type ProgramStatusState,
+} from "./program-status.ts";
+export {
 	type Component,
 	CompositeRevision,
 	Container,

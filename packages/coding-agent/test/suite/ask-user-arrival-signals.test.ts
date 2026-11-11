@@ -109,7 +109,9 @@ describe("ask-user arrival signals", () => {
 				);
 				const settled = delivery.settled(ctx, "arrival");
 				expect(asked).toHaveLength(1);
-				expect(blocked).toEqual([{ active: true, id: "arrival", label: "Library - Which library?" }]);
+				expect(blocked).toEqual([
+					{ active: true, id: "arrival", label: "Library - Which library?", kind: "question" },
+				]);
 				if (outcome === "abort") controller.abort();
 				else
 					response.resolve({
@@ -124,7 +126,7 @@ describe("ask-user arrival signals", () => {
 				await Promise.resolve();
 				expect(asked).toHaveLength(1);
 				expect(blocked).toEqual([
-					{ active: true, id: "arrival", label: "Library - Which library?" },
+					{ active: true, id: "arrival", label: "Library - Which library?", kind: "question" },
 					{ active: false, id: "arrival" },
 				]);
 			},
@@ -160,4 +162,34 @@ describe("ask-user arrival signals", () => {
 		expect(h.emitExtensionEvent).toHaveBeenLastCalledWith("herdr:blocked", { active: false, id: opened.id });
 		expect(h.emitExtensionEvent).toHaveBeenCalledTimes(2);
 	});
+	it.each(["select", "confirm", "input"] as const)(
+		"marks a %s dialog about a tool call as permission",
+		async (method) => {
+			const h = signalHost();
+			const done = Promise.withResolvers<string | boolean | undefined>();
+			const methods = {
+				select: "showExtensionSelector",
+				confirm: "showExtensionConfirm",
+				input: "showExtensionInput",
+			} as const;
+			Object.assign(h.fake, { [methods[method]]: () => done.promise });
+			const ui = h.fake.createExtensionUIContext();
+			const opts = { toolCallId: "call-1" };
+			const pending =
+				method === "select"
+					? ui.select("Allow bash?", ["Allow"], opts)
+					: method === "confirm"
+						? ui.confirm("Allow bash?", "", opts)
+						: ui.input("Allow bash?", undefined, opts);
+			expect(h.emitExtensionEvent).toHaveBeenCalledExactlyOnceWith("herdr:blocked", {
+				active: true,
+				id: expect.any(String),
+				label: "Allow bash?",
+				kind: "permission",
+			});
+			done.resolve(method === "confirm" ? true : "Allow");
+			await pending;
+			expect(h.emitExtensionEvent).toHaveBeenCalledTimes(2);
+		},
+	);
 });

@@ -7,4 +7,5 @@ export {
 	windowsTreeKillArgs,
 	windowsTreeKillPlan,
 } from "./harness/env/windows-process-tree.ts";
+export { localDeviceFiles } from "./execution/device-files-node.ts";
 export * from "./index.ts";

@@ -218,7 +218,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   # `npm run build` (scripts/build-all.mjs) is a pure function of the checked-out tree and writes only
-  # `packages/**/dist`, yet each of the four shards below used to run it: 4 x ~35 s of identical work on a
+  # `packages/**/dist`, yet each of the (then four) shards below used to run it: 4 x ~35 s of identical work on a
   # congested runner pool (senpi#4610). It runs once here and the shards unpack its output.
   #
   # The outputs travel as ONE tarball, not as a bare artifact path: `packages/*/dist` is thousands of small
@@ -266,17 +266,18 @@ jobs:
           if-no-files-found: error
 
   # The coding-agent vitest suite dominates CI wall time (2467+ files; three
-  # shards reached 27-minute jobs). Sharding it across four
-  # runners divides that wall while each shard keeps the CI fork-pool settings
+  # shards reached 27-minute jobs). Four shards later ran 15-25 min against the 25-minute step timeout
+  # (senpi#5855), so the suite runs on ten runners and every shard fails its "Shard time budget" step
+  # once its tests ran past 15 min, naming that time, long before the timeout. Sharding divides that wall while each shard keeps the CI fork-pool settings
   # from vitest.config.ts (forks pool, capped workers) that prevent the historical
   # subprocess-suite pool hang.
   test-coding-agent:
-    name: Test (coding-agent ${{ matrix.shard }}/4)
+    name: Test (coding-agent ${{ matrix.shard }}/10)
     needs: build-coding-agent
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -319,17 +320,26 @@ jobs:
         shell: bash
         run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
 
+      - name: Start the shard budget clock
+        shell: bash
+        run: echo "SHARD_BUDGET_STARTED=$(date +%s)" >> "$GITHUB_ENV"
+
       - name: Test shard
         timeout-minutes: 25
-        run: node ../../scripts/run-tests.mjs vitest run --shard=${{ matrix.shard }}/4
+        run: node ../../scripts/run-tests.mjs vitest run --shard=${{ matrix.shard }}/10
         working-directory: packages/coding-agent
+
+      - name: Shard time budget
+        env:
+          SHARD_LABEL: Test (coding-agent ${{ matrix.shard }}/10)
+        run: node scripts/ci-shard-budget.mjs
 
       - name: Workflow summary
         if: always()
         shell: bash
         run: |
           {
-            echo "## Test (coding-agent ${{ matrix.shard }}/4)"
+            echo "## Test (coding-agent ${{ matrix.shard }}/10)"
             echo "- Status: ${{ job.status }}"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Check OS temp after tests
@@ -374,7 +384,7 @@ jobs:
         run: |
           # tui-smoke.test.mjs drives the real tmux driver (senpi#4986 regression); make sure tmux exists.
           command -v tmux >/dev/null || { sudo apt-get update && sudo apt-get install -y tmux; }
-          node --test .agents/skills/senpi-qa/scripts/lib/equivalence-normalize.test.mjs .agents/skills/senpi-qa/scripts/lib/equivalence-tui-compare.test.mjs .agents/skills/senpi-qa/scripts/lib/tui-smoke.test.mjs
+          node --test .agents/skills/senpi-qa/scripts/lib/equivalence-normalize.test.mjs .agents/skills/senpi-qa/scripts/lib/equivalence-tui-compare.test.mjs .agents/skills/senpi-qa/scripts/lib/tui-smoke.test.mjs .agents/skills/senpi-qa/scripts/lib/equivalence-mutations.test.mjs
 
       # E29 (example extension gondolin) starts a real micro-VM, so the runner needs QEMU and a gondolin image store with
       # alpine-base:latest pulled ahead of time (the senpi#4751 M0 readiness recipe). Provisioned here so E29 runs on CI
@@ -412,7 +422,7 @@ jobs:
 
       - name: EQ compare against the B0 goldens
         timeout-minutes: 25
-        run: node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --compare --pipeline legacy --placement fused --evidence eq-ci
+        run: node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --compare --placement fused --evidence eq-ci
 
       - name: Z1.n Node smoke (node vs bun)
         timeout-minutes: 10
@@ -576,6 +586,8 @@ jobs:
   # timeouts and cmd.exe `--exec` hooks all behave differently on Windows.
   # senpi#3566 todo 4 (Windows half): the tool child's Job Object containment against the real kernel32. These tests need
   # bun:ffi, so vitest runs under Bun here; under Node they skip themselves, which the last step refuses.
+  # senpi#6125 rides the same job: the EcoQoS opt-out reads the real kernel32 power-throttling state of this process
+  # and of spawned children.
   tool-child-windows:
     name: Tool child Job Object (Windows)
     needs: platform-scope
@@ -610,14 +622,14 @@ jobs:
 
       - name: Run tool child Windows tests under Bun
         shell: bash
-        run: node ../../scripts/run-tests.mjs bun --bun ../../node_modules/vitest/vitest.mjs run src/modes/rpc/tool-child/windows-job.win32.test.ts src/modes/rpc/tool-child/launch-barrier.win32.test.ts src/modes/rpc/tool-child/child-containment.test.ts src/modes/rpc/tool-child/windows-breakaway.test.ts src/modes/rpc/tool-child/windows-command-line.test.ts --reporter=verbose --reporter=json --outputFile=vitest-tool-child-win32.json
+        run: node ../../scripts/run-tests.mjs bun --bun ../../node_modules/vitest/vitest.mjs run src/modes/rpc/tool-child/windows-job.win32.test.ts src/modes/rpc/tool-child/launch-barrier.win32.test.ts src/modes/rpc/tool-child/child-containment.test.ts src/modes/rpc/tool-child/windows-breakaway.test.ts src/modes/rpc/tool-child/windows-command-line.test.ts src/core/windows-power-throttling.test.ts src/core/windows-power-throttling.win32.test.ts --reporter=verbose --reporter=json --outputFile=vitest-tool-child-win32.json
         working-directory: packages/coding-agent
 
       # A skipped suite exits 0: fail unless both real-kernel files executed and every test in them passed.
       - name: Require the real-kernel tests to have executed
         shell: bash
         run: |
-          for name in windows-job.win32.test.ts launch-barrier.win32.test.ts; do
+          for name in windows-job.win32.test.ts launch-barrier.win32.test.ts windows-power-throttling.win32.test.ts; do
             node -e '
               const r = JSON.parse(require("fs").readFileSync("vitest-tool-child-win32.json", "utf8"));
               const file = r.testResults.find((t) => t.name.split("\\").join("/").endsWith(process.argv[1]));
@@ -1400,7 +1412,7 @@ jobs:
         timeout-minutes: 5
         run: |
           bash scripts/install-ci-system-deps.sh \
-            libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
+            fd-find ripgrep
           sudo ln -sf "$(which fdfind)" /usr/local/bin/fd
 
       - name: Install dependencies
@@ -1415,7 +1427,6 @@ jobs:
 
       - name: Fresh release entry graphs (codemode and exclusions)
         run: |
-          npm rebuild canvas --foreground-scripts
           node scripts/run-tests.mjs bun test scripts/release-graph-codemode.test.ts
           node scripts/run-tests.mjs bun test scripts/release-graph-exclusions.test.ts
 
@@ -1468,6 +1479,7 @@ jobs:
           --workspace packages/agent
           --workspace packages/ai
           --workspace packages/client
+          --workspace packages/machine-ops
           --workspace packages/protocol
           --workspace packages/pty
           --workspace packages/senpi-codemode

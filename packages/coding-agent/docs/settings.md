@@ -109,9 +109,9 @@ Permission rules are a confirmation policy, not a sandbox. Senpi, extensions, pa
 |---------|------|---------|-------------|
 | `defaultProvider` | string | - | Startup provider (e.g., `"anthropic"`, `"openai"`; saved with Ctrl+S in `/model`, or edited manually) |
 | `defaultModel` | string | - | Startup model ID (saved with Ctrl+S in `/model`, or edited manually) |
-| `recommendedModels` | string[] | `claude-opus-5-5`, `claude-fable-5-1`, `kimi-k3.1-pro`, `gpt-6-astra`, `gpt-6.1-sol`, `glm-5.3` | Preferred default model ids in priority order. Built-in thinking levels are claude-opus-5-5/`medium`, claude-fable-5-1/`xhigh`, kimi-k3.1-pro/`max`, gpt-6-astra/`xhigh`, gpt-6.1-sol/`medium`, glm-5.3/`max`. Override the list or disable auto-switch with `--no-recommended-models` / `warnings.offRecommendedModel`. |
+| `recommendedModels` | string[] | `claude-opus-5-5`, `claude-fable-5-2`, `kimi-k3.1-pro`, `gpt-6-astra`, `gpt-6.1-sol`, `glm-5.3` | Preferred default model ids in priority order. Built-in thinking levels are claude-opus-5-5/`medium`, claude-fable-5-2/`xhigh`, kimi-k3.1-pro/`max`, gpt-6-astra/`xhigh`, gpt-6.1-sol/`medium`, glm-5.3/`max`. Override the list or disable auto-switch with `--no-recommended-models` / `warnings.offRecommendedModel`. |
 | `defaultThinkingLevel` | string | - | Startup thinking level (saved with Ctrl+S in `/thinking`, or edited manually): `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"` |
-| `promptPreset` | string | `"auto"` | Force a system prompt preset: `"auto"`, `"kimi-k2-6"`, `"kimi-k2-7"`, `"kimi-k2-8"`, `"kimi-k3"`, `"kimi-k3-1"`, `"glm-5.2"`, `"glm-5.3"`, `"grok-4.5"`, `"grok-4.6"`, `"grok-4.7"`, `"claude-fable-5"`, `"claude-fable-5-1"`, `"claude-opus-5-5"`, `"claude-opus-5"`, `"claude-sonnet-5-5"`, `"claude-haiku-5-5"`, `"claude-opus-4-5"`, `"claude-opus-4-6"`, `"claude-opus-4-7"`, `"claude-opus-4-8"`, `"deepseek-v4-flash"`, `"deepseek-v4-flash-0731"`, `"deepseek-v4-1-flash"`, `"deepseek-v4-pro"`, `"gemini-4-argon"`, `"gpt-5"`, `"gpt-5.2"`, `"gpt-5.3-codex"`, `"gpt-5.4"`, `"gpt-5.5"`, `"gpt-5.6"`, or `"gpt-6-astra"` |
+| `promptPreset` | string | `"auto"` | Force a system prompt preset: `"auto"`, `"kimi-k2-6"`, `"kimi-k2-7"`, `"kimi-k2-8"`, `"kimi-k3"`, `"kimi-k3-1"`, `"glm-5.2"`, `"glm-5.3"`, `"grok-4.5"`, `"grok-4.6"`, `"grok-4.7"`, `"claude-fable-5"`, `"claude-fable-5-1"`, `"claude-fable-5-2"`, `"claude-opus-5-5"`, `"claude-opus-5"`, `"claude-sonnet-5-5"`, `"claude-haiku-5-5"`, `"claude-opus-4-5"`, `"claude-opus-4-6"`, `"claude-opus-4-7"`, `"claude-opus-4-8"`, `"deepseek-v4-flash"`, `"deepseek-v4-flash-0731"`, `"deepseek-v4-1-flash"`, `"deepseek-v4-pro"`, `"gemini-4-argon"`, `"gpt-5"`, `"gpt-5.2"`, `"gpt-5.3-codex"`, `"gpt-5.4"`, `"gpt-5.5"`, `"gpt-5.6"`, or `"gpt-6-astra"` |
 | `hideThinkingBlock` | boolean | `false` | Hide thinking blocks in output |
 | `showCacheMissNotices` | boolean | `false` | Show transcript notices for significant prompt-cache misses, compaction or branch-summary usage, and provider recovery diagnostics such as dropped Anthropic thinking blocks |
 | `thinkingBudgets` | object | - | Custom token budgets per thinking level. Anthropic, Google, and Bedrock use these natively. OpenAI-compatible models use them when `compat.thinkingTokenBudgetField` (or `supportsThinkingTokenBudget`) is set. |
@@ -214,6 +214,7 @@ Set `PI_SKIP_VERSION_CHECK=1` to disable the senpi version update check. Use `--
 |---------|------|---------|-------------|
 | `contextFiles.maxBytesPerFile` | number | `65536` | Maximum UTF-8 bytes loaded from each AGENTS.md / CLAUDE.md, including the truncation note and any closing code fence |
 | `contextFiles.maxTotalBytes` | number | `131072` | Maximum combined UTF-8 bytes of loaded context files, including truncation notes and closing code fences |
+| `contextFiles.globalPath` | string | unset | Global (user-scope) context file to load instead of the agent-dir `AGENTS.md`, e.g. `~/.agents/AGENTS.md`. Read from `~/.senpi/agent/settings.json` only; a project's `.senpi/settings.json` cannot set it. A leading `~` is expanded, a relative path resolves against `~/.senpi/agent`, and a directory runs the same `AGENTS.override.md` / `AGENTS.md` / `CLAUDE.md` candidate probe as the agent dir. Unset or blank keeps the agent-dir file; a path that is set but missing, unreadable, or a directory with no candidate falls back to the agent-dir probe and shows one warning naming the path. The loaded file keeps the same size limits |
 
 Files receive budget nearest-first: the current directory, its ancestors, then the global file. A cut prefers a newline in the last quarter of the available content budget; otherwise it uses a UTF-8 character boundary. An open backtick or tilde fence is closed with the same marker before the truncation note; the closing marker's bytes count against the budget. Files with less than 1024 bytes of budget left are skipped when they would need truncation, with a warning distinguishing an undersized per-file limit from budget used by nearer files. Both limits accept positive numbers (rounded down); invalid values use the defaults.
 
@@ -331,7 +332,7 @@ Keep `retry.provider.maxRetries` at `0` unless provider-level retries are explic
 
 #### Model fallback chains
 
-`retry.fallbackChains` maps a primary-model selector to an ordered list of fallback selectors. A selector is `provider/model` with an optional `:thinking-level` suffix, or a bare `model` id that applies to that model vendor's own providers - for example `anthropic-subscription` and `anthropic` for Claude, `chatgpt-subscription` and `openai` for GPT, `google` and `google-vertex` for Gemini. A bare selector never expands onto a reseller, gateway, cloud re-host or custom provider that also serves the model; name one as `provider/model` to use it. A bare id from a vendor senpi does not know stays on the provider the session is already using. Within the vendor's providers, those holding an OAuth credential are preferred, then a fixed precedence order. Senpi ships bare default chains for `claude-fable-5-1` and `claude-fable-5` - `claude-opus-5-5`, then `claude-opus-5` - and for `claude-opus-5-5` - `claude-opus-5` - with no thinking level of their own, so a shipped rung inherits the session's thinking level (clamped to what the model supports), so Fable 5.1, Fable 5 and Opus 5.5 keep a fallback chain whichever provider serves them, and a fallback never leaves the Anthropic family; set a key to `[]` to opt out entirely, or set one `provider/claude-fable-5-1` key to override just that provider. For example, this switches Fable 5.1 to Kimi K3 at `max` thinking when an eligible failure occurs:
+`retry.fallbackChains` maps a primary-model selector to an ordered list of fallback selectors. A selector is `provider/model` with an optional `:thinking-level` suffix, or a bare `model` id that applies to that model vendor's own providers - for example `anthropic-subscription` and `anthropic` for Claude, `chatgpt-subscription` and `openai` for GPT, `google` and `google-vertex` for Gemini. A bare selector never expands onto a reseller, gateway, cloud re-host or custom provider that also serves the model; name one as `provider/model` to use it. A bare id from a vendor senpi does not know stays on the provider the session is already using. Within the vendor's providers, those holding an OAuth credential are preferred, then a fixed precedence order. Senpi ships bare default chains for `claude-fable-5-2`, `claude-fable-5-1` and `claude-fable-5` - `claude-opus-5-5`, then `claude-opus-5` - and for `claude-opus-5-5` - `claude-opus-5` - with no thinking level of their own, so a shipped rung inherits the session's thinking level (clamped to what the model supports), so Fable 5.2, Fable 5.1, Fable 5 and Opus 5.5 keep a fallback chain whichever provider serves them, and a fallback never leaves the Anthropic family; set a key to `[]` to opt out entirely, or set one `provider/claude-fable-5-1` key to override just that provider. For example, this switches Fable 5.1 to Kimi K3 at `max` thinking when an eligible failure occurs:
 
 ```json
 {
@@ -481,6 +482,7 @@ unknown (e.g. Google models) or caching is off, no budget applies and timeout be
 |---------|------|---------|-------------|
 | `promptCache.cacheAwareTimeouts` | boolean | `true` | Cap foreground tool waits at the model's prompt-cache TTL minus the safety buffer; `false` restores the fixed legacy ceilings |
 | `promptCache.safetyBufferSeconds` | number | `30` | Headroom subtracted from the cache TTL (a 5m TTL yields a 270s ceiling). If it consumes the whole TTL, no budget applies |
+| `promptCache.sessionAffinity` | boolean | `true` | Send a stable per-session key on Anthropic Messages requests (`metadata.user_id`, plus the session-affinity header where the model's compat sends one) so a gateway that spreads requests over several accounts keeps one session on one account and its prompt cache. The key is an HMAC of the session id under a random per-install salt: it never carries the session id or any account or user identity. `false` restores the earlier behavior: no `metadata.user_id`, and a model whose compat sends the affinity header sends the session id there as before. A model whose compat sets `sendSessionAffinityHeaders: false` sends neither |
 | `promptCache.goalBackstopMaxSeconds` | number | `270` | Longest a goal parked on live wake sources (terminal monitors, background sessions, detached `eval` cells, task children) waits before it re-checks with a full turn, clamped to 1..3600. The default lands inside the 5m cache TTL; raise it toward `3570` to trade re-check frequency for cost on a wait you trust |
 
 A foreground `bash` command still running at the budget is handed to a live background session
@@ -634,16 +636,17 @@ An empty array starts with no built-in tools while preserving extension and SDK 
 
 #### Eval-only tools
 
-Whenever the `eval` tool is available (codemode loaded), `bash`, `powershell`, `grep`, `workflow` and `monitor` leave the model's direct tool list and run only inside eval cells:
+Whenever the `eval` tool is available (codemode loaded), `bash`, `powershell`, `grep`, `glob`, `generate_image`, `workflow` and `monitor` leave the model's direct tool list and run only inside eval cells:
 
 ```js
 const { output } = await tool.bash({ command: "ls -la" });
 const hits = await tool.grep({ pattern: "TODO", path: "src" });
+const image = await tool.generate_image({ prompt: "a line-art fox, transparent background" });
 const snapshot = await tool.workflow({ action: "snapshot", run_id });
 await tool.monitor({ description: "build", command: "bun run build", filter: "^done" });
 ```
 
-This is the default and has no setting. Tools may declare `exposure: "eval"` to join this policy; `bash`, `powershell` and `grep` use that declaration. They remain registered and discoverable through `tool_schema` inside eval. Hooks and permission checks apply unchanged to calls made this way, and the prompt surfaces that document these tools render the `tool.<name>(` form to match. If the model attempts a direct call anyway, the call returns a hint naming the eval form instead of executing the tool. When the `eval` tool is unavailable (codemode not loaded, or a child agent whose allowlist omits it), the policy stays inert and otherwise enabled tools remain directly callable, so shell, text search, workflow and monitor access is never lost.
+This is the default and has no setting. Tools may declare `exposure: "eval"` to join this policy; `bash`, `powershell`, `grep`, `glob` and `generate_image` use that declaration, and extension tools (for example the omo plugin's `thread_*` family) join the same way. They remain registered and discoverable through `tool_schema` inside eval. Hooks and permission checks apply unchanged to calls made this way, and the prompt surfaces that document these tools render the `tool.<name>(` form to match. If the model attempts a direct call anyway, the call returns a hint naming the eval form instead of executing the tool. When the `eval` tool is unavailable (codemode not loaded, or a child agent whose allowlist omits it), the policy stays inert and otherwise enabled tools remain directly callable, so shell, text search, workflow and monitor access is never lost.
 
 ### Automatic Turns
 
@@ -655,6 +658,12 @@ This is the default and has no setting. Tools may declare `exposure: "eval"` to 
 | `turn_max_runtime_ms` | number | `21600000` | Hard cap on one turn's runtime from prompt accept; `0` disables |
 
 When a limit is reached the session pauses with a notice instead of starting another turn; any message you send continues it, because only turns since your last message count.
+
+### Thread Chains
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `threads.chainCountLimit` | number | unset | Hops a thread chain may make (session A prompts B, B prompts A, ...) before the next thread call is refused with `chain_count_limit`; a chain that comes back to a session it already visited is allowed. Unset (the default) means unlimited. There is no cost limit. Read when RPC input arrives with a `chainCount` (a thread call from another session; see `rpc.md`) |
 
 ### Ask User
 

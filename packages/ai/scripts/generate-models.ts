@@ -7,7 +7,6 @@ import { fileURLToPath } from "url";
 import { getBaiModels } from "./generate-models-bai.ts";
 import { fetchOpenGatewayModels } from "./generate-models-opengateway.ts";
 import { applyOpenAiInputCap } from "../src/utils/openai-input-cap.ts";
-import { FABLE55_LAUNCH, isFable55ModelId } from "../src/utils/fable55-launch.ts";
 import { MODEL_SHARD_SUFFIX, importedModelShards, isPrunableModelShard } from "./model-shards.ts";
 import { getEffortThinkingLevelMap, type ModelsDevReasoningOption } from "./models-dev-reasoning-options.ts";
 import { buildOpenRouterCatalog, type OpenRouterCatalog, type OpenRouterModelListItem } from "./openrouter-catalog.ts";
@@ -361,7 +360,7 @@ const EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS = new Set([
 	"github-copilot:claude-sonnet-4.5",
 ]);
 const ANTHROPIC_ALLOWED_FALLBACK_MODELS = {
-	[FABLE55_LAUNCH.modelId]: [...FABLE55_LAUNCH.refusalFallbackModels],
+	"claude-fable-5-2": ["claude-opus-4-8", "claude-opus-5"],
 	"claude-fable-5-1": ["claude-opus-4-8", "claude-opus-5"],
 	"claude-fable-5": ["claude-opus-4-8", "claude-opus-5"],
 	"claude-opus-5-5": ["claude-opus-4-8", "claude-opus-5"],
@@ -961,10 +960,9 @@ const MID_CONVO_EFFORT_UNSUPPORTED_ANTHROPIC_MODELS = new Set(["openrouter:anthr
 function supportsAnthropicMidConvoEffort(modelId: string): boolean {
 	const id = modelId.toLowerCase().replace(/^~?anthropic\//, "");
 	return (
-		isFable55ModelId(id) ||
 		/^claude-opus-5(?:[.-]5)?(?:-\d{8})?$/.test(id) ||
 		/^claude-(?:sonnet|haiku)-5[.-]5(?:-\d{8})?$/.test(id) ||
-		/^claude-(?:fable|mythos)-5(?:[.-]1)(?:-\d{8})?$/.test(id)
+		/^claude-(?:fable|mythos)-5[.-][12](?:-\d{8})?$/.test(id)
 	);
 }
 
@@ -976,8 +974,8 @@ function supportsAnthropicMidConvoEffort(modelId: string): boolean {
 // whose thinking-off shape (unset + effort `low`) is valid either way.
 function isAnthropicAdaptiveOnlyModel(modelId: string): boolean {
 	return (
-		isFable55ModelId(modelId) ||
 		modelId.includes("fable-5") ||
+		modelId.includes("mythos-5") ||
 		modelId.includes("opus-5-5") ||
 		modelId.includes("opus-5.5") ||
 		modelId.includes("sonnet-5-5") ||
@@ -989,16 +987,15 @@ function isAnthropicAdaptiveOnlyModel(modelId: string): boolean {
 
 function supportsAnthropicMidConvoSystemMessages(modelId: string): boolean {
 	return (
-		isFable55ModelId(modelId) ||
 		/^claude-opus-(?:4[.-]8|5(?:[.-]5)?)(?:-\d{8})?$/.test(modelId) ||
 		/^claude-(?:sonnet|haiku)-5[.-]5(?:-\d{8})?$/.test(modelId) ||
-		/^claude-(?:fable|mythos)-5(?:[.-]1)?(?:-\d{8})?$/.test(modelId)
+		/^claude-(?:fable|mythos)-5(?:[.-][12])?(?:-\d{8})?$/.test(modelId)
 	);
 }
 
 function isAnthropicAdaptiveThinkingModel(modelId: string): boolean {
 	return (
-		isFable55ModelId(modelId) ||
+		modelId.includes("mythos-5") ||
 		modelId.includes("opus-4-6") ||
 		modelId.includes("opus-4.6") ||
 		modelId.includes("opus-4-7") ||
@@ -3413,15 +3410,39 @@ const CLOUDFLARE_WORKERS_AI_CLASSIFIER_MODELS: ClassifierModel<"cloudflare-worke
 // Static OpenAI image models. OpenRouter's image listing stays the only live
 // source; these entries are hand-authored because OpenAI's own API exposes no
 // public image-model catalog to fetch from.
-// Source: platform.openai.com model pages, verified 2026-09-09:
+// Source: platform.openai.com model pages, verified 2026-09-09 (2.6 entries 2026-11-05):
+// https://platform.openai.com/docs/models/gpt-image-2.6-sunburst
+// https://platform.openai.com/docs/models/gpt-image-2.6-flare
 // https://platform.openai.com/docs/models/gpt-image-2.5-sunburst
 // https://platform.openai.com/docs/models/gpt-image-2.5-flare
 // https://platform.openai.com/docs/models/gpt-image-2
-// GPT Image 2/2.5: $5 text input / $8 image input / $30 image output / $1.25
+// GPT Image 2/2.5/2.6: $5 text input / $8 image input / $30 image output / $1.25
 // cache-read per 1M tokens (`imageInput` prices reference and edit inputs).
 // Keep the existing gpt-image-1.5 zero-filled pricing unchanged.
-// GPT Image 2/2.5 accept text generation and reference images via /images/edits.
+// GPT Image 2/2.5/2.6 accept text generation and reference images via /images/edits.
 const OPENAI_IMAGE_MODELS: ImageModel<"openai-images">[] = [
+	{
+		type: "image",
+		id: "gpt-image-2.6-sunburst",
+		name: "GPT Image 2.6 Sunburst",
+		api: "openai-images",
+		provider: "openai",
+		baseUrl: "https://api.openai.com/v1",
+		input: ["text", "image"],
+		output: ["image"],
+		cost: { input: 5, output: 30, cacheRead: 1.25, cacheWrite: 0, imageInput: 8 },
+	},
+	{
+		type: "image",
+		id: "gpt-image-2.6-flare",
+		name: "GPT Image 2.6 Flare",
+		api: "openai-images",
+		provider: "openai",
+		baseUrl: "https://api.openai.com/v1",
+		input: ["text", "image"],
+		output: ["image"],
+		cost: { input: 5, output: 30, cacheRead: 1.25, cacheWrite: 0, imageInput: 8 },
+	},
 	{
 		type: "image",
 		id: "gpt-image-2.5-sunburst",

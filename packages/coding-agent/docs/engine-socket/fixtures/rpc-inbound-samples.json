@@ -1,0 +1,1336 @@
+{
+	"methodClassesVersion": 1,
+	"methodClassesDigest": "bca41dd6cac2eff3dc82c24d763e4143d90f44ee75920da9bca1c2c8a98c5156",
+	"sampleId": "00000000-0000-7000-8000-000000000000",
+	"samplePathRoot": "/nonexistent/senpi-rpc-inbound-sample",
+	"methodCount": 128,
+	"methods": [
+		{
+			"method": "abort",
+			"class": "drive",
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "abort"
+			}
+		},
+		{
+			"method": "abort_bash",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "abort_bash"
+			}
+		},
+		{
+			"method": "abort_branch_summary",
+			"class": "drive",
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "abort_branch_summary"
+			}
+		},
+		{
+			"method": "abort_compaction",
+			"class": "drive",
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "abort_compaction"
+			}
+		},
+		{
+			"method": "abort_retry",
+			"class": "drive",
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "abort_retry"
+			}
+		},
+		{
+			"method": "account_order",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "account_order",
+				"provider": "rpc-sample-provider",
+				"names": null
+			}
+		},
+		{
+			"method": "account_pin",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "account_pin",
+				"provider": "rpc-sample-provider",
+				"name": null
+			}
+		},
+		{
+			"method": "account_remove",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "account_remove",
+				"provider": "rpc-sample-provider",
+				"name": "rpc-sample-account"
+			}
+		},
+		{
+			"method": "account_reset",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "account_reset",
+				"provider": "rpc-sample-provider",
+				"name": "rpc-sample-account"
+			}
+		},
+		{
+			"method": "admit_external_message",
+			"class": "drive",
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "admit_external_message",
+				"deliveryId": "00000000-0000-7000-8000-000000000000",
+				"text": "Sample delivery.",
+				"sender": {
+					"kind": "agent",
+					"session_id": "00000000-0000-7000-8000-000000000000"
+				},
+				"deliverAs": "followUp",
+				"whenIdle": "queue"
+			}
+		},
+		{
+			"method": "append_session_entry",
+			"class": "dynamic",
+			"dynamicVersion": 1,
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "append_session_entry",
+				"entry": {
+					"type": "message",
+					"id": "00000000-0000-7000-8000-000000000000",
+					"parentId": null,
+					"timestamp": "2026-01-01T00:00:00.000Z",
+					"message": {
+						"role": "user",
+						"content": "Sample appended entry.",
+						"timestamp": 0
+					}
+				}
+			}
+		},
+		{
+			"method": "append_user_message",
+			"class": "drive",
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "append_user_message",
+				"content": "Sample appended message."
+			}
+		},
+		{
+			"method": "attach_session",
+			"class": "thread",
+			"sampleClass": "thread",
+			"connectionLocal": false,
+			"sample": {
+				"type": "attach_session",
+				"sessionId": "00000000-0000-7000-8000-000000000000",
+				"durableSessionId": "00000000-0000-7000-8000-000000000000"
+			}
+		},
+		{
+			"method": "bash",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "bash",
+				"command": "true"
+			}
+		},
+		{
+			"method": "cancel_attempt",
+			"class": "connection_local",
+			"sampleClass": "connection_local",
+			"connectionLocal": true,
+			"sample": {
+				"type": "cancel_attempt",
+				"admissionId": "00000000-0000-7000-8000-000000000000"
+			}
+		},
+		{
+			"method": "check_reload_veto",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "check_reload_veto"
+			}
+		},
+		{
+			"method": "claim_session",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "claim_session",
+				"cwd": "/nonexistent/senpi-rpc-inbound-sample/cwd"
+			}
+		},
+		{
+			"method": "cleanup_bash_output",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "cleanup_bash_output",
+				"path": "/nonexistent/senpi-rpc-inbound-sample/bash-output.txt"
+			}
+		},
+		{
+			"method": "clear_queue",
+			"class": "drive",
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "clear_queue"
+			}
+		},
+		{
+			"method": "clone",
+			"class": "thread",
+			"sampleClass": "thread",
+			"connectionLocal": false,
+			"sample": {
+				"type": "clone"
+			}
+		},
+		{
+			"method": "close_session",
+			"class": "thread",
+			"sampleClass": "thread",
+			"connectionLocal": false,
+			"sample": {
+				"type": "close_session",
+				"sessionId": "00000000-0000-7000-8000-000000000000"
+			}
+		},
+		{
+			"method": "compact",
+			"class": "drive",
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "compact"
+			}
+		},
+		{
+			"method": "continue_from_leaf",
+			"class": "drive",
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "continue_from_leaf"
+			}
+		},
+		{
+			"method": "cycle_model",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "cycle_model"
+			}
+		},
+		{
+			"method": "cycle_thinking_level",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "cycle_thinking_level"
+			}
+		},
+		{
+			"method": "dequeue_message",
+			"class": "drive",
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "dequeue_message",
+				"queuedId": "00000000-0000-7000-8000-000000000000"
+			}
+		},
+		{
+			"method": "detach_connection",
+			"class": "connection_local",
+			"sampleClass": "connection_local",
+			"connectionLocal": true,
+			"sample": {
+				"type": "detach_connection"
+			}
+		},
+		{
+			"method": "edit_assistant_message",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "edit_assistant_message",
+				"entryId": "00000000-0000-7000-8000-000000000000",
+				"text": "Sample edit."
+			}
+		},
+		{
+			"method": "edit_queued_message",
+			"class": "drive",
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "edit_queued_message",
+				"queuedId": "00000000-0000-7000-8000-000000000000",
+				"text": "Sample edit."
+			}
+		},
+		{
+			"method": "edit_user_message",
+			"class": "drive",
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "edit_user_message",
+				"entryId": "00000000-0000-7000-8000-000000000000",
+				"text": "Sample edit."
+			}
+		},
+		{
+			"method": "eval_cells.list",
+			"class": "observe",
+			"sampleClass": "observe",
+			"connectionLocal": false,
+			"sample": {
+				"type": "eval_cells.list"
+			}
+		},
+		{
+			"method": "eval_cells.peek",
+			"class": "observe",
+			"sampleClass": "observe",
+			"connectionLocal": false,
+			"sample": {
+				"type": "eval_cells.peek",
+				"cellId": "00000000-0000-7000-8000-000000000000"
+			}
+		},
+		{
+			"method": "eval_cells.stop",
+			"class": "drive",
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "eval_cells.stop",
+				"cellId": "00000000-0000-7000-8000-000000000000"
+			}
+		},
+		{
+			"method": "export_html",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "export_html",
+				"outputPath": "/nonexistent/senpi-rpc-inbound-sample/export.html"
+			}
+		},
+		{
+			"method": "export_jsonl",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "export_jsonl",
+				"outputPath": "/nonexistent/senpi-rpc-inbound-sample/export.jsonl"
+			}
+		},
+		{
+			"method": "extension_request",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "extension_request",
+				"name": "rpc-inbound-sample"
+			}
+		},
+		{
+			"method": "extension_ui_progress",
+			"class": "answer",
+			"sampleClass": "answer",
+			"connectionLocal": false,
+			"sample": {
+				"type": "extension_ui_progress",
+				"id": "00000000-0000-7000-8000-000000000000"
+			}
+		},
+		{
+			"method": "extension_ui_response",
+			"class": "answer",
+			"sampleClass": "answer",
+			"connectionLocal": false,
+			"sample": {
+				"type": "extension_ui_response",
+				"id": "00000000-0000-7000-8000-000000000000",
+				"cancelled": true
+			}
+		},
+		{
+			"method": "follow_up",
+			"class": "dynamic",
+			"dynamicVersion": 1,
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "follow_up",
+				"message": "Sample follow-up."
+			}
+		},
+		{
+			"method": "fork",
+			"class": "thread",
+			"sampleClass": "thread",
+			"connectionLocal": false,
+			"sample": {
+				"type": "fork",
+				"entryId": "00000000-0000-7000-8000-000000000000"
+			}
+		},
+		{
+			"method": "get_auth_providers",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "get_auth_providers"
+			}
+		},
+		{
+			"method": "get_available_models",
+			"class": "observe",
+			"sampleClass": "observe",
+			"connectionLocal": false,
+			"sample": {
+				"type": "get_available_models"
+			}
+		},
+		{
+			"method": "get_available_thinking_levels",
+			"class": "observe",
+			"sampleClass": "observe",
+			"connectionLocal": false,
+			"sample": {
+				"type": "get_available_thinking_levels"
+			}
+		},
+		{
+			"method": "get_commands",
+			"class": "observe",
+			"sampleClass": "observe",
+			"connectionLocal": false,
+			"sample": {
+				"type": "get_commands"
+			}
+		},
+		{
+			"method": "get_effect_status",
+			"class": "dynamic",
+			"dynamicVersion": 1,
+			"sampleClass": "observe",
+			"connectionLocal": false,
+			"sample": {
+				"type": "get_effect_status",
+				"effectId": "00000000-0000-7000-8000-000000000000"
+			}
+		},
+		{
+			"method": "get_entries",
+			"class": "observe",
+			"sampleClass": "observe",
+			"connectionLocal": false,
+			"sample": {
+				"type": "get_entries",
+				"limit": 1
+			}
+		},
+		{
+			"method": "get_fast_mode",
+			"class": "observe",
+			"sampleClass": "observe",
+			"connectionLocal": false,
+			"sample": {
+				"type": "get_fast_mode"
+			}
+		},
+		{
+			"method": "get_follow_up_messages",
+			"class": "observe",
+			"sampleClass": "observe",
+			"connectionLocal": false,
+			"sample": {
+				"type": "get_follow_up_messages"
+			}
+		},
+		{
+			"method": "get_fork_messages",
+			"class": "observe",
+			"sampleClass": "observe",
+			"connectionLocal": false,
+			"sample": {
+				"type": "get_fork_messages"
+			}
+		},
+		{
+			"method": "get_last_assistant_text",
+			"class": "observe",
+			"sampleClass": "observe",
+			"connectionLocal": false,
+			"sample": {
+				"type": "get_last_assistant_text"
+			}
+		},
+		{
+			"method": "get_loaded_surfaces",
+			"class": "observe",
+			"sampleClass": "observe",
+			"connectionLocal": false,
+			"sample": {
+				"type": "get_loaded_surfaces"
+			}
+		},
+		{
+			"method": "get_media",
+			"class": "observe",
+			"sampleClass": "observe",
+			"connectionLocal": false,
+			"sample": {
+				"type": "get_media",
+				"toolCallId": "00000000-0000-7000-8000-000000000000",
+				"contentIndex": 0
+			}
+		},
+		{
+			"method": "get_messages",
+			"class": "observe",
+			"sampleClass": "observe",
+			"connectionLocal": false,
+			"sample": {
+				"type": "get_messages"
+			}
+		},
+		{
+			"method": "get_model_thinking_level",
+			"class": "observe",
+			"sampleClass": "observe",
+			"connectionLocal": false,
+			"sample": {
+				"type": "get_model_thinking_level",
+				"provider": "rpc-sample-provider",
+				"modelId": "rpc-sample-model"
+			}
+		},
+		{
+			"method": "get_pending_inputs",
+			"class": "observe",
+			"sampleClass": "observe",
+			"connectionLocal": false,
+			"sample": {
+				"type": "get_pending_inputs"
+			}
+		},
+		{
+			"method": "get_project_settings",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "get_project_settings"
+			}
+		},
+		{
+			"method": "get_project_trust",
+			"class": "observe",
+			"sampleClass": "observe",
+			"connectionLocal": false,
+			"sample": {
+				"type": "get_project_trust"
+			}
+		},
+		{
+			"method": "get_protocol_info",
+			"class": "observe",
+			"sampleClass": "observe",
+			"connectionLocal": false,
+			"sample": {
+				"type": "get_protocol_info"
+			}
+		},
+		{
+			"method": "get_provider_accounts",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "get_provider_accounts",
+				"provider": "rpc-sample-provider"
+			}
+		},
+		{
+			"method": "get_recovery_page",
+			"class": "connection_local",
+			"sampleClass": "connection_local",
+			"connectionLocal": true,
+			"sample": {
+				"type": "get_recovery_page",
+				"token": "00000000-0000-7000-8000-000000000000",
+				"admissionId": "00000000-0000-7000-8000-000000000000",
+				"componentRef": "00000000-0000-7000-8000-000000000000",
+				"requestId": "00000000-0000-7000-8000-000000000000"
+			}
+		},
+		{
+			"method": "get_session_stats",
+			"class": "observe",
+			"sampleClass": "observe",
+			"connectionLocal": false,
+			"sample": {
+				"type": "get_session_stats"
+			}
+		},
+		{
+			"method": "get_snapshot",
+			"class": "observe",
+			"sampleClass": "observe",
+			"connectionLocal": false,
+			"sample": {
+				"type": "get_snapshot",
+				"tail": 0
+			}
+		},
+		{
+			"method": "get_state",
+			"class": "observe",
+			"sampleClass": "observe",
+			"connectionLocal": false,
+			"sample": {
+				"type": "get_state"
+			}
+		},
+		{
+			"method": "get_steering_messages",
+			"class": "observe",
+			"sampleClass": "observe",
+			"connectionLocal": false,
+			"sample": {
+				"type": "get_steering_messages"
+			}
+		},
+		{
+			"method": "get_subscription_limits",
+			"class": "observe",
+			"sampleClass": "observe",
+			"connectionLocal": false,
+			"sample": {
+				"type": "get_subscription_limits"
+			}
+		},
+		{
+			"method": "get_tree",
+			"class": "observe",
+			"sampleClass": "observe",
+			"connectionLocal": false,
+			"sample": {
+				"type": "get_tree"
+			}
+		},
+		{
+			"method": "hold_input",
+			"class": "drive",
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "hold_input",
+				"inputId": "00000000-0000-7000-8000-000000000000",
+				"revision": 1,
+				"text": "Sample held input."
+			}
+		},
+		{
+			"method": "host_response",
+			"class": "connection_local",
+			"sampleClass": "connection_local",
+			"connectionLocal": true,
+			"sample": {
+				"type": "host_response",
+				"id": "00000000-0000-7000-8000-000000000000",
+				"error": "rpc inbound sample"
+			}
+		},
+		{
+			"method": "import_jsonl",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "import_jsonl",
+				"inputPath": "/nonexistent/senpi-rpc-inbound-sample/import.jsonl"
+			}
+		},
+		{
+			"method": "interrupt",
+			"class": "drive",
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "interrupt"
+			}
+		},
+		{
+			"method": "list_hands",
+			"class": "observe",
+			"sampleClass": "observe",
+			"connectionLocal": false,
+			"sample": {
+				"type": "list_hands"
+			}
+		},
+		{
+			"method": "list_sessions",
+			"class": "observe",
+			"sampleClass": "observe",
+			"connectionLocal": false,
+			"sample": {
+				"type": "list_sessions"
+			}
+		},
+		{
+			"method": "login_api_key",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "login_api_key",
+				"provider": "rpc-sample-provider",
+				"key": "rpc-sample-not-a-key"
+			}
+		},
+		{
+			"method": "login_cancel",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "login_cancel",
+				"provider": "rpc-sample-provider"
+			}
+		},
+		{
+			"method": "login_start",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "login_start",
+				"provider": "rpc-sample-provider"
+			}
+		},
+		{
+			"method": "logout",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "logout",
+				"provider": "rpc-sample-provider"
+			}
+		},
+		{
+			"method": "memory_report",
+			"class": "observe",
+			"sampleClass": "observe",
+			"connectionLocal": false,
+			"sample": {
+				"type": "memory_report"
+			}
+		},
+		{
+			"method": "move_session",
+			"class": "connection_local",
+			"sampleClass": "connection_local",
+			"connectionLocal": true,
+			"sample": {
+				"type": "move_session",
+				"op": "status",
+				"moveId": "00000000-0000-7000-8000-000000000000"
+			}
+		},
+		{
+			"method": "navigate_tree",
+			"class": "drive",
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "navigate_tree",
+				"entryId": "00000000-0000-7000-8000-000000000000"
+			}
+		},
+		{
+			"method": "new_session",
+			"class": "dynamic",
+			"dynamicVersion": 1,
+			"sampleClass": "thread",
+			"connectionLocal": false,
+			"sample": {
+				"type": "new_session"
+			}
+		},
+		{
+			"method": "open_session",
+			"class": "dynamic",
+			"dynamicVersion": 2,
+			"sampleClass": "thread",
+			"connectionLocal": false,
+			"sample": {
+				"type": "open_session"
+			}
+		},
+		{
+			"method": "park_session",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "park_session",
+				"cwd": "/nonexistent/senpi-rpc-inbound-sample/cwd"
+			}
+		},
+		{
+			"method": "pause_for_run",
+			"class": "drive",
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "pause_for_run",
+				"parentSessionId": "00000000-0000-7000-8000-000000000000",
+				"parentPauseSeq": 1,
+				"runRef": {
+					"kind": "task",
+					"id": "00000000-0000-7000-8000-000000000000"
+				}
+			}
+		},
+		{
+			"method": "prompt",
+			"class": "dynamic",
+			"dynamicVersion": 1,
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "prompt",
+				"message": "Sample prompt."
+			}
+		},
+		{
+			"method": "read_project_file",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "read_project_file",
+				"path": "/nonexistent/senpi-rpc-inbound-sample/AGENTS.md"
+			}
+		},
+		{
+			"method": "reclaim_session",
+			"class": "connection_local",
+			"sampleClass": "connection_local",
+			"connectionLocal": true,
+			"sample": {
+				"type": "reclaim_session",
+				"sessionPath": "/nonexistent/senpi-rpc-inbound-sample/reclaim.jsonl",
+				"durableSessionId": "00000000-0000-7000-8000-000000000000",
+				"expectedHostInstance": "00000000-0000-7000-8000-000000000000"
+			}
+		},
+		{
+			"method": "record_bash_result",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "record_bash_result",
+				"command": "true",
+				"result": {
+					"output": "",
+					"exitCode": 0,
+					"cancelled": false,
+					"truncated": false
+				}
+			}
+		},
+		{
+			"method": "record_user_activity",
+			"class": "connection_local",
+			"sampleClass": "connection_local",
+			"connectionLocal": true,
+			"sample": {
+				"type": "record_user_activity",
+				"kind": "draft"
+			}
+		},
+		{
+			"method": "release_attachment",
+			"class": "connection_local",
+			"sampleClass": "connection_local",
+			"connectionLocal": true,
+			"sample": {
+				"type": "release_attachment",
+				"sessionId": "00000000-0000-7000-8000-000000000000"
+			}
+		},
+		{
+			"method": "release_recovery",
+			"class": "connection_local",
+			"sampleClass": "connection_local",
+			"connectionLocal": true,
+			"sample": {
+				"type": "release_recovery",
+				"lease": {
+					"kind": "event",
+					"id": "00000000-0000-7000-8000-000000000000"
+				},
+				"admissionId": "00000000-0000-7000-8000-000000000000"
+			}
+		},
+		{
+			"method": "release_session",
+			"class": "connection_local",
+			"sampleClass": "connection_local",
+			"connectionLocal": true,
+			"sample": {
+				"type": "release_session",
+				"sessionId": "00000000-0000-7000-8000-000000000000",
+				"reason": "takeover"
+			}
+		},
+		{
+			"method": "release_tool_barrier",
+			"class": "drive",
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "release_tool_barrier",
+				"barrierId": "00000000-0000-7000-8000-000000000000"
+			}
+		},
+		{
+			"method": "reload",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "reload"
+			}
+		},
+		{
+			"method": "request_self_settle",
+			"class": "drive",
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "request_self_settle"
+			}
+		},
+		{
+			"method": "reset_stream",
+			"class": "connection_local",
+			"sampleClass": "connection_local",
+			"connectionLocal": true,
+			"sample": {
+				"type": "reset_stream",
+				"admissionId": "00000000-0000-7000-8000-000000000000"
+			}
+		},
+		{
+			"method": "resolve_path",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "resolve_path",
+				"path": "/nonexistent/senpi-rpc-inbound-sample/resolve"
+			}
+		},
+		{
+			"method": "resume_for_run",
+			"class": "drive",
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "resume_for_run",
+				"parentSessionId": "00000000-0000-7000-8000-000000000000",
+				"parentPauseSeq": 1,
+				"resumeId": "00000000-0000-7000-8000-000000000000",
+				"childSeqCutoff": 0
+			}
+		},
+		{
+			"method": "resume_session",
+			"class": "thread",
+			"sampleClass": "thread",
+			"connectionLocal": false,
+			"sample": {
+				"type": "resume_session"
+			}
+		},
+		{
+			"method": "select_hand",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "select_hand",
+				"sessionId": "00000000-0000-7000-8000-000000000000",
+				"device": null
+			}
+		},
+		{
+			"method": "send_custom_message",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "send_custom_message",
+				"customType": "rpc-inbound-sample",
+				"content": "Sample custom message.",
+				"display": false
+			}
+		},
+		{
+			"method": "set_auto_compaction",
+			"class": "drive",
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "set_auto_compaction",
+				"enabled": false
+			}
+		},
+		{
+			"method": "set_auto_retry",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "set_auto_retry",
+				"enabled": false
+			}
+		},
+		{
+			"method": "set_client_info",
+			"class": "connection_local",
+			"sampleClass": "connection_local",
+			"connectionLocal": true,
+			"sample": {
+				"type": "set_client_info",
+				"width": 80
+			}
+		},
+		{
+			"method": "set_fast_mode",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "set_fast_mode",
+				"enabled": false
+			}
+		},
+		{
+			"method": "set_favorite_models",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "set_favorite_models",
+				"models": []
+			}
+		},
+		{
+			"method": "set_follow_up_mode",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "set_follow_up_mode",
+				"mode": "all"
+			}
+		},
+		{
+			"method": "set_label",
+			"class": "drive",
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "set_label",
+				"entryId": "00000000-0000-7000-8000-000000000000",
+				"label": "sample"
+			}
+		},
+		{
+			"method": "set_model",
+			"class": "dynamic",
+			"dynamicVersion": 1,
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "set_model",
+				"provider": "rpc-sample-provider",
+				"modelId": "rpc-sample-model"
+			}
+		},
+		{
+			"method": "set_permission_preset",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "set_permission_preset",
+				"permissionPreset": "ask"
+			}
+		},
+		{
+			"method": "set_project_setting",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "set_project_setting",
+				"key": "defaultThinkingLevel",
+				"value": "minimal"
+			}
+		},
+		{
+			"method": "set_project_trust",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "set_project_trust",
+				"choice": "trust"
+			}
+		},
+		{
+			"method": "set_retry_fallback",
+			"class": "drive",
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "set_retry_fallback",
+				"retryFallback": {
+					"modelFallback": false,
+					"fallbackChains": {
+						"main": [
+							"rpc-sample-provider/rpc-sample-model"
+						]
+					}
+				}
+			}
+		},
+		{
+			"method": "set_scoped_models",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "set_scoped_models",
+				"models": []
+			}
+		},
+		{
+			"method": "set_session_context",
+			"class": "thread",
+			"sampleClass": "thread",
+			"connectionLocal": false,
+			"sample": {
+				"type": "set_session_context",
+				"sessionId": "00000000-0000-7000-8000-000000000000",
+				"patch": {
+					"sample": "rpc-inbound"
+				}
+			}
+		},
+		{
+			"method": "set_session_name",
+			"class": "drive",
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "set_session_name",
+				"name": "rpc inbound sample"
+			}
+		},
+		{
+			"method": "set_steering_mode",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "set_steering_mode",
+				"mode": "all"
+			}
+		},
+		{
+			"method": "set_thinking_level",
+			"class": "dynamic",
+			"dynamicVersion": 1,
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "set_thinking_level",
+				"level": "off",
+				"scope": "turn"
+			}
+		},
+		{
+			"method": "steer",
+			"class": "dynamic",
+			"dynamicVersion": 1,
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "steer",
+				"message": "Sample steer."
+			}
+		},
+		{
+			"method": "subscribe_sessions",
+			"class": "connection_local",
+			"sampleClass": "connection_local",
+			"connectionLocal": true,
+			"sample": {
+				"type": "subscribe_sessions",
+				"sessions": {
+					"ids": [
+						"00000000-0000-7000-8000-000000000000"
+					]
+				}
+			}
+		},
+		{
+			"method": "switch_session",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "switch_session",
+				"sessionPath": "/nonexistent/senpi-rpc-inbound-sample/switch.jsonl"
+			}
+		},
+		{
+			"method": "test_provider_account",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "test_provider_account",
+				"provider": "rpc-sample-provider",
+				"name": "rpc-sample-account"
+			}
+		},
+		{
+			"method": "unload_session",
+			"class": "thread",
+			"sampleClass": "thread",
+			"connectionLocal": false,
+			"sample": {
+				"type": "unload_session",
+				"sessionId": "00000000-0000-7000-8000-000000000000"
+			}
+		},
+		{
+			"method": "unsubscribe_sessions",
+			"class": "connection_local",
+			"sampleClass": "connection_local",
+			"connectionLocal": true,
+			"sample": {
+				"type": "unsubscribe_sessions",
+				"subscriptionId": "00000000-0000-7000-8000-000000000000"
+			}
+		},
+		{
+			"method": "verify_api_key",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "verify_api_key",
+				"provider": "rpc-sample-provider",
+				"key": "rpc-sample-not-a-key"
+			}
+		},
+		{
+			"method": "wake",
+			"class": "drive",
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "wake"
+			}
+		},
+		{
+			"method": "warm",
+			"class": "connection_local",
+			"sampleClass": "connection_local",
+			"connectionLocal": true,
+			"sample": {
+				"type": "warm"
+			}
+		},
+		{
+			"method": "withdraw_held_input",
+			"class": "drive",
+			"sampleClass": "drive",
+			"connectionLocal": false,
+			"sample": {
+				"type": "withdraw_held_input",
+				"inputId": "00000000-0000-7000-8000-000000000000"
+			}
+		},
+		{
+			"method": "write_project_file",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "write_project_file",
+				"path": "/nonexistent/senpi-rpc-inbound-sample/AGENTS.md",
+				"content": "# Rules\n",
+				"ifEtag": null
+			}
+		}
+	]
+}

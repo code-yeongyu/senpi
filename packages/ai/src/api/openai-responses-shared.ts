@@ -213,6 +213,14 @@ type ResponseInputItem =
 
 export const CUSTOM_TOOL_CALL_ITEM_ID_SENTINEL = "custom";
 
+/**
+ * Models Ultrafast is documented for (OpenAI prices GPT-6 Astra and GPT-6.1 Sol Ultrafast at
+ * 6x Standard on the API and 8x of a ChatGPT plan's included usage). One list, read by both
+ * pricing adapters and the selection warning, so the next Ultrafast model needs a single edit
+ * (senpi#2978).
+ */
+export const ULTRAFAST_DOCUMENTED_MODEL_IDS: ReadonlySet<string> = new Set(["gpt-6-astra", "gpt-6.1-sol"]);
+
 type ResponseFunctionTool = Extract<OpenAITool, { type: "function" }>;
 
 function isResponseCustomToolCallItem(item: { type?: string }): item is ResponseCustomToolCallItem {
@@ -262,9 +270,10 @@ export type ResponsesDeferredToolsMode = "additional-tools" | "tool-search";
 
 /** `additional_tools` items win over client tool search when a model supports both. */
 export function resolveResponsesDeferredToolsMode(
-	compat: { supportsAdditionalTools?: boolean; supportsToolSearch?: boolean } | undefined,
+	compat: { supportsAdditionalTools?: boolean; supportsToolSearch?: boolean; siwc?: boolean } | undefined,
 ): ResponsesDeferredToolsMode | undefined {
 	if (compat?.supportsAdditionalTools) return "additional-tools";
+	if (compat?.siwc) return undefined;
 	return compat?.supportsToolSearch ? "tool-search" : undefined;
 }
 
@@ -382,7 +391,11 @@ export function convertResponsesMessages<TApi extends Api>(
 	};
 	const includeInitialSystemMessage = options?.includeSystemPrompt ?? true;
 	const compat = model.compat as { supportsDeveloperRole?: boolean } | undefined;
-	const instructionRole = model.reasoning && compat?.supportsDeveloperRole !== false ? "developer" : "system";
+	const instructionRole =
+		(model.compat as { siwc?: boolean } | undefined)?.siwc ||
+		(model.reasoning && compat?.supportsDeveloperRole !== false)
+			? "developer"
+			: "system";
 
 	let msgIndex = 0;
 	let sourceIndex = 0;

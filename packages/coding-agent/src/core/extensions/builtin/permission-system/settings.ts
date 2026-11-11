@@ -53,8 +53,30 @@ export function loadPermissionSettings(
 	);
 	const approved = agentDir === undefined ? [] : loadApproved(agentDir, projectDir);
 
-	const preset = cliPresetOverride ?? projectPreset ?? globalPreset ?? DEFAULT_PERMISSION_PRESET;
+	const preset = pickPermissionPreset(cliPresetOverride, projectPreset, globalPreset);
 	return { staticRuleset, approved, preset };
+}
+
+function pickPermissionPreset(
+	cliPreset: PermissionPresetName | undefined,
+	projectPreset: PermissionPresetName | undefined,
+	globalPreset: PermissionPresetName | undefined,
+): PermissionPresetName {
+	return cliPreset ?? projectPreset ?? globalPreset ?? DEFAULT_PERMISSION_PRESET;
+}
+
+/** The preset `loadPermissionSettings` would enforce, without loading rules; throws on an invalid settings preset. */
+export function resolvePermissionPreset(
+	settingsManager: SettingsManager,
+	cliPresetOverride?: PermissionPresetName,
+): PermissionPresetName {
+	const globalSettings = settingsManager.getGlobalSettings() as Settings & PermissionSettings;
+	const projectSettings = settingsManager.getProjectSettings() as Settings & PermissionSettings;
+	return pickPermissionPreset(
+		cliPresetOverride,
+		parseSettingsPreset(projectSettings.permissionPreset, "project"),
+		parseSettingsPreset(globalSettings.permissionPreset, "global"),
+	);
 }
 
 function parseSettingsPreset(value: unknown, scope: "global" | "project"): PermissionPresetName | undefined {

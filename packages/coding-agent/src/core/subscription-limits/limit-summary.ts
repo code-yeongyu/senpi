@@ -1,7 +1,8 @@
 import { formatAccountRetryTime } from "../credential-account-status.ts";
 import { type AccountLimits, type SubscriptionLimitStore, subscriptionLimits } from "./limit-store.ts";
 
-function age(ms: number): string {
+/** How old a limit reading is, for account lists. */
+export function readingAge(ms: number): string {
 	const minutes = Math.floor(ms / 60_000);
 	if (minutes < 1) return "just now";
 	if (minutes < 60) return `${minutes} min ago`;
@@ -25,7 +26,7 @@ export function describeAccountLimits(limits: AccountLimits | undefined, now: nu
 		const used = `${window.label} ${Math.round(window.usedPercent)}% used`;
 		return resetsAt === undefined ? used : `${used}, resets ${formatAccountRetryTime(resetsAt)}`;
 	});
-	const reading = `updated ${age(now - Date.parse(limits.reportedAt))}`;
+	const reading = `updated ${readingAge(now - Date.parse(limits.reportedAt))}`;
 	const failed = limits.error === undefined ? "" : `; last check failed: ${limits.error}`;
 	return `limits: ${windows.join("; ")} (${reading}${failed})`;
 }

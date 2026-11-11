@@ -1,3 +1,138 @@
+## 2026-11-09 - A 403 that refuses one model no longer blocks the credential slot (senpi#3972)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/classify.ts`: in the 403 branch, a refusal scoped to one model the plan does not include now fails the request instead of blocking the slot, matched by the new `MODEL_SCOPED_REFUSAL_TEXT` patterns. Every pattern is anchored on plan/subscription entitlement wording, so an account-wide refusal that merely mentions a model ("Access to model gpt-x denied: your account is not enabled") still blocks the slot as `auth_error`. The same refusal arriving as 429 (z.ai error code 1311) also fails the request instead of taking a `rate_limit` cooldown; a structured limit code still outranks the prose.
+
+### Why
+
+- With the built-in z.ai provider, GLM-5.3 failed with "The provider rejected the credentials" / "No credential slots available" while GLM-5.2 worked with the same key: the refusal was model-level (the plan does not include GLM-5.3), but a 403 whose body mentions subscription, account or organization became `auth_error`, blocking the slot for every model on that provider until the re-probe (senpi#3972). The vendor's actual refusal reads "Your current subscription plan does not yet include access to GLM-5.3" — "yet" in the middle and no word "model" — so a model-word pattern cannot see it.
+
+### Why an extension could not handle it
+
+- Credential failure classification runs in the shared pool before any extension sees the error; no extension hook can un-block a slot the classifier already poisoned.
+
+### Expected merge conflict zones
+
+- LOW: the `MODEL_SCOPED_REFUSAL_TEXT` patterns and the added checks in the 403 and 429 branches of `classify.ts`.
+
+## 2026-11-09 - Export the model-block matcher (senpi#6254)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/model-scope.ts`: exports `modelBlockApplies(key, modelId)`, a wrapper around the existing private `applies` (unchanged), so session code matches model blocks exactly as the pool does.
+
+### Why
+
+- Session code had a second, divergent copy of this rule.
+
+### Why an extension could not handle it
+
+- The matcher is internal to the credential pool.
+
+### Expected merge conflict zones
+
+- LOW: the export list of `model-scope.ts`.
+
+## 2026-10-30 - Select accounts by configured strategy (senpi#5068)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/selection-order.ts`: share cache-affine, stored-order fill-first, and round-robin ordering.
+- `packages/coding-agent/src/core/credential-pool/round-robin-state.ts`: hold process-local per-provider cursors and account choices for stable affinity keys.
+- `packages/coding-agent/src/core/credential-pool/rotation-slots.ts`: carry the strategy in the rotation policy.
+- `packages/coding-agent/src/core/credential-pool/rotation-stream.ts`: pass the strategy and this session's round-robin turn into the shared slot pick, and retain round-robin replacements after a block or skip (pins are never remembered).
+- `packages/coding-agent/src/core/credential-pool/session-slot.ts`: `SlotPickPolicy` carries `strategy` and `roundRobinOffset`; `orderRotationSlots` orders through `orderAccounts`, so the stream and `selectSessionSlot` apply the same strategy.
+
+### Why
+
+- `packages/coding-agent/src/core/credential-pool/rotation-stream.ts` previously offered only affinity ordering, not stored-order filling or cursor-based distribution of new sessions.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/credential-pool/rotation-stream.ts` selects credentials before dispatching provider requests.
+
+### Expected merge conflict zones
+
+- LOW: imports and selection callback in `packages/coding-agent/src/core/credential-pool/rotation-stream.ts`, ordering helpers in `packages/coding-agent/src/core/credential-pool/selection-order.ts`, and the policy type in `packages/coding-agent/src/core/credential-pool/rotation-slots.ts`. Failure classification and block lifetimes are unchanged.
+
+## 2026-10-30 - Prefer reported subscription headroom (senpi#5053)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/selection-order.ts`: add a pure preference for accounts whose live reported windows are below 95% usage.
+- `packages/coding-agent/src/core/credential-pool/session-slot.ts`: `pickRotationSlot` applies the preference after the pin and the normal account ordering (`orderRotationSlots`) when the policy carries limit readings, and holds the per-session memory of a headroom move (`rememberedHeadroomAccount` / `rememberHeadroomAccount`), so the stream and auxiliary requests pick the same account.
+- `packages/coding-agent/src/core/credential-pool/rotation-stream.ts`: passes the live limit readings and the remembered account to `pickRotationSlot`, and remembers a move the preference made (never a pinned pick).
+
+### Why
+
+- `packages/coding-agent/src/core/credential-pool/rotation-stream.ts` selected an account already near its subscription limit even when another account had reported headroom.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/credential-pool/rotation-stream.ts` selects the credential before the provider request runs.
+
+### Expected merge conflict zones
+
+- LOW: imports and the `select` callback in `packages/coding-agent/src/core/credential-pool/rotation-stream.ts`, and `SlotPickPolicy` / `pickRotationSlot` in `packages/coding-agent/src/core/credential-pool/session-slot.ts`; classification and block lifetimes are unchanged.
+
+## 2026-11-03 - An ISO reset after "Resets at" is read (senpi#5596)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/reset-time.ts`: `usageLimitReset` reads an ISO instant introduced by "resets [at]" in prose (with or without seconds, fractional seconds, `Z` or an offset) as an absolute reset, after the JSON and relative readers and before the clock reader. A timestamp not introduced by "resets" is ignored.
+
+### Why
+
+- "Weekly usage limit reached. Resets at 2026-11-03T02:40:02Z" returned no reset, so the pool fell back to the 60 s rate-limit backoff and retried a spent account every minute for a limit hours away.
+
+### Why an extension could not handle it
+
+- The reset parser is shared by the credential pool, retry-fallback and the Anthropic subscription lane; no extension hook sits before it.
+
+### Expected merge conflict zones
+
+- LOW: the reader order in `usageLimitReset`.
+
+## 2026-10-30 - The all-blocked outcome carries the soonest unblock time (senpi#3975)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/failover.ts`: when no slot can serve and every slot not out for auth or a disabled account waits on a rate limit (at least one), the thrown refusal carries `credentialPoolBlockedDiagnostic(soonest rate-limit reset)`; a slot with an unknown block keeps the refusal unclassified, and a disabled slot's re-probe time is never the pool's reset, and a forwarded terminal event goes through the new optional `withPoolRetryAt` hook. This happens only when the refusal is itself a limit (no attempt ran, or the last attempt was blocked for a rate limit): a probe refused for auth, billing or a missing model keeps its own classification and status, which the goal's 401/403 block reads. Pools blocked only for re-authentication are unchanged.
+- `packages/coding-agent/src/core/credential-pool/rotation-stream.ts`: `withPoolRetryAt` keeps a provider-classified limit's own reset (or adds the pool's), turns a failure with no diagnostic or an unclassified 429 into the pool's rate limit, and leaves anything else (auth, a 402/403/404 status) as the provider said.
+
+### Why
+
+- senpi#3975: after the cooling probe failed, the pool forwarded the probed slot's own error, which carried no reset, so the goal retried before any slot could serve.
+
+### Why an extension could not handle it
+
+- The refusal is produced inside the pool engine, before any event reaches an extension.
+
+### Expected merge conflict zones
+
+- LOW: the no-candidate branch of `runCredentialFailover` and the options passed in `streamWithCredentialRotation`.
+
+## 2026-10-27 - One slot pick for the stream and auxiliary callers (senpi#3924)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/session-slot.ts` (new): `pickRotationSlot` (pin, else affinity order with the user's account order) and `selectSessionSlot` (that pick over the stream's first-attempt candidates; when the stream would refuse it throws the stream's refusal).
+- `packages/coding-agent/src/core/credential-pool/rotation-stream.ts`: `streamWithCredentialRotation`'s `select` calls `pickRotationSlot`. `ModelRuntime.getSessionAuth` loads `selectSessionSlot` from `session-slot.ts` with a dynamic import next to the rotation stream.
+- `packages/coding-agent/src/core/credential-pool/failover.ts`: `attemptCandidates` (untried unblocked slots, else the cooling probe: the rate-limited slot due back first) and `noSlotsError` are extracted from `runCredentialFailover` and exported, so the stream and `selectSessionSlot` share one all-blocked rule.
+
+### Why
+
+- Auxiliary requests must authenticate as the account the session's turns use; sharing the pick keeps the two from drifting.
+
+### Why an extension could not handle it
+
+- Slot selection is internal to the credential pool.
+
+### Expected merge conflict zones
+
+- LOW: the `select` callback in `rotation-stream.ts`; the candidate/refusal lines at the top of `runCredentialFailover`'s loop in `failover.ts`.
+
 ## 2026-10-30 - A guessed limit backoff stops at 30 minutes (senpi#4091)
 
 ### What changed

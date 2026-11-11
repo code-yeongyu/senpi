@@ -13,6 +13,7 @@ import { queryWithAuthLane } from "./auth-lane.ts";
 import { markColdSeedOverflow } from "./cold-seed-budget.ts";
 import { CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW } from "./context-window.ts";
 import { buildCustomToolServers } from "./custom-tools.ts";
+import { resolveQuerySettingsEnv } from "./claude-settings-env.ts";
 import { sdkAssistantFailure, sdkResultFailure, sdkResultFailureUsage } from "./errors.ts";
 import { type ClaudeCodeRun, defaultExecutableDeps, resolveClaudeCodeRun } from "./executable.ts";
 import { estimateLongContextFallbackTokens } from "./long-context-budget.ts";
@@ -94,6 +95,10 @@ export function streamAnthropicSubscription(
 			if (sessionKey) toolWatch.reconcileWithContext(sessionKey, context);
 			const toolWatchNote = toolWatch.buildPromptNote(sessionKey, context, resolvedTools.customToolNameToSdk);
 			const providerSettings = loadAnthropicSubscriptionProviderSettingsFromDisk(cwd);
+			// The effective `env` block of the settings files this stream's queries load (senpi#2988 item 4): a
+			// lifetime set there is what Claude Code will actually use, so the pin must see it. Resolved once per
+			// stream; the pin only receives it for attempts whose settingSources are non-empty.
+			const settingsEnv = await resolveQuerySettingsEnv(cwd, providerSettings);
 			const senpiOwnsCompaction = resolveCompactionOwner(providerSettings) === "senpi";
 			const toolLessRequest = options?.toolChoice === "none";
 			const mcpServers = toolLessRequest ? undefined : await buildCustomToolServers(resolvedTools.customTools);
@@ -125,6 +130,11 @@ export function streamAnthropicSubscription(
 						queryOptions,
 						authLane ?? providerSettings.tokenInjection ?? "ambient",
 						{ ...process.env, ...options?.env },
+						// Only the settings files this attempt loads can set its lifetime: managed lanes load
+						// none, so nothing is passed there (senpi#2988).
+						queryOptions.settingSources !== undefined && queryOptions.settingSources.length > 0
+							? settingsEnv
+							: undefined,
 					);
 				}
 				return queryOptions;

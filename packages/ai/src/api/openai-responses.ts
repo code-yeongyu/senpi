@@ -62,6 +62,7 @@ import {
 import {
 	findPromptCacheComparisonResponseId,
 	type OpenAIPromptCacheOptionsPayload,
+	supportsOpenAIResponsesExplicitPromptCacheMode,
 	withPromptCacheComparison,
 } from "./openai-responses-prompt-cache.ts";
 import {
@@ -70,6 +71,7 @@ import {
 	processResponsesStream,
 	resolveResponsesDeferredToolsMode,
 	resolveResponsesToolPlacement,
+	ULTRAFAST_DOCUMENTED_MODEL_IDS,
 } from "./openai-responses-shared.ts";
 import { buildBaseOptions, clampMaxForOpenAI, OPENAI_RESPONSES_RESERVED_BODY_KEYS } from "./simple-options.ts";
 import { startWebSocketLiveness } from "./websocket-liveness.ts";
@@ -151,8 +153,8 @@ function getCompat(model: Model<"openai-responses">, env?: ProviderEnv): Require
 		supportsStrictMode: model.compat?.supportsStrictMode ?? false,
 		supportsOpenAIGrammarTools: model.compat?.supportsOpenAIGrammarTools ?? false,
 		supportsAdditionalTools: model.compat?.supportsAdditionalTools ?? false,
-		supportsToolSearch: model.compat?.supportsToolSearch ?? false,
-		supportsExplicitPromptCacheMode: model.compat?.supportsExplicitPromptCacheMode ?? false,
+		supportsToolSearch: !model.compat?.siwc && (model.compat?.supportsToolSearch ?? false),
+		supportsExplicitPromptCacheMode: supportsOpenAIResponsesExplicitPromptCacheMode(model),
 		supportsConfigurationUpdate: model.compat?.supportsConfigurationUpdate ?? false,
 		supportsMaxOutputTokens: model.compat?.supportsMaxOutputTokens ?? true,
 		supportsForcedToolChoice: model.compat?.supportsForcedToolChoice ?? true,
@@ -184,7 +186,7 @@ function getPromptCacheOptions(
 ): OpenAIPromptCacheOptionsPayload | undefined {
 	if (!compat.supportsExplicitPromptCacheMode) return undefined;
 	if (cacheRetention === "none") return { mode: "explicit" };
-	if (cacheRetention === "long" && compat.supportsLongCacheRetention) return { ttl: "30m" };
+	if (cacheRetention === "long" && compat.supportsLongCacheRetention) return { ttl: "12h" };
 	return undefined;
 }
 
@@ -260,6 +262,87 @@ function formatOpenAIResponsesError(error: unknown, provider: string, siwc = fal
 	return errorMessage.includes("subscription_sharing_usage_limit_exceeded")
 		? `${errorMessage}\nCheck your ChatGPT usage: ${CHATGPT_USAGE_URL}`
 		: errorMessage;
+}
+
+/**
+ * SIWC preview restrictions apply after hooks and sampling overrides too.
+ * https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations
+ */
+function shapeSiwcRequest(params: MutableResponsesPayload): MutableResponsesPayload {
+	const body: MutableResponsesPayload & Record<string, unknown> = { ...params, store: false, stream: true };
+	for (const key of [
+		"background",
+		"conversation",
+		"max_output_tokens",
+		"max_tool_calls",
+		"metadata",
+		"moderation",
+		"multi_agent",
+		"prompt",
+		"prompt_cache_retention",
+		"safety_identifier",
+		"temperature",
+		"top_logprobs",
+		"top_p",
+		"truncation",
+		"user",
+		"previous_response_id",
+		"prompt_cache_options",
+	])
+		delete body[key];
+	body.input =
+		typeof body.input === "string"
+			? [{ role: "user", content: body.input }]
+			: body.input?.map((item) =>
+					"role" in item && item.role === "system" ? { ...item, role: "developer" as const } : item,
+				);
+	const tools = body.tools
+		?.filter(
+			(tool) =>
+				tool.type === "function" ||
+				tool.type === "custom" ||
+				tool.type === "namespace" ||
+				tool.type === "web_search",
+		)
+		.map((tool) =>
+			tool.type === "namespace"
+				? {
+						...tool,
+						tools: tool.tools.filter((nested) => nested.type === "function" || nested.type === "custom"),
+					}
+				: tool,
+		);
+	// SIWC accepts local tools in namespaces or additional_tools, not flat top-level definitions.
+	const eagerTools = tools?.filter((tool) => tool.type === "function" || tool.type === "custom") ?? [];
+	body.tools = tools?.filter((tool) => tool.type !== "function" && tool.type !== "custom");
+	if (eagerTools.length > 0) {
+		Reflect.set(body, "input", [
+			{ type: "additional_tools", role: "developer", tools: eagerTools },
+			...(body.input ?? []),
+		]);
+	}
+	const choice: unknown = body.tool_choice;
+	if (isRecord(choice)) {
+		if (choice.type === "allowed_tools" && Array.isArray(choice.tools)) {
+			const tools = choice.tools.filter(
+				(tool) =>
+					isRecord(tool) && (tool.type === "function" || tool.type === "custom" || tool.type === "web_search"),
+			);
+			Reflect.set(
+				body,
+				"tool_choice",
+				tools.length > 0
+					? {
+							...choice,
+							tools,
+						}
+					: "none",
+			);
+		} else if (choice.type !== "function" && choice.type !== "custom" && choice.type !== "web_search") {
+			delete body.tool_choice;
+		}
+	}
+	return body;
 }
 
 // OpenAI Responses-specific options
@@ -338,7 +421,8 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 				params = { ...params, tools: limitedTools.tools };
 				recordGitHubCopilotToolLimit(output, limitedTools.omittedCount);
 			}
-			const transport = options?.transport ?? "sse";
+			if (compat.siwc) params = shapeSiwcRequest(params);
+			const transport = compat.siwc ? "sse" : (options?.transport ?? "sse");
 			let refusedAllowedToolsOverWebSocket = false;
 			if (transport !== "sse" && compat.supportsWebSocket) {
 				let websocketStarted = false;
@@ -527,6 +611,7 @@ export async function warmOpenAIResponsesPromptCache(
 	context: Context,
 	options?: SimpleStreamOptions,
 ): Promise<{ usage: Usage; usageRaw: unknown }> {
+	if (model.compat?.siwc) throw new Error("SIWC requires streaming inference; prompt-cache prewarm is unsupported");
 	const prefix = normalizeContext({ ...context, messages: [] });
 	const resolved = resolveSimpleOptions(model, prefix, options);
 	const clientAuth = resolveOpenAIClientAuth(model.provider, resolved.apiKey, resolved.headers);
@@ -1131,7 +1216,7 @@ function getServiceTierCostMultiplier(
 		case "ultrafast":
 			// OpenAI prices GPT-6 Astra and GPT-6.1 Sol Ultrafast at 6x Standard on every
 			// token class and context tier. Any other model keeps its base rate.
-			return ["gpt-6-astra", "gpt-6.1-sol"].includes(model.upstreamModelId ?? model.id) ? 6 : 1;
+			return ULTRAFAST_DOCUMENTED_MODEL_IDS.has(model.upstreamModelId ?? model.id) ? 6 : 1;
 		case "flex":
 			return 0.5;
 		case "priority":
