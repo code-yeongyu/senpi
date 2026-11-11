@@ -6216,7 +6216,7 @@
 		},
 		"packages/coding-agent/src/core/extensions/kernel-tools-context.ts#kernelToolContexts": {
 			"class": "realm-registry",
-			"reason": "kernel-tools/v1: the two async contexts are entered by codemode, dispatcher, loader and wrapper and read by the runner, possibly in different copies (design 3.2, 3.3). The invoker store was not exported and is reachable through the registry; that adds no reach, because the raw invoke of the public kernelToolsStorage store already takes options.invoker from its caller"
+			"reason": "kernel-tools/v1: the two async contexts are entered by codemode, dispatcher, loader and wrapper and read by the runner, possibly in different copies (design 3.2, 3.3). The invoker store is exported by its module (kernelToolInvokerStorage) but not from the package entry, and is reachable through the registry; that adds no reach, because the raw invoke of the public kernelToolsStorage store already takes options.invoker from its caller"
 		},
 		"packages/coding-agent/src/core/extensions/kernel-tools-context.ts#kernelToolInvokerStorage": {
 			"class": "realm-registry",

@@ -39,9 +39,10 @@ type KernelToolInvoker = { readonly sessionId: string };
  * The two kernel-tool async contexts of every engine copy in this realm (omo#12965). The codemode extension, the tool
  * dispatcher, the extension loader and the tool wrapper enter them, and the extension runner reads them; those can be
  * different copies of the engine in one process (the bundled engine next to the SDK graph an extension imports), so the
- * two stores are one realm registry. `storage` is the public `kernelToolsStorage` export. `invokerStorage` was not
- * exported, and the registry makes it reachable to code in the realm; that adds no reach, because the raw `invoke` of
- * the public store already takes the invoker from its caller (`options.invoker`).
+ * two stores are one realm registry. `storage` is the public `kernelToolsStorage` export. `invokerStorage` is exported
+ * by this module as `kernelToolInvokerStorage` but not from the package entry, and the registry makes it reachable to
+ * code in the realm; that adds no reach, because the raw `invoke` of the public store already takes the invoker from
+ * its caller (`options.invoker`).
  * A reader validates what it finds: a store value another copy shaped differently reads as absent.
  */
 interface KernelToolContexts {
