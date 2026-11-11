@@ -72,10 +72,10 @@ export function invocationSession(
 ): InvocationSession & { readonly sessionId: string } {
 	const invokerId = options && !("aborted" in options) ? options.invoker?.sessionId : undefined;
 	if (invokerId === undefined || invokerId === ownerId) return { sessionId: ownerId, ...owner };
-	// The hook answers only with a session: `undefined` or `null` is no answer, and the registered kernels decide.
-	const resolved = resolveSession?.(invokerId) ?? undefined;
-	const registered = resolved === undefined ? registeredInvocationSessions(invokerId) : [];
-	const invoker = resolved ?? registered.find((session) => session.state.active) ?? registered[0];
+	// Read on every cross-session call, before the hook, as one copy always has: an unreadable snapshot refuses even
+	// when the hook answers. The hook answers only with a session: `undefined` or `null` is no answer.
+	const registered = registeredInvocationSessions(invokerId);
+	const invoker = resolveSession?.(invokerId) ?? registered.find((session) => session.state.active) ?? registered[0];
 	for (const [enforcingSessionId, state] of [
 		[ownerId, owner.state],
 		[invokerId, invoker?.state],

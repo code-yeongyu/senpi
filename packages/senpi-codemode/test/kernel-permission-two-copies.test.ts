@@ -85,30 +85,41 @@ describe("codemode cross-session permission state across two copies (omo#12965)"
 		a.unregisterPermissionKernel("x12965-revoked", kernel);
 	});
 
-	it("refuses a cross-session kernel tool when the invoker's registered state cannot be read", async () => {
-		const [, b] = await twoCopies(authority);
-		// A snapshot from a version that no longer carries `active`: read as is, it would look like no enforcement.
-		const release = callRegistry("registerInvocation", "x12965-unreadable-invoker", () => ({
-			cwd: "/invoker",
-			state: { epoch: 1, enforcing: true, rules: [{ permission: "write", pattern: "*", layer: "user" }] },
-		}));
+	// The registered state is read on every cross-session call, as one copy always has, so the hook's answer does not
+	// make an unreadable snapshot readable.
+	const hookAnswer = (): { cwd: string; state: CellPermissionState } => ({ cwd: "/hook", state: inactive });
+	it.each<[string, typeof hookAnswer | undefined]>([
+		["with no hook", undefined],
+		["when the hook answers", hookAnswer],
+	])(
+		"refuses a cross-session kernel tool when the invoker's registered state cannot be read, %s",
+		async (_label, hook) => {
+			const [, b] = await twoCopies(authority);
+			const id = `x12965-unreadable-invoker-${hook ? "hooked" : "plain"}`;
+			// A snapshot from a version that no longer carries `active`: read as is, it would look like no enforcement.
+			const release = callRegistry("registerInvocation", id, () => ({
+				cwd: "/invoker",
+				state: { epoch: 1, enforcing: true, rules: [{ permission: "write", pattern: "*", layer: "user" }] },
+			}));
 
-		const invoke = () =>
-			b.invocationSession(
-				"x12965-owner-3",
-				{ cwd: "/owner", state: inactive },
-				{ invoker: { sessionId: "x12965-unreadable-invoker" } },
+			const invoke = () =>
+				b.invocationSession(
+					"x12965-owner-3",
+					{ cwd: "/owner", state: inactive },
+					{ invoker: { sessionId: id } },
+					hook,
+				);
+
+			expect(invoke).toThrow(
+				expect.objectContaining({
+					message: "Cross-session kernel tool refused: permission authority unavailable",
+					code: "cell_permission_denied",
+					enforcingSessionId: id,
+				}),
 			);
-
-		expect(invoke).toThrow(
-			expect.objectContaining({
-				message: "Cross-session kernel tool refused: permission authority unavailable",
-				code: "cell_permission_denied",
-				enforcingSessionId: "x12965-unreadable-invoker",
-			}),
-		);
-		if (typeof release === "function") release();
-	});
+			if (typeof release === "function") release();
+		},
+	);
 
 	it.each([
 		["revoke", { retire: async () => {} }],
