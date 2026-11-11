@@ -15,6 +15,8 @@ export interface InlineBundleFile {
 	readonly base64: string;
 }
 
+/** The staging folders this module makes under `incoming`; nothing else there is its to remove. */
+const STAGING_PREFIX = "inline-";
 /** A staging folder older than this was left by a host that died mid-import. */
 const STALE_STAGING_MS = 60 * 60_000;
 
@@ -66,6 +68,7 @@ function sentChecksums(files: readonly InlineBundleFile[]): ReadonlyMap<string, 
 
 async function removeStaleStaging(incoming: string): Promise<void> {
 	for (const name of await readdir(incoming)) {
+		if (!name.startsWith(STAGING_PREFIX)) continue;
 		const dir = join(incoming, name);
 		const modified = await stat(dir).then(
 			(entry) => entry.mtimeMs,
@@ -89,7 +92,7 @@ export async function withStagedInlineBundle<T>(
 	const sent = sentChecksums(files);
 	await mkdir(incoming, { recursive: true });
 	await removeStaleStaging(incoming);
-	const dir = await mkdtemp(join(incoming, "inline-"));
+	const dir = await mkdtemp(join(incoming, STAGING_PREFIX));
 	try {
 		for (const file of files) {
 			const to = join(dir, ...file.path.split("/"));
