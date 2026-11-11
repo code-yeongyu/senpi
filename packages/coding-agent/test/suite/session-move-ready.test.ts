@@ -9,7 +9,12 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { getDefaultSessionDir } from "../../src/core/session-manager.ts";
 import { importMovedSession } from "../../src/core/session-move/import.ts";
-import { MoveFencedError, MoveLedger, READY_TTL_MS } from "../../src/core/session-move/move-ledger.ts";
+import {
+	type BeginReceiveOptions,
+	MoveFencedError,
+	MoveLedger,
+	READY_TTL_MS,
+} from "../../src/core/session-move/move-ledger.ts";
 import type { MoveId } from "../../src/core/session-move/ownership.ts";
 import { MOVE, setup } from "./session-move-fixture.ts";
 
@@ -229,5 +234,83 @@ describe("importMovedSession needs a ready move (senpi#3676)", () => {
 		const { sessionFile } = await importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity });
 		expect(existsSync(sessionFile)).toBe(true);
 		expect(await ledger.answerStatus(MOVE, { movedIn: true })).toEqual({ state: "accepted" });
+	});
+});
+
+const signal = () => {
+	let resolve = () => {};
+	const promise = new Promise<void>((done) => {
+		resolve = done;
+	});
+	return { promise, resolve };
+};
+
+/** Holds its commit between the stamp and the rename, so the move's record lock is held until `gate` opens. */
+class HoldsCommit extends MoveLedger {
+	readonly stamped = signal();
+	readonly gate = signal();
+
+	override commit<T>(moveId: MoveId, target: string, rename: () => T | Promise<T>, prepare?: () => void): Promise<T> {
+		const held = async () => {
+			this.stamped.resolve();
+			await this.gate.promise;
+			return rename();
+		};
+		return super.commit(moveId, target, held, prepare);
+	}
+}
+
+/** Says when its import reached `beginReceive`, which is after the folder fence and the repository check. */
+class SignalsReceive extends MoveLedger {
+	readonly reached = signal();
+
+	override beginReceive(moveId: MoveId, target: string, options?: BeginReceiveOptions): Promise<void> {
+		this.reached.resolve();
+		return super.beginReceive(moveId, target, options);
+	}
+}
+
+/** A bounded wait: the fence must be passed while the other import still holds the lock, not after it lets go. */
+async function within(promise: Promise<void>, ms: number, failure: string): Promise<void> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const late = new Promise<never>((_, reject) => {
+		timer = setTimeout(() => reject(new Error(failure)), ms);
+	});
+	try {
+		await Promise.race([promise, late]);
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+// senpi#6435 with senpi#6413: the import's folder fence takes no lock. An import that arrives while another import of
+// the same move holds the record lock gets past the fence at once and waits only at `beginReceive`, where it is fenced
+// and answers the file the other import landed.
+describe("the import's folder fence does not wait for another import's lock (senpi#6435)", () => {
+	it("#given one import holding the move's lock between its stamp and its rename #when a second import of the move arrives #then it passes the folder fence while that lock is held and answers the landed session", async () => {
+		const world = await setup();
+		const first = new HoldsCommit(world.ledger.dir);
+		const second = new SignalsReceive(world.ledger.dir);
+		const importInto = (ledger: MoveLedger) =>
+			importMovedSession({
+				bundleDir: world.bundleDir,
+				targetCwd: world.cwdB,
+				ledger,
+				readIdentity: world.readIdentity,
+			});
+		const firstImport = importInto(first);
+		await first.stamped.promise;
+		const secondImport = importInto(second);
+
+		await within(
+			second.reached.promise,
+			5_000,
+			"the second import never reached beginReceive while the first held the move's lock: the folder fence waited for it",
+		);
+		first.gate.resolve();
+		const [landed, answered] = await Promise.all([firstImport, secondImport]);
+
+		expect(answered.sessionFile).toBe(landed.sessionFile);
+		expect(await world.ledger.answerStatus(MOVE, { movedIn: true })).toEqual({ state: "accepted" });
 	});
 });
