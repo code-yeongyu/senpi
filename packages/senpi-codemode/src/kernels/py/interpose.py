@@ -24,7 +24,6 @@ import sqlite3
 import subprocess
 import sys
 import types
-import urllib.parse
 import weakref
 import zipfile
 from typing import Callable
@@ -38,6 +37,12 @@ _identity_namespace = {"__builtins__": __builtins__, "__file__": _identity_path}
 with open(_identity_path, "rb") as _identity_source:
     exec(compile(_identity_source.read(), _identity_path, "exec"), _identity_namespace)
 create_identity = _identity_namespace["create_identity"]
+
+_sqlite_uri_path = os.path.join(os.path.dirname(__file__), "sqlite_uri.py")
+_sqlite_uri_namespace = {"__builtins__": __builtins__, "__file__": _sqlite_uri_path}
+with open(_sqlite_uri_path, "rb") as _sqlite_uri_source:
+    exec(compile(_sqlite_uri_source.read(), _sqlite_uri_path, "exec"), _sqlite_uri_namespace)
+parse_sqlite_uri = _sqlite_uri_namespace["parse_sqlite_uri"]
 
 
 def install(check, enforcing, refuse, runtime):
@@ -54,7 +59,6 @@ def install(check, enforcing, refuse, runtime):
     getframe = sys._getframe
     resolve_name = importlib.util.resolve_name
     reference, UnsupportedOperation = weakref.ref, io.UnsupportedOperation
-    urlsplit, parse_qs, unquote = urllib.parse.urlsplit, urllib.parse.parse_qs, urllib.parse.unquote
     DatabaseError = sqlite3.DatabaseError
     SQLITE_ATTACH, SQLITE_DENY, SQLITE_OK = sqlite3.SQLITE_ATTACH, sqlite3.SQLITE_DENY, sqlite3.SQLITE_OK
     native = importlib.import_module(os.name)
@@ -78,21 +82,6 @@ def install(check, enforcing, refuse, runtime):
     isabs = capture(isabs, os=path_os)
     quote = capture(quote)
     resolve_name = capture(resolve_name)
-    # urllib.parse helpers call each other through their module globals (on 3.11
-    # parse_qs -> parse_qsl -> unquote(..., encoding=)), so one captured entry
-    # point is not enough: rebind every helper defined there to one private
-    # snapshot of the module namespace, then take the entry points from it.
-    def capture_module(module):
-        namespace = vars(module)
-        snapshot = {**namespace, "__builtins__": __builtins__}
-        for name, value in namespace.items():
-            if isinstance(value, function_type) and value.__globals__ is namespace:
-                captured = function_type(value.__code__, snapshot, value.__name__, value.__defaults__, value.__closure__)
-                captured.__kwdefaults__ = value.__kwdefaults__
-                snapshot[name] = captured
-        return snapshot
-    url_parse = capture_module(urllib.parse)
-    urlsplit, parse_qs, unquote = url_parse["urlsplit"], url_parse["parse_qs"], url_parse["unquote"]
     grants = {}
     modules = sys.modules
     # The interpreter's own registries, never replaced: CPython's C-level import
@@ -621,16 +610,15 @@ def install(check, enforcing, refuse, runtime):
         path = fsdecode(fspath(database))
         if path in ("", ":memory:"):
             return None, ()
-        mode = None
+        modes = ()
         if uri and path.startswith("file:"):
-            parsed = urlsplit(path)
-            mode = parse_qs(parsed.query).get("mode", [None])[0]
-            if mode == "memory":
+            path, modes = parse_sqlite_uri(path)
+            if modes and all(mode == "memory" for mode in modes):
                 return None, ()
-            path = unquote(parsed.path)
             if path == ":memory:":
                 return None, ()
-        return path, ("read",) if mode == "ro" else ("read", "write")
+        read_only = bool(modes) and all(mode == "ro" for mode in modes)
+        return path, ("read",) if read_only else ("read", "write")
     class Cursor(sqlite3.Cursor):
         pass
     for name in ("execute", "executemany", "executescript", "fetchone", "fetchmany", "fetchall", "__next__"):
