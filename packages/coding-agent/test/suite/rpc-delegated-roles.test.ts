@@ -14,7 +14,6 @@ let opener: Peer;
 beforeEach(() => {
 	for (const name of ["OMO_RPC_SOCKET_PATH", "OMO_RPC_SOCKET", "SENPI_RPC_SOCKET", "PI_RPC_SOCKET"])
 		vi.stubEnv(name, undefined);
-	vi.stubEnv("SENPI_RPC_REQUIRE_ATTACH", undefined);
 });
 beforeAll(async () => {
 	host = await startHost();
@@ -153,8 +152,14 @@ describe("omo-relay-daemon#307: detach_connection retires the incarnation, never
 			success: true,
 			authority: { incarnation: 1, roles: ["interactive_user"] },
 		});
-		const [detached, early] = peer.sendTogether([{ type: "detach_connection" }, hold(sessionId, { relayExec: 2 })]);
+		// detach_connection ends the connection's attachments too, so the claim re-attaches before it holds (senpi#6245).
+		const [detached, reattached, early] = peer.sendTogether([
+			{ type: "detach_connection" },
+			attachTo(sessionId),
+			hold(sessionId, { relayExec: 2 }),
+		]);
 		expect(await detached).toMatchObject({ success: true });
+		expect(await reattached).toMatchObject({ success: true });
 		expect(await early).toMatchObject({
 			success: false,
 			error: NOT_INTERACTIVE,

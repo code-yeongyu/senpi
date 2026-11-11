@@ -47,12 +47,11 @@ export const ATTACH_GATE_EXEMPT: ReadonlySet<RpcCommand["type"]> = new Set<RpcCo
 	"check_reload_veto",
 ]);
 
-/** A client-chosen id as one log token: control characters and quotes escaped, so it never adds a line. */
-function logSafe(value: string): string {
-	return JSON.stringify(value).slice(1, -1);
-}
-
-/** Socket ownership is checked before lifecycle routing AND before worker dispatch. */
+/**
+ * Socket ownership is checked before lifecycle routing AND before worker dispatch. An unattached session command
+ * is always refused (senpi#6245): the one-release grace that served and logged it (senpi#3795) has ended, so no
+ * environment switch re-opens it.
+ */
 export function attachmentGate(host: RouterContext, command: RpcCommand): RpcResponse | undefined {
 	const owner = host.writer.currentConnection();
 	if (owner === undefined || ATTACH_GATE_EXEMPT.has(command.type)) return undefined;
@@ -76,13 +75,8 @@ export function attachmentGate(host: RouterContext, command: RpcCommand): RpcRes
 	)
 		return undefined;
 	if (host.sessionsByConnection.get(owner)?.has(command.sessionId)) return undefined;
-	if (process.env.SENPI_RPC_REQUIRE_ATTACH === "1")
-		return error(command.id, command.type, "session_not_attached", {
-			reason: "this connection is not attached to that session",
-			action: "attach first with attach_session { sessionId, durableSessionId } or open_session { sessionPath }",
-		});
-	process.stderr.write(
-		`senpi rpc host: ${command.type} on ${logSafe(command.sessionId)} from a connection not attached to it (refused from the next release)\n`,
-	);
-	return undefined;
+	return error(command.id, command.type, "session_not_attached", {
+		reason: "this connection is not attached to that session",
+		action: "attach first with attach_session { sessionId, durableSessionId } or open_session { sessionPath }",
+	});
 }

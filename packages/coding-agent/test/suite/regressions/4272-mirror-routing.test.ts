@@ -36,7 +36,6 @@ it.each(["get_recovery_page", "release_recovery"])(
 	"T2 mirror content %s uses token authority under RULING-96 and the flag-off attachment gate",
 	async (type) => {
 		vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
-		vi.stubEnv("SENPI_RPC_REQUIRE_ATTACH", "1");
 		await using host = await statusHost();
 		const owner = host.client("owner");
 		const peer = host.client("peer");
@@ -107,7 +106,6 @@ it.each(["get_recovery_page", "release_recovery"])(
 
 it("T2/Y07 peer end removes the old actor subscription, prevents stale routing and cannot authorize pages", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
-	vi.stubEnv("SENPI_RPC_REQUIRE_ATTACH", "1");
 	await using host = await statusHost();
 	const owner = host.client("owner");
 	const opened = await owner.request({ type: "open_session", cwd: host.cwd });

@@ -62,7 +62,9 @@ it.each(commands)("classifies $type activity through the shared host's idle swee
 	await rig.drop("owner");
 	now = 999;
 
-	await rig.send("observer", { ...command, id: "control", sessionId: session.sessionId });
+	// With an attachment every command refreshes the clock, so the classification is only observable on a session
+	// nobody holds: the host's own dispatch (no connection), since an unattached connection is refused (senpi#6245).
+	await rig.router.handle({ ...command, id: "control", sessionId: session.sessionId });
 	now = 1_000;
 	rig.router.sweepIdleSessions();
 

@@ -167,7 +167,6 @@ it("T2/X04 cancellation racing subscribe cleans the actual returned subscription
 // snapshot; its content is paged and released by consumption, not socket drain.
 it("T2/X04 compact subscribe owns a pageable seq-zero snapshot and releases it on consumption", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
-	vi.stubEnv("SENPI_RPC_REQUIRE_ATTACH", "1");
 	await using host = await statusHost();
 	const owner = host.client("owner");
 	const opened = await owner.request({ type: "open_session", cwd: host.cwd });
