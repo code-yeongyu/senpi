@@ -53,18 +53,26 @@ export async function importMoved(
 }
 
 /**
- * Opens the session an import landed. `undefined` means the open queued the import's answer itself; otherwise the
- * open failed, which never undoes the import: the move stands, and the caller opens the session with `open_session`.
+ * Opens the session an import landed, in the folder the import named (`cwd`): an open that names no folder runs in
+ * the host's own, whatever the landed file's header says (senpi#6427). `undefined` means the open queued the import's
+ * answer itself; otherwise the open failed, which never undoes the import: the move stands, and the caller opens the
+ * session with `open_session`.
  */
 export async function openLanded(
 	port: MoveImportPort,
 	id: string | undefined,
 	open: true | RpcMoveImportOpen,
+	cwd: string,
 	landed: RpcMoveImportData,
 ): Promise<RpcMoveOpenError | undefined> {
 	const failure = await port
 		.open(
-			{ ...(open === true ? {} : open), type: "open_session", sessionPath: landed.session_path },
+			{
+				...(open === true ? {} : open),
+				type: "open_session",
+				sessionPath: landed.session_path,
+				cwd: resolvePath(cwd),
+			},
 			{ command: { type: "move_session", id }, data: landed },
 		)
 		.catch((cause: unknown): RpcMoveOpenError => ({ error: cause instanceof Error ? cause.message : String(cause) }));

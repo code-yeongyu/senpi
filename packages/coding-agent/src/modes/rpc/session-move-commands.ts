@@ -66,7 +66,7 @@ export async function moveSession(
 		const landed = await importMoved(parsed, port, ledger, root);
 		const open = command.op === "import" ? command.open : undefined;
 		if (open === undefined) return answer(command.id, landed);
-		const open_error = await openLanded(port, command.id, open, landed);
+		const open_error = await openLanded(port, command.id, open, parsed.cwd, landed);
 		return open_error === undefined ? undefined : answer(command.id, { ...landed, open_error });
 	} catch (cause) {
 		if (cause instanceof MoveRefusal) return refusal(command.id, cause.code, cause.message);
