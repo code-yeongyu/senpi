@@ -107,8 +107,8 @@ export interface AnthropicSubscriptionSessionEntry {
 	lastUsedAt: number;
 	/** Digest of the access token the resident subprocess was spawned with. */
 	credentialDigest?: string;
-	/** senpi#6411: the live `setModel` chain the next turn admission waits for; it never rejects. */
-	pendingModelSwitch?: Promise<void>;
+	/** senpi#6411: the live `setModel` chain (`done` never rejects) and the model it selects, until it settles. */
+	pendingModelSwitch?: { done: Promise<void>; modelId: string };
 }
 
 export interface CreateSessionRegistryEntryInput {

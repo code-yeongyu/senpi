@@ -1,3 +1,4 @@
+import { logContinuityEvent } from "./session-observability.ts";
 import type { AnthropicSubscriptionSessionEntry, SessionBranchInfo } from "./session-registry.ts";
 import { transitionToTainted } from "./session-registry-state.ts";
 
@@ -10,8 +11,8 @@ export type AnnotatableRegistry = {
  * Starts the live model switch without waiting for it: the claude CLI confirms the model with the API on every
  * `setModel` (80-280 ms, 15 s when unreachable), and `model_select` must not hold `set_model` for it (senpi#6411).
  * Switches chain on `entry.pendingModelSwitch` so they apply in order; the next turn admission awaits the chain.
- * A failed switch leaves `modelId` on the last confirmed model, so that admission sees the drift and reattaches
- * the same lineage on a fresh process with the selected model (`model_changed`), keeping the binding.
+ * A failed switch is logged and leaves `modelId` on the last confirmed model, so that admission sees the drift and
+ * reattaches the same lineage on a fresh process with the selected model (`model_changed`), keeping the binding.
  */
 export function switchEntryModel(
 	registry: AnnotatableRegistry,
@@ -22,15 +23,25 @@ export function switchEntryModel(
 	const entry = registry.get(senpiSessionId);
 	const setModel = entry?.query.setModel?.bind(entry.query);
 	if (!entry || !setModel) return false;
+	const live = (): boolean => registry.get(senpiSessionId) === entry;
 	const apply = async (): Promise<void> => {
-		if (registry.get(senpiSessionId) !== entry) return;
-		await setModel(sdkModel);
+		if (!live()) return;
+		try {
+			await setModel(sdkModel);
+		} catch (error) {
+			// Closing the process rejects its pending setModel; only a failure on the live process is news.
+			if (live()) {
+				const detail = error instanceof Error ? error.message : String(error);
+				logContinuityEvent("claude_sdk_oauth_model_switch_failed", { modelId, error: detail });
+			}
+			return;
+		}
 		entry.modelId = modelId;
 		registry.touch(entry);
 	};
-	const pending = (entry.pendingModelSwitch?.then(apply) ?? apply()).catch(() => undefined);
+	const pending = { done: entry.pendingModelSwitch?.done.then(apply) ?? apply(), modelId };
 	entry.pendingModelSwitch = pending;
-	void pending.then(() => {
+	void pending.done.then(() => {
 		if (entry.pendingModelSwitch === pending) entry.pendingModelSwitch = undefined;
 	});
 	return true;
