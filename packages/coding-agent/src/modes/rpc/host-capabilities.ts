@@ -58,10 +58,10 @@ import {
 export const UNLOAD_SESSION_CAPABILITY = "unload_session";
 
 /** `unload_session { dryRun: true }`: what the unload would do now, and nothing else (senpi#6443). */
-export const UNLOAD_SESSION_DRY_RUN_CAPABILITY = "unload_session_dry_run";
+const UNLOAD_SESSION_DRY_RUN_CAPABILITY = "unload_session_dry_run";
 
 /** `set_client_info { client_id }`: holds are counted per CLIENT, so a client's own second connection is not "another" (senpi#6443). */
-export const CLIENT_IDENTITY_CAPABILITY = "client_identity";
+const CLIENT_IDENTITY_CAPABILITY = "client_identity";
 
 /** `get_subscription_limits` and the `subscription_limits` host record (senpi#3370). */
 export const SUBSCRIPTION_LIMITS_CAPABILITY = "subscription_limits";
