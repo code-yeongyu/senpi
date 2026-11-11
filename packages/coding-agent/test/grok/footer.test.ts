@@ -40,9 +40,7 @@ for (const { label, trueColor } of GROK_COLOR_MODES) {
 				supportsThinking: () => true,
 			};
 			const footer = new GrokFooter(thinkingSession as AgentSession, footerData);
-			expect(footer.render(80)).toEqual([
-				`${fg("dim", "/workspace/project")} ${fg("thinkingText", "faux-1:high")}`,
-			]);
+			expect(footer.render(80)).toEqual([`${fg("dim", "/workspace/project")} ${fg("thinkingText", "faux-1:high")}`]);
 			thinkingSession.thinkingLevel = "xhigh";
 			footer.invalidate();
 			expect(footer.render(80)).toEqual([
