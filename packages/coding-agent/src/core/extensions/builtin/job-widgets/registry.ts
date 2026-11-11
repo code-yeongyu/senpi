@@ -13,7 +13,7 @@ import { JobWidgetJob, type JobWidgetBriefText, type JobWidgetJobInput } from ".
 import { JobWidgetRequestController } from "./request-controller.ts";
 import type { JobWidgetRequestLimits } from "./request-policy.ts";
 import { JobWidgetStatePublisher } from "./state-publisher.ts";
-import type { JobWidgetEntry, JobWidgetState } from "./view-types.ts";
+import type { JobWidgetEntry, JobWidgetOutcome, JobWidgetState } from "./view-types.ts";
 
 const INGEST_MIN_INTERVAL_MS = 250;
 const REFRESH_INTERVAL_MS = 1000;
@@ -24,8 +24,8 @@ export interface JobWidgetSourceHandle {
 	notify(): void;
 	/** The job's own words changed (a task's `watch` hint or `stage`). */
 	update(brief: JobWidgetBriefText): void;
-	/** The job finished: its widget freezes as `done`. */
-	settle(): void;
+	/** The job finished: its widget freezes as `done`; `outcome` says how a bash session ended. */
+	settle(outcome?: JobWidgetOutcome): void;
 	/** The job is gone (evicted, or no longer a widget candidate): its entry leaves the state. */
 	dispose(): void;
 }
@@ -94,8 +94,8 @@ export class JobWidgetRegistry {
 				job.brief = { ...brief, kind: job.kind };
 				this.#scheduleRefresh();
 			},
-			settle: () => {
-				if (live()) this.#settle(job);
+			settle: (outcome) => {
+				if (live()) this.#settle(job, outcome);
 			},
 			dispose: () => {
 				if (live()) this.#forget(job);
@@ -174,8 +174,9 @@ export class JobWidgetRegistry {
 		});
 	}
 
-	#settle(job: JobWidgetJob): void {
+	#settle(job: JobWidgetJob, outcome: JobWidgetOutcome | undefined): void {
 		job.settled = true;
+		job.outcome = outcome;
 		job.ingest();
 		this.#publish();
 		this.#stopTickerWhenIdle();

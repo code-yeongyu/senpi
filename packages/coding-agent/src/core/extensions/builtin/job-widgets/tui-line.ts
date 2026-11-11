@@ -153,7 +153,7 @@ function viewParts(entry: JobWidgetEntry, view: JobWidgetView, width: number): L
 
 function idToken(entry: JobWidgetEntry): JobWidgetLineToken {
 	if (entry.state === "live") return "accent";
-	if (entry.state === "done") return "success";
+	if (entry.state === "done") return entry.outcome === "failed" || entry.outcome === "killed" ? "error" : "success";
 	return "muted";
 }
 

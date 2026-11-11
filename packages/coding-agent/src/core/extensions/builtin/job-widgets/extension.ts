@@ -19,7 +19,7 @@ import {
 	parkJobWidgetSession,
 	resendJobWidgetState,
 } from "./session-host.ts";
-import { JobBashRows } from "./tui-bash-rows.ts";
+import { isChartedBashJob, JobBashRows } from "./tui-bash-rows.ts";
 import { JobWidgetArea } from "./tui-widget.ts";
 import type { JobWidgetState } from "./view-types.ts";
 
@@ -44,14 +44,15 @@ export default function jobWidgetsExtension(pi: ExtensionAPI): void {
 		stopArea = undefined;
 		if (startCtx.mode !== "tui" || !startCtx.hasUI || !pi.events) return;
 		const area = new JobWidgetArea({ setWidget: (key, content) => startCtx.ui.setWidget(key, content) });
-		// Background bash sessions sit below the editor beside the subagent rows; the area above keeps task jobs.
+		// A bash job with a chart is drawn in the area above; one without (silent, skipped, not yet authored) gets a
+		// row below the editor beside the subagent rows, so every running background command shows exactly once.
 		const bashRows = new JobBashRows({
 			setWidget: (key, content, options) => startCtx.ui.setWidget(key, content, options),
 		});
 		const off = pi.events.on(JOB_WIDGET_STATE_EVENT, (data) => {
 			const state = data as JobWidgetState;
 			if (state.sessionId !== id) return;
-			area.update({ ...state, jobs: state.jobs.filter((job) => job.kind !== "bash") });
+			area.update({ ...state, jobs: state.jobs.filter((job) => job.kind !== "bash" || isChartedBashJob(job)) });
 			bashRows.update(state);
 		});
 		stopArea = () => {

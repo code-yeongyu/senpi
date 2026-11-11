@@ -115,10 +115,9 @@ describe("job widgets on background bash sessions", () => {
 		}
 	}, 30_000);
 
-	it("draws a background bash session as a row below the TUI editor and its widget on top of bash_output", async () => {
-		let area: Component | undefined;
-		let above = false;
-		let placement: string | undefined;
+	it("draws a silent session as a row below the TUI editor, then its live chart above it, driven by job_widget_state", async () => {
+		const areas = new Map<string, Component>();
+		const placements = new Map<string, string | undefined>();
 		const waiters = new Set<() => void>();
 		const redraw = (): void => {
 			for (const waiter of [...waiters]) waiter();
@@ -129,16 +128,17 @@ describe("job widgets on background bash sessions", () => {
 			content: ((tui: TUI, theme: Theme) => Component) | undefined,
 			options?: { placement?: string },
 		) => {
-			if (key === "job-widgets" && content !== undefined) above = true;
-			if (key !== "job-widgets-bash") return;
-			area = content?.(tui, theme);
-			placement = options?.placement ?? placement;
+			const component = content?.(tui, theme);
+			if (component) areas.set(key, component);
+			else areas.delete(key);
+			placements.set(key, options?.placement);
 			redraw();
 		}) as ExtensionUIContext["setWidget"];
-		const areaLine = (accept: (line: string) => boolean): Promise<string> =>
+		const lines = (key: string): string[] => areas.get(key)?.render(80) ?? [];
+		const areaLine = (key: string, accept: (line: string) => boolean): Promise<string> =>
 			new Promise((resolve, reject) => {
 				const check = (): void => {
-					const line = area?.render(80).find(accept);
+					const line = lines(key).find(accept);
 					if (line === undefined) return;
 					waiters.delete(check);
 					clearTimeout(timer);
@@ -146,7 +146,7 @@ describe("job widgets on background bash sessions", () => {
 				};
 				const timer = setTimeout(() => {
 					waiters.delete(check);
-					reject(new Error(`no matching widget line: ${JSON.stringify(area?.render(80))}`));
+					reject(new Error(`no matching ${key} line: ${JSON.stringify(lines(key))}`));
 				}, 20_000);
 				waiters.add(check);
 				check();
@@ -159,16 +159,19 @@ describe("job widgets on background bash sessions", () => {
 		harness.setResponses([answerWithBlenderSpec]);
 		const plain = (line: string): string => line.replace(/\x1b\[[0-9;]*m/g, "");
 
-		const pending = areaLine((line) => plain(line).includes("running"));
+		const running = areaLine("job-widgets-bash", (line) => plain(line).includes("running"));
 		const id = bashIdOf(
 			await harness.session.executeTool("bash", { command: `${BLENDER_PRINT}; sleep 30`, run_in_background: true }),
 		);
 		try {
-			expect(plain(await pending)).toContain(`· ${id} · running ·`);
-			expect(placement).toBe("belowEditor");
-			const live = plain(await areaLine((line) => plain(line).includes("rendered 2")));
-			expect(live).toMatch(new RegExp(`^ [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Blender render · ${id} · rendered 2 · \\d+s$`));
-			expect(above).toBe(false);
+			expect(plain(await running)).toContain(`· ${id} · running ·`);
+			expect(placements.get("job-widgets-bash")).toBe("belowEditor");
+			const live = plain(await areaLine("job-widgets", (line) => plain(line).includes("rendered 2")));
+			expect(live).toMatch(
+				new RegExp(`^ ${id}  Blender render · seconds per frame  [▁-█]{2}  rendered 2 · 4\\.30 s$`),
+			);
+			// The chart above is the job's only line: its row below the editor is gone.
+			expect(lines("job-widgets-bash").map(plain).join("\n")).not.toContain(id);
 
 			const read = await harness.session.executeTool("bash_output", { bash_id: id });
 			expect(read.details).toMatchObject({ jobWidget: { id, state: "live" } });

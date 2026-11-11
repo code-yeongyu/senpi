@@ -4,8 +4,9 @@
  * in the session's `job_widget_state` from the start: until a spec is installed (before its first
  * request, after the author skipped it, while a session cap holds the request back, or after the
  * author failed) it shows the plain `fallback` row with how long it has been running, so a silent
- * job never looks like nothing is running. A task job joins once its first spec request starts. A
- * finished job is listed as before: a never-asked one is absent, a skipped one stays `skipped`.
+ * job never looks like nothing is running. A finished bash job stays listed with how it ended: `skipped`
+ * when the author skipped it, otherwise `done` (a frozen chart, or the plain view when it never got
+ * one). A task job joins once its first spec request starts and keeps the old rules when it finishes.
  */
 import type { JobWidgetRedactor } from "./author-redact.ts";
 import type { JobWidgetBrief, JobWidgetJobKind } from "./author-types.ts";
@@ -14,7 +15,7 @@ import type { JobWidgetRequestOutcome } from "./request-controller.ts";
 import type { JobWidgetRequestJob } from "./request-policy.ts";
 import { JobWidgetRuntime } from "./runtime.ts";
 import type { JobTextSource } from "./source-types.ts";
-import type { JobWidgetEntry } from "./view-types.ts";
+import type { JobWidgetEntry, JobWidgetOutcome } from "./view-types.ts";
 
 /** What a host says about a job when it registers it; the kind lives beside the brief, not in it. */
 export type JobWidgetBriefText = Omit<JobWidgetBrief, "kind">;
@@ -37,6 +38,8 @@ export class JobWidgetJob implements JobWidgetRequestJob {
 	brief: JobWidgetBrief;
 	runtime: JobWidgetRuntime;
 	settled = false;
+	/** How a finished bash session ended, when its host said. */
+	outcome: JobWidgetOutcome | undefined;
 	readonly #matcher: LineMatcher;
 	readonly #redact: JobWidgetRedactor;
 	#asked = false;
@@ -83,12 +86,13 @@ export class JobWidgetJob implements JobWidgetRequestJob {
 	}
 
 	entry(): JobWidgetEntry | undefined {
-		// A running bash job always has a row; a task job's row waits for its subagent's watch hint.
-		const running = this.kind === "bash" && !this.settled;
-		if (this.#skippedAtMs !== undefined && !running) {
-			return { id: this.id, kind: this.kind, state: "skipped", updatedAtMs: this.#skippedAtMs };
+		// A bash job always has a row; a task job's row waits for its subagent's watch hint.
+		const bash = this.kind === "bash";
+		const outcome = this.outcome === undefined ? {} : { outcome: this.outcome };
+		if (this.#skippedAtMs !== undefined && (!bash || this.settled)) {
+			return { id: this.id, kind: this.kind, state: "skipped", updatedAtMs: this.#skippedAtMs, ...outcome };
 		}
-		if (!this.#asked && !running) return undefined;
+		if (!this.#asked && !bash) return undefined;
 		const brief = this.brief;
 		const derived = this.runtime.derive({
 			label: this.#redact.text(brief.intent ?? brief.task ?? brief.command ?? this.id),
@@ -100,11 +104,12 @@ export class JobWidgetJob implements JobWidgetRequestJob {
 		return {
 			id: this.id,
 			kind: this.kind,
-			// A finished bash job whose spec request failed has no spec to freeze; it is still done.
-			state: this.kind === "bash" && this.settled && derived.state === "fallback" ? "done" : derived.state,
+			// A finished bash job with no spec (never asked, or the request failed) is done with its plain view.
+			state: bash && this.settled ? "done" : derived.state,
 			view: derived.view,
 			updatedAtMs: derived.updatedAtMs,
 			startedAtMs: this.startTime,
+			...outcome,
 		};
 	}
 }

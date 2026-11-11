@@ -1,32 +1,43 @@
 /**
- * Background bash sessions as rows below the TUI editor, drawn like the background subagent rows that
- * sit there: `⠦ <command> · bash_2 · running · 1m 5s`, a spinner while it runs, `✓ … · done · <time>`
- * for {@link DONE_LINGER_MS} after it exits. Every running bash job has a row whether or not a widget
- * spec was ever written for it (a silent job, a skipped or failed spec); a live spec's headline stands
- * in for `running`. Task jobs are left to the area above the editor, so no job is drawn twice. The row
- * ticks every {@link FRAME_MS} only while some job runs; otherwise the one timer is the linger expiry.
+ * Background bash sessions that have no chart, as rows below the TUI editor drawn like the background
+ * subagent rows that sit there: `⠦ <command> · bash_2 · running · 1m 5s` while it runs, then for
+ * {@link DONE_LINGER_MS} after it exits `✓ … · done`, `✗ … · failed` or `✗ … · killed`. A job
+ * whose widget spec draws a chart (`live`, or `done` with a spec view) belongs to the area above
+ * the editor instead ({@link isChartedBashJob}), so no job is drawn twice; a running job leaves these
+ * rows once its chart appears. The rows repaint only when their text changes: the elapsed time moves
+ * once a second for the first hour and once a minute after that, and nothing else ticks.
  */
 import type { Component, TUI } from "@earendil-works/pi-tui";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import type { Theme } from "../../../../modes/interactive/theme/theme.ts";
 import type { ExtensionWidgetOptions } from "../../types.ts";
-import { cutPlain } from "./tui-line.ts";
+import { cutPlain, type JobWidgetLineStyle, type JobWidgetLineToken, jobWidgetLineStyle } from "./tui-line.ts";
 import type { JobWidgetEntry, JobWidgetState } from "./view-types.ts";
 
 export const JOB_BASH_ROWS_TUI_KEY = "job-widgets-bash";
 export const DONE_LINGER_MS = 10_000;
-export const FRAME_MS = 250;
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-const DONE_MARK = "✓";
 const MAX_ROWS = 5;
 const MAX_LINE_COLUMNS = 220;
 const MIN_SUMMARY_COLUMNS = 12;
 const PAD = " ";
+const SECOND_MS = 1000;
+const MINUTE_MS = 60_000;
+const HOUR_MS = 3_600_000;
 
-type WidgetFactory = (tui: TUI) => Component & { dispose?(): void };
+type WidgetFactory = (tui: TUI, theme: Theme) => Component & { dispose?(): void };
 
 export interface JobBashRowsOptions {
 	setWidget(key: string, content: WidgetFactory | undefined, options?: ExtensionWidgetOptions): void;
+	env?: NodeJS.ProcessEnv;
 	now?: () => number;
+}
+
+/** A bash job whose widget spec draws a chart: the area above the editor shows it, not these rows. */
+export function isChartedBashJob(entry: JobWidgetEntry): boolean {
+	if (entry.kind !== "bash" || entry.view === undefined) return false;
+	// A spec view never carries `lines`; the plain (pending, fallback) view always does.
+	return entry.state === "live" || (entry.state === "done" && entry.view.lines === undefined);
 }
 
 interface Row {
@@ -37,59 +48,83 @@ interface Row {
 	readonly doneAtMs: number | undefined;
 }
 
+/** `42s`, `1m 5s` for the first hour, then `1h 5m`. */
 export function formatRowElapsed(ms: number): string {
-	const seconds = Math.max(0, Math.floor(ms / 1000));
+	const seconds = Math.max(0, Math.floor(ms / SECOND_MS));
 	const minutes = Math.floor(seconds / 60);
-	return minutes === 0 ? `${seconds}s` : `${minutes}m ${seconds % 60}s`;
+	if (minutes === 0) return `${seconds}s`;
+	const hours = Math.floor(minutes / 60);
+	return hours === 0 ? `${minutes}m ${seconds % 60}s` : `${hours}h ${minutes % 60}m`;
+}
+
+/** Milliseconds until {@link formatRowElapsed} of a clock at `ms` next changes. */
+function nextElapsedChange(ms: number): number {
+	const step = ms >= HOUR_MS ? MINUTE_MS : SECOND_MS;
+	return step - (Math.max(0, ms) % step);
 }
 
 function oneLine(text: string): string {
 	return text.replace(/\s+/g, " ").trim();
 }
 
-function status(entry: JobWidgetEntry): string {
-	if (entry.state === "done") return "done";
-	const headline = entry.state === "live" ? entry.view?.headline : undefined;
-	if (!headline) return "running";
-	return oneLine(headline.label ? `${headline.label} ${headline.text}` : headline.text);
+interface Ending {
+	readonly mark: string;
+	readonly status: string;
+	readonly token: JobWidgetLineToken;
 }
 
-export function formatBashRow(row: Row, now: number, width: number): string {
+function ending(entry: JobWidgetEntry): Ending {
+	switch (entry.outcome) {
+		case "success":
+			return { mark: "✓", status: "done", token: "success" };
+		case "failed":
+			return { mark: "✗", status: "failed", token: "error" };
+		case "killed":
+			return { mark: "✗", status: "killed", token: "error" };
+		default:
+			return { mark: "■", status: "exited", token: "muted" };
+	}
+}
+
+function ended(entry: JobWidgetEntry): boolean {
+	return entry.state === "done" || entry.state === "skipped";
+}
+
+export function formatBashRow(row: Row, now: number, width: number, style: JobWidgetLineStyle): string {
 	const { entry } = row;
-	const done = entry.state === "done";
-	const mark = done ? DONE_MARK : (SPINNER[Math.floor(now / FRAME_MS) % SPINNER.length] ?? SPINNER[0]);
-	const end = row.doneAtMs ?? now;
-	const elapsed = row.startedAtMs === undefined ? undefined : formatRowElapsed(end - row.startedAtMs);
-	const tail = [entry.id, status(entry), ...(elapsed === undefined ? [] : [elapsed])].join(" · ");
+	const age = row.startedAtMs === undefined ? undefined : (row.doneAtMs ?? now) - row.startedAtMs;
+	const done = ended(entry) ? ending(entry) : undefined;
+	const tick = age === undefined ? 0 : Math.floor(age / SECOND_MS);
+	const mark = done?.mark ?? SPINNER[tick % SPINNER.length] ?? SPINNER[0];
+	const markToken: JobWidgetLineToken = done?.token ?? "accent";
+	const elapsed = age === undefined ? undefined : formatRowElapsed(age);
+	const status = done?.status ?? "running";
+	const tail = ` · ${[entry.id, status, ...(elapsed === undefined ? [] : [elapsed])].join(" · ")}`;
 	const summary = oneLine(entry.view?.title ?? entry.id);
-	const room = width - visibleWidth(`${mark}  · ${tail}`);
+	const room = width - visibleWidth(`${mark} ${tail}`);
 	const shown = cutPlain(summary, Math.max(MIN_SUMMARY_COLUMNS, room));
-	return cutPlain(`${mark} ${shown} · ${tail}`, width);
+	const line = `${style.fg(markToken, mark)} ${shown}${style.fg("muted", tail)}`;
+	if (visibleWidth(`${mark} ${shown}${tail}`) <= width) return line;
+	return truncateToWidth(line, width, "…");
 }
 
 class JobBashRowsComponent implements Component {
-	#rows: readonly Row[];
-	#more: number;
-	#now: number;
+	readonly #style: JobWidgetLineStyle;
+	#lines: (width: number, style: JobWidgetLineStyle) => string[];
 
-	constructor(rows: readonly Row[], more: number, now: number) {
-		this.#rows = rows;
-		this.#more = more;
-		this.#now = now;
+	constructor(style: JobWidgetLineStyle, lines: (width: number, style: JobWidgetLineStyle) => string[]) {
+		this.#style = style;
+		this.#lines = lines;
 	}
 
-	set(rows: readonly Row[], more: number, now: number): void {
-		this.#rows = rows;
-		this.#more = more;
-		this.#now = now;
+	set(lines: (width: number, style: JobWidgetLineStyle) => string[]): void {
+		this.#lines = lines;
 	}
 
 	render(width: number): string[] {
 		const inner = Math.min(MAX_LINE_COLUMNS, Math.max(0, width - PAD.length * 2));
 		if (inner === 0) return [];
-		const lines = this.#rows.map((row) => `${PAD}${formatBashRow(row, this.#now, inner)}`);
-		if (this.#more > 0) lines.push(`${PAD}${cutPlain(`+${this.#more} more`, inner)}`);
-		return lines;
+		return this.#lines(inner, this.#style).map((line) => `${PAD}${line}`);
 	}
 
 	invalidate(): void {}
@@ -97,15 +132,18 @@ class JobBashRowsComponent implements Component {
 
 export class JobBashRows {
 	readonly #setWidget: JobBashRowsOptions["setWidget"];
+	readonly #env: NodeJS.ProcessEnv;
 	readonly #now: () => number;
 	#rows = new Map<string, Row>();
 	#component: JobBashRowsComponent | undefined;
 	#tui: TUI | undefined;
+	#shownKey: string | undefined;
 	#timer: ReturnType<typeof setTimeout> | undefined;
 	#disposed = false;
 
 	constructor(options: JobBashRowsOptions) {
 		this.#setWidget = options.setWidget;
+		this.#env = options.env ?? process.env;
 		this.#now = options.now ?? Date.now;
 	}
 
@@ -114,18 +152,22 @@ export class JobBashRows {
 		const now = this.#now();
 		const next = new Map<string, Row>();
 		for (const entry of state.jobs) {
-			if (entry.kind !== "bash" || entry.view === undefined || entry.state === "skipped") continue;
+			if (entry.kind !== "bash" || isChartedBashJob(entry)) continue;
 			const previous = this.#rows.get(entry.id);
-			const endedNow = previous !== undefined && previous.entry.state !== "done";
-			const doneAtMs = entry.state === "done" ? (endedNow ? now : previous?.doneAtMs) : undefined;
-			next.set(entry.id, { entry, startedAtMs: entry.startedAtMs, doneAtMs });
-		}
-		// A row that was running and is now gone or skipped ended without a widget spec: show it done.
-		for (const [id, row] of this.#rows) {
-			if (next.has(id)) continue;
-			if (row.entry.state !== "done")
-				next.set(id, { ...row, entry: { ...row.entry, state: "done" }, doneAtMs: now });
-			else if (row.doneAtMs !== undefined) next.set(id, row);
+			if (!ended(entry)) {
+				if (entry.view !== undefined)
+					next.set(entry.id, { entry, startedAtMs: entry.startedAtMs, doneAtMs: undefined });
+				continue;
+			}
+			// Seen running, now ended: show how it ended. Already ended when first seen (a reload): not shown.
+			if (previous === undefined) continue;
+			const doneAtMs = previous.doneAtMs ?? now;
+			const view = entry.view ?? previous.entry.view;
+			next.set(entry.id, {
+				entry: { ...entry, ...(view ? { view } : {}) },
+				startedAtMs: previous.startedAtMs,
+				doneAtMs,
+			});
 		}
 		this.#rows = next;
 		this.#redraw();
@@ -145,9 +187,7 @@ export class JobBashRows {
 		for (const [id, row] of this.#rows) {
 			if (row.doneAtMs !== undefined && now - row.doneAtMs >= DONE_LINGER_MS) this.#rows.delete(id);
 		}
-		return [...this.#rows.values()]
-			.filter((row) => row.entry.state !== "done" || row.doneAtMs !== undefined)
-			.reverse();
+		return [...this.#rows.values()].reverse();
 	}
 
 	#redraw(): void {
@@ -159,36 +199,46 @@ export class JobBashRows {
 			if (this.#component) this.#setWidget(JOB_BASH_ROWS_TUI_KEY, undefined);
 			this.#component = undefined;
 			this.#tui = undefined;
+			this.#shownKey = undefined;
 			return;
 		}
 		const shown = rows.slice(0, MAX_ROWS);
 		const more = rows.length - shown.length;
-		if (this.#component) {
-			this.#component.set(shown, more, now);
-			this.#tui?.requestRender();
-		} else {
-			this.#setWidget(
-				JOB_BASH_ROWS_TUI_KEY,
-				(tui) => {
-					const component = new JobBashRowsComponent(shown, more, now);
-					this.#component = component;
-					this.#tui = tui;
-					return component;
-				},
-				{ placement: "belowEditor" },
-			);
-		}
+		const lines = (width: number, style: JobWidgetLineStyle): string[] => {
+			const out = shown.map((row) => formatBashRow(row, now, width, style));
+			if (more > 0) out.push(style.fg("muted", cutPlain(`+${more} more`, width)));
+			return out;
+		};
 		this.#arm(rows, now);
+		// Repaint only when what the rows say changed (a new job, a new status, the elapsed time moving).
+		const key = JSON.stringify(lines(MAX_LINE_COLUMNS, { fg: (_token, text) => text }));
+		if (this.#component && key === this.#shownKey) return;
+		this.#shownKey = key;
+		if (this.#component) {
+			this.#component.set(lines);
+			this.#tui?.requestRender();
+			return;
+		}
+		this.#setWidget(
+			JOB_BASH_ROWS_TUI_KEY,
+			(tui, theme) => {
+				const component = new JobBashRowsComponent(jobWidgetLineStyle(theme, this.#env), lines);
+				this.#component = component;
+				this.#tui = tui;
+				return component;
+			},
+			{ placement: "belowEditor" },
+		);
 	}
 
+	/** One timer: the next moment some row's text changes (its elapsed time, or a done row's expiry). */
 	#arm(rows: readonly Row[], now: number): void {
 		let wait: number | undefined;
-		if (rows.some((row) => row.entry.state !== "done")) wait = FRAME_MS - (now % FRAME_MS);
-		else {
-			for (const row of rows) {
-				const left = (row.doneAtMs ?? now) + DONE_LINGER_MS - now;
-				if (wait === undefined || left < wait) wait = left;
-			}
+		for (const row of rows) {
+			let left: number | undefined;
+			if (row.doneAtMs !== undefined) left = row.doneAtMs + DONE_LINGER_MS - now;
+			else if (row.startedAtMs !== undefined) left = nextElapsedChange(now - row.startedAtMs);
+			if (left !== undefined && (wait === undefined || left < wait)) wait = left;
 		}
 		if (wait === undefined) return;
 		this.#timer = setTimeout(() => {

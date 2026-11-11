@@ -6613,7 +6613,8 @@ The `job-widgets` builtin emits `job_widget_state` on the same path: live, displ
 session's long background jobs (bash sessions started with `run_in_background` or auto-detached, and jobs a
 host registers, such as background tasks). Clients receive it only when they advertise `extension_events`;
 the in-process `pi.events` channel carries the same payload. It is sent at most once per second per session
-and only when what a client draws changed, so a timestamp moving alone sends nothing. A client that starts
+and only when what a client draws changed, so a timestamp moving alone sends nothing; a change that is only a
+`fallback` view's latest line or line count (a chatty job with no widget) waits up to five seconds. A client that starts
 receiving extension events gets the session's current state once (within a second) when some job is shown,
 so a frozen `done` widget reaches a late client too. `jobWidgets.enabled:
 false` ([settings](settings.md#job-widgets)) turns it off.
@@ -6622,10 +6623,14 @@ false` ([settings](settings.md#job-widgets)) turns it off.
 `state` (`pending`, `live`, `done`, `skipped`, `fallback`), `updatedAtMs`, `startedAtMs` (absent from older
 senpi versions), and, except for `skipped`, a `view`: `title`, optional `headline` (`text`, `label`, `trend`),
 optional `stage`, up to four `blocks` (`spark`, `bars`, `meter`, `stat`, `grid`, `text`) whose numbers arrive
-formatted, and `lines` for `pending` and `fallback`. A running bash session is listed from its start, as
-`fallback` until a widget is built for it, so a client can show every live background command; a task job
-appears once its widget is being built. `done` keeps the last view frozen after the job exits; a bash session
-that never got a widget leaves the list when it exits. Ignore a payload whose `v` you do not know and any block `kind` you do not draw.
+formatted, and `lines` (non-empty lines read) on the plain view a job has before its widget is built. A running
+bash session is listed from its start, as `fallback` until a widget is built for it (`pending` while the spec
+is being written), so a client can show every live background command; a task job appears once its widget is
+being built. When a bash session exits it stays listed: `skipped` if the author skipped it, otherwise `done`,
+with its chart frozen, or with the plain view (`lines`, `stage`, no `blocks`) when it never got a chart
+(never asked, or the spec request failed). A finished bash entry carries `outcome`: `success` (exit code 0),
+`failed` (another exit code) or `killed` (killed, timed out or signalled); it is absent when the exit is
+unknown. Ignore a payload whose `v` you do not know and any block `kind` you do not draw.
 
 ```json
 {
