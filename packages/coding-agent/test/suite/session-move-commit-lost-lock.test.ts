@@ -4,7 +4,7 @@
  * failed while the stalled holder can still rename tells the sender to take the session back, and the holder then
  * lands a second writable copy.
  */
-import { existsSync, symlinkSync, utimesSync } from "node:fs";
+import { existsSync, readFileSync, symlinkSync, utimesSync } from "node:fs";
 import { basename, join } from "node:path";
 import lockfile from "proper-lockfile";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -18,12 +18,27 @@ import { MOVE, setup } from "./session-move-fixture.ts";
 
 type World = Awaited<ReturnType<typeof setup>>;
 
+const afterRename = vi.hoisted(() => new Map<string, () => Promise<void>>());
+
+// A rename is durable once it returns. A test holds a caller right after one, where a stalled process would be held.
+vi.mock("node:fs/promises", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:fs/promises")>();
+	return {
+		...actual,
+		rename: async (...args: Parameters<typeof actual.rename>) => {
+			await actual.rename(...args);
+			await afterRename.get(String(args[1]))?.();
+		},
+	};
+});
+
 const realLock = lockfile.lock;
 const AN_HOUR_MS = 60 * 60_000;
 
 afterEach(() => {
 	vi.restoreAllMocks();
 	setMoveStepHook(undefined);
+	afterRename.clear();
 });
 
 function deferred(): { readonly promise: Promise<void>; readonly resolve: () => void } {
@@ -71,6 +86,18 @@ function stallHolderOf(record: string): { readonly taken: () => void } {
 		return release;
 	});
 	return { taken: () => taken() };
+}
+
+/** Holds whoever writes this record's commit stamp right after the stamp is on disk, until `resume()`. */
+function stallAfterStamp(record: string): { readonly reached: Promise<void>; readonly resume: () => void } {
+	const reached = deferred();
+	const gate = deferred();
+	afterRename.set(record, async () => {
+		if (!readFileSync(record, "utf8").includes('"committing":true')) return;
+		reached.resolve();
+		await gate.promise;
+	});
+	return { reached: reached.promise, resume: gate.resolve };
 }
 
 /**
@@ -134,6 +161,33 @@ describe("a commit whose holder lost the move record's lock (senpi#6417)", () =>
 		expect({ answer, landed: existsSync(landingOf(world)) }).toEqual({
 			answer: { refused: "ELOCKLOST" },
 			landed: false,
+		});
+	});
+
+	it("#given a holder stalled right after its stamp, past the settle bound, and another process that settled the move failed #when the holder runs again #then it lands nothing and one copy is writable", async () => {
+		const world = await setup();
+		stallHolderOf(recordOf(world));
+		const stall = stallAfterStamp(recordOf(world));
+		const importing = settled(importWith(world, world.ledger));
+		await stall.reached;
+		const longAgo = new Date(Date.now() - AN_HOUR_MS);
+		utimesSync(`${recordOf(world)}.lock`, longAgo, longAgo);
+		const anHourLater = ledgerOfAnotherProcess(world, { now: () => Date.now() + AN_HOUR_MS });
+
+		const heard = await answerMoveStatus(anHourLater, MOVE, undefined);
+		await finishMove({ sessionFile: world.source, bundleDir: world.bundleDir, moveId: MOVE, answer: heard });
+		stall.resume();
+
+		expect({
+			heard,
+			holder: await importing,
+			landed: existsSync(landingOf(world)),
+			sender: await writable(world.source),
+		}).toEqual({
+			heard: { state: "failed", reason: "import_failed" },
+			holder: { refused: "move_fenced" },
+			landed: false,
+			sender: true,
 		});
 	});
 

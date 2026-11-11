@@ -6,6 +6,7 @@ import {
 	type Landing,
 	type LandingOutcome,
 	landedElsewhere,
+	isCommitStamp,
 	landsAt,
 	parseLanding,
 	recordAge,
@@ -176,15 +177,28 @@ export class MoveLedger {
 			if (!landsAt(record, landing, target))
 				throw new MoveFencedError(moveId, record, landedElsewhere(record, landing));
 			await prepare?.();
-			await this.write(moveId, { state: "receiving" }, { target, committing: true });
+			const stamp = await this.write(moveId, { state: "receiving" }, { target, committing: true });
 			moveStep("import:stamped");
-			// A holder that knows its lock was taken renames nothing: whoever took it may already have settled this stamp.
-			this.#locks.assertHeld(this.path(moveId));
+			await this.assertStampStands(moveId, stamp);
 			const result = await rename();
 			moveStep("import:renamed");
 			await this.write(moveId, { state: "accepted" }, { target });
 			return result;
 		});
+	}
+
+	/**
+	 * A commit renames only while it still holds the move's lock and the record still carries its own stamp. A holder
+	 * that stalled past the lock's stale bound may find the move settled by whoever took the lock: it then renames
+	 * nothing, and the refusal says what the record says.
+	 */
+	private async assertStampStands(moveId: MoveId, stamp: string): Promise<void> {
+		this.#locks.assertHeld(this.path(moveId));
+		const stored = await this.raw(moveId);
+		if (isCommitStamp(stored, stamp)) return;
+		const record = parseRecord(stored);
+		const replaced = record?.state === "receiving" ? "another import's commit took over its record" : undefined;
+		throw new MoveFencedError(moveId, record, replaced);
 	}
 
 	/**
@@ -298,13 +312,16 @@ export class MoveLedger {
 		return parseLanding(await this.raw(moveId));
 	}
 
-	private async write(moveId: MoveId, record: MoveRecord, landing: Landing = {}): Promise<void> {
+	/** Writes the record and answers the time it stamped it with. */
+	private async write(moveId: MoveId, record: MoveRecord, landing: Landing = {}): Promise<string> {
 		const file = this.path(moveId);
 		const temp = `${file}.${process.pid}.tmp`;
+		const at = new Date().toISOString();
 		this.#locks.assertHeld(file);
-		await writeFile(temp, `${JSON.stringify({ ...record, ...landing, at: new Date().toISOString() })}\n`);
+		await writeFile(temp, `${JSON.stringify({ ...record, ...landing, at })}\n`);
 		this.#locks.assertHeld(file);
 		await renameFile(temp, file);
+		return at;
 	}
 
 	private locked<T>(moveId: MoveId, fn: () => T | Promise<T>): Promise<T> {

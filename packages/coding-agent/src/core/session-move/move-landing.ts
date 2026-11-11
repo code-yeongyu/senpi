@@ -17,6 +17,12 @@ export function recordAge(value: unknown, now: number): number | undefined {
 	return Number.isNaN(at) ? undefined : now - at;
 }
 
+/** Whether a stored record is still the commit stamp that was written at `stamp`. */
+export function isCommitStamp(value: unknown, stamp: string): boolean {
+	if (typeof value !== "object" || value === null || !("at" in value)) return false;
+	return value.at === stamp && parseLanding(value).committing === true;
+}
+
 /** What the session file at a move's landing target records for the move. */
 export type LandingOutcome = "absent" | "moved_in" | "revoked";
 
