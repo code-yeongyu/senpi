@@ -1766,23 +1766,24 @@ The loopless runtime's execute path is core.
 - LOW: the `registerConnection` body and failure callback in `session-event-fanout.ts`.
 - LOW: `multi-session-host.ts`: the connection record, the handoff-parked hook and the shutdown's connection phase (now `closeHostConnections`).
 
-## 2026-10-26 - Reservation reads report typed store contention (senpi#4372)
+## 2026-10-26 - Endpoint reservation store with one-time role claims (senpi#4372)
 
 ### What changed
 
-- `packages/coding-agent/src/modes/rpc/endpoint-reservation-store.ts`: reservation and role reads share the transaction busy-error mapper, preserving existing typed refusals.
+- `packages/coding-agent/src/modes/rpc/endpoint-reservation-store.ts` (new): the endpoint reservation store of sisyphuslabs/omo-desktop-app#4199 (design 4.2a), a private SQLite database beside the endpoint lock with one `BEGIN IMMEDIATE` transaction per transition. `reserve` creates a pending generation that records its expected roles (schema 2) and refuses unknown roles; `offer` gives an expected role a fresh 256-bit nonce; `claim` consumes that nonce once, recording the participant, and a retry by the same participant gets no new nonce; `grant` binds only the recorded participant, from the recorded issuer, to a SHA-256 credential commitment; `cancel` revokes outstanding offers and keeps every claimed identity; `markServing` commits only when every expected role is granted, and an empty or unreadable expected set fails closed; `release` ends a granted participant's authority. Rows are never deleted. The file is created owner-only and validated through a no-follow descriptor before SQLite opens it. Every refusal is an `EndpointReservationError` with a machine-readable `reason`; contention on the open, on reads and on transitions (BEGIN or COMMIT) is `store_busy`, read from SQLite's result code. No production caller yet.
+- `packages/coding-agent/src/modes/rpc/bun-sqlite.d.ts`: references the `bun:sqlite` declaration so the build typecheck resolves the store's import.
 
 ### Why
 
-- An exclusive writer blocks rollback-journal readers too. Raw `database is locked` errors escaped the reservation protocol under load (sisyphuslabs/omo-desktop-app#4199).
+- Design 4.2a: a participant launched through a wrapper must prove it is the process its issuer admitted, and a generation must not be committed serving before every expected participant is admitted. A one-time nonce claimed under one write transaction, with a durable cancellation fence, gives that; a cross-process race test releases 8 claimants at once and requires exactly one `claimed`. Raw `database is locked` errors had escaped the protocol under load.
 
 ### Why an extension could not handle it
 
-- Reservation reads run during host startup before extension loading.
+- Reservation runs during host startup, before extension loading.
 
 ### Expected merge conflict zones
 
-- LOW: the reservation store's read and transaction helpers.
+- LOW: none outside the new module; the store has no caller yet.
 
 ## 2026-11-01 - A compact peer's live call records name their call by its snapshot key (RULING-123, senpi#5346)
 

@@ -4,6 +4,7 @@ import { chmod, link, mkdir, open, readFile, realpath, rename, unlink, writeFile
 import type { Socket } from "node:net";
 import { basename, dirname, join, win32 } from "node:path";
 import { acquireOwnershipSafeLock } from "./ownership-safe-lock.ts";
+import type { FileIdentity } from "./sqlite-file-identity.ts";
 
 const WINDOWS_PIPE_PREFIX = "\\\\.\\pipe\\senpi-rpc-";
 export const SOCKET_SECRET_BYTES = 32;
@@ -24,7 +25,8 @@ export async function ensureSocketSecret(path: string): Promise<Buffer> {
 	const existing = await readSecretEntry(path);
 	if (existing?.length === SOCKET_SECRET_BYTES) return existing;
 	await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-	const release = await acquireOwnershipSafeLock(await socketSecretLockPath(path));
+	const lock = await socketSecretLock(path);
+	const release = await acquireOwnershipSafeLock(lock.path, { expectedFile: lock.file });
 	try {
 		// The first read is only a hint (design 4.4): a contender may have published or repaired since.
 		const current = await readSecretEntry(path);
@@ -166,17 +168,19 @@ async function syncDirectory(dir: string): Promise<void> {
 /**
  * The per-secret mutation lock (design 4.2): `<canonical parent>/<name>.publish.lock`, so every spelling of one
  * physical secret takes the same lock. It holds only the SQLite lock database, is created owner-only, must be a regular
- * file, and is never removed.
+ * file, and is never removed. SQLite reopens it by name, and Windows has no O_NOFOLLOW for the check below, so the
+ * lock is taken only when the file SQLite opened is the one checked here (`expectedFile`).
  */
-async function socketSecretLockPath(path: string): Promise<string> {
+async function socketSecretLock(path: string): Promise<{ path: string; file: FileIdentity }> {
 	const lockPath = join(await realpath(dirname(path)), `${basename(path)}.publish.lock`);
 	const handle = await open(lockPath, constants.O_RDONLY | constants.O_CREAT | (constants.O_NOFOLLOW ?? 0), 0o600);
 	try {
-		if (!(await handle.stat()).isFile()) throw new Error(`RPC socket secret lock is not a regular file: ${lockPath}`);
+		const info = await handle.stat({ bigint: true });
+		if (!info.isFile()) throw new Error(`RPC socket secret lock is not a regular file: ${lockPath}`);
+		return { path: lockPath, file: { dev: info.dev, ino: info.ino } };
 	} finally {
 		await handle.close();
 	}
-	return lockPath;
 }
 
 /** Replaces an invalid secret with `candidate` in one rename; the old entry stays until that rename (design 4.4). */
