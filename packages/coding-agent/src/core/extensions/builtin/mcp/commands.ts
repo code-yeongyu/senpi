@@ -8,6 +8,7 @@ import { showMcpManager } from "./manager.ts";
 import { getMcpService } from "./service.ts";
 import { MCP_STARTUP_RACE_MS } from "./startup-race.ts";
 import { buildMcpStatusRows, formatMcpStatus } from "./status.ts";
+import { listMcpTools } from "./tool-client.ts";
 
 const SUBCOMMANDS = [
 	"status",
@@ -173,7 +174,7 @@ async function testServer(
 	const started = Date.now();
 	try {
 		await connection.connect();
-		const result = await connection.client.listTools({}, { timeout: 2000 });
+		const result = await listMcpTools(connection.client, {}, { timeout: 2000 });
 		const elapsedMs = Date.now() - started;
 		service.recordCall(name, elapsedMs, false);
 		notify(`MCP test ${name} ok (${elapsedMs}ms): ${result.tools.length} tools`);

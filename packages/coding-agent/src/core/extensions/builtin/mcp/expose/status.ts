@@ -1,6 +1,7 @@
 import type { McpToolCatalogEntry } from "../catalog.ts";
 import type { McpServerDeclaredConfig, McpSettings } from "../config-schema.ts";
 import type { ServerConnection } from "../connection.ts";
+import { listMcpTools } from "../tool-client.ts";
 import { computeMcpExposurePolicy } from "./policy.ts";
 
 export interface McpServerExposureStatus {
@@ -33,7 +34,7 @@ export async function getMcpServerExposureStatus(
 	settings: McpSettings,
 ): Promise<McpServerExposureStatus> {
 	try {
-		const result = await connection.client.listTools({}, { timeout: 500 });
+		const result = await listMcpTools(connection.client, {}, { timeout: 500 });
 		const catalog: McpToolCatalogEntry[] = result.tools.map((tool) => ({
 			annotations: tool.annotations,
 			connection,
