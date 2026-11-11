@@ -38,10 +38,17 @@ export function providerRetryAt(messages: readonly AgentMessage[], now: number):
 	return instants.length === 0 ? undefined : Math.min(...instants);
 }
 
-/** The turn ended on a provider refusing for a usage or rate limit, not on an outage (senpi#4085). */
+/**
+ * The turn ended on a provider refusing for a usage or rate limit, not on an outage (senpi#4085). An OpenAI-compatible
+ * adapter reports a bare 429 as a status-only diagnostic (`unknown` + 429); that status is still a limit.
+ */
 export function isLimitRefusal(messages: readonly AgentMessage[]): boolean {
-	const category = lastAssistantMessage(messages)?.providerDiagnostic?.category;
-	return category === "rate_limit" || category === "quota";
+	const diagnostic = lastAssistantMessage(messages)?.providerDiagnostic;
+	return (
+		diagnostic?.category === "rate_limit" ||
+		diagnostic?.category === "quota" ||
+		(diagnostic?.category === "unknown" && diagnostic.httpStatus === 429)
+	);
 }
 
 /**

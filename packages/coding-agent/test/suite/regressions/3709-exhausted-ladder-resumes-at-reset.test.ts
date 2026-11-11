@@ -122,7 +122,8 @@ describe("an exhausted fallback ladder resumes the goal at the soonest known res
 		["HTTP 429: rate_limit_exceeded", "HTTP 429: rate_limit_exceeded", "HTTP 429: rate_limit_exceeded"],
 		["HTTP 429: rate_limit_exceeded", "HTTP 503: upstream unavailable", "network error: connection reset"],
 	])(
-		"schedules no resume for a limit-shaped ladder without a reset: %s",
+		// senpi#4085 changed this case: a limit with no reset is re-checked on the provider backoff (15 s first), not left for input.
+		"re-checks a limit-shaped ladder without a reset on the provider backoff: %s",
 		async (...errors) => {
 			vi.useFakeTimers({ now: NOW });
 			const harness = await goalOnLadder(errors.map(failure));
@@ -131,9 +132,14 @@ describe("an exhausted fallback ladder resumes the goal at the soonest known res
 			await harness.session.prompt("start");
 			expect(harness.eventsOfType("retry_fallback_exhausted")).toHaveLength(1);
 
-			await advanceTo(NOW + 80 * HOUR);
+			await advanceTo(NOW + 14_000);
 			expect(runsAfterExhaustion(harness)).toBe(0);
 			expect(harness.getPendingResponseCount()).toBe(2);
+
+			const rechecked = waitForSettles(harness, 2);
+			await advanceTo(NOW + 16_000);
+			await rechecked;
+			expect(runsAfterExhaustion(harness)).toBe(1);
 		},
 		30_000,
 	);

@@ -18,7 +18,7 @@ const NOW = Date.UTC(2026, 10, 11, 8, 0);
 const MINUTE = 60_000;
 const TIMER_STATE = "goal_continuation_timer_state";
 
-function refusal(resetsAt: number | undefined): AgentMessage {
+function refusal(resetsAt: number | undefined, statusOnly = false): AgentMessage {
 	return {
 		role: "assistant",
 		content: [],
@@ -35,13 +35,15 @@ function refusal(resetsAt: number | undefined): AgentMessage {
 		},
 		stopReason: "error",
 		errorMessage: "You've hit your session limit",
-		providerDiagnostic: {
-			category: "rate_limit",
-			evidence: "structured_code",
-			code: "rate_limit_error",
-			httpStatus: 429,
-			...(resetsAt === undefined ? {} : { resetsAt }),
-		},
+		providerDiagnostic: statusOnly
+			? { category: "unknown", evidence: "structured_status", httpStatus: 429 }
+			: {
+					category: "rate_limit",
+					evidence: "structured_code",
+					code: "rate_limit_error",
+					httpStatus: 429,
+					...(resetsAt === undefined ? {} : { resetsAt }),
+				},
 		timestamp: Date.now(),
 	};
 }
@@ -85,7 +87,7 @@ describe("a goal outlasts accounts that stay limited (senpi#4085)", () => {
 		await cleanupGoalMonitorTempDirs();
 	});
 
-	it.each(["lane refusal", "exhausted ladder"] as const)(
+	it.each(["lane refusal", "exhausted ladder", "status-only 429"] as const)(
 		"keeps waking past the continuation cap on a %s",
 		async (shape) => {
 			vi.useFakeTimers({ now: NOW });
@@ -93,9 +95,14 @@ describe("a goal outlasts accounts that stay limited (senpi#4085)", () => {
 
 			for (let wake = 1; wake <= 12; wake++) {
 				const resetsAt = Date.now() + MINUTE;
-				await refusedTurn(refusal(resetsAt), shape === "exhausted ladder" ? { resumeAt: resetsAt } : undefined);
+				const statusOnly = shape === "status-only 429";
+				await refusedTurn(
+					refusal(resetsAt, statusOnly),
+					shape === "exhausted ladder" ? { resumeAt: resetsAt } : undefined,
+				);
 				const sent = waitForSentCount(harness, wake);
-				await vi.advanceTimersByTimeAsync(MINUTE + 1_001);
+				// A status-only 429 names no reset, so the goal re-checks on the provider backoff (capped at 30 min).
+				await vi.advanceTimersByTimeAsync(statusOnly ? 30 * MINUTE + 1_001 : MINUTE + 1_001);
 				await sent;
 			}
 
