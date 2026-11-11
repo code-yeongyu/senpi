@@ -33,6 +33,9 @@ const slotStateSchema = z.looseObject({
 	modelBlocks: z.record(z.string().min(1), z.looseObject({ blockedUntil: z.number().int().positive() })).optional(),
 });
 
+/** Every slot field this engine owns; any other field on a slot was written by another engine version. */
+export const KNOWN_SLOT_STATE_FIELDS: ReadonlySet<string> = new Set(Object.keys(slotStateSchema.shape));
+
 /**
  * The slot fields this engine reads and writes. Declared, not inferred from the loose schema: an inferred
  * type carries the schema's `[k: string]: unknown` index signature, which turned every writer's
