@@ -430,12 +430,7 @@ export function createOAuthConfig(deps: {
 				});
 				if (callbacks.signal !== undefined)
 					recordClaudeCliLoginOutcome(callbacks.signal, { account: { name }, check });
-				signedInCredential = withCheck(
-					withSlot(storedSubscription(saved) ?? current, tested),
-					name,
-					check,
-					dirId,
-				);
+				signedInCredential = withCheck(withSlot(storedSubscription(saved) ?? current, tested), name, check, dirId);
 			} catch (error) {
 				try {
 					await rollBack();
