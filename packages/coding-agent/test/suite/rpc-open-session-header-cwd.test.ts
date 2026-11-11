@@ -128,9 +128,11 @@ describe.each<[string, { readonly workers?: boolean }]>([
 			error: expect.stringContaining(`Stored session working directory does not exist: ${gone}`),
 		});
 		const { sessions } = (await peer.send({ type: "list_sessions" })).data as {
-			sessions: Array<{ sessionPath?: string }>;
+			sessions: Array<{ sessionPath?: string; status: string; cwd: string }>;
 		};
-		expect(sessions.filter((row) => row.sessionPath === file)).toEqual([]);
+		// The worker runtime lists a refused open as `closing` until its worker is gone; it is never an open session.
+		const listed = sessions.filter((row) => row.sessionPath === file);
+		expect(listed.filter((row) => row.status !== "closing" || row.cwd === host.cwd)).toEqual([]);
 		expect(readFileSync(file)).toEqual(bytes);
 	});
 
