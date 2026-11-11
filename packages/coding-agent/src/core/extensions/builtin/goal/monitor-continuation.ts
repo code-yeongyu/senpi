@@ -366,7 +366,7 @@ export class MonitorAwareGoalContinuation {
 
 	/**
 	 * senpi#3709: every fallback rung failed, so a continuation now would hit the same limits. Park on
-	 * the soonest reset the run named and resume once; with no known reset, stay parked until input.
+	 * the soonest reset the run named; with no known reset, re-check on the provider backoff (senpi#4085).
 	 */
 	#parkUntilLadderReset(resumeAt: number | undefined): Goal | undefined {
 		const goal = this.#goal;
