@@ -1150,6 +1150,17 @@ export class Markdown implements Component {
 
 			case "hr":
 				lines.push(this.theme.hr("─".repeat(Math.min(width, 80))));
+				if (inlineRanges && source) {
+					// Every rule glyph selects the authored rule, excluding block separators.
+					const first = rangeAt(source.raw.ranges, 0);
+					const last = rangeAt(source.raw.ranges, source.raw.text.trimEnd().length - 1);
+					inlineRanges.push(
+						repeatedRange(
+							first && last ? { start: first.start, end: last.end } : null,
+							stripTerminalSequences(lines[0]).length,
+						),
+					);
+				}
 				if (nextTokenType && nextTokenType !== "space") {
 					lines.push(""); // Add spacing after horizontal rules (unless space token follows)
 				}
@@ -1383,6 +1394,18 @@ export class Markdown implements Component {
 					repeatedRange(undefined, 2),
 					source.href.ranges,
 					repeatedRange(undefined, 1),
+				]);
+			} else if (token.type === "link" && mapped.length < rendered.length && source) {
+				// A reference destination lives elsewhere; its visible suffix selects
+				// only this link's source, never the remote definition or intervening prose.
+				const first = rangeAt(source.raw.ranges, 0);
+				const last = rangeAt(source.raw.ranges, source.raw.ranges.length - 1);
+				mapped = concatRanges([
+					mapped,
+					repeatedRange(
+						first && last ? { start: first.start, end: last.end } : null,
+						rendered.length - mapped.length,
+					),
 				]);
 			}
 			if (mapped.length < rendered.length) {

@@ -347,6 +347,8 @@ Fullscreen Markdown selection keeps the normal rendered appearance and copies th
 
 Selecting any part of a formula converted to Unicode copies the whole original formula, including its delimiters. If the formula body renders unchanged, selecting inside it copies only that source fragment.
 
+Selecting any part of a horizontal rule copies the authored rule as a whole, without trailing block separators. When a reference link displays its URL in parentheses, selecting any part of that suffix copies the link's own source syntax (`[ref]`, `[ref][1]` or `[ref][]`), without the remote definition or unselected surrounding prose. Selecting inside the link label still copies only that source fragment.
+
 If a display transform changes a Markdown component, selecting its text copies rendered text for the entire drag, including line breaks from visual wrapping. This also applies to unchanged prose beside a transformed block such as a Mermaid diagram. A selection with invalid source mapping, such as a wrapped-table selection that skips source content, still reports that the original source is unavailable and leaves the clipboard intact. The terminal's selection-bypass gesture copies its screen text.
 
 Custom components that copy rendered arrays or add ASCII left padding can preserve selection metadata with `copyLineSources`. Preserve the visible text when carrying its metadata. Returned arrays are source snapshots: if provenance changes, publish a new array even when its text looks identical. Do not replace metadata on an array that a retained frame may still use:

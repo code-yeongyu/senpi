@@ -60,6 +60,60 @@ it("copies original Markdown from a paragraph and list through public mouse inpu
 });
 
 const cases = [
+	// senpi#5695: rendered rules are atomic source spans, without block separators.
+	...["---", "***", "___"].flatMap((rule) => [
+		{
+			name: `horizontal rule ${rule} row without block separators`,
+			source: `Before\r\n\r\n${rule}\r\n\r\nAfter`,
+			visible: ["Before", "", "─".repeat(60), "", "After"],
+			start: [1, 3],
+			end: [60, 3],
+			expected: rule,
+		},
+		{
+			name: `partial horizontal rule ${rule}`,
+			source: `Before\r\n\r\n${rule}\r\n\r\nAfter`,
+			start: [4, 3],
+			end: [8, 3],
+			expected: rule,
+		},
+		{
+			name: `prose across horizontal rule ${rule}`,
+			source: `Before\r\n\r\n${rule}\r\n\r\nAfter`,
+			end: [5, 5],
+			expected: `Before\r\n\r\n${rule}\r\n\r\nAfter`,
+		},
+	]),
+	// senpi#5695: reference suffixes must never select the remote definition or surrounding prose.
+	...[
+		{ link: "[ref]", definition: "ref" },
+		{ link: "[ref][1]", definition: "1" },
+		{ link: "[ref][]", definition: "ref" },
+	].flatMap(({ link, definition }) => [
+		{
+			name: `reference link ${link} through visible URL suffix`,
+			source: `Before ${link} after.\r\n\r\n[${definition}]: https://example.com "Remote title"\r\n\r\nUnselected`,
+			visible: ["Before ref (https://example.com) after."],
+			start: [8, 1],
+			end: [32, 1],
+			expected: link,
+		},
+		{
+			name: `reference link ${link} bounded URL suffix interior`,
+			source: `Before ${link} after.\r\n\r\n[${definition}]: https://example.com "Remote title"\r\n\r\nUnselected`,
+			visible: ["Before ref (https://example.com) after."],
+			start: [21, 1],
+			end: [27, 1],
+			expected: link,
+		},
+		{
+			name: `reference link ${link} label interior`,
+			source: `Before ${link} after.\r\n\r\n[${definition}]: https://example.com "Remote title"\r\n\r\nUnselected`,
+			start: [9, 1],
+			end: [10, 1],
+			expected: "ef",
+		},
+	]),
 	{ name: "heading", source: "# Heading", end: [7, 1], expected: "# Heading" },
 	{ name: "visible heading prefix", source: "### Heading", end: [2, 1], expected: "##" },
 	{ name: "visible heading body", source: "### Heading", start: [5, 1], end: [11, 1], expected: "Heading" },
@@ -247,7 +301,7 @@ for (const fixture of cases) {
 		tui.addChild(new Markdown(fixture.source, 0, 0, defaultMarkdownTheme));
 		try {
 			await terminal.frame(() => tui.start());
-			if ("visible" in fixture) {
+			if ("visible" in fixture && fixture.visible) {
 				assert.deepEqual(
 					terminal
 						.getViewport()
@@ -256,7 +310,7 @@ for (const fixture of cases) {
 					fixture.visible,
 				);
 			}
-			const [x, y] = "start" in fixture ? fixture.start : [1, 1];
+			const [x, y] = ("start" in fixture ? fixture.start : undefined) ?? [1, 1];
 			const [endX, endY] = fixture.end;
 			await terminal.frame(() => {
 				terminal.sendInput(`\x1b[<0;${x};${y}M`);
