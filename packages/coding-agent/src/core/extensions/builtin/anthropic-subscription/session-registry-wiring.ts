@@ -21,9 +21,9 @@ import {
 	isTerminalFailure,
 } from "./session-commit-boundary.ts";
 import {
-	bindingFromEntry,
 	forgetBinding,
 	getBinding,
+	keepBindingThenClose,
 	rememberBinding,
 	rememberBindingInvalidation,
 } from "./session-reattach.ts";
@@ -34,7 +34,7 @@ import {
 	recordPendingFork,
 	switchSessionModel,
 } from "./session-registry.ts";
-import { sentHashesForEntry, sentMessageHashes, sentMessages } from "./session-sync.ts";
+import { sentMessageHashes, sentMessages } from "./session-sync.ts";
 
 const commitBoundary = new AssistantCommitBoundary();
 
@@ -64,12 +64,6 @@ async function invalidateBinding(
 	const sessionFile = ctx.sessionManager.getSessionFile?.();
 	if (sessionFile) await deleteStoredBinding(sessionFile);
 	persistBindingInvalidation(pi, sessionId, reason, divergedPath);
-}
-
-function keepBindingThenClose(sessionId: string, reason: string): void {
-	const entry = getSession(sessionId);
-	if (entry) rememberBinding(bindingFromEntry(entry, sentHashesForEntry(entry) ?? []));
-	closeSession(sessionId, reason);
 }
 
 function residentEntryFor(sessionId: string, message: AssistantMessage) {

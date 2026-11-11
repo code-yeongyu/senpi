@@ -1,14 +1,25 @@
 import { BoundedAsyncQueue, SESSION_STREAM_QUEUE_CAPACITY } from "./bounded-queue.ts";
 import { sdkResultFailure } from "./errors.ts";
 import type { SDKMessage, SDKUserMessage } from "./sdk-boundary.ts";
-import { bindingFromEntry, type ContinuityBinding, forgetBinding, rememberBinding } from "./session-reattach.ts";
+import { logContinuityEvent } from "./session-observability.ts";
+import {
+	bindingFromEntry,
+	type ContinuityBinding,
+	forgetBinding,
+	keepBindingThenClose,
+	rememberBinding,
+} from "./session-reattach.ts";
 import {
 	type AnthropicSubscriptionSessionEntry,
 	closeSession,
 	isCurrentGeneration,
 	sessionRegistry,
 } from "./session-registry.ts";
-import { submitSessionTurn, waitForTurnAdmission } from "./session-registry-pump.ts";
+import {
+	ConcurrentSessionTurnAdmissionError,
+	submitSessionTurn,
+	waitForTurnAdmission,
+} from "./session-registry-pump.ts";
 import { recordSyncedStream, sentHashPrefixDigest } from "./session-sync.ts";
 
 type StagedContinuityDecision = { emit(): void };
@@ -33,12 +44,11 @@ export async function waitForActiveTurn(
 	}
 }
 
-/** The CLI bounds `setModel` itself, so only an abort cuts the switch wait short. */
-const unboundedWait = (): (() => void) => () => {};
-
 /**
  * Holds a new attempt until the live model switch `model_select` started has settled, so a prompt sent right after
- * `set_model` runs on the selected model and continuity reads the confirmed `modelId` (senpi#6411).
+ * `set_model` runs on the selected model and continuity reads the confirmed `modelId` (senpi#6411). Bounded like
+ * `waitForActiveTurn`: a switch Claude Code never confirms retires that process, keeping the lineage on the selected
+ * model, so the turn reattaches instead of hanging.
  */
 export async function waitForModelSwitch(
 	entry: AnthropicSubscriptionSessionEntry,
@@ -46,9 +56,18 @@ export async function waitForModelSwitch(
 ): Promise<void> {
 	const pending = entry.pendingModelSwitch;
 	if (!pending) return;
-	if ((await waitForTurnAdmission(entry.senpiSessionId, pending, signal, unboundedWait)) === "aborted") {
-		throw new Error("Anthropic Subscription turn aborted while waiting for the model switch");
+	let outcome: "admitted" | "aborted";
+	try {
+		outcome = await waitForTurnAdmission(entry.senpiSessionId, pending.done, signal);
+	} catch (error) {
+		if (!(error instanceof ConcurrentSessionTurnAdmissionError)) throw error;
+		if (isCurrentGeneration(entry.senpiSessionId, entry.generation)) {
+			logContinuityEvent("claude_sdk_oauth_model_switch_timeout", { modelId: pending.modelId });
+			keepBindingThenClose(entry.senpiSessionId, "model_switch_timeout");
+		}
+		return;
 	}
+	if (outcome === "aborted") throw new Error("Anthropic Subscription turn aborted while waiting for the model switch");
 }
 
 function successfulTurn(messages: readonly SDKMessage[]): boolean {
