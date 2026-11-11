@@ -1,7 +1,11 @@
 /**
  * One job in a session's widget registry: its text sources, its derivation runtime (replaced by a
- * fresh one whenever a spec is installed), and where its spec request stands. A job joins the
- * session's `job_widget_state` once its first spec request starts; before that its row is plain.
+ * fresh one whenever a spec is installed), and where its spec request stands. A running bash job is
+ * in the session's `job_widget_state` from the start: until a spec is installed (before its first
+ * request, after the author skipped it, while a session cap holds the request back, or after the
+ * author failed) it shows the plain `fallback` row with how long it has been running, so a silent
+ * job never looks like nothing is running. A task job joins once its first spec request starts. A
+ * finished job is listed as before: a never-asked one is absent, a skipped one stays `skipped`.
  */
 import type { JobWidgetRedactor } from "./author-redact.ts";
 import type { JobWidgetBrief, JobWidgetJobKind } from "./author-types.ts";
@@ -79,10 +83,12 @@ export class JobWidgetJob implements JobWidgetRequestJob {
 	}
 
 	entry(): JobWidgetEntry | undefined {
-		if (this.#skippedAtMs !== undefined) {
+		// A running bash job always has a row; a task job's row waits for its subagent's watch hint.
+		const running = this.kind === "bash" && !this.settled;
+		if (this.#skippedAtMs !== undefined && !running) {
 			return { id: this.id, kind: this.kind, state: "skipped", updatedAtMs: this.#skippedAtMs };
 		}
-		if (!this.#asked) return undefined;
+		if (!this.#asked && !running) return undefined;
 		const brief = this.brief;
 		const derived = this.runtime.derive({
 			label: this.#redact.text(brief.intent ?? brief.task ?? brief.command ?? this.id),
@@ -94,9 +100,11 @@ export class JobWidgetJob implements JobWidgetRequestJob {
 		return {
 			id: this.id,
 			kind: this.kind,
-			state: derived.state,
+			// A finished bash job whose spec request failed has no spec to freeze; it is still done.
+			state: this.kind === "bash" && this.settled && derived.state === "fallback" ? "done" : derived.state,
 			view: derived.view,
 			updatedAtMs: derived.updatedAtMs,
+			startedAtMs: this.startTime,
 		};
 	}
 }

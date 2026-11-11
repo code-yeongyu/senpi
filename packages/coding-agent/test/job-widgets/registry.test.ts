@@ -56,7 +56,7 @@ describe("job widget registry", () => {
 		vi.useRealTimers();
 	});
 
-	it("goes pending then live once the job is old enough, sending at most once a second", async () => {
+	it("shows a running row from the start, then pending and live once the job is old enough, at most once a second", async () => {
 		const { registry, sent, write } = setup();
 		for (let frame = 1; frame <= 200; frame++) {
 			write(frameLine(frame));
@@ -64,12 +64,15 @@ describe("job widget registry", () => {
 		}
 		registry.dispose();
 
-		expect(states(sent).slice(0, 2)).toEqual(["pending", "live"]);
+		const distinct = states(sent).filter((state, index, all) => state !== all[index - 1]);
+		expect(distinct[0]).toBe("fallback");
+		expect(distinct.at(-1)).toBe("live");
+		expect(distinct.filter((state) => state !== "pending")).toEqual(["fallback", "live"]);
 		for (let index = 1; index < sent.length; index++) {
 			expect(sent[index].at - sent[index - 1].at).toBeGreaterThanOrEqual(PUBLISH_INTERVAL_MS);
 		}
-		// 20 s of output, 200 chunks: nothing before the 15 s threshold, then at most one send a second.
-		expect(sent.length).toBeLessThanOrEqual(6);
+		// 20 s of output, 200 chunks: the running row ticks once a second, never faster.
+		expect(sent.length).toBeLessThanOrEqual(21);
 		expect(sent.at(-1)?.state.jobs[0]?.view?.headline).toEqual({ text: "200", label: "rendered" });
 	});
 
@@ -85,6 +88,36 @@ describe("job widget registry", () => {
 			await vi.advanceTimersByTimeAsync(1000);
 		}
 		expect(sent.length).toBe(settledCount);
+		registry.dispose();
+	});
+
+	// A background job that prints nothing, or whose spec request never comes (skipped, held back by a
+	// session cap, or failed), used to have no row at all, so a long silent job looked like nothing was running.
+	it("lists a running bash job with its start time before and after the author skips it", async () => {
+		const { registry, sent, handle } = setup(async () => ({ skip: "no quantity" }));
+		expect(registry.snapshot().jobs).toMatchObject([
+			{ id: "bash_1", state: "fallback", startedAtMs: 1_000_000, view: { title: "blender -b scene.blend -a" } },
+		]);
+		await vi.advanceTimersByTimeAsync(5_000);
+		expect(sent.at(-1)?.state.jobs.map((job) => job.id)).toEqual(["bash_1"]);
+
+		const tap = new TextTap("out2", "command output");
+		const talky = registry.add({ id: "bash_2", kind: "bash", sources: [tap], brief: { command: "make" } });
+		tap.append("a\nb\nc\n");
+		talky.notify();
+		await vi.advanceTimersByTimeAsync(16_000);
+		expect(registry.snapshot().jobs.find((job) => job.id === "bash_2")).toMatchObject({ state: "fallback" });
+
+		handle.settle();
+		talky.settle();
+		expect(registry.snapshot().jobs.map((job) => [job.id, job.state])).toEqual([["bash_2", "skipped"]]);
+		registry.dispose();
+	});
+
+	it("keeps a task job out of the state until its spec is asked for", () => {
+		const { registry } = setup();
+		registry.add({ id: "st_1", kind: "task", sources: [], brief: { task: "refactor" } });
+		expect(registry.snapshot().jobs.map((job) => job.id)).toEqual(["bash_1"]);
 		registry.dispose();
 	});
 

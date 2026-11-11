@@ -120,6 +120,8 @@ export interface JobWidgetEntry {
 	/** Absent for skipped. */
 	view?: JobWidgetView;
 	updatedAtMs: number;
+	/** When the job started, for elapsed-time display. */
+	startedAtMs?: number;
 }
 
 /** Payload of the `job_widget_state` extension event. */

@@ -6619,11 +6619,13 @@ so a frozen `done` widget reaches a late client too. `jobWidgets.enabled:
 false` ([settings](settings.md#job-widgets)) turns it off.
 
 `data` is `{ v: 1, sessionId, jobs }`. Each job has `id` (`bash_N` or a task id), `kind` (`bash` or `task`),
-`state` (`pending`, `live`, `done`, `skipped`, `fallback`), `updatedAtMs`, and, except for `skipped`, a
-`view`: `title`, optional `headline` (`text`, `label`, `trend`), optional `stage`, up to four `blocks`
-(`spark`, `bars`, `meter`, `stat`, `grid`, `text`) whose numbers arrive formatted, and `lines` for
-`pending` and `fallback`. A job appears once its widget is being built; `done` keeps the last view frozen
-after the job exits. Ignore a payload whose `v` you do not know and any block `kind` you do not draw.
+`state` (`pending`, `live`, `done`, `skipped`, `fallback`), `updatedAtMs`, `startedAtMs` (absent from older
+senpi versions), and, except for `skipped`, a `view`: `title`, optional `headline` (`text`, `label`, `trend`),
+optional `stage`, up to four `blocks` (`spark`, `bars`, `meter`, `stat`, `grid`, `text`) whose numbers arrive
+formatted, and `lines` for `pending` and `fallback`. A running bash session is listed from its start, as
+`fallback` until a widget is built for it, so a client can show every live background command; a task job
+appears once its widget is being built. `done` keeps the last view frozen after the job exits; a bash session
+that never got a widget leaves the list when it exits. Ignore a payload whose `v` you do not know and any block `kind` you do not draw.
 
 ```json
 {
