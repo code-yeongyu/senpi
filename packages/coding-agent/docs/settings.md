@@ -214,6 +214,7 @@ Set `PI_SKIP_VERSION_CHECK=1` to disable the senpi version update check. Use `--
 |---------|------|---------|-------------|
 | `contextFiles.maxBytesPerFile` | number | `65536` | Maximum UTF-8 bytes loaded from each AGENTS.md / CLAUDE.md, including the truncation note and any closing code fence |
 | `contextFiles.maxTotalBytes` | number | `131072` | Maximum combined UTF-8 bytes of loaded context files, including truncation notes and closing code fences |
+| `contextFiles.globalPath` | string | unset | Global (user-scope) context file to load instead of the agent-dir `AGENTS.md`, e.g. `~/.agents/AGENTS.md`. Read from `~/.senpi/agent/settings.json` only; a project's `.senpi/settings.json` cannot set it. A leading `~` is expanded, a relative path resolves against `~/.senpi/agent`, and a directory runs the same `AGENTS.override.md` / `AGENTS.md` / `CLAUDE.md` candidate probe as the agent dir. Unset or blank keeps the agent-dir file; a path that is set but missing, unreadable, or a directory with no candidate falls back to the agent-dir probe and shows one warning naming the path. The loaded file keeps the same size limits |
 
 Files receive budget nearest-first: the current directory, its ancestors, then the global file. A cut prefers a newline in the last quarter of the available content budget; otherwise it uses a UTF-8 character boundary. An open backtick or tilde fence is closed with the same marker before the truncation note; the closing marker's bytes count against the budget. Files with less than 1024 bytes of budget left are skipped when they would need truncation, with a warning distinguishing an undersized per-file limit from budget used by nearer files. Both limits accept positive numbers (rounded down); invalid values use the defaults.
 
@@ -635,16 +636,17 @@ An empty array starts with no built-in tools while preserving extension and SDK 
 
 #### Eval-only tools
 
-Whenever the `eval` tool is available (codemode loaded), `bash`, `powershell`, `grep`, `workflow` and `monitor` leave the model's direct tool list and run only inside eval cells:
+Whenever the `eval` tool is available (codemode loaded), `bash`, `powershell`, `grep`, `glob`, `generate_image`, `workflow` and `monitor` leave the model's direct tool list and run only inside eval cells:
 
 ```js
 const { output } = await tool.bash({ command: "ls -la" });
 const hits = await tool.grep({ pattern: "TODO", path: "src" });
+const image = await tool.generate_image({ prompt: "a line-art fox, transparent background" });
 const snapshot = await tool.workflow({ action: "snapshot", run_id });
 await tool.monitor({ description: "build", command: "bun run build", filter: "^done" });
 ```
 
-This is the default and has no setting. Tools may declare `exposure: "eval"` to join this policy; `bash`, `powershell` and `grep` use that declaration. They remain registered and discoverable through `tool_schema` inside eval. Hooks and permission checks apply unchanged to calls made this way, and the prompt surfaces that document these tools render the `tool.<name>(` form to match. If the model attempts a direct call anyway, the call returns a hint naming the eval form instead of executing the tool. When the `eval` tool is unavailable (codemode not loaded, or a child agent whose allowlist omits it), the policy stays inert and otherwise enabled tools remain directly callable, so shell, text search, workflow and monitor access is never lost.
+This is the default and has no setting. Tools may declare `exposure: "eval"` to join this policy; `bash`, `powershell`, `grep`, `glob` and `generate_image` use that declaration, and extension tools (for example the omo plugin's `thread_*` family) join the same way. They remain registered and discoverable through `tool_schema` inside eval. Hooks and permission checks apply unchanged to calls made this way, and the prompt surfaces that document these tools render the `tool.<name>(` form to match. If the model attempts a direct call anyway, the call returns a hint naming the eval form instead of executing the tool. When the `eval` tool is unavailable (codemode not loaded, or a child agent whose allowlist omits it), the policy stays inert and otherwise enabled tools remain directly callable, so shell, text search, workflow and monitor access is never lost.
 
 ### Automatic Turns
 

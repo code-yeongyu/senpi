@@ -40,6 +40,8 @@ type RpcInboundSampleTable = { readonly [K in RpcMethodType]: RpcInboundRecordOf
 export const RPC_INBOUND_SAMPLES = {
 	get_protocol_info: { type: "get_protocol_info" },
 	open_session: { type: "open_session" },
+	park_session: { type: "park_session", cwd: `${SAMPLE_PATH_ROOT}/cwd` },
+	claim_session: { type: "claim_session", cwd: `${SAMPLE_PATH_ROOT}/cwd` },
 	close_session: { type: "close_session", sessionId: SAMPLE_ID },
 	move_session: { type: "move_session", op: "status", moveId: SAMPLE_ID },
 	release_session: { type: "release_session", sessionId: SAMPLE_ID, reason: "takeover" },
@@ -185,6 +187,13 @@ export const RPC_INBOUND_SAMPLES = {
 	set_project_trust: { type: "set_project_trust", choice: "trust" },
 	get_project_settings: { type: "get_project_settings" },
 	set_project_setting: { type: "set_project_setting", key: "defaultThinkingLevel", value: "minimal" },
+	read_project_file: { type: "read_project_file", path: `${SAMPLE_PATH_ROOT}/AGENTS.md` },
+	write_project_file: {
+		type: "write_project_file",
+		path: `${SAMPLE_PATH_ROOT}/AGENTS.md`,
+		content: "# Rules\n",
+		ifEtag: null,
+	},
 	extension_request: { type: "extension_request", name: "rpc-inbound-sample" },
 	"eval_cells.list": { type: "eval_cells.list" },
 	"eval_cells.peek": { type: "eval_cells.peek", cellId: SAMPLE_ID },

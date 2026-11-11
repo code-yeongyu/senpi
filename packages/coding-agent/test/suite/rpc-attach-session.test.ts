@@ -84,11 +84,13 @@ it.each(["drain", "shutdown"] as const)("refuses attach during %s before admissi
 	if (!entry || !turn) throw new Error("Missing live session");
 	// A running turn keeps the drain from parking the session, so the handle is still live.
 	turn.start();
-	if (phase === "shutdown") rig.teardown.hold();
+	const tearingDown = phase === "shutdown" ? rig.teardown.hold() : undefined;
 	const shutdown = phase === "shutdown" ? rig.router.dispose() : undefined;
 	if (phase === "drain") rig.router.beginDrain();
-	const before = { state: entry.state, attachments: entry.attachments };
 	try {
+		// Shutdown may first await speculative parks. Snapshot after its own close claim, while disposal is held.
+		await tearingDown;
+		const before = { state: entry.state, attachments: entry.attachments };
 		const response = await rig.send("late", { id: "draining-attach", type: "attach_session", ...ref });
 		expect(response).toMatchObject({
 			success: false,

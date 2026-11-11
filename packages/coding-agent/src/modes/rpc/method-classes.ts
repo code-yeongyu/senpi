@@ -240,6 +240,9 @@ export const RPC_METHOD_CLASS = {
 	// thread by id; device_admin when the record names a host path, a permission preset or a tool environment
 	new_session: { classify: newSessionClass, version: 1 },
 	open_session: { classify: openSessionClass, version: 2 },
+	// Both commands require a cwd; claim has the same device authority as a cwd-naming open.
+	claim_session: "device_admin",
+	park_session: "device_admin",
 	resume_session: "thread",
 	fork: "thread",
 	clone: "thread",
@@ -287,6 +290,9 @@ export const RPC_METHOD_CLASS = {
 	// reads a file from the session's cwd; writes one into it
 	get_project_settings: "device_admin",
 	set_project_setting: "device_admin",
+	// reads or replaces an instruction file in the session's cwd (AGENTS.md, CLAUDE.md, .omo/rules/**)
+	read_project_file: "device_admin",
+	write_project_file: "device_admin",
 	// switch_session opens (and appends to) the named session file; import_jsonl reads any host file into a session
 	// both write what the model reads as engine work: an assistant reply it never gave, a custom context message
 	// (append_session_entry classes the same entries appended directly as device_admin)

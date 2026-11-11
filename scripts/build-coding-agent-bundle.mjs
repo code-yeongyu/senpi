@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { bundleRequiredInputs, lazyEntryPoints } from "./bundle-entry-points.mjs";
 import { fileAttributePlugin } from "./bundle-file-attribute-plugin.mjs";
+import { assertRedactionRegistryCopies } from "./bundle-redaction-registry-guard.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
@@ -270,6 +271,7 @@ async function buildBundle() {
 
 	const metafiles = [mainResult.metafile, lazyResult.metafile, supervisorResult.metafile];
 	validateExternalImports(metafiles);
+	assertRedactionRegistryCopies(bundleDir);
 	chmodSync(join(bundleDir, "cli.js"), 0o755);
 	chmodSync(join(bundleDir, "rpc-entry.js"), 0o755);
 	writeRuntimeManifest(metafiles);

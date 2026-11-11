@@ -8,6 +8,7 @@ import { transitionGoalStatus } from "./transitions.ts";
 import type {
 	Goal,
 	GoalAccountingMode,
+	GoalContinuationStoppedDetail,
 	GoalStoreRef,
 	GoalUpdate,
 	GoalUpdateSource,
@@ -138,6 +139,7 @@ export async function updateGoal(
 			next.noProgressContinuations = 0;
 			delete next.lastContinuationSignature;
 			delete next.continuationStoppedAt;
+			delete next.continuationStoppedDetail;
 		}
 		if (source === "user" && requestedStatus === "active") {
 			next.consecutiveContinuations = 0;
@@ -145,6 +147,7 @@ export async function updateGoal(
 			next.noProgressContinuations = 0;
 			delete next.lastContinuationSignature;
 			delete next.continuationStoppedAt;
+			delete next.continuationStoppedDetail;
 			next.lastStartedAt ??= nowSeconds();
 		}
 		if (tokenBudget === undefined) delete next.tokenBudget;
@@ -220,6 +223,7 @@ export async function recordContinuationDelivered(
 			lastContinuationSignature: signature,
 		};
 		delete next.continuationStoppedAt;
+		delete next.continuationStoppedDetail;
 		if (next.status === "active") next.lastStartedAt ??= nowSeconds();
 		await held.write(next);
 		return next;
@@ -238,6 +242,7 @@ export async function resetContinuationStreak(
 		if (options.unattended === true || options.progress === true) next.noProgressContinuations = 0;
 		delete next.lastContinuationSignature;
 		delete next.continuationStoppedAt;
+		delete next.continuationStoppedDetail;
 		if (options.unattended === true && next.status === "active") next.lastStartedAt ??= nowSeconds();
 		await held.write(next);
 		return next;
@@ -250,6 +255,7 @@ export async function recordGoalContinuationStopped(
 	expected: Goal,
 	at: number,
 	blockedReason: string | undefined,
+	detail: GoalContinuationStoppedDetail,
 ): Promise<{ goal: Goal | null; recorded: boolean }> {
 	return withGoalFileLock(ref, async (held) => {
 		const current = await readGoalFile(ref);
@@ -277,6 +283,9 @@ export async function recordGoalContinuationStopped(
 		}
 		delete next.lastStartedAt;
 		next.continuationStoppedAt = at;
+		// The claim alone cannot rebuild the session entries; keep the denied payload with it so a later
+		// session start can re-append exactly the entries a crash swallowed (senpi#3015).
+		next.continuationStoppedDetail = detail;
 		await held.write(next);
 		return { goal: next, recorded: true };
 	});

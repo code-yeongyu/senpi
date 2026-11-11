@@ -1,3 +1,39 @@
+## 2026-11-09 - Isolated CLI re-launch no longer replays the caller's eval entry mode (senpi#2952)
+
+### What changed
+
+- `packages/coding-agent/src/cli.ts`: `requiresIsolatedProcess()` now decides on the sanitized argv from `utils/runtime-exec-argv.ts` instead of the raw `process.execArgv`, and `spawnFullCli()` forwards `runtimeExecArgv()` instead of the raw argv. Both entries now carry the `SENPI_CLI_ISOLATED_CHILD=1` recursion guard in the child environment (previously only the bundled entry did).
+
+### Why
+
+- An embedder that loads the CLI entry from `node -e` had its own `-e` code replayed in the isolated child (`node -e <caller code> dist/cli-main.js`), which re-imported the entry and spawned again: the unbundled entry recursed until an external guard stopped it, the bundled entry replayed the caller once (senpi#2952, the one site #2950 did not cover).
+
+### Why an extension could not handle it
+
+- The isolated re-launch decision and argv forwarding live in the CLI bootstrap itself, before any extension loads; no extension hook runs early enough to sanitize the argv the launcher replays.
+
+### Expected merge conflict zones
+
+- LOW: the `runtimeExecArgv` import, the `requiresIsolatedProcess()` decision, and the `spawnFullCli()` spawn line plus child environment in `cli.ts`.
+
+## 2026-11-09 - Hide the console window for self-update bootstrap commands on Windows (senpi#3965)
+
+### What changed
+
+- `packages/coding-agent/src/self-update-bootstrap.ts`: `runCommand` now passes `windowsHide: true` to its spawn.
+
+### Why
+
+- Update commands (npm/bun) are console-subsystem exes on Windows, but `runCommand` inherits the parent console (`stdio: "inherit"`), so `windowsHide` hides no new window here; the flag is kept for uniformity with the other win32 spawns.
+
+### Why an extension could not handle it
+
+- The spawn is the self-update bootstrap's own command runner, not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: one options line in the bootstrap runner.
+
 ## 2026-11-07 - A saved trust decision outranks the per-process trust memo (senpi#6176)
 
 ### What changed
