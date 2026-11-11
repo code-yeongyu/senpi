@@ -1,9 +1,3 @@
-## 2026-11-11 - Subscription account summaries preserve diagnostics and remove legacy defaults (desktop#6444, desktop#6445)
-
-- `credential-accounts.ts`: carry the redacted provider message and HTTP status through stored account summaries and RPC.
-- `anthropic-legacy-sign-out.ts`: replace a flat legacy subscription credential with an empty account list, remove previously migrated placeholder defaults and their stale pin, and preserve genuine named CLI accounts. Repeated loads are idempotent.
-- Tests: `test/anthropic-subscription-connection-check.test.ts` and `test/anthropic-subscription-cli-slot-listing.test.ts`.
-
 ## 2026-11-10 - A turn follows the permission setting of the machine it runs on; no origin outlives its turn (senpi#6342)
 
 ### What changed

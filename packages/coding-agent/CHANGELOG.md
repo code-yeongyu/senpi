@@ -10,8 +10,6 @@
 
 ### Fixed
 
-- Claude subscription connection tests retain the redacted provider message and HTTP status, and cannot attach an older credential's test result to a replacement login. Legacy flat credentials and previously migrated placeholder `default` accounts no longer appear as subscription accounts ([desktop#6444](https://github.com/sisyphuslabs/omo-desktop-app/issues/6444), [desktop#6445](https://github.com/sisyphuslabs/omo-desktop-app/issues/6445)).
-
 ### Removed
 
 ## [2026.11.10-3] - 2026-11-10
