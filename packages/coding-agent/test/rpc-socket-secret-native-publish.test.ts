@@ -56,8 +56,21 @@ describe("publishSocketSecretNoReplace", () => {
 		expect(result).toEqual({ outcome: "published", stagingLeftBehind: null });
 	});
 
-	it("fails closed on an outcome the bridge does not define", () => {
-		const binding = bridge({ outcome: "replaced" } as unknown as NativePublishResult);
+	it.each([
+		["an outcome the bridge does not define", { outcome: "replaced" }],
+		["an empty result", {}],
+		["a failed outcome without a failure", { outcome: "failed" }],
+		["a failed outcome with a null failure", { outcome: "failed", failure: null }],
+	])("fails closed on %s", (_label, result) => {
+		const binding = bridge(result as unknown as NativePublishResult);
 		expect(() => publishSocketSecretNoReplace(binding, staging, finalPath, secret)).toThrow(SocketSecretPublishError);
+	});
+
+	// Review #4312 LOW: a binding that returns no object at all still fails with the typed error, not a TypeError.
+	it.each([null, undefined, "published"])("fails closed with the typed error on a non-object result %s", (result) => {
+		const binding = bridge(result as unknown as NativePublishResult);
+		const failure = thrown(() => publishSocketSecretNoReplace(binding, staging, finalPath, secret));
+		expect(failure).toBeInstanceOf(SocketSecretPublishError);
+		expect(failure).toMatchObject({ windowsError: null, stagingLeftBehind: null });
 	});
 });

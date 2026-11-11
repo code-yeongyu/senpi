@@ -224,6 +224,10 @@ export function publishSocketSecretNoReplace(
 	bytes: Buffer,
 ): SocketSecretPublication {
 	const result = binding.publishNoReplace(stagingPath, finalPath, bytes);
+	// A native boundary: the declared result type is not a guarantee, and a non-object must fail typed too.
+	if (typeof result !== "object" || result === null) {
+		throw new SocketSecretPublishError(`unexpected bridge result ${String(result)}`, null, null);
+	}
 	const native = result.stagingLeftBehind;
 	const stagingLeftBehind = native
 		? {
