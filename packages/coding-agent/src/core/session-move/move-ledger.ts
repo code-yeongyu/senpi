@@ -8,9 +8,11 @@ import {
 	landedElsewhere,
 	landsAt,
 	parseLanding,
+	recordAge,
 	settledLanding,
 } from "./move-landing.ts";
 import { MoveRecordLocks } from "./move-ledger-lock.ts";
+import { type DeclineReason, type FailReason, type MoveAnswer, type MoveRecord, parseRecord } from "./move-record.ts";
 import { moveStep } from "./move-steps.ts";
 import type { MoveId } from "./ownership.ts";
 
@@ -19,24 +21,14 @@ import type { MoveId } from "./ownership.ts";
  * device never heard of is recorded as declined BEFORE the answer leaves, so a later import of it is refused and the
  * sender may safely take its session back. Every writer and the import's final rename share one lock per move.
  */
-export type DeclineReason = "no_record" | "expired" | "cancelled" | "chunk_without_ready" | "repository";
-export type FailReason = "bundle_invalid" | "import_failed";
-
-/** The answers a sender can hear. */
-export type MoveStatus =
-	| { readonly state: "receiving" }
-	| { readonly state: "accepted" }
-	| { readonly state: "declined"; readonly reason: DeclineReason }
-	| { readonly state: "failed"; readonly reason: FailReason };
-
-/**
- * A status answer as the sender hears it. `revoked` marks an accepted import the receiver later sealed with `revoke`:
- * the record stays `accepted` (final), but the receiver's copy is read-only, so the sender must take the session back.
- */
-export type MoveAnswer = MoveStatus | { readonly state: "accepted"; readonly revoked: true };
-
-/** `ready`: this device told the sender it can take the move; no bundle has been verified yet. */
-export type MoveRecord = MoveAnswer | { readonly state: "ready"; readonly expiresAt: string };
+export {
+	type DeclineReason,
+	type FailReason,
+	type MoveAnswer,
+	type MoveRecord,
+	type MoveStatus,
+	parseMoveStatus,
+} from "./move-record.ts";
 
 /** How long a ready move waits for its bundle before it is declined as expired. */
 export const READY_TTL_MS = 10 * 60_000;
@@ -58,38 +50,6 @@ export class MoveFencedError extends Error {
 		this.name = "MoveFencedError";
 		this.record = record;
 	}
-}
-
-const DECLINE_REASONS: readonly DeclineReason[] = [
-	"no_record",
-	"expired",
-	"cancelled",
-	"chunk_without_ready",
-	"repository",
-];
-const FAIL_REASONS: readonly FailReason[] = ["bundle_invalid", "import_failed"];
-
-/** A receiver's answer as it arrives back at the sender; a `ready` record is not an answer. */
-export function parseMoveStatus(value: unknown): MoveAnswer | undefined {
-	const record = parseRecord(value);
-	return record?.state === "ready" ? undefined : record;
-}
-
-function parseRecord(value: unknown): MoveRecord | undefined {
-	if (typeof value !== "object" || value === null) return undefined;
-	const { state, reason } = value as { readonly state?: unknown; readonly reason?: unknown };
-	if (state === "accepted" && (value as { readonly revoked?: unknown }).revoked === true)
-		return { state, revoked: true };
-	if (state === "receiving") return { state };
-	if (state === "accepted") return { state };
-	const { expiresAt } = value as { readonly expiresAt?: unknown };
-	if (state === "ready" && typeof expiresAt === "string" && !Number.isNaN(Date.parse(expiresAt)))
-		return { state, expiresAt };
-	const decline = DECLINE_REASONS.find((known) => known === reason);
-	if (state === "declined" && decline !== undefined) return { state, reason: decline };
-	const fail = FAIL_REASONS.find((known) => known === reason);
-	if (state === "failed" && fail !== undefined) return { state, reason: fail };
-	return undefined;
 }
 
 export class MoveLedger {
@@ -218,6 +178,8 @@ export class MoveLedger {
 			await prepare?.();
 			await this.write(moveId, { state: "receiving" }, { target, committing: true });
 			moveStep("import:stamped");
+			// A holder that knows its lock was taken renames nothing: whoever took it may already have settled this stamp.
+			this.#locks.assertHeld(this.path(moveId));
 			const result = await rename();
 			moveStep("import:renamed");
 			await this.write(moveId, { state: "accepted" }, { target });
@@ -245,17 +207,19 @@ export class MoveLedger {
 
 	/**
 	 * Settles a step a crash interrupted, from the file at the recorded target: a committing record becomes accepted
-	 * (revoked if the file is) when its file landed and failed when it did not, and an accepted record whose file is
-	 * sealed gains its revoke mark. Without `landed`, or without a recorded target, the record is returned as it is.
+	 * (revoked if the file is) when its file landed and failed when it did not, once its stamp is old enough that no
+	 * stalled commit can still land it (`COMMIT_SETTLE_AFTER_MS`), and an accepted record whose file is sealed gains its
+	 * revoke mark. Without `landed`, or without a recorded target, the record is returned as it is.
 	 */
 	private async reconcile(
 		moveId: MoveId,
 		record: MoveRecord | undefined,
 		landed: ((target: string) => LandingOutcome | Promise<LandingOutcome>) | undefined,
 	): Promise<MoveRecord | undefined> {
-		const { target, committing } = await this.landing(moveId);
+		const stored = await this.raw(moveId);
+		const { target, committing } = parseLanding(stored);
 		if (landed === undefined || target === undefined) return record;
-		const next = settledLanding(record, committing === true, await landed(target));
+		const next = settledLanding(record, committing === true, await landed(target), recordAge(stored, this.now()));
 		if (next === undefined) return record;
 		await this.write(moveId, next, { target });
 		return next;
