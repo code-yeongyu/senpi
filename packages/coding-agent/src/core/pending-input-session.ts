@@ -79,6 +79,8 @@ export class SessionPendingInputs {
 	readonly lifetimeId = randomUUID();
 	private readonly options: SessionPendingInputsOptions;
 	private storeOpening: Promise<PendingInputStore> | undefined;
+	/** The store once its open finished; the sync guard in `AgentSession` reads it. */
+	private openedStore: PendingInputStore | undefined;
 	private port: QueuedInputPort | undefined;
 	private attempts = 0;
 	/** Bumped synchronously by every clear, so a change can tell a clear it raced from a real divergence. */
@@ -91,6 +93,11 @@ export class SessionPendingInputs {
 		// Opened eagerly, unawaited: every later use awaits this same opening and surfaces its failure, so the
 		// eager start only must not report it a second time as an unhandled rejection.
 		if (journaled) this.store().catch(() => undefined);
+	}
+
+	/** Whether the store already opened and holds this input: only then does its record own the copy. */
+	hasAdmitted(clientMessageId: string): boolean {
+		return this.openedStore?.current(clientMessageId) !== undefined;
 	}
 
 	/**
@@ -247,6 +254,7 @@ export class SessionPendingInputs {
 			// crash was never sent and returns to the queue under its id (T28).
 			uncommittedAttemptsAreUnsent: true,
 		}).then((store) => {
+			this.openedStore = store;
 			const onChange = this.options.onChange;
 			if (onChange !== undefined)
 				store.subscribe((projections, cursor) =>
