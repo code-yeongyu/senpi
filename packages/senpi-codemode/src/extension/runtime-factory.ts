@@ -161,11 +161,23 @@ function reportSettingsProblems(ctx: ExtensionContext, problems: readonly string
 	}
 }
 
+// The OmO desktop renders a page only from a top-level show_html_page call; one made from a cell is recorded inside
+// the eval call, so the page was never shown while the tool told the model it was (senpi#6391).
+const TOP_LEVEL_ONLY_TOOL_REFUSALS: ReadonlyMap<string, string> = new Map([
+	[
+		"show_html_page",
+		"show_html_page cannot run inside eval: a page shown from a cell never reaches the reader. Build the HTML in the cell if you like, then call show_html_page directly as its own tool call.",
+	],
+]);
+
 export function createExecuteTool(pi: CodemodeRuntimeAPI, activeTools?: ReadonlySet<string>): AgentExecuteTool {
 	// A cell names tools directly and cannot run tool_search first, so eval opts in to
 	// lazy activation. Eligibility still belongs to the extension that registered the tool.
-	const executeTool: AgentExecuteTool = (toolName, params, executeOptions) =>
-		pi.executeTool(toolName, params, { ...executeOptions, activateInactiveTool: true });
+	const executeTool: AgentExecuteTool = (toolName, params, executeOptions) => {
+		const refusal = TOP_LEVEL_ONLY_TOOL_REFUSALS.get(toolName);
+		if (refusal !== undefined) return Promise.reject(new Error(refusal));
+		return pi.executeTool(toolName, params, { ...executeOptions, activateInactiveTool: true });
+	};
 	return Object.assign(executeTool, {
 		isToolAvailable: (name: string): boolean => (activeTools ?? reachableToolNames(pi)).has(name),
 	});
