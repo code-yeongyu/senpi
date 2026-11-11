@@ -51,6 +51,11 @@ describe("npm-audit-gate", () => {
 		assert.ok(failures.some((f) => f.startsWith("forge (moderate): GHSA-aaaa in forge")), failures.join("\n"));
 	});
 
+	it("fails an exception whose expiry is not a real calendar date", () => {
+		const failures = evaluateAudit(report, [exception("GHSA-aaaa", "forge", "2026-11-31"), ...all.slice(1)], NOW);
+		assert.ok(failures.some((f) => f.includes("not a valid YYYY-MM-DD date: 2026-11-31")), failures.join("\n"));
+	});
+
 	it("fails an exception missing its reason or tracking issue", () => {
 		const failures = evaluateAudit(report, [{ ...all[0], issue: "" }, ...all.slice(1)], NOW);
 		assert.ok(failures.some((f) => f.includes("missing issue")), failures.join("\n"));

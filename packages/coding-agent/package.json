@@ -126,7 +126,7 @@
 		"picomatch": "4.0.7",
 		"signal-exit": "3.0.7",
 		"turndown": "7.2.4",
-		"zod": "4.6.5"
+		"zod": "4.6.7"
 	},
 	"overrides": {
 		"protobufjs": "7.6.5",

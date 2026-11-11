@@ -1,39 +1,11 @@
 {
-	"$comment": "Reviewed npm audit exceptions (scripts/npm-audit-gate.mjs). List ONLY advisories with no published fix. Each entry expires within 30 days; renew it only after re-checking the advisory, and remove it once the fix ships.",
+	"$comment": "Reviewed npm audit exceptions (scripts/npm-audit-gate.mjs). List ONLY advisories whose affected copy cannot take a published fix. Each entry expires within 30 days; renew it only after re-checking the advisory, and remove it once the copy can move.",
 	"exceptions": [
 		{
 			"advisory": "GHSA-mrhx-c7xc-m3w5",
 			"package": "zod",
-			"reason": "zod <4.6.6: memory exhaustion validating oversized constrained collections. No fixed zod release is published yet. Direct pin in packages/coding-agent, also via @anthropic-ai/sandbox-runtime.",
+			"reason": "Only the zod 3.25.76 copy that @anthropic-ai/sandbox-runtime requires (zod ^3.24.1). The advisory covers every 3.x release and the fix exists only in 4.6.6+, which that range cannot take. The engine's own zod pin is 4.6.7 (fixed).",
 			"issue": "https://github.com/code-yeongyu/senpi/issues/6399",
-			"expires": "2026-12-10"
-		},
-		{
-			"advisory": "GHSA-6889-vf6x-f3g5",
-			"package": "node-forge",
-			"reason": "node-forge <=1.4.2 has no fixed release published. It comes in via @anthropic-ai/sandbox-runtime and @earendil-works/gondolin (root override pins 1.4.2).",
-			"issue": "https://github.com/code-yeongyu/senpi/issues/6400",
-			"expires": "2026-12-10"
-		},
-		{
-			"advisory": "GHSA-w4xr-hqv8-ch44",
-			"package": "node-forge",
-			"reason": "node-forge <=1.4.2 has no fixed release published. It comes in via @anthropic-ai/sandbox-runtime and @earendil-works/gondolin (root override pins 1.4.2).",
-			"issue": "https://github.com/code-yeongyu/senpi/issues/6400",
-			"expires": "2026-12-10"
-		},
-		{
-			"advisory": "GHSA-6cv4-p8m7-4r25",
-			"package": "node-forge",
-			"reason": "node-forge <=1.4.2 has no fixed release published. It comes in via @anthropic-ai/sandbox-runtime and @earendil-works/gondolin (root override pins 1.4.2).",
-			"issue": "https://github.com/code-yeongyu/senpi/issues/6400",
-			"expires": "2026-12-10"
-		},
-		{
-			"advisory": "GHSA-j8rw-jp99-435v",
-			"package": "node-forge",
-			"reason": "node-forge <=1.4.2 has no fixed release published. It comes in via @anthropic-ai/sandbox-runtime and @earendil-works/gondolin (root override pins 1.4.2).",
-			"issue": "https://github.com/code-yeongyu/senpi/issues/6400",
 			"expires": "2026-12-10"
 		}
 	]

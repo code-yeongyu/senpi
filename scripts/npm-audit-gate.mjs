@@ -30,12 +30,20 @@ export function leafAdvisories(vulnerabilities, name, seen = new Set()) {
 	return leaves;
 }
 
+/** The end of a calendar date, or undefined for anything but a real YYYY-MM-DD day (Date.parse rolls 02-30 over). */
+function strictDateEnd(value) {
+	if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
+	const end = Date.parse(`${value}T23:59:59Z`);
+	if (Number.isNaN(end) || new Date(end).toISOString().slice(0, 10) !== value) return undefined;
+	return end;
+}
+
 function checkException(exception, now) {
 	const problems = [];
 	for (const field of ["advisory", "package", "reason", "issue", "expires"])
 		if (typeof exception[field] !== "string" || exception[field].trim() === "") problems.push(`missing ${field}`);
-	const expires = Date.parse(`${exception.expires}T23:59:59Z`);
-	if (Number.isNaN(expires)) problems.push(`expires is not a YYYY-MM-DD date: ${exception.expires}`);
+	const expires = strictDateEnd(exception.expires);
+	if (expires === undefined) problems.push(`expires is not a valid YYYY-MM-DD date: ${exception.expires}`);
 	else if (expires < now) problems.push(`expired on ${exception.expires}`);
 	else if (expires - now > MAX_EXCEPTION_DAYS * DAY_MS)
 		problems.push(`expires ${exception.expires}, more than ${MAX_EXCEPTION_DAYS} days out`);
