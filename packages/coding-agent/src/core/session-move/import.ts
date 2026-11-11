@@ -19,6 +19,7 @@ import {
 	verifyBundle,
 } from "./bundle.ts";
 import { EXTENSION_STATE_PAYLOAD, movedStateDir } from "./extension-state.ts";
+import { attemptStaging, sweepAbandonedAttempts } from "./import-staging.ts";
 import { type MoveAnswer, MoveFencedError, type MoveLedger } from "./move-ledger.ts";
 import { moveStep } from "./move-steps.ts";
 import { headerSessionId, type MoveId, SESSION_MOVED, SESSION_MOVED_IN, sessionOwnership } from "./ownership.ts";
@@ -159,7 +160,11 @@ export async function importMovedSession(
 		throw error;
 	}
 	moveStep("import:received");
-	const staging = join(sessionDir, ".move-staging", encodeURIComponent(manifest.moveId));
+	// One folder per import ATTEMPT (senpi#4016): two imports of one move pass `beginReceive` together, and a shared
+	// folder let the later one remove and re-copy what the earlier one was about to commit. Each stages its own and
+	// commits only what it staged; folders an attempt died in are swept by age.
+	const { attempts, staging } = attemptStaging(sessionDir, manifest.moveId);
+	await sweepAbandonedAttempts(attempts);
 	try {
 		const staged = await stage(options.bundleDir, manifest, staging, options.from ?? "");
 		const sessionFile = await options.ledger.commit(
@@ -174,6 +179,7 @@ export async function importMovedSession(
 		);
 		moveStep("import:accepted");
 		await rm(staging, { recursive: true, force: true });
+		await rm(attempts, { force: true }).catch(() => undefined);
 		return { sessionFile };
 	} catch (error) {
 		if (error instanceof MoveFencedError && (await landed())) return confirmLanded();
