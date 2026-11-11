@@ -51,6 +51,9 @@ export const defaultSpawnWorker: OmoLocalSpawnWorker = (request) => {
 				detached: true,
 				env: process.env,
 				stdio: ["ignore", logFd, logFd],
+				// senpi#3965: bun.exe is a console-subsystem exe; without this the
+				// detached worker flashes an empty "bun" console window on Windows.
+				windowsHide: true,
 			});
 			child.unref();
 			return { ok: true, pid: child.pid, logPath };

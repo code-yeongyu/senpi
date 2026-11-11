@@ -262,7 +262,22 @@ type RpcCommandBody =
 	  };
 
 /** Compact callers may identify their own admission on any correlated session request. */
-export type RpcCommand = RpcCommandBody & { readonly admissionId?: string };
+export type RpcCommand = (
+	| RpcCommandBody
+	| {
+			id?: string;
+			/** Build one invisible session for later claim; never an attachment. Requires `park_claim`. */
+			type: "park_session";
+			cwd: string;
+			kind?: SessionKind;
+			context?: Record<string, string>;
+	  }
+	| (Omit<Extract<RpcCommandBody, { type: "open_session" }>, "type" | "cwd"> & {
+			/** Consume one ready park. A miss returns `claimed: false` and never builds a session. */
+			type: "claim_session";
+			cwd: string;
+	  })
+) & { readonly admissionId?: string };
 
 /** Stdin records: session/host commands plus extension-UI replies and progress, and host-request answers. */
 export type RpcInboundRecord = RpcCommand | RpcExtensionUIResponse | RpcExtensionUIProgress | RpcHostResponse;

@@ -41,6 +41,8 @@ export const runModelsProbe: CursorCliModelProbe = async ({ executable, stdoutPa
 			const child = spawn(executable, ["models"], {
 				env: cursorAgentEnvironment(home),
 				stdio: ["ignore", output.fd, "ignore"],
+				// senpi#3965: cursor-agent is a console-subsystem exe on Windows.
+				windowsHide: true,
 			});
 			let timedOut = false;
 			let settled = false;

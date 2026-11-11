@@ -32,6 +32,9 @@ async function ensureServer(transport: Transport, socketPath: string, sessionsRo
 	const child = spawn(process.execPath, [...runtimeExecArgv(), SERVER_ENTRY, socketPath, sessionsRoot], {
 		detached: true,
 		stdio: "ignore",
+		// senpi#3965: bun.exe is a console-subsystem exe; without this the
+		// detached server flashes an empty "bun" console window on Windows.
+		windowsHide: true,
 	});
 	child.unref();
 	const deadline = Date.now() + SERVER_START_TIMEOUT_MS;

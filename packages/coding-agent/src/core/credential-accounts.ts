@@ -16,7 +16,7 @@ import type { AuthStorage } from "./auth-storage.ts";
 import { getAgentDir } from "../config.ts";
 import { discoverEnvSlots } from "./credential-pool/env-slots.ts";
 import { isAvailable } from "./credential-pool/failover.ts";
-import { type ModelBlocks, pruneModelBlocks } from "./credential-pool/model-scope.ts";
+import { type ModelBlocks, modelBlockApplies, pruneModelBlocks } from "./credential-pool/model-scope.ts";
 import {
 	applicableStoredState,
 	CredentialSlotRepository,
@@ -46,6 +46,16 @@ export type CredentialAccountSource = "login" | "import" | "env";
  * until its re-probe time, `rate_limit` is a cooldown, `disabled` lasts until the credential is replaced.
  */
 export type CredentialAccountBlockedReason = "auth_error" | "rate_limit" | "disabled";
+
+/**
+ * Whether a pooled account can serve `modelId` now: not blocked, not signed out (the pool skips those slots), and
+ * no live block on that model. A block keyed by a family binds the family's models; any other key binds that exact
+ * model id only, matched by the pool's own rule (senpi#5590).
+ */
+export function accountCanServe(account: CredentialAccountSummary, modelId: string, now: number): boolean {
+	if (account.blocked || account.signedOut === true) return false;
+	return !(account.blockedModels ?? []).some((block) => block.until > now && modelBlockApplies(block.model, modelId));
+}
 
 /** Account metadata safe to surface: names and health only, never key material. */
 export type CredentialAccountSummary = {

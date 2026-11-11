@@ -131,7 +131,7 @@ describe("warmPromptCache for OpenAI Responses GPT-5.6+", () => {
 			serviceTier: "priority",
 		});
 
-		expect(bodies[0]?.prompt_cache_options).toEqual({ ttl: "30m", prewarm: true });
+		expect(bodies[0]?.prompt_cache_options).toEqual({ ttl: "12h", prewarm: true });
 		expect(bodies[0]?.service_tier).toBe("priority");
 		expect(result.supported).toBe(true);
 		if (!result.supported) return;

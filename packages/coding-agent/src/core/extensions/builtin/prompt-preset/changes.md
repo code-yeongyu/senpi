@@ -1,3 +1,61 @@
+## 2026-11-10 - Fable 5.2 uses the guide's codebase-ownership sentence (senpi#6360, fixes #6356)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-fable-5-2.ts`: the Scope structure paragraph opens with the exact ownership sentence from "Say who owns the code" in Anthropic's Fable 5.2 prompting guide, replacing the whole smallest-change sentence at the owner's request. The standalone discipline against hypothetical helpers and internal defensive checks remains, and the paragraph's other sentences are unchanged. The header rationale and preset documentation now describe that choice.
+- The rendered-prompt regression checks the exact guide sentence and absence of the old opening. Only Fable 5.2's six Native baseline hashes and six corresponding shared-sections hashes are recaptured; every other preset and shared section is unchanged.
+
+### Why
+
+- Without ownership framing, the guide reports that Fable 5.2 acts as a guest: it adds parallel code, leaves duplicates in place, and only mentions nearby bugs. The owner's order replaces the smallest-change instruction with the guide's ownership framing.
+
+### Why an extension could not handle it
+
+- This is the prompt-preset extension's own Fable 5.2 core text.
+
+### Expected merge conflict zones
+
+- LOW: the Fable 5.2 Scope structure paragraph, header comment, documentation line, and its baseline hash rows.
+
+## 2026-11-10 - Claude Fable 5.2 preset from the Fable 5.2 prompting guide (senpi#6314)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-fable-5-2.ts`: new standalone preset, a copy of the tuned Fable 5.1 core changed at six sentences per Anthropic's "Prompting Claude Fable 5.2" guide: ordinary obstacles against deliberate blockers in Scope, two more text-only turn endings in the last-paragraph check, the retry hard limit scoped to repeating an undiagnosed failure, building on existing code instead of a parallel copy, cost-first delegation, and a plain-writing rule in place of the mannered-prose sentence.
+- `matchers.ts`, `contract.ts`, `presets.ts`, `settings.ts`: Fable 5.2 / Mythos 5.2 ids resolve to `claude-fable-5-2` before Fable 5.1 and the generic `fable-5` matcher; a dated Fable 5 id stays on Fable 5. The provisional `claude-fable-5-5` preset is removed.
+
+### Why
+
+- `claude-fable-5-2` fell through to the Fable 5 core, the oldest Fable prompt, with none of the 5.1 repairs or the 5.2 guide's findings.
+
+### Why an extension could not handle it
+
+- This is the prompt-preset extension itself.
+
+### Expected merge conflict zones
+
+- LOW: the Fable matcher order in `contract.ts` and `matchers.ts`, and the `claude-fable-5-2` rows in `prompt-presets-native-baseline.json`.
+
+## 2026-11-09 - Haiku 5.5 search-grounding sentence renders for Anthropic-native search (senpi#6264)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-haiku-5-5.ts`: `buildSearchGroundingLine` renders the training-data-cutoff sentence when the builtin `web_search` tool is active OR `nativeSearchAvailable` is set (senpi#2935).
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/index.ts`: the preset extension computes `nativeSearchAvailable` from the model (`supportsNativeAnthropicWebSearch(model) && isAnthropicWebSearchEnabled()`, the same two checks the `anthropic-web-search` extension uses) on `before_agent_start` and `model_select`.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/presets.ts`: `withDefaults` preserves the flag.
+
+### Why
+
+- A Haiku 5.5 session that can search only through Anthropic-native web search never got the grounding reminder, even though the model can search; the guide's nudge applies whenever the model can search, not only when the builtin tool is mounted.
+
+### Why an extension could not handle it
+
+- The preset is itself the extension that owns this prompt text; the fix is a gate change inside it, plus a builder seam for the native-search signal.
+
+### Expected merge conflict zones
+
+- LOW: the grounding gate in `claude-haiku-5-5.ts` and `eventOptionsToBuilderInput` in `index.ts` (the in-flight language fix #5516 touches the same preset file in nearby but non-overlapping lines).
+
 ## 2026-11-03 - Opus and Fable presets declare full shared sections (senpi#5665)
 
 ### What changed

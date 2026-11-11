@@ -74,11 +74,11 @@ export function registryStatusSource(registry: {
 		sessionIds: () => registry.list().map((row) => row.sessionId),
 		entryView: (sessionId) => {
 			const entry = registry.peek(sessionId);
-			return entry === undefined ? undefined : entryView(entry);
+			return entry === undefined || entry.speculative ? undefined : entryView(entry);
 		},
 		view: (sessionId) => {
 			const entry = registry.peek(sessionId);
-			if (entry === undefined) return undefined;
+			if (entry === undefined || entry.speculative) return undefined;
 			const runtime = runtimeView(entry);
 			return runtime === undefined ? { entry: entryView(entry) } : { entry: entryView(entry), runtime };
 		},

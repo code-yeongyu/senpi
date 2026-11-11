@@ -1,6 +1,5 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { FABLE55_LAUNCH } from "@earendil-works/pi-ai/utils/fable55-launch";
 import { SettingsManager } from "../../../settings-manager.ts";
 import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "../../types.ts";
 
@@ -30,11 +29,7 @@ const GLM_PROVIDERS = ["zai-coding-plan", "opencode-go"] as const;
 
 export const RECOMMENDED_DEFAULT_MODELS = [
 	["claude-opus-5-5", "medium", CLAUDE_PROVIDERS],
-	[
-		FABLE55_LAUNCH.released && FABLE55_LAUNCH.promoteDefaults ? FABLE55_LAUNCH.modelId : "claude-fable-5-1",
-		"xhigh",
-		CLAUDE_PROVIDERS,
-	],
+	["claude-fable-5-2", "xhigh", CLAUDE_PROVIDERS],
 	["kimi-k3.1-pro", "max", KIMI_PROVIDERS],
 	["gpt-6-astra", "xhigh", GPT_PROVIDERS],
 	["gpt-6.1-sol", "medium", GPT_PROVIDERS],

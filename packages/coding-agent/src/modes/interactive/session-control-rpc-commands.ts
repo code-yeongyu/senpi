@@ -13,15 +13,17 @@
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import type { AgentSession } from "../../core/agent-session.ts";
-import { CONNECTION_ROLE_FIXED } from "../rpc/connection-roles.ts";
+import { admitExternalMessageFieldError } from "../rpc/admit-external-message-wire.ts";
 import { INTERACTIVE_USER_CAPABILITY } from "../rpc/custom-capability.ts";
 import { runAbort, runGetEffectStatus } from "../rpc/effect-commands.ts";
 import { buildRpcSessionState } from "../rpc/rpc-session-state.ts";
 import { getSnapshot } from "../rpc/get-snapshot.ts";
+import { MAX_RPC_MESSAGE_CHARACTERS } from "../rpc/rpc-input-validation.ts";
 import type { RpcCommand } from "../rpc/rpc-types.ts";
 import { answerSubscribeSessions, answerUnsubscribeSessions, refusal } from "../rpc/session-status-commands.ts";
 import { type ControlAttachments, keyOf } from "./session-control-attach.ts";
 import { admitInput, admitPrompt, answered, idOf } from "./session-control-input-commands.ts";
+import { admitTerminalDelivery, setClientInfo } from "./session-control-peer-commands.ts";
 import { type ControlCommand, type ControlConnection, failure, success } from "./session-control-server.ts";
 import { TERMINAL_PRESENTER_COMMANDS } from "./terminal-presenter-surface.ts";
 
@@ -29,12 +31,15 @@ type Command<T extends RpcCommand["type"]> = Extract<RpcCommand, { type: T }>;
 
 export const TUI_RPC_COMMANDS = [
 	"open_session",
+	"park_session",
+	"claim_session",
 	"get_snapshot",
 	"subscribe_sessions",
 	"unsubscribe_sessions",
 	"steer",
 	"follow_up",
 	"prompt",
+	"admit_external_message",
 	"get_effect_status",
 	"set_client_info",
 	"attach_session",
@@ -87,6 +92,9 @@ export async function runTuiRpcCommand(
 		}
 		case "open_session":
 			return openSession(context, connection, command);
+		case "park_session":
+		case "claim_session":
+			return failure(idOf(command), command.type, "multi_session_disabled");
 		case "subscribe_sessions":
 			return subscribe(context, connection, frame<"subscribe_sessions">(command));
 		case "unsubscribe_sessions":
@@ -100,8 +108,18 @@ export async function runTuiRpcCommand(
 			return admitInput(context, command, command.type === "steer" ? "steer" : "followUp", command.whenIdle);
 		case "prompt":
 			return admitPrompt(context, command);
+		case "admit_external_message": {
+			const fieldError = admitExternalMessageFieldError(command, MAX_RPC_MESSAGE_CHARACTERS);
+			if (fieldError !== undefined) return failure(idOf(command), command.type, fieldError);
+			return admitTerminalDelivery(
+				context.session,
+				context.attachments,
+				connection,
+				frame<"admit_external_message">(command),
+			);
+		}
 		case "set_client_info":
-			return setClientInfo(context, connection, command);
+			return setClientInfo(context.attachments, connection, command);
 		case "attach_session":
 			return attachSession(context, connection, command);
 		case "release_attachment":
@@ -159,18 +177,6 @@ function openSession(
 		});
 	});
 	return null;
-}
-
-/** Declares this connection's roles, fixed once declared, exactly as on a host; the other fields change nothing here. */
-function setClientInfo(context: RpcCommandContext, connection: ControlConnection, command: ControlCommand): object {
-	const capabilities = command.capabilities;
-	if (capabilities === undefined) return success(command.id, "set_client_info");
-	if (!Array.isArray(capabilities) || !capabilities.every((entry): entry is string => typeof entry === "string"))
-		return failure(command.id, "set_client_info", "capabilities must be an array of strings");
-	if (context.attachments.roles.declare(keyOf(connection), capabilities) !== "declared")
-		return failure(command.id, "set_client_info", CONNECTION_ROLE_FIXED);
-	context.attachments.presenters?.declare(keyOf(connection), capabilities);
-	return success(command.id, "set_client_info");
 }
 
 /**

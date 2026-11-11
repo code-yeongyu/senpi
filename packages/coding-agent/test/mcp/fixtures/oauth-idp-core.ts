@@ -2,19 +2,11 @@
 // Pure logic (no HTTP wiring) so oauth-idp.ts stays a thin router and the
 // refresh-race / reuse-detection behaviour is unit-inspectable.
 import { createHash, randomBytes } from "node:crypto";
+import type { IdpOptions } from "./oauth-idp-options.ts";
 
-export interface IdpOptions {
-	noS256: boolean;
-	rotateRefresh: boolean;
-	cimd: boolean;
-	oidcOnly: boolean;
-	expireAccessSec: number;
-	/** Send `null` / `""` for optional token and registration fields, as some servers do. */
-	nullOptionalFields: boolean;
-	/** RFC 9207 `iss` on the authorization response: omitted, this issuer, or another issuer. */
-	iss: "omit" | "match" | "mismatch";
-	/** Advertise `authorization_response_iss_parameter_supported` in the server metadata. */
-	issSupported: boolean;
+export interface ClientRegistration {
+	clientId: string;
+	redirectUris: string[];
 }
 
 export interface HttpReply {
@@ -45,6 +37,7 @@ interface RefreshToken {
 export interface RequestLogEntry {
 	method: string;
 	path: string;
+	rpcMethod?: string;
 	grantType?: string;
 	resource?: string;
 	note?: string;
@@ -60,6 +53,7 @@ export class IdpState {
 	registerHits = 0;
 	discoveryHits = 0;
 	familyInvalidated = false;
+	readonly registrations: ClientRegistration[] = [];
 	readonly #codes = new Map<string, IssuedCode>();
 	readonly #refresh = new Map<string, RefreshToken>();
 	readonly #revokedFamilies = new Set<string>();
@@ -78,9 +72,11 @@ export class IdpState {
 		return expiresAt !== undefined && expiresAt > Date.now();
 	}
 
-	protectedResourceMetadata(): HttpReply {
+	protectedResourceMetadata(resource?: string): HttpReply {
 		this.discoveryHits++;
-		return { status: 200, body: { resource: `${this.baseUrl}/mcp`, authorization_servers: [this.baseUrl] } };
+		const protectedResource = new URL("/mcp", this.baseUrl);
+		if (resource !== undefined) protectedResource.searchParams.set("resource", resource);
+		return { status: 200, body: { resource: protectedResource.href, authorization_servers: [this.baseUrl] } };
 	}
 
 	authorizationServerMetadata(kind: "oauth" | "oidc"): HttpReply {
@@ -122,6 +118,10 @@ export class IdpState {
 	register(body: Record<string, unknown>): HttpReply {
 		this.registerHits++;
 		const clientId = `dcr-${randomBytes(6).toString("hex")}`;
+		const redirectUris = Array.isArray(body.redirect_uris)
+			? body.redirect_uris.filter((uri): uri is string => typeof uri === "string")
+			: [];
+		this.registrations.push({ clientId, redirectUris });
 		return {
 			status: 201,
 			body: {
@@ -137,6 +137,16 @@ export class IdpState {
 		const redirectUri = query.get("redirect_uri");
 		const state = query.get("state");
 		if (redirectUri === null) return { status: 400, body: { error: "invalid_request" } };
+		if (this.options.strictRedirectUris) {
+			const clientId = query.get("client_id");
+			const registration = this.registrations.find((entry) => entry.clientId === clientId);
+			if (registration === undefined || !registration.redirectUris.includes(redirectUri)) {
+				return {
+					status: 400,
+					body: { error: "invalid_request", error_description: "Mismatching Redirect URL" },
+				};
+			}
+		}
 		const code = `code-${randomBytes(12).toString("hex")}`;
 		this.#codes.set(code, {
 			clientId: query.get("client_id") ?? "unknown",
@@ -206,9 +216,17 @@ export class IdpState {
 		}
 		if (this.options.rotateRefresh) record.used = true;
 		const resource = params.get("resource") ?? record.resource;
+		const body = this.#issueTokens(
+			record.family,
+			record.scope,
+			resource,
+			this.options.rotateRefresh ? undefined : token,
+		);
+		if (this.options.omitRefreshScope) delete body.scope;
+		else if (this.options.refreshScope !== undefined) body.scope = this.options.refreshScope;
 		return {
 			status: 200,
-			body: this.#issueTokens(record.family, record.scope, resource, this.options.rotateRefresh ? undefined : token),
+			body,
 		};
 	}
 
@@ -270,27 +288,4 @@ export function pkceS256(verifier: string): string {
 
 function newFamily(): string {
 	return `fam-${randomBytes(6).toString("hex")}`;
-}
-
-export function parseIdpOptions(argv: string[]): IdpOptions {
-	const expireIndex = argv.indexOf("--expire-access");
-	const expireAccessSec = expireIndex >= 0 ? Number.parseInt(argv[expireIndex + 1] ?? "3600", 10) : 3600;
-	return {
-		noS256: argv.includes("--no-s256"),
-		rotateRefresh: argv.includes("--rotate-refresh"),
-		cimd: argv.includes("--cimd"),
-		oidcOnly: argv.includes("--oidc-only"),
-		expireAccessSec: Number.isFinite(expireAccessSec) ? expireAccessSec : 3600,
-		nullOptionalFields: argv.includes("--null-optional-fields"),
-		iss: parseIssMode(argv),
-		issSupported: argv.includes("--iss-supported"),
-	};
-}
-
-function parseIssMode(argv: string[]): IdpOptions["iss"] {
-	const index = argv.indexOf("--iss");
-	if (index < 0) return "omit";
-	const mode = argv[index + 1];
-	if (mode === "match" || mode === "mismatch") return mode;
-	throw new Error(`--iss must be match or mismatch, got ${String(mode)}`);
 }
