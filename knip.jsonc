@@ -1445,6 +1445,8 @@
         // These sidecars type an .mjs module for its importers and tests.
         "scripts/**/*.d.mts",
       ],
+      // Input trees the realm census test copies and scans (check-realm-census.test.mjs); nothing imports them.
+      "ignore": ["scripts/fixtures/realm-census/**"],
       "includeEntryExports": true,
     },
     ".agents/skills/senpi-qa": {
