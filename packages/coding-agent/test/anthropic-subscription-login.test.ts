@@ -9,6 +9,30 @@ import { cleanupFakeClaudeCliLogins, fakeClaudeCliLogin } from "./support/fake-c
 afterEach(() => cleanupFakeClaudeCliLogins());
 
 describe("claude-sdk-oauth oauth login config", () => {
+	it("starts the connection test only after the fresh CLI slot is committed", async () => {
+		const cli = fakeClaudeCliLogin();
+		const store = cli.store();
+		let tested = false;
+		const config = createOAuthConfig({
+			readCurrent: async () => undefined,
+			claudeCli: {
+				...cli,
+				connectionTest: async ({ name, model }) => {
+					const stored = await store.read("anthropic-subscription");
+					const slot = stored?.accounts?.find((candidate) => candidate.name === name);
+					expect(slot).toMatchObject({ name, store: "claude-cli" });
+					expect(slot).not.toHaveProperty("check");
+					tested = true;
+					return { model, outcome: "ok", at: Date.now() };
+				},
+			},
+		});
+
+		await config.login({});
+
+		expect(tested).toBe(true);
+	});
+
 	it.each([
 		["with a prompt answered blank", async () => ""],
 		["headless", undefined],

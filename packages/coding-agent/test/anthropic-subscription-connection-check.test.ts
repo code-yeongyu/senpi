@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runClaudeCliConnectionTest } from "../src/core/extensions/builtin/anthropic-subscription/claude-cli-connection-test.ts";
+import { withCheck } from "../src/core/extensions/builtin/anthropic-subscription/claude-cli-login-slots.ts";
+import { SENTINEL_OAUTH_FIELDS } from "../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
 
 const { lane } = vi.hoisted(() => ({ lane: vi.fn() }));
 vi.mock("../src/core/extensions/builtin/anthropic-subscription/auth-lane.ts", () => ({
@@ -20,6 +22,14 @@ const input = {
 	providerSettings: {},
 	now: () => 42,
 };
+const old = {
+	name: "work",
+	source: "login" as const,
+	store: "claude-cli" as const,
+	dirId: "a".repeat(32),
+	signedInAt: 1,
+};
+
 describe("Claude subscription account checks (desktop#6444)", () => {
 	it("keeps the provider status and message while redacting credentials", async () => {
 		const token = `sk-ant-oat01-${"x".repeat(80)}`;
@@ -60,4 +70,18 @@ describe("Claude subscription account checks (desktop#6444)", () => {
 		});
 	});
 
+	it("does not stamp an old credential's failed test onto a fresh login", () => {
+		const fresh = { ...old, dirId: "b".repeat(32), signedInAt: 2 };
+		const credential = { type: "oauth" as const, ...SENTINEL_OAUTH_FIELDS, accounts: [fresh] };
+
+		expect(
+			withCheck(
+				credential,
+				old.name,
+				{ model: input.model, outcome: "failed", reason: "authentication", at: 1 },
+				old.dirId,
+			),
+		).toEqual(credential);
+	});
 });
+
