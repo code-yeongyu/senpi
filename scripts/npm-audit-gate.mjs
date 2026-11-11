@@ -19,7 +19,7 @@ function advisoryId(advisory) {
 }
 
 /** Every advisory behind a finding: `via` holds advisories or the names of other vulnerable packages. */
-export function leafAdvisories(vulnerabilities, name, seen = new Set()) {
+function leafAdvisories(vulnerabilities, name, seen = new Set()) {
 	if (seen.has(name)) return [];
 	seen.add(name);
 	const leaves = [];
