@@ -25,7 +25,7 @@ import {
 } from "../repository-identity.ts";
 
 /** At most this many bytes of a session file are scanned; a larger file is refused rather than answered in part. */
-export const SCAN_LIMIT_BYTES = 1024 ** 3;
+const SCAN_LIMIT_BYTES = 1024 ** 3;
 /** A recorded identity is a few hundred bytes, so a longer line is not one and is never held in memory. */
 const MAX_LINE_BYTES = 1024 * 1024;
 const CHUNK_BYTES = 256 * 1024;
@@ -36,14 +36,14 @@ const MARKER = Buffer.from(JSON.stringify(REPOSITORY_IDENTITY_ENTRY_TYPE));
 const READ_FLAGS = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
 
 /** The one answer for every path this host will not read, so a refusal never says whether a file is there. */
-export class MoveIdentityUnreadableError extends Error {
+class MoveIdentityUnreadableError extends Error {
 	constructor() {
 		super("No session file of this device is at that path, or it cannot be read; nothing was read.");
 		this.name = "MoveIdentityUnreadableError";
 	}
 }
 
-export class MoveIdentityTooLargeError extends Error {
+class MoveIdentityTooLargeError extends Error {
 	constructor() {
 		super(
 			`This session file is larger than the ${SCAN_LIMIT_BYTES} bytes this read scans, so its recorded repository was not read. The move can still be sent without the check.`,
