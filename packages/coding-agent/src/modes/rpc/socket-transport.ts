@@ -105,22 +105,67 @@ export async function createSocketSecret(path: string): Promise<Buffer> {
  */
 type SocketSecretPublication = "published" | "collision";
 
-/** Publishes `candidate` at `path` unless an entry already exists there. POSIX only. */
+/** What `link()` fails with on a filesystem without hard links (FAT/exFAT, some network and FUSE mounts). */
+const NO_HARD_LINK_CODES = ["EPERM", "ENOTSUP", "EOPNOTSUPP", "ENOSYS"] as const;
+
+/**
+ * First publication without hard links: the only other way to publish is to write the final path itself, which this
+ * design never does (a reader could see a partial secret, and a racing creator's secret could be overwritten). So the
+ * publication is refused, naming the `link()` error as its `cause`.
+ */
+class SocketSecretHardLinksUnsupportedError extends Error {
+	readonly reason = "hard_links_unsupported";
+	readonly path: string;
+
+	constructor(path: string, cause: unknown) {
+		const code = String(Reflect.get(Object(cause), "code"));
+		super(`RPC socket secret cannot be published at ${path}: its filesystem refused a hard link (${code})`, {
+			cause,
+		});
+		this.name = "SocketSecretHardLinksUnsupportedError";
+		this.path = path;
+	}
+}
+
+/**
+ * Publishes `candidate` at `path` unless an entry already exists there. POSIX only. Once `link()` succeeded the
+ * secret at `path` is this candidate and cannot be taken back, so a later directory fsync or staging cleanup failure
+ * is a warning, never the outcome; a failed `link()` is reported over a failed cleanup after it.
+ */
 async function publishSocketSecretIfAbsent(path: string, candidate: Buffer): Promise<SocketSecretPublication> {
 	const staging = stagingPath(path);
 	await writeStaging(staging, candidate);
 	try {
 		await link(staging, path);
-		await syncDirectory(dirname(path));
-		return "published";
 	} catch (error: unknown) {
+		await removeStaging(staging);
 		if (isNodeErrorCode(error, "EEXIST")) return "collision";
+		if (NO_HARD_LINK_CODES.some((code) => isNodeErrorCode(error, code))) {
+			throw new SocketSecretHardLinksUnsupportedError(path, error);
+		}
 		throw error;
-	} finally {
-		await unlink(staging).catch((error: unknown) => {
-			if (!isNodeErrorCode(error, "ENOENT")) throw error;
-		});
 	}
+	await syncDirectory(dirname(path)).catch((error: unknown) => {
+		warnPublication(
+			"SENPI_RPC_SOCKET_SECRET_DIRECTORY_SYNC_FAILED",
+			"directory fsync failed after publishing",
+			path,
+			error,
+		);
+	});
+	await removeStaging(staging);
+	return "published";
+}
+
+async function removeStaging(staging: string): Promise<void> {
+	await unlink(staging).catch((error: unknown) => {
+		if (isNodeErrorCode(error, "ENOENT")) return;
+		warnPublication("SENPI_RPC_SOCKET_SECRET_STAGING_LEFT_BEHIND", "staging file was not removed", staging, error);
+	});
+}
+
+function warnPublication(code: string, what: string, path: string, error: unknown): void {
+	process.emitWarning(`RPC socket secret ${what}`, { code, detail: JSON.stringify({ path, cause: String(error) }) });
 }
 
 async function writeStaging(staging: string, candidate: Buffer): Promise<void> {
