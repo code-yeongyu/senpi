@@ -21,6 +21,7 @@ import {
 	accountDirFor,
 	ensureAccountDir,
 } from "../src/core/extensions/builtin/anthropic-subscription/claude-cli-account-dir.ts";
+import { testClaudeCliAccount } from "../src/core/extensions/builtin/anthropic-subscription/claude-cli-account-test.ts";
 
 const PROVIDER = "anthropic-subscription";
 const FIXTURE = join(import.meta.dirname, "fixtures", "claude-cli-auth", "fake-claude.mjs");
@@ -74,6 +75,25 @@ afterEach(() => {
 });
 
 describe("CLI-store slot listing", () => {
+	it("does not let a manual test mark a replacement credential failed", async () => {
+		await testClaudeCliAccount({
+			provider: PROVIDER,
+			store: storage,
+			name: CLI_SLOT.name,
+			cwd: root,
+			connectionTest: async ({ model }) => {
+				await storage.modify(PROVIDER, async () => ({
+					...emptyCredential(),
+					accounts: [{ ...CLI_SLOT, dirId: "a".repeat(32), signedInAt: 1_793_000_000_200, check: undefined }],
+				}));
+				return { model, outcome: "failed", reason: "authentication", message: "Old credential rejected", at: 1 };
+			},
+		});
+
+		const [account] = await getCredentialAccounts(storage, PROVIDER, {}, repository);
+		expect(account?.check).toBeUndefined();
+	});
+
 	it("preserves redacted provider diagnostics in the RPC account summary", async () => {
 		const check = {
 			model: "claude-opus-5-5",
