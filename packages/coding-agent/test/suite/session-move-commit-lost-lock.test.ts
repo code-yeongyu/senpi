@@ -68,6 +68,25 @@ class HoldsCommitBeforeRename extends MoveLedger {
 	}
 }
 
+/** Holds its commit at the end of `prepare`: nothing is stamped yet and the move's lock is held. */
+class HoldsCommitInPrepare extends MoveLedger {
+	readonly preparing = deferred();
+	readonly gate = deferred();
+
+	override commit<T>(
+		moveId: MoveId,
+		target: string,
+		rename: () => T | Promise<T>,
+		prepare?: () => void | Promise<void>,
+	): Promise<T> {
+		return super.commit(moveId, target, rename, async () => {
+			await prepare?.();
+			this.preparing.resolve();
+			await this.gate.promise;
+		});
+	}
+}
+
 const recordOf = (world: World) => join(world.ledger.dir, `${MOVE}.json`);
 
 /**
@@ -191,21 +210,61 @@ describe("a commit whose holder lost the move record's lock (senpi#6417)", () =>
 		});
 	});
 
-	it("#given a commit that died after its stamp #then status answers receiving while the stamp is young and failed once it is old", async () => {
+	it("#given a holder stalled inside its commit's prepare, past the lock's stale bound, and another process whose import of the move failed #when the holder runs again #then it stamps nothing, lands nothing and one copy is writable", async () => {
 		const world = await setup();
-		setMoveStepHook((step) => {
-			if (step === "import:stamped") throw new Error("the process died");
-		});
-		await expect(importWith(world, world.ledger)).rejects.toThrow("the process died");
-		setMoveStepHook(undefined);
+		stallHolderOf(recordOf(world));
+		const holder = new HoldsCommitInPrepare(world.ledger.dir);
+		const importing = settled(importWith(world, holder));
+		await holder.preparing.promise;
+		const longAgo = new Date(Date.now() - AN_HOUR_MS);
+		utimesSync(`${recordOf(world)}.lock`, longAgo, longAgo);
+		const another = ledgerOfAnotherProcess(world);
 
-		const young = await answerMoveStatus(world.ledger, MOVE, undefined);
-		const anHourLater = ledgerOfAnotherProcess(world, { now: () => Date.now() + AN_HOUR_MS });
+		await another.fail(MOVE, "import_failed");
+		const heard = await answerMoveStatus(another, MOVE, undefined);
+		await finishMove({ sessionFile: world.source, bundleDir: world.bundleDir, moveId: MOVE, answer: heard });
+		holder.gate.resolve();
 
 		expect({
-			young,
-			old: await answerMoveStatus(anHourLater, MOVE, undefined),
+			heard,
+			holder: await importing,
 			landed: existsSync(landingOf(world)),
-		}).toEqual({ young: { state: "receiving" }, old: { state: "failed", reason: "import_failed" }, landed: false });
+			record: await answerMoveStatus(another, MOVE, undefined),
+			sender: await writable(world.source),
+		}).toEqual({
+			heard: { state: "failed", reason: "import_failed" },
+			holder: { refused: "move_fenced" },
+			landed: false,
+			record: { state: "failed", reason: "import_failed" },
+			sender: true,
+		});
 	});
+
+	it.each([
+		["an hour old", AN_HOUR_MS],
+		["from before the clock stepped back an hour", -AN_HOUR_MS],
+	])(
+		"#given a commit that died after its stamp #then status answers receiving while the stamp is young and failed once it is %s",
+		async (_age, clockOffsetMs) => {
+			const world = await setup();
+			setMoveStepHook((step) => {
+				if (step === "import:stamped") throw new Error("the process died");
+			});
+			await expect(importWith(world, world.ledger)).rejects.toThrow("the process died");
+			setMoveStepHook(undefined);
+
+			const young = await answerMoveStatus(world.ledger, MOVE, undefined);
+			const later = ledgerOfAnotherProcess(world, { now: () => Date.now() + clockOffsetMs });
+
+			expect({
+				young,
+				later: await answerMoveStatus(later, MOVE, undefined),
+				landed: existsSync(landingOf(world)),
+			}).toEqual({
+				young: { state: "receiving" },
+				later: { state: "failed", reason: "import_failed" },
+				landed: false,
+			});
+		},
+	);
 });

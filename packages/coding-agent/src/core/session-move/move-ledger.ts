@@ -172,11 +172,11 @@ export class MoveLedger {
 		prepare?: () => void | Promise<void>,
 	): Promise<T> {
 		return this.locked(moveId, async () => {
-			const record = await this.read(moveId);
-			const landing = await this.landing(moveId);
-			if (!landsAt(record, landing, target))
-				throw new MoveFencedError(moveId, record, landedElsewhere(record, landing));
+			await this.assertLandsAt(moveId, target);
 			await prepare?.();
+			// `prepare` can outlast the lock's stale bound: whoever took the lock may have settled the move since the first look.
+			this.#locks.assertHeld(this.path(moveId));
+			await this.assertLandsAt(moveId, target);
 			const stamp = await this.write(moveId, { state: "receiving" }, { target, committing: true });
 			moveStep("import:stamped");
 			await this.assertStampStands(moveId, stamp);
@@ -185,6 +185,14 @@ export class MoveLedger {
 			await this.write(moveId, { state: "accepted" }, { target });
 			return result;
 		});
+	}
+
+	/** A commit goes on only for a receiving move whose commit has not begun, into its target; else what the record says. */
+	private async assertLandsAt(moveId: MoveId, target: string): Promise<void> {
+		const record = await this.read(moveId);
+		const landing = await this.landing(moveId);
+		if (!landsAt(record, landing, target))
+			throw new MoveFencedError(moveId, record, landedElsewhere(record, landing));
 	}
 
 	/**

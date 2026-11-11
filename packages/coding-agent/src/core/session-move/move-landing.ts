@@ -45,7 +45,9 @@ export function parseLanding(value: unknown): Landing {
  * What a record becomes once the file at its target settles a step a crash interrupted: a committing record is
  * accepted (revoked if the file is) when its file landed and failed when it did not, and an accepted record whose file
  * is sealed gains its revoke mark. `undefined` when the record already agrees with the file, and while a commit stamp
- * with no file is younger than `COMMIT_SETTLE_AFTER_MS` (`stampAge`; a stamp with no known age counts as old).
+ * with no file is younger than `COMMIT_SETTLE_AFTER_MS` (`stampAge`). A stamp with no known age counts as old, and so
+ * does one dated after now: the clock stepped back since it was written, and its age would stay negative, and the
+ * move unsettled, for as long as the step.
  */
 export function settledLanding(
 	record: MoveRecord | undefined,
@@ -55,7 +57,7 @@ export function settledLanding(
 ): MoveRecord | undefined {
 	if (record?.state === "receiving" && committing) {
 		if (outcome === "absent")
-			return stampAge !== undefined && stampAge < COMMIT_SETTLE_AFTER_MS
+			return stampAge !== undefined && stampAge >= 0 && stampAge < COMMIT_SETTLE_AFTER_MS
 				? undefined
 				: { state: "failed", reason: "import_failed" };
 		return outcome === "revoked" ? { state: "accepted", revoked: true } : { state: "accepted" };
