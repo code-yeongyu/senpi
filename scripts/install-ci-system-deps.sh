@@ -29,8 +29,15 @@ if ! download 60s "$@"; then
     fi
   done
   fetched=0
+  # The step allows 12 minutes. Stop retrying once a wait plus a full 150 s attempt would end past this
+  # deadline, so a run of slow attempts fails with this script's own error, not a step timeout.
+  retry_deadline=$(( $(date +%s) + 570 ))
   for delay in 0 $retry_delays; do
     if [ "$delay" != 0 ]; then
+      if [ $(( $(date +%s) + delay + 150 )) -gt "$retry_deadline" ]; then
+        echo "::warning::not enough time left in the step for another APT attempt"
+        break
+      fi
       echo "::warning::APT transfer via archive.ubuntu.com failed; retrying in ${delay}s"
       sleep "$delay"
     fi
@@ -40,7 +47,7 @@ if ! download 60s "$@"; then
     fi
   done
   if [ "$fetched" != 1 ]; then
-    echo "::error::APT transfer failed after $(( $(wc -w <<<"$retry_delays") + 2 )) attempts"
+    echo "::error::APT transfer failed after retries via archive.ubuntu.com"
     exit 100
   fi
 fi

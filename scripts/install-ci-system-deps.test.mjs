@@ -11,7 +11,7 @@ const script = fileURLToPath(new URL("./install-ci-system-deps.sh", import.meta.
 
 // Shims stand in for sudo, timeout, apt-get and sleep so the script runs unprivileged and offline.
 // apt-get fails its first FAIL_DOWNLOADS download attempts (an 'update' call starts each attempt) and logs every call.
-function setup(failDownloads) {
+function setup(failDownloads, attemptSeconds = 1) {
 	const dir = mkdtempSync(join(tmpdir(), "ci-deps-"));
 	const bin = join(dir, "bin");
 	const etc = join(dir, "etc");
@@ -33,11 +33,14 @@ function setup(failDownloads) {
 			'case " $* " in *" update "*) n=$(( $(cat "$count" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$count";; esac',
 			'n=$(cat "$count" 2>/dev/null || echo 0)',
 			'case " $* " in *" --no-download "*) exit 0;; esac',
+			`case " $* " in *" update "*) c=$(cat ${JSON.stringify(join(dir, "clock"))} 2>/dev/null || echo 1000); echo $(( c + ${attemptSeconds} )) > ${JSON.stringify(join(dir, "clock"))};; esac`,
 			`if [ "$n" -le ${failDownloads} ]; then echo "Temporary failure resolving 'archive.ubuntu.com'" >&2; exit 100; fi`,
 			"exit 0",
 		].join("\n"),
 	);
-	shim("sleep", `echo "$1" >> ${JSON.stringify(join(dir, "sleeps"))}`);
+	const clock = JSON.stringify(join(dir, "clock"));
+	shim("date", `cat ${clock} 2>/dev/null || echo 1000`);
+	shim("sleep", `echo "$1" >> ${JSON.stringify(join(dir, "sleeps"))}\nc=$(cat ${clock} 2>/dev/null || echo 1000); echo $(( c + $1 )) > ${clock}`);
 	const run = () =>
 		spawnSync("bash", [script, "qemu-user-static"], {
 			encoding: "utf8",
@@ -71,7 +74,7 @@ test("#given DNS stays down through every attempt #when deps install #then it st
 	assert.equal(result.status, 100);
 	assert.deepEqual(env.read("sleeps"), ["30", "60", "120"]);
 	assert.equal(env.read("updates")[0], "5");
-	assert.match(result.stdout, /::error::APT transfer failed after 5 attempts/);
+	assert.match(result.stdout, /::error::APT transfer failed after retries via archive\.ubuntu\.com/);
 	assert.ok(!env.read("apt.log").some((line) => line.includes("--no-download")));
 });
 
@@ -83,4 +86,15 @@ test("#given the Azure mirror answers #when deps install #then there is no fallb
 	assert.deepEqual(env.read("sleeps"), []);
 	assert.equal(env.read("updates")[0], "1");
 	assert.match(readFileSync(join(env.etc, "apt-mirrors.txt"), "utf8"), /azure\.archive\.ubuntu\.com/);
+});
+
+test("#given every attempt runs to its full 150 s limit #when deps install #then the retries stop inside the 12-minute step and the script reports its own error", (t) => {
+	const env = setup(99, 150);
+	t.after(() => rmSync(env.dir, { recursive: true, force: true }));
+	const result = env.run();
+	assert.equal(result.status, 100);
+	assert.deepEqual(env.read("sleeps"), ["30", "60"]);
+	assert.ok(Number(env.read("clock")[0]) - 1000 < 720, `ended at ${env.read("clock")[0]}`);
+	assert.match(result.stdout, /not enough time left in the step/);
+	assert.match(result.stdout, /::error::APT transfer failed after retries/);
 });
