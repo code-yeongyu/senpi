@@ -1,9 +1,11 @@
-import type { SessionManager } from "./session-manager.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 /**
- * Who started a turn, for the delegated-default permission rule (remote approval-mode work):
- * - `local`: a local connection's or the TUI's own input;
- * - `delegated`: input that arrived on a delegated (remote device) connection;
+ * Who started a turn, for the remote approval-mode rule (senpi#6342: a turn follows the permission setting of the machine
+ * it runs on, and no origin outlives the turn it started):
+ * - `local`: this machine's own input, or input from a device the forwarder stated is the same account;
+ * - `delegated`: input from a device the forwarder did not state is the same account, or the one run such a device's
+ *   record started;
  * - `engine`: a turn no client record started (an extension's message, a goal or loop turn, restored input).
  * A steer joins the running turn (`join`) and never changes its origin.
  */
@@ -11,13 +13,14 @@ export type TurnOrigin = "local" | "delegated" | "engine";
 export type InputTurnMark = TurnOrigin | "join";
 export type ConnectionOrigin = "local" | "delegated";
 
-const DELEGATED_ORIGIN_ENTRY = "delegated_origin";
-
-type OriginSessionManager = Pick<SessionManager, "getEntries" | "appendCustomEntry">;
-
 const inputMarks = new WeakMap<object, InputTurnMark>();
 const currentOrigins = new WeakMap<object, TurnOrigin>();
-const delegatedSessions = new WeakSet<object>();
+// The record being handled, for the work its own handling creates (senpi#6342). It lives in that record's async
+// context, so no other record can change or clear it. The first run that record starts takes the origin and closes it,
+// so later engine work that merely descends from that run (an extension's follow-up) does not inherit it.
+type RecordScope = { readonly origin: ConnectionOrigin; open: boolean };
+const recordScopes = new AsyncLocalStorage<RecordScope>();
+const continuingTurns = new WeakSet<object>();
 
 /** The mark an input gets where it is created: explicit for client records, `local` for the TUI, else `engine`. */
 export function inputTurnMark(input: {
@@ -27,6 +30,7 @@ export function inputTurnMark(input: {
 }): InputTurnMark {
 	if (input.mode === "steer") return "join";
 	if (input.connectionOrigin !== undefined) return input.connectionOrigin;
+	if (recordIsDelegated()) return "delegated";
 	return input.source === undefined || input.source === "interactive" ? "local" : "engine";
 }
 
@@ -45,9 +49,36 @@ export function hasInputTurnMark(message: object): boolean {
 	return inputMarks.has(message);
 }
 
-/** A run starts as engine work; the user message that opens a turn sets its origin, a steer keeps it. */
+/** Runs `handle`, and every async task it starts, as the record `origin` describes. */
+export function runInRecordScope<T>(origin: ConnectionOrigin, handle: () => Promise<T>): Promise<T> {
+	return recordScopes.run({ origin, open: true }, handle);
+}
+
+/** Whether the work being created belongs to an open cross-account record's own handling. */
+export function recordIsDelegated(): boolean {
+	const scope = recordScopes.getStore();
+	return scope?.open === true && scope.origin === "delegated";
+}
+
+/**
+ * A run starts as engine work, or as delegated work when a cross-account record's own handling starts it; a retry keeps
+ * the turn it continues. The user message that opens a turn sets its origin, a steer keeps it.
+ */
 export function noteRunStart(sessionManager: object): void {
-	currentOrigins.set(sessionManager, "engine");
+	if (continuingTurns.has(sessionManager)) return;
+	const delegated = recordIsDelegated();
+	const scope = recordScopes.getStore();
+	if (scope !== undefined) scope.open = false;
+	currentOrigins.set(sessionManager, delegated ? "delegated" : "engine");
+}
+
+/** A retry or recovery run repeats the turn it continues, so it keeps that turn's origin until the continuation ends. */
+export function noteTurnContinuation(sessionManager: object): void {
+	continuingTurns.add(sessionManager);
+}
+
+export function endTurnContinuation(sessionManager: object): void {
+	continuingTurns.delete(sessionManager);
 }
 
 export function noteUserMessageStart(sessionManager: object, message: object): void {
@@ -56,29 +87,7 @@ export function noteUserMessageStart(sessionManager: object, message: object): v
 	currentOrigins.set(sessionManager, mark ?? "engine");
 }
 
-export function recordDelegatedOrigin(sessionManager: OriginSessionManager): void {
-	if (delegatedOriginOf(sessionManager)) return;
-	delegatedSessions.add(sessionManager);
-	sessionManager.appendCustomEntry(DELEGATED_ORIGIN_ENTRY, { delegatedOrigin: true }, { startupBookkeeping: true });
-}
-
-// How many entries a session's scan has already found free of the marker: each gated decision reads only new entries.
-const scannedEntries = new WeakMap<object, number>();
-
-function delegatedOriginOf(sessionManager: Pick<SessionManager, "getEntries">): boolean {
-	if (delegatedSessions.has(sessionManager)) return true;
-	const entries = sessionManager.getEntries();
-	const persisted = entries
-		.slice(scannedEntries.get(sessionManager) ?? 0)
-		.some((entry) => entry.type === "custom" && entry.customType === DELEGATED_ORIGIN_ENTRY);
-	if (persisted) delegatedSessions.add(sessionManager);
-	else scannedEntries.set(sessionManager, entries.length);
-	return persisted;
-}
-
-/** Whether the deciding turn counts as delegated-origin: a remote device started it, or nobody did on a remote-driven session. */
-export function decidingTurnIsDelegated(sessionManager: Pick<SessionManager, "getEntries">): boolean {
-	const origin = currentOrigins.get(sessionManager) ?? "engine";
-	if (origin === "delegated") return true;
-	return origin === "engine" && delegatedOriginOf(sessionManager);
+/** Whether the deciding turn counts as delegated-origin: a cross-account device started this turn or this run. */
+export function decidingTurnIsDelegated(sessionManager: object): boolean {
+	return currentOrigins.get(sessionManager) === "delegated";
 }

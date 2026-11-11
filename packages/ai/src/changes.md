@@ -1,3 +1,58 @@
+## 2026-11-10 - Export the shared Ultrafast documented-model list (senpi#2978)
+
+### What changed
+
+- `packages/ai/src/index.ts`: re-exports `ULTRAFAST_DOCUMENTED_MODEL_IDS` from `./api/openai-responses-shared.ts` so the selection warning in coding-agent reads the same list as the pricing adapters.
+
+### Why
+
+- The warning policy lives in another package and needs the same single list (senpi#2978 item 2).
+
+### Why an extension could not handle it
+
+- The list is a package export, not extension behavior.
+
+### Expected merge conflict zones
+
+- LOW: the one added export line only.
+
+## 2026-11-10 - Cursor capability row for Claude Fable 5.2 (senpi#3893)
+
+### What changed
+
+- `packages/ai/src/cursor/capability-table.ts`: `claude-fable-5-2` takes the same served shape as `claude-fable-5-1` (300k default context, 1M max, thinking/context/effort parameters, low..max levels) until a live AvailableModels capture lists it.
+
+### Why
+
+- Without a row a Cursor-served Fable 5.2 would fall to the 256k default with no effort or thinking controls.
+
+### Why an extension could not handle it
+
+- The capability table is the provider's own static data, read before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the post-2026-10-18 family block of `CURSOR_MODEL_CAPABILITIES`.
+
+## 2026-11-09 - Export the OpenAI 12-hour prompt-cache TTL constant (senpi#6292, closes #6290)
+
+### What changed
+
+- `packages/ai/src/index.ts`: exports `PROMPT_CACHE_TTL_OPENAI_LONG_SECONDS`.
+- `packages/ai/src/openai-responses-compat.ts`: the `supportsLongCacheRetention` doc names `"12h"` on GPT-5.6+.
+
+### Why
+
+- Callers that read the lifetime can compare against the new 12-hour lane.
+
+### Why an extension could not handle it
+
+- Package root exports.
+
+### Expected merge conflict zones
+
+- LOW: one export line and one doc comment.
+
 ## 2026-11-05 - Login forwards the reauthorized account name (part of #5003)
 
 ### What changed

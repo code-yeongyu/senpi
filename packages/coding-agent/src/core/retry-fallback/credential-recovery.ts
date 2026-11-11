@@ -38,3 +38,31 @@ export async function releaseOnCredentialChange(
 		trigger: "sign-in",
 	});
 }
+
+/**
+ * A billing pin a usage limit caused holds only until the reset that limit stated: the account serves again
+ * then, so the pin and the original's cooldown, unusable mark and circuit are released and the existing
+ * revert path tries it once, with no re-login (senpi#4085). A pin with no stated reset (an empty credit
+ * balance) still holds until a sign-in. A still-spent original falls back and pins again.
+ */
+export function releaseOnLimitReset(
+	state: ActiveFallbackState,
+	original: Model<Api>,
+	deps: RecoveryDeps,
+	unusable: UnusableEntries,
+): void {
+	if (!state.pinnedByBilling || state.pinnedUntil === undefined) return;
+	if (deps.cooldowns.wallClock() < state.pinnedUntil) return;
+	state.pinnedByBilling = false;
+	state.pinnedUntil = undefined;
+	state.pinned = state.pinnedByRefusal;
+	const selector = formatSelector(original);
+	deps.cooldowns.clearModel(selector);
+	unusable.clear(original);
+	deps.circuits?.close(selector);
+	deps.logger.info("credential_recovery_released", {
+		chainKey: state.chainKey,
+		originalSelector: state.originalSelector,
+		trigger: "limit-reset",
+	});
+}

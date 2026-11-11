@@ -1,5 +1,23 @@
 # changes — senpi-monorepo root
 
+## 2026-11-10 - Remove stale OAuth export audit entries (senpi#2861)
+
+### What changed
+
+- `knip.jsonc`: remove the obsolete `oauth-provider.ts` mapping for `freezeGrantAttribution` and `tokenExpiresAt`, together with its associated comment.
+
+### Why
+
+- `knip.jsonc`: the OAuth helper extraction removed these exports from the provider, so retaining their old unused-export entries fails the existing audit.
+
+### Why an extension could not handle it
+
+- `knip.jsonc`: the export audit is repository tooling outside the extension runtime.
+
+### Expected merge conflict zones
+
+- LOW: the removed OAuth provider mapping and its comment in `knip.jsonc`.
+
 ## 2026-11-03 - Type checking and vitest resolve the machine-ops workspace from source (senpi#5592)
 
 ### What changed

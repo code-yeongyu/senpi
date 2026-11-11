@@ -301,10 +301,13 @@ import { customTurnOrigin, type InputOrigin, inputAttributionOf, inputOriginOf }
 import {
 	type ConnectionOrigin,
 	copyInputTurnMark,
+	endTurnContinuation,
 	hasInputTurnMark,
 	inputTurnMark,
 	markInputTurnOrigin,
 	noteRunStart,
+	noteTurnContinuation,
+	recordIsDelegated,
 	noteUserMessageStart,
 } from "./turn-origin.ts";
 import { releaseDecisionPreset } from "./permission-decision.ts";
@@ -389,6 +392,7 @@ import {
 	probeBackSchedule,
 } from "./retry-fallback/hint-policy.ts";
 import { createFallbackLogger } from "./retry-fallback/log.ts";
+import { redactAssistantErrorText } from "./assistant-error-redaction.ts";
 import {
 	createModelConfigErrorReporter,
 	isModelConfigFailure,
@@ -527,6 +531,7 @@ function evalHelperCall(name: string): string {
 	if (name === "grep" || name === "glob") return `tool.${name}({ pattern: "...", path: "..." })`;
 	if (name === "workflow") return `tool.${name}({ action: "..." })`;
 	if (name === "monitor") return `tool.monitor({ description: "...", command: "...", filter: "..." })`;
+	if (name === "generate_image") return `tool.generate_image({ prompt: "..." })`;
 	return `tool.${name}({ ... })`;
 }
 /**
@@ -1785,8 +1790,9 @@ export class AgentSession {
 	private readonly _toolChildHostTargets = new Map<RegisteredHostCallKind, HostCallTarget>();
 	/** The composed filesystem policy the built-in file tools enforce; a tool child's `authorize` asks the same one. */
 	private _filesystemPolicy: FilesystemPolicyChecker | undefined;
-	/** Settles once dispose() has stopped the tool child, swept what it launched, and closed its in-process offload jobs. */
+	/** Settles once dispose() has stopped the tool child, swept what it launched, closed its in-process offload jobs, and the fallback log's first-start removal has finished. */
 	private _toolChildClosed: Promise<void> = Promise.resolve();
+	private _fallbackLogSettled: Promise<void> = Promise.resolve();
 	private _extensionRunnerRef?: { current?: ExtensionRunner };
 	private _initialActiveToolNames?: string[];
 	private _defaultToolNames?: Set<string>;
@@ -1951,6 +1957,7 @@ export class AgentSession {
 		this._modelRegistry = config.modelRegistry ?? new ModelRegistry(modelRuntime);
 		this._agentDir = config.agentDir ?? getAgentDir();
 		const fallbackLogger = createFallbackLogger(this._agentDir);
+		this._fallbackLogSettled = fallbackLogger.settled();
 		this._modelConfigErrors = createModelConfigErrorReporter(fallbackLogger, (event) => this._emit(event));
 		this._sessionLogger = createSessionLogger(this._agentDir, {
 			context: () => ({
@@ -3333,7 +3340,7 @@ export class AgentSession {
 		return this._agentDir;
 	}
 
-	/** Resolves after dispose() once the tool child has exited and its launched groups are swept; awaited by disposers. */
+	/** Resolves after dispose() once the tool child has exited, its launched groups are swept and the fallback log has stopped writing; awaited by disposers. */
 	whenToolChildClosed(): Promise<void> {
 		return this._toolChildClosed;
 	}
@@ -3692,6 +3699,7 @@ export class AgentSession {
 
 	/** Internal handler for agent events - shared by subscribe and reconnect */
 	private _handleAgentEvent = (event: AgentEvent, signal: AbortSignal): void => {
+		redactAssistantErrorText(event);
 		let queuedEvent: AgentEvent = event;
 		let pendingMessage: AgentMessage | undefined;
 		// Lifecycle events this event raises are delivered just before it, in the same queue (LifecycleEventSequencer).
@@ -5033,7 +5041,7 @@ export class AgentSession {
 				?.close()
 				.catch((error: unknown) => this._sessionLogger.warn("tool_child_close_failed", { error: String(error) })) ??
 			Promise.resolve();
-		this._toolChildClosed = Promise.all([inProcessClosed, childClosed]).then(() => undefined);
+		this._toolChildClosed = Promise.all([inProcessClosed, childClosed, this._fallbackLogSettled]).then(() => undefined);
 		this._disconnectFromAgent();
 		this._unsubscribeSettingsSource?.();
 		this._unsubscribeSettingsSource = undefined;
@@ -7294,6 +7302,7 @@ export class AgentSession {
 		if (input.source !== undefined) this._userInputSources.set(message, input.source);
 		// Restored input with no source keeps no mark: an unmarked turn is engine work, never a trusted origin.
 		if (input.source !== undefined) markInputTurnOrigin(message, inputTurnMark(input));
+		else if (recordIsDelegated()) markInputTurnOrigin(message, "delegated");
 		if (input.inputId !== undefined) this._queuedInputDispositions.track(message, input.inputId);
 		this._queuedMessages.set(queuedId, message);
 		if (this._promptStartPending && this._skipNextPostCompactionAssistantCheck) {
@@ -7732,6 +7741,9 @@ export class AgentSession {
 		} satisfies CustomMessage;
 		// A delivery that found a run already streaming becomes a steer or follow-up: it keeps the origin it was admitted with.
 		copyInputTurnMark(message, appMessage);
+		// senpi#6342: a custom message a cross-account record's own handling sends carries that origin wherever it waits
+		// (joining a streaming run, parked behind a compaction, held for the next turn), so the turn it opens still asks.
+		if (!hasInputTurnMark(appMessage) && recordIsDelegated()) markInputTurnOrigin(appMessage, "delegated");
 		if (this._sizesOnlyStartup && options?.triggerTurn === true) {
 			// Size inspection makes no model call (#3483): keep the message for a turn that never starts.
 			this._pendingNextTurnMessages.push(appMessage);
@@ -8474,7 +8486,7 @@ export class AgentSession {
 	}
 
 	/**
-	 * A refused engine turn still records its message and settles a cross-session delivery it carries. A delivery
+	 * A refused engine turn still records its message and settles a cross-session delivery it carries. A message
 	 * whose entry the file refuses leaves the context too: its sender redelivers it, and it must not appear twice.
 	 */
 	private _recordRefusedEngineTurnMessage(appMessage: CustomMessage): void {
@@ -8482,11 +8494,16 @@ export class AgentSession {
 			this._appendCustomMessage(appMessage);
 			this.externalAdmission.observePersisted(appMessage);
 		} catch (error) {
-			if (deliveryIdOf(appMessage) !== undefined) {
-				const index = this.agent.state.messages.lastIndexOf(appMessage);
-				if (index >= 0) this.agent.state.messages.splice(index, 1);
-			}
-			this.externalAdmission.observeRefused(appMessage, error instanceof Error ? error.message : String(error));
+			// The session file refused the entry: the message leaves the context too, so the context matches the
+			// file, and the failure follows the same contract as the main persistence path — it is recorded,
+			// logged, and emitted (senpi#2972). This holds for non-delivery messages as well as deliveries.
+			const errorMessage = error instanceof Error ? error.message : String(error);
+			const index = this.agent.state.messages.lastIndexOf(appMessage);
+			if (index >= 0) this.agent.state.messages.splice(index, 1);
+			this._transcriptWriteFailures.record(appMessage, error);
+			this._sessionLogger.warn("transcript_write_failed", { role: appMessage.role, error: errorMessage });
+			this._emit({ type: "transcript_write_failed", role: appMessage.role, errorMessage });
+			this.externalAdmission.observeRefused(appMessage, errorMessage);
 			this._takePersistWatcher(appMessage)?.failed(error);
 		}
 	}
@@ -8589,12 +8606,26 @@ export class AgentSession {
 			appMessage.details,
 			{ recoveryOwner: recoveryCarrier(start) },
 		);
-		this._emitEntryAppended(entryId);
+		// The entry is written: only a failure of the write itself counts as refused. Bookkeeping (ticket,
+		// watcher settlement, revision) runs before any notification, and each notification is guarded on its
+		// own, so a throwing listener can neither leave a persisted delivery unsettled nor suppress a later
+		// notification (senpi#2972).
 		this._recordWrittenTicket(appMessage, entryId);
 		this._takePersistWatcher(appMessage)?.persisted(entryId);
 		this._incrementMessageRevision();
-		this._emit(start);
-		this._emit({ type: "message_end", message: appMessage });
+		const notify = (emit: () => void): void => {
+			try {
+				emit();
+			} catch (error) {
+				this._sessionLogger.warn("custom_message_listener_failed", {
+					customType: appMessage.customType,
+					error: error instanceof Error ? error.message : String(error),
+				});
+			}
+		};
+		notify(() => this._emitEntryAppended(entryId));
+		notify(() => this._emit(start));
+		notify(() => this._emit({ type: "message_end", message: appMessage }));
 	}
 
 	private _flushPendingCustomMessages(): void {
@@ -11719,6 +11750,7 @@ export class AgentSession {
 	private async _continueAgentAfterCurrentRun(
 		options: AgentContinuationOptions = {},
 		retryTimeoutMs?: number,
+		keepsTurnOrigin = false,
 	): Promise<"continued" | "taken-over"> {
 		await this.agent.waitForIdle();
 		try {
@@ -11746,6 +11778,7 @@ export class AgentSession {
 
 			await runBoundedRetryContinuation({
 				continueRun: async () => {
+					if (keepsTurnOrigin) noteTurnContinuation(this.sessionManager);
 					if (this._continueWithQueuedInput) {
 						// Joined input of a start that never ran: the transcript tail may be anything, even empty.
 						this._continueWithQueuedInput = false;
@@ -11792,6 +11825,7 @@ export class AgentSession {
 			}
 			throw error;
 		} finally {
+			endTurnContinuation(this.sessionManager);
 			this._scheduledContinuationRecompacted = false;
 			this._continueWithQueuedInput = false;
 		}
@@ -11829,13 +11863,14 @@ export class AgentSession {
 		options: AgentContinuationOptions = {},
 		retryContinuation = false,
 		retryTimeoutMs?: number,
+		keepsTurnOrigin = retryContinuation,
 	): void {
 		// Tool hooks wait for queued message persistence, so continue() cannot run inside this event promise.
 		const currentEventQueue = this._agentEventQueue;
 		const finishContinuationWork = this._sessionWorkBarrier.begin();
 		const continueAfterEvent = async (): Promise<void> => {
 			try {
-				const outcome = await this._continueAgentAfterCurrentRun(options, retryTimeoutMs);
+				const outcome = await this._continueAgentAfterCurrentRun(options, retryTimeoutMs, keepsTurnOrigin);
 				if (retryContinuation && outcome === "taken-over") {
 					DEFERRED_RETRY_QUEUE_OWNERS.delete(this);
 				}
@@ -11985,7 +12020,8 @@ export class AgentSession {
 				// continue from the turn they failed to answer, so strip the whole run.
 				this._stripTrailingFailedAssistants();
 
-				this._scheduleContinuationAfterCurrentEvent();
+				// The recovery run repeats this turn, so it keeps the turn's origin.
+				this._scheduleContinuationAfterCurrentEvent({}, false, undefined, true);
 				return true;
 			} else if (this.pendingMessageCount > 0) {
 				this._scheduleContinuationAfterCurrentEvent();
@@ -14584,7 +14620,43 @@ export class AgentSession {
 		const estimate = branchEntries.some((entry) => entry.type === "context_edit")
 			? estimateProjectedContextTokens(this.sessionManager.buildSessionProjection(), branchEntries)
 			: estimateContextTokens(messages);
+		// A model switch after the last reported usage invalidates that usage: it was
+		// counted with the previous model's tokenizer, so showing it against the new
+		// model's window misstates the context (oh-my-openagent#11684). Fall back to
+		// the content estimate, like the compaction and context-edit paths above.
+		if (estimate.lastUsageIndex !== null && this._isUsageStaleAfterModelChange(branchEntries)) {
+			return { tokens: messages.reduce((sum, message) => sum + estimateTokens(message), 0), reported: false };
+		}
 		return { tokens: estimate.tokens, reported: estimate.usageTokens > 0 };
+	}
+
+	/**
+	 * Whether the latest reported usage predates the latest model switch: no
+	 * assistant message after the switch reported usage, so the last reported
+	 * figure belongs to the previous model's tokenizer. Assistant messages are
+	 * appended to the branch only once they stop streaming (a pending assistant
+	 * message is rejected), so a switch that lands mid-turn still precedes the
+	 * message entry carrying the new model's usage.
+	 */
+	private _isUsageStaleAfterModelChange(branchEntries: readonly SessionEntry[]): boolean {
+		let latestModelChangeIndex = -1;
+		for (let i = branchEntries.length - 1; i >= 0; i--) {
+			if (branchEntries[i].type === "model_change") {
+				latestModelChangeIndex = i;
+				break;
+			}
+		}
+		if (latestModelChangeIndex === -1) return false;
+		for (let i = branchEntries.length - 1; i > latestModelChangeIndex; i--) {
+			const entry = branchEntries[i];
+			if (entry.type === "message" && entry.message.role === "assistant") {
+				const assistant = entry.message;
+				if (assistant.stopReason !== "aborted" && assistant.stopReason !== "error") {
+					if (calculateContextTokens(assistant.usage) > 0) return false;
+				}
+			}
+		}
+		return true;
 	}
 
 	/**

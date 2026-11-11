@@ -21,7 +21,7 @@ import type {
 	FallbackRungRefusal,
 	RetryFallbackControllerDeps,
 } from "./controller-types.ts";
-import { releaseOnCredentialChange } from "./credential-recovery.ts";
+import { releaseOnCredentialChange, releaseOnLimitReset } from "./credential-recovery.ts";
 import { pinAfterSwitch } from "./pin.ts";
 import { isPureNetworkTransient } from "./transient-network.ts";
 import { type UsageLimitScopeProbe, UnusableEntries } from "./unusable.ts";
@@ -181,6 +181,7 @@ export class RetryFallbackController {
 		const model = selector && this.deps.registry.find(selector.provider, selector.id);
 		if (!model) return false;
 		if (boundary === "turn") await releaseOnCredentialChange(state, model, this.deps, this.unusable);
+		releaseOnLimitReset(state, model, this.deps, this.unusable);
 		if (state.pinned || !this.deps.isAuthAvailable(model.provider)) return false;
 		const stranded = this.unusable.isUnusable(current.model) && !this.unusable.isUnusable(model);
 		if (
@@ -444,12 +445,19 @@ export class RetryFallbackController {
 		const recoveryRevision = prior
 			? prior.recoveryRevision
 			: await this.deps.recoveryRevision?.(current.model.provider);
+		const pin = pinAfterSwitch(prior, { from, fromProvider: current.model.provider, reason, limit });
+		// A new billing pin from a usage limit lasts until the reset the limit stated, when it named one (senpi#4085).
+		const pinnedUntil =
+			pin.pinnedByBilling && prior?.pinnedByBilling !== true
+				? (this.deps.cooldowns.statedResetAt(from) ?? this.unusable.accountResetAt(current.model.provider))
+				: prior?.pinnedUntil;
 		this.state = {
 			...(recoveryRevision === undefined ? {} : { recoveryRevision }),
 			chainKey: candidate.chainKey,
 			originalThinkingLevel: prior?.originalThinkingLevel ?? current.thinkingLevel,
 			lastAppliedThinkingLevel: thinking,
-			...pinAfterSwitch(prior, { from, fromProvider: current.model.provider, reason, limit }),
+			...pin,
+			...(pinnedUntil === undefined ? {} : { pinnedUntil }),
 		};
 		const scope = limit === undefined ? {} : { limit };
 		this.deps.logger.info("fallback_applied", { from, to, chainKey: candidate.chainKey, reason, ...scope });

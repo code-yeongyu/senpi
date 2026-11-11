@@ -61,6 +61,8 @@ describe("multi-session RPC protocol info", () => {
 					"detach_connection",
 					"delegated_connection_v1",
 					"delegation_roles_v1",
+					"peer_agent_role_v1",
+					"same_account_delegation_v1",
 					"unload_session",
 					"move_session",
 					"move_session_revoke",

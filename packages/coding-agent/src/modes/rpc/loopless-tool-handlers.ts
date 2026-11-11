@@ -5,6 +5,7 @@ import type { BeforeAgentStartEvent, InputAttribution, InputSource } from "../..
 import type { BuildSystemPromptOptions } from "../../core/system-prompt.ts";
 import type { ReadonlySessionManager } from "../../core/session-manager.ts";
 import { forwardToolEvents } from "../../core/extensions/two-sided-forwarding.ts";
+import { hookModelOf, hookRequestOutputOf, parseHookRequestInput } from "../../core/hand/hook-contract.ts";
 import type { LooplessToolHandlers } from "./loopless-tool-call.ts";
 
 /** Where a two-sided extension runs whole: with the loop (fused, split-local; S29) or on the hand (hosted loop; S33). */
@@ -118,6 +119,23 @@ export function extensionLoopHooks(
 				),
 			);
 		}
+		if (event === "before_provider_request") {
+			// The hosted loop's request hooks (CK21): the user's hooks get the projected input (payload and effective model,
+			// no headers), and the reply's `output` carries the payload they produced.
+			const input = parseHookRequestInput(payload.input);
+			const model = hookModelOf(input);
+			return call.run(sessionId, cwd, idle, (effects) =>
+				dispatchLoopHook(runner, call, effects, async () => ({
+					output: hookRequestOutputOf(
+						input,
+						await runner.emitBeforeProviderRequest(structuredClone(input.payload), undefined, undefined, {
+							only: isUserLoopHook,
+							...(model === undefined ? {} : { model }),
+						}),
+					),
+				})),
+			);
+		}
 		throw new Error(`no loop hooks run on a hand for ${event}`);
 	};
 }
@@ -127,7 +145,7 @@ export function extensionLoopHooks(
  * builtin, which runs the user's shell hooks (C8). Every other builtin is the loop's own machinery (model, compaction,
  * todo, search): each side loads its own builtins, so those run where the loop runs, as S29 never forwards builtins.
  */
-const isUserLoopHook = (extensionPath: string): boolean =>
+export const isUserLoopHook = (extensionPath: string): boolean =>
 	!extensionPath.startsWith("<builtin:") || extensionPath === "<builtin:hooks>";
 
 const INPUT_SOURCES = ["interactive", "rpc", "extension"] as const satisfies readonly InputSource[];

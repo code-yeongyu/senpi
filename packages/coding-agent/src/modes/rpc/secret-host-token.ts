@@ -23,6 +23,15 @@ const MINT_TIMEOUT_MS = 30_000;
 /** After a failed mint, while a holder remains: retry within this, sooner when a cached token expires first. */
 const RETRY_MAX_MS = 60_000;
 const RETRY_MIN_MS = 5_000;
+/** A retry is armed at least this far before the cached token's `exp`, so it lands before the token does. */
+const RETRY_BEFORE_EXP_MS = 1_000;
+/**
+ * A retry never fires sooner than this after a failure. Without a floor, a near-expiry failure armed the next
+ * retry at 0 ms and a failing issuer got back-to-back mint calls until `exp` (senpi#5919 review). 250 ms is the
+ * low end of the suggested 250-500 ms range: a retry armed with over 1.25 s left still lands at least 1 s
+ * before `exp`, while the burst in the final second is bounded to a handful of attempts.
+ */
+const RETRY_MIN_WAIT_MS = 250;
 
 type SecretAuthority = PresenterAccountAuthority &
 	Required<Pick<PresenterAccountAuthority, "mintSecretHostToken" | "verifySecretAnswer">>;
@@ -204,9 +213,18 @@ export class SecretHostTokens {
 			return;
 		}
 		// While a holder remains, a failure is retried; a still-valid token is kept until its own `exp` (3.2).
+		// The retry must land before that `exp`: with under ~5 s left the 5 s floor alone would push the
+		// attempt past it, so the wait is capped at 1 s before `exp` (senpi#5919). The cap keeps a small
+		// minimum wait (`RETRY_MIN_WAIT_MS`) so a failure in the last second cannot arm the next retry at
+		// 0 ms and hammer a failing issuer back-to-back until `exp`. Without a valid token the retry stays
+		// at the 60 s bound.
 		if (!entry.held()) return;
-		const left = this.valid(entry.token) ? (entry.token.exp * 1000 - Date.now()) / 3 : RETRY_MAX_MS;
-		this.arm(durableSessionId, entry, Math.min(RETRY_MAX_MS, Math.max(RETRY_MIN_MS, left)));
+		const remainingMs = this.valid(entry.token) ? entry.token.exp * 1000 - Date.now() : undefined;
+		const left = remainingMs === undefined ? RETRY_MAX_MS : remainingMs / 3;
+		let delay = Math.min(RETRY_MAX_MS, Math.max(RETRY_MIN_MS, left));
+		if (remainingMs !== undefined)
+			delay = Math.min(delay, Math.max(RETRY_MIN_WAIT_MS, remainingMs - RETRY_BEFORE_EXP_MS));
+		this.arm(durableSessionId, entry, delay);
 	}
 
 	/** The claims the engine relies on, checked against what it asked for; anything else is not this session's token. */

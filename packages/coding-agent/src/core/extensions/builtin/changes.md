@@ -1,3 +1,57 @@
+## 2026-11-10 - show_html_page says what the host did with the page (senpi#6273)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts`: the result text depends on the session's prompt surface (`ctx.getSystemPromptOptions().surface`, else `SENPI_PROMPT_SURFACE`). On `app`, the surface the OmO desktop opens every session it renders with, it says the page was shown to the reader inline above the reply and where the copy is saved. On every other surface (terminal, chat, none named) it says the page was written to the path and not displayed in this interface. The "Open it in the desktop to see it rendered with your theme" sentence is gone. The description says the same: inline in the OmO desktop thread, elsewhere only saved to a file, and the result says which.
+
+### Why
+
+- In a desktop thread the page renders inline, but the result told the model to open the file in the desktop, so the model reported that the page was not shown. The result stays in the thread, so later turns sometimes refused to call the tool at all (senpi#6273).
+
+### Why an extension could not handle it
+
+- `show_html_page` is this builtin's own tool; its result text is defined here. The host signal is the existing `promptSurface`, no new capability.
+
+### Expected merge conflict zones
+
+- LOW: the result `text` and the end of the description in `html-render/tool.ts`.
+
+## 2026-11-10 - Recommended Fable slot is Fable 5.2 (senpi#3893)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`: the Fable slot of `RECOMMENDED_DEFAULT_MODELS` is `claude-fable-5-2` at `xhigh` on the same Claude lanes. The launch-flag lookup is removed.
+
+### Why
+
+- Fable 5.2 is the released Fable model.
+
+### Why an extension could not handle it
+
+- This is the builtin's own shipped list.
+
+### Expected merge conflict zones
+
+- LOW: the Fable row of `RECOMMENDED_DEFAULT_MODELS`.
+
+## 2026-11-09 - vertex-garden per-model thinking toggles (senpi#6270)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/vertex-model-garden/models.ts`: each garden model declares `thinkingFormat: "chat-template"` with its own flag (GLM 5.2 `enable_thinking`, DeepSeek V4.1 Flash `thinking`), a two-level `thinkingLevelMap` (off, medium), and its live-verified Vertex default (GLM `medium`, DeepSeek `off`).
+
+### Why
+
+- Live probes against the global OpenAPI endpoint (2026-11-09) showed the endpoint toggles thinking per model through `chat_template_kwargs` and silently ignores a wrong flag name, so the previous "accepts no thinking parameters" registration hid a control both models support and risked sending one model's flag to the other.
+
+### Why an extension could not handle it
+
+- It is the extension's own model registration; only the default-level declaration needed the `types.ts` companion entry above.
+
+### Expected merge conflict zones
+
+- LOW: the `garden()` helper and the two model entries; the `NO_THINKING_CONTROLS` block is replaced outright.
+
 ## 2026-11-08 - terminal_background_age event (senpi#6201)
 
 ### What changed

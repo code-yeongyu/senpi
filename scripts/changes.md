@@ -1,3 +1,22 @@
+## 2026-11-10 - The bundle build refuses a redaction module copy without the shared registry (senpi#6334)
+
+### What changed
+
+- `scripts/bundle-redaction-registry-guard.mjs` (new): `assertRedactionRegistryCopies(bundleDir)` finds every emitted `.js` file that defines `rememberResolvedReferenceValue` and fails unless each one carries the registry slot key, or when no file defines it.
+- `scripts/build-coding-agent-bundle.mjs`: `buildBundle` runs the guard after `validateExternalImports`.
+
+### Why
+
+- `scripts/bundle-redaction-registry-guard.mjs`: the bundle emits the redaction module more than once (shared chunk and the self-contained session-worker entry); a copy keeping a private set would not redact values another copy resolved (code-yeongyu/oh-my-openagent#12965).
+
+### Why an extension could not handle it
+
+- `scripts/build-coding-agent-bundle.mjs`: release bundle tooling.
+
+### Expected merge conflict zones
+
+- LOW: the guard import and the one call after `validateExternalImports(metafiles)` in `scripts/build-coding-agent-bundle.mjs`.
+
 ## 2026-11-06 - The forced release suite runs coding-agent as parallel shards (senpi#6139)
 
 ### What changed
