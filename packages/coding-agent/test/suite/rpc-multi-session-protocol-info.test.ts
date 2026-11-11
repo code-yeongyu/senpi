@@ -72,6 +72,7 @@ describe("multi-session RPC protocol info", () => {
 					"move_session_import_session_dir",
 					"move_session_import_open",
 					"move_session_inline_max_bytes:1048576",
+					"release_session_move_export", // senpi#6267: a release for a move answers the export too.
 					"session_relocation",
 					"session_context",
 					"session_kind",

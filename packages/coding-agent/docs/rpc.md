@@ -3661,6 +3661,12 @@ no longer lists it and the handle answers `unknown_session`.
 
 A release with `reason: "move"` (and a `moveId`) seals the session for a move to another device: its `session_released` entry records `move_id`, `target` and `session_id`, and from then on any write to the file is refused with `session_moved_away` until that same move is reclaimed. A later `takeover` release, or any ownership entry for another move, is refused too. A `move` without a `moveId`, or with one that is not a plain id (a letter or digit first, then letters, digits, `.`, `_` or `-`, at most 128 characters), is refused with `invalid_release_reason`, and a session whose own id is not a plain id is refused with `release_unsupported` (`errorData.detail: "session_id_not_plain"`) before anything is interrupted or sealed. A `session_moved_away` refusal after an `interrupt` carries `interrupted` and `dropped` like any other refusal after one. Before the seal, a `move` release runs the extensions' `session_move_export` handlers, each under the `session_shutdown` handler budget (`sessionShutdownHandlerTimeoutMs`); a handler that throws or is still running at the cap fails the release with `release_failed` (nothing sealed, admission open again). Each `move` release attempt stages into its own folder and its `session_released` entry records that attempt (`state_attempt`); `move_session export` bundles only the sealing attempt's state, so a handler still running from an earlier, failed attempt of the same move never feeds the bundle. A release refused after those handlers ran and before its seal is written removes its own attempt's folder; one refused after the seal (for example `session_closing`) keeps it, since the seal names it.
 
+With `export` (capability `release_session_move_export`) that release also answers the export, so a move away from this host costs one request instead of two: `{ "export": { "inline": true, "inlineMaxBytes": 380000 } }` holds the fields of `move_session` op `export` that the release does not already know, both optional, read as that op reads them (`{}` asks for the folder answer). The release supplies the rest: the session file, its own `moveId` and `target` (required with `export`), and its own `dropped.user_messages`, which the bundle then records. An `export` the host cannot run is refused `invalid_move_request` with `errorData.detail` before anything is interrupted, staged or sealed, whatever else the host is doing: `export` on a `takeover` release, an `export` that is not an object, `inline` other than `true`, an `inlineMaxBytes` that is not a non-negative integer, a missing or blank `target`, or a host that keeps no agent directory.
+
+The export runs after the session is sealed and released, through the one function the `export` op runs, and its outcome is `data.export`, present only when the request had `export`: `{ ok: true, data }` with exactly the `data` that op answers for the same fields (`inline_files` included when the bundle fits), or `{ ok: false, error, detail }` with the code that op would have been refused with (`session_held` when a runtime still holds the file, which a teardown that reached its close grace leaves; `session_open_here`; `move_failed` for a disk error). The release itself still answers `success: true` and its own `data` fields are unchanged: nothing the export does can turn a release into a refusal, because by then the session is sealed and the host no longer has it. A failed export leaves the session sealed for the move with no bundle; the host does not take it back on its own. The caller does, with `move_session` op `finish` and a `declined` answer.
+
+A caller that sends `export` holds its own durable record of the move id and the session path before it sends the release: if the answer is lost, that record is the only way back to a sealed session. After a release that carried `export`, do not export the move again; give back and move under a new id. An `export` op that is sent anyway and names no `droppedUserMessages` keeps the list the kept bundle of that move records, so it never erases the input the release took out.
+
 ### Moving a session to another device (`move_session`)
 
 A move hands a session to another host under the same id (capability `move_session`). The transport between the two hosts only carries the bundle folder and the receiver's answers; every decision about the session file is taken by `move_session`. Each host keeps its move folders under `<agentDir>/session-moves`.
@@ -3669,7 +3675,7 @@ A move hands a session to another host under the same id (capability `move_sessi
 |---|---|---|---|
 | `prepare` | receiver | `moveId` | `{ state: "ready", expires_at }` (or `receiving` / `accepted` if it already is); the move must see its bundle within 10 minutes |
 | `cancel` | receiver | `moveId` | the record: `declined` with reason `cancelled`, unless already `receiving` or `accepted` |
-| `export` | sender | `sessionPath`, `moveId`, `target`, `droppedUserMessages?`, `inline?`, `inlineMaxBytes?` | `{ move_id, session_id, bundle_dir, files }`; `bundle_dir` is the folder to send, kept until `finish`. With `inline`, also `inline_files` when the bundle is small: see "Moving without a bundle folder" |
+| `export` | sender | `sessionPath`, `moveId`, `target`, `droppedUserMessages?`, `inline?`, `inlineMaxBytes?` | `{ move_id, session_id, bundle_dir, files }`; `bundle_dir` is the folder to send, kept until `finish`. With `inline`, also `inline_files` when the bundle is small: see "Moving without a bundle folder". Without `droppedUserMessages`, an export of a move whose bundle is kept keeps that bundle's list; with it, an empty list included, the list sent is written |
 | `import` | receiver | `cwd` (absolute), `bundleDir` (absolute) or `files`, `from?`, `sessionDir?` (absolute), `open?` | `{ session_id, session_path }`; the session lands in this host's session folder for `cwd`, or in `sessionDir`. With `open`, the opened session's data sits beside it. A move lands in one file only: see below |
 | `status` | receiver | `moveId`, `sessionPath?` | the answer for the sender: `receiving`, `accepted`, or `declined` / `failed` with `reason`; an unknown move is recorded `declined` (`no_record`) before the answer. `accepted` carries `revoked: true` once the import was revoked, with or without `sessionPath`; `revoked: true` wins over `accepted` for writability: that copy refuses every write (`session_moved_away`). A `sessionPath` whose file is not this move's import is refused with `move_mismatch` |
 | `finish` | sender | `sessionPath`, `moveId`, `answer` (the `status` data, `revoked` included) | `{ ownership: "moved" \| "writable" \| "moving" }`; an answer with `revoked: true` takes the session back (`writable`), and is refused with `move_already_moved` if the file was already marked moved |
@@ -3698,7 +3704,7 @@ Refusals carry `errorData.detail` (the reason and what to do): `invalid_move_req
 
 #### Moving without a bundle folder
 
-Four additions let a small bundle travel inside the move's own answers, so the transport carries no folder and the receiver needs no separate `open_session`. Each has its own capability; a client checks for it before sending the field it names. An older host ignores `inline`, `sessionDir` and `open` (the folder answer, this host's own session folder, no open) and refuses an `import` without `bundleDir` with `invalid_move_request`.
+Five additions let a small bundle travel inside the move's own answers, so the transport carries no folder and the receiver needs no separate `open_session`. Each has its own capability; a client checks for it before sending the field it names. An older host ignores `inline`, `sessionDir` and `open` (the folder answer, this host's own session folder, no open) and refuses an `import` without `bundleDir` with `invalid_move_request`.
 
 | Field | On | Capability | What it does |
 |---|---|---|---|
@@ -3706,6 +3712,7 @@ Four additions let a small bundle travel inside the move's own answers, so the t
 | `files` | `import` | `move_session_import_files` | The bundle itself, in place of `bundleDir` |
 | `sessionDir` (absolute) | `import` | `move_session_import_session_dir` | The folder the session lands in, as on `copy`. A relative one, and one with a file in its place or above it, is refused `invalid_move_request` and the move stays importable |
 | `open` | `import` | `move_session_import_open` | Opens the landed session on the importing connection in the same answer |
+| `export: { inline?, inlineMaxBytes? }` | `release_session` reason `move` | `release_session_move_export` | The release answers the export in `data.export`, so the sender needs no separate `export`: see "Handing a session over (`release_session`)" |
 
 `inline_files` is every file of the bundle folder as `{ path, sha256, base64 }`, the manifest (`manifest.json`) first: `path` is the file's `/`-separated path inside the bundle, `sha256` is the hex digest of its bytes, and `base64` is those bytes as padded base64. `export` answers it only when the files together hold at most 1,048,576 bytes (1 MiB, counted before base64) and number at most 1,024. The host states that cap in its capabilities as `move_session_inline_max_bytes:<n>`, so a client reads the number instead of assuming it. `inlineMaxBytes` asks for less, for example when the transport that will carry the import takes a smaller record; a value above the cap means the cap. A bundle over the limit is answered exactly as without `inline`: no `inline_files`, and the transport carries `bundle_dir`. The folder is written and kept until `finish` either way.
 
@@ -6076,6 +6083,14 @@ Response:
   }
 }
 ```
+
+A release for a move may carry `export` on a host that advertises `release_session_move_export`:
+
+```json
+{"type": "release_session", "sessionId": "rpc-1", "reason": "move", "moveId": "move-1", "target": "device-b", "export": {"inline": true}}
+```
+
+Its `data` then also holds `export`: `{"ok": true, "data": {"move_id": "move-1", "session_id": "...", "bundle_dir": "/abs/outgoing/move-1", "files": 1, "inline_files": [...]}}`, or `{"ok": false, "error": "session_held", "detail": "..."}` when the export failed after the session was released. Either way `success` is `true` and the session is sealed for the move.
 
 `dropped` is non-empty only after `"interrupt": true` took queued input out of the session: redeliver the ids in `deliveries` to the next owner, and hand `user_messages` to the adopting client, which decides what to do with them (for example, resubmit them in order as queued prompts).
 

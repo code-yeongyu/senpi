@@ -9,10 +9,12 @@ import { pathExists } from "../tools/path-utils.ts";
 import {
 	type BundleFile,
 	MANIFEST_FILE,
+	MoveBundleInvalidError,
 	MOVE_BUNDLE_FORMAT,
 	type MoveManifest,
 	parseMoveId,
 	parsePlainId,
+	readManifest,
 	SESSION_BUNDLE_PATH,
 	sha256File,
 } from "./bundle.ts";
@@ -31,8 +33,12 @@ export interface ExportSessionForMoveOptions {
 	readonly sessionFile: string;
 	readonly moveId: MoveId;
 	readonly target: string;
-	/** Queued user input the release took out of the session (`dropped.user_messages`), in order. */
-	readonly droppedUserMessages: readonly string[];
+	/**
+	 * Queued user input the release took out of the session (`dropped.user_messages`), in order. Omitted keeps what a
+	 * kept bundle of this move already records, so a caller that lost the release's answer does not erase it by
+	 * exporting again (senpi#6267).
+	 */
+	readonly droppedUserMessages?: readonly string[];
 	readonly bundleDir: string;
 	/**
 	 * What the extensions wrote at the move release, bundled as the `extension-state` payload. A function is resolved
@@ -126,13 +132,24 @@ async function writeMoveBundle(options: ExportSessionForMoveOptions): Promise<Mo
 		repository: await readRecordedRepositoryIdentity(sessionFile),
 		session: { path: SESSION_BUNDLE_PATH, sha256: await sha256File(join(staging, SESSION_BUNDLE_PATH)) },
 		sidecars,
-		droppedUserMessages: [...options.droppedUserMessages],
+		droppedUserMessages: [...(options.droppedUserMessages ?? (await keptDroppedUserMessages(options)))],
 		payloads: stateFiles.length > 0 ? [{ kind: EXTENSION_STATE_PAYLOAD, files: stateFiles }] : [],
 	};
 	await writeFile(join(staging, MANIFEST_FILE), `${JSON.stringify(manifest, null, 1)}\n`);
 	await rm(options.bundleDir, { recursive: true, force: true });
 	await rename(staging, options.bundleDir);
 	return manifest;
+}
+
+/** What a kept bundle of this move records as its dropped input; none when there is no such bundle to read. */
+async function keptDroppedUserMessages(options: ExportSessionForMoveOptions): Promise<readonly string[]> {
+	try {
+		const kept = await readManifest(options.bundleDir);
+		return kept.moveId === options.moveId ? kept.droppedUserMessages : [];
+	} catch (error) {
+		if (error instanceof MoveBundleInvalidError) return [];
+		throw error;
+	}
 }
 
 async function copySidecars(sessionDir: string, sessionId: string, staging: string): Promise<BundleFile[]> {

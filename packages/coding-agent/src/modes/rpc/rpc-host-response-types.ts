@@ -2,6 +2,7 @@ import type { RpcUnloadAnswer } from "./rpc-effect-answer-types.ts";
 import type { RpcSubscriptionLimitsEvent } from "./rpc-host-lifecycle-types.ts";
 import type { RpcProtocolInfo } from "./rpc-protocol-info-types.ts";
 import type { RpcSessionState } from "./rpc-session-state-types.ts";
+import type { RpcReleaseExportOutcome } from "./session-move-wire.ts";
 import type { SessionStatusRecord } from "./session-status.ts";
 
 /**
@@ -97,6 +98,11 @@ export type RpcHostCommandResponse =
 				session_path: string;
 				attachments: number;
 				dropped: { deliveries: readonly string[]; user_messages: readonly string[] };
+				/**
+				 * The export the request asked for (senpi#6267), present only then. A failed export leaves the session
+				 * sealed for the move, which only the caller's give-back undoes; the release itself still succeeded.
+				 */
+				export?: RpcReleaseExportOutcome;
 			};
 	  }
 	| {

@@ -16,6 +16,33 @@ const refused = (record: unknown): string => {
 	return result.reason;
 };
 
+describe("release_session inbound schema for a move's export (senpi#6267)", () => {
+	it("accepts the export fields a release carries and bounds them", () => {
+		const releasing = (fields: object) => ({
+			type: "release_session",
+			sessionId: "rpc-1",
+			reason: "move",
+			moveId: "m",
+			target: "t",
+			...fields,
+		});
+		for (const record of [
+			releasing({}),
+			releasing({ export: {} }),
+			releasing({ export: { inline: true } }),
+			releasing({ export: { inline: true, inlineMaxBytes: 0 } }),
+		])
+			expect(validateRpcInboundRecord(record)).toEqual(ACCEPTED);
+		for (const record of [
+			releasing({ export: "yes" }),
+			releasing({ export: { inline: false } }),
+			releasing({ export: { inline: true, inlineMaxBytes: -1 } }),
+			releasing({ export: { inline: true, inlineMaxBytes: RPC_INBOUND_LIMITS.count + 1 } }),
+		])
+			expect(refused(record)).toContain("does not match its schema");
+	});
+});
+
 describe("move_session inbound schema (senpi#6267)", () => {
 	it("accepts a move's inline bundle fields and bounds the file list (senpi#6267)", () => {
 		const file = { path: "manifest.json", sha256: "0".repeat(64), base64: "e30K" };

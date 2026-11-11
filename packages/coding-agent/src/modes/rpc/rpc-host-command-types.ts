@@ -148,6 +148,12 @@ type RpcCommandBody =
 			target?: string;
 			interrupt?: boolean;
 			force?: boolean;
+			/**
+			 * With `reason: "move"`: export the session for the move in the same answer, as `move_session` op `export`
+			 * would (capability `release_session_move_export`). The release supplies the session file, the move id, the
+			 * target and its own `dropped.user_messages`; these are the fields it cannot know.
+			 */
+			export?: { inline?: true; inlineMaxBytes?: number };
 	  }
 	| {
 			id?: string;

@@ -43,13 +43,14 @@ export const RECOVERY_PATH_FILES = [
 export const SESSION_PATH_ROOT_DIRECTORY = "src/core/tools";
 
 /**
- * The move feature's own code: every module under `src/core/session-move`, the RPC `move_session` commands and the
- * rebind an import commits through. Nothing in these files may call synchronous I/O, and no ledger entry may name one.
+ * The move feature's own code: every module under `src/core/session-move`, the RPC `move_session` commands, the
+ * export a `release_session` for a move runs, and the rebind an import commits through. Nothing in these files may call synchronous I/O, and no ledger entry may name one.
  */
 export const MOVE_PATH_DIRECTORY = "src/core/session-move";
 export const MOVE_PATH_EXTRA_FILES = [
 	"src/modes/rpc/session-move-commands.ts",
 	"src/modes/rpc/session-move-import.ts",
+	"src/modes/rpc/session-release-export.ts",
 	"src/core/session-rebind.ts",
 ] as const;
 

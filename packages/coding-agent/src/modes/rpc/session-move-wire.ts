@@ -113,6 +113,14 @@ export type RpcMoveSessionData =
 	| RpcMoveImportData
 	| { ownership: "writable" | "moving" | "moved" };
 
+/**
+ * The outcome of the export a `release_session` reason `move` carried (senpi#6267): the `data` the `export` op
+ * answers, or the code and sentence it would have been refused with. The release itself succeeded either way.
+ */
+export type RpcReleaseExportOutcome =
+	| { ok: true; data: RpcMoveSessionData }
+	| { ok: false; error: string; detail: string };
+
 export interface RpcMoveSessionResponse {
 	id?: string;
 	type: "response";

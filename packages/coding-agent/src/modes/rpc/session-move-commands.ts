@@ -30,9 +30,13 @@ import {
 import { importMoved, type MoveImportPort, openLanded, sessionDirRefusal } from "./session-move-import.ts";
 import { type MoveRequest, parseMoveRequest } from "./session-move-request.ts";
 
-export interface MoveSessionPort extends MoveImportPort {
+/** What an export needs of its host: the agent directory its move folders live under, and the sessions it holds open. */
+export interface MoveExportPort {
+	readonly agentDir: string;
 	hostedPaths(): readonly string[];
 }
+
+export type MoveSessionPort = MoveImportPort & MoveExportPort;
 
 /** Refusal codes the move core throws (`error.code`), passed through to the wire as they are. */
 const CORE_CODES: ReadonlySet<string> = new Set([
@@ -71,17 +75,64 @@ export async function moveSession(
 		const open_error = await openLanded(port, command.id, open, parsed.cwd, landed);
 		return open_error === undefined ? undefined : answer(command.id, { ...landed, open_error });
 	} catch (cause) {
-		if (cause instanceof MoveRefusal) return refusal(command.id, cause.code, cause.message);
-		const code = typeof cause === "object" && cause !== null && "code" in cause ? cause.code : undefined;
-		const detail = cause instanceof Error ? cause.message : String(cause);
-		return refusal(
-			command.id,
-			typeof code === "string"
-				? (RENAMED_CODES[code] ?? (CORE_CODES.has(code) ? code : RPC_ERROR_MOVE_FAILED))
-				: RPC_ERROR_MOVE_FAILED,
-			detail,
-		);
+		const { code, detail } = moveRefusalOf(cause instanceof Error ? cause : new Error(String(cause)));
+		return refusal(command.id, code, detail);
 	}
+}
+
+/** The wire code and the sentence a failed move step is answered with; a code the core does not own is move_failed. */
+export function moveRefusalOf(cause: Error): { readonly code: string; readonly detail: string } {
+	if (cause instanceof MoveRefusal) return { code: cause.code, detail: cause.message };
+	const code = "code" in cause ? cause.code : undefined;
+	if (typeof code !== "string") return { code: RPC_ERROR_MOVE_FAILED, detail: cause.message };
+	return {
+		code: RENAMED_CODES[code] ?? (CORE_CODES.has(code) ? code : RPC_ERROR_MOVE_FAILED),
+		detail: cause.message,
+	};
+}
+
+/**
+ * The bundle an export writes, and the answer it is reported with. `release_session` reason `move` runs this too
+ * (senpi#6267 P1), so the release and the op answer the same data for the same fields.
+ */
+export async function exportMoveBundle(
+	port: MoveExportPort,
+	parsed: Extract<MoveRequest, { op: "export" }>,
+): Promise<RpcMoveSessionData> {
+	const sessionFile = await orderedRealPath(parsed.sessionPath);
+	const bundleDir = join(port.agentDir, "session-moves", "outgoing", parsed.moveId);
+	const { inlineMaxBytes } = parsed;
+	const { manifest, read: inline } = await exportSessionForMoveAndRead(
+		{
+			sessionFile,
+			moveId: parsed.moveId,
+			target: parsed.target,
+			...(parsed.dropped === undefined ? {} : { droppedUserMessages: parsed.dropped }),
+			bundleDir,
+			extensionStateDir: () => sealedOutgoingStateDir(sessionFile, parsed.moveId),
+			guard: async () => {
+				await refuseOpenHere(
+					port,
+					sessionFile,
+					"This session is open on this host. Release it with release_session reason move and this moveId first.",
+				);
+				await refuseUnlessSealedFor(sessionFile, parsed.moveId);
+			},
+			// Again inside the cross-process lock: a finish from another generation may have reclaimed it meanwhile.
+			lockedGuard: () => refuseUnlessSealedFor(sessionFile, parsed.moveId),
+		},
+		async (written) =>
+			inlineMaxBytes === undefined
+				? undefined
+				: readInlineBundle(written, { maxBytes: inlineMaxBytes, maxFiles: MOVE_INLINE_MAX_FILES }),
+	);
+	return {
+		move_id: manifest.moveId,
+		session_id: manifest.sessionId,
+		bundle_dir: bundleDir,
+		files: 1 + manifest.sidecars.length,
+		...(inline === undefined ? {} : { inline_files: inline }),
+	};
 }
 
 async function run(
@@ -98,42 +149,8 @@ async function run(
 			return wireRecord(await ledger.decline(parsed.moveId, "cancelled"));
 		case "status":
 			return answerMoveStatus(ledger, parsed.moveId, parsed.sessionPath);
-		case "export": {
-			const sessionFile = await orderedRealPath(parsed.sessionPath);
-			const bundleDir = outgoing(parsed.moveId);
-			const { inlineMaxBytes } = parsed;
-			const { manifest, read: inline } = await exportSessionForMoveAndRead(
-				{
-					sessionFile,
-					moveId: parsed.moveId,
-					target: parsed.target,
-					droppedUserMessages: parsed.dropped,
-					bundleDir,
-					extensionStateDir: () => sealedOutgoingStateDir(sessionFile, parsed.moveId),
-					guard: async () => {
-						await refuseOpenHere(
-							port,
-							sessionFile,
-							"This session is open on this host. Release it with release_session reason move and this moveId first.",
-						);
-						await refuseUnlessSealedFor(sessionFile, parsed.moveId);
-					},
-					// Again inside the cross-process lock: a finish from another generation may have reclaimed it meanwhile.
-					lockedGuard: () => refuseUnlessSealedFor(sessionFile, parsed.moveId),
-				},
-				async (written) =>
-					inlineMaxBytes === undefined
-						? undefined
-						: readInlineBundle(written, { maxBytes: inlineMaxBytes, maxFiles: MOVE_INLINE_MAX_FILES }),
-			);
-			return {
-				move_id: manifest.moveId,
-				session_id: manifest.sessionId,
-				bundle_dir: bundleDir,
-				files: 1 + manifest.sidecars.length,
-				...(inline === undefined ? {} : { inline_files: inline }),
-			};
-		}
+		case "export":
+			return exportMoveBundle(port, parsed);
 		case "finish": {
 			const sessionFile = await orderedRealPath(parsed.sessionPath);
 			await finishMove({
@@ -200,7 +217,7 @@ async function refuseUnlessSealedFor(sessionFile: string, moveId: MoveId): Promi
 		);
 }
 
-async function refuseOpenHere(port: MoveSessionPort, sessionFile: string, detail: string): Promise<void> {
+async function refuseOpenHere(port: MoveExportPort, sessionFile: string, detail: string): Promise<void> {
 	const hosted = await Promise.all(port.hostedPaths().map((path) => realSessionPath(path)));
 	if (hosted.includes(sessionFile)) throw new MoveRefusal(RPC_ERROR_SESSION_OPEN_HERE, detail);
 }

@@ -8,7 +8,8 @@
 import { readFileSync } from "node:fs";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
-import { RELEASE_QUEUED_HINT, RELEASED_ADMISSION_CLOSED } from "../../src/modes/rpc/session-release.ts";
+import { RELEASE_QUEUED_HINT } from "../../src/modes/rpc/session-release-busy.ts";
+import { RELEASED_ADMISSION_CLOSED } from "../../src/modes/rpc/session-release.ts";
 import { gatewayFixture } from "./rpc-release-gateway-fixture.ts";
 import { afterReleased, heldTurn, nextEvent, startReleaseHost } from "./rpc-release-host-support.ts";
 

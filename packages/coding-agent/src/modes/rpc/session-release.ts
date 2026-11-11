@@ -26,20 +26,20 @@ import type { AgentSession } from "../../core/agent-session.ts";
 import { isMoveId, isPlainId, parseMoveId } from "../../core/session-move/bundle.ts";
 import { prepareOutgoingState, STATE_ATTEMPT_FIELD } from "../../core/session-move/extension-state.ts";
 import { SessionMovedAwayError } from "../../core/session-move/ownership.ts";
-import { isHandoffBusy } from "./handoff-activity.ts";
 import {
 	RPC_ERROR_ATTACHED,
 	RPC_ERROR_HOST_DRAINING,
 	RPC_ERROR_INVALID_RELEASE_REASON,
 	RPC_ERROR_RELEASE_FAILED,
 	RPC_ERROR_RELEASE_UNSUPPORTED,
-	RPC_ERROR_SESSION_BUSY,
 	RPC_ERROR_SESSION_CLOSING,
-	RPC_ERROR_TURN_ACTIVE,
 	type RpcCommand,
 	type RpcResponse,
 } from "./rpc-types.ts";
+import { RPC_ERROR_INVALID_MOVE_REQUEST } from "./session-move-wire.ts";
 import type { RpcSessionEntry } from "./session-registry.ts";
+import { busyCode, busyData, busySignals } from "./session-release-busy.ts";
+import { exportForRelease, parseReleaseExport } from "./session-release-export.ts";
 import {
 	abortAndSettle,
 	NOTHING_DROPPED,
@@ -57,25 +57,14 @@ export type ReleaseSessionCommand = Extract<RpcCommand, { type: "release_session
 export const RELEASED_ADMISSION_CLOSED =
 	"release_session handed this session to another runtime; deliver there instead (admission is closed here)";
 
-/** `errorData.hint` of a refusal whose `busy` names `queued`: only an interrupt hands that input back. */
-export const RELEASE_QUEUED_HINT =
-	"queued user input is still owed a turn; release with interrupt: true to take it out and receive it in dropped.user_messages";
-
-export type ReleaseBusySignal =
-	| "turn"
-	| "prompt"
-	| "queued"
-	| "delivery"
-	| "bash"
-	| "compaction"
-	| "session_work"
-	| "activity"
-	| "request";
-
 /** What the router lends a release: its lookup, its request accounting, and the park teardown. */
 export interface SessionReleasePort extends ReleaseSettlePort {
 	readonly draining: () => boolean;
 	readonly hostInstance: string | undefined;
+	/** This host's agent directory, where the bundle of an exporting release is written; none means it cannot export. */
+	readonly agentDir: string | undefined;
+	/** The sessions this host holds open, which the export refuses to bundle under. */
+	hostedPaths(): readonly string[];
 	/** The live entry, or a throw carrying the wire code (`unknown_session`, `session_closing`). */
 	lookup(sessionId: string): RpcSessionEntry;
 	code(cause: unknown): string;
@@ -100,6 +89,26 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 	// Export and the receiver's ledger accept only a plain move id; a release under any other id could never finish.
 	const validMove = command.reason === "move" && isMoveId(command.moveId);
 	if (command.reason !== "takeover" && !validMove) return refusal(command.id, RPC_ERROR_INVALID_RELEASE_REASON);
+	// Read before anything is interrupted, staged or sealed: an export this host cannot run refuses on its own.
+	const ask = parseReleaseExport({ ...command }, port.agentDir);
+	if (ask.kind === "invalid") return refusal(command.id, RPC_ERROR_INVALID_MOVE_REQUEST, { detail: ask.detail });
+	const answer = await claimAndSeal(port, command);
+	if (ask.kind === "none" || answer.success !== true || answer.command !== "release_session") return answer;
+	const exported = await exportForRelease(port, ask, {
+		sessionPath: answer.data.session_path,
+		moveId: command.moveId,
+		target: command.target ?? "",
+		droppedUserMessages: answer.data.dropped.user_messages,
+	});
+	return { ...answer, data: { ...answer.data, export: exported } };
+}
+
+/**
+ * Today's release: the checks, the optional interrupt, the staged extension state, the seal and the teardown. The
+ * export of a move release runs after this answered, outside its `finally`, so a failed export neither reopens
+ * admission nor removes the staged state the seal names.
+ */
+async function claimAndSeal(port: SessionReleasePort, command: ReleaseSessionCommand): Promise<RpcResponse> {
 	if (port.draining()) return refusal(command.id, RPC_ERROR_HOST_DRAINING);
 	const first = releasable(port, command, undefined);
 	if (!("session" in first)) return first;
@@ -234,37 +243,6 @@ async function claimAndRelease(
 		success: true,
 		data: { released: true, session_path: ready.sessionPath, attachments: ready.attachments, dropped },
 	};
-}
-
-function busySignals(port: SessionReleasePort, sessionId: string, session: AgentSession): ReleaseBusySignal[] {
-	const activity = session.activitySnapshot;
-	const signals: ReleaseBusySignal[] = [];
-	if (activity.isStreaming) signals.push("turn");
-	if (port.pendingPrompts(sessionId).length > 0) signals.push("prompt");
-	// Queued user input outlives its run (a steer can end the stream it was aimed at): it is still owed a turn.
-	if (session.pendingMessageCount > 0) signals.push("queued");
-	if (session.externalAdmission.list().pending.length > 0) signals.push("delivery");
-	if (activity.isBashRunning) signals.push("bash");
-	if (activity.isCompacting) signals.push("compaction");
-	if (activity.hasSessionWork) signals.push("session_work");
-	// The handoff park's predicate decides; a source added to it later is not missed here.
-	if (signals.length === 0 && isHandoffBusy(activity)) signals.push("activity");
-	if (port.otherRequests(sessionId) > 0) signals.push("request");
-	return signals;
-}
-
-function busyData(signals: readonly ReleaseBusySignal[]): Readonly<Record<string, unknown>> {
-	return signals.includes("queued")
-		? { busy: signals, retry_with: { interrupt: true }, hint: RELEASE_QUEUED_HINT }
-		: { busy: signals };
-}
-
-function busyCode(signals: readonly ReleaseBusySignal[]): string {
-	return signals.some(
-		(signal) => signal === "turn" || signal === "prompt" || signal === "queued" || signal === "delivery",
-	)
-		? RPC_ERROR_TURN_ACTIVE
-		: RPC_ERROR_SESSION_BUSY;
 }
 
 /** `taken`: what an interrupt already took out of the session, merged into any refusal's `errorData`. */

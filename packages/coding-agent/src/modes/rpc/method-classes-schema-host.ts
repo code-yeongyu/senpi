@@ -108,6 +108,7 @@ export const HOST_RECORD_SCHEMAS = {
 		target: OptId,
 		interrupt: OptBool,
 		force: OptBool,
+		export: Opt(Type.Object({ inline: Opt(Type.Literal(true)), inlineMaxBytes: OptNum })),
 	}),
 	unload_session: command("unload_session", {
 		sessionId: Id,

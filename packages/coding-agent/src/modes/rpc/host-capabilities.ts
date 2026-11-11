@@ -58,6 +58,7 @@ import {
 	MOVE_SESSION_INLINE_MAX_BYTES_CAPABILITY,
 	MOVE_SESSION_REVOKE_CAPABILITY,
 } from "./session-move-wire.ts";
+import { RELEASE_SESSION_MOVE_EXPORT_CAPABILITY } from "./session-release-export.ts";
 
 /** `unload_session` and `session_parked.reason` (senpi#3225). */
 export const UNLOAD_SESSION_CAPABILITY = "unload_session";
@@ -148,6 +149,8 @@ export function multiSessionHostCapabilities(options: {
 			MOVE_SESSION_IMPORT_SESSION_DIR_CAPABILITY,
 			MOVE_SESSION_IMPORT_OPEN_CAPABILITY,
 			MOVE_SESSION_INLINE_MAX_BYTES_CAPABILITY,
+			// ...and a release for a move answers that export in the same answer (senpi#6267).
+			RELEASE_SESSION_MOVE_EXPORT_CAPABILITY,
 			// A host session asks the client that offers it to continue the session elsewhere (`host_request`).
 			SESSION_RELOCATION_CAPABILITY,
 			SESSION_CONTEXT_CAPABILITY,

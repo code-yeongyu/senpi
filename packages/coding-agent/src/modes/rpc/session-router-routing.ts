@@ -132,6 +132,9 @@ export async function dispatch(
 			{
 				draining: () => host.draining,
 				hostInstance: host.defaults.hostContext?.host_instance,
+				agentDir: host.registry.agentDir,
+				hostedPaths: () =>
+					host.registry.list().flatMap((row) => (row.sessionPath === undefined ? [] : [row.sessionPath])),
 				otherAttachments: (sessionId) => otherAttachments(host, host.writer.currentConnection(), sessionId),
 				lookup: (sessionId) => host.registry.getForCommand(sessionId, "release_session"),
 				code: (cause) => code(cause),

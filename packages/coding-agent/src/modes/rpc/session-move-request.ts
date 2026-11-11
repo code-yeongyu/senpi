@@ -17,7 +17,8 @@ export type MoveRequest =
 			readonly sessionPath: string;
 			readonly moveId: MoveId;
 			readonly target: string;
-			readonly dropped: readonly string[];
+			/** Omitted when the request sent none, which keeps what a kept bundle of this move records. */
+			readonly dropped: readonly string[] | undefined;
 			/** The most bytes the bundle may hold to be answered inline; `undefined` when the caller did not ask. */
 			readonly inlineMaxBytes: number | undefined;
 	  }
@@ -57,7 +58,7 @@ function parseCopy(raw: Record<string, unknown>): MoveRequest | string {
 	return { op: "copy", sessionPath: raw.sessionPath, sessionId: raw.sessionId, sessionDir: raw.sessionDir };
 }
 
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+export const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
 	typeof value === "object" && value !== null && !Array.isArray(value);
 
 /**
@@ -121,6 +122,20 @@ function parseImport(raw: Record<string, unknown>): MoveRequest | string {
 	return { op: "import", bundle, cwd: raw.cwd, from: from ?? "", sessionDir: raw.sessionDir };
 }
 
+/**
+ * `inline` and `inlineMaxBytes` as `export` takes them, with the cap applied: `release_session` reason `move` takes
+ * the same two fields, and both must read them the same way (senpi#6267).
+ */
+export function parseInlineRequest(
+	raw: Record<string, unknown>,
+): { readonly inlineMaxBytes: number | undefined } | string {
+	if (raw.inline !== undefined && raw.inline !== true) return "inline must be true or omitted.";
+	const cap = raw.inlineMaxBytes ?? MOVE_INLINE_MAX_BYTES;
+	if (typeof cap !== "number" || !Number.isSafeInteger(cap) || cap < 0)
+		return "inlineMaxBytes must be a non-negative integer.";
+	return { inlineMaxBytes: raw.inline === true ? Math.min(cap, MOVE_INLINE_MAX_BYTES) : undefined };
+}
+
 export function parseMoveRequest(raw: Record<string, unknown>): MoveRequest | string {
 	const { op } = raw;
 	if (op === "import") return parseImport(raw);
@@ -138,16 +153,24 @@ export function parseMoveRequest(raw: Record<string, unknown>): MoveRequest | st
 			return { op, moveId: id, sessionPath };
 		}
 		case "export": {
-			const dropped = raw.droppedUserMessages ?? [];
 			if (!text(raw.sessionPath) || !text(raw.target)) return "export needs sessionPath and target.";
-			if (!Array.isArray(dropped) || !dropped.every((item): item is string => typeof item === "string"))
+			const { droppedUserMessages } = raw;
+			if (
+				droppedUserMessages !== undefined &&
+				(!Array.isArray(droppedUserMessages) ||
+					!droppedUserMessages.every((item): item is string => typeof item === "string"))
+			)
 				return "droppedUserMessages must be the dropped.user_messages strings release_session returned.";
-			if (raw.inline !== undefined && raw.inline !== true) return "inline must be true or omitted.";
-			const cap = raw.inlineMaxBytes ?? MOVE_INLINE_MAX_BYTES;
-			if (typeof cap !== "number" || !Number.isSafeInteger(cap) || cap < 0)
-				return "inlineMaxBytes must be a non-negative integer.";
-			const inlineMaxBytes = raw.inline === true ? Math.min(cap, MOVE_INLINE_MAX_BYTES) : undefined;
-			return { op, sessionPath: raw.sessionPath, moveId: id, target: raw.target, dropped, inlineMaxBytes };
+			const inline = parseInlineRequest(raw);
+			if (typeof inline === "string") return inline;
+			return {
+				op,
+				sessionPath: raw.sessionPath,
+				moveId: id,
+				target: raw.target,
+				dropped: droppedUserMessages,
+				inlineMaxBytes: inline.inlineMaxBytes,
+			};
 		}
 		case "finish": {
 			const answer = parseMoveStatus(raw.answer);
