@@ -856,7 +856,7 @@ export type AgentSessionEvent =
 			/** The account a Claude CLI sign-in signed in (senpi#4436). */
 			account?: { name: string };
 			/** That account's sign-in connection test. */
-			check?: { model: string; outcome: "ok" | "failed"; reason?: string; at: number };
+			check?: { model: string; outcome: "ok" | "failed"; reason?: string; message?: string; status?: number; at: number };
 	  }
 	| {
 			type: "summarization_retry_scheduled";
