@@ -81,7 +81,7 @@ export const GOAL_CONTINUATION_RESUMED_EVENT = "goal_continuation_resumed";
 export const GOAL_CONTINUATION_TIMER_STATE_EVENT = "goal_continuation_timer_state";
 export const GOAL_MONITOR_STALL_EVENT = "goal_monitor_continuation_stall";
 /** A limit outlasted GOAL_LIMIT_WAIT_WAKE_LIMIT re-checks: the goal waits for a sign-in, a block reset or input. */
-export const GOAL_LIMIT_WAIT_PARKED_EVENT = "goal_limit_wait_parked";
+const GOAL_LIMIT_WAIT_PARKED_EVENT = "goal_limit_wait_parked";
 
 /** The one notice a provider-limit park shows: when the goal resumes, in local time and as the exact instant. */
 function providerPauseNotice(retryAt: number): string {
