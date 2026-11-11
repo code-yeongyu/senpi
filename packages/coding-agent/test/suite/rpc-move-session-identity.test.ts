@@ -188,6 +188,27 @@ describe("move_session identity reads only this host's session files (senpi#6435
 		}
 	});
 
+	// One op, one parser branch, one dispatch and one capability constant: a build cannot have one form without the
+	// other, so what is pinned is the implication a client relies on - the capability is advertised only by a host on
+	// which BOTH forms answer.
+	it("#given a host that advertises move_session_identity #then both forms of the op answer on it", async () => {
+		const fixture = await devices();
+		await using a = createInProcessRig(fixture.agentA);
+
+		const protocol = await a.router.handle({ type: "get_protocol_info", id: "probe" });
+		const capabilities = (protocol as { data?: { capabilities?: string[] } } | undefined)?.data?.capabilities ?? [];
+
+		expect(capabilities).toContain("move_session_identity");
+		expect(await move(a, { op: "identity", sessionPath: fixture.sessionPath })).toMatchObject({
+			success: true,
+			data: { repository: { rootCommits: [fixture.root] } },
+		});
+		expect(await move(a, { op: "identity", cwd: fixture.repoA })).toMatchObject({
+			success: true,
+			data: { repository: { rootCommits: [fixture.root] } },
+		});
+	});
+
 	it("#given an identity request that names both forms or neither #then it is refused invalid_move_request", async () => {
 		const fixture = await devices();
 		await using a = createInProcessRig(fixture.agentA);
