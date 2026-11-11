@@ -32,6 +32,8 @@ export interface ImportMovedSessionOptions {
 	readonly ledger: MoveLedger;
 	readonly sessionDir?: string;
 	readonly from?: string;
+	/** The sha256 each file of an inline bundle was sent with (senpi#6267); checked beside the manifest's. */
+	readonly sent?: ReadonlyMap<string, string>;
 	readonly readIdentity?: (dir: string) => Promise<RepositoryIdentity | undefined>;
 }
 
@@ -139,7 +141,7 @@ export async function importMovedSession(
 		return { sessionFile: target };
 	}
 	try {
-		await verifyBundle(options.bundleDir, manifest);
+		await verifyBundle(options.bundleDir, manifest, options.sent);
 	} catch (error) {
 		if (error instanceof MoveBundleInvalidError)
 			await options.ledger.fail(manifest.moveId, "bundle_invalid", { unlessLanded: landed });

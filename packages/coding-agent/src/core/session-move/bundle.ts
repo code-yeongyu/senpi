@@ -55,7 +55,7 @@ export async function sha256File(path: string): Promise<string> {
 const isString = (value: unknown): value is string => typeof value === "string";
 
 /** Both separators count: a bundle written on one OS is read on another. */
-function leavesBundle(path: string): boolean {
+export function leavesBundle(path: string): boolean {
 	return posix.isAbsolute(path) || win32.isAbsolute(path) || path.split(/[\\/]/).includes("..");
 }
 
@@ -151,7 +151,15 @@ export async function readManifest(bundleDir: string): Promise<MoveManifest> {
 	};
 }
 
-export async function verifyBundle(bundleDir: string, manifest: MoveManifest): Promise<void> {
+/**
+ * Checks every listed file against the manifest. `sent` is the sha256 each file of an inline bundle arrived with
+ * (senpi#6267): a file must match that too, so an entry that contradicts its own bytes is refused like a changed file.
+ */
+export async function verifyBundle(
+	bundleDir: string,
+	manifest: MoveManifest,
+	sent?: ReadonlyMap<string, string>,
+): Promise<void> {
 	for (const file of [manifest.session, ...manifest.sidecars, ...manifest.payloads.flatMap((p) => p.files)]) {
 		let actual: string;
 		try {
@@ -160,6 +168,8 @@ export async function verifyBundle(bundleDir: string, manifest: MoveManifest): P
 			throw new MoveBundleInvalidError(`missing ${file.path}`);
 		}
 		if (actual !== file.sha256) throw new MoveBundleInvalidError(`${file.path} changed in transit`);
+		if (sent !== undefined && sent.get(file.path) !== actual)
+			throw new MoveBundleInvalidError(`${file.path} was sent with a sha256 that is not its bytes'`);
 	}
 	const header = (await readFile(join(bundleDir, manifest.session.path), "utf8")).split("\n", 1)[0] ?? "";
 	let id: unknown;
