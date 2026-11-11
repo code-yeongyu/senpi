@@ -113,22 +113,21 @@ for (const prefix of ["exec", "spawn"]) {
 		});
 	}
 }
-// SQLite ends a token at %00 and opens the file unless every mode is memory, so each of these reaches the real file.
-for (const uri of [
-	"subject",
-	"file:subject?mode=ro",
-	"file:subject?mode=rw",
-	"file:subject?mode=rwc",
-	"file:subject?mode=memory&mode%00=rw",
-	"file:subject%00junk?mode=ro",
-	"file:subject?mode=memory&mode=ro",
-]) {
+for (const uri of ["subject", "file:subject?mode=ro", "file:subject?mode=rw", "file:subject?mode=rwc"]) {
 	cases.push({
 		name: `sqlite3.connect ${uri}`,
 		code: `sqlite3.connect('${uri}', uri=True).close()`,
 		absent: uri === "subject" || uri.endsWith("rwc"),
 	});
 }
+// SQLite ends a token at %00 and opens the file unless every mode is memory, so each of these reaches the real file.
+// Short names: vitest cuts an interpolated $name at 40 characters, and the gate keys contracts by test name.
+for (const [name, uri] of [
+	["sqlite3.connect %00 in a mode key", "file:subject?mode=memory&mode%00=rw"],
+	["sqlite3.connect %00 in the path", "file:subject%00junk?mode=ro"],
+	["sqlite3.connect memory and ro modes", "file:subject?mode=memory&mode=ro"],
+])
+	cases.push({ name, code: `sqlite3.connect('${uri}', uri=True).close()` });
 const imports =
 	"import os, io, _io, pathlib, shutil, subprocess, pty, glob, sqlite3, importlib.machinery\nfrom pathlib import Path\n";
 
