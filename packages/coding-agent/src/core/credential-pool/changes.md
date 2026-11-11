@@ -1,3 +1,39 @@
+## 2026-11-09 - A 403 that refuses one model no longer blocks the credential slot (senpi#3972)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/classify.ts`: in the 403 branch, a refusal scoped to one model the plan does not include now fails the request instead of blocking the slot, matched by the new `MODEL_SCOPED_REFUSAL_TEXT` patterns. Every pattern is anchored on plan/subscription entitlement wording, so an account-wide refusal that merely mentions a model ("Access to model gpt-x denied: your account is not enabled") still blocks the slot as `auth_error`. The same refusal arriving as 429 (z.ai error code 1311) also fails the request instead of taking a `rate_limit` cooldown; a structured limit code still outranks the prose.
+
+### Why
+
+- With the built-in z.ai provider, GLM-5.3 failed with "The provider rejected the credentials" / "No credential slots available" while GLM-5.2 worked with the same key: the refusal was model-level (the plan does not include GLM-5.3), but a 403 whose body mentions subscription, account or organization became `auth_error`, blocking the slot for every model on that provider until the re-probe (senpi#3972). The vendor's actual refusal reads "Your current subscription plan does not yet include access to GLM-5.3" — "yet" in the middle and no word "model" — so a model-word pattern cannot see it.
+
+### Why an extension could not handle it
+
+- Credential failure classification runs in the shared pool before any extension sees the error; no extension hook can un-block a slot the classifier already poisoned.
+
+### Expected merge conflict zones
+
+- LOW: the `MODEL_SCOPED_REFUSAL_TEXT` patterns and the added checks in the 403 and 429 branches of `classify.ts`.
+
+## 2026-11-09 - Export the model-block matcher (senpi#6254)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/model-scope.ts`: exports `modelBlockApplies(key, modelId)`, a wrapper around the existing private `applies` (unchanged), so session code matches model blocks exactly as the pool does.
+
+### Why
+
+- Session code had a second, divergent copy of this rule.
+
+### Why an extension could not handle it
+
+- The matcher is internal to the credential pool.
+
+### Expected merge conflict zones
+
+- LOW: the export list of `model-scope.ts`.
+
 ## 2026-10-30 - Select accounts by configured strategy (senpi#5068)
 
 ### What changed

@@ -1,9 +1,9 @@
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionFactory } from "../../../src/core/extensions/types.ts";
-import type { SessionEntry } from "../../../src/core/session-manager.ts";
-import { noteDelegatedRecord } from "../../../src/modes/rpc/delegated-drive-origin.ts";
+import { recordTurnOrigin } from "../../../src/modes/rpc/delegated-drive-origin.ts";
 import { RPC_METHOD_CLASS } from "../../../src/modes/rpc/method-classes.ts";
+import { decidingTurnIsDelegated, noteRunStart, runInRecordScope } from "../../../src/core/turn-origin.ts";
 import { attach, type DelegatedHost } from "../rpc-delegated-host-support.ts";
 import {
 	ASKED,
@@ -62,7 +62,7 @@ describe("#6189 the origin of a turn on a session with no client-named mode", ()
 		expect(call).toEqual({ asked: [], ran: true });
 	}, 120_000);
 
-	it("runs a local prompt on the host default on a remote-driven session, but asks for engine-started work", async () => {
+	it("keeps no origin after a remote device drove the session: a local prompt and its engine-started work run on the host default", async () => {
 		host = await permissionHost([engineFollowUp]);
 		const remote = await remotePeer(host);
 		const remoteLog = new FrameLog(remote);
@@ -89,7 +89,7 @@ describe("#6189 the origin of a turn on a session with no client-named mode", ()
 			start: () => local.send({ type: "prompt", sessionId: session.sessionId, message: "go" }),
 		});
 		expect(localCall).toEqual({ asked: [], ran: true });
-		expect(engineCall).toEqual({ asked: ASKED, ran: false });
+		expect(engineCall).toEqual({ asked: [], ran: true });
 	}, 120_000);
 
 	it("never overrides a mode the remote client named", async () => {
@@ -182,7 +182,7 @@ describe("#6189 the origin of a turn on a session with no client-named mode", ()
 		expect(call).toEqual({ asked: ASKED, ran: false });
 	}, 120_000);
 
-	it("marks a session remote-driven when a remote device compacts it, so engine-started work then asks", async () => {
+	it("leaves no origin behind when a remote device compacts the session: later engine-started work runs on the host default", async () => {
 		host = await permissionHost([engineFollowUp]);
 		const local = await host.proven();
 		const localLog = new FrameLog(local);
@@ -198,26 +198,19 @@ describe("#6189 the origin of a turn on a session with no client-named mode", ()
 			start: () => local.send({ type: "prompt", sessionId: session.sessionId, message: "go" }),
 		});
 		expect(localCall).toEqual({ asked: [], ran: true });
-		expect(engineCall).toEqual({ asked: ASKED, ran: false });
+		expect(engineCall).toEqual({ asked: [], ran: true });
 	}, 120_000);
 
-	it("marks the session for every record the method-class table lets act on its work, and for no other", () => {
+	it("counts the next run as delegated for every record the method-class table lets act on its work, and for no other", () => {
 		const acting: ReadonlySet<string> = new Set(["drive", "device_admin"]);
 		const staticRows = Object.entries(RPC_METHOD_CLASS).flatMap(([type, entry]) =>
 			typeof entry === "string" ? [{ type, methodClass: entry }] : [],
 		);
 		expect(staticRows.filter((row) => row.methodClass === "drive").length).toBeGreaterThan(20);
 		const marks = (type: string, origin: "local" | "delegated") => {
-			const entries: SessionEntry[] = [];
-			const sessionManager = {
-				getEntries: () => entries,
-				appendCustomEntry: (customType: string) => {
-					entries.push({ type: "custom", customType, id: String(entries.length), parentId: null, timestamp: "" });
-					return String(entries.length);
-				},
-			};
-			noteDelegatedRecord({ type }, origin, sessionManager);
-			return entries.length;
+			const sessionManager = {};
+			void runInRecordScope(recordTurnOrigin({ type }, origin), async () => noteRunStart(sessionManager));
+			return decidingTurnIsDelegated(sessionManager) ? 1 : 0;
 		};
 		const outcome = staticRows.map(({ type }) => ({
 			type,

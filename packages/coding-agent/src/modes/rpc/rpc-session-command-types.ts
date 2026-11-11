@@ -335,6 +335,9 @@ export type RpcSessionCommand =
 	| { id?: string; type: "set_project_trust"; choice: "trust" | "trust_parent" | "do_not_trust" }
 	| { id?: string; type: "get_project_settings" }
 	| { id?: string; type: "set_project_setting"; key: string; value: unknown }
+	// The workspace's instruction files: AGENTS.md, CLAUDE.md, .omo/rules/**
+	| { id?: string; type: "read_project_file"; path: string }
+	| { id?: string; type: "write_project_file"; path: string; content: string; ifEtag: string | null }
 	| { id?: string; type: "extension_request"; name: string; data?: unknown }
 	| { id?: string; type: "eval_cells.list" }
 	| { id?: string; type: "eval_cells.peek"; cellId: string; tailBytes?: number }

@@ -22,6 +22,8 @@ export type VersionProbeOptions = {
 	encoding: "utf8";
 	timeout: number;
 	env: NodeJS.ProcessEnv;
+	// senpi#3965: hide the console window for console-subsystem children on Windows.
+	windowsHide?: boolean;
 };
 
 export type VersionProbeCallback = (error: Error | null, stdout: string, stderr: string) => void;
@@ -122,6 +124,8 @@ export function probeCursorAgentVersion(
 			encoding: "utf8",
 			timeout: 10_000,
 			env: cursorAgentEnvironment(homedir()),
+			// senpi#3965: cursor-agent is a console-subsystem exe on Windows.
+			windowsHide: true,
 		};
 		deps.execFile(executable, ["--version"], options, (error, stdout) => {
 			if (error) {

@@ -129,7 +129,7 @@ To see where a long session's memory goes, start senpi with `SENPI_MEMORY_REPORT
 
 Senpi loads `AGENTS.md` or `CLAUDE.md` at startup from:
 
-- `~/.senpi/agent/AGENTS.md` for global instructions
+- `~/.senpi/agent/AGENTS.md` for global instructions (set `contextFiles.globalPath` in settings to load a different file or directory instead, e.g. `~/.agents/AGENTS.md`)
 - parent directories, walking up from the current working directory
 - the current directory
 
