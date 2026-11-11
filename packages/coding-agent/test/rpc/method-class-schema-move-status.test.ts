@@ -21,7 +21,11 @@ const landing = { cwd: "/repo", sessionFileName: "2026-10-19T00-00-00-000Z_sessi
 
 describe("move_session status inbound schema: landing", () => {
 	it("accepts a status with a landing, with and without the session folder", () => {
-		for (const record of [status({}), status({ landing }), status({ landing: { ...landing, sessionDir: "/sessions" } })])
+		for (const record of [
+			status({}),
+			status({ landing }),
+			status({ landing: { ...landing, sessionDir: "/sessions" } }),
+		])
 			expect(validateRpcInboundRecord(record)).toEqual(ACCEPTED);
 	});
 
