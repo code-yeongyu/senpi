@@ -104,7 +104,7 @@
 ### What changed
 
 - `scripts/publish.mjs`: new `--require-socket-secret-bridge=win32-<arch>[,...]` flag, passed to `assertSenpiPackedWorkspaceFiles` for the senpi tarball.
-- `scripts/senpi-publish-pack-checks.mjs`: exported `socketSecretBridgeFile(target)` (validated against a module-private target list) and an `options.requiredSocketSecretTargets` check that rejects a senpi tarball missing a named bridge.
+- `scripts/senpi-publish-pack-checks.mjs`: `SOCKET_SECRET_BRIDGE_TARGETS`, `socketSecretBridgeFile(target)`, and an `options.requiredSocketSecretTargets` check that rejects a senpi tarball missing a named bridge.
 
 ### Why
 
