@@ -93,7 +93,6 @@ function ownerCheckedFs(
 	// removal stays plain, but the previous holder's token goes first: a stale holder that releases while this
 	// takeover is still between mkdir and the new token must find no token, not its own.
 	const verdict = (
-		lockDir: string,
 		token: string,
 		current: string | undefined,
 		readError: NodeJS.ErrnoException | null,
@@ -108,7 +107,7 @@ function ownerCheckedFs(
 		tokenFs.readFile(`${lockDir}.owner`, "utf8", (readError, current) => {
 			// Only a missing token or someone else's means the lock changed hands; any other read error keeps the
 			// pre-fix behavior (remove the directory) instead of leaving a dead lock behind for retries:0 callers.
-			if (verdict(lockDir, token, current, readError) === "foreign") {
+			if (verdict(token, current, readError) === "foreign") {
 				onForeign(lockDir);
 				callback(null);
 				return;
@@ -127,7 +126,7 @@ function ownerCheckedFs(
 			} catch (error) {
 				readError = error as NodeJS.ErrnoException;
 			}
-			if (verdict(lockDir, token, current, readError) === "foreign") {
+			if (verdict(token, current, readError) === "foreign") {
 				onForeign(lockDir);
 				return;
 			}
@@ -195,12 +194,13 @@ export async function lockWithLossHandling(path: string, options: FileLockOption
 	});
 	try {
 		// The same directory the library locked: an explicit lockfilePath as given, else <file>.lock where the file is
-		// path.resolve(path), canonicalised through realpath unless realpath is false.
+		// canonicalised exactly as the library decides (its default is realpath: true, overridden by any explicit value).
+		// Async: this runs on the session path, whose synchronous fs calls are frozen (no-sync-in-session-path).
+		const canonical = { realpath: true, ...lockOptions }.realpath;
 		const lockDir =
-			lockOptions.lockfilePath ??
-			`${lockOptions.realpath === false ? resolve(path) : baseFs.realpathSync(path)}.lock`;
+			lockOptions.lockfilePath ?? `${canonical ? await nodeFs.promises.realpath(path) : resolve(path)}.lock`;
 		const token = randomBytes(16).toString("hex");
-		baseFs.writeFileSync(`${lockDir}.owner`, token, { mode: 0o600 });
+		await nodeFs.promises.writeFile(`${lockDir}.owner`, token, { mode: 0o600 });
 		ownerToken = token;
 	} catch {
 		// No token: release falls back to the library's plain removal, never worse than before.
