@@ -25,7 +25,7 @@ import {
 	rememberHeadroomAccount,
 	type SlotPickPolicy,
 } from "./session-slot.ts";
-import type { CredentialSlotState } from "./state-store.ts";
+import { type CredentialSlotState, KNOWN_SLOT_STATE_FIELDS } from "./state-store.ts";
 
 export { listRotationSlots, type RotationLane, type RotationSlot, type RotationSources } from "./rotation-slots.ts";
 
@@ -38,15 +38,31 @@ export const sha256SlotHasher: SlotHasher = (input) => createHash("sha256").upda
  * serving every other model. A half-open probe lease this attempt held is
  * released so the next caller can probe the slot for another model.
  */
+/**
+ * Whether `current` was recorded for the credential this write is about. A stored slot keys its health
+ * by the account or by the token (senpi#4093), so a write under one key over an entry recorded under the
+ * other key for the same live credential is the same lineage, not a new credential (senpi#5097).
+ */
+function sameLineage(
+	current: CredentialSlotState | undefined,
+	credentialRevision: string | undefined,
+	lineage: readonly string[],
+): current is CredentialSlotState {
+	if (current === undefined) return false;
+	if (current.credentialRevision === credentialRevision) return true;
+	return current.credentialRevision !== undefined && lineage.includes(current.credentialRevision);
+}
+
 function modelBlockPatch(
 	family: string,
 	modelId: string,
 	blockedUntil: number,
 	current: CredentialSlotState | undefined,
 	now: number,
-	credentialRevision?: string,
+	credentialRevision: string | undefined,
+	lineage: readonly string[],
 ): Omit<CredentialSlotState, "stateVersion"> {
-	const sameMaterial = current !== undefined && current.credentialRevision === credentialRevision;
+	const sameMaterial = sameLineage(current, credentialRevision, lineage);
 	const { stateVersion: _stateVersion, ...kept } = sameMaterial ? current : { stateVersion: 0 };
 	return {
 		...kept,
@@ -68,19 +84,27 @@ function blockPatch(
 	credentialRevision?: string,
 	policy?: { cooldownBaseMs?: number; cooldownCapMs?: number },
 	modelId?: string,
+	lineage: readonly string[] = [],
 ): Omit<CredentialSlotState, "stateVersion"> {
 	if (block.reason === "rate_limit" && block.modelFamily !== undefined && modelId !== undefined) {
 		const blockedUntil = now + Math.min(policy?.cooldownCapMs ?? block.cooldownMs, block.cooldownMs);
-		return modelBlockPatch(block.modelFamily, modelId, blockedUntil, current, now, credentialRevision);
+		return modelBlockPatch(block.modelFamily, modelId, blockedUntil, current, now, credentialRevision, lineage);
 	}
-	const failureCount = (current?.failureCount ?? 0) + 1;
-	// Model blocks belong to the material that earned them, like every other health field.
-	const liveModelBlocks =
-		current?.credentialRevision === credentialRevision ? pruneModelBlocks(current?.modelBlocks, now) : undefined;
+	// Health belongs to the credential that earned it: a new credential starts clean, while the same
+	// credential keeps its counters, model blocks, and the fields another engine version wrote (senpi#5097).
+	const kept = sameLineage(current, credentialRevision, lineage) ? current : undefined;
+	// Only fields this engine does not own carry over: a known field (a usage-limit pause, a lease) is decided
+	// below, so one this engine adds to the schema later is never kept stale by mistake.
+	const unknownFields = Object.fromEntries(
+		Object.entries(kept ?? {}).filter(([field]) => !KNOWN_SLOT_STATE_FIELDS.has(field)),
+	);
+	const failureCount = (kept?.failureCount ?? 0) + 1;
+	const liveModelBlocks = kept === undefined ? undefined : pruneModelBlocks(kept.modelBlocks, now);
 	const base = {
+		...unknownFields,
 		failureCount,
 		...(credentialRevision === undefined ? {} : { credentialRevision }),
-		...(current?.lastSuccessAt === undefined ? {} : { lastSuccessAt: current.lastSuccessAt }),
+		...(kept?.lastSuccessAt === undefined ? {} : { lastSuccessAt: kept.lastSuccessAt }),
 		...(liveModelBlocks === undefined ? {} : { modelBlocks: liveModelBlocks }),
 	};
 	if (block.reason === "rate_limit") {
@@ -264,7 +288,10 @@ export function streamWithCredentialRotation(
 						: slot.storedRevision;
 			const written = await writeHealthUnlessStoreBusy(`${block.reason} block on ${slot.name}`, () =>
 				sources.repository.mutateSlotState(sources.providerId, slot.lane, slot.name, (current) =>
-					blockPatch(block, current, now(), revision, sources.policy, options.modelId),
+					blockPatch(block, current, now(), revision, sources.policy, options.modelId, [
+						...(slot.storedRevision === undefined ? [] : [slot.storedRevision]),
+						...(slot.materialRevision === undefined ? [] : [slot.materialRevision]),
+					]),
 				),
 			);
 			if (written !== STORE_BUSY) emitProviderAccountsChanged(sources.providerId);

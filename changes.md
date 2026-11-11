@@ -1,5 +1,24 @@
 # changes — senpi-monorepo root
 
+## 2026-11-09 - The sqlite-bun package carries the complete bun:sqlite declaration (senpi#6255)
+
+### What changed
+
+- `packages/session-backends/sqlite-bun/src/bun-sqlite.d.ts`: the `bun:sqlite` `Database` class is now declared here, exactly once, with the full surface the workspace uses (constructor, `exec`/`close`, `prepare`, `query`, `transaction`); the file previously only merged in the query/transaction members. `prepare` is carried over from the declaration this move replaces, which upstream's endpoint-reservation store uses.
+- `packages/session-backends/sqlite-bun/src/index.ts`: references `./bun-sqlite.d.ts` so the ambient declaration ships with the package entry point and a standalone consumer type-checks an import of the package.
+
+### Why
+
+- The class lived in `packages/coding-agent/src/modes/rpc/bun-sqlite.d.ts`, which is not part of the published tarball, so a temp project installing only the packed tarball (+ TypeScript) failed with `TS2307: Cannot find module 'bun:sqlite'` from the package's own sources (senpi#5996).
+
+### Why an extension could not handle it
+
+- The declaration is a compile-time property of the published package's own sources; no extension event sees it.
+
+### Expected merge conflict zones
+
+- LOW: `bun-sqlite.d.ts` (the single `bun:sqlite` declaration) and the `/// <reference>` line in `src/index.ts`.
+
 ## 2026-11-10 - Remove stale OAuth export audit entries (senpi#2861)
 
 ### What changed

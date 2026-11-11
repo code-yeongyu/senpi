@@ -1,3 +1,22 @@
+## 2026-11-11 - The Python sqlite guard parses SQLite URIs without urllib.parse (senpi#6377)
+
+### What changed
+
+- `src/kernels/py/sqlite_uri.py` (new): `parse_sqlite_uri(uri)` splits a `file:` URI into the percent-decoded path and every `mode` value, following SQLite's URI rules. A `%00` ends the path, key or value it appears in, as in SQLite, so `mode%00=rw` reads as `mode=rw`. It imports nothing and runs with interpose.py's frozen builtins.
+- `src/kernels/py/interpose.py`: `database_path` uses `parse_sqlite_uri` instead of `urllib.parse`. A URI counts as in-memory only when every `mode` is `memory`, and as read-only only when every `mode` is `ro`.
+
+### Why
+
+- The guard read `urllib.parse` functions, module globals, a shared `lru_cache` and the `SplitResult` class, and cell code could rebind or poison any of them. On Python 3.11.2 that crashed the guard with a `TypeError`. On 3.12, rebinding `unquote_plus` or patching `SplitResult.path` let a read-only open skip the permission check (#6376).
+
+### Why an extension could not handle it
+
+- The guard is the kernel's own permission interposition.
+
+### Expected merge conflict zones
+
+- LOW: `database_path` and the module loaders at the top of `interpose.py`.
+
 ## 2026-11-09 - Eval-exposed tools stay reachable for agent(), output() and the kernel preludes (senpi#6276)
 
 ### What changed
