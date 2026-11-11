@@ -15,12 +15,12 @@ import type { RpcResponse } from "./rpc-types.ts";
 import { canonicalSessionPath } from "./session-path-key.ts";
 
 /** Session files this host may hold before one lookup refuses rather than walking them all. */
-export const FIND_SESSION_FILE_LIMIT = 20_000;
+const FIND_SESSION_FILE_LIMIT = 20_000;
 /** A session header is the file's first line; it carries the id and the folder and nothing else is read. */
 const HEADER_READ_BYTES = 64 * 1024;
 const READERS = 16;
 
-export class FindSessionTooManyError extends Error {
+class FindSessionTooManyError extends Error {
 	readonly code = "find_session_too_many";
 
 	constructor(limit: number) {
@@ -100,8 +100,8 @@ async function sessionFiles(agentDir: string): Promise<string[]> {
 }
 
 /** A host without an agent directory (the worker runtime) keeps no session files to look in. */
-export const RPC_ERROR_FIND_SESSION_UNSUPPORTED = "find_session_unsupported";
-export const RPC_ERROR_FIND_SESSION_TOO_MANY = "find_session_too_many";
+const RPC_ERROR_FIND_SESSION_UNSUPPORTED = "find_session_unsupported";
+const RPC_ERROR_FIND_SESSION_TOO_MANY = "find_session_too_many";
 
 export interface FindSessionPort {
 	readonly agentDir: string | undefined;
@@ -150,7 +150,7 @@ export async function findSession(
 	}
 }
 
-export async function findSessionFile(options: FindSessionOptions): Promise<FindSessionAnswer> {
+async function findSessionFile(options: FindSessionOptions): Promise<FindSessionAnswer> {
 	const files = await sessionFiles(options.agentDir);
 	const byPath = new Map<string, Candidate>();
 	for (const row of options.hosted) {
