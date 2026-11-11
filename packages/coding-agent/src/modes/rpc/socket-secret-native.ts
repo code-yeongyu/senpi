@@ -32,10 +32,16 @@ export interface NativeLeftBehindStaging {
 	readonly windowsError: number;
 }
 
-/** `publishNoReplace` result. napi-rs leaves an absent optional field `undefined`. */
+/** The bridge's `#[napi(string_enum = "lowercase")] PublishResultOutcome`: exactly these three strings. */
+type NativePublishOutcome = "published" | "collision" | "failed";
+
+/**
+ * `publishNoReplace` result. napi-rs leaves an absent optional field `undefined`. `failure.code` is the failed call's
+ * Windows error, absent only for `owner_sid_utf16`, where no Windows call failed.
+ */
 export interface NativePublishResult {
-	readonly outcome: "published" | "collision" | "failed";
-	readonly failure?: { readonly step: string; readonly code: number } | null;
+	readonly outcome: NativePublishOutcome;
+	readonly failure?: { readonly step: string; readonly code?: number | null } | null;
 	readonly stagingLeftBehind?: NativeLeftBehindStaging | null;
 }
 
@@ -101,7 +107,8 @@ export interface NativePresenceBinding {
 	/**
 	 * The probe's admissibility rules applied to a guard this process already retains, the one a blocking wait acquired
 	 * (design Revision 8, r7 note 4): `acquired` keeps it, an inadmissible handle is released at once (`unknown`,
-	 * `inadmissible`), and a guard not held is `unknown` (`not_held`). The handle is never closed and reacquired.
+	 * `inadmissible`), and a guard not held, or one already admitted (it leaves only with a receipt), is `unknown`
+	 * (`not_held`). The handle is never closed and reacquired.
 	 */
 	presenceProbeRetained(request: NativePresenceProbe): NativePresenceResult;
 	presencePreActionCheck(presenceId: string): NativePresenceResult;
@@ -236,7 +243,7 @@ export function publishSocketSecretNoReplace(
 		return { outcome: result.outcome, stagingLeftBehind };
 	}
 	if (result.outcome === "failed" && result.failure) {
-		throw new SocketSecretPublishError(result.failure.step, result.failure.code, stagingLeftBehind);
+		throw new SocketSecretPublishError(result.failure.step, result.failure.code ?? null, stagingLeftBehind);
 	}
 	throw new SocketSecretPublishError(`unexpected bridge outcome ${String(result.outcome)}`, null, stagingLeftBehind);
 }

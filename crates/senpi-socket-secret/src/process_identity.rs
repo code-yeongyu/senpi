@@ -3,6 +3,12 @@
 //! its PID, the complete 64-bit creation FILETIME and the `TokenUser` SID read on one process handle.
 //! A later observation decides `Live`, `Gone` or `Unknown`; only `Gone` may satisfy a retirement
 //! census entry, and it never authorizes signalling or adopting whatever now holds the PID.
+//!
+//! PIDs and creation times compare only within one kernel session (`crate::session`). `observe`
+//! takes no session, so its caller applies the comparison-domain gate: `Gone(PidAbsent)` and
+//! `Gone(CreationTimeDiffers)` count as absence only when the kernel session the record was taken in
+//! is `Verified` and `same_session` as the current one. A record from another or an unverified
+//! session is outside this table's domain, and nothing here proves it Gone.
 
 /// What a participant was recorded as. HANDLE values are process-local and never part of it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -38,7 +44,9 @@ pub enum Observation {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GoneReason {
+    /// Absence only inside the record's own kernel session (module doc).
     PidAbsent,
+    /// Absence only inside the record's own kernel session (module doc).
     CreationTimeDiffers,
     Exited,
 }

@@ -63,7 +63,9 @@ mod windows_receipts {
         let wrong_target = ProcessRecord { pid, ..wrapper };
         let observed = observe(&wrong_target, &observe_pid(pid));
         println!("RECEIPT_IDENTITY wrapper_record_against_child={observed:?}");
-        assert_ne!(observed, Liveness::Live);
+        // This process (the wrapper) was created before the child it spawned, so the child at that PID
+        // answers with a later creation FILETIME under the same SID: exactly a different instance.
+        assert_eq!(observed, Liveness::Gone(GoneReason::CreationTimeDiffers));
         child.kill().expect("terminate the child");
         child.wait().expect("reap the child");
     }

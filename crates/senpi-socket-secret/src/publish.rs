@@ -30,6 +30,9 @@ pub enum PublishError {
         step: &'static str,
         code: u32,
     },
+    /// The current user's SID string was not valid UTF-16, so no owner-only DACL could be built. No
+    /// Windows call failed, so there is no Windows error to report.
+    OwnerSidNotUtf16,
 }
 
 #[cfg(not(windows))]
@@ -46,7 +49,7 @@ pub use windows_publish::publish_no_replace;
 #[cfg(windows)]
 mod windows_publish {
     use super::{Publication, PublishError, PublishOutcome};
-    use crate::owner_dacl::OwnerOnlyDescriptor;
+    use crate::owner_dacl::{DescriptorError, OwnerOnlyDescriptor};
     use windows_sys::Win32::Foundation::{
         CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, ERROR_FILE_EXISTS, GENERIC_WRITE, HANDLE,
         INVALID_HANDLE_VALUE,
@@ -131,8 +134,10 @@ mod windows_publish {
         delete: impl FnOnce(&OwnedHandle) -> Result<(), u32>,
         published: impl FnOnce(),
     ) -> Result<Publication, PublishError> {
-        let descriptor = OwnerOnlyDescriptor::for_current_user()
-            .map_err(|code| PublishError::Os { step: "dacl", code })?;
+        let descriptor = OwnerOnlyDescriptor::for_current_user().map_err(|error| match error {
+            DescriptorError::Os(code) => PublishError::Os { step: "dacl", code },
+            DescriptorError::SidNotUtf16 => PublishError::OwnerSidNotUtf16,
+        })?;
         let attributes = SECURITY_ATTRIBUTES {
             nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
             lpSecurityDescriptor: descriptor.as_ptr(),

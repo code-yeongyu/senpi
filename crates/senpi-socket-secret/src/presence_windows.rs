@@ -212,3 +212,62 @@ fn overlapped_result(handle: HANDLE, overlapped: &mut OVERLAPPED) -> Result<(), 
         Err(last_error())
     }
 }
+
+/// Native receipt for the cancel half of design test 26. It lives in the crate, not in `tests/`, because
+/// it needs the crate-private `CancelToken::has_pending_wait`; `ci.yml` `socket-secret-native-windows`
+/// runs it with the unit tests and prints its `RECEIPT_PRESENCE` line.
+#[cfg(test)]
+mod tests {
+    use super::WindowsPresenceBackend;
+    use crate::presence::{CancelToken, LockAttempt, PresenceRegistry, WaitOutcome};
+
+    struct Scratch(std::path::PathBuf);
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn a_cancelled_blocking_wait_returns_cancelled_and_holds_nothing() {
+        let dir = std::env::temp_dir().join(format!("senpi-presence-cancel-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        // Declared before the holder, so it runs after every handle on the object is closed.
+        let _scratch = Scratch(dir.clone());
+        let path = dir.join("p-1.lock");
+        std::fs::write(&path, b"tag").expect("presence object");
+        let path = path.to_str().expect("utf-8 path").to_string();
+        let mut holder = PresenceRegistry::new(WindowsPresenceBackend);
+        assert_eq!(holder.acquire("p-1", &path), LockAttempt::Acquired);
+        let cancel = CancelToken::default();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let waiter = {
+            let (path, cancel) = (path.clone(), cancel.clone());
+            std::thread::spawn(move || {
+                let mut registry = PresenceRegistry::new(WindowsPresenceBackend);
+                started_tx.send(()).expect("signal");
+                let outcome = registry.wait_and_acquire("p-1", &path, &cancel);
+                (outcome, registry.holds("p-1"))
+            })
+        };
+        started_rx.recv().expect("waiter started");
+        // Cancel only once the lock is pending, so this receipt proves the CancelIoEx path and not the
+        // pre-cancel check. Bounded: the waiter issues its lock right after signalling.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while !cancel.has_pending_wait() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the wait never became pending"
+            );
+            std::thread::yield_now();
+        }
+        cancel.cancel();
+        let (outcome, held) = waiter.join().expect("waiter");
+        println!("RECEIPT_PRESENCE wait_cancel outcome={outcome:?} held={held}");
+        assert_eq!(outcome, WaitOutcome::Cancelled);
+        assert!(!held);
+        assert!(holder.holds("p-1"), "the holder keeps its guard");
+    }
+}
