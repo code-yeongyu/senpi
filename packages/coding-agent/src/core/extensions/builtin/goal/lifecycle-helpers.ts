@@ -92,7 +92,9 @@ export async function admitAndQueueGoalContinuation(
 		goalStoreRef(ctx.sessionManager, ctx.cwd),
 		options.input.currentSignature,
 		goal.id,
-		{ countUnattended: options.input.path !== "monitorDelayed" },
+		options.input.limitWait === true
+			? { countUnattended: false, countStreak: false }
+			: { countUnattended: options.input.path !== "monitorDelayed" },
 	);
 	if (recordedGoal === null) return null;
 	options.markContinuationPending();

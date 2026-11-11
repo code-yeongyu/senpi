@@ -209,7 +209,7 @@ export async function recordContinuationDelivered(
 	ref: GoalStoreRef,
 	signature: string,
 	expectedGoalId?: string,
-	options: { countUnattended?: boolean } = {},
+	options: { countUnattended?: boolean; countStreak?: boolean } = {},
 ): Promise<Goal | null> {
 	return withGoalFileLock(ref, async (held) => {
 		const goal = await readGoalFile(ref);
@@ -217,7 +217,7 @@ export async function recordContinuationDelivered(
 		const counted = options.countUnattended === false ? 0 : 1;
 		const next: Goal = {
 			...goal,
-			consecutiveContinuations: (goal.consecutiveContinuations ?? 0) + 1,
+			consecutiveContinuations: (goal.consecutiveContinuations ?? 0) + (options.countStreak === false ? 0 : 1),
 			unattendedContinuations: (goal.unattendedContinuations ?? 0) + counted,
 			noProgressContinuations: (goal.noProgressContinuations ?? 0) + counted,
 			lastContinuationSignature: signature,
