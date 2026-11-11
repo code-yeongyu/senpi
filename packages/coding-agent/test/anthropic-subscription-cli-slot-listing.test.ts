@@ -74,6 +74,25 @@ afterEach(() => {
 });
 
 describe("CLI-store slot listing", () => {
+	it("preserves redacted provider diagnostics in the RPC account summary", async () => {
+		const check = {
+			model: "claude-opus-5-5",
+			outcome: "failed" as const,
+			reason: "other",
+			status: 403,
+			message: "This account cannot use the requested model",
+			at: 1_793_000_000_100,
+		};
+		await storage.modify(PROVIDER, async () => ({
+			...emptyCredential(),
+			accounts: [{ ...CLI_SLOT, check }],
+		}));
+
+		const [account] = await getCredentialAccounts(storage, PROVIDER, {}, repository);
+
+		expect(account?.check).toEqual(check);
+	});
+
 	it("the summary of a CLI slot carries the store, sign-in time, profile and check", async () => {
 		const [account] = await getCredentialAccounts(storage, PROVIDER, {}, repository);
 
