@@ -43,6 +43,11 @@ const answer = (sessionId: string, userUuid: string, text: string): SDKMessage[]
 
 const harnesses: Harness[] = [];
 
+function required<T>(value: T | undefined, what: string): T {
+	if (value === undefined) throw new Error(`held-model-switch fixture: no ${what}`);
+	return value;
+}
+
 /** Call from `afterEach`. */
 export function cleanupResidentSessions(): void {
 	while (harnesses.length > 0) harnesses.pop()?.cleanup();
@@ -103,17 +108,19 @@ export async function residentSession() {
 		events,
 		queries,
 		process0,
-		model: (id: string) => harness.getModel(id)!,
+		model: (id: string) => required(harness.getModel(id), `model ${id}`),
 		/** The `index`-th `setModel` call the process received, once it arrives. */
 		setModelCall: (index: number): Promise<HeldSetModel> =>
 			held[index] ? Promise.resolve(held[index]) : new Promise((resolve) => waiters.push(resolve)),
 		/** Runs `settle` only once the next turn admission waits on the session's pending switch. */
 		atAdmission: (settle: () => void) => {
-			const entry = getSession(harness.sessionManager.getSessionId())!;
-			const queued = entry.pendingModelSwitch!;
+			const entry = required(getSession(harness.sessionManager.getSessionId()), "resident session");
+			const queued = required(entry.pendingModelSwitch, "pending model switch");
 			const done = {
 				// oxlint-disable-next-line unicorn/no-thenable -- intentional thenable observing the turn admission awaiting it
 				then: (onFulfilled?: () => unknown, onRejected?: (reason: unknown) => unknown) => {
+					// Put the real switch back so it clears once settled and a later switch chains on it, not on this.
+					if (entry.pendingModelSwitch?.done === done) entry.pendingModelSwitch = queued;
 					events.push("admission waits");
 					settle();
 					return queued.done.then(onFulfilled, onRejected);
