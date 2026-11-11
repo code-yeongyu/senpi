@@ -1,9 +1,9 @@
 {
 	"methodClassesVersion": 1,
-	"methodClassesDigest": "bca41dd6cac2eff3dc82c24d763e4143d90f44ee75920da9bca1c2c8a98c5156",
+	"methodClassesDigest": "3b9f36e0b7ba0bf3c416776ef46b5e87f037d445197716a879696ca89fe7186d",
 	"sampleId": "00000000-0000-7000-8000-000000000000",
 	"samplePathRoot": "/nonexistent/senpi-rpc-inbound-sample",
-	"methodCount": 128,
+	"methodCount": 129,
 	"methods": [
 		{
 			"method": "abort",
@@ -396,6 +396,16 @@
 				"type": "extension_ui_response",
 				"id": "00000000-0000-7000-8000-000000000000",
 				"cancelled": true
+			}
+		},
+		{
+			"method": "find_session",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "find_session",
+				"durableSessionId": "00000000-0000-7000-8000-000000000000"
 			}
 		},
 		{

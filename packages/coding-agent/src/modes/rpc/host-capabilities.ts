@@ -63,6 +63,9 @@ export const SUBSCRIPTION_LIMITS_CAPABILITY = "subscription_limits";
 /** `resolve_path`: which file a message's path means, the engine's one rule (senpi#3415). */
 export const RESOLVE_PATH_CAPABILITY = "resolve_path";
 
+/** `find_session`: which session file of this host carries a durable id, read-only (senpi#6429). */
+export const FIND_SESSION_CAPABILITY = "find_session";
+
 /** `set_permission_preset`: a live session's approval mode can be set and is echoed back (classic and multi-session). */
 export const SET_PERMISSION_PRESET_CAPABILITY = "set_permission_preset_v1";
 
@@ -98,6 +101,8 @@ export function multiSessionHostCapabilities(options: {
 			EFFECT_LEDGER_CAPABILITY,
 			SUBSCRIPTION_LIMITS_CAPABILITY,
 			RESOLVE_PATH_CAPABILITY,
+			// Only a multi-session host keeps the agent directory whose session files this looks in.
+			FIND_SESSION_CAPABILITY,
 			STEER_WHEN_IDLE_CAPABILITY,
 			CONTINUE_FROM_LEAF_CAPABILITY,
 			EVAL_CELLS_CAPABILITY,
