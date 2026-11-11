@@ -107,6 +107,8 @@ export interface AnthropicSubscriptionSessionEntry {
 	lastUsedAt: number;
 	/** Digest of the access token the resident subprocess was spawned with. */
 	credentialDigest?: string;
+	/** senpi#6411: the live `setModel` chain the next turn admission waits for; it never rejects. */
+	pendingModelSwitch?: Promise<void>;
 }
 
 export interface CreateSessionRegistryEntryInput {
@@ -323,7 +325,7 @@ export function markTainted(senpiSessionId: string, reason: string): void {
 	annotateTainted(sessionRegistry, senpiSessionId, reason);
 }
 
-export async function switchSessionModel(senpiSessionId: string, modelId: string, sdkModel?: string): Promise<boolean> {
+export function switchSessionModel(senpiSessionId: string, modelId: string, sdkModel?: string): boolean {
 	return switchEntryModel(sessionRegistry, senpiSessionId, modelId, sdkModel);
 }
 

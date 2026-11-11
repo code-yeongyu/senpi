@@ -84,6 +84,8 @@ describe("claude-sdk-oauth model and thinking switches", () => {
 			model: { id: "claude-sonnet-5", provider: ANTHROPIC_SUBSCRIPTION_PROVIDER_ID },
 			previousModel: { id: "claude-opus-4-5", provider: ANTHROPIC_SUBSCRIPTION_PROVIDER_ID },
 		});
+		// The switch is applied in the background and awaited by the next turn admission (senpi#6411).
+		await getSession(SESSION_ID)?.pendingModelSwitch;
 
 		expect(modelCalls).toEqual(["claude-sonnet-5"]);
 		expect(getSession(SESSION_ID)?.sdkSessionId).toBe(sdkSessionId);

@@ -125,7 +125,7 @@ export function registerSessionRegistry(
 		});
 		await invalidateBinding(pi, ctx, "tree_changed");
 	});
-	pi.on("model_select", async (event, ctx) => {
+	pi.on("model_select", (event, ctx) => {
 		const sessionId = ctx.sessionManager.getSessionId();
 		// Leaving this provider is an excursion, not an invalidation: the live SDK
 		// session closes but the binding stays, so coming back to the same model
@@ -135,7 +135,8 @@ export function registerSessionRegistry(
 			keepBindingThenClose(sessionId, "model_selected");
 			return;
 		}
-		if (!(await switchSessionModel(sessionId, event.model.id, sdkModelId(event.model)))) {
+		// Started, not awaited: the next turn admission waits for it (senpi#6411).
+		if (!switchSessionModel(sessionId, event.model.id, sdkModelId(event.model))) {
 			keepBindingThenClose(sessionId, "model_selected");
 		}
 	});

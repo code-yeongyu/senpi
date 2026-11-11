@@ -6,17 +6,33 @@ export type AnnotatableRegistry = {
 	touch(entry: AnthropicSubscriptionSessionEntry): void;
 };
 
-export async function switchEntryModel(
+/**
+ * Starts the live model switch without waiting for it: the claude CLI confirms the model with the API on every
+ * `setModel` (80-280 ms, 15 s when unreachable), and `model_select` must not hold `set_model` for it (senpi#6411).
+ * Switches chain on `entry.pendingModelSwitch` so they apply in order; the next turn admission awaits the chain.
+ * A failed switch leaves `modelId` on the last confirmed model, so that admission sees the drift and reattaches
+ * the same lineage on a fresh process with the selected model (`model_changed`), keeping the binding.
+ */
+export function switchEntryModel(
 	registry: AnnotatableRegistry,
 	senpiSessionId: string,
 	modelId: string,
 	sdkModel: string = modelId,
-): Promise<boolean> {
+): boolean {
 	const entry = registry.get(senpiSessionId);
-	if (!entry?.query.setModel) return false;
-	await entry.query.setModel(sdkModel);
-	entry.modelId = modelId;
-	registry.touch(entry);
+	const setModel = entry?.query.setModel?.bind(entry.query);
+	if (!entry || !setModel) return false;
+	const apply = async (): Promise<void> => {
+		if (registry.get(senpiSessionId) !== entry) return;
+		await setModel(sdkModel);
+		entry.modelId = modelId;
+		registry.touch(entry);
+	};
+	const pending = (entry.pendingModelSwitch?.then(apply) ?? apply()).catch(() => undefined);
+	entry.pendingModelSwitch = pending;
+	void pending.then(() => {
+		if (entry.pendingModelSwitch === pending) entry.pendingModelSwitch = undefined;
+	});
 	return true;
 }
 
