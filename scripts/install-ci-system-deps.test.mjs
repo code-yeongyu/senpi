@@ -41,7 +41,7 @@ function setup(failDownloads) {
 	const run = () =>
 		spawnSync("bash", [script, "qemu-user-static"], {
 			encoding: "utf8",
-			env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, APT_ETC_DIR: etc, CI_DEPS_RETRY_DELAYS: "20 60 120" },
+			env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, APT_ETC_DIR: etc },
 		});
 	const read = (name) => {
 		try {
@@ -58,7 +58,7 @@ test("#given DNS fails on the Azure mirror and the first two archive attempts #w
 	t.after(() => rmSync(env.dir, { recursive: true, force: true }));
 	const result = env.run();
 	assert.equal(result.status, 0, result.stdout + result.stderr);
-	assert.deepEqual(env.read("sleeps"), ["20", "60"]);
+	assert.deepEqual(env.read("sleeps"), ["30", "60"]);
 	assert.equal(env.read("updates")[0], "4");
 	assert.ok(env.read("apt.log").some((line) => line.includes("--no-download install -y qemu-user-static")));
 	assert.match(readFileSync(join(env.etc, "apt-mirrors.txt"), "utf8"), /^http:\/\/archive\.ubuntu\.com\/ubuntu\/$/m);
@@ -69,7 +69,7 @@ test("#given DNS stays down through every attempt #when deps install #then it st
 	t.after(() => rmSync(env.dir, { recursive: true, force: true }));
 	const result = env.run();
 	assert.equal(result.status, 100);
-	assert.deepEqual(env.read("sleeps"), ["20", "60", "120"]);
+	assert.deepEqual(env.read("sleeps"), ["30", "60", "120"]);
 	assert.equal(env.read("updates")[0], "5");
 	assert.match(result.stdout, /::error::APT transfer failed after 5 attempts/);
 	assert.ok(!env.read("apt.log").some((line) => line.includes("--no-download")));

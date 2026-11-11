@@ -4,7 +4,7 @@ set -euo pipefail
 apt_etc="${APT_ETC_DIR:-/etc/apt}"
 # Waits (seconds) before each retry after the archive.ubuntu.com fallback. A runner can lose DNS for
 # several minutes; one immediate retry fails inside the same outage, so the retries back off.
-retry_delays="${CI_DEPS_RETRY_DELAYS:-30 60 120}"
+retry_delays="30 60 120"
 
 # Bound the whole transfer, not just idle sockets: a slow mirror can keep making
 # progress for minutes. Download first so a timeout never interrupts dpkg.
