@@ -25,7 +25,7 @@ import {
 	getSession,
 	isIdleExpired,
 } from "./session-registry.ts";
-import { admitRestoredBinding } from "./session-restored-admission.ts";
+import { admitRestoredBinding, repeatableAdmission } from "./session-restored-admission.ts";
 import {
 	buildDeltaPromptBlocks,
 	configFingerprint,
@@ -96,8 +96,10 @@ async function createResidentAttempt(
 	const messages = sentMessages(input.context);
 	const hashes = sentMessageHashes(messages);
 	// Continuity and the delta are read from the settled previous turn, never from one still in flight.
-	const { binding, transcriptAvailable } = await admitSettledTurn(sessionId, input.streamOptions.signal, () =>
-		admitRestoredBinding(sessionId, auth.options.cwd, auth.authLane),
+	const { binding, transcriptAvailable } = await admitSettledTurn(
+		sessionId,
+		input.streamOptions.signal,
+		repeatableAdmission(sessionId, () => admitRestoredBinding(sessionId, auth.options.cwd, auth.authLane)),
 	);
 	const existing = getSession(sessionId);
 	const fingerprint = configFingerprint(auth.options, input.context, auth.authLane, auth.accountName);
