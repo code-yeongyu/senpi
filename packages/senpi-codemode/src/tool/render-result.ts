@@ -101,7 +101,7 @@ export function renderEvalResult(
 	}
 	const expanded = options.expanded || context.expanded;
 	const imageProtocol = context.imageProtocol ?? null;
-	component.syncLiveTicker(hasLiveCell(details), context.invalidate);
+	component.syncLiveTicker(hasLiveCell(details), context.invalidate, expanded ? "expanded" : "collapsed");
 	if (details?.cells !== undefined && details.cells.length > 0) {
 		const blocks: RenderBlock[] = [
 			{
