@@ -1,4 +1,7 @@
-import { mkdtempSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import * as nodeFs from "node:fs";
+import { existsSync, mkdtempSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -56,5 +59,83 @@ describe("a lock holder that lost its lock without learning it (senpi#6428)", ()
 		expect(first.lost()).toBe(true);
 		await second.release();
 		expect(() => statSync(lockDir)).toThrow();
+	});
+
+	it("#given a holder that was taken over #when its process exits without releasing #then its exit-time cleanup leaves the new holder's lock (review MEDIUM)", async () => {
+		const { file, lockDir, alias } = target();
+		const stale = 2_000;
+		const script = `
+			const { lockWithLossHandling } = await import(${JSON.stringify(new URL("../../src/core/file-lock.ts", import.meta.url).pathname)});
+			await lockWithLossHandling(${JSON.stringify(file)}, { realpath: false, stale: ${stale}, update: 60_000 });
+			process.stdout.write("held\\n");
+			process.stdin.once("data", () => process.exit(0));
+		`;
+		const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], {
+			stdio: ["pipe", "pipe", "inherit"],
+		});
+		await once(child.stdout, "data");
+		const old = new Date(Date.now() - 10 * stale);
+		utimesSync(lockDir, old, old);
+		const second = await lockWithLossHandling(alias("second"), {
+			realpath: false,
+			lockfilePath: lockDir,
+			stale,
+			update: 60_000,
+		});
+		const exited = once(child, "exit");
+		child.stdin.write("go\n");
+		await exited;
+		expect(statSync(lockDir).isDirectory()).toBe(true);
+		await second.release();
+	});
+
+	it("#given a takeover that is between mkdir and its own token #when the stale holder releases #then the new holder's lock survives (review LOW)", async () => {
+		const { file, lockDir, alias } = target();
+		const stale = 2_000;
+		const first = await lockWithLossHandling(file, { realpath: false, stale, update: 60_000 });
+		const old = new Date(Date.now() - 10 * stale);
+		utimesSync(lockDir, old, old);
+		let releaseFirst: () => void = () => {};
+		const firstReleasing = new Promise<void>((resolve) => {
+			releaseFirst = () => void first.release().then(resolve);
+		});
+		// The second holder's mkdir finishes, then the stale holder releases before the second writes its token.
+		const gatedFs = Object.assign(Object.create(nodeFs) as typeof nodeFs, {
+			mkdir: (dir: string, callback: (error: NodeJS.ErrnoException | null) => void) =>
+				nodeFs.mkdir(dir, (error) => {
+					// Only the mkdir that wins the takeover is held open; the first one fails with EEXIST.
+					if (error) {
+						callback(error);
+						return;
+					}
+					releaseFirst();
+					void firstReleasing.then(() => callback(null));
+				}),
+		});
+		const second = await lockWithLossHandling(alias("second"), {
+			realpath: false,
+			lockfilePath: lockDir,
+			stale,
+			update: 60_000,
+			fs: gatedFs,
+		} as never);
+		expect(statSync(lockDir).isDirectory()).toBe(true);
+		expect(first.lost()).toBe(true);
+		await second.release();
+	});
+
+	it("#given the token file cannot be read for a reason other than its absence #when the owner releases #then the lock directory is still removed (review LOW)", async () => {
+		const { file, lockDir } = target();
+		const failingFs = Object.assign(Object.create(nodeFs) as typeof nodeFs, {
+			readFile: (
+				_path: string,
+				_encoding: string,
+				callback: (error: NodeJS.ErrnoException | null, data?: string) => void,
+			) => callback(Object.assign(new Error("too many open files"), { code: "EMFILE" })),
+		});
+		const held = await lockWithLossHandling(file, { realpath: false, fs: failingFs } as never);
+		await held.release();
+		expect(existsSync(lockDir)).toBe(false);
+		expect(held.lost()).toBe(false);
 	});
 });

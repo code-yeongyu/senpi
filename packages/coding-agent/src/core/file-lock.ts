@@ -73,30 +73,73 @@ type LockFs = typeof nodeFs;
  * `<lock dir>.owner` right after acquiring, and its removal of the lock directory goes ahead only while that token is
  * still its own; otherwise it removes nothing and reports the lock as lost. The token lives BESIDE the directory so the
  * library's stale takeover (and plain lockSync users) can still remove an empty directory. Before the lock is held (the
- * library's own takeover of another holder's dead lock) removal is unchanged. The check-then-remove window that remains
- * is the few microseconds between reading the token and removing the directory, against the refresh interval before.
+ * library's own takeover of another holder's dead lock) the directory is removed as before, after its stale token. The
+ * exit-time removal (rmdirSync) is checked the same way. What remains is the few microseconds between reading the
+ * token and removing the directory, against up to one refresh interval before.
  */
 function ownerCheckedFs(
 	base: LockFs,
 	ownToken: () => string | undefined,
 	onForeign: (lockDir: string) => void,
 ): LockFs {
+	// The token file is ours, so a caller-supplied fs that lacks a method falls back to node:fs for it.
+	const tokenFs = {
+		readFile: base.readFile ?? nodeFs.readFile,
+		unlink: base.unlink ?? nodeFs.unlink,
+		readFileSync: base.readFileSync ?? nodeFs.readFileSync,
+		unlinkSync: base.unlinkSync ?? nodeFs.unlinkSync,
+	};
+	// Before this holder owns the lock (the library's takeover of a stale lock, or its cleanup of a failed acquire),
+	// removal stays plain, but the previous holder's token goes first: a stale holder that releases while this
+	// takeover is still between mkdir and the new token must find no token, not its own.
+	const verdict = (
+		lockDir: string,
+		token: string,
+		current: string | undefined,
+		readError: NodeJS.ErrnoException | null,
+	): "own" | "foreign" =>
+		readError?.code === "ENOENT" || (readError === null && current !== token) ? "foreign" : "own";
 	const rmdir = (lockDir: string, callback: (error: NodeJS.ErrnoException | null) => void): void => {
 		const token = ownToken();
 		if (token === undefined) {
-			base.rmdir(lockDir, callback);
+			tokenFs.unlink(`${lockDir}.owner`, () => base.rmdir(lockDir, callback));
 			return;
 		}
-		base.readFile(`${lockDir}.owner`, "utf8", (readError, current) => {
-			if (readError || current !== token) {
+		tokenFs.readFile(`${lockDir}.owner`, "utf8", (readError, current) => {
+			// Only a missing token or someone else's means the lock changed hands; any other read error keeps the
+			// pre-fix behavior (remove the directory) instead of leaving a dead lock behind for retries:0 callers.
+			if (verdict(lockDir, token, current, readError) === "foreign") {
 				onForeign(lockDir);
 				callback(null);
 				return;
 			}
-			base.unlink(`${lockDir}.owner`, () => base.rmdir(lockDir, callback));
+			tokenFs.unlink(`${lockDir}.owner`, () => base.rmdir(lockDir, callback));
 		});
 	};
-	return Object.assign(Object.create(base) as LockFs, { rmdir });
+	// The library also removes every lock it believes it holds when the process exits, synchronously.
+	const rmdirSync = (lockDir: string): void => {
+		const token = ownToken();
+		if (token !== undefined) {
+			let current: string | undefined;
+			let readError: NodeJS.ErrnoException | null = null;
+			try {
+				current = tokenFs.readFileSync(`${lockDir}.owner`, "utf8");
+			} catch (error) {
+				readError = error as NodeJS.ErrnoException;
+			}
+			if (verdict(lockDir, token, current, readError) === "foreign") {
+				onForeign(lockDir);
+				return;
+			}
+		}
+		try {
+			tokenFs.unlinkSync(`${lockDir}.owner`);
+		} catch {
+			// No token file: nothing to remove beside the directory.
+		}
+		base.rmdirSync(lockDir);
+	};
+	return Object.assign(Object.create(base) as LockFs, { rmdir, rmdirSync });
 }
 
 export async function lockWithLossHandling(path: string, options: FileLockOptions = {}): Promise<HeldFileLock> {
