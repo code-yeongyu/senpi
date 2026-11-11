@@ -1,3 +1,10 @@
+## 2026-11-11 - Claude account tests keep provider diagnostics and belong to one credential (desktop#6444, desktop#6445)
+
+- `accounts.ts`, `claude-cli-connection-test.ts` and `errors.ts`: persist the original provider message and HTTP status alongside the classification, using the existing secret redactor before storage. Timeout, cancellation and missing-result failures also retain a readable explanation.
+- `claude-cli-login-slots.ts`, `oauth-login.ts` and `claude-cli-account-test.ts`: bind automatic and manual check updates to the tested CLI directory, so a previous credential cannot mark a fresh sign-in failed. The login still awaits credential commit before starting its test.
+- `accounts.ts`: exclude a migrated legacy placeholder named `default` from every subscription listing while preserving a real CLI account with that name.
+- Regression coverage: `test/anthropic-subscription-connection-check.test.ts`, `test/anthropic-subscription-login.test.ts` and `test/anthropic-subscription-cli-slot-listing.test.ts`.
+
 ## 2026-11-10 - The one-shot cache pin reads the lifetime from loaded settings files (senpi#2988)
 
 ### What changed

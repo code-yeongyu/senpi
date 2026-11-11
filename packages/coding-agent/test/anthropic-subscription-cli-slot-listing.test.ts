@@ -113,6 +113,23 @@ describe("CLI-store slot listing", () => {
 		expect(account?.check).toEqual(check);
 	});
 
+	it("does not list a migrated legacy default, while keeping a real CLI account named default", async () => {
+		await storage.modify(PROVIDER, async () => ({
+			...emptyCredential(),
+			accounts: [{ ...CLI_SLOT, name: "default", signInRequired: "legacy_sign_in_retired" }, CLI_SLOT],
+		}));
+		expect((await getCredentialAccounts(storage, PROVIDER, {}, repository)).map((account) => account.name)).toEqual([
+			"work",
+		]);
+		await storage.modify(PROVIDER, async () => ({
+			...emptyCredential(),
+			accounts: [{ ...CLI_SLOT, name: "default" }],
+		}));
+		expect((await getCredentialAccounts(storage, PROVIDER, {}, repository)).map((account) => account.name)).toEqual([
+			"default",
+		]);
+	});
+
 	it("the summary of a CLI slot carries the store, sign-in time, profile and check", async () => {
 		const [account] = await getCredentialAccounts(storage, PROVIDER, {}, repository);
 

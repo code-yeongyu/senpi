@@ -76,13 +76,23 @@ function signOutSubscription(stored: unknown): { entry: unknown; changed: boolea
 	if (stored.accounts !== undefined && !isSlotList(stored.accounts)) {
 		return "the anthropic-subscription accounts are not account objects";
 	}
-	const accounts = stored.accounts ?? [];
+	const allAccounts = stored.accounts ?? [];
+	const accounts = allAccounts.filter(
+		(slot) =>
+			!(
+				slot.name === "default" &&
+				(slot.store !== "claude-cli" || slot.signInRequired === "legacy_sign_in_retired")
+			),
+	);
 	if (accounts.some((slot) => isRetiredLoginSlot(slot) && typeof slot.name !== "string")) {
 		return "an anthropic-subscription account has no name";
 	}
-	if (!accounts.some(isRetiredLoginSlot)) return { entry: stored, changed: false };
+	if (stored.accounts !== undefined && accounts.length === allAccounts.length && !accounts.some(isRetiredLoginSlot))
+		return { entry: stored, changed: false };
 	const signedOut = accounts.map((slot) => (isRetiredLoginSlot(slot) ? signedOutSlot(slot) : (slot as AccountSlot)));
-	return { entry: { ...stored, ...SENTINEL_OAUTH_FIELDS, accounts: signedOut }, changed: true };
+	const entry: Slot = { ...stored, ...SENTINEL_OAUTH_FIELDS, accounts: signedOut };
+	if (stored.pinned === "default" && !signedOut.some((slot) => slot.name === "default")) delete entry.pinned;
+	return { entry, changed: true };
 }
 
 function signOutAnthropic(stored: unknown): { entry: unknown; changed: boolean } | string {

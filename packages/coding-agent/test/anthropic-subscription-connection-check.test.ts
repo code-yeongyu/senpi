@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { runClaudeCliConnectionTest } from "../src/core/extensions/builtin/anthropic-subscription/claude-cli-connection-test.ts";
 import { withCheck } from "../src/core/extensions/builtin/anthropic-subscription/claude-cli-login-slots.ts";
 import { SENTINEL_OAUTH_FIELDS } from "../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
+import { signOutLegacyClaudeLogins } from "../src/core/anthropic-legacy-sign-out.ts";
 
 const { lane } = vi.hoisted(() => ({ lane: vi.fn() }));
 vi.mock("../src/core/extensions/builtin/anthropic-subscription/auth-lane.ts", () => ({
@@ -85,3 +86,33 @@ describe("Claude subscription account checks (desktop#6444)", () => {
 	});
 });
 
+describe("legacy default subscription cleanup (desktop#6445)", () => {
+	it("does not turn a flat legacy credential into a default account", () => {
+		const migrated = signOutLegacyClaudeLogins({
+			"anthropic-subscription": { type: "oauth", access: "dummy", refresh: "dummy", expires: 1 },
+		});
+
+		expect(migrated.migrated).toBe(true);
+		expect(migrated.data["anthropic-subscription"]?.accounts).toEqual([]);
+	});
+
+	it("drops an already migrated legacy default and its pin but keeps a real CLI account named default", () => {
+		const legacy = { ...old, name: "default", signInRequired: "legacy_sign_in_retired" as const };
+		const credential = {
+			type: "oauth" as const,
+			...SENTINEL_OAUTH_FIELDS,
+			pinned: "default",
+			accounts: [legacy, { ...old, name: "personal" }],
+		};
+
+		const migrated = signOutLegacyClaudeLogins({ "anthropic-subscription": credential });
+
+		expect(migrated.data["anthropic-subscription"]?.accounts).toEqual([credential.accounts[1]]);
+		expect(migrated.data["anthropic-subscription"]).not.toHaveProperty("pinned");
+		const real = { ...credential, accounts: [{ ...old, name: "default" }] };
+		expect(signOutLegacyClaudeLogins({ "anthropic-subscription": real }).data["anthropic-subscription"]).toEqual(
+			real,
+		);
+		expect(signOutLegacyClaudeLogins(migrated.data).migrated).toBe(false);
+	});
+});
