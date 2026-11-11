@@ -6,7 +6,7 @@
  * session after its own commit was fenced removes the staging folder it filled.
  */
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getDefaultSessionDir } from "../../src/core/session-manager.ts";
 import { importMovedSession } from "../../src/core/session-move/import.ts";
@@ -18,13 +18,15 @@ type World = Awaited<ReturnType<typeof setup>>;
 
 const cannotBeRemoved = vi.hoisted(() => new Set<string>());
 
-// A folder a test names here cannot be removed: what an import does when its cleanup fails.
+// A folder a test names here cannot be removed, nor anything in it: what an import does when its cleanup fails.
 vi.mock("node:fs/promises", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("node:fs/promises")>();
 	return {
 		...actual,
 		rm: async (...args: Parameters<typeof actual.rm>) => {
-			if (cannotBeRemoved.has(String(args[0]))) throw Object.assign(new Error("EBUSY: busy"), { code: "EBUSY" });
+			const path = String(args[0]);
+			if ([...cannotBeRemoved].some((folder) => path === folder || path.startsWith(`${folder}${sep}`)))
+				throw Object.assign(new Error("EBUSY: busy"), { code: "EBUSY" });
 			return actual.rm(...args);
 		},
 	};
@@ -223,5 +225,7 @@ describe("an import whose commit was fenced by another import's landing (senpi#6
 
 		expect(await importLate).toEqual({ sessionFile: landed.sessionFile });
 		expect(await world.ledger.answerStatus(MOVE, { movedIn: false })).toEqual({ state: "accepted" });
+		// What it staged is still there: the removal did fail, and the answer did not depend on it.
+		expect(existsSync(join(defaultFolder(world), ".move-staging", encodeURIComponent(MOVE)))).toBe(true);
 	});
 });
