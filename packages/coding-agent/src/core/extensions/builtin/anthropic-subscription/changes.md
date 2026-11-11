@@ -1,3 +1,53 @@
+## 2026-11-11 — Claude test failures keep provider diagnostics and credential ownership
+
+### What changed
+- `claude-cli-connection-test.ts` keeps the redacted original error and HTTP status, capped at `STORED_CHECK_MESSAGE_MAX_CHARS` after redaction without splitting a surrogate pair. A deadline or caller cancel that fired first still reports `timeout` / `cancelled`.
+- `errors.ts` exposes the provider-error text extraction and makes it total for null-prototype objects and Errors whose `message` is not a string.
+- `claude-cli-login-slots.ts`, `oauth-login.ts` and `claude-cli-account-test.ts` bind automatic and manual results to the tested CLI directory, and login progress includes the redacted provider response.
+- `accounts.ts` adds the optional `message` / `status` check fields.
+
+### Why
+- A bare classification such as `other` cannot explain a failure, and a result for a previous credential must not overwrite a fresh sign-in.
+
+### Why an extension could not handle it
+- The built-in subscription lane owns the SDK errors, the credential-directory identity and the login transaction.
+
+### Expected merge conflict zones
+- The connection-test result and catch paths, and the automatic and manual check updates. Keep classification codes, redaction and the directory comparison.
+
+## 2026-11-11 — Revert the Claude connection-test diagnostics from #6380
+
+### What changed
+- `accounts.ts`, `errors.ts`, `claude-cli-connection-test.ts`, `claude-cli-login-slots.ts`, `oauth-login.ts` and `claude-cli-account-test.ts` under `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/` are back to their state before #6380, with the tests #6380 added.
+
+### Why
+- #6380 is reverted as one unit so main is green. Its diagnostics and credential-directory binding come back in the re-land.
+
+### Why an extension could not handle it
+- This is a revert of the built-in subscription lane. No extension is involved.
+
+### Expected merge conflict zones
+- The connection-test result and catch paths, when #6380 is re-landed.
+
+## 2026-11-11 — Claude test failures preserve provider diagnostics and credential ownership
+
+### What changed
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/accounts.ts` adds optional check diagnostics and excludes migrated legacy default placeholders from stored subscription listings.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/errors.ts` exposes the existing provider-error text extraction and makes it total: a null-prototype object or an Error with a non-string `message` no longer throws out of the classifiers.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/claude-cli-connection-test.ts` redacts and retains original errors and HTTP status (the stored message capped at `STORED_CHECK_MESSAGE_MAX_CHARS` after redaction), including readable timeout and missing-result explanations; a deadline or caller cancel that fired before the SDK's own error still reports `timeout` / `cancelled`, as before.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/claude-cli-login-slots.ts`, `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/oauth-login.ts`, and `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/claude-cli-account-test.ts` bind automatic and manual results to the tested CLI directory; login progress includes the redacted provider response.
+- Regression tests cover bare API keys, OAuth access/refresh tokens, Bearer JWTs, and structured refresh tokens in thrown and result errors without printing credential values. Late results timestamped after a replacement sign-in are rejected by directory identity; results for the unchanged directory are still stored.
+- The commit-before-test login fixture inspects the actual stored account instead of importing a nonexistent normalizer.
+
+### Why
+- A classification such as `other` cannot explain a failure. A result for a previous credential must not overwrite a fresh sign-in. Login still awaits durable credential commit before testing.
+
+### Why an extension could not handle it
+- The built-in subscription lane owns SDK errors, credential-directory identity, and the login transaction. A UI extension cannot restore information after that lane discards it.
+
+### Expected merge conflict zones
+- Check metadata, the connection-test result/catch paths, and automatic/manual check updates. Preserve stable classification codes, secret redaction, and credential-directory comparisons.
+
 ## 2026-11-10 - The one-shot cache pin reads the lifetime from loaded settings files (senpi#2988)
 
 ### What changed
