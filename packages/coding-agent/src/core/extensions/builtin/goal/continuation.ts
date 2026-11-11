@@ -43,8 +43,9 @@ export type GoalContinuationInput = {
 	/** The last turn was rejected (or silently starved) by context size and recovery did not shrink it. */
 	readonly lastTurnStuckOnContextOverflow: boolean;
 	/**
-	 * The wake re-checks a provider that refused for a usage or rate limit. Waiting out a limit is not a stall, so it
-	 * spends neither the continuation cap nor the no-progress budget (senpi#4085).
+	 * The wake re-checks a provider that refused for a usage or rate limit, either on the armed provider retry or as
+	 * the first wake of a session opened in the middle of that wait. Waiting out a limit is not a stall, so it spends
+	 * neither the continuation cap nor the no-progress budget (senpi#4085).
 	 */
 	readonly limitWait?: boolean;
 };
@@ -119,7 +120,7 @@ export function evaluateGoalContinuation(input: GoalContinuationInput): GoalCont
 	if (input.continuationPending) return { kind: "deny", reason: "single-flight" };
 	if (hasRepeatedNormalizedOutputHash(input.recentNormalizedOutputHashes))
 		return { kind: "deny", reason: "repetition" };
-	const limitWait = input.path === "providerRecovery" && input.limitWait === true;
+	const limitWait = (input.path === "providerRecovery" || input.path === "sessionStart") && input.limitWait === true;
 	if (!limitWait && isNoProgressBudgetExhausted(input)) return { kind: "deny", reason: "no-progress" };
 	if (!limitWait && input.consecutiveContinuations >= GOAL_CONTINUATION_CAP) {
 		return { kind: "deny", reason: "cap" };

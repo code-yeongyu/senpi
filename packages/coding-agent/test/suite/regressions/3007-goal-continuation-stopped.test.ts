@@ -3,10 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { registerGoalCommand } from "../../../src/core/extensions/builtin/goal/command-registration.ts";
 import type { GoalContinuationInput } from "../../../src/core/extensions/builtin/goal/continuation.ts";
 import { goalLiveElapsedSeconds } from "../../../src/core/extensions/builtin/goal/elapsed-ticker.ts";
-import {
-	admitAndQueueGoalContinuation,
-	queueGoalContinuation,
-} from "../../../src/core/extensions/builtin/goal/lifecycle-helpers.ts";
+import { admitAndQueueGoalContinuation } from "../../../src/core/extensions/builtin/goal/lifecycle-helpers.ts";
+import { queueGoalContinuation } from "../../../src/core/extensions/builtin/goal/session-start-continuation.ts";
 import {
 	accountGoalUsage,
 	createGoal,

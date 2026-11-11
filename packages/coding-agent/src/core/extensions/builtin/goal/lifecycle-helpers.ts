@@ -22,7 +22,6 @@ import {
 	NO_PROGRESS_BLOCKED_REASON,
 	REPETITION_BLOCKED_REASON,
 } from "./continuation-recovery.ts";
-import { buildContinuationPrompt } from "./prompt.ts";
 import { recordContinuationDelivered, recordGoalContinuationStopped } from "./store.ts";
 import { goalStoreRef } from "./store-ref.ts";
 import { openTodoTaskContents } from "./todo-gate.ts";
@@ -36,11 +35,6 @@ export const GOAL_STALE_STOP_NOTICE =
 type GoalContinuationDeliveryOptions = {
 	readonly input: Omit<GoalContinuationInput, "goal">;
 	readonly content: (verdict: ContinuingGoalContinuationVerdict) => string;
-	readonly markContinuationPending: () => void;
-};
-
-export type SessionStartContinuationOptions = {
-	readonly continuationPending: boolean;
 	readonly markContinuationPending: () => void;
 };
 
@@ -102,42 +96,6 @@ export async function admitAndQueueGoalContinuation(
 	return recordedGoal;
 }
 
-/** Routes startup and resume continuations through the same verdict and delivery accounting as agent-end paths. */
-export async function queueGoalContinuation(
-	pi: ExtensionAPI,
-	ctx: ExtensionContext,
-	goal: Goal,
-	options: SessionStartContinuationOptions,
-): Promise<Goal | null> {
-	const signature = buildCurrentGoalContinuationSignature(
-		ctx,
-		goal,
-		lastAssistantTextFromEntries(ctx.sessionManager.getBranch()),
-	);
-	return admitAndQueueGoalContinuation(pi, ctx, goal, {
-		input: {
-			isIdle: ctx.isIdle(),
-			hasPendingMessages: ctx.hasPendingMessages(),
-			path: "sessionStart",
-			lastStopReason: undefined,
-			lastTurnWasMalformedToolUse: false,
-			consecutiveContinuations: goal.consecutiveContinuations ?? 0,
-			lastContinuationSignature: goal.lastContinuationSignature,
-			currentSignature: signature,
-			consecutiveLengthRecoveries: 0,
-			recentNormalizedOutputHashes: [],
-			toollessContinuationStreak: 0,
-			continuationPending: options.continuationPending,
-			lastTurnStuckOnContextOverflow: isLastTurnStuckOnContextOverflow(
-				ctx,
-				lastAssistantFromEntries(ctx.sessionManager.getBranch()),
-			),
-		},
-		content: () => buildContinuationPrompt(goal, { modelId: ctx.model?.id }),
-		markContinuationPending: options.markContinuationPending,
-	});
-}
-
 export function buildCurrentGoalContinuationSignature(
 	ctx: ExtensionContext,
 	goal: Goal,
@@ -155,21 +113,6 @@ export function lastAssistantText(messages: readonly AgentMessage[]): string {
 		if (message?.role === "assistant") return textContent(message);
 	}
 	return "";
-}
-
-function lastAssistantTextFromEntries(entries: readonly SessionEntry[]): string {
-	const assistant = lastAssistantFromEntries(entries);
-	return assistant === undefined ? "" : textContent(assistant);
-}
-
-function lastAssistantFromEntries(
-	entries: readonly SessionEntry[],
-): Extract<AgentMessage, { role: "assistant" }> | undefined {
-	for (let index = entries.length - 1; index >= 0; index--) {
-		const entry = entries[index];
-		if (entry?.type === "message" && entry.message.role === "assistant") return entry.message;
-	}
-	return undefined;
 }
 
 export function isLastTurnStuckOnContextOverflow(
