@@ -12,6 +12,44 @@
 
 ### Removed
 
+## [2026.11.10-3] - 2026-11-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Ultrafast pricing adapters and the selection warning now read one shared list of documented Ultrafast models ([#6323](https://github.com/code-yeongyu/senpi/pull/6323))
+
+### Removed
+
+## [2026.11.10-2] - 2026-11-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.10-1] - 2026-11-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.11.10] - 2026-11-10
 
 ### Breaking Changes

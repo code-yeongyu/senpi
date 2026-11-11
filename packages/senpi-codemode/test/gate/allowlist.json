@@ -1,6 +1,29 @@
 {
 	"version": 1,
 	"nodes": {
+		"senpi#6377": {
+			"additions": [
+				"legacyContracts/test/py-kernel-permissions.test.ts/Python permission interposition keeps private dependency urllib.parse.SplitResult",
+				"legacyContracts/test/py-kernel-permissions.test.ts/Python permission interposition keeps private dependency urllib.parse.SplitResult.path",
+				"legacyContracts/test/py-kernel-permissions.test.ts/Python permission interposition keeps private dependency urllib.parse.unquote_plus",
+				"legacyContracts/test/py-kernel-permissions.test.ts/Python permission interposition denied: sqlite3.connect %00 in a mode key",
+				"legacyContracts/test/py-kernel-permissions.test.ts/Python permission interposition denied: sqlite3.connect %00 in the path",
+				"legacyContracts/test/py-kernel-permissions.test.ts/Python permission interposition denied: sqlite3.connect memory and ro modes",
+				"legacyContracts/test/py-kernel-permissions.test.ts/Python permission interposition allowed: sqlite3.connect %00 in a mode key",
+				"legacyContracts/test/py-kernel-permissions.test.ts/Python permission interposition allowed: sqlite3.connect %00 in the path",
+				"legacyContracts/test/py-kernel-permissions.test.ts/Python permission interposition allowed: sqlite3.connect memory and ro modes",
+				"legacyContracts/test/py-kernel-permissions.test.ts/Python permission interposition inactive: sqlite3.connect %00 in a mode key",
+				"legacyContracts/test/py-kernel-permissions.test.ts/Python permission interposition inactive: sqlite3.connect %00 in the path",
+				"legacyContracts/test/py-kernel-permissions.test.ts/Python permission interposition inactive: sqlite3.connect memory and ro modes"
+			],
+			"reason": "senpi#6377 (Fixes #6376): the sqlite permission guard parses SQLite URIs itself (sqlite_uri.py) instead of reading urllib.parse helpers a cell can rebind. These are new contract cases in test/py-kernel-permissions.test.ts: three private-dependency rows (SplitResult, SplitResult.path, unquote_plus), and three short-named sqlite3.connect rows (a %00 inside a mode key, a %00 inside the path, memory plus ro modes) across the denied/allowed/inactive policies. No prompt cell moves and the baseline is unchanged."
+		},
+		"senpi#6334": {
+			"additions": [
+				"legacyContracts/test/js-kernel-host-registry-slot.test.ts/JavaScript kernel realm Given the host realm holds the redaction registry slot when a cell looks for it then the cell cannot see it"
+			],
+			"reason": "senpi#6334 (omo#12965 stopgap): the JavaScript kernel realm contract in test/js-kernel-host-registry-slot.test.ts pins that a cell cannot see the host realm's redaction registry slot. It is a new contract case and the only measured key this PR adds; no prompt cell moves and the baseline is unchanged."
+		},
 		"senpi#6259": {
 			"additions": [
 				"legacyContracts/test/eval-nested-tool-updates.test.ts/Given a cell that settles many nested tool calls without printing (#6257 review) When each call settles, then the live view holds only the newest settled call's output"
@@ -6088,6 +6111,14 @@
 				"legacyContracts/test/reachable-tools.test.ts/eval-exposed tools stay reachable from a cell keeps the kernel prelude of an eval-exposed tool while it is withheld"
 			],
 			"reason": "senpi#6276 (catch-up): #6276 kept eval-exposed tools reachable for agent(), output() and the kernel preludes, adding src/extension/reachable-tools.ts (loaded by the extension and the first kernel) and five contract cases (test/extension.test.ts, test/reachable-tools.test.ts) without listing them here, so codemode-gate failed on main from 749ae14d9b. This lists those 7 reviewed additions; the baseline is unchanged.",
+			"changes": []
+		},
+		"senpi#6391": {
+			"additions": [
+				"legacyContracts/test/6391-show-html-page-top-level-only.test.ts/senpi#6391: show_html_page from an eval cell is refused before it runs, with an error that tells the model to call it directly",
+				"legacyContracts/test/6391-show-html-page-top-level-only.test.ts/senpi#6391: show_html_page from an eval cell leaves other tools callable from a cell"
+			],
+			"reason": "senpi#6391 (catch-up for #6393): #6393 made eval refuse show_html_page from a cell (the desktop never renders a page shown from inside eval) and added two contract cases in test/6391-show-html-page-top-level-only.test.ts without listing them here, so codemode-gate failed on main from c330760b63. This lists those 2 reviewed additions; the baseline is unchanged.",
 			"changes": []
 		}
 	}

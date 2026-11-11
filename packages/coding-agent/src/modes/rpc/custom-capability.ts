@@ -70,6 +70,8 @@ export const DELEGATED_CONNECTION_CAPABILITY = "delegated_connection_v1";
 export const DELEGATION_ROLES_CAPABILITY = "delegation_roles_v1";
 /** A host-mode delegation may carry the forwarder-granted `peer_agent` role (senpi#6305). */
 export const PEER_AGENT_ROLE_CAPABILITY = "peer_agent_role_v1";
+/** A delegation may state `principal.sameAccount`, so that device's turns follow this host's own setting (senpi#6342). */
+export const SAME_ACCOUNT_DELEGATION_CAPABILITY = "same_account_delegation_v1";
 
 /**
  * Client opt-in (D11 S3-5): the connection renders the value-free `secret_input_notice` and `grant_select_notice` of a
@@ -129,6 +131,8 @@ export const AUTO_TITLE_PER_SESSION_CAPABILITY = "auto_title_per_session";
  * cwd, kind and context needs without opening a session. Advertised only by an in-process runtime.
  */
 export const WARM_CAPABILITY = "warm";
+/** HOST capability: invisible speculative sessions and single-use claim, in-process registries only. */
+export const PARK_CLAIM_CAPABILITY = "park_claim";
 
 /**
  * HOST capability: this host honors `open_session.durableSessionId`, so a caller that already

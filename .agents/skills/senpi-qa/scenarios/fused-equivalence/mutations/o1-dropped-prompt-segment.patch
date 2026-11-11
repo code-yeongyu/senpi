@@ -1,5 +1,5 @@
 diff --git a/packages/coding-agent/src/core/dynamic-prompt/intent-gate.ts b/packages/coding-agent/src/core/dynamic-prompt/intent-gate.ts
-index 8216ac9510..17dddc7f35 100644
+index a53cf74349..6a0fbabf5c 100644
 --- a/packages/coding-agent/src/core/dynamic-prompt/intent-gate.ts
 +++ b/packages/coding-agent/src/core/dynamic-prompt/intent-gate.ts
 @@ -41,7 +41,6 @@ Deliver the task at the scope asked - never quietly narrow, widen, or swap it. M
@@ -7,6 +7,6 @@ index 8216ac9510..17dddc7f35 100644
  	diet: `Route by true intent, not surface form:
  - Information ask (explain, look into, investigate): read code, report answer/findings; no edits, no fixes yet.
 -- Judgment ask (what do you think, review) / open-ended change (refactor, improve, clean up): assess, propose, wait for confirmation.
- - Change ask (implement, add, fix this error): build, or diagnose + minimal fix, exactly at asked scope = smallest path fully satisfying an open-ended goal; name ambiguity, resolve from context when possible.
+ - Change ask (implement, add, fix this error): build, or diagnose + fix at the cause, exactly at asked scope = what fully satisfies an open-ended goal, nothing beyond; name ambiguity, resolve from context when possible.
  
  Deliver at asked scope; never quietly narrow, widen, swap. Routine calls: decide yourself; ask only when readings diverge into materially different work.

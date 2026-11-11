@@ -1,3 +1,61 @@
+## 2026-11-10 - Keep offered MCP operations across proven OAuth refresh (senpi#2861)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/token-store.ts`: additive normalized scope and authorization proof fields, with the resolved store root.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-grant.ts`: token mapping, active grant binding, durable credential commitments, proof validation and epoch selection.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-provider.ts`: fresh acquisition context, selected resource capture and conservative SDK saves.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-refresh.ts`: extend an epoch only after a locked, successful refresh proves unchanged authorization.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth.ts`: mark real code and client-credentials acquisitions as fresh grants.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/catalog-identity.ts`: validate persisted provenance before excluding rotating token bytes; refuse token-only legacy OAuth cache adoption.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service-register.ts`: reconcile authentication before health renewal and recheck ownership between awaits.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/invocation.ts`: classify retired readiness rejection without masking live errors or cancellation.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/catalog-cache.ts`: collect every catalog page and metadata field through one captured client.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/catalog.ts`: capture one client for the tool collection.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/startup-race.ts`: abandon retired authentication and catalog work, including rejected shared catalog collection.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service-tools-changed.ts`: refuse publication and error reporting by retired notification passes.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/token-store.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-grant.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-provider.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-refresh.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth.ts`, and `packages/coding-agent/src/core/extensions/builtin/mcp/auth/catalog-identity.ts`: successful same-grant refresh rotated token bytes and therefore retired an already offered operation. Persisted scope and binding commitments distinguish that rotation from account replacement.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service-register.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/invocation.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/catalog-cache.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/catalog.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/startup-race.ts`, and `packages/coding-agent/src/core/extensions/builtin/mcp/service-tools-changed.ts`: retired asynchronous work must have no dispatch, catalog publication or error-reporting authority.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/token-store.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-grant.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-provider.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-refresh.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth.ts`, and `packages/coding-agent/src/core/extensions/builtin/mcp/auth/catalog-identity.ts`: the MCP builtin owns the locked OAuth write and credential identity used by private and shared connections.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service-register.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/invocation.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/catalog-cache.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/catalog.ts`, `packages/coding-agent/src/core/extensions/builtin/mcp/startup-race.ts`, and `packages/coding-agent/src/core/extensions/builtin/mcp/service-tools-changed.ts`: the builtin owns the captured invocation, client generations and catalog publication fences.
+
+### Expected merge conflict zones
+
+- LOW: additive record fields in `packages/coding-agent/src/core/extensions/builtin/mcp/auth/token-store.ts` and the fork-native helper `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-grant.ts`.
+- MEDIUM: token mapping and saves in `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-provider.ts`; refresh commit in `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-refresh.ts`; exchange boundaries in `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth.ts`; OAuth cache identity in `packages/coding-agent/src/core/extensions/builtin/mcp/auth/catalog-identity.ts`.
+- LOW: readiness ordering in `packages/coding-agent/src/core/extensions/builtin/mcp/service-register.ts` and rejection classification in `packages/coding-agent/src/core/extensions/builtin/mcp/invocation.ts`.
+- LOW: client captures in `packages/coding-agent/src/core/extensions/builtin/mcp/catalog-cache.ts` and `packages/coding-agent/src/core/extensions/builtin/mcp/catalog.ts`; retirement fences in `packages/coding-agent/src/core/extensions/builtin/mcp/startup-race.ts` and `packages/coding-agent/src/core/extensions/builtin/mcp/service-tools-changed.ts`.
+
+## 2026-11-10 - An authorizing OAuth flow reuses only a registration that names its redirect URI (senpi#6327)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/registered-redirect.ts` (new): `registrationForFlow()` hands an authorizing flow only a stored dynamic registration that names the flow's redirect URI, matched against the `redirectUrisSent` the client registered with (falling back to the server's echoed `redirect_uris` for older records; a registration with neither is kept). `withRegistration()` stores a new registration: an authorizing flow that would replace the signed-in client stages it in `pendingClientInfo` instead, and `withPromotedRegistration()` swaps it in, dropping the old client's refresh token, only in the write that stores the flow's exchanged tokens. `grantForFlow()` withholds the signed-in client's refresh token from a flow that uses a staged client.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/token-store.ts`: `McpClientRegistration` (`OAuthClientInformationFull` plus `redirectUrisSent`) and `McpStoredAuth.pendingClientInfo`.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-provider.ts`: `McpOAuthProviderOptions.requireRegisteredRedirect`; `clientInformation()`, `saveClientInformation()`, `tokens()` and `saveTokens()` go through the `registered-redirect.ts` helpers. `discoveryNamesItsServer()` moved unchanged to `oauth-issuer.ts`.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-issuer.ts`: now exports `discoveryNamesItsServer()` (moved from `oauth-provider.ts`, no behavior change).
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/context.ts`: `resolveServerAuth()` sets `requireRegisteredRedirect` exactly when the caller passes `redirectUrl` (`/mcp auth`, `auth-start`, `auth-complete`); background connects and refresh keep the signed-in registration.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/commands-auth.ts`: the `client_credentials` branch of `/mcp auth` builds its provider without a redirect URL, since that grant sends no authorize request.
+
+### Why
+
+- A dynamic registration is bound to its `redirect_uris`, and the provider handed the stored one to every flow. A background connect registers the placeholder `http://127.0.0.1:0/callback` and every `/mcp auth` binds a new loopback port, so the authorize request named a redirect URI the `client_id` never registered, and exact-matching authorization servers (django-oauth-toolkit, e.g. Readwise; Neon) answered `invalid_request: Mismatching Redirect URL` on every retry (code-yeongyu/oh-my-openagent#12963).
+- The SDK saves a new registration before it redirects to the authorize page, so replacing the signed-in client at that point would cost a working refresh token whenever a sign-in is abandoned; staging keeps it until the new grant exists. Matching the URI the client sent (not the server's echo) keeps a server that rewrites the echoed URI from hiding the registration it just made. `client_credentials` sends no authorize request, so gating its client by redirect URI only broke it.
+
+### Why an extension could not handle it
+
+- The dynamic registration and its reuse live in the MCP builtin's OAuth provider and token store, which the SDK reads directly during `auth()`; no extension hook sits between them.
+
+### Expected merge conflict zones
+
+- LOW: `clientInformation()`, `saveClientInformation()`, `tokens()` and `saveTokens()` in `auth/oauth-provider.ts`; the `McpOAuthProvider` construction in `resolveServerAuth()` in `auth/context.ts`; the `client_credentials` branch of `runAuth()` in `auth/commands-auth.ts`; the `McpStoredAuth` interface in `auth/token-store.ts`.
+
 ## 2026-11-09 - Hide the console window for MCP diagnostic commands on Windows (senpi#3965)
 
 ### What changed

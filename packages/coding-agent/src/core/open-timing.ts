@@ -1,4 +1,5 @@
 import { envValue } from "./brand.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 /**
  * Per-phase timing of a session open (senpi#5707), for naming the await that holds a slow open.
@@ -17,13 +18,19 @@ export interface OpenTimer {
 }
 
 const DISABLED: OpenTimer = { mark: () => {} };
+const speculative = new AsyncLocalStorage<boolean>();
+
+/** Speculative builds have no caller to charge; drop their timing rather than report a misleading open. */
+export function withoutOpenTiming<T>(build: () => T): T {
+	return speculative.run(true, build);
+}
 
 export function openTimingEnabled(): boolean {
 	return ENABLED;
 }
 
 export function startOpenTimer(scope: string): OpenTimer {
-	if (!ENABLED) return DISABLED;
+	if (!ENABLED || speculative.getStore()) return DISABLED;
 	let last = performance.now();
 	return {
 		mark(phase) {

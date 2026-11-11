@@ -1,5 +1,11 @@
 # Permission System Builtin Extension
 
+## 2026-11-10 - A tool-owned permission request keeps autoApproveAsk (senpi#6305)
+
+### What changed
+
+- `parsers.ts`: `toolOwnedPermissionRequests` passes a tool's `autoApproveAsk` through instead of dropping it, so a tool can ask the system to approve an `ask` decision for a call while `allow` and `deny` rules still match its request (an omo reply to the peer that messaged the run, oh-my-openagent#12954). `ToolPermissionRequest` (`core/extensions/types.ts`) declares the field.
+
 ## 2026-11-08 - The preset is read per decision through the core override (senpi#6206)
 
 ### What changed

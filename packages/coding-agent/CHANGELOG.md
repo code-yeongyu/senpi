@@ -12,6 +12,72 @@
 
 ### Removed
 
+## [2026.11.10-3] - 2026-11-10
+
+### Breaking Changes
+
+### Added
+
+- `contextFiles.globalPath` setting: load the global (user-scope) context file from an explicit file or directory (e.g. `~/.agents/AGENTS.md`) instead of the agent-dir probe; unset keeps the current behavior; the setting is read from global settings only (a project's `.senpi/settings.json` cannot set it), a relative path resolves against the agent dir, and a set-but-missing path falls back to the agent-dir file with one warning, under the same size limits ([#6197](https://github.com/code-yeongyu/senpi/pull/6197))
+- Provider hooks accept a `providers` declaration, and a hand can advertise its request and stream hooks and serve a hosted loop's request hooks (hosted model-key custody); not wired to any command yet ([#6278](https://github.com/code-yeongyu/senpi/pull/6278))
+
+### Changed
+
+- A session follows the permission setting of the machine it runs on. Work from a device of the same account, which the relay states as such, no longer asks for approval. One remote command no longer makes every later automatic turn on that session ask. Devices of another account still ask (senpi#6342).
+
+### Fixed
+
+- The footer now names the account actually serving the session when the pinned account is blocked, and marks the blocked pin with its unblock time ([#5983](https://github.com/code-yeongyu/senpi/issues/5983), [#6222](https://github.com/code-yeongyu/senpi/pull/6222))
+- Selecting a pinned Ultrafast variant (for example `gpt-6.1-sol-ultrafast:ultrafast`) no longer warns that Ultrafast is undocumented for it ([#6323](https://github.com/code-yeongyu/senpi/pull/6323))
+- Every copy of the engine loaded in one process now shares one registry of resolved config-reference values for redaction, provider error text is value-redacted in the `model_config_error` event, the assistant message and the transcript, every fallback-log field goes through redaction, and fallback log files from earlier versions are removed on first start ([#6334](https://github.com/code-yeongyu/senpi/pull/6334))
+- After a mid-session model switch, the status line no longer shows the previous model's token count against the new model's window: context usage falls back to the content estimate until the new model reports usage ([#6343](https://github.com/code-yeongyu/senpi/pull/6343))
+
+### Removed
+
+## [2026.11.10-2] - 2026-11-10
+
+### Breaking Changes
+
+### Added
+
+- In-process multi-session RPC hosts advertise `park_claim`: `park_session` prepares an invisible runtime for a cwd, kind and context, and `claim_session` opens it without rebuilding. Parks expire and never survive the host; unsupported options and missing parks return `claimed: false` for a normal open ([#6344](https://github.com/code-yeongyu/senpi/issues/6344)).
+
+### Changed
+
+- Fable 5.2 now opens its Scope structure paragraph with the prompting guide's codebase-ownership sentence instead of the smallest-change instruction. Every other preset keeps its existing wording ([#6360](https://github.com/code-yeongyu/senpi/pull/6360), fixes [#6356](https://github.com/code-yeongyu/senpi/issues/6356)).
+
+### Fixed
+
+- A refused non-delivery message on the engine-turn pause path is now recorded and dropped from context like any other transcript write failure, and a listener throwing after a successful custom-message write no longer settles the delivery as failed ([#6284](https://github.com/code-yeongyu/senpi/pull/6284))
+- Offered MCP tools remain callable across successful OAuth refreshes that prove the same grant, client, resource and granted scope. Authorization replacement still retires offers and consent; retired catalog work cannot publish stale metadata ([#6366](https://github.com/code-yeongyu/senpi/pull/6366), fixes [#2861](https://github.com/code-yeongyu/senpi/issues/2861)).
+- Stabilized command-hook timeout and cancellation tests with atomic PID publication and independent process-lifetime exit observation ([#6368](https://github.com/code-yeongyu/senpi/pull/6368)).
+
+### Removed
+
+## [2026.11.10-1] - 2026-11-10
+
+### Breaking Changes
+
+### Added
+
+- RPC: `read_project_file` and `write_project_file` let a client read and edit the session workspace's `AGENTS.md`, `CLAUDE.md` and `.omo/rules/**` files, with an etag precondition, a typed conflict and the project trust gate, so a remote client edits Rules the same way a local one does ([#6307](https://github.com/code-yeongyu/senpi/pull/6307), fixes #6297)
+
+### Changed
+
+- `generate_image` is eval-only, like `bash`: whenever the `eval` tool is available it leaves the model's direct tool list and is called as `tool.generate_image({ prompt: "..." })` inside an eval cell (`tool_schema("generate_image")` lists the parameters); without an eval tool it stays an ordinary direct tool. Behaviour, parameters and results are unchanged ([#6272](https://github.com/code-yeongyu/senpi/pull/6272), closes [#6269](https://github.com/code-yeongyu/senpi/issues/6269))
+
+### Fixed
+
+- The isolated CLI re-launch no longer replays a `node -e` caller's eval code in the child, so loading the CLI entry from eval runs the caller exactly once ([#6274](https://github.com/code-yeongyu/senpi/pull/6274))
+- A goal-continuation stop lost to a crash between the goal-state claim and the session append is re-appended once when the session reopens, instead of never reaching the session or RPC clients ([#6301](https://github.com/code-yeongyu/senpi/pull/6301))
+- `anthropic-subscription` sessions on windows under 575k (200k rows such as `claude-haiku-4-5`, legacy long-context ids after a 1M refusal, models.json rows declaring 200k) no longer loop between context-overflow compaction and `Prompt is too long`: Claude Code is handed the planned window plus its own output reserve, so it refuses a request only past the window senpi compacts against ([#6303](https://github.com/code-yeongyu/senpi/pull/6303))
+- A message another agent sends from a device of the same account now runs under the receiving session's own permission preset instead of stopping on an approval nobody can answer on an unattended host. Remote prompts and deliveries from any other kind of sender still ask (senpi#6305).
+- MCP OAuth no longer fails with `Mismatching Redirect URL` on authorization servers that match `redirect_uri` exactly: `/mcp auth` and `/mcp auth-start` register a client for the redirect URI they send instead of reusing one registered for the background placeholder (`127.0.0.1:0`) or an earlier loopback port. The signed-in client and its refresh token stay in use until the new sign-in completes, and `/mcp auth` with `flow: "client_credentials"` keeps using a stored registration ([#6328](https://github.com/code-yeongyu/senpi/pull/6328))
+- `show_html_page` no longer tells the model to open the page in the desktop. In an OmO desktop thread the result says the page was shown inline above the reply, plus the saved path. Elsewhere it says the page was written to the path and not displayed. The model no longer reports a failure for a page the reader saw, or refuses the tool in later turns ([#6331](https://github.com/code-yeongyu/senpi/pull/6331), fixes [#6273](https://github.com/code-yeongyu/senpi/issues/6273))
+- The one-shot prompt-cache pin now reads `FORCE_PROMPT_CACHING_5M` / `CLAUDE_CODE_PROMPT_CACHE_TTL` from the settings files a query loads, so its breakpoint matches the lifetime Claude Code actually uses ([#6333](https://github.com/code-yeongyu/senpi/pull/6333))
+
+### Removed
+
 ## [2026.11.10] - 2026-11-10
 
 ### Breaking Changes

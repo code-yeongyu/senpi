@@ -1,3 +1,22 @@
+## 2026-11-10 - One shared list of the models Ultrafast is documented for (senpi#2978)
+
+### What changed
+
+- `packages/ai/src/api/openai-responses-shared.ts`: new export `ULTRAFAST_DOCUMENTED_MODEL_IDS` (`gpt-6-astra`, `gpt-6.1-sol`), the single list of the models Ultrafast is documented for.
+- `packages/ai/src/api/openai-responses.ts` and `packages/ai/src/api/openai-codex-responses.ts`: `getServiceTierCostMultiplier` reads the shared list instead of its own `["gpt-6-astra", "gpt-6.1-sol"]` literal. The multipliers are unchanged (6x Standard on the API, 8x of a ChatGPT plan's included usage).
+
+### Why
+
+- The same model set lived in three places (both adapters plus the selection warning in coding-agent), so the next Ultrafast model needed three matching edits (senpi#2978 item 2).
+
+### Why an extension could not handle it
+
+- Service-tier pricing is computed inside the wire adapters from the model and tier; no extension API owns the multiplier table.
+
+### Expected merge conflict zones
+
+- LOW: the `case "ultrafast"` line in each adapter's `getServiceTierCostMultiplier` only.
+
 ## 2026-11-09 - OpenAI Responses `long` retention sends `prompt_cache_options.ttl: "12h"` (senpi#6292, closes #6290)
 
 ### What changed

@@ -17,6 +17,8 @@ export interface ActiveFallbackState {
 	pinned: boolean;
 	/** The original provider's login id when the episode began; a sign-in moves it and releases a billing pin (senpi#4099). */
 	recoveryRevision?: string;
+	/** Wall-clock reset the usage limit behind a billing pin stated; the pin releases once it passes (senpi#4085). */
+	pinnedUntil?: number;
 }
 
 export type FallbackReason = "transient" | "refusal" | "hard-error" | "billing";

@@ -1,3 +1,191 @@
+## 2026-11-10 - A turn follows the permission setting of the machine it runs on; no origin outlives its turn (senpi#6342)
+
+### What changed
+
+- `turn-origin.ts`: the session-wide `delegated_origin` marker is gone, both the write and the scan. A turn's origin lasts for that turn only.
+  - A cross-account device's record that can act on the session marks only the next run it starts, once (`noteDelegatedRun`).
+  - An engine-started turn after it runs on the host setting.
+  - The `peer` origin is removed.
+
+- `agent-session.ts`: a custom message that a cross-account record's own handling sends carries that origin wherever it waits (joining a streaming run, parked behind a compaction, held for the next turn), so the turn it opens still asks.
+- `agent-session.ts`: only a retry or overflow-recovery run keeps the origin of the turn it continues (other continuations, such as queued follow-ups, open their own turn) (`noteTurnContinuation`/`endTurnContinuation` in `turn-origin.ts`), so a cross-account turn still asks after an automatic retry.
+
+### Why
+
+A session follows the permission setting of the machine it runs on. One remote command used to mark the whole session, so every later automatic turn asked. A retried run must still keep the origin of the turn it repeats.
+
+### Why an extension could not handle it
+
+Turn origin is decided inside the core permission path, at `agent_start` and in the retry loop. No extension hook runs there.
+
+### Expected merge conflict zones
+
+- `agent-session.ts`: the `turn-origin.ts` import and `runBoundedRetryContinuation` in the scheduled-continuation path.
+- `turn-origin.ts`: the whole module is rewritten.
+
+## 2026-11-10 - Context usage falls back to the content estimate after a model switch (senpi#6343)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_measureContextTokens()` now treats a `model_change` entry after the last reported usage like the existing compaction and context-edit boundaries — it returns the per-message content estimate (`reported: false`) instead of the previous model's reported token count, until the new model reports usage. New private helper `_isUsageStaleAfterModelChange()` scans the branch for a usable assistant usage after the latest `model_change` entry, mirroring the post-compaction scan in the same function.
+
+### Why
+
+- After a mid-session model switch, the status line kept showing the previous model's token count against the new model's window (oh-my-openagent#11684: Claude's last turn reported 304,057 tokens, shown as 304K/500K — 60.8% — against GPT's window, whose own first turn was ~172K). Each model's per-turn values are consistent; only the cross-switch figure is wrong, because `_measureContextTokens()` took the last reported usage with no notion of which model produced it. The content estimate is the behavior the issue's expected outcome allows ("re-estimated for the new model"), and it is what the code already shows whenever no usage exists.
+
+### Why an extension could not handle it
+
+- The reported-usage accounting lives in the session core (`AgentSession._measureContextTokens()`), which the footer and the compaction thresholds read directly; no extension hook sits between the last reported usage and the displayed figure.
+
+### Expected merge conflict zones
+
+- LOW: `_measureContextTokens()` and the new `_isUsageStaleAfterModelChange()` in `core/agent-session.ts`; the compaction early-return block directly above the change is untouched.
+
+## 2026-11-10 - Resolved-value redaction registry shared across module copies (senpi#6334)
+
+### What changed
+
+- `packages/coding-agent/src/core/config-reference-redaction.ts`: the values config references resolve to live in one registry per JavaScript realm instead of a module-local set. The first copy of the module pins a frozen `{ version: 1, add, size, values }` object on `globalThis[Symbol.for("@code-yeongyu/senpi/config-reference-redaction/v1")]` (non-writable, non-configurable, non-enumerable); the backing `Set` stays in that copy's closure, `size` is an accessor, and there is no delete, clear or setter. A later copy adopts the slot only when it is pinned that way, frozen and carries the v1 members; anything else makes the import throw `ConfigReferenceRedactionSlotError` (`code: SENPI_REDACTION_SLOT_INCOMPATIBLE`). `add` keeps strings of 4 to 65,536 characters. Each copy keys its encoded-forms cache on the registry size. The module doc records the permanent compatibility contract for the key and the v1 members.
+- `packages/coding-agent/src/core/assistant-error-redaction.ts` (new): `redactAssistantErrorText(event)` value-redacts an assistant message's `errorMessage`, in place, on `message_start`, `message_update` (and the update's partial or final message) and `message_end`.
+- `packages/coding-agent/src/core/agent-session.ts`: `_handleAgentEvent` calls `redactAssistantErrorText` first, before any listener, the transcript or agent state reads the message.
+- `packages/coding-agent/src/core/retry-fallback/model-config-error.ts`: the `model_config_error` event's `errorExcerpt` and its log line carry `redactSecrets` output.
+- `packages/coding-agent/src/core/retry-fallback/log.ts`: bigint, symbol and function leaves and nested object keys go through `safeText`; the serialized line gets a `redactSensitiveTokenValues` backstop pass; the first fallback logger created on an agent dir removes `logs/fallback.log` and `logs/fallback.log.1` once and writes the marker `logs/.fallback-log-v2`. The removal runs through `node:fs/promises` off the session-start path: lines logged while it runs are redacted, queued (at most 256, newest kept, drops counted) and written in order afterwards, a failed removal still flushes them and logs one `retire_generations_failed` warning, and the logger exposes `settled()`.
+
+### Why
+
+- One process can evaluate this module more than once (the bundle's shared chunk, its self-contained `session-worker` entry and the SDK graph an in-process child loads). With a module-local set, a sink in one copy did not redact values another copy resolved (code-yeongyu/oh-my-openagent#12965). The same provider error text also reached the `model_config_error` event, the assistant message and the transcript without the value pass, and symbol, bigint and function leaves skipped `safeText`. Log generations written before this change are removed once. This is the stopgap; the single-instance fix is tracked in code-yeongyu/oh-my-openagent#12965.
+
+### Why an extension could not handle it
+
+- The registry, the session's message events and the fallback log are engine internals that run before any extension sees the text.
+
+### Expected merge conflict zones
+
+- LOW: the top of `config-reference-redaction.ts` (registry slot), the first statement of `_handleAgentEvent` and one import in `agent-session.ts`, `createFallbackLogger` / `writeLine` / `serializeValue` in `retry-fallback/log.ts`, one line in `model-config-error.ts`.
+
+## 2026-11-10 - The Ultrafast selection warning is keyed on the upstream model (senpi#2978)
+
+### What changed
+
+- `packages/coding-agent/src/core/ultrafast-lanes.ts`: `ultrafastSelectionWarning` checks `model.upstreamModelId ?? model.id` against `ULTRAFAST_DOCUMENTED_MODEL_IDS` (now imported from `@earendil-works/pi-ai`) instead of checking the catalog id only. Selecting a tier-pinned row such as `chatgpt-subscription/gpt-6.1-sol-ultrafast:ultrafast` no longer warns; an actually undocumented model still warns with the same message.
+
+### Why
+
+- A tier-pinned row's catalog id (`gpt-6.1-sol-ultrafast`) is not the documented model id, so the warning fired for models that are documented (senpi#2978 item 1). The pricing code already resolves through `upstreamModelId`.
+
+### Why an extension could not handle it
+
+- Model-pattern resolution and its diagnostics live in core (`model-resolver.ts` calls this warning); no extension API owns the documented-model check.
+
+### Expected merge conflict zones
+
+- LOW: the documented-model check inside `ultrafastSelectionWarning` only.
+
+## 2026-11-09 - Hand hook advertisement and the request-hook contract (custody CK21, senpi#6278)
+
+### What changed
+
+- `packages/coding-agent/src/core/hand/hook-contract.ts` (new): `HookRequestInput`, the pinned shape of `HookModelRequestInput` (`{ payload, model? }`: the fused `before_provider_request` input without the request headers or the model's `headers`); `hookRequestInputOf`, `hookRequestInputForCall` (none for an aux call), `parseHookRequestInput` (closed envelope), `serveHookModelRequest` (placement claim first, then the input, then the hooks) and `loopHookRequestHooks` over a hand's loop-hook runner, whose result carries the hooks' failures (`errors`) and the messages and notices they sent (`sent`, `notices`, `droppedLate`) with the `output`, as every loop-hook reply does.
+- `packages/coding-agent/src/core/egress/wire.ts`: `HookModelRequestReply` gains the optional `errors` (`HookFailure`: `extensionPath`, `event`, `error`), `sent`, `notices` and `droppedLate`, so a user hook's failure on the hand reaches the hosted side instead of disappearing.
+- `packages/coding-agent/src/core/hand/hook-advertise.ts` (new): `handHookAccess` (request and stream hooks of the user's extensions from their `providers` declarations, `"*"` for any undeclared one), `computeAdvertHash` (`sha256:` over the canonical JSON of the extension set hash, cwd and project-local hook set), and `createHandHookLink`, which sends every bound session's `hand.session.advertise` first on each (re)connect and refuses a `hook.model_request` its session's advertisement on that connection did not precede. Only that check and the reply's send are ordered on the link; each request's hooks run concurrently outside it, so a slow hook holds back no other session's reply and no reconnect's advertisements, and a reply whose connection was replaced meanwhile is not sent.
+
+### Why
+
+Row CK21 of hosted model-key custody (#5849): the brain needs the device's hook view before it dispatches a hooked call, and the hook input must be exactly what a fused session's hooks see.
+
+### Why an extension could not handle it
+
+The advertisement and the hook contract are part of the custody wire between a hosted brain and the device, below every extension.
+
+### Expected merge conflict zones
+
+- None: both files are new and fork-only.
+
+## 2026-11-08 - `contextFiles.globalPath` relocates the global context file (senpi#5567)
+
+### What changed
+
+- `packages/coding-agent/src/core/context-files.ts`: `ContextFileLimits` gains the additive optional `globalPath`. New `loadGlobalContextFile(agentDir, globalPath)` replaces the direct agent-dir probe for the user-scope entry: a blank/unset path keeps the agent-dir probe; a file path (leading `~` expanded, relative resolved against the agent dir like other paths in global settings) is read directly; a directory runs the same `AGENTS.override.md`/`AGENTS.md`/`AGENTS.MD`/`CLAUDE.md`/`CLAUDE.MD` candidate probe; a set-but-missing, unreadable, special-file, or candidate-less target falls back to the agent-dir probe and adds one warning naming the configured path to the returned diagnostics (no `console.error`). The loaded entry keeps `scope: "user"`; `seenPaths` now keys every loaded file by its real path (`pathKey`, renamed from `directoryKey`), so an ancestor `AGENTS.md` that symlinks to the global file loads once; the untouched `applyContextFileLimits` budget applies identically.
+- `packages/coding-agent/src/core/settings-manager.ts`: new `getGlobalContextFilePath()` reads `contextFiles.globalPath` from session overrides, then global settings, never the project layer.
+- `packages/coding-agent/src/core/resource-loader.ts`: the context-file load passes `globalPath` from `getGlobalContextFilePath()` instead of the merged settings, so a project's `.senpi/settings.json` cannot redirect the user's global instructions.
+- `packages/coding-agent/docs/settings.md`: `contextFiles.globalPath` table row. `packages/coding-agent/docs/usage.md`: Context Files bullet notes the override.
+
+### Why
+
+- Users whose standing instructions live outside the agent dir (e.g. `~/.agents/AGENTS.md`, shared across several agent CLIs) had to symlink or duplicate the file into `~/.senpi/agent`; the request asks for a configured path instead (senpi#5567).
+
+### Why an extension could not handle it
+
+- Context-file discovery is core startup loading consumed by the system-prompt builder before any extension event fires; an extension could only re-read and re-inject prompt text, not relocate the scoped user file the loader dedupes and budgets.
+
+### Expected merge conflict zones
+
+- LOW: `context-files.ts` `ContextFileLimits`, the new `loadGlobalContextFile`, `pathKey` (renamed from `directoryKey`), and `loadProjectContextFiles`'s global entry, ancestor dedupe, and return (fork-only file; `loadContextFileFromDir` itself is unchanged).
+- LOW: `settings-manager.ts` (`getGlobalContextFilePath` after `getProjectSettings`) and `resource-loader.ts` (the `loadProjectContextFiles` call).
+
+## 2026-11-10 - Promote a speculative in-memory session without rebuilding it (senpi#6344)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: `enablePersistence()` allocates the existing in-memory session's default file asynchronously, preserving its identity and buffered transcript.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `persistSession()` promotes that manager and acquires the existing runtime file hold.
+- `packages/coding-agent/src/core/open-timing.ts`: `withoutOpenTiming()` drops speculative build timing across its asynchronous construction scope.
+
+### Why
+
+- A parked runtime must hold no session-list file or file lease until a caller claims it. Rebuilding to gain persistence would defeat the claim's purpose. A crash before claim leaves no durable transcript to restore.
+- `packages/coding-agent/src/core/session-manager.ts` preserves the buffered identity and entries; `packages/coding-agent/src/core/agent-session-runtime.ts` acquires the same file hold as ordinary construction; `packages/coding-agent/src/core/open-timing.ts` prevents unclaimed builds from being charged to a caller.
+
+### Why an extension could not handle it
+
+- Persistence and writer registration belong to `packages/coding-agent/src/core/session-manager.ts`; the file hold belongs to `packages/coding-agent/src/core/agent-session-runtime.ts`; construction timing belongs to `packages/coding-agent/src/core/open-timing.ts`.
+
+### Expected merge conflict zones
+
+- LOW: the persistence accessor area in `packages/coding-agent/src/core/session-manager.ts`, the file-hold methods in `packages/coding-agent/src/core/agent-session-runtime.ts`, and timer creation in `packages/coding-agent/src/core/open-timing.ts`.
+
+## 2026-11-09 - Refused engine-turn messages follow the transcript-failure contract (senpi#2972)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_recordRefusedEngineTurnMessage` now applies the main persistence path's contract to every refused message, not just deliveries — the message leaves `agent.state.messages` so the context matches the file, the failure is recorded via `TranscriptWriteFailures.record`, logged as `transcript_write_failed`, and emitted as a `transcript_write_failed` event. `_appendCustomMessage` only treats a failure of the write itself (`appendCustomMessageEntry`) as refused: bookkeeping (written ticket, persist-watcher settlement, revision) runs before any notification, and each of the `entry_appended` / `message_start` / `message_end` notifications is guarded on its own and logged as `custom_message_listener_failed` when it throws, so a throwing listener can neither leave a persisted delivery unsettled nor suppress a later notification (senpi#2972).
+
+### Why
+
+- A refused non-delivery message on the engine-turn pause path stayed in context with no failure record, so the context diverged from the file; and a listener throwing after a successful write made a cross-session delivery already on disk get taken out of context and settled as failed, so its sender redelivered a message that was already there (senpi#2972).
+
+### Why an extension could not handle it
+
+- The pause path and the custom-message append live in the session core (`AgentSession`); no extension hook runs between the file write and the refused/delivered settlement.
+
+### Expected merge conflict zones
+
+- LOW: the catch block of `_recordRefusedEngineTurnMessage` and the post-write tail of `_appendCustomMessage`.
+
+## 2026-11-10 - A relayed peer-agent delivery runs under the receiving session's own preset (senpi#6305)
+
+### What changed
+
+- `turn-origin.ts`: a fourth turn origin, `peer`, for a turn opened by an agent's relayed delivery on a delegated connection whose host-mode delegation the forwarder granted `peer_agent`. `decidingTurnIsDelegated` is false for it, so the permission decision treats the turn as the session's own work (a client-named preset, a live parent, the host default) and never runs it above that preset.
+
+## 2026-11-09 - generate_image joins the eval-only policy (senpi#6272, closes #6269)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `evalHelperCall` renders `tool.generate_image({ prompt: "..." })` for `generate_image`, so the eval-only paragraph of the system prompt, the redirect hint a direct call gets, and the `tool_search` answer for a query naming the tool all show the real argument instead of the generic `{ ... }` sample.
+
+### Why
+
+- `generate_image` now declares `exposure: "eval"` (imagegen `changes.md`, this PR). The policy machinery already handled declared eval tools; only the sample call was generic.
+
+### Why an extension could not handle it
+
+- The sample-call table is private to `AgentSession`'s prompt rebuild and hint publication; an extension cannot reach it.
+
+### Expected merge conflict zones
+
+- LOW: the one added line in `evalHelperCall`.
+
 ## 2026-11-10 - Fable 5.2 default fallback chain (senpi#3893)
 
 ### What changed
