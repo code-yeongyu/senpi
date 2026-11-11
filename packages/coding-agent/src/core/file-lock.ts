@@ -18,7 +18,7 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 import * as nodeFs from "node:fs";
-import { basename } from "node:path";
+import { basename, resolve } from "node:path";
 import lockfile from "proper-lockfile";
 import { appendDebugLogEntry } from "./hidden-stdout-log.ts";
 
@@ -139,7 +139,12 @@ function ownerCheckedFs(
 		}
 		base.rmdirSync(lockDir);
 	};
-	return Object.assign(Object.create(base) as LockFs, { rmdir, rmdirSync });
+	// A plain object, never a prototype write: under Bun the node:fs module namespace is frozen, and an object built on
+	// it with Object.create cannot take an own rmdir (TypeError, readonly property). A spread would drop inherited methods.
+	// Every method the caller's fs offers, own or inherited (for...in), copied onto a fresh object.
+	const copy: Record<string, unknown> = {};
+	for (const key in base) copy[key] = (base as unknown as Record<string, unknown>)[key];
+	return Object.assign(copy, { rmdir, rmdirSync }) as unknown as LockFs;
 }
 
 export async function lockWithLossHandling(path: string, options: FileLockOptions = {}): Promise<HeldFileLock> {
@@ -147,6 +152,8 @@ export async function lockWithLossHandling(path: string, options: FileLockOption
 	let released = false;
 	let lostError: Error | undefined;
 	let ownerToken: string | undefined;
+	// The library's own default is graceful-fs (its retry-on-EMFILE wrapper). Passing an fs replaces that default, so
+	// the lock calls (mkdir, stat, utimes, rmdir: one each per acquire, refresh or release) now use node:fs directly.
 	const baseFs = (lockOptions as { fs?: LockFs }).fs ?? nodeFs;
 	const releaseLock = await lockfile.lock(path, {
 		...lockOptions,
@@ -186,14 +193,17 @@ export async function lockWithLossHandling(path: string, options: FileLockOption
 			}
 		},
 	});
-	const lockDir =
-		lockOptions.lockfilePath ?? `${lockOptions.realpath === false ? path : baseFs.realpathSync(path)}.lock`;
-	const token = randomBytes(16).toString("hex");
 	try {
+		// The same directory the library locked: an explicit lockfilePath as given, else <file>.lock where the file is
+		// path.resolve(path), canonicalised through realpath unless realpath is false.
+		const lockDir =
+			lockOptions.lockfilePath ??
+			`${lockOptions.realpath === false ? resolve(path) : baseFs.realpathSync(path)}.lock`;
+		const token = randomBytes(16).toString("hex");
 		baseFs.writeFileSync(`${lockDir}.owner`, token, { mode: 0o600 });
 		ownerToken = token;
 	} catch {
-		// No token means release falls back to the library's plain removal: never worse than before.
+		// No token: release falls back to the library's plain removal, never worse than before.
 	}
 	return {
 		release: async () => {
