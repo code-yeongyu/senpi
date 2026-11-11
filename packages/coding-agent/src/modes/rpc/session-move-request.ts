@@ -67,7 +67,9 @@ function parseStatusFile(raw: Record<string, unknown>): StatusNamedFile | undefi
 	if (sessionPath !== undefined) return "status takes sessionPath or landing, not both.";
 	if (typeof landing !== "object" || landing === null || Array.isArray(landing))
 		return "landing must be an object: cwd, sessionFileName and, if the import named one, sessionDir.";
-	const { cwd, sessionFileName, sessionDir } = landing as Readonly<Record<string, unknown>>;
+	const cwd = "cwd" in landing ? landing.cwd : undefined;
+	const sessionFileName = "sessionFileName" in landing ? landing.sessionFileName : undefined;
+	const sessionDir = "sessionDir" in landing ? landing.sessionDir : undefined;
 	if (!text(cwd) || !isAbsolute(cwd)) return "landing.cwd must be the absolute folder the import was given.";
 	if (!isSessionFileName(sessionFileName))
 		return "landing.sessionFileName must be the session's plain file name, as the bundle's manifest names it.";
