@@ -6103,6 +6103,39 @@
 			],
 			"reason": "senpi#6391 (catch-up for #6393): #6393 made eval refuse show_html_page from a cell (the desktop never renders a page shown from inside eval) and added two contract cases in test/6391-show-html-page-top-level-only.test.ts without listing them here, so codemode-gate failed on main from c330760b63. This lists those 2 reviewed additions; the baseline is unchanged.",
 			"changes": []
+		},
+		"senpi#6422": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/kernels/shared/cell-authority-registry.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/cell-authority-registry.ts",
+				"imports/extension/packages/realm-registry/dist/index.js",
+				"imports/firstKernel/packages/realm-registry/dist/index.js",
+				"legacyContracts/test/js-kernel-host-registry-slot.test.ts/JavaScript kernel realm Given the host realm holds every engine registry when a cell looks for them then the cell sees none",
+				"legacyContracts/test/kernel-permission-foreign-payload.test.ts/codemode cell authority handed back by another version's registry (omo#12965) reads a session whose handle it cannot read as dead (x12965-no-functions)",
+				"legacyContracts/test/kernel-permission-foreign-payload.test.ts/codemode cell authority handed back by another version's registry (omo#12965) reads a session whose handle it cannot read as dead (x12965-pending-not-a-promise)",
+				"legacyContracts/test/kernel-permission-foreign-payload.test.ts/codemode cell authority handed back by another version's registry (omo#12965) reads a session whose handle it cannot read as dead (x12965-dead-not-a-boolean)",
+				"legacyContracts/test/kernel-permission-foreign-payload.test.ts/codemode cell authority handed back by another version's registry (omo#12965) reads a session whose handle it can read as that handle reports it",
+				"legacyContracts/test/kernel-permission-foreign-payload.test.ts/codemode cell authority handed back by another version's registry (omo#12965) refuses a cross-session kernel tool when the invoker's snapshots cannot be read",
+				"legacyContracts/test/kernel-permission-foreign-payload.test.ts/codemode cell authority handed back by another version's registry (omo#12965) still serves the owner's own session without reading another session's state",
+				"legacyContracts/test/kernel-permission-two-copies.test.ts/codemode cross-session permission state across two copies (omo#12965) refuses a cross-session kernel tool whose invoker registered its deny rules through another copy",
+				"legacyContracts/test/kernel-permission-two-copies.test.ts/codemode cross-session permission state across two copies (omo#12965) admits a cross-session kernel tool whose invoker another copy registered without deny rules",
+				"legacyContracts/test/kernel-permission-two-copies.test.ts/codemode cross-session permission state across two copies (omo#12965) revokes and retires a session's kernels that another copy registered",
+				"legacyContracts/test/kernel-permission-two-copies.test.ts/codemode cross-session permission state across two copies (omo#12965) refuses a cross-session kernel tool when the invoker's registered state cannot be read, with no hook",
+				"legacyContracts/test/kernel-permission-two-copies.test.ts/codemode cross-session permission state across two copies (omo#12965) refuses a cross-session kernel tool when the invoker's registered state cannot be read, when the hook answers",
+				"legacyContracts/test/kernel-permission-two-copies.test.ts/codemode cross-session permission state across two copies (omo#12965) refuses to register a kernel it could not revoke",
+				"legacyContracts/test/kernel-permission-two-copies.test.ts/codemode cross-session permission state across two copies (omo#12965) refuses to register a kernel it could not retire",
+				"legacyContracts/test/kernel-permission-two-copies.test.ts/codemode cross-session permission state across two copies (omo#12965) revokes and retires every kernel of a session when one of them throws in revoke, and leaves the session dead",
+				"legacyContracts/test/kernel-permission-two-copies.test.ts/codemode cross-session permission state across two copies (omo#12965) revokes and retires every kernel of a session when one of them throws in retire, and leaves the session dead",
+				"legacyContracts/test/kernel-permission-two-copies.test.ts/codemode cross-session permission state across two copies (omo#12965) shows a session another copy marked dead to a kernel that binds to it",
+				"legacyContracts/test/kernel-permission-two-copies.test.ts/which session answers for a cross-session invoker (omo#12965) takes the hook's answer over a registered kernel that enforces",
+				"legacyContracts/test/kernel-permission-two-copies.test.ts/which session answers for a cross-session invoker (omo#12965) leaves the answer to the registered kernels when the hook returns null",
+				"legacyContracts/test/kernel-permission-two-copies.test.ts/which session answers for a cross-session invoker (omo#12965) leaves the answer to the registered kernels when the hook returns undefined",
+				"legacyContracts/test/kernel-permission-two-copies.test.ts/which session answers for a cross-session invoker (omo#12965) lets an enforcing kernel win over one registered before it that does not enforce",
+				"legacyContracts/test/kernel-permission-two-copies.test.ts/which session answers for a cross-session invoker (omo#12965) keeps a session's newer registration when an older release closure is called again",
+				"legacyContracts/test/kernel-permission-two-copies.test.ts/which session answers for a cross-session invoker (omo#12965) takes the first registered kernel when none enforces"
+			],
+			"reason": "senpi#6422 (omo#12965): the cross-session cell authority of every codemode copy in a realm lives in one realm registry. src/kernels/shared/cell-authority-registry.ts joins the extension and first-kernel import scopes (invocation-authority.ts and permission-sessions.ts import it), together with the built entry of the helper package it imports (packages/realm-registry/dist/index.js), and the new contracts pin the two-copy cases, the payload rules for a registry another version created, the answer rule for a cross-session invoker, and that a cell sees no engine registry key. No prompt, schema, helper or invariant cell moves; the baseline is unchanged.",
+			"changes": []
 		}
 	}
 }
