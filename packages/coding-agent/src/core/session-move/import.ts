@@ -89,34 +89,53 @@ export async function answerMoveStatus(
 	moveId: MoveId,
 	sessionFile: string | undefined,
 ): Promise<MoveAnswer> {
-	return (await answerMoveStatusAndLanding(ledger, moveId, sessionFile)).answer;
+	const asked: StatusFile | undefined = sessionFile === undefined ? undefined : { file: sessionFile, as: "copy" };
+	return (await answerMoveStatusAndLanding(ledger, moveId, asked)).answer;
+}
+
+/** The session file a `status` asks about, and what it is to the move. */
+export interface StatusFile {
+	readonly file: string;
+	/** `copy`: the copy the import returned, which must record the move. `landing`: where the move would have landed. */
+	readonly as: "copy" | "landing";
 }
 
 /**
  * `answerMoveStatus`, and for an accepted move where it landed (senpi#6436). To settle an interrupted step the ledger
  * reads the file at the target its record names, under the record's lock; that same read says what the file is, so
  * nothing is read twice and nothing is opened or written for it. A record that names no target says nothing.
+ *
+ * A `landing` is read before the ledger is asked, so a move that landed answers `accepted` from its file even when its
+ * record is lost, and no record is made for it. A file there that does not record this move (the copy an earlier move
+ * of the session left, another session) is no landing: the ledger answers, as it does when no file is there.
  */
 export async function answerMoveStatusAndLanding(
 	ledger: MoveLedger,
 	moveId: MoveId,
-	sessionFile: string | undefined,
+	asked: StatusFile | undefined,
 ): Promise<{ readonly answer: MoveAnswer; readonly landed?: LandedFile }> {
-	const seen: { file?: LandedFile } = {};
+	const seen: { file?: LandedFile; landing?: LandedFile } = {};
 	const landed = async (target: string) => {
 		const { outcome, file } = await readLanding(target, moveId);
 		seen.file = file;
 		return outcome;
 	};
+	const fromLedger = () => ledger.answerStatus(moveId, { movedIn: false, landed });
 	const answer =
-		sessionFile === undefined || !(await pathExists(sessionFile))
-			? await ledger.answerStatus(moveId, { movedIn: false, landed })
-			: await serializeByKey(await moveLockKey(sessionFile), async () => {
-					const outcome = await importOutcome(sessionFile, moveId);
-					if (outcome === "absent") throw new StatusPathMismatchError(moveId, sessionFile);
+		asked === undefined || !(await pathExists(asked.file))
+			? await fromLedger()
+			: await serializeByKey(await moveLockKey(asked.file), async () => {
+					const { outcome, file } = await readLanding(asked.file, moveId);
+					if (outcome === "absent") {
+						if (asked.as === "copy") throw new StatusPathMismatchError(moveId, asked.file);
+						return fromLedger();
+					}
+					if (asked.as === "landing") seen.landing = file;
 					return ledger.answerStatus(moveId, { movedIn: true, revoked: outcome === "revoked", landed });
 				});
-	return answer.state === "accepted" && seen.file !== undefined ? { answer, landed: seen.file } : { answer };
+	// Where the record says the move landed; a lost record says nothing, and then the landing just read is the place.
+	const where = seen.file ?? seen.landing;
+	return answer.state === "accepted" && where !== undefined ? { answer, landed: where } : { answer };
 }
 
 /**

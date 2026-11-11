@@ -16,7 +16,7 @@ import { revokeImportedMove } from "../../core/session-move/revoke.ts";
 import { orderedRealPath, realSessionPath } from "../../core/session-move/session-lock.ts";
 import { normalizePath, resolvePath } from "../../utils/paths.ts";
 import type { RpcResponse } from "./rpc-types.ts";
-import { landedWhenFenced, statusAnswer } from "./session-move-landed.ts";
+import { landedWhenFenced, statusAnswer, statusFile } from "./session-move-landed.ts";
 import {
 	RPC_ERROR_INVALID_MOVE_REQUEST,
 	RPC_ERROR_MOVE_FAILED,
@@ -89,7 +89,7 @@ async function run(
 		case "cancel":
 			return wireRecord(await ledger.decline(parsed.moveId, "cancelled"));
 		case "status":
-			return statusAnswer(ledger, parsed.moveId, parsed.sessionPath);
+			return statusAnswer(ledger, parsed.moveId, statusFile(parsed.named, port.agentDir));
 		case "export": {
 			const sessionFile = await orderedRealPath(parsed.sessionPath);
 			const bundleDir = outgoing(parsed.moveId);

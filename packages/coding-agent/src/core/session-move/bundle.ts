@@ -94,8 +94,12 @@ export function parseMoveId(value: unknown): MoveId {
 /** The importer joins this name onto its session folder, so it must be a plain session file name and nothing else. */
 const SESSION_FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*\.jsonl$/;
 
+/** Whether `value` is a name a session can land under: what a manifest may carry and what a `status` may name. */
+export const isSessionFileName = (value: unknown): value is string =>
+	typeof value === "string" && SESSION_FILE_NAME.test(value) && !value.includes("..");
+
 function parseSessionFileName(value: string): string {
-	if (!SESSION_FILE_NAME.test(value) || value.includes(".."))
+	if (!isSessionFileName(value))
 		throw new MoveBundleInvalidError(`the session file name is not a plain file name: ${value}`);
 	return value;
 }
