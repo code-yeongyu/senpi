@@ -113,6 +113,13 @@ function selectedBlock(prefix: string, selected: readonly string[]): string[] {
 
 const GATED_NO_ANSWER = "No answer: do not take the action it gates. Keep that action pending and end the turn.";
 
+/**
+ * A partial answer still gates the action on the unanswered question, so its closing line names
+ * that question instead of contradicting the answers above it with "No answer:" (senpi#6283).
+ */
+const PARTIAL_GATED_NO_ANSWER =
+	"The unanswered question still gates the action: do not take the action it gates until it is answered. Keep that action pending and end the turn.";
+
 /** A required question gates an action, so every settlement without an answer refuses that action (senpi#2949). */
 function formatGatedNoAnswer(
 	response: QuestionResponse,
@@ -122,8 +129,20 @@ function formatGatedNoAnswer(
 ): string {
 	const partial =
 		(response.status === "answered" || response.status === "comment-submitted") && response.unanswered.length > 0;
+	const comment = response.status === "comment-submitted" ? (response.comment?.trim() ?? "") : "";
+	// Registered before the answered lines so the comment keeps its place ahead of them, exactly
+	// as the non-gated comment-submitted branch renders it.
+	const commentLine = comment.length > 0 ? `The user responded: ${words.comment(comment)}` : undefined;
+	const selected = answeredLines(response, questions, words);
+	// A comment-only reply still gates: a comment is not an answer to the gating question, so the
+	// action stays pending until the question is actually answered. The reason line says so
+	// accurately instead of claiming a partial answer (senpi#6283).
 	const reason = partial
-		? "The user answered only part of the question."
+		? selected.length > 0
+			? "The user answered only part of the question."
+			: comment.length > 0
+				? "The user left a comment without answering the question."
+				: "The user did not answer the question."
 		: (cancellationReason ??
 			(response.status === "timed_out"
 				? `The user did not answer within ${Math.round((response.autoResolvedAfterMs ?? DEFAULT_ASK_USER_TIMEOUT_MS) / 60_000)} minutes. (사용자가 답변을 안하고 timeout 으로 종료됨)`
@@ -133,7 +152,7 @@ function formatGatedNoAnswer(
 						? "The pending question could not be resumed after a restart."
 						: "This session has no user attached (subagent or headless)."));
 	const lines = [reason];
-	const selected = answeredLines(response, questions, words);
+	if (commentLine !== undefined) lines.push(commentLine);
 	if (selected.length > 0) {
 		// A partial answer's answered lines are real answers, not idle
 		// selections, so they stand on their own; the unanswered questions
@@ -142,7 +161,7 @@ function formatGatedNoAnswer(
 		else lines.push(...selectedBlock("Before going idle the user had selected (not an answer):", selected));
 	}
 	if (partial) lines.push(...unansweredLine(response, questions));
-	lines.push(GATED_NO_ANSWER);
+	lines.push(partial ? PARTIAL_GATED_NO_ANSWER : GATED_NO_ANSWER);
 	return lines.join("\n");
 }
 

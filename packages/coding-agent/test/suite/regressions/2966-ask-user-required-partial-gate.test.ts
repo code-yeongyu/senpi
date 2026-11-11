@@ -42,6 +42,14 @@ const fullyAnswered: QuestionResponse = {
 	answers: { q1: { selected: ["Yes"] }, q2: { selected: ["No"] } },
 	unanswered: [],
 };
+// Maintainer follow-up on #6283: a comment-only reply settles as "comment-submitted" with
+// every question in `unanswered`, so it always hits the required gate.
+const commentOnly: QuestionResponse = {
+	status: "comment-submitted",
+	comment: "hold on, checking with the team",
+	answers: {},
+	unanswered: ["q1"],
+};
 
 function renderings(response: QuestionResponse, required: boolean): string[] {
 	const text = formatResultText("claude", response, QUESTIONS, required);
@@ -87,5 +95,50 @@ describe("senpi#2966 a required question answered only in part", () => {
 		expect(formatResultText("claude", partialComment, QUESTIONS, false)).toBe(
 			"The user responded: go ahead with the second one\nDeploy: Yes\nUnanswered: Approve",
 		);
+	});
+
+	it("keeps a comment-only reply to a required question gated without dropping the comment", () => {
+		// given a required single-question call answered with a comment only
+		// when the tool result and the late-answer frame are rendered
+		// then the action stays gated, the reason says the question went unanswered instead of
+		// claiming a partial answer, and the comment survives: inline in the result text, as a
+		// labelled word block in the frame, and in `words` (the model text names it by label)
+		for (const rendered of renderings(commentOnly, true)) {
+			expect(rendered).toContain("The user left a comment without answering the question.");
+			expect(rendered).toContain("do not take the action it gates");
+			expect(rendered).not.toContain("The user answered only part of the question.");
+			expect(rendered).not.toContain("No answer:");
+			expect(rendered).not.toMatch(/best judgment/i);
+		}
+		expect(formatResultText("claude", commentOnly, QUESTIONS, true)).toContain("hold on, checking with the team");
+		expect(renderings(commentOnly, true)[2]).toContain("hold on, checking with the team");
+		const words = formatModelAnswer(commentOnly, "req-1", QUESTIONS, true).words;
+		expect(words.map((word) => word.text)).toContain("hold on, checking with the team");
+	});
+
+	it("keeps the comment on a multi-question partial answer to a required call", () => {
+		// given a required multi-question call answered in part with a comment attached
+		// when the tool result and the late-answer frame are rendered
+		// then the comment survives in the same three places, the partial reason stands, and
+		// the closing line is partial-specific instead of the shared "No answer:" line
+		for (const rendered of renderings(partialComment, true)) {
+			expect(rendered).toContain("The user answered only part of the question.");
+			expect(rendered).toContain("until it is answered");
+			expect(rendered).not.toContain("No answer:");
+		}
+		expect(formatResultText("claude", partialComment, QUESTIONS, true)).toContain("go ahead with the second one");
+		expect(renderings(partialComment, true)[2]).toContain("go ahead with the second one");
+		const words = formatModelAnswer(partialComment, "req-1", QUESTIONS, true).words;
+		expect(words.map((word) => word.text)).toContain("go ahead with the second one");
+	});
+
+	it("ends a partial gated rendering with a partial-specific line, not 'No answer:'", () => {
+		// given a required multi-question call answered in part with no comment
+		// then the closing line names the still-gating unanswered question instead of
+		// contradicting the answers above it with "No answer:"
+		for (const rendered of renderings(partialAnswered, true)) {
+			expect(rendered).toContain("until it is answered");
+			expect(rendered).not.toContain("No answer:");
+		}
 	});
 });
