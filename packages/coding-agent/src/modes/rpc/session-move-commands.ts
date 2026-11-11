@@ -27,7 +27,7 @@ import {
 	type RpcMoveSessionCommand,
 	type RpcMoveSessionData,
 } from "./session-move-wire.ts";
-import { importMoved, type MoveImportPort, openLanded } from "./session-move-import.ts";
+import { importMoved, type MoveImportPort, openLanded, sessionDirRefusal } from "./session-move-import.ts";
 import { type MoveRequest, parseMoveRequest } from "./session-move-request.ts";
 
 export interface MoveSessionPort extends MoveImportPort {
@@ -63,6 +63,8 @@ export async function moveSession(
 	const ledger = new MoveLedger(join(root, "ledger"));
 	try {
 		if (parsed.op !== "import") return answer(command.id, await run(parsed, port, ledger, root));
+		const notAFolder = await sessionDirRefusal(parsed.sessionDir);
+		if (notAFolder !== undefined) return refusal(command.id, RPC_ERROR_INVALID_MOVE_REQUEST, notAFolder);
 		const landed = await importMoved(parsed, port, ledger, root);
 		const open = command.op === "import" ? command.open : undefined;
 		if (open === undefined) return answer(command.id, landed);

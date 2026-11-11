@@ -3,7 +3,7 @@
  * `copy` already lets it, and the import opens the landed session on the importing connection, so a move to another
  * host needs no separate `open_session`. A failed open never undoes an import that landed.
  */
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { getDefaultSessionDir } from "../../src/core/session-manager.ts";
@@ -39,16 +39,33 @@ describe("move_session import: sessionDir and open (senpi#6267)", () => {
 		});
 	});
 
-	it("#given a sessionDir that is not absolute #then import refuses it and the move stays importable", async () => {
+	it.each<[string, (base: string) => string]>([
+		["is not absolute", () => "landing"],
+		[
+			"names an existing file",
+			(base) => {
+				writeFileSync(join(base, "a-file"), "x\n");
+				return join(base, "a-file");
+			},
+		],
+		[
+			"lies under an existing file",
+			(base) => {
+				writeFileSync(join(base, "a-file"), "x\n");
+				return join(base, "a-file", "landing");
+			},
+		],
+	])("#given a sessionDir that %s #then import refuses it and the move stays importable", async (_case, dirIn) => {
 		const { fixture, a, b, importFields } = await readyToImport("move-d2");
 		await using _a = a;
 		await using _b = b;
 
-		expect(await move(b, { ...importFields, sessionDir: "landing" })).toMatchObject({
+		expect(await move(b, { ...importFields, sessionDir: dirIn(fixture.base) })).toMatchObject({
 			success: false,
 			errorCode: "invalid_move_request",
 		});
 		expect(existsSync(join(fixture.repoB, "landing"))).toBe(false);
+		expect((await move(b, { op: "status", moveId: "move-d2" })).data).toEqual({ state: "receiving" });
 		expect(await move(b, importFields)).toMatchObject({ success: true, data: { session_id: SESSION_ID } });
 	});
 
@@ -104,12 +121,16 @@ describe("move_session import: sessionDir and open (senpi#6267)", () => {
 		expect(await move(b, { op: "status", moveId: "move-o3" })).toMatchObject({ data: { state: "accepted" } });
 	});
 
-	it("#given an open that is neither true nor open_session fields #then import refuses it before importing", async () => {
+	it.each<[string, unknown]>([
+		["is neither true nor open_session fields", "yes"],
+		["names the folder, which is the import's own", { cwd: "/elsewhere" }],
+		["names an admission, which is the import's own", { admissionId: "admission-1" }],
+	])("#given an open that %s #then import refuses it before importing", async (_case, open) => {
 		const { fixture, a, b, importFields } = await readyToImport("move-o4");
 		await using _a = a;
 		await using _b = b;
 
-		expect(await moveAs(b, "conn-b", { ...importFields, open: "yes" })).toMatchObject({
+		expect(await moveAs(b, "conn-b", { ...importFields, open })).toMatchObject({
 			success: false,
 			errorCode: "invalid_move_request",
 		});

@@ -6,7 +6,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, posix, relative, sep } from "node:path";
-import { leavesBundle, MANIFEST_FILE, MoveBundleInvalidError } from "./bundle.ts";
+import { leavesBundle, listedFiles, MANIFEST_FILE, MoveBundleInvalidError, parseManifest } from "./bundle.ts";
 import { filesUnder } from "./export.ts";
 
 export interface InlineBundleFile {
@@ -17,8 +17,11 @@ export interface InlineBundleFile {
 
 /** The staging folders this module makes under `incoming`; nothing else there is its to remove. */
 const STAGING_PREFIX = "inline-";
-/** A staging folder older than this was left by a host that died mid-import. */
+/** A staging folder not modified for this long belongs to an import that died; one in use is younger. */
 const STALE_STAGING_MS = 60 * 60_000;
+/** The longest file name the filesystems a host stages on take, and the longest path an inline file may be sent at. */
+const MAX_SEGMENT_BYTES = 255;
+const MAX_PATH_BYTES = 1024;
 
 const sha256 = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
 
@@ -43,26 +46,62 @@ export async function readInlineBundle(
 	return files;
 }
 
-/** A path an inline file may have: relative, `/`-separated, with no empty, `.` or `..` segment. */
-const staysInBundle = (path: string): boolean =>
-	!leavesBundle(path) && path.split("/").every((segment) => segment !== "" && segment !== ".");
+/** Both separators count, as in `leavesBundle`: a bundle written on one OS is read on another. */
+const segmentsOf = (path: string): string[] => path.split(/[\\/]/);
+
+/** A sent path as an error may show it: quoted, and cut short when it is long. */
+const shown = (path: string): string => JSON.stringify(path.length > 120 ? `${path.slice(0, 120)}...` : path);
 
 /**
- * The sha256 each file was sent with, by path. Refuses a path that leaves the bundle and a manifest whose bytes do not
- * match the sha256 they came with: the manifest names the move, so only one that arrived intact may settle a move's
- * record. Every other file is checked by the folder verification, against the manifest and against this map.
+ * A path an inline file may be written at: relative, with no empty, `.` or `..` segment under either separator, no
+ * NUL, and no segment or whole path too long to be a file where the bundle is staged.
+ */
+function staysInBundle(path: string): boolean {
+	if (leavesBundle(path) || path.includes("\0") || Buffer.byteLength(path) > MAX_PATH_BYTES) return false;
+	return segmentsOf(path).every(
+		(segment) => segment !== "" && segment !== "." && Buffer.byteLength(segment) <= MAX_SEGMENT_BYTES,
+	);
+}
+
+/** Refuses a sent path that is also the folder of another sent path: only one of the two can be written. */
+function refuseFileAsFolder(sent: ReadonlyMap<string, string>): void {
+	const files = new Set([...sent.keys()].map((path) => segmentsOf(path).join("/")));
+	for (const path of files) {
+		let folder = "";
+		for (const segment of path.split("/").slice(0, -1)) {
+			folder = folder === "" ? segment : `${folder}/${segment}`;
+			if (files.has(folder)) throw new MoveBundleInvalidError(`${shown(folder)} was sent as a file and as a folder`);
+		}
+	}
+}
+
+/**
+ * The sha256 each file was sent with, by path, once the whole list is known to be writable: nothing here touches the
+ * disk. Refuses a path that cannot be a file inside the bundle, a path sent twice, a manifest whose bytes do not match
+ * the sha256 they came with, and a file the manifest does not list (an unlisted file is never verified, and every sent
+ * file costs folders). The manifest names the move, so a list refused here settles no move's record. What the
+ * manifest lists is checked by the folder verification, against the manifest and against this map.
  */
 function sentChecksums(files: readonly InlineBundleFile[]): ReadonlyMap<string, string> {
 	const sent = new Map<string, string>();
 	for (const file of files) {
-		if (!staysInBundle(file.path)) throw new MoveBundleInvalidError(`a sent path leaves the bundle: ${file.path}`);
-		if (sent.has(file.path)) throw new MoveBundleInvalidError(`${file.path} was sent twice`);
+		if (!staysInBundle(file.path))
+			throw new MoveBundleInvalidError(`a sent path cannot be a file inside the bundle: ${shown(file.path)}`);
+		if (sent.has(file.path)) throw new MoveBundleInvalidError(`${shown(file.path)} was sent twice`);
 		sent.set(file.path, file.sha256);
 	}
 	const manifest = files.find((file) => file.path === MANIFEST_FILE);
 	if (manifest === undefined) throw new MoveBundleInvalidError("no manifest was sent");
-	if (sha256(Buffer.from(manifest.base64, "base64")) !== manifest.sha256)
-		throw new MoveBundleInvalidError("the manifest changed in transit");
+	const text = Buffer.from(manifest.base64, "base64");
+	if (sha256(text) !== manifest.sha256) throw new MoveBundleInvalidError("the manifest changed in transit");
+	const listed = new Set([
+		MANIFEST_FILE,
+		...listedFiles(parseManifest(text.toString("utf8"))).map((file) => file.path),
+	]);
+	const unlisted = [...sent.keys()].find((path) => !listed.has(path));
+	if (unlisted !== undefined)
+		throw new MoveBundleInvalidError(`${shown(unlisted)} was sent but the manifest does not list it`);
+	refuseFileAsFolder(sent);
 	return sent;
 }
 
@@ -81,8 +120,9 @@ async function removeStaleStaging(incoming: string): Promise<void> {
 
 /**
  * Writes an inline bundle into a folder of its own under `incoming`, as the bundle folder it was read from, runs `use`
- * on it with the sha256 each file was sent with, and removes the folder whatever happens. A refused bundle writes
- * nothing; folders a dead host left under `incoming` are removed first.
+ * on it with the sha256 each file was sent with, and removes the folder whatever happens. A refused list makes no
+ * folder and writes nothing. Before it writes, it removes the `inline-` folders under `incoming` that were not
+ * modified for an hour (`STALE_STAGING_MS`); a younger one, or a folder of another name, is kept.
  */
 export async function withStagedInlineBundle<T>(
 	files: readonly InlineBundleFile[],

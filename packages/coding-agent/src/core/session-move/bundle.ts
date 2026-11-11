@@ -120,15 +120,28 @@ function parsePayload(value: unknown): MovePayload {
 	return { kind: payload.kind, files };
 }
 
+const unreadable = (error: unknown) =>
+	new MoveBundleInvalidError(`manifest unreadable: ${error instanceof Error ? error.message : String(error)}`);
+
 export async function readManifest(bundleDir: string): Promise<MoveManifest> {
+	let text: string;
+	try {
+		text = await readFile(join(bundleDir, MANIFEST_FILE), "utf8");
+	} catch (error) {
+		throw unreadable(error);
+	}
+	return parseManifest(text);
+}
+
+/** The manifest from its own text: an inline bundle's manifest is read before any of its files is written. */
+export function parseManifest(text: string): MoveManifest {
 	let raw: unknown;
 	try {
-		raw = JSON.parse(await readFile(join(bundleDir, MANIFEST_FILE), "utf8"));
+		raw = JSON.parse(text);
 	} catch (error) {
-		throw new MoveBundleInvalidError(
-			`manifest unreadable: ${error instanceof Error ? error.message : String(error)}`,
-		);
+		throw unreadable(error);
 	}
+	if (typeof raw !== "object" || raw === null) throw new MoveBundleInvalidError("the manifest is not an object");
 	const m = raw as Record<string, unknown>;
 	if (m.format !== MOVE_BUNDLE_FORMAT) throw new MoveBundleInvalidError(`unknown bundle format ${String(m.format)}`);
 	for (const key of ["moveId", "sessionId", "sessionFileName", "sourceCwd"] as const) {
@@ -151,6 +164,13 @@ export async function readManifest(bundleDir: string): Promise<MoveManifest> {
 	};
 }
 
+/** Every file a manifest lists besides itself: the session, its sidecars and the payload files. */
+export const listedFiles = (manifest: MoveManifest): readonly BundleFile[] => [
+	manifest.session,
+	...manifest.sidecars,
+	...manifest.payloads.flatMap((payload) => payload.files),
+];
+
 /**
  * Checks every listed file against the manifest. `sent` is the sha256 each file of an inline bundle arrived with
  * (senpi#6267): a file must match that too, so an entry that contradicts its own bytes is refused like a changed file.
@@ -160,7 +180,7 @@ export async function verifyBundle(
 	manifest: MoveManifest,
 	sent?: ReadonlyMap<string, string>,
 ): Promise<void> {
-	for (const file of [manifest.session, ...manifest.sidecars, ...manifest.payloads.flatMap((p) => p.files)]) {
+	for (const file of listedFiles(manifest)) {
 		let actual: string;
 		try {
 			actual = await sha256File(join(bundleDir, file.path));

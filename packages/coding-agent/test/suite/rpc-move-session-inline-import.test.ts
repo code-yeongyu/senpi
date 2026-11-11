@@ -1,7 +1,7 @@
 /**
  * `move_session import` with `files` (senpi#6267): the bundle arrives inline in place of a folder and is verified
- * exactly like one. A file that fails the check, a path that leaves the bundle and a request that is not a bundle are
- * refused, and nothing is left staged.
+ * exactly like one. A file that fails the check and a request that is not a bundle are refused, and nothing is left
+ * staged. What a sent path may be is in `rpc-move-session-inline-paths.test.ts`.
  */
 import { existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -11,7 +11,6 @@ import { move } from "./rpc-move-session-support.ts";
 import {
 	changed,
 	exported,
-	filesUnder,
 	type InlineFile,
 	inlineFile,
 	inlineOf,
@@ -23,14 +22,19 @@ import {
 import { SESSION_ID } from "./session-move-fixture.ts";
 
 describe("move_session import with files (senpi#6267)", () => {
-	it("#given the inline files #when B imports them without a folder #then the session lands as it does from a folder and no staging is left, a dead host's included", async () => {
+	it("#given the inline files #when B imports them without a folder #then the session lands as it does from a folder, and of the folders left under incoming only an inline one an hour old is removed", async () => {
 		const { fixture, a, b, reply } = await exported("move-i2", { inline: true, droppedUserMessages: ["queued"] });
 		await using _a = a;
 		await using _b = b;
-		const crashed = join(fixture.agentB, "session-moves", "incoming", "inline-crashed");
-		mkdirSync(crashed, { recursive: true });
-		writeFileSync(join(crashed, "manifest.json"), "{}\n");
-		utimesSync(crashed, new Date(0), new Date(0));
+		const leftUnderIncoming = (name: string, modified?: Date) => {
+			const dir = join(fixture.agentB, "session-moves", "incoming", name);
+			mkdirSync(dir, { recursive: true });
+			writeFileSync(join(dir, "left"), "x\n");
+			if (modified !== undefined) utimesSync(dir, modified, modified);
+		};
+		leftUnderIncoming("inline-died-long-ago", new Date(0));
+		leftUnderIncoming("inline-in-use-now");
+		leftUnderIncoming("not-an-inline-folder", new Date(0));
 
 		const imported = await move(b, { op: "import", files: inlineOf(reply), cwd: fixture.repoB, from: "device-a" });
 
@@ -48,7 +52,10 @@ describe("move_session import with files (senpi#6267)", () => {
 			SessionManager.open(onB).appendMessage({ role: "user", content: "on B", timestamp: 3 }),
 		).not.toThrow();
 		expect(await move(b, { op: "status", moveId: "move-i2" })).toMatchObject({ data: { state: "accepted" } });
-		expect(stagedOn(fixture.agentB)).toEqual([]);
+		expect(stagedOn(fixture.agentB)).toEqual([
+			"incoming/inline-in-use-now/left",
+			"incoming/not-an-inline-folder/left",
+		]);
 		expect(
 			await move(a, {
 				op: "finish",
@@ -99,29 +106,6 @@ describe("move_session import with files (senpi#6267)", () => {
 		expect((await move(b, { op: "status", moveId: "move-i3" })).data).toEqual(status);
 	});
 
-	it.each([
-		["a parent segment", () => "../escaped.txt"],
-		["a parent segment below the bundle", () => "files/../../escaped.txt"],
-		["a backslash parent segment", () => "..\\escaped.txt"],
-		["a drive path", () => "C:\\escaped.txt"],
-		["an absolute path", (base: string) => join(base, "escaped.txt")],
-	])(
-		"#given a file whose path leaves the bundle by %s #then import refuses it and writes nothing there",
-		async (_case, pathIn) => {
-			const { fixture, a, b, reply } = await exported("move-i4");
-			await using _a = a;
-			await using _b = b;
-			const stray = inlineFile(pathIn(fixture.base), Buffer.from("out of the bundle\n"));
-
-			const refused = await move(b, { op: "import", files: [...inlineOf(reply), stray], cwd: fixture.repoB });
-
-			expect(refused).toMatchObject({ success: false, errorCode: "move_bundle_invalid" });
-			expect(filesUnder(fixture.base).filter((path) => path.includes("escaped"))).toEqual([]);
-			expect(existsSync(landedOn(fixture))).toBe(false);
-			expect(stagedOn(fixture.agentB)).toEqual([]);
-		},
-	);
-
 	it.each<[string, (files: InlineFile[], bundleDir: string) => Record<string, unknown>]>([
 		["both a folder and files", (files, bundleDir) => ({ files, bundleDir })],
 		["files that are not a list", () => ({ files: "manifest.json" })],
@@ -133,6 +117,10 @@ describe("move_session import with files (senpi#6267)", () => {
 		[
 			"files over the engine's 1 MiB cap",
 			(files) => ({ files: [...files, inlineFile("files/big.bin", Buffer.alloc(1024 * 1024, 1))] }),
+		],
+		[
+			"more files than an inline import takes",
+			() => ({ files: Array.from({ length: 1025 }, (_, at) => inlineFile(`files/n${at}`, Buffer.from("x"))) }),
 		],
 		[
 			"one file as long as a line may carry",

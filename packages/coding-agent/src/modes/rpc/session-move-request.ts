@@ -117,7 +117,7 @@ function parseImport(raw: Record<string, unknown>): MoveRequest | string {
 		open !== true &&
 		!(isRecord(open) && OPEN_FIELDS_THE_IMPORT_SETS.every((field) => !(field in open)))
 	)
-		return "open must be true or open_session fields other than id, type, sessionPath and cwd.";
+		return "open must be true or open_session fields other than id, type, sessionPath, cwd and admissionId.";
 	return { op: "import", bundle, cwd: raw.cwd, from: from ?? "", sessionDir: raw.sessionDir };
 }
 

@@ -33,6 +33,16 @@ export const changed = (file: InlineFile): InlineFile => ({
 export const inlineOf = (reply: Record<string, unknown>) =>
 	(reply.data as { inline_files?: InlineFile[] }).inline_files ?? [];
 
+/** The same bundle with `extra` sent and listed in its manifest as sidecars, so only a rule about paths can refuse them. */
+export function withListed(files: readonly InlineFile[], ...extra: InlineFile[]): InlineFile[] {
+	const manifest = files.find((file) => file.path === "manifest.json");
+	if (manifest === undefined) throw new Error("the bundle has no manifest");
+	const listed = JSON.parse(bytesOf(manifest).toString("utf8")) as { sidecars: Array<Omit<InlineFile, "base64">> };
+	listed.sidecars.push(...extra.map(({ path, sha256: sum }) => ({ path, sha256: sum })));
+	const rewritten = inlineFile("manifest.json", Buffer.from(`${JSON.stringify(listed)}\n`));
+	return [rewritten, ...files.filter((file) => file !== manifest), ...extra];
+}
+
 /** Every file under `dir`, by its `/`-separated path inside it. */
 export function filesUnder(dir: string): string[] {
 	if (!existsSync(dir)) return [];

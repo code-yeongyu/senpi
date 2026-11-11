@@ -178,9 +178,10 @@ export async function importMovedSession(
 		await rm(staging, { recursive: true, force: true });
 		return { sessionFile };
 	} catch (error) {
-		// Another import landed this move; what this one staged after that import cleaned up is not kept.
+		// Another import landed this move; what this one staged after that import cleaned up is not kept. The folder is
+		// clutter only, so a removal that fails never replaces the answer the landed file gives.
 		if (error instanceof MoveFencedError && (await landed())) {
-			await rm(staging, { recursive: true, force: true });
+			await rm(staging, { recursive: true, force: true }).catch(() => undefined);
 			return confirmLanded();
 		}
 		if (!(error instanceof MoveFencedError))

@@ -7,7 +7,7 @@
  */
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { getDefaultSessionDir } from "../../src/core/session-manager.ts";
 import { importMovedSession } from "../../src/core/session-move/import.ts";
 import { type MoveAnswer, MoveLedger, READY_TTL_MS } from "../../src/core/session-move/move-ledger.ts";
@@ -15,6 +15,24 @@ import type { MoveId } from "../../src/core/session-move/ownership.ts";
 import { MOVE, setup } from "./session-move-fixture.ts";
 
 type World = Awaited<ReturnType<typeof setup>>;
+
+const cannotBeRemoved = vi.hoisted(() => new Set<string>());
+
+// A folder a test names here cannot be removed: what an import does when its cleanup fails.
+vi.mock("node:fs/promises", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:fs/promises")>();
+	return {
+		...actual,
+		rm: async (...args: Parameters<typeof actual.rm>) => {
+			if (cannotBeRemoved.has(String(args[0]))) throw Object.assign(new Error("EBUSY: busy"), { code: "EBUSY" });
+			return actual.rm(...args);
+		},
+	};
+});
+
+afterEach(() => {
+	cannotBeRemoved.clear();
+});
 
 function deferred(): { readonly promise: Promise<void>; readonly resolve: () => void } {
 	let resolve = () => {};
@@ -164,6 +182,19 @@ describe("this move's file at the target while the record does not agree (senpi#
 	});
 });
 
+/** From its commit on, the staging folder this import filled cannot be removed. */
+class CannotRemoveStagingAfterItsCommit extends HoldsAfterReceive {
+	override commit<T>(
+		moveId: MoveId,
+		target: string,
+		rename: () => T | Promise<T>,
+		prepare?: () => void | Promise<void>,
+	): Promise<T> {
+		cannotBeRemoved.add(join(dirname(target), ".move-staging", encodeURIComponent(moveId)));
+		return super.commit(moveId, target, rename, prepare);
+	}
+}
+
 describe("an import whose commit was fenced by another import's landing (senpi#6413)", () => {
 	it("#given it staged after the landing import removed the staging folder #when it answers the landed session #then no staging folder is left", async () => {
 		const world = await setup();
@@ -179,5 +210,18 @@ describe("an import whose commit was fenced by another import's landing (senpi#6
 		expect(await importLate).toEqual({ sessionFile: landed.sessionFile });
 		expect(landed.sessionFile).toBe(landingOf(world));
 		expect(existsSync(staging)).toBe(false);
+	});
+
+	it("#given its staging folder cannot be removed #when it answers the landed session #then the answer is still the landed session", async () => {
+		const world = await setup();
+		const late = new CannotRemoveStagingAfterItsCommit(world.ledger.dir);
+		const importLate = importInto(world, late, defaultFolder(world));
+		await late.receiving.promise;
+		const landed = await importInto(world, world.ledger, defaultFolder(world));
+
+		late.gate.resolve();
+
+		expect(await importLate).toEqual({ sessionFile: landed.sessionFile });
+		expect(await world.ledger.answerStatus(MOVE, { movedIn: false })).toEqual({ state: "accepted" });
 	});
 });

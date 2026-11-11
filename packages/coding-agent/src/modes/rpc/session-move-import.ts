@@ -3,6 +3,7 @@
  * the request, the session lands in this host's session folder for `cwd` or in the one the caller names, and with
  * `open` the landed session is opened in the same answer.
  */
+import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { getDefaultSessionDir, loadEntriesFromFileAsync } from "../../core/session-manager.ts";
 import { importMovedSession } from "../../core/session-move/import.ts";
@@ -24,6 +25,20 @@ export interface MoveImportPort {
 	 * and resolves `undefined`; otherwise it resolves the open's failure response and queues nothing.
 	 */
 	open(command: Extract<RpcCommand, { type: "open_session" }>, reply: OpenReplyAs): Promise<RpcResponse | undefined>;
+}
+
+/**
+ * Why a `sessionDir` cannot hold the session, when a file is in its place or above it: a request error, asked before
+ * the import touches the move, so the move stays importable. `undefined` for a folder and for a path not there yet.
+ */
+export async function sessionDirRefusal(sessionDir: string | undefined): Promise<string | undefined> {
+	if (sessionDir === undefined) return undefined;
+	const found = await stat(normalizePath(sessionDir)).then(
+		(entry) => (entry.isDirectory() ? "folder" : "file"),
+		(cause: unknown) =>
+			typeof cause === "object" && cause !== null && "code" in cause && cause.code === "ENOTDIR" ? "file" : "absent",
+	);
+	return found === "file" ? "sessionDir must be a folder: a file is in its place or above it." : undefined;
 }
 
 /** An inline bundle is staged in this host's own folder under `root`, then read exactly as a folder is. */
