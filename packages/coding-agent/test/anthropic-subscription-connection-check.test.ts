@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runClaudeCliConnectionTest } from "../src/core/extensions/builtin/anthropic-subscription/claude-cli-connection-test.ts";
+import {
+	runClaudeCliConnectionTest,
+	STORED_CHECK_MESSAGE_MAX_CHARS,
+} from "../src/core/extensions/builtin/anthropic-subscription/claude-cli-connection-test.ts";
 import { withCheck } from "../src/core/extensions/builtin/anthropic-subscription/claude-cli-login-slots.ts";
 import { SENTINEL_OAUTH_FIELDS } from "../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
 import { signOutLegacyClaudeLogins } from "../src/core/anthropic-legacy-sign-out.ts";
@@ -122,6 +125,52 @@ describe("Claude subscription account checks (desktop#6444)", () => {
 		});
 	});
 
+	it("reports cancelled, not the SDK's late error, when the caller cancelled first", async () => {
+		lane.mockReturnValue({
+			close() {},
+			async *[Symbol.asyncIterator]() {
+				yield { type: "result", subtype: "error_during_execution", is_error: true, errors: ["stream closed"] };
+			},
+		});
+
+		expect(await runClaudeCliConnectionTest({ ...input, signal: AbortSignal.abort() })).toMatchObject({
+			outcome: "failed",
+			reason: "cancelled",
+		});
+	});
+
+	it.each([
+		["a null-prototype object", Object.create(null)],
+		["an Error whose message is not a string", Object.assign(new Error(), { message: 7 })],
+	])("returns a failed check when the SDK throws %s", async (_label, thrown) => {
+		lane.mockReturnValue({
+			async next() {
+				throw thrown;
+			},
+			[Symbol.asyncIterator]() {
+				return this;
+			},
+		});
+
+		expect(await runClaudeCliConnectionTest(input)).toMatchObject({ outcome: "failed", reason: expect.any(String) });
+	});
+
+	it("caps the stored message so a proxy error page cannot bloat auth.json", async () => {
+		lane.mockReturnValue({
+			async next() {
+				throw new Error(`<html>${"x".repeat(STORED_CHECK_MESSAGE_MAX_CHARS * 3)}</html>`);
+			},
+			[Symbol.asyncIterator]() {
+				return this;
+			},
+		});
+
+		const check = await runClaudeCliConnectionTest(input);
+
+		expect(check.message?.length).toBe(STORED_CHECK_MESSAGE_MAX_CHARS);
+		expect(check.message?.startsWith("<html>")).toBe(true);
+	});
+
 	it("does not stamp an old credential's failed test onto a fresh login", () => {
 		const fresh = { ...old, dirId: "b".repeat(32), signedInAt: 2 };
 		const credential = { type: "oauth" as const, ...SENTINEL_OAUTH_FIELDS, accounts: [fresh] };
@@ -178,5 +227,36 @@ describe("legacy default subscription cleanup (desktop#6445)", () => {
 			real,
 		);
 		expect(signOutLegacyClaudeLogins(migrated.data).migrated).toBe(false);
+	});
+
+	it("leaves a non-OAuth subscription entry exactly as stored", () => {
+		const apiKey = { type: "api_key" as const, key: "synthetic-key" };
+		const migrated = signOutLegacyClaudeLogins({ "anthropic-subscription": apiKey });
+
+		expect(migrated.migrated).toBe(false);
+		expect(migrated.data["anthropic-subscription"]).toEqual(apiKey);
+	});
+
+	it("drops the order and slot state naming the removed default, once, and keeps them for a real CLI default", () => {
+		const personal = { ...old, name: "personal" };
+		const stale = {
+			type: "oauth" as const,
+			...SENTINEL_OAUTH_FIELDS,
+			order: ["default", "personal"],
+			slotState: { default: { cooldownUntil: 9 }, personal: { cooldownUntil: 1 } },
+			accounts: [personal],
+		};
+
+		const migrated = signOutLegacyClaudeLogins({ "anthropic-subscription": stale });
+
+		expect(migrated.migrated).toBe(true);
+		expect(migrated.data["anthropic-subscription"]).toMatchObject({
+			order: ["personal"],
+			slotState: { personal: { cooldownUntil: 1 } },
+		});
+		expect(migrated.data["anthropic-subscription"]).not.toHaveProperty("slotState.default");
+		expect(signOutLegacyClaudeLogins(migrated.data).migrated).toBe(false);
+		const real = { ...stale, accounts: [{ ...old, name: "default" }, personal] };
+		expect(signOutLegacyClaudeLogins({ "anthropic-subscription": real }).data["anthropic-subscription"]).toEqual(real);
 	});
 });

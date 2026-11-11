@@ -70,9 +70,29 @@ function isRetiredLoginSlot(slot: Slot): boolean {
 	return slot.store === undefined && (slot.source === "login" || slot.source === "import");
 }
 
+/** The pin, rotation order and slot state that still name the removed `default` placeholder. */
+function hasDefaultReference(entry: Slot): boolean {
+	return (
+		entry.pinned === "default" ||
+		(Array.isArray(entry.order) && entry.order.includes("default")) ||
+		(isPlainObject(entry.slotState) && Object.hasOwn(entry.slotState, "default"))
+	);
+}
+
+function dropDefaultReferences(entry: Slot): void {
+	if (entry.pinned === "default") delete entry.pinned;
+	if (Array.isArray(entry.order)) entry.order = entry.order.filter((name) => name !== "default");
+	if (isPlainObject(entry.slotState) && Object.hasOwn(entry.slotState, "default")) {
+		const { default: _removed, ...rest } = entry.slotState;
+		entry.slotState = rest;
+	}
+}
+
 function signOutSubscription(stored: unknown): { entry: unknown; changed: boolean } | string {
 	if (stored === undefined) return { entry: stored, changed: false };
 	if (!isPlainObject(stored)) return "the anthropic-subscription entry is not an object";
+	// The subscription lane reads only OAuth entries; any other shape is not a legacy login and stays as stored.
+	if (stored.type !== "oauth") return { entry: stored, changed: false };
 	if (stored.accounts !== undefined && !isSlotList(stored.accounts)) {
 		return "the anthropic-subscription accounts are not account objects";
 	}
@@ -87,11 +107,17 @@ function signOutSubscription(stored: unknown): { entry: unknown; changed: boolea
 	if (accounts.some((slot) => isRetiredLoginSlot(slot) && typeof slot.name !== "string")) {
 		return "an anthropic-subscription account has no name";
 	}
-	if (stored.accounts !== undefined && accounts.length === allAccounts.length && !accounts.some(isRetiredLoginSlot))
+	const keepsDefault = accounts.some((slot) => slot.name === "default");
+	if (
+		stored.accounts !== undefined &&
+		accounts.length === allAccounts.length &&
+		!accounts.some(isRetiredLoginSlot) &&
+		(keepsDefault || !hasDefaultReference(stored))
+	)
 		return { entry: stored, changed: false };
 	const signedOut = accounts.map((slot) => (isRetiredLoginSlot(slot) ? signedOutSlot(slot) : (slot as AccountSlot)));
 	const entry: Slot = { ...stored, ...SENTINEL_OAUTH_FIELDS, accounts: signedOut };
-	if (stored.pinned === "default" && !signedOut.some((slot) => slot.name === "default")) delete entry.pinned;
+	if (!keepsDefault) dropDefaultReferences(entry);
 	return { entry, changed: true };
 }
 
@@ -128,7 +154,9 @@ function signOut(data: AuthStorageData): LegacySignOutResult {
  * Signs out every Claude subscription login from the retired senpi-owned sign-in (senpi#4436), once, at the auth.json
  * load seam. No token is copied or kept anywhere:
  * - an `anthropic-subscription` slot holding a token (`source` login or import) becomes a Claude CLI slot that must
- *   sign in again, under the same name, display name and model blocks, so the pin and order still name it;
+ *   sign in again, under the same name, display name and model blocks, so the pin and order still name it. A slot
+ *   named `default` is the generic-pool placeholder and is dropped instead (with any pin, order or slot state naming
+ *   it); a user's own login under that name cannot be told apart from it and goes the same way;
  * - the OAuth part of an `anthropic` entry is dropped; its API-key slots stay as an API-key credential;
  * - env slots and Claude CLI slots are untouched, and a store with nothing left to sign out is returned as is.
  * An entry it cannot parse is left exactly as stored and explained in `skipped`; it never throws.

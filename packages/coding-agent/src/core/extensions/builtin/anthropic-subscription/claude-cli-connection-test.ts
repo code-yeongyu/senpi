@@ -12,6 +12,17 @@ export type DefaultModelSelection = { readonly provider?: string; readonly model
 
 const CONNECTION_TEST_PROMPT = "Reply with OK";
 const CONNECTION_TEST_TIMEOUT_MS = 60_000;
+/** auth.json keeps the redacted provider message for the UI; a proxy's HTML error page must not bloat it. */
+export const STORED_CHECK_MESSAGE_MAX_CHARS = 2_000;
+
+type CheckFailure = { readonly reason: string; readonly error: unknown; readonly providerStatus?: unknown };
+
+function storedMessage(error: unknown): string {
+	const message = redactSecrets(errorText(error));
+	return message.length <= STORED_CHECK_MESSAGE_MAX_CHARS
+		? message
+		: `${message.slice(0, STORED_CHECK_MESSAGE_MAX_CHARS - 1)}…`;
+}
 
 /**
  * The model the sign-in connection test runs on: the default model when the default provider is this one, else the
@@ -46,24 +57,28 @@ export async function runClaudeCliConnectionTest(input: ClaudeCliConnectionTestI
 	let handle: SdkQueryHandle | undefined;
 	const closeOnAbort = () => handle?.close();
 	signal.addEventListener("abort", closeOnAbort, { once: true });
-	const finish = (
-		outcome: "ok" | "failed",
-		reason?: string,
-		error?: unknown,
-		providerStatus?: unknown,
-	): ClaudeCliAccountCheck => {
+	const finish = (failure?: CheckFailure): ClaudeCliAccountCheck => {
+		if (failure === undefined) return { model: input.model, outcome: "ok", at: now() };
+		const { reason, error } = failure;
 		const status =
-			providerStatus ??
+			failure.providerStatus ??
 			(error !== null && typeof error === "object" && "status" in error ? error.status : undefined);
 		return {
 			model: input.model,
-			outcome,
-			...(reason === undefined ? {} : { reason }),
-			...(error === undefined ? {} : { message: redactSecrets(errorText(error)) }),
+			outcome: "failed",
+			reason,
+			message: storedMessage(error),
 			...(typeof status === "number" ? { status } : {}),
 			at: now(),
 		};
 	};
+	// The deadline and the caller's cancel win over whatever the SDK reports after close().
+	const abortedCheck = (): ClaudeCliAccountCheck | undefined =>
+		deadline.aborted
+			? finish({ reason: "timeout", error: "Connection test timed out." })
+			: input.signal?.aborted
+				? finish({ reason: "cancelled", error: "Connection test was cancelled." })
+				: undefined;
 	try {
 		await loadClaudeAgentSdk();
 		const messages = queryWithAuthLane({
@@ -98,25 +113,23 @@ export async function runClaudeCliConnectionTest(input: ClaudeCliConnectionTestI
 						? sdkResultFailure(message)
 						: undefined);
 			if (failure)
-				return finish(
-					"failed",
-					classifySdkError(failure).kind,
-					failure,
-					message.type === "result" && "api_error_status" in message ? message.api_error_status : undefined,
+				return (
+					abortedCheck() ??
+					finish({
+						reason: classifySdkError(failure).kind,
+						error: failure,
+						providerStatus:
+							message.type === "result" && "api_error_status" in message ? message.api_error_status : undefined,
+					})
 				);
-			if (message.type === "result") return finish("ok");
+			if (message.type === "result") return finish();
 		}
-		return signal.aborted
-			? finish(
-					"failed",
-					deadline.aborted ? "timeout" : "cancelled",
-					deadline.aborted ? "Connection test timed out." : "Connection test was cancelled.",
-				)
-			: finish("failed", "no_result", "Claude Code ended the connection test without a result.");
+		return (
+			abortedCheck() ??
+			finish({ reason: "no_result", error: "Claude Code ended the connection test without a result." })
+		);
 	} catch (error) {
-		if (deadline.aborted) return finish("failed", "timeout", "Connection test timed out.");
-		if (input.signal?.aborted) return finish("failed", "cancelled", "Connection test was cancelled.");
-		return finish("failed", classifySdkError(error).kind, error);
+		return abortedCheck() ?? finish({ reason: classifySdkError(error).kind, error });
 	} finally {
 		signal.removeEventListener("abort", closeOnAbort);
 	}
