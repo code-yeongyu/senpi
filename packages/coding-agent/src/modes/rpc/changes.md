@@ -1,3 +1,55 @@
+## 2026-11-10 - Same-account devices follow the host's own setting (senpi#6342)
+
+### What changed
+
+- `delegation-declaration.ts`, `connection-roles.ts`: a host-mode or legacy `declare_delegation` may state `principal.sameAccount: true`. It is fixed for the record's life, because a later declaration must name the same principal, and `ConnectionRoles.sameAccount` reads it.
+- `connection-handler.ts`: a new `turnOrigin()` treats a same-account delegated connection as local for the permission rule. That covers its prompts, follow-ups, steers and `admit_external_message` deliveries.
+  - A delegated connection without the statement stays cross-account and keeps asking.
+  - The connection's own origin is unchanged for admission, so the `remote_origin` stamp, ledger keys and the delegated-without-device refusal behave as before.
+- `delegated-drive-origin.ts`, `connection-handler.ts`: a cross-account acting record's own handling runs in a record scope (`runInRecordScope`, `recordTurnOrigin`), instead of marking the whole session. Only a run or message that the record's own handling creates counts as delegated. The scope belongs to that record's async context, so no other record can change or clear it. The first run the record starts takes its origin and closes the scope, so engine work that only descends from that run opens its own turn, and a record that starts no run leaves nothing behind.
+- `admit-external-message-command.ts`: the turn a delivery opens is the connection's turn origin. `peer_agent` no longer changes permissions; it remains only an admission fact.
+- `custom-capability.ts`, `host-capabilities.ts`: hosts advertise `same_account_delegation_v1`.
+- Tests:
+  - `6342-same-account-follows-host-setting.test.ts`:
+    - after a remote device's command, a later engine-started turn runs on the host setting;
+    - a same-account device's prompt runs on the host setting;
+    - a same-account device's delivery runs on the host setting, with an agent sender or no sender;
+    - a device not stated as same-account still asks, for a prompt and a delivery alike;
+    - a cross-account `peer_agent` agent delivery still asks.
+  - `remote-permission-delegated-default.test.ts`: the cases that pinned the sticky marker now pin its absence.
+  - `6305-peer-delivery-receiver-preset.test.ts`: removed, superseded by the cases above.
+
+### Why
+
+The relay states which devices belong to the host's own account. Their work then follows the host setting, and every other device keeps asking.
+
+### Why an extension could not handle it
+
+Delegation records and connection roles are parsed and enforced inside the RPC host, before any extension sees the command.
+
+### Expected merge conflict zones
+
+- `connection-handler.ts`: `handleCommand` and its caller, and the `admit_external_message` case.
+- `delegation-declaration.ts`: `parseDeclaration` and `samePrincipal`.
+
+## 2026-11-09 - A hand runs a hosted loop's request hooks (custody CK21, senpi#6278)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/loopless-tool-handlers.ts`: `extensionLoopHooks` serves `before_provider_request` (payload `{ sessionId, idle, input }`, the input in CK21's closed envelope): the user's request hooks (the same `isUserLoopHook` set as `input` and `before_agent_start`, now exported) run on the payload with the loop's effective model, inside a loop-hook call bound to that session, and the reply is `{ output }` with the payload they produced.
+
+### Why
+
+A hosted loop's request hooks run on the user's machine, in the same extension instances as its tool and loop hooks (#5849).
+
+### Why an extension could not handle it
+
+The loop-hook link and the events it serves are the hand runtime itself.
+
+### Expected merge conflict zones
+
+- LOW: the event branches of `extensionLoopHooks`.
+
 ## 2026-11-10 - Claim an invisible, already-built host session (senpi#6344)
 
 ### What changed

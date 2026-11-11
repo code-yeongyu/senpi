@@ -1,3 +1,24 @@
+## 2026-11-09 - Provider access declarations on provider hooks, and a hand's request-hook dispatch (custody CK21, senpi#6278)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ProviderHookOptions` (`HandlerRegistrationOptions` plus `providers?: readonly ProviderId[]`) is the registration option type of `pi.on("before_provider_request" | "provider_stream_event" | "after_provider_response", ...)`; `Extension.handlerProviders` records each declared handler's providers.
+- `packages/coding-agent/src/core/extensions/loader.ts`: `on()` validates a `providers` declaration on those three events (a non-empty array of non-empty provider ids, else it throws naming the extension), on every side, also for a handler whose `runs` side does not register it, and records it; other events ignore the option, as they ignore `previewSafe`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitBeforeProviderRequest` takes an optional fourth argument, `HandRequestHookDispatch` (`only`, `model?`). With it, only the extensions `only` accepts run, the event carries that model and no headers, and the sessionless drop does not apply. Without it, which is every existing caller, dispatch is unchanged.
+
+### Why
+
+- A hand advertises to a hosted brain which providers' calls need the device's request and stream hooks; an undeclared hook means every provider (#5849). The declaration never filters dispatch anywhere.
+- A hand serving a hosted loop's `hook.model_request` runs the user's request hooks on a runner that has no loop of its own.
+
+### Why an extension could not handle it
+
+- The declaration is part of the extension registration API, and the hand's request-hook dispatch is the runner's own dispatch.
+
+### Expected merge conflict zones
+
+- LOW: the three provider-hook `on()` overloads in `types.ts`, the `Extension` interface, the `on()` registration body in `loader.ts`, and the head of `emitBeforeProviderRequest` in `runner.ts`.
+
 ## 2026-11-10 - `ToolPermissionRequest` carries `autoApproveAsk` (senpi#6305)
 
 ### What changed

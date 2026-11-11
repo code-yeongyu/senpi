@@ -1,3 +1,21 @@
+## 2026-11-10 - Export the shared Ultrafast documented-model list (senpi#2978)
+
+### What changed
+
+- `packages/ai/src/index.ts`: re-exports `ULTRAFAST_DOCUMENTED_MODEL_IDS` from `./api/openai-responses-shared.ts` so the selection warning in coding-agent reads the same list as the pricing adapters.
+
+### Why
+
+- The warning policy lives in another package and needs the same single list (senpi#2978 item 2).
+
+### Why an extension could not handle it
+
+- The list is a package export, not extension behavior.
+
+### Expected merge conflict zones
+
+- LOW: the one added export line only.
+
 ## 2026-11-10 - Cursor capability row for Claude Fable 5.2 (senpi#3893)
 
 ### What changed

@@ -1,3 +1,22 @@
+## 2026-11-08 - The footer names the serving account when the pin is blocked (senpi#5983, fixes #5983)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/footer.ts`: `accountFooterSuffix` resolves the effective pin as CLI > settings > stored (new optional `pinnedAccount` option) and picks block-aware: a pin whose stored slot carries a future `blockedUntil` is skipped for the first usable slot in the same ranking, and the suffix marks the blocked pin (`@work (default blocked until 14:00)`); when every slot is blocked it names the top-ranked slot with a blocked marker. `FooterComponent` takes an optional `resolveAccountPin` resolver, used at render time. The resolver's pin is applied only when the current model uses the `anthropic-subscription` provider; a same-named slot of another pooled provider keeps its own stored pin (senpi#6222 review).
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the default footer is constructed with a resolver built from `getSessionClaudeAccountPin` and `loadAnthropicSubscriptionProviderSettingsFromDisk(...).pinnedAccount`, so CLI and settings pins are reflected the same way as the stored pin.
+
+### Why
+
+- senpi#5983: after a usage-limit refusal moved every later turn to a sibling, the footer still showed the pinned account, so users could not tell the fallback account was spending its allowance; the footer also ignored the settings pin and `--claude-account`.
+
+### Why an extension could not handle it
+
+- The footer suffix is computed in core from the stored credential; an extension cannot change which account the footer names or inject the effective pin into the render.
+
+### Expected merge conflict zones
+
+- LOW: the `accountFooterSuffix` function and the `FooterComponent` constructor in `footer.ts`, and the footer construction site in `interactive-mode.ts`.
+
 ## 2026-11-10 - Refuse speculative host sessions on terminal endpoints (senpi#6344)
 
 ### What changed
