@@ -16,7 +16,7 @@ import type { AuthStorage } from "./auth-storage.ts";
 import { getAgentDir } from "../config.ts";
 import { discoverEnvSlots } from "./credential-pool/env-slots.ts";
 import { isAvailable } from "./credential-pool/failover.ts";
-import { type ModelBlocks, pruneModelBlocks } from "./credential-pool/model-scope.ts";
+import { type ModelBlocks, modelBlockApplies, pruneModelBlocks } from "./credential-pool/model-scope.ts";
 import {
 	applicableStoredState,
 	CredentialSlotRepository,
@@ -46,6 +46,16 @@ export type CredentialAccountSource = "login" | "import" | "env";
  * until its re-probe time, `rate_limit` is a cooldown, `disabled` lasts until the credential is replaced.
  */
 export type CredentialAccountBlockedReason = "auth_error" | "rate_limit" | "disabled";
+
+/**
+ * Whether a pooled account can serve `modelId` now: not blocked, not signed out (the pool skips those slots), and
+ * no live block on that model. A block keyed by a family binds the family's models; any other key binds that exact
+ * model id only, matched by the pool's own rule (senpi#5590).
+ */
+export function accountCanServe(account: CredentialAccountSummary, modelId: string, now: number): boolean {
+	if (account.blocked || account.signedOut === true) return false;
+	return !(account.blockedModels ?? []).some((block) => block.until > now && modelBlockApplies(block.model, modelId));
+}
 
 /** Account metadata safe to surface: names and health only, never key material. */
 export type CredentialAccountSummary = {
@@ -85,6 +95,8 @@ export type CredentialAccountCheck = {
 	readonly model: string;
 	readonly outcome: "ok" | "failed";
 	readonly reason?: string;
+	readonly message?: string;
+	readonly status?: number;
 	readonly at: number;
 };
 
@@ -106,7 +118,16 @@ function storedCheck(slot: object): CredentialAccountCheck | undefined {
 	const at = numberField(check, "at");
 	if (model === undefined || at === undefined || (outcome !== "ok" && outcome !== "failed")) return undefined;
 	const reason = stringField(check, "reason");
-	return { model, outcome, ...(reason === undefined ? {} : { reason }), at };
+	const message = stringField(check, "message");
+	const status = numberField(check, "status");
+	return {
+		model,
+		outcome,
+		...(reason === undefined ? {} : { reason }),
+		...(message === undefined ? {} : { message }),
+		...(status === undefined ? {} : { status }),
+		at,
+	};
 }
 
 /** The listing fields of a stored `claude-cli` slot, read defensively: auth.json is a trust boundary. */

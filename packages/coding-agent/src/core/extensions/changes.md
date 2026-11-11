@@ -1,3 +1,80 @@
+## 2026-11-09 - Provider access declarations on provider hooks, and a hand's request-hook dispatch (custody CK21, senpi#6278)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ProviderHookOptions` (`HandlerRegistrationOptions` plus `providers?: readonly ProviderId[]`) is the registration option type of `pi.on("before_provider_request" | "provider_stream_event" | "after_provider_response", ...)`; `Extension.handlerProviders` records each declared handler's providers.
+- `packages/coding-agent/src/core/extensions/loader.ts`: `on()` validates a `providers` declaration on those three events (a non-empty array of non-empty provider ids, else it throws naming the extension), on every side, also for a handler whose `runs` side does not register it, and records it; other events ignore the option, as they ignore `previewSafe`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitBeforeProviderRequest` takes an optional fourth argument, `HandRequestHookDispatch` (`only`, `model?`). With it, only the extensions `only` accepts run, the event carries that model and no headers, and the sessionless drop does not apply. Without it, which is every existing caller, dispatch is unchanged.
+
+### Why
+
+- A hand advertises to a hosted brain which providers' calls need the device's request and stream hooks; an undeclared hook means every provider (#5849). The declaration never filters dispatch anywhere.
+- A hand serving a hosted loop's `hook.model_request` runs the user's request hooks on a runner that has no loop of its own.
+
+### Why an extension could not handle it
+
+- The declaration is part of the extension registration API, and the hand's request-hook dispatch is the runner's own dispatch.
+
+### Expected merge conflict zones
+
+- LOW: the three provider-hook `on()` overloads in `types.ts`, the `Extension` interface, the `on()` registration body in `loader.ts`, and the head of `emitBeforeProviderRequest` in `runner.ts`.
+
+## 2026-11-10 - `ToolPermissionRequest` carries `autoApproveAsk` (senpi#6305)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ToolPermissionRequest` gains an optional `autoApproveAsk: true`, so a tool's own `permissionParser` can have an `ask` decision for one call approved without a prompt while `allow` and `deny` rules still match its request.
+
+### Why
+
+An omo reply to the agent that messaged the run must not wait on an approval nobody can give, but a user's `deny` rule for that tool must still apply; returning no request at all dropped the deny (oh-my-openagent#12954 review).
+
+### Why an extension could not handle it
+
+The extension tool contract is this type; the permission system reads only the fields it declares.
+
+### Expected merge conflict zones
+
+- None: one additive optional field.
+
+## 2026-11-09 - Provider model configs can declare a default thinking level (senpi#6270)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ProviderChatModelConfig` gains optional `defaultThinkingLevel?: Model<Api>["defaultThinkingLevel"]`. The provider-composer extension path already spreads definition fields into the registered Model, so the declaration completes the type end to end.
+
+### Why
+
+- The vertex-garden builtin needs per-model defaults (GLM 5.2 thinks by default on Vertex; DeepSeek V4.1 Flash does not, live-verified 2026-11-09). Without the declared field, registration cannot express them and every extension model falls through to the configured default, flipping GLM 5.2 to off.
+
+### Why an extension could not handle it
+
+- The field is part of the public `ProviderChatModelConfig` registration contract owned by `types.ts`; an extension cannot widen the host type.
+
+### Expected merge conflict zones
+
+- LOW: two lines inside `ProviderChatModelConfig` adjacent to `thinkingLevelMap`.
+
+## 2026-11-09 - A warm open_session no longer re-hashes the extension module graph (senpi#6256)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/extension-module-cache.ts`: the freshness check behind `cachedExtensionFactory` remembers each compiled source it proved to match its importer fingerprint, together with that file's stat identity (`dev:ino:size:mtimeNs:ctimeNs`, read before the hash). A later lookup re-reads and re-hashes the file only when that identity moved. A file modified within the last 2 s is never remembered (git's racy-clean rule). A changed, deleted or replaced source still drops the whole generation exactly as before. `clearExtensionCache()` also forgets the remembered proofs.
+- `packages/coding-agent/scripts/bench-open-session.ts` (new): warm `open_session` bench against the real `--listen` host from source, with a sandboxed agent dir and `HOME`, a local mock model, and extra host args after `--`. It reports the client round-trip p50 and every `SENPI_OPEN_TIMING` phase p50.
+- `knip.jsonc`: `packages/coding-agent/scripts/bench-open-session.ts` is listed as an entry next to the other by-path benchmarks, because it is run by path and nothing imports it. `qa-host.mjs#sandboxHostEnv` leaves `preprocessorOptions.preExistingExports`, because the bench now imports it.
+
+### Why
+
+- Every cached lookup, one per extension per session open, read and SHA-256-hashed every source the live generation had compiled. With omo's extensions loaded that was about 10 ms per extension per open, about 24 ms of every warm `open_session` (senpi#6256).
+
+### Why an extension could not handle it
+
+- The module cache is the host's process-wide extension loader state. No extension can see or change how the host decides to reuse a compiled graph.
+
+### Expected merge conflict zones
+
+- LOW: `sourcesUnchanged()` and `clearExtensionCache()` in `extension-module-cache.ts` (fork-only file).
+
 ## 2026-11-08 - `SessionControlRemoteOrigin` on a delivery's details (senpi#6233)
 
 ### What changed

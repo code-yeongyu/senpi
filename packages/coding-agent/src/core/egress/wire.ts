@@ -228,11 +228,25 @@ export interface HookModelRequest {
 	readonly input: HookModelRequestInput;
 }
 
+/** A user hook's failure on the hand: reported with the reply, as a fused session reports it, never thrown. */
+export interface HookFailure {
+	readonly extensionPath: string;
+	readonly event: string;
+	readonly error: string;
+}
+
 export interface HookModelRequestReply {
 	readonly t: "hook.model_request.reply";
 	readonly sessionId: string;
 	readonly stepId: string;
 	readonly output: HookModelRequestInput;
+	/** The hooks that failed; `output` is what the others produced. Absent: none failed. */
+	readonly errors?: readonly HookFailure[];
+	/** The messages and notices the hooks sent during the call, as on every loop-hook reply (S33). Absent: none. */
+	readonly sent?: readonly WireJson[];
+	readonly notices?: readonly WireJson[];
+	/** Late messages and notices the hand dropped past its per-session bound. Absent: none. */
+	readonly droppedLate?: number;
 }
 
 export interface HandSessionAdvertisement {

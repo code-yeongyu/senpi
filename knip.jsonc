@@ -502,8 +502,9 @@
       "packages/coding-agent/scripts/qa-rpc-socket/lib/offload-workload.mjs": ["workload"],
       // pre-existing at origin main aceb1cc1d9: unused export parseInject (entry, newly export-checked)
       "packages/coding-agent/scripts/qa-rpc-socket/lib/qa-args.mjs": ["parseInject"],
-      // pre-existing at origin main aceb1cc1d9: unused exports sandboxHostEnv, QA_READINESS_TIMEOUT_MS, qaHostLaunch (entry, newly export-checked)
-      "packages/coding-agent/scripts/qa-rpc-socket/lib/qa-host.mjs": ["QA_READINESS_TIMEOUT_MS", "qaHostLaunch", "sandboxHostEnv"],
+      // pre-existing at origin main aceb1cc1d9: unused exports QA_READINESS_TIMEOUT_MS, qaHostLaunch (entry, newly export-checked);
+      // sandboxHostEnv left this list when scripts/bench-open-session.ts began importing it (senpi#6260)
+      "packages/coding-agent/scripts/qa-rpc-socket/lib/qa-host.mjs": ["QA_READINESS_TIMEOUT_MS", "qaHostLaunch"],
       // pre-existing at origin main aceb1cc1d9: unused export REQUIREMENT_CAPABILITIES (entry, newly export-checked)
       "packages/coding-agent/scripts/qa-rpc-socket/lib/qa-scenarios.mjs": ["REQUIREMENT_CAPABILITIES"],
       // pre-existing at origin main aceb1cc1d9: unused export connectSocket (entry, newly export-checked)
@@ -721,8 +722,6 @@
       "packages/coding-agent/src/core/extensions/builtin/loop/tools.ts": ["BLANK_REASON_ERROR", "FIXED_TICK_ERROR", "MAX_WAKEUP_DELAY_SECONDS", "MIN_WAKEUP_DELAY_SECONDS", "MISSING_DELAY_ERROR", "MISSING_PROMPT_ERROR", "NON_INTEGER_DELAY_ERROR", "NOOP_WITH_STOP_ERROR", "NO_ACTIVE_DYNAMIC_LOOP_ERROR", "SCHEDULE_WAKEUP_DESCRIPTION"],
       // pre-existing at origin main aceb1cc1d9: unused exports LOOP_KINDS
       "packages/coding-agent/src/core/extensions/builtin/loop/types.ts": ["LOOP_KINDS"],
-      // pre-existing at origin main aceb1cc1d9: unused exports tokenExpiresAt, freezeGrantAttribution
-      "packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-provider.ts": ["freezeGrantAttribution", "tokenExpiresAt"],
       // pre-existing at origin main aceb1cc1d9: unused exports isTokenStale
       "packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-refresh.ts": ["isTokenStale"],
       // pre-existing at origin main aceb1cc1d9: unused exports assertAuthorizable
@@ -1161,8 +1160,6 @@
       "packages/coding-agent/src/modes/rpc/session-router-close.ts": ["createFinalization"],
       // pre-existing at origin main aceb1cc1d9: unused exports parkForHandoff, evictIdleSession
       "packages/coding-agent/src/modes/rpc/session-router-occupancy.ts": ["evictIdleSession", "parkForHandoff"],
-      // pre-existing at origin main aceb1cc1d9: unused exports open
-      "packages/coding-agent/src/modes/rpc/session-router-open.ts": ["open"],
       // pre-existing at origin main aceb1cc1d9: unused exports dispatch, setSessionContext
       "packages/coding-agent/src/modes/rpc/session-router-routing.ts": ["dispatch", "setSessionContext"],
       // pre-existing at origin main aceb1cc1d9: unused exports DETACHED_RETIREMENT_GRACE_MS
@@ -1561,6 +1558,7 @@
         "src/experimental/mini/main.ts",
         // QA drivers and benchmarks run by path.
         "scripts/**/*.mjs",
+        "scripts/bench-open-session.ts",
         "bench/*.ts",
         // Example extensions are loaded by path (`senpi -e <file>`), never imported. The examples with
         // their own package.json are separate workspaces.

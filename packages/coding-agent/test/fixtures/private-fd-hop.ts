@@ -80,6 +80,7 @@ if (mode === "engine") {
 		instanceId: "fixture",
 		cleanupPaths: [],
 		publicSocket: "fixture",
+		trustHandOff: {},
 	});
 	child.once("error", () => process.exit(3));
 	child.once("exit", (code) => process.exit(code ?? 3));

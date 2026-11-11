@@ -120,6 +120,22 @@ export async function attachToOpenSession(
 	// no attach may revoke it for the clients that already rely on it.
 	if (options?.retainOnDisconnect) entry.retainOnDisconnect = true;
 	if (!entry.durableSessionId) throw new RpcSessionRegistryError("session_path_in_use");
+	applyAttachedProfile(entry, profile);
+	entry.lastCommandAt = now;
+	if (wasParked) {
+		entry.lifecycleMutex = entry.lifecycleMutex.then(() => entry.runtime?.emitAttachmentEvent("session_resumed"));
+		await entry.lifecycleMutex;
+	}
+	return {
+		sessionId: handle,
+		durableSessionId: entry.durableSessionId,
+		sessionPath: entry.sessionPath,
+		attached: true,
+	};
+}
+
+/** The live launch choices shared by attach-on-open and claiming an already-built session. */
+export function applyAttachedProfile(entry: RpcSessionEntry, profile: RpcSessionLaunchProfile): void {
 	// The surface, browser engine and permission preset follow the client: an attach that names one
 	// moves the live session to it; an attach without one keeps what the session has.
 	if (profile.promptSurface !== undefined && profile.promptSurface !== entry.profile.promptSurface) {
@@ -139,15 +155,4 @@ export async function attachToOpenSession(
 		entry.profile = frozenProfile(withClientPreset(entry.profile, namedPreset));
 		entry.runtime?.setPermissionPreset(namedPreset);
 	}
-	entry.lastCommandAt = now;
-	if (wasParked) {
-		entry.lifecycleMutex = entry.lifecycleMutex.then(() => entry.runtime?.emitAttachmentEvent("session_resumed"));
-		await entry.lifecycleMutex;
-	}
-	return {
-		sessionId: handle,
-		durableSessionId: entry.durableSessionId,
-		sessionPath: entry.sessionPath,
-		attached: true,
-	};
 }
