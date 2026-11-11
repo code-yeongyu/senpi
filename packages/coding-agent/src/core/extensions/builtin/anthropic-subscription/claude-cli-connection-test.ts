@@ -37,7 +37,7 @@ export type ClaudeCliConnectionTestInput = {
 
 /**
  * One "Reply with OK" turn on the named account, pinned with account fallback off, no tools, no setting sources and
- * no persisted session. The outcome is classified with the turn classifiers; only the kind is kept, never error text.
+ * no persisted session. The outcome uses the turn classifiers and retains the provider status and redacted message.
  */
 export async function runClaudeCliConnectionTest(input: ClaudeCliConnectionTestInput): Promise<ClaudeCliAccountCheck> {
 	const now = input.now ?? Date.now;

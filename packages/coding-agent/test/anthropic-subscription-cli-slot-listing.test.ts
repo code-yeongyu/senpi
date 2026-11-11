@@ -86,12 +86,38 @@ describe("CLI-store slot listing", () => {
 					...emptyCredential(),
 					accounts: [{ ...CLI_SLOT, dirId: "a".repeat(32), signedInAt: 1_793_000_000_200, check: undefined }],
 				}));
-				return { model, outcome: "failed", reason: "authentication", message: "Old credential rejected", at: 1 };
+				return {
+					model,
+					outcome: "failed",
+					reason: "authentication",
+					message: "Old credential rejected",
+					at: 1_793_000_000_300,
+				};
 			},
 		});
 
 		const [account] = await getCredentialAccounts(storage, PROVIDER, {}, repository);
+		expect(account?.signedInAt).toBe(1_793_000_000_200);
 		expect(account?.check).toBeUndefined();
+	});
+
+	it("stores a manual test result for the unchanged credential", async () => {
+		const check = await testClaudeCliAccount({
+			provider: PROVIDER,
+			store: storage,
+			name: CLI_SLOT.name,
+			cwd: root,
+			connectionTest: async ({ model }) => ({
+				model,
+				outcome: "failed",
+				reason: "auth_error",
+				status: 401,
+				message: "Synthetic sign-in rejected",
+				at: 1_793_000_000_300,
+			}),
+		});
+		const [account] = await getCredentialAccounts(storage, PROVIDER, {}, repository);
+		expect(account?.check).toEqual(check);
 	});
 
 	it("preserves redacted provider diagnostics in the RPC account summary", async () => {
