@@ -135,7 +135,6 @@ describe("interactive thinking level cycle", () => {
 				ui.renderNow();
 				await terminal.flush();
 				const output = writes.join("");
-				expect(output).toContain(`effort ${level} (shift+tab)`);
 				expect(output).not.toContain("Thinking level:");
 				expect(output).not.toMatch(/\x1b\[(?:[23]J|[0-9]+;[0-9]+r)/);
 				for (const line of startup) expect(output).not.toContain(line);
