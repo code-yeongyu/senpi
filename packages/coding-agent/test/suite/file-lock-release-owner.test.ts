@@ -100,7 +100,8 @@ describe("a lock holder that lost its lock without learning it (senpi#6428)", ()
 			releaseFirst = () => void first.release().then(resolve);
 		});
 		// The second holder's mkdir finishes, then the stale holder releases before the second writes its token.
-		const gatedFs = Object.assign(Object.create(nodeFs) as typeof nodeFs, {
+		const gatedFs = {
+			...nodeFs,
 			mkdir: (dir: string, callback: (error: NodeJS.ErrnoException | null) => void) =>
 				nodeFs.mkdir(dir, (error) => {
 					// Only the mkdir that wins the takeover is held open; the first one fails with EEXIST.
@@ -111,7 +112,7 @@ describe("a lock holder that lost its lock without learning it (senpi#6428)", ()
 					releaseFirst();
 					void firstReleasing.then(() => callback(null));
 				}),
-		});
+		} as typeof nodeFs;
 		const second = await lockWithLossHandling(alias("second"), {
 			realpath: false,
 			lockfilePath: lockDir,
@@ -126,13 +127,14 @@ describe("a lock holder that lost its lock without learning it (senpi#6428)", ()
 
 	it("#given the token file cannot be read for a reason other than its absence #when the owner releases #then the lock directory is still removed (review LOW)", async () => {
 		const { file, lockDir } = target();
-		const failingFs = Object.assign(Object.create(nodeFs) as typeof nodeFs, {
+		const failingFs = {
+			...nodeFs,
 			readFile: (
 				_path: string,
 				_encoding: string,
 				callback: (error: NodeJS.ErrnoException | null, data?: string) => void,
 			) => callback(Object.assign(new Error("too many open files"), { code: "EMFILE" })),
-		});
+		} as typeof nodeFs;
 		const held = await lockWithLossHandling(file, { realpath: false, fs: failingFs } as never);
 		await held.release();
 		expect(existsSync(lockDir)).toBe(false);
