@@ -1,0 +1,40 @@
+{
+	"$comment": "Reviewed npm audit exceptions (scripts/npm-audit-gate.mjs). List ONLY advisories with no published fix. Each entry expires within 30 days; renew it only after re-checking the advisory, and remove it once the fix ships.",
+	"exceptions": [
+		{
+			"advisory": "GHSA-mrhx-c7xc-m3w5",
+			"package": "zod",
+			"reason": "zod <4.6.6: memory exhaustion validating oversized constrained collections. No fixed zod release is published yet. Direct pin in packages/coding-agent, also via @anthropic-ai/sandbox-runtime.",
+			"issue": "https://github.com/code-yeongyu/senpi/issues/6399",
+			"expires": "2026-12-10"
+		},
+		{
+			"advisory": "GHSA-6889-vf6x-f3g5",
+			"package": "node-forge",
+			"reason": "node-forge <=1.4.2 has no fixed release published. It comes in via @anthropic-ai/sandbox-runtime and @earendil-works/gondolin (root override pins 1.4.2).",
+			"issue": "https://github.com/code-yeongyu/senpi/issues/6400",
+			"expires": "2026-12-10"
+		},
+		{
+			"advisory": "GHSA-w4xr-hqv8-ch44",
+			"package": "node-forge",
+			"reason": "node-forge <=1.4.2 has no fixed release published. It comes in via @anthropic-ai/sandbox-runtime and @earendil-works/gondolin (root override pins 1.4.2).",
+			"issue": "https://github.com/code-yeongyu/senpi/issues/6400",
+			"expires": "2026-12-10"
+		},
+		{
+			"advisory": "GHSA-6cv4-p8m7-4r25",
+			"package": "node-forge",
+			"reason": "node-forge <=1.4.2 has no fixed release published. It comes in via @anthropic-ai/sandbox-runtime and @earendil-works/gondolin (root override pins 1.4.2).",
+			"issue": "https://github.com/code-yeongyu/senpi/issues/6400",
+			"expires": "2026-12-10"
+		},
+		{
+			"advisory": "GHSA-j8rw-jp99-435v",
+			"package": "node-forge",
+			"reason": "node-forge <=1.4.2 has no fixed release published. It comes in via @anthropic-ai/sandbox-runtime and @earendil-works/gondolin (root override pins 1.4.2).",
+			"issue": "https://github.com/code-yeongyu/senpi/issues/6400",
+			"expires": "2026-12-10"
+		}
+	]
+}
