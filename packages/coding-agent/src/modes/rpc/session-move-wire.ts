@@ -6,6 +6,11 @@ export const MOVE_SESSION_CAPABILITY = "move_session";
 export const MOVE_SESSION_REVOKE_CAPABILITY = "move_session_revoke";
 /** Capability: `move_session` answers op `copy`, which copies a session into a new one under a given id (senpi#5889). */
 export const MOVE_SESSION_COPY_CAPABILITY = "move_session_copy";
+/**
+ * Capability: `status` for an accepted move, and an `import` refused because the move already landed, answer where it
+ * landed (senpi#6436).
+ */
+export const MOVE_SESSION_STATUS_LANDED_PATH_CAPABILITY = "move_session_status_landed_path";
 
 /** A `move_session` request whose fields do not parse (op, move id, paths, answer). */
 export const RPC_ERROR_INVALID_MOVE_REQUEST = "invalid_move_request";
@@ -33,8 +38,20 @@ export type RpcMoveSessionCommand = { id?: string; type: "move_session" } & (
 	| { op: "copy"; sessionPath: string; sessionId: string; sessionDir?: string }
 );
 
-/** The receiver's record of a move as a client sees it; `expires_at` while it waits for the bundle. */
-export type RpcMoveRecord = MoveAnswer | { state: "ready"; expires_at: string };
+/**
+ * Where an accepted move landed: the session file its record names, with the id and the folder that file's header
+ * names. `landed_file: "gone"` when no file is there or the file there no longer records the move.
+ */
+export type RpcMoveLanded = { session_path: string; session_id: string; cwd: string } | { landed_file: "gone" };
+
+/**
+ * The receiver's record of a move as a client sees it; `expires_at` while it waits for the bundle, and where it landed
+ * beside `accepted` (absent when the record names no landing target).
+ */
+export type RpcMoveRecord =
+	| MoveAnswer
+	| (Extract<MoveAnswer, { state: "accepted" }> & RpcMoveLanded)
+	| { state: "ready"; expires_at: string };
 
 export type RpcMoveSessionData =
 	| RpcMoveRecord

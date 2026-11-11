@@ -67,6 +67,7 @@ describe("multi-session RPC protocol info", () => {
 					"move_session",
 					"move_session_revoke",
 					"move_session_copy",
+					"move_session_status_landed_path",
 					"session_relocation",
 					"session_context",
 					"session_kind",

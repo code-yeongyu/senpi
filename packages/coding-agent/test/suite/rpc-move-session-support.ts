@@ -115,6 +115,13 @@ export async function importedOnB(
 	return (imported.data as { session_path: string }).session_path;
 }
 
+/** What `status` says beside `accepted` once the fixture's session landed on B at `sessionPath` (senpi#6436). */
+export const landedOnB = (fixture: { readonly repoB: string }, sessionPath: string) => ({
+	session_path: sessionPath,
+	session_id: SESSION_ID,
+	cwd: fixture.repoB,
+});
+
 export const customTypes = (file: string) =>
 	readFileSync(file, "utf8")
 		.trim()

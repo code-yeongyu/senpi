@@ -13,7 +13,7 @@ import { getDefaultSessionDir, loadEntriesFromFile } from "../../src/core/sessio
 import { MOVE_STEPS, type MoveStep, setMoveStepHook } from "../../src/core/session-move/move-steps.ts";
 import { sessionOwnership } from "../../src/core/session-move/ownership.ts";
 import { createInProcessRig } from "./rpc-inprocess-host-support.ts";
-import { devices, exportedForB, move, type Rig } from "./rpc-move-session-support.ts";
+import { devices, exportedForB, landedOnB, move, type Rig } from "./rpc-move-session-support.ts";
 import { admittedInputs } from "./session-move-fixture.ts";
 
 type Fixture = Awaited<ReturnType<typeof devices>>;
@@ -162,7 +162,7 @@ describe("move_session survives a fault at every durable step (senpi#4004)", () 
 							expect(
 								await status(run.b, run.moveId, run.copies, false, `${label}: before the repeated revoke`),
 								`${label}: the revoke mark was lost`,
-							).toEqual({ state: "accepted", revoked: true });
+							).toEqual({ state: "accepted", revoked: true, ...landedOnB(run.fixture, run.copies.here) });
 							expect(
 								await move(run.b, { op: "revoke", sessionPath: run.copies.here, moveId: run.moveId }),
 							).toMatchObject({ success: true });
@@ -174,7 +174,12 @@ describe("move_session survives a fault at every durable step (senpi#4004)", () 
 
 						const answer = await status(run.b, run.moveId, run.copies, deleted, label);
 						expect(answer.state, `${label}: still receiving after the retry`).not.toBe("receiving");
-						if (row.flow === "revoke") expect(answer).toEqual({ state: "accepted", revoked: true });
+						if (row.flow === "revoke")
+							expect(answer).toEqual({
+								state: "accepted",
+								revoked: true,
+								...(deleted ? { landed_file: "gone" } : landedOnB(run.fixture, run.copies.here)),
+							});
 						expect(
 							await move(run.a, { op: "finish", sessionPath: run.copies.sender, moveId: run.moveId, answer }),
 						).toMatchObject({ success: true });

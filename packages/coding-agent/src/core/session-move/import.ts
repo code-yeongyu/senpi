@@ -19,11 +19,11 @@ import {
 	verifyBundle,
 } from "./bundle.ts";
 import { EXTENSION_STATE_PAYLOAD, movedStateDir } from "./extension-state.ts";
+import { type LandedFile, outcomeIn, readLanding } from "./landed-file.ts";
 import { type MoveAnswer, MoveFencedError, type MoveLedger } from "./move-ledger.ts";
 import { moveStep } from "./move-steps.ts";
-import { headerSessionId, type MoveId, SESSION_MOVED, SESSION_MOVED_IN, sessionOwnership } from "./ownership.ts";
+import { headerSessionId, type MoveId, SESSION_MOVED_IN, sessionOwnership } from "./ownership.ts";
 import { requeueInput } from "./requeue.ts";
-import { REVOKED } from "./revoke.ts";
 import { moveLockKey } from "./session-lock.ts";
 
 export interface ImportMovedSessionOptions {
@@ -66,19 +66,7 @@ const movedInFor = async (file: string, moveId: MoveId): Promise<boolean> =>
 			(entry.data as { move_id?: unknown } | undefined)?.move_id === moveId,
 	);
 
-/** What the session file records for the move: nothing, its import, or its import and then a revoke. */
-async function importOutcome(file: string, moveId: MoveId): Promise<"absent" | "moved_in" | "revoked"> {
-	let outcome: "absent" | "moved_in" | "revoked" = "absent";
-	for (const entry of await loadEntriesFromFileAsync(file)) {
-		if (entry.type !== "custom") continue;
-		const data = entry.data as { move_id?: unknown; reason?: unknown } | undefined;
-		if (data?.move_id !== moveId) continue;
-		if (entry.customType === SESSION_MOVED_IN) outcome = "moved_in";
-		else if (outcome === "moved_in" && entry.customType === SESSION_MOVED && data.reason === REVOKED)
-			outcome = "revoked";
-	}
-	return outcome;
-}
+const importOutcome = async (file: string, moveId: MoveId) => outcomeIn(await loadEntriesFromFileAsync(file), moveId);
 
 export class StatusPathMismatchError extends Error {
 	readonly code = "move_mismatch";
@@ -101,14 +89,34 @@ export async function answerMoveStatus(
 	moveId: MoveId,
 	sessionFile: string | undefined,
 ): Promise<MoveAnswer> {
-	const landed = async (target: string) => ((await pathExists(target)) ? importOutcome(target, moveId) : "absent");
-	if (sessionFile === undefined || !(await pathExists(sessionFile)))
-		return ledger.answerStatus(moveId, { movedIn: false, landed });
-	return serializeByKey(await moveLockKey(sessionFile), async () => {
-		const outcome = await importOutcome(sessionFile, moveId);
-		if (outcome === "absent") throw new StatusPathMismatchError(moveId, sessionFile);
-		return ledger.answerStatus(moveId, { movedIn: true, revoked: outcome === "revoked", landed });
-	});
+	return (await answerMoveStatusAndLanding(ledger, moveId, sessionFile)).answer;
+}
+
+/**
+ * `answerMoveStatus`, and for an accepted move where it landed (senpi#6436). To settle an interrupted step the ledger
+ * reads the file at the target its record names, under the record's lock; that same read says what the file is, so
+ * nothing is read twice and nothing is opened or written for it. A record that names no target says nothing.
+ */
+export async function answerMoveStatusAndLanding(
+	ledger: MoveLedger,
+	moveId: MoveId,
+	sessionFile: string | undefined,
+): Promise<{ readonly answer: MoveAnswer; readonly landed?: LandedFile }> {
+	const seen: { file?: LandedFile } = {};
+	const landed = async (target: string) => {
+		const { outcome, file } = await readLanding(target, moveId);
+		seen.file = file;
+		return outcome;
+	};
+	const answer =
+		sessionFile === undefined || !(await pathExists(sessionFile))
+			? await ledger.answerStatus(moveId, { movedIn: false, landed })
+			: await serializeByKey(await moveLockKey(sessionFile), async () => {
+					const outcome = await importOutcome(sessionFile, moveId);
+					if (outcome === "absent") throw new StatusPathMismatchError(moveId, sessionFile);
+					return ledger.answerStatus(moveId, { movedIn: true, revoked: outcome === "revoked", landed });
+				});
+	return answer.state === "accepted" && seen.file !== undefined ? { answer, landed: seen.file } : { answer };
 }
 
 /**
