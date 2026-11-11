@@ -178,7 +178,11 @@ export async function importMovedSession(
 		await rm(staging, { recursive: true, force: true });
 		return { sessionFile };
 	} catch (error) {
-		if (error instanceof MoveFencedError && (await landed())) return confirmLanded();
+		// Another import landed this move; what this one staged after that import cleaned up is not kept.
+		if (error instanceof MoveFencedError && (await landed())) {
+			await rm(staging, { recursive: true, force: true });
+			return confirmLanded();
+		}
 		if (!(error instanceof MoveFencedError))
 			await options.ledger.fail(
 				manifest.moveId,
