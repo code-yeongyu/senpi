@@ -60,8 +60,12 @@ function parseCopy(raw: Record<string, unknown>): MoveRequest | string {
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
 	typeof value === "object" && value !== null && !Array.isArray(value);
 
-/** Padded base64, as `Buffer.toString("base64")` writes it, so the decoded size follows from the length alone. */
-const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+/**
+ * Padded base64, as `Buffer.toString("base64")` writes it: a length that is a multiple of four, alphabet characters,
+ * then at most two `=`. One character class and no repeated group, so a string as long as a line costs one pass.
+ */
+const BASE64_CHARACTERS = /^[A-Za-z0-9+/]*={0,2}$/;
+const isPaddedBase64 = (value: string): boolean => value.length % 4 === 0 && BASE64_CHARACTERS.test(value);
 
 function parseInlineFiles(value: unknown): readonly InlineBundleFile[] | string {
 	if (!Array.isArray(value) || value.length > MOVE_INLINE_MAX_FILES)
@@ -71,13 +75,15 @@ function parseInlineFiles(value: unknown): readonly InlineBundleFile[] | string 
 	for (const item of value) {
 		if (!isRecord(item)) return "each file must be an object with path, sha256 and base64.";
 		const { path, sha256, base64 } = item;
-		if (typeof path !== "string" || typeof sha256 !== "string" || typeof base64 !== "string" || !BASE64.test(base64))
+		if (typeof path !== "string" || typeof sha256 !== "string" || typeof base64 !== "string")
 			return "each file needs path and sha256 as strings and base64 as padded base64.";
+		// Counted from the length, before a character is read, so files over the cap are refused at no further cost.
 		bytes += Buffer.byteLength(base64, "base64");
+		if (bytes > MOVE_INLINE_MAX_BYTES)
+			return `files hold more than the ${MOVE_INLINE_MAX_BYTES} bytes an inline import takes; send the bundle folder instead.`;
+		if (!isPaddedBase64(base64)) return "each file needs path and sha256 as strings and base64 as padded base64.";
 		files.push({ path, sha256, base64 });
 	}
-	if (bytes > MOVE_INLINE_MAX_BYTES)
-		return `files hold ${bytes} bytes, more than the ${MOVE_INLINE_MAX_BYTES} an inline import takes; send the bundle folder instead.`;
 	return files;
 }
 

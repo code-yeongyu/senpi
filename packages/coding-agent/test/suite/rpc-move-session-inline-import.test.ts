@@ -134,6 +134,12 @@ describe("move_session import with files (senpi#6267)", () => {
 			"files over the engine's 1 MiB cap",
 			(files) => ({ files: [...files, inlineFile("files/big.bin", Buffer.alloc(1024 * 1024, 1))] }),
 		],
+		[
+			"one file as long as a line may carry",
+			(files) => ({
+				files: [...files, { path: "files/big.bin", sha256: "0".repeat(64), base64: "A".repeat(15 * 1024 * 1024) }],
+			}),
+		],
 	])("#given %s #then import refuses invalid_move_request and the move stays importable", async (_case, fields) => {
 		const { fixture, a, b, reply } = await exported("move-i8");
 		await using _a = a;
