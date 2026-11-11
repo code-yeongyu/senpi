@@ -6111,6 +6111,7 @@
 				"imports/extension/packages/realm-registry/dist/index.js",
 				"imports/firstKernel/packages/realm-registry/dist/index.js",
 				"legacyContracts/test/js-kernel-host-registry-slot.test.ts/JavaScript kernel realm Given the host realm holds every engine registry when a cell looks for them then the cell sees none",
+				"legacyContracts/test/kernel-graph-source-resolution-bun.test.ts/the kernel graph under Bun in a tree that is installed but not built (omo#12965) resolves the realm-registry helper to its source",
 				"legacyContracts/test/kernel-permission-foreign-payload.test.ts/codemode cell authority handed back by another version's registry (omo#12965) reads a session whose handle it cannot read as dead (x12965-no-functions)",
 				"legacyContracts/test/kernel-permission-foreign-payload.test.ts/codemode cell authority handed back by another version's registry (omo#12965) reads a session whose handle it cannot read as dead (x12965-pending-not-a-promise)",
 				"legacyContracts/test/kernel-permission-foreign-payload.test.ts/codemode cell authority handed back by another version's registry (omo#12965) reads a session whose handle it cannot read as dead (x12965-dead-not-a-boolean)",
