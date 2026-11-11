@@ -1,6 +1,23 @@
 {
 	"version": 1,
 	"nodes": {
+		"senpi#6377": {
+			"additions": [
+				"legacyContracts/test/py-kernel-permissions.test.ts/Python permission interposition keeps private dependency urllib.parse.SplitResult",
+				"legacyContracts/test/py-kernel-permissions.test.ts/Python permission interposition keeps private dependency urllib.parse.SplitResult.path",
+				"legacyContracts/test/py-kernel-permissions.test.ts/Python permission interposition keeps private dependency urllib.parse.unquote_plus",
+				"legacyContracts/test/py-kernel-permissions.test.ts/Python permission interposition denied: sqlite3.connect file:subject?mode=memory&mode%00=rw",
+				"legacyContracts/test/py-kernel-permissions.test.ts/Python permission interposition denied: sqlite3.connect file:subject%00junk?mode=ro",
+				"legacyContracts/test/py-kernel-permissions.test.ts/Python permission interposition denied: sqlite3.connect file:subject?mode=memory&mode=ro",
+				"legacyContracts/test/py-kernel-permissions.test.ts/Python permission interposition allowed: sqlite3.connect file:subject?mode=memory&mode%00=rw",
+				"legacyContracts/test/py-kernel-permissions.test.ts/Python permission interposition allowed: sqlite3.connect file:subject%00junk?mode=ro",
+				"legacyContracts/test/py-kernel-permissions.test.ts/Python permission interposition allowed: sqlite3.connect file:subject?mode=memory&mode=ro",
+				"legacyContracts/test/py-kernel-permissions.test.ts/Python permission interposition inactive: sqlite3.connect file:subject?mode=memory&mode%00=rw",
+				"legacyContracts/test/py-kernel-permissions.test.ts/Python permission interposition inactive: sqlite3.connect file:subject%00junk?mode=ro",
+				"legacyContracts/test/py-kernel-permissions.test.ts/Python permission interposition inactive: sqlite3.connect file:subject?mode=memory&mode=ro"
+			],
+			"reason": "senpi#6377 (Fixes #6376): the sqlite permission guard parses SQLite URIs itself (sqlite_uri.py) instead of reading urllib.parse helpers a cell can rebind. These are new contract cases in test/py-kernel-permissions.test.ts: three private-dependency rows (SplitResult, SplitResult.path, unquote_plus), and three sqlite3.connect URIs (a %00 inside a mode key, a %00 inside the path, several mode values) across the denied/allowed/inactive policies. No prompt cell moves and the baseline is unchanged."
+		},
 		"senpi#6334": {
 			"additions": [
 				"legacyContracts/test/js-kernel-host-registry-slot.test.ts/JavaScript kernel realm Given the host realm holds the redaction registry slot when a cell looks for it then the cell cannot see it"

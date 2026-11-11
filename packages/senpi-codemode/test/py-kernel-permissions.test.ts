@@ -113,7 +113,16 @@ for (const prefix of ["exec", "spawn"]) {
 		});
 	}
 }
-for (const uri of ["subject", "file:subject?mode=ro", "file:subject?mode=rw", "file:subject?mode=rwc"]) {
+// SQLite ends a token at %00 and opens the file unless every mode is memory, so each of these reaches the real file.
+for (const uri of [
+	"subject",
+	"file:subject?mode=ro",
+	"file:subject?mode=rw",
+	"file:subject?mode=rwc",
+	"file:subject?mode=memory&mode%00=rw",
+	"file:subject%00junk?mode=ro",
+	"file:subject?mode=memory&mode=ro",
+]) {
 	cases.push({
 		name: `sqlite3.connect ${uri}`,
 		code: `sqlite3.connect('${uri}', uri=True).close()`,

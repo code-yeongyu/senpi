@@ -3,7 +3,8 @@
 The guard must not read anything cell code can rebind, so this module uses no
 imports: only str/bytes methods and the frozen builtins interpose.py executes it
 with. It follows SQLite's own URI rules (sqlite3ParseUri) instead of urllib's:
-'+' is not a space, the authority is dropped, and the fragment is ignored.
+'+' is not a space, the authority is dropped, the fragment is ignored, and a
+%00 ends the path, key or value it appears in.
 """
 
 _HEX = "0123456789abcdefABCDEF"
@@ -18,7 +19,11 @@ def _percent_decode(text):
     while index < size:
         byte = raw[index]
         if byte == 37 and index + 2 < size and chr(raw[index + 1]) in _HEX and chr(raw[index + 2]) in _HEX:
-            decoded.append(int(raw[index + 1:index + 3].decode("ascii"), 16))
+            octet = int(raw[index + 1:index + 3].decode("ascii"), 16)
+            if octet == 0:
+                # sqlite3ParseUri ignores the rest of the token after %00, so the guard must too.
+                break
+            decoded.append(octet)
             index += 3
             continue
         decoded.append(byte)
