@@ -91,7 +91,9 @@ export async function testClaudeCliAccount(input: ClaudeCliAccountTestInput): Pr
 		return {
 			...credential,
 			accounts: (credential.accounts ?? []).map((slot) =>
-				slot.name === input.name ? checkedSlot(slot, check) : slot,
+				slot.name === input.name && slot.store === "claude-cli" && slot.dirId === before.dirId
+					? checkedSlot(slot, check)
+					: slot,
 			),
 		};
 	});

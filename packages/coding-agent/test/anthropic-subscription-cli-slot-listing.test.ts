@@ -21,6 +21,7 @@ import {
 	accountDirFor,
 	ensureAccountDir,
 } from "../src/core/extensions/builtin/anthropic-subscription/claude-cli-account-dir.ts";
+import { testClaudeCliAccount } from "../src/core/extensions/builtin/anthropic-subscription/claude-cli-account-test.ts";
 
 const PROVIDER = "anthropic-subscription";
 const FIXTURE = join(import.meta.dirname, "fixtures", "claude-cli-auth", "fake-claude.mjs");
@@ -74,6 +75,87 @@ afterEach(() => {
 });
 
 describe("CLI-store slot listing", () => {
+	it("does not let a manual test mark a replacement credential failed", async () => {
+		await testClaudeCliAccount({
+			provider: PROVIDER,
+			store: storage,
+			name: CLI_SLOT.name,
+			cwd: root,
+			connectionTest: async ({ model }) => {
+				await storage.modify(PROVIDER, async () => ({
+					...emptyCredential(),
+					accounts: [{ ...CLI_SLOT, dirId: "a".repeat(32), signedInAt: 1_793_000_000_200, check: undefined }],
+				}));
+				return {
+					model,
+					outcome: "failed",
+					reason: "authentication",
+					message: "Old credential rejected",
+					at: 1_793_000_000_300,
+				};
+			},
+		});
+
+		const [account] = await getCredentialAccounts(storage, PROVIDER, {}, repository);
+		expect(account?.signedInAt).toBe(1_793_000_000_200);
+		expect(account?.check).toBeUndefined();
+	});
+
+	it("stores a manual test result for the unchanged credential", async () => {
+		const check = await testClaudeCliAccount({
+			provider: PROVIDER,
+			store: storage,
+			name: CLI_SLOT.name,
+			cwd: root,
+			connectionTest: async ({ model }) => ({
+				model,
+				outcome: "failed",
+				reason: "auth_error",
+				status: 401,
+				message: "Synthetic sign-in rejected",
+				at: 1_793_000_000_300,
+			}),
+		});
+		const [account] = await getCredentialAccounts(storage, PROVIDER, {}, repository);
+		expect(account?.check).toEqual(check);
+	});
+
+	it("preserves redacted provider diagnostics in the RPC account summary", async () => {
+		const check = {
+			model: "claude-opus-5-5",
+			outcome: "failed" as const,
+			reason: "other",
+			status: 403,
+			message: "This account cannot use the requested model",
+			at: 1_793_000_000_100,
+		};
+		await storage.modify(PROVIDER, async () => ({
+			...emptyCredential(),
+			accounts: [{ ...CLI_SLOT, check }],
+		}));
+
+		const [account] = await getCredentialAccounts(storage, PROVIDER, {}, repository);
+
+		expect(account?.check).toEqual(check);
+	});
+
+	it("does not list a migrated legacy default, while keeping a real CLI account named default", async () => {
+		await storage.modify(PROVIDER, async () => ({
+			...emptyCredential(),
+			accounts: [{ ...CLI_SLOT, name: "default", signInRequired: "legacy_sign_in_retired" }, CLI_SLOT],
+		}));
+		expect((await getCredentialAccounts(storage, PROVIDER, {}, repository)).map((account) => account.name)).toEqual([
+			"work",
+		]);
+		await storage.modify(PROVIDER, async () => ({
+			...emptyCredential(),
+			accounts: [{ ...CLI_SLOT, name: "default" }],
+		}));
+		expect((await getCredentialAccounts(storage, PROVIDER, {}, repository)).map((account) => account.name)).toEqual([
+			"default",
+		]);
+	});
+
 	it("the summary of a CLI slot carries the store, sign-in time, profile and check", async () => {
 		const [account] = await getCredentialAccounts(storage, PROVIDER, {}, repository);
 
