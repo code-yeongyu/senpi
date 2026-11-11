@@ -1,4 +1,4 @@
-import { appendFileSync, chmodSync, renameSync, statSync } from "node:fs";
+import { appendFile, chmod, rename, stat } from "node:fs/promises";
 import { redactSecrets } from "../sensitive-output.ts";
 import type { CredentialBlock, RateLimitResetSource } from "./classify.ts";
 
@@ -40,21 +40,42 @@ export function redactBlockExcerpt(text: string): string {
 	return masked.length > EXCERPT_MAX_CHARS ? `${masked.slice(0, EXCERPT_MAX_CHARS)}…` : masked;
 }
 
-/** Appends one entry; a log that cannot be written never fails the request that was blocked. */
+// One write chain per log path: appends run in the order the blocks happened, and the size check and rollover of
+// one append cannot interleave with the next.
+const pendingWrites = new Map<string, Promise<void>>();
+
+/**
+ * Appends one entry without blocking the caller (the block is recorded on the session path, which must not run
+ * synchronous fs work: senpi#3993). A log that cannot be written never fails the request that was blocked.
+ */
 export function appendCredentialBlockLog(path: string, entry: CredentialBlockLogEntry): void {
+	const previous = pendingWrites.get(path) ?? Promise.resolve();
+	const next = previous.then(() => writeEntry(path, entry));
+	pendingWrites.set(path, next);
+	void next.finally(() => {
+		if (pendingWrites.get(path) === next) pendingWrites.delete(path);
+	});
+}
+
+/** Resolves once every entry appended to `path` so far is on disk (or was dropped as unwritable). */
+export function flushCredentialBlockLog(path: string): Promise<void> {
+	return pendingWrites.get(path) ?? Promise.resolve();
+}
+
+async function writeEntry(path: string, entry: CredentialBlockLogEntry): Promise<void> {
 	try {
-		const size = fileSize(path);
-		if (size !== undefined && size >= BLOCK_LOG_MAX_BYTES) renameSync(path, `${path}.1`);
-		appendFileSync(path, `${JSON.stringify(entry)}\n`, { mode: 0o600 });
-		chmodSync(path, 0o600);
+		const size = await fileSize(path);
+		if (size !== undefined && size >= BLOCK_LOG_MAX_BYTES) await rename(path, `${path}.1`);
+		await appendFile(path, `${JSON.stringify(entry)}\n`, { mode: 0o600 });
+		await chmod(path, 0o600);
 	} catch {
 		// Best effort: the block itself is already recorded in the pool state.
 	}
 }
 
-function fileSize(path: string): number | undefined {
+async function fileSize(path: string): Promise<number | undefined> {
 	try {
-		return statSync(path).size;
+		return (await stat(path)).size;
 	} catch {
 		return undefined;
 	}

@@ -6,6 +6,7 @@ import type { PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	BLOCK_LOG_MAX_BYTES,
+	flushCredentialBlockLog,
 	type CredentialBlockLogEntry,
 	redactBlockExcerpt,
 } from "../../../src/core/credential-pool/block-log.ts";
@@ -88,6 +89,8 @@ async function blockAlpha(refusal: Error): Promise<void> {
 	for await (const _event of stream) {
 		// drain
 	}
+	// The block log is appended off the session path; wait for this block's line before reading it.
+	await flushCredentialBlockLog(repository.blockLogPath());
 }
 
 function logEntries(): CredentialBlockLogEntry[] {
