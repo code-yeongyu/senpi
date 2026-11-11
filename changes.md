@@ -1,5 +1,78 @@
 # changes — senpi-monorepo root
 
+## 2026-11-10 - Remove stale OAuth export audit entries (senpi#2861)
+
+### What changed
+
+- `knip.jsonc`: remove the obsolete `oauth-provider.ts` mapping for `freezeGrantAttribution` and `tokenExpiresAt`, together with its associated comment.
+
+### Why
+
+- `knip.jsonc`: the OAuth helper extraction removed these exports from the provider, so retaining their old unused-export entries fails the existing audit.
+
+### Why an extension could not handle it
+
+- `knip.jsonc`: the export audit is repository tooling outside the extension runtime.
+
+### Expected merge conflict zones
+
+- LOW: the removed OAuth provider mapping and its comment in `knip.jsonc`.
+
+## 2026-11-03 - Type checking and vitest resolve the machine-ops workspace from source (senpi#5592)
+
+### What changed
+
+- `tsconfig.json`: paths for `@code-yeongyu/senpi-machine-ops`, `/in-process-holder` and `/conformance` to the package sources.
+- `vitest.base.ts`: the same three aliases, so every package's tests load the sources.
+
+### Why
+
+- A remote machine executor and the agent's own tools must share one implementation of file and process operations, their limits and their permission checks. The shared layer is the new engine-free workspace package `packages/machine-ops` (`@code-yeongyu/senpi-machine-ops`), which imports nothing from `packages/agent` or `packages/coding-agent`.
+
+### Why an extension could not handle it
+
+- Root type-check and test resolution are repository infrastructure.
+
+### Expected merge conflict zones
+
+- LOW: the `paths` block in `tsconfig.json`; `workspaceSourcePaths` and the alias list in `vitest.base.ts`.
+
+## 2026-11-01 - Fixed node-forge and undici in the sandbox and gondolin example extensions (part of senpi#4820)
+
+### What changed
+
+- `package.json` `overrides`: `@earendil-works/gondolin` now pins `node-forge` 1.4.2 beside `undici` 6.29.1 (was 6.28.1), and a new `@anthropic-ai/sandbox-runtime` entry pins `node-forge` 1.4.2. `package-lock.json`, `bun.lock` and the two examples' own `package-lock.json` files resolve node-forge 1.4.2 and gondolin's undici 6.29.1.
+
+### Why
+
+- The private `pi-extension-sandbox` and `pi-extension-gondolin` workspaces pulled node-forge 1.4.0 (GHSA-86w9-cpqp-85rv and eleven more) and undici 6.28.1 (eight advisories), which the root `npm audit --omit=dev` counts in the scheduled audit job. Both parents accept the fixed releases (node-forge `^1.4.0` / `^1.3.3`, undici `^6.21.0`).
+
+### Why an extension could not handle it
+
+- Dependency overrides are root workspace configuration outside the extension runtime.
+
+### Expected merge conflict zones
+
+- LOW: the `@earendil-works/gondolin` and `@anthropic-ai/sandbox-runtime` entries in the root `overrides` block, and the lockfile hunks for node-forge and gondolin's nested undici.
+
+## 2026-11-03 - Format with bun fmt instead of oxfmt (senpi#5573)
+
+### What changed
+
+- `package.json`: `fmt` and `fmt:check` run `node scripts/bun-fmt.mjs` (`bun fmt --no-script`, with `--check` for the gate) in place of `oxfmt`; the `oxfmt` devDependency is removed.
+
+### Why
+
+- Bun 1.4.4, already pinned in CI, formats with the same `.oxfmtrc.json` and produced byte-identical output on all 7,965 files, 2.4x faster (senpi#5572).
+
+### Why an extension could not handle it
+
+- Repository scripts and dev dependencies are not extension surfaces.
+
+### Expected merge conflict zones
+
+- LOW: the `fmt` / `fmt:check` script lines and the devDependencies block of the root `package.json`.
+
 ## 2026-10-31 - Drop findSlot from knip's pre-existing unused exports (part of senpi#4600)
 
 ### What changed

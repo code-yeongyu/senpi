@@ -1,8 +1,3 @@
-import { recordHandoverParkedSession } from "./host-handover-parked.ts";
-import { parkedEntryFromProfile } from "./host-handover-parked-open.ts";
-
-import { hostInstanceId } from "./protocol-identity.ts";
-
 import type { RpcSessionClosedReason } from "./rpc-types.ts";
 
 import { readDrainVerdicts } from "./session-drain.ts";
@@ -10,6 +5,7 @@ import { holdUnattendedTurns } from "./session-drain-hold.ts";
 import { forgetSessionOwnership } from "./session-router-attachments.ts";
 import { finalizeClose, tryClaimClose } from "./session-router-close.ts";
 import type { RouterContext } from "./session-router-context.ts";
+import { recordRetainedSession } from "./session-router-residency.ts";
 import { selectSweepEvictions } from "./session-sweep.ts";
 
 const DRAIN_SWEEP_MS = 50;
@@ -21,6 +17,15 @@ const DRAIN_SWEEP_MS = 50;
  */
 export function beginDrain(host: RouterContext): void {
 	host.draining = true;
+	void host.parks
+		.stop()
+		.catch((cause: unknown) => {
+			process.stderr.write(`senpi rpc park close failed during drain: ${String(cause)}\n`);
+		})
+		.then(() => sweepDrain(host))
+		.catch((cause: unknown) => {
+			process.stderr.write(`senpi rpc drain sweep failed after park close: ${String(cause)}\n`);
+		});
 	stopSweep(host);
 	// Armed BEFORE the first pass, so a pass that fails is retried instead of ending the drain
 	// (senpi#2285). Unref'd: a draining host must never be the reason the event loop stays open.
@@ -41,7 +46,7 @@ export function sweepDrain(host: RouterContext): void {
 	holdUnattendedTurns(host);
 	for (const sessionId of verdicts.gone) parkForHandoff(host, sessionId, "session_dir_removed");
 	for (const sessionId of verdicts.park) parkForHandoff(host, sessionId, "handoff_parked");
-	if (host.registry.size > 0 || host.handoffParks > 0 || host.finalizations.size > 0) return;
+	if (host.registry.size > 0 || host.parks.size > 0 || host.handoffParks > 0 || host.finalizations.size > 0) return;
 	if (host.drainTimer !== undefined) {
 		clearInterval(host.drainTimer);
 		host.drainTimer = undefined;
@@ -145,18 +150,7 @@ export async function evictIdleSession(
 		retained?.retainOnDisconnect === true &&
 		retained.sessionPath !== undefined
 	) {
-		await recordHandoverParkedSession(host.handoverParkedDir, {
-			...parkedEntryFromProfile(
-				{
-					sessionPath: retained.sessionPath,
-					contextOverlay: retained.contextOverlay,
-					...(retained.durableSessionId !== undefined ? { durableSessionId: retained.durableSessionId } : {}),
-				},
-				retained.profile,
-				Object.keys(host.defaults.hostContext ?? {}),
-			),
-			parkedBy: host.defaults.hostContext?.host_instance ?? hostInstanceId(),
-		}).catch((cause: unknown) => {
+		await recordRetainedSession(host, retained, retained.sessionPath, false).catch((cause: unknown) => {
 			process.stderr.write(`senpi rpc handover park record ${sessionId} failed: ${String(cause)}\n`);
 		});
 	}

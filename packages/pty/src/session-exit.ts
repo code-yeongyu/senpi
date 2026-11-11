@@ -6,6 +6,33 @@ import type {
 	TerminalSessionOperationResult,
 } from "./session-types.ts";
 
+/** A grace option as a usable wait: unset, non-finite or negative values take the fallback. */
+export function normalizeGraceMs(value: number | undefined, fallback: number): number {
+	if (value === undefined || !Number.isFinite(value) || value < 0) return fallback;
+	return value;
+}
+
+/** Await a session's exit for at most `graceMs`; `null` means it did not settle in time (or never started). */
+export async function settledExitWithin(
+	exitPromise: Promise<TerminalSessionExit> | null,
+	graceMs: number,
+): Promise<TerminalSessionExit | null> {
+	if (exitPromise === null || graceMs <= 0) return null;
+	let graceTimer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		return await Promise.race([
+			// Attaching the catch here also keeps a late backend rejection from
+			// surfacing as an unhandled rejection once the grace timer wins.
+			exitPromise.catch(() => null),
+			new Promise<null>((resolve) => {
+				graceTimer = setTimeout(() => resolve(null), graceMs);
+			}),
+		]);
+	} finally {
+		if (graceTimer !== undefined) clearTimeout(graceTimer);
+	}
+}
+
 export function normalizeTerminalExit(
 	exit: unknown,
 	backend: TerminalSessionBackend,

@@ -34,6 +34,11 @@ export function modelBlockKey(family: string, modelId: string): string {
 	return inFamily(modelId, family) ? family : modelId;
 }
 
+/** Whether a model block keyed by `key` (a family name or an exact model id) binds `modelId`. */
+export function modelBlockApplies(key: string, modelId: string): boolean {
+	return applies(key, modelId);
+}
+
 function applies(key: string, modelId: string): boolean {
 	return key === modelId || (FAMILY_KEY.test(key) && inFamily(modelId, key));
 }
@@ -95,10 +100,4 @@ export function mergeModelBlocks(
 		merged.set(key, { blockedUntil: Math.max(merged.get(key)?.blockedUntil ?? 0, block.blockedUntil) });
 	}
 	return merged.size === 0 ? undefined : Object.fromEntries(merged);
-}
-
-export function describeModelBlocks(blocks: ModelBlocks | undefined, now: number): string[] {
-	return Object.entries(pruneModelBlocks(blocks, now) ?? {}).map(
-		([key, block]) => `blocked for ${key} until ${new Date(block.blockedUntil).toISOString()}`,
-	);
 }

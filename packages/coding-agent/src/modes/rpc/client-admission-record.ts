@@ -26,6 +26,8 @@ const admissionIdentitySchema = clientMessageIdentitySchema.extend({
 	durableSessionId: z.string(),
 	fingerprint: z.string(),
 	disposition: z.enum(["queued", "started", "handled"]),
+	/** The engine turn this admission started; older, queued, and handled admissions omit it. */
+	turnId: z.string().optional(),
 	/** The host minted `clientMessageId` for input sent without one (`host:<durableSessionId>:<uuid>`). */
 	hostMinted: z.literal(true).optional(),
 });

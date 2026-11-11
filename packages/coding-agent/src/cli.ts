@@ -1,13 +1,17 @@
 #!/usr/bin/env node
 import "./valid-cwd.ts";
-// Second: capture the private descriptor table before anything can spawn (senpi#4749).
+// Release a coordinated start's filler pipes while the private table is still in the environment (senpi#4602).
+import "./private-fd-startup-release.ts";
+// Then: capture the private descriptor table before anything can spawn (senpi#4749).
 import "./private-fds.ts";
+import "./windows-power-throttling-startup.ts";
 import "./internal-role.ts";
 import { spawn, spawnSync, type StdioOptions } from "node:child_process";
 import { existsSync, fstatSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { processBunRuntimeOptions, resolveBunReexec } from "./bun-runtime.ts";
+import { isFifoMode } from "./utils/inherited-duplex.ts";
 import { captureStdout, exitAfterOutput, printThenExit } from "./cli/print-then-exit.ts";
 import { dispatchAgentDirectoryCommand } from "./cli/agent-dir-command.ts";
 import { dispatchKillGuardCommand } from "./cli/kill-guard-command.ts";
@@ -21,12 +25,34 @@ import {
 	isBundledNode,
 } from "./config.ts";
 import { hasInheritedInspectorOption, releaseInheritedInspectorForChild } from "./inspector-policy.ts";
+import { runtimeExecArgv } from "./utils/runtime-exec-argv.ts";
 import { prepareRuntimeSnapshot } from "./runtime-snapshot/enter.ts";
 import { handleBootstrapSelfUpdate } from "./self-update-bootstrap.ts";
 import { preparePrivateFdSpawn, spawnWithPrivateFds } from "./private-fd-spawn.ts";
+import { HOST_STARTUP_EVENTS_ENV } from "./modes/rpc/host-identity-env.ts";
+import { STARTUP_EVENT_FD } from "./modes/rpc/host-startup-wire.ts";
+
+/**
+ * A coordinated host start keeps its startup pipe through CLI re-execution (senpi#4602): the hand-off variable
+ * is still unread here, and the process that loads cli-main reports on the same descriptor.
+ */
+function reexecStdio(): StdioOptions {
+	const base = channelStdio();
+	if (!process.env[HOST_STARTUP_EVENTS_ENV]) return base;
+	try {
+		const stat = fstatSync(STARTUP_EVENT_FD);
+		if (!stat.isSocket() && !isFifoMode(stat.mode)) return base;
+	} catch {
+		return base;
+	}
+	const slots: StdioOptions = typeof base === "string" ? [base, base, base] : [...base];
+	while (slots.length < STARTUP_EVENT_FD) slots.push("ignore");
+	slots[STARTUP_EVENT_FD] = STARTUP_EVENT_FD;
+	return slots;
+}
 
 /** Only a presenter-enabled launch may carry its reserved private channel through CLI re-execution. */
-function reexecStdio(): StdioOptions {
+function channelStdio(): StdioOptions {
 	const argv = process.argv.slice(2);
 	const presenter = argv.indexOf("--mcp-presenter-fd");
 	if (presenter < 0 || argv[presenter + 1] !== "4") return "inherit";
@@ -151,7 +177,9 @@ function requiresIsolatedProcess(): boolean {
 	// The bundled entry re-executes itself rather than a sibling, so the child would otherwise see the
 	// same exec arguments and spawn again forever. The marker is read before anything else runs.
 	if (process.env[ISOLATED_CHILD_ENV] === "1") return false;
-	return process.execArgv.length > 0 || hasInheritedInspectorOption();
+	// Decide on the sanitized argv (senpi#2952): the caller's entry mode (-e/-p/-i and friends) is
+	// not a runtime option, so an eval caller alone must not force an isolated re-launch.
+	return runtimeExecArgv().length > 0 || hasInheritedInspectorOption();
 }
 
 async function spawnFullCli(): Promise<number> {
@@ -164,9 +192,12 @@ async function spawnFullCli(): Promise<number> {
 		? fileURLToPath(import.meta.url)
 		: fileURLToPath(new URL(`./cli-main${extension}`, import.meta.url));
 	releaseInheritedInspectorForChild();
-	const childEnvironment = isBundledNode ? { ...process.env, [ISOLATED_CHILD_ENV]: "1" } : process.env;
+	// The child carries the caller's runtime options but never its entry mode (senpi#2952): forwarding
+	// raw execArgv replayed a `node -e` caller in the child. Both entries get the isolation marker so
+	// a re-entered cli.ts loads the agent in process instead of spawning again.
+	const childEnvironment = { ...process.env, [ISOLATED_CHILD_ENV]: "1" };
 	return await new Promise<number>((resolve, reject) => {
-		const child = spawnWithPrivateFds(spawn, process.execPath, [...process.execArgv, fullCliPath, ...args], {
+		const child = spawnWithPrivateFds(spawn, process.execPath, [...runtimeExecArgv(), fullCliPath, ...args], {
 			env: childEnvironment,
 			stdio: reexecStdio(),
 		});

@@ -12,6 +12,229 @@
 
 ### Removed
 
+## [2026.11.10-3] - 2026-11-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.10-2] - 2026-11-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.10-1] - 2026-11-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- `agent()`, `output()` and the eval prompt's spawn helpers keep working when the task tools are eval-only (`exposure: "eval"`, withheld from the model while eval exists), and an eval-only tool's kernel prelude stays loaded ([#6276](https://github.com/code-yeongyu/senpi/pull/6276))
+
+### Removed
+
+## [2026.11.10] - 2026-11-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- The bundled Bun skill no longer tells agents to re-spawn Bun as `process.execPath` unconditionally: inside a compiled host that path is the host binary, so the skill now limits it to standalone Bun and directs compiled hosts to resolve `bun` through PATH ([code-yeongyu/oh-my-openagent#12569](https://github.com/code-yeongyu/oh-my-openagent/issues/12569), [#6232](https://github.com/code-yeongyu/senpi/pull/6232))
+- Hide the console window for installer and kernel subprocess spawns on Windows ([#3965](https://github.com/code-yeongyu/senpi/issues/3965))
+
+### Removed
+
+## [2026.11.9-2] - 2026-11-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- A nested tool's streamed lines no longer vanish from a running eval cell's live update for one frame when the tool finishes; they stay until the cell's own output or its completion replaces them ([#6259](https://github.com/code-yeongyu/senpi/pull/6259)).
+
+### Removed
+
+## [2026.11.9] - 2026-11-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.6-3] - 2026-11-08
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.6-2] - 2026-11-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- A tool called from an eval cell now streams its partial results into the cell's live update (in JavaScript cells and over the bridge for Python, Ruby and Julia cells), so `tool.bash(...)` output shows while the command runs instead of all at once when it ends; the value returned to the cell and the cell's result are unchanged ([#6167](https://github.com/code-yeongyu/senpi/issues/6167))
+
+### Removed
+
+## [2026.11.6-1] - 2026-11-06
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The JavaScript `eval` kernel runs in its own process by default when senpi's executable is `bun` on macOS or Linux, so a crash on the kernel (Bun 1.4.4 `Worker` threads can corrupt the JavaScriptCore heap and kill the host with `SIGBUS`/`SIGTRAP`) settles the cell with the signal and the session survives; a Node.js host, a compiled binary and a Windows bun host keep the worker thread, and `isolation.js` / `SENPI_CODEMODE_JS_ISOLATION` still win on every host ([#6094](https://github.com/code-yeongyu/senpi/issues/6094), [#6095](https://github.com/code-yeongyu/senpi/pull/6095))
+
+### Fixed
+
+- The bundled `bun` skill's capability map now gives `--retry=<N>` and `--compile --bytecode --bytecode-order=<profile>` in forms bun accepts, its shell-trap fix spawns with `env: process.env`, and the references it points to now cover IPC, `stripANSI`, `inspect.table`, hashing, UUID v7, semver, `deepEquals`, gzip/zstd and `which` ([#6008](https://github.com/code-yeongyu/senpi/issues/6008))
+- On Windows, the JavaScript eval kernels opt every process they start out of EcoQoS power throttling, as senpi does, so commands run from eval code are not held to a few percent of a core; `SENPI_KEEP_POWER_THROTTLING=1` keeps Windows' default ([#6131](https://github.com/code-yeongyu/senpi/pull/6131))
+
+### Removed
+
+## [2026.11.5-1] - 2026-11-05
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.4-2] - 2026-11-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.4-1] - 2026-11-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.3-3] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.3-2] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.3-1] - 2026-11-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- JS eval imports a module by `file://` URL (for example `import(pathToFileURL(p).href)`) instead of refusing it as an unsupported protocol; other schemes without a registered root are still refused ([#4111](https://github.com/code-yeongyu/senpi/issues/4111), reported by @yjacket).
+
+### Removed
+
+## [2026.11.2-3] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+- Eval cells are judged by the kill guard before a signal leaves them: JS `Bun.$` (and `new Bun.$.Shell()` instances), `Bun.spawn`/`spawnSync`, `child_process` and `process.kill`, and Python `subprocess`, `os.system`, `os.popen`, `os.exec*`/`spawn*`, `os.kill` and `os.killpg`, whether or not permission enforcement is on ([#5354](https://github.com/code-yeongyu/senpi/pull/5354))
+- Eval kernels and the processes they start get the kill guard's runtime shims on `PATH`, its `BASH_ENV` wrapper and its interactive-bash `PROMPT_COMMAND` hook while the guard is on, so `kill`, `pkill` and `killall` run from a cell or its children are judged on their real arguments ([#5358](https://github.com/code-yeongyu/senpi/pull/5358))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.11.2-2] - 2026-11-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.11.02-1] - 2026-11-02
 
 ### Breaking Changes

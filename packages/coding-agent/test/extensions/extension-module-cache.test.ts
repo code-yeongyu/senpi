@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	cachedExtensionFactory,
 	clearExtensionCache,
@@ -11,6 +11,18 @@ import {
 	extensionModuleImporter,
 	rememberExtensionFactory,
 } from "../../src/core/extensions/extension-module-cache.ts";
+
+const fsSpies = vi.hoisted(() => ({ readFileSync: undefined as undefined | { mock: { calls: unknown[][] } } }));
+vi.mock("node:fs", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:fs")>();
+	const readFileSync = vi.fn(actual.readFileSync);
+	fsSpies.readFileSync = readFileSync;
+	return { ...actual, readFileSync };
+});
+
+function readsOf(files: readonly string[]): number {
+	return (fsSpies.readFileSync?.mock.calls ?? []).filter((call) => files.includes(String(call[0]))).length;
+}
 
 const roots: string[] = [];
 
@@ -29,6 +41,26 @@ function writeSource(path: string, body: string): string {
 function touchForward(path: string): void {
 	const future = new Date(Date.now() + 2_000);
 	utimesSync(path, future, future);
+}
+
+/** A whole-second mtime, so restoring it after an edit leaves `mtimeNs` byte-identical. */
+const PINNED_MTIME_S = 1_700_000_000;
+
+function pinMtime(path: string): void {
+	utimesSync(path, PINNED_MTIME_S, PINNED_MTIME_S);
+}
+
+/**
+ * Waits until the filesystem stamps a ctime later than `after` (its clock ticks coarsely), observed on a probe file,
+ * so an inode change made next is guaranteed a different ctime. Bounded by attempts, not by elapsed time.
+ */
+function untilFilesystemClockPasses(root: string, after: bigint): void {
+	const probe = join(root, ".clock-probe");
+	for (let attempt = 0; attempt < 1_000_000; attempt++) {
+		writeFileSync(probe, String(attempt));
+		if (statSync(probe, { bigint: true }).ctimeNs > after) return;
+	}
+	throw new Error("filesystem ctime never advanced");
 }
 
 function fakeImporter(files: string[], options: { reportsFiles?: boolean } = {}) {
@@ -56,6 +88,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	vi.useRealTimers();
 	clearExtensionCache();
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
@@ -81,6 +114,101 @@ describe("extension module cache", () => {
 		// Then
 		expect(reused).toBe(factory);
 		expect(extensionModuleGenerationCount() - before).toBe(1);
+	});
+
+	// senpi#6256: every cached lookup (one per extension per session open) re-hashed the whole compiled graph.
+	it("re-reads no compiled source on a warm lookup, and still drops the generation on a later edit", async () => {
+		// Given: a generation whose two sources settled long before the clock reads them.
+		const root = fixtureRoot();
+		const entry = writeSource(join(root, "extension.ts"), "export default () => {};\n");
+		const dependency = writeSource(join(root, "dependency.ts"), "export const value = 1;\n");
+		const { importer } = fakeImporter([entry, dependency]);
+		const factory = () => undefined;
+		await extensionModuleImporter(async () => importer);
+		rememberExtensionFactory(entry, factory, importer);
+		vi.useFakeTimers({ toFake: ["Date"] });
+		vi.setSystemTime(Date.now() + 60_000);
+		expect(cachedExtensionFactory(entry)).toBe(factory);
+		const readsBefore = readsOf([entry, dependency]);
+
+		// When: the next session opens.
+		const warm = cachedExtensionFactory(entry);
+
+		// Then: served from the proven sources without reading either one again.
+		expect(warm).toBe(factory);
+		expect(readsOf([entry, dependency]) - readsBefore).toBe(0);
+
+		// When: the dependency is edited after it was proven.
+		writeSource(dependency, "export const value = 22;\n");
+
+		// Then
+		expect(cachedExtensionFactory(entry)).toBeUndefined();
+	});
+
+	// senpi#6256 review: the 2 s racy-timestamp rule. A source modified that recently may still take a same-tick write
+	// that leaves every timestamp unchanged, so it is re-hashed on every lookup until it settles.
+	it("never remembers a source modified within the last 2 s, so every lookup re-reads it", async () => {
+		// Given: a generation whose sources were written just now.
+		const root = fixtureRoot();
+		const entry = writeSource(join(root, "extension.ts"), "export default () => {};\n");
+		const dependency = writeSource(join(root, "dependency.ts"), "export const value = 1;\n");
+		pinMtime(entry);
+		pinMtime(dependency);
+		const { importer } = fakeImporter([entry, dependency]);
+		const factory = () => undefined;
+		await extensionModuleImporter(async () => importer);
+		rememberExtensionFactory(entry, factory, importer);
+		const newestCtimeMs = Math.max(statSync(entry).ctimeMs, statSync(dependency).ctimeMs);
+		vi.useFakeTimers({ toFake: ["Date"] });
+		vi.setSystemTime(newestCtimeMs + 500);
+		expect(cachedExtensionFactory(entry)).toBe(factory);
+		const readsBefore = readsOf([entry, dependency]);
+
+		// When
+		const again = cachedExtensionFactory(entry);
+
+		// Then: both sources were hashed again, not served from a remembered identity.
+		expect(again).toBe(factory);
+		expect(readsOf([entry, dependency]) - readsBefore).toBe(2);
+
+		// When: a same-size edit that puts the mtime back.
+		writeSource(dependency, "export const value = 2;\n");
+		pinMtime(dependency);
+
+		// Then
+		expect(cachedExtensionFactory(entry)).toBeUndefined();
+	});
+
+	// senpi#6256 review: ctime is part of the remembered identity because userland cannot set it back.
+	it("drops a remembered generation on a same-size edit whose mtime was restored", async () => {
+		// Given: sources proven and remembered (their timestamps are long settled by the clock below).
+		const root = fixtureRoot();
+		const entry = writeSource(join(root, "extension.ts"), "export default () => {};\n");
+		const dependency = writeSource(join(root, "dependency.ts"), "export const value = 1;\n");
+		pinMtime(entry);
+		pinMtime(dependency);
+		const { importer } = fakeImporter([entry, dependency]);
+		const factory = () => undefined;
+		await extensionModuleImporter(async () => importer);
+		rememberExtensionFactory(entry, factory, importer);
+		vi.useFakeTimers({ toFake: ["Date"] });
+		vi.setSystemTime(Date.now() + 60_000);
+		expect(cachedExtensionFactory(entry)).toBe(factory);
+		const readsBefore = readsOf([entry, dependency]);
+		expect(cachedExtensionFactory(entry)).toBe(factory);
+		expect(readsOf([entry, dependency]) - readsBefore).toBe(0);
+		const proven = statSync(dependency, { bigint: true });
+		untilFilesystemClockPasses(root, proven.ctimeNs);
+
+		// When: same size, same inode, mtime restored to the exact nanosecond - only ctime moves.
+		writeSource(dependency, "export const value = 2;\n");
+		pinMtime(dependency);
+		const edited = statSync(dependency, { bigint: true });
+		expect([edited.size, edited.ino, edited.mtimeNs]).toEqual([proven.size, proven.ino, proven.mtimeNs]);
+		expect(edited.ctimeNs).not.toBe(proven.ctimeNs);
+
+		// Then
+		expect(cachedExtensionFactory(entry)).toBeUndefined();
 	});
 
 	it("drops the generation when the entry source changes", async () => {

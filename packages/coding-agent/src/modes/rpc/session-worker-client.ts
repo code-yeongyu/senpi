@@ -8,10 +8,11 @@ import type { CliRuntimeConfiguration } from "../../main.ts";
 import type { RpcConnectionOptions } from "./connection-handler.ts";
 import { workerCapabilities } from "./worker-client-capabilities.ts";
 import { captureAdmissionReply, withAdmissionReply } from "./compact-admission-reply.ts";
+import { commandAuthority } from "./command-authority.ts";
 import { roleConnection } from "./connection-roles.ts";
+import { originField } from "./remote-origin.ts";
 import { answeredUiRequestId, isGrantSelectRequest, refusedExtensionUiResponse } from "./extension-ui-response.ts";
 import { enqueueLegacyRecord } from "./legacy-record-depth.ts";
-import type { SecretInputRoute } from "./secret-input-requests.ts";
 import type { RpcSessionBinding } from "./session-binding.ts";
 import type { RpcExtensionUIResponse } from "./rpc-types.ts";
 import { SessionAcceptanceLane } from "./session-acceptance-lane.ts";
@@ -25,7 +26,7 @@ import { SessionWorkerRequests, type WorkerRequestInput } from "./session-worker
 import { WorkerIntake } from "./session-worker-intake.ts";
 import { acknowledge, acknowledgeGrant } from "./session-worker-signals.ts";
 import { WorkerOwnerGates } from "./session-worker-owners.ts";
-import { WorkerSecretIds } from "./session-worker-secrets.ts";
+import { WorkerHostSecrets } from "./session-worker-host-secrets.ts";
 import { randomUUID } from "node:crypto";
 import type { McpFormBinding } from "../../core/mcp-form-types.ts";
 import { recoveryAgentDir } from "./compact-storage-health.ts";
@@ -34,8 +35,10 @@ import { startSessionWorker } from "./session-worker-start.ts";
 import { reconcileWorkerReplacement } from "./session-worker-replacement.ts";
 
 export class SessionWorkerClient {
-	private secretRoute?: SecretInputRoute;
-	private readonly secretIds = new WorkerSecretIds();
+	private readonly secrets = new WorkerHostSecrets({
+		post: (message) => this.post(message),
+		request: (message) => this.request(message),
+	});
 	private privateBinding?: McpFormBinding;
 	private stopPrivateBinding?: () => void;
 	private readonly privateOperations = new Map<
@@ -83,8 +86,7 @@ export class SessionWorkerClient {
 		this.exited = new Promise((resolve, reject) => {
 			this.worker.once("exit", () => {
 				this.intake?.permits.close();
-				for (const id of this.secretIds.ids()) this.secretRoute?.forget(id);
-				this.secretIds.clear();
+				this.secrets.exited();
 				this.stopPrivateBinding?.();
 				this.privateBinding?.dispose();
 				this.owners.retireAll();
@@ -199,7 +201,7 @@ export class SessionWorkerClient {
 	): Promise<RpcSessionBinding> {
 		this.sessionId = sessionId;
 		this.writer = writer;
-		this.secretRoute = writer.secretInputRoute(sessionId);
+		this.secrets.bind(sessionId, writer);
 		if (this.acceptance) writer.registerAcceptance(sessionId, this.acceptance);
 		// RULING-111 (LEAK-D): a diagnostic of the compact path; with the flag off the stderr stays as on main.
 		if (compactUpdatesEnabled())
@@ -208,12 +210,15 @@ export class SessionWorkerClient {
 			);
 		this.requestClose = requestClose;
 		this.options = options;
+		// omo-relay-daemon#307: the descriptor the attaching line captured at its start, never a lookup made now.
+		const bound = writer.connectionContext.delegation;
 		await this.request({
 			type: "bind",
 			sessionId,
 			capabilities: options.capabilities ?? [],
 			connection: writer.currentConnection(),
-			roles: options.connectionRoles?.rolesOf(roleConnection(writer.currentConnection())),
+			roles: options.connectionRoles?.rolesOf(roleConnection(writer.currentConnection()), bound?.incarnation),
+			...(bound === undefined ? {} : { delegation: bound }),
 			mcpFormsEnforced: writer.mcpPresenters !== undefined,
 		});
 		return {
@@ -229,18 +234,23 @@ export class SessionWorkerClient {
 						: undefined;
 				if (answered !== undefined && writer.acceptWorkerGrantResponse(sessionId, answered, connection) === false)
 					return;
-				if (answered !== undefined && this.secretIds.has(answered) && !this.secretRoute?.accepts(answered)) {
+				if (answered !== undefined && this.secrets.refuses(answered)) {
 					const response = command as RpcExtensionUIResponse;
 					writer.enqueue(sessionId, refusedExtensionUiResponse(response.id, "secret_answer_refused"));
 					return;
 				}
+				const delegation = writer.connectionContext.delegation;
+				const exec = commandAuthority.getStore()?.exec;
 				await this.request({
 					type: "command",
 					admissionReply: captureAdmissionReply(),
 					command,
 					connection,
-					roles: options.connectionRoles?.rolesOf(roleConnection(connection)),
+					roles: options.connectionRoles?.rolesOf(roleConnection(connection), delegation?.incarnation),
+					...originField(options.connectionRoles?.originOf(connection)),
 					...(owner === undefined ? {} : { owner }),
+					...(delegation === undefined ? {} : { delegation }),
+					...(exec === undefined ? {} : { exec }),
 				});
 			},
 			cancelPendingExtensionUiRequests: () => this.post({ type: "cancel_ui" }),
@@ -299,51 +309,8 @@ export class SessionWorkerClient {
 			return;
 		}
 		this.intake?.received(message);
+		if (this.secrets.receive(message)) return;
 		switch (message.type) {
-			case "secret_select": {
-				if (!this.secretIds.has(message.id) && !this.secretIds.admitsNew()) {
-					acknowledge(message.signal, false);
-					return;
-				}
-				const select = () => {
-					const reason =
-						this.secretRoute?.select(message.id, () => this.post({ type: "cancel_secret", id: message.id })) ??
-						(this.secretRoute ? undefined : "no_presenter");
-					if (reason === undefined) this.secretIds.add(message.id);
-					const result =
-						reason === undefined
-							? { accepted: true, connection: this.secretRoute?.presenter(message.id) }
-							: { accepted: false, reason };
-					const encoded = new TextEncoder().encode(JSON.stringify(result));
-					new Uint8Array(message.decision, 4).set(encoded);
-					Atomics.store(new Int32Array(message.decision, 0, 1), 0, encoded.length);
-					acknowledge(message.signal, true);
-				};
-				if (message.connection !== undefined && this.writer) this.writer.withConnection(message.connection, select);
-				else select();
-				return;
-			}
-			case "secret_frame":
-				if (!this.secretIds.admitFrame(message.id, message.record)) {
-					acknowledge(message.signal, false);
-					return;
-				}
-				this.secretRoute?.send(message.id, message.record);
-				acknowledge(message.signal, true);
-				return;
-			case "secret_settled":
-				this.secretRoute?.settled(message.id);
-				acknowledge(message.signal, true);
-				return;
-			case "secret_forget":
-				this.secretIds.forget(message.id);
-				this.secretRoute?.forget(message.id);
-				acknowledge(message.signal, true);
-				return;
-			case "secret_handshake":
-				this.writer?.setSoleSecretCapabilities(message.capabilities);
-				acknowledge(message.signal, true);
-				return;
 			case "mcp_form_bind": {
 				this.stopPrivateBinding?.();
 				this.privateBinding?.dispose();
@@ -424,6 +391,9 @@ export class SessionWorkerClient {
 				});
 				return;
 			}
+			case "secret_sealed_result":
+				this.requests.receive(message);
+				return;
 			case "prepared":
 			case "ready":
 			case "result": {
@@ -496,12 +466,14 @@ export class SessionWorkerClient {
 				}
 				let outputConnection = message.connection;
 				if (isGrantSelectRequest(record)) {
+					const title: unknown = Reflect.get(record, "title");
 					const target = writer.routeWorkerGrant(
 						sessionId,
 						record.id,
 						message.connection,
 						this.options.capabilities ?? [],
 						() => this.post({ type: "cancel_grant", id: record.id }),
+						typeof title === "string" ? title : undefined,
 					);
 					if (!target.accepted) {
 						acknowledge(message.signal, true);
@@ -515,7 +487,13 @@ export class SessionWorkerClient {
 						if (message.bootstrap) lane?.bootstrap(message.bootstrap);
 						else {
 							lane?.applyTranscript(message.transitions ?? []);
-							lane?.accept(record, message.recovery, frameUnit(message), message.canonicalRefused === true);
+							lane?.accept(
+								record,
+								message.recovery,
+								frameUnit(message),
+								message.canonicalRefused === true,
+								message.callKey,
+							);
 						}
 						if (!enqueueLegacyRecord(writer, sessionId, record)) {
 							acknowledge(message.signal, false);

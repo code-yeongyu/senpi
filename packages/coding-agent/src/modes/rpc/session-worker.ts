@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { parentPort, workerData } from "node:worker_threads";
+import "../../windows-power-throttling-startup.ts";
 import { captureAdmissionReply } from "./compact-admission-reply.ts";
 import { workerAdmissionCommand } from "./worker-admission-command.ts";
 import { runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
@@ -8,8 +9,10 @@ import { isBunBinary } from "../../config.ts";
 import { WAKE_SOURCE_STATE_EVENT } from "../../core/extensions/builtin/monitor-state-event.ts";
 import type { ExtensionUIContext } from "../../core/extensions/types.ts";
 import { attachMcpGrantPresentation } from "../../core/mcp-grant-presentations.ts";
+import { startOpenTimer } from "../../core/open-timing.ts";
 import { takeOverStdout } from "../../core/output-guard.ts";
 import type { SecurityNoticeSnapshot } from "../../core/security-notices.ts";
+import { executionCallKey } from "../../core/session-call-keys.ts";
 import { recoveryCarrier, setSessionRecoveryEpoch } from "../../core/session-recovery-identity.ts";
 import { getDefaultSessionDir, type SessionManager } from "../../core/session-manager.ts";
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
@@ -17,7 +20,9 @@ import { SettingsManager } from "../../core/settings-manager.ts";
 import { registerWebViewBroker } from "../../core/webview/webview-broker.ts";
 import { createCliRuntimeFactory } from "../../main.ts";
 import { initTheme } from "../interactive/theme/theme.ts";
+import { CommandAuthority, commandAuthority, withReceipt } from "./command-authority.ts";
 import { ConnectionRoles, roleConnection } from "./connection-roles.ts";
+import { authorityConflict, DELEGATION_AUTHORITY_CONFLICT } from "./delegation-resolve.ts";
 import { isHandoffBusy } from "./handoff-activity.ts";
 import { createRpcSessionBinding, type RpcSessionBinding } from "./session-binding.ts";
 import { SessionEventWriter } from "./session-event-writer.ts";
@@ -42,7 +47,7 @@ import { createSessionWorkerRegistry } from "./session-worker-registry.ts";
 import { IssuedWorkerOwners } from "./session-worker-owners.ts";
 import { McpFormWorker } from "./mcp-form-worker.ts";
 import type { SecretInputRoute } from "./secret-input-requests.ts";
-import type { SecretInputUnavailableReason } from "../../core/extensions/secret-input.ts";
+import { WorkerSecretRoutes } from "./session-worker-secret-route.ts";
 
 if (isBunBinary) {
 	const { registerBunRuntimeModules } = await import("../../bun/runtime-modules.ts");
@@ -63,52 +68,17 @@ function failWorker(error: string): never {
 	process.exit(1);
 }
 
-const { exchange, transfer, post, installTransport, installWriteReservation } = createWorkerCredit(send, failWorker);
+const { exchange, transfer, post, installTransport, installWriteReservation, declareOnHost } = createWorkerCredit(
+	send,
+	failWorker,
+);
 // The host's key for the same file, so a deleted directory neither throws here nor misses (senpi#2285).
 installWriteReservation(canonicalSessionPath);
 
 class WorkerEventWriter extends SessionEventWriter {
-	readonly secretCancels = new Map<string, () => void>();
+	readonly secrets = new WorkerSecretRoutes(exchange, () => this.currentConnection());
 	override secretInputRoute(_sessionId: string): SecretInputRoute {
-		const presenters = new Map<string, string | undefined>();
-		return {
-			select: (id, unavailable) => {
-				const decision = new SharedArrayBuffer(8192);
-				exchange((signal) => ({
-					type: "secret_select",
-					id,
-					connection: this.currentConnection(),
-					decision,
-					signal,
-				}));
-				const length = new Int32Array(decision, 0, 1)[0];
-				const result = JSON.parse(new TextDecoder().decode(new Uint8Array(decision, 4, length))) as
-					| { accepted: true; connection?: string }
-					| { accepted: false; reason: SecretInputUnavailableReason };
-				if (!result.accepted) return result.reason;
-				presenters.set(id, result.connection);
-				this.secretCancels.set(id, unavailable);
-				return undefined;
-			},
-			presenter: (id) => presenters.get(id),
-			// The parent authorizes the actual sender before forwarding a response into this isolate.
-			accepts: (id) => presenters.has(id) && presenters.get(id) === this.currentConnection(),
-			available: (id) => presenters.has(id),
-			send: (id, record) => exchange((signal) => ({ type: "secret_frame", id, record, signal })),
-			settled: (id) => {
-				this.secretCancels.delete(id);
-				exchange((signal) => ({ type: "secret_settled", id, signal }));
-			},
-			forget: (id) => {
-				this.secretCancels.delete(id);
-				presenters.delete(id);
-				exchange((signal) => ({ type: "secret_forget", id, signal }));
-			},
-			handshake: (capabilities) => {
-				if (this.currentConnection() === undefined)
-					exchange((signal) => ({ type: "secret_handshake", capabilities, signal }));
-			},
-		};
+		return this.secrets.route();
 	}
 	override bindMcpForms(_sessionId: string, durableId: string, ui: object, admit: () => void) {
 		return privateFormsEnforced ? privateForms.bind(durableId, ui, admit) : undefined;
@@ -146,7 +116,9 @@ class WorkerEventWriter extends SessionEventWriter {
 			signal,
 		}));
 	}
-	override enqueue(_sessionId: string, record: object): boolean {
+	override enqueue(_sessionId: string, value: object): boolean {
+		// The command's receipt is stamped where the command ran (omo-relay-daemon#307); the host never overwrites it.
+		const record = withReceipt(value, this.currentConnection());
 		let epochSignal: SharedArrayBuffer | undefined;
 		// Built under the host's payload permit (S12b): no line, snapshot or transcript exists before it is held.
 		transfer((signal) => {
@@ -180,11 +152,13 @@ class WorkerEventWriter extends SessionEventWriter {
 			const transitions = ordered && !replaced ? (journaled?.drainTranscript() ?? []) : [];
 			epochSignal = ordered && replaced ? new SharedArrayBuffer(36) : undefined;
 			const recovery = recoveryCarrier(record);
+			const callKey = executionCallKey(record);
 			const canonical = carriedCanonical(record);
 			const order = ordered
 				? {
 						...stamp.stamp(recovery, canonical, record),
 						recovery,
+						...(callKey ? { callKey } : {}),
 						...(canonical ? { canonical } : {}),
 						...(carriedRefusal(record) ? { canonicalRefused: true as const } : {}),
 						...(replaced
@@ -294,14 +268,18 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 		}
 		case "commit": {
 			if (!prepared || registry) throw new Error("Invalid session commit");
+			const timer = startOpenTimer(`worker-commit:${message.request}`);
 			const startupSettingsManager = SettingsManager.create(
 				prepared.configuration.cwd,
 				prepared.configuration.agentDir,
 			);
+			timer.mark("settings");
 			const factory = createCliRuntimeFactory(prepared.configuration, { startupSettingsManager });
 			initTheme(startupSettingsManager.getTheme(), false);
 			registry = createSessionWorkerRegistry(prepared.configuration.agentDir, factory);
+			timer.mark("factory");
 			const opened = await registry.openSession(prepared.profile);
+			timer.mark("registry_open");
 			entry = registry.getForCommand(opened.sessionId, "open_session");
 			// The host offers acceptance only with the flag on (RULING-112); a session without the structured lane declines
 			// it with a `ready` lacking a bootstrap, which the host refuses (RULING-106).
@@ -323,7 +301,11 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 		}
 		case "bind": {
 			if (!entry || binding) throw new Error("Invalid session binding");
-			if (message.roles !== undefined) connectionRoles.adopt(roleConnection(message.connection), message.roles);
+			const bound = roleConnection(message.connection);
+			if (message.delegation !== undefined && connectionRoles.retain(bound, message.delegation).kind === "conflict")
+				throw new Error(DELEGATION_AUTHORITY_CONFLICT);
+			if (message.delegation !== undefined) connectionRoles.noteCarriedDelegation(bound);
+			if (message.roles !== undefined) connectionRoles.adopt(bound, message.roles, message.delegation?.incarnation);
 			const bindingEntry = entry;
 			privateFormsEnforced = message.mcpFormsEnforced === true;
 			const createBinding = () =>
@@ -332,11 +314,17 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 					connectionRoles,
 					clientInfo: {
 						connectionId: () => writer.currentConnection(),
-						setCapabilities: (connection, capabilities) =>
-							exchange(
-								(signal) => ({ type: "capabilities", connection, capabilities, signal }),
-								"session_worker_capabilities_denied",
-							),
+						// The incarnation is the declaring command's own, passed in, never read here (#307).
+						setCapabilities: (connection, capabilities, incarnation) =>
+							declareOnHost((signal) => ({
+								type: "capabilities",
+								connection,
+								capabilities,
+								...(incarnation === undefined ? {} : { incarnation }),
+								signal,
+							})) === "stale"
+								? "stale"
+								: undefined,
 					},
 				});
 			binding = await (message.connection === undefined
@@ -358,7 +346,14 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			return;
 		}
 		case "cancel_secret":
-			writer.secretCancels.get(message.id)?.();
+			writer.secrets.cancels.get(message.id)?.();
+			return;
+		case "secret_sealed_answer":
+			send({
+				type: "secret_sealed_result",
+				request: message.request,
+				reply: await writer.secrets.answer(message.answer),
+			});
 			return;
 		case "command": {
 			const privileged =
@@ -367,10 +362,25 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 					String(message.command.type),
 				);
 			if (!binding || (closing && !privileged)) throw new Error("session_closing");
-			if (message.roles !== undefined) connectionRoles.adopt(roleConnection(message.connection), message.roles);
+			const connection = roleConnection(message.connection);
+			const resolved =
+				message.delegation === undefined ? undefined : connectionRoles.retain(connection, message.delegation);
+			if (resolved?.kind !== "conflict" && message.roles !== undefined)
+				connectionRoles.adopt(connection, message.roles, message.delegation?.incarnation);
+			if (message.delegation !== undefined) connectionRoles.noteCarriedDelegation(connection);
+			if (message.origin !== undefined) connectionRoles.declareOrigin(connection, message.origin);
 			const activeBinding = binding;
-			const run = () => activeBinding.handle(message.command);
-			await workerAdmissionCommand(message, writer, issuedOwners, run);
+			const run =
+				resolved?.kind === "conflict"
+					? async () => void writer.enqueue("", authorityConflict(message.command))
+					: () => activeBinding.handle(message.command);
+			const authority = new CommandAuthority(
+				message.connection,
+				resolved === undefined || resolved.kind === "conflict" ? message.delegation : resolved.descriptor,
+				message.exec,
+				resolved?.kind === "stale",
+			);
+			await commandAuthority.run(authority, () => workerAdmissionCommand(message, writer, issuedOwners, run));
 			publishSnapshot();
 			send({ type: "result", request: message.request });
 			return;

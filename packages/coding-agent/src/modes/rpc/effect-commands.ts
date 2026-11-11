@@ -1,25 +1,13 @@
 import type { AgentSession } from "../../core/agent-session.ts";
-import { ModelUsabilityBudgetError } from "../../core/extensions/builtin/compaction/model-usability-budget.ts";
-import { ModelSwitchAuthError } from "../../core/model-switch-auth-error.ts";
 import { ABORT_DEFAULT_GRACE_MS, ABORT_MAX_GRACE_MS, isAbortGraceInRange } from "./abort-grace.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
 import { type EffectBegin, EffectLedger } from "./effect-ledger.ts";
-import {
-	contextBudgetOutcome,
-	EFFECT_OUTCOMES,
-	modelSwitchErrorOutcome,
-	providerUnavailableOutcome,
-	unknownModelOutcome,
-	unsupportedThinkingLevelOutcome,
-} from "./effect-outcome-copy.ts";
+import { EFFECT_OUTCOMES, unsupportedThinkingLevelOutcome } from "./effect-outcome-copy.ts";
 import { type EffectActor, type EffectCommandKind, EffectIdConflict, type EffectStatus } from "./effect-record.ts";
 import { lookupEffectInTranscript, TranscriptUnreadable } from "./effect-transcript-lookup.ts";
 import {
-	RPC_ERROR_CONTEXT_BUDGET,
 	RPC_ERROR_EFFECT_ID_CONFLICT,
 	RPC_ERROR_INVALID_ARGUMENT,
-	RPC_ERROR_MODEL_NOT_FOUND,
-	RPC_ERROR_PROVIDER_UNAVAILABLE,
 	RPC_ERROR_TRANSCRIPT_UNREADABLE,
 	type RpcCommand,
 	type RpcEffectAnswer,
@@ -51,11 +39,11 @@ type EffectResponse = Extract<
 >;
 type ResponsePayload<T> = T extends EffectResponse ? Omit<T, "id" | "type" | "success"> : never;
 
-function respond(id: string | undefined, response: ResponsePayload<EffectResponse>): RpcResponse {
+export function respond(id: string | undefined, response: ResponsePayload<EffectResponse>): RpcResponse {
 	return { ...response, id, type: "response", success: true };
 }
 
-function refuse(
+export function refuse(
 	id: string | undefined,
 	command: string,
 	message: string,
@@ -271,73 +259,6 @@ function replayedStatus(status: EffectStatus, command: "dequeue_message" | "edit
 	)
 		return status.outcome.kind;
 	return command === "dequeue_message" ? ("removed" as const) : ("edited" as const);
-}
-
-export async function runSetModel(ctx: EffectCommandContext, command: Command<"set_model">): Promise<RpcResponse> {
-	const { effectId } = command;
-	const begun = effectId === undefined ? undefined : await beginEffect(ctx, "set_model", { ...command, effectId });
-	if (begun !== undefined && isResponse(begun)) return begun;
-	if (begun !== undefined && "replay" in begun)
-		return respond(command.id, { command: "set_model", data: effectAnswer(begun.replay, ctx.sessionId, true) });
-	const ledger = effectId === undefined ? undefined : EffectLedger.forSession(ctx.session);
-	const models = await ctx.session.modelRegistry.getAvailable();
-	const model = models.find((m) => m.provider === command.provider && m.id === command.modelId);
-	if (!model) {
-		const message = `Model not found: ${command.provider}/${command.modelId}`;
-		const failed =
-			effectId === undefined
-				? undefined
-				: ledger?.transition(effectId, "failed", {
-						outcome: unknownModelOutcome(command.provider, command.modelId),
-					});
-		return refuse(
-			command.id,
-			"set_model",
-			message,
-			RPC_ERROR_MODEL_NOT_FOUND,
-			failed && effectAnswer(failed, ctx.sessionId),
-		);
-	}
-	if (effectId === undefined || ledger === undefined) {
-		const systemPromptChange = await ctx.session.setModel(model, { source: "rpc" });
-		return respond(command.id, {
-			command: "set_model",
-			data: { ...model, systemPromptName: systemPromptChange?.systemPromptName },
-		});
-	}
-	let systemPromptName: string | undefined;
-	try {
-		systemPromptName = (await ctx.session.setModel(model, { source: "rpc", effectId }))?.systemPromptName;
-	} catch (cause) {
-		if (!(cause instanceof ModelUsabilityBudgetError) && !(cause instanceof ModelSwitchAuthError)) {
-			ledger.transition(effectId, "failed", {
-				outcome: modelSwitchErrorOutcome(cause instanceof Error ? cause.message : String(cause)),
-			});
-			throw cause;
-		}
-		const budget = cause instanceof ModelUsabilityBudgetError;
-		const failed = ledger.transition(effectId, "failed", {
-			outcome: budget ? contextBudgetOutcome(cause.message) : providerUnavailableOutcome(cause.message),
-		});
-		return refuse(
-			command.id,
-			"set_model",
-			cause.message,
-			budget ? RPC_ERROR_CONTEXT_BUDGET : RPC_ERROR_PROVIDER_UNAVAILABLE,
-			effectAnswer(failed, ctx.sessionId),
-		);
-	}
-	// `done` was written by the ledger when `model_changed` carried this id; a switch held for compaction
-	// stays `accepted` until it lands.
-	const status = ledger.status(effectId);
-	return respond(command.id, {
-		command: "set_model",
-		data: {
-			...model,
-			systemPromptName,
-			...(status === undefined ? {} : effectAnswer(status, ctx.sessionId)),
-		},
-	});
 }
 
 export async function runSetThinkingLevel(ctx: EffectCommandContext, command: Command<"set_thinking_level">) {

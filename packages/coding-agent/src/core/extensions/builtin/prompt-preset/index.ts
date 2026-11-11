@@ -1,5 +1,7 @@
-import type { BuildDynamicSystemPromptOptions } from "../../../dynamic-prompt/build.ts";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import type { BuildDynamicSystemPromptOptions, FullToolPrompt } from "../../../dynamic-prompt/build.ts";
 import { SettingsManager } from "../../../settings-manager.ts";
+import { isAnthropicWebSearchEnabled, supportsNativeAnthropicWebSearch } from "../anthropic-web-search/index.ts";
 import type {
 	BeforeAgentStartEvent,
 	BeforeAgentStartEventResult,
@@ -8,7 +10,8 @@ import type {
 	ExtensionHandler,
 	ModelSelectEvent,
 } from "../../types.ts";
-import { resolvePreset, resolvePresetName } from "./presets.ts";
+import { resolveActivePresetName } from "./active-preset.ts";
+import { resolvePreset } from "./presets.ts";
 import { loadPromptPresetSettings } from "./settings.ts";
 
 interface SystemPromptOptionsLike {
@@ -16,6 +19,7 @@ interface SystemPromptOptionsLike {
 	selectedTools?: string[];
 	toolSnippets?: Record<string, string>;
 	promptGuidelines?: string[];
+	fullToolPrompt?: FullToolPrompt;
 	contextFiles?: Array<{ path: string; content: string }>;
 	skills?: BuildDynamicSystemPromptOptions["skills"];
 	surface?: BuildDynamicSystemPromptOptions["surface"];
@@ -25,9 +29,15 @@ interface SystemPromptOptionsLike {
 	appendSystemPrompt?: string;
 }
 
+/** Whether the model can search through Anthropic-native web search on this request (senpi#2935). */
+function hasNativeAnthropicSearch(model: Model<Api> | undefined): boolean {
+	return model !== undefined && supportsNativeAnthropicWebSearch(model) && isAnthropicWebSearchEnabled();
+}
+
 function eventOptionsToBuilderInput(
 	event: { systemPromptOptions: SystemPromptOptionsLike | undefined },
 	ctx: Pick<ExtensionContext, "cwd">,
+	model: Model<Api> | undefined,
 ): Partial<BuildDynamicSystemPromptOptions> {
 	const options = event.systemPromptOptions ?? {};
 	return {
@@ -35,9 +45,11 @@ function eventOptionsToBuilderInput(
 		selectedTools: options.selectedTools,
 		toolSnippets: options.toolSnippets,
 		promptGuidelines: options.promptGuidelines,
+		fullToolPrompt: options.fullToolPrompt,
 		contextFiles: options.contextFiles,
 		skills: options.skills,
 		surface: options.surface,
+		nativeSearchAvailable: hasNativeAnthropicSearch(model),
 	};
 }
 
@@ -46,14 +58,7 @@ function getSettings(ctx: ExtensionContext): ReturnType<typeof loadPromptPresetS
 }
 
 function getPresetName(ctx: ExtensionContext, event?: Pick<ModelSelectEvent, "model">): string | undefined {
-	const model = event?.model ?? ctx.model;
-	if (!model) {
-		return undefined;
-	}
-	if (hasUserSystemPrompt(ctx.getSystemPromptOptions?.())) {
-		return undefined;
-	}
-	return resolvePresetName(model, getSettings(ctx));
+	return resolveActivePresetName(ctx, event?.model ?? ctx.model);
 }
 
 function hasUserSystemPrompt(options: SystemPromptOptionsLike | undefined): boolean {
@@ -93,7 +98,7 @@ export default function promptPresetExtension(pi: ExtensionAPI): void {
 			return undefined;
 		}
 
-		const preset = resolvePreset(model, getSettings(ctx), eventOptionsToBuilderInput(event, ctx));
+		const preset = resolvePreset(model, getSettings(ctx), eventOptionsToBuilderInput(event, ctx, model));
 		if (!preset) {
 			return undefined;
 		}
@@ -120,7 +125,7 @@ export default function promptPresetExtension(pi: ExtensionAPI): void {
 		if (hasUserSystemPrompt(event.systemPromptOptions)) {
 			return { systemPrompt: null };
 		}
-		const preset = resolvePreset(event.model, getSettings(ctx), eventOptionsToBuilderInput(event, ctx));
+		const preset = resolvePreset(event.model, getSettings(ctx), eventOptionsToBuilderInput(event, ctx, event.model));
 		return {
 			systemPrompt: preset ? withUserAppends(preset.prompt, event.systemPromptOptions) : null,
 			systemPromptName: preset?.name,

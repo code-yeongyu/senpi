@@ -36,6 +36,10 @@ it("exempts exactly the reviewed commands from the attach gate", () => {
 			"get_media",
 			"get_messages",
 			"get_pending_inputs",
+			// senpi#6176/#6185: the workspace's saved trust and project settings file, read without effect like
+			// get_loaded_surfaces and resolve_path; set_project_trust and set_project_setting stay gated.
+			"get_project_settings",
+			"get_project_trust",
 			"get_protocol_info",
 			"get_provider_accounts",
 			"get_session_stats",
@@ -45,9 +49,17 @@ it("exempts exactly the reviewed commands from the attach gate", () => {
 			"get_steering_messages",
 			"get_subscription_limits",
 			"get_tree",
+			// senpi#5938: lists the engine's hands and a session's recorded hand; an observing read like list_sessions.
+			// select_hand, which changes where the session's tools run, stays gated.
+			"list_hands",
 			"list_sessions",
 			"memory_report",
 			"open_session",
+			"park_session",
+			"claim_session",
+			// senpi#6307: reads one allowlisted instruction file, without effect like get_project_settings;
+			// write_project_file stays gated.
+			"read_project_file",
 			"reclaim_session",
 			"resolve_path",
 			"subscribe_sessions",
@@ -95,6 +107,9 @@ it("refuses an unattached record_user_activity under enforcement, like every oth
 		{ type: "wake" },
 		{ type: "extension_ui_response", confirmed: true },
 		{ type: "export_jsonl" },
+		{ type: "select_hand", device: null },
+		{ type: "set_project_trust", choice: "trust" },
+		{ type: "set_project_setting", key: "theme", value: "dark" },
 	];
 	for (const [index, mutation] of mutations.entries()) {
 		const command = { ...mutation, id: `m-${index}`, sessionId: ref.sessionId };

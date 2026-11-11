@@ -275,6 +275,20 @@ function getGlobalDefaultExtensionModulePath(extensionId: (typeof globalDefaultE
 	);
 }
 
+// A write-denied agent dir (a sandboxed review child, senpi#6287) is left as it is: a missing default
+// extension shim is not seeded, so that default does not load, and a stale shim keeps loading whatever it
+// points at. Startup survives either way; any other error is a real failure.
+function seedWritable(write: () => void): boolean {
+	try {
+		write();
+		return true;
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code === "EROFS" || code === "EACCES" || code === "EPERM") return false;
+		throw error;
+	}
+}
+
 function buildGlobalDefaultExtensionShim(modulePath: string): string {
 	return `${GENERATED_GLOBAL_EXTENSION_BANNER}export { default } from ${JSON.stringify(pathToFileURL(modulePath).href)};\n`;
 }
@@ -853,6 +867,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 						cwd: this.cwd,
 						agentDir: this.agentDir,
 						...this.settingsManager.getSettings().contextFiles,
+						// senpi#5567: user settings only; a project's settings never redirect the global file.
+						globalPath: this.settingsManager.getGlobalContextFilePath(),
 					}),
 		};
 		const resolvedAgentsFiles = this.agentsFilesOverride ? this.agentsFilesOverride(agentsFiles) : agentsFiles;
@@ -882,7 +898,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		}
 
 		const extensionsDir = join(this.agentDir, "extensions");
-		mkdirSync(extensionsDir, { recursive: true });
+		if (!seedWritable(() => mkdirSync(extensionsDir, { recursive: true }))) return;
 
 		for (const extensionId of globalDefaultExtensionIds) {
 			const modulePath = getGlobalDefaultExtensionModulePath(extensionId);
@@ -901,11 +917,11 @@ export class DefaultResourceLoader implements ResourceLoader {
 					continue;
 				}
 
-				writeFileSync(targetPath, shim, "utf-8");
+				seedWritable(() => writeFileSync(targetPath, shim, "utf-8"));
 				continue;
 			}
 
-			writeFileSync(targetPath, shim, "utf-8");
+			seedWritable(() => writeFileSync(targetPath, shim, "utf-8"));
 		}
 	}
 

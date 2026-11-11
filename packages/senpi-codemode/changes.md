@@ -1,3 +1,122 @@
+## 2026-11-09 - Eval-exposed tools stay reachable for agent(), output() and the kernel preludes (senpi#6276)
+
+### What changed
+
+- `src/extension/reachable-tools.ts` (new): `reachableToolNames(pi)` = `pi.getActiveTools()` plus every `pi.getAllTools()` entry whose `exposure` is `"eval"`.
+- `src/extension/runtime-factory.ts`: `spawns` and `createExecuteTool(...).isToolAvailable` read the reachable set instead of the active list.
+- `src/extension/kernel-preludes.ts`: `activeKernelPreludes` keeps the kernel prelude of a reachable (active or eval-exposed) tool.
+- `src/bridges/schema-bridge.ts`: `EvalSchemaToolInfo.exposure` (optional), the field the host's `getAllTools()` already reports.
+
+### Why
+
+- The session withholds an eval-exposed tool from the model whenever eval is registered, so it is absent from the active list while `executeTool` still reaches it. With the task tool family declaring `exposure: "eval"` (Q 2026-11-09, the omo plugin), `agent()`/`output()` threw `AgentUnavailableError`, the eval prompt lost its spawn helpers and the tool's kernel prelude vanished.
+
+### Why an extension could not handle it
+
+- This is the codemode extension itself.
+
+### Expected merge conflict zones
+
+- LOW: the `activeTools` lines of `createRuntime` and `createExecuteTool` in `runtime-factory.ts`.
+
+## 2026-11-09 - Hide the console window for codemode installer and kernel spawns on Windows (senpi#3965)
+
+### What changed
+
+- `packages/senpi-codemode/src/environments/js-installer.ts`: the installer spawn (npm/pnpm) now passes `windowsHide: true`.
+- `packages/senpi-codemode/src/environments/py-installer.ts`: the interpreter spawn (python/pip) now passes `windowsHide: true`.
+- `packages/senpi-codemode/src/kernels/shared/subprocess-process.ts`: the default kernel subprocess spawn now passes `windowsHide: true`.
+
+### Why
+
+- Installers, interpreters, and kernel children can all be console-subsystem exes on Windows; without `windowsHide` each start flashed a console window.
+
+### Why an extension could not handle it
+
+- The spawns are the codemode package's own environment/kernel lifecycle, not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: one options line in each of three codemode files.
+
+## 2026-11-09 - A settled nested tool's lines stay in the eval live update until the cell replaces them (senpi#6257)
+
+### What changed
+
+- `src/tool/nested-tool-output.ts`: `drop()` keeps the settled call's last text as the one held text (only the newest settled call is held, so a cell that settles many calls without printing keeps one tail); a live call's next text, `releaseSettled()` and `clear()` remove it; `appendTo`/`appendLines` show it before the live calls.
+- `src/tool/cell-runtime.ts`: the cell's own output chunk releases held nested lines before it is appended; `nestedToolSettled` no longer emits an update of its own (settling changes nothing on screen). `#finish` still clears everything, so the cell's result never contains nested output.
+- `test/eval-nested-tool-updates.test.ts`: 200 settled calls without cell output leave only the last call's tail held; after the last nested tick is live, no update may show the running cell with neither the ticks nor the cell's own output.
+
+### Why
+
+When a nested tool that streamed lines settled, the cell emitted one live update showing only its header (the throttled update scheduled by the last tick, or the settle itself), about 10 ms before the cell's own output or completion. Clients rendering every update showed the lines, an empty running cell for one frame, then the lines again (a desktop client measured the blank at 50-103 ms in 4 of 5 runs).
+
+### Expected merge conflict zones
+
+- LOW: `nested-tool-output.ts` and `cell-runtime.ts` (`nestedToolSettled`, `dropNestedTool`, the collector's `onChunk`).
+
+## 2026-11-06 - JavaScript kernel defaults to process isolation on bun hosts (senpi#6095)
+
+### What changed
+
+- `packages/senpi-codemode/src/config/feature-settings.ts`: `resolveJsIsolation` takes the host (`currentJsIsolationHost`: the runtime name of `process.execPath` and `process.platform`) and, with no file or environment value, returns `defaultJsIsolation(host)`: `process` when the host's executable is `bun` on a non-Windows platform, else `worker`. The environment still wins over the file and the file over the host default.
+- `packages/senpi-codemode/src/kernels/js/runtime-name.ts` (new): `runtimeNameOf` moved out of `process-worker.ts`, which re-exports it, so the settings module does not import the kernel graph.
+- `packages/senpi-codemode/README.md`: the isolation section and the settings table describe the host-dependent default.
+- `.agents/skills/senpi-qa/scenarios/fused-equivalence/golden/{linux-x64,darwin-arm64}/E{08,16,20}.json`: the B0 goldens of the three cases that run eval cells, recorded with a bun child runtime, now carry the new default's shape: every eval `runtime` block gains `isolation: "process"` (124 blocks) and E16's memory readings report `measure: "footprint"` instead of `"heap"` (7 per platform). No other golden field changes.
+- `packages/senpi-codemode/test/gate/allowlist.json`: a `senpi#6095` node records the fourteen new gate keys as reviewed additions (twelve contract titles, the new `runtime-name.ts` module in the extension and firstKernel import maps); the frozen baseline is unchanged.
+
+### Why
+
+- senpi#6094: a bun-hosted TUI session dies with `SIGBUS`/`SIGTRAP`/`SIGSEGV`/`SIGABRT` on its `WebWorker::create` thread, the codemode JavaScript kernel's `Worker`, several times a day; one frame is the cross-thread stack-sanitizer class of code-yeongyu/oh-my-openagent#12369. The class is open upstream (oven-sh/bun#41857, oven-sh/bun#43663) and Bun 1.4.4 is the newest release. A kernel in its own process cannot take the session down, and the opt-in process mode already settles the crashed cell with the signal and restarts the kernel for the next one.
+- A Node.js host keeps the worker thread (its `worker_threads` are not the faulting runtime). A compiled binary keeps it too: its executable cannot run `process-entry.js`, so process mode there needs a `bun` or `node` on `PATH`, which only an explicit setting should ask for. A Windows bun host keeps it as well: the crash evidence is macOS, and the process kernel's Windows channel (no libc; cell output shares the frame channel) has no CI coverage, so the mode stays opt-in there (review finding on this PR).
+- This reverses the 2026-09-30 codemode plan call that kept the worker default with process isolation opt-in; that call predates the production crashes.
+
+### Why an extension could not handle it
+
+- The default is read by the builtin codemode session manager and runtime factory before any session kernel starts; an extension cannot choose the mode a session's `eval` kernel is created with.
+
+### Expected merge conflict zones
+
+- LOW: the `resolveJsIsolation` signature in `feature-settings.ts`; the import block of `process-worker.ts`; the README isolation section and settings table.
+
+## 2026-11-03 - Full eval guidelines for the Opus and Fable presets (senpi#5665)
+
+### What changed
+
+- `packages/senpi-codemode/src/prompt/eval-prompt.ts`: `buildEvalPrompt` also returns `fullPromptGuidelines`, the pre-#5342 per-dialect batching line and reset line.
+- `packages/senpi-codemode/src/tool/eval-tool.ts`: passes them as the eval tool's `fullPromptGuidelines`.
+
+### Why
+
+- A beta tester reported that Opus 5.5 got slower and less capable after the senpi#5335 diet (#5342) shipped. Q's order: revert the diet only for the Fable and Opus presets; every other model keeps it.
+
+### Why an extension could not handle it
+
+- The text lives in builtin prompt generators, builtin tool definitions, and builtin extension prompt hooks, and the preset that selects the wording is a builtin extension.
+
+### Expected merge conflict zones
+
+- LOW: the eval prompt parts and the tool definition.
+
+## 2026-11-01 - System prompt diet, shared modules (senpi#5335)
+
+### What changed
+
+- `packages/senpi-codemode/src/prompt/eval-prompt.ts`: the per-dialect batching guideline is removed (each dialect's description already carries it) and the remaining guideline keeps only the kernel memory notice rule.
+- Terse pass: the kernel memory notice guideline in `packages/senpi-codemode/src/prompt/eval-prompt.ts` is shortened.
+
+### Why
+
+- senpi#5335: the batching guideline and the reset rule restated the eval description.
+
+### Why an extension could not handle it
+
+- The eval tool definition owns its guidelines.
+
+### Expected merge conflict zones
+
+- LOW: `promptGuidelines` in `buildEvalPrompt`.
+
 ## 2026-10-31 - eval infers an omitted run language when it is unambiguous (senpi#5154)
 
 ### What changed

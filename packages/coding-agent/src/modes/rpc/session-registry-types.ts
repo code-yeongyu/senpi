@@ -28,6 +28,8 @@ export type RpcSessionState = "opening" | "open" | "closing" | "quarantined" | "
 
 export interface RpcSessionEntry {
 	state: RpcSessionState;
+	/** Built speculatively: no public identity, attachment, listing, or disk persistence until claimed. */
+	speculative?: boolean;
 	runtime?: SessionRuntime;
 	worker?: SessionWorkerClient;
 	/** The in-process session's ordered acceptance lane, present only while the compact-updates flag is on. */
@@ -61,6 +63,8 @@ export interface RpcSessionEntry {
 	 * Requested per `open_session`; an attach may turn it on, never off.
 	 */
 	retainOnDisconnect?: boolean;
+	/** The session path this host's handover-parked record entry is keyed by; it follows a transcript switch. */
+	recordedPath?: string;
 	/** Timestamp of the last routed command / observed activity; drives idle eviction. */
 	lastCommandAt: number;
 	/**
@@ -137,6 +141,8 @@ export interface RpcSessionRegistryOptions {
 
 /** Host-side lifecycle policy for one `open_session`, distinct from the session's launch profile. */
 export interface RpcSessionOpenOptions {
+	/** Router-owned park construction; never accepted directly from the wire. */
+	speculative?: boolean;
 	/** Refuse unless the registry already owns the path; never prepare or construct a writer. */
 	attachOnly?: boolean;
 	/** Keep the session alive when its last client disconnects (`open_session.retain_on_disconnect`). */

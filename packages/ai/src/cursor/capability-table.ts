@@ -203,6 +203,8 @@ export const CURSOR_MODEL_CAPABILITIES: Record<string, CursorModelCapability> = 
 	// maxWindow is the largest context option AvailableModels offers.
 	"claude-opus-5-5": served(300_000, 1_000_000, ["context", "effort", "fast"], LEVELS_LOW_MAX),
 	"claude-fable-5-1": served(300_000, 1_000_000, ["thinking", "context", "effort"], LEVELS_LOW_MAX),
+	// Fable 5.2 (2026-11-09) takes the Fable 5.1 shape until a live AvailableModels capture lists it.
+	"claude-fable-5-2": served(300_000, 1_000_000, ["thinking", "context", "effort"], LEVELS_LOW_MAX),
 	"claude-sonnet-5-5": served(300_000, 1_000_000, ["context", "reasoning_effort"], LEVELS_LOW_MAX),
 	"claude-haiku-5-5": served(300_000, 1_000_000, ["thinking", "context", "reasoning_effort"], LEVELS_LOW_MAX),
 	"muse-wonder-1.0": served(300_000, 1_000_000, ["context", "reasoning_effort"], ["minimal", ...LEVELS_LOW_MAX]),

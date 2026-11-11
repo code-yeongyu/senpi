@@ -23,6 +23,7 @@ import type {
 	AgentToolCallOutcome,
 	AgentToolResult,
 	AgentToolUpdateCallback,
+	DeviceFiles,
 	ThinkingLevel,
 	ToolExecutionMode,
 } from "@earendil-works/pi-agent-core";
@@ -66,6 +67,7 @@ import type {
 	KeyId,
 	OverlayHandle,
 	OverlayOptions,
+	ProgramStatus,
 	TUI,
 } from "@earendil-works/pi-tui";
 import type { Static, TSchema } from "typebox";
@@ -120,18 +122,20 @@ import type {
 import type { ReadClassifier } from "../tools/read-classifiers.ts";
 import type { ModelRoute, ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
 import type { McpServerDeclaration } from "./builtin/mcp/config-schema.ts";
+import type { RpcRemoteSource } from "./builtin/terminal/rpc-remote-source.ts";
 import type { McpServerRegistry } from "./mcp-server-registry.ts";
 import type { PermissionPresetName } from "./builtin/permission-system/types.ts";
 import type { EvalHandleHost } from "./eval-handle-host.ts";
 import type { ExtensionKernelTools } from "./kernel-tools-context.ts";
 import type { SessionControlActions, SessionControlWakeEvent } from "./session-control-types.ts";
+import type { SessionDialogApi } from "./session-dialog-api.ts";
 import type { UserActivityKind } from "./user-activity.ts";
 
 export type { ExecOptions, ExecResult } from "../exec.ts";
 export type { AppKeybinding, KeybindingsManager } from "../keybindings.ts";
 export type { BuildSystemPromptOptions, NormalizedBuildSystemPromptOptions } from "../system-prompt.ts";
 export * from "./session-control-types.ts";
-export type { AgentToolResult, AgentToolUpdateCallback, ToolExecutionMode };
+export type { AgentToolResult, AgentToolUpdateCallback, ProgramStatus, ToolExecutionMode };
 
 export type ServiceTier = "auto" | "flex" | "priority" | "ultrafast";
 // biome-ignore format: keep literal union alias consistent with nearby ServiceTier style.
@@ -160,6 +164,11 @@ export interface ExtensionUIDialogOptions {
 	toolCallId?: string;
 	/** Set with `toolCallId` when another tool (for example a codemode script) issued that call. */
 	parentToolCallId?: string;
+	/**
+	 * `session`: address the dialog to every client attached to the session instead of the connection whose command
+	 * is running, so a prompt raised after that command returned still reaches someone who can answer. RPC field.
+	 */
+	audience?: "session";
 }
 
 /** A guarded private single-line input; callers on older hosts must check capabilities first. */
@@ -332,6 +341,9 @@ export interface ExtensionUIContext {
 	/** Set the terminal window/tab title. */
 	setTitle(title: string): void;
 
+	/** Report the program's state to the terminal (OSC 7501 Program Status); `undefined` clears it. */
+	setProgramStatus(status: ProgramStatus | undefined): void;
+
 	/** Show a custom component with keyboard focus. */
 	custom<T>(
 		factory: (
@@ -359,7 +371,7 @@ export interface ExtensionUIContext {
 	getEditorText(): string;
 
 	/** Show a multi-line editor for text editing. */
-	editor(title: string, prefill?: string): Promise<string | undefined>;
+	editor(title: string, prefill?: string, opts?: ExtensionUIDialogOptions): Promise<string | undefined>;
 
 	/** Stack additional autocomplete behavior on top of the built-in provider. */
 	addAutocompleteProvider(factory: AutocompleteProviderFactory): void;
@@ -556,6 +568,12 @@ export interface ExtensionContext {
 	readonly browserEngine?: BrowserEngine;
 	/** Caller env the opener gave THIS session (`open_session.env`, senpi#4381); absent when it gave none. */
 	readonly sessionEnv?: Readonly<Record<string, string>>;
+	/**
+	 * The files of the device this session's tools run on (senpi#5839): the local filesystem on a fused session and on a
+	 * hand, the hand's file channel on the loop side of a split session. Data that must stay on the device goes through
+	 * it. Optional for contexts built outside a runner; every runner-built context has it.
+	 */
+	readonly deviceFiles?: DeviceFiles;
 	/** Model registry for API key resolution */
 	modelRegistry: ModelRegistry;
 	/** Current model (may be undefined) */
@@ -990,6 +1008,8 @@ export interface ToolPermissionRequest {
 	readonly patterns: readonly string[];
 	/** Patterns an "always" approval of this call records. */
 	readonly always: readonly string[];
+	/** An `ask` decision for this call is approved without a prompt; an `allow` or `deny` rule still decides first. */
+	readonly autoApproveAsk?: true;
 }
 
 /**
@@ -1138,6 +1158,11 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	 * prompt-cache prefix.
 	 */
 	promptGuidelines?: string[];
+	/**
+	 * Optional guideline bullets that replace `promptGuidelines` when the active prompt preset renders the full
+	 * (pre-diet) shared sections (senpi#5665). Omitted means `promptGuidelines` renders there too.
+	 */
+	fullPromptGuidelines?: string[];
 	/** Optional eval-kernel globals installed while this tool is active; see {@link KernelPreludeContribution}. */
 	kernelPrelude?: KernelPreludeContribution;
 	/**
@@ -1201,6 +1226,12 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 
 	/** Where this tool's work runs once the per-session tool child exists (senpi#3566). */
 	placement?: ToolPlacement;
+	/**
+	 * The side of a split session this tool belongs on (see {@link HandlerRegistrationOptions.runs}). It is recorded
+	 * with the definition only: the tool still registers on every side, and {@link ToolDefinition.placement} keeps
+	 * its meaning.
+	 */
+	runs?: ExtensionSide;
 	/**
 	 * The file-backed body a `"child"`-placed tool runs on the session's tool child (senpi#3566). `path` is absolute or
 	 * relative to the registering extension file and must stay inside that extension's directory; `export` names a
@@ -1713,8 +1744,35 @@ export interface BeforeAgentStartEvent {
 	preview?: boolean;
 }
 
+/** The side of a split session a registration runs on: the agent loop (`"brain"`) or tool execution (`"hand"`). */
+export type ExtensionSide = "brain" | "hand";
+
+/** Registration options every `pi.on(event, handler, options)` call accepts. */
+export interface HandlerRegistrationOptions {
+	/**
+	 * The side this handler runs on when a session's agent loop (`"brain"`) and its tool execution (`"hand"`)
+	 * run as separate processes: the extension generation loaded for the other side does not register it.
+	 * Omitted, the handler registers wherever the extension loads, as before `runs` existed. A fused session,
+	 * where one process is both sides, registers every handler whatever this says.
+	 */
+	runs?: ExtensionSide;
+}
+
+/**
+ * Registration options for the provider request and stream hooks (`before_provider_request`, `provider_stream_event`,
+ * `after_provider_response`).
+ */
+export interface ProviderHookOptions extends HandlerRegistrationOptions {
+	/**
+	 * The providers whose requests or streams this handler reads or changes; omitted, every provider. A hand advertises
+	 * these to a hosted brain so it knows which calls need the device's hooks (hosted model-key custody CK21). The
+	 * declaration never filters dispatch: the handler still receives every event wherever it runs.
+	 */
+	providers?: readonly ProviderId[];
+}
+
 /** Registration options for `pi.on("before_agent_start", handler, options)`. */
-export interface BeforeAgentStartHandlerOptions {
+export interface BeforeAgentStartHandlerOptions extends HandlerRegistrationOptions {
 	/**
 	 * Declares that the handler has no side effects when `event.preview` is `true`: it only
 	 * computes the system prompt a real turn would get, and consumes no one-shot state,
@@ -1733,7 +1791,7 @@ export interface BeforeAgentStartHandlerOptions {
 }
 
 /** Registration options for `pi.on("context", handler, options)` and `pi.on("context_with_system", handler, options)`. */
-export interface ContextHandlerOptions {
+export interface ContextHandlerOptions extends HandlerRegistrationOptions {
 	/**
 	 * Opt-in performance declaration (senpi#2525). `false` declares that the handler never
 	 * mutates a message object — or anything nested in one — in place; it may still return a
@@ -1834,6 +1892,12 @@ export interface AgentBeforeSettleEvent extends BoundaryState {
 /** Fired after an agent run has fully settled and no automatic retry, compaction, or queued continuation will run. */
 export interface AgentSettledEvent {
 	type: "agent_settled";
+	/**
+	 * Present when every fallback rung failed and at least one failure was limit-shaped. `resumeAt`
+	 * (epoch ms) is the soonest future reset the run named, or the latest past reset if all passed.
+	 * It is absent only when no reset was collected. Outage-only exhaustion keeps provider recovery.
+	 */
+	fallbackExhausted?: { resumeAt?: number };
 }
 
 export type UIPromptKind = "select" | "confirm" | "input" | "editor" | "custom" | "question";
@@ -2034,6 +2098,11 @@ export interface InputEvent {
 	attribution: InputAttribution;
 	/** How the input will be delivered during streaming, or undefined when idle */
 	streamingBehavior?: "steer" | "followUp";
+	/**
+	 * Set when the input is a thread call from another session: its chain hop count (decision K8). A thread call this
+	 * session sends next carries one more.
+	 */
+	chainCount?: number;
 }
 
 /** Fired after interception and admission determine ownership of an input. */
@@ -2537,6 +2606,8 @@ export const EMPTY_SESSION_CONTEXT: SessionContext = Object.freeze({});
 export interface ExtensionSessionProfile {
 	readonly sessionKind: SessionKind;
 	readonly sessionContext: SessionContext;
+	/** The side of a split session this extension generation is loaded for; absent on a fused session. Not exposed on `pi`. */
+	readonly side?: ExtensionSide;
 }
 
 /** The profile a classic launch (and any caller that names none) loads extensions with. */
@@ -2582,49 +2653,112 @@ export interface ExtensionAPI {
 	// Event Subscription
 	// =========================================================================
 
-	on(event: "project_trust", handler: ProjectTrustHandler): () => void;
+	on(event: "project_trust", handler: ProjectTrustHandler, options?: HandlerRegistrationOptions): () => void;
 	on(
 		event: "resources_discover",
 		handler: ExtensionHandler<ResourcesDiscoverEvent, ResourcesDiscoverResult>,
+		options?: HandlerRegistrationOptions,
 	): () => void;
-	on(event: "session_start", handler: ExtensionHandler<SessionStartEvent>): () => void;
+	on(
+		event: "session_start",
+		handler: ExtensionHandler<SessionStartEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
 	on(
 		event: "held_wakes_released",
 		handler: ExtensionHandler<HeldWakesReleasedEvent, HeldWakesReleasedEventResult>,
+		options?: HandlerRegistrationOptions,
 	): () => void;
-	on(event: "session_hold_changed", handler: ExtensionHandler<SessionHoldChangedEvent>): () => void;
-	on(event: "session_info_changed", handler: ExtensionHandler<SessionInfoChangedEvent>): () => void;
-	on(event: "session_parked", handler: ExtensionHandler<SessionParkedEvent>): () => void;
-	on(event: "session_resumed", handler: ExtensionHandler<SessionResumedEvent>): () => void;
+	on(
+		event: "session_hold_changed",
+		handler: ExtensionHandler<SessionHoldChangedEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "session_info_changed",
+		handler: ExtensionHandler<SessionInfoChangedEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "session_parked",
+		handler: ExtensionHandler<SessionParkedEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "session_resumed",
+		handler: ExtensionHandler<SessionResumedEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
 	on(
 		event: "session_before_switch",
 		handler: ExtensionHandler<SessionBeforeSwitchEvent, SessionBeforeSwitchResult>,
+		options?: HandlerRegistrationOptions,
 	): () => void;
 	on(
 		event: "session_before_fork",
 		handler: ExtensionHandler<SessionBeforeForkEvent, SessionBeforeForkResult>,
+		options?: HandlerRegistrationOptions,
 	): () => void;
 	on(
 		event: "session_before_reload",
 		handler: ExtensionHandler<SessionBeforeReloadEvent, SessionBeforeReloadResult>,
+		options?: HandlerRegistrationOptions,
 	): () => void;
 	on(
 		event: "session_before_compact",
 		handler: ExtensionHandler<SessionBeforeCompactEvent, SessionBeforeCompactResult>,
+		options?: HandlerRegistrationOptions,
 	): () => void;
-	on(event: "session_compact", handler: ExtensionHandler<SessionCompactEvent>): () => void;
-	on(event: "session_compact_failed", handler: ExtensionHandler<SessionCompactFailedEvent>): () => void;
-	on(event: "session_shutdown", handler: ExtensionHandler<SessionShutdownEvent>): () => void;
-	on(event: "mcp_servers_change", handler: ExtensionHandler<McpServersChangeEvent>): () => void;
-	on(event: "session_abort", handler: ExtensionHandler<SessionAbortEvent>): () => void;
-	on(event: "session_extensions_removed", handler: ExtensionHandler<SessionExtensionsRemovedEvent>): () => void;
-	on(event: "session_move_export", handler: ExtensionHandler<SessionMoveExportEvent>): () => void;
-	on(event: "session_move_import", handler: ExtensionHandler<SessionMoveImportEvent>): () => void;
+	on(
+		event: "session_compact",
+		handler: ExtensionHandler<SessionCompactEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "session_compact_failed",
+		handler: ExtensionHandler<SessionCompactFailedEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "session_shutdown",
+		handler: ExtensionHandler<SessionShutdownEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "mcp_servers_change",
+		handler: ExtensionHandler<McpServersChangeEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "session_abort",
+		handler: ExtensionHandler<SessionAbortEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "session_extensions_removed",
+		handler: ExtensionHandler<SessionExtensionsRemovedEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "session_move_export",
+		handler: ExtensionHandler<SessionMoveExportEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "session_move_import",
+		handler: ExtensionHandler<SessionMoveImportEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
 	on(
 		event: "session_before_tree",
 		handler: ExtensionHandler<SessionBeforeTreeEvent, SessionBeforeTreeResult>,
+		options?: HandlerRegistrationOptions,
 	): () => void;
-	on(event: "session_tree", handler: ExtensionHandler<SessionTreeEvent>): () => void;
+	on(
+		event: "session_tree",
+		handler: ExtensionHandler<SessionTreeEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
 	on(
 		event: "context",
 		handler: ExtensionHandler<ContextEvent, ContextEventResult>,
@@ -2638,43 +2772,145 @@ export interface ExtensionAPI {
 	on(
 		event: "before_provider_request",
 		handler: ExtensionHandler<BeforeProviderRequestEvent, BeforeProviderRequestEventResult>,
+		options?: ProviderHookOptions,
 	): () => void;
-	on(event: "before_provider_headers", handler: ExtensionHandler<BeforeProviderHeadersEvent>): () => void;
-	on(event: "after_provider_response", handler: ExtensionHandler<AfterProviderResponseEvent>): () => void;
-	on(event: "provider_stream_event", handler: ExtensionHandler<ProviderStreamEvent>): () => void;
+	on(
+		event: "before_provider_headers",
+		handler: ExtensionHandler<BeforeProviderHeadersEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "after_provider_response",
+		handler: ExtensionHandler<AfterProviderResponseEvent>,
+		options?: ProviderHookOptions,
+	): () => void;
+	on(
+		event: "provider_stream_event",
+		handler: ExtensionHandler<ProviderStreamEvent>,
+		options?: ProviderHookOptions,
+	): () => void;
 	on(
 		event: "before_agent_start",
 		handler: ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult>,
 		options?: BeforeAgentStartHandlerOptions,
 	): () => void;
-	on(event: "agent_start", handler: ExtensionHandler<AgentStartEvent>): () => void;
-	on(event: "agent_end", handler: ExtensionHandler<AgentEndEvent>): () => void;
+	on(
+		event: "agent_start",
+		handler: ExtensionHandler<AgentStartEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(event: "agent_end", handler: ExtensionHandler<AgentEndEvent>, options?: HandlerRegistrationOptions): () => void;
 	on(
 		event: "agent_before_settle",
 		handler: ExtensionHandler<AgentBeforeSettleEvent, AgentBeforeSettleEventResult>,
+		options?: HandlerRegistrationOptions,
 	): () => void;
-	on(event: "agent_settled", handler: ExtensionHandler<AgentSettledEvent>): () => void;
-	on(event: "session_control_wake", handler: ExtensionHandler<SessionControlWakeEvent>): () => void;
-	on(event: "ui_prompt_start", handler: ExtensionHandler<UIPromptStartEvent>): () => void;
-	on(event: "ui_prompt_end", handler: ExtensionHandler<UIPromptEndEvent>): () => void;
-	on(event: "turn_start", handler: ExtensionHandler<TurnStartEvent>): () => void;
-	on(event: "turn_end", handler: ExtensionHandler<TurnEndEvent, TurnEndEventResult>): () => void;
-	on(event: "message_start", handler: ExtensionHandler<MessageStartEvent>): () => void;
-	on(event: "message_update", handler: ExtensionHandler<MessageUpdateEvent>): () => void;
-	on(event: "message_end", handler: ExtensionHandler<MessageEndEvent, MessageEndEventResult>): () => void;
-	on(event: "tool_execution_start", handler: ExtensionHandler<ToolExecutionStartEvent>): () => void;
-	on(event: "tool_execution_update", handler: ExtensionHandler<ToolExecutionUpdateEvent>): () => void;
-	on(event: "tool_execution_end", handler: ExtensionHandler<ToolExecutionEndEvent>): () => void;
-	on(event: "model_select", handler: ExtensionHandler<ModelSelectEvent, ModelSelectEventResult>): () => void;
-	on(event: "provider_login_start", handler: ExtensionHandler<ProviderLoginStartEvent>): () => void;
-	on(event: "system_prompt_change", handler: ExtensionHandler<SystemPromptChangeEvent>): () => void;
-	on(event: "thinking_level_select", handler: ExtensionHandler<ThinkingLevelSelectEvent>): () => void;
-	on(event: "tool_activated", handler: ExtensionHandler<ToolActivatedEvent>): () => void;
-	on(event: "tool_call", handler: ExtensionHandler<ToolCallEvent, ToolCallEventResult>): () => void;
-	on(event: "tool_result", handler: ExtensionHandler<ToolResultEvent, ToolResultEventResult>): () => void;
-	on(event: "user_bash", handler: ExtensionHandler<UserBashEvent, UserBashEventResult>): () => void;
-	on(event: "input", handler: ExtensionHandler<InputEvent, InputEventResult>): () => void;
-	on(event: "input_disposition", handler: ExtensionHandler<InputDispositionEvent>): () => void;
+	on(
+		event: "agent_settled",
+		handler: ExtensionHandler<AgentSettledEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "session_control_wake",
+		handler: ExtensionHandler<SessionControlWakeEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "ui_prompt_start",
+		handler: ExtensionHandler<UIPromptStartEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "ui_prompt_end",
+		handler: ExtensionHandler<UIPromptEndEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(event: "turn_start", handler: ExtensionHandler<TurnStartEvent>, options?: HandlerRegistrationOptions): () => void;
+	on(
+		event: "turn_end",
+		handler: ExtensionHandler<TurnEndEvent, TurnEndEventResult>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "message_start",
+		handler: ExtensionHandler<MessageStartEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "message_update",
+		handler: ExtensionHandler<MessageUpdateEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "message_end",
+		handler: ExtensionHandler<MessageEndEvent, MessageEndEventResult>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "tool_execution_start",
+		handler: ExtensionHandler<ToolExecutionStartEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "tool_execution_update",
+		handler: ExtensionHandler<ToolExecutionUpdateEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "tool_execution_end",
+		handler: ExtensionHandler<ToolExecutionEndEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "model_select",
+		handler: ExtensionHandler<ModelSelectEvent, ModelSelectEventResult>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "provider_login_start",
+		handler: ExtensionHandler<ProviderLoginStartEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "system_prompt_change",
+		handler: ExtensionHandler<SystemPromptChangeEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "thinking_level_select",
+		handler: ExtensionHandler<ThinkingLevelSelectEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "tool_activated",
+		handler: ExtensionHandler<ToolActivatedEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "tool_call",
+		handler: ExtensionHandler<ToolCallEvent, ToolCallEventResult>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "tool_result",
+		handler: ExtensionHandler<ToolResultEvent, ToolResultEventResult>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "user_bash",
+		handler: ExtensionHandler<UserBashEvent, UserBashEventResult>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "input",
+		handler: ExtensionHandler<InputEvent, InputEventResult>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
+	on(
+		event: "input_disposition",
+		handler: ExtensionHandler<InputDispositionEvent>,
+		options?: HandlerRegistrationOptions,
+	): () => void;
 
 	// =========================================================================
 	// Tool Registration
@@ -2773,6 +3009,14 @@ export interface ExtensionAPI {
 	getPermissionPreset(): PermissionPresetName | undefined;
 
 	/**
+	 * Dialogs addressed to every client attached to this session, not only to the connection whose command is
+	 * running: a prompt raised after that command returned (a background child's permission request a task runner
+	 * forwards) still reaches someone who can answer. The first answer wins. Secret inputs stay with the raising
+	 * connection. In the terminal UI they show like any dialog.
+	 */
+	sessionDialog: SessionDialogApi;
+
+	/**
 	 * Every subscription account's latest limit windows: the records `get_subscription_limits` serves, fed by
 	 * the engine's usage poll and by turns (senpi#3684). An account nothing has reported for is absent.
 	 */
@@ -2807,6 +3051,12 @@ export interface ExtensionAPI {
 
 	/** Register a compact read classifier; removed on unregister, failed load, or runtime invalidation. */
 	registerReadClassifier(classifier: ReadClassifier): () => void;
+
+	/**
+	 * Serve `monitor` rpc targets on another device (`<device>/<session>`, `<device>/*`). The latest registration
+	 * wins; removed on unregister, failed load, or runtime invalidation. Without one, such a target is refused.
+	 */
+	registerRpcRemoteSource(source: RpcRemoteSource): () => void;
 
 	// =========================================================================
 	// Actions
@@ -3167,6 +3417,12 @@ export interface ProviderConfig {
 	 * used and blocked all of them (senpi#2081).
 	 */
 	ownsAccountSelection?: boolean;
+	/**
+	 * Capability flag: every request runs through a binary on this machine, under a login stored on this
+	 * machine (for example a CLI driven as a subprocess), so the provider can only be served where that
+	 * binary and login exist. Metadata only: nothing reads it yet, and selection and resolution ignore it.
+	 */
+	localOnly?: boolean;
 }
 
 interface ProviderModelConfigBase {
@@ -3200,6 +3456,8 @@ export interface ProviderChatModelConfig extends ProviderModelConfigBase {
 	recoverTextToolCalls?: boolean;
 	/** Maps pi thinking levels to provider/model-specific values; null marks a level unsupported. */
 	thinkingLevelMap?: Model<Api>["thinkingLevelMap"];
+	/** The model's own default thinking level, applied before the configured default (senpi#2196). */
+	defaultThinkingLevel?: Model<Api>["defaultThinkingLevel"];
 	/** Best-effort prompt cache lifetime in seconds per retention tier (catalog metadata). */
 	promptCache?: Model<Api>["promptCache"];
 	/** Maximum context window size in tokens. */
@@ -3583,6 +3841,7 @@ export interface ExtensionContextActions {
 	getAskUserSettings?: () => { enabled: boolean; timeoutMinutes: number };
 	getBrowserEngine?: () => BrowserEngine | undefined;
 	getSessionEnv?: () => Readonly<Record<string, string>> | undefined;
+	getDeviceFiles?: () => DeviceFiles;
 	getImageSettings: () => { autoResize: boolean; blockImages: boolean };
 	sessionSettings: ExtensionSessionSettings;
 	compact: (options?: CompactOptions) => void;
@@ -3682,6 +3941,10 @@ export interface Extension {
 	runLastHandlers?: WeakSet<HandlerFn>;
 	/** `context`/`context_with_system` handlers registered with `{ mutatesMessages: false }`. */
 	nonMutatingContextHandlers?: WeakSet<HandlerFn>;
+	/** The declared side of each handler registered with `{ runs }`; a handler that declared none has no entry. */
+	handlerSides?: WeakMap<HandlerFn, ExtensionSide>;
+	/** The declared providers of each provider hook registered with `{ providers }`; undeclared hooks have no entry. */
+	handlerProviders?: WeakMap<HandlerFn, readonly ProviderId[]>;
 	tools: Map<string, RegisteredTool>;
 	/** Optional for compatibility with extension records created before child modules. */
 	childModules?: Map<string, RegisteredChildModule>;

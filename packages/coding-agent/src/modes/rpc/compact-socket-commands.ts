@@ -1,8 +1,14 @@
 import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
-import { CONNECTION_ROLE_FIXED, roleConnection } from "./connection-roles.ts";
+import { commandAuthority } from "./command-authority.ts";
+import { CONNECTION_ROLE_FIXED, DELEGATION_INCARNATION_STALE, roleConnection } from "./connection-roles.ts";
+import { remoteOriginDeclaration } from "./remote-origin.ts";
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
 import type { RouterContext } from "./session-router-context.ts";
 import { error } from "./session-router-errors.ts";
+
+function staleError(id: string | undefined, command: string, message: string): RpcResponse {
+	return { id, type: "response", command, success: false, error: message, errorCode: "delegation_incarnation_stale" };
+}
 
 /** Validate the full declaration before committing role, media, recovery or pending state. */
 export function declareSocketClient(
@@ -11,7 +17,17 @@ export function declareSocketClient(
 ): RpcResponse {
 	const peer = host.writer.currentConnection();
 	const selection = peer === undefined ? undefined : host.writer.compactSelection(peer);
-	const role = (caps: readonly string[]) => host.connectionRoles.declare(roleConnection(peer), caps);
+	const connection = roleConnection(peer);
+	// omo-relay-daemon#307 (v5 review H1): the stale check runs first and touches nothing, so a declaration captured before
+	// a `detach_connection` can never reach `CompactSelection.declare`, whose role refusal can mark the selection refused.
+	const incarnation = commandAuthority.getStore()?.incarnation;
+	if (host.connectionRoles.isStale(connection, incarnation))
+		return staleError(command.id, command.type, DELEGATION_INCARNATION_STALE);
+	const role = (caps: readonly string[]) => host.connectionRoles.declare(connection, caps, incarnation) === "declared";
+	const origin = remoteOriginDeclaration(command.remoteOrigin, (declared) =>
+		host.connectionRoles.acceptsOrigin(roleConnection(peer), declared),
+	);
+	if ("refusal" in origin) return error(command.id, command.type, origin.refusal);
 	const reason = selection
 		? selection.declare(command.capabilities, host.registry.supportsCompact?.() === true, role)
 		: command.capabilities !== undefined && !role(command.capabilities)
@@ -19,6 +35,8 @@ export function declareSocketClient(
 			: undefined;
 	if (reason)
 		return error(command.id, command.type, reason === "connection_role_fixed" ? CONNECTION_ROLE_FIXED : reason);
+	// Before the capability commit: its recheck must already see a background presenter that now speaks for a remote device.
+	if (origin.origin !== undefined) host.connectionRoles.declareOrigin(roleConnection(peer), origin.origin);
 	if (peer !== undefined) {
 		// RULING-111 (LEAK-B): with the flag off a declaration without capabilities resets them, exactly as on main.
 		const caps = compactUpdatesEnabled()

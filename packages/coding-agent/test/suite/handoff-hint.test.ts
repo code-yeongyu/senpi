@@ -1,5 +1,6 @@
 // senpi#3230: suggest a fresh session with a handoff when a large session's cache has expired.
-import type { Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import { getModels } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildHandoffBrief } from "../../src/core/extensions/builtin/handoff-hint/brief.ts";
 import { estimateHandoff, hintText } from "../../src/core/extensions/builtin/handoff-hint/estimate.ts";
@@ -59,6 +60,7 @@ function harness(
 		settings?: object;
 		goal?: "active";
 		cancelSwitch?: boolean;
+		model?: Model<Api>;
 	} = {},
 ) {
 	let now = 1_000_000;
@@ -130,7 +132,7 @@ function harness(
 		mode: options.mode ?? "tui",
 		hasUI: true,
 		cwd: "/work",
-		model: opus,
+		model: options.model ?? opus,
 		isIdle: () => idle,
 		hasPendingMessages: () => false,
 		isCompacting: () => false,
@@ -368,6 +370,49 @@ describe("handoff hint", () => {
 		expect(brief.customType).toBe(HANDOFF_BRIEF_MESSAGE_TYPE);
 		expect(brief.display).toBe(true);
 		expect(brief.content).toContain("/sessions/s1.jsonl");
+	});
+});
+
+function catalogModel(provider: "openai" | "chatgpt-subscription", id: string): Model<Api> {
+	const model = getModels(provider).find((candidate) => candidate.id === id);
+	if (model === undefined) throw new Error(`missing catalog model ${provider}/${id}`);
+	return model as Model<Api>;
+}
+
+// senpi#6290: OpenAI keeps a signed-in ChatGPT user's cache with no expiry, and its API sells a 12-hour lifetime.
+describe("handoff hint on OpenAI cache lifetimes", () => {
+	beforeEach(() => vi.useFakeTimers());
+	afterEach(() => vi.useRealTimers());
+
+	const HOUR_MS = 3_600_000;
+
+	it("never shows on idle time for a ChatGPT subscription session, whose cache does not expire", async () => {
+		const h = harness({ model: catalogModel("chatgpt-subscription", "gpt-6-sol") });
+		await h.fire("session_start");
+		await h.humanTurn();
+		await h.advance(24 * HOUR_MS);
+		expect(h.visible()).toBe(false);
+		expect(h.events).toEqual([]);
+	});
+
+	it("shows after 30 minutes on an API-key GPT-6 session with the default lifetime", async () => {
+		const h = harness({ model: catalogModel("openai", "gpt-6-sol") });
+		await h.fire("session_start");
+		await h.humanTurn();
+		await h.advance(HOUR_MS / 2 - 1000);
+		expect(h.visible()).toBe(false);
+		await h.advance(1000);
+		expect(h.visible()).toBe(true);
+	});
+
+	it("waits the full 12 hours on an API-key GPT-6 session that bought the long lifetime", async () => {
+		const h = harness({ model: { ...catalogModel("openai", "gpt-6-sol"), cacheRetention: "long" } });
+		await h.fire("session_start");
+		await h.humanTurn();
+		await h.advance(12 * HOUR_MS - 1000);
+		expect(h.visible()).toBe(false);
+		await h.advance(1000);
+		expect(h.visible()).toBe(true);
 	});
 });
 
