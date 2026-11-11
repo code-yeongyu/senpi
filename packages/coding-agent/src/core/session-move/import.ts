@@ -1,11 +1,7 @@
 import { copyFile, mkdir, readdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { normalizePath, resolvePath } from "../../utils/paths.ts";
-import {
-	compareRepositoryIdentities,
-	type RepositoryIdentity,
-	readRepositoryIdentity,
-} from "../repository-identity.ts";
+import type { RepositoryIdentity } from "../repository-identity.ts";
 import { getDefaultSessionDir, loadEntriesFromFileAsync, SessionManager } from "../session-manager.ts";
 import { rebindSessionFile } from "../session-rebind.ts";
 import { encodedSessionId, serializeByKey } from "../session-sidecar-store.ts";
@@ -24,7 +20,10 @@ import { moveStep } from "./move-steps.ts";
 import { headerSessionId, type MoveId, SESSION_MOVED, SESSION_MOVED_IN, sessionOwnership } from "./ownership.ts";
 import { requeueInput } from "./requeue.ts";
 import { REVOKED } from "./revoke.ts";
+import { isCheckoutOfRepository, MoveRefusedError } from "./repository-check.ts";
 import { moveLockKey } from "./session-lock.ts";
+
+export { MoveRefusedError } from "./repository-check.ts";
 
 export interface ImportMovedSessionOptions {
 	readonly bundleDir: string;
@@ -33,18 +32,6 @@ export interface ImportMovedSessionOptions {
 	readonly sessionDir?: string;
 	readonly from?: string;
 	readonly readIdentity?: (dir: string) => Promise<RepositoryIdentity | undefined>;
-}
-
-export class MoveRefusedError extends Error {
-	readonly code: "move_repository_mismatch";
-
-	constructor(targetCwd: string, sourceCwd: string) {
-		super(
-			`${targetCwd} is not the same repository the session was recorded in (${sourceCwd}). Pick a checkout of the same repository, or copy the session into this folder instead.`,
-		);
-		this.name = "MoveRefusedError";
-		this.code = "move_repository_mismatch";
-	}
 }
 
 export class MoveTargetOccupiedError extends Error {
@@ -145,12 +132,14 @@ export async function importMovedSession(
 			await options.ledger.fail(manifest.moveId, "bundle_invalid", { unlessLanded: landed });
 		throw error;
 	}
-	const read = options.readIdentity ?? readRepositoryIdentity;
-	if (compareRepositoryIdentities(manifest.repository, await read(targetCwd)) !== "same") {
+	// Before the repository check: an import into a folder this move was not readied for must not decline the move,
+	// which that check does, because the move still lands in the folder its `prepare` checked (senpi#6435).
+	await options.ledger.requireReadiedFor(manifest.moveId, targetCwd);
+	if (!(await isCheckoutOfRepository(targetCwd, manifest.repository, options.readIdentity))) {
 		if (!(await landed())) await options.ledger.decline(manifest.moveId, "repository");
 		throw new MoveRefusedError(targetCwd, manifest.sourceCwd);
 	}
-	await options.ledger.beginReceive(manifest.moveId, target);
+	await options.ledger.beginReceive(manifest.moveId, target, { cwd: targetCwd });
 	moveStep("import:received");
 	const staging = join(sessionDir, ".move-staging", encodeURIComponent(manifest.moveId));
 	try {

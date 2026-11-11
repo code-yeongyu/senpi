@@ -1,4 +1,11 @@
+import type { RepositoryIdentity } from "../../core/repository-identity.ts";
 import type { MoveAnswer } from "../../core/session-move/move-ledger.ts";
+
+/** What a caller sends and hears for a repository identity; `rootCommits` is mutable as it arrives off the wire. */
+export interface RpcRepositoryIdentity {
+	rootCommits: string[];
+	originUrl?: string;
+}
 
 /** Capability: the host answers `move_session` (senpi#3676). */
 export const MOVE_SESSION_CAPABILITY = "move_session";
@@ -6,6 +13,10 @@ export const MOVE_SESSION_CAPABILITY = "move_session";
 export const MOVE_SESSION_REVOKE_CAPABILITY = "move_session_revoke";
 /** Capability: `move_session` answers op `copy`, which copies a session into a new one under a given id (senpi#5889). */
 export const MOVE_SESSION_COPY_CAPABILITY = "move_session_copy";
+/** Capability: `move_session` answers op `identity`, in both its forms, without releasing anything (senpi#6435). */
+export const MOVE_SESSION_IDENTITY_CAPABILITY = "move_session_identity";
+/** Capability: op `prepare` checks `cwd` against `repository`, and the import lands only there (senpi#6435). */
+export const MOVE_SESSION_PREPARE_REPOSITORY_CAPABILITY = "move_session_prepare_repository";
 
 /** A `move_session` request whose fields do not parse (op, move id, paths, answer). */
 export const RPC_ERROR_INVALID_MOVE_REQUEST = "invalid_move_request";
@@ -23,7 +34,9 @@ export const RPC_ERROR_MOVE_FAILED = "move_failed";
  * side: `copy`, a new writable session from one that is read-only here.
  */
 export type RpcMoveSessionCommand = { id?: string; type: "move_session" } & (
-	| { op: "prepare"; moveId: string }
+	| { op: "prepare"; moveId: string; cwd?: string; repository?: RpcRepositoryIdentity }
+	| { op: "identity"; sessionPath: string }
+	| { op: "identity"; cwd: string }
 	| { op: "cancel"; moveId: string }
 	| { op: "status"; moveId: string; sessionPath?: string }
 	| { op: "export"; sessionPath: string; moveId: string; target: string; droppedUserMessages?: string[] }
@@ -38,6 +51,7 @@ export type RpcMoveRecord = MoveAnswer | { state: "ready"; expires_at: string };
 
 export type RpcMoveSessionData =
 	| RpcMoveRecord
+	| { repository?: RepositoryIdentity }
 	| { move_id: string; session_id: string; bundle_dir: string; files: number }
 	| { session_id: string; session_path: string }
 	| { ownership: "writable" | "moving" | "moved" };

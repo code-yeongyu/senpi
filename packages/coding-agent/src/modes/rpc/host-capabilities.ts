@@ -51,6 +51,8 @@ import { STEER_WHEN_IDLE_CAPABILITY, USER_ACTIVITY_CAPABILITY } from "./rpc-type
 import {
 	MOVE_SESSION_CAPABILITY,
 	MOVE_SESSION_COPY_CAPABILITY,
+	MOVE_SESSION_IDENTITY_CAPABILITY,
+	MOVE_SESSION_PREPARE_REPOSITORY_CAPABILITY,
 	MOVE_SESSION_REVOKE_CAPABILITY,
 } from "./session-move-wire.ts";
 
@@ -137,6 +139,9 @@ export function multiSessionHostCapabilities(options: {
 			MOVE_SESSION_CAPABILITY,
 			MOVE_SESSION_REVOKE_CAPABILITY,
 			MOVE_SESSION_COPY_CAPABILITY,
+			// ...and answers a session's or a folder's recorded repository, and checks it before a release (senpi#6435).
+			MOVE_SESSION_IDENTITY_CAPABILITY,
+			MOVE_SESSION_PREPARE_REPOSITORY_CAPABILITY,
 			// A host session asks the client that offers it to continue the session elsewhere (`host_request`).
 			SESSION_RELOCATION_CAPABILITY,
 			SESSION_CONTEXT_CAPABILITY,

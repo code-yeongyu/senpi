@@ -25,6 +25,9 @@ import {
 
 const move = <const P extends TProperties>(properties: P) => command("move_session", properties);
 
+/** A repository identity as `move_session` op `identity` answers it and op `prepare` takes it back (senpi#6435). */
+const RepositoryIdentity = Type.Object({ rootCommits: Strings, originUrl: OptPath });
+
 const uiResponseFrame = {
 	secret: OptBool,
 	type: Type.Literal("extension_ui_response"),
@@ -65,8 +68,10 @@ export const HOST_RECORD_SCHEMAS = {
 	park_session: command("park_session", { cwd: PathStr, kind: Opt(SessionKind), context: Opt(SessionContext) }),
 	close_session: command("close_session", { sessionId: Id }),
 	move_session: Type.Union([
-		move({ op: Type.Literal("prepare"), moveId: Id }),
+		move({ op: Type.Literal("prepare"), moveId: Id, cwd: OptPath, repository: Opt(RepositoryIdentity) }),
 		move({ op: Type.Literal("cancel"), moveId: Id }),
+		move({ op: Type.Literal("identity"), sessionPath: PathStr }),
+		move({ op: Type.Literal("identity"), cwd: PathStr }),
 		move({ op: Type.Literal("status"), moveId: Id, sessionPath: OptPath }),
 		move({
 			op: Type.Literal("export"),

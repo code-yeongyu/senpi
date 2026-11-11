@@ -5,38 +5,34 @@ import { parseMoveId } from "./bundle.ts";
 import {
 	type Landing,
 	type LandingOutcome,
+	heldElsewhere,
 	landedElsewhere,
 	landsAt,
 	parseLanding,
+	settledAt,
 	settledLanding,
 } from "./move-landing.ts";
 import { MoveRecordLocks } from "./move-ledger-lock.ts";
 import { moveStep } from "./move-steps.ts";
+import {
+	type DeclineReason,
+	type FailReason,
+	type MoveAnswer,
+	MoveFencedError,
+	type MoveRecord,
+	parseRecord,
+} from "./move-record.ts";
 import type { MoveId } from "./ownership.ts";
 
-/**
- * The receiving device's record of every move it was offered. Asking about a move is itself a fence: a move this
- * device never heard of is recorded as declined BEFORE the answer leaves, so a later import of it is refused and the
- * sender may safely take its session back. Every writer and the import's final rename share one lock per move.
- */
-export type DeclineReason = "no_record" | "expired" | "cancelled" | "chunk_without_ready" | "repository";
-export type FailReason = "bundle_invalid" | "import_failed";
-
-/** The answers a sender can hear. */
-export type MoveStatus =
-	| { readonly state: "receiving" }
-	| { readonly state: "accepted" }
-	| { readonly state: "declined"; readonly reason: DeclineReason }
-	| { readonly state: "failed"; readonly reason: FailReason };
-
-/**
- * A status answer as the sender hears it. `revoked` marks an accepted import the receiver later sealed with `revoke`:
- * the record stays `accepted` (final), but the receiver's copy is read-only, so the sender must take the session back.
- */
-export type MoveAnswer = MoveStatus | { readonly state: "accepted"; readonly revoked: true };
-
-/** `ready`: this device told the sender it can take the move; no bundle has been verified yet. */
-export type MoveRecord = MoveAnswer | { readonly state: "ready"; readonly expiresAt: string };
+export {
+	type DeclineReason,
+	type FailReason,
+	type MoveAnswer,
+	MoveFencedError,
+	type MoveRecord,
+	type MoveStatus,
+	parseMoveStatus,
+} from "./move-record.ts";
 
 /** How long a ready move waits for its bundle before it is declined as expired. */
 export const READY_TTL_MS = 10 * 60_000;
@@ -47,51 +43,17 @@ export interface MoveLedgerOptions {
 	readonly now?: () => number;
 }
 
-export class MoveFencedError extends Error {
-	readonly code = "move_fenced";
-	readonly record: MoveRecord | undefined;
-
-	constructor(moveId: MoveId, record: MoveRecord | undefined, detail?: string) {
-		super(
-			`Move ${moveId} can no longer be imported here: ${detail ?? `it was already answered (${record?.state ?? "no record"})`}.`,
-		);
-		this.name = "MoveFencedError";
-		this.record = record;
-	}
+/** What a receive brings to `beginReceive`. */
+export interface BeginReceiveOptions {
+	/** The folder the import lands in, resolved as the import resolves it. The record keeps it as `cwd`. */
+	readonly cwd?: string;
 }
 
-const DECLINE_REASONS: readonly DeclineReason[] = [
-	"no_record",
-	"expired",
-	"cancelled",
-	"chunk_without_ready",
-	"repository",
-];
-const FAIL_REASONS: readonly FailReason[] = ["bundle_invalid", "import_failed"];
-
-/** A receiver's answer as it arrives back at the sender; a `ready` record is not an answer. */
-export function parseMoveStatus(value: unknown): MoveAnswer | undefined {
-	const record = parseRecord(value);
-	return record?.state === "ready" ? undefined : record;
-}
-
-function parseRecord(value: unknown): MoveRecord | undefined {
-	if (typeof value !== "object" || value === null) return undefined;
-	const { state, reason } = value as { readonly state?: unknown; readonly reason?: unknown };
-	if (state === "accepted" && (value as { readonly revoked?: unknown }).revoked === true)
-		return { state, revoked: true };
-	if (state === "receiving") return { state };
-	if (state === "accepted") return { state };
-	const { expiresAt } = value as { readonly expiresAt?: unknown };
-	if (state === "ready" && typeof expiresAt === "string" && !Number.isNaN(Date.parse(expiresAt)))
-		return { state, expiresAt };
-	const decline = DECLINE_REASONS.find((known) => known === reason);
-	if (state === "declined" && decline !== undefined) return { state, reason: decline };
-	const fail = FAIL_REASONS.find((known) => known === reason);
-	if (state === "failed" && fail !== undefined) return { state, reason: fail };
-	return undefined;
-}
-
+/**
+ * The receiving device's record of every move it was offered. Asking about a move is itself a fence: a move this
+ * device never heard of is recorded as declined BEFORE the answer leaves, so a later import of it is refused and the
+ * sender may safely take its session back. Every writer and the import's final rename share one lock per move.
+ */
 export class MoveLedger {
 	readonly dir: string;
 	private readonly now: () => number;
@@ -106,16 +68,35 @@ export class MoveLedger {
 	 * Says this device can take the move, for `READY_TTL_MS`. Sending ready again keeps the first window; a move already
 	 * receiving or accepted stays so, and one already answered otherwise is refused.
 	 */
-	prepare(moveId: MoveId): Promise<MoveRecord> {
+	prepare(moveId: MoveId, cwd?: string): Promise<MoveRecord> {
 		return this.locked(moveId, async () => {
 			const record = await this.current(moveId);
+			const landing = await this.landing(moveId);
+			// A move lands in one folder: the first ready that names one fixes it, and the window is never restarted.
+			if (cwd !== undefined && landing.cwd !== undefined && landing.cwd !== cwd)
+				throw new MoveFencedError(moveId, record, heldElsewhere(landing));
 			if (record === undefined) {
 				const ready = { state: "ready", expiresAt: new Date(this.now() + READY_TTL_MS).toISOString() } as const;
-				await this.write(moveId, ready);
+				await this.write(moveId, ready, cwd === undefined ? {} : { cwd });
 				return ready;
 			}
-			if (record.state === "ready" || record.state === "receiving" || record.state === "accepted") return record;
-			throw new MoveFencedError(moveId, record);
+			if (record.state !== "ready" && record.state !== "receiving" && record.state !== "accepted")
+				throw new MoveFencedError(moveId, record);
+			if (cwd !== undefined && landing.cwd === undefined) await this.write(moveId, record, { ...landing, cwd });
+			return record;
+		});
+	}
+
+	/**
+	 * Refuses an import into a folder other than the one a ready move was readied for, before the import's own
+	 * repository check can answer that folder's repository instead (senpi#6435). It writes nothing: the move stays
+	 * ready for the folder it was readied for, and `beginReceive` decides again under the lock.
+	 */
+	requireReadiedFor(moveId: MoveId, cwd: string): Promise<void> {
+		return this.locked(moveId, async () => {
+			const [record, landing] = await Promise.all([this.read(moveId), this.landing(moveId)]);
+			if (record?.state === "ready" && landing.cwd !== undefined && landing.cwd !== cwd)
+				throw new MoveFencedError(moveId, record, heldElsewhere(landing));
 		});
 	}
 
@@ -127,12 +108,15 @@ export class MoveLedger {
 	 * is gone). A receiving record with no target (an older build wrote it) is fenced too: where it landed is unknown,
 	 * and a file it already landed is confirmed by the import's same-file check, which runs before this.
 	 */
-	beginReceive(moveId: MoveId, target: string): Promise<void> {
+	beginReceive(moveId: MoveId, target: string, options: BeginReceiveOptions = {}): Promise<void> {
 		return this.locked(moveId, async () => {
 			const record = await this.current(moveId);
 			const landing = await this.landing(moveId);
 			if (record?.state === "ready") {
-				await this.write(moveId, { state: "receiving" }, { target });
+				// A move readied for a folder is received only for that folder; one readied for none keeps this one.
+				if (landing.cwd !== undefined && landing.cwd !== options.cwd)
+					throw new MoveFencedError(moveId, record, heldElsewhere(landing));
+				await this.write(moveId, { state: "receiving" }, settledAt({ cwd: options.cwd }, target));
 				return;
 			}
 			if (landsAt(record, landing, target)) return;
@@ -216,11 +200,11 @@ export class MoveLedger {
 			if (!landsAt(record, landing, target))
 				throw new MoveFencedError(moveId, record, landedElsewhere(record, landing));
 			await prepare?.();
-			await this.write(moveId, { state: "receiving" }, { target, committing: true });
+			await this.write(moveId, { state: "receiving" }, { ...settledAt(landing, target), committing: true });
 			moveStep("import:stamped");
 			const result = await rename();
 			moveStep("import:renamed");
-			await this.write(moveId, { state: "accepted" }, { target });
+			await this.write(moveId, { state: "accepted" }, settledAt(landing, target));
 			return result;
 		});
 	}
@@ -239,7 +223,11 @@ export class MoveLedger {
 				throw new MoveFencedError(moveId, record, landedElsewhere(record, landing));
 			const marked = record?.state === "accepted" && "revoked" in record;
 			if (record?.state === "accepted" && (marked || !revoked)) return;
-			await this.write(moveId, revoked ? { state: "accepted", revoked: true } : { state: "accepted" }, { target });
+			await this.write(
+				moveId,
+				revoked ? { state: "accepted", revoked: true } : { state: "accepted" },
+				settledAt(landing, target),
+			);
 		});
 	}
 
@@ -253,11 +241,11 @@ export class MoveLedger {
 		record: MoveRecord | undefined,
 		landed: ((target: string) => LandingOutcome | Promise<LandingOutcome>) | undefined,
 	): Promise<MoveRecord | undefined> {
-		const { target, committing } = await this.landing(moveId);
+		const { target, cwd, committing } = await this.landing(moveId);
 		if (landed === undefined || target === undefined) return record;
 		const next = settledLanding(record, committing === true, await landed(target));
 		if (next === undefined) return record;
-		await this.write(moveId, next, { target });
+		await this.write(moveId, next, settledAt({ cwd }, target));
 		return next;
 	}
 
@@ -271,8 +259,12 @@ export class MoveLedger {
 			const record = await this.read(moveId);
 			if (record !== undefined && record.state !== "receiving" && record.state !== "accepted") return;
 			if (record?.state === "accepted" && "revoked" in record) return;
-			const { target } = await this.landing(moveId);
-			await this.write(moveId, { state: "accepted", revoked: true }, target === undefined ? {} : { target });
+			const landing = await this.landing(moveId);
+			await this.write(
+				moveId,
+				{ state: "accepted", revoked: true },
+				landing.target === undefined ? {} : settledAt(landing, landing.target),
+			);
 		});
 	}
 

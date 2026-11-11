@@ -4,14 +4,17 @@
  * outgoing bundles and the session folder for a working directory) and maps refusals to wire codes.
  */
 import { join } from "node:path";
+import { readRepositoryIdentity } from "../../core/repository-identity.ts";
 import { getDefaultSessionDir, loadEntriesFromFileAsync } from "../../core/session-manager.ts";
 import { copySessionAs } from "../../core/session-move/copy.ts";
 import { exportSessionForMove } from "../../core/session-move/export.ts";
 import { sealedOutgoingStateDir } from "../../core/session-move/extension-state.ts";
 import { finishMove } from "../../core/session-move/finish.ts";
+import { readSessionRepositoryIdentity } from "../../core/session-move/identity.ts";
 import { answerMoveStatus, importMovedSession } from "../../core/session-move/import.ts";
 import { MoveLedger, type MoveRecord } from "../../core/session-move/move-ledger.ts";
 import { headerSessionId, type MoveId, sessionOwnership } from "../../core/session-move/ownership.ts";
+import { prepareMove } from "../../core/session-move/prepare.ts";
 import { revokeImportedMove } from "../../core/session-move/revoke.ts";
 import { orderedRealPath, realSessionPath } from "../../core/session-move/session-lock.ts";
 import { normalizePath, resolvePath } from "../../utils/paths.ts";
@@ -82,7 +85,22 @@ async function run(
 ): Promise<RpcMoveSessionData | { readonly refuse: string; readonly detail: string }> {
 	switch (parsed.op) {
 		case "prepare":
-			return wireRecord(await ledger.prepare(parsed.moveId));
+			return wireRecord(
+				await prepareMove({
+					ledger,
+					moveId: parsed.moveId,
+					cwd: parsed.cwd,
+					repository: parsed.repository,
+				}),
+			);
+		case "identity": {
+			// The folder form reads what the import reads; the session form reads only this host's own session files.
+			const repository =
+				"cwd" in parsed
+					? await readRepositoryIdentity(resolvePath(parsed.cwd))
+					: await readSessionRepositoryIdentity(join(port.agentDir, "sessions"), parsed.sessionPath);
+			return repository === undefined ? {} : { repository };
+		}
 		case "cancel":
 			return wireRecord(await ledger.decline(parsed.moveId, "cancelled"));
 		case "status":

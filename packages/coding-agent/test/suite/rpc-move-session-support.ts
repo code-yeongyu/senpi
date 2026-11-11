@@ -5,7 +5,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach } from "vitest";
 import { REPOSITORY_IDENTITY_ENTRY_TYPE } from "../../src/core/repository-identity.ts";
 import { getDefaultSessionDir } from "../../src/core/session-manager.ts";
@@ -57,7 +57,22 @@ export async function devices() {
 		},
 	];
 	writeFileSync(sessionPath, `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`);
-	return { base, repoA, repoB, agentA, agentB, sessionPath };
+	return { base, repoA, repoB, agentA, agentB, sessionPath, root };
+}
+
+/** One more working copy of `repo`: a clone at `to`, so a checkout of the same repository in another folder. */
+export function cloneOf(repo: string, to: string): string {
+	mkdirSync(dirname(to), { recursive: true });
+	git(dirname(to), "clone", "-q", repo, to);
+	return to;
+}
+
+/** A git repository at `dir` with a root commit of its own: not a checkout of the fixture's repository. */
+export function unrelatedRepo(dir: string): string {
+	mkdirSync(dir, { recursive: true });
+	git(dir, "init", "-q");
+	git(dir, "commit", "-q", "--allow-empty", "-m", "the root of another repository");
+	return dir;
 }
 
 export async function move(rig: Rig, fields: MoveFields): Promise<Record<string, unknown>> {

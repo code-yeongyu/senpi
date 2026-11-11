@@ -3,7 +3,7 @@
  * that sees no verified bundle within its window or is cancelled is declined, and neither ever overrides a move that is
  * already receiving or accepted. The clock is injected; no test waits for real time.
  */
-import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -144,6 +144,71 @@ describe("MoveLedger ready state (senpi#3676)", () => {
 			reason: "expired",
 		});
 	});
+});
+
+// senpi#6435
+describe("MoveLedger keeps the folder a move was readied for (senpi#6435)", () => {
+	const stored = (dir: string, move: string) =>
+		JSON.parse(readFileSync(join(dir, `${move}.json`), "utf8")) as Record<string, unknown>;
+
+	it("#given a move readied for a folder #when ready is sent again #then the same folder and a ready with no folder keep the first window, and another folder is refused", async () => {
+		const { book, clock } = clockedLedger();
+		const first = await book.prepare(id("f1"), "/work/one");
+		expect(first).toEqual({ state: "ready", expiresAt: expect.any(String) });
+		clock.now += 1000;
+
+		expect(await book.prepare(id("f1"), "/work/one")).toEqual(first);
+		expect(await book.prepare(id("f1"))).toEqual(first);
+		await expect(book.prepare(id("f1"), "/work/two")).rejects.toBeInstanceOf(MoveFencedError);
+		expect(await book.expire(id("f1"))).toEqual(first);
+	});
+
+	it("#given a move readied for a folder #when a receive begins for another folder or names none #then it is refused, the move stays ready, and a receive for that folder begins", async () => {
+		const { book } = clockedLedger();
+		const first = await book.prepare(id("f2"), "/work/one");
+
+		await expect(book.beginReceive(id("f2"), LANDING, { cwd: "/work/two" })).rejects.toBeInstanceOf(MoveFencedError);
+		await expect(book.beginReceive(id("f2"), LANDING)).rejects.toBeInstanceOf(MoveFencedError);
+		expect(await book.expire(id("f2"))).toEqual(first);
+
+		await book.beginReceive(id("f2"), LANDING, { cwd: "/work/one" });
+		expect(await book.answerStatus(id("f2"), { movedIn: false })).toEqual({ state: "receiving" });
+	});
+
+	it("#given a move readied with no folder #when a later ready names one #then the first window stands and the move is held to that folder", async () => {
+		const { book, clock } = clockedLedger();
+		const first = await book.prepare(id("f3"));
+		clock.now += 1000;
+
+		expect(await book.prepare(id("f3"), "/work/one")).toEqual(first);
+
+		await expect(book.beginReceive(id("f3"), LANDING, { cwd: "/work/two" })).rejects.toBeInstanceOf(MoveFencedError);
+		await book.beginReceive(id("f3"), LANDING, { cwd: "/work/one" });
+	});
+
+	// The record on disk is a storage contract: every writer of a move's record keeps the folder in the field `cwd`.
+	it.each([
+		["readied for that folder", "/work/one"],
+		["readied with no folder", undefined],
+	])(
+		"#given a move %s #when its receive names the folder #then the ready record and every record from receiving to accepted hold it as cwd",
+		async (name, readiedFor) => {
+			const { book, dir } = clockedLedger();
+			const move = `f4-${name.length}`;
+			await book.prepare(id(move), readiedFor);
+			expect(stored(dir, move).cwd).toBe(readiedFor);
+
+			await book.beginReceive(id(move), LANDING, { cwd: "/work/one" });
+			expect(stored(dir, move)).toMatchObject({ state: "receiving", target: LANDING, cwd: "/work/one" });
+			let stamped: Record<string, unknown> = {};
+			await book.commit(id(move), LANDING, () => {
+				stamped = stored(dir, move);
+			});
+
+			expect(stamped).toMatchObject({ state: "receiving", committing: true, target: LANDING, cwd: "/work/one" });
+			expect(stored(dir, move)).toMatchObject({ state: "accepted", target: LANDING, cwd: "/work/one" });
+		},
+	);
 });
 
 describe("importMovedSession needs a ready move (senpi#3676)", () => {

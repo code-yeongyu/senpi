@@ -67,6 +67,8 @@ describe("multi-session RPC protocol info", () => {
 					"move_session",
 					"move_session_revoke",
 					"move_session_copy",
+					"move_session_identity", // senpi#6435: a session's recorded repository, read without a release.
+					"move_session_prepare_repository", // senpi#6435: prepare checks the folder's repository.
 					"session_relocation",
 					"session_context",
 					"session_kind",
