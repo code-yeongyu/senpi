@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { RpcClient } from "../../src/modes/rpc/rpc-client.ts";
 import { attachmentRig } from "./rpc-attachment-support.ts";
 import { attachmentWireResponse } from "./rpc-attachment-wire-schema.ts";
 import { startWorkerHost } from "./rpc-worker-host-support.ts";
@@ -55,6 +56,73 @@ describe("unload counts only other connections", () => {
 
 			expect(dry, JSON.stringify(dry)).toMatchObject({ data: { dry_run: true, outcome: "ready", blockers: [] } });
 			expect(unloaded, JSON.stringify(unloaded)).toMatchObject({ data: { outcome: "unloaded" } });
+		} finally {
+			await host.dispose();
+		}
+	}, 60_000);
+
+	// senpi#6443: the name counts on either form of the declaration. A client bound to a session sends its declaration
+	// with that session's id, and with the compact flag off that form goes on to the session, past the router.
+	it("counts a client that named itself on a session-scoped declaration as one client (senpi#6443)", async () => {
+		const host = await startWorkerHost(undefined, { socket: true, sessionRuntime });
+		try {
+			const main = await host.connect();
+			const second = await host.connect();
+			const opened = await main.request({ type: "open_session", cwd: host.cwd, retain_on_disconnect: true });
+			const sessionId = opened.data?.sessionId;
+			await second.request({ type: "open_session", cwd: host.cwd, sessionPath: opened.data?.state?.sessionFile });
+			for (const connection of [main, second])
+				expect(
+					await connection.request({ type: "set_client_info", sessionId, width: 80, client_id: "one-client" }),
+				).toMatchObject({ success: true });
+
+			const dry = await main.request({ type: "unload_session", sessionId, dryRun: true });
+
+			expect(dry, JSON.stringify(dry)).toMatchObject({ data: { dry_run: true, outcome: "ready", blockers: [] } });
+		} finally {
+			await host.dispose();
+		}
+	}, 60_000);
+
+	it("counts a client that named itself through RpcClient on a bound connection as one client (senpi#6443)", async () => {
+		const host = await startWorkerHost(undefined, { socket: true, sessionRuntime });
+		const client = new RpcClient({ socketPath: host.socketPath });
+		try {
+			await client.start();
+			const opened = await client.openSession({ cwd: host.cwd, retain_on_disconnect: true });
+			await client.setClientInfo(80, undefined, "one-client");
+			const second = await host.connect();
+			await second.request({ type: "set_client_info", width: 80, client_id: "one-client" });
+			await second.request({ type: "open_session", cwd: host.cwd, sessionPath: opened.state.sessionFile });
+
+			const dry = await second.request({ type: "unload_session", sessionId: opened.sessionId, dryRun: true });
+
+			expect(dry, JSON.stringify(dry)).toMatchObject({ data: { dry_run: true, outcome: "ready", blockers: [] } });
+		} finally {
+			await client.stop();
+			await host.dispose();
+		}
+	}, 60_000);
+
+	it("keeps a client's name when a later declaration carries none (senpi#6443)", async () => {
+		const host = await startWorkerHost(undefined, { socket: true, sessionRuntime });
+		try {
+			const main = await host.connect();
+			const second = await host.connect();
+			for (const connection of [main, second])
+				await connection.request({ type: "set_client_info", width: 80, client_id: "one-client" });
+			const opened = await main.request({ type: "open_session", cwd: host.cwd, retain_on_disconnect: true });
+			const sessionId = opened.data?.sessionId;
+			await second.request({ type: "open_session", cwd: host.cwd, sessionPath: opened.data?.state?.sessionFile });
+			// A resize: the declaration is sent again with a new width and no name.
+			expect(await second.request({ type: "set_client_info", width: 120 })).toMatchObject({ success: true });
+			expect(await second.request({ type: "set_client_info", sessionId, width: 132 })).toMatchObject({
+				success: true,
+			});
+
+			const dry = await main.request({ type: "unload_session", sessionId, dryRun: true });
+
+			expect(dry, JSON.stringify(dry)).toMatchObject({ data: { dry_run: true, outcome: "ready", blockers: [] } });
 		} finally {
 			await host.dispose();
 		}

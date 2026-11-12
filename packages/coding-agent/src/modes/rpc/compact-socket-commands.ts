@@ -10,6 +10,17 @@ function staleError(id: string | undefined, command: string, message: string): R
 	return { id, type: "response", command, success: false, error: message, errorCode: "delegation_incarnation_stale" };
 }
 
+/**
+ * senpi#6443: a client that names itself is one client on every connection it opens, for the holds a refusal counts.
+ * The router records the name for every declaration that carries one, in either form (with a `sessionId` or without)
+ * and whatever the compact flag says: with the flag off a session-scoped declaration goes on to its session, which
+ * has nowhere to keep it. The name is the connection's for its life; a later declaration without one keeps it.
+ */
+export function declareClientId(host: RouterContext, command: Extract<RpcCommand, { type: "set_client_info" }>): void {
+	const peer = host.writer.currentConnection();
+	if (peer !== undefined && command.client_id !== undefined) host.clientIds.set(peer, command.client_id);
+}
+
 /** Validate the full declaration before committing role, media, recovery or pending state. */
 export function declareSocketClient(
 	host: RouterContext,
@@ -37,9 +48,6 @@ export function declareSocketClient(
 		return error(command.id, command.type, reason === "connection_role_fixed" ? CONNECTION_ROLE_FIXED : reason);
 	// Before the capability commit: its recheck must already see a background presenter that now speaks for a remote device.
 	if (origin.origin !== undefined) host.connectionRoles.declareOrigin(roleConnection(peer), origin.origin);
-	// senpi#6443: a client that names itself is one client on every connection it opens, for the holds a refusal counts.
-	if (peer !== undefined && typeof command.client_id === "string" && command.client_id !== "")
-		host.clientIds.set(peer, command.client_id);
 	if (peer !== undefined) {
 		// RULING-111 (LEAK-B): with the flag off a declaration without capabilities resets them, exactly as on main.
 		const caps = compactUpdatesEnabled()

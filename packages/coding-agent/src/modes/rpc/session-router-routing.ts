@@ -1,6 +1,6 @@
 import { detachConnection } from "./connection-detach.ts";
 import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
-import { compactAdmissionGate, declareSocketClient } from "./compact-socket-commands.ts";
+import { compactAdmissionGate, declareClientId, declareSocketClient } from "./compact-socket-commands.ts";
 import { invalidCompactAdmission, unknownCompactAdmission } from "./compact-admission-validation.ts";
 import { compactSubscribe } from "./compact-subscribe-admission.ts";
 import { withAdmissionRequest } from "./compact-admission-reply.ts";
@@ -58,6 +58,7 @@ function admitted(host: RouterContext, command: RpcCommand): Promise<RpcResponse
 	if (command.type === "park_session") return parkSession(host, command);
 	const refusal = attachmentGate(host, command) ?? compactAdmissionGate(host, command);
 	if (refusal) return Promise.resolve(refusal);
+	if (command.type === "set_client_info") declareClientId(host, command);
 	// RULING-111 (LEAK-B/C): the host-side pre-declaration belongs to the compact negotiation; with the flag off a
 	// session-scoped declaration reaches its session exactly as on main.
 	if (command.type === "set_client_info" && compactUpdatesEnabled()) {
