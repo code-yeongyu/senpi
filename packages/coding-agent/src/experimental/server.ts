@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { chmod, lstat, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { Context } from "@earendil-works/chord";
@@ -88,10 +88,15 @@ const LOCK_STALE_MS = 30_000;
  * but never finishes is bounded by LAUNCHER_LOCK_CEILING_MS, which ends the wait with an error naming it.
  */
 const LAUNCHER_LOCK_CEILING_MS = 10 * 60_000;
-const LAUNCHER_LOCK_BOUNDS = { heldMs: LAUNCHER_LOCK_CEILING_MS, transientMs: LOCK_STALE_MS };
+const LAUNCHER_LOCK_TOKEN = "token";
+const LAUNCHER_LOCK_BOUNDS = {
+	heldMs: LAUNCHER_LOCK_CEILING_MS,
+	transientMs: LOCK_STALE_MS,
+	marker: { name: LAUNCHER_LOCK_TOKEN, staleMs: LOCK_STALE_MS },
+};
 
 /** A launcher lock still held, by a live process, when its waiter's ceiling ran out. */
-export class LauncherLockTimeoutError extends Error {
+class LauncherLockTimeoutError extends Error {
 	readonly code = "launcher_lock_timeout";
 	readonly holderPid: number | undefined;
 
@@ -148,6 +153,7 @@ export async function acquireServerProfile(directory: string, requestedServerId?
 
 	const lockPath = join(directory, `launcher-${serverId}`);
 	const ownerPath = launcherOwnerPath(directory, serverId);
+	const waitStarted = performance.now();
 	const { release, assertHeld } = await waitForFileLock(
 		lockPath,
 		{ realpath: false, stale: LOCK_STALE_MS, update: LOCK_STALE_MS / 3 },
@@ -155,17 +161,21 @@ export async function acquireServerProfile(directory: string, requestedServerId?
 	).catch(async (error: unknown) => {
 		if (!(error instanceof Error && "code" in error && error.code === "ELOCKED")) throw error;
 		const holder = await readLauncherOwner(ownerPath);
-		throw new LauncherLockTimeoutError(`${lockPath}.lock`, LAUNCHER_LOCK_CEILING_MS, holder?.pid);
+		throw new LauncherLockTimeoutError(`${lockPath}.lock`, performance.now() - waitStarted, holder?.pid);
 	});
-	// Names the holder and the lock directory it took (its inode), so an activator that stopped its own server can
-	// remove exactly that lock: a stale takeover deletes and re-creates the directory, so a new holder's lock never
-	// matches a record its predecessor left.
-	const lockInode = (await stat(`${lockPath}.lock`)).ino;
-	await writeFile(ownerPath, `${process.pid} ${lockInode}`, { mode: 0o600 });
+	// A fresh random token, written both into the lock directory this holder took and into the owner record. An
+	// activator that stopped its own server removes the lock only while the directory still holds that server's token:
+	// a stale takeover re-creates the directory under a new token, whatever inode the file system hands it.
+	const token = randomUUID();
+	const tokenPath = join(`${lockPath}.lock`, LAUNCHER_LOCK_TOKEN);
+	await writeFile(tokenPath, token, { mode: 0o600 });
+	await writeFile(ownerPath, `${process.pid} ${token}`, { mode: 0o600 });
 	return {
 		serverId,
 		async release() {
 			await rm(ownerPath, { force: true });
+			// proper-lockfile removes its directory with a non-recursive rmdir, so the token goes first.
+			await rm(tokenPath, { force: true });
 			await release();
 		},
 		assertHeld,
@@ -270,16 +280,17 @@ export async function removeStoppedServerLauncherLock(
 	const owner = await readLauncherOwner(ownerPath);
 	if (owner?.pid !== pid) return;
 	const lockDirectory = join(directory, `launcher-${serverId}.lock`);
-	// Only the lock directory that server took: one re-created by a newer holder has another inode.
-	const current = await stat(lockDirectory).catch(() => undefined);
-	if (current === undefined || current.ino !== owner.lockInode) return;
+	// Only the lock that server took: one re-created by a newer holder carries another token.
+	const current = await readFile(join(lockDirectory, LAUNCHER_LOCK_TOKEN), "utf8").catch(() => undefined);
+	if (current?.trim() !== owner.token) return;
 	await rm(lockDirectory, { recursive: true, force: true });
 	await rm(ownerPath, { force: true });
 }
 
-async function readLauncherOwner(ownerPath: string): Promise<{ pid: number; lockInode: number } | undefined> {
-	const [pid, lockInode] = ((await readFile(ownerPath, "utf8").catch(() => "")) ?? "").trim().split(" ").map(Number);
-	return Number.isInteger(pid) && Number.isInteger(lockInode) ? { pid, lockInode } : undefined;
+async function readLauncherOwner(ownerPath: string): Promise<{ pid: number; token: string } | undefined> {
+	const [rawPid, token] = ((await readFile(ownerPath, "utf8").catch(() => "")) ?? "").trim().split(" ");
+	const pid = Number(rawPid);
+	return Number.isInteger(pid) && token !== undefined && token.length > 0 ? { pid, token } : undefined;
 }
 
 export async function acquireServerActivation(

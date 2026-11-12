@@ -1,6 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import nodeFs, { existsSync, watch as watchDirectory } from "node:fs";
-import { lstat, mkdir, mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { syncBuiltinESMExports } from "node:module";
 import nodeNet, { type Socket } from "node:net";
@@ -490,23 +490,98 @@ describe("experimental durable server composition", () => {
 		await expect(waiting).rejects.toMatchObject({ code: "launcher_lock_timeout", holderPid: process.pid });
 	});
 
-	test("never removes a launcher lock that a newer holder took over", async () => {
+	test("leaves no lock directory behind when a holder releases normally", async () => {
+		const { directory, serverId } = await lockFixture("pes-launcher-release-");
+		const profile = await acquireServerProfile(directory, serverId);
+
+		await profile.release();
+
+		expect(await pathExists(join(directory, `launcher-${serverId}.lock`))).toBe(false);
+	});
+
+	test("takes over a killed holder's lock, token and all, and starts", async () => {
+		const { directory, serverId } = await lockFixture("pes-launcher-killed-");
+		// What a SIGKILLed holder leaves: its lock directory with its token still inside, unrefreshed past the bound.
+		const lockDirectory = join(directory, `launcher-${serverId}.lock`);
+		await mkdir(lockDirectory);
+		await writeFile(join(lockDirectory, "token"), "the-killed-holder");
+		const longAgo = new Date(Date.now() - 120_000);
+		await utimes(lockDirectory, longAgo, longAgo);
+
+		const profile = await acquireServerProfile(directory, serverId);
+
+		expect(await readFile(join(lockDirectory, "token"), "utf8")).not.toBe("the-killed-holder");
+		await profile.release();
+	});
+
+	test("gives a killed holder's lock to exactly one of two waiters, and the other waits", async () => {
+		const { directory, serverId } = await lockFixture("pes-launcher-race-");
+		const lockDirectory = join(directory, `launcher-${serverId}.lock`);
+		await mkdir(lockDirectory);
+		await writeFile(join(lockDirectory, "token"), "the-killed-holder");
+		const longAgo = new Date(Date.now() - 120_000);
+		await utimes(lockDirectory, longAgo, longAgo);
+
+		const waiters = [acquireServerProfile(directory, serverId), acquireServerProfile(directory, serverId)];
+		const settled = [false, false];
+		for (const [index, waiter] of waiters.entries()) {
+			waiter.then(
+				() => {
+					settled[index] = true;
+				},
+				() => {
+					settled[index] = true;
+				},
+			);
+		}
+		// Whichever waiter takes the lock first is the winner; the race decides, not the order they were started in.
+		const { index, profile } = await Promise.race(
+			waiters.map((waiter, position) => waiter.then((held) => ({ index: position, profile: held }))),
+		);
+		const loser = 1 - index;
+
+		// One holds it; the other is still waiting, not rejected with ENOTEMPTY.
+		expect(settled[loser]).toBe(false);
+		await profile.release();
+		await (await waiters[loser]).release();
+	});
+
+	test("never removes a launcher lock a real takeover re-created, whatever inode it got", async () => {
 		const { directory, serverId } = await lockFixture("pes-launcher-takeover-");
 		const lockDirectory = join(directory, `launcher-${serverId}.lock`);
-		// The stopped server's record names its pid and the lock directory it took...
+		// The stopped server's record names its own token...
 		await mkdir(lockDirectory);
+		await writeFile(join(lockDirectory, "token"), "the-stopped-server");
 		const stoppedInode = (await lstat(lockDirectory)).ino;
-		await writeFile(join(directory, `launcher-${serverId}.owner`), `4242 ${stoppedInode}`);
-		// ...but a newer holder took the stale lock over (a takeover deletes and re-creates the directory) before
-		// writing its own record.
+		await writeFile(join(directory, `launcher-${serverId}.owner`), `4242 the-stopped-server`);
+		// ...and a real takeover follows: remove, re-create at once, nothing in between, a new token.
 		await rm(lockDirectory, { recursive: true });
-		const parked = await mkdtemp(join(directory, "keep-inode-"));
 		await mkdir(lockDirectory);
-		await rm(parked, { recursive: true });
+		await writeFile(join(lockDirectory, "token"), "the-new-holder");
+		const newInode = (await lstat(lockDirectory)).ino;
 
 		await removeStoppedServerLauncherLock(directory, serverId, 4242);
 
-		expect(await pathExists(lockDirectory)).toBe(true);
+		// Whether or not the file system handed back the same inode, the new holder's lock stands.
+		expect({
+			kept: await pathExists(lockDirectory),
+			token: await readFile(join(lockDirectory, "token"), "utf8"),
+			inodeReused: newInode === stoppedInode,
+		}).toEqual({ kept: true, token: "the-new-holder", inodeReused: newInode === stoppedInode });
+	});
+
+	test("clears a stale lock's token but never a live holder's", async ({ onTestFinished }) => {
+		const { directory, serverId } = await lockFixture("pes-launcher-token-");
+		const liveHolder = await acquireServerProfile(directory, serverId);
+		onTestFinished(() => liveHolder.release());
+		const liveToken = await readFile(join(directory, `launcher-${serverId}.lock`, "token"), "utf8");
+
+		// A waiter against this live holder never reaches the token: the lock is held, not ENOTEMPTY.
+		const waiting = acquireServerProfile(directory, serverId);
+		waiting.catch(() => {});
+		await new Promise<void>((resolve) => setTimeout(resolve, 200));
+
+		expect(await readFile(join(directory, `launcher-${serverId}.lock`, "token"), "utf8")).toBe(liveToken);
 	});
 
 	test("removes the launcher lock of a server it stopped after its startup timed out", async ({ onTestFinished }) => {
