@@ -1,10 +1,10 @@
 import { open } from "node:fs/promises";
-import { parseSessionEntryLine, SessionLineSplitter } from "./session-entry-file.ts";
-import { loadEntriesFromFileAsync } from "./session-manager.ts";
+import { parseSessionEntryLine, SESSION_READ_BUFFER_SIZE, SessionLineSplitter } from "./session-entry-file.ts";
 
-/** The same bounds the session manager scans a header with (`readSessionHeader`). */
-const SCAN_LIMIT_BYTES = 1024 * 1024;
+/** A header is almost always in the first chunk. */
 const CHUNK_BYTES = 4096;
+/** Past this much without a header (a very long first line) the scan reads in the loader's own chunks. */
+const SMALL_SCAN_BYTES = 1024 * 1024;
 
 /** Keep scanning (`undefined`), or the folder of the first entry, which is `undefined` when it names none. */
 function candidate(line: string): { readonly cwd: string | undefined } | undefined {
@@ -21,9 +21,9 @@ function candidate(line: string): { readonly cwd: string | undefined } | undefin
  * `undefined` when there is no file yet (ENOENT, ENOTDIR) or the file names no folder; every other failure to read an
  * existing file throws, so a caller never mistakes an unreadable file for one that names nothing.
  *
- * The bounded scan is a discovery step, not the answer: a file whose header lies past the bound (a very long first
- * line) is loaded whole, as `SessionManager.open` loads it, so such a session still opens where its header says
- * instead of in the host's folder (senpi#6427).
+ * The scan has no bound of its own: it reads on until the first entry that parses, however far in that is, and stops
+ * there. So a header behind a very long first line is still found (senpi#6427), and nothing after it is read or
+ * parsed: the open that follows loads the transcript once, not twice.
  */
 export async function readHeaderCwd(sessionFile: string): Promise<string | undefined> {
 	let handle: Awaited<ReturnType<typeof open>>;
@@ -36,11 +36,12 @@ export async function readHeaderCwd(sessionFile: string): Promise<string | undef
 	}
 	try {
 		const splitter = new SessionLineSplitter();
-		const buffer = Buffer.allocUnsafe(CHUNK_BYTES);
+		let buffer = Buffer.allocUnsafe(CHUNK_BYTES);
 		let scanned = 0;
-		while (scanned < SCAN_LIMIT_BYTES) {
-			const length = Math.min(buffer.length, SCAN_LIMIT_BYTES - scanned);
-			const { bytesRead } = await handle.read(buffer, 0, length, null);
+		while (true) {
+			if (scanned >= SMALL_SCAN_BYTES && buffer.length === CHUNK_BYTES)
+				buffer = Buffer.allocUnsafe(SESSION_READ_BUFFER_SIZE);
+			const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
 			if (bytesRead === 0) return candidate(splitter.finish())?.cwd;
 			scanned += bytesRead;
 			for (const line of splitter.push(buffer.subarray(0, bytesRead))) {
@@ -51,14 +52,4 @@ export async function readHeaderCwd(sessionFile: string): Promise<string | undef
 	} finally {
 		await handle.close();
 	}
-	return headerCwdFromWholeFile(sessionFile);
-}
-
-/** The header of a file whose first entry lies past the scan bound: the whole file decides, as the manager does. */
-async function headerCwdFromWholeFile(sessionFile: string): Promise<string | undefined> {
-	for (const entry of await loadEntriesFromFileAsync(sessionFile)) {
-		const found = candidate(JSON.stringify(entry));
-		if (found) return found.cwd;
-	}
-	return undefined;
 }

@@ -7,8 +7,34 @@
 import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { readHeaderCwd } from "./session-header-cwd.ts";
+
+const taken = vi.hoisted(() => ({ bytes: 0, opens: 0 }));
+
+// Counts what is taken from a file, whichever function reads it: every reader here opens a handle and reads from it.
+vi.mock("node:fs/promises", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:fs/promises")>();
+	const open: typeof actual.open = async (...args) => {
+		const handle = await actual.open(...args);
+		taken.opens += 1;
+		const read = handle.read.bind(handle);
+		Object.defineProperty(handle, "read", {
+			value: async (...readArgs: Parameters<typeof read>) => {
+				const result = await read(...readArgs);
+				taken.bytes += result.bytesRead;
+				return result;
+			},
+		});
+		return handle;
+	};
+	return { ...actual, open };
+});
+
+beforeEach(() => {
+	taken.bytes = 0;
+	taken.opens = 0;
+});
 
 const root = mkdtempSync(join(tmpdir(), "senpi-header-cwd-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -40,6 +66,25 @@ describe("readHeaderCwd", () => {
 	it("#given a header past the bounded scan #then the whole file is read and that folder answered", async () => {
 		const long = `${"x".repeat(1024 * 1024 + 64)}\n${header("/work/late-header")}`;
 		await expect(readHeaderCwd(sessionFile("late-header.jsonl", long))).resolves.toBe("/work/late-header");
+	});
+
+	it("#given a header past the first megabyte of a large transcript #then the folder is answered from one open that stops reading at the header", async () => {
+		const longLine = `${"x".repeat(1024 * 1024 + 64)}\n`;
+		const head = header("/work/large-transcript");
+		const entry = `${JSON.stringify({ type: "message", id: "m", text: "y".repeat(1000) })}\n`;
+		const transcript = entry.repeat(8 * 1024);
+		const file = sessionFile("large-transcript.jsonl", `${longLine}${head}${transcript}`);
+		const headerEnd = Buffer.byteLength(longLine) + Buffer.byteLength(head);
+
+		const cwd = await readHeaderCwd(file);
+
+		expect(cwd).toBe("/work/large-transcript");
+		// Nothing after the header is needed: at most one read's worth beyond it, of a transcript eight times that.
+		expect(Buffer.byteLength(transcript)).toBeGreaterThan(8 * 1024 * 1024);
+		expect({ opens: taken.opens, readPastHeader: taken.bytes - headerEnd <= 1024 * 1024 }).toEqual({
+			opens: 1,
+			readPastHeader: true,
+		});
 	});
 
 	it("#given a path that cannot be opened at all #then it throws instead of answering undefined", async () => {
