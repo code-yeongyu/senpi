@@ -5,7 +5,11 @@
  */
 import { join } from "node:path";
 import { readRepositoryIdentity } from "../../core/repository-identity.ts";
-import { getDefaultSessionDir, loadEntriesFromFileAsync } from "../../core/session-manager.ts";
+import {
+	getDefaultSessionDir,
+	getDefaultSessionDirPath,
+	loadEntriesFromFileAsync,
+} from "../../core/session-manager.ts";
 import { copySessionAs } from "../../core/session-move/copy.ts";
 import { exportSessionForMoveAndRead } from "../../core/session-move/export.ts";
 import { sealedOutgoingStateDir } from "../../core/session-move/extension-state.ts";
@@ -40,7 +44,8 @@ export interface MoveSessionPort extends MoveImportPort {
 
 /**
  * Where a `prepare` that names its session would land (senpi#6471): the session folder is picked exactly as the
- * import of that move picks it, so both steps look at the same file.
+ * import of that move picks it, so both steps look at the same file. It is only named here, never created: a `prepare`
+ * reads, and the import makes the folder when the session lands.
  */
 function prepareLanding(parsed: Extract<MoveRequest, { op: "prepare" }>, agentDir: string) {
 	if (parsed.session === undefined || parsed.cwd === undefined) return undefined;
@@ -49,7 +54,7 @@ function prepareLanding(parsed: Extract<MoveRequest, { op: "prepare" }>, agentDi
 		sessionFileName: parsed.session.fileName,
 		sessionDir:
 			parsed.sessionDir === undefined
-				? getDefaultSessionDir(resolvePath(parsed.cwd), agentDir)
+				? getDefaultSessionDirPath(resolvePath(parsed.cwd), agentDir)
 				: normalizePath(parsed.sessionDir),
 	};
 }
