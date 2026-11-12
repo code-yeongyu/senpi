@@ -25,6 +25,7 @@ interface MockEndpoint {
 
 interface MockOptions {
 	readonly mandatoryReasoning: boolean;
+	readonly mandatoryMessage?: string;
 	readonly failure?: { status: number; message: string };
 }
 
@@ -73,7 +74,7 @@ async function startMockEndpoint(options: MockOptions): Promise<MockEndpoint> {
 		}
 		if (options.mandatoryReasoning && reasoning?.effort === "none") {
 			response.writeHead(400, { "content-type": "application/json" });
-			response.end(JSON.stringify({ error: { message: MANDATORY_MESSAGE, code: 400 } }));
+			response.end(JSON.stringify({ error: { message: options.mandatoryMessage ?? MANDATORY_MESSAGE, code: 400 } }));
 			return;
 		}
 		writeTitleStream(response, model);
@@ -159,6 +160,18 @@ describe("issue #2163: session titles on endpoints that mandate reasoning", () =
 	it("retries once with low reasoning for Z.ai GLM 5.3 Flash routed through OpenRouter", async () => {
 		endpoint = await startMockEndpoint({ mandatoryReasoning: true });
 		const model = openRouterModel("z-ai/glm-5.3-flash", endpoint.baseUrl);
+
+		await expect(titleFor(model)).resolves.toBe("Fix Login Bug");
+
+		expect(endpoint.requests.map((request) => request.reasoningEffort)).toEqual(["none", "low"]);
+	});
+
+	it("retries once with low reasoning when the refusal is in Chinese and the catalog has no thinking map (senpi#6548)", async () => {
+		endpoint = await startMockEndpoint({
+			mandatoryReasoning: true,
+			mandatoryMessage: "该模型始终思考，不支持关闭思考；请使用 low、high 或 max。",
+		});
+		const model = openRouterModel("glm-5.3", endpoint.baseUrl);
 
 		await expect(titleFor(model)).resolves.toBe("Fix Login Bug");
 
