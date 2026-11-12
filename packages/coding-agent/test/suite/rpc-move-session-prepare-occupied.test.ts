@@ -66,6 +66,24 @@ describe("move_session prepare refuses an occupied landing file before the relea
 		},
 	);
 
+	it("#given a landing file that holds another session's sealed file #when prepare names the session #then it is refused move_target_occupied, because a sealed file of another session is no predecessor of this one", async () => {
+		const fixture = await devices();
+		await using a = createInProcessRig(fixture.agentA);
+		await using b = createInProcessRig(fixture.agentB);
+		await hostAndRelease(a, fixture.repoA, fixture.sessionPath, "move-earlier");
+		const before = place(
+			landingIn(fixture.repoB, fixture),
+			readFileSync(fixture.sessionPath, "utf8").replaceAll(SESSION_ID, OTHER_ID),
+		);
+		expect(sessionOwnership(loadEntriesFromFile(landingIn(fixture.repoB, fixture))).writable).toBe(false);
+
+		const refused = await prepare(b, fixture, "move-o2");
+
+		expect(refused).toMatchObject(refusedWith("move_target_occupied"));
+		expect(existsSync(ledgerFile(fixture.agentB, "move-o2"))).toBe(false);
+		expect(readFileSync(landingIn(fixture.repoB, fixture), "utf8")).toBe(before);
+	});
+
 	it("#given a landing file that holds this session's sealed predecessor #then prepare readies the move and leaves that file as it was", async () => {
 		const fixture = await devices();
 		await using a = createInProcessRig(fixture.agentA);
