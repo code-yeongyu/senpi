@@ -3403,8 +3403,9 @@ What the host does enforce are lifecycle windows, and they only ever return memo
   endpoint's daemon directory (`handover-parked/`, one entry per session path, the same record a handoff park writes)
   as soon as its open succeeds; the entry follows the session's `set_session_context` patches and its park, and a
   transcript switch (`new_session`, `switch_session`, a fork) moves it to the new file, so only the transcript the
-  session is on comes back. An explicit `close_session` or a reclaim removes every key the session was recorded
-  under. While the session is open the entry names the process that holds it; a park drops that, and a host never
+  session is on comes back. An explicit `close_session`, a `release_session` (the file is another runtime's then) or
+  a reclaim removes every key the session was recorded under. While the session is open the entry names the process
+  that holds it; a park drops that, and a host never
   reopens an entry whose holding process is still alive. So during a generation handoff the successor does not open
   a session its draining predecessor still has loaded, idle and detached ones included: it reopens the predecessor's
   park once the drain writes it (or the entry, if the predecessor dies without parking). A host
