@@ -48,9 +48,11 @@ export async function disposeFolderHosts(): Promise<void> {
 
 export async function startFolderHost(
 	options: {
-		readonly settings?: WireRecord;
+		readonly settings?: WireRecord | ((layout: FolderLayout) => WireRecord);
 		readonly layout?: (scratch: string) => Pick<FolderLayout, "cwd" | "agentDir">;
 		readonly prepare?: (layout: FolderLayout) => void;
+		/** Stubs `HOME` to the scratch folder, so `~` (e.g. `~/.agents/skills`) resolves inside the test. */
+		readonly stubHome?: boolean;
 	} = {},
 ): Promise<FolderHost> {
 	const scratch = realpathSync(mkdtempSync(join(tmpdir(), "senpi-pfm-")));
@@ -61,16 +63,18 @@ export async function startFolderHost(
 		outside: join(scratch, "outside"),
 	};
 	const { cwd, agentDir } = layout;
+	const settings = typeof options.settings === "function" ? options.settings(layout) : options.settings;
 	mkdirSync(join(cwd, CONFIG_DIR_NAME, "skills", SKILL_NAME), { recursive: true });
 	mkdirSync(layout.outside);
 	mkdirSync(agentDir, { recursive: true });
 	writeFileSync(join(cwd, CONFIG_DIR_NAME, "skills", SKILL_NAME, "SKILL.md"), skillSource(SKILL_NAME));
 	writeFileSync(
 		join(agentDir, "settings.json"),
-		JSON.stringify({ defaultProvider: "faux", defaultModel: "faux-1", ...options.settings }),
+		JSON.stringify({ defaultProvider: "faux", defaultModel: "faux-1", ...settings }),
 	);
 	options.prepare?.(layout);
 	for (const name of ["SENPI_CODING_AGENT_DIR", "OMO_CODING_AGENT_DIR"]) vi.stubEnv(name, agentDir);
+	if (options.stubHome === true) vi.stubEnv("HOME", scratch);
 	for (const name of ["OMO_RPC_SOCKET_PATH", "OMO_RPC_SOCKET", "SENPI_RPC_SOCKET", "PI_RPC_SOCKET"])
 		vi.stubEnv(name, undefined);
 	const faux = fauxProvider({ models: [{ id: "faux-1", reasoning: false, contextWindow: 128_000 }] });
