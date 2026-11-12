@@ -25,27 +25,60 @@ const SPECIFIER =
 // terminal job bodies import their tool schemas, whose type imports reach the extension types barrel).
 const TYPE_SPECIFIER = /import\s+type\s[^'"]*?from\s*["'](\.{1,2}\/[^"']+)["']/g;
 
-function reachable(roots: readonly string[]): Set<string> {
+function reachable(
+	roots: readonly string[],
+	root: string = packageRoot,
+	readSource: (file: string) => string = (file) => readFileSync(file, "utf8"),
+): Set<string> {
 	const seen = new Set<string>();
-	const queue = roots.map((root) => resolve(packageRoot, root));
+	const queue = roots.map((entry) => resolve(root, entry));
 	while (queue.length > 0) {
 		const file = queue.pop();
 		if (file === undefined || seen.has(file)) continue;
 		seen.add(file);
-		const source = readFileSync(file, "utf8");
-		const typeImports = new Set<string>();
-		for (const match of source.matchAll(TYPE_SPECIFIER)) typeImports.add(resolve(dirname(file), match[1]));
+		const source = readSource(file);
+		// Only the `import type` statement itself is exempt (senpi#6486): another statement naming the same module
+		// still loads it, so the exemption is keyed by where the statement starts, never by the module it names.
+		const typeOnlyStatements = new Set<number>();
+		for (const match of source.matchAll(TYPE_SPECIFIER)) typeOnlyStatements.add(match.index);
 		for (const match of source.matchAll(SPECIFIER)) {
+			if (typeOnlyStatements.has(match.index)) continue;
 			const specifier = match[1] ?? match[2] ?? match[3] ?? match[4];
-			if (specifier?.endsWith(".ts")) {
-				const target = resolve(dirname(file), specifier);
-				if (typeImports.has(target)) continue;
-				queue.push(target);
-			}
+			if (specifier?.endsWith(".ts")) queue.push(resolve(dirname(file), specifier));
 		}
 	}
-	return new Set([...seen].map((file) => relative(packageRoot, file)));
+	return new Set([...seen].map((file) => relative(root, file)));
 }
+
+// senpi#6486: a type-only import of a module must not hide another statement in the same file that loads it.
+describe("the import walk", () => {
+	const fixtureRoot = resolve("/fixture");
+	function reachesWriter(mid: string): boolean {
+		const files = new Map([
+			[resolve(fixtureRoot, "root.ts"), 'import { run } from "./mid.ts";\n'],
+			[resolve(fixtureRoot, "mid.ts"), mid],
+			[resolve(fixtureRoot, "writer.ts"), "export function write(): void {}\n"],
+		]);
+		return reachable(["root.ts"], fixtureRoot, (file) => files.get(file) ?? "").has("writer.ts");
+	}
+
+	it.each([
+		{ name: "a value import", mid: 'import { write } from "./writer.ts";\n', reaches: true },
+		{ name: "a type-only import", mid: 'import type { W } from "./writer.ts";\n', reaches: false },
+		{
+			name: "a type-only import and a value import",
+			mid: 'import type { W } from "./writer.ts";\nimport { write } from "./writer.ts";\n',
+			reaches: true,
+		},
+		{
+			name: "a type-only import and a dynamic import",
+			mid: 'import type { W } from "./writer.ts";\nexport async function run(): Promise<void> {\n\tawait import("./writer.ts");\n}\n',
+			reaches: true,
+		},
+	])("follows $name: $reaches", ({ mid, reaches }) => {
+		expect(reachesWriter(mid)).toBe(reaches);
+	});
+});
 
 describe("the tool child never writes a session", () => {
 	const graph = reachable(ROOTS);
