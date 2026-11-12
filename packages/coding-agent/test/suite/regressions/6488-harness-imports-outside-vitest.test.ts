@@ -18,7 +18,8 @@ it("loads the suite harness outside a Vitest run", () => {
 });
 
 // Outside Vitest nothing joins a recorded cleanup, so a script must await it: a failed removal then reaches the script.
-it("reports a failed removal to a script that awaits cleanup() outside Vitest", () => {
+// Root ignores the directory's permissions, so the removal cannot be made to fail there: the case is skipped, visibly.
+it.skipIf(process.getuid?.() === 0)("reports a failed removal to a script that awaits cleanup() outside Vitest", () => {
 	const harness = pathToFileURL(join(import.meta.dirname, "../harness.ts")).href;
 	const script = `
 		import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -42,6 +43,6 @@ it("reports a failed removal to a script that awaits cleanup() outside Vitest", 
 	const run = spawnSync("bun", ["-e", script], { encoding: "utf8" });
 	expect({ status: run.status, stdout: run.stdout.trim().split("\n").at(-1) }).toEqual({
 		status: 0,
-		stdout: process.getuid?.() === 0 ? "cleanup resolved" : "cleanup failed EACCES",
+		stdout: "cleanup failed EACCES",
 	});
 });

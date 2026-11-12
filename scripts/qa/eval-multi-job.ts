@@ -190,7 +190,10 @@ try {
 	await manager.dispose();
 	await kernels?.dispose();
 	const harnessDir = harness?.tempDir;
-	await harness?.cleanup();
+	// A failed removal is this run's failure (unless one is already recorded); the rest of the teardown still runs.
+	await harness?.cleanup().catch((error: unknown) => {
+		failure ??= error;
+	});
 	await rm(sandbox, { recursive: true, force: true });
 	let bridgeClosed = bridgePort === undefined;
 	if (bridgePort !== undefined) {
