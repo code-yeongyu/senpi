@@ -67,7 +67,11 @@ describe.skipIf(runningAsRoot)("#6287 seeding default extensions into a read-onl
 	it("#given a generated shim whose target is another live engine install and a read-only extensions dir #when resources load #then that install's module is what loads", async () => {
 		const otherInstall = join(tempDir, "other-install", "dist", "core", "extensions", "builtin", "diff.js");
 		mkdirSync(join(otherInstall, ".."), { recursive: true });
-		writeFileSync(otherInstall, "export default function otherInstallDiff() {}\n");
+		const ranMarker = join(tempDir, "other-install-ran");
+		writeFileSync(
+			otherInstall,
+			`import { writeFileSync } from "node:fs";\nexport default function otherInstallDiff() { writeFileSync(${JSON.stringify(ranMarker)}, "ran"); }\n`,
+		);
 		const stale = `${GENERATED_SHIM_BANNER}export { default } from ${JSON.stringify(`file://${otherInstall}`)};\n`;
 		writeFileSync(join(extensionsDir, "diff.js"), stale);
 		chmodSync(join(extensionsDir, "diff.js"), 0o444);
@@ -78,6 +82,7 @@ describe.skipIf(runningAsRoot)("#6287 seeding default extensions into a read-onl
 
 		expect(resourceLoader.getExtensions().errors).toEqual([]);
 		expect(seededDefaultsLoaded(resourceLoader)).toEqual([join(extensionsDir, "diff.js")]);
+		expect(readFileSync(ranMarker, "utf-8")).toBe("ran");
 		expect(readFileSync(join(extensionsDir, "diff.js"), "utf-8")).toBe(stale);
 	});
 
@@ -88,9 +93,20 @@ describe.skipIf(runningAsRoot)("#6287 seeding default extensions into a read-onl
 		await resourceLoader.reload();
 
 		expect(resourceLoader.getExtensions().errors).toEqual([]);
-		// Nothing could be seeded, so no default extension loads from the agent dir.
+		// Nothing could be seeded, so no default extension loads from the agent dir, and the denial is reported.
 		expect(seededDefaultsLoaded(resourceLoader)).toEqual([]);
+		expect(deniedSeedWarnings(resourceLoader).length).toBeGreaterThan(0);
 	});
+
+	function deniedSeedWarnings(resourceLoader: DefaultResourceLoader): string[] {
+		return (resourceLoader.getExtensions().warnings ?? [])
+			.filter(
+				(warning) =>
+					warning.path.startsWith(extensionsDir) &&
+					warning.warning.startsWith("Default extension shim not written"),
+			)
+			.map((warning) => warning.path);
+	}
 
 	function seededDefaultsLoaded(resourceLoader: DefaultResourceLoader): string[] {
 		return resourceLoader

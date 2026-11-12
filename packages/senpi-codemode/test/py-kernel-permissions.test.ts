@@ -120,6 +120,14 @@ for (const uri of ["subject", "file:subject?mode=ro", "file:subject?mode=rw", "f
 		absent: uri === "subject" || uri.endsWith("rwc"),
 	});
 }
+// SQLite ends a token at %00 and opens the file unless every mode is memory, so each of these reaches the real file.
+// Short names: vitest cuts an interpolated $name at 40 characters, and the gate keys contracts by test name.
+for (const [name, uri] of [
+	["sqlite3.connect %00 in a mode key", "file:subject?mode=memory&mode%00=rw"],
+	["sqlite3.connect %00 in the path", "file:subject%00junk?mode=ro"],
+	["sqlite3.connect memory and ro modes", "file:subject?mode=memory&mode=ro"],
+])
+	cases.push({ name, code: `sqlite3.connect('${uri}', uri=True).close()` });
 const imports =
 	"import os, io, _io, pathlib, shutil, subprocess, pty, glob, sqlite3, importlib.machinery\nfrom pathlib import Path\n";
 
@@ -234,6 +242,24 @@ describe("Python permission interposition", () => {
 			"sqlite3.connect('file:subject?mode=ro', uri=True)",
 		],
 		["urllib.parse", "unquote", "lambda *a: ':memory:'", "sqlite3.connect('file:subject?mode=ro', uri=True)"],
+		[
+			"urllib.parse",
+			"SplitResult",
+			"lambda *a: type('URI', (), {'path': ':memory:', 'query': '', 'fragment': ''})()",
+			"urllib.parse.urlsplit('file:subject?mode=ro'); sqlite3.connect('file:subject?mode=ro', uri=True)",
+		],
+		[
+			"urllib.parse.SplitResult",
+			"path",
+			"property(lambda self: ':memory:')",
+			"sqlite3.connect('file:subject?mode=ro', uri=True)",
+		],
+		[
+			"urllib.parse",
+			"unquote_plus",
+			"lambda s, **k: 'memory' if s == 'ro' else s",
+			"sqlite3.connect('file:subject?mode=ro', uri=True)",
+		],
 		["sqlite3", "SQLITE_ATTACH", "-1", "sqlite3.connect(':memory:').execute(\"ATTACH ':memory:' AS attached\")"],
 		["sqlite3", "SQLITE_DENY", "0", "sqlite3.connect(':memory:').execute(\"ATTACH ':memory:' AS attached\")"],
 		["sqlite3", "SQLITE_OK", "1", "sqlite3.connect(':memory:').execute('SELECT 42'); open('subject')"],
