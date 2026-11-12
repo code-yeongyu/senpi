@@ -219,4 +219,53 @@ describe("a release or an unload while a replacement is still telling extensions
 		},
 		120_000,
 	);
+
+	it("a move release that crosses a switch back to the same session is refused and releases nothing", async () => {
+		let exportEntered!: () => void;
+		const exporting = new Promise<void>((resolve) => {
+			exportEntered = resolve;
+		});
+		let letExportGo!: () => void;
+		const exportHeld = new Promise<void>((resolve) => {
+			letExportGo = resolve;
+		});
+		const gateway = gatewayFixture();
+		const extension: ExtensionFactory = (pi) => {
+			gateway.extension(pi);
+			pi.on("session_move_export", async () => {
+				exportEntered();
+				await exportHeld;
+			});
+		};
+		await using host = await startReleaseHost(extension);
+		const s1 = await host.open("s1");
+		const folder = dirname(s1.sessionPath);
+
+		const releasing = host.send(
+			send({
+				type: "release_session",
+				id: "release",
+				sessionId: s1.sessionId,
+				reason: "move",
+				moveId: "move-6484",
+				target: "device-b",
+			}),
+		);
+		await exporting;
+		// The same durable session, rebuilt: a new session object behind the route, no other session.
+		const switched = await host.send(
+			send({ type: "switch_session", id: "switch", sessionId: s1.sessionId, sessionPath: s1.sessionPath }),
+			"replacer",
+		);
+		expect(switched).toMatchObject({ success: true });
+		await bindingSettled(host, s1.sessionId);
+		letExportGo();
+		const answer = await releasing;
+
+		expect(answer).toMatchObject({ success: false, errorCode: "session_mismatch" });
+		expect((answer.errorData as Wire).expected).toBeUndefined();
+		expect(sealedTranscripts(folder)).toEqual([]);
+		const state = await host.send(send({ type: "get_state", id: "state", sessionId: s1.sessionId }));
+		expect(state.data).toMatchObject({ sessionId: s1.session.sessionId });
+	}, 120_000);
 });

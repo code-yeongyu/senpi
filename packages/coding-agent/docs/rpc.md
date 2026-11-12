@@ -3669,6 +3669,12 @@ file and the durable id of the session that was sealed, read from that session i
   what the extensions staged for the move is removed. Without the field `errorData` carries no `expected`; after an
   interrupt it carries `interrupted`, `dropped` and `taken_from`, the durable id of the session that input was
   taken from. A client that does not know the code reads it as any refusal: the release did not happen.
+  `session_mismatch` with no `expected` means the session behind the route was rebuilt or replaced while the release
+  was in progress (a switch back to the same session rebuilds it too): nothing was released. The release can be
+  asked again, and a second ask acts on the session that is behind the route then. With `expectSessionId` that is
+  safe by itself: after a real replacement the compare refuses again. Without the field a second ask releases
+  whichever session is there, the successor included, so a client that cannot send the field reads the state first
+  and asks again only if it still names the session it means.
 - A host that does not advertise `release_session_expect_id` ignores the field and releases whichever session the
   route names. So a client reads the capability from the host that holds the session, over that session's own
   route, for that request; without it the client does not send the field, does not assume the release compared
