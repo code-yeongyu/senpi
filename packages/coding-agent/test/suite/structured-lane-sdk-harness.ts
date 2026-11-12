@@ -28,9 +28,9 @@ export async function createStructuredHarness(
 			...fixture,
 			agent: session.agent,
 			session,
-			cleanup: () => {
+			cleanup: async () => {
 				session.dispose();
-				fixture.cleanup();
+				await fixture.cleanup();
 			},
 		};
 	} catch (error) {

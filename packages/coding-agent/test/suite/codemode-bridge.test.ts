@@ -101,8 +101,8 @@ async function createCodemodeHarness(options: {
 	await harness.session.bindExtensions({});
 	return {
 		...harness,
-		cleanup() {
-			harness.cleanup();
+		async cleanup() {
+			await harness.cleanup();
 			rmSync(tempDir, { recursive: true, force: true });
 		},
 	};
