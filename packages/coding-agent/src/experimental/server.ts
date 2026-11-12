@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { chmod, lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { Context } from "@earendil-works/chord";
@@ -84,9 +84,25 @@ const LOCK_STALE_MS = 30_000;
  * The launcher lock is held by one server for its whole startup (plugin builds, its coordinator, its backend, worker
  * discovery), however long that takes; proper-lockfile refreshes it every LOCK_STALE_MS / 3 while the holder lives.
  * So a waiter waits as long as the holder lives: a holder that dies leaves a lock that goes stale LOCK_STALE_MS after
- * its last refresh and is taken over then, or is removed at once by the activator that stopped it.
+ * its last refresh and is taken over then, or is removed at once by the activator that stopped it. A holder that lives
+ * but never finishes is bounded by LAUNCHER_LOCK_CEILING_MS, which ends the wait with an error naming it.
  */
-const LAUNCHER_LOCK_BOUNDS = { heldMs: Number.POSITIVE_INFINITY, transientMs: LOCK_STALE_MS };
+const LAUNCHER_LOCK_CEILING_MS = 10 * 60_000;
+const LAUNCHER_LOCK_BOUNDS = { heldMs: LAUNCHER_LOCK_CEILING_MS, transientMs: LOCK_STALE_MS };
+
+/** A launcher lock still held, by a live process, when its waiter's ceiling ran out. */
+export class LauncherLockTimeoutError extends Error {
+	readonly code = "launcher_lock_timeout";
+	readonly holderPid: number | undefined;
+
+	constructor(path: string, waitedMs: number, holderPid: number | undefined) {
+		super(
+			`The experimental server launcher lock ${path} was still held after ${Math.round(waitedMs / 1000)} s${holderPid === undefined ? "" : ` by pid ${holderPid}`}`,
+		);
+		this.name = "LauncherLockTimeoutError";
+		this.holderPid = holderPid;
+	}
+}
 
 function launcherOwnerPath(directory: string, serverId: ServerId): string {
 	return join(directory, `launcher-${serverId}.owner`);
@@ -130,14 +146,22 @@ export async function acquireServerProfile(directory: string, requestedServerId?
 		}
 	}
 
+	const lockPath = join(directory, `launcher-${serverId}`);
+	const ownerPath = launcherOwnerPath(directory, serverId);
 	const { release, assertHeld } = await waitForFileLock(
-		join(directory, `launcher-${serverId}`),
+		lockPath,
 		{ realpath: false, stale: LOCK_STALE_MS, update: LOCK_STALE_MS / 3 },
 		LAUNCHER_LOCK_BOUNDS,
-	);
-	// Names the holder, so an activator that stopped its own server can remove the lock that server left.
-	const ownerPath = launcherOwnerPath(directory, serverId);
-	await writeFile(ownerPath, String(process.pid), { mode: 0o600 });
+	).catch(async (error: unknown) => {
+		if (!(error instanceof Error && "code" in error && error.code === "ELOCKED")) throw error;
+		const holder = await readLauncherOwner(ownerPath);
+		throw new LauncherLockTimeoutError(`${lockPath}.lock`, LAUNCHER_LOCK_CEILING_MS, holder?.pid);
+	});
+	// Names the holder and the lock directory it took (its inode), so an activator that stopped its own server can
+	// remove exactly that lock: a stale takeover deletes and re-creates the directory, so a new holder's lock never
+	// matches a record its predecessor left.
+	const lockInode = (await stat(`${lockPath}.lock`)).ino;
+	await writeFile(ownerPath, `${process.pid} ${lockInode}`, { mode: 0o600 });
 	return {
 		serverId,
 		async release() {
@@ -236,17 +260,26 @@ export async function activateServer(options: ActivateServerOptions): Promise<Ac
 }
 
 /** A server stopped during startup cannot release its launcher lock; the activator that stopped it removes it. */
-async function removeStoppedServerLauncherLock(
+export async function removeStoppedServerLauncherLock(
 	directory: string,
 	serverId: ServerId,
 	pid: number | undefined,
 ): Promise<void> {
 	if (pid === undefined) return;
 	const ownerPath = launcherOwnerPath(directory, serverId);
-	const owner = await readFile(ownerPath, "utf8").catch(() => undefined);
-	if (owner?.trim() !== String(pid)) return;
-	await rm(join(directory, `launcher-${serverId}.lock`), { recursive: true, force: true });
+	const owner = await readLauncherOwner(ownerPath);
+	if (owner?.pid !== pid) return;
+	const lockDirectory = join(directory, `launcher-${serverId}.lock`);
+	// Only the lock directory that server took: one re-created by a newer holder has another inode.
+	const current = await stat(lockDirectory).catch(() => undefined);
+	if (current === undefined || current.ino !== owner.lockInode) return;
+	await rm(lockDirectory, { recursive: true, force: true });
 	await rm(ownerPath, { force: true });
+}
+
+async function readLauncherOwner(ownerPath: string): Promise<{ pid: number; lockInode: number } | undefined> {
+	const [pid, lockInode] = ((await readFile(ownerPath, "utf8").catch(() => "")) ?? "").trim().split(" ").map(Number);
+	return Number.isInteger(pid) && Number.isInteger(lockInode) ? { pid, lockInode } : undefined;
 }
 
 export async function acquireServerActivation(

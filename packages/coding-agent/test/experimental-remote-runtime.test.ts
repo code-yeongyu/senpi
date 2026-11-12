@@ -21,9 +21,11 @@ import { ensureCoordinator } from "../src/experimental/coordinator.ts";
 import {
 	acquireServerActivation,
 	acquireServerProfile,
+	removeStoppedServerLauncherLock,
 	type RunningServer,
 	startServer,
 } from "../src/experimental/server.ts";
+import { lockWithLossHandling } from "../src/core/file-lock.ts";
 import { AgentController } from "../src/experimental/services/agent-controller.ts";
 import { createSessionServiceSource, type SessionAttachmentState } from "../src/experimental/services/connection.ts";
 import { Models } from "../src/experimental/services/models.ts";
@@ -404,7 +406,7 @@ describe("experimental durable server composition", () => {
 
 	test("waits for another activator's lock after both clocks moved past 10 s", async ({ onTestFinished }) => {
 		const { directory, serverId } = await lockFixture("pes-activation-lock-");
-		const holder = await acquireServerActivation(directory, serverId);
+		const holder = await holdLock(join(directory, `activation-${serverId}`));
 		await expectWaiterOutlasts(onTestFinished, join(directory, `activation-${serverId}.lock`), holder, 11_000, () =>
 			acquireServerActivation(directory, serverId),
 		);
@@ -414,7 +416,7 @@ describe("experimental durable server composition", () => {
 		onTestFinished,
 	}) => {
 		const { directory, serverId } = await lockFixture("pes-launcher-lock-");
-		const holder = await acquireServerProfile(directory, serverId);
+		const holder = await holdLock(join(directory, `launcher-${serverId}`));
 		await expectWaiterOutlasts(onTestFinished, join(directory, `launcher-${serverId}.lock`), holder, 200_000, () =>
 			acquireServerProfile(directory, serverId),
 		);
@@ -446,6 +448,65 @@ describe("experimental durable server composition", () => {
 		const acquired = await acquireServerActivation(directory, serverId);
 		await acquired.release();
 		expect(failures).toBe(1);
+	});
+
+	test("gives up on a launcher lock still held after ten minutes, naming its holder", async ({ onTestFinished }) => {
+		const { directory, serverId } = await lockFixture("pes-launcher-ceiling-");
+		const lockBase = join(directory, `launcher-${serverId}`);
+		const holder = await holdLock(lockBase);
+		onTestFinished(() => holder.release());
+		await writeFile(join(directory, `launcher-${serverId}.owner`), `${process.pid} 0`);
+		let firstStat = (): void => {};
+		const firstAttempt = new Promise<void>((resolve) => {
+			firstStat = resolve;
+		});
+		const realStat = nodeFs.stat;
+		const stat = vi.spyOn(nodeFs, "stat").mockImplementation(((...args: unknown[]) => {
+			const callback = args.at(-1);
+			if (args[0] !== `${lockBase}.lock` || typeof callback !== "function")
+				return Reflect.apply(realStat, nodeFs, args);
+			return Reflect.apply(realStat, nodeFs, [
+				...args.slice(0, -1),
+				(...results: unknown[]) => {
+					Reflect.apply(callback, undefined, results);
+					firstStat();
+				},
+			]);
+		}) as typeof nodeFs.stat);
+		syncBuiltinESMExports();
+		onTestFinished(() => {
+			stat.mockRestore();
+			syncBuiltinESMExports();
+		});
+
+		const waiting = acquireServerProfile(directory, serverId);
+		waiting.catch(() => {});
+		await firstAttempt;
+		// The holder stays live (its lock refreshed into the future); only the waiter's ceiling can end the wait.
+		const refreshed = new Date(Date.now() + 11 * 60_000);
+		await utimes(`${lockBase}.lock`, refreshed, refreshed);
+		advanceClocks(11 * 60_000, onTestFinished);
+
+		await expect(waiting).rejects.toMatchObject({ code: "launcher_lock_timeout", holderPid: process.pid });
+	});
+
+	test("never removes a launcher lock that a newer holder took over", async () => {
+		const { directory, serverId } = await lockFixture("pes-launcher-takeover-");
+		const lockDirectory = join(directory, `launcher-${serverId}.lock`);
+		// The stopped server's record names its pid and the lock directory it took...
+		await mkdir(lockDirectory);
+		const stoppedInode = (await lstat(lockDirectory)).ino;
+		await writeFile(join(directory, `launcher-${serverId}.owner`), `4242 ${stoppedInode}`);
+		// ...but a newer holder took the stale lock over (a takeover deletes and re-creates the directory) before
+		// writing its own record.
+		await rm(lockDirectory, { recursive: true });
+		const parked = await mkdtemp(join(directory, "keep-inode-"));
+		await mkdir(lockDirectory);
+		await rm(parked, { recursive: true });
+
+		await removeStoppedServerLauncherLock(directory, serverId, 4242);
+
+		expect(await pathExists(lockDirectory)).toBe(true);
 	});
 
 	test("removes the launcher lock of a server it stopped after its startup timed out", async ({ onTestFinished }) => {
@@ -1325,6 +1386,14 @@ function advanceClocks(ms: number, onTestFinished: (cleanup: () => void) => void
 		now.mockRestore();
 		vi.useRealTimers();
 	});
+}
+
+/**
+ * A holder for an in-process lock test. Its refresh interval is far beyond any test, so proper-lockfile's own refresh
+ * cannot run mid-test and see the mtime the test sets; staleness is still judged by the waiter's own options.
+ */
+function holdLock(base: string): Promise<{ release(): Promise<void> }> {
+	return lockWithLossHandling(base, { realpath: false, stale: 3_600_000, update: 1_800_000, retries: 0 });
 }
 
 async function lockFixture(prefix: string): Promise<{ directory: string; serverId: ServerId }> {
