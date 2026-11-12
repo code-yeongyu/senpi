@@ -1,36 +1,42 @@
 import { type FileLockOptions, type HeldFileLock, lockWithLossHandling } from "../core/file-lock.ts";
 
 /**
- * Acquire errors that end once another holder or the system lets go: the lock is held, or the process or system is
- * briefly out of file descriptors or the path is busy. proper-lockfile's own retry loop retried these; it measures its
- * budget on the wall clock, so the waits below take one attempt at a time on the monotonic clock instead.
+ * Acquire errors that end once the system lets go: the process or system is briefly out of file descriptors, or the
+ * path is busy. proper-lockfile's own retry loop retried these and a held lock; it measures its budget on the wall
+ * clock, so the waits below take one attempt at a time on the monotonic clock instead.
  */
-const TRANSIENT_ACQUIRE_CODES: ReadonlySet<string> = new Set([
-	"ELOCKED",
-	"EMFILE",
-	"ENFILE",
-	"EBUSY",
-	"EAGAIN",
-	"EINTR",
-]);
+const TRANSIENT_ACQUIRE_CODES: ReadonlySet<string> = new Set(["EMFILE", "ENFILE", "EBUSY", "EAGAIN", "EINTR"]);
 const LOCK_RETRY_MS = 25;
 
-/**
- * Takes the lock at `path`, retrying held and transient acquire errors until `waitMs` has passed on the monotonic clock;
- * any other error, or the last one once the budget is spent, is thrown.
- */
+export interface LockWaitBounds {
+	/**
+	 * How long a lock another process holds is waited for. A holder refreshes its lock while it lives, and a lock that
+	 * goes unrefreshed past its staleness bound is taken over, so `Infinity` waits exactly as long as the holder lives.
+	 */
+	readonly heldMs: number;
+	/** How long transient acquire errors are retried. */
+	readonly transientMs: number;
+}
+
+/** Takes the lock at `path`; any other error, or the last one once its bound has passed, is thrown. */
 export async function waitForFileLock(
 	path: string,
 	options: Omit<FileLockOptions, "retries">,
-	waitMs: number,
+	bounds: LockWaitBounds,
 ): Promise<HeldFileLock> {
-	const deadline = performance.now() + waitMs;
+	const started = performance.now();
 	while (true) {
 		try {
 			return await lockWithLossHandling(path, { ...options, retries: 0 });
 		} catch (error) {
 			const code = error instanceof Error && "code" in error ? String(error.code) : undefined;
-			if (code === undefined || !TRANSIENT_ACQUIRE_CODES.has(code) || performance.now() >= deadline) throw error;
+			const bound =
+				code === "ELOCKED"
+					? bounds.heldMs
+					: code !== undefined && TRANSIENT_ACQUIRE_CODES.has(code)
+						? bounds.transientMs
+						: 0;
+			if (performance.now() - started >= bound) throw error;
 			await new Promise<void>((resolve) => setTimeout(resolve, LOCK_RETRY_MS));
 		}
 	}

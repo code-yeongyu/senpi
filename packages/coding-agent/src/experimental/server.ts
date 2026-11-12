@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { chmod, lstat, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { Context } from "@earendil-works/chord";
@@ -81,10 +81,16 @@ export function resolveSessionDirectory(sessionDir?: string): string {
 
 const LOCK_STALE_MS = 30_000;
 /**
- * How long a launcher waits for another holder of the launcher lock. A server holds it through its whole startup,
- * which includes waiting up to COORDINATOR_STARTUP_HANG_MS (120 s) for its coordinator, so this outlasts that bound.
+ * The launcher lock is held by one server for its whole startup (plugin builds, its coordinator, its backend, worker
+ * discovery), however long that takes; proper-lockfile refreshes it every LOCK_STALE_MS / 3 while the holder lives.
+ * So a waiter waits as long as the holder lives: a holder that dies leaves a lock that goes stale LOCK_STALE_MS after
+ * its last refresh and is taken over then, or is removed at once by the activator that stopped it.
  */
-const LAUNCHER_LOCK_WAIT_MS = 130_000;
+const LAUNCHER_LOCK_BOUNDS = { heldMs: Number.POSITIVE_INFINITY, transientMs: LOCK_STALE_MS };
+
+function launcherOwnerPath(directory: string, serverId: ServerId): string {
+	return join(directory, `launcher-${serverId}.owner`);
+}
 const DEFAULT_SERVER_ID_FILE = "default-server-id";
 
 export interface ServerProfile {
@@ -127,9 +133,19 @@ export async function acquireServerProfile(directory: string, requestedServerId?
 	const { release, assertHeld } = await waitForFileLock(
 		join(directory, `launcher-${serverId}`),
 		{ realpath: false, stale: LOCK_STALE_MS, update: LOCK_STALE_MS / 3 },
-		LAUNCHER_LOCK_WAIT_MS,
+		LAUNCHER_LOCK_BOUNDS,
 	);
-	return { serverId, release, assertHeld };
+	// Names the holder, so an activator that stopped its own server can remove the lock that server left.
+	const ownerPath = launcherOwnerPath(directory, serverId);
+	await writeFile(ownerPath, String(process.pid), { mode: 0o600 });
+	return {
+		serverId,
+		async release() {
+			await rm(ownerPath, { force: true });
+			await release();
+		},
+		assertHeld,
+	};
 }
 
 const ACTIVATION_TIMEOUT_MS = 10_000;
@@ -211,11 +227,26 @@ export async function activateServer(options: ActivateServerOptions): Promise<Ac
 			}
 		} catch (error) {
 			await terminateInternalProcess(child);
+			await removeStoppedServerLauncherLock(options.directory, serverId, child.pid);
 			throw error;
 		}
 	} finally {
 		await activation.release();
 	}
+}
+
+/** A server stopped during startup cannot release its launcher lock; the activator that stopped it removes it. */
+async function removeStoppedServerLauncherLock(
+	directory: string,
+	serverId: ServerId,
+	pid: number | undefined,
+): Promise<void> {
+	if (pid === undefined) return;
+	const ownerPath = launcherOwnerPath(directory, serverId);
+	const owner = await readFile(ownerPath, "utf8").catch(() => undefined);
+	if (owner?.trim() !== String(pid)) return;
+	await rm(join(directory, `launcher-${serverId}.lock`), { recursive: true, force: true });
+	await rm(ownerPath, { force: true });
 }
 
 export async function acquireServerActivation(
@@ -225,7 +256,7 @@ export async function acquireServerActivation(
 	return waitForFileLock(
 		join(directory, `activation-${serverId}`),
 		{ realpath: false, stale: ACTIVATION_TIMEOUT_MS * 2, update: ACTIVATION_TIMEOUT_MS },
-		ACTIVATION_LOCK_WAIT_MS,
+		{ heldMs: ACTIVATION_LOCK_WAIT_MS, transientMs: ACTIVATION_LOCK_WAIT_MS },
 	);
 }
 

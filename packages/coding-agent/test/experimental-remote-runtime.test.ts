@@ -38,6 +38,7 @@ import {
 } from "./experimental-session-support.ts";
 import { HOLD_SERVER_DISCONNECT_ENV } from "./fixtures/faux-session-worker.ts";
 import { HELD_COORDINATOR_READY_FILE } from "./fixtures/held-coordinator-entry.ts";
+import { HELD_LAUNCHER_READY_FILE } from "./fixtures/held-launcher-server-entry.ts";
 import { HELD_SERVER_READY_FILE } from "./fixtures/held-server-entry.ts";
 import { KeyedProbe } from "./fixtures/keyed-service.ts";
 
@@ -47,6 +48,7 @@ const directories = new Set<string>();
 const fauxWorkerEntryUrl = new URL("fixtures/faux-session-worker.ts", import.meta.url);
 const heldServerEntryUrl = new URL("fixtures/held-server-entry.ts", import.meta.url);
 const heldCoordinatorEntryUrl = new URL("fixtures/held-coordinator-entry.ts", import.meta.url);
+const heldLauncherServerEntryUrl = new URL("fixtures/held-launcher-server-entry.ts", import.meta.url);
 const realSpawnInternalProcess = processRuntime.spawnInternalProcess;
 /**
  * Every internal process (server, coordinator, session worker) a test started. `server.close()` resolves when a
@@ -408,10 +410,12 @@ describe("experimental durable server composition", () => {
 		);
 	});
 
-	test("waits for a starting server's launcher lock after both clocks moved past 30 s", async ({ onTestFinished }) => {
+	test("waits for a starting server's launcher lock for as long as its holder keeps it fresh", async ({
+		onTestFinished,
+	}) => {
 		const { directory, serverId } = await lockFixture("pes-launcher-lock-");
 		const holder = await acquireServerProfile(directory, serverId);
-		await expectWaiterOutlasts(onTestFinished, join(directory, `launcher-${serverId}.lock`), holder, 31_000, () =>
+		await expectWaiterOutlasts(onTestFinished, join(directory, `launcher-${serverId}.lock`), holder, 200_000, () =>
 			acquireServerProfile(directory, serverId),
 		);
 	});
@@ -442,6 +446,32 @@ describe("experimental durable server composition", () => {
 		const acquired = await acquireServerActivation(directory, serverId);
 		await acquired.release();
 		expect(failures).toBe(1);
+	});
+
+	test("removes the launcher lock of a server it stopped after its startup timed out", async ({ onTestFinished }) => {
+		const directory = await mkdtemp(join("/tmp", "pes-stopped-holder-"));
+		directories.add(directory);
+		const serverId = "00000000-0000-4000-8000-000000000001";
+		vi.stubEnv("PI_SERVER_DIR", directory);
+		vi.stubEnv("PI_SERVER_ID", serverId);
+		const spawn = vi
+			.spyOn(processRuntime, "spawnInternalProcess")
+			.mockImplementation((role, args, options) =>
+				spawnTracked(
+					role,
+					args,
+					role === "server" ? { ...options, entryUrl: heldLauncherServerEntryUrl } : options,
+				),
+			);
+		onTestFinished(() => spawn.mockRestore());
+
+		const opening = openClientRuntime({ command: "client", ...sessionWorkerModel });
+		opening.catch(() => {});
+		await fileAppears(join(directory, HELD_LAUNCHER_READY_FILE));
+		advanceClocks(121_000, onTestFinished);
+		await expect(opening).rejects.toThrow("Timed out waiting for automatically activated server");
+
+		expect(await pathExists(join(directory, `launcher-${serverId}.lock`))).toBe(false);
 	});
 
 	test("stops the coordinator it started when the startup wait times out", async ({ onTestFinished }) => {
@@ -1350,10 +1380,11 @@ async function expectWaiterOutlasts(
 	const waiting = acquire();
 	// The waiter's budget starts at its first attempt, so the clocks move only once it is waiting.
 	await firstAttempt;
+	// The holder refreshes its lock as time passes. The refresh lands before the clocks move, so no attempt made on the
+	// moved clocks can read the held lock as stale and take it over instead of waiting for it.
+	const refreshed = new Date(Date.now() + ms);
+	await utimes(lockPath, refreshed, refreshed);
 	advanceClocks(ms, onTestFinished);
-	// The holder refreshes its lock as time passes; without that the moved clock would make the held lock stale and the
-	// waiter would take it over instead of waiting for it.
-	await utimes(lockPath, new Date(), new Date());
 	jumped = true;
 	await attempted;
 	await holder.release();
