@@ -54,10 +54,10 @@ export interface ServerEndpointOptions {
 
 /**
  * The server endpoint lives next to the public socket when that path fits. In a deeper server directory it moves to a
- * fresh 0700 directory of this user's under the OS temp directory (or `/tmp` when that is too deep, as the RPC host's
- * internal socket does, senpi#3487): the server could bind the long path through its short bind-and-link, but nothing
- * could connect to it, so the coordinator dropped every client and the server retired without one (senpi#6522).
- * A root another user could take an entry out of is skipped, as the RPC host's bind alias does.
+ * fresh 0700 directory of this user's under the first guarded root - the OS temp directory, then this user's
+ * `XDG_RUNTIME_DIR`, then `/tmp` - as the RPC host's internal socket does (senpi#3487): the server could bind the long
+ * path through its short bind-and-link, but nothing could connect to it, so the coordinator dropped every client and
+ * the server retired without one (senpi#6522).
  */
 export async function createServerEndpoint(
 	preferredPath: string,
@@ -119,6 +119,9 @@ const OWNERLESS_MIN_AGE_MS = 300_000;
 /**
  * The probe that reads an owner's start time, bounded so a starved `ps` cannot hold a sweep (or a server's own
  * startup) for long; it reads in UTC, like the record, so a server and a later sweep in different time zones agree.
+ *
+ * Worst case per directory in a sweep: `processMatchesPidFile` retries, so about 5 attempts of 5 s plus its own 2 s,
+ * near 36 s; the writer spends at most two attempts, near 10 s. Both stay inside the activator's 120 s startup wait.
  */
 const OWNER_PROBE_TIMEOUT_MS = 5_000;
 export function readEndpointOwnerStartTime(pid: number): Promise<string | undefined> {
@@ -132,8 +135,17 @@ export function readEndpointOwnerStartTime(pid: number): Promise<string | undefi
  * Removes this user's `senpi-xs-*` endpoint directories under `roots` whose server is gone, as a killed server leaves
  * them behind. ONE rule decides: a record naming a pid holds the directory for as long as that process lives - proved
  * by its recorded start time where there is one, and by the pid alone where the start time could not be read - and a
- * directory with no record at all is held for OWNERLESS_MIN_AGE_MS, while a server could still be writing one.
+ * directory whose record is missing, unreadable or unparsable is held for OWNERLESS_MIN_AGE_MS, while a server could
+ * still be writing one.
  */
+function parseOwnerRecord(raw: string): unknown {
+	try {
+		return JSON.parse(raw);
+	} catch {
+		return undefined;
+	}
+}
+
 export async function reapOrphanedServerEndpoints(roots: readonly string[]): Promise<void> {
 	const uid = process.getuid?.();
 	await Promise.all(
@@ -149,7 +161,9 @@ export async function reapOrphanedServerEndpoints(roots: readonly string[]): Pro
 							if (uid !== undefined && stats.uid !== uid) return;
 							const unclaimedTooLong = stats.mtimeMs <= Date.now() - OWNERLESS_MIN_AGE_MS;
 							const raw = await readFile(join(directory, ".owner"), "utf8").catch(() => undefined);
-							const owner: unknown = raw === undefined ? undefined : JSON.parse(raw);
+							// A record that does not parse claims nobody, so it follows the no-record rule rather than
+							// holding its directory for ever through the catch below.
+							const owner: unknown = raw === undefined ? undefined : parseOwnerRecord(raw);
 							const pid: unknown =
 								typeof owner === "object" && owner !== null ? Reflect.get(owner, "pid") : undefined;
 							const processStartTime: unknown =
@@ -162,7 +176,10 @@ export async function reapOrphanedServerEndpoints(roots: readonly string[]): Pro
 								return;
 							}
 							if (typeof processStartTime !== "string" || processStartTime.length === 0) {
-								// Claimed, but the writer's own probe was starved: the pid alone decides, however old it is.
+								// Claimed, but the writer's own probe was starved, so only the pid is left to judge by, however old
+								// the directory is. `processIsLive` counts a zombie and an EPERM answer as alive, so the directory
+								// outlives its server only until that pid is gone - and a pid the OS has recycled since holds it
+								// too, which costs one stale directory rather than unlinking a live server's socket.
 								if (!processIsLive(pid)) await rm(directory, { recursive: true, force: true });
 								return;
 							}

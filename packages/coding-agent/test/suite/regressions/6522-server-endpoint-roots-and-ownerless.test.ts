@@ -85,9 +85,33 @@ it("removes a directory whose record names a dead pid with no start time", async
 	expect(existsSync(directory)).toBe(false);
 });
 
-it("bounds the owner start-time probe well under the five-minute hold", async () => {
+it("bounds the owner start-time probe when ps itself hangs", async () => {
+	const binDir = tempRoot(0o700);
+	// A 'ps' that never answers, first on PATH: without the probe's own timeout this read would hang, not resolve.
+	writeFileSync(join(binDir, "ps"), "#!/bin/sh\nexec sleep 600\n", { mode: 0o755 });
+	vi.stubEnv("PATH", `${binDir}:${process.env.PATH ?? ""}`);
 	const started = Date.now();
-	// A pid that cannot exist: the probe must return, not hang, and must do so far inside OWNERLESS_MIN_AGE_MS.
-	await expect(readEndpointOwnerStartTime(0x7fffffff)).resolves.toBeUndefined();
-	expect(Date.now() - started).toBeLessThan(30_000);
+
+	// The bound ends the probe instead of waiting on ps: it settles, and the writer records null while the sweep's
+	// matcher turns a throw for a live pid into "unreadable", which holds the directory.
+	await expect(readEndpointOwnerStartTime(process.pid)).rejects.toThrow();
+
+	expect(Date.now() - started).toBeLessThan(60_000);
+}, 120_000);
+
+it("removes a directory whose owner record does not parse, on the same age rule as none", async () => {
+	const root = tempRoot(0o700);
+	const aged = join(root, `${SHORT_SERVER_ENDPOINT_PREFIX}bad0json`);
+	mkdirSync(aged, { mode: 0o700 });
+	writeFileSync(join(aged, ".owner"), "{not json");
+	writeFileSync(join(aged, "server.sock"), "");
+	const longAgo = new Date(Date.now() - 600_000);
+	utimesSync(aged, longAgo, longAgo);
+	const fresh = join(root, `${SHORT_SERVER_ENDPOINT_PREFIX}bad0fre5`);
+	mkdirSync(fresh, { mode: 0o700 });
+	writeFileSync(join(fresh, ".owner"), "{not json");
+
+	await reapOrphanedServerEndpoints([root]);
+
+	expect({ aged: existsSync(aged), fresh: existsSync(fresh) }).toEqual({ aged: false, fresh: true });
 });
