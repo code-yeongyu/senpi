@@ -34,6 +34,12 @@ export const RPC_ERROR_RESPONSE_TOO_LARGE = "response_too_large";
  */
 export const RPC_ERROR_RESPONSE_UNWRITABLE = "response_unwritable";
 
+/**
+ * A host-level command's handler failed unexpectedly; `errorData.detail` carries the message. Sent in place of the reply
+ * so the caller is never left waiting (senpi#6483).
+ */
+export const RPC_ERROR_INTERNAL = "internal_error";
+
 export const RPC_ERROR_OPEN_FAILED = "open_failed";
 
 export const RPC_ERROR_OWNER_CHANGED = "owner_changed";
@@ -263,4 +269,5 @@ export type RpcErrorCode =
 	| typeof RPC_ERROR_RELEASE_UNSUPPORTED
 	| typeof RPC_ERROR_RELEASE_FAILED
 	| typeof RPC_ERROR_HOST_DRAINING
-	| typeof RPC_ERROR_RESPONSE_UNWRITABLE;
+	| typeof RPC_ERROR_RESPONSE_UNWRITABLE
+	| typeof RPC_ERROR_INTERNAL;
