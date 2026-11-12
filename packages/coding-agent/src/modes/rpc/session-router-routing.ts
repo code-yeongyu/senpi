@@ -20,7 +20,7 @@ import { attachmentGate } from "./session-attachment-gate.ts";
 import { runWithSessionAttribution } from "./session-attribution.ts";
 import { dispatchSessionBinding } from "./session-held.ts";
 import { findSession } from "./find-session.ts";
-import { moveSession } from "./session-move-commands.ts";
+import { routeMoveSession } from "./session-move-router.ts";
 import { releaseSession } from "./session-release.ts";
 import { releaseConnection } from "./session-router-attachments.ts";
 import { close, tearDownUnloaded } from "./session-router-close.ts";
@@ -146,23 +146,7 @@ export async function dispatch(
 			},
 			command,
 		);
-	if (command.type === "move_session") {
-		const agentDir = host.registry.agentDir;
-		if (agentDir === undefined)
-			return error(
-				command.id,
-				command.type,
-				"move_unsupported: this host keeps no agent directory to move sessions in",
-			);
-		return moveSession(
-			{
-				agentDir,
-				hostedPaths: () =>
-					host.registry.list().flatMap((row) => (row.sessionPath === undefined ? [] : [row.sessionPath])),
-			},
-			command,
-		);
-	}
+	if (command.type === "move_session") return routeMoveSession(host, command);
 	if (command.type === "unload_session") {
 		const caller = host.writer.currentConnection();
 		return unloadSession(

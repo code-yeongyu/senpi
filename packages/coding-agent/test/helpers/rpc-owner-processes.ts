@@ -5,7 +5,7 @@ import type { Socket } from "node:net";
 import { expect } from "vitest";
 import { STOP_WAIT_BUDGET_MS } from "../../src/modes/rpc/host-ensure-stop.ts";
 import { processExitEvent } from "./process-exit-event.ts";
-import { processAlive } from "./spawned-host-reaper.ts";
+import { processAlive, waitForPidGone } from "./spawned-host-reaper.ts";
 
 export const EXIT_BOUND_MS = 10_000;
 
@@ -75,8 +75,13 @@ export class RpcOwnerProcesses {
 			),
 		);
 		await Promise.all([...this.supervisors.values()].map((supervisor) => supervisor.wait(exitBoundMs)));
-		for (const [pid, command] of this.pids)
-			expect(processAlive(pid), `pid ${pid} (${command}) still alive after owner exit`).toBe(false);
+		// Wait for each tracked pid's own exit (senpi#6420): a one-shot liveness read right after the supervisors
+		// exit reports a child that is still being torn down on a loaded host as "still alive".
+		const gone = await Promise.all(
+			[...this.pids].map(async ([pid, command]) => [pid, command, await waitForPidGone(pid, exitBoundMs)] as const),
+		);
+		for (const [pid, command, exited] of gone)
+			expect(exited, `pid ${pid} (${command}) still alive after owner exit`).toBe(true);
 	}
 
 	async cleanup(primaryFailure?: { message?: string }): Promise<void> {
