@@ -6455,16 +6455,24 @@ Errors: `invalid_argument` when `patch` is not an object or `ifEtag` is neither 
 `project_mcp_config_invalid` when the loader rejects the merged file, `project_file_permission_denied`,
 `project_file_not_allowed`, `project_file_too_large`, and `project_file_write_failed`.
 
-#### read_project_skill_file / write_project_skill_file
+#### read_project_skill_file
 
-Read and replace the file of a skill the engine lists for the session, by skill name.
+Read the file of a skill the engine lists for the session, by skill name.
 
 ```json
 {"type": "read_project_skill_file", "skill": "deploy"}
+```
+
+#### write_project_skill_file
+
+Replace the file of a skill the engine lists for the session, by skill name. `ifEtag` is the `etag` the last read
+answered.
+
+```json
 {"type": "write_project_skill_file", "skill": "deploy", "content": "---\nname: deploy\n…", "ifEtag": "sha256-…"}
 ```
 
-`data` is `{ cwd, skill, path, exists, content, etag, projectTrusted }`, with `path` relative to the session's folder.
+For both, `data` is `{ cwd, skill, path, exists, content, etag, projectTrusted }`, with `path` relative to the session's folder.
 Only a listed skill whose file lies inside the session's folder is reachable; a skill that lives elsewhere (a global
 skill) or is reached through a folder link or a file link is refused. A file whose real path lies in the agent dir or
 in any user-global skill root the engine loads (`~/.agents/skills`, a selected skill root) is user-global

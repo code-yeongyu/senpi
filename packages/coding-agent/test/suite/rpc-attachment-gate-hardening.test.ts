@@ -36,6 +36,9 @@ it("exempts exactly the reviewed commands from the attach gate", () => {
 			"get_media",
 			"get_messages",
 			"get_pending_inputs",
+			// senpi#6485: reads the folder's MCP servers file without effect, like read_project_file;
+			// set_project_mcp_servers stays gated.
+			"get_project_mcp_servers",
 			// senpi#6176/#6185: the workspace's saved trust and project settings file, read without effect like
 			// get_loaded_surfaces and resolve_path; set_project_trust and set_project_setting stay gated.
 			"get_project_settings",
@@ -60,6 +63,9 @@ it("exempts exactly the reviewed commands from the attach gate", () => {
 			// senpi#6307: reads one allowlisted instruction file, without effect like get_project_settings;
 			// write_project_file stays gated.
 			"read_project_file",
+			// senpi#6485: reads one listed project skill's file without effect, like read_project_file;
+			// write_project_skill_file stays gated.
+			"read_project_skill_file",
 			"reclaim_session",
 			"resolve_path",
 			"subscribe_sessions",
