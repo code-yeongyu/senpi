@@ -18,12 +18,13 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 const LOADER = fileURLToPath(new URL("../../src/core/extensions/loader.ts", import.meta.url));
 const BUILT_LOADER = fileURLToPath(new URL("../../dist/core/extensions/loader.js", import.meta.url));
+const BUILT_OUTPUT = fileURLToPath(new URL("../../dist", import.meta.url));
 const PACKAGE_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const PACKAGES = fileURLToPath(new URL("../../..", import.meta.url));
 // Workspace packages the built engine imports at runtime, directly or through each other.
@@ -68,6 +69,7 @@ afterEach(() => {
 });
 
 interface Build {
+	/** The package's build output directory. */
 	output: string;
 	sources: string;
 }
@@ -78,25 +80,37 @@ function newestMtime(path: string): number {
 	return Math.max(stat.mtimeMs, ...readdirSync(path).map((entry) => newestMtime(join(path, entry))));
 }
 
+function outputMtimes(directory: string): number[] {
+	return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+		const path = join(directory, entry.name);
+		return entry.isDirectory() ? outputMtimes(path) : [statSync(path).mtimeMs];
+	});
+}
+
 /**
- * "built" only when every build output is strictly newer than every file and directory of its sources; a missing
- * output or an equal mtime counts as stale. A stale build would let the probe pass on old engine code and hide a
- * regression in the sources, so anything short of provably fresh runs the sources.
+ * "built" only when, for every package, the OLDEST file anywhere under its build output directory is strictly newer
+ * than the newest file or directory of its sources. A missing or empty output directory, or an equal mtime, counts as
+ * stale. Comparing one representative output would miss an interrupted emit that left that file fresh and another
+ * output of the same package stale. A stale build would let the probe pass on old engine code and hide a regression
+ * in the sources, so anything short of provably fresh runs the sources.
  */
 function selectProbeLoader(builds: readonly Build[]): "built" | "source" {
 	for (const build of builds) {
-		if (!existsSync(build.output) || statSync(build.output).mtimeMs <= newestMtime(build.sources)) return "source";
+		if (!existsSync(build.output)) return "source";
+		const outputs = outputMtimes(build.output);
+		const oldest = outputs.reduce((min, mtime) => Math.min(min, mtime), Number.POSITIVE_INFINITY);
+		if (outputs.length === 0 || oldest <= newestMtime(build.sources)) return "source";
 	}
 	return "built";
 }
 
 function engineBuilds(): Build[] {
 	return [
-		{ output: BUILT_LOADER, sources: join(PACKAGE_ROOT, "src") },
+		{ output: BUILT_OUTPUT, sources: join(PACKAGE_ROOT, "src") },
 		...ENGINE_DEPENDENCIES.map((name) => {
 			const root = join(PACKAGES, name);
 			const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { main: string };
-			return { output: join(root, manifest.main), sources: join(root, "src") };
+			return { output: join(root, dirname(manifest.main)), sources: join(root, "src") };
 		}),
 	];
 }
@@ -141,17 +155,24 @@ describe("selectProbeLoader", () => {
 		writeFileSync(join(sources, "nested", "b.ts"), "");
 		const paths = [join(sources, "a.ts"), join(sources, "nested", "b.ts"), join(sources, "nested"), sources];
 		for (const path of paths) utimesSync(path, T, T);
-		return { root, build: { output: join(root, "dist", "loader.js"), sources }, paths };
+		return { root, build: { output: join(root, "dist"), sources }, paths };
 	}
 
-	function writeOutput(build: Build, seconds: number): void {
-		mkdirSync(join(build.output, ".."), { recursive: true });
-		writeFileSync(build.output, "");
-		utimesSync(build.output, seconds, seconds);
+	function writeOutput(build: Build, seconds: number, file = "loader.js"): void {
+		mkdirSync(build.output, { recursive: true });
+		const path = join(build.output, file);
+		writeFileSync(path, "");
+		utimesSync(path, seconds, seconds);
 	}
 
 	it("takes the source when the build output is missing", () => {
 		expect(selectProbeLoader([tree().build])).toBe("source");
+	});
+
+	it("takes the source when the build output directory is empty", () => {
+		const { build } = tree();
+		mkdirSync(build.output);
+		expect(selectProbeLoader([build])).toBe("source");
 	});
 
 	it("takes the build when its output is newer than every source", () => {
@@ -164,6 +185,14 @@ describe("selectProbeLoader", () => {
 		const { build, paths } = tree();
 		writeOutput(build, T + 10);
 		utimesSync(paths[1], T + 20, T + 20);
+		expect(selectProbeLoader([build])).toBe("source");
+	});
+
+	it("takes the source when the entry output is fresh but a sibling output is older than a source", () => {
+		const { build, paths } = tree();
+		writeOutput(build, T + 10);
+		writeOutput(build, T + 5, "sibling.js");
+		utimesSync(paths[1], T + 7, T + 7);
 		expect(selectProbeLoader([build])).toBe("source");
 	});
 
