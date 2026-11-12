@@ -212,6 +212,8 @@ describe("move_session checks the repository before the release (senpi#6435)", (
 	it.each([
 		["a relative folder", (f: Fixture) => ({ cwd: "work/repo", repository: { rootCommits: [f.root] } })],
 		["a repository that is not an object", (f: Fixture) => ({ cwd: f.repoB, repository: "same" })],
+		["a repository that is a list", (f: Fixture) => ({ cwd: f.repoB, repository: [] })],
+		["a repository that is a list of lists", (f: Fixture) => ({ cwd: f.repoB, repository: [["x"]] })],
 		["root commits that are not a list", (f: Fixture) => ({ cwd: f.repoB, repository: { rootCommits: f.root } })],
 		["a root commit that is not a string", (f: Fixture) => ({ cwd: f.repoB, repository: { rootCommits: [1] } })],
 		[
