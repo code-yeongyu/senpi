@@ -137,12 +137,23 @@ describe("a listed preference key", () => {
 		).toMatchObject({
 			success: true,
 		});
+		for (const [key, value] of [
+			["smoothStreamingFps", 120],
+			["editorPaddingX", 3],
+			["autocompleteMaxVisible", 20],
+		] as const)
+			expect(await write(local, session.sessionId, key, value)).toMatchObject({ success: true });
 		const invalid: Array<[string, unknown]> = [
 			["steeringMode", "sometimes"],
 			["hideThinkingBlock", "yes"],
 			["modelThinkingLevels", { "faux/faux-1": "loud" }],
 			["modelThinkingLevels", JSON.parse('{"__proto__": "high"}')],
 			["fullscreenWheelScrollLines", 1000],
+			["smoothStreamingFps", 10],
+			["smoothStreamingFps", 500],
+			["editorPaddingX", 4],
+			["autocompleteMaxVisible", 2],
+			["autocompleteMaxVisible", 21],
 			["markdown", { codeBlockIndent: "\u001b]0;x\u0007" }],
 			["markdown", { mermaid: "final", extra: true }],
 		];
@@ -155,6 +166,9 @@ describe("a listed preference key", () => {
 			steeringMode: "all",
 			defaultThinkingLevel: "high",
 			markdown: { codeBlockIndent: "\t", mermaid: "off" },
+			smoothStreamingFps: 120,
+			editorPaddingX: 3,
+			autocompleteMaxVisible: 20,
 		});
 	}, 60_000);
 });
@@ -184,6 +198,18 @@ describe("a write from another device follows the engine's existing origin rule"
 		const remote = await attachedPeer(session, await remotePeer(target));
 		expect(await write(remote, session.sessionId, "shellPath", "/bin/sh")).toMatchObject(NEEDS_PERMISSION);
 		expect(projectFile(session.path)).toBeUndefined();
+	}, 60_000);
+
+	it("refuses a cross-account device when the session's preset comes from settings with lower allow rules", async () => {
+		const { target, local } = await start({
+			settingsDefault: true,
+			agentSettings: { permissionPreset: "ask", permission: { edit: "allow", bash: "allow" } },
+		});
+		const session = await trustedSession(local);
+		const remote = await attachedPeer(session, await remotePeer(target));
+		expect(await write(remote, session.sessionId, "shellPath", "/bin/sh")).toMatchObject(NEEDS_PERMISSION);
+		expect(projectFile(session.path)).toBeUndefined();
+		expect(await write(local, session.sessionId, "shellPath", "/bin/sh")).toMatchObject({ success: true });
 	}, 60_000);
 
 	it("decides a same-account device as local", async () => {
