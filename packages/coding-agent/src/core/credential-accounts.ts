@@ -28,7 +28,7 @@ import {
 	isListedStoredSlot,
 	SENTINEL_OAUTH_FIELDS,
 } from "./extensions/builtin/anthropic-subscription/accounts.ts";
-import { isAccountBlocked } from "./extensions/builtin/anthropic-subscription/affinity.ts";
+import { isAccountBlocked, isLimitLiftedEarly } from "./extensions/builtin/anthropic-subscription/affinity.ts";
 import {
 	accountDirFor,
 	isValidAccountDirId,
@@ -239,7 +239,16 @@ function storedSlotBlock(provider: string, slot: object, now: number): SlotBlock
 	if (normalizeProviderId(provider) === "anthropic-subscription" && isForeignAuthBlock(slot)) return UNBLOCKED;
 	const skipped =
 		normalizeProviderId(provider) === "anthropic-subscription"
-			? isAccountBlocked({ blockedUntil }, now)
+			? isAccountBlocked({ blockedUntil }, now) &&
+				!isLimitLiftedEarly(
+					{
+						name: stringField(slot, "name") ?? "",
+						blockReason,
+						blockedAt: numberField(slot, "blockedAt"),
+						blockedUntil,
+					},
+					now,
+				)
 			: isSlotBlocked({ blockReason, blockedUntil }, now);
 	if (!skipped) return UNBLOCKED;
 	return {

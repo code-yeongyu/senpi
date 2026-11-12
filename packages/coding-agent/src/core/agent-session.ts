@@ -153,6 +153,8 @@ import {
 	trackTurnAdmission,
 } from "./continue-from-leaf.ts";
 import { accountCanServe, getCredentialAccounts } from "./credential-accounts.ts";
+import { subscriptionLimits } from "./subscription-limits/limit-store.ts";
+import { refreshSubscriptionUsage } from "./subscription-limits/usage-poller.ts";
 import { credentialRecoveryRevision } from "./credential-recovery-revision.ts";
 import { admitCursorHistory, cursorAdmissionBudgetBytes } from "./cursor-history-admission.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
@@ -6337,6 +6339,13 @@ export class AgentSession {
 						? await this._pooledAccountHealth(model.provider, model.id)
 						: undefined;
 				if (model && pool?.usable) this._retryFallback.releaseAccountHold(model.provider);
+				// A limit the provider lifted before the reset it stated shows in the account's usage: newer usage under its
+				// limits releases the hold for any turn. Only a person's turn reads usage early, at most once a minute per
+				// account, so a loop never probes a held account more often than the poll does (senpi#6536, senpi#3131).
+				if (model && !this._pendingModelSwitch && this._retryFallback.isProviderSpent(model.provider)) {
+					if (attributionOf(options) === "user") await refreshSubscriptionUsage(model.provider);
+					this._retryFallback.releaseAccountHoldShownServable(model.provider, subscriptionLimits.snapshot());
+				}
 				if (
 					model &&
 					!this._pendingModelSwitch &&
