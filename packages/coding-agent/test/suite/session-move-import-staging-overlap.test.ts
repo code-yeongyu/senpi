@@ -5,6 +5,7 @@
  * under the other. Each import attempt stages in a folder of its own, and removes only that folder.
  */
 import {
+	chmodSync,
 	cpSync,
 	existsSync,
 	mkdirSync,
@@ -14,6 +15,7 @@ import {
 	utimesSync,
 	writeFileSync,
 } from "node:fs";
+import { readdir } from "node:fs/promises";
 import { basename, dirname, join, sep } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getDefaultSessionDir, SessionManager } from "../../src/core/session-manager.ts";
@@ -235,4 +237,29 @@ describe("staging that imports which died left in a session folder (senpi#4016)"
 		expect(admittedInputs(landingOf(world))).toEqual(["queued follow-up"]);
 		expect(existsSync(left) ? readFileSync(left, "utf8") : "removed").toBe(leftBytes);
 	});
+
+	// senpi#6445's review: the sweep threw what listing another move's folder threw, and the import failed with it.
+	// A root process lists any folder, so the case cannot be made there (as in rpc-host-gc-removal.test.ts).
+	it.skipIf(process.getuid?.() === 0)(
+		"#given another move's staging folder in that session folder that cannot be listed #when a move is imported there #then the session lands and is answered as if nothing had been left, and that folder is not touched",
+		async () => {
+			const world = await setup();
+			const unreadable = join(stagingOf(world), "move-of-another");
+			mkdirSync(join(unreadable, "attempt-left"), { recursive: true });
+			chmodSync(unreadable, 0o000);
+			const listing = await readdir(unreadable).then(
+				() => "listed",
+				(error: unknown) => (error instanceof Error && "code" in error ? error.code : error),
+			);
+
+			const answer = await settled(importWith(world, world.ledger));
+			chmodSync(unreadable, 0o700);
+
+			expect(listing).toBe("EACCES");
+			expect(answer).toEqual({ value: { sessionFile: landingOf(world) } });
+			expect(await world.ledger.answerStatus(MOVE, { movedIn: false })).toEqual({ state: "accepted" });
+			expect(readdirSync(stagingOf(world))).toEqual(["move-of-another"]);
+			expect(readdirSync(unreadable)).toEqual(["attempt-left"]);
+		},
+	);
 });

@@ -29,15 +29,16 @@ export interface StagedBundle {
 const failedWith = (error: unknown, ...codes: readonly string[]): boolean =>
 	typeof error === "object" && error !== null && "code" in error && codes.some((code) => code === error.code);
 
-/** A staging folder's entries; none when it is not there, which another attempt's cleanup can make true at any time. */
-async function entriesOf(folder: string): Promise<string[]> {
-	try {
-		return (await readdir(folder)).map((name) => join(folder, name));
-	} catch (error) {
-		if (failedWith(error, "ENOENT", "ENOTDIR")) return [];
-		throw error;
-	}
-}
+/**
+ * A staging folder's entries; none when it cannot be listed. It may be gone, which another attempt's cleanup can make
+ * true at any time, or unreadable. The sweep removes clutter, so what it cannot list it leaves, as `discard` leaves
+ * what it cannot remove: a folder of another move must never decide what this import answers.
+ */
+const entriesOf = (folder: string): Promise<string[]> =>
+	readdir(folder).then(
+		(names) => names.map((name) => join(folder, name)),
+		() => [],
+	);
 
 /**
  * Staging is clutter once its attempt ended. A removal that fails leaves it for a later import's sweep and never
