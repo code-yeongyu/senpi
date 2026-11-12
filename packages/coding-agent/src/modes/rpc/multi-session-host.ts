@@ -25,6 +25,7 @@ import type { LaunchProofSource } from "./delegated-connection.ts";
 import { parseClientCapabilities } from "./custom-capability.ts";
 import { ClientOccupancy } from "./host-client-occupancy.ts";
 import { HostCoreGate, type HostCoreHooks } from "./host-core-gate.ts";
+import { answerLine } from "./host-line-answer.ts";
 import { bindRegisteredEndpoint } from "./host-bare-endpoint-registration.ts";
 import { createHostDaemonPaths } from "./host-daemon-paths.ts";
 import { ENDPOINT_OWNER_FENCE_CAPABILITY, GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
@@ -274,9 +275,7 @@ export function createHostCore(
 			return;
 		}
 		const command = parsed as RpcCommand;
-		const response = await gate.dispatch(withOpenRetention(command, delegated, machineOwned));
-		if (response) await writer.enqueueControl(response);
-		writer.delegations.lineAnswered(connection);
+		await answerLine(writer, connection, gate, withOpenRetention(command, delegated, machineOwned));
 	};
 	return {
 		router,
