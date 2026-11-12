@@ -529,6 +529,40 @@ describe("schedule runner", () => {
 	);
 
 	it.skipIf(process.platform === "win32")(
+		"keeps a dead runner's lock while its live delivery runs, even when the lock's boot instant predates a clock step",
+		async () => {
+			const dir = await tempScheduleDir();
+			const exited = (child: ReturnType<typeof spawn>) =>
+				new Promise<void>((resolve) => child.once("exit", () => resolve()));
+			const gone = spawn("/usr/bin/true");
+			await exited(gone);
+			const delivery = spawn("/bin/sleep", ["60"], { detached: true, stdio: "ignore" });
+			const deliveryExited = exited(delivery);
+			const startedAt = 1_700_000_000_000;
+			const lockFile = join(dir, "sessions", `${encodeURIComponent("session-a")}.lock`);
+			// A wall-clock step moved the boot instant 10 minutes after the lock was written; the delivery leader is the
+			// same live process, so its start time (and nothing else) decides.
+			await writeAtomic(
+				lockFile,
+				JSON.stringify({
+					pid: gone.pid,
+					bootAtMs: (await processBootAtMs()) - 600_000,
+					processStartedAtMs: 1,
+					deliveryPid: delivery.pid,
+					deliveryStartedAtMs: startedAt,
+				}),
+			);
+			const probes = { readProcessStartMs: async () => startedAt };
+
+			const whileRunning = await acquireSessionDeliveryLock(dir, "session-a", probes);
+			process.kill(-(delivery.pid ?? 0), "SIGKILL");
+			await deliveryExited;
+
+			expect(whileRunning).toEqual({ acquired: false, heldByPid: delivery.pid });
+		},
+	);
+
+	it.skipIf(process.platform === "win32")(
 		"reports a timed-out delivery only after its process has exited, and names it on spawn",
 		async () => {
 			const spawned: number[] = [];

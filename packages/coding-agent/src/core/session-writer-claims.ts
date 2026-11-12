@@ -11,6 +11,12 @@ import {
 	ownProcessStartedAtMs,
 	sameBoot,
 } from "./extensions/builtin/terminal/process-identity.ts";
+import {
+	ownProcessKey,
+	type ProcessKeyReader,
+	readProcessKey,
+	sameProcessKey,
+} from "./extensions/builtin/terminal/process-key.ts";
 import { readProcessStartMs } from "./extensions/builtin/terminal/process-start-probe.ts";
 import { encodedSessionId } from "./session-sidecar-store.ts";
 
@@ -25,6 +31,8 @@ export interface WriterClaim {
 	readonly pid: number;
 	readonly bootAtMs: number;
 	readonly processStartedAtMs: number;
+	/** The writer's step-invariant identity (`process-key.ts`), when its platform has one. */
+	readonly processKey?: string;
 	readonly canonicalPath: string;
 }
 
@@ -34,6 +42,8 @@ export interface WriterProbes {
 	readonly bootAtMs: OwnBootReader;
 	readonly host: () => string;
 	readonly self: () => { readonly pid: number; readonly processStartedAtMs: number };
+	/** The step-invariant key of a pid's process (`process-key.ts`); absent probes fall back to start times alone. */
+	readonly readProcessKey?: ProcessKeyReader;
 }
 
 export class SessionWriterBusyError extends Error {
@@ -66,6 +76,7 @@ export const realWriterProbes: WriterProbes = {
 	readProcessStartMs,
 	bootAtMs: ownBootAtMs,
 	host: () => hostname(),
+	readProcessKey: (pid) => (pid === process.pid ? ownProcessKey() : readProcessKey(pid)),
 	self: () => ({ pid: process.pid, processStartedAtMs: ownProcessStartedAtMs() }),
 };
 
@@ -90,6 +101,7 @@ export async function acquireWriterClaim(
 	if (current !== undefined && !(await ownerGone(dir, current, probes, bootAtMs)))
 		throw new SessionWriterBusyError(current);
 	const self = probes.self();
+	const processKey = await probes.readProcessKey?.(self.pid);
 	const claim: WriterClaim = {
 		generation: (current?.generation ?? 0) + 1,
 		nonce: randomUUID(),
@@ -97,6 +109,7 @@ export async function acquireWriterClaim(
 		pid: self.pid,
 		bootAtMs,
 		processStartedAtMs: self.processStartedAtMs,
+		...(processKey === undefined ? {} : { processKey }),
 		canonicalPath,
 	};
 	try {
@@ -145,7 +158,10 @@ async function ownerGone(dir: string, claim: WriterClaim, probes: WriterProbes, 
 	// A writer on another host (a shared or network directory) cannot be probed from here: never displace it.
 	if (claim.host !== probes.host()) return false;
 	if (!probes.pidAlive(claim.pid)) return true;
-	// A live pid is judged by its start time first: a wall-clock step moves the kernel's recorded boot instant, so a live
+	// A step-invariant key decides exactly where both sides have one: another key is a reboot or a reused pid.
+	const byKey = sameProcessKey(claim.processKey, await probes.readProcessKey?.(claim.pid));
+	if (byKey !== undefined) return !byKey;
+	// Without keys a live pid is judged by its start time first: a wall-clock step moves the kernel's recorded boot instant, so a live
 	// writer whose claim predates the step reads as another boot while its pid and start time still match.
 	const startedAtMs = await probes.readProcessStartMs(claim.pid);
 	if (startedAtMs !== undefined) return Math.abs(startedAtMs - claim.processStartedAtMs) > BOOT_INSTANT_TOLERANCE_MS;
@@ -206,6 +222,7 @@ function parseClaim(raw: string, dir: string): WriterClaim {
 		pid: parsed.pid,
 		bootAtMs: parsed.bootAtMs,
 		processStartedAtMs: parsed.processStartedAtMs,
+		...("processKey" in parsed && typeof parsed.processKey === "string" ? { processKey: parsed.processKey } : {}),
 		canonicalPath: parsed.canonicalPath,
 	};
 }

@@ -21,6 +21,7 @@ import {
 	unlinkIfPresent,
 } from "./extensions/builtin/terminal/lease-file.ts";
 import { ownProcessStartedAtMs, processBootAtMs } from "./extensions/builtin/terminal/process-identity.ts";
+import { withOwnProcessKey } from "./extensions/builtin/terminal/process-key.ts";
 import {
 	SessionHeldError,
 	type SessionHolder,
@@ -72,17 +73,18 @@ export interface HolderRecord extends Partial<SessionHolderEndpoint> {
 	readonly pid: number;
 	readonly bootAtMs: number;
 	readonly processStartedAtMs: number;
+	readonly processKey?: string;
 	readonly cwd?: string;
 }
 
 async function identityRecord(cwd?: string, endpoint?: SessionHolderEndpoint): Promise<string> {
-	const record: HolderRecord = {
+	const record: HolderRecord = await withOwnProcessKey({
 		pid: process.pid,
 		bootAtMs: await processBootAtMs(),
 		processStartedAtMs: ownProcessStartedAtMs(),
 		...(cwd === undefined ? {} : { cwd }),
 		...endpoint,
-	};
+	});
 	return JSON.stringify(record);
 }
 

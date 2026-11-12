@@ -79,7 +79,7 @@ describe("same-host liveness after a wall-clock step", () => {
 		const world = { alive: new Set<number>(), starts: new Map<number, number>() };
 		const probes = movedProbes(world);
 		const probe = residentWriterProbe(probes);
-		// A writer from another boot: the first poll checks it against a fresh read, then records it gone.
+		// A writer from another boot whose pid is dead: the dead pid alone records it gone, so no poll reads a boot record.
 		const writer: ResidentWriter = { host: "host-a", pid: 100, bootAtMs: 50, processStartedAtMs: 1_000 };
 
 		const verdicts: boolean[] = [];
@@ -87,8 +87,32 @@ describe("same-host liveness after a wall-clock step", () => {
 
 		expect({ verdicts, freshReads: probes.freshReads() }).toEqual({
 			verdicts: [false, false, false, false, false],
-			freshReads: 1,
+			freshReads: 0,
 		});
+	});
+
+	it("re-checks a verified live resident writer by its pid alone, with no boot or start read per poll", async () => {
+		const reads = { boot: 0, start: 0 };
+		const probes: WriterProbes = {
+			host: () => "host-a",
+			pidAlive: () => true,
+			readProcessStartMs: async () => {
+				reads.start += 1;
+				return 1_000;
+			},
+			bootAtMs: async () => {
+				reads.boot += 1;
+				return 50;
+			},
+			self: () => ({ pid: 200, processStartedAtMs: 2_000 }),
+		};
+		const probe = residentWriterProbe(probes);
+		const writer: ResidentWriter = { host: "host-a", pid: 100, bootAtMs: 50 - STEP_MS, processStartedAtMs: 1_000 };
+
+		const verdicts: boolean[] = [];
+		for (let poll = 0; poll < 5; poll += 1) verdicts.push(await probe(writer));
+
+		expect({ verdicts, reads }).toEqual({ verdicts: [true, true, true, true, true], reads: { boot: 0, start: 1 } });
 	});
 
 	it("holds a reclaim lock whose live holder predates the step, and frees one whose holder is dead", async () => {

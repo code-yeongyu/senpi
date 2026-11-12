@@ -22,6 +22,7 @@ import {
 	sameBootAsOwn,
 	sameProcessStart,
 } from "../terminal/process-identity.ts";
+import { type ProcessKeyReader, readProcessKey, sameProcessKey, withOwnProcessKey } from "../terminal/process-key.ts";
 import { readProcessStartMs } from "../terminal/process-start-probe.ts";
 import { type RunnerIdentity, runnersDir } from "./store.ts";
 
@@ -50,7 +51,7 @@ export async function writeRunnerLease(
 ): Promise<void> {
 	await mkdir(runnersDir(dir), { recursive: true, mode: 0o700 });
 	const bootAtMs = await processBootAtMs();
-	const identity = ownRunnerIdentity();
+	const identity = await withOwnProcessKey(ownRunnerIdentity());
 	await publishReplace(
 		leasePath(dir, identity.pid),
 		JSON.stringify({ ...identity, bootAtMs, beatAt: now, ...lease }),
@@ -148,6 +149,7 @@ export function isDeliveryGroupAlive(pid: number): boolean {
 
 export interface LockProbes {
 	readonly readProcessStartMs?: (pid: number) => Promise<number | undefined>;
+	readonly readProcessKey?: ProcessKeyReader;
 }
 
 function isPidAlive(pid: number): boolean {
@@ -178,9 +180,12 @@ async function orphanedDelivery(raw: string, lockAgeMs: number, probes: LockProb
 	const field = (key: string): unknown => (key in parsed ? Reflect.get(parsed, key) : undefined);
 	const pid = field("deliveryPid");
 	const startedAt = field("deliveryStartedAtMs");
-	// A live leader whose start time reads is judged by it first: a wall-clock step moves the kernel's recorded boot
-	// instant, so a delivery recorded before the step reads as another boot while its leader is the same process.
+	// A live leader is judged by its step-invariant key where both sides have one, else by its start time: a wall-clock
+	// step moves the kernel's recorded boot instant, so a delivery recorded before the step reads as another boot while
+	// its leader is the same process.
 	if (typeof pid === "number" && typeof startedAt === "number" && isPidAlive(pid)) {
+		const byKey = sameProcessKey(field("deliveryKey"), await (probes.readProcessKey ?? readProcessKey)(pid));
+		if (byKey !== undefined) return byKey ? pid : undefined;
 		const leaderStart = await (probes.readProcessStartMs ?? readProcessStartMs)(pid).catch(() => undefined);
 		if (leaderStart !== undefined) return sameProcessStart(startedAt, leaderStart) ? pid : undefined;
 	}
@@ -215,13 +220,13 @@ export async function acquireSessionDeliveryLock(
 ): Promise<SessionDeliveryLock> {
 	const probes = options;
 	const path = sessionLockPath(dir, sessionId);
-	const identity = {
+	const identity = await withOwnProcessKey({
 		pid: process.pid,
 		bootAtMs: await processBootAtMs(),
 		processStartedAtMs: ownProcessStartedAtMs(),
 		gated: options.gated ?? process.platform !== "win32",
 		maxDeliveryMs: options.maxDeliveryMs ?? DEFAULT_MAX_DELIVERY_MS,
-	};
+	});
 	let mine = JSON.stringify(identity);
 	for (let attempt = 0; attempt < 3; attempt += 1) {
 		try {
@@ -238,8 +243,14 @@ export async function acquireSessionDeliveryLock(
 					serialized(async () => {
 						// The runner spawned it a moment ago; `ps` may not list a just-forked process yet.
 						const startedAt = Math.floor(Date.now() / 1000) * 1000;
+						const deliveryKey = await (probes.readProcessKey ?? readProcessKey)(pid);
 						if ((await readLeaseText(path)) !== mine) throw new Error("session delivery lock was lost");
-						const next = JSON.stringify({ ...identity, deliveryPid: pid, deliveryStartedAtMs: startedAt });
+						const next = JSON.stringify({
+							...identity,
+							deliveryPid: pid,
+							deliveryStartedAtMs: startedAt,
+							...(deliveryKey === undefined ? {} : { deliveryKey }),
+						});
 						await publishReplace(path, next, PRIVATE);
 						mine = next;
 					}),
