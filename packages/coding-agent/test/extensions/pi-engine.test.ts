@@ -105,7 +105,8 @@ function walk(path: string, links: string[]): string[] {
  * The walk skips symbolic links: a link is neither descended into nor counted, so neither it nor its target adds an
  * mtime. Following them let a link loop recurse without end and let a target outside the sources, which the build
  * never compiles, make a fresh build look stale. The cost: an edit behind a link under the sources is not seen as a
- * newer source, so the skipped links are returned in `skippedLinks` and the probe logs them.
+ * newer source, so the skipped links are returned in `skippedLinks` and the probe logs them. A package whose walk
+ * finds no source file (its sources root is itself a link) has nothing to prove fresh against, so it answers "source".
  */
 function selectProbeLoader(builds: readonly Build[]): ProbeLoader {
 	const links: string[] = [];
@@ -114,6 +115,9 @@ function selectProbeLoader(builds: readonly Build[]): ProbeLoader {
 	for (const build of builds) {
 		if (!existsSync(build.entry)) return answer({ loader: "source", reason: `missing ${build.entry}` });
 		const sources = walk(build.sources, links).map((path) => ({ path, mtimeMs: statSync(path).mtimeMs }));
+		if (sources.length === 0) {
+			return answer({ loader: "source", reason: `no source files under ${build.sources}` });
+		}
 		const newest = sources.reduce((a, b) => (b.mtimeMs > a.mtimeMs ? b : a));
 		const stale = (output: string): ProbeLoader =>
 			answer({ loader: "source", reason: `${output} is not newer than ${newest.path}` });
@@ -285,6 +289,18 @@ describe("selectProbeLoader", () => {
 			expect(selectProbeLoader([build])).toEqual({ loader: "built", skippedLinks: [link] });
 		},
 	);
+
+	it("takes the source, without throwing, when the sources root is itself a symbolic link", { timeout: 5_000 }, () => {
+		const { root, build } = tree();
+		writeBuild(build, T + 10);
+		const sources = join(root, "linked-src");
+		symlinkSync(build.sources, sources, "dir");
+		expect(selectProbeLoader([{ ...build, sources }])).toEqual({
+			loader: "source",
+			reason: `no source files under ${sources}`,
+			skippedLinks: [sources],
+		});
+	});
 });
 
 describe("pi.engine (omo#12965, T-F)", () => {
