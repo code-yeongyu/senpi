@@ -22,7 +22,14 @@ import {
 	sameBootAsOwn,
 	sameProcessStart,
 } from "../terminal/process-identity.ts";
-import { type ProcessKeyReader, readProcessKey, sameProcessKey, withOwnProcessKey } from "../terminal/process-key.ts";
+import {
+	ownProcessKey,
+	type ProcessKeyReader,
+	readProcessKey,
+	sameBootByKey,
+	sameProcessKey,
+	withOwnProcessKey,
+} from "../terminal/process-key.ts";
 import { readProcessStartMs } from "../terminal/process-start-probe.ts";
 import { type RunnerIdentity, runnersDir } from "./store.ts";
 
@@ -184,14 +191,22 @@ async function orphanedDelivery(raw: string, lockAgeMs: number, probes: LockProb
 	// step moves the kernel's recorded boot instant, so a delivery recorded before the step reads as another boot while
 	// its leader is the same process.
 	if (typeof pid === "number" && typeof startedAt === "number" && isPidAlive(pid)) {
-		const byKey = sameProcessKey(field("deliveryKey"), await (probes.readProcessKey ?? readProcessKey)(pid));
+		const deliveryKey = field("deliveryKey");
+		const byKey =
+			typeof deliveryKey === "string"
+				? sameProcessKey(deliveryKey, await (probes.readProcessKey ?? readProcessKey)(pid))
+				: undefined;
 		if (byKey !== undefined) return byKey ? pid : undefined;
 		const leaderStart = await (probes.readProcessStartMs ?? readProcessStartMs)(pid).catch(() => undefined);
 		if (leaderStart !== undefined) return sameProcessStart(startedAt, leaderStart) ? pid : undefined;
 	}
-	// Without that, the boot instant decides: a process group or pid alive in another boot is someone else's.
+	// Without that, the lock must come from this boot: a process group or pid alive in another boot is someone else's.
+	// The boot id in the runner's key decides where the lock carries one (it does not move with a clock step, so a
+	// leader that died while its descendants still deliver keeps the lock across a step); else the boot instant.
+	const byBootId = sameBootByKey(field("processKey"), await ownProcessKey());
 	const boot = field("bootAtMs");
-	if (typeof boot !== "number" || !(await sameBootAsOwn(boot))) return undefined;
+	if (byBootId === false) return undefined;
+	if (byBootId === undefined && (typeof boot !== "number" || !(await sameBootAsOwn(boot)))) return undefined;
 	if (typeof pid !== "number" || typeof startedAt !== "number") {
 		const maxDeliveryMs = field("maxDeliveryMs");
 		const runner = field("pid");

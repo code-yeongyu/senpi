@@ -72,7 +72,10 @@ export function residentWriterProbe(
 		// A step-invariant key decides exactly where both sides have one. Without keys a live pid is judged by its start
 		// time first (a wall-clock step moves the boot instant), and the boot instant only when the start time is
 		// unreadable; that read is checked against a fresh one, since a step makes the cached record stale.
-		const byKey = sameProcessKey(writer.processKey, await probes.readProcessKey?.(writer.pid));
+		const byKey =
+			writer.processKey === undefined
+				? undefined
+				: sameProcessKey(writer.processKey, await probes.readProcessKey?.(writer.pid));
 		const startedAtMs = byKey === undefined ? await probes.readProcessStartMs(writer.pid) : undefined;
 		const sameProcess =
 			byKey ??

@@ -3,24 +3,36 @@
  *
  * The millisecond start instant compared elsewhere is derived on Linux from `/proc/stat` btime, and btime moves with
  * every clock step, so a live process recorded before a step reads as a reused pid after it. A process key is
- * `<boot>:<start>` from values the kernel stores and never rewrites:
- * - Linux: `/proc/sys/kernel/random/boot_id` and the start time in clock ticks since boot (`/proc/<pid>/stat`).
+ * `<boot>:<view>:<start>` from values the kernel stores and never rewrites:
+ * - Linux: `/proc/sys/kernel/random/boot_id`, the reader's time namespace, and the start time in clock ticks since boot
+ *   (`/proc/<pid>/stat`). Since kernel 5.6 those ticks are reported in the READER's time namespace, so two readers in
+ *   different time namespaces (a CRIU-restored or `unshare -T` process) compute different keys for one live process.
+ *   The view part names the namespace, and keys from different views are not compared (the millisecond rule decides).
  * - macOS: `kern.bootsessionuuid` and `p_starttime` as `ps -o lstart=` prints it in UTC; that instant is stored at fork,
- *   so a later step does not change it (1 s resolution, compared exactly).
+ *   so a later step does not change it. The resolution is 1 s, which is safe because XNU hands out pids sequentially up
+ *   to 99,999 before wrapping: reusing one pid within the same second would take about 100,000 forks in that second.
  * - Elsewhere: none; callers fall back to the millisecond rule.
- * Two keys are compared exactly: equal is the same process, different is another one (a reboot changes the boot half).
+ * Two keys from the same view are compared exactly: equal is the same process, different is another one (a reboot
+ * changes the boot half).
  */
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readFile, readlink } from "node:fs/promises";
 
 type KeyPlatform = NodeJS.Platform;
 
 let ownBootId: Promise<string | undefined> | undefined;
 
 async function readBootId(platform: KeyPlatform): Promise<string | undefined> {
-	if (platform === "linux") return (await readFile("/proc/sys/kernel/random/boot_id", "utf8")).trim() || undefined;
-	if (platform === "darwin")
-		return (await run("/usr/sbin/sysctl", ["-n", "kern.bootsessionuuid"])).trim() || undefined;
+	if (platform === "linux") {
+		const boot = (await readFile("/proc/sys/kernel/random/boot_id", "utf8")).trim();
+		// No time namespace (kernels before 5.6) is the host's own view.
+		const view = await readlink("/proc/self/ns/time").catch(() => "host");
+		return boot.length > 0 ? `${boot}:${view.replace(/[^0-9A-Za-z]/g, "")}` : undefined;
+	}
+	if (platform === "darwin") {
+		const boot = (await run("/usr/sbin/sysctl", ["-n", "kern.bootsessionuuid"])).trim();
+		return boot.length > 0 ? `${boot}:host` : undefined;
+	}
 	return undefined;
 }
 
@@ -95,7 +107,21 @@ export function ownProcessKey(): Promise<string | undefined> {
  */
 export function sameProcessKey(recorded: unknown, observed: string | undefined): boolean | undefined {
 	if (typeof recorded !== "string" || recorded.length === 0 || observed === undefined) return undefined;
+	const [recordedBoot, recordedView] = recorded.split(":");
+	const [observedBoot, observedView] = observed.split(":");
+	// Another boot is another process, whatever the view; another view on this boot cannot be compared.
+	if (recordedBoot !== observedBoot) return false;
+	if (recordedView !== observedView) return undefined;
 	return recorded === observed;
+}
+
+/**
+ * Whether a key was recorded on this machine's current boot: `undefined` when either key is missing, so the caller
+ * falls back to the boot instant. Unlike the boot instant, the boot id does not move with a wall-clock step.
+ */
+export function sameBootByKey(recorded: unknown, own: string | undefined): boolean | undefined {
+	if (typeof recorded !== "string" || recorded.length === 0 || own === undefined) return undefined;
+	return recorded.split(":")[0] === own.split(":")[0];
 }
 
 export async function withOwnProcessKey<T extends object>(record: T): Promise<T & { processKey?: string }> {

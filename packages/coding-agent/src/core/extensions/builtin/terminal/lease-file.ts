@@ -162,12 +162,21 @@ export async function reclaimLockState(lock: string, probes: LockProbes = {}): P
 	}
 	if (!(probes.isProcessAlive ?? pidAlive)(holder.pid)) return { state: "stale", raw };
 	// A step-invariant key decides exactly where both sides have one: the same key is the same process whatever the
-	// clock did, another key (a reboot or a reused pid) is someone else.
-	const byKey = sameProcessKey(holder.processKey, await (probes.readProcessKey ?? readProcessKey)(holder.pid));
-	if (byKey !== undefined) return byKey ? { state: "held", holder } : { state: "stale", raw };
+	// clock did, another key (a reboot or a reused pid) is someone else. A record without a key costs no key read.
+	const readStart = probes.readProcessStartMs ?? defaultReadProcessStartMs;
+	if (holder.processKey !== undefined) {
+		const byKey = sameProcessKey(holder.processKey, await (probes.readProcessKey ?? readProcessKey)(holder.pid));
+		if (byKey === false) return { state: "stale", raw };
+		if (byKey === true) {
+			// The start-time probe still runs for a live holder: callers learn its start through it (the session-held
+			// check recognises this daemon's own previous generation by it).
+			await readStart(holder.pid).catch(() => undefined);
+			return { state: "held", holder };
+		}
+	}
 	// A live pid is judged by its start time first: a wall-clock step moves the kernel's recorded boot instant, so a live
 	// holder whose record predates the step reads as another boot while its pid and start time still match.
-	const observed = await (probes.readProcessStartMs ?? defaultReadProcessStartMs)(holder.pid).catch(() => undefined);
+	const observed = await readStart(holder.pid).catch(() => undefined);
 	if (observed !== undefined)
 		return sameProcessStart(holder.processStartedAtMs, observed)
 			? { state: "held", holder }

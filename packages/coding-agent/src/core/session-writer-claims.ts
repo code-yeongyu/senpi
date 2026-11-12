@@ -159,7 +159,10 @@ async function ownerGone(dir: string, claim: WriterClaim, probes: WriterProbes, 
 	if (claim.host !== probes.host()) return false;
 	if (!probes.pidAlive(claim.pid)) return true;
 	// A step-invariant key decides exactly where both sides have one: another key is a reboot or a reused pid.
-	const byKey = sameProcessKey(claim.processKey, await probes.readProcessKey?.(claim.pid));
+	const byKey =
+		claim.processKey === undefined
+			? undefined
+			: sameProcessKey(claim.processKey, await probes.readProcessKey?.(claim.pid));
 	if (byKey !== undefined) return !byKey;
 	// Without keys a live pid is judged by its start time first: a wall-clock step moves the kernel's recorded boot instant, so a live
 	// writer whose claim predates the step reads as another boot while its pid and start time still match.

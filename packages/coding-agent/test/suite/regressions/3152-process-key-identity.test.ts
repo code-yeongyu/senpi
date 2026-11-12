@@ -5,7 +5,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { reclaimLockState } from "../../../src/core/extensions/builtin/terminal/lease-file.ts";
 import { processBootAtMs } from "../../../src/core/extensions/builtin/terminal/process-identity.ts";
-import { ownProcessKey, readProcessKey } from "../../../src/core/extensions/builtin/terminal/process-key.ts";
+import {
+	ownProcessKey,
+	readProcessKey,
+	sameProcessKey,
+} from "../../../src/core/extensions/builtin/terminal/process-key.ts";
 import { readProcessStartMs } from "../../../src/core/extensions/builtin/terminal/process-start-probe.ts";
 
 // senpi#3152 / #6562: on Linux the start instant compared before was `/proc/stat btime + start ticks`, and btime moves
@@ -102,5 +106,27 @@ describe.runIf(process.platform === "linux")("liveness across a wall-clock step 
 		});
 
 		expect((await reclaimLockState(lock)).state).toBe("stale");
+	});
+});
+
+describe("comparing process keys", () => {
+	it("compares keys exactly within one view, never across time namespaces, and never matches another boot", () => {
+		expect({
+			same: sameProcessKey("boot-a:time1:100", "boot-a:time1:100"),
+			reusedPid: sameProcessKey("boot-a:time1:100", "boot-a:time1:250"),
+			otherBoot: sameProcessKey("boot-a:time1:100", "boot-b:time1:100"),
+			otherView: sameProcessKey("boot-a:time1:100", "boot-a:time2:999"),
+			unkeyed: sameProcessKey(undefined, "boot-a:time1:100"),
+		}).toEqual({ same: true, reusedPid: false, otherBoot: false, otherView: undefined, unkeyed: undefined });
+	});
+
+	it("reads no process key for a holder record that carries none", async () => {
+		const pid = liveChild();
+		const lock = await lockWith({ pid, bootAtMs: await processBootAtMs(), processStartedAtMs: 1 });
+		const readProcessKeySpy = vi.fn(async () => "boot-a:time1:1");
+
+		await reclaimLockState(lock, { readProcessKey: readProcessKeySpy, readProcessStartMs: async () => 1 });
+
+		expect(readProcessKeySpy).not.toHaveBeenCalled();
 	});
 });
