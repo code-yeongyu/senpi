@@ -52,7 +52,16 @@ import { STEER_WHEN_IDLE_CAPABILITY, USER_ACTIVITY_CAPABILITY } from "./rpc-type
 import {
 	MOVE_SESSION_CAPABILITY,
 	MOVE_SESSION_COPY_CAPABILITY,
+	MOVE_SESSION_EXPORT_INLINE_CAPABILITY,
+	MOVE_SESSION_IDENTITY_CAPABILITY,
+	MOVE_SESSION_IMPORT_FILES_CAPABILITY,
+	MOVE_SESSION_IMPORT_OPEN_CAPABILITY,
+	MOVE_SESSION_IMPORT_SESSION_DIR_CAPABILITY,
+	MOVE_SESSION_INLINE_MAX_BYTES_CAPABILITY,
+	MOVE_SESSION_PREPARE_REPOSITORY_CAPABILITY,
 	MOVE_SESSION_REVOKE_CAPABILITY,
+	MOVE_SESSION_STATUS_LANDED_PATH_CAPABILITY,
+	MOVE_SESSION_STATUS_LANDING_CAPABILITY,
 } from "./session-move-wire.ts";
 
 /** `unload_session` and `session_parked.reason` (senpi#3225). */
@@ -148,6 +157,19 @@ export function multiSessionHostCapabilities(options: {
 			MOVE_SESSION_CAPABILITY,
 			MOVE_SESSION_REVOKE_CAPABILITY,
 			MOVE_SESSION_COPY_CAPABILITY,
+			// A move's bundle travels inside the move answers, and an import lands and opens where the caller says (senpi#6267).
+			MOVE_SESSION_EXPORT_INLINE_CAPABILITY,
+			MOVE_SESSION_IMPORT_FILES_CAPABILITY,
+			MOVE_SESSION_IMPORT_SESSION_DIR_CAPABILITY,
+			MOVE_SESSION_IMPORT_OPEN_CAPABILITY,
+			MOVE_SESSION_INLINE_MAX_BYTES_CAPABILITY,
+			// ...and answers a session's or a folder's recorded repository, and checks it before a release (senpi#6435).
+			MOVE_SESSION_IDENTITY_CAPABILITY,
+			MOVE_SESSION_PREPARE_REPOSITORY_CAPABILITY,
+			// ...and says where an accepted move landed (senpi#6436).
+			MOVE_SESSION_STATUS_LANDED_PATH_CAPABILITY,
+			// ...and a `status` that names where the move would have landed is answered from the file there first.
+			MOVE_SESSION_STATUS_LANDING_CAPABILITY,
 			// A host session asks the client that offers it to continue the session elsewhere (`host_request`).
 			SESSION_RELOCATION_CAPABILITY,
 			SESSION_CONTEXT_CAPABILITY,

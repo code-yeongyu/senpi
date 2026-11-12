@@ -986,7 +986,7 @@ export function buildSessionContext(
  * Compute the default session directory for a cwd.
  * Encodes cwd into a safe directory name under ~/.senpi/agent/sessions/.
  */
-function getDefaultSessionDirPath(cwd: string, agentDir: string = getDefaultAgentDir()): string {
+export function getDefaultSessionDirPath(cwd: string, agentDir: string = getDefaultAgentDir()): string {
 	const resolvedCwd = resolvePath(cwd);
 	const resolvedAgentDir = resolvePath(agentDir);
 	const safePath = `--${resolvedCwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;

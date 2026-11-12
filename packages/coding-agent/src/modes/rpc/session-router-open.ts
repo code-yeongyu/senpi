@@ -18,7 +18,7 @@ import { code, detail, error } from "./session-router-errors.ts";
 import { sweepDrain } from "./session-router-occupancy.ts";
 import { openSessionFolder } from "./open-session-folder.ts";
 import { invalidSpawnedBy, validatedOpenProfile } from "./session-router-open-profile.ts";
-import { holdOpenConnection, ownOpen, publishOpen, replyOpen } from "./session-router-open-result.ts";
+import { holdOpenConnection, type OpenReplyAs, ownOpen, publishOpen, replyOpen } from "./session-router-open-result.ts";
 import { closePark } from "./session-router-park.ts";
 import { relocationConnection } from "./session-router-relocation.ts";
 import { syncRetainedRecord } from "./session-router-residency.ts";
@@ -27,10 +27,11 @@ import { liveToolMediaScope, toolMediaPersister } from "./tool-media-store.ts";
 export function openWithBarrier(
 	host: RouterContext,
 	command: Extract<RpcCommand, { type: "open_session" }>,
+	replyAs?: OpenReplyAs,
 ): Promise<RpcResponse | undefined> {
 	if (compactUpdatesEnabled() && command.admissionId !== undefined)
 		return compactOpen(host, command, (accept, signal) => openPhysicalWithBarrier(host, command, accept, signal));
-	return openPhysicalWithBarrier(host, command);
+	return openPhysicalWithBarrier(host, command, undefined, undefined, replyAs);
 }
 
 function openPhysicalWithBarrier(
@@ -38,9 +39,10 @@ function openPhysicalWithBarrier(
 	command: Extract<RpcCommand, { type: "open_session" }>,
 	accept?: OpenAcceptance,
 	signal?: AbortSignal,
+	replyAs?: OpenReplyAs,
 ): Promise<RpcResponse | undefined> {
 	const owner = host.writer.currentConnection();
-	if (owner === undefined) return open(host, command);
+	if (owner === undefined) return open(host, command, undefined, { replyAs });
 	// Every open already accepted anywhere on this host, not just on this connection: the
 	// in-process runtime serves them on ONE loop, so the wait this caller faces is the total.
 	let inFlight = 0;
@@ -55,7 +57,7 @@ function openPhysicalWithBarrier(
 			position: inFlight + 1,
 			in_flight: inFlight,
 		});
-	const start = () => open(host, command, owner, accept === undefined ? undefined : { accept, signal });
+	const start = () => open(host, command, owner, accept === undefined ? { replyAs } : { accept, signal });
 	// A late open's physical session is released by its admission (the accept/rollback path, 4272-admission-
 	// abandonment), so the late response itself owns nothing to release here.
 	const opened = signal === undefined ? start() : runAdmissionProducer(signal, start, async () => {});
@@ -85,6 +87,8 @@ export async function open(
 		readonly signal?: AbortSignal;
 		readonly defaults?: boolean;
 		readonly contextOverlay?: HandoverParkedEntry["contextOverlay"];
+		/** The reply is another command's answer: see `OpenReplyAs`. */
+		readonly replyAs?: OpenReplyAs;
 		/** An invisible speculative open, published only when its ledger hands it to a caller. */
 		readonly park?: (opened: OpenRpcSession) => void;
 	},
@@ -225,7 +229,14 @@ export async function open(
 			return undefined;
 		}
 		timer.mark("reply");
-		replyOpen(host, opened, entry, command, options?.reply !== false);
+		replyOpen(
+			host,
+			opened,
+			entry,
+			options?.replyAs?.command ?? command,
+			options?.reply !== false,
+			options?.replyAs?.data,
+		);
 		return undefined;
 	} catch (cause) {
 		if (opened) {
