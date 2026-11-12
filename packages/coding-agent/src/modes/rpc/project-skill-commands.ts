@@ -4,16 +4,17 @@
  *
  * Only a listed skill's own file is reachable, and only while it lies inside the session folder: its path is taken
  * relative to the folder and resolved segment by segment with `lstat`, so a skill reached through a folder link or a
- * file link that leaves the folder (or a skill that lives elsewhere, like a global one) is refused. A file whose real
- * path lies in the agent dir is global config and refused too, whatever the session folder is. Reading runs
- * nothing, so trust does not gate it; a write names the version it replaces and passes `project-write-gate.ts`.
+ * file link that leaves the folder (or a skill that lives elsewhere, like a global one) is refused. A file whose
+ * real path lies in the agent dir or in any user-global skill root the engine loads (`~/.agents/skills`, a selected
+ * root) is user-global configuration and refused too, whatever the session folder is. Reading runs nothing, so
+ * trust does not gate it; a write names the version it replaces and passes `project-write-gate.ts`.
  */
 
 import { realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, sep } from "node:path";
 import type { AgentSession } from "../../core/agent-session.ts";
 import {
-	insideAgentDir,
+	insideUserGlobalRoots,
 	PROJECT_FILE_MAX_BYTES,
 	type ProjectFilePath,
 	resolveProjectFile,
@@ -86,7 +87,10 @@ async function readSkillState(
 ): Promise<SkillFileState | ProjectWriteRefusal> {
 	const cwd = session.sessionManager.getCwd();
 	const resolved = await resolveProjectFile(cwd, file);
-	if (!resolved.ok || (await insideAgentDir(session.agentDir, resolved.absolute))) {
+	if (
+		!resolved.ok ||
+		(await insideUserGlobalRoots(session.agentDir, session.resourceLoader.getUserSkillRoots(), resolved.absolute))
+	) {
 		return notAllowed(file.relative);
 	}
 	const stored: Stored = resolved.exists ? await readStored(resolved.absolute) : { kind: "missing" };

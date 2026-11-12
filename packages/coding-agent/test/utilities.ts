@@ -237,6 +237,7 @@ export function createTestResourceLoader(options: CreateTestResourceLoaderOption
 	return {
 		getExtensions: () => extensionsResult,
 		getSkills: () => ({ skills: [], diagnostics: [] }),
+		getUserSkillRoots: () => [],
 		getPrompts: () => ({ prompts: [], diagnostics: [] }),
 		getThemes: () => ({ themes: [], diagnostics: [] }),
 		getAgentsFiles: () => ({ agentsFiles: [] }),

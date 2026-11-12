@@ -6372,7 +6372,10 @@ below it, or a file under `.omo/rules/`. Reading runs nothing, so it works while
 
 `path` is relative to the session's folder, `/`-separated and canonical: no empty, `.` or `..` segment, no `\\`, `:`
 or NUL, and never through `.git` or `node_modules`. A file that does not exist yet is a success with `exists: false`
-and `content`/`etag` `null`. `etag` is an opaque version of the stored bytes: compare it, never parse it.
+and `content`/`etag` `null`. `etag` is an opaque version of the stored bytes: compare it, never parse it. An
+instruction file whose real path lies in the agent dir or in a user-global skill root the engine loads
+(`~/.agents/skills`, a selected skill root) is user-global configuration, not a project file, and is refused — the
+case of a session opened in `$HOME`, whose folder holds the agent dir and `~/.agents`.
 Errors: `invalid_argument` when `path` is not a string, `project_file_not_allowed` (`errorData: { path }`) for any
 other path, or when a folder on the way or the file itself is a symlink or not a regular file and folder, and
 `project_file_too_large` (`errorData: { limitBytes }`) for a stored file over 512 KiB.
@@ -6426,7 +6429,9 @@ Reading runs nothing, so it works while the project is untrusted.
 
 `mcpServers` holds the entries as stored (placeholders unexpanded); it is `null` when the file is missing or does
 not parse. `parseError` says why a stored file does not parse (not JSON, not a JSON object, or `mcpServers` not an
-object). Errors: `project_file_not_allowed` when the config folder or the file is a symlink or not a regular
+object). A project MCP file whose real path is user-global configuration — it lies in the agent dir (a flat agent
+dir with the session in its parent) or in a user-global skill root the engine loads — is refused. Errors:
+`project_file_not_allowed` when the config folder or the file is a symlink or not a regular
 file and folder, and `project_file_too_large` for a stored file over 512 KiB.
 
 #### set_project_mcp_servers
@@ -6461,9 +6466,10 @@ Read and replace the file of a skill the engine lists for the session, by skill 
 
 `data` is `{ cwd, skill, path, exists, content, etag, projectTrusted }`, with `path` relative to the session's folder.
 Only a listed skill whose file lies inside the session's folder is reachable; a skill that lives elsewhere (a global
-skill) or is reached through a folder link or a file link is refused. A file whose real path lies in the agent dir is
-global config and is refused even when the session's folder contains it (a session opened in `$HOME`); the same holds
-for the project MCP file. A write passes the same trust and permission
+skill) or is reached through a folder link or a file link is refused. A file whose real path lies in the agent dir or
+in any user-global skill root the engine loads (`~/.agents/skills`, a selected skill root) is user-global
+configuration and is refused even when the session's folder contains it (a session opened in `$HOME`); the same holds
+for the project MCP file and the instruction files of `read_project_file`. A write passes the same trust and permission
 gates as `set_project_mcp_servers` and answers the read after it. Errors: `project_skill_not_listed`
 (`errorData: { skill }`), `project_file_not_allowed`, `invalid_argument`, `project_not_trusted`,
 `project_file_conflict`, `project_file_permission_denied`, `project_file_too_large`, and

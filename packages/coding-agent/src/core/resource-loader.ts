@@ -197,6 +197,8 @@ export interface ResourceLoader {
 	emitExtensionEvent?(channel: string, data: unknown): void;
 	onExtensionEvent?(channel: string, handler: (data: unknown) => void): () => void;
 	getSkills(): { skills: Skill[]; diagnostics: ResourceDiagnostic[] };
+	/** The user-global skill roots this loader loads from, besides the session folder's own roots (senpi#6547). */
+	getUserSkillRoots(): readonly string[];
 	getPrompts(): { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] };
 	getThemes(): { themes: Theme[]; diagnostics: ResourceDiagnostic[] };
 	getAgentsFiles(): { agentsFiles: ContextFile[]; diagnostics?: ResourceDiagnostic[] };
@@ -589,6 +591,15 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 	getSkills(): { skills: Skill[]; diagnostics: ResourceDiagnostic[] } {
 		return { skills: this.skills, diagnostics: this.skillDiagnostics };
+	}
+
+	getUserSkillRoots(): readonly string[] {
+		return [
+			...this.userSkillRoots,
+			...(this.settingsManager.getGlobalSettings().skills ?? [])
+				.filter((path) => !/^[!+-]/.test(path))
+				.map((path) => resolvePath(path, this.agentDir, { trim: true })),
+		];
 	}
 
 	getPrompts(): { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] } {
@@ -1193,12 +1204,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 						metadataByPath?.get(path)?.skillProvenance ?? { kind: "user", selectedRoot: path },
 					]),
 				),
-				userSkillRoots: [
-					...this.userSkillRoots,
-					...(this.settingsManager.getGlobalSettings().skills ?? [])
-						.filter((path) => !/^[!+-]/.test(path))
-						.map((path) => resolvePath(path, this.agentDir, { trim: true })),
-				],
+				userSkillRoots: this.getUserSkillRoots(),
 			});
 		}
 		const resolvedSkills = this.skillsOverride ? this.skillsOverride(skillsResult) : skillsResult;

@@ -380,6 +380,19 @@ export interface LoadSkillsOptions {
 }
 
 /**
+ * The user-global skill roots every session loads regardless of its folder: the agent dir's skills root, the
+ * shared `~/.agents/skills` root, and any user-selected root. One list for two consumers: the loader's skill
+ * allowlist and the RPC project verbs' refusal of user-global files both derive from it, so a root the engine
+ * loads is refused by those verbs without a second list to keep in sync (senpi#6547 review LOWs).
+ */
+export function userGlobalSkillRoots(
+	resolvedAgentDir: string,
+	userSkillRoots: readonly string[] = [],
+): readonly string[] {
+	return [join(resolvedAgentDir, "skills"), join(homedir(), ".agents", "skills"), ...userSkillRoots];
+}
+
+/**
  * Load skills from all configured locations.
  * Returns skills and any validation diagnostics.
  */
@@ -392,9 +405,7 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 	const projectRoot = skillProjectRoot(resolvedCwd);
 	const projectSkillsPath = resolve(resolvedCwd, CONFIG_DIR_NAME, "skills");
 	const allowedSet = buildSkillAllowedSet([
-		join(resolvedAgentDir, "skills"),
-		join(homedir(), ".agents", "skills"),
-		...(options.userSkillRoots ?? []),
+		...userGlobalSkillRoots(resolvedAgentDir, options.userSkillRoots),
 		...skillPaths
 			.map((path) => resolvePath(path, resolvedCwd, { trim: true }))
 			.filter((path) => {

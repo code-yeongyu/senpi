@@ -5,12 +5,15 @@
  * in any folder below it, and anything under `.omo/rules/`. A path is relative, `/`-separated and canonical (no empty,
  * `.` or `..` segment), and never passes through `.git` or `node_modules`. Resolution walks the path one segment at a
  * time with `lstat` from the real workspace root and refuses any symlink or non-folder on the way, so neither a
- * traversal nor a link can reach a file outside the workspace.
+ * traversal nor a link can reach a file outside the workspace. On top of that, `insideUserGlobalRoots` refuses a
+ * real path in any user-global root the engine loads, so a session whose folder contains such a root (a session
+ * opened in `$HOME`) still cannot reach user-global configuration through these verbs (senpi#6547 review LOWs).
  */
 
 import { constants } from "node:fs";
 import { lstat, mkdir, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { userGlobalSkillRoots } from "../../core/skills.ts";
 
 /** Under the host's 1,000,000-character message limit, so an oversized write reaches this typed refusal. */
 export const PROJECT_FILE_MAX_BYTES = 512 * 1024;
@@ -84,20 +87,44 @@ export async function resolveProjectFile(cwd: string, file: ProjectFilePath): Pr
 	return { ok: true, absolute, exists: true, missingFolders };
 }
 
+/** True when `absolute` equals `root` or lies inside it, `root` by real path (missing roots compare lexically). */
+async function insideRealRoot(root: string, absolute: string): Promise<boolean> {
+	let real: string;
+	try {
+		real = await realpath(root);
+	} catch (error) {
+		if (!isMissing(error)) throw error;
+		real = resolve(root);
+	}
+	const path = relative(real, absolute);
+	return path === "" || (!isAbsolute(path) && path !== ".." && !path.startsWith(`..${sep}`));
+}
+
 /**
  * True when the resolved `absolute` is the agent dir or lies inside it, compared by real path: that is the machine's
  * global config, never a project file, even when the session folder is the agent dir's parent (or `$HOME`).
  */
 export async function insideAgentDir(agentDir: string, absolute: string): Promise<boolean> {
-	let root: string;
-	try {
-		root = await realpath(agentDir);
-	} catch (error) {
-		if (!isMissing(error)) throw error;
-		root = resolve(agentDir);
+	return insideRealRoot(agentDir, absolute);
+}
+
+/**
+ * True when the resolved `absolute` lies in any user-global root the engine loads: the agent dir (its context file,
+ * its skills, the global MCP file) or any user-global skill root, taken from `userGlobalSkillRoots` — the same list
+ * that builds the loader's skill allowlist, never a second hard-coded one. Such a file is user-global
+ * configuration, never a project file, even when the session folder contains the root (a session opened in `$HOME`)
+ * or reaches it through a link; the comparison is by real path (senpi#6547 review LOWs).
+ */
+export async function insideUserGlobalRoots(
+	agentDir: string,
+	userSkillRoots: readonly string[],
+	absolute: string,
+): Promise<boolean> {
+	if (await insideAgentDir(agentDir, absolute)) return true;
+	for (const root of userGlobalSkillRoots(agentDir, userSkillRoots)) {
+		if (await insideRealRoot(root, absolute)) return true;
 	}
-	const path = relative(root, absolute);
-	return path === "" || (!isAbsolute(path) && path !== ".." && !path.startsWith(`..${sep}`));
+	return false;
 }
 
 /**

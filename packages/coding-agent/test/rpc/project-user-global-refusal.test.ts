@@ -46,9 +46,7 @@ async function startHomeHost(
 		layout: (scratch) => ({ cwd: scratch, agentDir: join(scratch, PROJECT_CONFIG_DIR, "agent") }),
 		stubHome: true,
 		prepare: (layout) => options.prepare?.(layout.cwd),
-		...(typeof options.settings === "function"
-			? { settings: (folder: FolderLayout) => options.settings?.(folder) }
-			: { settings: options.settings }),
+		settings: options.settings,
 	});
 }
 
@@ -210,9 +208,9 @@ describe("project verbs: the folder's own files still work in a session opened i
 			}),
 		).toMatchObject({ success: true });
 
-		expect(
-			await host.call("set_project_mcp_servers", { patch: { alpha: SERVER }, ifEtag: null }),
-		).toMatchObject({ success: true });
+		expect(await host.call("set_project_mcp_servers", { patch: { alpha: SERVER }, ifEtag: null })).toMatchObject({
+			success: true,
+		});
 		expect(await host.call("get_project_mcp_servers")).toMatchObject({
 			success: true,
 			data: { exists: true, mcpServers: { alpha: SERVER }, parseError: null },
