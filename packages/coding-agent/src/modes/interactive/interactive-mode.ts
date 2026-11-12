@@ -6077,7 +6077,10 @@ export class InteractiveMode {
 				}
 				if (isRetryableProviderError(event.lastError)) this.getProviderErrors().clear();
 				this.showNoticeBox({
-					title: `✕ Fallback chain exhausted · ${event.chainKey}`,
+					title:
+						event.pinned === true
+							? `✕ Pinned model failed · ${event.chainKey}`
+							: `✕ Fallback chain exhausted · ${event.chainKey}`,
 					tone: "error",
 					why: describeFallbackExhaustion(event),
 				});

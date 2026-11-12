@@ -6468,7 +6468,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 | `compaction_end` | Compaction completes |
 | `auto_retry_start` | Auto-retry begins (after transient error) |
 | `auto_retry_end` | Auto-retry completes (success or final failure) |
-| `retry_fallback_exhausted` | Every model in the fallback chain failed this turn (`chainKey`, `lastError`, optional `primaryError`, `failures`) |
+| `retry_fallback_exhausted` | Every model in the fallback chain failed this turn, or the session's pinned model failed (`chainKey`, `lastError`, optional `primaryError`, `failures`, `pinned`) |
 | `summarization_retry_scheduled` | Retry scheduled for a transient compaction or branch-summary summarization error |
 | `summarization_retry_attempt_start` | Retried summarization request starts |
 | `summarization_retry_finished` | Summarization retry loop completes |
@@ -7087,6 +7087,7 @@ Emitted when the turn's model fallback chain runs out: the primary and every fal
 - `lastError`: the error of the rung that ran last.
 - `primaryError` (optional): the failure that started the fallback walk, the turn's first failed rung, as `{ model, reason, error }`. `reason` is `transient`, `refusal`, `hard-error` or `billing`.
 - `failures` (optional): every rung that failed this turn, in the order it ran, the primary first. An exact repeat of the previous entry is dropped.
+- `pinned` (optional, `true`): the session runs with model fallback off (a model it was opened or started with explicitly, or `--no-model-fallback`), so no other model was tried. `chainKey` is that model, and the turn ended on its failure. Sent once per run, when the run settles on that failure.
 
 `primaryError` and `failures` are present together when the session recorded at least one rung failure, and absent otherwise. Account usage-limit text in `lastError` and in each `error` is replaced by its account-limit description. Clients that ignore unknown fields keep working with `chainKey` and `lastError`.
 

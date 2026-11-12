@@ -826,6 +826,8 @@ export type AgentSessionEvent =
 			failures?: FallbackRungFailure[];
 			/** Rungs this turn's walk could not switch to (senpi#3447), each with the guard's reason and numbers. */
 			refusals?: readonly FallbackRungRefusal[];
+			/** The session's model is pinned (fallback off): `chainKey` names that model and nothing else was tried (omo#13243). */
+			pinned?: true;
 	  }
 	| ModelConfigErrorEvent
 	| {
@@ -3089,6 +3091,37 @@ export class AgentSession {
 		this._emitEntryAppended(entry.id);
 	}
 
+	/**
+	 * A run on a pinned model (fallback off: an explicitly chosen model, `--no-model-fallback`) that ended on a
+	 * failure fallback would have answered reports it the typed way a spent chain does, naming the model and
+	 * the error, so every surface tells a pinned failure from a chain that ran out (omo#13243).
+	 */
+	private _reportPinnedModelFailure(): void {
+		if (this._runFallbackExhausted) return;
+		if (this.settingsManager.getRetryFallbackSettings().modelFallback) return;
+		const last = this.agent.state.messages.at(-1);
+		if (last?.role !== "assistant" || last.stopReason !== "error") return;
+		const hardError = !this._isRetryableError(last) && this._isHardErrorFallbackEligible(last);
+		if (!hardError && !this._isRetryableError(last)) return;
+		const model = `${last.provider}/${last.model}`;
+		const error = last.errorMessage || "Unknown error";
+		const reason: FallbackRungFailure["reason"] = hardError
+			? "hard-error"
+			: isBillingErrorMessage(error)
+				? "billing"
+				: "transient";
+		const failures: FallbackRungFailure[] =
+			this._fallbackTurnFailures.length > 0 ? [...this._fallbackTurnFailures] : [{ model, reason, error }];
+		this._emit({
+			type: "retry_fallback_exhausted",
+			chainKey: model,
+			lastError: error,
+			primaryError: failures[0],
+			failures,
+			pinned: true,
+		});
+	}
+
 	private _emitFallbackExhausted(chainKey: string, lastError: string): void {
 		const failures = [...this._fallbackTurnFailures];
 		const primaryError = failures[0];
@@ -3478,6 +3511,7 @@ export class AgentSession {
 		let deferredTurnClaims: DeferredTurnClaim[] = [];
 		this._agentSettledDelivery.begin(this._userAbortGeneration);
 		const settlementEpoch = ++this._settlementEpoch;
+		this._reportPinnedModelFailure();
 		const fallbackExhausted = this._takeRunFallbackExhaustion();
 		try {
 			// agent_settled is notification-only: the run has settled, so subscribers (RPC clients, the TUI) hear it now.
