@@ -2,7 +2,15 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { attach, type DelegatedHost, declare, type Peer } from "../rpc-delegated-host-support.ts";
-import { DEVICE, FrameLog, open, permissionHost, probeCalls, remotePeer } from "../rpc-delegated-permission-support.ts";
+import {
+	ASKED,
+	DEVICE,
+	FrameLog,
+	open,
+	permissionHost,
+	probeCalls,
+	remotePeer,
+} from "../rpc-delegated-permission-support.ts";
 
 // senpi#6479: project settings writes over RPC use a key allowlist. A listed preference key is checked against its
 // declared type and written; any other key (a later one included, and its removal) is decided like an edit of the
@@ -210,6 +218,24 @@ describe("a write from another device follows the engine's existing origin rule"
 		expect(await write(remote, session.sessionId, "shellPath", "/bin/sh")).toMatchObject(NEEDS_PERMISSION);
 		expect(projectFile(session.path)).toBeUndefined();
 		expect(await write(local, session.sessionId, "shellPath", "/bin/sh")).toMatchObject({ success: true });
+	}, 60_000);
+
+	it("refuses a cross-account device during its own turn's mode even when settings name that mode with lower allow rules", async () => {
+		const { target, local } = await start({
+			settingsDefault: true,
+			agentSettings: { permissionPreset: "ask", permission: { edit: "allow", bash: "allow" } },
+		});
+		const session = await trustedSession(local);
+		const remote = await attachedPeer(session, await remotePeer(target));
+		const log = new FrameLog(remote);
+		const [remoteCall] = await probeCalls(log, { log, peer: remote }, session.sessionId, {
+			count: 1,
+			answer: "Deny",
+			start: () => remote.send({ type: "prompt", sessionId: session.sessionId, message: "go" }),
+		});
+		expect(remoteCall).toEqual({ asked: ASKED, ran: false });
+		expect(await write(remote, session.sessionId, "shellPath", "/bin/sh")).toMatchObject(NEEDS_PERMISSION);
+		expect(projectFile(session.path)).toBeUndefined();
 	}, 60_000);
 
 	it("decides a same-account device as local", async () => {
