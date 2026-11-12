@@ -25,7 +25,8 @@ async function fixture(label: string) {
 		sessionDir = join(root, "sessions"),
 		cwd = join(root, "work"),
 		socket = join(root, "rpc.sock");
-	mkdirSync(agentDir, { recursive: true });
+	// The host refuses a key root writable by group or others, so the fixture owns its mode (senpi#4541).
+	mkdirSync(agentDir, { recursive: true, mode: 0o700 });
 	mkdirSync(sessionDir, { recursive: true });
 	mkdirSync(cwd, { recursive: true });
 	const fake = await startFakeModelServer();
