@@ -45,7 +45,12 @@ export async function waitForFileLock(
 			const bound =
 				code === "ELOCKED"
 					? bounds.heldMs
-					: code !== undefined && TRANSIENT_ACQUIRE_CODES.has(code)
+					: // Two waiters racing one dead lock: the loser's own rmdir hits ENOTEMPTY once the winner has already
+						// cleared the marker or taken the lock, and nothing is left for `clearStaleMarker` to remove; or the
+						// other's takeover, judged on the old lock, removes the directory this attempt had just created before
+						// proper-lockfile's own probe of it (ENOENT). Either is another process making progress, not a broken
+						// lock, so both are retried like any transient code.
+						code !== undefined && (TRANSIENT_ACQUIRE_CODES.has(code) || code === "ENOTEMPTY" || code === "ENOENT")
 						? bounds.transientMs
 						: 0;
 			if (performance.now() - started >= bound) throw error;

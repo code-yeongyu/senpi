@@ -1,4 +1,4 @@
-import type { ChildProcess } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import nodeFs, { existsSync, watch as watchDirectory } from "node:fs";
 import { lstat, mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -25,6 +25,7 @@ import {
 	type RunningServer,
 	startServer,
 } from "../src/experimental/server.ts";
+import { waitForFileLock } from "../src/experimental/lock-wait.ts";
 import { lockWithLossHandling } from "../src/core/file-lock.ts";
 import { AgentController } from "../src/experimental/services/agent-controller.ts";
 import { createSessionServiceSource, type SessionAttachmentState } from "../src/experimental/services/connection.ts";
@@ -490,6 +491,42 @@ describe("experimental durable server composition", () => {
 		await expect(waiting).rejects.toMatchObject({ code: "launcher_lock_timeout", holderPid: process.pid });
 	});
 
+	test("keeps its own launcher lock across refreshes after writing its token", async ({ onTestFinished }) => {
+		const { directory, serverId } = await lockFixture("pes-launcher-refresh-");
+		// proper-lockfile arms its refresh (every LOCK_STALE_MS / 3 = 10 s) when the lock is taken, so setTimeout is faked
+		// first. Each refresh compares the lock directory's mtime to the one it recorded, exactly, and an entry written
+		// inside the directory changes that mtime. Only setTimeout is faked: the refresh's stat and utimes run for real.
+		vi.useFakeTimers({ toFake: ["setTimeout"] });
+		onTestFinished(() => {
+			vi.useRealTimers();
+		});
+		const profile = await acquireServerProfile(directory, serverId);
+		onTestFinished(() => profile.release());
+
+		// The armed refresh is the one fake timer; proper-lockfile re-arms it only after a refresh found the lock its own,
+		// and a refresh that finds the lock compromised leaves it unarmed and reports the loss.
+		const armed = vi.getTimerCount();
+		for (let interval = 1; interval <= 2; interval += 1) {
+			await vi.advanceTimersByTimeAsync(10_000);
+			let lost: unknown;
+			while (lost === undefined && vi.getTimerCount() < armed) {
+				try {
+					profile.assertHeld();
+				} catch (error) {
+					lost = error;
+				}
+				await new Promise<void>((resolve) => setImmediate(resolve));
+			}
+			expect({ interval, lost, rearmed: vi.getTimerCount() === armed }).toEqual({
+				interval,
+				lost: undefined,
+				rearmed: true,
+			});
+		}
+
+		expect(() => profile.assertHeld()).not.toThrow();
+	});
+
 	test("leaves no lock directory behind when a holder releases normally", async () => {
 		const { directory, serverId } = await lockFixture("pes-launcher-release-");
 		const profile = await acquireServerProfile(directory, serverId);
@@ -514,37 +551,39 @@ describe("experimental durable server composition", () => {
 		await profile.release();
 	});
 
-	test("gives a killed holder's lock to exactly one of two waiters, and the other waits", async () => {
+	test("gives a killed holder's lock to exactly one of two racing processes, and the other waits", async () => {
 		const { directory, serverId } = await lockFixture("pes-launcher-race-");
 		const lockDirectory = join(directory, `launcher-${serverId}.lock`);
-		await mkdir(lockDirectory);
-		await writeFile(join(lockDirectory, "token"), "the-killed-holder");
-		const longAgo = new Date(Date.now() - 120_000);
-		await utimes(lockDirectory, longAgo, longAgo);
+		const racers = [launcherRacer(directory, serverId), launcherRacer(directory, serverId)];
+		try {
+			for (let round = 1; round <= 25; round += 1) {
+				// What a SIGKILLed holder leaves: its lock directory with its token inside, unrefreshed past the bound.
+				await mkdir(lockDirectory);
+				await writeFile(join(lockDirectory, "token"), "the-killed-holder");
+				const longAgo = new Date(Date.now() - 120_000);
+				await utimes(lockDirectory, longAgo, longAgo);
+				const answers = racers.map((racer) => racer.send("acquire"));
 
-		const waiters = [acquireServerProfile(directory, serverId), acquireServerProfile(directory, serverId)];
-		const settled = [false, false];
-		for (const [index, waiter] of waiters.entries()) {
-			waiter.then(
-				() => {
-					settled[index] = true;
-				},
-				() => {
-					settled[index] = true;
-				},
-			);
+				// Whichever process answers first holds the lock; the other must still be waiting, never failed (ENOTEMPTY).
+				const first = await Promise.race(answers.map((answer, index) => answer.then((line) => ({ index, line }))));
+				const loser = racers[1 - first.index];
+				const winner = racers[first.index];
+				if (loser === undefined || winner === undefined) throw new Error("two racers expected");
+				expect({ round, winner: first.line, loser: loser.pending() }).toEqual({
+					round,
+					winner: "ACQUIRED",
+					loser: true,
+				});
+
+				// Once the winner lets go, the waiter takes the lock; then it lets go too, leaving no lock for the next round.
+				expect(await winner.send("release")).toBe("RELEASED");
+				expect({ round, loser: await answers[1 - first.index] }).toEqual({ round, loser: "ACQUIRED" });
+				expect(await loser.send("release")).toBe("RELEASED");
+			}
+		} finally {
+			await Promise.all(racers.map((racer) => racer.exit()));
 		}
-		// Whichever waiter takes the lock first is the winner; the race decides, not the order they were started in.
-		const { index, profile } = await Promise.race(
-			waiters.map((waiter, position) => waiter.then((held) => ({ index: position, profile: held }))),
-		);
-		const loser = 1 - index;
-
-		// One holds it; the other is still waiting, not rejected with ENOTEMPTY.
-		expect(settled[loser]).toBe(false);
-		await profile.release();
-		await (await waiters[loser]).release();
-	});
+	}, 120_000);
 
 	test("never removes a launcher lock a real takeover re-created, whatever inode it got", async () => {
 		const { directory, serverId } = await lockFixture("pes-launcher-takeover-");
@@ -570,18 +609,78 @@ describe("experimental durable server composition", () => {
 		}).toEqual({ kept: true, token: "the-new-holder", inodeReused: newInode === stoppedInode });
 	});
 
-	test("clears a stale lock's token but never a live holder's", async ({ onTestFinished }) => {
+	test("removes a dead holder's token only from a lock older than the marker's staleness bound", async () => {
+		const { directory } = await lockFixture("pes-launcher-marker-gate-");
+		const base = join(directory, "gate");
+		const lockDirectory = `${base}.lock`;
+		await mkdir(lockDirectory);
+		await writeFile(join(lockDirectory, "token"), "a-recent-holder");
+		const fiveSecondsAgo = new Date(Date.now() - 5_000);
+		await utimes(lockDirectory, fiveSecondsAgo, fiveSecondsAgo);
+
+		// proper-lockfile calls this lock stale (1 s bound) and its takeover hits ENOTEMPTY on the token, but the marker's
+		// own bound (60 s) says the holder may still be alive: the token stays and the wait ends without the lock.
+		const recent = await waitForFileLock(
+			base,
+			{ realpath: false, stale: 1_000 },
+			{ heldMs: 0, transientMs: 0, marker: { name: "token", staleMs: 60_000 } },
+		).then(
+			() => "acquired",
+			(error: unknown) => (error instanceof Error && "code" in error ? String(error.code) : "other"),
+		);
+		expect({ recent, token: await readFile(join(lockDirectory, "token"), "utf8") }).toEqual({
+			recent: "ENOTEMPTY",
+			token: "a-recent-holder",
+		});
+
+		// Past the marker's bound the same token is a dead holder's: it is removed and the lock taken.
+		const twoMinutesAgo = new Date(Date.now() - 120_000);
+		await utimes(lockDirectory, twoMinutesAgo, twoMinutesAgo);
+		const held = await waitForFileLock(
+			base,
+			{ realpath: false, stale: 1_000 },
+			{ heldMs: 0, transientMs: 0, marker: { name: "token", staleMs: 60_000 } },
+		);
+		expect(await pathExists(join(lockDirectory, "token"))).toBe(false);
+		await held.release();
+	});
+
+	test("never touches a live holder's token while a waiter waits on it", async () => {
 		const { directory, serverId } = await lockFixture("pes-launcher-token-");
+		const lockDirectory = join(directory, `launcher-${serverId}.lock`);
 		const liveHolder = await acquireServerProfile(directory, serverId);
-		onTestFinished(() => liveHolder.release());
-		const liveToken = await readFile(join(directory, `launcher-${serverId}.lock`, "token"), "utf8");
-
-		// A waiter against this live holder never reaches the token: the lock is held, not ENOTEMPTY.
+		const liveToken = await readFile(join(lockDirectory, "token"), "utf8");
+		// The waiter's attempt ends in proper-lockfile's stat of the held lock; that stat is the signal it is waiting.
+		let attempted = (): void => {};
+		const firstAttempt = new Promise<void>((resolve) => {
+			attempted = resolve;
+		});
+		const realStat = nodeFs.stat;
+		const stat = vi.spyOn(nodeFs, "stat").mockImplementation(((...args: unknown[]) => {
+			const callback = args.at(-1);
+			if (args[0] !== lockDirectory || typeof callback !== "function") return Reflect.apply(realStat, nodeFs, args);
+			return Reflect.apply(realStat, nodeFs, [
+				...args.slice(0, -1),
+				(...results: unknown[]) => {
+					Reflect.apply(callback, undefined, results);
+					attempted();
+				},
+			]);
+		}) as typeof nodeFs.stat);
+		syncBuiltinESMExports();
 		const waiting = acquireServerProfile(directory, serverId);
-		waiting.catch(() => {});
-		await new Promise<void>((resolve) => setTimeout(resolve, 200));
+		try {
+			await firstAttempt;
 
-		expect(await readFile(join(directory, `launcher-${serverId}.lock`, "token"), "utf8")).toBe(liveToken);
+			expect(await readFile(join(lockDirectory, "token"), "utf8")).toBe(liveToken);
+		} finally {
+			// Inside the test, before afterEach removes the directory: the holder lets go, then the waiter takes the
+			// lock and releases it, so it never outlives the test.
+			stat.mockRestore();
+			syncBuiltinESMExports();
+			await liveHolder.release();
+			await (await waiting).release();
+		}
 	});
 
 	test("removes the launcher lock of a server it stopped after its startup timed out", async ({ onTestFinished }) => {
@@ -1501,6 +1600,56 @@ function advanceClocks(ms: number, onTestFinished: (cleanup: () => void) => void
  */
 function holdLock(base: string): Promise<{ release(): Promise<void> }> {
 	return lockWithLossHandling(base, { realpath: false, stale: 3_600_000, update: 1_800_000, retries: 0 });
+}
+
+const launcherRaceEntryUrl = new URL("fixtures/launcher-lock-race-entry.ts", import.meta.url);
+
+/**
+ * A separate process that races for the launcher lock on command. `send` writes one command and resolves with the
+ * process's answer line; `pending()` is true while an answer is still outstanding; `exit()` ends the process.
+ */
+function launcherRacer(
+	directory: string,
+	serverId: ServerId,
+): { send(command: string): Promise<string>; pending(): boolean; exit(): Promise<void> } {
+	const child = spawn(
+		process.execPath,
+		[
+			"--import",
+			new URL("../src/experimental/source-resolver.ts", import.meta.url).href,
+			fileURLToPath(launcherRaceEntryUrl),
+			directory,
+			serverId,
+		],
+		{ stdio: ["pipe", "pipe", "inherit"] },
+	);
+	spawnedProcesses.add(child);
+	const exited = new Promise<void>((resolveExit) => child.once("exit", () => resolveExit()));
+	const waiting: Array<{ resolve(line: string): void; reject(error: Error): void }> = [];
+	let buffered = "";
+	child.stdout?.setEncoding("utf8");
+	child.stdout?.on("data", (chunk: string) => {
+		buffered += chunk;
+		for (let end = buffered.indexOf("\n"); end >= 0; end = buffered.indexOf("\n")) {
+			waiting.shift()?.resolve(buffered.slice(0, end));
+			buffered = buffered.slice(end + 1);
+		}
+	});
+	child.once("exit", (code) => {
+		for (const pending of waiting.splice(0)) pending.reject(new Error(`launcher racer exited with ${code}`));
+	});
+	return {
+		send: (command) =>
+			new Promise<string>((resolveLine, reject) => {
+				waiting.push({ resolve: resolveLine, reject });
+				child.stdin?.write(`${command}\n`);
+			}),
+		pending: () => waiting.length > 0,
+		exit: async () => {
+			if (child.exitCode === null) child.stdin?.end("exit\n");
+			await exited;
+		},
+	};
 }
 
 async function lockFixture(prefix: string): Promise<{ directory: string; serverId: ServerId }> {
