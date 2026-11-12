@@ -1,13 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { readAliasOwnerStartTime, rootModeIsGuarded } from "../modes/rpc/host-socket-bind.ts";
 import { MAX_SOCKET_PATH_BYTES } from "../modes/rpc/socket-ownership.ts";
-import {
-	ProcessIdentityUnreadableError,
-	processMatchesPidFile,
-	readProcessStartTime,
-} from "../utils/process-identity.ts";
+import { ProcessIdentityUnreadableError, processMatchesPidFile } from "../utils/process-identity.ts";
 
 /** A Unix socket path the platform cannot connect to: sun_path holds 104 bytes on macOS and 108 on Linux. */
 export class SocketPathTooLongError extends Error {
@@ -43,39 +40,66 @@ export interface ServerEndpoint {
 	release(): Promise<void>;
 }
 
+export interface ServerEndpointOptions {
+	/** Temp roots to try, in order (default: the OS temp directory, then `/tmp`). */
+	readonly roots?: readonly string[];
+	/** Start-time reader for the owner record (default: the UTC reader the reaper also uses). */
+	readonly readStartTime?: (pid: number) => Promise<string | undefined>;
+}
+
 /**
  * The server endpoint lives next to the public socket when that path fits. In a deeper server directory it moves to a
  * fresh 0700 directory of this user's under the OS temp directory (or `/tmp` when that is too deep, as the RPC host's
  * internal socket does, senpi#3487): the server could bind the long path through its short bind-and-link, but nothing
  * could connect to it, so the coordinator dropped every client and the server retired without one (senpi#6522).
+ * A root another user could take an entry out of is skipped, as the RPC host's bind alias does.
  */
-export async function createServerEndpoint(preferredPath: string): Promise<ServerEndpoint> {
+export async function createServerEndpoint(
+	preferredPath: string,
+	options: ServerEndpointOptions = {},
+): Promise<ServerEndpoint> {
 	if (socketPathFits(preferredPath)) return { path: preferredPath, release: async () => {} };
 	const name = `${SHORT_SERVER_ENDPOINT_PREFIX}${randomUUID().slice(0, 8)}`;
-	const roots = [tmpdir(), "/tmp"];
+	const roots = options.roots ?? [tmpdir(), "/tmp"];
 	await reapOrphanedServerEndpoints(roots);
-	const root = roots.find((candidate) => socketPathFits(join(candidate, name, "server.sock")));
+	let root: string | undefined;
+	for (const candidate of roots) {
+		if (socketPathFits(join(candidate, name, "server.sock")) && (await guardedRoot(candidate))) {
+			root = candidate;
+			break;
+		}
+	}
 	if (root === undefined) throw new SocketPathTooLongError("server", preferredPath);
 	const directory = join(root, name);
 	// Non-recursive and 0700: a fresh, unguessable directory of this user's, never an existing one.
 	await mkdir(directory, { recursive: false, mode: 0o700 });
-	const processStartTime = await readProcessStartTime(process.pid);
-	await writeFile(
-		join(directory, ".owner"),
-		JSON.stringify({ pid: process.pid, processStartTime: processStartTime ?? null }),
-		{
-			mode: 0o600,
-		},
-	);
-	return {
-		path: join(directory, "server.sock"),
-		release: () => rm(directory, { recursive: true, force: true }),
-	};
+	const release = () => rm(directory, { recursive: true, force: true });
+	try {
+		// An unreadable start time is recorded as null: the reaper then never proves this directory dead.
+		const readStartTime = options.readStartTime ?? readAliasOwnerStartTime;
+		const processStartTime = await readStartTime(process.pid).catch(() => undefined);
+		await writeFile(
+			join(directory, ".owner"),
+			JSON.stringify({ pid: process.pid, processStartTime: processStartTime ?? null }),
+			{ mode: 0o600 },
+		);
+	} catch (error) {
+		await release();
+		throw error;
+	}
+	return { path: join(directory, "server.sock"), release };
+}
+
+/** A root no other user can take an entry of ours out of, the check the RPC host's bind alias applies. */
+async function guardedRoot(root: string): Promise<boolean> {
+	const entry = await stat(root).catch(() => undefined);
+	return entry !== undefined && entry.isDirectory() && rootModeIsGuarded(entry, process.getuid?.());
 }
 
 /**
  * Removes `senpi-xs-*` endpoint directories under `roots` that belong to this user and whose recorded server is
- * provably gone, as a killed server leaves them behind. A directory without a readable owner record, with an owner start
+ * provably gone, as a killed server leaves them behind. The owner start time is written and read in UTC
+ * (`readAliasOwnerStartTime`), so a server and a later sweep running under different TZ values read the same instant. A directory without a readable owner record, with an owner start
  * time that was never read, or whose owner's identity cannot be read now, is kept: it may belong to a live server.
  */
 export async function reapOrphanedServerEndpoints(roots: readonly string[]): Promise<void> {
@@ -100,7 +124,10 @@ export async function reapOrphanedServerEndpoints(roots: readonly string[]): Pro
 								processStartTime.length === 0
 							)
 								return;
-							const alive = await processMatchesPidFile({ pid, processStartTime }).catch((error: unknown) => {
+							const alive = await processMatchesPidFile(
+								{ pid, processStartTime },
+								readAliasOwnerStartTime,
+							).catch((error: unknown) => {
 								if (error instanceof ProcessIdentityUnreadableError) return true;
 								throw error;
 							});
