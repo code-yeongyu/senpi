@@ -30,14 +30,19 @@ class HoldsCommitBeforeRename extends MoveLedger {
 	readonly stamped = deferred();
 	readonly gate = deferred();
 
-	override commit<T>(moveId: MoveId, target: string, rename: () => T | Promise<T>, prepare?: () => void): Promise<T> {
+	override commit<T>(
+		moveId: MoveId,
+		target: string,
+		rename: (stampStands: () => Promise<void>) => T | Promise<T>,
+		prepare?: () => void,
+	): Promise<T> {
 		return super.commit(
 			moveId,
 			target,
-			async () => {
+			async (stampStands) => {
 				this.stamped.resolve();
 				await this.gate.promise;
-				return rename();
+				return rename(stampStands);
 			},
 			prepare,
 		);
@@ -63,7 +68,7 @@ class WaitsBeforeCommit extends MoveLedger {
 	override async commit<T>(
 		moveId: MoveId,
 		target: string,
-		rename: () => T | Promise<T>,
+		rename: (stampStands: () => Promise<void>) => T | Promise<T>,
 		prepare?: () => void,
 	): Promise<T> {
 		this.reached.resolve();
@@ -74,7 +79,12 @@ class WaitsBeforeCommit extends MoveLedger {
 
 /** Its commit stamps the record and fails before the rename: nothing lands. */
 class FailsBeforeRename extends MoveLedger {
-	override commit<T>(moveId: MoveId, target: string, _rename: () => T | Promise<T>, prepare?: () => void): Promise<T> {
+	override commit<T>(
+		moveId: MoveId,
+		target: string,
+		_rename: (stampStands: () => Promise<void>) => T | Promise<T>,
+		prepare?: () => void,
+	): Promise<T> {
 		const failing = (): T => {
 			throw new Error("the rename failed");
 		};

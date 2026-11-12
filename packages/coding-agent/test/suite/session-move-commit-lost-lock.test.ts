@@ -4,8 +4,9 @@
  * failed while the stalled holder can still rename tells the sender to take the session back, and the holder then
  * lands a second writable copy.
  */
-import { existsSync, readFileSync, symlinkSync, utimesSync } from "node:fs";
-import { basename, join } from "node:path";
+import { existsSync, readdirSync, readFileSync, symlinkSync, utimesSync } from "node:fs";
+import { uptime } from "node:os";
+import { basename, dirname, join } from "node:path";
 import lockfile from "proper-lockfile";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getDefaultSessionDir, loadEntriesFromFileAsync } from "../../src/core/session-manager.ts";
@@ -35,6 +36,12 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 const realLock = lockfile.lock;
 const AN_HOUR_MS = 60 * 60_000;
 
+/** A process for which an hour really passed: its wall clock and the machine's uptime both read an hour later. */
+const AN_HOUR_LATER: MoveLedgerOptions = {
+	now: () => Date.now() + AN_HOUR_MS,
+	uptime: () => uptime() * 1000 + AN_HOUR_MS,
+};
+
 afterEach(() => {
 	vi.restoreAllMocks();
 	setMoveStepHook(undefined);
@@ -54,14 +61,19 @@ class HoldsCommitBeforeRename extends MoveLedger {
 	readonly stamped = deferred();
 	readonly gate = deferred();
 
-	override commit<T>(moveId: MoveId, target: string, rename: () => T | Promise<T>, prepare?: () => void): Promise<T> {
+	override commit<T>(
+		moveId: MoveId,
+		target: string,
+		rename: (stampStands: () => Promise<void>) => T | Promise<T>,
+		prepare?: () => void,
+	): Promise<T> {
 		return super.commit(
 			moveId,
 			target,
-			async () => {
+			async (stampStands) => {
 				this.stamped.resolve();
 				await this.gate.promise;
-				return rename();
+				return rename(stampStands);
 			},
 			prepare,
 		);
@@ -76,7 +88,7 @@ class HoldsCommitInPrepare extends MoveLedger {
 	override commit<T>(
 		moveId: MoveId,
 		target: string,
-		rename: () => T | Promise<T>,
+		rename: (stampStands: () => Promise<void>) => T | Promise<T>,
 		prepare?: () => void | Promise<void>,
 	): Promise<T> {
 		return super.commit(moveId, target, rename, async () => {
@@ -191,7 +203,7 @@ describe("a commit whose holder lost the move record's lock (senpi#6417)", () =>
 		await stall.reached;
 		const longAgo = new Date(Date.now() - AN_HOUR_MS);
 		utimesSync(`${recordOf(world)}.lock`, longAgo, longAgo);
-		const anHourLater = ledgerOfAnotherProcess(world, { now: () => Date.now() + AN_HOUR_MS });
+		const anHourLater = ledgerOfAnotherProcess(world, AN_HOUR_LATER);
 
 		const heard = await answerMoveStatus(anHourLater, MOVE, undefined);
 		await finishMove({ sessionFile: world.source, bundleDir: world.bundleDir, moveId: MOVE, answer: heard });
@@ -242,7 +254,7 @@ describe("a commit whose holder lost the move record's lock (senpi#6417)", () =>
 
 	it.each([
 		["an hour old", AN_HOUR_MS],
-		["from before the clock stepped back an hour", -AN_HOUR_MS],
+		["an hour old on a machine whose wall clock was stepped back an hour", -AN_HOUR_MS],
 	])(
 		"#given a commit that died after its stamp #then status answers receiving while the stamp is young and failed once it is %s",
 		async (_age, clockOffsetMs) => {
@@ -254,7 +266,7 @@ describe("a commit whose holder lost the move record's lock (senpi#6417)", () =>
 			setMoveStepHook(undefined);
 
 			const young = await answerMoveStatus(world.ledger, MOVE, undefined);
-			const later = ledgerOfAnotherProcess(world, { now: () => Date.now() + clockOffsetMs });
+			const later = ledgerOfAnotherProcess(world, { ...AN_HOUR_LATER, now: () => Date.now() + clockOffsetMs });
 
 			expect({
 				young,
@@ -267,4 +279,109 @@ describe("a commit whose holder lost the move record's lock (senpi#6417)", () =>
 			});
 		},
 	);
+
+	it("#given a holder between its stamp and its rename #when a process on the same machine whose wall clock was stepped an hour ahead asks status #then it hears receiving, the move lands once and the sender's copy stays sealed", async () => {
+		const world = await setup();
+		stallHolderOf(recordOf(world));
+		const holder = new HoldsCommitBeforeRename(world.ledger.dir);
+		const importing = importWith(world, holder);
+		await holder.stamped.promise;
+		// A forward step is also what makes the lock library call a held lock stale and hand it over.
+		const longAgo = new Date(Date.now() - AN_HOUR_MS);
+		utimesSync(`${recordOf(world)}.lock`, longAgo, longAgo);
+		const steppedAhead = ledgerOfAnotherProcess(world, { now: () => Date.now() + AN_HOUR_MS });
+
+		const heard = await answerMoveStatus(steppedAhead, MOVE, undefined);
+		holder.gate.resolve();
+		const landed = await importing;
+		await finishMove({ sessionFile: world.source, bundleDir: world.bundleDir, moveId: MOVE, answer: heard });
+
+		expect({
+			heard,
+			record: await answerMoveStatus(world.ledger, MOVE, undefined),
+			sender: await writable(world.source),
+			receiver: await writable(landed.sessionFile),
+		}).toEqual({ heard: { state: "receiving" }, record: { state: "accepted" }, sender: false, receiver: true });
+	});
+
+	it.each([
+		["an hour ahead", AN_HOUR_MS],
+		["an hour back", -AN_HOUR_MS],
+	])(
+		"#given a commit that died after its stamp #when a process on the same machine whose wall clock was stepped %s asks status right away #then it hears receiving: a step does not age the stamp",
+		async (_step, wallOffsetMs) => {
+			const world = await setup();
+			setMoveStepHook((step) => {
+				if (step === "import:stamped") throw new Error("the process died");
+			});
+			await expect(importWith(world, world.ledger)).rejects.toThrow("the process died");
+			setMoveStepHook(undefined);
+			const stepped = ledgerOfAnotherProcess(world, { now: () => Date.now() + wallOffsetMs });
+
+			expect(await answerMoveStatus(stepped, MOVE, undefined)).toEqual({ state: "receiving" });
+		},
+	);
+
+	it.each([
+		["another machine", { host: "another-machine" }],
+		["this machine after a restart", { uptime: () => 1_000 }],
+	])(
+		"#given a commit that died after its stamp #when %s reads it with a wall clock an hour later #then the wall clock decides and it hears failed",
+		async (_reader, reader) => {
+			const world = await setup();
+			setMoveStepHook((step) => {
+				if (step === "import:stamped") throw new Error("the process died");
+			});
+			await expect(importWith(world, world.ledger)).rejects.toThrow("the process died");
+			setMoveStepHook(undefined);
+			const later = ledgerOfAnotherProcess(world, { now: () => Date.now() + AN_HOUR_MS, ...reader });
+
+			expect(await answerMoveStatus(later, MOVE, undefined)).toEqual({ state: "failed", reason: "import_failed" });
+		},
+	);
+
+	it("#given a holder stalled after its stamp check and before its file lands, past the settle bound, and another process that settled the move failed #when the holder runs again #then it lands nothing, leaves no rewritten copy and one copy is writable", async () => {
+		const world = await setup();
+		stallHolderOf(recordOf(world));
+		const holder = new HoldsCommitBeforeRename(world.ledger.dir);
+		const importing = settled(importWith(world, holder));
+		await holder.stamped.promise;
+		const longAgo = new Date(Date.now() - AN_HOUR_MS);
+		utimesSync(`${recordOf(world)}.lock`, longAgo, longAgo);
+
+		const heard = await answerMoveStatus(ledgerOfAnotherProcess(world, AN_HOUR_LATER), MOVE, undefined);
+		await finishMove({ sessionFile: world.source, bundleDir: world.bundleDir, moveId: MOVE, answer: heard });
+		holder.gate.resolve();
+
+		expect({
+			heard,
+			holder: await importing,
+			landed: existsSync(landingOf(world)),
+			rewrittenCopies: readdirSync(dirname(landingOf(world))).filter((name) => name.includes(".rebind-")),
+			sender: await writable(world.source),
+		}).toEqual({
+			heard: { state: "failed", reason: "import_failed" },
+			holder: { refused: "move_fenced" },
+			landed: false,
+			rewrittenCopies: [],
+			sender: true,
+		});
+	});
+
+	it("#given a holder told during its commit's prepare that its lock was taken #then it stamps nothing, lands nothing and its import fails", async () => {
+		const world = await setup();
+		const lock = stallHolderOf(recordOf(world));
+		const holder = new HoldsCommitInPrepare(world.ledger.dir);
+		const importing = settled(importWith(world, holder));
+		await holder.preparing.promise;
+
+		lock.taken();
+		holder.gate.resolve();
+
+		expect({
+			answer: await importing,
+			stamped: readFileSync(recordOf(world), "utf8").includes('"committing":true'),
+			landed: existsSync(landingOf(world)),
+		}).toEqual({ answer: { refused: "ELOCKLOST" }, stamped: false, landed: false });
+	});
 });
