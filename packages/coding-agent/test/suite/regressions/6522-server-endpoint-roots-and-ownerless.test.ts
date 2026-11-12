@@ -115,3 +115,31 @@ it("removes a directory whose owner record does not parse, on the same age rule 
 
 	expect({ aged: existsSync(aged), fresh: existsSync(fresh) }).toEqual({ aged: false, fresh: true });
 });
+
+it("checks a live owner's liveness without blocking the event loop", async () => {
+	const root = tempRoot(0o700);
+	const directory = join(root, `${SHORT_SERVER_ENDPOINT_PREFIX}l1veown0`);
+	mkdirSync(directory, { mode: 0o700 });
+	writeFileSync(
+		join(directory, ".owner"),
+		JSON.stringify({ pid: process.pid, processStartTime: "Thu Jan  1 00:00:00 2026" }),
+	);
+	writeFileSync(join(directory, "server.sock"), "");
+	// A ps that answers nothing after a second: the start-time probe gives no identity, so the matcher falls back to its
+	// liveness check. The synchronous default would run this same ps through execFileSync and stall the loop for it.
+	const binDir = tempRoot(0o700);
+	writeFileSync(join(binDir, "ps"), "#!/bin/sh\nsleep 1\nexit 0\n", { mode: 0o755 });
+	vi.stubEnv("PATH", `${binDir}:${process.env.PATH ?? ""}`);
+	let last = performance.now();
+	let longestStallMs = 0;
+	const ticker = setInterval(() => {
+		const now = performance.now();
+		longestStallMs = Math.max(longestStallMs, now - last);
+		last = now;
+	}, 25);
+
+	await reapOrphanedServerEndpoints([root]);
+
+	clearInterval(ticker);
+	expect({ kept: existsSync(directory), blocked: longestStallMs >= 700 }).toEqual({ kept: true, blocked: false });
+}, 60_000);

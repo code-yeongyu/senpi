@@ -12,7 +12,7 @@ import {
 } from "../utils/process-identity.ts";
 
 /** A Unix socket path the platform cannot connect to: sun_path holds 104 bytes on macOS and 108 on Linux. */
-export class SocketPathTooLongError extends Error {
+class SocketPathTooLongError extends Error {
 	readonly code = "socket_path_too_long";
 	readonly path: string;
 	readonly bytes: number;
@@ -29,7 +29,7 @@ export class SocketPathTooLongError extends Error {
 	}
 }
 
-export function socketPathFits(path: string): boolean {
+function socketPathFits(path: string): boolean {
 	return Buffer.byteLength(path) <= MAX_SOCKET_PATH_BYTES;
 }
 
