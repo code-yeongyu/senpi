@@ -3,6 +3,7 @@ import { theme } from "../theme/theme.ts";
 import { toolSpinnerGlyph } from "../tool-progress.ts";
 import type { ExplorationCall } from "./exploration-call.ts";
 import type { ToolExecutionComponent } from "./tool-execution.ts";
+import { AnimationFrame } from "./animation-frame.ts";
 
 /** Body lines past this many collapse into one `… +K more` line, as codex caps exploring cells. */
 const MAX_BODY_LINES = 8;
@@ -34,6 +35,21 @@ function bodyLines(calls: readonly ExplorationCall[]): string[] {
  * owns and disposes the cards, and result routing keeps addressing them by tool call id.
  */
 export class ExplorationGroup extends Container {
+	private readonly animation: AnimationFrame;
+
+	constructor(requestRender: () => void) {
+		super();
+		this.animation = new AnimationFrame(requestRender);
+	}
+
+	stopAnimation(): void {
+		this.animation.cancel();
+	}
+
+	override dispose(): void {
+		this.animation.dispose();
+		super.dispose();
+	}
 	calls: { readonly component: ToolExecutionComponent; readonly call: ExplorationCall }[] = [];
 	/** Rule paths injected into this group's calls; repeated paths count once. */
 	private rules: readonly string[] = [];
@@ -47,6 +63,8 @@ export class ExplorationGroup extends Container {
 
 	override render(width: number): string[] {
 		const pending = this.calls.some(({ call }) => call.pending);
+		if (pending) this.animation.schedule();
+		else this.animation.cancel();
 		const failed = this.calls.filter(({ call }) => call.failed).length;
 		const marker = pending
 			? theme.fg("accent", toolSpinnerGlyph(Math.floor(Date.now() / SPINNER_FRAME_MS)))
@@ -113,6 +131,7 @@ export class ExplorationGroup extends Container {
 			rules.length !== this.rules.length || rules.some((rule, index) => rule !== this.rules[index]);
 		this.children = members;
 		this.calls = calls;
+		if (!calls.some(({ call }) => call.pending)) this.animation.cancel();
 		this.rules = rules;
 		// Call objects are cached per card revision, so unchanged identities mean an unchanged body.
 		if (!callsChanged && !rulesChanged) return;

@@ -15,6 +15,10 @@ export interface LoaderIndicatorOptions {
 	messageFormatter?: LoaderMessageFormatter;
 	/** Frame interval in milliseconds for message animation. Defaults to intervalMs. */
 	messageIntervalMs?: number;
+	/** Transform the cached formatted message for display without recomputing its content. */
+	presentationFormatter?: LoaderMessageFormatter;
+	/** Optional display cadence, independent of the message content and decorative frame cadences. */
+	presentationIntervalMs?: number;
 }
 
 const DEFAULT_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -29,6 +33,10 @@ export class Loader extends Text {
 	private currentFrame = 0;
 	private indicatorIntervalId: NodeJS.Timeout | null = null;
 	private messageIntervalId: NodeJS.Timeout | null = null;
+	private presentationIntervalId: NodeJS.Timeout | null = null;
+	private presentationFormatter: LoaderMessageFormatter | undefined;
+	private presentationIntervalMs = DEFAULT_INTERVAL_MS;
+	private formattedMessage = "";
 	private indicatorFormatter: LoaderIndicatorFormatter | undefined = undefined;
 	private messageFormatter: LoaderMessageFormatter | undefined = undefined;
 	private messageIntervalMs = DEFAULT_INTERVAL_MS;
@@ -76,6 +84,10 @@ export class Loader extends Text {
 			clearInterval(this.messageIntervalId);
 			this.messageIntervalId = null;
 		}
+		if (this.presentationIntervalId) {
+			clearInterval(this.presentationIntervalId);
+			this.presentationIntervalId = null;
+		}
 	}
 
 	dispose(): void {
@@ -102,6 +114,11 @@ export class Loader extends Text {
 			indicator?.messageIntervalMs && indicator.messageIntervalMs > 0
 				? indicator.messageIntervalMs
 				: this.intervalMs;
+		this.presentationFormatter = indicator?.presentationFormatter;
+		this.presentationIntervalMs =
+			indicator?.presentationIntervalMs && indicator.presentationIntervalMs > 0
+				? indicator.presentationIntervalMs
+				: this.messageIntervalMs;
 		this.currentFrame = 0;
 		this.messageAnimationStartedAt = Date.now();
 		this.start();
@@ -123,6 +140,15 @@ export class Loader extends Text {
 			}, this.messageIntervalMs);
 			this.messageIntervalId.unref?.();
 		}
+		const presentationUsesExistingTimer =
+			(this.messageIntervalId !== null && this.presentationIntervalMs === this.messageIntervalMs) ||
+			(this.indicatorIntervalId !== null && this.presentationIntervalMs === this.intervalMs);
+		if (this.presentationFormatter && !presentationUsesExistingTimer) {
+			this.presentationIntervalId = setInterval(() => {
+				this.updateDisplay(false);
+			}, this.presentationIntervalMs);
+			this.presentationIntervalId.unref?.();
+		}
 	}
 
 	protected getRenderedIndicator(animationElapsedMs: number = this.getAnimationElapsedMs()): string {
@@ -140,13 +166,18 @@ export class Loader extends Text {
 		return Math.max(0, Date.now() - this.messageAnimationStartedAt);
 	}
 
-	private updateDisplay(): void {
+	private updateDisplay(refreshMessage = true): void {
 		const animationElapsedMs = this.getAnimationElapsedMs();
 		const renderedFrame = this.getRenderedIndicator(animationElapsedMs);
 		const indicator = renderedFrame.length > 0 ? `${renderedFrame} ` : "";
-		const renderedMessage = this.messageFormatter
-			? this.messageFormatter(this.message, animationElapsedMs)
-			: this.messageColorFn(this.message);
+		if (refreshMessage) {
+			this.formattedMessage = this.messageFormatter
+				? this.messageFormatter(this.message, animationElapsedMs)
+				: this.messageColorFn(this.message);
+		}
+		const renderedMessage = this.presentationFormatter
+			? this.presentationFormatter(this.formattedMessage, animationElapsedMs)
+			: this.formattedMessage;
 		const displayedText = `${indicator}${renderedMessage}`;
 		if (displayedText === this.lastDisplayedText) {
 			return;

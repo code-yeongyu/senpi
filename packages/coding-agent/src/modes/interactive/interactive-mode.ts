@@ -361,11 +361,11 @@ import { ToolResultRevealController } from "./tool-result-reveal.ts";
 import { createInteractiveTui, createInteractiveTuiReference } from "./tui-renderer.ts";
 import { reportUnknownCommand, submitsCommandAsText } from "./unknown-command-feedback.ts";
 import { formatDisplayVersion } from "./version-label.ts";
+import { AnimatedStatusText } from "./components/animated-status-text.ts";
+import { hookStatusAnimation, workingStatusAnimation } from "./working-status-animation.ts";
 import {
 	blendWorkingStatusShimmerRgbColor,
 	formatActiveToolWorkingLabel,
-	formatToolHookStatusMessageFrame,
-	formatWorkingStatusMessageFrame,
 	largeSessionWorkingStatusInterval,
 	sanitizeWorkingStatusPlainText,
 	type WorkingStatusRgbColor,
@@ -3224,21 +3224,17 @@ export class InteractiveMode {
 			return;
 		}
 
-		const now = Date.now();
 		for (const hook of this.activeToolHooks.values()) {
-			const elapsedMs = Math.max(0, now - hook.startedAt);
-			const elapsedSeconds = Math.floor(elapsedMs / 1000);
 			this.hookStatusContainer.addChild(
-				new Text(
-					formatToolHookStatusMessageFrame(hook.hookName, hook.statusMessage, elapsedSeconds, elapsedMs, {
+				new AnimatedStatusText(
+					() => this.ui.requestRender(),
+					hookStatusAnimation(hook.hookName, hook.statusMessage, hook.startedAt, {
 						base: (text) => theme.fg("dim", text),
 						glow: (text) => theme.fg("text", text),
 						highlight: (text) => theme.bold(theme.fg("text", text)),
 						shimmer: formatWorkingStatusShimmerText,
 						suffix: (text) => theme.fg("dim", text),
 					}),
-					1,
-					0,
 				),
 			);
 		}
@@ -3385,24 +3381,21 @@ export class InteractiveMode {
 				theme.getColorMode() === "truecolor"
 					? (frame, elapsedMs) => formatWorkingStatusShimmerText(frame, elapsedMs)
 					: undefined,
-			messageFormatter: (message, animationElapsedMs) =>
-				formatWorkingStatusMessageFrame(
-					message,
-					this.getWorkingElapsedSeconds(),
-					keyText("app.interrupt"),
-					animationElapsedMs,
-					{
-						base: (text) => theme.fg("dim", text),
-						glow: (text) => theme.fg("text", text),
-						highlight: (text) => theme.bold(theme.fg("text", text)),
-						shimmer: formatWorkingStatusShimmerText,
-						suffix: (text) => theme.fg("dim", text),
-					},
+			...workingStatusAnimation(
+				() => this.getWorkingElapsedSeconds(),
+				keyText("app.interrupt"),
+				{
+					base: (text) => theme.fg("dim", text),
+					glow: (text) => theme.fg("text", text),
+					highlight: (text) => theme.bold(theme.fg("text", text)),
+					shimmer: formatWorkingStatusShimmerText,
+					suffix: (text) => theme.fg("dim", text),
+				},
+				largeSessionWorkingStatusInterval(
+					sessionEntryCount,
+					DEFAULT_WORKING_STATUS_MESSAGE_ANIMATION_INTERVAL_MS,
+					LARGE_SESSION_WORKING_STATUS_MESSAGE_INTERVAL_MS,
 				),
-			messageIntervalMs: largeSessionWorkingStatusInterval(
-				sessionEntryCount,
-				DEFAULT_WORKING_STATUS_MESSAGE_ANIMATION_INTERVAL_MS,
-				LARGE_SESSION_WORKING_STATUS_MESSAGE_INTERVAL_MS,
 			),
 		};
 	}
