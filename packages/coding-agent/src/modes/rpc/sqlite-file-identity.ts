@@ -48,9 +48,9 @@ const DESCRIPTOR_DIRECTORY: Partial<Record<NodeJS.Platform, string>> = { linux: 
  * component only, so a directory swapped for a symbolic link between the resolution and the open is still followed
  * (an attacker with write access to the directory holding the swapped component, normally the same user). Without
  * `noFollow` (node:sqlite takes no open flags), `path` is checked once more right before the open, and a link swapped in
- * between that `lstat` and SQLite's own is still followed (the same attacker). A device node put at `path` itself needs `mknod` privilege or a hard link to a
- * device file on the same filesystem (limited by Linux protected_hardlinks); a file on a FUSE mount the user mounted
- * can also block an open.
+ * between that `lstat` and SQLite's own is still followed (the same attacker). A device node put at `path` itself
+ * needs `mknod` privilege or a hard link to a device file on the same filesystem (limited by Linux
+ * protected_hardlinks); a file on a FUSE mount the user mounted can also block an open.
  */
 let checkedOpens: Promise<unknown> = Promise.resolve();
 
