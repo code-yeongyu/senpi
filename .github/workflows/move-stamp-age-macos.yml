@@ -2,16 +2,30 @@ name: Move-record stamp age on macOS
 
 # A move record is aged by the machine's uptime, not by its wall clock, so that a wall-clock step cannot make a young
 # stamp look old (senpi#6463). That holds only if the uptime does not move with the wall clock. This measures it on
-# macOS, under node and under bun, by stepping the runner's wall clock an hour. It runs only when the stamp's code or
-# this file changes: on a pull request that touches them, and on main after such a change lands. The stamp's code is
-# the file that defines its clock and its age, the file that writes it into a record, and the ledger, which chooses
-# the clock a stamp is read with and is where its age is read and acted on.
+# macOS, under node and under bun, by stepping the runner's wall clock an hour. It runs on a pull request that touches
+# the files below, and on main after such a change lands.
+#
+# The path filter follows one rule: every production source file that chooses, writes or reads a stamp's clock, and
+# this file. The rule's pattern is the "stamp-files" line below, and it is written in this one place:
+# packages/coding-agent/test/move-stamp-age-workflow.test.ts reads it from here and fails when the filter and the
+# files that match it differ, so the list cannot fall behind the code. By hand it is
+#   grep -rlE --include='*.ts' '<the pattern>' packages/coding-agent/src
+#
+#   stamp-files: new MoveLedger\(|\b(stampClock|stampFields|stampAge|isCommitStamp|UptimeStamp)\b
+#
+# Today that lists move-landing.ts (defines the clock and the age), move-record-file.ts (writes the stamp into a
+# record), move-ledger.ts (chooses the clock a stamp is read with, and reads its age) and
+# modes/rpc/session-move-commands.ts (builds the one production ledger, with the default clock).
+# The node and bun versions the measurement runs under are pinned in this file, since the repository has no single
+# file that pins them; the same guard holds them equal to the macOS job's in ci.yml, so a version change there
+# cannot leave this one behind.
 on:
   pull_request:
     paths:
       - packages/coding-agent/src/core/session-move/move-landing.ts
       - packages/coding-agent/src/core/session-move/move-record-file.ts
       - packages/coding-agent/src/core/session-move/move-ledger.ts
+      - packages/coding-agent/src/modes/rpc/session-move-commands.ts
       - .github/workflows/move-stamp-age-macos.yml
   push:
     branches: [main]
@@ -19,6 +33,7 @@ on:
       - packages/coding-agent/src/core/session-move/move-landing.ts
       - packages/coding-agent/src/core/session-move/move-record-file.ts
       - packages/coding-agent/src/core/session-move/move-ledger.ts
+      - packages/coding-agent/src/modes/rpc/session-move-commands.ts
       - .github/workflows/move-stamp-age-macos.yml
 
 permissions:
