@@ -125,6 +125,7 @@ async function removeStaleStaging(incoming: string): Promise<void> {
  *
  * A list with two paths that are one name where names fold (letter case, Unicode form) is refused too, but only
  * where `incoming`'s file system really folds them (senpi#6472): `probeFolding` asks it, and only for such a list.
+ * Like every other refusal of a sent list, it happens before the first folder is made.
  */
 export async function withStagedInlineBundle<T>(
 	files: readonly InlineBundleFile[],
@@ -133,8 +134,10 @@ export async function withStagedInlineBundle<T>(
 	probeFolding?: (folder: string) => Promise<NameFolding>,
 ): Promise<T> {
 	const sent = sentChecksums(files);
-	await mkdir(incoming, { recursive: true });
+	// Above the mkdir: every refusal of a sent list is before the first folder is made. The probe does not need
+	// `incoming` to be there, since it asks the nearest folder above it that is.
 	await refuseNamesThatFold([...sent.keys()], incoming, probeFolding);
+	await mkdir(incoming, { recursive: true });
 	await removeStaleStaging(incoming);
 	const dir = await mkdtemp(join(incoming, STAGING_PREFIX));
 	try {

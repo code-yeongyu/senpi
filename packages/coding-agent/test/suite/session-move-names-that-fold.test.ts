@@ -53,7 +53,26 @@ describe("an inline bundle with two paths that are one name where names fold (se
 
 		await expect(refused).rejects.toBeInstanceOf(MoveBundleInvalidError);
 		expect(use).not.toHaveBeenCalled();
-		expect(readdirSync(incoming)).toEqual([]);
+		// The refusal is above the mkdir, so the folder is not made at all (senpi#6523's review).
+		expect(existsSync(incoming)).toBe(false);
+	});
+
+	it("#given a staging folder that is not there yet and a list refused for names that fold #then no folder is made for it", async () => {
+		const { fixture, a, b, reply } = await exported("move-n7");
+		await using _a = a;
+		await using _b = b;
+		const incoming = join(fixture.base, "not-there-yet", "incoming");
+
+		const refused = withStagedInlineBundle(
+			withListed(inlineOf(reply), ...pairInline()),
+			incoming,
+			async () => "used",
+			async () => FOLDS,
+		);
+
+		await expect(refused).rejects.toBeInstanceOf(MoveBundleInvalidError);
+		expect(existsSync(incoming)).toBe(false);
+		expect(existsSync(dirname(incoming))).toBe(false);
 	});
 
 	it("#given a staging folder whose file system keeps them apart #then the list is staged and handed on with both paths", async () => {

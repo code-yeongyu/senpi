@@ -8,7 +8,7 @@
 import { randomBytes } from "node:crypto";
 import { access, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { MoveBundleInvalidError } from "./bundle.ts";
+import { MoveBundleInvalidError, shown } from "./bundle.ts";
 
 export interface NameFolding {
 	/** `Notes` and `notes` are one name. */
@@ -57,8 +57,6 @@ export async function probeNameFolding(path: string): Promise<NameFolding> {
 }
 
 const segments = (path: string): string[] => path.split(/[\\/]/);
-
-const shown = (path: string): string => JSON.stringify(path.length > 120 ? `${path.slice(0, 120)}...` : path);
 
 /**
  * Why these paths cannot all be files on a file system that folds names so, or `undefined` when they can: two of them
