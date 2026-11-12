@@ -39,14 +39,17 @@ const DESCRIPTOR_DIRECTORY: Partial<Record<NodeJS.Platform, string>> = { linux: 
 /**
  * The checked opens of this process, one at a time, each with its caller's validation open: a contender's own open of
  * `expected` inside another's listing window would otherwise count as that one's added descriptor and hide its impostor.
- * Each link settles either way, so one failed open never stalls the next.
+ * Each link settles either way, so one failed open never stalls the next, and none waits on a file: `validate` must not
+ * block (the callers open a file only to create it, `O_EXCL | O_NONBLOCK`, and `lstat` an existing one), and the
+ * listings and the SQLite open do not wait on the file either.
  */
 let checkedOpens: Promise<unknown> = Promise.resolve();
 
 /**
- * Runs `validate`, the caller's own no-follow open of `path` (open, fstat, close) that returns the identity it found and
- * throws to refuse the file, then `open`, a synchronous SQLite open of `path`, and checks the file SQLite opened is that
- * identity (`expected` below). Both run inside the one-at-a-time section (`checkedOpens`), so no validation open of a
+ * Runs `validate`, the caller's check of `path` that returns the identity it found and throws to refuse the file, then
+ * `open`, a synchronous SQLite open of `path`, and checks the file SQLite opened is that identity (`expected` below).
+ * `validate` never opens an existing file: closing that descriptor would drop this process's SQLite locks on it
+ * (senpi#6478). Both run inside the one-at-a-time section (`checkedOpens`), so no validation open of a
  * checked file can land in another checked open's listing window. Unless the identity is proven, it closes what was
  * opened and answers `replaced`, or `busy` when only a later open can tell.
  *
@@ -106,8 +109,8 @@ async function checkedOpen<T>(
  * descriptor is `expected`, U = some added regular file is not, B = `expected` was already open before:
  * - E and not U: proven. A new SQLite descriptor is `expected`, since every added one is. A reused one is a parked
  *   descriptor of the inode `path` named, and then the added `expected` descriptor is some other open of `expected`.
- *   Every open of a checked file in this package is either SQLite's or its caller's `validate`, and both run only inside
- *   the one-at-a-time section, so no such other open can fall in the window. What remains is call discipline: code that
+ *   Every open of a checked file in this package is either SQLite's or its caller's `validate` (which opens only a file
+ *   it creates), and both run only inside the one-at-a-time section, so no such other open can fall in the window. What remains is call discipline: code that
  *   opened `expected` outside `openExpectedFile`, while an attacker linked in a file this process holds SQLite locks on
  *   for exactly that window, would make an impostor pass here.
  * - U, not E, not B: replaced. Nothing of `expected` was open, so SQLite could reuse none of it; its descriptor is new,

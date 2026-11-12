@@ -8,9 +8,10 @@ export interface OwnershipSafeLockOptions {
 		readonly maxTimeout: number;
 	};
 	/**
-	 * The caller's validation of the lock file through its own descriptor (open, fstat, close), returning the identity it
-	 * found; SQLite must open exactly that file. It runs before each open attempt, inside the same one-at-a-time section as
-	 * the SQLite open (`openExpectedFile`).
+	 * The caller's validation of the lock file, returning the identity it found; SQLite must open exactly that file. It
+	 * runs before each open attempt, after this process's earlier holders of the lock released it (`inProcessHolders`),
+	 * inside the same one-at-a-time section as the SQLite open (`openExpectedFile`). It must not open an existing lock file
+	 * (closing that descriptor would drop this process's locks on it) and must not block.
 	 */
 	readonly validateFile?: () => Promise<FileIdentity>;
 }
@@ -108,24 +109,94 @@ async function openChecked<T>(
 	return checked.opened;
 }
 
+/**
+ * The lock holders of this process that validate their lock file (`validateFile`), per lock path, in arrival order:
+ * each link settles once its holder released the lock or gave up. Closing any descriptor of a file drops all of this
+ * process's POSIX locks on it (senpi#6478), so while one of them holds the lock no other one of this process validates
+ * or opens the file: the next one waits here, without an attempt of its own, until the lock is released or its deadline
+ * passes. The other callers never touch their lock file outside SQLite, whose own connections keep this process's
+ * locks (a connection closed while they are held parks its descriptor).
+ */
+const inProcessHolders = new Map<string, Promise<void>>();
+
+/** An in-process holder still held the lock at the deadline; no attempt was made on the file. Busy, like contention. */
+class LockWaitTimeoutError extends Error {
+	readonly code = "ELOCK_WAIT_TIMEOUT" as const;
+	readonly lockPath: string;
+
+	constructor(lockPath: string) {
+		super(`Lock is still held in this process at the deadline: ${lockPath}`);
+		this.name = "LockWaitTimeoutError";
+		this.lockPath = lockPath;
+	}
+}
+
+/** Waits for this caller's turn at `lockPath` until `deadline`; answers how to give the turn to the next caller. */
+async function waitForInProcessTurn(lockPath: string, deadline: number): Promise<() => void> {
+	const previous = inProcessHolders.get(lockPath) ?? Promise.resolve();
+	let leave: () => void = () => undefined;
+	const left = new Promise<void>((resolve) => {
+		leave = resolve;
+	});
+	const tail = previous.then(() => left);
+	inProcessHolders.set(lockPath, tail);
+	void tail.then(() => {
+		if (inProcessHolders.get(lockPath) === tail) inProcessHolders.delete(lockPath);
+	});
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const expired = new Promise<false>((resolve) => {
+		timer = setTimeout(() => resolve(false), Math.max(0, deadline - Date.now()));
+	});
+	const turn = await Promise.race([previous.then(() => true as const), expired]);
+	clearTimeout(timer);
+	if (turn) return leave;
+	// Given up: the callers behind this one wait only for the ones ahead of it.
+	leave();
+	throw new LockWaitTimeoutError(lockPath);
+}
+
 export async function acquireOwnershipSafeLock(
 	lockPath: string,
 	options: OwnershipSafeLockOptions = {},
 ): Promise<() => Promise<void>> {
 	const retries = options.retries ?? DEFAULT_RETRIES;
 	// One cumulative deadline caps the total wait (proper-lockfile's profile
-	// waited ~10s); each SQLite busy wait stays SHORT because it blocks the
-	// event loop synchronously - a long busy_timeout would stop a same-process
-	// holder from ever finishing its critical section - and the async sleep
-	// between attempts yields without adding to the budget (the deadline is the
-	// only limit).
+	// waited ~10s), the in-process wait included; each SQLite busy wait stays SHORT
+	// because it blocks the event loop synchronously - a long busy_timeout would
+	// stop a same-process holder from ever finishing its critical section - and the
+	// async sleep between attempts yields without adding to the budget (the deadline
+	// is the only limit).
 	const deadline = Date.now() + retries.retries * retries.maxTimeout;
+	// A legacy directory is refused at once, not after the wait for an in-process holder.
+	await rejectLegacyDirectory(lockPath);
+	const leave = options.validateFile === undefined ? () => undefined : await waitForInProcessTurn(lockPath, deadline);
+	try {
+		const release = await attemptUntil(lockPath, options.validateFile, retries, deadline);
+		return async () => {
+			try {
+				await release();
+			} finally {
+				leave();
+			}
+		};
+	} catch (error: unknown) {
+		leave();
+		throw error;
+	}
+}
+
+async function attemptUntil(
+	lockPath: string,
+	validateFile: (() => Promise<FileIdentity>) | undefined,
+	retries: NonNullable<OwnershipSafeLockOptions["retries"]>,
+	deadline: number,
+): Promise<() => Promise<void>> {
 	while (true) {
 		await rejectLegacyDirectory(lockPath);
 		const busyMs = Math.max(1, Math.min(retries.maxTimeout, deadline - Date.now()));
 		let database: LockDatabase | undefined;
 		try {
-			database = await openLockDatabase(lockPath, options.validateFile);
+			database = await openLockDatabase(lockPath, validateFile);
 			database.exec(`PRAGMA busy_timeout = ${busyMs}; BEGIN EXCLUSIVE;`);
 			let released = false;
 			const held = database;
@@ -168,7 +239,16 @@ async function rejectLegacyDirectory(lockPath: string): Promise<void> {
 	}
 }
 
+/**
+ * Contention, classified by code only, never by message (a message may name a path that says "busy" or "locked"): the
+ * SQLite primary result SQLITE_BUSY (5) or SQLITE_LOCKED (6), from node:sqlite's `errcode` or bun:sqlite's
+ * `SQLITE_BUSY*`/`SQLITE_LOCKED*` code, and this module's own busy refusals.
+ */
 export function isBusy(error: unknown): boolean {
-	const message = error instanceof Error ? error.message : String(error);
-	return /busy|locked/i.test(message) || (error as { code?: string })?.code === "SQLITE_BUSY";
+	if (error instanceof LockFileBusyError || error instanceof LockWaitTimeoutError) return true;
+	if (typeof error !== "object" || error === null) return false;
+	const errcode = Reflect.get(error, "errcode");
+	if (typeof errcode === "number") return (errcode & 0xff) === 5 || (errcode & 0xff) === 6;
+	const code = Reflect.get(error, "code");
+	return typeof code === "string" && /^SQLITE_(BUSY|LOCKED)/.test(code);
 }

@@ -5,7 +5,7 @@
  * Precondition: the store's directory is private to this user. Each check below holds when it runs; a writer in that
  * directory could still replace the journal name later.
  */
-import { constants, type Stats } from "node:fs";
+import { type BigIntStats, constants, type Stats } from "node:fs";
 import { lstat, open } from "node:fs/promises";
 import { EndpointReservationError } from "./endpoint-reservation-error.ts";
 import { type FileIdentity, openExpectedFile } from "./sqlite-file-identity.ts";
@@ -79,26 +79,42 @@ async function checked<T>(path: string, open: () => T, close: (opened: T) => voi
 }
 
 /**
- * Creates the database file owner-only when absent and validates an existing one through a no-follow descriptor before
- * SQLite opens it: a regular file, owned by this user, with no group or other permission bits (POSIX). Windows DACL
- * validation belongs to the native bridge and is not done here. Runs as `openExpectedFile`'s `validate`, inside the
- * checked-open section.
+ * Creates the database file owner-only when absent and validates it before SQLite opens it: a regular file, owned by
+ * this user, with no group or other permission bits (POSIX). An existing file is checked by `lstat`, never opened:
+ * closing a descriptor of it would drop the locks a store connection of this process holds on it (senpi#6478), and an
+ * open of a FIFO would block. Windows DACL validation belongs to the native bridge and is not done here. Runs as
+ * `openExpectedFile`'s `validate`, inside the checked-open section, whose descriptor proof checks SQLite opened exactly
+ * this file.
  */
 async function precreatePrivate(path: string): Promise<FileIdentity> {
-	let handle: Awaited<ReturnType<typeof open>>;
+	let handle: Awaited<ReturnType<typeof open>> | undefined;
 	try {
-		handle = await open(path, constants.O_RDWR | constants.O_CREAT | (constants.O_NOFOLLOW ?? 0), 0o600);
+		const flags = constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0);
+		handle = await open(path, flags | (constants.O_NONBLOCK ?? 0), 0o600);
 	} catch (error: unknown) {
-		throw new EndpointReservationError("store_insecure", `cannot open ${path}: ${(error as Error).message}`);
+		if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+			throw new EndpointReservationError("store_insecure", `cannot open ${path}: ${(error as Error).message}`);
+		}
 	}
+	// A file this call created is new, so closing its descriptor drops no lock.
+	const info = handle ? await statAndClose(handle) : await lstat(path, { bigint: true }).catch(cannotInspect(path));
+	if (!info.isFile()) throw new EndpointReservationError("store_insecure", `not a regular file: ${path}`);
+	refuseShared(Number(info.uid), Number(info.mode), path);
+	return { dev: info.dev, ino: info.ino };
+}
+
+async function statAndClose(handle: Awaited<ReturnType<typeof open>>): Promise<BigIntStats> {
 	try {
-		const info = await handle.stat({ bigint: true });
-		if (!info.isFile()) throw new EndpointReservationError("store_insecure", `not a regular file: ${path}`);
-		refuseShared(Number(info.uid), Number(info.mode), path);
-		return { dev: info.dev, ino: info.ino };
+		return await handle.stat({ bigint: true });
 	} finally {
 		await handle.close();
 	}
+}
+
+function cannotInspect(path: string): (error: unknown) => never {
+	return (error) => {
+		throw new EndpointReservationError("store_insecure", `cannot inspect ${path}: ${(error as Error).message}`);
+	};
 }
 
 /**

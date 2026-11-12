@@ -67,7 +67,8 @@ describe.skipIf(process.platform !== "linux" && process.platform !== "darwin")("
 		attacker.swap = { path: lockPath, root, persistent: true, opens: 0 };
 		const swap = attacker.swap;
 		await expect(
-			acquireOwnershipSafeLock(lockPath, { validateFile, retries: { retries: 5, minTimeout: 1, maxTimeout: 10 } }),
+			// A deadline of 1 s, not 50 ms: the attempts it admits must not depend on how loaded the machine is.
+			acquireOwnershipSafeLock(lockPath, { validateFile, retries: { retries: 100, minTimeout: 1, maxTimeout: 10 } }),
 		).rejects.toMatchObject({ code: "ELOCK_FILE_BUSY" });
 		expect(swap.opens).toBeGreaterThan(1);
 	});

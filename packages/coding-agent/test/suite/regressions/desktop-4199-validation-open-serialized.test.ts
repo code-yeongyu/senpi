@@ -18,6 +18,8 @@ const hooks = vi.hoisted(() => ({
 	opened: undefined as ((path: string, handle: FileHandle) => void) | undefined,
 	// Sees every call into the checked-open queue.
 	checkedOpen: undefined as ((path: string) => void) | undefined,
+	// Sees every `node:fs/promises` stat.
+	statted: undefined as ((path: string) => void) | undefined,
 	// Runs before SQLite's open of a path; the returned function runs after it.
 	sqliteOpen: undefined as ((path: string) => (() => void) | undefined) | undefined,
 }));
@@ -31,6 +33,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 			hooks.opened?.(String(args[0]), handle);
 			return handle;
 		},
+		stat: (async (...args: Parameters<typeof actual.stat>) => {
+			hooks.statted?.(String(args[0]));
+			return actual.stat(...args);
+		}) as typeof actual.stat,
 		readdir: (async (...args: Parameters<typeof actual.readdir>) => {
 			const names = await actual.readdir(...args);
 			const hook = hooks.listing;
@@ -80,6 +86,7 @@ describe.skipIf(process.platform !== "linux" && process.platform !== "darwin")("
 		hooks.listing = undefined;
 		hooks.opened = undefined;
 		hooks.checkedOpen = undefined;
+		hooks.statted = undefined;
 		hooks.sqliteOpen = undefined;
 		for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 	});
@@ -90,7 +97,10 @@ describe.skipIf(process.platform !== "linux" && process.platform !== "darwin")("
 		return root;
 	}
 
-	/** Resolves when a call reaches `path`'s validation open, or the checked-open queue, whichever comes first. */
+	/**
+	 * Resolves when a call reaches `path`'s validation open, the checked-open queue, or (for a lock) the lock's legacy
+	 * check, after which it waits for this process's holder of the lock; whichever comes first.
+	 */
 	function validationOrQueue(path: string, onValidation: (handle: FileHandle) => void): Promise<void> {
 		return new Promise((resolve) => {
 			hooks.opened = (opened, handle) => {
@@ -101,6 +111,9 @@ describe.skipIf(process.platform !== "linux" && process.platform !== "darwin")("
 			};
 			hooks.checkedOpen = (queued) => {
 				if (queued === path) resolve();
+			};
+			hooks.statted = (statted) => {
+				if (statted === path) resolve();
 			};
 		});
 	}
