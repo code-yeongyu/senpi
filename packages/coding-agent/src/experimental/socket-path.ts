@@ -2,9 +2,14 @@ import { randomUUID } from "node:crypto";
 import { lstat, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readAliasOwnerStartTime, rootModeIsGuarded } from "../modes/rpc/host-socket-bind.ts";
+import { rootModeIsGuarded } from "../modes/rpc/host-socket-bind.ts";
 import { MAX_SOCKET_PATH_BYTES } from "../modes/rpc/socket-ownership.ts";
-import { ProcessIdentityUnreadableError, processMatchesPidFile } from "../utils/process-identity.ts";
+import {
+	ProcessIdentityUnreadableError,
+	processIsLive,
+	processMatchesPidFile,
+	readProcessIdentity,
+} from "../utils/process-identity.ts";
 
 /** A Unix socket path the platform cannot connect to: sun_path holds 104 bytes on macOS and 108 on Linux. */
 export class SocketPathTooLongError extends Error {
@@ -41,7 +46,7 @@ export interface ServerEndpoint {
 }
 
 export interface ServerEndpointOptions {
-	/** Temp roots to try, in order (default: the OS temp directory, then `/tmp`). */
+	/** Temp roots to try, in order (default: the OS temp directory, this user's runtime directory, then `/tmp`). */
 	readonly roots?: readonly string[];
 	/** Start-time reader for the owner record (default: the UTC reader the reaper also uses). */
 	readonly readStartTime?: (pid: number) => Promise<string | undefined>;
@@ -75,9 +80,12 @@ export async function createServerEndpoint(
 	await mkdir(directory, { recursive: false, mode: 0o700 });
 	const release = () => rm(directory, { recursive: true, force: true });
 	try {
-		// An unreadable start time is recorded as null: the reaper then never proves this directory dead.
-		const readStartTime = options.readStartTime ?? readAliasOwnerStartTime;
-		const processStartTime = await readStartTime(process.pid).catch(() => undefined);
+		// A start time the probe cannot read is recorded as null, and the sweep then keeps this directory for as long as
+		// this pid lives. The probe is bounded and retried once, because a starved probe is the common cause.
+		const readStartTime = options.readStartTime ?? readEndpointOwnerStartTime;
+		const processStartTime =
+			(await readStartTime(process.pid).catch(() => undefined)) ??
+			(await readStartTime(process.pid).catch(() => undefined));
 		await writeFile(
 			join(directory, ".owner"),
 			JSON.stringify({ pid: process.pid, processStartTime: processStartTime ?? null }),
@@ -97,13 +105,6 @@ async function guardedRoot(root: string): Promise<boolean> {
 }
 
 /**
- * Removes `senpi-xs-*` endpoint directories under `roots` that belong to this user and whose recorded server is
- * provably gone, as a killed server leaves them behind. The owner start time is written and read in UTC
- * (`readAliasOwnerStartTime`), so a server and a later sweep running under different TZ values read the same instant. A directory without a readable owner record, with an owner start
- * time that was never read, is kept for OWNERLESS_MIN_AGE_MS and removed after that; one whose owner's identity cannot be
- * read now is kept: it may belong to a live server.
- */
-/**
  * The OS temp directory first, then the per-user runtime directory, then the shared `/tmp`; each is used only when it
  * is guarded, so an unguarded TMPDIR falls back to this user's runtime directory before the shared root.
  */
@@ -112,9 +113,27 @@ function defaultServerEndpointRoots(): readonly string[] {
 	return [...new Set([tmpdir(), ...(runtimeDir === undefined || runtimeDir === "" ? [] : [runtimeDir]), "/tmp"])];
 }
 
-/** A directory with no usable owner record is removed only once no starting server could still be writing one. */
+/** A directory with NO owner record at all is removed only once no starting server could still be writing one. */
 const OWNERLESS_MIN_AGE_MS = 300_000;
 
+/**
+ * The probe that reads an owner's start time, bounded so a starved `ps` cannot hold a sweep (or a server's own
+ * startup) for long; it reads in UTC, like the record, so a server and a later sweep in different time zones agree.
+ */
+const OWNER_PROBE_TIMEOUT_MS = 5_000;
+export function readEndpointOwnerStartTime(pid: number): Promise<string | undefined> {
+	return readProcessIdentity(pid, process.platform, OWNER_PROBE_TIMEOUT_MS, undefined, "UTC").then((identity) => {
+		if (identity.kind === "error") throw identity.error;
+		return identity.kind === "present" ? identity.identity : undefined;
+	});
+}
+
+/**
+ * Removes this user's `senpi-xs-*` endpoint directories under `roots` whose server is gone, as a killed server leaves
+ * them behind. ONE rule decides: a record naming a pid holds the directory for as long as that process lives - proved
+ * by its recorded start time where there is one, and by the pid alone where the start time could not be read - and a
+ * directory with no record at all is held for OWNERLESS_MIN_AGE_MS, while a server could still be writing one.
+ */
 export async function reapOrphanedServerEndpoints(roots: readonly string[]): Promise<void> {
 	const uid = process.getuid?.();
 	await Promise.all(
@@ -128,7 +147,7 @@ export async function reapOrphanedServerEndpoints(roots: readonly string[]): Pro
 						try {
 							const stats = await lstat(directory);
 							if (uid !== undefined && stats.uid !== uid) return;
-							const ownerless = stats.mtimeMs <= Date.now() - OWNERLESS_MIN_AGE_MS;
+							const unclaimedTooLong = stats.mtimeMs <= Date.now() - OWNERLESS_MIN_AGE_MS;
 							const raw = await readFile(join(directory, ".owner"), "utf8").catch(() => undefined);
 							const owner: unknown = raw === undefined ? undefined : JSON.parse(raw);
 							const pid: unknown =
@@ -137,17 +156,19 @@ export async function reapOrphanedServerEndpoints(roots: readonly string[]): Pro
 								typeof owner === "object" && owner !== null
 									? Reflect.get(owner, "processStartTime")
 									: undefined;
-							if (
-								typeof pid !== "number" ||
-								typeof processStartTime !== "string" ||
-								processStartTime.length === 0
-							) {
-								if (ownerless) await rm(directory, { recursive: true, force: true });
+							if (typeof pid !== "number") {
+								// No record at all (or an unreadable one): nobody has claimed this directory.
+								if (unclaimedTooLong) await rm(directory, { recursive: true, force: true });
+								return;
+							}
+							if (typeof processStartTime !== "string" || processStartTime.length === 0) {
+								// Claimed, but the writer's own probe was starved: the pid alone decides, however old it is.
+								if (!processIsLive(pid)) await rm(directory, { recursive: true, force: true });
 								return;
 							}
 							const alive = await processMatchesPidFile(
 								{ pid, processStartTime },
-								readAliasOwnerStartTime,
+								readEndpointOwnerStartTime,
 							).catch((error: unknown) => {
 								if (error instanceof ProcessIdentityUnreadableError) return true;
 								throw error;

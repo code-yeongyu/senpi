@@ -1,8 +1,10 @@
+import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import {
 	createServerEndpoint,
+	readEndpointOwnerStartTime,
 	reapOrphanedServerEndpoints,
 	SHORT_SERVER_ENDPOINT_PREFIX,
 } from "../../../src/experimental/socket-path.ts";
@@ -53,4 +55,39 @@ it("places the endpoint in the runtime directory when the temp directory is not 
 
 	expect(endpoint.path.startsWith(`${runtime}/`)).toBe(true);
 	await endpoint.release();
+});
+
+it("keeps a directory whose record names a live pid with no start time, however old it is", async () => {
+	const root = tempRoot(0o700);
+	const directory = join(root, `${SHORT_SERVER_ENDPOINT_PREFIX}n0start00`);
+	mkdirSync(directory, { mode: 0o700 });
+	// What the writer records when its own start-time probe was starved: the server is live, the start time is not known.
+	writeFileSync(join(directory, ".owner"), JSON.stringify({ pid: process.pid, processStartTime: null }));
+	writeFileSync(join(directory, "server.sock"), "");
+	const longAgo = new Date(Date.now() - 600_000);
+	utimesSync(directory, longAgo, longAgo);
+
+	await reapOrphanedServerEndpoints([root]);
+
+	expect(existsSync(directory)).toBe(true);
+});
+
+it("removes a directory whose record names a dead pid with no start time", async () => {
+	const root = tempRoot(0o700);
+	const exited = spawnSync(process.execPath, ["-e", ""]);
+	const directory = join(root, `${SHORT_SERVER_ENDPOINT_PREFIX}dead0st0`);
+	mkdirSync(directory, { mode: 0o700 });
+	writeFileSync(join(directory, ".owner"), JSON.stringify({ pid: exited.pid ?? 999_999_999, processStartTime: null }));
+	writeFileSync(join(directory, "server.sock"), "");
+
+	await reapOrphanedServerEndpoints([root]);
+
+	expect(existsSync(directory)).toBe(false);
+});
+
+it("bounds the owner start-time probe well under the five-minute hold", async () => {
+	const started = Date.now();
+	// A pid that cannot exist: the probe must return, not hang, and must do so far inside OWNERLESS_MIN_AGE_MS.
+	await expect(readEndpointOwnerStartTime(0x7fffffff)).resolves.toBeUndefined();
+	expect(Date.now() - started).toBeLessThan(30_000);
 });
