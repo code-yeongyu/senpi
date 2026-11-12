@@ -153,10 +153,10 @@ export interface RpcMoveSealedBy {
 	move_id: string;
 	state: "moving" | "moved";
 	/**
-	 * The device the sealing release named, or `""` when it named none: the destination is not known here. A caller
-	 * shows that as another device, as the `session_moved_away` refusal words it.
+	 * The device the sealing release named. Absent when it named none: the destination is not known here, and a caller
+	 * shows that as another device, as the `session_moved_away` refusal words it. Never the empty string.
 	 */
-	target: string;
+	target?: string;
 }
 
 /**

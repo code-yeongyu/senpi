@@ -4,10 +4,11 @@
  * this host was answered like a session a caller could bind, and binding it was refused `session_moved_away`. The
  * answer now carries the verdict of the rule that refuses those writes, from the same read of the same file.
  */
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { SessionManager } from "../../src/core/session-manager.ts";
-import { SessionMovedAwayError } from "../../src/core/session-move/ownership.ts";
+import { SESSION_RELEASED, SessionMovedAwayError } from "../../src/core/session-move/ownership.ts";
 import { opened } from "./rpc-inprocess-host-metrics.ts";
 import { createInProcessRig } from "./rpc-inprocess-host-support.ts";
 import { devices, hostAndRelease, importedOnB, landedOnB, move, type Rig } from "./rpc-move-session-support.ts";
@@ -16,6 +17,18 @@ import { SESSION_ID } from "./session-move-fixture.ts";
 type Fixture = Awaited<ReturnType<typeof devices>>;
 
 const LATER = "move-later";
+
+/** A value as a client receives it: what JSON carries, so a field that is absent is absent. */
+const onTheWire = (value: unknown): unknown => JSON.parse(JSON.stringify(value));
+
+/** The data of the last release entry in a session file. */
+function releaseEntryOf(sessionFile: string): unknown {
+	return readFileSync(sessionFile, "utf8")
+		.trim()
+		.split("\n")
+		.map((line) => JSON.parse(line) as { customType?: string; data?: unknown })
+		.findLast((entry) => entry.customType === SESSION_RELEASED)?.data;
+}
 
 /** B releases the copy it imported to a third device under a later move, and exports it; nothing imports it. */
 async function releasedFromB(b: Rig, fixture: Fixture, onB: string): Promise<void> {
@@ -68,7 +81,7 @@ describe("move_session status says whether the landed copy can still be written 
 		expect(refused.errorData).toEqual({ detail: expect.any(String), ...sealedOnB(fixture, onB, "moving") });
 	});
 
-	it("#given the landed session released from here by a later move that named no device #when status is asked for the first move #then sealed_by names the later move with an empty target, the wire's word for a device this host does not know", async () => {
+	it("#given the landed session released from here by a later move that named no device #when status is asked for the first move #then sealed_by names the later move and carries no target at all, #and the file still holds the empty string #and a refused write still says another device", async () => {
 		const fixture = await devices();
 		await using a = createInProcessRig(fixture.agentA);
 		await using b = createInProcessRig(fixture.agentB);
@@ -89,12 +102,18 @@ describe("move_session status says whether the landed copy can still be written 
 
 		const answer = await move(b, { op: "status", moveId: "move-w-no-target" });
 
-		expect(answer.data).toEqual({
-			state: "accepted",
-			...landedOnB(fixture, onB),
-			writable: false,
-			sealed_by: { move_id: LATER, state: "moving", target: "" },
-		});
+		const sealed = { ...landedOnB(fixture, onB), writable: false, sealed_by: { move_id: LATER, state: "moving" } };
+		// As it goes on the wire: the field is absent, not empty and not null.
+		expect(onTheWire(answer.data)).toStrictEqual({ state: "accepted", ...sealed });
+		// Storage is unchanged: the release still writes the empty string into the file.
+		expect(releaseEntryOf(onB)).toMatchObject({ move_id: LATER, target: "" });
+		// The words of the refusal do not change with the field.
+		const write = () => SessionManager.open(onB).appendMessage({ role: "user", content: "not here", timestamp: 9 });
+		expect(write).toThrow("This session is being moved to another device; it is read-only here.");
+		// A second import of the first move is fenced, and its refusal carries the same fields.
+		const bundleDir = join(fixture.agentA, "session-moves", "outgoing", "move-w-no-target");
+		const refused = await move(b, { op: "import", bundleDir, cwd: fixture.repoA, from: "device-a" });
+		expect(onTheWire(refused.errorData)).toStrictEqual({ detail: expect.any(String), ...sealed });
 	});
 
 	it("#given that later move finished #when status is asked for the first move #then it answers not writable and that the later move is moved", async () => {
