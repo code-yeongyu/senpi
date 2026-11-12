@@ -3,13 +3,18 @@
  * that sees no verified bundle within its window or is cancelled is declined, and neither ever overrides a move that is
  * already receiving or accepted. The clock is injected; no test waits for real time.
  */
-import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { getDefaultSessionDir } from "../../src/core/session-manager.ts";
 import { importMovedSession } from "../../src/core/session-move/import.ts";
-import { MoveFencedError, MoveLedger, READY_TTL_MS } from "../../src/core/session-move/move-ledger.ts";
+import {
+	type BeginReceiveOptions,
+	MoveFencedError,
+	MoveLedger,
+	READY_TTL_MS,
+} from "../../src/core/session-move/move-ledger.ts";
 import type { MoveId } from "../../src/core/session-move/ownership.ts";
 import { MOVE, setup } from "./session-move-fixture.ts";
 
@@ -146,6 +151,71 @@ describe("MoveLedger ready state (senpi#3676)", () => {
 	});
 });
 
+// senpi#6435
+describe("MoveLedger keeps the folder a move was readied for (senpi#6435)", () => {
+	const stored = (dir: string, move: string) =>
+		JSON.parse(readFileSync(join(dir, `${move}.json`), "utf8")) as Record<string, unknown>;
+
+	it("#given a move readied for a folder #when ready is sent again #then the same folder and a ready with no folder keep the first window, and another folder is refused", async () => {
+		const { book, clock } = clockedLedger();
+		const first = await book.prepare(id("f1"), "/work/one");
+		expect(first).toEqual({ state: "ready", expiresAt: expect.any(String) });
+		clock.now += 1000;
+
+		expect(await book.prepare(id("f1"), "/work/one")).toEqual(first);
+		expect(await book.prepare(id("f1"))).toEqual(first);
+		await expect(book.prepare(id("f1"), "/work/two")).rejects.toBeInstanceOf(MoveFencedError);
+		expect(await book.expire(id("f1"))).toEqual(first);
+	});
+
+	it("#given a move readied for a folder #when a receive begins for another folder or names none #then it is refused, the move stays ready, and a receive for that folder begins", async () => {
+		const { book } = clockedLedger();
+		const first = await book.prepare(id("f2"), "/work/one");
+
+		await expect(book.beginReceive(id("f2"), LANDING, { cwd: "/work/two" })).rejects.toBeInstanceOf(MoveFencedError);
+		await expect(book.beginReceive(id("f2"), LANDING)).rejects.toBeInstanceOf(MoveFencedError);
+		expect(await book.expire(id("f2"))).toEqual(first);
+
+		await book.beginReceive(id("f2"), LANDING, { cwd: "/work/one" });
+		expect(await book.answerStatus(id("f2"), { movedIn: false })).toEqual({ state: "receiving" });
+	});
+
+	it("#given a move readied with no folder #when a later ready names one #then the first window stands and the move is held to that folder", async () => {
+		const { book, clock } = clockedLedger();
+		const first = await book.prepare(id("f3"));
+		clock.now += 1000;
+
+		expect(await book.prepare(id("f3"), "/work/one")).toEqual(first);
+
+		await expect(book.beginReceive(id("f3"), LANDING, { cwd: "/work/two" })).rejects.toBeInstanceOf(MoveFencedError);
+		await book.beginReceive(id("f3"), LANDING, { cwd: "/work/one" });
+	});
+
+	// The record on disk is a storage contract: every writer of a move's record keeps the folder in the field `cwd`.
+	it.each([
+		["readied for that folder", "/work/one"],
+		["readied with no folder", undefined],
+	])(
+		"#given a move %s #when its receive names the folder #then the ready record and every record from receiving to accepted hold it as cwd",
+		async (name, readiedFor) => {
+			const { book, dir } = clockedLedger();
+			const move = `f4-${name.length}`;
+			await book.prepare(id(move), readiedFor);
+			expect(stored(dir, move).cwd).toBe(readiedFor);
+
+			await book.beginReceive(id(move), LANDING, { cwd: "/work/one" });
+			expect(stored(dir, move)).toMatchObject({ state: "receiving", target: LANDING, cwd: "/work/one" });
+			let stamped: Record<string, unknown> = {};
+			await book.commit(id(move), LANDING, () => {
+				stamped = stored(dir, move);
+			});
+
+			expect(stamped).toMatchObject({ state: "receiving", committing: true, target: LANDING, cwd: "/work/one" });
+			expect(stored(dir, move)).toMatchObject({ state: "accepted", target: LANDING, cwd: "/work/one" });
+		},
+	);
+});
+
 describe("importMovedSession needs a ready move (senpi#3676)", () => {
 	it("#given a bundle for a move this device never readied #then the import is refused and nothing is staged", async () => {
 		const { cwdB, bundleDir, ledger, readIdentity } = await setup(undefined, undefined, { ready: false });
@@ -164,5 +234,88 @@ describe("importMovedSession needs a ready move (senpi#3676)", () => {
 		const { sessionFile } = await importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity });
 		expect(existsSync(sessionFile)).toBe(true);
 		expect(await ledger.answerStatus(MOVE, { movedIn: true })).toEqual({ state: "accepted" });
+	});
+});
+
+const signal = () => {
+	let resolve = () => {};
+	const promise = new Promise<void>((done) => {
+		resolve = done;
+	});
+	return { promise, resolve };
+};
+
+/** Holds its commit between the stamp and the rename, so the move's record lock is held until `gate` opens. */
+class HoldsCommit extends MoveLedger {
+	readonly stamped = signal();
+	readonly gate = signal();
+
+	override commit<T>(
+		moveId: MoveId,
+		target: string,
+		rename: (stampStands: () => Promise<void>) => T | Promise<T>,
+		prepare?: () => void,
+	): Promise<T> {
+		const held = async (stampStands: () => Promise<void>) => {
+			this.stamped.resolve();
+			await this.gate.promise;
+			return rename(stampStands);
+		};
+		return super.commit(moveId, target, held, prepare);
+	}
+}
+
+/** Says when its import reached `beginReceive`, which is after the folder fence and the repository check. */
+class SignalsReceive extends MoveLedger {
+	readonly reached = signal();
+
+	override beginReceive(moveId: MoveId, target: string, options?: BeginReceiveOptions): Promise<void> {
+		this.reached.resolve();
+		return super.beginReceive(moveId, target, options);
+	}
+}
+
+/** A bounded wait: the fence must be passed while the other import still holds the lock, not after it lets go. */
+async function within(promise: Promise<void>, ms: number, failure: string): Promise<void> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const late = new Promise<never>((_, reject) => {
+		timer = setTimeout(() => reject(new Error(failure)), ms);
+	});
+	try {
+		await Promise.race([promise, late]);
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+// senpi#6435 with senpi#6413: the import's folder fence takes no lock. An import that arrives while another import of
+// the same move holds the record lock gets past the fence at once and waits only at `beginReceive`, where it is fenced
+// and answers the file the other import landed.
+describe("the import's folder fence does not wait for another import's lock (senpi#6435)", () => {
+	it("#given one import holding the move's lock between its stamp and its rename #when a second import of the move arrives #then it passes the folder fence while that lock is held and answers the landed session", async () => {
+		const world = await setup();
+		const first = new HoldsCommit(world.ledger.dir);
+		const second = new SignalsReceive(world.ledger.dir);
+		const importInto = (ledger: MoveLedger) =>
+			importMovedSession({
+				bundleDir: world.bundleDir,
+				targetCwd: world.cwdB,
+				ledger,
+				readIdentity: world.readIdentity,
+			});
+		const firstImport = importInto(first);
+		await first.stamped.promise;
+		const secondImport = importInto(second);
+
+		await within(
+			second.reached.promise,
+			5_000,
+			"the second import never reached beginReceive while the first held the move's lock: the folder fence waited for it",
+		);
+		first.gate.resolve();
+		const [landed, answered] = await Promise.all([firstImport, secondImport]);
+
+		expect(answered.sessionFile).toBe(landed.sessionFile);
+		expect(await world.ledger.answerStatus(MOVE, { movedIn: true })).toEqual({ state: "accepted" });
 	});
 });

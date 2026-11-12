@@ -246,9 +246,11 @@ describe("a fence that is not another import's landing still refuses (senpi#6413
 		await waiting.reached.promise;
 
 		await expect(importWith(world, new FailsBeforeRename(world.ledger.dir))).rejects.toThrow("the rename failed");
+		const record = await world.ledger.answerStatus(MOVE, { movedIn: false });
 		waiting.gate.resolve();
 
 		expect(await importWaiting).toEqual({ refused: "move_fenced" });
 		expect(existsSync(landingOf(world))).toBe(false);
+		expect(await world.ledger.answerStatus(MOVE, { movedIn: false })).toEqual(record);
 	});
 });

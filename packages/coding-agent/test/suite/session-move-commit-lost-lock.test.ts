@@ -4,7 +4,7 @@
  * failed while the stalled holder can still rename tells the sender to take the session back, and the holder then
  * lands a second writable copy.
  */
-import { existsSync, readdirSync, readFileSync, symlinkSync, utimesSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { uptime } from "node:os";
 import { basename, dirname, join } from "node:path";
 import lockfile from "proper-lockfile";
@@ -368,6 +368,25 @@ describe("a commit whose holder lost the move record's lock (senpi#6417)", () =>
 		});
 	});
 
+	// The lock can be lost while the landing waits (for the session's move lock, or rewriting the copy): the stamp check
+	// the landing runs right before its rename asserts the lock again.
+	it("#given a holder told after its stamp check, before its file lands, that its lock was taken #then it lands nothing, leaves no rewritten copy and its import fails", async () => {
+		const world = await setup();
+		const lock = stallHolderOf(recordOf(world));
+		const holder = new HoldsCommitBeforeRename(world.ledger.dir);
+		const importing = settled(importWith(world, holder));
+		await holder.stamped.promise;
+
+		lock.taken();
+		holder.gate.resolve();
+
+		expect({
+			answer: await importing,
+			landed: existsSync(landingOf(world)),
+			rewrittenCopies: readdirSync(dirname(landingOf(world))).filter((name) => name.includes(".rebind-")),
+		}).toEqual({ answer: { refused: "ELOCKLOST" }, landed: false, rewrittenCopies: [] });
+	});
+
 	it("#given a holder told during its commit's prepare that its lock was taken #then it stamps nothing, lands nothing and its import fails", async () => {
 		const world = await setup();
 		const lock = stallHolderOf(recordOf(world));
@@ -384,4 +403,31 @@ describe("a commit whose holder lost the move record's lock (senpi#6417)", () =>
 			landed: existsSync(landingOf(world)),
 		}).toEqual({ answer: { refused: "ELOCKLOST" }, stamped: false, landed: false });
 	});
+
+	it.each([
+		["a newer", AN_HOUR_MS],
+		["an older", -AN_HOUR_MS],
+	])(
+		"#given a holder past its own stamp and %s commit stamp of the same move in the record, as another import's commit that took its record over leaves it #when the holder goes to land its file #then it lands nothing and is refused, and the record keeps the other stamp",
+		async (_which, offsetMs) => {
+			const world = await setup();
+			const holder = new HoldsCommitBeforeRename(world.ledger.dir);
+			const importing = settled(importWith(world, holder));
+			await holder.stamped.promise;
+			const mine: unknown = JSON.parse(readFileSync(recordOf(world), "utf8"));
+			if (typeof mine !== "object" || mine === null || !("at" in mine) || typeof mine.at !== "string")
+				throw new Error("the holder left no commit stamp");
+			// The same move, stamped committing at another time: only the time tells the two stamps apart.
+			const other = { ...mine, at: new Date(Date.parse(mine.at) + offsetMs).toISOString() };
+			writeFileSync(recordOf(world), `${JSON.stringify(other)}\n`);
+
+			holder.gate.resolve();
+
+			expect({
+				holder: await importing,
+				landed: existsSync(landingOf(world)),
+				record: JSON.parse(readFileSync(recordOf(world), "utf8")),
+			}).toEqual({ holder: { refused: "move_fenced" }, landed: false, record: other });
+		},
+	);
 });

@@ -50,7 +50,10 @@ describe("experimental server profile", () => {
 		expect(second.serverId).toBe(SECOND_SERVER_ID);
 		expect((await readdir(directory)).sort()).toEqual([
 			`launcher-${FIRST_SERVER_ID}.lock`,
+			// Each held lock carries its owner token beside it (senpi#6428); release removes both.
+			`launcher-${FIRST_SERVER_ID}.lock.owner`,
 			`launcher-${SECOND_SERVER_ID}.lock`,
+			`launcher-${SECOND_SERVER_ID}.lock.owner`,
 		]);
 		await Promise.all([first.release(), second.release()]);
 	});
