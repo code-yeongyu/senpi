@@ -88,7 +88,11 @@ function loadedSpecifiers(file: string, source: string): string[] {
 		}
 		for (const child of Object.values(value)) visit(child);
 	};
-	visit(parseSync(file, source).program);
+	const parsed = parseSync(file, source);
+	const [firstError] = parsed.errors;
+	// A file that does not parse has no trustworthy import list; dropping its edges would hide whatever it loads.
+	if (firstError !== undefined) throw new Error(`Cannot audit ${file}: ${firstError.message}`);
+	visit(parsed.program);
 	return specifiers;
 }
 
@@ -143,6 +147,10 @@ describe("the import walk", () => {
 		},
 	])("follows $name: $reaches", ({ mid, reaches }) => {
 		expect(reachesWriter(mid)).toBe(reaches);
+	});
+
+	it("refuses a file it cannot parse instead of dropping its imports", () => {
+		expect(() => reachesWriter('import { write from "./writer.ts";\n')).toThrow(/mid\.ts.*\S/);
 	});
 });
 
