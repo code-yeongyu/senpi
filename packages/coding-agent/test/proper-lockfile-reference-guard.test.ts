@@ -67,6 +67,9 @@ const LOCK_SITES: Record<string, LockSite> = {
 		reason:
 			"every record write goes through MoveRecordFile.write; a commit's landing rename runs under the same lock",
 		writes: [
+			{ file: at("core/session-move/import.ts"), fn: "replacePredecessor", op: "await rm(" },
+			{ file: at("core/session-move/import.ts"), fn: "placeExtensionState", op: "await rm(" },
+			{ file: at("core/session-move/import.ts"), fn: "placeExtensionState", op: "await copyFile(" },
 			{ file: at("core/session-move/move-record-file.ts"), fn: "write", op: "writeFile(temp" },
 			{ file: at("core/session-move/move-record-file.ts"), fn: "write", op: "renameFile(temp" },
 			{ file: at("core/session-move/move-ledger.ts"), fn: "commit", op: "await rename()" },
