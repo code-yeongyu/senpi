@@ -93,6 +93,21 @@ export function headerSessionId(entries: readonly EntryLike[]): string | undefin
 	return typeof header?.id === "string" ? header.id : undefined;
 }
 
+/**
+ * Every session id an ownership entry in these entries names (senpi#5930). A copy or branch inherits the entries
+ * of the sessions it was copied from, so the set names older ids than the header's: copying back under one of
+ * them would make those entries apply again and the copy would refuse every write.
+ */
+export function ownershipSessionIds(entries: readonly EntryLike[]): ReadonlySet<string> {
+	const ids = new Set<string>();
+	for (const entry of entries) {
+		if (entry.type !== "custom" || !isOwnershipEntryType(entry.customType)) continue;
+		const owner = field(entry.data, "session_id");
+		if (owner !== undefined) ids.add(owner);
+	}
+	return ids;
+}
+
 export function sessionOwnership(entries: readonly EntryLike[]): SessionOwnership {
 	const sessionId = headerSessionId(entries);
 	let verdict = WRITABLE;

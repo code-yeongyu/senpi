@@ -62,6 +62,8 @@ describe("move_session copy (senpi#5889)", () => {
 		["an id a session in that folder already has", "move_target_occupied", "taken"],
 		["the source's own id", "invalid_move_request", SESSION_ID],
 		["an id that is not plain", "invalid_move_request", "../escape"],
+		["an id ending in a separator", "invalid_move_request", "copy-"],
+		["an id ending in a dot", "invalid_move_request", "a."],
 	])("#given %s #then copy refuses with %s and writes nothing", async (_case, code, sessionId) => {
 		const { fixture, a, b, onB } = await revokedOnB(`move-c3-${code}-${sessionId.length}`);
 		await using _a = a;
@@ -76,5 +78,25 @@ describe("move_session copy (senpi#5889)", () => {
 		expect(reply).toMatchObject({ success: false, errorCode: code });
 		expect(readdirSync(dir)).toEqual(files);
 		expect(existsSync(onB)).toBe(true);
+	});
+
+	it("#given a copy whose inherited ownership entries name an older id #when copy runs under that older id #then copy refuses with invalid_move_request and writes nothing (senpi#5930)", async () => {
+		const { a, b, onB } = await revokedOnB("move-c4-copy-back");
+		await using _a = a;
+		await using _b = b;
+		const sessionDir = realpathSync(mkdtempSync(join(tmpdir(), "senpi-copy-back-")));
+		const first = await move(b, { op: "copy", sessionPath: onB, sessionId: COPY_ID, sessionDir });
+		expect(first).toMatchObject({ success: true });
+		const files = readdirSync(sessionDir);
+
+		const reply = await move(b, {
+			op: "copy",
+			sessionPath: (first.data as { session_path: string }).session_path,
+			sessionId: SESSION_ID,
+			sessionDir,
+		});
+
+		expect(reply).toMatchObject({ success: false, errorCode: "invalid_move_request" });
+		expect(readdirSync(sessionDir)).toEqual(files);
 	});
 });
