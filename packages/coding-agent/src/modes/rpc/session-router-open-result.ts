@@ -47,12 +47,22 @@ export function publishOpen(host: RouterContext, opened: OpenRpcSession, entry: 
 	}
 }
 
+/**
+ * An open whose reply is another command's answer (senpi#6267: a `move_session import` that opens what it landed): the
+ * reply goes out under that command, with `data` beside the open's own.
+ */
+export interface OpenReplyAs {
+	readonly command: { readonly type: "move_session"; readonly id?: string };
+	readonly data: Readonly<Record<string, unknown>>;
+}
+
 export function replyOpen(
 	host: RouterContext,
 	opened: OpenRpcSession,
 	entry: RpcSessionEntry,
-	command: { readonly type: "open_session" | "claim_session"; readonly id?: string },
+	command: { readonly type: "open_session" | "claim_session" | "move_session"; readonly id?: string },
 	reply = true,
+	beside: Readonly<Record<string, unknown>> = {},
 ): void {
 	const state =
 		entry.worker?.snapshot?.state ?? (entry.runtime ? buildRpcSessionState(entry.runtime.session) : undefined);
@@ -64,6 +74,7 @@ export function replyOpen(
 			command: command.type,
 			success: true,
 			data: {
+				...beside,
 				sessionId: opened.sessionId,
 				state,
 				...openReplyPermissionMode(state),

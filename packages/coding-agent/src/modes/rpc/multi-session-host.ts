@@ -43,6 +43,7 @@ import { createEndpointReservations } from "./host-reservations.ts";
 import { hostChildDrainRequestFile, watchDrainRequest } from "./host-stop-intent.ts";
 import { armHostWatchdog, type HostWatchdogConfig } from "./host-watchdog.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
+import { withOpenRetention } from "./open-retention.ts";
 import { hostGeneration, hostInstanceId, protocolIdentity } from "./protocol-identity.ts";
 import { rpcCommandShapeError } from "./rpc-input-validation.ts";
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
@@ -273,14 +274,7 @@ export function createHostCore(
 			return;
 		}
 		const command = parsed as RpcCommand;
-		const response = await gate.dispatch(
-			(command.type === "open_session" || command.type === "claim_session") &&
-				(delegated
-					? command.retain_on_disconnect !== true
-					: machineOwned && command.retain_on_disconnect === undefined)
-				? { ...command, retain_on_disconnect: true }
-				: command,
-		);
+		const response = await gate.dispatch(withOpenRetention(command, delegated, machineOwned));
 		if (response) await writer.enqueueControl(response);
 		writer.delegations.lineAnswered(connection);
 	};
