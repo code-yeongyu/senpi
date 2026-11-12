@@ -148,6 +148,9 @@ describe("senpi#5632: delegated connections are decided by the engine's own clas
 		expect(RPC_METHOD_CLASSES_DIGEST).toBe(DIGEST_ON_BASE);
 	});
 
+	// senpi#6534: this one test runs the whole method table once for the local connection and once per grant set, and
+	// alone it takes most of its 400 s bound. It is to be split so that no single test carries the whole sweep, with
+	// every assertion kept. Nothing is split yet: this comment only marks it.
 	it("runs every permitted type of the table as on a local connection and refuses the rest, for each grant set", async () => {
 		const local = await host.proven();
 		const grantSets: ReadonlyArray<readonly RpcMethodClass[]> = [...FORWARDABLE.map((c) => [c]), FORWARDABLE];
