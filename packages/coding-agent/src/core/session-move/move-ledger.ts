@@ -221,10 +221,13 @@ export class MoveLedger {
 				{ ...settledAt(landing, target), committing: true },
 			);
 			moveStep("import:stamped");
-			const stampStands = () => this.#file.assertStampStands(moveId, stamp);
+			// The stamp check, then the lock: the check's read is awaited, and a lock taken during it shows only after it.
+			// `commit` runs both before it calls the landing, and the landing runs both again right before its rename.
+			const stampStands = async () => {
+				await this.#file.assertStampStands(moveId, stamp);
+				this.#locks.assertHeld(this.#file.path(moveId));
+			};
 			await stampStands();
-			// The last look before the landing: the stamp check awaited above, and the lock itself, with nothing awaited between.
-			this.#locks.assertHeld(this.#file.path(moveId));
 			const result = await rename(stampStands);
 			moveStep("import:renamed");
 			await this.#file.write(moveId, { state: "accepted" }, settledAt(landing, target));
