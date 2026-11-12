@@ -34,3 +34,22 @@ it("#given a bundle whose session file is replaced by another session file after
 	const staged = join(sessionDir, ".move-staging", encodeURIComponent(MOVE), basename(source));
 	expect(existsSync(staged) ? customTypes(staged) : []).not.toContain(SESSION_MOVED_IN);
 });
+
+it("#given a bundle whose sidecar is replaced after it was verified #then the import is refused and the move is settled failed as an invalid bundle, #and no session lands", async () => {
+	const { source, cwdB, bundleDir, ledger, readIdentity } = await setup();
+	const manifest = JSON.parse(readFileSync(join(bundleDir, "manifest.json"), "utf8")) as {
+		sidecars: { path: string }[];
+	};
+	const sidecar = manifest.sidecars[0];
+	if (sidecar === undefined) throw new Error("the fixture's bundle lists no sidecar");
+	const listed = join(bundleDir, sidecar.path);
+	setMoveStepHook((step) => {
+		if (step === "import:received") writeFileSync(listed, '{"goal":"another"}\n');
+	});
+
+	const refused = importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity });
+
+	await expect(refused).rejects.toBeInstanceOf(MoveBundleInvalidError);
+	expect(await ledger.answerStatus(MOVE, { movedIn: false })).toEqual({ state: "failed", reason: "bundle_invalid" });
+	expect(existsSync(join(getDefaultSessionDir(cwdB), basename(source)))).toBe(false);
+});
