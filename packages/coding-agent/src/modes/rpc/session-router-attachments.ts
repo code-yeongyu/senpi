@@ -86,6 +86,8 @@ async function releaseConnectionHolds(host: RouterContext, connectionId: string)
 	host.releasedConnections.add(connectionId);
 	host.writer.clearConnectionCapabilities(connectionId);
 	host.connectionRoles.release(connectionId);
+	// senpi#6443: the name follows the incarnation, as the roles do: a detach or a drop ends it, whatever was held.
+	host.clientIds.delete(connectionId);
 	for (const sessionId of host.sessionsByConnection.get(connectionId)?.keys() ?? []) {
 		host.writer.detachConnectionFromSession(connectionId, sessionId);
 		connectionLeft(host, sessionId, connectionId);
@@ -94,7 +96,6 @@ async function releaseConnectionHolds(host: RouterContext, connectionId: string)
 	// The delegation record and its claims end here too (omo-relay-daemon#307): a `detach_connection` never reaches this.
 	if (!host.writer.hasConnection(connectionId)) {
 		host.pendingCapabilities.delete(connectionId);
-		host.clientIds.delete(connectionId);
 		host.writer.delegations.forget(connectionId);
 		host.connectionRoles.forget(connectionId);
 	}

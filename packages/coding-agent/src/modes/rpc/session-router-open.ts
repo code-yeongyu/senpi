@@ -174,6 +174,9 @@ export async function open(
 									host.pendingCapabilities.set(connectionId, [...capabilities]);
 								}
 							},
+							setClientId: (connectionId, clientId) => {
+								if (connectionId !== undefined) host.clientIds.set(connectionId, clientId);
+							},
 							connectionId: () => host.writer.currentConnection(),
 							relocationConnection: () => relocationConnection(host, openedSession.sessionId),
 							deliverTo: (connection, deliver) => host.writer.withConnection(connection, deliver),

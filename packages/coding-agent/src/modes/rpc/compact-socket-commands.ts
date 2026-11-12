@@ -10,19 +10,21 @@ function staleError(id: string | undefined, command: string, message: string): R
 	return { id, type: "response", command, success: false, error: message, errorCode: "delegation_incarnation_stale" };
 }
 
+type SetClientInfo = Extract<RpcCommand, { type: "set_client_info" }>;
+
 /**
  * senpi#6443: a client that names itself is one client on every connection it opens, for the holds a refusal counts.
- * The router records the name for every declaration that carries one, in either form (with a `sessionId` or without)
- * and whatever the compact flag says: with the flag off a session-scoped declaration goes on to its session, which
- * has nowhere to keep it. The name is the connection's for its life; a later declaration without one keeps it.
+ * The name is kept only once its declaration was accepted, never before: a refused one changes nothing. A declaration
+ * that ends at the host is kept here; one that goes on to its session is kept by that session, through its
+ * client-info port, when it accepts it. A later declaration without a name keeps the one this incarnation declared.
  */
-export function declareClientId(host: RouterContext, command: Extract<RpcCommand, { type: "set_client_info" }>): void {
+function keepClientId(host: RouterContext, command: SetClientInfo): void {
 	const peer = host.writer.currentConnection();
 	if (peer !== undefined && command.client_id !== undefined) host.clientIds.set(peer, command.client_id);
 }
 
 /** Validate the full declaration before committing role, media, recovery or pending state. */
-export function declareSocketClient(
+function declareSocketClient(
 	host: RouterContext,
 	command: Extract<RpcCommand, { type: "set_client_info" }>,
 ): RpcResponse {
@@ -63,6 +65,31 @@ export function declareSocketClient(
 		success: true,
 		...(selection?.ack() ? { data: selection.ack() } : {}),
 	};
+}
+
+/** A declaration with no `sessionId` ends at the host: it is answered here, and its name is kept only when accepted. */
+export function declareSessionless(host: RouterContext, command: SetClientInfo): RpcResponse | undefined {
+	// Flag on and no id: `preDeclare` already accepted this declaration, and nothing is answered.
+	const reply = command.id === undefined && compactUpdatesEnabled() ? undefined : declareSocketClient(host, command);
+	if (reply === undefined || reply.success) keepClientId(host, command);
+	return reply;
+}
+
+/**
+ * Flag on: the host-side pre-declaration of every `set_client_info` (RULING-111). Answers the refusal, `"done"` when the
+ * declaration ends here with nothing to answer (no id and no capabilities; its name is kept), or the command to route on.
+ */
+export function preDeclare(host: RouterContext, command: SetClientInfo): RpcResponse | SetClientInfo | "done" {
+	const reply = declareSocketClient(host, command);
+	if (!reply.success) return reply;
+	const peer = host.writer.currentConnection();
+	const next =
+		command.capabilities !== undefined && peer !== undefined
+			? { ...command, capabilities: [...(host.pendingCapabilities.get(peer) ?? [])] }
+			: command;
+	if (next.id !== undefined || next.capabilities !== undefined) return next;
+	keepClientId(host, next);
+	return "done";
 }
 
 /** Format freezes before record-producing admission; status-only observation does not select a format. */

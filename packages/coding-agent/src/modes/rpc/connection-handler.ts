@@ -222,6 +222,8 @@ export interface RpcConnectionOptions {
 			incarnation?: number,
 		) => "stale" | void;
 		hasCapability?: (connectionId: string, capability: string) => boolean;
+		/** senpi#6443: keeps the name a connection declared, once this session accepted the declaration that carried it. */
+		setClientId?: (connectionId: string | undefined, clientId: string) => void;
 	};
 	bindSecurityPresentation?: (
 		session: AgentSessionRuntime["session"],
