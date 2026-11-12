@@ -254,6 +254,13 @@ describe("a reap counts only once the stop really ended the session", () => {
 				10, 40, 70, 100,
 			]);
 
+			// senpi#6252: once the reap has failed, later age notices stop promising one.
+			expect(
+				ages
+					.filter((event) => event.kind === "running" && event.ageMinutes >= 70)
+					.map((event) => event.autoReapMinutes),
+			).toEqual([null, null]);
+
 			// It ends on its own later: that exit is not a reap.
 			runtime.exit();
 			await vi.advanceTimersByTimeAsync(0);
