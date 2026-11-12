@@ -69,6 +69,7 @@ const LOCK_SITES: Record<string, LockSite> = {
 		writes: [
 			{ file: at("core/session-move/import.ts"), fn: "replacePredecessor", op: "await rm(" },
 			{ file: at("core/session-move/import.ts"), fn: "placeExtensionState", op: "await rm(" },
+			{ file: at("core/session-move/import.ts"), fn: "placeExtensionState", op: "await mkdir(" },
 			{ file: at("core/session-move/import.ts"), fn: "placeExtensionState", op: "await copyFile(" },
 			{ file: at("core/session-move/move-record-file.ts"), fn: "write", op: "writeFile(temp" },
 			{ file: at("core/session-move/move-record-file.ts"), fn: "write", op: "renameFile(temp" },

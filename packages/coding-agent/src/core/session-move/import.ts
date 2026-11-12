@@ -270,6 +270,7 @@ async function placeExtensionState(
 	await rm(dir, { recursive: true, force: true });
 	for (const file of files) {
 		const to = join(dir, file.path.slice(EXTENSION_STATE_PREFIX.length));
+		assertHeld();
 		await mkdir(dirname(to), { recursive: true });
 		assertHeld();
 		await copyFile(join(staging, STAGED_PAYLOADS, file.path), to);
