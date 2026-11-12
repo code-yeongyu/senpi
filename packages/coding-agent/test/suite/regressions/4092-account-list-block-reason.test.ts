@@ -84,7 +84,12 @@ describe("account lists say why an account is blocked and until when (senpi#4092
 
 	it("/gpt-account", async () => {
 		await seedOauthPool("chatgpt-subscription", HEALTH);
-		expectReasons(await listOutput(registerCommand("gpt-account", gptAccountExtension), ""));
+		const output = await listOutput(registerCommand("gpt-account", gptAccountExtension), "");
+		expectReasons(output);
+		// senpi#3216: a rejected sign-in names the command that signs that account in again in place.
+		expect(output).toContain(
+			`rejected | login | sign-in rejected; next check after ${RETRY}, or run /gpt-account reauthorize rejected`,
+		);
 	});
 
 	it("/claude-account", async () => {
