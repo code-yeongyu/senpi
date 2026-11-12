@@ -11,7 +11,15 @@ import { getDefaultSessionDir, loadEntriesFromFile } from "../../src/core/sessio
 import { sessionOwnership } from "../../src/core/session-move/ownership.ts";
 import { opened } from "./rpc-inprocess-host-metrics.ts";
 import { createInProcessRig } from "./rpc-inprocess-host-support.ts";
-import { cloneOf, devices, hostAndRelease, move, type Rig, unrelatedRepo } from "./rpc-move-session-support.ts";
+import {
+	cloneOf,
+	devices,
+	hostAndRelease,
+	landedOnB,
+	move,
+	type Rig,
+	unrelatedRepo,
+} from "./rpc-move-session-support.ts";
 import { SESSION_ID } from "./session-move-fixture.ts";
 
 type Fixture = Awaited<ReturnType<typeof devices>>;
@@ -128,11 +136,13 @@ describe("move_session checks the repository before the release (senpi#6435)", (
 			errorCode: "move_fenced",
 		});
 
-		expect(await move(b, { op: "import", bundleDir, cwd: fixture.repoB, from: "device-a" })).toMatchObject({
-			success: true,
-			data: { session_id: SESSION_ID },
+		const landed = await move(b, { op: "import", bundleDir, cwd: fixture.repoB, from: "device-a" });
+		expect(landed).toMatchObject({ success: true, data: { session_id: SESSION_ID } });
+		// An accepted move also says where it landed (senpi#6436): the readied folder, and the file the import answered.
+		expect((await move(b, { op: "status", moveId: "move-p2b" })).data).toEqual({
+			state: "accepted",
+			...landedOnB(fixture, (landed.data as { session_path: string }).session_path),
 		});
-		expect((await move(b, { op: "status", moveId: "move-p2b" })).data).toEqual({ state: "accepted" });
 	});
 
 	it("#given a prepare with no folder and no repository #then it readies the move as before", async () => {

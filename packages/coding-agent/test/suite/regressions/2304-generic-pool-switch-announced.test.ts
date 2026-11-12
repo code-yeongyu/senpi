@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AssistantMessage, AssistantMessageEvent } from "@earendil-works/pi-ai";
@@ -35,9 +36,9 @@ beforeEach(() => {
 	});
 });
 
-afterEach(() => {
+afterEach(async () => {
 	unsubscribe();
-	rmSync(dir, { recursive: true, force: true });
+	await rm(dir, { recursive: true, force: true });
 });
 
 function accounts(...names: string[]): PooledCredential {

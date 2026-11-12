@@ -11,7 +11,6 @@ import { exportSessionForMoveAndRead } from "../../core/session-move/export.ts";
 import { sealedOutgoingStateDir } from "../../core/session-move/extension-state.ts";
 import { finishMove } from "../../core/session-move/finish.ts";
 import { readSessionRepositoryIdentity } from "../../core/session-move/identity.ts";
-import { answerMoveStatus } from "../../core/session-move/import.ts";
 import { readInlineBundle } from "../../core/session-move/inline-bundle.ts";
 import { MoveLedger, type MoveRecord } from "../../core/session-move/move-ledger.ts";
 import { type MoveId, sessionOwnership } from "../../core/session-move/ownership.ts";
@@ -20,12 +19,14 @@ import { revokeImportedMove } from "../../core/session-move/revoke.ts";
 import { orderedRealPath, realSessionPath } from "../../core/session-move/session-lock.ts";
 import { normalizePath, resolvePath } from "../../utils/paths.ts";
 import type { RpcResponse } from "./rpc-types.ts";
+import { landedWhenFenced, statusAnswer, statusFile } from "./session-move-landed.ts";
 import {
 	MOVE_INLINE_MAX_FILES,
 	RPC_ERROR_INVALID_MOVE_REQUEST,
 	RPC_ERROR_MOVE_FAILED,
 	RPC_ERROR_MOVE_NOT_RELEASED,
 	RPC_ERROR_SESSION_OPEN_HERE,
+	type RpcMoveLanded,
 	type RpcMoveRecord,
 	type RpcMoveSessionCommand,
 	type RpcMoveSessionData,
@@ -83,6 +84,7 @@ export async function moveSession(
 				? (RENAMED_CODES[code] ?? (CORE_CODES.has(code) ? code : RPC_ERROR_MOVE_FAILED))
 				: RPC_ERROR_MOVE_FAILED,
 			detail,
+			await landedWhenFenced(ledger, cause),
 		);
 	}
 }
@@ -118,7 +120,7 @@ async function run(
 		case "cancel":
 			return wireRecord(await ledger.decline(parsed.moveId, "cancelled"));
 		case "status":
-			return answerMoveStatus(ledger, parsed.moveId, parsed.sessionPath);
+			return statusAnswer(ledger, parsed.moveId, statusFile(parsed.named, port.agentDir));
 		case "export": {
 			const sessionFile = await orderedRealPath(parsed.sessionPath);
 			const bundleDir = outgoing(parsed.moveId);
@@ -231,7 +233,12 @@ function answer(id: string | undefined, data: Awaited<ReturnType<typeof run>>): 
 	return { id, type: "response", command: "move_session", success: true, data };
 }
 
-function refusal(id: string | undefined, code: string, detail: string): RpcResponse {
+function refusal(
+	id: string | undefined,
+	code: string,
+	detail: string,
+	landed?: RpcMoveLanded & { revoked?: true },
+): RpcResponse {
 	return {
 		id,
 		type: "response",
@@ -239,6 +246,6 @@ function refusal(id: string | undefined, code: string, detail: string): RpcRespo
 		success: false,
 		error: code,
 		errorCode: code,
-		errorData: { detail },
+		errorData: { detail, ...landed },
 	};
 }

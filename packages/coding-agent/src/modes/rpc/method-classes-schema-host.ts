@@ -83,7 +83,12 @@ export const HOST_RECORD_SCHEMAS = {
 		move({ op: Type.Literal("cancel"), moveId: Id }),
 		move({ op: Type.Literal("identity"), sessionPath: PathStr }),
 		move({ op: Type.Literal("identity"), cwd: PathStr }),
-		move({ op: Type.Literal("status"), moveId: Id, sessionPath: OptPath }),
+		move({
+			op: Type.Literal("status"),
+			moveId: Id,
+			sessionPath: OptPath,
+			landing: Opt(Type.Object({ cwd: PathStr, sessionFileName: Id, sessionDir: OptPath })),
+		}),
 		move({
 			op: Type.Literal("export"),
 			sessionPath: PathStr,

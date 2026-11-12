@@ -58,6 +58,7 @@ describe("multi-session RPC protocol info", () => {
 					"entries_tail",
 					"set_permission_preset_v1",
 					"retain_on_disconnect",
+					"open_session_header_cwd", // senpi#6427: an open by path with no cwd works where the file's header says.
 					"detach_connection",
 					"delegated_connection_v1",
 					"delegation_roles_v1",
@@ -74,6 +75,8 @@ describe("multi-session RPC protocol info", () => {
 					"move_session_inline_max_bytes:1048576",
 					"move_session_identity", // senpi#6435: a session's recorded repository, read without a release.
 					"move_session_prepare_repository", // senpi#6435: prepare checks the folder's repository.
+					"move_session_status_landed_path", // senpi#6436: where an accepted move landed.
+					"move_session_status_landing",
 					"session_relocation",
 					"session_context",
 					"session_kind",

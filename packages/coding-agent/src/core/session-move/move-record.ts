@@ -26,6 +26,7 @@ export type MoveRecord = MoveAnswer | { readonly state: "ready"; readonly expire
 
 export class MoveFencedError extends Error {
 	readonly code = "move_fenced";
+	readonly moveId: MoveId;
 	readonly record: MoveRecord | undefined;
 
 	constructor(moveId: MoveId, record: MoveRecord | undefined, detail?: string) {
@@ -33,6 +34,7 @@ export class MoveFencedError extends Error {
 			`Move ${moveId} can no longer be imported here: ${detail ?? `it was already answered (${record?.state ?? "no record"})`}.`,
 		);
 		this.name = "MoveFencedError";
+		this.moveId = moveId;
 		this.record = record;
 	}
 }

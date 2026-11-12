@@ -4,11 +4,21 @@
  */
 import { isAbsolute } from "node:path";
 import { parseRepositoryIdentity, type RepositoryIdentity } from "../../core/repository-identity.ts";
-import { isPlainId, parseMoveId } from "../../core/session-move/bundle.ts";
+import { isPlainId, isSessionFileName, parseMoveId } from "../../core/session-move/bundle.ts";
 import type { InlineBundleFile } from "../../core/session-move/inline-bundle.ts";
 import { type MoveAnswer, parseMoveStatus } from "../../core/session-move/move-ledger.ts";
 import type { MoveId } from "../../core/session-move/ownership.ts";
 import { MOVE_INLINE_MAX_BYTES, MOVE_INLINE_MAX_FILES } from "./session-move-wire.ts";
+
+/** The file a `status` names: the copy the import returned, or the place the move would have landed. */
+export type StatusNamedFile =
+	| { readonly kind: "path"; readonly sessionPath: string }
+	| {
+			readonly kind: "landing";
+			readonly cwd: string;
+			readonly sessionFileName: string;
+			readonly sessionDir: string | undefined;
+	  };
 
 export type MoveRequest =
 	| {
@@ -20,7 +30,7 @@ export type MoveRequest =
 	| { readonly op: "cancel"; readonly moveId: MoveId }
 	| { readonly op: "identity"; readonly sessionPath: string }
 	| { readonly op: "identity"; readonly cwd: string }
-	| { readonly op: "status"; readonly moveId: MoveId; readonly sessionPath: string | undefined }
+	| { readonly op: "status"; readonly moveId: MoveId; readonly named: StatusNamedFile | undefined }
 	| {
 			readonly op: "export";
 			readonly sessionPath: string;
@@ -95,6 +105,27 @@ function parseCopy(raw: Record<string, unknown>): MoveRequest | string {
 	if (raw.sessionDir !== undefined && (!text(raw.sessionDir) || !isAbsolute(raw.sessionDir)))
 		return "sessionDir must be an absolute path.";
 	return { op: "copy", sessionPath: raw.sessionPath, sessionId: raw.sessionId, sessionDir: raw.sessionDir };
+}
+
+/** The file a `status` names, if it names one: `sessionPath` or `landing`, never both. A string says what is wrong. */
+function parseStatusFile(raw: Record<string, unknown>): StatusNamedFile | undefined | string {
+	const { sessionPath, landing } = raw;
+	if (landing === undefined) {
+		if (sessionPath === undefined) return undefined;
+		return text(sessionPath) ? { kind: "path", sessionPath } : "sessionPath must be a non-empty string.";
+	}
+	if (sessionPath !== undefined) return "status takes sessionPath or landing, not both.";
+	if (typeof landing !== "object" || landing === null || Array.isArray(landing))
+		return "landing must be an object: cwd, sessionFileName and, if the import named one, sessionDir.";
+	const cwd = "cwd" in landing ? landing.cwd : undefined;
+	const sessionFileName = "sessionFileName" in landing ? landing.sessionFileName : undefined;
+	const sessionDir = "sessionDir" in landing ? landing.sessionDir : undefined;
+	if (!text(cwd) || !isAbsolute(cwd)) return "landing.cwd must be the absolute folder the import was given.";
+	if (!isSessionFileName(sessionFileName))
+		return "landing.sessionFileName must be the session's plain file name, as the bundle's manifest names it.";
+	if (sessionDir !== undefined && (!text(sessionDir) || !isAbsolute(sessionDir)))
+		return "landing.sessionDir must be an absolute path.";
+	return { kind: "landing", cwd, sessionFileName, sessionDir };
 }
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
@@ -174,10 +205,8 @@ export function parseMoveRequest(raw: Record<string, unknown>): MoveRequest | st
 		case "cancel":
 			return { op, moveId: id };
 		case "status": {
-			const sessionPath = text(raw.sessionPath) ? raw.sessionPath : undefined;
-			if (raw.sessionPath !== undefined && sessionPath === undefined)
-				return "sessionPath must be a non-empty string.";
-			return { op, moveId: id, sessionPath };
+			const named = parseStatusFile(raw);
+			return typeof named === "string" ? named : { op, moveId: id, named };
 		}
 		case "export": {
 			const dropped = raw.droppedUserMessages ?? [];

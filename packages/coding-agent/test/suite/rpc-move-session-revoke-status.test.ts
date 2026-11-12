@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createInProcessRig } from "./rpc-inprocess-host-support.ts";
-import { customTypes, devices, importedOnB, move } from "./rpc-move-session-support.ts";
+import { customTypes, devices, importedOnB, landedOnB, move } from "./rpc-move-session-support.ts";
 
 describe("move_session status after a revoke (senpi#4004)", () => {
 	it("#given B revoked its import #when status asks without sessionPath #then it answers accepted + revoked and finish takes the session back", async () => {
@@ -17,7 +17,7 @@ describe("move_session status after a revoke (senpi#4004)", () => {
 		expect(await move(b, { op: "revoke", sessionPath: onB, moveId: "move-s1" })).toMatchObject({ success: true });
 
 		const answer = (await move(b, { op: "status", moveId: "move-s1" })).data;
-		expect(answer).toEqual({ state: "accepted", revoked: true });
+		expect(answer).toEqual({ state: "accepted", revoked: true, ...landedOnB(fixture, onB) });
 		const ledgerRecord = JSON.parse(
 			readFileSync(join(fixture.agentB, "session-moves", "ledger", "move-s1.json"), "utf8"),
 		) as Record<string, unknown>;
@@ -27,7 +27,11 @@ describe("move_session status after a revoke (senpi#4004)", () => {
 		expect(await move(b, { op: "import", bundleDir, cwd: fixture.repoB, from: "device-a" })).toMatchObject({
 			success: true,
 		});
-		expect((await move(b, { op: "status", moveId: "move-s1" })).data).toEqual({ state: "accepted", revoked: true });
+		expect((await move(b, { op: "status", moveId: "move-s1" })).data).toEqual({
+			state: "accepted",
+			revoked: true,
+			...landedOnB(fixture, onB),
+		});
 
 		expect(
 			await move(a, { op: "finish", sessionPath: fixture.sessionPath, moveId: "move-s1", answer }),

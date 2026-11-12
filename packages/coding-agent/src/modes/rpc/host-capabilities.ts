@@ -28,6 +28,7 @@ import {
 	MEDIA_PLACEHOLDERS_CAPABILITY,
 	MOVED_PATH_GUARD_CAPABILITY,
 	OBSERVE_READS_CAPABILITY,
+	OPEN_SESSION_HEADER_CWD_CAPABILITY,
 	PROMPT_SURFACE_CAPABILITY,
 	PROMPT_SURFACE_CHAT_CAPABILITY,
 	PROVIDER_ACCOUNT_TEST_CAPABILITY,
@@ -59,6 +60,8 @@ import {
 	MOVE_SESSION_INLINE_MAX_BYTES_CAPABILITY,
 	MOVE_SESSION_PREPARE_REPOSITORY_CAPABILITY,
 	MOVE_SESSION_REVOKE_CAPABILITY,
+	MOVE_SESSION_STATUS_LANDED_PATH_CAPABILITY,
+	MOVE_SESSION_STATUS_LANDING_CAPABILITY,
 } from "./session-move-wire.ts";
 
 /** `unload_session` and `session_parked.reason` (senpi#3225). */
@@ -128,6 +131,8 @@ export function multiSessionHostCapabilities(options: {
 			// per-session launch profile `context`/`auto_title` travel on, and the session
 			// listing `kind` filters.
 			RETAIN_ON_DISCONNECT_CAPABILITY,
+			// An open by path with no `cwd` resumes the session where its file's header says, not where this host runs.
+			OPEN_SESSION_HEADER_CWD_CAPABILITY,
 			// Only a multi-session host tracks attachments per connection, so only it can drop them on request.
 			DETACH_CONNECTION_CAPABILITY,
 			// Its host core decides every inbound line of a delegated connection before dispatch (senpi#5632).
@@ -153,6 +158,10 @@ export function multiSessionHostCapabilities(options: {
 			// ...and answers a session's or a folder's recorded repository, and checks it before a release (senpi#6435).
 			MOVE_SESSION_IDENTITY_CAPABILITY,
 			MOVE_SESSION_PREPARE_REPOSITORY_CAPABILITY,
+			// ...and says where an accepted move landed (senpi#6436).
+			MOVE_SESSION_STATUS_LANDED_PATH_CAPABILITY,
+			// ...and a `status` that names where the move would have landed is answered from the file there first.
+			MOVE_SESSION_STATUS_LANDING_CAPABILITY,
 			// A host session asks the client that offers it to continue the session elsewhere (`host_request`).
 			SESSION_RELOCATION_CAPABILITY,
 			SESSION_CONTEXT_CAPABILITY,
