@@ -99,6 +99,32 @@ export function sameBoot(bootAtMs: number, otherBootAtMs: number | undefined): b
 	return Math.abs(bootAtMs - otherBootAtMs) <= BOOT_INSTANT_TOLERANCE_MS;
 }
 
+/**
+ * This process's boot instant: the cached kernel record, or with `fresh` a new read of it that replaces the cache. The
+ * kernel's recorded boot instant moves with a wall-clock step, so a value cached before a step can be stale.
+ */
+export type OwnBootReader = (options?: { readonly fresh?: boolean }) => Promise<number>;
+
+export const ownBootAtMs: OwnBootReader = (options) => {
+	if (options?.fresh === true) kernelBootRecords.delete(process.platform);
+	return processBootAtMs();
+};
+
+/**
+ * Whether `otherBootAtMs` belongs to this machine's current boot. A 'different boot' verdict on the cached record is
+ * checked once more against a fresh read before it stands: after a wall-clock step past the tolerance the cache is
+ * stale while a live peer recorded the moved instant, and calling that peer's lock or claim stale would let a second
+ * owner in.
+ */
+export async function sameBootAsOwn(
+	otherBootAtMs: number | undefined,
+	read: OwnBootReader = ownBootAtMs,
+): Promise<boolean> {
+	if (otherBootAtMs === undefined || !Number.isFinite(otherBootAtMs)) return false;
+	if (sameBoot(await read(), otherBootAtMs)) return true;
+	return sameBoot(await read({ fresh: true }), otherBootAtMs);
+}
+
 export interface ChildProcessIdentity {
 	readonly pid: number;
 	readonly processGroupId?: number;

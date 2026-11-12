@@ -11,7 +11,7 @@
 
 import { randomUUID } from "node:crypto";
 import { link, open, readFile, rename, stat, unlink } from "node:fs/promises";
-import { ownProcessStartedAtMs, processBootAtMs, sameBoot, sameProcessStart } from "./process-identity.ts";
+import { ownProcessStartedAtMs, processBootAtMs, sameBootAsOwn, sameProcessStart } from "./process-identity.ts";
 import { readProcessStartMs as defaultReadProcessStartMs } from "./process-start-probe.ts";
 
 export function errorCode(error: unknown): string | undefined {
@@ -141,7 +141,7 @@ export async function reclaimLockState(lock: string, probes: LockProbes = {}): P
 		);
 		return age > UNREADABLE_LOCK_STALE_MS ? { state: "stale", raw } : { state: "held" };
 	}
-	if (!sameBoot(holder.bootAtMs, await processBootAtMs())) return { state: "stale", raw };
+	if (!(await sameBootAsOwn(holder.bootAtMs))) return { state: "stale", raw };
 	if (holder.pid === process.pid) {
 		// Our own pid: held only by this very process (another reclaim in flight here), never by a
 		// crashed earlier process whose pid this one now wears.

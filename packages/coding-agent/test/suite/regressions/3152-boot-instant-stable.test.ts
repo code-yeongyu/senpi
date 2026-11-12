@@ -128,3 +128,26 @@ for (const platform of ["linux", "darwin"] as const) {
 		});
 	});
 }
+
+it("re-reads a stale cached boot record before calling a live peer from another boot", async ({ onTestFinished }) => {
+	// ownBootAtMs reads this host's platform; pin it to linux so the mocked /proc/stat is the record on every host.
+	const platform = Object.getOwnPropertyDescriptor(process, "platform");
+	Object.defineProperty(process, "platform", { value: "linux", configurable: true });
+	onTestFinished(() => {
+		if (platform !== undefined) Object.defineProperty(process, "platform", platform);
+	});
+	vi.resetModules();
+	const identity = await import("../../../src/core/extensions/builtin/terminal/process-identity.ts");
+	const cached = await identity.ownBootAtMs();
+	// A wall-clock step of +300 s moves the kernel's recorded boot instant; a live peer that started afterwards
+	// recorded the moved instant, while this process still caches the old one.
+	kernel.btime += 300;
+
+	const verdict = await identity.sameBootAsOwn(kernel.btime * 1000);
+
+	expect({ cached, verdict, refreshed: await identity.ownBootAtMs() }).toEqual({
+		cached: 1_000_000,
+		verdict: true,
+		refreshed: 1_300_000,
+	});
+});

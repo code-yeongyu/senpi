@@ -48,8 +48,11 @@ export function residentWriterProbe(
 	const gone = new Set<string>();
 	const verified = new Set<string>();
 	return async (writer) => {
-		// Resolved first, so nothing yields between reading the verdict cache and recording a new verdict.
-		const bootAtMs = await probes.bootAtMs();
+		// Resolved first, so nothing yields between reading the verdict cache and recording a new verdict; a writer that
+		// looks like another boot is checked against a fresh read, since a wall-clock step makes the cached record stale.
+		let bootAtMs = await probes.bootAtMs();
+		if (writer.host === probes.host() && !sameBoot(bootAtMs, writer.bootAtMs))
+			bootAtMs = await probes.bootAtMs({ fresh: true });
 		const key = `${writer.host}:${writer.pid}:${writer.processStartedAtMs}`;
 		if (gone.has(key)) return false;
 		if (writer.host !== probes.host()) return true;

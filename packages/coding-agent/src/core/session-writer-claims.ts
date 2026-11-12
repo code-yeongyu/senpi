@@ -6,8 +6,9 @@ import { resolveMovedPath } from "./extensions/builtin/moved-path-guard/resolve.
 import { errorCode } from "./extensions/builtin/terminal/lease-file.ts";
 import {
 	BOOT_INSTANT_TOLERANCE_MS,
+	type OwnBootReader,
+	ownBootAtMs,
 	ownProcessStartedAtMs,
-	processBootAtMs,
 	sameBoot,
 } from "./extensions/builtin/terminal/process-identity.ts";
 import { readProcessStartMs } from "./extensions/builtin/terminal/process-start-probe.ts";
@@ -30,7 +31,7 @@ export interface WriterClaim {
 export interface WriterProbes {
 	readonly pidAlive: (pid: number) => boolean;
 	readonly readProcessStartMs: (pid: number) => Promise<number | undefined>;
-	readonly bootAtMs: () => Promise<number>;
+	readonly bootAtMs: OwnBootReader;
 	readonly host: () => string;
 	readonly self: () => { readonly pid: number; readonly processStartedAtMs: number };
 }
@@ -63,7 +64,7 @@ export const realWriterProbes: WriterProbes = {
 		}
 	},
 	readProcessStartMs,
-	bootAtMs: () => processBootAtMs(),
+	bootAtMs: ownBootAtMs,
 	host: () => hostname(),
 	self: () => ({ pid: process.pid, processStartedAtMs: ownProcessStartedAtMs() }),
 };
@@ -78,10 +79,14 @@ export async function acquireWriterClaim(
 	canonicalPath: string,
 	probes: WriterProbes = realWriterProbes,
 ): Promise<WriterClaim> {
-	// Resolved before the claim check, so nothing yields between proving the owner gone and publishing the next claim.
-	const bootAtMs = await probes.bootAtMs();
 	await mkdir(dir, { recursive: true });
 	const current = await latestClaim(dir);
+	// Resolved before the claim check, so nothing yields between proving the owner gone and publishing the next claim.
+	// A claim from another boot is checked against a fresh read first: a cached record that a wall-clock step made
+	// stale must not call a live writer's claim gone.
+	let bootAtMs = await probes.bootAtMs();
+	if (current !== undefined && current.host === probes.host() && !sameBoot(bootAtMs, current.bootAtMs))
+		bootAtMs = await probes.bootAtMs({ fresh: true });
 	if (current !== undefined && !(await ownerGone(dir, current, probes, bootAtMs)))
 		throw new SessionWriterBusyError(current);
 	const self = probes.self();

@@ -16,7 +16,12 @@ import {
 	reclaimLockState,
 	unlinkIfPresent,
 } from "../terminal/lease-file.ts";
-import { ownProcessStartedAtMs, processBootAtMs, sameBoot, sameProcessStart } from "../terminal/process-identity.ts";
+import {
+	ownProcessStartedAtMs,
+	processBootAtMs,
+	sameBootAsOwn,
+	sameProcessStart,
+} from "../terminal/process-identity.ts";
 import { readProcessStartMs } from "../terminal/process-start-probe.ts";
 import { type RunnerIdentity, runnersDir } from "./store.ts";
 
@@ -172,7 +177,7 @@ async function orphanedDelivery(raw: string, lockAgeMs: number, probes: LockProb
 	if (typeof parsed !== "object" || parsed === null) return undefined;
 	const field = (key: string): unknown => (key in parsed ? Reflect.get(parsed, key) : undefined);
 	const boot = field("bootAtMs");
-	if (typeof boot !== "number" || !sameBoot(boot, await processBootAtMs())) return undefined;
+	if (typeof boot !== "number" || !(await sameBootAsOwn(boot))) return undefined;
 	const pid = field("deliveryPid");
 	const startedAt = field("deliveryStartedAtMs");
 	if (typeof pid !== "number" || typeof startedAt !== "number") {

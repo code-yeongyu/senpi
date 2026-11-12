@@ -67,14 +67,23 @@ function holdersDir(sessionFile: string, sessionId: string): string {
 	return join(dirname(resolveMovedPath(sessionFile)), HOLDERS_DIR, encodedSessionId(sessionId));
 }
 
+/** What a holder publishes for a session it has open: its identity and, for an RPC host, that host's endpoint. */
+export interface HolderRecord extends Partial<SessionHolderEndpoint> {
+	readonly pid: number;
+	readonly bootAtMs: number;
+	readonly processStartedAtMs: number;
+	readonly cwd?: string;
+}
+
 async function identityRecord(cwd?: string, endpoint?: SessionHolderEndpoint): Promise<string> {
-	return JSON.stringify({
+	const record: HolderRecord = {
 		pid: process.pid,
 		bootAtMs: await processBootAtMs(),
 		processStartedAtMs: ownProcessStartedAtMs(),
 		...(cwd === undefined ? {} : { cwd }),
 		...endpoint,
-	});
+	};
+	return JSON.stringify(record);
 }
 
 function unlinkIfPresentSync(path: string): void {

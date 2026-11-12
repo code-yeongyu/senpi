@@ -480,6 +480,7 @@ describe("RPC session registry", () => {
 		const dir = await mkdtemp(join(tmpdir(), "senpi-rpc-hold-throw-"));
 		directories.push(dir);
 		const failure = new Error("runtime construction failed");
+		let heldWhenConstructionFailed = false;
 		const createRuntime: CreateAgentSessionRuntimeFactory = async (options) => {
 			const result = runtime(options);
 			// The creator reads the session manager once to take the hold; the constructor's own read of it (to bind the
@@ -487,7 +488,11 @@ describe("RPC session registry", () => {
 			let managerReads = 0;
 			const session = new Proxy(result.session, {
 				get: (target, property, receiver) => {
-					if (property === "sessionManager" && ++managerReads > 1) throw failure;
+					if (property === "sessionManager" && ++managerReads > 1) {
+						// The hold was really taken: its record exists at the moment construction fails.
+						heldWhenConstructionFailed = ownHolderRecord(dir) !== undefined;
+						throw failure;
+					}
 					return Reflect.get(target, property, receiver);
 				},
 			});
@@ -502,7 +507,10 @@ describe("RPC session registry", () => {
 			}),
 		).rejects.toBe(failure);
 
-		expect(ownHolderRecord(dir)).toBeUndefined();
+		expect({ heldWhenConstructionFailed, leftBehind: ownHolderRecord(dir) }).toEqual({
+			heldWhenConstructionFailed: true,
+			leftBehind: undefined,
+		});
 	});
 
 	test("constructs a runtime around a passed-in hold without touching the holder record", async () => {
