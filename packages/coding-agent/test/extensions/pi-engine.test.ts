@@ -7,7 +7,6 @@
  */
 import { execFileSync } from "node:child_process";
 import {
-	existsSync,
 	mkdirSync,
 	lstatSync,
 	mkdtempSync,
@@ -15,6 +14,7 @@ import {
 	readdirSync,
 	rmSync,
 	statSync,
+	type Stats,
 	symlinkSync,
 	utimesSync,
 	writeFileSync,
@@ -83,15 +83,55 @@ type ProbeLoader = ({ loader: "built" } | { loader: "source"; reason: string }) 
 	skippedLinks?: readonly string[];
 };
 
-/** Every file and directory under `path`, `path` included; a symbolic link is pushed to `links` instead. */
-function walk(path: string, links: string[]): string[] {
-	const stats = lstatSync(path);
-	if (stats.isSymbolicLink()) {
-		links.push(path);
-		return [];
+/** The filesystem calls the selector makes: production passes nothing and gets node's, tests inject failing ones. */
+interface ProbeFs {
+	lstatSync(path: string): Stats;
+	readdirSync(path: string): string[];
+	statSync(path: string): Stats;
+}
+
+const NODE_FS: ProbeFs = { lstatSync, readdirSync, statSync };
+
+/** One filesystem call's value, or why it failed: the error code and the path, as in `ENOENT: <path>`. */
+type FsRead<T> = { ok: true; value: T } | { ok: false; code: string; reason: string };
+
+function readFs<T>(path: string, read: () => T): FsRead<T> {
+	try {
+		return { ok: true, value: read() };
+	} catch (error) {
+		const code =
+			error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : "EUNKNOWN";
+		return { ok: false, code, reason: `${code}: ${path}` };
 	}
-	if (!stats.isDirectory()) return [path];
-	return [path, ...readdirSync(path).flatMap((entry) => walk(join(path, entry), links))];
+}
+
+type Walk = { ok: true; paths: string[] } | { ok: false; reason: string };
+
+/**
+ * Every file and directory under `path`, `path` included; a symbolic link is pushed to `links` instead. The `root`
+ * must be a directory: a root that is a regular file has no source tree, so it fails with `ENOTDIR`.
+ */
+function walk(path: string, links: string[], fs: ProbeFs, root: boolean): Walk {
+	const stats = readFs(path, () => fs.lstatSync(path));
+	if (!stats.ok) return stats;
+	if (stats.value.isSymbolicLink()) {
+		links.push(path);
+		return { ok: true, paths: [] };
+	}
+	if (!stats.value.isDirectory()) {
+		return root
+			? { ok: false, reason: `ENOTDIR: ${path} is a file, so there is no source tree` }
+			: { ok: true, paths: [path] };
+	}
+	const entries = readFs(path, () => fs.readdirSync(path));
+	if (!entries.ok) return entries;
+	const paths = [path];
+	for (const entry of entries.value) {
+		const below = walk(join(path, entry), links, fs, false);
+		if (!below.ok) return below;
+		paths.push(...below.paths);
+	}
+	return { ok: true, paths };
 }
 
 /**
@@ -107,25 +147,42 @@ function walk(path: string, links: string[]): string[] {
  * never compiles, make a fresh build look stale. The cost: an edit behind a link under the sources is not seen as a
  * newer source, so the skipped links are returned in `skippedLinks` and the probe logs them. A package whose walk
  * finds no source file (its sources root is itself a link) has nothing to prove fresh against, so it answers "source".
+ * The selector never throws: each filesystem call (the lstat and readdir of the walk, the stat of every source, of
+ * the entry and of every output) is checked on its own, and any error answers "source" with the error code and the
+ * path, as in `ENOENT: <path>`, since the sources are the safe path. Two codes keep their meaning in the rule: a
+ * missing entry answers `missing <entry>`, and a missing output is ignored as above. A sources root that is a regular
+ * file answers `ENOTDIR`: it has no source tree, so it must not pass as a one-file tree. `fs` defaults to node's;
+ * production callers pass nothing, and tests inject calls that fail without depending on permissions or races.
  */
-function selectProbeLoader(builds: readonly Build[]): ProbeLoader {
+function selectProbeLoader(builds: readonly Build[], fs: ProbeFs = NODE_FS): ProbeLoader {
 	const links: string[] = [];
 	const answer = (choice: ProbeLoader): ProbeLoader =>
 		links.length > 0 ? { ...choice, skippedLinks: links } : choice;
+	const source = (reason: string): ProbeLoader => answer({ loader: "source", reason });
 	for (const build of builds) {
-		if (!existsSync(build.entry)) return answer({ loader: "source", reason: `missing ${build.entry}` });
-		const sources = walk(build.sources, links).map((path) => ({ path, mtimeMs: statSync(path).mtimeMs }));
-		if (sources.length === 0) {
-			return answer({ loader: "source", reason: `no source files under ${build.sources}` });
+		const entry = readFs(build.entry, () => fs.statSync(build.entry));
+		if (!entry.ok) return source(entry.code === "ENOENT" ? `missing ${build.entry}` : entry.reason);
+		const tree = walk(build.sources, links, fs, true);
+		if (!tree.ok) return source(tree.reason);
+		const sources: { path: string; mtimeMs: number }[] = [];
+		for (const path of tree.paths) {
+			const stats = readFs(path, () => fs.statSync(path));
+			if (!stats.ok) return source(stats.reason);
+			sources.push({ path, mtimeMs: stats.value.mtimeMs });
 		}
+		if (sources.length === 0) return source(`no source files under ${build.sources}`);
 		const newest = sources.reduce((a, b) => (b.mtimeMs > a.mtimeMs ? b : a));
-		const stale = (output: string): ProbeLoader =>
-			answer({ loader: "source", reason: `${output} is not newer than ${newest.path}` });
-		if (statSync(build.entry).mtimeMs <= newest.mtimeMs) return stale(build.entry);
+		const stale = (output: string): ProbeLoader => source(`${output} is not newer than ${newest.path}`);
+		if (entry.value.mtimeMs <= newest.mtimeMs) return stale(build.entry);
 		for (const { path } of sources) {
 			if (!/\.tsx?$/.test(path) || path.endsWith(".d.ts")) continue;
 			const output = join(build.output, relative(build.sources, path)).replace(/\.tsx?$/, ".js");
-			if (existsSync(output) && statSync(output).mtimeMs <= newest.mtimeMs) return stale(output);
+			const built = readFs(output, () => fs.statSync(output));
+			if (!built.ok) {
+				if (built.code === "ENOENT") continue;
+				return source(built.reason);
+			}
+			if (built.value.mtimeMs <= newest.mtimeMs) return stale(output);
 		}
 	}
 	return answer({ loader: "built" });
@@ -301,6 +358,81 @@ describe("selectProbeLoader", () => {
 			skippedLinks: [sources],
 		});
 	});
+
+	function fsError(code: string, path: string): never {
+		throw Object.assign(new Error(`${code}: injected failure, '${path}'`), { code });
+	}
+
+	/** A fresh build over the tree; `failing` is the path whose code the reason must name. */
+	interface FsFailureCase {
+		name: string;
+		code: string;
+		setup(): { build: Build; failing: string; fs?: ProbeFs };
+	}
+
+	it.each<FsFailureCase>([
+		{
+			name: "the sources root is missing",
+			code: "ENOENT",
+			setup: () => {
+				const { root, build } = tree();
+				writeBuild(build, T + 10);
+				const sources = join(root, "missing-src");
+				return { build: { ...build, sources }, failing: sources };
+			},
+		},
+		{
+			name: "the sources root is a regular file, so there is no source tree",
+			code: "ENOTDIR",
+			setup: () => {
+				const { root, build } = tree();
+				writeBuild(build, T + 10);
+				const sources = join(root, "src-file");
+				writeFileSync(sources, "");
+				utimesSync(sources, T, T);
+				return { build: { ...build, sources }, failing: sources };
+			},
+		},
+		{
+			name: "reading a directory under the sources fails with EACCES",
+			code: "EACCES",
+			setup: () => {
+				const { build } = tree();
+				writeBuild(build, T + 10);
+				const failing = join(build.sources, "nested");
+				const fs: ProbeFs = {
+					...NODE_FS,
+					readdirSync: (path) => (path === failing ? fsError("EACCES", path) : readdirSync(path)),
+				};
+				return { build, failing, fs };
+			},
+		},
+		{
+			name: "a listed file vanishes before its lstat",
+			code: "ENOENT",
+			setup: () => {
+				const { build } = tree();
+				writeBuild(build, T + 10);
+				const failing = join(build.sources, "nested", "b.ts");
+				const fs: ProbeFs = {
+					...NODE_FS,
+					lstatSync: (path) => (path === failing ? fsError("ENOENT", path) : lstatSync(path)),
+				};
+				return { build, failing, fs };
+			},
+		},
+	])(
+		"takes the source, without throwing, when $name",
+		({ code, setup }) => {
+			const { build, failing, fs } = setup();
+			let choice: ProbeLoader | undefined;
+			expect(() => {
+				choice = selectProbeLoader([build], fs);
+			}).not.toThrow();
+			expect(choice).toMatchObject({ loader: "source", reason: expect.stringContaining(`${code}: ${failing}`) });
+		},
+		5_000,
+	);
 });
 
 describe("pi.engine (omo#12965, T-F)", () => {
