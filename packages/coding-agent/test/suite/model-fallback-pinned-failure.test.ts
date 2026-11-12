@@ -6,6 +6,22 @@ import { createHarness, type Harness } from "./harness.ts";
 const primary = "faux/faux-1";
 const fallback = "faux/faux-2";
 
+/** A later run on the real admission path that settles with no assistant reply: its admission write fails. */
+async function settleWithoutReply(harness: Harness): Promise<void> {
+	const settledBefore = harness.eventsOfType("agent_settled").length;
+	const storageError = Object.assign(new Error("EISDIR: cannot persist admission"), { code: "EISDIR" });
+	await expect(
+		harness.session.prompt("refused at admission", {
+			source: "rpc",
+			interactiveUser: false,
+			onTurnAdmitted: () => {
+				throw storageError;
+			},
+		}),
+	).rejects.toBe(storageError);
+	expect(harness.eventsOfType("agent_settled")).toHaveLength(settledBefore + 1);
+}
+
 describe("a pinned model's failure is reported as a typed exhaustion (omo#13243)", () => {
 	const harnesses: Harness[] = [];
 	afterEach(() => {
@@ -121,7 +137,7 @@ describe("a pinned model's failure is reported as a typed exhaustion (omo#13243)
 		expect(harness.eventsOfType("retry_fallback_exhausted")).toHaveLength(1);
 
 		// A later settle with no assistant reply of its own (an admission that produced none) reports nothing.
-		(harness.session as unknown as { _reportPinnedModelFailure(): void })._reportPinnedModelFailure();
+		await settleWithoutReply(harness);
 
 		expect(harness.eventsOfType("retry_fallback_exhausted")).toHaveLength(1);
 	});
@@ -138,7 +154,7 @@ describe("a pinned model's failure is reported as a typed exhaustion (omo#13243)
 
 		// Fallback turned off later (a /fallback toggle or an RPC override), then a settle with no reply of its own.
 		harness.settingsManager.applyOverrides({ retry: { modelFallback: false } });
-		(harness.session as unknown as { _reportPinnedModelFailure(): void })._reportPinnedModelFailure();
+		await settleWithoutReply(harness);
 
 		expect(harness.eventsOfType("retry_fallback_exhausted")).toStrictEqual([]);
 	});
