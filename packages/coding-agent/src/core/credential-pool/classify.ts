@@ -39,11 +39,19 @@ export type CredentialBlock =
 			reason: "rate_limit";
 			cooldownMs: number;
 			retryAfterWasCapped: boolean;
+			/** Where the wait came from, for the local block log (senpi#3216). */
+			resetSource?: RateLimitResetSource;
 			/** SIWC quota pause: cooldown is a probe policy, not the provider's reset time. */
 			usageLimit?: true;
 			/** Set when the limit names the one model family it binds ("Fable limit"). */
 			modelFamily?: string;
 	  };
+
+/**
+ * `retry_after`: the server's Retry-After header (the adapter's marker); `reset_field`: a reset time the provider's
+ * structured diagnostic carried; `reset_prose`: a wait or reset time read from the response text; `default_backoff`: none.
+ */
+export type RateLimitResetSource = "retry_after" | "reset_field" | "reset_prose" | "default_backoff";
 
 export type CredentialAction =
 	| { kind: "failover"; block: CredentialBlock }
@@ -300,6 +308,43 @@ function isOverflowText(text: string): boolean {
  * outage only destroys prompt-cache locality; everything else fails the
  * request so the model fallback chain above keeps owning it.
  */
+const JSON_BODY = /\{\s*"[^"]+"\s*:/;
+
+/** The wait a rate-limited response names, and which part of the response named it. */
+function rateLimitHint(
+	codedThrottle: boolean,
+	codedReset: number | undefined,
+	text: string,
+	status: number | undefined,
+	usageLimit: boolean,
+	diagnosticRetryAfterMs: number | undefined,
+	nowMs: number,
+): { hint: number | undefined; resetSource: RateLimitResetSource } {
+	const sourced = (
+		hint: number | undefined,
+		source: RateLimitResetSource,
+	): { hint: number | undefined; resetSource: RateLimitResetSource } =>
+		hint === undefined ? { hint, resetSource: "default_backoff" } : { hint, resetSource: source };
+	if (codedThrottle) return sourced(parseRetryAfterMsMarker(text), "retry_after");
+	if (codedReset !== undefined) return sourced(codedReset, "reset_field");
+	const retryAfter = extract429RetryAfterMs({ status: status ?? 429, bodyText: text }, nowMs);
+	// The adapter writes a Retry-After header into the text as a marker; a JSON body carries reset fields; anything
+	// else the extractor read is prose.
+	if (retryAfter !== undefined) {
+		if (parseRetryAfterMsMarker(text) !== undefined) return sourced(retryAfter, "retry_after");
+		return sourced(retryAfter, JSON_BODY.test(text) ? "reset_field" : "reset_prose");
+	}
+	if (!usageLimit) return sourced(undefined, "default_backoff");
+	if (diagnosticRetryAfterMs !== undefined) return sourced(diagnosticRetryAfterMs, "reset_field");
+	return sourced(usageLimitResetMs(text, nowMs), JSON_BODY.test(text) ? "reset_field" : "reset_prose");
+}
+
+/** The provider's answer as one text, the same text the classifier reads. */
+export function credentialFailureText(error: unknown): string {
+	const normalized = normalizeProviderError(error);
+	return normalized.messageCarriesBody ? normalized.message : `${normalized.message} ${normalized.body ?? ""}`;
+}
+
 export function classifyCredentialFailure(
 	error: unknown,
 	context: { failureCount?: number; cooldownBaseMs?: number; cooldownCapMs?: number; nowMs?: number } = {},
@@ -417,12 +462,15 @@ export function classifyCredentialFailure(
 		const codedResetMs =
 			codedLimit?.kind === "spent" && codedLimit.resetsAt !== undefined ? codedLimit.resetsAt - nowMs : undefined;
 		const codedReset = codedResetMs !== undefined && codedResetMs > 0 ? codedResetMs : undefined;
-		const hint =
-			codedLimit?.kind === "throttle"
-				? parseRetryAfterMsMarker(text)
-				: (codedReset ??
-					extract429RetryAfterMs({ status: status ?? 429, bodyText: text }, nowMs) ??
-					(usageLimit ? (normalized.retryAfterMs ?? usageLimitResetMs(text, nowMs)) : undefined));
+		const { hint, resetSource } = rateLimitHint(
+			codedLimit?.kind === "throttle",
+			codedReset,
+			text,
+			status,
+			usageLimit,
+			normalized.retryAfterMs,
+			nowMs,
+		);
 		const modelFamily = rateLimitModelFamily(text);
 		const policy = { baseMs: context.cooldownBaseMs, capMs: context.cooldownCapMs };
 		return {
@@ -435,6 +483,7 @@ export function classifyCredentialFailure(
 				...(usageLimit && hint !== undefined && hint > 0
 					? usageLimitCooldown(hint, policy)
 					: rateLimitCooldown(failureCount, hint, policy)),
+				resetSource,
 				...(modelFamily === undefined ? {} : { modelFamily }),
 			},
 		};

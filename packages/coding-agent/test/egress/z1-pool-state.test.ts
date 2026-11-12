@@ -6,7 +6,11 @@ import type { AssistantMessage, AssistantMessageEvent } from "@earendil-works/pi
 import type { PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { type RotationSources, streamWithCredentialRotation } from "../../src/core/credential-pool/rotation-stream.ts";
-import { CredentialSlotRepository, type CredentialSlotState } from "../../src/core/credential-pool/state-store.ts";
+import {
+	BLOCK_LOG_FILENAME,
+	CredentialSlotRepository,
+	type CredentialSlotState,
+} from "../../src/core/credential-pool/state-store.ts";
 import type { PoolState } from "../../src/core/egress/pool-state.ts";
 
 /**
@@ -220,7 +224,8 @@ describe("credential-pool rotation through the PoolState port (senpi#5835, Z1)",
 	test.each(["stored", "env"] as const)("%s lane: the file-backed pool keeps today's sequence", async (lane) => {
 		const { traces, files } = await fileSequence(lane);
 
-		expect(files).toEqual([STATE_FILE]);
+		// The file-backed pool also records each block in its local block log (senpi#3216).
+		expect(files).toEqual([BLOCK_LOG_FILENAME, STATE_FILE].sort());
 		expect(traces).toEqual(golden(lane));
 	});
 
