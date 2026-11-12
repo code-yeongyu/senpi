@@ -188,16 +188,48 @@ function selectProbeLoader(builds: readonly Build[], fs: ProbeFs = NODE_FS): Pro
 	return answer({ loader: "built" });
 }
 
-function engineBuilds(): Build[] {
-	return [
-		{ entry: BUILT_LOADER, output: BUILT_OUTPUT, sources: join(PACKAGE_ROOT, "src") },
-		...ENGINE_DEPENDENCIES.map((name) => {
-			const root = join(PACKAGES, name);
-			const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { main: string };
-			const main = join(root, manifest.main);
-			return { entry: main, output: dirname(main), sources: join(root, "src") };
-		}),
-	];
+type ReadText = (path: string) => string;
+
+const readUtf8: ReadText = (path) => readFileSync(path, "utf8");
+
+/**
+ * The selector's input: `loaderBuild`, then one build per package in `names` under `packagesDir`, whose entry is the
+ * `main` of its `package.json`, whose output is that entry's directory and whose sources are its `src`. Never throws:
+ * a manifest that cannot be read answers "source" with the error code and its path (`ENOENT: <path>`), invalid JSON
+ * answers `invalid JSON: <path>`, and a `main` that is missing or not a non-empty string answers `no main in <path>`.
+ * `readText` defaults to reading the file; tests inject a read that fails.
+ */
+function resolveEngineBuilds(
+	packagesDir: string,
+	names: readonly string[],
+	loaderBuild: Build,
+	readText: ReadText = readUtf8,
+): Build[] | { loader: "source"; reason: string } {
+	const builds = [loaderBuild];
+	for (const name of names) {
+		const root = join(packagesDir, name);
+		const path = join(root, "package.json");
+		const text = readFs(path, () => readText(path));
+		if (!text.ok) return { loader: "source", reason: text.reason };
+		let manifest: unknown;
+		try {
+			manifest = JSON.parse(text.value);
+		} catch {
+			return { loader: "source", reason: `invalid JSON: ${path}` };
+		}
+		const main = typeof manifest === "object" && manifest !== null && "main" in manifest ? manifest.main : undefined;
+		if (typeof main !== "string" || main === "") return { loader: "source", reason: `no main in ${path}` };
+		const entry = join(root, main);
+		builds.push({ entry, output: dirname(entry), sources: join(root, "src") });
+	}
+	return builds;
+}
+
+const ENGINE_LOADER_BUILD: Build = { entry: BUILT_LOADER, output: BUILT_OUTPUT, sources: join(PACKAGE_ROOT, "src") };
+
+function nodeProbeLoader(): ProbeLoader {
+	const builds = resolveEngineBuilds(PACKAGES, ENGINE_DEPENDENCIES, ENGINE_LOADER_BUILD);
+	return "loader" in builds ? builds : selectProbeLoader(builds);
 }
 
 function probe(runtime: "node" | "bun"): Record<string, unknown> {
@@ -207,7 +239,7 @@ function probe(runtime: "node" | "bun"): Record<string, unknown> {
 	// Under load, tsx compiling the whole engine graph from source outran the 170 s limit on node, so node runs the
 	// built engine when it is fresh and falls back to the sources (tsx) when dist is missing or older than them.
 	const choice: ProbeLoader =
-		runtime === "node" ? selectProbeLoader(engineBuilds()) : { loader: "source", reason: "bun runs the sources" };
+		runtime === "node" ? nodeProbeLoader() : { loader: "source", reason: "bun runs the sources" };
 	const loader = choice.loader;
 	console.log(
 		`pi.engine probe on ${runtime}: ${choice.loader === "built" ? "built loader" : `source loader (${choice.reason})`}`,
@@ -430,6 +462,88 @@ describe("selectProbeLoader", () => {
 				choice = selectProbeLoader([build], fs);
 			}).not.toThrow();
 			expect(choice).toMatchObject({ loader: "source", reason: expect.stringContaining(`${code}: ${failing}`) });
+		},
+		5_000,
+	);
+});
+
+describe("resolveEngineBuilds", () => {
+	const loaderBuild: Build = { entry: "/engine/dist/loader.js", output: "/engine/dist", sources: "/engine/src" };
+
+	/** A packages directory with one directory per name, holding `package.json` with the given text. */
+	function packagesDir(manifests: Record<string, string>): string {
+		const dir = mkdtempSync(join(tmpdir(), "senpi-engine-builds-"));
+		roots.push(dir);
+		for (const [name, text] of Object.entries(manifests)) {
+			mkdirSync(join(dir, name));
+			writeFileSync(join(dir, name, "package.json"), text);
+		}
+		return dir;
+	}
+
+	it("gives one build per name, with main as the entry, its directory as the output and src as the sources", () => {
+		const dir = packagesDir({
+			a: JSON.stringify({ main: "dist/index.js" }),
+			b: JSON.stringify({ main: "./lib/main.js" }),
+		});
+		expect(resolveEngineBuilds(dir, ["a", "b"], loaderBuild)).toEqual([
+			loaderBuild,
+			{ entry: join(dir, "a", "dist", "index.js"), output: join(dir, "a", "dist"), sources: join(dir, "a", "src") },
+			{ entry: join(dir, "b", "lib", "main.js"), output: join(dir, "b", "lib"), sources: join(dir, "b", "src") },
+		]);
+	});
+
+	/** One dependency `a`; `reason` gets the path of its manifest. */
+	interface ManifestFailureCase {
+		name: string;
+		setup(): { dir: string; readText?: ReadText };
+		reason(manifest: string): string;
+	}
+
+	it.each<ManifestFailureCase>([
+		{
+			name: "the package.json is missing",
+			setup: () => {
+				const dir = packagesDir({});
+				mkdirSync(join(dir, "a"));
+				return { dir };
+			},
+			reason: (manifest) => `ENOENT: ${manifest}`,
+		},
+		{
+			name: "the package.json is not valid JSON",
+			setup: () => ({ dir: packagesDir({ a: "{ main: " }) }),
+			reason: (manifest) => `invalid JSON: ${manifest}`,
+		},
+		{
+			name: "the package.json has no main",
+			setup: () => ({ dir: packagesDir({ a: JSON.stringify({ name: "a" }) }) }),
+			reason: (manifest) => `no main in ${manifest}`,
+		},
+		{
+			name: "the main is a number, not a string",
+			setup: () => ({ dir: packagesDir({ a: JSON.stringify({ main: 42 }) }) }),
+			reason: (manifest) => `no main in ${manifest}`,
+		},
+		{
+			name: "reading the package.json fails with EACCES",
+			setup: () => ({
+				dir: packagesDir({ a: JSON.stringify({ main: "dist/index.js" }) }),
+				readText: (path) => {
+					throw Object.assign(new Error(`EACCES: injected failure, '${path}'`), { code: "EACCES" });
+				},
+			}),
+			reason: (manifest) => `EACCES: ${manifest}`,
+		},
+	])(
+		"takes the source, without throwing, when $name",
+		({ setup, reason }) => {
+			const { dir, readText } = setup();
+			let answer: ReturnType<typeof resolveEngineBuilds> | undefined;
+			expect(() => {
+				answer = resolveEngineBuilds(dir, ["a"], loaderBuild, readText);
+			}).not.toThrow();
+			expect(answer).toEqual({ loader: "source", reason: reason(join(dir, "a", "package.json")) });
 		},
 		5_000,
 	);
