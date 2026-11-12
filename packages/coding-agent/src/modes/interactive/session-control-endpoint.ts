@@ -81,7 +81,9 @@ async function openEndpoint(
 	);
 	// A warning about the published secret goes to the TUI's notice line; stderr would land under the TUI frame.
 	const secret = await createSocketSecret(socketSecretPath(socket), (warning) =>
-		surface.notice(`control endpoint: ${warning.message} (${warning.code}): ${warning.cause}`),
+		surface.notice(
+			`control endpoint: ${warning.message} (${warning.code}): ${warning.cause}${warning.path === undefined ? "" : ` (path: ${warning.path})`}`,
+		),
 	);
 	const feed = new ControlFeed();
 	// Every wake runs a pass, so a failure that repeats is shown once, until a pass succeeds again.
