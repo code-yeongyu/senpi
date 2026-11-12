@@ -1,11 +1,7 @@
 import { copyFile, mkdir, readdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { normalizePath, resolvePath } from "../../utils/paths.ts";
-import {
-	compareRepositoryIdentities,
-	type RepositoryIdentity,
-	readRepositoryIdentity,
-} from "../repository-identity.ts";
+import type { RepositoryIdentity } from "../repository-identity.ts";
 import { getDefaultSessionDir, loadEntriesFromFileAsync, SessionManager } from "../session-manager.ts";
 import { rebindSessionFile } from "../session-rebind.ts";
 import { encodedSessionId, serializeByKey } from "../session-sidecar-store.ts";
@@ -24,7 +20,10 @@ import { type MoveAnswer, MoveFencedError, type MoveLedger } from "./move-ledger
 import { moveStep } from "./move-steps.ts";
 import { headerSessionId, type MoveId, SESSION_MOVED_IN, sessionOwnership } from "./ownership.ts";
 import { requeueInput } from "./requeue.ts";
+import { isCheckoutOfRepository, MoveRefusedError } from "./repository-check.ts";
 import { moveLockKey } from "./session-lock.ts";
+
+export { MoveRefusedError } from "./repository-check.ts";
 
 export interface ImportMovedSessionOptions {
 	readonly bundleDir: string;
@@ -32,19 +31,9 @@ export interface ImportMovedSessionOptions {
 	readonly ledger: MoveLedger;
 	readonly sessionDir?: string;
 	readonly from?: string;
+	/** The sha256 each file of an inline bundle was sent with (senpi#6267); checked beside the manifest's. */
+	readonly sent?: ReadonlyMap<string, string>;
 	readonly readIdentity?: (dir: string) => Promise<RepositoryIdentity | undefined>;
-}
-
-export class MoveRefusedError extends Error {
-	readonly code: "move_repository_mismatch";
-
-	constructor(targetCwd: string, sourceCwd: string) {
-		super(
-			`${targetCwd} is not the same repository the session was recorded in (${sourceCwd}). Pick a checkout of the same repository, or copy the session into this folder instead.`,
-		);
-		this.name = "MoveRefusedError";
-		this.code = "move_repository_mismatch";
-	}
 }
 
 export class MoveTargetOccupiedError extends Error {
@@ -167,19 +156,21 @@ export async function importMovedSession(
 	};
 	if (await landed()) return confirmLanded();
 	try {
-		await verifyBundle(options.bundleDir, manifest);
+		await verifyBundle(options.bundleDir, manifest, options.sent);
 	} catch (error) {
 		if (error instanceof MoveBundleInvalidError)
 			await options.ledger.fail(manifest.moveId, "bundle_invalid", { unlessLanded: landed });
 		throw error;
 	}
-	const read = options.readIdentity ?? readRepositoryIdentity;
-	if (compareRepositoryIdentities(manifest.repository, await read(targetCwd)) !== "same") {
+	// Before the repository check: an import into a folder this move was not readied for must not decline the move,
+	// which that check does, because the move still lands in the folder its `prepare` checked (senpi#6435).
+	await options.ledger.requireReadiedFor(manifest.moveId, targetCwd);
+	if (!(await isCheckoutOfRepository(targetCwd, manifest.repository, options.readIdentity))) {
 		if (!(await landed())) await options.ledger.decline(manifest.moveId, "repository");
 		throw new MoveRefusedError(targetCwd, manifest.sourceCwd);
 	}
 	try {
-		await options.ledger.beginReceive(manifest.moveId, target);
+		await options.ledger.beginReceive(manifest.moveId, target, { cwd: targetCwd });
 	} catch (error) {
 		// Another import of this move may have landed the file since this one looked for it: then the file answers.
 		if (error instanceof MoveFencedError && (await landed())) return confirmLanded();
@@ -203,7 +194,12 @@ export async function importMovedSession(
 		await rm(staging, { recursive: true, force: true });
 		return { sessionFile };
 	} catch (error) {
-		if (error instanceof MoveFencedError && (await landed())) return confirmLanded();
+		// Another import landed this move; what this one staged after that import cleaned up is not kept. The folder is
+		// clutter only, so a removal that fails never replaces the answer the landed file gives.
+		if (error instanceof MoveFencedError && (await landed())) {
+			await rm(staging, { recursive: true, force: true }).catch(() => undefined);
+			return confirmLanded();
+		}
 		if (!(error instanceof MoveFencedError))
 			await options.ledger.fail(
 				manifest.moveId,
