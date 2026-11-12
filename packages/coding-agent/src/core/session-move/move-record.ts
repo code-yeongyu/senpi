@@ -1,6 +1,7 @@
 /**
- * What the receiving device records for a move it was offered, how a record is read back from disk or from the wire,
- * and the refusal a move gets once its record no longer lets it land.
+ * A move record as the receiving device keeps it and as a sender hears it: its states and reasons, the parser that
+ * reads one back from the record file or from a sender's `finish`, and the refusal a move gets once its record no
+ * longer lets it land.
  */
 import type { MoveId } from "./ownership.ts";
 
@@ -51,6 +52,7 @@ export function parseMoveStatus(value: unknown): MoveAnswer | undefined {
 	return record?.state === "ready" ? undefined : record;
 }
 
+/** A record as it was written; `undefined` when the value is not one. */
 export function parseRecord(value: unknown): MoveRecord | undefined {
 	if (typeof value !== "object" || value === null) return undefined;
 	const { state, reason } = value as { readonly state?: unknown; readonly reason?: unknown };

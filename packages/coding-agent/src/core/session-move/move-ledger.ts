@@ -7,8 +7,10 @@ import {
 	type LandingOutcome,
 	heldElsewhere,
 	landedElsewhere,
+	isCommitStamp,
 	landsAt,
 	parseLanding,
+	recordAge,
 	settledAt,
 	settledLanding,
 } from "./move-landing.ts";
@@ -195,18 +197,46 @@ export class MoveLedger {
 		prepare?: () => void | Promise<void>,
 	): Promise<T> {
 		return this.locked(moveId, async () => {
-			const record = await this.read(moveId);
-			const landing = await this.landing(moveId);
-			if (!landsAt(record, landing, target))
-				throw new MoveFencedError(moveId, record, landedElsewhere(record, landing));
+			await this.assertLandsAt(moveId, target);
 			await prepare?.();
-			await this.write(moveId, { state: "receiving" }, { ...settledAt(landing, target), committing: true });
+			// `prepare` can outlast the lock's stale bound: whoever took the lock may have settled the move since the first look.
+			this.#locks.assertHeld(this.path(moveId));
+			const landing = await this.assertLandsAt(moveId, target);
+			const stamp = await this.write(
+				moveId,
+				{ state: "receiving" },
+				{ ...settledAt(landing, target), committing: true },
+			);
 			moveStep("import:stamped");
+			await this.assertStampStands(moveId, stamp);
 			const result = await rename();
 			moveStep("import:renamed");
 			await this.write(moveId, { state: "accepted" }, settledAt(landing, target));
 			return result;
 		});
+	}
+
+	/** A commit goes on only for a receiving move whose commit has not begun, into its target; else what the record says. */
+	private async assertLandsAt(moveId: MoveId, target: string): Promise<Landing> {
+		const record = await this.read(moveId);
+		const landing = await this.landing(moveId);
+		if (!landsAt(record, landing, target))
+			throw new MoveFencedError(moveId, record, landedElsewhere(record, landing));
+		return landing;
+	}
+
+	/**
+	 * A commit renames only while it still holds the move's lock and the record still carries its own stamp. A holder
+	 * that stalled past the lock's stale bound may find the move settled by whoever took the lock: it then renames
+	 * nothing, and the refusal says what the record says.
+	 */
+	private async assertStampStands(moveId: MoveId, stamp: string): Promise<void> {
+		this.#locks.assertHeld(this.path(moveId));
+		const stored = await this.raw(moveId);
+		if (isCommitStamp(stored, stamp)) return;
+		const record = parseRecord(stored);
+		const replaced = record?.state === "receiving" ? "another import's commit took over its record" : undefined;
+		throw new MoveFencedError(moveId, record, replaced);
 	}
 
 	/**
@@ -233,17 +263,19 @@ export class MoveLedger {
 
 	/**
 	 * Settles a step a crash interrupted, from the file at the recorded target: a committing record becomes accepted
-	 * (revoked if the file is) when its file landed and failed when it did not, and an accepted record whose file is
-	 * sealed gains its revoke mark. Without `landed`, or without a recorded target, the record is returned as it is.
+	 * (revoked if the file is) when its file landed and failed when it did not, once its stamp is old enough that no
+	 * stalled commit can still land it (`COMMIT_SETTLE_AFTER_MS`), and an accepted record whose file is sealed gains its
+	 * revoke mark. Without `landed`, or without a recorded target, the record is returned as it is.
 	 */
 	private async reconcile(
 		moveId: MoveId,
 		record: MoveRecord | undefined,
 		landed: ((target: string) => LandingOutcome | Promise<LandingOutcome>) | undefined,
 	): Promise<MoveRecord | undefined> {
-		const { target, cwd, committing } = await this.landing(moveId);
+		const stored = await this.raw(moveId);
+		const { target, cwd, committing } = parseLanding(stored);
 		if (landed === undefined || target === undefined) return record;
-		const next = settledLanding(record, committing === true, await landed(target));
+		const next = settledLanding(record, committing === true, await landed(target), recordAge(stored, this.now()));
 		if (next === undefined) return record;
 		await this.write(moveId, next, settledAt({ cwd }, target));
 		return next;
@@ -326,13 +358,16 @@ export class MoveLedger {
 		return parseLanding(await this.raw(moveId));
 	}
 
-	private async write(moveId: MoveId, record: MoveRecord, landing: Landing = {}): Promise<void> {
+	/** Writes the record and answers the time it stamped it with. */
+	private async write(moveId: MoveId, record: MoveRecord, landing: Landing = {}): Promise<string> {
 		const file = this.path(moveId);
 		const temp = `${file}.${process.pid}.tmp`;
+		const at = new Date().toISOString();
 		this.#locks.assertHeld(file);
-		await writeFile(temp, `${JSON.stringify({ ...record, ...landing, at: new Date().toISOString() })}\n`);
+		await writeFile(temp, `${JSON.stringify({ ...record, ...landing, at })}\n`);
 		this.#locks.assertHeld(file);
 		await renameFile(temp, file);
+		return at;
 	}
 
 	private locked<T>(moveId: MoveId, fn: () => T | Promise<T>): Promise<T> {
