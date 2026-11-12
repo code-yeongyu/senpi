@@ -17,7 +17,11 @@ import type { RpcMoveLanded, RpcMoveRecord } from "./session-move-wire.ts";
 function wireLanded(landed: LandedFile | undefined): RpcMoveLanded | undefined {
 	if (landed === undefined) return undefined;
 	if (landed === "gone") return { landed_file: "gone" };
-	return { session_path: landed.sessionPath, session_id: landed.sessionId, cwd: landed.cwd };
+	const { ownership } = landed;
+	const where = { session_path: landed.sessionPath, session_id: landed.sessionId, cwd: landed.cwd };
+	if (ownership.writable) return { ...where, writable: true };
+	const sealed_by = { move_id: ownership.moveId, state: ownership.state, target: ownership.target };
+	return { ...where, writable: false, sealed_by };
 }
 
 /**

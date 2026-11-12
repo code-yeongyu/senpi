@@ -8,7 +8,14 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs
 import { basename, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createInProcessRig } from "./rpc-inprocess-host-support.ts";
-import { devices, hostAndRelease, importedOnB, landedOnB, move } from "./rpc-move-session-support.ts";
+import {
+	devices,
+	hostAndRelease,
+	importedOnB,
+	landedOnB,
+	move,
+	revokedLandingOnB,
+} from "./rpc-move-session-support.ts";
 
 type Fixture = Awaited<ReturnType<typeof devices>>;
 
@@ -43,7 +50,7 @@ describe("move_session status answers from the file at the landing it is given",
 
 		const answer = await move(b, { op: "status", moveId: "move-l2", landing: landingOnB(fixture) });
 
-		expect(answer.data).toEqual({ state: "accepted", revoked: true, ...landedOnB(fixture, onB) });
+		expect(answer.data).toEqual({ state: "accepted", revoked: true, ...revokedLandingOnB(fixture, onB, "move-l2") });
 	});
 
 	it("#given the landed file sits in the folder the import named and the record was lost #when status names that folder as sessionDir #then it answers accepted with the file there", async () => {

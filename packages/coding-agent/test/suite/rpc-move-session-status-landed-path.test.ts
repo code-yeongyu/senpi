@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } 
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createInProcessRig } from "./rpc-inprocess-host-support.ts";
-import { cloneOf, devices, importedOnB, landedOnB, move } from "./rpc-move-session-support.ts";
+import { cloneOf, devices, importedOnB, landedOnB, move, revokedLandingOnB } from "./rpc-move-session-support.ts";
 import { SESSION_ID } from "./session-move-fixture.ts";
 
 const ledgerFile = (agentDir: string, moveId: string) => join(agentDir, "session-moves", "ledger", `${moveId}.json`);
@@ -36,9 +36,7 @@ describe("move_session status answers where an accepted move landed (senpi#6436)
 		expect(answer).toMatchObject({ success: true });
 		expect(answer.data).toEqual({
 			state: "accepted",
-			session_path: onB,
-			session_id: SESSION_ID,
-			cwd: fixture.repoB,
+			...landedOnB(fixture, onB),
 		});
 		expect(readFileSync(onB)).toEqual(bytes);
 		expect(statSync(onB).mtimeMs).toBe(modified);
@@ -153,9 +151,7 @@ describe("move_session status answers where an accepted move landed (senpi#6436)
 		expect((await move(b, { op: "status", moveId: "move-p5" })).data).toEqual({
 			state: "accepted",
 			revoked: true,
-			session_path: onB,
-			session_id: SESSION_ID,
-			cwd: fixture.repoB,
+			...revokedLandingOnB(fixture, onB, "move-p5"),
 		});
 	});
 
