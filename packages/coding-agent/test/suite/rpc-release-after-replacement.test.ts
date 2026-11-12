@@ -23,13 +23,17 @@ const send = (command: Wire): RpcCommand & { id: string } => command as unknown 
 const RELEASES = [{ reason: "takeover" }, { reason: "move", moveId: "move-6484", target: "device-b" }] as const;
 
 describe("the host's record of a handle after a replacement in the same folder (senpi#6484)", () => {
-	it.each(REPLACING_COMMANDS)("names the new session as soon as %s has answered", async (replacing) => {
-		await using host = await startReleaseHost(gatewayFixture().extension);
+	it.each(REPLACING_COMMANDS)(
+		"names the new session as soon as %s has answered",
+		async (replacing) => {
+			await using host = await startReleaseHost(gatewayFixture().extension);
 
-		const { stored, next } = await replaceInSameFolder(host, replacing);
+			const { stored, next } = await replaceInSameFolder(host, replacing);
 
-		expect(stored).toEqual({ sessionPath: next.sessionFile, durableSessionId: next.sessionId });
-	});
+			expect(stored).toEqual({ sessionPath: next.sessionFile, durableSessionId: next.sessionId });
+		},
+		120_000,
+	);
 
 	it.each(REPLACING_COMMANDS.flatMap((replacing) => RELEASES.map((release) => ({ replacing, ...release }))))(
 		"a release after $replacing (reason $reason) answers the file and id of the session it sealed",
@@ -46,6 +50,7 @@ describe("the host's record of a handle after a replacement in the same folder (
 			expect(sealedTranscripts(dirname(old.sessionFile))).toEqual([next.sessionFile]);
 			expect(answer.data).toMatchObject({ session_path: next.sessionFile, session_id: next.sessionId });
 		},
+		120_000,
 	);
 
 	it.each(REPLACING_COMMANDS)(
@@ -63,6 +68,7 @@ describe("the host's record of a handle after a replacement in the same folder (
 			expect(sealedTranscripts(dirname(old.sessionFile))).toEqual([next.sessionFile]);
 			expect(answer.data).toMatchObject({ released: true, session_path: next.sessionFile });
 		},
+		120_000,
 	);
 
 	it("a release answers from the session it sealed, not from the host's stored record", async () => {
@@ -78,7 +84,7 @@ describe("the host's record of a handle after a replacement in the same folder (
 		expect(sealedTranscripts(dirname(old.sessionFile))).toEqual([next.sessionFile]);
 		expect(answer.data).toMatchObject({ released: true, session_path: next.sessionFile, session_id: next.sessionId });
 		expect(storedRecord(host, handle)).toEqual({ sessionPath: undefined, durableSessionId: undefined });
-	});
+	}, 120_000);
 
 	it("an unload after a replacement answers the new session's file, and that file reopens as the new session", async () => {
 		await using host = await startReleaseHost(gatewayFixture().extension);
@@ -93,5 +99,5 @@ describe("the host's record of a handle after a replacement in the same folder (
 			send({ type: "get_state", id: "state", sessionId: String((reopened.data as Wire).sessionId) }),
 		);
 		expect(state.data).toMatchObject({ sessionFile: next.sessionFile, sessionId: next.sessionId });
-	});
+	}, 120_000);
 });

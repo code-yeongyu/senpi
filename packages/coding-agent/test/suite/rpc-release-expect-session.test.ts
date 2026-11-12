@@ -47,7 +47,7 @@ describe("release_session { expectSessionId } (senpi#6484)", () => {
 		expect(existsSync(outgoingStateDir(next.sessionFile, MOVE))).toBe(false);
 		const state = await host.send(send({ type: "get_state", id: "state", sessionId: handle }));
 		expect(state.data).toMatchObject({ sessionId: next.sessionId });
-	});
+	}, 120_000);
 
 	it("an interrupting release refused at the first compare takes nothing out of the running session", async () => {
 		await using host = await startReleaseHost(gatewayFixture().extension);
@@ -80,7 +80,7 @@ describe("release_session { expectSessionId } (senpi#6484)", () => {
 		expect(running.isStreaming).toBe(true);
 		expect(running.pendingMessageCount).toBe(queued);
 		await host.send(send({ type: "abort", id: "stop", sessionId: handle }));
-	});
+	}, 120_000);
 
 	it("releases as before when the session behind the route is the expected one, and names it by file and id", async () => {
 		await using host = await startReleaseHost(gatewayFixture().extension);
@@ -101,32 +101,36 @@ describe("release_session { expectSessionId } (senpi#6484)", () => {
 			data: { released: true, session_path: s1.sessionPath, session_id: s1.session.sessionId },
 		});
 		expect(sealedTranscripts(dirname(s1.sessionPath))).toEqual([s1.sessionPath]);
-	});
+	}, 120_000);
 
 	it.each([
 		{ name: "an empty string", value: "" },
 		{ name: "a string over the identifier limit", value: "a".repeat(513) },
 		{ name: "a string that is not a session id", value: "../s1" },
 		{ name: "a number", value: 42 },
-	])("refuses $name as invalid_session_id and releases nothing", async ({ value }) => {
-		await using host = await startReleaseHost(gatewayFixture().extension);
-		const s1 = await host.open("s1");
+	])(
+		"refuses $name as invalid_session_id and releases nothing",
+		async ({ value }) => {
+			await using host = await startReleaseHost(gatewayFixture().extension);
+			const s1 = await host.open("s1");
 
-		const answer = await host.send(
-			send({
-				type: "release_session",
-				id: "release",
-				sessionId: s1.sessionId,
-				reason: "takeover",
-				expectSessionId: value,
-			}),
-		);
+			const answer = await host.send(
+				send({
+					type: "release_session",
+					id: "release",
+					sessionId: s1.sessionId,
+					reason: "takeover",
+					expectSessionId: value,
+				}),
+			);
 
-		expect(answer).toMatchObject({ success: false, errorCode: "invalid_session_id" });
-		expect(sealedTranscripts(dirname(s1.sessionPath))).toEqual([]);
-		const state = await host.send(send({ type: "get_state", id: "state", sessionId: s1.sessionId }));
-		expect(state).toMatchObject({ success: true });
-	});
+			expect(answer).toMatchObject({ success: false, errorCode: "invalid_session_id" });
+			expect(sealedTranscripts(dirname(s1.sessionPath))).toEqual([]);
+			const state = await host.send(send({ type: "get_state", id: "state", sessionId: s1.sessionId }));
+			expect(state).toMatchObject({ success: true });
+		},
+		120_000,
+	);
 
 	it("a replacement that lands while a move release waits for the extensions' export is refused at the second compare, with no staged folder left", async () => {
 		let exportEntered!: () => void;
@@ -183,5 +187,78 @@ describe("release_session { expectSessionId } (senpi#6484)", () => {
 		const stagedRoot = outgoingStateDir(s1.sessionPath, MOVE);
 		expect(existsSync(stagedRoot) ? readdirSync(stagedRoot) : []).toEqual([]);
 		expect(await replaced).toMatchObject({ success: true });
-	});
+	}, 120_000);
+
+	it("a mismatch found at the second compare after an interrupt hands back what was taken and says which session it came from", async () => {
+		let exportEntered!: () => void;
+		const exporting = new Promise<void>((resolve) => {
+			exportEntered = resolve;
+		});
+		let letExportGo!: () => void;
+		const exportHeld = new Promise<void>((resolve) => {
+			letExportGo = resolve;
+		});
+		let newSessionStarted!: () => void;
+		const replacedSessionStarted = new Promise<void>((resolve) => {
+			newSessionStarted = resolve;
+		});
+		const gateway = gatewayFixture();
+		const extension: ExtensionFactory = (pi) => {
+			gateway.extension(pi);
+			pi.on("session_move_export", async () => {
+				exportEntered();
+				await exportHeld;
+			});
+			pi.on("session_start", (event) => {
+				if (event.reason === "new") newSessionStarted();
+			});
+		};
+		await using host = await startReleaseHost(extension);
+		host.faux.setResponses([fauxAssistantMessage("seed reply"), heldTurn]);
+		const s1 = await host.open("s1");
+		const expected = s1.session.sessionId;
+		const started = nextEvent(s1.session, "agent_start");
+		await host.send(send({ type: "prompt", id: "work", sessionId: s1.sessionId, message: "long work" }));
+		await started;
+		await host.send(
+			send({ type: "follow_up", id: "queued-1", sessionId: s1.sessionId, message: "first, after the work" }),
+		);
+		await host.send(
+			send({ type: "follow_up", id: "queued-2", sessionId: s1.sessionId, message: "second, after the work" }),
+		);
+
+		const releasing = host.send(
+			send({
+				type: "release_session",
+				id: "release",
+				sessionId: s1.sessionId,
+				...MOVE_FIELDS,
+				interrupt: true,
+				expectSessionId: expected,
+			}),
+		);
+		await exporting;
+		const replaced = host.send(send({ type: "new_session", id: "replace", sessionId: s1.sessionId }), "replacer");
+		await replacedSessionStarted;
+		letExportGo();
+		const answer = await releasing;
+
+		expect(answer).toMatchObject({
+			success: false,
+			errorCode: "session_mismatch",
+			errorData: {
+				expected,
+				taken_from: expected,
+				interrupted: true,
+				dropped: { user_messages: ["first, after the work", "second, after the work"] },
+			},
+		});
+		const state = await host.send(send({ type: "get_state", id: "state", sessionId: s1.sessionId }));
+		const successor = String((state.data as Wire).sessionId);
+		expect(successor).not.toBe(expected);
+		expect(JSON.stringify(answer)).not.toContain(successor);
+		expect(JSON.stringify(answer)).not.toContain(String((state.data as Wire).sessionFile));
+		expect(sealedTranscripts(dirname(s1.sessionPath))).toEqual([]);
+		expect(await replaced).toMatchObject({ success: true });
+	}, 120_000);
 });

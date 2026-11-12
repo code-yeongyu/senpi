@@ -3661,8 +3661,14 @@ file and the durable id of the session that was sealed, read from that session i
   answer is `session_mismatch` with `errorData { expected }`, which names nothing of the other session. A mismatch
   found after an interrupt also carries `interrupted`, `dropped` and `taken_from` (equal to `expected`): that input
   came out of the expected session, which the handle no longer names, so it goes back to that session by its file,
-  never to the handle. An empty or malformed value is refused `invalid_session_id`; only an absent field means no
-  expectation.
+  never to the handle. A value that is empty, longer than 512 characters or not a session id is refused
+  `invalid_session_id`; only an absent field means no expectation.
+- A release that a replacement crosses is refused, with or without `expectSessionId`: when the session behind the
+  route is replaced while the release waits (for a move's extension export, an interrupt to settle, or a first
+  header write), the answer is `session_mismatch` and nothing is released: nothing is sealed on the successor, and
+  what the extensions staged for the move is removed. Without the field `errorData` carries no `expected`; after an
+  interrupt it carries `interrupted`, `dropped` and `taken_from`, the durable id of the session that input was
+  taken from. A client that does not know the code reads it as any refusal: the release did not happen.
 - A host that does not advertise `release_session_expect_id` ignores the field and releases whichever session the
   route names. So a client reads the capability from the host that holds the session, over that session's own
   route, for that request; without it the client does not send the field, does not assume the release compared

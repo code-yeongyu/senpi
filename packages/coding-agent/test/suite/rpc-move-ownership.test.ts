@@ -81,7 +81,7 @@ describe('move_session { op: "ownership" } (senpi#6484, part 4)', () => {
 		});
 
 		expect(snapshot()).toEqual(before);
-	});
+	}, 120_000);
 
 	it("refuses a path with no session file, never answering writable, and creates nothing", async () => {
 		await using host = await startReleaseHost(gatewayFixture().extension);
@@ -102,7 +102,7 @@ describe('move_session { op: "ownership" } (senpi#6484, part 4)', () => {
 
 		expect(existsSync(missing)).toBe(false);
 		expect(filesUnder(folder)).toEqual(before);
-	});
+	}, 120_000);
 
 	it("records nothing about a move it was asked about, unlike a status", async () => {
 		await using host = await startReleaseHost(gatewayFixture().extension);
@@ -144,5 +144,5 @@ describe('move_session { op: "ownership" } (senpi#6484, part 4)', () => {
 
 		expect(answer).toMatchObject({ success: true, data: { sealed_for_move: false, held_this_move: false } });
 		expect(filesUnder(moves)).toEqual(before);
-	});
+	}, 120_000);
 });

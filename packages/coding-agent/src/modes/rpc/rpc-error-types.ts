@@ -110,9 +110,10 @@ export const RPC_ERROR_INVALID_SESSION_ID = "invalid_session_id";
 export const RPC_ERROR_SESSION_ID_IN_USE = "session_id_in_use";
 
 /**
- * `release_session.expectSessionId` names another session than the one behind the route now (it was replaced): nothing
- * was released. `errorData.expected` repeats the caller's id; after an interrupt, `taken_from` says the input in
- * `dropped` came out of that session, which the handle no longer names.
+ * `release_session`: the session behind the route is not the one the release is about, so nothing was released. Either
+ * `expectSessionId` names another session (`errorData.expected` repeats the caller's id), or the session was replaced
+ * while the release was in progress (no `expected` unless the caller sent one). After an interrupt, `taken_from` is the
+ * durable id of the session the input in `dropped` came out of, which the handle no longer names.
  */
 export const RPC_ERROR_SESSION_MISMATCH = "session_mismatch";
 

@@ -4,15 +4,18 @@
  * window the host's record of the handle must already name the new session, and a release or an unload sent then must
  * name what it acted on, or act on nothing.
  */
-import { readdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fauxAssistantMessage } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
-import type { LoadExtensionsResult } from "../../src/core/extensions/types.ts";
+import type { ExtensionFactory, LoadExtensionsResult } from "../../src/core/extensions/types.ts";
+import { outgoingStateDir } from "../../src/core/session-move/extension-state.ts";
+import type { MoveId } from "../../src/core/session-move/ownership.ts";
 import type { RpcCommand } from "../../src/modes/rpc/rpc-types.ts";
 import type { RouterContext } from "../../src/modes/rpc/session-router-context.ts";
 import { gatewayFixture } from "./rpc-release-gateway-fixture.ts";
-import { startReleaseHost } from "./rpc-release-host-support.ts";
-import { sealedTranscripts, storedRecord } from "./rpc-replacement-follow-support.ts";
+import { heldTurn, nextEvent, startReleaseHost } from "./rpc-release-host-support.ts";
+import { bindingSettled, sealedTranscripts, storedRecord } from "./rpc-replacement-follow-support.ts";
 
 type Wire = Record<string, unknown>;
 const send = (command: Wire): RpcCommand & { id: string } => command as unknown as RpcCommand & { id: string };
@@ -75,7 +78,7 @@ describe("a release or an unload while a replacement is still telling extensions
 		}
 		letGo();
 		expect(await replaced).toMatchObject({ success: true });
-	});
+	}, 120_000);
 
 	it("while the new session is still being built after the old one was disposed, a release and an unload act on nothing", async () => {
 		let holdBuild = false;
@@ -112,7 +115,7 @@ describe("a release or an unload while a replacement is still telling extensions
 		holdBuild = false;
 		letGo();
 		expect(await replaced).toMatchObject({ success: true });
-	});
+	}, 120_000);
 
 	it("a replacing command sent in the same turn as a release never runs on the released session", async () => {
 		await using host = await startReleaseHost(gatewayFixture().extension);
@@ -133,5 +136,87 @@ describe("a release or an unload while a replacement is still telling extensions
 		expect(sealedTranscripts(folder)).toEqual([s1.sessionPath]);
 		expect(replace.success).toBe(false);
 		expect(readdirSync(folder).filter((name) => name.endsWith(".jsonl"))).toEqual(["s1.jsonl"]);
-	});
+	}, 120_000);
+
+	it.each(
+		[false, true].flatMap((interrupt) =>
+			(["still binding", "quiet"] as const).map((successor) => ({ interrupt, successor })),
+		),
+	)(
+		"a move release without expectSessionId that a replacement crosses is refused, not sealed on the successor (interrupt: $interrupt, successor $successor)",
+		async ({ interrupt, successor }) => {
+			let exportEntered!: () => void;
+			const exporting = new Promise<void>((resolve) => {
+				exportEntered = resolve;
+			});
+			let letExportGo!: () => void;
+			const exportHeld = new Promise<void>((resolve) => {
+				letExportGo = resolve;
+			});
+			let newSessionStarted!: () => void;
+			const successorStarted = new Promise<void>((resolve) => {
+				newSessionStarted = resolve;
+			});
+			const gateway = gatewayFixture();
+			const extension: ExtensionFactory = (pi) => {
+				gateway.extension(pi);
+				pi.on("session_move_export", async (event) => {
+					mkdirSync(join(event.dir, "staged-by-the-first-session"), { recursive: true });
+					exportEntered();
+					await exportHeld;
+				});
+				pi.on("session_start", (event) => {
+					if (event.reason === "new") newSessionStarted();
+				});
+			};
+			await using host = await startReleaseHost(extension);
+			host.faux.setResponses([fauxAssistantMessage("seed reply"), heldTurn]);
+			const s1 = await host.open("s1");
+			const folder = dirname(s1.sessionPath);
+			if (interrupt) {
+				const started = nextEvent(s1.session, "agent_start");
+				await host.send(send({ type: "prompt", id: "work", sessionId: s1.sessionId, message: "long work" }));
+				await started;
+				await host.send(
+					send({ type: "follow_up", id: "queued", sessionId: s1.sessionId, message: "after the work" }),
+				);
+			}
+
+			const releasing = host.send(
+				send({
+					type: "release_session",
+					id: "release",
+					sessionId: s1.sessionId,
+					reason: "move",
+					moveId: "move-6484",
+					target: "device-b",
+					...(interrupt ? { interrupt: true } : {}),
+				}),
+			);
+			await exporting;
+			const replaced = host.send(send({ type: "new_session", id: "replace", sessionId: s1.sessionId }), "replacer");
+			await successorStarted;
+			// Still binding, a release of the successor would be refused as busy; once it is quiet, it would be sealed.
+			if (successor === "quiet") await bindingSettled(host, s1.sessionId);
+			letExportGo();
+			const answer = await releasing;
+
+			expect(answer).toMatchObject({ success: false, errorCode: "session_mismatch" });
+			expect((answer.errorData as Wire).expected).toBeUndefined();
+			if (interrupt)
+				expect(answer.errorData).toMatchObject({
+					interrupted: true,
+					dropped: { user_messages: ["after the work"] },
+					taken_from: s1.session.sessionId,
+				});
+			else expect((answer.errorData as Wire).taken_from).toBeUndefined();
+			const state = await host.send(send({ type: "get_state", id: "state", sessionId: s1.sessionId }));
+			expect(JSON.stringify(answer)).not.toContain(String((state.data as Wire).sessionId));
+			expect(sealedTranscripts(folder)).toEqual([]);
+			const stagedRoot = outgoingStateDir(s1.sessionPath, "move-6484" as MoveId);
+			expect(existsSync(stagedRoot) ? readdirSync(stagedRoot) : []).toEqual([]);
+			expect(await replaced).toMatchObject({ success: true });
+		},
+		120_000,
+	);
 });

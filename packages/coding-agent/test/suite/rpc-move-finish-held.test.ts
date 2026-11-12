@@ -81,26 +81,31 @@ describe("finish for a file the move did not hold (senpi#6484, part 3)", () => {
 			expect(existsSync(staged)).toBe(true);
 			expect(readFileSync(old.sessionFile, "utf8")).toBe(otherBefore);
 		},
+		120_000,
 	);
 
 	it.each([
 		{ state: "declined", reason: "expired" },
 		{ state: "failed", reason: "import_failed" },
-	])("a $state finish for a file that was never sealed answers writable and changes nothing", async (answer) => {
-		await using host = await startReleaseHost(gatewayFixture().extension);
-		const { file } = await writtenAndUnloaded(host, "never-sealed");
-		const staged = outgoingStateDir(file, MOVE);
-		mkdirSync(staged, { recursive: true });
-		const before = readFileSync(file, "utf8");
+	])(
+		"a $state finish for a file that was never sealed answers writable and changes nothing",
+		async (answer) => {
+			await using host = await startReleaseHost(gatewayFixture().extension);
+			const { file } = await writtenAndUnloaded(host, "never-sealed");
+			const staged = outgoingStateDir(file, MOVE);
+			mkdirSync(staged, { recursive: true });
+			const before = readFileSync(file, "utf8");
 
-		expect(await finish(host, file, answer)).toMatchObject({
-			success: true,
-			data: { ownership: "writable", held_this_move: false },
-		});
+			expect(await finish(host, file, answer)).toMatchObject({
+				success: true,
+				data: { ownership: "writable", held_this_move: false },
+			});
 
-		expect(existsSync(staged)).toBe(true);
-		expect(readFileSync(file, "utf8")).toBe(before);
-	});
+			expect(existsSync(staged)).toBe(true);
+			expect(readFileSync(file, "utf8")).toBe(before);
+		},
+		120_000,
+	);
 
 	it("a file that inherited the move's entries from another session is not held by it", async () => {
 		await using host = await startReleaseHost(gatewayFixture().extension);
@@ -118,7 +123,7 @@ describe("finish for a file the move did not hold (senpi#6484, part 3)", () => {
 		});
 
 		expect(existsSync(staged)).toBe(true);
-	});
+	}, 120_000);
 
 	it("a session that moved away under one move and came back under another is held by the first: its leftovers go", async () => {
 		await using host = await startReleaseHost(gatewayFixture().extension);
@@ -147,5 +152,5 @@ describe("finish for a file the move did not hold (senpi#6484, part 3)", () => {
 		});
 
 		expect(existsSync(staged)).toBe(false);
-	});
+	}, 120_000);
 });

@@ -155,7 +155,7 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 			if (failed !== undefined)
 				throw new Error(`${failed.extensionPath} could not write its state for the move: ${failed.error}`);
 		}
-		answer = await claimAndRelease(port, command, interrupted, dropped, stagedState?.attempt, () => {
+		answer = await claimAndRelease(port, command, first.session, interrupted, dropped, stagedState?.attempt, () => {
 			sealed = true;
 		});
 		return answer;
@@ -189,6 +189,7 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 async function claimAndRelease(
 	port: SessionReleasePort,
 	command: ReleaseSessionCommand,
+	first: AgentSession,
 	interrupted: boolean,
 	dropped: ReleaseDropped,
 	stateAttempt: string | undefined,
@@ -197,6 +198,15 @@ async function claimAndRelease(
 	const taken = interrupted ? { interrupted: true, dropped } : undefined;
 	const ready = releasable(port, command, taken);
 	if (!("session" in ready)) return ready;
+	// The session behind the route was replaced while this release awaited (a move's export, an interrupt's settle, a
+	// first header write). What was staged and taken belongs to the session the release began on: nothing is sealed on
+	// its successor, whether or not the caller sent `expectSessionId` (senpi#6484).
+	if (ready.session !== first)
+		return refusal(command.id, RPC_ERROR_SESSION_MISMATCH, {
+			detail: "the session behind this route was replaced while the release was in progress; nothing was released",
+			...(command.expectSessionId === undefined ? {} : { expected: command.expectSessionId }),
+			...(taken === undefined ? {} : { ...taken, taken_from: first.sessionManager.getSessionId() }),
+		});
 	const stillBusy = busySignals(port, command.sessionId, ready.session);
 	if (stillBusy.length > 0) {
 		return refusal(command.id, busyCode(stillBusy), {
