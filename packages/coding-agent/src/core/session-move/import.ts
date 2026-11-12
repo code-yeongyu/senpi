@@ -147,20 +147,18 @@ export async function importMovedSession(
 		(await pathExists(target)) && (await movedInFor(target, manifest.moveId));
 	// The rename already committed; a crash or a failed write may have lost `accepted`, and the file is the authority.
 	// It answers only for the folder it landed for: an import that names another folder (into the same `sessionDir`)
-	// was never checked against that folder's repository, and its `open` would run the session there.
+	// was never checked against that folder's repository, and its `open` would run the session there. That import is
+	// fenced with the record the file just confirmed, so its refusal says where the move landed (senpi#6436).
 	const confirmLanded = async (): Promise<{ readonly sessionFile: string }> => {
+		const revoked = (await importOutcome(target, manifest.moveId)) === "revoked";
+		await options.ledger.confirmLanded(manifest.moveId, target, revoked);
 		const landedFor = await readSessionCwd(target);
 		if (landedFor !== undefined && landedFor !== targetCwd)
 			throw new MoveFencedError(
 				manifest.moveId,
-				undefined,
+				revoked ? { state: "accepted", revoked: true } : { state: "accepted" },
 				`it already landed here for ${landedFor}, and a move lands for one folder`,
 			);
-		await options.ledger.confirmLanded(
-			manifest.moveId,
-			target,
-			(await importOutcome(target, manifest.moveId)) === "revoked",
-		);
 		return { sessionFile: target };
 	};
 	if (await landed()) return confirmLanded();
