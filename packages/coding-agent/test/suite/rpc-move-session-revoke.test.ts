@@ -11,7 +11,7 @@ import { moveLockKey } from "../../src/core/session-move/session-lock.ts";
 import { serializeByKey } from "../../src/core/session-sidecar-store.ts";
 import { opened } from "./rpc-inprocess-host-metrics.ts";
 import { createInProcessRig } from "./rpc-inprocess-host-support.ts";
-import { customTypes, devices, hostAndRelease, importedOnB, move } from "./rpc-move-session-support.ts";
+import { customTypes, devices, hostAndRelease, importedOnB, landedOnB, move } from "./rpc-move-session-support.ts";
 import { SESSION_ID } from "./session-move-fixture.ts";
 
 const lastEntry = (file: string) =>
@@ -137,6 +137,7 @@ describe("move_session revoke (senpi#4003)", () => {
 		const onB = await importedOnB(a, b, fixture, "move-r7");
 		expect((await move(b, { op: "status", moveId: "move-r7", sessionPath: onB })).data).toEqual({
 			state: "accepted",
+			...landedOnB(fixture, onB),
 		});
 
 		expect(await move(b, { op: "revoke", sessionPath: onB, moveId: "move-r7" })).toMatchObject({ success: true });
@@ -150,7 +151,11 @@ describe("move_session revoke (senpi#4003)", () => {
 			SessionManager.open(onB).appendMessage({ role: "user", content: "after revoke", timestamp: 9 }),
 		).toThrow(SessionMovedAwayError);
 		// Without the copy's path the ledger answers: its record stays `accepted` and carries the revoke too.
-		expect((await move(b, { op: "status", moveId: "move-r7" })).data).toEqual({ state: "accepted", revoked: true });
+		expect((await move(b, { op: "status", moveId: "move-r7" })).data).toEqual({
+			state: "accepted",
+			revoked: true,
+			...landedOnB(fixture, onB),
+		});
 	});
 
 	it("#given the receiver wrote turns on its copy after the import #then revoke still seals it, keeps those turns, and refuses later writes", async () => {
