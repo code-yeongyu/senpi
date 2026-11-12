@@ -70,6 +70,10 @@ describe("move_session import with files: the paths it takes (senpi#6267)", () =
 			"a listed path one folder deeper than a bundle path may be",
 			listed(`files/${"d/".repeat(MAX_BUNDLE_PATH_SEGMENTS - 1)}x`),
 		],
+		[
+			"a listed path one folder deeper than a bundle path may be, written with backslashes",
+			listed(`files\\${"d\\".repeat(MAX_BUNDLE_PATH_SEGMENTS - 1)}x`),
+		],
 	])(
 		"#given %s #then import refuses move_bundle_invalid before a folder is made and the move stays importable",
 		async (_case, tamper) => {

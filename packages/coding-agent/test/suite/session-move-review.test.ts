@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -103,27 +104,57 @@ describe("session move review fixes (senpi#3631)", () => {
 		);
 	});
 
-	it("#given a bundle folder whose manifest lists a path one folder deeper than a bundle path may be #then the import refuses it and makes no folder for it, and the move stays importable", async () => {
+	it("#given a bundle folder whose manifest lists a path exactly as deep as a bundle path may be #then the import takes it and the session lands", async () => {
 		const { cwdB, bundleDir, ledger, readIdentity } = await setup();
-		const original = readFileSync(join(bundleDir, "manifest.json"), "utf8");
-		const tooDeep = `files/${"d/".repeat(MAX_BUNDLE_PATH_SEGMENTS - 1)}x`;
-		mkdirSync(dirname(join(bundleDir, tooDeep)), { recursive: true });
-		writeFileSync(join(bundleDir, tooDeep), "x");
+		// `files/` is the first segment and the file name the last: the folders between make the depth the cap exactly.
+		const deepest = `files/${"d/".repeat(MAX_BUNDLE_PATH_SEGMENTS - 2)}x`;
+		mkdirSync(dirname(join(bundleDir, deepest)), { recursive: true });
+		writeFileSync(join(bundleDir, deepest), "x");
+		const sha256 = createHash("sha256").update("x").digest("hex");
 		editManifest(bundleDir, (manifest) => {
-			manifest.sidecars = [{ path: tooDeep, sha256: "0".repeat(64) }];
+			const listedBefore = Array.isArray(manifest.sidecars) ? manifest.sidecars : [];
+			manifest.sidecars = [...listedBefore, { path: deepest, sha256 }];
 		});
-		const sessionDir = getDefaultSessionDir(cwdB);
 
-		await expect(importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity })).rejects.toBeInstanceOf(
-			MoveBundleInvalidError,
-		);
-
-		// Refused when the manifest is read: before the receive begins and before anything is staged.
-		expect(existsSync(join(sessionDir, ".move-staging"))).toBe(false);
-		writeFileSync(join(bundleDir, "manifest.json"), original);
 		const landed = await importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity });
+
+		expect(deepest.split("/")).toHaveLength(MAX_BUNDLE_PATH_SEGMENTS);
 		expect(existsSync(landed.sessionFile)).toBe(true);
 	});
+
+	it.each([
+		["one folder deeper than a bundle path may be", `files/${"d/".repeat(MAX_BUNDLE_PATH_SEGMENTS - 1)}x`],
+		[
+			"one folder deeper than a bundle path may be, written with backslashes",
+			`files\\${"d\\".repeat(MAX_BUNDLE_PATH_SEGMENTS - 1)}x`,
+		],
+		// In the folder form an empty or `.` segment is not refused but counts: these paths name only as many real
+		// segments as the cap allows, and the one extra segment refuses them.
+		["whose empty segment is the one over the cap", `files//${"d/".repeat(MAX_BUNDLE_PATH_SEGMENTS - 2)}x`],
+		["whose dot segment is the one over the cap", `files/./${"d/".repeat(MAX_BUNDLE_PATH_SEGMENTS - 2)}x`],
+	])(
+		"#given a bundle folder whose manifest lists a path %s #then the import refuses it and makes no folder for it, and the move stays importable",
+		async (_case, tooDeep) => {
+			const { cwdB, bundleDir, ledger, readIdentity } = await setup();
+			const original = readFileSync(join(bundleDir, "manifest.json"), "utf8");
+			mkdirSync(dirname(join(bundleDir, tooDeep)), { recursive: true });
+			writeFileSync(join(bundleDir, tooDeep), "x");
+			editManifest(bundleDir, (manifest) => {
+				manifest.sidecars = [{ path: tooDeep, sha256: "0".repeat(64) }];
+			});
+			const sessionDir = getDefaultSessionDir(cwdB);
+
+			await expect(importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity })).rejects.toBeInstanceOf(
+				MoveBundleInvalidError,
+			);
+
+			// Refused when the manifest is read: before the receive begins and before anything is staged.
+			expect(existsSync(join(sessionDir, ".move-staging"))).toBe(false);
+			writeFileSync(join(bundleDir, "manifest.json"), original);
+			const landed = await importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity });
+			expect(existsSync(landed.sessionFile)).toBe(true);
+		},
+	);
 
 	it("#given a bundle folder whose manifest is null #then the bundle is invalid, as for any manifest that is not an object, and the move's record is untouched", async () => {
 		const { cwdB, bundleDir, ledger, readIdentity } = await setup();
