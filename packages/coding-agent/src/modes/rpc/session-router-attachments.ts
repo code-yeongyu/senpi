@@ -94,6 +94,7 @@ async function releaseConnectionHolds(host: RouterContext, connectionId: string)
 	// The delegation record and its claims end here too (omo-relay-daemon#307): a `detach_connection` never reaches this.
 	if (!host.writer.hasConnection(connectionId)) {
 		host.pendingCapabilities.delete(connectionId);
+		host.clientIds.delete(connectionId);
 		host.writer.delegations.forget(connectionId);
 		host.connectionRoles.forget(connectionId);
 	}
@@ -122,7 +123,6 @@ async function releaseConnectionHolds(host: RouterContext, connectionId: string)
 	);
 	if (opens) await Promise.all([...opens]);
 	host.releasedConnections.delete(connectionId);
-	host.clientIds.delete(connectionId);
 	return [...deferred];
 }
 
