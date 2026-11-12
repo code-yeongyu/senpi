@@ -5,6 +5,7 @@ import {
 	heldElsewhere,
 	landedElsewhere,
 	landsAt,
+	moveFolder,
 	parseLanding,
 	recordAge,
 	settledAt,
@@ -69,7 +70,8 @@ export class MoveLedger {
 	 * Says this device can take the move, for `READY_TTL_MS`. Sending ready again keeps the first window; a move already
 	 * receiving or accepted stays so, and one already answered otherwise is refused.
 	 */
-	prepare(moveId: MoveId, cwd?: string): Promise<MoveRecord> {
+	prepare(moveId: MoveId, folder?: string): Promise<MoveRecord> {
+		const cwd = moveFolder(folder);
 		return this.locked(moveId, async () => {
 			const record = await this.current(moveId);
 			const landing = await this.#file.landing(moveId);
@@ -99,7 +101,7 @@ export class MoveLedger {
 	async requireReadiedFor(moveId: MoveId, cwd: string): Promise<void> {
 		const stored = await this.#file.raw(moveId);
 		const [record, landing] = [parseRecord(stored), parseLanding(stored)];
-		if (record?.state === "ready" && landing.cwd !== undefined && landing.cwd !== cwd)
+		if (record?.state === "ready" && landing.cwd !== undefined && landing.cwd !== moveFolder(cwd))
 			throw new MoveFencedError(moveId, record, heldElsewhere(landing));
 	}
 
@@ -112,16 +114,17 @@ export class MoveLedger {
 	 * and a file it already landed is confirmed by the import's same-file check, which runs before this.
 	 */
 	beginReceive(moveId: MoveId, target: string, options: BeginReceiveOptions = {}): Promise<void> {
+		const cwd = moveFolder(options.cwd);
 		return this.locked(moveId, async () => {
 			const record = await this.current(moveId);
 			const landing = await this.#file.landing(moveId);
 			const receiving = landsAt(record, landing, target);
 			// A move readied or already received for a folder is received only for that folder; one with none keeps this
 			// one. The folder itself is compared: two folders can map to the same landing file.
-			if ((record?.state === "ready" || receiving) && landing.cwd !== undefined && landing.cwd !== options.cwd)
+			if ((record?.state === "ready" || receiving) && landing.cwd !== undefined && landing.cwd !== cwd)
 				throw new MoveFencedError(moveId, record, heldElsewhere(landing));
 			if (record?.state === "ready") {
-				await this.#file.write(moveId, { state: "receiving" }, settledAt({ cwd: options.cwd }, target));
+				await this.#file.write(moveId, { state: "receiving" }, settledAt({ cwd }, target));
 				return;
 			}
 			if (receiving) return;

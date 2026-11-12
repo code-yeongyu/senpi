@@ -1,3 +1,4 @@
+import { resolvePath } from "../../utils/paths.ts";
 import { MOVE_RECORD_LOCK_STALE_MS } from "./move-ledger-lock.ts";
 import type { MoveRecord } from "./move-record.ts";
 
@@ -51,6 +52,14 @@ export function parseLanding(value: unknown): Landing {
 /** What a write keeps of a landing: where the move lands and the folder it was readied for, never the commit stamp. */
 export function settledAt(landing: Landing, target: string): Landing {
 	return landing.cwd === undefined ? { target } : { target, cwd: landing.cwd };
+}
+
+/**
+ * The one spelling a move's folder is kept and compared in (senpi#6435): resolved as the import resolves its `cwd`,
+ * so a trailing slash, a `.` or `..` segment or a doubled slash still names the same folder at every step.
+ */
+export function moveFolder(cwd: string | undefined): string | undefined {
+	return cwd === undefined ? undefined : resolvePath(cwd);
 }
 
 /** Why a move readied for one folder refuses another: it lands only where its repository was checked (senpi#6435). */

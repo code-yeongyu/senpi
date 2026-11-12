@@ -209,6 +209,30 @@ describe("move_session checks the repository before the release (senpi#6435)", (
 		});
 	});
 
+	// One folder has one spelling: it is kept and compared as the import resolves its `cwd`.
+	it.each([
+		["a trailing slash", (repo: string) => `${repo}/`, (repo: string) => repo],
+		["a trailing slash, imported with it too", (repo: string) => `${repo}/`, (repo: string) => `${repo}/`],
+		["a . segment", (repo: string) => `${dirname(repo)}/./${basename(repo)}`, (repo: string) => repo],
+		["a .. segment", (repo: string) => `${dirname(repo)}/a/../${basename(repo)}`, (repo: string) => repo],
+		["a doubled slash", (repo: string) => `${dirname(repo)}//${basename(repo)}`, (repo: string) => repo],
+	])(
+		"#given a move readied for a checkout spelled with %s #when its bundle is imported into that checkout #then it lands",
+		async (_spelling, readiedFor, importedInto) => {
+			const fixture = await devices();
+			await using a = createInProcessRig(fixture.agentA);
+			await using b = createInProcessRig(fixture.agentB);
+			const repository = await recordedIdentity(a, fixture.sessionPath);
+			const cwd = readiedFor(fixture.repoB);
+			expect(await move(b, { op: "prepare", moveId: "move-p7", cwd, repository })).toMatchObject({ success: true });
+			const bundleDir = await exported(a, fixture, "move-p7");
+
+			const landed = await move(b, { op: "import", bundleDir, cwd: importedInto(fixture.repoB), from: "device-a" });
+
+			expect(landed).toMatchObject({ success: true, data: { session_id: SESSION_ID } });
+		},
+	);
+
 	it.each([
 		["a relative folder", (f: Fixture) => ({ cwd: "work/repo", repository: { rootCommits: [f.root] } })],
 		["a repository that is not an object", (f: Fixture) => ({ cwd: f.repoB, repository: "same" })],
