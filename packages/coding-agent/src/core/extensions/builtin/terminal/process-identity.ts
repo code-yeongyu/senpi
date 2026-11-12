@@ -9,9 +9,9 @@ export {
 } from "../../../../utils/process-identity.ts";
 
 /**
- * Two boot instants further apart than this belong to different boots. `os.uptime()` is
- * integral seconds on every platform, and a laptop's sleep is accounted in uptime, so the
- * only drift left is sub-second rounding on either side.
+ * Two boot instants further apart than this belong to different boots. Where the kernel's boot record is readable two
+ * processes read the same value; on the `now - os.uptime()` fallback a laptop's sleep is accounted in uptime, so the
+ * only drift left there is whole-second rounding on either side.
  */
 export const BOOT_INSTANT_TOLERANCE_MS = 120_000;
 
@@ -22,19 +22,33 @@ const wholeSeconds = (ms: number): number => Math.round(ms / 1000) * 1000;
  * is one recorded value, not `now - uptime`, so two reads agree to the second however they straddle an uptime tick
  * (senpi#3152), and a wall-clock step moves it for every process alike. Undefined where neither is readable.
  */
-function kernelBootEpochSeconds(platform: NodeJS.Platform): number | undefined {
+function readKernelBootEpochSeconds(platform: NodeJS.Platform): number | undefined {
 	try {
 		if (platform === "linux") {
 			const match = /^btime (\d+)$/m.exec(readFileSync("/proc/stat", "utf8"));
 			return match ? Number(match[1]) : undefined;
 		}
 		if (platform === "darwin") {
-			const raw = execFileSync("sysctl", ["-n", "kern.boottime"], { encoding: "utf8", timeout: 2_000 });
+			const raw = execFileSync("/usr/sbin/sysctl", ["-n", "kern.boottime"], { encoding: "utf8", timeout: 2_000 });
 			const match = /sec = (\d+)/.exec(raw);
 			return match ? Number(match[1]) : undefined;
 		}
 	} catch {}
 	return undefined;
+}
+
+/**
+ * The kernel's boot record, read once per process and platform: it cannot change while the machine is up, and the
+ * darwin read spawns a synchronous `sysctl`. Only a value the kernel actually returned is kept; the uptime
+ * fallback is computed on every read.
+ */
+const kernelBootRecords = new Map<NodeJS.Platform, number>();
+function kernelBootEpochSeconds(platform: NodeJS.Platform): number | undefined {
+	const known = kernelBootRecords.get(platform);
+	if (known !== undefined) return known;
+	const read = readKernelBootEpochSeconds(platform);
+	if (read !== undefined) kernelBootRecords.set(platform, read);
+	return read;
 }
 
 export function processBootAtMs(now: () => number = Date.now, platform: NodeJS.Platform = process.platform): number {
