@@ -3,8 +3,7 @@ import { createInMemoryModelRegistry, createModelRegistry, getModelRuntime } fro
  * Local test harness for the new coding-agent test suite.
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
-import { rm } from "node:fs/promises";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage, AgentOptions, AgentTool } from "@earendil-works/pi-agent-core";
@@ -18,11 +17,16 @@ import type {
 } from "@earendil-works/pi-ai/compat";
 import { registerFauxProvider, streamSimple } from "@earendil-works/pi-ai/compat";
 import type { RetryPolicyProfile } from "@earendil-works/pi-ai/utils/retry-profile/types";
+import { afterAll, afterEach } from "vitest";
 import { makeTempDir, onTempCleanup } from "../../../../scripts/vitest-temp.ts";
 import type { ToolRuntimeKind } from "../../src/cli/tool-runtime.ts";
 import { AgentSession, type AgentSessionEvent } from "../../src/core/agent-session.ts";
 import { settledFallbackLoggers } from "../../src/core/retry-fallback/log.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
+import {
+	pendingCredentialBlockLogsWithin,
+	settledCredentialBlockLogsWithin,
+} from "../../src/core/credential-pool/block-log.ts";
 import type { ExtensionRunner, ExtensionUIContext } from "../../src/core/extensions/index.ts";
 import type { SessionStartEvent } from "../../src/core/extensions/types.ts";
 import { convertToLlmForTransport } from "../../src/core/messages.ts";
@@ -197,6 +201,20 @@ onTempCleanup(() => {
 	for (const dispose of [...disposals].reverse()) dispose();
 });
 
+// cleanup() is called unawaited by most suites, so every removal it starts is joined here before the next test starts.
+// Each recorded removal already has a handler, so an unawaited failure is never an unhandled rejection; the hook
+// rethrows it, failing the test that left it behind. Hooks run in reverse registration order, so these run after the
+// importing file's own afterEach/afterAll that call cleanup().
+const pendingCleanups = new Set<Promise<void>>();
+async function joinPendingCleanups(): Promise<void> {
+	const results = await Promise.allSettled([...pendingCleanups]);
+	pendingCleanups.clear();
+	const failure = results.find((result) => result.status === "rejected");
+	if (failure !== undefined) throw failure.reason;
+}
+afterEach(joinPendingCleanups);
+afterAll(joinPendingCleanups);
+
 export async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
 	const tempDir = makeTempDir(join(tmpdir(), "pi-suite-"));
 	const sibling = options.siblingOf;
@@ -358,9 +376,24 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		if (!sibling) fauxProvider.unregister();
 	};
 	disposals.add(dispose);
-	const cleanup = async () => {
+	// The removal stays synchronous, as before: an async walk lets the suite's own in-process writers land files in the
+	// tree mid-removal (ENOTEMPTY). Only a pending credential block-log append, which the guard's rmSync refuses
+	// (senpi#6488), is waited for first.
+	const removeTempDir = (): void => {
+		if (existsSync(tempDir)) rmSync(tempDir, { recursive: true });
+	};
+	const cleanup = (): Promise<void> => {
 		dispose();
-		await rm(tempDir, { recursive: true, force: true });
+		const removal =
+			pendingCredentialBlockLogsWithin(tempDir).length === 0
+				? new Promise<void>((resolve) => {
+						removeTempDir();
+						resolve();
+					})
+				: settledCredentialBlockLogsWithin(tempDir).then(removeTempDir);
+		pendingCleanups.add(removal);
+		removal.catch(() => {});
+		return removal;
 	};
 	return {
 		agent,
