@@ -67,7 +67,14 @@ describe("multi-session RPC protocol info", () => {
 					"move_session",
 					"move_session_revoke",
 					"move_session_copy",
-					"move_session_status_landed_path",
+					"move_session_export_inline", // senpi#6267: a move's bundle travels inside the move answers.
+					"move_session_import_files",
+					"move_session_import_session_dir",
+					"move_session_import_open",
+					"move_session_inline_max_bytes:1048576",
+					"move_session_identity", // senpi#6435: a session's recorded repository, read without a release.
+					"move_session_prepare_repository", // senpi#6435: prepare checks the folder's repository.
+					"move_session_status_landed_path", // senpi#6436: where an accepted move landed.
 					"session_relocation",
 					"session_context",
 					"session_kind",

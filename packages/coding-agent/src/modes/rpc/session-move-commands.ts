@@ -4,20 +4,24 @@
  * outgoing bundles and the session folder for a working directory) and maps refusals to wire codes.
  */
 import { join } from "node:path";
+import { readRepositoryIdentity } from "../../core/repository-identity.ts";
 import { getDefaultSessionDir, loadEntriesFromFileAsync } from "../../core/session-manager.ts";
 import { copySessionAs } from "../../core/session-move/copy.ts";
-import { exportSessionForMove } from "../../core/session-move/export.ts";
+import { exportSessionForMoveAndRead } from "../../core/session-move/export.ts";
 import { sealedOutgoingStateDir } from "../../core/session-move/extension-state.ts";
 import { finishMove } from "../../core/session-move/finish.ts";
-import { importMovedSession } from "../../core/session-move/import.ts";
+import { readSessionRepositoryIdentity } from "../../core/session-move/identity.ts";
+import { readInlineBundle } from "../../core/session-move/inline-bundle.ts";
 import { MoveLedger, type MoveRecord } from "../../core/session-move/move-ledger.ts";
-import { headerSessionId, type MoveId, sessionOwnership } from "../../core/session-move/ownership.ts";
+import { type MoveId, sessionOwnership } from "../../core/session-move/ownership.ts";
+import { prepareMove } from "../../core/session-move/prepare.ts";
 import { revokeImportedMove } from "../../core/session-move/revoke.ts";
 import { orderedRealPath, realSessionPath } from "../../core/session-move/session-lock.ts";
 import { normalizePath, resolvePath } from "../../utils/paths.ts";
 import type { RpcResponse } from "./rpc-types.ts";
 import { landedWhenFenced, statusAnswer } from "./session-move-landed.ts";
 import {
+	MOVE_INLINE_MAX_FILES,
 	RPC_ERROR_INVALID_MOVE_REQUEST,
 	RPC_ERROR_MOVE_FAILED,
 	RPC_ERROR_MOVE_NOT_RELEASED,
@@ -27,11 +31,10 @@ import {
 	type RpcMoveSessionCommand,
 	type RpcMoveSessionData,
 } from "./session-move-wire.ts";
+import { importMoved, type MoveImportPort, openLanded, sessionDirRefusal } from "./session-move-import.ts";
 import { type MoveRequest, parseMoveRequest } from "./session-move-request.ts";
 
-export interface MoveSessionPort {
-	/** This host's agent directory: the move folders live under `<agentDir>/session-moves`. */
-	readonly agentDir: string;
+export interface MoveSessionPort extends MoveImportPort {
 	hostedPaths(): readonly string[];
 }
 
@@ -53,15 +56,24 @@ const RENAMED_CODES: Readonly<Record<string, string>> = { ESESSIONHELD: "session
 const wireRecord = (record: MoveRecord): RpcMoveRecord =>
 	record.state === "ready" ? { state: "ready", expires_at: record.expiresAt } : record;
 
-export async function moveSession(port: MoveSessionPort, command: RpcMoveSessionCommand): Promise<RpcResponse> {
+export async function moveSession(
+	port: MoveSessionPort,
+	command: RpcMoveSessionCommand,
+): Promise<RpcResponse | undefined> {
 	const raw: Record<string, unknown> = { ...command };
 	const parsed = parseMoveRequest(raw);
 	if (typeof parsed === "string") return refusal(command.id, RPC_ERROR_INVALID_MOVE_REQUEST, parsed);
 	const root = join(port.agentDir, "session-moves");
 	const ledger = new MoveLedger(join(root, "ledger"));
-	const outgoing = (moveId: MoveId) => join(root, "outgoing", moveId);
 	try {
-		return answer(command.id, await run(parsed, port, ledger, outgoing));
+		if (parsed.op !== "import") return answer(command.id, await run(parsed, port, ledger, root));
+		const notAFolder = await sessionDirRefusal(parsed.sessionDir);
+		if (notAFolder !== undefined) return refusal(command.id, RPC_ERROR_INVALID_MOVE_REQUEST, notAFolder);
+		const landed = await importMoved(parsed, port, ledger, root);
+		const open = command.op === "import" ? command.open : undefined;
+		if (open === undefined) return answer(command.id, landed);
+		const open_error = await openLanded(port, command.id, open, parsed.cwd, landed);
+		return open_error === undefined ? undefined : answer(command.id, { ...landed, open_error });
 	} catch (cause) {
 		if (cause instanceof MoveRefusal) return refusal(command.id, cause.code, cause.message);
 		const code = typeof cause === "object" && cause !== null && "code" in cause ? cause.code : undefined;
@@ -78,14 +90,33 @@ export async function moveSession(port: MoveSessionPort, command: RpcMoveSession
 }
 
 async function run(
-	parsed: MoveRequest,
+	parsed: Exclude<MoveRequest, { op: "import" }>,
 	port: MoveSessionPort,
 	ledger: MoveLedger,
-	outgoing: (moveId: MoveId) => string,
+	root: string,
 ): Promise<RpcMoveSessionData | { readonly refuse: string; readonly detail: string }> {
+	const outgoing = (moveId: MoveId) => join(root, "outgoing", moveId);
 	switch (parsed.op) {
 		case "prepare":
-			return wireRecord(await ledger.prepare(parsed.moveId));
+			return wireRecord(
+				await prepareMove({
+					ledger,
+					moveId: parsed.moveId,
+					cwd: parsed.cwd,
+					repository: parsed.repository,
+				}),
+			);
+		case "identity": {
+			// The folder form reads what the import reads; the session form reads only this host's own session files.
+			const repository =
+				"cwd" in parsed
+					? await readRepositoryIdentity(resolvePath(parsed.cwd))
+					: await readSessionRepositoryIdentity(join(port.agentDir, "sessions"), parsed.sessionPath);
+			// The answer is the wire shape: a plain copy, never the core object.
+			return repository === undefined
+				? {}
+				: { repository: { ...repository, rootCommits: [...repository.rootCommits] } };
+		}
 		case "cancel":
 			return wireRecord(await ledger.decline(parsed.moveId, "cancelled"));
 		case "status":
@@ -93,45 +124,38 @@ async function run(
 		case "export": {
 			const sessionFile = await orderedRealPath(parsed.sessionPath);
 			const bundleDir = outgoing(parsed.moveId);
-			const manifest = await exportSessionForMove({
-				sessionFile,
-				moveId: parsed.moveId,
-				target: parsed.target,
-				droppedUserMessages: parsed.dropped,
-				bundleDir,
-				extensionStateDir: () => sealedOutgoingStateDir(sessionFile, parsed.moveId),
-				guard: async () => {
-					await refuseOpenHere(
-						port,
-						sessionFile,
-						"This session is open on this host. Release it with release_session reason move and this moveId first.",
-					);
-					await refuseUnlessSealedFor(sessionFile, parsed.moveId);
+			const { inlineMaxBytes } = parsed;
+			const { manifest, read: inline } = await exportSessionForMoveAndRead(
+				{
+					sessionFile,
+					moveId: parsed.moveId,
+					target: parsed.target,
+					droppedUserMessages: parsed.dropped,
+					bundleDir,
+					extensionStateDir: () => sealedOutgoingStateDir(sessionFile, parsed.moveId),
+					guard: async () => {
+						await refuseOpenHere(
+							port,
+							sessionFile,
+							"This session is open on this host. Release it with release_session reason move and this moveId first.",
+						);
+						await refuseUnlessSealedFor(sessionFile, parsed.moveId);
+					},
+					// Again inside the cross-process lock: a finish from another generation may have reclaimed it meanwhile.
+					lockedGuard: () => refuseUnlessSealedFor(sessionFile, parsed.moveId),
 				},
-				// Again inside the cross-process lock: a finish from another generation may have reclaimed it meanwhile.
-				lockedGuard: () => refuseUnlessSealedFor(sessionFile, parsed.moveId),
-			});
+				async (written) =>
+					inlineMaxBytes === undefined
+						? undefined
+						: readInlineBundle(written, { maxBytes: inlineMaxBytes, maxFiles: MOVE_INLINE_MAX_FILES }),
+			);
 			return {
 				move_id: manifest.moveId,
 				session_id: manifest.sessionId,
 				bundle_dir: bundleDir,
 				files: 1 + manifest.sidecars.length,
+				...(inline === undefined ? {} : { inline_files: inline }),
 			};
-		}
-		case "import": {
-			const cwd = resolvePath(parsed.cwd);
-			const sessionDir = getDefaultSessionDir(cwd, port.agentDir);
-			const { sessionFile } = await importMovedSession({
-				bundleDir: normalizePath(parsed.bundleDir),
-				targetCwd: cwd,
-				ledger,
-				sessionDir,
-				from: parsed.from,
-			});
-			const sessionId = headerSessionId(await loadEntriesFromFileAsync(sessionFile));
-			if (sessionId === undefined)
-				throw new Error(`The imported session at ${sessionFile} has no id in its header.`);
-			return { session_id: sessionId, session_path: sessionFile };
 		}
 		case "finish": {
 			const sessionFile = await orderedRealPath(parsed.sessionPath);

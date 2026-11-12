@@ -9,6 +9,7 @@ import {
 	Opt,
 	OptBool,
 	OptId,
+	OptNum,
 	OptPath,
 	OptStr,
 	PathStr,
@@ -22,8 +23,12 @@ import {
 	Strings,
 	ThinkingLevel,
 } from "./method-classes-schema-fields.ts";
+import { MOVE_INLINE_MAX_BYTES, MOVE_INLINE_MAX_FILES } from "./session-move-wire.ts";
 
 const move = <const P extends TProperties>(properties: P) => command("move_session", properties);
+
+/** A repository identity as `move_session` op `identity` answers it and op `prepare` takes it back (senpi#6435). */
+const RepositoryIdentity = Type.Object({ rootCommits: Strings, originUrl: OptPath });
 
 const uiResponseFrame = {
 	secret: OptBool,
@@ -55,6 +60,15 @@ const openProperties = {
 	env: Opt(SessionEnv),
 };
 
+/** One file of a move's inline bundle (senpi#6267); its bytes are bounded by the cap on the whole bundle. */
+const MoveInlineFile = Type.Object({
+	path: PathStr,
+	sha256: Id,
+	base64: Type.String({ maxLength: Math.ceil(MOVE_INLINE_MAX_BYTES / 3) * 4 }),
+});
+/** The open an import asks for takes `open_session`'s fields, except the session file the import itself names. */
+const { sessionPath: _sessionPath, cwd: _cwd, ...moveImportOpenProperties } = openProperties;
+
 export const HOST_RECORD_SCHEMAS = {
 	get_protocol_info: command("get_protocol_info", {
 		auth: Opt(Type.Object({ client_nonce: Id })),
@@ -65,8 +79,10 @@ export const HOST_RECORD_SCHEMAS = {
 	park_session: command("park_session", { cwd: PathStr, kind: Opt(SessionKind), context: Opt(SessionContext) }),
 	close_session: command("close_session", { sessionId: Id }),
 	move_session: Type.Union([
-		move({ op: Type.Literal("prepare"), moveId: Id }),
+		move({ op: Type.Literal("prepare"), moveId: Id, cwd: OptPath, repository: Opt(RepositoryIdentity) }),
 		move({ op: Type.Literal("cancel"), moveId: Id }),
+		move({ op: Type.Literal("identity"), sessionPath: PathStr }),
+		move({ op: Type.Literal("identity"), cwd: PathStr }),
 		move({ op: Type.Literal("status"), moveId: Id, sessionPath: OptPath }),
 		move({
 			op: Type.Literal("export"),
@@ -74,8 +90,18 @@ export const HOST_RECORD_SCHEMAS = {
 			moveId: Id,
 			target: Id,
 			droppedUserMessages: Opt(Strings),
+			inline: Opt(Type.Literal(true)),
+			inlineMaxBytes: OptNum,
 		}),
-		move({ op: Type.Literal("import"), bundleDir: PathStr, cwd: PathStr, from: OptId }),
+		move({
+			op: Type.Literal("import"),
+			cwd: PathStr,
+			from: OptId,
+			bundleDir: OptPath,
+			files: Opt(Type.Array(MoveInlineFile, { maxItems: MOVE_INLINE_MAX_FILES })),
+			sessionDir: OptPath,
+			open: Opt(Type.Union([Type.Literal(true), Type.Object(moveImportOpenProperties)])),
+		}),
 		move({ op: Type.Literal("finish"), sessionPath: PathStr, moveId: Id, answer: Type.Unknown() }),
 		move({ op: Type.Literal("revoke"), sessionPath: PathStr, moveId: Id }),
 		move({ op: Type.Literal("copy"), sessionPath: PathStr, sessionId: Id, sessionDir: OptPath }),
