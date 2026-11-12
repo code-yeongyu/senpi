@@ -6,6 +6,13 @@ import { subscriptionLimits } from "../../../subscription-limits/limit-store.ts"
 import type { AccountSlot } from "./accounts.ts";
 
 export const DEFAULT_AFFINITY_KEY = "claude-sdk-oauth-default";
+const PROVIDER = "anthropic-subscription";
+
+/**
+ * Under most-headroom, the account each affinity key was given. The ranking moves as usage changes, so the
+ * session keeps its account (and prompt cache) until a block or the headroom preference moves it.
+ */
+const mostHeadroomChoices = new Map<string, string>();
 
 export type AffinityOptions = {
 	affinityKey?: string;
@@ -178,14 +185,16 @@ function selectUnblocked(
 		options.preferredAccount === undefined
 			? undefined
 			: accounts.find((account) => account.name === options.preferredAccount);
+	const limits = subscriptionLimits.snapshot();
 	const usable = orderAccounts(
 		accounts,
 		rendezvousOrder(getAffinityKey(options), accounts),
 		options.accountOrder,
 		options.accountStrategy,
 		roundRobinOffset,
+		{ provider: PROVIDER, limits, now },
 	).filter((account) => !isBlockedFor(account, now, options.model));
-	return preferHeadroom(usable, "anthropic-subscription", subscriptionLimits.snapshot(), now, preferred?.name)[0];
+	return preferHeadroom(usable, PROVIDER, limits, now, preferred?.name)[0];
 }
 
 function unblockAt(account: AccountSlot, now: number, model: string | undefined): number | undefined {
@@ -238,17 +247,26 @@ function limitedModel(accounts: readonly AccountSlot[], now: number, model: stri
 	return modelOnly ? model : undefined;
 }
 
-/** Selects a pinned, resident, or strategy-ranked account; only round-robin holds a distribution cursor. */
+/**
+ * Selects a pinned, resident, or strategy-ranked account; only round-robin holds a distribution cursor, and
+ * round-robin and most-headroom remember each session's account.
+ */
 export function selectAccount(accounts: readonly AccountSlot[], requestedOptions: AffinityOptions = {}): AccountSlot {
+	const affinityKey = getAffinityKey(requestedOptions);
 	const roundRobin =
-		requestedOptions.accountStrategy === "round-robin"
-			? roundRobinState.session("anthropic-subscription", getAffinityKey(requestedOptions))
-			: undefined;
+		requestedOptions.accountStrategy === "round-robin" ? roundRobinState.session(PROVIDER, affinityKey) : undefined;
+	const mostHeadroom = requestedOptions.accountStrategy === "most-headroom";
+	const remembered = roundRobin?.account ?? (mostHeadroom ? mostHeadroomChoices.get(affinityKey) : undefined);
 	const options =
-		roundRobin?.account !== undefined && requestedOptions.preferredAccount === undefined
-			? { ...requestedOptions, preferredAccount: roundRobin.account }
+		remembered !== undefined && requestedOptions.preferredAccount === undefined
+			? { ...requestedOptions, preferredAccount: remembered }
 			: requestedOptions;
 	const now = options.now ?? Date.now();
+	const remember = (selected: AccountSlot): void => {
+		if (roundRobin !== undefined) roundRobin.account = selected.name;
+		else if (mostHeadroom && selected.name !== options.pinnedAccount)
+			mostHeadroomChoices.set(affinityKey, selected.name);
+	};
 	let candidates = accounts;
 	let unavailableAccount: UnavailableAccount | undefined;
 	if (options.accountFallback === false) {
@@ -261,6 +279,7 @@ export function selectAccount(accounts: readonly AccountSlot[], requestedOptions
 				options.accountOrder,
 				options.accountStrategy,
 				roundRobin?.offset,
+				{ provider: PROVIDER, limits: subscriptionLimits.snapshot(), now },
 			)[0]?.name;
 		candidates = accounts.filter((account) => account.name === name);
 		const pinnedBy = options.pinnedAccount !== undefined ? options.pinSource : undefined;
@@ -273,7 +292,7 @@ export function selectAccount(accounts: readonly AccountSlot[], requestedOptions
 	}
 	const selected = selectUnblocked(candidates, options, now, roundRobin?.offset);
 	if (selected) {
-		if (roundRobin !== undefined) roundRobin.account = selected.name;
+		remember(selected);
 		return selected;
 	}
 
@@ -282,7 +301,7 @@ export function selectAccount(accounts: readonly AccountSlot[], requestedOptions
 	const cleared = clearExpiredBlocks(candidates, now);
 	const afterClear = selectUnblocked(cleared, options, now, roundRobin?.offset);
 	if (afterClear) {
-		if (roundRobin !== undefined) roundRobin.account = afterClear.name;
+		remember(afterClear);
 		return afterClear;
 	}
 	throw new AllAccountsBlockedError(

@@ -16,7 +16,8 @@ import { subscriptionLimits } from "../../../src/core/subscription-limits/limit-
 import { cliSlot } from "../../support/claude-cli-test-slots.ts";
 
 // omo#10146: account strategy changes new-session distribution, not a session's cache locality.
-type Strategy = "cache-affine" | "fill-first" | "round-robin";
+type Strategy = "cache-affine" | "fill-first" | "round-robin" | "most-headroom";
+const strategies = ["cache-affine", "fill-first", "round-robin", "most-headroom"] as const;
 const NOW = Date.parse("2026-10-30T00:00:00Z");
 const names = ["alpha", "beta", "gamma"];
 const accounts: AccountSlot[] = names.map((name) => cliSlot(name));
@@ -45,7 +46,7 @@ function settings(global: unknown, project: unknown = {}): SettingsManager {
 }
 
 describe("account strategy settings", () => {
-	it.each(["cache-affine", "fill-first", "round-robin"])("loads the %s Claude strategy", (accountStrategy) => {
+	it.each(strategies)("loads the %s Claude strategy", (accountStrategy) => {
 		expect(loadAnthropicSubscriptionProviderSettings(settings({ accountStrategy }), {})).toMatchObject({
 			accountStrategy,
 		});
@@ -66,7 +67,7 @@ describe("account strategy settings", () => {
 		);
 	});
 
-	it.each(["cache-affine", "fill-first", "round-robin"])("loads the %s generic policy", (accountStrategy) => {
+	it.each(strategies)("loads the %s generic policy", (accountStrategy) => {
 		expect(
 			ModelConfig.validationError(
 				JSON.stringify({ providers: { example: { credentials: { accountStrategy } } } }),
@@ -87,6 +88,21 @@ describe("account strategy settings", () => {
 
 describe.each(["generic", "claude"] as const)("%s account strategies", (lane) => {
 	const provider = lane === "generic" ? "strategy-test" : "anthropic-subscription";
+
+	/** Reported usage per account: one window, or `[percent, resetsAt]` for a window with a reset time. */
+	function reportUsage(used: Record<string, number | [number, string]>): void {
+		vi.spyOn(subscriptionLimits, "snapshot").mockReturnValue(
+			Object.entries(used).map(([account, reading]) => {
+				const [usedPercent, resetsAt] = typeof reading === "number" ? [reading, undefined] : reading;
+				return {
+					provider,
+					account,
+					windows: [{ id: "quota", label: "5h", usedPercent, ...(resetsAt === undefined ? {} : { resetsAt }) }],
+					reportedAt: new Date(NOW).toISOString(),
+				};
+			}),
+		);
+	}
 
 	async function choose(
 		key: string,
@@ -151,7 +167,46 @@ describe.each(["generic", "claude"] as const)("%s account strategies", (lane) =>
 			const expected = rendezvousOrder(key, accounts)[0]?.name;
 			expect(await choose(key)).toBe(expected);
 			expect(await choose(key, "cache-affine")).toBe(expected);
+			// With no usage reported every account ties, so most-headroom spreads sessions exactly like cache-affine.
+			expect(await choose(key, "most-headroom")).toBe(expected);
 		}
+	});
+
+	it("starts a new session on the account with the most usage left in its tightest window", async () => {
+		const reportedAt = new Date(NOW).toISOString();
+		vi.spyOn(subscriptionLimits, "snapshot").mockReturnValue([
+			{ provider, account: "alpha", windows: [{ id: "5h", label: "5h", usedPercent: 20 }], reportedAt },
+			{
+				provider,
+				account: "beta",
+				windows: [
+					{ id: "5h", label: "5h", usedPercent: 10 },
+					{ id: "7d", label: "7d", usedPercent: 80 },
+				],
+				reportedAt,
+			},
+			{ provider, account: "gamma", windows: [{ id: "5h", label: "5h", usedPercent: 30 }], reportedAt },
+		]);
+		for (const key of ["mh-new-a", "mh-new-b", "mh-new-c"]) {
+			expect(await choose(key, "most-headroom", { order: ["gamma", "beta"] })).toBe("alpha");
+		}
+	});
+
+	it("counts an account with no reported usage, or only reset windows, as unused", async () => {
+		reportUsage({ alpha: 50, beta: 40 });
+		expect(await choose("mh-unreported", "most-headroom")).toBe("gamma");
+		reportUsage({ alpha: 50, beta: [90, new Date(NOW - 1_000).toISOString()], gamma: 60 });
+		expect(await choose("mh-reset", "most-headroom")).toBe("beta");
+	});
+
+	it("keeps a most-headroom session on its account until that account nears its limit", async () => {
+		reportUsage({ alpha: 10, beta: 50, gamma: 50 });
+		expect(await choose("mh-sticky", "most-headroom")).toBe("alpha");
+		reportUsage({ alpha: 60, beta: 5, gamma: 50 });
+		expect(await choose("mh-sticky", "most-headroom")).toBe("alpha");
+		expect(await choose("mh-sticky-other", "most-headroom")).toBe("beta");
+		reportUsage({ alpha: 96, beta: 5, gamma: 50 });
+		expect(await choose("mh-sticky", "most-headroom")).toBe("beta");
 	});
 
 	it("fills the first stored account even when HRW ranks another first", async () => {
@@ -204,36 +259,30 @@ describe.each(["generic", "claude"] as const)("%s account strategies", (lane) =>
 		expect(await choose("rr-block", "round-robin")).toBe(replacement);
 	});
 
-	it.each(["cache-affine", "fill-first", "round-robin"] as const)(
-		"applies headroom preference and honors pins under %s",
-		async (strategy) => {
-			vi.spyOn(subscriptionLimits, "snapshot").mockReturnValue(
-				["alpha", "beta"].map((account) => ({
-					provider,
-					account,
-					windows: [{ id: "quota", label: "5h", usedPercent: 95 }],
-					reportedAt: new Date(NOW).toISOString(),
-				})),
-			);
-			expect(await choose(`headroom-${strategy}`, strategy, { order: names })).toBe("gamma");
-			expect(await choose(`pinned-${strategy}`, strategy, { order: names, pinned: "alpha" })).toBe("alpha");
-		},
-	);
+	it.each(strategies)("applies headroom preference and honors pins under %s", async (strategy) => {
+		vi.spyOn(subscriptionLimits, "snapshot").mockReturnValue(
+			["alpha", "beta"].map((account) => ({
+				provider,
+				account,
+				windows: [{ id: "quota", label: "5h", usedPercent: 95 }],
+				reportedAt: new Date(NOW).toISOString(),
+			})),
+		);
+		expect(await choose(`headroom-${strategy}`, strategy, { order: names })).toBe("gamma");
+		expect(await choose(`pinned-${strategy}`, strategy, { order: names, pinned: "alpha" })).toBe("alpha");
+	});
 
-	it.each(["cache-affine", "fill-first", "round-robin"] as const)(
-		"keeps serving when every account is near its limit under %s",
-		async (strategy) => {
-			vi.spyOn(subscriptionLimits, "snapshot").mockReturnValue(
-				names.map((account) => ({
-					provider,
-					account,
-					windows: [{ id: "quota", label: "5h", usedPercent: 100 }],
-					reportedAt: new Date(NOW).toISOString(),
-				})),
-			);
-			expect(names).toContain(await choose(`all-near-${strategy}`, strategy));
-		},
-	);
+	it.each(strategies)("keeps serving when every account is near its limit under %s", async (strategy) => {
+		vi.spyOn(subscriptionLimits, "snapshot").mockReturnValue(
+			names.map((account) => ({
+				provider,
+				account,
+				windows: [{ id: "quota", label: "5h", usedPercent: 100 }],
+				reportedAt: new Date(NOW).toISOString(),
+			})),
+		);
+		expect(names).toContain(await choose(`all-near-${strategy}`, strategy));
+	});
 
 	it("keeps a round-robin headroom replacement after the original resets", async () => {
 		const first = await choose("rr-headroom", "round-robin");
@@ -261,25 +310,22 @@ describe.each(["generic", "claude"] as const)("%s account strategies", (lane) =>
 			expect(await choose(key, "cache-affine", { affinity: false })).toBe(rendezvousOrder(key, accounts)[0]?.name);
 		});
 	} else {
-		it.each(["cache-affine", "fill-first", "round-robin"] as const)(
-			"preserves resident account and disabled fallback under %s",
-			(accountStrategy) => {
-				const options = {
-					accountStrategy,
-					sessionId: `resident-${accountStrategy}`,
-					preferredAccount: "beta",
-					accountFallback: false,
-				};
-				expect(selectAccount(accounts, options).name).toBe("beta");
-				expect(() =>
-					selectAccount(
-						accounts.map((account) =>
-							account.name === "beta" ? { ...account, blockedUntil: NOW + 60_000 } : account,
-						),
-						options,
+		it.each(strategies)("preserves resident account and disabled fallback under %s", (accountStrategy) => {
+			const options = {
+				accountStrategy,
+				sessionId: `resident-${accountStrategy}`,
+				preferredAccount: "beta",
+				accountFallback: false,
+			};
+			expect(selectAccount(accounts, options).name).toBe("beta");
+			expect(() =>
+				selectAccount(
+					accounts.map((account) =>
+						account.name === "beta" ? { ...account, blockedUntil: NOW + 60_000 } : account,
 					),
-				).toThrow("All Anthropic Subscription accounts are blocked");
-			},
-		);
+					options,
+				),
+			).toThrow("All Anthropic Subscription accounts are blocked");
+		});
 	}
 });

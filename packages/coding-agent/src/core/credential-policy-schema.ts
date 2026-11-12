@@ -28,7 +28,12 @@ export const CredentialPolicySchema = Type.Object(
 		rotation: Type.Optional(Type.Boolean()),
 		affinity: Type.Optional(Type.Boolean()),
 		accountStrategy: Type.Optional(
-			Type.Union([Type.Literal("cache-affine"), Type.Literal("fill-first"), Type.Literal("round-robin")]),
+			Type.Union([
+				Type.Literal("cache-affine"),
+				Type.Literal("fill-first"),
+				Type.Literal("round-robin"),
+				Type.Literal("most-headroom"),
+			]),
 		),
 		cooldownBaseMs: Type.Optional(Type.Number({ minimum: 0 })),
 		cooldownCapMs: Type.Optional(Type.Number({ minimum: 0 })),

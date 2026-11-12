@@ -502,6 +502,7 @@ behavior per provider in `models.json`:
 - `"cache-affine"` (default) keeps the existing session-affine rendezvous order, with the user's stored account order taking precedence.
 - `"fill-first"` uses the user's stored account order, followed by the remaining accounts in their stored order, and selects the first usable account.
 - `"round-robin"` assigns consecutive new affinity keys to consecutive accounts. A session retains its chosen account until a block or the headroom preference requires another account. The cursor and choices are held in memory for the life of the process.
+- `"most-headroom"` starts each new session on the account with the most usage left, measured by its most-used reported window (a weekly window at 80% outranks a 5-hour window at 10%). An account with no reported usage counts as unused, and accounts with equal headroom keep the cache-affine order, so with no usage data it behaves like `"cache-affine"`. A session keeps its account as usage shifts, until a block or the headroom preference requires another account; that choice is held in memory for the life of the process.
 
 An explicitly configured strategy takes precedence over the legacy `affinity` toggle.
 Without `accountStrategy`, an existing `affinity: false` configuration keeps its behavior.
@@ -518,10 +519,10 @@ The Claude subscription lane owns its account selection separately. Set its stra
 }
 ```
 
-Project settings override global settings. The same three values and default apply.
+Project settings override global settings. The same four values and default apply.
 Claude also retains a usable resident session's account to preserve its prompt cache.
 
-All three strategies prefer accounts whose reported subscription windows are below 95% usage.
+All strategies prefer accounts whose reported subscription windows are below 95% usage.
 Missing usage data and windows whose reset time has passed do not cause a skip. If every usable
 account is near its limit, the normal choice still receives the request. An explicit account pin
 always wins, and Claude's `accountFallback: false` still prevents automatic account switching.

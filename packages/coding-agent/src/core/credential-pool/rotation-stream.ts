@@ -209,12 +209,15 @@ export function streamWithCredentialRotation(
 			const winner = pickRotationSlot(candidates, policy);
 			if (!winner) throw new Error("credential rotation selected from an empty candidate set");
 			// A pinned winner is the user's choice, not a headroom move or a round-robin turn, so it is never remembered.
+			// most-headroom remembers every pick: the ranking moves as usage changes, and the session keeps its cache.
 			if (roundRobin !== undefined) {
 				if (winner.pinned !== true) roundRobin.account = winner.name;
 			} else if (
 				rememberAffinity &&
 				winner.pinned !== true &&
-				(remembered !== undefined || winner !== orderRotationSlots(candidates, policy)[0])
+				(policy.strategy === "most-headroom" ||
+					remembered !== undefined ||
+					winner !== orderRotationSlots(candidates, policy)[0])
 			) {
 				rememberHeadroomAccount(sources.repository, sources.providerId, affinityKey, winner.name);
 			}
