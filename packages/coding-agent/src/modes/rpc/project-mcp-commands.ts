@@ -6,13 +6,20 @@
  * is one level deep: each patch entry replaces or (`null`) removes one server and every other key stays as stored, so a
  * rename is one atomic write. The candidate is checked with the MCP loader's own steps before anything is written, a
  * file that does not parse is never written over, and the write passes the per-write gates of `project-write-gate.ts`.
+ * A project MCP file whose real path lies in the agent dir is the global one (a flat agent dir with the session in its
+ * parent) and is refused.
  */
 
 import { join } from "node:path";
 import { CONFIG_DIR_NAME } from "../../config.ts";
 import type { AgentSession } from "../../core/agent-session.ts";
 import { assertLoadableMcpConfig, McpConfigValidationError } from "../../core/extensions/builtin/mcp/config.ts";
-import { PROJECT_FILE_MAX_BYTES, type ProjectFilePath, resolveProjectFile } from "./project-file-path.ts";
+import {
+	insideAgentDir,
+	PROJECT_FILE_MAX_BYTES,
+	type ProjectFilePath,
+	resolveProjectFile,
+} from "./project-file-path.ts";
 import { etagOf, readStored, type Stored, serializeWrite } from "./project-file-store.ts";
 import {
 	commitGuardedWrite,
@@ -86,7 +93,9 @@ function storedServers(raw: Readonly<Record<string, unknown>>): Record<string, u
 async function readMcpState(session: AgentSession): Promise<McpFileState | ProjectWriteRefusal> {
 	const cwd = session.sessionManager.getCwd();
 	const resolved = await resolveProjectFile(cwd, MCP_FILE);
-	if (!resolved.ok) return notAllowed(MCP_FILE.relative);
+	if (!resolved.ok || (await insideAgentDir(session.agentDir, resolved.absolute))) {
+		return notAllowed(MCP_FILE.relative);
+	}
 	const stored: Stored = resolved.exists ? await readStored(resolved.absolute) : { kind: "missing" };
 	if (stored.kind === "refused") return notAllowed(MCP_FILE.relative);
 	if (stored.kind === "too_large") return tooLarge();

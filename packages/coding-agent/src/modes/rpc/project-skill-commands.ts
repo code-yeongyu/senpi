@@ -4,14 +4,20 @@
  *
  * Only a listed skill's own file is reachable, and only while it lies inside the session folder: its path is taken
  * relative to the folder and resolved segment by segment with `lstat`, so a skill reached through a folder link or a
- * file link that leaves the folder (or a skill that lives elsewhere, like a global one) is refused. Reading runs
+ * file link that leaves the folder (or a skill that lives elsewhere, like a global one) is refused. A file whose real
+ * path lies in the agent dir is global config and refused too, whatever the session folder is. Reading runs
  * nothing, so trust does not gate it; a write names the version it replaces and passes `project-write-gate.ts`.
  */
 
 import { realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, sep } from "node:path";
 import type { AgentSession } from "../../core/agent-session.ts";
-import { PROJECT_FILE_MAX_BYTES, type ProjectFilePath, resolveProjectFile } from "./project-file-path.ts";
+import {
+	insideAgentDir,
+	PROJECT_FILE_MAX_BYTES,
+	type ProjectFilePath,
+	resolveProjectFile,
+} from "./project-file-path.ts";
 import { etagOf, readStored, type Stored, serializeWrite } from "./project-file-store.ts";
 import {
 	commitGuardedWrite,
@@ -80,7 +86,9 @@ async function readSkillState(
 ): Promise<SkillFileState | ProjectWriteRefusal> {
 	const cwd = session.sessionManager.getCwd();
 	const resolved = await resolveProjectFile(cwd, file);
-	if (!resolved.ok) return notAllowed(file.relative);
+	if (!resolved.ok || (await insideAgentDir(session.agentDir, resolved.absolute))) {
+		return notAllowed(file.relative);
+	}
 	const stored: Stored = resolved.exists ? await readStored(resolved.absolute) : { kind: "missing" };
 	if (stored.kind === "refused") return notAllowed(file.relative);
 	if (stored.kind === "too_large") return tooLarge();
