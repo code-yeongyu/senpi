@@ -6429,8 +6429,11 @@ Reading runs nothing, so it works while the project is untrusted.
 
 `mcpServers` holds the entries as stored (placeholders unexpanded); it is `null` when the file is missing or does
 not parse. `parseError` says why a stored file does not parse (not JSON, not a JSON object, or `mcpServers` not an
-object). A project MCP file whose real path is user-global configuration — it lies in the agent dir (a flat agent
-dir with the session in its parent) or in a user-global skill root the engine loads — is refused. Errors:
+object). Server entries can hold literal credentials in their env values, and the reply returns them as stored;
+that is acceptable because this verb is `device_admin` (the class that already reads host files), while
+`set_project_mcp_servers` stays gated. A project MCP file whose real path is user-global configuration — it lies in
+the agent dir (a flat agent dir with the session in its parent) or in a user-global skill root the engine loads — is
+refused. Errors:
 `project_file_not_allowed` when the config folder or the file is a symlink or not a regular
 file and folder, and `project_file_too_large` for a stored file over 512 KiB.
 
