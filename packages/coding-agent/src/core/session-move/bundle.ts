@@ -59,11 +59,28 @@ export function leavesBundle(path: string): boolean {
 	return posix.isAbsolute(path) || win32.isAbsolute(path) || path.split(/[\\/]/).includes("..");
 }
 
+/**
+ * The most segments a path in a bundle may have (senpi#6469). The engine's own paths are at most four deep
+ * (`files/extensions/<extension>/<id>.json`, `files/resident-blobs/<session>/<id>.blob`); extension state under
+ * `state/` is as deep as its extension makes it, and this leaves eight times the engine's depth for it. With no cap a
+ * path of 1,024 bytes names about 500 folders, and an import creates every folder of every listed path.
+ */
+export const MAX_BUNDLE_PATH_SEGMENTS = 32;
+
+/** Both separators count, as in `leavesBundle`. */
+export function nestsTooDeep(path: string): boolean {
+	return path.split(/[\\/]/).length > MAX_BUNDLE_PATH_SEGMENTS;
+}
+
 function parseFile(value: unknown): BundleFile {
 	const file = value as Partial<BundleFile> | null;
 	if (typeof file !== "object" || file === null || !isString(file.path) || !isString(file.sha256))
 		throw new MoveBundleInvalidError("a listed file is malformed");
 	if (leavesBundle(file.path)) throw new MoveBundleInvalidError(`a listed path leaves the bundle: ${file.path}`);
+	if (nestsTooDeep(file.path))
+		throw new MoveBundleInvalidError(
+			`a listed path is nested deeper than ${MAX_BUNDLE_PATH_SEGMENTS} segments: ${file.path.slice(0, 120)}...`,
+		);
 	return { path: file.path, sha256: file.sha256 };
 }
 
