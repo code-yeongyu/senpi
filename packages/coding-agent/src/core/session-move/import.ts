@@ -12,7 +12,7 @@ import { encodedSessionId, serializeByKey } from "../session-sidecar-store.ts";
 import { pathExists } from "../tools/path-utils.ts";
 import { MoveBundleInvalidError, readManifest, verifyBundle } from "./bundle.ts";
 import { movedStateDir } from "./extension-state.ts";
-import { placeExtensionState, stageSession, withStagingAttempt } from "./import-staging.ts";
+import { assertSidecarsLanded, placeExtensionState, stageSession, withStagingAttempt } from "./import-staging.ts";
 import { type MoveAnswer, MoveFencedError, type MoveLedger } from "./move-ledger.ts";
 import { moveStep } from "./move-steps.ts";
 import { headerSessionId, type MoveId, SESSION_MOVED, SESSION_MOVED_IN, sessionOwnership } from "./ownership.ts";
@@ -164,7 +164,10 @@ export async function importMovedSession(
 			const landedFile = await options.ledger.commit(
 				manifest.moveId,
 				target,
-				() => rebindSessionFile(staged, targetCwd, sessionDir),
+				() =>
+					rebindSessionFile(staged, targetCwd, sessionDir, {
+						beforeRename: () => assertSidecarsLanded(manifest, sessionDir),
+					}),
 				async () => {
 					await replacePredecessor(target, manifest.sessionId, sessionDir);
 					// Before the rename: a crash here re-copies on retry, and after it the state is already in place.

@@ -4,7 +4,7 @@
  * one move overlap when a caller sends the import again while the first still runs. So an attempt writes, commits
  * from and removes only its own folder, and never reuses what another attempt staged: a retry stages again.
  */
-import { copyFile, mkdir, mkdtemp, readdir, rm, rmdir, stat } from "node:fs/promises";
+import { access, copyFile, mkdir, mkdtemp, readdir, rm, rmdir, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { SessionManager } from "../session-manager.ts";
 import { EXTENSION_STATE_PREFIX, MoveBundleInvalidError, type MoveManifest, sha256File } from "./bundle.ts";
@@ -92,6 +92,29 @@ export async function withStagingAttempt<T>(
 	} finally {
 		await discard(staging);
 		await removeIfEmpty(moveFolder);
+	}
+}
+
+class MovedSidecarMissingError extends Error {
+	constructor(sidecar: string) {
+		super(
+			`The moved session was not imported: its ${sidecar} was not in place when it was about to land, so nothing was landed. The move is recorded failed; the sender keeps the session.`,
+		);
+		this.name = "MovedSidecarMissingError";
+	}
+}
+
+/**
+ * Before the rename that lands the session: every sidecar the manifest lists is in the session folder. The commit moves
+ * them out of staging and skips one that is not there, so a sweep that took this attempt's folder inside its commit
+ * (senpi#6445's custody review) would land the session without them, accepted. Failing here lands nothing instead.
+ */
+export async function assertSidecarsLanded(manifest: MoveManifest, sessionDir: string): Promise<void> {
+	for (const sidecar of manifest.sidecars) {
+		const landed = join(sessionDir, sidecar.path.replace(/^files\//, ""));
+		await access(landed).catch(() => {
+			throw new MovedSidecarMissingError(sidecar.path.replace(/^files\//, ""));
+		});
 	}
 }
 
