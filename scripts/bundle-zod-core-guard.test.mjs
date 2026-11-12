@@ -11,6 +11,7 @@ import {
 	PINNED_CLAUDE_AGENT_SDK_VERSION,
 	readClaudeAgentSdkVersions,
 	scanZodCores,
+	sdkSourceOutputs,
 	STALE_ZOD_ALLOWANCE,
 } from "./bundle-zod-core-guard.mjs";
 import { realZodOutput } from "./zod-real-output.test-support.mjs";
@@ -66,6 +67,7 @@ const RELEASE_LAYOUT = {
 	"cli.js": "console.log(1)",
 	"chunks/chunk-FKX6EWFV.js": core("4.6.7"),
 	"chunks/host-lifecycle.js": core("4.6.7"),
+	"chunks/sdk-KBAE6CAS.js": "export const unrelated=1;",
 	"chunks/sdk-W3PQXNYH.js": sdkCopy("var a=1;"),
 	"chunks/session-worker.js": `${core("4.6.7")}${sdkCopy("var b=2;")}`,
 	"host-supervisor.js": core("4.6.7"),
@@ -90,7 +92,9 @@ function withSdk(files, check) {
 	}
 }
 
-const run = (dir, allowance = ALLOWANCE, sdk = PINNED_SDK) => assertBundleZodCores(dir, allowance, sdk);
+/** The outputs whose metafile inputs include the SDK's sdk.mjs in the release layout (not the unrelated chunks/sdk-KBAE6CAS.js). */
+const SDK_OUTPUTS = ["chunks/sdk-W3PQXNYH.js", "chunks/session-worker.js"];
+const run = (dir, allowance = ALLOWANCE, sdk = PINNED_SDK, outputs = SDK_OUTPUTS) => assertBundleZodCores(dir, outputs, allowance, sdk);
 
 describe("bundle zod core guard", () => {
 	it("pins the version and source hashes of the Claude agent SDK the repository resolves and locks", () => {
@@ -225,11 +229,41 @@ describe("bundle zod core guard", () => {
 		withBundle({ ...RELEASE_LAYOUT, "chunks/chunk-AX72VNRS.js": sdkText }, (dir) => {
 			assert.throws(() => run(dir), /claude-agent-sdk 0\.3\.321 only.*outside the allowed files: chunks\/chunk-AX72VNRS\.js 4\.6\.2/s);
 		});
-		withBundle({ ...RELEASE_LAYOUT, "chunks/sdk-OTHER.js": sdkText }, (dir) => {
-			assert.throws(() => run(dir), /\/\^chunks\\\/sdk-.*: expected stale zod \[4\.6\.2, 3\.x\], found \[4\.6\.2, 4\.6\.2, 3\.x, 3\.x\]/);
+		withBundle({ ...RELEASE_LAYOUT, "chunks/sdk-KBAE6CAS.js": sdkText }, (dir) => {
+			assert.throws(() => run(dir), /outside the allowed files: chunks\/sdk-KBAE6CAS\.js 4\.6\.2, chunks\/sdk-KBAE6CAS\.js 3\.x/);
 		});
 		withBundle({ ...RELEASE_LAYOUT, "chunks/chunk-AX72VNRS.js": core("4.6.2") }, (dir) => {
 			assert.throws(() => run(dir), /outside the allowed files: chunks\/chunk-AX72VNRS\.js 4\.6\.2/);
+		});
+	});
+
+	it("fails when the SDK's copies move into another sdk-* chunk (senpi#6514 review)", () => {
+		// The real build emits an unrelated chunks/sdk-*.js beside the Claude SDK's chunk; a name pattern cannot tell them apart.
+		const moved = { ...RELEASE_LAYOUT, "chunks/sdk-W3PQXNYH.js": "export const a=1;", "chunks/sdk-KBAE6CAS.js": RELEASE_LAYOUT["chunks/sdk-W3PQXNYH.js"] };
+		withBundle(moved, (dir) => {
+			assert.throws(
+				() => run(dir),
+				/chunks\/sdk-W3PQXNYH\.js: expected stale zod \[4\.6\.2, 3\.x\], found \[\].*outside the allowed files: chunks\/sdk-KBAE6CAS\.js 4\.6\.2, chunks\/sdk-KBAE6CAS\.js 3\.x/s,
+			);
+		});
+	});
+
+	it("places the SDK's copies only in outputs whose metafile inputs include its sdk.mjs, one per allowed name", () => {
+		// Given: a metafile where an unrelated sdk-* chunk sits beside the SDK's own chunk (metafile paths are cwd-relative).
+		const sdkInput = "node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs";
+		const metafiles = [
+			{ outputs: { "out/chunks/sdk-W3PQXNYH.js": { inputs: { [sdkInput]: {} } }, "out/chunks/sdk-KBAE6CAS.js": { inputs: { "node_modules/other/sdk.mjs": {} } } } },
+			{ outputs: { "out/chunks/session-worker.js": { inputs: { [`packages/coding-agent/${sdkInput}`]: {} } } } },
+		];
+		// When / Then
+		assert.deepEqual(sdkSourceOutputs(metafiles, "/repo/out", ALLOWANCE, "/repo"), SDK_OUTPUTS);
+		withBundle(RELEASE_LAYOUT, (dir) => {
+			assert.throws(() => run(dir, ALLOWANCE, PINNED_SDK, ["chunks/session-worker.js"]), /\/\^chunks\\\/sdk-.*: expected exactly one output built from .*sdk\.mjs, found \[\]/s);
+			assert.throws(
+				() => run(dir, ALLOWANCE, PINNED_SDK, [...SDK_OUTPUTS, "chunks/sdk-KBAE6CAS.js"]),
+				/found \[chunks\/sdk-W3PQXNYH\.js, chunks\/sdk-KBAE6CAS\.js\]/,
+			);
+			assert.throws(() => run(dir, ALLOWANCE, PINNED_SDK, [...SDK_OUTPUTS, "cli.js"]), /cli\.js is built from .*sdk\.mjs but is not an allowed location/);
 		});
 	});
 

@@ -5,9 +5,9 @@ import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
-import { commonBuildOptions, findContainingOutput, validateExternalImports } from "./build-coding-agent-bundle.mjs";
+import { commonBuildOptions, findContainingOutput, mainBuildOptions, validateExternalImports } from "./build-coding-agent-bundle.mjs";
 import { lazyEntryPoints } from "./bundle-entry-points.mjs";
-import { assertBundleZodCores, describeStaleZodAllowances, STALE_ZOD_ALLOWANCE } from "./bundle-zod-core-guard.mjs";
+import { assertBundleZodCores, describeStaleZodAllowances, STALE_ZOD_ALLOWANCE, sdkSourceOutputs } from "./bundle-zod-core-guard.mjs";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const permissionSystemSrc = join(repoRoot, "packages", "coding-agent", "src", "core", "extensions", "builtin", "permission-system");
@@ -86,18 +86,34 @@ describe("build-coding-agent-bundle", () => {
 });
 
 describe("built bundle zod cores", () => {
-	it("ships no zod core older than 4.6.6 beyond the pinned Claude agent SDK copies", () => {
+	it("ships no zod core older than 4.6.6 beyond the pinned Claude agent SDK copies, in the SDK's exact chunk", async () => {
 		// Given: the built bundle. CI builds it before the script tests (release-graph-codemode, node-bundle-smoke);
-		// a missing or empty bundle is a failed scan, not a skipped one (senpi#6497 review).
+		// a missing or empty bundle is a failed scan, not a skipped one (senpi#6497 review). The SDK's chunk is named by
+		// the metafile of the same graph rebuilt in memory (same options, same chunk hashes), not by a name pattern: the
+		// build also emits an unrelated chunks/sdk-*.js (senpi#6514 review).
 		const bundleDir = join(repoRoot, "packages", "coding-agent", "dist", "bundle");
+		const main = await build({ ...mainBuildOptions(), write: false });
+		const lazyDir = dirname(findContainingOutput(main.metafile, "packages/ai/dist/api/bedrock-converse-stream.lazy.js"));
+		const worker = await build({
+			...commonBuildOptions(),
+			entryNames: "[name]",
+			entryPoints: { "session-worker": lazyEntryPoints({ codingAgentDistDir: join(repoRoot, "packages", "coding-agent", "dist"), aiDistDir: join(repoRoot, "packages", "ai", "dist") })["session-worker"] },
+			outdir: lazyDir,
+			splitting: false,
+			write: false,
+		});
+		const outputs = sdkSourceOutputs([main.metafile, worker.metafile], bundleDir);
+		const sdkChunk = outputs.find((file) => file !== "chunks/session-worker.js");
+		assert.match(sdkChunk, /^chunks\/sdk-[A-Z0-9]+\.js$/);
+		assert.deepEqual(outputs, [sdkChunk, "chunks/session-worker.js"]);
 
-		// When / Then: one 4.6.2 core and one zod/v3 layer in the SDK's chunk and in the session worker, nothing else
+		// When / Then: one 4.6.2 core and one zod/v3 layer in that exact chunk and in the session worker, nothing else
 		// stale, and the report names the pinned SDK version and source hashes.
-		const report = describeStaleZodAllowances(assertBundleZodCores(bundleDir)).map((line) => line.replace(/chunks\/sdk-[^/ ]+\.js/, "chunks/sdk-*.js"));
+		const report = describeStaleZodAllowances(assertBundleZodCores(bundleDir, outputs));
 		const sdk = `@anthropic-ai/claude-agent-sdk ${STALE_ZOD_ALLOWANCE.sdkVersion}`;
 		assert.deepEqual(report.slice(STALE_ZOD_ALLOWANCE.sources.length), [
-			`allowed stale zod copy: ${sdk} chunks/sdk-*.js zod 4.6.2 core`,
-			`allowed stale zod copy: ${sdk} chunks/sdk-*.js zod/v3 layer`,
+			`allowed stale zod copy: ${sdk} ${sdkChunk} zod 4.6.2 core`,
+			`allowed stale zod copy: ${sdk} ${sdkChunk} zod/v3 layer`,
 			`allowed stale zod copy: ${sdk} chunks/session-worker.js zod 4.6.2 core`,
 			`allowed stale zod copy: ${sdk} chunks/session-worker.js zod/v3 layer`,
 		]);

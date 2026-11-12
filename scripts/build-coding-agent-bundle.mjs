@@ -9,7 +9,7 @@ import { build } from "esbuild";
 import { bundleRequiredInputs, lazyEntryPoints } from "./bundle-entry-points.mjs";
 import { fileAttributePlugin } from "./bundle-file-attribute-plugin.mjs";
 import { assertRedactionRegistryCopies } from "./bundle-redaction-registry-guard.mjs";
-import { assertBundleZodCores, describeStaleZodAllowances } from "./bundle-zod-core-guard.mjs";
+import { assertBundleZodCores, describeStaleZodAllowances, sdkSourceOutputs } from "./bundle-zod-core-guard.mjs";
 import { zodSingleCopyPlugin } from "./bundle-zod-single-copy-plugin.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -194,17 +194,9 @@ function outputBytes(metafiles) {
 	);
 }
 
-async function buildBundle() {
-	for (const entry of bundleRequiredInputs({ codingAgentDistDir, aiDistDir })) {
-		if (!existsSync(entry)) {
-			throw new Error(`Bundle input is missing: ${relative(repoRoot, entry)}. Build the workspace packages first.`);
-		}
-	}
-
-	rmSync(bundleDir, { force: true, recursive: true });
-	mkdirSync(bundleDir, { recursive: true });
-
-	const mainResult = await build({
+/** The main graph (entries plus split chunks); the same options give the same chunk names, written or not. */
+export function mainBuildOptions() {
+	return {
 		...commonBuildOptions(),
 		entryNames: "[name]",
 		entryPoints: {
@@ -216,7 +208,20 @@ async function buildBundle() {
 		outdir: bundleDir,
 		chunkNames: "chunks/[name]-[hash]",
 		splitting: true,
-	});
+	};
+}
+
+async function buildBundle() {
+	for (const entry of bundleRequiredInputs({ codingAgentDistDir, aiDistDir })) {
+		if (!existsSync(entry)) {
+			throw new Error(`Bundle input is missing: ${relative(repoRoot, entry)}. Build the workspace packages first.`);
+		}
+	}
+
+	rmSync(bundleDir, { force: true, recursive: true });
+	mkdirSync(bundleDir, { recursive: true });
+
+	const mainResult = await build(mainBuildOptions());
 
 	const bedrockLoaderOutput = findContainingOutput(mainResult.metafile, "packages/ai/dist/api/bedrock-converse-stream.lazy.js");
 	const oauthLoaderOutput = findContainingOutput(mainResult.metafile, "packages/ai/dist/auth/oauth/load.js");
@@ -275,7 +280,7 @@ async function buildBundle() {
 	validateExternalImports(metafiles);
 	assertRedactionRegistryCopies(bundleDir);
 	// senpi#6497: no emitted file may carry a zod core older than 4.6.6 beyond the pinned Claude agent SDK copies.
-	for (const line of describeStaleZodAllowances(assertBundleZodCores(bundleDir))) console.log(line);
+	for (const line of describeStaleZodAllowances(assertBundleZodCores(bundleDir, sdkSourceOutputs(metafiles, bundleDir)))) console.log(line);
 	chmodSync(join(bundleDir, "cli.js"), 0o755);
 	chmodSync(join(bundleDir, "rpc-entry.js"), 0o755);
 	writeRuntimeManifest(metafiles);
