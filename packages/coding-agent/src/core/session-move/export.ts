@@ -18,6 +18,7 @@ import {
 	SESSION_BUNDLE_PATH,
 	sha256File,
 } from "./bundle.ts";
+import { putAtPlace, queuedInputToCarry } from "./bundle-place.ts";
 import { EXTENSION_STATE_PAYLOAD } from "./extension-state.ts";
 import {
 	headerSessionId,
@@ -131,6 +132,7 @@ async function writeMoveBundle(options: ExportSessionForMoveOptions): Promise<Mo
 	await copyFile(sessionFile, join(staging, SESSION_BUNDLE_PATH));
 	const sidecars = await copySidecars(dirname(sessionFile), sessionId, staging);
 	const stateFiles = await copyExtensionState(stateDir, staging);
+	const queued = await queuedInputToCarry(options.bundleDir, moveId, options.droppedUserMessages);
 	const manifest: MoveManifest = {
 		format: MOVE_BUNDLE_FORMAT,
 		moveId,
@@ -140,12 +142,11 @@ async function writeMoveBundle(options: ExportSessionForMoveOptions): Promise<Mo
 		repository: await readRecordedRepositoryIdentity(sessionFile),
 		session: { path: SESSION_BUNDLE_PATH, sha256: await sha256File(join(staging, SESSION_BUNDLE_PATH)) },
 		sidecars,
-		droppedUserMessages: [...options.droppedUserMessages],
+		droppedUserMessages: queued,
 		payloads: stateFiles.length > 0 ? [{ kind: EXTENSION_STATE_PAYLOAD, files: stateFiles }] : [],
 	};
 	await writeFile(join(staging, MANIFEST_FILE), `${JSON.stringify(manifest, null, 1)}\n`);
-	await rm(options.bundleDir, { recursive: true, force: true });
-	await rename(staging, options.bundleDir);
+	await putAtPlace(staging, options.bundleDir);
 	return manifest;
 }
 
