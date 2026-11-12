@@ -54,11 +54,23 @@ export interface ExportSessionForMoveOptions {
  * manifest. Running it again for the same move rewrites the same bundle without a second release entry.
  */
 export function exportSessionForMove(options: ExportSessionForMoveOptions): Promise<MoveManifest> {
+	return exportSessionForMoveAndRead(options, async () => undefined).then(({ manifest }) => manifest);
+}
+
+/**
+ * `exportSessionForMove`, then `read` on the written bundle folder before the move lock is released, so a `finish` or
+ * a second export of the session cannot change the folder while it is read (senpi#6267: the inline answer).
+ */
+export function exportSessionForMoveAndRead<T>(
+	options: ExportSessionForMoveOptions,
+	read: (bundleDir: string) => Promise<T>,
+): Promise<{ readonly manifest: MoveManifest; readonly read: T }> {
 	return withSessionMoveLock(
 		options.sessionFile,
 		async () => {
 			await options.lockedGuard?.();
-			return writeMoveBundle(options);
+			const manifest = await writeMoveBundle(options);
+			return { manifest, read: await read(options.bundleDir) };
 		},
 		options.guard,
 	);
@@ -161,7 +173,7 @@ function bundlePath(prefix: string, from: string, source: string): string {
 	return posix.join(prefix, ...relative(from, source).split(sep));
 }
 
-async function filesUnder(dir: string): Promise<string[]> {
+export async function filesUnder(dir: string): Promise<string[]> {
 	if (!(await pathExists(dir))) return [];
 	const files: string[] = [];
 	for (const entry of await readdir(dir, { withFileTypes: true })) {

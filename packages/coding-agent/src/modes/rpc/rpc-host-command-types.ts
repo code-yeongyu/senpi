@@ -42,6 +42,11 @@ type RpcCommandBody =
 			 */
 			expectedHostInstance?: string;
 			sessionPath?: string;
+			/**
+			 * The folder the session works in. Omitted, a `sessionPath` at which a session file exists opens where that
+			 * file's header says (capability `open_session_header_cwd`); a header folder that is not on this host refuses
+			 * the open. Any other open without it works in the host's own folder.
+			 */
 			cwd?: string;
 			provider?: string;
 			modelId?: string;

@@ -236,6 +236,13 @@
 			"count": 1
 		},
 		{
+			"file": "src/core/file-lock.ts",
+			"callee": "rmdirSync",
+			"symbol": "rmdirSync",
+			"count": 1,
+			"reason": "proper-lockfile's own exit-time lock removal (an exit handler cannot await), now token-checked so a holder that was taken over and exits leaves the new holder's lock (senpi#6428 review MEDIUM). It runs once per held lock at process exit, never per request. Allowed by the LEAD's ruling on senpi#6430."
+		},
+		{
 			"file": "src/core/hidden-stdout-log.ts",
 			"callee": "chmodSync",
 			"symbol": "appendDebugLogEntry",
@@ -402,13 +409,13 @@
 		{
 			"file": "src/core/session-entry-file.ts",
 			"callee": "existsSync",
-			"symbol": "readRawEntriesFromFile",
+			"symbol": "loadEntriesFromFileAsync",
 			"count": 1
 		},
 		{
 			"file": "src/core/session-entry-file.ts",
 			"callee": "existsSync",
-			"symbol": "loadEntriesFromFileAsync",
+			"symbol": "readRawEntriesFromFile",
 			"count": 1
 		},
 		{

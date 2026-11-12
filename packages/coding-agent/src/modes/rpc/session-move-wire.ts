@@ -1,4 +1,13 @@
 import type { MoveAnswer } from "../../core/session-move/move-ledger.ts";
+import type { RpcCommand } from "./rpc-host-command-types.ts";
+import type { RpcSessionPresence } from "./rpc-host-response-types.ts";
+import type { RpcSessionState } from "./rpc-session-state-types.ts";
+
+/** What a caller sends and hears for a repository identity; `rootCommits` is mutable as it arrives off the wire. */
+export interface RpcRepositoryIdentity {
+	rootCommits: string[];
+	originUrl?: string;
+}
 
 /** Capability: the host answers `move_session` (senpi#3676). */
 export const MOVE_SESSION_CAPABILITY = "move_session";
@@ -6,6 +15,37 @@ export const MOVE_SESSION_CAPABILITY = "move_session";
 export const MOVE_SESSION_REVOKE_CAPABILITY = "move_session_revoke";
 /** Capability: `move_session` answers op `copy`, which copies a session into a new one under a given id (senpi#5889). */
 export const MOVE_SESSION_COPY_CAPABILITY = "move_session_copy";
+/** Capability: `export` takes `inline` and answers `inline_files` for a bundle under the cap (senpi#6267). */
+export const MOVE_SESSION_EXPORT_INLINE_CAPABILITY = "move_session_export_inline";
+/** Capability: `import` takes `files`, an inline bundle, in place of `bundleDir` (senpi#6267). */
+export const MOVE_SESSION_IMPORT_FILES_CAPABILITY = "move_session_import_files";
+/** Capability: `import` takes `sessionDir`, the folder the session lands in (senpi#6267). */
+export const MOVE_SESSION_IMPORT_SESSION_DIR_CAPABILITY = "move_session_import_session_dir";
+/** Capability: `import` takes `open` and answers the opened session beside the import (senpi#6267). */
+export const MOVE_SESSION_IMPORT_OPEN_CAPABILITY = "move_session_import_open";
+
+/** The most raw bytes, over every file with the manifest, a bundle may hold to travel inline (senpi#6267). */
+export const MOVE_INLINE_MAX_BYTES = 1024 * 1024;
+/** The most files an inline bundle may list. */
+export const MOVE_INLINE_MAX_FILES = 1024;
+/** Capability: the inline cap in bytes, as `move_session_inline_max_bytes:<n>`, so a caller can read it (senpi#6267). */
+export const MOVE_SESSION_INLINE_MAX_BYTES_CAPABILITY = `move_session_inline_max_bytes:${MOVE_INLINE_MAX_BYTES}`;
+
+/** Capability: `move_session` answers op `identity`, in both its forms, without releasing anything (senpi#6435). */
+export const MOVE_SESSION_IDENTITY_CAPABILITY = "move_session_identity";
+/** Capability: op `prepare` checks `cwd` against `repository`, and the import lands only there (senpi#6435). */
+export const MOVE_SESSION_PREPARE_REPOSITORY_CAPABILITY = "move_session_prepare_repository";
+
+/**
+ * Capability: `status` for an accepted move, and an `import` refused because the move already landed, answer where it
+ * landed (senpi#6436).
+ */
+export const MOVE_SESSION_STATUS_LANDED_PATH_CAPABILITY = "move_session_status_landed_path";
+/**
+ * Capability: `status` takes `landing`, the place the move would have landed, and answers from the session file there
+ * before it answers from its record. A move that landed and whose record was lost then answers `accepted`.
+ */
+export const MOVE_SESSION_STATUS_LANDING_CAPABILITY = "move_session_status_landing";
 
 /** A `move_session` request whose fields do not parse (op, move id, paths, answer). */
 export const RPC_ERROR_INVALID_MOVE_REQUEST = "invalid_move_request";
@@ -23,23 +63,101 @@ export const RPC_ERROR_MOVE_FAILED = "move_failed";
  * side: `copy`, a new writable session from one that is read-only here.
  */
 export type RpcMoveSessionCommand = { id?: string; type: "move_session" } & (
-	| { op: "prepare"; moveId: string }
+	| { op: "prepare"; moveId: string; cwd?: string; repository?: RpcRepositoryIdentity }
+	| { op: "identity"; sessionPath: string }
+	| { op: "identity"; cwd: string }
 	| { op: "cancel"; moveId: string }
-	| { op: "status"; moveId: string; sessionPath?: string }
-	| { op: "export"; sessionPath: string; moveId: string; target: string; droppedUserMessages?: string[] }
-	| { op: "import"; bundleDir: string; cwd: string; from?: string }
+	| { op: "status"; moveId: string; sessionPath?: string; landing?: RpcMoveStatusLanding }
+	| {
+			op: "export";
+			sessionPath: string;
+			moveId: string;
+			target: string;
+			droppedUserMessages?: string[];
+			/** Answer the bundle's files as `inline_files` when they fit `inlineMaxBytes` (at most, and by default, the cap). */
+			inline?: true;
+			inlineMaxBytes?: number;
+	  }
+	| {
+			op: "import";
+			cwd: string;
+			from?: string;
+			/** The bundle: the folder `export` named, or the `inline_files` it answered. Exactly one of the two. */
+			bundleDir?: string;
+			files?: RpcMoveInlineFile[];
+			/** The folder the session lands in; this host's session folder for `cwd` when omitted. */
+			sessionDir?: string;
+			/** Open the landed session on this connection: `true`, or the `open_session` fields to open it with. */
+			open?: true | RpcMoveImportOpen;
+	  }
 	| { op: "finish"; sessionPath: string; moveId: string; answer: MoveAnswer }
 	| { op: "revoke"; sessionPath: string; moveId: string }
 	| { op: "copy"; sessionPath: string; sessionId: string; sessionDir?: string }
 );
 
-/** The receiver's record of a move as a client sees it; `expires_at` while it waits for the bundle. */
-export type RpcMoveRecord = MoveAnswer | { state: "ready"; expires_at: string };
+/** One file of an inline bundle: its `/`-separated path in the bundle, the sha256 of its bytes, and the bytes. */
+export interface RpcMoveInlineFile {
+	path: string;
+	sha256: string;
+	base64: string;
+}
+
+/** The `open_session` fields an `import` may open the landed session with; the import itself names the session file. */
+export type RpcMoveImportOpen = Omit<
+	Extract<RpcCommand, { type: "open_session" }>,
+	"id" | "type" | "sessionPath" | "cwd" | "admissionId"
+>;
+
+/**
+ * `import`'s data. With `open`, the opened session's `open_session` data sits at the same keys beside it; when the
+ * landed session could not be opened, `open_error` carries the failed open's error fields and the import still stands.
+ */
+export type RpcMoveImportData = {
+	session_id: string;
+	session_path: string;
+	sessionId?: string;
+	state?: RpcSessionState;
+	attached?: boolean;
+	presence?: RpcSessionPresence;
+	open_error?: RpcMoveOpenError;
+};
+
+export interface RpcMoveOpenError {
+	error: string;
+	errorCode?: string;
+	errorData?: unknown;
+}
+
+/**
+ * Where a move would have landed, as a `status` may name it in place of `sessionPath`: the folder the import was
+ * given, the session file name the bundle's manifest carries, and the session folder the import named, if it named one.
+ */
+export interface RpcMoveStatusLanding {
+	cwd: string;
+	sessionFileName: string;
+	sessionDir?: string;
+}
+
+/**
+ * Where an accepted move landed: the session file its record names, with the id and the folder that file's header
+ * names. `landed_file: "gone"` when no file is there or the file there no longer records the move.
+ */
+export type RpcMoveLanded = { session_path: string; session_id: string; cwd: string } | { landed_file: "gone" };
+
+/**
+ * The receiver's record of a move as a client sees it; `expires_at` while it waits for the bundle, and where it landed
+ * beside `accepted` (absent when the record names no landing target).
+ */
+export type RpcMoveRecord =
+	| MoveAnswer
+	| (Extract<MoveAnswer, { state: "accepted" }> & RpcMoveLanded)
+	| { state: "ready"; expires_at: string };
 
 export type RpcMoveSessionData =
 	| RpcMoveRecord
-	| { move_id: string; session_id: string; bundle_dir: string; files: number }
-	| { session_id: string; session_path: string }
+	| { move_id: string; session_id: string; bundle_dir: string; files: number; inline_files?: RpcMoveInlineFile[] }
+	| RpcMoveImportData
+	| { repository?: RpcRepositoryIdentity }
 	| { ownership: "writable" | "moving" | "moved" };
 
 export interface RpcMoveSessionResponse {
