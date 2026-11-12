@@ -43,10 +43,12 @@ const DESCRIPTOR_DIRECTORY: Partial<Record<NodeJS.Platform, string>> = { linux: 
  * file only to create it, `O_EXCL | O_NONBLOCK`, and `lstat` an existing one), and the listings open no file (`readdir`
  * and `fstat`). SQLite's open resolves `path` itself, `lstat` per component, then opens the result `O_RDWR | O_NOFOLLOW`
  * (unix VFS): a FIFO opens at once, but a symbolic link swapped in before that resolution is followed, and the open of a
- * device it names can block the process (a serial tty without CLOCAL). With `noFollow` (SQLITE_OPEN_NOFOLLOW, which
- * refuses a link anywhere in `path`) no link is ever followed. Without it (node:sqlite takes no open flags), `path` is
- * checked once more right before the open, and a link swapped in between that `lstat` and SQLite's own is still
- * followed. A device node put at `path` itself needs `mknod` privilege or a device file on the same filesystem.
+ * device it names can block the process (a serial tty without CLOCAL). With `noFollow` (SQLITE_OPEN_NOFOLLOW) a link
+ * found while SQLite resolves `path` is refused. The open after that resolution applies O_NOFOLLOW to the last
+ * component only, so a directory swapped for a symbolic link between the resolution and the open is still followed
+ * (same-user attacker only). Without `noFollow` (node:sqlite takes no open flags), `path` is checked once more right
+ * before the open, and a link swapped in between that `lstat` and SQLite's own is still followed. A device node put at
+ * `path` itself needs `mknod` privilege; a file on a FUSE mount the user mounted can also make an open block.
  */
 let checkedOpens: Promise<unknown> = Promise.resolve();
 

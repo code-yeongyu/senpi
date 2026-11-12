@@ -75,7 +75,8 @@ async function openLockDatabase(
 ): Promise<LockDatabase> {
 	if (typeof (globalThis as { Bun?: unknown }).Bun !== "undefined") {
 		const { constants, Database } = await import("bun:sqlite");
-		// A checked open never follows a link swapped in at the validated name (sqlite-file-identity.ts).
+		// A checked open refuses a link SQLite finds while resolving the path; a directory swapped for a link after that
+		// resolution is still followed (sqlite-file-identity.ts).
 		const noFollow = validateFile === undefined ? 0 : constants.SQLITE_OPEN_NOFOLLOW;
 		const flags = constants.SQLITE_OPEN_READWRITE | constants.SQLITE_OPEN_CREATE | noFollow;
 		const { opened: database, file } = await openChecked(
