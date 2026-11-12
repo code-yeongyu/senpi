@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 
-const root = fileURLToPath(new URL("../../..", import.meta.url));
+const root = fileURLToPath(new URL("../../../../..", import.meta.url));
 const FILE = ".github/workflows/move-stamp-age-macos.yml";
 const SOURCE = "packages/coding-agent/src";
 const text = readFileSync(join(root, FILE), "utf8");
