@@ -68,6 +68,35 @@ describe("move_session status says whether the landed copy can still be written 
 		expect(refused.errorData).toEqual({ detail: expect.any(String), ...sealedOnB(fixture, onB, "moving") });
 	});
 
+	it("#given the landed session released from here by a later move that named no device #when status is asked for the first move #then sealed_by names the later move with an empty target, the wire's word for a device this host does not know", async () => {
+		const fixture = await devices();
+		await using a = createInProcessRig(fixture.agentA);
+		await using b = createInProcessRig(fixture.agentB);
+		const onB = await importedOnB(a, b, fixture, "move-w-no-target");
+		const session = opened(
+			await b.open("conn-a", { cwd: fixture.repoB, sessionPath: onB, retain_on_disconnect: true }),
+			0,
+		);
+		await b.drop("conn-a");
+		await b.router.handle({
+			type: "release_session",
+			id: "rel",
+			sessionId: session.sessionId,
+			reason: "move",
+			moveId: LATER,
+		});
+		await b.settle();
+
+		const answer = await move(b, { op: "status", moveId: "move-w-no-target" });
+
+		expect(answer.data).toEqual({
+			state: "accepted",
+			...landedOnB(fixture, onB),
+			writable: false,
+			sealed_by: { move_id: LATER, state: "moving", target: "" },
+		});
+	});
+
 	it("#given that later move finished #when status is asked for the first move #then it answers not writable and that the later move is moved", async () => {
 		const fixture = await devices();
 		await using a = createInProcessRig(fixture.agentA);
