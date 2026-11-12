@@ -12,8 +12,11 @@ import { checkRpcKeyDirectory } from "../../../src/modes/rpc/rpc-public-key.ts";
 import { sandbox, sweepSandboxes } from "../../helpers/rpc-host-daemon-sandbox.ts";
 import { endpointScratch, sweepEndpointScratches } from "../../helpers/rpc-host-endpoint-scratch.ts";
 import { scratch } from "../../helpers/rpc-socket-host-support.ts";
+import { generationScratch } from "../../helpers/rpc-generation-support.ts";
+import { cleanupSpawnedHosts, scratch as identityScratch } from "../../rpc-protocol-identity-support.ts";
 import { resolveQuarantineAgentDir } from "../../support/quarantine.ts";
 import { hostCliSandbox, sweepHostCliSandboxes } from "../host-cli-support.ts";
+import { effectHostWorld } from "../rpc-effect-host-support.ts";
 
 async function underGroupWritableUmask<T>(build: () => Promise<T> | T): Promise<T> {
 	const previous = process.umask(0o002);
@@ -36,6 +39,7 @@ describe.skipIf(process.platform === "win32")("RPC host fixtures under umask 000
 		await sweepHostCliSandboxes();
 		await sweepSandboxes();
 		await sweepEndpointScratches();
+		cleanupSpawnedHosts();
 	});
 
 	test("#given umask 0002 #when hostCliSandbox builds its agent dir #then the host accepts it as a key root", async () => {
@@ -55,6 +59,25 @@ describe.skipIf(process.platform === "win32")("RPC host fixtures under umask 000
 
 	test("#given umask 0002 #when the daemon sandbox builds a canonical socket dir #then the host accepts the key root", async () => {
 		const qa = await underGroupWritableUmask(() => sandbox("umask", { canonicalSocket: true }));
+		await expectKeyRootAccepted(qa.agentDir);
+	});
+
+	test("#given umask 0002 #when the generation scratch builds its agent dir #then the host accepts it as a key root", async () => {
+		const qa = await underGroupWritableUmask(() => generationScratch("umask"));
+		try {
+			await expectKeyRootAccepted(qa.agentDir);
+		} finally {
+			rmSync(qa.root, { recursive: true, force: true });
+		}
+	});
+
+	test("#given umask 0002 #when the effect-host world builds its agent dir #then the host accepts it as a key root", async () => {
+		await using world = await underGroupWritableUmask(() => effectHostWorld());
+		await expectKeyRootAccepted(world.agentDir);
+	});
+
+	test("#given umask 0002 #when the protocol-identity scratch builds its agent dir #then the host accepts it as a key root", async () => {
+		const qa = await underGroupWritableUmask(() => identityScratch("umask"));
 		await expectKeyRootAccepted(qa.agentDir);
 	});
 
