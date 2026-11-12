@@ -20,10 +20,15 @@ const landing = (fixture: Fixture) =>
 	join(getDefaultSessionDirPath(fixture.repoB, fixture.agentB), basename(fixture.sessionPath));
 const identity = (fixture: Fixture) => ({ rootCommits: [fixture.root] });
 
-/** A name that is there and cannot be followed: looking at it fails, and not because nothing is there. */
-function placeUnreadable(at: string): void {
+/** Names that are there and cannot be read as a file. Looking through them fails; the name is taken all the same. */
+const LINKS = [
+	["a link that leads back to itself", (at: string) => symlinkSync(at, at)],
+	["a link that leads nowhere", (at: string) => symlinkSync(join(dirname(at), "nowhere"), at)],
+] as const;
+
+function placeLink(at: string, make: (at: string) => void): void {
 	mkdirSync(dirname(at), { recursive: true });
-	symlinkSync(at, at);
+	make(at);
 }
 
 function place(at: string, text: string): void {
@@ -57,28 +62,48 @@ const NO_SESSION = [
 
 // senpi#6471
 describe.skipIf(process.platform === "win32")("a landing place that cannot be looked at is not free", () => {
-	it("#given a landing place that cannot be looked at #when prepare names the session #then the move is not readied and the place is left as it was", async () => {
+	it.each(LINKS)(
+		"#given a landing place that holds %s #when prepare names the session #then the move is not readied and the place is left as it was",
+		async (_case, make) => {
+			const fixture = await devices();
+			await using b = createInProcessRig(fixture.agentB);
+			placeLink(landing(fixture), make);
+
+			const answer = await prepareNamed(b, fixture, "move-u1");
+
+			expect(answer).toMatchObject(NOT_DONE);
+			expect(existsSync(ledgerFile(fixture.agentB, "move-u1"))).toBe(false);
+			expect(lstatSync(landing(fixture)).isSymbolicLink()).toBe(true);
+		},
+	);
+
+	it.each(LINKS)(
+		"#given a landing place that holds %s #when the bundle is imported #then the import does not land and does not replace what stands there",
+		async (_case, make) => {
+			const fixture = await devices();
+			await using a = createInProcessRig(fixture.agentA);
+			await using b = createInProcessRig(fixture.agentB);
+			placeLink(landing(fixture), make);
+
+			const imported = await importInto(a, b, fixture, "move-u2");
+
+			expect(imported).toMatchObject(NOT_DONE);
+			expect(lstatSync(landing(fixture)).isSymbolicLink()).toBe(true);
+		},
+	);
+
+	it("#given a session folder path that is a file, so the landing place cannot be looked at #when prepare names the session #then the move is not readied", async () => {
 		const fixture = await devices();
 		await using b = createInProcessRig(fixture.agentB);
-		placeUnreadable(landing(fixture));
+		const folder = dirname(landing(fixture));
+		mkdirSync(dirname(folder), { recursive: true });
+		writeFileSync(folder, "not a folder\n");
 
-		const answer = await prepareNamed(b, fixture, "move-u1");
+		const answer = await prepareNamed(b, fixture, "move-u3");
 
 		expect(answer).toMatchObject(NOT_DONE);
-		expect(existsSync(ledgerFile(fixture.agentB, "move-u1"))).toBe(false);
-		expect(lstatSync(landing(fixture)).isSymbolicLink()).toBe(true);
-	});
-
-	it("#given a landing place that cannot be looked at #when the bundle is imported #then the import does not land and does not replace what stands there", async () => {
-		const fixture = await devices();
-		await using a = createInProcessRig(fixture.agentA);
-		await using b = createInProcessRig(fixture.agentB);
-		placeUnreadable(landing(fixture));
-
-		const imported = await importInto(a, b, fixture, "move-u2");
-
-		expect(imported).toMatchObject(NOT_DONE);
-		expect(lstatSync(landing(fixture)).isSymbolicLink()).toBe(true);
+		expect(existsSync(ledgerFile(fixture.agentB, "move-u3"))).toBe(false);
+		expect(readFileSync(folder, "utf8")).toBe("not a folder\n");
 	});
 });
 
