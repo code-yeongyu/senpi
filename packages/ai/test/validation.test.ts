@@ -2,7 +2,7 @@ import { Type } from "typebox";
 import { Compile } from "typebox/compile";
 import { describe, expect, it } from "vitest";
 import type { JsonValue, Tool, ToolCall } from "../src/types.ts";
-import { validateToolArguments } from "../src/utils/validation.ts";
+import { registerToolArgumentValidator, validateToolArguments } from "../src/utils/validation.ts";
 
 function createToolCallWithPlainSchema(
 	schema: Tool["parameters"],
@@ -306,6 +306,84 @@ describe("validateToolArguments JSON-encoded structured arguments (#6265)", () =
 		validateToolArguments(imageTool, second);
 
 		expect(second.arguments).toEqual(before);
+	});
+});
+
+// senpi#6271: the #6266 decode missed three shapes — Record values live under
+// patternProperties, JSON text nested inside a typeless union never recurses,
+// and protocol-validated (modern MCP) schemas return before the decode runs.
+describe("validateToolArguments JSON-encoded structured arguments gaps (#6271)", () => {
+	const cases: Array<{
+		name: string;
+		tool: Tool;
+		toolCall: ToolCall;
+		expected: unknown;
+	}> = [
+		{
+			name: "decodes a Record value held under patternProperties",
+			tool: {
+				name: "labels",
+				description: "Labels tool",
+				parameters: Type.Object({
+					values: Type.Record(Type.String(), Type.Array(Type.String())),
+				}),
+			},
+			toolCall: {
+				type: "toolCall",
+				id: "call-1",
+				name: "labels",
+				arguments: { values: { k: '["a"]' } },
+			},
+			expected: { values: { k: ["a"] } },
+		},
+		{
+			name: "decodes JSON text nested inside a typeless union",
+			tool: {
+				name: "nested",
+				description: "Nested union tool",
+				parameters: Type.Object({
+					value: Type.Union([Type.Array(Type.Array(Type.String())), Type.Null()]),
+				}),
+			},
+			toolCall: {
+				type: "toolCall",
+				id: "call-1",
+				name: "nested",
+				arguments: { value: '["[\\"a\\"]"]' },
+			},
+			expected: { value: [["a"]] },
+		},
+	];
+
+	for (const testCase of cases) {
+		it(testCase.name, () => {
+			expect(validateToolArguments(testCase.tool, testCase.toolCall)).toEqual(testCase.expected);
+		});
+	}
+
+	it("decodes a JSON-encoded array for a protocol-validated MCP schema", () => {
+		// The protocol validator is compiled inside the test, not at collection time:
+		// compiling it earlier would let TypeBox cache that dynamic evaluation works,
+		// breaking the "Function constructor is unavailable" test above.
+		const mcpParameters = {
+			type: "object",
+			properties: { paths: { type: "array", items: { type: "string" } } },
+			required: ["paths"],
+		} as Tool["parameters"];
+		const mcpValidator = Compile(mcpParameters);
+		registerToolArgumentValidator(mcpParameters, (value: unknown) => mcpValidator.Check(value));
+		const tool: Tool = {
+			name: "mcp-echo",
+			description: "MCP tool",
+			parameters: mcpParameters,
+		};
+		const toolCall: ToolCall = {
+			type: "toolCall",
+			id: "call-1",
+			name: "mcp-echo",
+			arguments: { paths: '["/refs/a.png"]' },
+		};
+		expect(validateToolArguments(tool, toolCall)).toEqual({ paths: ["/refs/a.png"] });
 	});
 });
 

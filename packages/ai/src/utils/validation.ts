@@ -11,6 +11,7 @@ const TYPEBOX_KIND = Symbol.for("TypeBox.Kind");
 interface JsonSchemaObject {
 	type?: string | string[];
 	properties?: Record<string, JsonSchemaObject>;
+	patternProperties?: Record<string, JsonSchemaObject>;
 	required?: string[];
 	items?: JsonSchemaObject | JsonSchemaObject[];
 	additionalProperties?: boolean | JsonSchemaObject;
@@ -235,6 +236,11 @@ function parseJsonStructure(text: string, accepted: Set<string>): unknown {
  * wrap that text into a one-element array that passes validation, so the tool ran with the JSON text
  * as a path. Decode the text back to the structure the schema declares before conversion, only where
  * the schema rejects strings and the text parses to that declared array/object.
+ *
+ * senpi#6271: three shapes the #6266 pass missed — Record values live under `patternProperties`,
+ * not `properties`/`additionalProperties`; a typeless anyOf/oneOf carries no top-level `type`, so
+ * nested JSON text inside a decoded value never recursed; and protocol-validated (modern MCP)
+ * schemas return from validateToolArguments before this pass runs (see there).
  */
 function decodeJsonEncodedStructures(value: unknown, schema: JsonSchemaObject): unknown {
 	if (typeof value === "string") {
@@ -243,31 +249,70 @@ function decodeJsonEncodedStructures(value: unknown, schema: JsonSchemaObject): 
 		const decoded = parseJsonStructure(value, accepted);
 		return decoded === undefined ? value : decodeJsonEncodedStructures(decoded, schema);
 	}
-	const types = getSchemaTypes(schema);
 
-	if (Array.isArray(value) && types.includes("array")) {
-		const items = schema.items;
+	if (Array.isArray(value)) {
 		for (let index = 0; index < value.length; index++) {
-			const itemSchema = Array.isArray(items) ? items[index] : items;
-			if (itemSchema) value[index] = decodeJsonEncodedStructures(value[index], itemSchema);
+			for (const candidate of decodeSchemasFor(schema, "array")) {
+				const items = candidate.items;
+				if (!items) continue;
+				const itemSchema = Array.isArray(items) ? items[index] : items;
+				if (itemSchema) {
+					value[index] = decodeJsonEncodedStructures(value[index], itemSchema);
+					break;
+				}
+			}
 		}
 		return value;
 	}
 
-	if (matchesJsonType(value, "object") && types.includes("object")) {
+	if (matchesJsonType(value, "object")) {
 		const record = value as Record<string, unknown>;
-		const properties = schema.properties ?? {};
-		const additional = schema.additionalProperties;
 		for (const key of Object.keys(record)) {
-			const propertySchema = Object.hasOwn(properties, key)
-				? properties[key]
-				: typeof additional === "object"
-					? additional
-					: undefined;
-			if (propertySchema) record[key] = decodeJsonEncodedStructures(record[key], propertySchema);
+			for (const candidate of decodeSchemasFor(schema, "object")) {
+				const propertySchema = propertySchemaForKey(candidate, key);
+				if (propertySchema) {
+					record[key] = decodeJsonEncodedStructures(record[key], propertySchema);
+					break;
+				}
+			}
 		}
 	}
 	return value;
+}
+
+/**
+ * Schemas to recurse into for a value of the given kind: the schema itself when it declares the
+ * kind, else the anyOf/oneOf members that accept it (senpi#6271: a typeless union such as
+ * Union([Array(Array(String)), Null]) carries no top-level `type`, so getSchemaTypes is empty).
+ */
+function decodeSchemasFor(schema: JsonSchemaObject, kind: "array" | "object"): JsonSchemaObject[] {
+	if (getSchemaTypes(schema).includes(kind)) return [schema];
+	const members = schema.anyOf ?? schema.oneOf;
+	if (!Array.isArray(members)) return [];
+	return members.filter((member) => acceptedJsonTypes(member)?.has(kind) ?? false);
+}
+
+/**
+ * The schema governing one key of an object value: a named property, then additionalProperties,
+ * then the first patternProperties entry whose pattern matches the key (senpi#6271: Type.Record
+ * values live under patternProperties, e.g. `{"^.*$": <value schema>}`).
+ */
+function propertySchemaForKey(schema: JsonSchemaObject, key: string): JsonSchemaObject | undefined {
+	const properties = schema.properties ?? {};
+	if (Object.hasOwn(properties, key)) return properties[key];
+	const additional = schema.additionalProperties;
+	if (typeof additional === "object") return additional;
+	const patterns = schema.patternProperties;
+	if (patterns) {
+		for (const [pattern, patternSchema] of Object.entries(patterns)) {
+			try {
+				if (new RegExp(pattern).test(key)) return patternSchema;
+			} catch {
+				continue;
+			}
+		}
+	}
+	return undefined;
 }
 
 function getValidator(schema: Tool["parameters"]): ReturnType<typeof Compile> {
@@ -436,6 +481,10 @@ export function validateToolArguments(tool: Tool, toolCall: ToolCall): any {
 	const args = structuredClone(toolCall.arguments);
 	const protocolValidator = getToolArgumentValidator(tool.parameters);
 	if (protocolValidator !== undefined) {
+		// senpi#6271: protocol-validated (modern MCP) schemas return before the decode runs, so they
+		// kept the pre-#6266 behaviour for JSON-encoded arrays/objects. Decode first, then let the
+		// protocol validator check the declared structure.
+		decodeJsonEncodedStructures(args, tool.parameters as JsonSchemaObject);
 		if (!protocolValidator(args)) {
 			const errors =
 				protocolValidator.errors
