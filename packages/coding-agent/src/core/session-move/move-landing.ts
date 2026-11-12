@@ -1,3 +1,4 @@
+import { resolvePath } from "../../utils/paths.ts";
 import { MOVE_RECORD_LOCK_STALE_MS } from "./move-ledger-lock.ts";
 import type { MoveRecord } from "./move-record.ts";
 
@@ -29,16 +30,41 @@ export type LandingOutcome = "absent" | "moved_in" | "revoked";
 /** The hidden part of a move record: where the move lands, and whether its commit began. Never part of an answer. */
 export interface Landing {
 	readonly target?: string;
+	/**
+	 * The folder this move was readied for and lands in, resolved as the import resolves its `cwd` (senpi#6435).
+	 * Whoever readies the move writes it: the target's `prepare` once it checked that folder's repository, or an
+	 * import that readies the move itself, with its own folder. From then on the move lands only there.
+	 */
+	readonly cwd?: string;
 	readonly committing?: true;
 }
 
 export function parseLanding(value: unknown): Landing {
 	if (typeof value !== "object" || value === null) return {};
-	const { target, committing } = value as { target?: unknown; committing?: unknown };
+	const { target, cwd, committing } = value as { target?: unknown; cwd?: unknown; committing?: unknown };
 	return {
 		...(typeof target === "string" ? { target } : {}),
+		...(typeof cwd === "string" ? { cwd } : {}),
 		...(committing === true ? { committing: true } : {}),
 	};
+}
+
+/** What a write keeps of a landing: where the move lands and the folder it was readied for, never the commit stamp. */
+export function settledAt(landing: Landing, target: string): Landing {
+	return landing.cwd === undefined ? { target } : { target, cwd: landing.cwd };
+}
+
+/**
+ * The one spelling a move's folder is kept and compared in (senpi#6435): resolved as the import resolves its `cwd`,
+ * so a trailing slash, a `.` or `..` segment or a doubled slash still names the same folder at every step.
+ */
+export function moveFolder(cwd: string | undefined): string | undefined {
+	return cwd === undefined ? undefined : resolvePath(cwd);
+}
+
+/** Why a move readied for one folder refuses another: it lands only where its repository was checked (senpi#6435). */
+export function heldElsewhere(landing: Landing): string {
+	return `it was readied for ${landing.cwd ?? "another folder"} and lands only there`;
 }
 
 /**
