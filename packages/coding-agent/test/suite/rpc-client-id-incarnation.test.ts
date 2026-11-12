@@ -3,7 +3,7 @@
  * own, so a name must never reach a connection through a refused declaration, nor stay on a socket whose viewer
  * changed. Real sessions on a real multi-session host; each case starts its own host.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { CommandAuthority, commandAuthority } from "../../src/modes/rpc/command-authority.ts";
 import { RouterContext } from "../../src/modes/rpc/session-router-context.ts";
 import {
@@ -126,6 +126,26 @@ describe("a client name does not outlive its declaration's authority (senpi#6443
 			);
 
 			expect(names(host).get(socket.connectionId)).toBe("new-viewer");
+		} finally {
+			await host.dispose();
+		}
+	}, 120_000);
+
+	it("#given the compact flag on #when a declaration with no id and no capabilities names a session this host does not have #then no name is kept, and for a session it has the name is kept", async () => {
+		const host = await startHost();
+		try {
+			const client = await host.proven();
+			const session = await openSession(client, { retain_on_disconnect: true });
+			vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
+			const declareUnanswered = (sessionId: string) =>
+				host.writer.withConnection(client.connectionId, () =>
+					host.core.router.handle({ type: "set_client_info", width: 80, sessionId, client_id: "one-client" }),
+				);
+
+			expect(await declareUnanswered("no-such-session")).toBeUndefined();
+			expect(names(host).has(client.connectionId)).toBe(false);
+			expect(await declareUnanswered(session.sessionId)).toBeUndefined();
+			expect(names(host).get(client.connectionId)).toBe("one-client");
 		} finally {
 			await host.dispose();
 		}

@@ -77,7 +77,7 @@ export function declareSessionless(host: RouterContext, command: SetClientInfo):
 
 /**
  * Flag on: the host-side pre-declaration of every `set_client_info` (RULING-111). Answers the refusal, `"done"` when the
- * declaration ends here with nothing to answer (no id and no capabilities; its name is kept), or the command to route on.
+ * declaration ends here with nothing to answer (no id and no capabilities), or the command to route on.
  */
 export function preDeclare(host: RouterContext, command: SetClientInfo): RpcResponse | SetClientInfo | "done" {
 	const reply = declareSocketClient(host, command);
@@ -88,7 +88,8 @@ export function preDeclare(host: RouterContext, command: SetClientInfo): RpcResp
 			? { ...command, capabilities: [...(host.pendingCapabilities.get(peer) ?? [])] }
 			: command;
 	if (next.id !== undefined || next.capabilities !== undefined) return next;
-	keepClientId(host, next);
+	// Nothing answers this form, so nothing refuses it either: its name is kept only for a session this host has.
+	if (!next.sessionId || host.registry.peek(next.sessionId) !== undefined) keepClientId(host, next);
 	return "done";
 }
 
