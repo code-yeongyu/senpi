@@ -9,11 +9,13 @@ import { execFileSync } from "node:child_process";
 import {
 	existsSync,
 	mkdirSync,
+	lstatSync,
 	mkdtempSync,
 	readFileSync,
 	readdirSync,
 	rmSync,
 	statSync,
+	symlinkSync,
 	utimesSync,
 	writeFileSync,
 } from "node:fs";
@@ -76,12 +78,20 @@ interface Build {
 	sources: string;
 }
 
-type ProbeLoader = { loader: "built" } | { loader: "source"; reason: string };
+type ProbeLoader = ({ loader: "built" } | { loader: "source"; reason: string }) & {
+	/** The symbolic links the walk skipped, present only when it skipped at least one. */
+	skippedLinks?: readonly string[];
+};
 
-/** Every file and directory under `path`, `path` included. */
-function walk(path: string): string[] {
-	if (!statSync(path).isDirectory()) return [path];
-	return [path, ...readdirSync(path).flatMap((entry) => walk(join(path, entry)))];
+/** Every file and directory under `path`, `path` included; a symbolic link is pushed to `links` instead. */
+function walk(path: string, links: string[]): string[] {
+	const stats = lstatSync(path);
+	if (stats.isSymbolicLink()) {
+		links.push(path);
+		return [];
+	}
+	if (!stats.isDirectory()) return [path];
+	return [path, ...readdirSync(path).flatMap((entry) => walk(join(path, entry), links))];
 }
 
 /**
@@ -92,16 +102,21 @@ function walk(path: string): string[] {
  * rewrites them, so they would stay old forever. A new or edited source is itself N, so (a) catches it. An equal mtime
  * counts as stale. Otherwise the answer is "source" with the file that decided it. A stale build would let the probe
  * pass on old engine code and hide a regression in the sources, so anything short of provably fresh runs the sources.
+ * The walk skips symbolic links: a link is neither descended into nor counted, so neither it nor its target adds an
+ * mtime. Following them let a link loop recurse without end and let a target outside the sources, which the build
+ * never compiles, make a fresh build look stale. The cost: an edit behind a link under the sources is not seen as a
+ * newer source, so the skipped links are returned in `skippedLinks` and the probe logs them.
  */
 function selectProbeLoader(builds: readonly Build[]): ProbeLoader {
+	const links: string[] = [];
+	const answer = (choice: ProbeLoader): ProbeLoader =>
+		links.length > 0 ? { ...choice, skippedLinks: links } : choice;
 	for (const build of builds) {
-		if (!existsSync(build.entry)) return { loader: "source", reason: `missing ${build.entry}` };
-		const sources = walk(build.sources).map((path) => ({ path, mtimeMs: statSync(path).mtimeMs }));
+		if (!existsSync(build.entry)) return answer({ loader: "source", reason: `missing ${build.entry}` });
+		const sources = walk(build.sources, links).map((path) => ({ path, mtimeMs: statSync(path).mtimeMs }));
 		const newest = sources.reduce((a, b) => (b.mtimeMs > a.mtimeMs ? b : a));
-		const stale = (output: string): ProbeLoader => ({
-			loader: "source",
-			reason: `${output} is not newer than ${newest.path}`,
-		});
+		const stale = (output: string): ProbeLoader =>
+			answer({ loader: "source", reason: `${output} is not newer than ${newest.path}` });
 		if (statSync(build.entry).mtimeMs <= newest.mtimeMs) return stale(build.entry);
 		for (const { path } of sources) {
 			if (!/\.tsx?$/.test(path) || path.endsWith(".d.ts")) continue;
@@ -109,7 +124,7 @@ function selectProbeLoader(builds: readonly Build[]): ProbeLoader {
 			if (existsSync(output) && statSync(output).mtimeMs <= newest.mtimeMs) return stale(output);
 		}
 	}
-	return { loader: "built" };
+	return answer({ loader: "built" });
 }
 
 function engineBuilds(): Build[] {
@@ -136,6 +151,11 @@ function probe(runtime: "node" | "bun"): Record<string, unknown> {
 	console.log(
 		`pi.engine probe on ${runtime}: ${choice.loader === "built" ? "built loader" : `source loader (${choice.reason})`}`,
 	);
+	if (choice.skippedLinks) {
+		console.log(
+			`pi.engine probe: skipped ${choice.skippedLinks.length} symbolic link(s) under the sources, first ${choice.skippedLinks[0]}`,
+		);
+	}
 	const main = join(root, loader === "built" ? "main.mjs" : "main.mts");
 	writeFileSync(
 		main,
@@ -236,6 +256,35 @@ describe("selectProbeLoader", () => {
 		writeBuild(build, T);
 		expect(selectProbeLoader([build]).loader).toBe("source");
 	});
+
+	it(
+		"returns and takes the build when a symbolic link under the sources loops back to them",
+		{ timeout: 5_000 },
+		() => {
+			const { build } = tree();
+			writeBuild(build, T + 10);
+			const link = join(build.sources, "loop");
+			symlinkSync(build.sources, link, "dir");
+			utimesSync(build.sources, T, T);
+			expect(selectProbeLoader([build])).toEqual({ loader: "built", skippedLinks: [link] });
+		},
+	);
+
+	it(
+		"takes the build when a symbolic link under the sources points outside them at a newer file",
+		{ timeout: 5_000 },
+		() => {
+			const { root, build } = tree();
+			writeBuild(build, T + 10);
+			const outside = join(root, "outside.ts");
+			writeFileSync(outside, "");
+			utimesSync(outside, T + 20, T + 20);
+			const link = join(build.sources, "linked.ts");
+			symlinkSync(outside, link);
+			utimesSync(build.sources, T, T);
+			expect(selectProbeLoader([build])).toEqual({ loader: "built", skippedLinks: [link] });
+		},
+	);
 });
 
 describe("pi.engine (omo#12965, T-F)", () => {
