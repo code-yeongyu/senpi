@@ -42,7 +42,11 @@ export type RpcMoveSessionData =
 	| RpcMoveRecord
 	| { move_id: string; session_id: string; bundle_dir: string; files: number }
 	| { session_id: string; session_path: string }
-	| { ownership: "writable" | "moving" | "moved" };
+	| {
+			ownership: "writable" | "moving" | "moved";
+			/** On `finish` for a writable file: whether this move held it (only then are its bundle and staged state removed). */
+			held_this_move?: boolean;
+	  };
 
 export interface RpcMoveSessionResponse {
 	id?: string;

@@ -132,7 +132,7 @@ async function run(
 		}
 		case "finish": {
 			const sessionFile = await orderedRealPath(parsed.sessionPath);
-			await finishMove({
+			const settled = await finishMove({
 				sessionFile,
 				bundleDir: outgoing(parsed.moveId),
 				moveId: parsed.moveId,
@@ -144,7 +144,8 @@ async function run(
 						"This session is open on this host, so its runtime would not see the move end. Close it here, then finish the move.",
 					),
 			});
-			return ownershipOf(sessionFile);
+			const ownership = await ownershipOf(sessionFile);
+			return ownership.ownership === "writable" ? { ...ownership, held_this_move: settled.heldThisMove } : ownership;
 		}
 		case "revoke": {
 			const sessionFile = await orderedRealPath(parsed.sessionPath);
