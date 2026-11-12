@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { MoveFencedError, MoveLedger } from "../../src/core/session-move/move-ledger.ts";
-import { MoveRecordUnlockedError } from "../../src/core/session-move/move-ledger-lock.ts";
+import { MoveRecordLocks, MoveRecordUnlockedError } from "../../src/core/session-move/move-ledger-lock.ts";
+import { MoveRecordFile } from "../../src/core/session-move/move-record-file.ts";
 import type { MoveId } from "../../src/core/session-move/ownership.ts";
 
 /** The session file a receive in these tests lands as. */
@@ -124,11 +125,8 @@ describe("MoveLedger fence", () => {
 	it("#given a record write outside the move's lock #then it fails loudly and leaves the record unwritten", async () => {
 		const book = ledger();
 		await book.prepare(id("m6"));
-		const write: unknown = Reflect.get(book, "write");
-		if (typeof write !== "function") throw new Error("MoveLedger.write is gone; update this test");
-		await expect(Reflect.apply(write, book, [id("m6"), { state: "accepted" }])).rejects.toBeInstanceOf(
-			MoveRecordUnlockedError,
-		);
+		const file = new MoveRecordFile(book.dir, new MoveRecordLocks());
+		await expect(file.write(id("m6"), { state: "accepted" })).rejects.toBeInstanceOf(MoveRecordUnlockedError);
 		expect(await book.answerStatus(id("m6"), { movedIn: false })).not.toEqual({ state: "accepted" });
 	});
 });
