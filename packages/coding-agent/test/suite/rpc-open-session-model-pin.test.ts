@@ -31,6 +31,29 @@ function fauxWherePrimaryIsRateLimited() {
 	return faux;
 }
 
+function lastAssistant(
+	host: Awaited<ReturnType<typeof contextHost>>,
+	connection: string,
+	sessionId: string,
+): { model: string | undefined; text: string } {
+	const end = host
+		.inbox(connection)
+		.filter(
+			(record) =>
+				record.type === "message_end" &&
+				record.sessionId === sessionId &&
+				(record as { message?: { role?: string } }).message?.role === "assistant",
+		)
+		.at(-1) as
+		| { message?: { model?: string; errorMessage?: string; content?: Array<{ type: string; text?: string }> } }
+		| undefined;
+	const message = end?.message;
+	return {
+		model: message?.model,
+		text: message?.errorMessage ?? message?.content?.find((block) => block.type === "text")?.text ?? "",
+	};
+}
+
 function calledModels(faux: ReturnType<typeof fauxProvider>): string[] {
 	return faux.getCallLog().map((call) => call.modelId);
 }
@@ -83,6 +106,29 @@ describe("an open_session that names a model is pinned (omo#13243)", () => {
 		await host.prompt("conn-a", String(opened.sessionId), "go");
 
 		expect(calledModels(faux)).toStrictEqual(["primary", "spare-a"]);
+	}, 120_000);
+
+	it("pins only the session that named its model: an unpinned session on the same host still falls back", async () => {
+		const faux = fauxWherePrimaryIsRateLimited();
+		await using host = await contextHost({ faux, globalSettings: SETTINGS });
+		const pinned = await host.send("conn-a", {
+			type: "open_session",
+			cwd: host.cwd,
+			provider: "faux-fallback",
+			modelId: "primary",
+		});
+		const pinnedId = String((pinned as { data?: { sessionId?: string } } | undefined)?.data?.sessionId);
+		const unpinned = await host.open("conn-b", {});
+		const unpinnedId = String(unpinned.sessionId);
+
+		await host.prompt("conn-a", pinnedId, "go");
+		await host.prompt("conn-b", unpinnedId, "go");
+
+		expect(lastAssistant(host, "conn-a", pinnedId)).toStrictEqual({ model: "primary", text: RATE_LIMIT });
+		expect(lastAssistant(host, "conn-b", unpinnedId)).toStrictEqual({
+			model: "spare-a",
+			text: "answered by spare-a",
+		});
 	}, 120_000);
 });
 

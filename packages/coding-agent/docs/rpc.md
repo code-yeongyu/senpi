@@ -2971,6 +2971,11 @@ settings file) and replaces the session's override for that one key only: a `set
 chains, while `modelFallback` keeps the profile's value. The policy is not stored with the session, so a client that
 reopens a session after it was closed sends the profile again.
 
+An open that names a model (`provider` and `modelId`) and sends no `retryFallback` is pinned to that model: it runs
+with `{ modelFallback: false, fallbackChains: {} }`, so a failed turn ends with that model's error instead of moving to
+another model. Send `retryFallback` with `modelFallback: true` to keep fallback for a named model. A host's default
+model is not a choice the client made and keeps the host's settings.
+
 #### Browser engine per session (`browser_engine`)
 
 `open_session.browserEngine: "connected" | "builtin" | "none"` names the browser THIS session's skills drive: the

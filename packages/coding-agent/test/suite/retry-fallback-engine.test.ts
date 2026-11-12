@@ -7,6 +7,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
+import { MODEL_SWITCH_MARKER_TYPE } from "../../src/core/model-switch-marker.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
 const primary = "faux/faux-1";
@@ -310,8 +311,18 @@ describe("retry fallback engine", () => {
 		await harness.session.prompt("second turn");
 
 		if (!stateBeforeFailedAssistant) throw new Error("Missing pre-error fallback snapshot");
-		expect(stateAtFallbackRequest).toEqual(stateBeforeFailedAssistant.slice(0, -1));
-		expect(fallbackRequestMessages).toEqual(stateBeforeFailedAssistant.slice(0, -1));
+		// The fallback request is the pre-error context plus the switch note the model reads (omo#13243).
+		expect(stateAtFallbackRequest).toEqual([
+			...stateBeforeFailedAssistant.slice(0, -1),
+			expect.objectContaining({ role: "custom", customType: MODEL_SWITCH_MARKER_TYPE }),
+		]);
+		expect(fallbackRequestMessages).toEqual([
+			...stateBeforeFailedAssistant.slice(0, -1),
+			expect.objectContaining({
+				role: "user",
+				content: [{ type: "text", text: expect.stringContaining(`moved this session to ${fallback}`) }],
+			}),
+		]);
 		expect(modelSelectSources).toEqual(["faux-1->faux-2:fallback"]);
 		expect(fallbackRequestSystemPrompt).toBe("fallback preset system prompt");
 		expect(fallbackRequestToolNames).toEqual(["fallback_preset"]);
@@ -649,8 +660,13 @@ describe("retry fallback engine", () => {
 				role: "user",
 				content: [{ type: "text", text: "full fallback request" }],
 			}),
+			// The switch note the fallback model reads (omo#13243).
+			expect.objectContaining({
+				role: "user",
+				content: [{ type: "text", text: expect.stringContaining(`${primary} failed`) }],
+			}),
 		]);
-		expect(fallbackRequest.context.messages).toHaveLength(1);
+		expect(fallbackRequest.context.messages).toHaveLength(2);
 		expect(fallbackRequest.options).not.toHaveProperty("previous_response_id");
 	});
 

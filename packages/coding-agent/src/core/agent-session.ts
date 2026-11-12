@@ -13,7 +13,6 @@
  * Modes use this class and add their own I/O layer on top.
  */
 
-import { modelSwitchMarker } from "./model-switch-marker.ts";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
@@ -349,6 +348,7 @@ import { ModelRegistry } from "./model-registry.ts";
 import { type AvailableModelsSource, getModelNarrowingPatterns, resolveModelScope } from "./model-resolver.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
 import { ModelSwitchAuthError } from "./model-switch-auth-error.ts";
+import { modelSwitchMarker } from "./model-switch-marker.ts";
 import { NestedToolCallRunner } from "./nested-tool-calls.ts";
 import { type PendingInputSnapshot, type PendingInputUpdate, SessionPendingInputs } from "./pending-input-session.ts";
 import { PROMPT_CACHE_SAFE_WAIT_ENV, resolvePromptCacheSafeWaitSeconds } from "./prompt-cache-budget.ts";
@@ -7862,6 +7862,8 @@ export class AgentSession {
 				if (releasedWake && !releasedWake()) return;
 				const inputOrigin = customTurnOrigin(message.customType);
 				if (inputOrigin === "engine") this._recordEngineTurnStart(message.customType);
+				// A switch note queued while idle belongs to this request too, not to the next user turn.
+				this._flushModelSwitchMarkers();
 				await this._promptAgent(messages, { inputOrigin, deferredTurnClaim });
 			} else if (this.isStreaming) {
 				if (options?.ticket) this.workObligations.passive(options.ticket);

@@ -57,4 +57,35 @@ describe("model fallback switch marker (omo#13243)", () => {
 		if (reply?.role !== "assistant") throw new Error("expected the recovered reply");
 		expect(`${reply.provider}/${reply.model}`).toBe(fallback);
 	});
+	it("writes a note queued while idle before a turn an extension message starts", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }, { id: "faux-2" }],
+			settings: fallbackSettings,
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("first"), fauxAssistantMessage("woken")]);
+		await harness.session.prompt("first turn");
+		const fallbackModel = harness.getModel("faux-2");
+		if (!fallbackModel) throw new Error("Missing faux-2");
+		// The retry controller's own switch callback, run while the session is idle (a revert after compaction does this).
+		await (
+			harness.session as unknown as {
+				_retryFallback: {
+					deps: {
+						switchModel(model: unknown, thinking: string, reason: "fallback" | "fallback-revert"): Promise<void>;
+					};
+				};
+			}
+		)._retryFallback.deps.switchModel(fallbackModel, "off", "fallback");
+
+		await harness.session.sendCustomMessage(
+			{ customType: "extension_wake", content: "wake up", display: false },
+			{ triggerTurn: true },
+		);
+		await harness.session.waitForSettledSessionWork();
+
+		const request = harness.faux.getCallLog().at(-1);
+		if (!request) throw new Error("Missing the woken request");
+		expect(JSON.stringify(request.context.messages)).toContain(`moved this session to ${fallback}`);
+	});
 });
