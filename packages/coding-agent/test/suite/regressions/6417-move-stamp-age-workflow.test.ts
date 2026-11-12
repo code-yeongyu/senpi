@@ -1,5 +1,6 @@
 /**
- * The macOS measurement of the move-record stamp's premise (senpi#6463) runs only for the files its path filter
+ * senpi#6417: the macOS measurement of the move-record stamp's premise (added by senpi#6463, the pull request that
+ * followed that issue's fix) runs only for the files its path filter
  * names. These rows hold that the filter names every file its rule says it must and none that is gone, that both
  * triggers carry the same list, that it runs under the versions the macOS job of CI runs under, and that the
  * runner's clock is put back.

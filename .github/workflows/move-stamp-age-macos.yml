@@ -7,7 +7,7 @@ name: Move-record stamp age on macOS
 #
 # The path filter follows one rule: every production source file that chooses, writes or reads a stamp's clock, and
 # this file. The rule's pattern is the "stamp-files" line below, and it is written in this one place:
-# packages/coding-agent/test/suite/regressions/6463-move-stamp-age-workflow.test.ts reads it from here and fails when
+# packages/coding-agent/test/suite/regressions/6417-move-stamp-age-workflow.test.ts reads it from here and fails when
 # the filter and the files that match it differ, so the list cannot fall behind the code. By hand it is
 #   grep -rlE --include='*.ts' '<the pattern>' packages/coding-agent/src
 #
