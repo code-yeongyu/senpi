@@ -9,7 +9,7 @@ import { build } from "esbuild";
 import { bundleRequiredInputs, lazyEntryPoints } from "./bundle-entry-points.mjs";
 import { fileAttributePlugin } from "./bundle-file-attribute-plugin.mjs";
 import { assertRedactionRegistryCopies } from "./bundle-redaction-registry-guard.mjs";
-import { assertBundleZodCores } from "./bundle-zod-core-guard.mjs";
+import { assertBundleZodCores, describeStaleZodAllowances, STALE_ZOD_ALLOWANCE } from "./bundle-zod-core-guard.mjs";
 import { zodSingleCopyPlugin } from "./bundle-zod-single-copy-plugin.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -275,7 +275,7 @@ async function buildBundle() {
 	validateExternalImports(metafiles);
 	assertRedactionRegistryCopies(bundleDir);
 	// senpi#6497: no emitted file may carry a zod core older than 4.6.6 beyond the pinned Claude agent SDK copies.
-	assertBundleZodCores(bundleDir);
+	for (const line of describeStaleZodAllowances(STALE_ZOD_ALLOWANCE.sdkVersion, assertBundleZodCores(bundleDir))) console.log(line);
 	chmodSync(join(bundleDir, "cli.js"), 0o755);
 	chmodSync(join(bundleDir, "rpc-entry.js"), 0o755);
 	writeRuntimeManifest(metafiles);

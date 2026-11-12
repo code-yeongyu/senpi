@@ -1,20 +1,44 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawnSync } from "node:child_process";
 import { describe, it } from "node:test";
-import { assertBinaryZodCores } from "./bundle-zod-core-guard.mjs";
+import { assertBinaryZodCores, describeStaleZodAllowances, PINNED_CLAUDE_AGENT_SDK_VERSION } from "./bundle-zod-core-guard.mjs";
 import { realZodOutput } from "./zod-real-output.test-support.mjs";
 
 // senpi#6497 follow-up: `bun build --compile` embeds the bundled JS in the executable, so the compiled binaries get
-// their own scan for stale zod cores: the Claude agent SDK's pinned 4.6.2 and its zod/v3 layer (one copy each, as a real
-// compile embeds them) are allowed, anything else older than 4.6.6, and any further zod 3.x copy, fails the build.
+// their own scan for stale zod cores. The only stale zod allowed is the Claude agent SDK's: one 4.6.2 core and one
+// unpatched zod/v3 layer, each pinned by the sha256 of its bytes under the pinned SDK version; anything else fails.
+
+const SDK = PINNED_CLAUDE_AGENT_SDK_VERSION;
+const PINNED_SDK = { installed: SDK, locked: [SDK] };
+const V3_WINDOW = 32768;
+const sha = (text) => createHash("sha256").update(text, "latin1").digest("hex");
+const V3_MARKER = /Extended_Pictographic\}\|\\{1,2}p\{Emoji_Component\}\)\+\$/;
 
 const core = (version) => {
 	const [, minor, patch] = version.split(".");
 	return `var v={major:4,minor:${minor},patch:${patch}};`;
 };
+
+const ZOD3 = await realZodOutput("zod-3.25.76");
+const SDK_COPY = `${core("4.6.2")}var a=1;${ZOD3}`;
+
+function allowanceFor(embedded) {
+	const banner = embedded.search(/major:\s*4,\s*minor:\s*6,\s*patch:\s*2/);
+	const marker = embedded.search(V3_MARKER);
+	return {
+		sdkVersion: SDK,
+		bundle: [],
+		binary: [
+			{ version: "4.6.2", sha256: sha(embedded.slice(banner, marker)) },
+			{ version: "3.x", sha256: sha(embedded.slice(marker, marker + V3_WINDOW)) },
+		],
+	};
+}
+const ALLOWANCE = allowanceFor(SDK_COPY);
 
 /** A fake executable: binary noise around the embedded JS text. */
 function withBinary(embedded, check) {
@@ -28,64 +52,94 @@ function withBinary(embedded, check) {
 	}
 }
 
+const run = (file, allowance = ALLOWANCE, sdk = PINNED_SDK) => assertBinaryZodCores([file], allowance, sdk);
+
 describe("compiled binary zod core guard", () => {
-	it("accepts current cores and the SDK's pinned 4.6.2 copy", () => {
-		withBinary(core("4.6.7") + core("4.6.2"), (file) => {
-			assert.deepEqual(assertBinaryZodCores([file]).map((entry) => entry.version), ["4.6.2"]);
+	it("accepts current cores plus the SDK's pinned copies, and names them with SDK version and hash", () => {
+		withBinary(core("4.6.7") + SDK_COPY, (file) => {
+			const checked = run(file);
+			assert.deepEqual(checked.map((entry) => entry.version), ["4.6.2", "3.x"]);
+			const report = describeStaleZodAllowances(SDK, checked);
+			assert.equal(report[0], `allowed stale zod copy: @anthropic-ai/claude-agent-sdk ${SDK} ${file} zod 4.6.2 core sha256:${ALLOWANCE.binary[0].sha256}`);
+			assert.equal(report[1], `allowed stale zod copy: @anthropic-ai/claude-agent-sdk ${SDK} ${file} zod/v3 layer sha256:${ALLOWANCE.binary[1].sha256}`);
 		});
 	});
 
-	it("fails on a second 4.6.2 copy", () => {
-		withBinary(core("4.6.7") + core("4.6.2").repeat(2), (file) => {
-			assert.throws(() => assertBinaryZodCores([file]), /at most 1 zod 4\.6\.2 core\(s\), found 2/);
+	it("fails when the vendored SDK version differs from the pinned one", () => {
+		withBinary(core("4.6.7") + SDK_COPY, (file) => {
+			assert.throws(() => run(file, ALLOWANCE, { installed: "0.3.322", locked: [SDK] }), /@anthropic-ai\/claude-agent-sdk 0\.3\.322 is installed.*pinned to 0\.3\.321/s);
+		});
+	});
+
+	it("fails when one byte inside an allowed copy changes", () => {
+		withBinary(core("4.6.7") + SDK_COPY.replace("var a=1;", "var a=2;"), (file) => {
+			assert.throws(() => run(file), /zod 4\.6\.2 core bytes changed.*claude-agent-sdk 0\.3\.321/s);
+		});
+		const marker = SDK_COPY.search(V3_MARKER);
+		const flipped = `${SDK_COPY.slice(0, marker + 200)}${SDK_COPY[marker + 200] === "x" ? "y" : "x"}${SDK_COPY.slice(marker + 201)}`;
+		withBinary(core("4.6.7") + flipped, (file) => {
+			assert.throws(() => run(file), /zod\/v3 layer bytes changed/);
+		});
+	});
+
+	it("fails on a second 4.6.2 copy, whether or not its bytes match", () => {
+		withBinary(core("4.6.7") + SDK_COPY + SDK_COPY, (file) => {
+			assert.throws(() => run(file), /allowance: @anthropic-ai\/claude-agent-sdk 0\.3\.321 only.*expected 1 zod 4\.6\.2 core, found 2/s);
+		});
+		withBinary(core("4.6.7") + SDK_COPY + core("4.6.2"), (file) => {
+			assert.throws(() => run(file), /expected 1 zod 4\.6\.2 core, found 2/);
 		});
 	});
 
 	it("fails on a 4.0.0 core", () => {
-		withBinary(core("4.6.7") + core("4.0.0"), (file) => {
-			assert.throws(() => assertBinaryZodCores([file]), /outside the pinned exposures: .*pi 4\.0\.0/);
+		withBinary(core("4.6.7") + SDK_COPY + core("4.0.0"), (file) => {
+			assert.throws(() => run(file), /outside the pinned exposures: .*pi 4\.0\.0/);
 		});
 	});
 
-	it("fails on a real zod 3.25.76 copy, and accepts zod 4.6.7's zod/v3 layer", async () => {
-		const zod3 = await realZodOutput("zod-3.25.76");
+	it("fails on a real zod 3.25.76 copy beyond the SDK's, and accepts zod 4.6.7's zod/v3 layer", async () => {
 		const v4 = await realZodOutput("zod-4.6.7-v4");
 		const v4v3 = await realZodOutput("zod-4.6.7-v3");
-		// The SDK's own unpatched layer appears once in a compiled binary; a second copy is a new exposure.
-		withBinary(v4 + zod3.repeat(2), (file) => {
-			assert.throws(() => assertBinaryZodCores([file]), /at most 1 zod 3\.x core\(s\), found 2/);
+		withBinary(v4 + SDK_COPY + ZOD3, (file) => {
+			assert.throws(() => run(file), /expected 1 zod\/v3 layer, found 2/);
 		});
-		withBinary(v4 + zod3, (file) => {
-			assert.equal(assertBinaryZodCores([file]).length, 1);
+		withBinary(v4 + SDK_COPY + v4v3, (file) => {
+			assert.equal(run(file).length, 2);
 		});
-		withBinary(v4 + v4v3, (file) => {
-			assert.deepEqual(assertBinaryZodCores([file]), []);
+	});
+
+	it("fails when the SDK's copies are missing from a binary, so the row is retired rather than forgotten", async () => {
+		const v4 = await realZodOutput("zod-4.6.7-v4");
+		withBinary(v4, (file) => {
+			assert.throws(() => run(file), /expected 1 zod 4\.6\.2 core, found 0; retire the row/);
 		});
 	});
 
 	it("fails closed on a binary that embeds no zod core, or only stale ones", () => {
 		withBinary("console.log(1)", (file) => {
-			assert.throws(() => assertBinaryZodCores([file]), /no current zod core/);
+			assert.throws(() => run(file), /no current zod core/);
 		});
-		withBinary(core("4.6.2"), (file) => {
-			assert.throws(() => assertBinaryZodCores([file]), /no current zod core/);
+		withBinary(SDK_COPY, (file) => {
+			assert.throws(() => run(file), /no current zod core/);
 		});
 	});
 
 	it("fails on a missing binary and on an empty argument list", () => {
-		assert.throws(() => assertBinaryZodCores(["/nonexistent/senpi-pi"]), /unreadable/);
-		assert.throws(() => assertBinaryZodCores([]), /no binary to scan/);
+		assert.throws(() => assertBinaryZodCores(["/nonexistent/senpi-pi"], ALLOWANCE, PINNED_SDK), /unreadable/);
+		assert.throws(() => assertBinaryZodCores([], ALLOWANCE, PINNED_SDK), /no binary to scan/);
 	});
 
-	it("exits non-zero from the build-step script on a stale core and zero on a clean binary", () => {
+	it("exits non-zero from the build-step script, naming what is wrong", () => {
 		const script = new URL("./assert-binary-zod-cores.mjs", import.meta.url).pathname;
-		withBinary(core("4.6.7"), (file) => {
-			assert.equal(spawnSync("node", [script, file], { encoding: "utf8" }).status, 0);
-		});
 		withBinary(core("4.0.0"), (file) => {
 			const result = spawnSync("node", [script, file], { encoding: "utf8" });
 			assert.equal(result.status, 1);
 			assert.match(result.stderr, /4\.0\.0/);
+		});
+		withBinary(core("4.6.7"), (file) => {
+			const result = spawnSync("node", [script, file], { encoding: "utf8" });
+			assert.equal(result.status, 1);
+			assert.match(result.stderr, /expected 1 zod 4\.6\.2 core, found 0; retire the row/);
 		});
 	});
 
