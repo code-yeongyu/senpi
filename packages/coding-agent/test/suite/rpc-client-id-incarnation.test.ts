@@ -31,22 +31,25 @@ async function dryUnloadOnceAttached(client: Peer, session: Awaited<ReturnType<t
 	return client.send({ type: "unload_session", sessionId: session.sessionId, dryRun: true });
 }
 
+/** A delegated socket after its `detach_connection`, with the authority of a command made before that detach. */
+async function viewerChanged(host: DelegatedHost) {
+	const socket = await host.proven();
+	const granted = await declare(socket, ["observe", "drive", "thread"], VIEWER, {
+		roles: ["interactive_user", "task_parent"],
+	});
+	expect(granted).toMatchObject({ success: true });
+	const beforeDetach = host.writer.withConnection(socket.connectionId, () => host.writer.connectionContext.delegation);
+	if (beforeDetach?.mode !== "host") throw new Error("the socket is not a host-mode delegated connection");
+	const madeBeforeDetach = new CommandAuthority(socket.connectionId, { ...beforeDetach }, undefined);
+	expect(await socket.send({ type: "detach_connection" })).toMatchObject({ success: true });
+	return { socket, madeBeforeDetach };
+}
+
 describe("a client name does not outlive its declaration's authority (senpi#6443)", () => {
 	it("#given a delegated socket whose viewer changed #when a declaration made before the detach arrives with the old viewer's name #then it is refused stale, no name is kept, and the old viewer's unload of the new viewer's session is refused", async () => {
 		const host = await startHost();
 		try {
-			const socket = await host.proven();
-			const granted = await declare(socket, ["observe", "drive", "thread"], VIEWER, {
-				roles: ["interactive_user", "task_parent"],
-			});
-			expect(granted).toMatchObject({ success: true });
-			const beforeDetach = host.writer.withConnection(
-				socket.connectionId,
-				() => host.writer.connectionContext.delegation,
-			);
-			if (beforeDetach?.mode !== "host") throw new Error("the socket is not a host-mode delegated connection");
-			const madeBeforeDetach = new CommandAuthority(socket.connectionId, { ...beforeDetach }, undefined);
-			expect(await socket.send({ type: "detach_connection" })).toMatchObject({ success: true });
+			const { socket, madeBeforeDetach } = await viewerChanged(host);
 			const session = await openSession(socket, { retain_on_disconnect: true });
 			const oldViewer = await host.proven();
 			expect(await oldViewer.send({ type: "set_client_info", client_id: "old-viewer" })).toMatchObject({
@@ -102,6 +105,27 @@ describe("a client name does not outlive its declaration's authority (senpi#6443
 			expect(names(host).has(client.connectionId)).toBe(false);
 			expect(await client.send({ ...scoped, client_id: "one-client" })).toMatchObject({ success: true });
 			expect(names(host).get(client.connectionId)).toBe("one-client");
+		} finally {
+			await host.dispose();
+		}
+	}, 120_000);
+
+	it("#given a delegated socket whose viewer changed and a session the new viewer named itself on #when a session-scoped declaration made before the detach carries only the old viewer's name #then the session refuses it and the new viewer's name stays", async () => {
+		const host = await startHost();
+		try {
+			const { socket, madeBeforeDetach } = await viewerChanged(host);
+			const session = await openSession(socket, { retain_on_disconnect: true });
+			const scoped = { type: "set_client_info", sessionId: session.sessionId, width: 80 } as const;
+			expect(await socket.send({ ...scoped, client_id: "new-viewer" })).toMatchObject({ success: true });
+			expect(names(host).get(socket.connectionId)).toBe("new-viewer");
+
+			await commandAuthority.run(madeBeforeDetach, () =>
+				host.writer.withConnection(socket.connectionId, () =>
+					host.core.router.handle({ ...scoped, id: "late", client_id: "old-viewer" }),
+				),
+			);
+
+			expect(names(host).get(socket.connectionId)).toBe("new-viewer");
 		} finally {
 			await host.dispose();
 		}
