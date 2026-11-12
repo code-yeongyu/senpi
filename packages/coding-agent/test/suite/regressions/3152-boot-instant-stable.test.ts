@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 // two reads straddling an uptime tick computed instants a second apart. It is read from the kernel's boot record now:
 // `btime` in /proc/stat on Linux, `kern.boottime` from sysctl on macOS. Both sources are mocked and the platform is
 // passed in, so every case runs on every host.
-const kernel = vi.hoisted(() => ({ uptimeSeconds: 4_000, btime: 1_000, sysctlCalls: 0 }));
+const kernel = vi.hoisted(() => ({ uptimeSeconds: 4_000, btime: 1_000, sysctlCalls: 0, sysctlThrowsOnce: false }));
 vi.mock("node:os", async (importOriginal) => ({
 	...(await importOriginal<typeof import("node:os")>()),
 	uptime: () => kernel.uptimeSeconds,
@@ -26,6 +26,10 @@ vi.mock("node:child_process", async (importOriginal) => {
 		execFileSync: ((file: unknown, ...rest: unknown[]) => {
 			if (file !== "/usr/sbin/sysctl") return Reflect.apply(actual.execFileSync, actual, [file, ...rest]);
 			kernel.sysctlCalls++;
+			if (kernel.sysctlThrowsOnce) {
+				kernel.sysctlThrowsOnce = false;
+				throw new Error("sysctl: unavailable");
+			}
 			return `{ sec = ${kernel.btime}, usec = 123456 } Thu Jan  1 00:16:40 1970\n`;
 		}) as typeof actual.execFileSync,
 	};
@@ -42,6 +46,7 @@ async function freshProcessBootAtMs(): Promise<
 beforeEach(() => {
 	kernel.btime = 1_000;
 	kernel.sysctlCalls = 0;
+	kernel.sysctlThrowsOnce = false;
 });
 
 afterEach(() => {
@@ -75,4 +80,21 @@ it("reads the darwin boot record with one sysctl call however often it is asked"
 	processBootAtMs(Date.now, "darwin");
 	processBootAtMs(Date.now, "darwin");
 	expect(kernel.sysctlCalls).toBe(1);
+});
+
+it("retries a kernel read that failed instead of remembering the failure", async () => {
+	const processBootAtMs = await freshProcessBootAtMs();
+	kernel.sysctlThrowsOnce = true;
+	kernel.uptimeSeconds = 4_000;
+	vi.useFakeTimers({ toFake: ["Date"], now: 5_000_900 });
+
+	// The first read falls back to now - uptime; only a value the kernel returned is remembered, so the second reads it.
+	const fallback = processBootAtMs(Date.now, "darwin");
+	const fromKernel = processBootAtMs(Date.now, "darwin");
+
+	expect({ fallback, fromKernel, calls: kernel.sysctlCalls }).toEqual({
+		fallback: 1_001_000,
+		fromKernel: 1_000_000,
+		calls: 2,
+	});
 });
