@@ -1,4 +1,4 @@
-import { stat } from "node:fs/promises";
+import { type FileHandle, lstat, open as openHandle, stat } from "node:fs/promises";
 import type { FileIdentity } from "./sqlite-file-identity.ts";
 
 export interface OwnershipSafeLockOptions {
@@ -11,7 +11,8 @@ export interface OwnershipSafeLockOptions {
 	 * The caller's validation of the lock file, returning the identity it found; SQLite must open exactly that file. It
 	 * runs before each open attempt, after this process's earlier holders of the lock released it (`inProcessHolders`),
 	 * inside the same one-at-a-time section as the SQLite open (`openExpectedFile`). It must not open an existing lock file
-	 * (closing that descriptor would drop this process's locks on it) and must not block.
+	 * (closing that descriptor would drop this process's locks on it) and must not block. With it, `lockPath` must contain
+	 * no symbolic link: bun:sqlite then opens it with SQLITE_OPEN_NOFOLLOW, which refuses one anywhere in the path.
 	 */
 	readonly validateFile?: () => Promise<FileIdentity>;
 }
@@ -60,6 +61,8 @@ const DEFAULT_RETRIES = { retries: 100, minTimeout: 20, maxTimeout: 100 } as con
 interface LockDatabase {
 	exec(sql: string): void;
 	close(): void;
+	/** The file SQLite opened, proven to be the one `validateFile` answered; only with `validateFile`. */
+	readonly file?: FileIdentity;
 }
 
 /** Runs under both supported runtimes: bun:sqlite inside the Bun binary and
@@ -71,23 +74,29 @@ async function openLockDatabase(
 	validateFile: (() => Promise<FileIdentity>) | undefined,
 ): Promise<LockDatabase> {
 	if (typeof (globalThis as { Bun?: unknown }).Bun !== "undefined") {
-		const { Database } = await import("bun:sqlite");
-		const database = await openChecked(
+		const { constants, Database } = await import("bun:sqlite");
+		// A checked open never follows a link swapped in at the validated name (sqlite-file-identity.ts).
+		const noFollow = validateFile === undefined ? 0 : constants.SQLITE_OPEN_NOFOLLOW;
+		const flags = constants.SQLITE_OPEN_READWRITE | constants.SQLITE_OPEN_CREATE | noFollow;
+		const { opened: database, file } = await openChecked(
 			lockPath,
 			validateFile,
-			() => new Database(lockPath, { create: true }),
+			() => new Database(lockPath, flags),
 			(opened) => opened.close(false),
+			true,
 		);
-		return { exec: (sql) => database.exec(sql), close: () => database.close(false) };
+		return { exec: (sql) => database.exec(sql), close: () => database.close(false), file };
 	}
 	const { DatabaseSync } = await import("node:sqlite");
-	const database = await openChecked(
+	const { opened: database, file } = await openChecked(
 		lockPath,
 		validateFile,
 		() => new DatabaseSync(lockPath),
 		(opened) => opened.close(),
+		// node:sqlite takes no open flags, so SQLITE_OPEN_NOFOLLOW is out of reach.
+		false,
 	);
-	return { exec: (sql) => database.exec(sql), close: () => database.close() };
+	return { exec: (sql) => database.exec(sql), close: () => database.close(), file };
 }
 
 /**
@@ -100,13 +109,83 @@ async function openChecked<T>(
 	validateFile: (() => Promise<FileIdentity>) | undefined,
 	open: () => T,
 	close: (opened: T) => void,
-): Promise<T> {
-	if (validateFile === undefined) return open();
+	noFollow: boolean,
+): Promise<{ opened: T; file?: FileIdentity }> {
+	if (validateFile === undefined) return { opened: open() };
 	const { openExpectedFile } = await import("./sqlite-file-identity.ts");
-	const checked = await openExpectedFile(lockPath, validateFile, open, close);
+	let file: FileIdentity | undefined;
+	const validate = async (): Promise<FileIdentity> => (file = await validateFile());
+	const checked = await openExpectedFile(lockPath, validate, open, close, noFollow);
 	if ("replaced" in checked) throw new LockFileReplacedError(lockPath, checked.replaced);
 	if ("busy" in checked) throw new LockFileBusyError(lockPath, checked.busy);
-	return checked.opened;
+	return { opened: checked.opened, file };
+}
+
+/**
+ * The validated lock files (`validateFile`) this process holds the lock on, by identity, each with the descriptors of it
+ * that `openBesideHeldLocks` got anyway. Closing any descriptor of a file drops all of this process's POSIX locks on it
+ * (senpi#6478), and a writer in the directory can make another name a hard link to a lock file, so those descriptors
+ * stay open, unused, until the lock is released.
+ */
+const heldFiles = new Map<string, FileHandle[]>();
+
+/** An open of a name that is not a lock file this process holds (`openBesideHeldLocks`). */
+export interface BesideHeldLocks {
+	readonly handle: FileHandle;
+	/** Closes the handle, or keeps it open until the lock is released if its file is a lock file held by now. */
+	close(): Promise<void>;
+}
+
+/** A name opened beside the held locks is a lock file this process holds; its descriptor would drop the lock. */
+class HeldLockFileError extends Error {
+	readonly code = "ELOCK_FILE_ALIAS" as const;
+
+	constructor(path: string) {
+		super(`${path} is a lock file this process holds`);
+		this.name = "HeldLockFileError";
+	}
+}
+
+/**
+ * Opens `path` for a caller that must never get a descriptor of a lock file this process holds: refused before the open
+ * when `path` names one, and after it when the descriptor is one (a name swapped in between), which is then kept open
+ * until that lock is released. What remains is a lock taken in this process while the returned handle's close runs.
+ */
+export async function openBesideHeldLocks(path: string, flags: number, mode?: number): Promise<BesideHeldLocks> {
+	// An lstat failure is left to the open below, which meets the same entry and reports it.
+	const entry = heldFiles.size > 0 ? await lstat(path, { bigint: true }).catch(() => undefined) : undefined;
+	if (entry !== undefined && heldFiles.has(identityKey(entry))) throw new HeldLockFileError(path);
+	const handle = await openHandle(path, flags, mode);
+	let key: string;
+	try {
+		key = identityKey(await handle.stat({ bigint: true }));
+	} catch (error: unknown) {
+		await handle.close();
+		throw error;
+	}
+	const parked = heldFiles.get(key);
+	if (parked !== undefined) {
+		parked.push(handle);
+		throw new HeldLockFileError(path);
+	}
+	const close = async (): Promise<void> => {
+		const held = heldFiles.get(key);
+		if (held === undefined) await handle.close();
+		else held.push(handle);
+	};
+	return { handle, close };
+}
+
+/** Closes the descriptors `openBesideHeldLocks` kept open on `file`, once its lock is released. */
+async function releaseHeldFile(file: FileIdentity | undefined): Promise<void> {
+	if (file === undefined) return;
+	const parked = heldFiles.get(identityKey(file)) ?? [];
+	heldFiles.delete(identityKey(file));
+	await Promise.all(parked.map((handle) => handle.close()));
+}
+
+function identityKey(file: FileIdentity): string {
+	return `${file.dev}:${file.ino}`;
 }
 
 /**
@@ -200,13 +279,18 @@ async function attemptUntil(
 			database.exec(`PRAGMA busy_timeout = ${busyMs}; BEGIN EXCLUSIVE;`);
 			let released = false;
 			const held = database;
+			if (held.file !== undefined) heldFiles.set(identityKey(held.file), []);
 			return async () => {
 				if (released) return;
 				released = true;
 				try {
 					held.exec("COMMIT;");
 				} finally {
-					held.close();
+					try {
+						held.close();
+					} finally {
+						await releaseHeldFile(held.file);
+					}
 				}
 			};
 		} catch (error: unknown) {

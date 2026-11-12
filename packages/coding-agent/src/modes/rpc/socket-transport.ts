@@ -1,9 +1,9 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { constants } from "node:fs";
-import { chmod, link, lstat, mkdir, open, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
+import { chmod, link, lstat, mkdir, open, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import type { Socket } from "node:net";
 import { basename, dirname, join, win32 } from "node:path";
-import { acquireOwnershipSafeLock } from "./ownership-safe-lock.ts";
+import { acquireOwnershipSafeLock, type BesideHeldLocks, openBesideHeldLocks } from "./ownership-safe-lock.ts";
 import type { FileIdentity } from "./sqlite-file-identity.ts";
 
 const WINDOWS_PIPE_PREFIX = "\\\\.\\pipe\\senpi-rpc-";
@@ -51,17 +51,19 @@ export async function ensureSocketSecret(path: string): Promise<Buffer> {
  * The bytes of the regular file at `path`, read up to one byte past the valid length, or `undefined` when
  * nothing is there. A terminal symlink or another entry type throws instead of being followed or written
  * through: only a regular file is a credential this process may reuse or repair
- * (sisyphuslabs/omo-desktop-app#4199).
+ * (sisyphuslabs/omo-desktop-app#4199). A name that is a hard link to a lock file this process holds, as the publish lock
+ * read under, throws too, and its descriptor is never closed under that lock (`openBesideHeldLocks`).
  */
 async function readSecretEntry(path: string): Promise<Buffer | undefined> {
-	let handle: Awaited<ReturnType<typeof open>>;
+	let opened: BesideHeldLocks;
 	try {
-		handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+		opened = await openBesideHeldLocks(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
 	} catch (error: unknown) {
 		if (isNodeErrorCode(error, "ENOENT")) return undefined;
 		if (isNodeErrorCode(error, "ELOOP")) throw new Error(`RPC socket secret is not a regular file: ${path}`);
 		throw error;
 	}
+	const { handle } = opened;
 	try {
 		if (!(await handle.stat()).isFile()) throw new Error(`RPC socket secret is not a regular file: ${path}`);
 		const buffer = Buffer.alloc(SOCKET_SECRET_BYTES + 1);
@@ -73,7 +75,7 @@ async function readSecretEntry(path: string): Promise<Buffer | undefined> {
 		}
 		return buffer.subarray(0, length);
 	} finally {
-		await handle.close();
+		await opened.close();
 	}
 }
 
@@ -126,6 +128,7 @@ async function publishSocketSecretIfAbsent(path: string, candidate: Buffer): Pro
 }
 
 async function writeStaging(staging: string, candidate: Buffer): Promise<void> {
+	// `O_EXCL` creates a new file, so this descriptor is never one of a lock file this process holds.
 	const handle = await open(
 		staging,
 		constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0),
@@ -157,7 +160,8 @@ async function writeStaging(staging: string, candidate: Buffer): Promise<void> {
 }
 
 async function syncDirectory(dir: string): Promise<void> {
-	const handle = await open(dir, constants.O_RDONLY);
+	// `O_DIRECTORY`: a name swapped for a hard link to the held lock file is refused (ENOTDIR), never opened and closed.
+	const handle = await open(dir, constants.O_RDONLY | (constants.O_DIRECTORY ?? 0));
 	try {
 		await handle.sync();
 	} finally {
@@ -237,7 +241,13 @@ async function writeSocketSecretInPlace(path: string): Promise<Buffer> {
 }
 
 export async function readSocketSecret(path: string): Promise<Buffer> {
-	const secret = await readFile(path);
+	const opened = await openBesideHeldLocks(path, constants.O_RDONLY);
+	let secret: Buffer;
+	try {
+		secret = await opened.handle.readFile();
+	} finally {
+		await opened.close();
+	}
 	if (secret.length !== SOCKET_SECRET_BYTES) throw new Error(`invalid RPC socket secret: ${path}`);
 	return secret;
 }

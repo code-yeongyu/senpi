@@ -21,8 +21,16 @@ declare module "bun:sqlite" {
 		immediate(): Result;
 	}
 
+	/** The `SQLITE_OPEN_*` flags the workspace passes as a number to `new Database(filename, flags)`. */
+	export const constants: {
+		readonly SQLITE_OPEN_READWRITE: number;
+		readonly SQLITE_OPEN_CREATE: number;
+		readonly SQLITE_OPEN_NOFOLLOW: number;
+	};
+
 	export class Database {
-		constructor(filename: string, options?: { readonly create?: boolean });
+		/** `options` as a number is the `SQLITE_OPEN_*` flags of the open (`constants`). */
+		constructor(filename: string, options?: number | { readonly create?: boolean });
 		exec(sql: string): unknown;
 		prepare(sql: string): {
 			run(...params: unknown[]): unknown;

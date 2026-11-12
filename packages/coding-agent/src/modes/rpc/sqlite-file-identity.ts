@@ -39,9 +39,14 @@ const DESCRIPTOR_DIRECTORY: Partial<Record<NodeJS.Platform, string>> = { linux: 
 /**
  * The checked opens of this process, one at a time, each with its caller's validation open: a contender's own open of
  * `expected` inside another's listing window would otherwise count as that one's added descriptor and hide its impostor.
- * Each link settles either way, so one failed open never stalls the next, and none waits on a file: `validate` must not
- * block (the callers open a file only to create it, `O_EXCL | O_NONBLOCK`, and `lstat` an existing one), and the
- * listings and the SQLite open do not wait on the file either.
+ * Each link settles either way, so one failed open never stalls the next. `validate` must not block (the callers open a
+ * file only to create it, `O_EXCL | O_NONBLOCK`, and `lstat` an existing one), and the listings open no file (`readdir`
+ * and `fstat`). SQLite's open resolves `path` itself, `lstat` per component, then opens the result `O_RDWR | O_NOFOLLOW`
+ * (unix VFS): a FIFO opens at once, but a symbolic link swapped in before that resolution is followed, and the open of a
+ * device it names can block the process (a serial tty without CLOCAL). With `noFollow` (SQLITE_OPEN_NOFOLLOW, which
+ * refuses a link anywhere in `path`) no link is ever followed. Without it (node:sqlite takes no open flags), `path` is
+ * checked once more right before the open, and a link swapped in between that `lstat` and SQLite's own is still
+ * followed. A device node put at `path` itself needs `mknod` privilege or a device file on the same filesystem.
  */
 let checkedOpens: Promise<unknown> = Promise.resolve();
 
@@ -60,14 +65,18 @@ let checkedOpens: Promise<unknown> = Promise.resolve();
  * - Everywhere: `path` itself must be a regular file (not a link) with `expected`'s identity. On Windows this is the
  *   check of SQLite's handle: SQLite opens without FILE_SHARE_DELETE, so the file it holds cannot be renamed away from
  *   or deleted under that name while it is open.
+ *
+ * `noFollow`: `open` passes SQLITE_OPEN_NOFOLLOW, so `path` must contain no symbolic link; its refusal of one answers
+ * `replaced`. Otherwise `path` is checked by name right before `open`, and a refusal there opens nothing.
  */
 export function openExpectedFile<T>(
 	path: string,
 	validate: () => Promise<FileIdentity>,
 	open: () => T,
 	close: (opened: T) => void,
+	noFollow: boolean,
 ): Promise<CheckedOpen<T>> {
-	const run = checkedOpens.then(() => checkedOpen(path, validate, open, close));
+	const run = checkedOpens.then(() => checkedOpen(path, validate, open, close, noFollow));
 	checkedOpens = run.catch(() => undefined);
 	return run;
 }
@@ -77,10 +86,20 @@ async function checkedOpen<T>(
 	validate: () => Promise<FileIdentity>,
 	open: () => T,
 	close: (opened: T) => void,
+	noFollow: boolean,
 ): Promise<CheckedOpen<T>> {
 	const expected = await validate();
 	const before = await openFiles();
-	const opened = open();
+	const moved = noFollow ? undefined : await nameRefusal(path, expected);
+	if (moved !== undefined) return moved;
+	let opened: T;
+	try {
+		opened = open();
+	} catch (error: unknown) {
+		if (noFollow && isLinkRefusal(error))
+			return { replaced: `a symbolic link is in the path SQLite opened: ${path}` };
+		throw error;
+	}
 	const after = before && (await openFiles());
 	const refusal = before
 		? after
@@ -181,6 +200,12 @@ function regularFile(fd: number): Promise<OpenFile | undefined> {
 			resolve(error === null && info.isFile() ? { fd, dev: info.dev, ino: info.ino } : undefined);
 		});
 	});
+}
+
+/** SQLITE_CANTOPEN_SYMLINK (1550), as node:sqlite's `errcode` or bun:sqlite's `code`; by code only, like `isBusy`. */
+function isLinkRefusal(error: unknown): boolean {
+	if (typeof error !== "object" || error === null) return false;
+	return Reflect.get(error, "errcode") === 1550 || Reflect.get(error, "code") === "SQLITE_CANTOPEN_SYMLINK";
 }
 
 function descriptorKey(file: OpenFile): string {
