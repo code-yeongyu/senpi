@@ -156,6 +156,18 @@ describe("session move review fixes (senpi#3631)", () => {
 		},
 	);
 
+	it("#given a bundle folder whose manifest lists a path one folder too deep and short enough to show #then the refusal names the whole path, quoted, with nothing cut from it", async () => {
+		const { cwdB, bundleDir, ledger, readIdentity } = await setup();
+		const tooDeep = `files/${"d/".repeat(MAX_BUNDLE_PATH_SEGMENTS - 1)}x`;
+		editManifest(bundleDir, (manifest) => {
+			manifest.sidecars = [{ path: tooDeep, sha256: "0".repeat(64) }];
+		});
+
+		const refused = importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity });
+
+		await expect(refused).rejects.toThrow(`segments: ${JSON.stringify(tooDeep)})`);
+	});
+
 	it("#given a bundle folder whose manifest is null #then the bundle is invalid, as for any manifest that is not an object, and the move's record is untouched", async () => {
 		const { cwdB, bundleDir, ledger, readIdentity } = await setup();
 		const record = join(ledger.dir, `${MOVE}.json`);

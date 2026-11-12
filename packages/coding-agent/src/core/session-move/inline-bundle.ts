@@ -6,14 +6,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, posix, relative, sep } from "node:path";
-import {
-	leavesBundle,
-	listedFiles,
-	MANIFEST_FILE,
-	MoveBundleInvalidError,
-	nestsTooDeep,
-	parseManifest,
-} from "./bundle.ts";
+import { leavesBundle, listedFiles, MANIFEST_FILE, MoveBundleInvalidError, parseManifest, shown } from "./bundle.ts";
 import { filesUnder } from "./export.ts";
 
 export interface InlineBundleFile {
@@ -56,17 +49,13 @@ export async function readInlineBundle(
 /** Both separators count, as in `leavesBundle`: a bundle written on one OS is read on another. */
 const segmentsOf = (path: string): string[] => path.split(/[\\/]/);
 
-/** A sent path as an error may show it: quoted, and cut short when it is long. */
-const shown = (path: string): string => JSON.stringify(path.length > 120 ? `${path.slice(0, 120)}...` : path);
-
 /**
  * A path an inline file may be written at: relative, with no empty, `.` or `..` segment under either separator, no
- * NUL, no segment or whole path too long to be a file where the bundle is staged, and no deeper than any bundle path
- * may be (`MAX_BUNDLE_PATH_SEGMENTS`).
+ * NUL, and no segment or whole path too long to be a file where the bundle is staged. How deep a path may be is
+ * the manifest's rule (`MAX_BUNDLE_PATH_SEGMENTS`): every sent path is either listed there or refused as unlisted.
  */
 function staysInBundle(path: string): boolean {
-	if (leavesBundle(path) || nestsTooDeep(path) || path.includes("\0") || Buffer.byteLength(path) > MAX_PATH_BYTES)
-		return false;
+	if (leavesBundle(path) || path.includes("\0") || Buffer.byteLength(path) > MAX_PATH_BYTES) return false;
 	return segmentsOf(path).every(
 		(segment) => segment !== "" && segment !== "." && Buffer.byteLength(segment) <= MAX_SEGMENT_BYTES,
 	);
