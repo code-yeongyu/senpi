@@ -7,6 +7,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { getDefaultSessionDirPath } from "../../src/core/session-manager.ts";
 import { createInProcessRig } from "./rpc-inprocess-host-support.ts";
 import { devices, hostAndRelease, importedOnB, landedOnB, move } from "./rpc-move-session-support.ts";
 
@@ -189,19 +190,20 @@ describe("move_session status given a landing while the move's record is still h
 		expect(recorded(fixture.agentB, "move-r2").state).toBe("accepted");
 	});
 
-	it("#given a landed move whose record is here #when status names another work folder, where no file is #then the record answers: accepted at the recorded file", async () => {
+	it("#given a landed move whose record is here #when status names another work folder, where no file is #then the record answers: accepted at the recorded file, and no session folder is made for that work folder", async () => {
 		const fixture = await devices();
 		await using a = createInProcessRig(fixture.agentA);
 		await using b = createInProcessRig(fixture.agentB);
 		const onB = await importedOnB(a, b, fixture, "move-r3");
+		const otherWork = join(fixture.base, "another-work-folder");
 
 		const answer = await move(b, {
 			op: "status",
 			moveId: "move-r3",
-			landing: { ...landingOnB(fixture), cwd: join(fixture.base, "another-work-folder") },
+			landing: { ...landingOnB(fixture), cwd: otherWork },
 		});
 
 		expect(answer.data).toEqual({ state: "accepted", ...landedOnB(fixture, onB) });
-		expect(existsSync(join(fixture.base, "another-work-folder"))).toBe(false);
+		expect(existsSync(getDefaultSessionDirPath(otherWork, fixture.agentB))).toBe(false);
 	});
 });
