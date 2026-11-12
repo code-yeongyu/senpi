@@ -1656,6 +1656,54 @@ jobs:
           npm ci --ignore-scripts
           npm run build
 
+      # A move record's commit stamp is aged by the machine's uptime, on the premise that a wall-clock step does not
+      # move it. Measured here on the hosted macOS runner: the clock is stepped one hour forward with sudo and back.
+      - name: A wall-clock step does not move the uptime a move record is aged by
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          set -euo pipefail
+          landing="$PWD/packages/coding-agent/dist/core/session-move/move-landing.js"
+          probe="$RUNNER_TEMP/stamp-age.mjs"
+          cat > "$probe" <<'EOF'
+          import { readFileSync, writeFileSync } from "node:fs";
+          import { pathToFileURL } from "node:url";
+          const [landing, record, mode] = process.argv.slice(2);
+          const { stampAge, stampClock, stampFields } = await import(pathToFileURL(landing).href);
+          if (mode === "write") writeFileSync(record, JSON.stringify({ at: new Date().toISOString(), ...stampFields(stampClock()) }));
+          else console.log(stampAge(JSON.parse(readFileSync(record, "utf8")), stampClock()));
+          EOF
+          uptime_of() { "$1" -e 'console.log(require("node:os").uptime())'; }
+          node "$probe" "$landing" "$RUNNER_TEMP/record-node.json" write
+          bun "$probe" "$landing" "$RUNNER_TEMP/record-bun.json" write
+          sudo systemsetup -setusingnetworktime off > /dev/null 2>&1 || echo "network time could not be turned off; the reads below follow the step within seconds"
+          restore() {
+            sudo date -u "$(date -u -r $(( $(date +%s) - 3600 )) +%m%d%H%M%Y.%S)" > /dev/null
+            sudo systemsetup -setusingnetworktime on > /dev/null 2>&1 || true
+            sudo sntp -sS time.apple.com > /dev/null 2>&1 || true
+          }
+          wall0=$(date +%s); node0=$(uptime_of node); bun0=$(uptime_of bun)
+          sudo date -u "$(date -u -r $(( wall0 + 3600 )) +%m%d%H%M%Y.%S)" > /dev/null
+          trap restore EXIT
+          wall1=$(date +%s); node1=$(uptime_of node); bun1=$(uptime_of bun)
+          age_node=$(node "$probe" "$landing" "$RUNNER_TEMP/record-node.json")
+          age_bun=$(bun "$probe" "$landing" "$RUNNER_TEMP/record-bun.json")
+          echo "wall clock (s): before $wall0, after $wall1, moved $(( wall1 - wall0 ))"
+          echo "node os.uptime() (s): before $node0, after $node1"
+          echo "bun os.uptime() (s): before $bun0, after $bun1"
+          echo "stamp age after the step (ms): node $age_node, bun $age_bun (the wall clock alone would say about 3600000)"
+          node -e '
+            const [wall0, wall1, node0, node1, bun0, bun1, ageNode, ageBun] = process.argv.slice(1).map(Number);
+            const fail = (why) => { console.error(`::error::${why}`); process.exit(1); };
+            if (wall1 - wall0 < 3500) fail("the wall clock did not step, so the premise was not tested");
+            const elapsed = wall1 - wall0 - 3600;
+            for (const [name, moved] of [["node", node1 - node0], ["bun", bun1 - bun0]])
+              if (moved < 0 || Math.abs(moved - elapsed) > 5) fail(`${name} os.uptime() moved ${moved} s across the step; the real elapsed time was about ${elapsed} s`);
+            for (const [name, age] of [["node", ageNode], ["bun", ageBun]])
+              if (!(age >= 0 && age < 60000)) fail(`${name}: the stamp age after the step is ${age} ms, not the machine age`);
+          ' "$wall0" "$wall1" "$node0" "$node1" "$bun0" "$bun1" "$age_node" "$age_bun"
+
       - name: Show the crash-handling environment
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         shell: bash
