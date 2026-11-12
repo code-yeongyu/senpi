@@ -896,9 +896,9 @@ the failure on stderr, as `senpi rpc connection <id> failed: <cause>` (or `senpi
 A request gets one answer. The host answers a handler's failure only when no answer under the request's `id` was
 queued for that connection while its line was handled: a control answer (a compact `open_session` that fails after it
 was accepted ends with its own refusal, which carries its `admissionId`) or a `close_session` reply. A reply that a
-compact `open_session` or `subscribe_sessions` hands to its admission baseline is written later by the connection and
-is not seen that way; for it the one answer rests on the handler returning right after it hands the reply over
-(senpi#6561). A command sent without an `id` is owed no answer and gets none. The stderr line is written in every case.
+compact `open_session`, `subscribe_sessions` or `reset_stream` hands to its admission baseline is written later by
+the connection. It counts as that answer from the moment it is handed to a baseline the connection took; a reply
+handed to a baseline the connection did not take is written by nothing and does not count (senpi#6561). A command sent without an `id` is owed no answer and gets none. The stderr line is written in every case.
 
 #### get_recovery_page
 

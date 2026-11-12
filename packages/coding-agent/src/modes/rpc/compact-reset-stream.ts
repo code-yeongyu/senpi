@@ -37,15 +37,19 @@ export async function resetStream(host: RouterContext, command: Extract<RpcComma
 		generation,
 		data: { recovery: { token: token.id, componentRef: "manifest" } },
 	};
-	host.writer.installAdmissionBaseline(
-		peer,
-		admissionBaseline(
-			Promise.resolve(answer),
-			{ sessionId, admissionId, generation, token: token.id },
-			() => true,
-			stream.routes,
+	const reply = host.writer.baselineAnswer(peer);
+	reply.install(() =>
+		host.writer.installAdmissionBaseline(
+			peer,
+			admissionBaseline(
+				reply.answer,
+				{ sessionId, admissionId, generation, token: token.id },
+				() => true,
+				stream.routes,
+			),
+			() => host.writer.socketEpochOf(peer) === socketEpoch,
 		),
-		() => host.writer.socketEpochOf(peer) === socketEpoch,
 	);
+	reply.hand(answer);
 	return undefined;
 }

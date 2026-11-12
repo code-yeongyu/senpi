@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { CompactAdmissionError } from "./compact-admissions.ts";
-import { admissionBaseline } from "./compact-admission-baseline.ts";
+import { admissionBaseline, type BaselineAnswer } from "./compact-admission-baseline.ts";
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
 import type { OpenRpcSession } from "./session-registry.ts";
 import { RouteAnnouncement, type RouteRetirement } from "./route-retire-reasons.ts";
@@ -38,7 +38,7 @@ export async function compactOpen(
 	const fingerprint = createHash("sha256")
 		.update(JSON.stringify(Object.entries(request).sort(([a], [b]) => a.localeCompare(b))))
 		.digest("hex");
-	let delivery: ReturnType<typeof Promise.withResolvers<Readonly<Record<string, unknown>> | undefined>> | undefined;
+	let delivery: BaselineAnswer | undefined;
 	let baseline: (() => void) | undefined;
 	let completedOpen: { readonly sessionId: string; readonly release: () => Promise<void> } | undefined;
 	// RULING-119: an accepted open that ends unanswered retires its route only once its tagged final reply is enqueued.
@@ -47,8 +47,10 @@ export async function compactOpen(
 	let retireAfterReply: ((retirement: RouteRetirement) => void) | undefined;
 	const answerFinally = (emit: () => void) => {
 		announced = RouteAnnouncement.emit("open_ended", emit);
-		retireAfterReply?.(announced);
+		// Cleared first: a retirement that throws is not attempted again by the failure path below.
+		const retire = retireAfterReply;
 		retireAfterReply = undefined;
+		retire?.(announced);
 	};
 	const cancelledAnswer = async () => {
 		const result = await admissions.result(socketEpoch, admissionId);
@@ -83,14 +85,16 @@ export async function compactOpen(
 				const token = frozen.value.token;
 				const identity = { sessionId, admissionId, generation: token.admission.generation, token: token.id };
 				let active = true;
-				delivery = Promise.withResolvers<Readonly<Record<string, unknown>> | undefined>();
-				const reply = delivery.promise;
+				const reply = host.writer.baselineAnswer(peer);
+				delivery = reply;
 				host.writer.registerAdmission(peer, admissionId, sessionId);
 				baseline = () =>
-					host.writer.installAdmissionBaseline(
-						peer,
-						admissionBaseline(reply, identity, () => active),
-						() => host.writer.socketEpochOf(peer) === socketEpoch,
+					reply.install(() =>
+						host.writer.installAdmissionBaseline(
+							peer,
+							admissionBaseline(reply.answer, identity, () => active),
+							() => host.writer.socketEpochOf(peer) === socketEpoch,
+						),
 					);
 				accepted = { admissionId, generation: token.admission.generation };
 				const retire = (retirement: RouteRetirement) => {
@@ -153,14 +157,17 @@ export async function compactOpen(
 			const reply = delivery;
 			const deliver = () => {
 				baseline?.();
-				reply.resolve(response);
+				reply.hand(response);
 			};
 			if (cancelled) answerFinally(deliver);
 			else deliver();
 		} else await host.writer.enqueueControl(response, peer);
 		return undefined;
 	} catch (cause) {
-		delivery?.resolve(undefined);
+		delivery?.hand(undefined);
+		// An open whose answer was already handed to its baseline is answered. Nothing below queues a refusal on top of
+		// it, and the host, which asks whether the request was answered, adds none either (senpi#6561).
+		if (delivery?.taken === true) throw cause;
 		if (!(cause instanceof OpenRefused) && !(cause instanceof CompactAdmissionError)) {
 			// An accepted open ends with its own typed refusal, tagged with its admission. It is queued before the
 			// rethrow, so the host, which answers a throwing handler only when nothing was answered under the request's
