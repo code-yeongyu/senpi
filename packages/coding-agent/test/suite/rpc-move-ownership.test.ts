@@ -90,7 +90,18 @@ describe('move_session { op: "ownership" } (senpi#6484, part 4)', () => {
 		const missing = join(folder, "no-such-session.jsonl");
 		const headerless = join(folder, "not-a-session.jsonl");
 		writeFileSync(headerless, `${JSON.stringify({ type: "custom", customType: "note", data: {} })}\n`);
-		const before = filesUnder(folder);
+		// Only the places this command could write. The folder as a whole also holds the engine's own files (its log, its
+		// scheduler's beat, its inbox markers), which come and go by themselves.
+		const owned = () => ({
+			transcripts: readdirSync(folder)
+				.filter((name) => name.endsWith(".jsonl"))
+				.sort(),
+			session: readFileSync(s1.sessionPath, "utf8"),
+			headerless: readFileSync(headerless, "utf8"),
+			staged: filesUnder(outgoingStateDir(missing, MOVE)),
+			moves: filesUnder(join(folder, "agent", "session-moves")),
+		});
+		const before = owned();
 
 		for (const sessionPath of [missing, headerless]) {
 			const answer = await host.send(
@@ -101,7 +112,7 @@ describe('move_session { op: "ownership" } (senpi#6484, part 4)', () => {
 		}
 
 		expect(existsSync(missing)).toBe(false);
-		expect(filesUnder(folder)).toEqual(before);
+		expect(owned()).toEqual(before);
 	}, 120_000);
 
 	it("records nothing about a move it was asked about, unlike a status", async () => {

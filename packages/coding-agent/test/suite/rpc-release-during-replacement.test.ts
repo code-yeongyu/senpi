@@ -339,4 +339,56 @@ describe("a release or an unload while a replacement is still telling extensions
 		},
 		120_000,
 	);
+
+	it("a refusal still names the session the release began on when that session's id is rewritten in place during the wait", async () => {
+		let exportEntered!: () => void;
+		const exporting = new Promise<void>((resolve) => {
+			exportEntered = resolve;
+		});
+		let letExportGo!: () => void;
+		const exportHeld = new Promise<void>((resolve) => {
+			letExportGo = resolve;
+		});
+		const gateway = gatewayFixture();
+		const extension: ExtensionFactory = (pi) => {
+			gateway.extension(pi);
+			pi.on("session_move_export", async () => {
+				exportEntered();
+				await exportHeld;
+			});
+		};
+		await using host = await startReleaseHost(extension);
+		host.faux.setResponses([fauxAssistantMessage("seed reply"), heldTurn]);
+		const s1 = await host.open("s1");
+		const beganOn = s1.session.sessionId;
+		const started = nextEvent(s1.session, "agent_start");
+		await host.send(send({ type: "prompt", id: "work", sessionId: s1.sessionId, message: "long work" }));
+		await started;
+		await host.send(send({ type: "follow_up", id: "queued", sessionId: s1.sessionId, message: "after the work" }));
+
+		const releasing = host.send(
+			send({
+				type: "release_session",
+				id: "release",
+				sessionId: s1.sessionId,
+				reason: "move",
+				moveId: "move-6484",
+				target: "device-b",
+				interrupt: true,
+			}),
+		);
+		await exporting;
+		expect(await host.attach(s1.sessionPath, "second-client")).toMatchObject({ success: true });
+		// The same session object, a new id: what an in-memory fork does to the manager it reuses.
+		s1.session.sessionManager.newSession();
+		expect(s1.session.sessionManager.getSessionId()).not.toBe(beganOn);
+		letExportGo();
+		const answer = await releasing;
+
+		expect(answer).toMatchObject({
+			success: false,
+			errorCode: "attached",
+			errorData: { interrupted: true, dropped: { user_messages: ["after the work"] }, taken_from: beganOn },
+		});
+	}, 120_000);
 });

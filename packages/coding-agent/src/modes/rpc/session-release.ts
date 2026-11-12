@@ -110,11 +110,13 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 				"expectSessionId is the durable id of the session (get_state's sessionId); an absent field means no expectation",
 		});
 	if (port.draining()) return refusal(command.id, RPC_ERROR_HOST_DRAINING);
-	const first = releasable(port, command, undefined);
+	const first = releasable(port, command, undefined, "first lookup");
 	if (!("session" in first)) return first;
+	// Read once, before any wait: what an interrupt takes came out of this session, and the object's id is not read again.
+	const beganOn = first.session.sessionManager.getSessionId();
 	// The seal records the session's own id, which the bundle and the receiver use as a folder name: a move of a session
 	// whose id is not a plain id is refused here, before anything is interrupted or sealed (never sanitized).
-	if (command.reason === "move" && !isPlainId(first.session.sessionManager.getSessionId())) {
+	if (command.reason === "move" && !isPlainId(beganOn)) {
 		return refusal(command.id, RPC_ERROR_RELEASE_UNSUPPORTED, { detail: "session_id_not_plain" });
 	}
 	const busy = busySignals(port, command.sessionId, first.session);
@@ -155,25 +157,30 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 			if (failed !== undefined)
 				throw new Error(`${failed.extensionPath} could not write its state for the move: ${failed.error}`);
 		}
-		answer = await claimAndRelease(port, command, first.session, interrupted, dropped, stagedState?.attempt, () => {
-			sealed = true;
-		});
+		answer = await claimAndRelease(
+			port,
+			command,
+			first.session,
+			beganOn,
+			interrupted,
+			dropped,
+			stagedState?.attempt,
+			() => {
+				sealed = true;
+			},
+		);
 		return answer;
 	} catch (cause) {
 		if (cause instanceof SessionMovedAwayError) {
 			answer = refusal(command.id, cause.code, {
 				detail: cause.message,
-				...(interrupted
-					? { interrupted: true, dropped, taken_from: first.session.sessionManager.getSessionId() }
-					: {}),
+				...(interrupted ? { interrupted: true, dropped, taken_from: beganOn } : {}),
 			});
 			return answer;
 		}
 		answer = refusal(command.id, RPC_ERROR_RELEASE_FAILED, {
 			detail: cause instanceof Error ? cause.message : String(cause),
-			...(interrupted
-				? { interrupted: true, dropped, taken_from: first.session.sessionManager.getSessionId() }
-				: {}),
+			...(interrupted ? { interrupted: true, dropped, taken_from: beganOn } : {}),
 		});
 		return answer;
 	} finally {
@@ -194,15 +201,14 @@ async function claimAndRelease(
 	port: SessionReleasePort,
 	command: ReleaseSessionCommand,
 	first: AgentSession,
+	beganOn: string,
 	interrupted: boolean,
 	dropped: ReleaseDropped,
 	stateAttempt: string | undefined,
 	onSealed: () => void,
 ): Promise<RpcResponse> {
 	// After an interrupt every refusal says which session the taken input came out of: the one this release began on.
-	const taken = interrupted
-		? { interrupted: true, dropped, taken_from: first.sessionManager.getSessionId() }
-		: undefined;
+	const taken = interrupted ? { interrupted: true, dropped, taken_from: beganOn } : undefined;
 	const ready = releasable(port, command, taken, first);
 	if (!("session" in ready)) return ready;
 	const stillBusy = busySignals(port, command.sessionId, ready.session);
@@ -292,13 +298,14 @@ function busyCode(signals: readonly ReleaseBusySignal[]): string {
 
 /**
  * `taken`: what an interrupt already took out of the session, merged into any refusal's `errorData`.
- * `first`: at the second lookup, the session the release began on.
+ * `began`: required, so no caller can leave the replaced-session check out by omission: the first lookup says so, and
+ * every later lookup passes the session the release began on.
  */
 function releasable(
 	port: SessionReleasePort,
 	command: ReleaseSessionCommand,
 	taken: Readonly<Record<string, unknown>> | undefined,
-	first?: AgentSession,
+	began: AgentSession | "first lookup",
 ): Releasable | RpcResponse {
 	const refuse = (code: string, data?: Readonly<Record<string, unknown>>): RpcResponse =>
 		refusal(command.id, code, data || taken ? { ...data, ...taken } : undefined);
@@ -320,7 +327,7 @@ function releasable(
 	// first header write). What was staged and taken belongs to the session the release began on: nothing is sealed on
 	// its successor, whether or not the caller sent `expectSessionId` (senpi#6484). Checked before the `attached` and
 	// busy checks: either refusal invites a retry (with `force`, or later), and that retry would release the successor.
-	if (first !== undefined && session !== first)
+	if (began !== "first lookup" && session !== began)
 		return refuse(RPC_ERROR_SESSION_MISMATCH, {
 			detail: "the session behind this route was replaced while the release was in progress; nothing was released",
 			...(expected === undefined ? {} : { expected }),
