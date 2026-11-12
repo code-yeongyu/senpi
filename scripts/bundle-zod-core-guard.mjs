@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative, resolve } from "node:path";
 
 // senpi#6497: the MCP client parses remote-server JSON-RPC with schemas built on whichever zod core the MCP SDK's
 // `zod/v4` import reached. A hoisted zod 3.25.x answers it with a 4.0.0 core, so every emitted file is scanned for
@@ -35,8 +35,11 @@ export const PINNED_CLAUDE_AGENT_SDK_VERSION = "0.3.321";
  *  - the exact SDK version (`sdkVersion`; the installed package and every lockfile entry must equal it);
  *  - the sha256 of every SDK file that carries a stale copy (`sources`, hashed as published, before any bundler touches
  *    them), and the stale copies each carries. An SDK file carrying a stale copy that is not listed here fails;
- *  - where the copies may land: `reachedSource` is the SDK entry the CLI imports, and each `bundle` file (pattern) holds
- *    exactly its copies, as does each compiled binary. Only placement, count and version are checked in the output:
+ *  - where the copies may land: `reachedSource` is the SDK entry the CLI imports. In the bundle, its copies may sit only in
+ *    the outputs whose esbuild metafile inputs include that file (`sdkSourceOutputs`), each output holds exactly its
+ *    copies, and those outputs must be exactly one per `bundle` name (pattern): the build also emits an unrelated
+ *    `chunks/sdk-*.js`, so a name pattern alone cannot place them (senpi#6514 review). Each compiled binary holds
+ *    exactly its copies too. Only placement, count and version are checked in the output:
  *    the bundler renames, tree-shakes and (for `bun build --compile`) folds `process.platform` per target, so output
  *    bytes are not a stable identity, while the source hash above is.
  * To re-review after an SDK bump: install it, run the scan, read the new source sha256 values from the failure, review the
@@ -187,6 +190,39 @@ function verifiedSdk(allowance, sdk) {
 	return { sources, expected: reached.stale };
 }
 
+/**
+ * The bundle outputs (relative to `bundleDir`, forward slashes) whose esbuild metafile inputs include the vendored SDK's
+ * `reachedSource`: the only files its stale copies may land in. Metafile paths are relative to `absWorkingDir`.
+ */
+export function sdkSourceOutputs(metafiles, bundleDir, allowance = STALE_ZOD_ALLOWANCE, absWorkingDir = REPO_ROOT) {
+	const source = `node_modules/${SDK_NAME}/${allowance.reachedSource}`;
+	const outputs = new Set();
+	for (const metafile of metafiles) {
+		for (const [outputPath, output] of Object.entries(metafile.outputs)) {
+			if (!Object.keys(output.inputs).some((input) => input.replaceAll("\\", "/").endsWith(source))) continue;
+			outputs.add(relative(bundleDir, resolve(absWorkingDir, outputPath)).replaceAll("\\", "/"));
+		}
+	}
+	return [...outputs].sort((left, right) => left.localeCompare(right));
+}
+
+/** Problems unless each allowed `bundle` name (pattern) matches exactly one SDK output and every SDK output matches one. */
+function checkPlacement(allowance, sdkOutputs) {
+	const problems = [];
+	for (const location of allowance.bundle) {
+		const matched = sdkOutputs.filter((file) => fileMatches(location, file));
+		if (matched.length !== 1) {
+			problems.push(`${String(location)}: expected exactly one output built from ${SDK_NAME}/${allowance.reachedSource}, found [${matched.join(", ")}]`);
+		}
+	}
+	for (const file of sdkOutputs) {
+		if (!allowance.bundle.some((location) => fileMatches(location, file))) {
+			problems.push(`${file} is built from ${SDK_NAME}/${allowance.reachedSource} but is not an allowed location`);
+		}
+	}
+	return problems;
+}
+
 /** Problems when a location's stale copies differ from `expected` (exact versions and counts; none is a failure too). */
 function checkLocation(name, entries, expected, copies) {
 	const found = entries.map((entry) => entry.version);
@@ -244,18 +280,19 @@ export function assertBinaryZodCores(binaries, allowance = STALE_ZOD_ALLOWANCE, 
 }
 
 /**
- * Fails unless every stale zod copy in `bundleDir` sits in an allowed file and each allowed file (pattern) holds exactly the
- * reached SDK source's stale copies, under the pinned SDK version and source hashes.
+ * Fails unless every stale zod copy in `bundleDir` sits in an exact SDK output (`sdkOutputs`, from `sdkSourceOutputs`), each
+ * of those files holds exactly the reached SDK source's stale copies, and the outputs are exactly one per allowed `bundle`
+ * name, under the pinned SDK version and source hashes.
  */
-export function assertBundleZodCores(bundleDir, allowance = STALE_ZOD_ALLOWANCE, sdk = readClaudeAgentSdkVersions()) {
+export function assertBundleZodCores(bundleDir, sdkOutputs, allowance = STALE_ZOD_ALLOWANCE, sdk = readClaudeAgentSdkVersions()) {
 	const { sources, expected } = verifiedSdk(allowance, sdk);
 	const stale = scanZodCores(bundleDir).filter(isStale);
-	const problems = [];
+	const problems = checkPlacement(allowance, sdkOutputs);
 	const copies = [];
-	for (const location of allowance.bundle) {
-		problems.push(...checkLocation(String(location), stale.filter((entry) => fileMatches(location, entry.file)), expected, copies));
+	for (const file of sdkOutputs) {
+		problems.push(...checkLocation(file, stale.filter((entry) => entry.file === file), expected, copies));
 	}
-	const outside = stale.filter((entry) => !allowance.bundle.some((location) => fileMatches(location, entry.file)));
+	const outside = stale.filter((entry) => !sdkOutputs.includes(entry.file));
 	if (outside.length > 0) {
 		problems.push(`zod cores older than 4.${MINIMUM.minor}.${MINIMUM.patch} outside the allowed files: ${outside.map((entry) => `${entry.file} ${entry.version}`).join(", ")}`);
 	}
