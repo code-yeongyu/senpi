@@ -8,7 +8,7 @@ import { basename, dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { getDefaultSessionDir } from "../../src/core/session-manager.ts";
 import { createInProcessRig } from "./rpc-inprocess-host-support.ts";
-import { devices, exportedForB, move, moveAs } from "./rpc-move-session-support.ts";
+import { devices, exportedForB, landedOnB, move, moveAs } from "./rpc-move-session-support.ts";
 import { SESSION_ID } from "./session-move-fixture.ts";
 
 async function readyToImport(moveId: string) {
@@ -161,6 +161,8 @@ describe("move_session import: sessionDir and open (senpi#6267)", () => {
 		const again = await moveAs(b, "conn-b", { ...importFields, sessionDir, cwd: elsewhere, open: true });
 
 		expect(again).toMatchObject({ success: false, errorCode: "move_fenced" });
+		// The move is accepted here, so this refusal says where it landed, as every fence of an accepted move does.
+		expect(again.errorData).toEqual({ detail: expect.any(String), ...landedOnB(fixture, landed) });
 		expect(await b.list()).toEqual([]);
 		expect(readFileSync(landed, "utf8")).toBe(before);
 		expect(await move(b, { ...importFields, sessionDir })).toMatchObject({
