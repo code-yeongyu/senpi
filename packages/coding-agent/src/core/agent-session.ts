@@ -1933,11 +1933,7 @@ export class AgentSession {
 		this._unsubscribeSettingsSource = this.settingsManager.subscribeToSourceSelection((source) => {
 			this._emit({ type: "settings_source_selected", ...source });
 		});
-		// A model chosen explicitly at launch (`--model`) is a pin: a failed turn stays failed and names that
-		// model instead of moving to another one (omo#13243). Sessions without an explicit model keep fallback.
-		const explicitModelPin = config.sessionStartEvent?.initialModelProvenance === "cli";
 		const noModelFallback =
-			explicitModelPin ||
 			config.resourceLoader.getExtensions().runtime.flagValues.get("no-model-fallback") === true ||
 			envValue("NO_FALLBACK") === "1";
 		if (noModelFallback) {

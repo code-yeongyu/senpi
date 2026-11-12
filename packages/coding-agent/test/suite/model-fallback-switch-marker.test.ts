@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { MODEL_SWITCH_MARKER_TYPE } from "../../src/core/model-switch-marker.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
-// omo#13243: a model chosen at launch is a pin, and a fallback switch is written where the model reads it.
+// omo#13243: a fallback switch is written where the model reads it.
 const primary = "faux/faux-1";
 const fallback = "faux/faux-2";
 const fallbackSettings = {
@@ -20,37 +20,10 @@ function markerTexts(harness: Harness): string[] {
 	);
 }
 
-describe("model fallback pin and switch marker (omo#13243)", () => {
+describe("model fallback switch marker (omo#13243)", () => {
 	const harnesses: Harness[] = [];
 	afterEach(() => {
 		while (harnesses.length > 0) harnesses.pop()?.cleanup();
-	});
-
-	it("keeps a launch-chosen model: the failed turn ends on that model with no fallback entry", async () => {
-		const harness = await createHarness({
-			models: [{ id: "faux-1" }, { id: "faux-2" }],
-			settings: fallbackSettings,
-			sessionStartEvent: { type: "session_start", reason: "startup", initialModelProvenance: "cli" },
-		});
-		harnesses.push(harness);
-		harness.setResponses([
-			fauxAssistantMessage("", { stopReason: "error", errorMessage: "429 rate_limit_error: too many requests" }),
-			fauxAssistantMessage("must not be reached"),
-		]);
-
-		await harness.session.prompt("stay on the chosen model");
-
-		expect(harness.eventsOfType("retry_fallback_applied")).toStrictEqual([]);
-		const fallbackEntries = harness.sessionManager
-			.getEntries()
-			.filter((entry) => entry.type === "model_change" && entry.reason === "fallback");
-		expect(fallbackEntries).toStrictEqual([]);
-		const last = harness.session.messages.at(-1);
-		expect(last?.role).toBe("assistant");
-		if (last?.role !== "assistant") throw new Error("expected the failed assistant turn");
-		expect(`${last.provider}/${last.model}`).toBe(primary);
-		expect(last.stopReason).toBe("error");
-		expect(last.errorMessage).toContain("429");
 	});
 
 	it("tells the model on its next request that another model now answers", async () => {
