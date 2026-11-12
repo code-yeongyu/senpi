@@ -125,6 +125,22 @@ describe("session move review fixes (senpi#3631)", () => {
 		expect(existsSync(landed.sessionFile)).toBe(true);
 	});
 
+	it("#given a bundle folder whose manifest is null #then the bundle is invalid, as for any manifest that is not an object, and the move's record is untouched", async () => {
+		const { cwdB, bundleDir, ledger, readIdentity } = await setup();
+		const record = join(ledger.dir, `${MOVE}.json`);
+		const before = existsSync(record) ? readFileSync(record, "utf8") : undefined;
+		writeFileSync(join(bundleDir, "manifest.json"), "null");
+
+		const refused = await importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity }).then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+
+		expect(refused).toBeInstanceOf(MoveBundleInvalidError);
+		expect(String(refused)).toContain("the manifest is not an object");
+		expect(existsSync(record) ? readFileSync(record, "utf8") : undefined).toBe(before);
+	});
+
 	it("#given a bundle with a payload kind this version does not know #then the import refuses it", async () => {
 		const { cwdB, bundleDir, ledger, readIdentity } = await setup();
 		editManifest(bundleDir, (manifest) => {
