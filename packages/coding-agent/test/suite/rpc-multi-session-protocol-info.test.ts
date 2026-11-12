@@ -58,6 +58,7 @@ describe("multi-session RPC protocol info", () => {
 					"entries_tail",
 					"set_permission_preset_v1",
 					"retain_on_disconnect",
+					"open_session_header_cwd", // senpi#6427: an open by path with no cwd works where the file's header says.
 					"detach_connection",
 					"delegated_connection_v1",
 					"delegation_roles_v1",

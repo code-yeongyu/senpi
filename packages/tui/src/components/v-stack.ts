@@ -1,3 +1,4 @@
+import { copyLineSources, setLineSource } from "../selection-source.ts";
 import { allocateStackSizes, Stack, type StackChild, type StackOptions, visibleStackEntries } from "./stack.ts";
 
 export class VStack extends Stack {
@@ -20,11 +21,20 @@ export class VStack extends Stack {
 		const lines: string[] = [];
 		for (let index = 0; index < entries.length; index++) {
 			if (index > 0) {
-				for (let gap = 0; gap < this.gap; gap++) lines.push("");
+				for (let gap = 0; gap < this.gap; gap++) {
+					lines.push("");
+					setLineSource(lines, lines.length - 1, null);
+				}
 			}
-			const childLines = rendered[index]!.slice(0, sizes[index]);
+			const original = rendered[index]!;
+			const childLines = copyLineSources(original, original.slice(0, sizes[index]));
+			const offset = lines.length;
 			lines.push(...childLines);
-			for (let padding = childLines.length; padding < sizes[index]!; padding++) lines.push("");
+			copyLineSources(childLines, lines, offset);
+			for (let padding = childLines.length; padding < sizes[index]!; padding++) {
+				lines.push("");
+				setLineSource(lines, lines.length - 1, null);
+			}
 		}
 		return lines;
 	}
