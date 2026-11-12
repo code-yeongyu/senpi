@@ -28,17 +28,23 @@ export interface MoveImportPort {
 }
 
 /**
- * Why a `sessionDir` cannot hold the session, when a file is in its place or above it: a request error, asked before
- * the import touches the move, so the move stays importable. `undefined` for a folder and for a path not there yet.
+ * Why a `sessionDir` cannot hold the session: a file is in its place or above it, or this host could not look at it
+ * (no permission, a symlink loop). A request error, asked before the import touches the move, so the move stays
+ * importable. `undefined` for a folder and for a path that is not there yet (ENOENT), which the import creates.
  */
 export async function sessionDirRefusal(sessionDir: string | undefined): Promise<string | undefined> {
 	if (sessionDir === undefined) return undefined;
 	const found = await stat(normalizePath(sessionDir)).then(
 		(entry) => (entry.isDirectory() ? "folder" : "file"),
 		(cause: unknown) =>
-			typeof cause === "object" && cause !== null && "code" in cause && cause.code === "ENOTDIR" ? "file" : "absent",
+			typeof cause === "object" && cause !== null && "code" in cause ? String(cause.code) : "unknown",
 	);
-	return found === "file" ? "sessionDir must be a folder: a file is in its place or above it." : undefined;
+	if (found === "folder" || found === "ENOENT") return undefined;
+	if (found === "file" || found === "ENOTDIR")
+		return "sessionDir must be a folder: a file is in its place or above it.";
+	// Any other answer (no permission, a symlink loop, an I/O error) is not "nothing there": the import would fail on
+	// the same path after the move began receiving, and settle it failed.
+	return `sessionDir cannot be used (${found}): this host could not look at it.`;
 }
 
 /** An inline bundle is staged in this host's own folder under `root`, then read exactly as a folder is. */
