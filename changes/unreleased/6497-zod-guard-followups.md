@@ -1,0 +1,20 @@
+<!-- changes-log: scripts/changes.md -->
+## 2026-11-12 - The compiled binaries and the bundle scan for stale zod 4 and zod 3 copies (senpi#6497 follow-up)
+
+### What changed
+
+- `scripts/bundle-zod-core-guard.mjs`: the scan also recognises a zod 3.x classic copy (the `ZodEffects = "ZodEffects"` enum assignment that built zod 3.25.x keeps through minification; zod 4 has no such string) and reports it as stale "3.x"; new `assertBinaryZodCores(binaries)` scans compiled executables, allowing only the Claude agent SDK's pinned 4.6.2 (at most the two copies the bundle pins) and failing on any other core older than 4.6.6 or any zod 3.x copy.
+- `scripts/assert-binary-zod-cores.mjs` (new) runs that scan from `scripts/build-binaries.sh` right after each platform's `bun build --compile`, before the release archives are made.
+- `scripts/bundle-zod-core-guard.test.mjs`, `scripts/bundle-zod-binary-guard.test.mjs`: a zod-3-shaped fixture is caught and a 4.x core is not mistaken for it; the binary scan against clean, 4.6.2-only, third-copy, 4.0.0 and zod 3 binaries, the script's exit codes, and its place in the build script.
+
+### Why
+
+- The compiled binaries were protected only by the lockfile pin; nothing scanned their output. The guard also could not see a stale zod 3.x copy reached through `zod/v3` (it was covered only because such a layout also bundles a 4.0.0 core).
+
+### Why an extension could not handle it
+
+- The release build scripts are core.
+
+### Expected merge conflict zones
+
+- LOW: the compile loop in `scripts/build-binaries.sh`.

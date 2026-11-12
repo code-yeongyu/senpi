@@ -24,6 +24,9 @@ function bundleWith(files) {
 	return dir;
 }
 
+/** The enum zod 3.25.x builds, as bun and esbuild minify it. */
+const ZOD3_COPY = 'var e;(function(r){r.ZodString="ZodString",r.ZodEffects="ZodEffects",r.ZodNativeEnum="ZodNativeEnum"})(e||(e={}));';
+
 const RELEASE_LAYOUT = {
 	"cli.js": "console.log(1)",
 	"chunks/chunk-FKX6EWFV.js": core("4.6.7"),
@@ -128,6 +131,24 @@ describe("bundle zod core guard", () => {
 	it("fails when a pinned copy is gone, so the row is retired rather than forgotten", () => {
 		withBundle({ ...RELEASE_LAYOUT, "chunks/sdk-W3PQXNYH.js": core("4.6.7") }, (dir) => {
 			assert.throws(() => assertBundleZodCores(dir), /found 0; retire the row/);
+		});
+	});
+
+	// senpi#6497 follow-up: a stale zod 3.x classic copy (reached through `zod/v3`) carries no 4.x banner; the
+	// ZodFirstPartyTypeKind enum assignment is the marker built zod 3.25.x keeps through minification.
+	it("fails on a zod 3.x classic copy, which carries no 4.x core banner", () => {
+		withBundle({ ...RELEASE_LAYOUT, "chunks/chunk-V3COPY.js": ZOD3_COPY }, (dir) => {
+			assert.deepEqual(
+				scanZodCores(dir).filter((entry) => entry.version.startsWith("3.")).map((entry) => `${entry.file} ${entry.version}`),
+				["chunks/chunk-V3COPY.js 3.x"],
+			);
+			assert.throws(() => assertBundleZodCores(dir), /outside the pinned exposures: chunks\/chunk-V3COPY\.js 3\.x/);
+		});
+	});
+
+	it("does not mistake a 4.x core for a zod 3.x copy", () => {
+		withBundle({ ...RELEASE_LAYOUT, "chunks/chunk-V4.js": core("4.6.7") + 'var n="ZodString",e="ZodEffects";' }, (dir) => {
+			assert.equal(scanZodCores(dir).filter((entry) => entry.version.startsWith("3.")).length, 0);
 		});
 	});
 });
