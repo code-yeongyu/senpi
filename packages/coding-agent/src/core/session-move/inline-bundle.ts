@@ -6,7 +6,15 @@
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, posix, relative, sep } from "node:path";
-import { leavesBundle, listedFiles, MANIFEST_FILE, MoveBundleInvalidError, parseManifest } from "./bundle.ts";
+import {
+	leavesBundle,
+	listedFiles,
+	MANIFEST_FILE,
+	MoveBundleInvalidError,
+	nestsTooDeep,
+	parseManifest,
+} from "./bundle.ts";
+import { type NameFolding, refuseNamesThatFold } from "./name-folding.ts";
 import { filesUnder } from "./export.ts";
 
 export interface InlineBundleFile {
@@ -54,10 +62,12 @@ const shown = (path: string): string => JSON.stringify(path.length > 120 ? `${pa
 
 /**
  * A path an inline file may be written at: relative, with no empty, `.` or `..` segment under either separator, no
- * NUL, and no segment or whole path too long to be a file where the bundle is staged.
+ * NUL, no segment or whole path too long to be a file where the bundle is staged, and no deeper than any bundle path
+ * may be (`MAX_BUNDLE_PATH_SEGMENTS`).
  */
 function staysInBundle(path: string): boolean {
-	if (leavesBundle(path) || path.includes("\0") || Buffer.byteLength(path) > MAX_PATH_BYTES) return false;
+	if (leavesBundle(path) || nestsTooDeep(path) || path.includes("\0") || Buffer.byteLength(path) > MAX_PATH_BYTES)
+		return false;
 	return segmentsOf(path).every(
 		(segment) => segment !== "" && segment !== "." && Buffer.byteLength(segment) <= MAX_SEGMENT_BYTES,
 	);
@@ -123,14 +133,19 @@ async function removeStaleStaging(incoming: string): Promise<void> {
  * on it with the sha256 each file was sent with, and removes the folder whatever happens. A refused list makes no
  * folder and writes nothing. Before it writes, it removes the `inline-` folders under `incoming` that were not
  * modified for an hour (`STALE_STAGING_MS`); a younger one, or a folder of another name, is kept.
+ *
+ * A list with two paths that are one name where names fold (letter case, Unicode form) is refused too, but only
+ * where `incoming`'s file system really folds them (senpi#6472): `probeFolding` asks it, and only for such a list.
  */
 export async function withStagedInlineBundle<T>(
 	files: readonly InlineBundleFile[],
 	incoming: string,
 	use: (bundleDir: string, sent: ReadonlyMap<string, string>) => Promise<T>,
+	probeFolding?: (folder: string) => Promise<NameFolding>,
 ): Promise<T> {
 	const sent = sentChecksums(files);
 	await mkdir(incoming, { recursive: true });
+	await refuseNamesThatFold([...sent.keys()], incoming, probeFolding);
 	await removeStaleStaging(incoming);
 	const dir = await mkdtemp(join(incoming, STAGING_PREFIX));
 	try {
