@@ -43,7 +43,7 @@ export async function openReservationDatabase(path: string): Promise<Database> {
 async function openDatabase(path: string, validated: FileIdentity): Promise<Database> {
 	if (typeof (globalThis as { Bun?: unknown }).Bun !== "undefined") {
 		const { Database } = await import("bun:sqlite");
-		const database = checked(
+		const database = await checked(
 			path,
 			validated,
 			() => new Database(path),
@@ -56,7 +56,7 @@ async function openDatabase(path: string, validated: FileIdentity): Promise<Data
 		};
 	}
 	const { DatabaseSync } = await import("node:sqlite");
-	const database = checked(
+	const database = await checked(
 		path,
 		validated,
 		() => new DatabaseSync(path),
@@ -69,8 +69,13 @@ async function openDatabase(path: string, validated: FileIdentity): Promise<Data
 	};
 }
 
-function checked<T>(path: string, validated: FileIdentity, open: () => T, close: (opened: T) => void): T {
-	const result = openExpectedFile(path, validated, open, close);
+async function checked<T>(
+	path: string,
+	validated: FileIdentity,
+	open: () => T,
+	close: (opened: T) => void,
+): Promise<T> {
+	const result = await openExpectedFile(path, validated, open, close);
 	if ("replaced" in result) throw new EndpointReservationError("store_insecure", result.replaced);
 	return result.opened;
 }

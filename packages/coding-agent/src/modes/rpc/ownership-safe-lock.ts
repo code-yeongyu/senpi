@@ -1,5 +1,5 @@
 import { stat } from "node:fs/promises";
-import { type FileIdentity, openExpectedFile } from "./sqlite-file-identity.ts";
+import type { FileIdentity } from "./sqlite-file-identity.ts";
 
 export interface OwnershipSafeLockOptions {
 	readonly retries?: {
@@ -48,7 +48,7 @@ other (verified empirically; see the changes.md entry). */
 async function openLockDatabase(lockPath: string, expectedFile: FileIdentity | undefined): Promise<LockDatabase> {
 	if (typeof (globalThis as { Bun?: unknown }).Bun !== "undefined") {
 		const { Database } = await import("bun:sqlite");
-		const database = openChecked(
+		const database = await openChecked(
 			lockPath,
 			expectedFile,
 			() => new Database(lockPath, { create: true }),
@@ -57,7 +57,7 @@ async function openLockDatabase(lockPath: string, expectedFile: FileIdentity | u
 		return { exec: (sql) => database.exec(sql), close: () => database.close(false) };
 	}
 	const { DatabaseSync } = await import("node:sqlite");
-	const database = openChecked(
+	const database = await openChecked(
 		lockPath,
 		expectedFile,
 		() => new DatabaseSync(lockPath),
@@ -66,14 +66,20 @@ async function openLockDatabase(lockPath: string, expectedFile: FileIdentity | u
 	return { exec: (sql) => database.exec(sql), close: () => database.close() };
 }
 
-function openChecked<T>(
+/**
+ * The identity proof is part of this function's lazy loading boundary, like the SQLite driver above: it loads only when a
+ * caller passes `expectedFile` (the socket secret's repair lock), so it stays out of the lifecycle supervisor's startup
+ * graph, which imports this module (`test/supervisor-import-graph.test.ts`).
+ */
+async function openChecked<T>(
 	lockPath: string,
 	expectedFile: FileIdentity | undefined,
 	open: () => T,
 	close: (opened: T) => void,
-): T {
+): Promise<T> {
 	if (expectedFile === undefined) return open();
-	const checked = openExpectedFile(lockPath, expectedFile, open, close);
+	const { openExpectedFile } = await import("./sqlite-file-identity.ts");
+	const checked = await openExpectedFile(lockPath, expectedFile, open, close);
 	if ("replaced" in checked) throw new LockFileReplacedError(lockPath, checked.replaced);
 	return checked.opened;
 }
