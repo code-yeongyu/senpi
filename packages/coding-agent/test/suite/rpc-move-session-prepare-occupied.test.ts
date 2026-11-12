@@ -7,7 +7,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { getDefaultSessionDir, loadEntriesFromFile } from "../../src/core/session-manager.ts";
+import { getDefaultSessionDirPath, loadEntriesFromFile } from "../../src/core/session-manager.ts";
 import { sessionOwnership } from "../../src/core/session-move/ownership.ts";
 import { createInProcessRig } from "./rpc-inprocess-host-support.ts";
 import { devices, hostAndRelease, move, type Rig, unrelatedRepo } from "./rpc-move-session-support.ts";
@@ -21,7 +21,9 @@ const refusedWith = (errorCode: string) => ({ success: false, command: "move_ses
 
 const ledgerFile = (agentDir: string, moveId: string) => join(agentDir, "session-moves", "ledger", `${moveId}.json`);
 const fileName = (fixture: Fixture) => basename(fixture.sessionPath);
-const landingIn = (cwd: string, fixture: Fixture) => join(getDefaultSessionDir(cwd, fixture.agentB), fileName(fixture));
+/** The session folder a working directory lands in, named only: asking for it must never be what creates it. */
+const sessionFolder = (cwd: string, fixture: Fixture) => getDefaultSessionDirPath(cwd, fixture.agentB);
+const landingIn = (cwd: string, fixture: Fixture) => join(sessionFolder(cwd, fixture), fileName(fixture));
 const named = (fixture: Fixture) => ({ id: SESSION_ID, fileName: fileName(fixture) });
 const identity = (fixture: Fixture) => ({ rootCommits: [fixture.root] });
 
@@ -104,6 +106,8 @@ describe("move_session prepare refuses an occupied landing file before the relea
 
 		expect(await prepare(b, fixture, "move-o4")).toMatchObject(READY);
 		expect(existsSync(landingIn(fixture.repoB, fixture))).toBe(false);
+		// It only reads: readying a move creates no session folder either. The import makes it when it lands.
+		expect(existsSync(sessionFolder(fixture.repoB, fixture))).toBe(false);
 	});
 
 	it("#given an occupied landing file #when prepare does not name the session #then the move is readied as before and the import refuses it as before", async () => {
@@ -189,5 +193,17 @@ describe("move_session prepare refuses an occupied landing file before the relea
 
 		expect(refused).toMatchObject(refusedWith("move_repository_mismatch"));
 		expect(existsSync(ledgerFile(fixture.agentB, "move-o8"))).toBe(false);
+	});
+
+	it("#given a folder of another repository with no session folder yet #when prepare names the session and is refused #then no session folder is left behind for that folder", async () => {
+		const fixture = await devices();
+		const other = unrelatedRepo(join(fixture.base, "other"));
+		await using b = createInProcessRig(fixture.agentB);
+		expect(existsSync(sessionFolder(other, fixture))).toBe(false);
+
+		const refused = await prepare(b, fixture, "move-o9", { cwd: other });
+
+		expect(refused).toMatchObject(refusedWith("move_repository_mismatch"));
+		expect(existsSync(sessionFolder(other, fixture))).toBe(false);
 	});
 });
