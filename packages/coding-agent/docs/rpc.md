@@ -3733,6 +3733,8 @@ One more reason a move cannot land was, until senpi#6471, found only by the `imp
 
 - no file there, or a sealed earlier copy of the same session: the move is readied. `prepare` removes nothing and creates nothing, not even the session folder; replacing that earlier copy stays the import's job, and so does making the folder.
 - another session, or a copy of the same session that can still be written: refused `move_target_occupied`, and nothing is readied, so the sender never releases.
+- anything else by that name that is not this session's sealed file keeps the place as well: a file that holds no session (empty, or other text), or a link, even one that leads nowhere. It is refused `move_target_occupied` and left as it was.
+- a landing place that cannot be looked at (the look fails for any reason other than "nothing by that name"): `prepare` fails with `move_failed` and readies nothing. Such a place is never taken for free. The import gives the same two answers.
 
 `session` without `cwd`, a `session` that is not `{ id, fileName }`, an `id` that is not a plain id, a `fileName` with a folder in it, a relative `sessionDir`, a `sessionDir` that is a file, or a `sessionDir` with no `session` is refused `invalid_move_request`, and nothing is readied.
 
