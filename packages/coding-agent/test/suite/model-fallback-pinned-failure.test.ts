@@ -125,4 +125,21 @@ describe("a pinned model's failure is reported as a typed exhaustion (omo#13243)
 
 		expect(harness.eventsOfType("retry_fallback_exhausted")).toHaveLength(1);
 	});
+	it("never reports a failure kept by a run that settled with fallback on, after fallback is turned off", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }],
+			settings: { retry: { enabled: true, baseDelayMs: 1, maxRetries: 0 } },
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" })]);
+		// Fallback on (no chain for this model): the failure settles with no pinned report.
+		await harness.session.prompt("fallback on");
+		expect(harness.eventsOfType("retry_fallback_exhausted")).toStrictEqual([]);
+
+		// Fallback turned off later (a /fallback toggle or an RPC override), then a settle with no reply of its own.
+		harness.settingsManager.applyOverrides({ retry: { modelFallback: false } });
+		(harness.session as unknown as { _reportPinnedModelFailure(): void })._reportPinnedModelFailure();
+
+		expect(harness.eventsOfType("retry_fallback_exhausted")).toStrictEqual([]);
+	});
 });

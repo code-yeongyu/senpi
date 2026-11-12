@@ -3097,11 +3097,12 @@ export class AgentSession {
 	 * the error, so every surface tells a pinned failure from a chain that ran out (omo#13243).
 	 */
 	private _reportPinnedModelFailure(): void {
-		if (this._runFallbackExhausted) return;
-		if (this.settingsManager.getRetryFallbackSettings().modelFallback) return;
-		// Only this run's own failure: a run that settled with no assistant reply (a refused admission) reports nothing.
+		// Only this run's own failure: read and clear first, on every settle, so a reply this run kept (fallback on,
+		// or an exhaustion already reported) can never be reported by a later reply-less settle.
 		const last = this._runLastAssistant;
 		this._runLastAssistant = undefined;
+		if (this._runFallbackExhausted) return;
+		if (this.settingsManager.getRetryFallbackSettings().modelFallback) return;
 		if (last === undefined || last.stopReason !== "error") return;
 		// The class alone: whether a fallback could serve it is always no here, since fallback is off.
 		const hardError = !this._isRetryableError(last) && this._isHardErrorFallbackClass(last);
