@@ -34,7 +34,11 @@ export class MoveRecordFile {
 	}
 
 	async read(moveId: MoveId): Promise<MoveRecord | undefined> {
-		const value = await this.raw(moveId);
+		return this.recordIn(moveId, await this.raw(moveId));
+	}
+
+	/** The record in what `raw` read: none for no file, and an error for a file that does not hold one. */
+	private recordIn(moveId: MoveId, value: unknown): MoveRecord | undefined {
 		if (value === undefined) return undefined;
 		const record = parseRecord(value);
 		if (record === undefined) throw new Error(`Move record ${this.path(moveId)} is not a move record`);
@@ -60,8 +64,9 @@ export class MoveRecordFile {
 
 	/** A commit goes on only for a receiving move whose commit has not begun, into its target; else what the record says. */
 	async assertLandsAt(moveId: MoveId, target: string): Promise<Landing> {
-		const record = await this.read(moveId);
-		const landing = await this.landing(moveId);
+		// One read: the state and the landing come from the same version of the record, whoever else may be writing it.
+		const stored = await this.raw(moveId);
+		const [record, landing] = [this.recordIn(moveId, stored), parseLanding(stored)];
 		if (!landsAt(record, landing, target))
 			throw new MoveFencedError(moveId, record, landedElsewhere(record, landing));
 		return landing;
