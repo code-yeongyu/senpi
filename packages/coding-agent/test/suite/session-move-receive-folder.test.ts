@@ -64,4 +64,15 @@ describe("the ledger compares a move's folder in one spelling (senpi#6435)", () 
 			await expect(book.beginReceive(MOVE, "/sessions/landing.jsonl", { cwd: other })).resolves.toBeUndefined();
 		},
 	);
+
+	it("#given a move readied for a folder #when the import's fence, a second prepare and the receive name that folder in another letter case #then all three refuse it: letter case is not folded", async () => {
+		const book = new MoveLedger(temp());
+		await book.prepare(MOVE, "/work/one");
+
+		await expect(book.requireReadiedFor(MOVE, "/work/One")).rejects.toBeInstanceOf(MoveFencedError);
+		await expect(book.prepare(MOVE, "/work/One")).rejects.toBeInstanceOf(MoveFencedError);
+		await expect(book.beginReceive(MOVE, "/sessions/landing.jsonl", { cwd: "/work/One" })).rejects.toBeInstanceOf(
+			MoveFencedError,
+		);
+	});
 });
