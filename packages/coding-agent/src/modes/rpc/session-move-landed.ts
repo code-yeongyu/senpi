@@ -1,6 +1,7 @@
 /**
- * The `move_session` answers that say where an accepted move landed (senpi#6436): `status`, and an `import` refused
- * because the move already landed. Whoever may send the import may ask; nothing is opened, held or rewritten for it.
+ * The `move_session` answers that say where an accepted move landed (senpi#6436): `status`, and a `move_fenced`
+ * refusal of a move already accepted here. Whoever may send the import may ask; nothing is opened, held or rewritten
+ * for it.
  */
 import { answerMoveStatusAndLanding } from "../../core/session-move/import.ts";
 import type { LandedFile } from "../../core/session-move/landed-file.ts";
@@ -25,16 +26,18 @@ export async function statusAnswer(
 }
 
 /**
- * What a refusal's `errorData` gains when an import was fenced because its move already landed here: where it landed,
- * and `revoked: true` when that copy was sealed, so a caller learns that binding it would answer `session_moved_away`.
+ * What a `move_fenced` refusal's `errorData` gains when the move it refuses is already accepted here, whichever op
+ * was refused (an `import` into another folder, a `prepare` for another folder): where the move landed, and
+ * `revoked: true` when that copy was sealed, so a caller learns that binding it would answer `session_moved_away`.
+ * It only adds to a refusal: if the record or the landed file cannot be read now, the refusal goes out without it.
  */
 export async function landedWhenFenced(
 	ledger: MoveLedger,
 	cause: unknown,
 ): Promise<(RpcMoveLanded & { revoked?: true }) | undefined> {
 	if (!(cause instanceof MoveFencedError) || cause.record?.state !== "accepted") return undefined;
-	const { answer, landed } = await answerMoveStatusAndLanding(ledger, cause.moveId, undefined);
-	const where = wireLanded(landed);
-	if (where === undefined) return undefined;
-	return "revoked" in answer ? { ...where, revoked: true } : where;
+	const read = await answerMoveStatusAndLanding(ledger, cause.moveId, undefined).catch(() => undefined);
+	const where = wireLanded(read?.landed);
+	if (read === undefined || where === undefined) return undefined;
+	return "revoked" in read.answer ? { ...where, revoked: true } : where;
 }

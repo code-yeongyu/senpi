@@ -72,19 +72,10 @@ export class StatusPathMismatchError extends Error {
  * The sender's question. The ledger answers, its `accepted` final and marked `revoked` once the import is revoked; a
  * given session file is read in the move's queue and is the authority too (a committed import is accepted, a revoked
  * one revoked), so a file that is not this move's import is refused. A path with no file answers from the ledger.
- */
-export async function answerMoveStatus(
-	ledger: MoveLedger,
-	moveId: MoveId,
-	sessionFile: string | undefined,
-): Promise<MoveAnswer> {
-	return (await answerMoveStatusAndLanding(ledger, moveId, sessionFile)).answer;
-}
-
-/**
- * `answerMoveStatus`, and for an accepted move where it landed (senpi#6436). To settle an interrupted step the ledger
- * reads the file at the target its record names, under the record's lock; that same read says what the file is, so
- * nothing is read twice and nothing is opened or written for it. A record that names no target says nothing.
+ *
+ * For an accepted move it also says where it landed (senpi#6436). To settle an interrupted step the ledger reads the
+ * file at the target its record names, under the record's lock; that same read says what the file is, so nothing is
+ * read twice and nothing is opened or written for it. A record that names no target says nothing.
  */
 export async function answerMoveStatusAndLanding(
 	ledger: MoveLedger,
