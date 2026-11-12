@@ -9,6 +9,8 @@ import { build } from "esbuild";
 import { bundleRequiredInputs, lazyEntryPoints } from "./bundle-entry-points.mjs";
 import { fileAttributePlugin } from "./bundle-file-attribute-plugin.mjs";
 import { assertRedactionRegistryCopies } from "./bundle-redaction-registry-guard.mjs";
+import { assertBundleZodCores } from "./bundle-zod-core-guard.mjs";
+import { zodSingleCopyPlugin } from "./bundle-zod-single-copy-plugin.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
@@ -90,28 +92,6 @@ const httpsProxyAgentNamedExportPlugin = {
 		);
 	},
 };
-
-/**
- * The MCP SDK imports `zod/v4`, `zod/v4-mini` and `zod/v3` and parses remote-server responses with them.
- * Which zod those subpaths reach depends on the install layout: npm hoists a 3.25.x root copy whose `zod/v4`
- * reports 4.0.0, bun hoists 4.6.x. Pin every such import to the zod that coding-agent depends on, so one
- * layout-independent copy ships. Only the MCP SDK is redirected: other packages (sandbox-runtime) keep the
- * zod their own range selects. The Claude agent SDK embeds a minified zod inside sdk.mjs rather than importing
- * it, so no resolver can reach that copy.
- */
-export function zodSingleCopyPlugin(resolveDir = codingAgentDir) {
-	return {
-		name: "zod-single-copy",
-		setup(build) {
-			build.onResolve({ filter: /^zod(\/.*)?$/ }, async (args) => {
-				if (args.pluginData === "zod-single-copy") return undefined;
-				if (!/[/\\]@modelcontextprotocol[/\\]sdk[/\\]/.test(args.importer)) return undefined;
-				const resolved = await build.resolve(args.path, { kind: args.kind, resolveDir, pluginData: "zod-single-copy" });
-				return resolved.errors.length > 0 ? undefined : resolved;
-			});
-		},
-	};
-}
 
 export function commonBuildOptions() {
 	return {
@@ -294,6 +274,8 @@ async function buildBundle() {
 	const metafiles = [mainResult.metafile, lazyResult.metafile, supervisorResult.metafile];
 	validateExternalImports(metafiles);
 	assertRedactionRegistryCopies(bundleDir);
+	// senpi#6497: no emitted file may carry a zod core older than 4.6.6 beyond the pinned Claude agent SDK copies.
+	assertBundleZodCores(bundleDir);
 	chmodSync(join(bundleDir, "cli.js"), 0o755);
 	chmodSync(join(bundleDir, "rpc-entry.js"), 0o755);
 	writeRuntimeManifest(metafiles);
