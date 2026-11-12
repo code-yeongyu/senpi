@@ -21,7 +21,7 @@
  */
 import type { AgentSession } from "../../core/agent-session.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
-import { beginEffect, effectAnswer, isEffectBegin } from "./effect-commands.ts";
+import { beginEffect, effectAnswer, isEffectBegin } from "./effect-answers.ts";
 import { EffectLedger } from "./effect-ledger.ts";
 import type { EffectActor, EffectStatus } from "./effect-record.ts";
 import type { RpcCommand, RpcResponse, RpcUnloadAnswer, UnloadRefusalReason } from "./rpc-types.ts";
