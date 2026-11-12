@@ -8,7 +8,7 @@ import {
 } from "../../src/core/extensions/builtin/terminal/process-identity.ts";
 
 describe("terminal process identity", () => {
-	it("derives a whole-second boot instant from os.uptime that two consecutive reads agree on", () => {
+	it("derives a whole-second boot instant that two consecutive reads agree on", () => {
 		const boot = processBootAtMs();
 		expect(Number.isInteger(boot)).toBe(true);
 		expect(boot % 1000).toBe(0);

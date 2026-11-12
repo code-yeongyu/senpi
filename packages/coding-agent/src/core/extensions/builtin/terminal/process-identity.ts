@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { uptime as osUptimeSeconds } from "node:os";
 import { workerData } from "node:worker_threads";
 
@@ -16,15 +18,29 @@ export const BOOT_INSTANT_TOLERANCE_MS = 120_000;
 const wholeSeconds = (ms: number): number => Math.round(ms / 1000) * 1000;
 
 /**
- * The boot instant of this process cannot change, so the default read is taken once, from one `now`/uptime pair, and
- * reused: `os.uptime()` counts whole seconds, so two reads straddling an uptime tick computed boot instants a second
- * apart (senpi#3152). An injected clock always computes.
+ * The kernel's own boot instant in epoch seconds: `btime` in `/proc/stat` on Linux, `kern.boottime` on macOS. It
+ * is one recorded value, not `now - uptime`, so two reads agree to the second however they straddle an uptime tick
+ * (senpi#3152), and a wall-clock step moves it for every process alike. Undefined where neither is readable.
  */
-let bootAtMs: number | undefined;
-export function processBootAtMs(now?: () => number): number {
-	if (now !== undefined) return wholeSeconds(now() - osUptimeSeconds() * 1000);
-	bootAtMs ??= wholeSeconds(Date.now() - osUptimeSeconds() * 1000);
-	return bootAtMs;
+function kernelBootEpochSeconds(platform: NodeJS.Platform): number | undefined {
+	try {
+		if (platform === "linux") {
+			const match = /^btime (\d+)$/m.exec(readFileSync("/proc/stat", "utf8"));
+			return match ? Number(match[1]) : undefined;
+		}
+		if (platform === "darwin") {
+			const raw = execFileSync("sysctl", ["-n", "kern.boottime"], { encoding: "utf8", timeout: 2_000 });
+			const match = /sec = (\d+)/.exec(raw);
+			return match ? Number(match[1]) : undefined;
+		}
+	} catch {}
+	return undefined;
+}
+
+export function processBootAtMs(now: () => number = Date.now, platform: NodeJS.Platform = process.platform): number {
+	const bootSeconds = kernelBootEpochSeconds(platform);
+	if (bootSeconds !== undefined) return bootSeconds * 1000;
+	return wholeSeconds(now() - osUptimeSeconds() * 1000);
 }
 
 const floorToSecond = (ms: number): number => Math.floor(ms / 1000) * 1000;
