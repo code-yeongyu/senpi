@@ -6,6 +6,7 @@ import { getDocsPath, getExamplesPath, getReadmePath } from "../config.ts";
 import type { ContextFile } from "./context-files.ts";
 import type { PromptSurface, SharedSections } from "./dynamic-prompt/types.ts";
 import { formatSkillsForPrompt, type Skill } from "./skills.ts";
+import type { SkillCatalogLimits } from "./skills-prompt.ts";
 
 export interface BuildSystemPromptOptions {
 	/** Custom system prompt (replaces the default prefix). */
@@ -30,6 +31,8 @@ export interface BuildSystemPromptOptions {
 	contextFiles?: ContextFile[];
 	/** Pre-loaded skills. */
 	skills?: Skill[];
+	/** Catalog caps from settings (`skillCatalog`); omitted fields keep the built-in defaults. */
+	skillCatalog?: SkillCatalogLimits;
 	/** Where replies render (`SENPI_PROMPT_SURFACE`); read by the dynamic prompt and presets. */
 	surface?: PromptSurface;
 }
@@ -90,6 +93,7 @@ export function normalizeBuildSystemPromptOptions(input: BuildSystemPromptOption
 		cwd: input.cwd,
 		contextFiles: (input.contextFiles ?? []).map((file) => ({ ...file })),
 		skills: (input.skills ?? []).map((skill) => ({ ...skill })),
+		skillCatalog: input.skillCatalog,
 		surface: input.surface,
 	};
 }
@@ -173,6 +177,7 @@ export function buildSystemPromptSections(input: BuildSystemPromptOptions): Syst
 		cwd,
 		contextFiles,
 		skills,
+		skillCatalog,
 	} = options;
 
 	assertSystemPromptSectionNames(customSections);
@@ -195,7 +200,7 @@ export function buildSystemPromptSections(input: BuildSystemPromptOptions): Syst
 	if (contextFiles.length > 0) promptSections.project_context = renderProjectContext(contextFiles);
 	const skillFileReadTool = (["read", "bash"] as const).find((tool) => selectedTools.includes(tool));
 	if (skillFileReadTool && skills.length > 0) {
-		const skillsPrompt = formatSkillsForPrompt(skills, skillFileReadTool).trim();
+		const skillsPrompt = formatSkillsForPrompt(skills, skillFileReadTool, skillCatalog).trim();
 		if (skillsPrompt) promptSections.skills = skillsPrompt;
 	}
 	promptSections.cwd = cwd.replace(/\\/g, "/");
@@ -250,6 +255,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 		cwd,
 		contextFiles: providedContextFiles,
 		skills: providedSkills,
+		skillCatalog,
 	} = options;
 	if (forceSystemPrompt !== undefined) return forceSystemPrompt;
 	const promptCwd = cwd.replace(/\\/g, "/");
@@ -281,7 +287,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 
 		// Append skills when a tool capable of reading their files is available.
 		if (skillFileReadTool && skills.length > 0) {
-			prompt += formatSkillsForPrompt(skills, skillFileReadTool);
+			prompt += formatSkillsForPrompt(skills, skillFileReadTool, skillCatalog);
 		}
 
 		prompt += customSectionText;
@@ -326,7 +332,7 @@ ${renderPiDocs()}`;
 
 	// Append skills when a tool capable of reading their files is available.
 	if (skillFileReadTool && skills.length > 0) {
-		prompt += formatSkillsForPrompt(skills, skillFileReadTool);
+		prompt += formatSkillsForPrompt(skills, skillFileReadTool, skillCatalog);
 	}
 
 	prompt += customSectionText;

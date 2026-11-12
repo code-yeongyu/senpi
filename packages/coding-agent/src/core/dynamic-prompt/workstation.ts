@@ -133,9 +133,13 @@ function pinnedHost(env: NodeJS.ProcessEnv): PinnedHost | undefined {
 export function pinnedDisplayPath(filePath: string, env: NodeJS.ProcessEnv = process.env): string {
 	const root = pinnedHost(env)?.repoRoot;
 	if (root === undefined) return filePath;
-	if (filePath === root.from) return root.to;
-	const prefix = root.from.endsWith(path.sep) ? root.from : root.from + path.sep;
-	return filePath.startsWith(prefix) ? path.join(root.to, filePath.slice(prefix.length)) : filePath;
+	// Compare on either separator: a POSIX-shaped pin (`/work/checkout`) must still match while running on Windows,
+	// where `path.sep` is a backslash and joining with it would never find the prefix.
+	const from = root.from.replace(/[\\/]+$/, "");
+	const to = root.to.replace(/[\\/]+$/, "");
+	if (filePath === from) return to;
+	const rest = filePath.slice(from.length);
+	return /^[\\/]/.test(rest) ? `${to}${rest}` : filePath;
 }
 
 /** Read host facts from `node:os` and `env`, honoring the test-only `SENPI_TEST_WORKSTATION` pin. Not cached. */

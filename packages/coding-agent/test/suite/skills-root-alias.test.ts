@@ -53,6 +53,23 @@ describe("formatSkillsForPrompt root aliases", () => {
 		const absoluteLocationChars = skills.reduce((n, s) => n + s.filePath.length, 0);
 		expect(locationChars).toBeLessThan(absoluteLocationChars / 4);
 	});
+
+	// senpi#4569: a Windows host hands over backslash paths, which used to render one empty root and a full
+	// absolute location per skill.
+	it("splits a Windows path on backslashes so every skill shares one compact root", () => {
+		const windowsSkill = {
+			name: "alpha",
+			description: "alpha description.",
+			filePath: "C:\\Users\\u\\.agents\\skills\\alpha\\SKILL.md",
+			baseDir: "C:\\Users\\u\\.agents\\skills\\alpha",
+		} as Skill;
+
+		const result = formatSkillsForPrompt([windowsSkill]);
+
+		expect(result).toContain("<r0>C:/Users/u/.agents/skills</r0>");
+		expect(result).toContain("<location>r0/alpha/SKILL.md</location>");
+		expect(result).not.toContain("C:\\Users");
+	});
 });
 
 // senpi#5067: SENPI_TEST_WORKSTATION's repoRoot pin shows a root inside the pinned checkout under a synthetic root.

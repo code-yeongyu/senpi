@@ -5903,6 +5903,7 @@ export class AgentSession {
 		this._baseSystemPromptOptions = {
 			cwd: this._cwd,
 			skills: loadedSkills,
+			skillCatalog: this.settingsManager.getSettings().skillCatalog,
 			contextFiles: loadedContextFiles,
 			selectedTools: validToolNames,
 			toolSnippets,
