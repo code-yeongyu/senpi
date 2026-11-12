@@ -23,7 +23,7 @@ import type { AgentSession } from "../../core/agent-session.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
 import { beginEffect, effectAnswer, isEffectBegin } from "./effect-commands.ts";
 import { EffectLedger } from "./effect-ledger.ts";
-import type { EffectActor } from "./effect-record.ts";
+import type { EffectActor, EffectStatus } from "./effect-record.ts";
 import type { RpcCommand, RpcResponse, RpcUnloadAnswer, UnloadRefusalReason } from "./rpc-types.ts";
 import type { RpcSessionEntry } from "./session-registry.ts";
 import { abortAndSettle, type ReleaseSettlePort } from "./session-release-interrupt.ts";
@@ -70,23 +70,24 @@ export async function unloadSession(port: SessionUnloadPort, command: UnloadSess
 		);
 	const first = loaded(port, command.sessionId);
 	if ("reason" in first) return answer(command, refused(first));
-	// Before the effect ledger: a dry run records nothing, so its effectId stays free for the real call.
-	if (command.dryRun === true)
-		return dryRunAnswer(command, blockers(port, command, first.session, first.durableSessionId));
 	const { effectId } = command;
+	// Before the effect ledger: a dry run records nothing, so its effectId stays free for the real call. An id the
+	// ledger already holds for an unload is replayed by the real call, not judged again, so the dry run answers that.
+	if (command.dryRun === true) {
+		const recorded =
+			effectId === undefined
+				? undefined
+				: EffectLedger.forSession(first.session).status(effectId, command.sessionId);
+		if (recorded?.kind === "unload") return answer(command, replayed(recorded, command.sessionId));
+		return dryRunAnswer(command, blockers(port, command, first.session, first.durableSessionId));
+	}
 	if (effectId !== undefined) {
 		const begun = await beginEffect({ session: first.session, by: port.by, sessionId: command.sessionId }, "unload", {
 			...command,
 			effectId,
 		});
 		if (!isEffectBegin(begun)) return begun;
-		if ("replay" in begun)
-			return answer(command, {
-				outcome: begun.replay.state === "failed" ? "refused" : "unloaded",
-				// A replayed refusal answers the same reason, detail and action as the first one.
-				...refusalFields(begun.replay.outcome),
-				...effectAnswer(begun.replay, command.sessionId, true),
-			});
+		if ("replay" in begun) return answer(command, replayed(begun.replay, command.sessionId));
 	}
 	const blocked = blockers(port, command, first.session, first.durableSessionId);
 	// Never stop work for an unload that would still be refused: only interruptible blockers are interrupted.
@@ -122,6 +123,15 @@ async function claimAndUnload(port: SessionUnloadPort, command: UnloadSessionCom
 		sessionPath: ready.sessionPath,
 		...(effect === undefined ? {} : effectAnswer(effect, command.sessionId)),
 	});
+}
+
+/** A recorded unload answered again: a replayed refusal carries the same reason, detail and action as the first one. */
+function replayed(recorded: EffectStatus, sessionId: string): RpcUnloadAnswer {
+	return {
+		outcome: recorded.state === "failed" ? "refused" : "unloaded",
+		...refusalFields(recorded.outcome),
+		...effectAnswer(recorded, sessionId, true),
+	};
 }
 
 /** What the real call would do now, from the same blockers, in the same order: it refuses on the first standing one. */
