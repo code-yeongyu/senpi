@@ -111,7 +111,8 @@ export function multiSessionHostCapabilities(options: {
 			EFFECT_LEDGER_CAPABILITY,
 			SUBSCRIPTION_LIMITS_CAPABILITY,
 			RESOLVE_PATH_CAPABILITY,
-			// Only a multi-session host keeps the agent directory whose session files this looks in.
+			// Every multi-session host keeps the agent directory whose session files this looks in, whichever runtime its
+			// sessions use: the router reads the host's own directory when the session registry carries none.
 			FIND_SESSION_CAPABILITY,
 			STEER_WHEN_IDLE_CAPABILITY,
 			CONTINUE_FROM_LEAF_CAPABILITY,

@@ -31,7 +31,11 @@ class FindSessionTooManyError extends Error {
 	}
 }
 
-/** `open` says an engine of this host holds the session now, so a caller knows whether it is reopening or attaching. */
+/**
+ * `open` says an engine of this host holds the session now, so a caller knows whether it is reopening or attaching.
+ * One exception: a hosted session that names no file cannot be matched to a file, so its file on disk is answered
+ * with `open: false`. `open` is a hint; the id is what a caller checks.
+ */
 export type FindSessionAnswer =
 	| { readonly found: { readonly sessionPath: string; readonly cwd: string; readonly open: boolean } }
 	| { readonly ambiguous: true }
@@ -99,7 +103,7 @@ async function sessionFiles(agentDir: string): Promise<string[]> {
 	return files;
 }
 
-/** A host without an agent directory (the worker runtime) keeps no session files to look in. */
+/** A host built with no agent directory at all keeps no session files to look in; every host this package starts has one. */
 const RPC_ERROR_FIND_SESSION_UNSUPPORTED = "find_session_unsupported";
 const RPC_ERROR_FIND_SESSION_TOO_MANY = "find_session_too_many";
 
