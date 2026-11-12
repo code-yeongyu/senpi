@@ -24,9 +24,10 @@ import {
 import { createUnixServer, getUnixSocketPath } from "@earendil-works/pi-server/unix";
 import type { AuthInput } from "../cli/experimental/command-options.ts";
 import { getAgentDir } from "../config.ts";
-import { type HeldFileLock, lockWithLossHandling } from "../core/file-lock.ts";
+import type { HeldFileLock } from "../core/file-lock.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { CoordinatorConnection, type CoordinatorStartupLease, ensureCoordinator } from "./coordinator.ts";
+import { waitForFileLock } from "./lock-wait.ts";
 import { createPresentationFacetData } from "./plugins/bundled.ts";
 import {
 	createServerPluginPackage,
@@ -79,8 +80,11 @@ export function resolveSessionDirectory(sessionDir?: string): string {
 }
 
 const LOCK_STALE_MS = 30_000;
-const LOCK_RETRY_MS = 25;
-const LOCK_WAIT_MS = 30_000;
+/**
+ * How long a launcher waits for another holder of the launcher lock. A server holds it through its whole startup,
+ * which includes waiting up to COORDINATOR_STARTUP_HANG_MS (120 s) for its coordinator, so this outlasts that bound.
+ */
+const LAUNCHER_LOCK_WAIT_MS = 130_000;
 const DEFAULT_SERVER_ID_FILE = "default-server-id";
 
 export interface ServerProfile {
@@ -120,18 +124,11 @@ export async function acquireServerProfile(directory: string, requestedServerId?
 		}
 	}
 
-	const { release, assertHeld } = await lockWithLossHandling(join(directory, `launcher-${serverId}`), {
-		realpath: false,
-		stale: LOCK_STALE_MS,
-		update: LOCK_STALE_MS / 3,
-		retries: {
-			retries: Math.ceil(LOCK_WAIT_MS / LOCK_RETRY_MS),
-			factor: 1,
-			minTimeout: LOCK_RETRY_MS,
-			maxTimeout: LOCK_RETRY_MS,
-			maxRetryTime: LOCK_WAIT_MS,
-		},
-	});
+	const { release, assertHeld } = await waitForFileLock(
+		join(directory, `launcher-${serverId}`),
+		{ realpath: false, stale: LOCK_STALE_MS, update: LOCK_STALE_MS / 3 },
+		LAUNCHER_LOCK_WAIT_MS,
+	);
 	return { serverId, release, assertHeld };
 }
 
@@ -149,7 +146,6 @@ const ACTIVATION_STARTUP_HANG_MS = 120_000;
  * on a slow cold start, so this outlasts that bound; measured on the monotonic clock like the startup wait.
  */
 const ACTIVATION_LOCK_WAIT_MS = ACTIVATION_STARTUP_HANG_MS + ACTIVATION_TIMEOUT_MS;
-const ACTIVATION_LOCK_RETRY_MS = 25;
 
 export interface ActivatedServer {
 	readonly client: Client;
@@ -226,22 +222,11 @@ export async function acquireServerActivation(
 	directory: string,
 	serverId: ServerId,
 ): Promise<Pick<HeldFileLock, "release" | "assertHeld">> {
-	// One lock attempt at a time on the monotonic clock: the library's own retry budget is measured on the wall clock.
-	const deadline = performance.now() + ACTIVATION_LOCK_WAIT_MS;
-	while (true) {
-		try {
-			return await lockWithLossHandling(join(directory, `activation-${serverId}`), {
-				realpath: false,
-				stale: ACTIVATION_TIMEOUT_MS * 2,
-				update: ACTIVATION_TIMEOUT_MS,
-				retries: 0,
-			});
-		} catch (error) {
-			const held = error instanceof Error && "code" in error && error.code === "ELOCKED";
-			if (!held || performance.now() >= deadline) throw error;
-			await new Promise<void>((resolve) => setTimeout(resolve, ACTIVATION_LOCK_RETRY_MS));
-		}
-	}
+	return waitForFileLock(
+		join(directory, `activation-${serverId}`),
+		{ realpath: false, stale: ACTIVATION_TIMEOUT_MS * 2, update: ACTIVATION_TIMEOUT_MS },
+		ACTIVATION_LOCK_WAIT_MS,
+	);
 }
 
 async function connect(route: UnixServerRoute): Promise<Client | undefined> {
@@ -646,7 +631,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 		const controlPath = join(directory, `control-${serverId}.sock`);
 		const serverNonce = randomUUID().replaceAll("-", "").slice(0, 12);
 		const serverPath = join(directory, `server-${serverId}-${serverNonce}.sock`);
-		startupLease = await ensureCoordinator(socketPath, controlPath);
+		startupLease = await ensureCoordinator(socketPath, controlPath, assertHeld);
 		coordinator = new CoordinatorConnection({ controlPath, endpoint: serverPath });
 		const sessionDir = resolveSessionDirectory(options.sessionDir);
 		workers = new SessionWorkerManager(coordinator, sessionDir, workerModel, (count) =>

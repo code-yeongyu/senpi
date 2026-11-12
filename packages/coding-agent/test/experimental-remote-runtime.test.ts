@@ -1,6 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import nodeFs, { existsSync, watch as watchDirectory } from "node:fs";
-import { lstat, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { syncBuiltinESMExports } from "node:module";
 import nodeNet, { type Socket } from "node:net";
@@ -9,7 +9,7 @@ import { type Context, createFacetHost, defineFacet, defineService } from "@eare
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { Client, ServerError as ClientServerError } from "@earendil-works/pi-client";
 import { createUnixTransportFactory } from "@earendil-works/pi-client/unix";
-import { isServerId } from "@earendil-works/pi-protocol";
+import { isServerId, type ServerId } from "@earendil-works/pi-protocol";
 import { Server } from "@earendil-works/pi-server";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ExampleFacetService } from "../examples/plugins/pi-example-plugin/src/contract.ts";
@@ -17,7 +17,13 @@ import { runClient } from "../src/experimental/client.ts";
 import { activateBuiltinClientServices, openClientRuntime } from "../src/experimental/client-runtime.ts";
 import { createPresentationFacetLoaders } from "../src/experimental/plugins/bundled.ts";
 import * as processRuntime from "../src/experimental/process.ts";
-import { acquireServerActivation, type RunningServer, startServer } from "../src/experimental/server.ts";
+import { ensureCoordinator } from "../src/experimental/coordinator.ts";
+import {
+	acquireServerActivation,
+	acquireServerProfile,
+	type RunningServer,
+	startServer,
+} from "../src/experimental/server.ts";
 import { AgentController } from "../src/experimental/services/agent-controller.ts";
 import { createSessionServiceSource, type SessionAttachmentState } from "../src/experimental/services/connection.ts";
 import { Models } from "../src/experimental/services/models.ts";
@@ -55,8 +61,12 @@ const spawnTracked: typeof realSpawnInternalProcess = (role, args, options) => {
 	const child = realSpawnInternalProcess(role, args, options);
 	spawnedProcesses.add(child);
 	spawnedRoles.set(child, role);
+	const entry = options?.entryUrl?.href;
+	if (entry === heldServerEntryUrl.href || entry === heldCoordinatorEntryUrl.href) heldProcesses.add(child);
 	return child;
 };
+/** Fixture processes held until SIGUSR2; one a test never released cannot exit on its own, so teardown stops it. */
+const heldProcesses = new Set<ChildProcess>();
 const sessionWorkerModel = { provider: "anthropic", model: "claude-sonnet-4-5" } as const;
 /**
  * Event-loop turns the injected stalled peer takes to drain one write. It is a turn budget, not a
@@ -130,6 +140,8 @@ async function teardownTest(): Promise<void> {
 	const ownServers = takeAll(servers);
 	const ownProcesses = takeAll(spawnedProcesses);
 	const ownDirectories = takeAll(directories);
+	for (const held of takeAll(heldProcesses))
+		if (held.exitCode === null && held.signalCode === null) held.kill("SIGKILL");
 	vi.unstubAllEnvs();
 	await Promise.all(ownClients.map((client) => client.dispose()));
 	await Promise.all(ownServers.map((server) => server.close()));
@@ -389,47 +401,64 @@ describe("experimental durable server composition", () => {
 	});
 
 	test("waits for another activator's lock after both clocks moved past 10 s", async ({ onTestFinished }) => {
-		const directory = await mkdtemp(join("/tmp", "pes-activation-lock-"));
-		directories.add(directory);
-		const serverId = "00000000-0000-4000-8000-000000000001";
-		if (!isServerId(serverId)) throw new Error("fixture server id is not a ServerId");
+		const { directory, serverId } = await lockFixture("pes-activation-lock-");
 		const holder = await acquireServerActivation(directory, serverId);
+		await expectWaiterOutlasts(onTestFinished, join(directory, `activation-${serverId}.lock`), holder, 11_000, () =>
+			acquireServerActivation(directory, serverId),
+		);
+	});
+
+	test("waits for a starting server's launcher lock after both clocks moved past 30 s", async ({ onTestFinished }) => {
+		const { directory, serverId } = await lockFixture("pes-launcher-lock-");
+		const holder = await acquireServerProfile(directory, serverId);
+		await expectWaiterOutlasts(onTestFinished, join(directory, `launcher-${serverId}.lock`), holder, 31_000, () =>
+			acquireServerProfile(directory, serverId),
+		);
+	});
+
+	test("retries a transient error while taking the activation lock", async ({ onTestFinished }) => {
+		const { directory, serverId } = await lockFixture("pes-activation-emfile-");
 		const lockPath = join(directory, `activation-${serverId}.lock`);
-		// proper-lockfile reports a held lock only after it stats the lock directory to judge staleness, so a stat that
-		// completed after the clocks moved means the waiter has made one full attempt on the moved clocks.
-		let statAfterJump = (): void => {};
-		const attempted = new Promise<void>((resolve) => {
-			statAfterJump = resolve;
-		});
-		let jumped = false;
-		const realStat = nodeFs.stat;
-		const stat = vi.spyOn(nodeFs, "stat").mockImplementation(((...args: unknown[]) => {
+		let failures = 0;
+		const realMkdir = nodeFs.mkdir;
+		const mkdir = vi.spyOn(nodeFs, "mkdir").mockImplementation(((...args: unknown[]) => {
 			const callback = args.at(-1);
-			if (args[0] !== lockPath || !jumped || typeof callback !== "function") {
-				return Reflect.apply(realStat, nodeFs, args);
+			if (args[0] === lockPath && failures === 0 && typeof callback === "function") {
+				failures++;
+				const error = Object.assign(new Error(`EMFILE: too many open files, mkdir '${lockPath}'`), {
+					code: "EMFILE",
+				});
+				process.nextTick(() => Reflect.apply(callback, undefined, [error]));
+				return undefined;
 			}
-			return Reflect.apply(realStat, nodeFs, [
-				...args.slice(0, -1),
-				(...results: unknown[]) => {
-					Reflect.apply(callback, undefined, results);
-					statAfterJump();
-				},
-			]);
-		}) as typeof nodeFs.stat);
+			return Reflect.apply(realMkdir, nodeFs, args);
+		}) as typeof nodeFs.mkdir);
 		syncBuiltinESMExports();
 		onTestFinished(() => {
-			stat.mockRestore();
+			mkdir.mockRestore();
 			syncBuiltinESMExports();
 		});
 
-		const waiting = acquireServerActivation(directory, serverId);
-		advanceClocks(11_000, onTestFinished);
-		jumped = true;
-		await attempted;
-		await holder.release();
-
-		const acquired = await waiting;
+		const acquired = await acquireServerActivation(directory, serverId);
 		await acquired.release();
+		expect(failures).toBe(1);
+	});
+
+	test("stops the coordinator it started when the startup wait times out", async ({ onTestFinished }) => {
+		const { coordinator, waiting } = await startHeldCoordinator(onTestFinished, () => {});
+		advanceClocks(121_000, onTestFinished);
+		await expect(waiting).rejects.toThrow("Timed out waiting for coordinator startup");
+		expect(coordinator.exitCode !== null || coordinator.signalCode !== null).toBe(true);
+	});
+
+	test("stops the coordinator it started when the caller's lock is lost", async ({ onTestFinished }) => {
+		let lost = false;
+		const { coordinator, waiting } = await startHeldCoordinator(onTestFinished, () => {
+			if (lost) throw new Error("launcher lock lost");
+		});
+		lost = true;
+		await expect(waiting).rejects.toThrow("launcher lock lost");
+		expect(coordinator.exitCode !== null || coordinator.signalCode !== null).toBe(true);
 	});
 
 	test("retires a cold server after its only Session attachment disconnects", async () => {
@@ -1268,17 +1297,136 @@ function advanceClocks(ms: number, onTestFinished: (cleanup: () => void) => void
 	});
 }
 
-/** Resolves once `path` exists, woken by the directory's change events (the watch is live before the first check). */
+async function lockFixture(prefix: string): Promise<{ directory: string; serverId: ServerId }> {
+	const directory = await mkdtemp(join("/tmp", prefix));
+	directories.add(directory);
+	const serverId = "00000000-0000-4000-8000-000000000001";
+	if (!isServerId(serverId)) throw new Error("fixture server id is not a ServerId");
+	return { directory, serverId };
+}
+
+/**
+ * Once the waiter has made its first attempt, moves both clocks by `ms` while `holder` keeps the lock at `lockPath`, then
+ * releases it once the waiter has made one
+ * full attempt on the moved clocks, and expects the waiter to get the lock. proper-lockfile reports a held lock only
+ * after it stats the lock directory to judge staleness, so a stat completed after the jump marks that attempt.
+ */
+async function expectWaiterOutlasts(
+	onTestFinished: (cleanup: () => void) => void,
+	lockPath: string,
+	holder: { release(): Promise<void> },
+	ms: number,
+	acquire: () => Promise<{ release(): Promise<void> }>,
+): Promise<void> {
+	let firstStat = (): void => {};
+	const firstAttempt = new Promise<void>((resolve) => {
+		firstStat = resolve;
+	});
+	let statAfterJump = (): void => {};
+	const attempted = new Promise<void>((resolve) => {
+		statAfterJump = resolve;
+	});
+	let jumped = false;
+	const realStat = nodeFs.stat;
+	const stat = vi.spyOn(nodeFs, "stat").mockImplementation(((...args: unknown[]) => {
+		const callback = args.at(-1);
+		if (args[0] !== lockPath || typeof callback !== "function") return Reflect.apply(realStat, nodeFs, args);
+		const afterJump = jumped;
+		return Reflect.apply(realStat, nodeFs, [
+			...args.slice(0, -1),
+			(...results: unknown[]) => {
+				Reflect.apply(callback, undefined, results);
+				if (afterJump) statAfterJump();
+				else firstStat();
+			},
+		]);
+	}) as typeof nodeFs.stat);
+	syncBuiltinESMExports();
+	onTestFinished(() => {
+		stat.mockRestore();
+		syncBuiltinESMExports();
+	});
+
+	const waiting = acquire();
+	// The waiter's budget starts at its first attempt, so the clocks move only once it is waiting.
+	await firstAttempt;
+	advanceClocks(ms, onTestFinished);
+	// The holder refreshes its lock as time passes; without that the moved clock would make the held lock stale and the
+	// waiter would take it over instead of waiting for it.
+	await utimes(lockPath, new Date(), new Date());
+	jumped = true;
+	await attempted;
+	await holder.release();
+	const acquired = await waiting;
+	await acquired.release();
+}
+
+/** Starts `ensureCoordinator` against a coordinator held until SIGUSR2 and returns once that coordinator is waiting. */
+async function startHeldCoordinator(
+	onTestFinished: (cleanup: () => void) => void,
+	assertHeld: () => void,
+): Promise<{ coordinator: ChildProcess; waiting: Promise<unknown> }> {
+	const directory = await mkdtemp(join("/tmp", "pes-held-coordinator-"));
+	directories.add(directory);
+	let coordinatorSpawned = (_child: ChildProcess): void => {};
+	const spawned = new Promise<ChildProcess>((resolve) => {
+		coordinatorSpawned = resolve;
+	});
+	const spawn = vi.spyOn(processRuntime, "spawnInternalProcess").mockImplementation((role, args, options) => {
+		const child = spawnTracked(role, args, { ...options, entryUrl: heldCoordinatorEntryUrl });
+		coordinatorSpawned(child);
+		return child;
+	});
+	onTestFinished(() => spawn.mockRestore());
+	const waiting = ensureCoordinator(join(directory, "public.sock"), join(directory, "control-held.sock"), assertHeld);
+	waiting.catch(() => {});
+	const coordinator = await spawned;
+	await fileAppears(join(directory, HELD_COORDINATOR_READY_FILE));
+	return { coordinator, waiting };
+}
+
+/**
+ * Resolves once `path` exists, woken by the directory's change events (the watch is live before the first check). When
+ * no watch can be made (EMFILE or ENOSPC: the host is out of descriptors or inotify instances) it checks the path on a
+ * short interval instead; either way it gives up after WORKER_EXIT_TIMEOUT_MS.
+ */
 function fileAppears(path: string): Promise<void> {
 	return new Promise((resolve, reject) => {
+		let stop = (): void => {};
+		const giveUp = setTimeout(() => {
+			stop();
+			reject(new Error(`${path} did not appear within ${WORKER_EXIT_TIMEOUT_MS} ms`));
+		}, WORKER_EXIT_TIMEOUT_MS);
 		const settle = (): void => {
 			if (!existsSync(path)) return;
-			watcher.close();
+			clearTimeout(giveUp);
+			stop();
 			resolve();
 		};
-		const watcher = watchDirectory(dirname(path), settle);
-		watcher.once("error", reject);
-		settle();
+		const poll = (): void => {
+			const interval = setInterval(settle, 20);
+			stop = () => clearInterval(interval);
+			settle();
+		};
+		const cannotWatch = (error: unknown): boolean =>
+			error instanceof Error && "code" in error && (error.code === "EMFILE" || error.code === "ENOSPC");
+		try {
+			const watcher = watchDirectory(dirname(path), settle);
+			stop = () => watcher.close();
+			watcher.once("error", (error) => {
+				watcher.close();
+				if (cannotWatch(error)) return poll();
+				clearTimeout(giveUp);
+				reject(error);
+			});
+			settle();
+		} catch (error) {
+			if (!cannotWatch(error)) {
+				clearTimeout(giveUp);
+				throw error;
+			}
+			poll();
+		}
 	});
 }
 

@@ -9,6 +9,7 @@ import {
 	isDirectInternalProcessEntry,
 	MAX_CONTROL_LINE_BYTES,
 	spawnInternalProcess,
+	terminateInternalProcess,
 } from "./process.ts";
 
 export const COORDINATOR_PROTOCOL_VERSION = 3;
@@ -189,17 +190,31 @@ export interface CoordinatorStartupLease {
 	close(): void;
 }
 
-export async function ensureCoordinator(publicPath: string, controlPath: string): Promise<CoordinatorStartupLease> {
+/**
+ * `assertHeld` is the caller's lock check (the launcher lock a server starts under): it runs on every poll, and a lost
+ * lock ends the wait. A wait that ends without a reachable coordinator stops the coordinator it started.
+ */
+export async function ensureCoordinator(
+	publicPath: string,
+	controlPath: string,
+	assertHeld: () => void = () => {},
+): Promise<CoordinatorStartupLease> {
 	const existing = await tryConnect(controlPath);
 	if (existing) return { close: () => existing.destroy() };
 	const child = spawnInternalProcess("coordinator", [publicPath, controlPath]);
 	const deadline = performance.now() + COORDINATOR_STARTUP_HANG_MS;
-	while (true) {
-		const socket = await tryConnect(controlPath);
-		if (socket) return { close: () => socket.destroy() };
-		if (child.exitCode !== null || child.signalCode !== null) throw new Error("Coordinator exited during startup");
-		if (performance.now() >= deadline) throw new Error("Timed out waiting for coordinator startup");
-		await new Promise<void>((resolve) => setTimeout(resolve, COORDINATOR_RETRY_MS));
+	try {
+		while (true) {
+			const socket = await tryConnect(controlPath);
+			if (socket) return { close: () => socket.destroy() };
+			if (child.exitCode !== null || child.signalCode !== null) throw new Error("Coordinator exited during startup");
+			assertHeld();
+			if (performance.now() >= deadline) throw new Error("Timed out waiting for coordinator startup");
+			await new Promise<void>((resolve) => setTimeout(resolve, COORDINATOR_RETRY_MS));
+		}
+	} catch (error) {
+		await terminateInternalProcess(child);
+		throw error;
 	}
 }
 
