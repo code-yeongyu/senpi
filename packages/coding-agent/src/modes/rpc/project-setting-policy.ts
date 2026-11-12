@@ -6,13 +6,13 @@
  * already chosen model thinks. Every other key, a key added later included, and its removal (`null`) alike, is decided
  * as the same write through a tool call would be: an edit of the project settings file plus a shell call only a bash
  * `*` rule decides, by the session's registered permission authorizer, with no ask. The record is decided on the
- * preset its origin calls for (`recordDecisionPreset`); the live service is never reloaded for it, so a live preset
- * other than that one refuses.
+ * preset its origin calls for (`recordDecisionPreset`); the live service is never reloaded for it, so live rules not
+ * loaded with that preset refuse.
  */
 
 import type { AgentSession } from "../../core/agent-session.ts";
 import { decideDispatchPolicy, type DispatchPolicy } from "../../core/extensions/builtin/permission-system/dispatch.ts";
-import { readPermissionPreset } from "../../core/extensions/builtin/permission-system/preset-registry.ts";
+import { readDecisionPresetOverride } from "../../core/extensions/builtin/permission-system/preset-registry.ts";
 import { recordDecisionPreset } from "../../core/permission-decision.ts";
 import { getSettingsPath } from "../../core/settings-manager.ts";
 import {
@@ -37,9 +37,12 @@ const oneOf =
 	(value) =>
 		allowed.includes(value);
 const isBoolean: ValueCheck = (value) => typeof value === "boolean";
-const isFiniteNumber: ValueCheck = (value) => typeof value === "number" && Number.isFinite(value);
+const numberFrom =
+	(min: number, max: number): ValueCheck =>
+	(value) =>
+		typeof value === "number" && Number.isFinite(value) && value >= min && value <= max;
 const integerFrom =
-	(min: number, max = Number.MAX_SAFE_INTEGER): ValueCheck =>
+	(min: number, max: number): ValueCheck =>
 	(value) =>
 		Number.isSafeInteger(value) && typeof value === "number" && value >= min && value <= max;
 
@@ -73,7 +76,7 @@ const ALLOWLIST: ReadonlyMap<string, ValueCheck> = new Map<string, ValueCheck>([
 	["followUpMode", oneOf("all", "one-at-a-time")],
 	["hideThinkingBlock", isBoolean],
 	["smoothStreaming", isBoolean],
-	["smoothStreamingFps", isFiniteNumber],
+	["smoothStreamingFps", numberFrom(30, 120)],
 	["showCacheMissNotices", isBoolean],
 	["quietStartup", (value) => isBoolean(value) || value === "header"],
 	["tips", isBoolean],
@@ -81,9 +84,9 @@ const ALLOWLIST: ReadonlyMap<string, ValueCheck> = new Map<string, ValueCheck>([
 	["collapseChangelog", isBoolean],
 	["doubleEscapeAction", oneOf("fork", "tree", "none")],
 	["treeFilterMode", oneOf("default", "no-tools", "user-only", "labeled-only", "all")],
-	["editorPaddingX", integerFrom(0)],
+	["editorPaddingX", integerFrom(0, 3)],
 	["outputPad", oneOf(0, 1)],
-	["autocompleteMaxVisible", integerFrom(1)],
+	["autocompleteMaxVisible", integerFrom(3, 20)],
 	["showHardwareCursor", isBoolean],
 	["tuiMode", oneOf("regular", "fullscreen")],
 	["fullscreenExitOutput", oneOf("transcript", "resume-hint")],
@@ -151,8 +154,10 @@ function decideOutsideAllowlist(session: AgentSession): ProjectSettingRefusal | 
 	}
 	if (action === "deny") return denied("a rule denies it.");
 	if (action === "ask") return needsPermission("the edit or shell rule asks.");
+	// The live rules are this record's only when they were loaded with its preset as the override, the way a turn of
+	// the same origin loads them: a preset of the same name from settings keeps the lower settings rules in force.
 	const required = recordDecisionPreset(session.sessionManager);
-	if (required !== undefined && readPermissionPreset(permissionSession) !== required)
+	if (required !== undefined && readDecisionPresetOverride(permissionSession) !== required)
 		return needsPermission(`this connection is decided on the ${required} mode.`);
 	return undefined;
 }
