@@ -1,4 +1,3 @@
-import type { RepositoryIdentity } from "../../core/repository-identity.ts";
 import type { MoveAnswer } from "../../core/session-move/move-ledger.ts";
 import type { RpcCommand } from "./rpc-host-command-types.ts";
 import type { RpcSessionPresence } from "./rpc-host-response-types.ts";
@@ -125,7 +124,7 @@ export type RpcMoveSessionData =
 	| RpcMoveRecord
 	| { move_id: string; session_id: string; bundle_dir: string; files: number; inline_files?: RpcMoveInlineFile[] }
 	| RpcMoveImportData
-	| { repository?: RepositoryIdentity }
+	| { repository?: RpcRepositoryIdentity }
 	| { ownership: "writable" | "moving" | "moved" };
 
 export interface RpcMoveSessionResponse {

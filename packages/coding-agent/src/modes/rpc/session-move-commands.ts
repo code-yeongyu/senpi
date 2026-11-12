@@ -110,7 +110,10 @@ async function run(
 				"cwd" in parsed
 					? await readRepositoryIdentity(resolvePath(parsed.cwd))
 					: await readSessionRepositoryIdentity(join(port.agentDir, "sessions"), parsed.sessionPath);
-			return repository === undefined ? {} : { repository };
+			// The answer is the wire shape: a plain copy, never the core object.
+			return repository === undefined
+				? {}
+				: { repository: { ...repository, rootCommits: [...repository.rootCommits] } };
 		}
 		case "cancel":
 			return wireRecord(await ledger.decline(parsed.moveId, "cancelled"));
