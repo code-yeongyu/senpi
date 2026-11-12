@@ -59,7 +59,7 @@ describe("project MCP verbs: classes and session", () => {
 		for (const command of commands) {
 			expect(await host.send({ ...command, sessionId: "no-such-session" })).toMatchObject({
 				success: false,
-				errorCode: "unknown_session",
+				error: "unknown_session",
 			});
 		}
 		expect(existsSync(join(host.cwd, MCP_PATH))).toBe(false);

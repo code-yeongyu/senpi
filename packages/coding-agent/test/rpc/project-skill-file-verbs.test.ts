@@ -3,7 +3,7 @@
  * for the session folder, contained to that folder, so a remote client edits skills the way a local one does.
  * One test per gate and per refusal; every accepted write answers the read-back `read_project_skill_file` gives.
  */
-import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ProjectTrustStore } from "../../src/core/trust-manager.ts";
@@ -65,7 +65,7 @@ describe("project skill file verbs: classes and session", () => {
 		]) {
 			expect(await host.send({ ...command, sessionId: "no-such-session" })).toMatchObject({
 				success: false,
-				errorCode: "unknown_session",
+				error: "unknown_session",
 			});
 		}
 		expect(onDisk(host)).toBe(ORIGINAL);
@@ -183,26 +183,31 @@ describe("project skill file verbs: containment", () => {
 		);
 	});
 
-	it("refuses a listed skill reached through a folder link or a file link that leaves the folder", async () => {
-		const host = await startFolderHost({
-			prepare: (layout) => {
-				mkdirSync(join(layout.outside, "linked-skill"));
-				writeFileSync(join(layout.outside, "linked-skill", "SKILL.md"), skillSource("linked-skill"));
-				symlinkSync(join(layout.outside, "linked-skill"), projectSkillDir(layout, "linked-skill"));
-				writeFileSync(join(layout.outside, "file-link.md"), skillSource("file-link"));
-				mkdirSync(projectSkillDir(layout, "file-link"));
-				symlinkSync(join(layout.outside, "file-link.md"), join(projectSkillDir(layout, "file-link"), "SKILL.md"));
+	it.each([
+		[
+			"its folder swapped for a link that leaves the folder",
+			(layout: FolderLayout) => {
+				renameSync(projectSkillDir(layout, SKILL_NAME), join(layout.outside, "moved"));
+				symlinkSync(join(layout.outside, "moved"), projectSkillDir(layout, SKILL_NAME));
 			},
+		],
+		[
+			"its file swapped for a link that leaves the folder",
+			(layout: FolderLayout) => {
+				mkdirSync(join(layout.outside, "moved"));
+				renameSync(join(layout.cwd, SKILL_PATH), join(layout.outside, "moved", "SKILL.md"));
+				symlinkSync(join(layout.outside, "moved", "SKILL.md"), join(layout.cwd, SKILL_PATH));
+			},
+		],
+	])("refuses a listed skill with %s, and leaves the target alone", async (_label, swap) => {
+		const host = await startFolderHost();
+		const first = await trustedRead(host);
+		swap(host);
+		expect(await read(host, SKILL_NAME)).toMatchObject({ success: false, errorCode: "project_file_not_allowed" });
+		expect(await write(host, SKILL_NAME, EDITED, first.etag)).toMatchObject({
+			success: false,
+			errorCode: "project_file_not_allowed",
 		});
-		await host.trust();
-		for (const skill of ["linked-skill", "file-link"]) {
-			expect(await read(host, skill)).toMatchObject({ success: false, errorCode: "project_file_not_allowed" });
-			expect(await write(host, skill, EDITED, null)).toMatchObject({
-				success: false,
-				errorCode: "project_file_not_allowed",
-			});
-		}
-		expect(readFileSync(join(host.outside, "linked-skill", "SKILL.md"), "utf8")).toBe(skillSource("linked-skill"));
-		expect(readFileSync(join(host.outside, "file-link.md"), "utf8")).toBe(skillSource("file-link"));
+		expect(readFileSync(join(host.outside, "moved", "SKILL.md"), "utf8")).toBe(ORIGINAL);
 	});
 });
