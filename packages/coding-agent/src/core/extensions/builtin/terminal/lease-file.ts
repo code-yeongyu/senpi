@@ -141,7 +141,6 @@ export async function reclaimLockState(lock: string, probes: LockProbes = {}): P
 		);
 		return age > UNREADABLE_LOCK_STALE_MS ? { state: "stale", raw } : { state: "held" };
 	}
-	if (!(await sameBootAsOwn(holder.bootAtMs))) return { state: "stale", raw };
 	if (holder.pid === process.pid) {
 		// Our own pid: held only by this very process (another reclaim in flight here), never by a
 		// crashed earlier process whose pid this one now wears.
@@ -150,11 +149,18 @@ export async function reclaimLockState(lock: string, probes: LockProbes = {}): P
 			: { state: "stale", raw };
 	}
 	if (!(probes.isProcessAlive ?? pidAlive)(holder.pid)) return { state: "stale", raw };
+	// A live pid is judged by its start time first: a wall-clock step moves the kernel's recorded boot instant, so a live
+	// holder whose record predates the step reads as another boot while its pid and start time still match.
 	const observed = await (probes.readProcessStartMs ?? defaultReadProcessStartMs)(holder.pid).catch(() => undefined);
+	if (observed !== undefined)
+		return sameProcessStart(holder.processStartedAtMs, observed)
+			? { state: "held", holder }
+			: { state: "stale", raw };
+	// Only without a start time does the boot instant decide: a pid alive in another boot is someone else's.
+	if (!(await sameBootAsOwn(holder.bootAtMs))) return { state: "stale", raw };
 	// An unreadable start time cannot tell the holder from a process wearing its reused pid: held, but
 	// `unproven`, so a caller with positive evidence of the holder's death may still reclaim it.
-	if (observed === undefined) return { state: "held", holder, unproven: true };
-	return sameProcessStart(holder.processStartedAtMs, observed) ? { state: "held", holder } : { state: "stale", raw };
+	return { state: "held", holder, unproven: true };
 }
 
 /** Remove a stale lock only if it still holds `raw`; a lock someone took meanwhile is put back. */

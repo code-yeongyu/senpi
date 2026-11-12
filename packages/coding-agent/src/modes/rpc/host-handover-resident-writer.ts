@@ -48,21 +48,32 @@ export function residentWriterProbe(
 	const gone = new Set<string>();
 	const verified = new Set<string>();
 	return async (writer) => {
-		// Resolved first, so nothing yields between reading the verdict cache and recording a new verdict; a writer that
-		// looks like another boot is checked against a fresh read, since a wall-clock step makes the cached record stale.
+		const key = `${writer.host}:${writer.pid}:${writer.processStartedAtMs}`;
+		// A writer found gone stays gone: the set only grows, so this sync check needs no boot read, and a reopen watch
+		// polling a gone writer never re-reads the kernel record (a `sysctl` spawn on macOS) on every poll.
+		if (gone.has(key)) return false;
+		// Resolved before the verdict, so nothing yields between reading the verdict cache and recording a new verdict; a
+		// writer that looks like another boot is checked against a fresh read, since a wall-clock step makes the cached
+		// record stale.
 		let bootAtMs = await probes.bootAtMs();
 		if (writer.host === probes.host() && !sameBoot(bootAtMs, writer.bootAtMs))
 			bootAtMs = await probes.bootAtMs({ fresh: true });
-		const key = `${writer.host}:${writer.pid}:${writer.processStartedAtMs}`;
 		if (gone.has(key)) return false;
 		if (writer.host !== probes.host()) return true;
-		if (!sameBoot(bootAtMs, writer.bootAtMs) || !probes.pidAlive(writer.pid)) {
+		if (!probes.pidAlive(writer.pid)) {
 			gone.add(key);
 			return false;
 		}
 		if (verified.has(key)) return true;
+		// A live pid is judged by its start time first: a wall-clock step moves the kernel's recorded boot instant, so a
+		// live writer recorded before the step reads as another boot while its pid and start time still match. Only
+		// without a start time does the boot instant decide.
 		const startedAtMs = await probes.readProcessStartMs(writer.pid);
-		if (startedAtMs !== undefined && Math.abs(startedAtMs - writer.processStartedAtMs) > BOOT_INSTANT_TOLERANCE_MS) {
+		const sameProcess =
+			startedAtMs !== undefined
+				? Math.abs(startedAtMs - writer.processStartedAtMs) <= BOOT_INSTANT_TOLERANCE_MS
+				: sameBoot(bootAtMs, writer.bootAtMs);
+		if (!sameProcess) {
 			gone.add(key);
 			return false;
 		}

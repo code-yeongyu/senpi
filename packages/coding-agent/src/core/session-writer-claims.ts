@@ -144,11 +144,13 @@ async function ownerGone(dir: string, claim: WriterClaim, probes: WriterProbes, 
 	if (await releasedWith(dir, claim)) return true;
 	// A writer on another host (a shared or network directory) cannot be probed from here: never displace it.
 	if (claim.host !== probes.host()) return false;
-	if (!sameBoot(bootAtMs, claim.bootAtMs)) return true;
 	if (!probes.pidAlive(claim.pid)) return true;
+	// A live pid is judged by its start time first: a wall-clock step moves the kernel's recorded boot instant, so a live
+	// writer whose claim predates the step reads as another boot while its pid and start time still match.
 	const startedAtMs = await probes.readProcessStartMs(claim.pid);
-	if (startedAtMs === undefined) return false;
-	return Math.abs(startedAtMs - claim.processStartedAtMs) > BOOT_INSTANT_TOLERANCE_MS;
+	if (startedAtMs !== undefined) return Math.abs(startedAtMs - claim.processStartedAtMs) > BOOT_INSTANT_TOLERANCE_MS;
+	// Only without a start time does the boot instant decide: a pid alive in another boot is someone else's.
+	return !sameBoot(bootAtMs, claim.bootAtMs);
 }
 
 async function releasedWith(dir: string, claim: WriterClaim): Promise<boolean> {

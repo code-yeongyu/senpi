@@ -176,10 +176,17 @@ async function orphanedDelivery(raw: string, lockAgeMs: number, probes: LockProb
 	}
 	if (typeof parsed !== "object" || parsed === null) return undefined;
 	const field = (key: string): unknown => (key in parsed ? Reflect.get(parsed, key) : undefined);
-	const boot = field("bootAtMs");
-	if (typeof boot !== "number" || !(await sameBootAsOwn(boot))) return undefined;
 	const pid = field("deliveryPid");
 	const startedAt = field("deliveryStartedAtMs");
+	// A live leader whose start time reads is judged by it first: a wall-clock step moves the kernel's recorded boot
+	// instant, so a delivery recorded before the step reads as another boot while its leader is the same process.
+	if (typeof pid === "number" && typeof startedAt === "number" && isPidAlive(pid)) {
+		const leaderStart = await (probes.readProcessStartMs ?? readProcessStartMs)(pid).catch(() => undefined);
+		if (leaderStart !== undefined) return sameProcessStart(startedAt, leaderStart) ? pid : undefined;
+	}
+	// Without that, the boot instant decides: a process group or pid alive in another boot is someone else's.
+	const boot = field("bootAtMs");
+	if (typeof boot !== "number" || !(await sameBootAsOwn(boot))) return undefined;
 	if (typeof pid !== "number" || typeof startedAt !== "number") {
 		const maxDeliveryMs = field("maxDeliveryMs");
 		const runner = field("pid");
