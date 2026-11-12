@@ -78,6 +78,7 @@ export const HOST_RECORD_SCHEMAS = {
 		move({ op: Type.Literal("import"), bundleDir: PathStr, cwd: PathStr, from: OptId }),
 		move({ op: Type.Literal("finish"), sessionPath: PathStr, moveId: Id, answer: Type.Unknown() }),
 		move({ op: Type.Literal("revoke"), sessionPath: PathStr, moveId: Id }),
+		move({ op: Type.Literal("ownership"), sessionPath: PathStr, moveId: Id }),
 		move({ op: Type.Literal("copy"), sessionPath: PathStr, sessionId: Id, sessionDir: OptPath }),
 	]),
 	release_session: command("release_session", {

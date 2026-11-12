@@ -52,6 +52,7 @@ import { STEER_WHEN_IDLE_CAPABILITY, USER_ACTIVITY_CAPABILITY } from "./rpc-type
 import {
 	MOVE_SESSION_CAPABILITY,
 	MOVE_SESSION_COPY_CAPABILITY,
+	MOVE_SESSION_OWNERSHIP_CAPABILITY,
 	MOVE_SESSION_REVOKE_CAPABILITY,
 	RELEASE_SESSION_EXPECT_ID_CAPABILITY,
 } from "./session-move-wire.ts";
@@ -143,6 +144,7 @@ export function multiSessionHostCapabilities(options: {
 			MOVE_SESSION_COPY_CAPABILITY,
 			// ...and its release compares the session the caller expects (senpi#6484).
 			RELEASE_SESSION_EXPECT_ID_CAPABILITY,
+			MOVE_SESSION_OWNERSHIP_CAPABILITY,
 			// A host session asks the client that offers it to continue the session elsewhere (`host_request`).
 			SESSION_RELOCATION_CAPABILITY,
 			SESSION_CONTEXT_CAPABILITY,

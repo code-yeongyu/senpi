@@ -8,6 +8,8 @@ export const MOVE_SESSION_REVOKE_CAPABILITY = "move_session_revoke";
 export const MOVE_SESSION_COPY_CAPABILITY = "move_session_copy";
 /** The host honours `release_session.expectSessionId` (senpi#6484); an engine without it ignores the field. */
 export const RELEASE_SESSION_EXPECT_ID_CAPABILITY = "release_session_expect_id";
+/** `move_session { op: "ownership" }`: the sender's read-only question about a file and a move (senpi#6484). */
+export const MOVE_SESSION_OWNERSHIP_CAPABILITY = "move_session_ownership";
 
 /** A `move_session` request whose fields do not parse (op, move id, paths, answer). */
 export const RPC_ERROR_INVALID_MOVE_REQUEST = "invalid_move_request";
@@ -15,6 +17,8 @@ export const RPC_ERROR_INVALID_MOVE_REQUEST = "invalid_move_request";
 export const RPC_ERROR_SESSION_OPEN_HERE = "session_open_here";
 /** `export` of a session file that is not sealed for this move by a `release_session` reason `move`. */
 export const RPC_ERROR_MOVE_NOT_RELEASED = "move_not_released";
+/** `ownership` of a path with no session file (missing, or no session header): never read as a writable session. */
+export const RPC_ERROR_NOT_A_SESSION_FILE = "not_a_session_file";
 /** A move step that failed for a reason with no code of its own; `errorData.detail` says what happened. */
 export const RPC_ERROR_MOVE_FAILED = "move_failed";
 
@@ -32,6 +36,7 @@ export type RpcMoveSessionCommand = { id?: string; type: "move_session" } & (
 	| { op: "import"; bundleDir: string; cwd: string; from?: string }
 	| { op: "finish"; sessionPath: string; moveId: string; answer: MoveAnswer }
 	| { op: "revoke"; sessionPath: string; moveId: string }
+	| { op: "ownership"; sessionPath: string; moveId: string }
 	| { op: "copy"; sessionPath: string; sessionId: string; sessionDir?: string }
 );
 
@@ -46,6 +51,8 @@ export type RpcMoveSessionData =
 			ownership: "writable" | "moving" | "moved";
 			/** On `finish` for a writable file: whether this move held it (only then are its bundle and staged state removed). */
 			held_this_move?: boolean;
+			/** On `ownership`: the file is sealed for exactly this move (an export's own check). */
+			sealed_for_move?: boolean;
 	  };
 
 export interface RpcMoveSessionResponse {

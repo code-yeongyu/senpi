@@ -20,6 +20,7 @@ export type MoveRequest =
 	| { readonly op: "import"; readonly bundleDir: string; readonly cwd: string; readonly from: string }
 	| { readonly op: "finish"; readonly sessionPath: string; readonly moveId: MoveId; readonly answer: MoveAnswer }
 	| { readonly op: "revoke"; readonly sessionPath: string; readonly moveId: MoveId }
+	| { readonly op: "ownership"; readonly sessionPath: string; readonly moveId: MoveId }
 	| {
 			readonly op: "copy";
 			readonly sessionPath: string;
@@ -85,7 +86,10 @@ export function parseMoveRequest(raw: Record<string, unknown>): MoveRequest | st
 		case "revoke":
 			if (!text(raw.sessionPath)) return "revoke needs sessionPath, the copy this host imported for the move.";
 			return { op, sessionPath: raw.sessionPath, moveId: id };
+		case "ownership":
+			if (!text(raw.sessionPath)) return "ownership needs sessionPath, the session file to read.";
+			return { op, sessionPath: raw.sessionPath, moveId: id };
 		default:
-			return 'op must be one of "prepare", "cancel", "status", "export", "import", "finish", "revoke" or "copy".';
+			return 'op must be one of "prepare", "cancel", "status", "export", "import", "finish", "revoke", "ownership" or "copy".';
 	}
 }

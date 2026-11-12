@@ -7,7 +7,7 @@ import type { MoveAnswer } from "./move-ledger.ts";
 import { moveStep } from "./move-steps.ts";
 import {
 	headerSessionId,
-	isOwnershipEntryType,
+	heldByMove,
 	type MoveId,
 	SESSION_MOVED,
 	SESSION_RECLAIMED,
@@ -122,17 +122,6 @@ async function settleMove(options: FinishMoveOptions): Promise<FinishOutcome> {
 	moveStep("finish:requeued");
 	await discardMoveFiles(sessionFile, bundleDir, moveId);
 	return { heldThisMove: true };
-}
-
-/** Any ownership entry for `moveId` that belongs to the file's own session (an inherited one names another session). */
-function heldByMove(entries: readonly { type: string; customType?: string; data?: unknown }[], moveId: MoveId): boolean {
-	const own = headerSessionId(entries);
-	return entries.some((entry) => {
-		if (entry.type !== "custom" || !isOwnershipEntryType(entry.customType)) return false;
-		const data = entry.data as { move_id?: unknown; session_id?: unknown } | undefined;
-		if (data?.move_id !== moveId) return false;
-		return data.session_id === undefined || own === undefined || data.session_id === own;
-	});
 }
 
 /** `session_reclaimed` makes the file writable again, then the queued input comes back under ids stable per move. */
