@@ -29,11 +29,12 @@ export async function createStructuredHarness(
 			...fixture,
 			agent: session.agent,
 			session,
+			// Dispose runs before cleanup() returns, as the harness's own does: callers start closing their scope next.
 			cleanup: () =>
 				trackCleanup(
-					Promise.resolve().then(() => {
+					new Promise<void>((resolve, reject) => {
 						session.dispose();
-						return fixture.cleanup();
+						fixture.cleanup().then(resolve, reject);
 					}),
 				),
 		};

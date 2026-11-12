@@ -190,7 +190,7 @@ try {
 	await manager.dispose();
 	await kernels?.dispose();
 	const harnessDir = harness?.tempDir;
-	harness?.cleanup();
+	await harness?.cleanup();
 	await rm(sandbox, { recursive: true, force: true });
 	let bridgeClosed = bridgePort === undefined;
 	if (bridgePort !== undefined) {

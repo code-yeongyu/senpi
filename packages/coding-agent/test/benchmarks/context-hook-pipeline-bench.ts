@@ -175,6 +175,6 @@ export async function runContextHookPipelineBench(args: string[]): Promise<void>
 		};
 		console.log(JSON.stringify(report, null, 2));
 	} finally {
-		harness.cleanup();
+		await harness.cleanup();
 	}
 }

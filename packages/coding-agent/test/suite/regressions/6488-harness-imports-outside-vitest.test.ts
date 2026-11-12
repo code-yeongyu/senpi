@@ -16,3 +16,32 @@ it("loads the suite harness outside a Vitest run", () => {
 		error: undefined,
 	});
 });
+
+// Outside Vitest nothing joins a recorded cleanup, so a script must await it: a failed removal then reaches the script.
+it("reports a failed removal to a script that awaits cleanup() outside Vitest", () => {
+	const harness = pathToFileURL(join(import.meta.dirname, "../harness.ts")).href;
+	const script = `
+		import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+		import { join } from "node:path";
+		const { createHarness } = await import(${JSON.stringify(harness)});
+		const fixture = await createHarness();
+		const locked = join(fixture.tempDir, "locked");
+		mkdirSync(locked);
+		writeFileSync(join(locked, "file"), "");
+		chmodSync(locked, 0o500);
+		try {
+			await fixture.cleanup();
+			console.log("cleanup resolved");
+		} catch (error) {
+			console.log("cleanup failed " + error.code);
+		} finally {
+			chmodSync(locked, 0o700);
+			rmSync(fixture.tempDir, { recursive: true, force: true });
+		}
+	`;
+	const run = spawnSync("bun", ["-e", script], { encoding: "utf8" });
+	expect({ status: run.status, stdout: run.stdout.trim().split("\n").at(-1) }).toEqual({
+		status: 0,
+		stdout: process.getuid?.() === 0 ? "cleanup resolved" : "cleanup failed EACCES",
+	});
+});
