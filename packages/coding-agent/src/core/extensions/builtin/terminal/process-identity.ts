@@ -15,8 +15,16 @@ export const BOOT_INSTANT_TOLERANCE_MS = 120_000;
 
 const wholeSeconds = (ms: number): number => Math.round(ms / 1000) * 1000;
 
-export function processBootAtMs(now: () => number = Date.now): number {
-	return wholeSeconds(now() - osUptimeSeconds() * 1000);
+/**
+ * The boot instant of this process cannot change, so the default read is taken once, from one `now`/uptime pair, and
+ * reused: `os.uptime()` counts whole seconds, so two reads straddling an uptime tick computed boot instants a second
+ * apart (senpi#3152). An injected clock always computes.
+ */
+let bootAtMs: number | undefined;
+export function processBootAtMs(now?: () => number): number {
+	if (now !== undefined) return wholeSeconds(now() - osUptimeSeconds() * 1000);
+	bootAtMs ??= wholeSeconds(Date.now() - osUptimeSeconds() * 1000);
+	return bootAtMs;
 }
 
 const floorToSecond = (ms: number): number => Math.floor(ms / 1000) * 1000;
