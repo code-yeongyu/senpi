@@ -21,7 +21,7 @@
  */
 import type { AgentSession } from "../../core/agent-session.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
-import { beginEffect, effectAnswer, isEffectBegin } from "./effect-answers.ts";
+import { beginEffect, effectAnswer, isEffectBegin, recordedEffect } from "./effect-answers.ts";
 import { EffectLedger } from "./effect-ledger.ts";
 import type { EffectActor, EffectStatus } from "./effect-record.ts";
 import type { RpcCommand, RpcResponse, RpcUnloadAnswer, UnloadRefusalReason } from "./rpc-types.ts";
@@ -72,14 +72,13 @@ export async function unloadSession(port: SessionUnloadPort, command: UnloadSess
 	if ("reason" in first) return answer(command, refused(first));
 	const { effectId } = command;
 	// Before the effect ledger: a dry run records nothing, so its effectId stays free for the real call. An id the
-	// ledger already holds for an unload is replayed by the real call, not judged again, so the dry run answers that.
+	// ledger already holds is answered as the real call would be: the replay, or the conflict for another payload.
 	if (command.dryRun === true) {
 		const recorded =
-			effectId === undefined
-				? undefined
-				: EffectLedger.forSession(first.session).status(effectId, command.sessionId);
-		if (recorded?.kind === "unload") return answer(command, replayed(recorded, command.sessionId));
-		return dryRunAnswer(command, blockers(port, command, first.session, first.durableSessionId));
+			effectId === undefined ? undefined : recordedEffect(first.session, "unload", { ...command, effectId });
+		if (recorded === undefined)
+			return dryRunAnswer(command, blockers(port, command, first.session, first.durableSessionId));
+		return "type" in recorded ? recorded : answer(command, replayed(recorded, command.sessionId));
 	}
 	if (effectId !== undefined) {
 		const begun = await beginEffect({ session: first.session, by: port.by, sessionId: command.sessionId }, "unload", {

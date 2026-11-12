@@ -64,13 +64,33 @@ export async function beginEffect(
 	try {
 		return await EffectLedger.forSession(ctx.session).begin(kind, command.effectId, command, ctx.by);
 	} catch (cause) {
-		if (!(cause instanceof EffectIdConflict)) throw cause;
-		return refuse(command.id, command.type, cause.message, RPC_ERROR_EFFECT_ID_CONFLICT, {
-			effectId: cause.effectId,
-			reason: cause.reason,
-			action: cause.action,
-		});
+		return conflictRefusal(command, cause);
 	}
+}
+
+/**
+ * What a command carrying this `effectId` would be answered from the ledger, with nothing recorded (a dry run): the
+ * stored status to replay, the `effect_id_conflict` refusal for another payload, or nothing for a fresh id.
+ */
+export function recordedEffect(
+	session: AgentSession,
+	kind: EffectCommandKind,
+	command: { readonly id?: string; readonly type: string; readonly effectId: string },
+): EffectStatus | RpcResponse | undefined {
+	try {
+		return EffectLedger.forSession(session).recorded(kind, command.effectId, command);
+	} catch (cause) {
+		return conflictRefusal(command, cause);
+	}
+}
+
+function conflictRefusal(command: { readonly id?: string; readonly type: string }, cause: unknown): RpcResponse {
+	if (!(cause instanceof EffectIdConflict)) throw cause;
+	return refuse(command.id, command.type, cause.message, RPC_ERROR_EFFECT_ID_CONFLICT, {
+		effectId: cause.effectId,
+		reason: cause.reason,
+		action: cause.action,
+	});
 }
 
 export function isResponse(value: EffectBegin | RpcResponse): value is RpcResponse {

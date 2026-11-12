@@ -34,4 +34,23 @@ describe("unload_session dry run with a recorded effectId (senpi#6443)", () => {
 		});
 		await host.stop();
 	}, 240_000);
+
+	it("#given an unload recorded under an effectId #when a dry run carries that id with another payload #then it answers effect_id_conflict, as the real call with that payload does", async () => {
+		await using world = await effectHostWorld();
+		const host = await world.start();
+		const owner = await host.connect();
+		const other = await host.connect();
+		const opened = await openSession(owner, { cwd: world.cwd, ...MODEL });
+		await settledTurn(owner, opened.sessionId);
+		await openSession(other, { sessionPath: opened.sessionPath });
+		const unload = { type: "unload_session", sessionId: opened.sessionId, effectId: "recorded-2" };
+		expect(await owner.request(unload)).toMatchObject({ data: { outcome: "refused", reason: "attached" } });
+
+		const dry = await owner.request({ ...unload, force: true, dryRun: true });
+		const real = await owner.request({ ...unload, force: true });
+
+		expect(real).toMatchObject({ success: false, errorCode: "effect_id_conflict" });
+		expect(dry).toMatchObject({ success: false, errorCode: "effect_id_conflict" });
+		await host.stop();
+	}, 240_000);
 });
