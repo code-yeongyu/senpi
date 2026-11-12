@@ -8,6 +8,7 @@
  * row, and the view is one a test may set.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
 import { type DelegatedHost, openSession, type Peer, startHost } from "./rpc-delegated-host-support.ts";
 
 const FAILURE = "the heap view failed";
@@ -70,12 +71,16 @@ describe("a host-level command whose handler throws is still answered (senpi#648
 		expect(answer).toMatchObject({ success: true, data: { sessions: [expect.any(Object)] } });
 	});
 
-	it("#given no connection, as on the stdio transport #when a list_sessions line's handler throws #then the line's handling settles and the host reports it as a stdio request", async () => {
+	it("#given no connection, as on the stdio transport #when a list_sessions line's handler throws #then the line's handling settles, the request is answered internal_error, and the host reports it as a stdio request", async () => {
 		const written = stderrLines();
+		const answered = vi.spyOn(SessionEventWriter.prototype, "enqueueControl");
 		failingView();
 
 		await expect(host.core.handle(JSON.stringify({ id: "stdio-1", type: "list_sessions" }))).resolves.toBeUndefined();
 
+		expect(answered.mock.calls.map((call) => call[0])).toEqual([
+			expect.objectContaining({ id: "stdio-1", type: "response", success: false, errorCode: "internal_error" }),
+		]);
 		expect(written()).toContain(`senpi rpc stdio request failed: ${FAILURE}\n`);
 	});
 });

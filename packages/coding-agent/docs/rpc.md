@@ -877,6 +877,8 @@ record whose path still overflows the stack outside the writer is refused as bef
 `LegacyRecordDepthError`, reported as
 `senpi rpc host: legacy record refused: <type> nests deeper than this runtime's JSON engine limit (session <id>)`,
 and the session keeps running.
+A worker session sends a record deeper than 1,024 levels to the host as JSON text, so the host's structured-clone
+reader (which stops near 4,000 levels on Node) never drops it.
 
 A host-level command whose handler fails unexpectedly is answered too (senpi#6483). On the multi-session host such
 a request used to get no response at all: the failure went to the host's stderr and the caller waited out its own
@@ -890,8 +892,11 @@ and the connection keeps answering later requests. A failure that carries a refu
 registry refusal) is answered with that code, as a session-scoped command already answers it. The host still reports
 the failure on stderr, as `senpi rpc connection <id> failed: <cause>` (or `senpi rpc stdio request failed: <cause>`).
 `internal_error` is a refusal like any other: a client that does not know the code reads `success: false`.
-A worker session sends a record deeper than 1,024 levels to the host as JSON text, so the host's structured-clone
-reader (which stops near 4,000 levels on Node) never drops it.
+
+A request gets one answer. A handler that had already answered under the request's `id` and then failed keeps that
+answer as the only one (a compact `open_session` that fails after it was accepted ends with its own refusal, which
+carries its `admissionId`), and a command sent without an `id` is owed no answer and gets none; the stderr line is
+written in both cases.
 
 #### get_recovery_page
 

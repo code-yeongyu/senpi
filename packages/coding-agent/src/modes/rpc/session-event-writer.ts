@@ -1,3 +1,4 @@
+import { AnsweredRequests } from "./answered-requests.ts";
 import { withReceipt } from "./command-authority.ts";
 import { normalizeJsonValue } from "./json-normal-value.ts";
 import { serializeJsonLine } from "./jsonl.ts";
@@ -23,6 +24,8 @@ export { MAX_SHARED_STDIO_QUEUE_BYTES, MAX_SHARED_STDIO_QUEUE_RECORDS } from "./
  * scheduling boundary and violate D9.
  */
 export class SessionEventWriter extends SessionEventWriterDestinations {
+	/** Which requests in flight already had an answer taken into a queue; asked by the one place that answers a throw. */
+	readonly answered = new AnsweredRequests();
 	secretInputRoute(sessionId: string, sealed = false): SecretInputRoute {
 		return this.secretPresentations.route(sessionId, sealed);
 	}
@@ -116,6 +119,7 @@ export class SessionEventWriter extends SessionEventWriterDestinations {
 		const registered = targetId === undefined ? undefined : this.fanout.get(targetId);
 		if (registered) {
 			registered.actor.enqueue(serializeJsonLine(value), undefined, undefined, undefined, isCorrelatedReply(value));
+			this.answered.taken(targetId, value);
 			this.requestFlush();
 			return Promise.resolve();
 		}
@@ -135,6 +139,8 @@ export class SessionEventWriter extends SessionEventWriterDestinations {
 		const completion = new Promise<void>((resolve, reject) => {
 			this.records.append(queue, { ...value }, undefined, resolve, reject);
 		});
+		// Told only here and above, where the value is taken: a value refused before this point was not an answer.
+		this.answered.taken(targetId, value);
 		this.markReady(queue);
 		this.requestFlush();
 		return completion;

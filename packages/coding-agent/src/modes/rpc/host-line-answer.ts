@@ -21,6 +21,11 @@ function handlerFailure(command: RpcCommand, cause: unknown): RpcResponse {
  * one that did not used to leave the request with no response at all: the line's rejection went to stderr and the
  * caller waited out its own timeout (senpi#6483). The throw is answered here, the outermost point that still knows
  * the command's id and type; the stderr line stays, and what follows an answered line still runs.
+ *
+ * It is answered at most once. A handler may have answered under the request's id itself and thrown afterwards (a
+ * compact open that failed after it was accepted ends with its own tagged refusal): the writer says whether it took
+ * such an answer for this connection while the line was handled, and then the throw gets no second one. A command
+ * sent without an id is owed no answer, so its throw gets none either.
  */
 export async function answerLine(
 	writer: SessionEventWriter,
@@ -28,13 +33,16 @@ export async function answerLine(
 	gate: Pick<HostCoreGate, "dispatch">,
 	command: RpcCommand,
 ): Promise<void> {
+	const watch = writer.answered.watch(connection, command.id);
 	let response: object | undefined;
 	try {
 		response = await gate.dispatch(command);
 	} catch (cause) {
 		const where = connection === undefined ? "stdio request" : `connection ${connection}`;
 		process.stderr.write(`senpi rpc ${where} failed: ${errorMessage(cause)}\n`);
-		response = handlerFailure(command, cause);
+		if (command.id !== undefined && !watch.answered()) response = handlerFailure(command, cause);
+	} finally {
+		watch.done();
 	}
 	if (response) await writer.enqueueControl(response);
 	writer.delegations.lineAnswered(connection);
