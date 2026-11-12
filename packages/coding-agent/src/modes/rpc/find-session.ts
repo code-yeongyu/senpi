@@ -31,7 +31,11 @@ class FindSessionTooManyError extends Error {
 	}
 }
 
-/** `open` says an engine of this host holds the session now, so a caller knows whether it is reopening or attaching. */
+/**
+ * `open` says an engine of this host holds the session now, so a caller knows whether it is reopening or attaching.
+ * One exception: a hosted session that names no file cannot be matched to a file, so its file on disk is answered
+ * with `open: false`. `open` is a hint; the id is what a caller checks.
+ */
 export type FindSessionAnswer =
 	| { readonly found: { readonly sessionPath: string; readonly cwd: string; readonly open: boolean } }
 	| { readonly ambiguous: true }
