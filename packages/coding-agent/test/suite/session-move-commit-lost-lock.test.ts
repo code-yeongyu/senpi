@@ -10,7 +10,7 @@ import lockfile from "proper-lockfile";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getDefaultSessionDir, loadEntriesFromFileAsync } from "../../src/core/session-manager.ts";
 import { finishMove } from "../../src/core/session-move/finish.ts";
-import { answerMoveStatus, importMovedSession } from "../../src/core/session-move/import.ts";
+import { answerMoveStatusAndLanding, importMovedSession } from "../../src/core/session-move/import.ts";
 import { MoveLedger, type MoveLedgerOptions } from "../../src/core/session-move/move-ledger.ts";
 import { setMoveStepHook } from "../../src/core/session-move/move-steps.ts";
 import { type MoveId, sessionOwnership } from "../../src/core/session-move/ownership.ts";
@@ -155,14 +155,14 @@ describe("a commit whose holder lost the move record's lock (senpi#6417)", () =>
 		const longAgo = new Date(Date.now() - AN_HOUR_MS);
 		utimesSync(`${recordOf(world)}.lock`, longAgo, longAgo);
 
-		const heard = await answerMoveStatus(ledgerOfAnotherProcess(world), MOVE, undefined);
+		const heard = (await answerMoveStatusAndLanding(ledgerOfAnotherProcess(world), MOVE, undefined)).answer;
 		holder.gate.resolve();
 		const landed = await importing;
 		await finishMove({ sessionFile: world.source, bundleDir: world.bundleDir, moveId: MOVE, answer: heard });
 
 		expect({
 			heard,
-			record: await answerMoveStatus(world.ledger, MOVE, undefined),
+			record: (await answerMoveStatusAndLanding(world.ledger, MOVE, undefined)).answer,
 			sender: await writable(world.source),
 			receiver: await writable(landed.sessionFile),
 		}).toEqual({ heard: { state: "receiving" }, record: { state: "accepted" }, sender: false, receiver: true });
@@ -193,7 +193,7 @@ describe("a commit whose holder lost the move record's lock (senpi#6417)", () =>
 		utimesSync(`${recordOf(world)}.lock`, longAgo, longAgo);
 		const anHourLater = ledgerOfAnotherProcess(world, { now: () => Date.now() + AN_HOUR_MS });
 
-		const heard = await answerMoveStatus(anHourLater, MOVE, undefined);
+		const heard = (await answerMoveStatusAndLanding(anHourLater, MOVE, undefined)).answer;
 		await finishMove({ sessionFile: world.source, bundleDir: world.bundleDir, moveId: MOVE, answer: heard });
 		stall.resume();
 
@@ -221,7 +221,7 @@ describe("a commit whose holder lost the move record's lock (senpi#6417)", () =>
 		const another = ledgerOfAnotherProcess(world);
 
 		await another.fail(MOVE, "import_failed");
-		const heard = await answerMoveStatus(another, MOVE, undefined);
+		const heard = (await answerMoveStatusAndLanding(another, MOVE, undefined)).answer;
 		await finishMove({ sessionFile: world.source, bundleDir: world.bundleDir, moveId: MOVE, answer: heard });
 		holder.gate.resolve();
 
@@ -229,7 +229,7 @@ describe("a commit whose holder lost the move record's lock (senpi#6417)", () =>
 			heard,
 			holder: await importing,
 			landed: existsSync(landingOf(world)),
-			record: await answerMoveStatus(another, MOVE, undefined),
+			record: (await answerMoveStatusAndLanding(another, MOVE, undefined)).answer,
 			sender: await writable(world.source),
 		}).toEqual({
 			heard: { state: "failed", reason: "import_failed" },
@@ -253,12 +253,12 @@ describe("a commit whose holder lost the move record's lock (senpi#6417)", () =>
 			await expect(importWith(world, world.ledger)).rejects.toThrow("the process died");
 			setMoveStepHook(undefined);
 
-			const young = await answerMoveStatus(world.ledger, MOVE, undefined);
+			const young = (await answerMoveStatusAndLanding(world.ledger, MOVE, undefined)).answer;
 			const later = ledgerOfAnotherProcess(world, { now: () => Date.now() + clockOffsetMs });
 
 			expect({
 				young,
-				later: await answerMoveStatus(later, MOVE, undefined),
+				later: (await answerMoveStatusAndLanding(later, MOVE, undefined)).answer,
 				landed: existsSync(landingOf(world)),
 			}).toEqual({
 				young: { state: "receiving" },
