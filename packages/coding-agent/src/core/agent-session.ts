@@ -3638,6 +3638,9 @@ export class AgentSession {
 			}
 			this.agent.abortServerSideFallback =
 				this.settingsManager.getAbortServerSideFallback() && this._retryFallback.hasConfiguredChain();
+			// Every switch made before this request (a revert at the turn boundary, routing around a spent account
+			// or a held family, one made while idle) is written here, so the model that answers reads it.
+			if (!this.agent.state.isStreaming) this._flushModelSwitchMarkers();
 			await this.agent.prompt(messages);
 			// AgentSession's subscriber intentionally queues event work instead of
 			// blocking Agent core. Wait for this run's queued recovery decision
@@ -6334,7 +6337,6 @@ export class AgentSession {
 		if (!this.isStreaming) {
 			try {
 				await this._maybeRestoreFallbackPrimary();
-				this._flushModelSwitchMarkers();
 				const model = this.model;
 				// A turn the user started asks the provider again unless it stated when the limit resets (senpi#5568);
 				// automated turns keep the remembered hold so a loop never hammers a spent account (senpi#3131).
@@ -7862,8 +7864,6 @@ export class AgentSession {
 				if (releasedWake && !releasedWake()) return;
 				const inputOrigin = customTurnOrigin(message.customType);
 				if (inputOrigin === "engine") this._recordEngineTurnStart(message.customType);
-				// A switch note queued while idle belongs to this request too, not to the next user turn.
-				this._flushModelSwitchMarkers();
 				await this._promptAgent(messages, { inputOrigin, deferredTurnClaim });
 			} else if (this.isStreaming) {
 				if (options?.ticket) this.workObligations.passive(options.ticket);

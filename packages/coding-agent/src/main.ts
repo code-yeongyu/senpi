@@ -84,6 +84,7 @@ import { ModelUsabilityBudgetError } from "./core/extensions/builtin/compaction/
 import { resolveMovedPath } from "./core/extensions/builtin/moved-path-guard/resolve.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
 import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dispatcher.ts";
+import { launchRetryFallback } from "./core/launch-model-pin.ts";
 import { installMemoryReportSignal } from "./core/memory-report/memory-report-write.ts";
 import {
 	getModelNarrowingPatterns,
@@ -104,7 +105,6 @@ import {
 	MissingSessionCwdError,
 	type SessionCwdIssue,
 } from "./core/session-cwd.ts";
-import { launchRetryFallback } from "./core/launch-model-pin.ts";
 import { sessionExtensionFlagValues } from "./core/session-extension-flags.ts";
 import { assertValidSessionId, SessionManager, sessionFileNameId } from "./core/session-manager.ts";
 import { classifySessionRepository, readSessionCwd, rebindSessionFile } from "./core/session-rebind.ts";
