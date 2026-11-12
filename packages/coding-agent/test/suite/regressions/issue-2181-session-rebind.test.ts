@@ -1,4 +1,13 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -154,5 +163,32 @@ describe("issue #2181 rebinding a session into a moved repository", () => {
 		const read = async (dir: string) => (dir === oldCwd ? { rootCommits: ["e".repeat(40)] } : RECORDED);
 
 		expect(await classifySessionRepository(session, oldCwd, newCwd, read)).toBe("different");
+	});
+});
+
+describe("a rebind refused right before it lands the file (senpi#6417)", () => {
+	it("#given a beforeRename that throws #then nothing lands: the source and its sidecar stay where they were and no rewritten copy is left", async () => {
+		const root = tempDir();
+		const oldCwd = join(root, "old", "repo");
+		const newCwd = join(root, "new", "repo");
+		mkdirSync(newCwd, { recursive: true });
+		const source = writeSession(getDefaultSessionDir(oldCwd), oldCwd, RECORDED);
+		const goalSidecar = join(dirname(source), "extensions", "goal", `${SESSION_ID}.json`);
+		mkdirSync(dirname(goalSidecar), { recursive: true });
+		writeFileSync(goalSidecar, '{"goal":"ship"}\n');
+		const before = readFileSync(source, "utf8");
+		const targetDir = getDefaultSessionDir(newCwd);
+
+		const refused = rebindSessionFile(source, newCwd, undefined, {
+			beforeRename: () => {
+				throw new Error("the move was settled by another process");
+			},
+		});
+
+		await expect(refused).rejects.toThrow("the move was settled by another process");
+		expect(readFileSync(source, "utf8")).toBe(before);
+		expect(readFileSync(goalSidecar, "utf8")).toBe('{"goal":"ship"}\n');
+		expect(existsSync(join(targetDir, "extensions", "goal", `${SESSION_ID}.json`))).toBe(false);
+		expect(readdirSync(targetDir).filter((name) => name.includes(".rebind-") || name.endsWith(".jsonl"))).toEqual([]);
 	});
 });

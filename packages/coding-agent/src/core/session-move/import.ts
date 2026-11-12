@@ -183,7 +183,7 @@ export async function importMovedSession(
 		const sessionFile = await options.ledger.commit(
 			manifest.moveId,
 			target,
-			() => rebindSessionFile(staged, targetCwd, sessionDir),
+			(stampStands) => rebindSessionFile(staged, targetCwd, sessionDir, { beforeRename: stampStands }),
 			async () => {
 				const assertHeld = () => options.ledger.assertHeld(manifest.moveId);
 				await replacePredecessor(target, manifest.sessionId, sessionDir, assertHeld);

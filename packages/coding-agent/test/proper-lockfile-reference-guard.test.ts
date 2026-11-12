@@ -73,7 +73,7 @@ const LOCK_SITES: Record<string, LockSite> = {
 			{ file: at("core/session-move/import.ts"), fn: "placeExtensionState", op: "await copyFile(" },
 			{ file: at("core/session-move/move-record-file.ts"), fn: "write", op: "writeFile(temp" },
 			{ file: at("core/session-move/move-record-file.ts"), fn: "write", op: "renameFile(temp" },
-			{ file: at("core/session-move/move-ledger.ts"), fn: "commit", op: "await rename()" },
+			{ file: at("core/session-move/move-ledger.ts"), fn: "commit", op: "await rename(stampStands)" },
 		],
 	},
 	[`${at("core/settings-manager.ts")}#acquireLockWithRetry`]: {
