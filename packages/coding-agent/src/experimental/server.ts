@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { chmod, lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { Context } from "@earendil-works/chord";
@@ -154,28 +154,42 @@ export async function acquireServerProfile(directory: string, requestedServerId?
 	const lockPath = join(directory, `launcher-${serverId}`);
 	const ownerPath = launcherOwnerPath(directory, serverId);
 	const waitStarted = performance.now();
-	const { release, assertHeld } = await waitForFileLock(
-		lockPath,
-		{ realpath: false, stale: LOCK_STALE_MS, update: LOCK_STALE_MS / 3 },
-		LAUNCHER_LOCK_BOUNDS,
-	).catch(async (error: unknown) => {
-		if (!(error instanceof Error && "code" in error && error.code === "ELOCKED")) throw error;
-		const holder = await readLauncherOwner(ownerPath);
-		throw new LauncherLockTimeoutError(`${lockPath}.lock`, performance.now() - waitStarted, holder?.pid);
-	});
 	// A fresh random token, written both into the lock directory this holder took and into the owner record. An
 	// activator that stopped its own server removes the lock only while the directory still holds that server's token:
 	// a stale takeover re-creates the directory under a new token, whatever inode the file system hands it.
 	const token = randomUUID();
-	const tokenPath = join(`${lockPath}.lock`, LAUNCHER_LOCK_TOKEN);
-	await writeFile(tokenPath, token, { mode: 0o600 });
+	const lockDirectory = `${lockPath}.lock`;
+	const tokenPath = join(lockDirectory, LAUNCHER_LOCK_TOKEN);
+	let held: Awaited<ReturnType<typeof waitForFileLock>>;
+	while (true) {
+		held = await waitForFileLock(
+			lockPath,
+			{ realpath: false, stale: LOCK_STALE_MS, update: LOCK_STALE_MS / 3 },
+			LAUNCHER_LOCK_BOUNDS,
+		).catch(async (error: unknown) => {
+			if (!(error instanceof Error && "code" in error && error.code === "ELOCKED")) throw error;
+			const holder = await readLauncherOwner(ownerPath);
+			throw new LauncherLockTimeoutError(lockDirectory, performance.now() - waitStarted, holder?.pid);
+		});
+		try {
+			await withLockDirectoryTimes(lockDirectory, () => writeFile(tokenPath, token, { mode: 0o600 }));
+			break;
+		} catch (error) {
+			// Two waiters taking over one dead lock: the other judged it stale before this one re-created it, and its
+			// takeover removed the directory this one had just taken, before the token was in it. The other holds the
+			// lock now, so this waits again. The lost handle is never released (that would remove the other's lock); its
+			// own refresh sees a directory it does not own and marks it lost without touching it.
+			if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+		}
+	}
+	const { release, assertHeld } = held;
 	await writeFile(ownerPath, `${process.pid} ${token}`, { mode: 0o600 });
 	return {
 		serverId,
 		async release() {
 			await rm(ownerPath, { force: true });
 			// proper-lockfile removes its directory with a non-recursive rmdir, so the token goes first.
-			await rm(tokenPath, { force: true });
+			await withLockDirectoryTimes(lockDirectory, () => rm(tokenPath, { force: true }));
 			await release();
 		},
 		assertHeld,
@@ -285,6 +299,21 @@ export async function removeStoppedServerLauncherLock(
 	if (current?.trim() !== owner.token) return;
 	await rm(lockDirectory, { recursive: true, force: true });
 	await rm(ownerPath, { force: true });
+}
+
+/**
+ * Runs `change` on an entry inside a held lock directory and puts the directory's own timestamps back.
+ *
+ * proper-lockfile keeps a lock alive by `utimes`-ing its directory on a timer and compares the stored mtime to the
+ * directory's current one EXACTLY (`isMtimeOurs`); writing or removing an entry bumps that mtime, so without this the
+ * holder's next refresh would report its own live lock as compromised. The times are read before the change and
+ * restored after it, which is exact: `stat` reports the same value the dependency stored, at whatever precision it
+ * probed for this file system.
+ */
+async function withLockDirectoryTimes(lockDirectory: string, change: () => Promise<void>): Promise<void> {
+	const before = await stat(lockDirectory).catch(() => undefined);
+	await change();
+	if (before !== undefined) await utimes(lockDirectory, before.atime, before.mtime).catch(() => {});
 }
 
 async function readLauncherOwner(ownerPath: string): Promise<{ pid: number; token: string } | undefined> {
