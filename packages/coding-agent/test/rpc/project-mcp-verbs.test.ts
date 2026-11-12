@@ -199,6 +199,21 @@ describe("set_project_mcp_servers: refusals", () => {
 });
 
 describe("project MCP verbs: containment", () => {
+	// senpi#6532 review LOW2: with a flat agent dir and the session in its parent, the project MCP file is the global one.
+	it("refuses the project MCP file when it lies in the agent dir, and leaves it alone", async () => {
+		const host = await startFolderHost({
+			layout: (scratch) => ({ cwd: join(scratch, "home"), agentDir: join(scratch, "home", PROJECT_CONFIG_DIR) }),
+			prepare: ({ agentDir }) => writeFileSync(join(agentDir, "mcp.json"), '{"mcpServers":{}}'),
+		});
+		await host.trust();
+		expect(await get(host)).toMatchObject({ success: false, errorCode: "project_file_not_allowed" });
+		expect(await set(host, { alpha: SERVER }, null)).toMatchObject({
+			success: false,
+			errorCode: "project_file_not_allowed",
+		});
+		expect(readFileSync(join(host.agentDir, "mcp.json"), "utf8")).toBe('{"mcpServers":{}}');
+	});
+
 	it("refuses a project config folder linked outside the folder, and leaves the target alone", async () => {
 		const host = await startFolderHost({
 			prepare: ({ cwd, outside }) => {

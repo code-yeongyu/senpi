@@ -165,8 +165,13 @@ describe("write_project_skill_file: refusals", () => {
 });
 
 describe("project skill file verbs: containment", () => {
-	it("refuses a listed skill whose file lies outside the folder (a global skill)", async () => {
+	// senpi#6532 review LOW2: a session folder above the agent dir holds the global skills lexically; they stay refused.
+	it.each([
+		["beside the session folder", undefined],
+		["inside the session folder", (scratch: string) => ({ cwd: scratch, agentDir: join(scratch, "agent") })],
+	])("refuses a global skill, its agent dir %s", async (_label, layout) => {
 		const host = await startFolderHost({
+			...(layout === undefined ? {} : { layout }),
 			prepare: ({ agentDir }) => {
 				mkdirSync(join(agentDir, "skills", "global-skill"), { recursive: true });
 				writeFileSync(join(agentDir, "skills", "global-skill", "SKILL.md"), skillSource("global-skill"));
