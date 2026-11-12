@@ -178,8 +178,8 @@ export async function readManifest(bundleDir: string): Promise<MoveManifest> {
 }
 
 /**
- * What a sender reads back from the bundle it kept: the move it is for, and the queued input the release took out.
- * Nothing else is checked. The bundle is the sender's own, and a rule about its paths that is newer than the bundle
+ * What a sender reads back from the bundle it kept: the move it is for, and the queued input the release took out,
+ * in a format this version knows. Nothing else is checked. The bundle is the sender's own, and a rule about its paths that is newer than the bundle
  * (the depth cap) must not stop the sender from finishing its move.
  */
 export async function readKeptBundle(bundleDir: string): Promise<Pick<MoveManifest, "moveId" | "droppedUserMessages">> {
@@ -190,6 +190,9 @@ export async function readKeptBundle(bundleDir: string): Promise<Pick<MoveManife
 		throw unreadable(error);
 	}
 	if (typeof raw !== "object" || raw === null) throw new MoveBundleInvalidError("the manifest is not an object");
+	// The format says what the two fields read below mean: a bundle of another format is left for a version that knows it.
+	const format: unknown = Reflect.get(raw, "format");
+	if (format !== MOVE_BUNDLE_FORMAT) throw new MoveBundleInvalidError(`unknown bundle format ${String(format)}`);
 	const queued: unknown = Reflect.get(raw, "droppedUserMessages");
 	const droppedUserMessages = Array.isArray(queued) ? queued : [];
 	if (!droppedUserMessages.every(isString)) throw new MoveBundleInvalidError("malformed queued input");

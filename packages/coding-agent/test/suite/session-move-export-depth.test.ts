@@ -8,7 +8,11 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadEntriesFromFileAsync, SessionManager } from "../../src/core/session-manager.ts";
-import { MAX_BUNDLE_PATH_SEGMENTS, MovePathTooDeepError } from "../../src/core/session-move/bundle.ts";
+import {
+	MAX_BUNDLE_PATH_SEGMENTS,
+	MoveBundleInvalidError,
+	MovePathTooDeepError,
+} from "../../src/core/session-move/bundle.ts";
 import { exportSessionForMove } from "../../src/core/session-move/export.ts";
 import { finishMove } from "../../src/core/session-move/finish.ts";
 import { importMovedSession } from "../../src/core/session-move/import.ts";
@@ -148,6 +152,25 @@ describe("the sender finishes a move whose kept bundle lists a path deeper than 
 		expect(await writable(source)).toBe(true);
 		expect(admittedInputs(source)).toEqual(["queued follow-up"]);
 		expect(existsSync(bundleDir)).toBe(false);
+	});
+
+	it("#given a kept bundle in a format this version does not know, its queued input intact #when the sender finishes #then it is refused: nothing is put back, the session stays sealed and the bundle stays", async () => {
+		const { source, bundleDir } = await setup();
+		const file = join(bundleDir, "manifest.json");
+		const manifest: unknown = JSON.parse(readFileSync(file, "utf8"));
+		writeFileSync(file, JSON.stringify({ ...Object(manifest), format: 2 }));
+
+		const refused = finishMove({
+			sessionFile: source,
+			bundleDir,
+			moveId: MOVE,
+			answer: { state: "declined", reason: "cancelled" },
+		});
+
+		await expect(refused).rejects.toBeInstanceOf(MoveBundleInvalidError);
+		expect(await writable(source)).toBe(false);
+		expect(admittedInputs(source)).toEqual([]);
+		expect(existsSync(bundleDir)).toBe(true);
 	});
 
 	it("#given an accepted answer #when the sender finishes #then the session is marked moved and the bundle is gone", async () => {
