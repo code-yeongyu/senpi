@@ -182,7 +182,8 @@ function loaded(
 	if (entry.state !== "open") return { reason: "session_closing", detail: "the session is already closing" };
 	const session = entry.runtime?.session;
 	if (session === undefined) return { reason: "unsupported", detail: "a worker isolate owns this session's runtime" };
-	const sessionPath = entry.sessionPath ?? session.sessionFile;
+	// Read from the session this unload acts on, never from the host's record of the handle (senpi#6484).
+	const sessionPath = session.sessionFile;
 	if (sessionPath === undefined)
 		return {
 			reason: "unsupported",

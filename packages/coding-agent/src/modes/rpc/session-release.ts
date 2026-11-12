@@ -232,7 +232,13 @@ async function claimAndRelease(
 		type: "response",
 		command: "release_session",
 		success: true,
-		data: { released: true, session_path: ready.sessionPath, attachments: ready.attachments, dropped },
+		data: {
+			released: true,
+			session_path: ready.sessionPath,
+			session_id: ready.session.sessionManager.getSessionId(),
+			attachments: ready.attachments,
+			dropped,
+		},
 	};
 }
 
@@ -284,7 +290,9 @@ function releasable(
 	if (entry.state !== "open") return refuse(RPC_ERROR_SESSION_CLOSING);
 	const session = entry.runtime?.session;
 	if (session === undefined) return refuse(RPC_ERROR_RELEASE_UNSUPPORTED, { detail: "worker_runtime" });
-	const sessionPath = entry.sessionPath ?? session.sessionFile;
+	// The file of the session this release acts on, read from that session and never from the host's record of the handle:
+	// the answer, the staged state and the teardown name what was sealed (senpi#6484).
+	const sessionPath = session.sessionFile;
 	if (sessionPath === undefined) return refuse(RPC_ERROR_RELEASE_UNSUPPORTED, { detail: "no_session_file" });
 	const elsewhere = port.otherAttachments(command.sessionId);
 	if (elsewhere > 0 && command.force !== true) return refuse(RPC_ERROR_ATTACHED, { attachments: elsewhere });
