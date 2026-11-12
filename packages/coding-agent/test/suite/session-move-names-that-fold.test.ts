@@ -75,6 +75,25 @@ describe("an inline bundle with two paths that are one name where names fold (se
 		expect(existsSync(dirname(incoming))).toBe(false);
 	});
 
+	it("#given two paths that differ only by a backslash against a slash #and a file system that keeps names apart #then the list is still refused, since a backslash is a separator on every host", async () => {
+		const { fixture, a, b, reply } = await exported("move-n8");
+		await using _a = a;
+		await using _b = b;
+		const incoming = join(fixture.base, "incoming");
+		const use = vi.fn(async () => "used");
+
+		const refused = withStagedInlineBundle(
+			withListed(inlineOf(reply), inlineFile("files/x\\y", BYTES), inlineFile("files/x/y", BYTES)),
+			incoming,
+			use,
+			async () => APART,
+		);
+
+		await expect(refused).rejects.toBeInstanceOf(MoveBundleInvalidError);
+		expect(use).not.toHaveBeenCalled();
+		expect(existsSync(incoming)).toBe(false);
+	});
+
 	it("#given a staging folder whose file system keeps them apart #then the list is staged and handed on with both paths", async () => {
 		const { fixture, a, b, reply } = await exported("move-n2");
 		await using _a = a;

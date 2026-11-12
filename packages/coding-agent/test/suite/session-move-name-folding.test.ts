@@ -90,6 +90,12 @@ describe("oneNameUnder", () => {
 			true,
 		],
 		["a folder shared by two files, where case folds", ["files/a/x", "files/a/y"], LETTER_CASE, false],
+		[
+			"a backslash against a slash, where names are kept apart: a backslash is a separator on every host",
+			["files/x\\y", "files/x/y"],
+			APART,
+			true,
+		],
 		["one path listed twice as written, where case folds", ["files/x", "files/x"], LETTER_CASE, false],
 		[
 			"a capital with a combining mark and the composed small letter, where both fold",
