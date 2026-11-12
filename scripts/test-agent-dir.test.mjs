@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -60,4 +60,17 @@ test("quarantineAgentDirEnv leaves the env alone under SENPI_TEST_USE_REAL_AGENT
 	const inherited = { SENPI_TEST_USE_REAL_AGENT_DIR: "1", SENPI_CODING_AGENT_DIR: "/home/user/.senpi/agent" };
 
 	assert.equal(quarantineAgentDirEnv(inherited, "/unused"), inherited);
+});
+
+test("quarantineAgentDirEnv keeps the agent dir private under umask 0002 (senpi#4541)", { skip: process.platform === "win32" }, () => {
+	const root = mkdtempSync(join(tmpdir(), "agent-dir-quarantine-"));
+	const previous = process.umask(0o002);
+	try {
+		const next = quarantineAgentDirEnv({}, root);
+
+		assert.equal(lstatSync(next.SENPI_CODING_AGENT_DIR).mode & 0o077, 0);
+	} finally {
+		process.umask(previous);
+		rmSync(root, { recursive: true, force: true });
+	}
 });

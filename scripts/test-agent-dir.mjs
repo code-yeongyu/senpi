@@ -18,7 +18,8 @@ export function quarantineAgentDirEnv(env, root) {
 	const next = { ...env };
 	for (const key of Object.keys(next)) if (key.endsWith(AGENT_DIR_ENV_SUFFIX)) delete next[key];
 	const agentDir = join(root, "agent");
-	mkdirSync(agentDir, { recursive: true });
+	// A host started on this agent dir refuses it as a key root if group or others can write it (senpi#4541).
+	mkdirSync(agentDir, { recursive: true, mode: 0o700 });
 	next.SENPI_CODING_AGENT_DIR = agentDir;
 	next.SENPI_TEST_AGENT_DIR_GUARD = "1";
 	return next;
