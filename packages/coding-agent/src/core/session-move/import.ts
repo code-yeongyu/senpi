@@ -20,7 +20,7 @@ import { type LandedFile, outcomeIn, readLanding } from "./landed-file.ts";
 import { type MoveAnswer, MoveFencedError, type MoveLedger } from "./move-ledger.ts";
 import { moveStep } from "./move-steps.ts";
 import { type NameFolding, refuseNamesThatFold } from "./name-folding.ts";
-import { STAGED_PAYLOADS, stagedName, stagedNames } from "./staged-layout.ts";
+import { STAGED_PAYLOADS, stagedName, stagedNames, stagedTwice } from "./staged-layout.ts";
 import { headerSessionId, type MoveId, SESSION_MOVED_IN, sessionOwnership } from "./ownership.ts";
 import { requeueInput } from "./requeue.ts";
 import { isCheckoutOfRepository, MoveRefusedError } from "./repository-check.ts";
@@ -176,6 +176,10 @@ export async function importMovedSession(
 		options.probeNameFolding,
 	);
 	try {
+		// Two different files staged under one name can be imported nowhere, so unlike names that only fold here this
+		// settles the move: the sender takes the session back.
+		const twice = stagedTwice(manifest);
+		if (twice !== undefined) throw new MoveBundleInvalidError(twice);
 		await verifyBundle(options.bundleDir, manifest, options.sent);
 	} catch (error) {
 		if (error instanceof MoveBundleInvalidError)
@@ -288,6 +292,10 @@ async function stage(bundleDir: string, manifest: MoveManifest, staging: string,
 			await copyFile(join(bundleDir, item.path), to);
 		}
 		await stagePayloads(bundleDir, manifest, staging);
+		// The entry below names the listed session's hash, and a retry trusts a staged file that carries it. So what
+		// was staged is hashed first: the entry never attests bytes that are not the listed session's (senpi#6575).
+		if ((await sha256File(file)) !== manifest.session.sha256)
+			throw new MoveBundleInvalidError(`${manifest.session.path} changed in transit`);
 		(await SessionManager.openAsync(file, staging)).appendCustomEntry(SESSION_MOVED_IN, {
 			move_id: manifest.moveId,
 			session_id: manifest.sessionId,
