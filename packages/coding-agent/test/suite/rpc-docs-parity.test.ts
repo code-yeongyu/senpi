@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { TODAY } from "../characterization/rpc-method-surface-corpus.ts";
 
 /**
  * Every command a client can send must have a `#### <type>` section in the docs/rpc.md that
@@ -99,5 +100,24 @@ describe("docs/rpc.md documents every RpcCommand", () => {
 	it("keeps the exemption list honest", () => {
 		const stale = Object.keys(UNDOCUMENTED).filter((type) => headings.has(type) || !types.includes(type));
 		expect(stale).toEqual([]);
+	});
+});
+
+// senpi#6484: the command table once left a field out that the prose and the response type both named.
+describe("docs/rpc.md's command table names the fields a command answers", () => {
+	it("lists for release_session exactly the fields the method-surface corpus pins", () => {
+		const row = readFileSync(docsPath, "utf8")
+			.split("\n")
+			.find((line) => line.startsWith("| `release_session` |"));
+		const documented = (/`\{ (released: true[^`]*) \}`/.exec(row ?? "")?.[1] ?? "")
+			.split(", ")
+			.map((field) => field.split(":")[0]?.trim())
+			.sort();
+		const pinned = /ok\{([^}]*)\}/
+			.exec(TODAY.release_session ?? "")?.[1]
+			?.split(",")
+			.sort();
+
+		expect(documented).toEqual(pinned);
 	});
 });
