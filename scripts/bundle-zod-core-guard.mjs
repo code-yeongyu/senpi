@@ -20,43 +20,37 @@ const ZOD_CORE_BANNER = /major:\s*4,\s*minor:\s*(\d+),\s*patch:\s*(\d+)/g;
  */
 const ZOD_V3_MARKER = /Extended_Pictographic\}\|\\{1,2}p\{Emoji_Component\}\)\+\$/g;
 const MINIMUM = { minor: 6, patch: 6 };
+const SCRIPT_EXTENSIONS = /\.(?:m|c)?js$/;
 
 const SDK_NAME = "@anthropic-ai/claude-agent-sdk";
 const REPO_ROOT = join(import.meta.dirname, "..");
 
-/** The vendored Claude agent SDK version the allowance below was measured on; any other version voids it. */
+/** The vendored Claude agent SDK version the allowance below was reviewed on; any other version voids it. */
 export const PINNED_CLAUDE_AGENT_SDK_VERSION = "0.3.321";
 
-/** How much of the SDK's zod/v3 layer a copy's hash covers, counted from the layer's emoji pattern. */
-const V3_WINDOW_BYTES = 32768;
-
 /**
- * Every zod copy older than 4.6.6 that may exist, and nothing else. The only source is the minified zod the vendored
- * `@anthropic-ai/claude-agent-sdk` embeds inside its prebuilt sdk.mjs: a 4.6.2 core plus zod's unpatched `zod/v3` classic
- * layer. It is not an import, so no resolver reaches it, and it parses the local Claude Code subprocess's output, not a
- * remote server's. The allowance is keyed on THREE things at once:
- *  - the exact SDK version (`sdkVersion`; the installed package and every lockfile entry must equal it),
- *  - where the copy lives (the SDK chunk and the session worker in the npm bundle, whose graph is bundled whole with
- *    splitting off; the names are lost in a compiled binary, where each copy appears once),
- *  - the sha256 of the copy's exact bytes. A "4.6.2 core" copy is the text from its `{major:4,minor:6,patch:2}` banner up
- *    to the zod/v3 layer's emoji pattern; a "zod/v3 layer" copy is the 32 KiB that start at that pattern. The bundler
- *    rewrites the SDK per output (tree-shaking, renames, minification), so each output form carries its own hash.
- * A different SDK, a changed byte in a copy, a copy in another file, or another count fails; a copy that disappears
- * means the SDK moved on and its row is retired. To re-measure after an SDK bump: build, run
- * `node scripts/assert-binary-zod-cores.mjs` after a compile, read each reported sha256, and review the new SDK's zod.
+ * The only stale zod allowed is what the vendored `@anthropic-ai/claude-agent-sdk` embeds in its own published files: a
+ * minified zod 4.6.2 core and zod's unpatched `zod/v3` classic layer. It is not an import, so no resolver reaches it, and it
+ * parses the local Claude Code subprocess's output, not a remote server's. The allowance is keyed on:
+ *  - the exact SDK version (`sdkVersion`; the installed package and every lockfile entry must equal it);
+ *  - the sha256 of every SDK file that carries a stale copy (`sources`, hashed as published, before any bundler touches
+ *    them), and the stale copies each carries. An SDK file carrying a stale copy that is not listed here fails;
+ *  - where the copies may land: `reachedSource` is the SDK entry the CLI imports, and each `bundle` file (pattern) holds
+ *    exactly its copies, as does each compiled binary. Only placement, count and version are checked in the output:
+ *    the bundler renames, tree-shakes and (for `bun build --compile`) folds `process.platform` per target, so output
+ *    bytes are not a stable identity, while the source hash above is.
+ * To re-review after an SDK bump: install it, run the scan, read the new source sha256 values from the failure, review the
+ * new SDK's embedded zod, then update the version, hashes and stale lists here.
  */
 export const STALE_ZOD_ALLOWANCE = {
 	sdkVersion: PINNED_CLAUDE_AGENT_SDK_VERSION,
-	bundle: [
-		{ file: /^chunks\/sdk-[^/]+\.js$/, version: "4.6.2", sha256: "b39755b19bac223d186389643ca41fe0585922a3823d015359c54548ba495ae0" },
-		{ file: "chunks/session-worker.js", version: "4.6.2", sha256: "1c791e63090499a92e22b3d8fa83ad463e42a8ed61975b580238d52760e1fba9" },
-		{ file: /^chunks\/sdk-[^/]+\.js$/, version: "3.x", sha256: "cd1886d6de269fb902a9835e3b80a319d5b105a3b4936941df54e0cf392908fe" },
-		{ file: "chunks/session-worker.js", version: "3.x", sha256: "4d1ed7396a99f17cf3acba1bcf7c1fe1426d607f2dca1994aa20a9ec7aea043d" },
+	sources: [
+		{ path: "sdk.mjs", sha256: "20524b5de1d5e69f4b98005994e0970f0426c99ec55e9b9dae1af1f270d86ab7", stale: ["4.6.2", "3.x"] },
+		{ path: "bridge.mjs", sha256: "5bf1b9f96a64df0c26f89db6f1f8545287bc0353caa2016e2f4e8718b764d2c3", stale: ["4.6.2"] },
+		{ path: "browser-sdk.js", sha256: "ff345a16af6640bdec252b3eb18b5a4cfc312d095116b0a49c1f1ddfe12bd775", stale: ["4.6.2", "3.x"] },
 	],
-	binary: [
-		{ version: "4.6.2", sha256: "41aeaf57f1952159e78f66156104e142c270169ec032c695d93da9ed5bc98db1" },
-		{ version: "3.x", sha256: "bc794b36778d2fbfde4bcb185800f3130b899c7736b4cafae9e5791ba2f0bf9a" },
-	],
+	reachedSource: "sdk.mjs",
+	bundle: [/^chunks\/sdk-[^/]+\.js$/, "chunks/session-worker.js"],
 };
 
 function isStale({ major, minor, patch }) {
@@ -68,49 +62,48 @@ function fileMatches(pattern, file) {
 	return typeof pattern === "string" ? pattern === file : pattern.test(file);
 }
 
-/** Every zod 4.x core banner in the bundle's emitted .js files, in file order. Throws on a missing or empty bundle. */
-export function scanZodCores(bundleDir) {
-	let names;
-	try {
-		names = readdirSync(bundleDir, { recursive: true, encoding: "utf8" });
-	} catch (error) {
-		throw new Error(`cannot scan the bundle for zod cores: ${bundleDir} is unreadable (${error.code ?? error.message})`);
-	}
-	const files = names
-		.filter((name) => name.endsWith(".js"))
-		.map((name) => name.replaceAll("\\", "/"))
-		.sort((left, right) => left.localeCompare(right));
-	if (files.length === 0) throw new Error(`cannot scan the bundle for zod cores: no emitted .js file under ${bundleDir}`);
-	const found = [];
-	for (const file of files) found.push(...scanText(readFileSync(join(bundleDir, file), "utf8"), file, "utf8"));
-	return found;
+/** Cores in ascending version order, then zod/v3 layers: a stable form for comparing and printing stale lists. */
+function canonical(versions) {
+	const rank = (version) => (version === "3.x" ? [1, 0, 0] : [0, ...version.split(".").slice(1).map(Number)]);
+	return [...versions].sort((left, right) => {
+		const [a, b] = [rank(left), rank(right)];
+		return a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+	});
 }
+const listOf = (versions) => `[${canonical(versions).join(", ")}]`;
 
-function sha256Of(text, encoding, start, end) {
-	return createHash("sha256").update(text.slice(start, end), encoding).digest("hex");
-}
-
-/**
- * Every zod 4.x core banner and zod 3.x copy marker in `text`, tagged with `file` and with the sha256 of its bytes (see
- * STALE_ZOD_ALLOWANCE for which bytes). `encoding` is how `text` was decoded, so the hash covers the file's raw bytes.
- */
-function scanText(text, file, encoding) {
+/** Every zod 4.x core banner and zod 3.x copy marker in `text`, tagged with `file`. */
+function scanText(text, file) {
 	const found = [];
-	const layers = Array.from(text.matchAll(ZOD_V3_MARKER), (match) => match.index);
 	for (const match of text.matchAll(ZOD_CORE_BANNER)) {
 		const minor = Number(match[1]);
 		const patch = Number(match[2]);
-		const layer = layers.find((index) => index > match.index);
-		const sha256 = layer === undefined ? "no-zod-v3-layer-follows" : sha256Of(text, encoding, match.index, layer);
-		found.push({ file, version: `4.${minor}.${patch}`, major: 4, minor, patch, kind: "core", sha256 });
+		found.push({ file, version: `4.${minor}.${patch}`, major: 4, minor, patch, kind: "core" });
 	}
-	for (const index of layers) {
-		found.push({ file, version: "3.x", major: 3, minor: 0, patch: 0, kind: "zod/v3 layer", sha256: sha256Of(text, encoding, index, index + V3_WINDOW_BYTES) });
-	}
+	for (const _ of text.matchAll(ZOD_V3_MARKER)) found.push({ file, version: "3.x", major: 3, minor: 0, patch: 0, kind: "zod/v3 layer" });
 	return found;
 }
 
-/** The installed and locked versions of the vendored Claude agent SDK, read from the resolved package and every lockfile. */
+function scriptFilesUnder(dir, skip = () => false) {
+	return readdirSync(dir, { recursive: true, encoding: "utf8" })
+		.map((name) => name.replaceAll("\\", "/"))
+		.filter((name) => SCRIPT_EXTENSIONS.test(name) && !skip(name))
+		.sort((left, right) => left.localeCompare(right));
+}
+
+/** Every zod 4.x core banner in the bundle's emitted .js files, in file order. Throws on a missing or empty bundle. */
+export function scanZodCores(bundleDir) {
+	let files;
+	try {
+		files = scriptFilesUnder(bundleDir, (name) => !name.endsWith(".js"));
+	} catch (error) {
+		throw new Error(`cannot scan the bundle for zod cores: ${bundleDir} is unreadable (${error.code ?? error.message})`);
+	}
+	if (files.length === 0) throw new Error(`cannot scan the bundle for zod cores: no emitted .js file under ${bundleDir}`);
+	return files.flatMap((file) => scanText(readFileSync(join(bundleDir, file), "utf8"), file));
+}
+
+/** The installed and locked versions of the vendored Claude agent SDK, and its package directory. */
 export function readClaudeAgentSdkVersions(root = REPO_ROOT) {
 	const packageDirs = [join(root, "packages/coding-agent/node_modules", SDK_NAME), join(root, "node_modules", SDK_NAME)];
 	const dir = packageDirs.find((candidate) => existsSync(join(candidate, "package.json")));
@@ -127,78 +120,110 @@ export function readClaudeAgentSdkVersions(root = REPO_ROOT) {
 			if (key === `node_modules/${SDK_NAME}` || key.endsWith(`/node_modules/${SDK_NAME}`)) locked.push(entry.version);
 		}
 	}
-	return { installed, locked, sdkMjs: dir === undefined ? undefined : join(dir, "sdk.mjs") };
+	return { installed, locked, dir };
 }
 
-/** Fails unless the installed SDK and every lockfile entry are exactly the version `allowance` was measured on. */
+const unreviewed = (version, how, pinned) =>
+	`${SDK_NAME} ${version} is ${how} but the stale zod allowance in scripts/bundle-zod-core-guard.mjs is pinned to ${pinned}: the new SDK's embedded zod copies are unreviewed; re-review them and update the pin and hashes`;
+
+/** Fails unless the installed SDK and every lockfile entry are exactly the version `allowance` was reviewed on. */
 function assertSdkPinned(allowance, sdk) {
 	const pinned = allowance.sdkVersion;
 	if (sdk.installed === undefined) {
 		throw new Error(`cannot read the installed ${SDK_NAME} version, so the stale zod allowance (pinned to ${pinned}) cannot be applied`);
 	}
-	if (sdk.installed !== pinned) {
-		throw new Error(`${SDK_NAME} ${sdk.installed} is installed but the stale zod allowance in scripts/bundle-zod-core-guard.mjs is pinned to ${pinned}: the new SDK's embedded zod copies are unreviewed; re-measure them and update the pin and hashes`);
-	}
+	if (sdk.installed !== pinned) throw new Error(unreviewed(sdk.installed, "installed", pinned));
 	if (sdk.locked.length === 0) throw new Error(`no lockfile entry for ${SDK_NAME}, so the stale zod allowance (pinned to ${pinned}) cannot be applied`);
 	for (const version of sdk.locked) {
-		if (version !== pinned) {
-			throw new Error(`${SDK_NAME} ${version} is locked but the stale zod allowance in scripts/bundle-zod-core-guard.mjs is pinned to ${pinned}: the new SDK's embedded zod copies are unreviewed; re-measure them and update the pin and hashes`);
-		}
+		if (version !== pinned) throw new Error(unreviewed(version, "locked", pinned));
 	}
-}
-
-const kindOf = (version) => (version === "3.x" ? "zod/v3 layer" : "core");
-const label = (version) => (version === "3.x" ? "zod/v3 layer" : `zod ${version} core`);
-
-/** One line per allowed stale copy a scan passed: SDK version, file, zod version and the hash its bytes matched. */
-export function describeStaleZodAllowances(sdkVersion, checked) {
-	return checked.map((entry) => `allowed stale zod copy: ${SDK_NAME} ${sdkVersion} ${entry.file} ${entry.version === "3.x" ? "" : `zod ${entry.version} `}${entry.kind} sha256:${entry.sha256}`);
 }
 
 /**
- * Compares the stale copies `found` in one scanned unit with `rows` and returns the problems. Each row claims the
- * entries of its version (in a bundle, also its file) and must find exactly one; the one it finds must carry the pinned
- * hash. An entry no row claims is a new exposure. `claimed` collects the matches.
+ * Fails unless every installed SDK file carrying a stale zod copy is a pinned source, each pinned source has its pinned
+ * sha256, and each carries exactly its pinned stale copies. Returns the sources with their hashes and stale copies.
  */
-function matchAllowance(found, rows, sdkVersion, claimed) {
+export function assertClaudeAgentSdkSources(allowance, sdk) {
 	const problems = [];
-	const unclaimed = new Set(found);
-	for (const row of rows) {
-		const inFile = row.file === undefined ? "" : ` in ${String(row.file)}`;
-		const candidates = found.filter((entry) => entry.version === row.version && (row.file === undefined || fileMatches(row.file, entry.file)));
-		for (const entry of candidates) unclaimed.delete(entry);
-		if (candidates.length !== 1) {
-			const names = candidates.length > 0 ? ` (${candidates.map((entry) => entry.file).join(", ")})` : "";
-			const retire = candidates.length === 0 ? "; retire the row if the embedded copy moved past 4.6.5" : "";
-			problems.push(`expected 1 ${label(row.version)}${inFile}, found ${candidates.length}${names}${retire}`);
+	const pinned = new Set(allowance.sources.map((source) => source.path));
+	for (const file of scriptFilesUnder(sdk.dir, (name) => name.split("/").includes("node_modules"))) {
+		if (pinned.has(file)) continue;
+		const stale = scanText(readFileSync(join(sdk.dir, file), "utf8"), file).filter(isStale);
+		if (stale.length > 0) problems.push(`${file} carries stale zod ${listOf(stale.map((entry) => entry.version))} but is not a pinned source`);
+	}
+	const sources = [];
+	for (const source of allowance.sources) {
+		let bytes;
+		try {
+			bytes = readFileSync(join(sdk.dir, source.path));
+		} catch (error) {
+			problems.push(`${source.path}: pinned source is unreadable (${error.code ?? error.message})`);
 			continue;
 		}
-		const [entry] = candidates;
-		if (entry.sha256 !== row.sha256) {
-			problems.push(`${entry.file}: ${label(row.version)} bytes changed (sha256:${entry.sha256}, pinned sha256:${row.sha256}; ${SDK_NAME} ${sdkVersion} embeds a different copy than the one reviewed)`);
+		const sha256 = createHash("sha256").update(bytes).digest("hex");
+		if (sha256 !== source.sha256) {
+			problems.push(`${source.path}: sha256:${sha256}, pinned sha256:${source.sha256} (${SDK_NAME} ${allowance.sdkVersion} as reviewed has different bytes)`);
 			continue;
 		}
-		claimed.push(entry);
+		const stale = scanText(bytes.toString("utf8"), source.path).filter(isStale).map((entry) => entry.version);
+		if (listOf(stale) !== listOf(source.stale)) {
+			problems.push(`${source.path} carries stale zod ${listOf(stale)}, pinned ${listOf(source.stale)}`);
+			continue;
+		}
+		sources.push({ path: source.path, sha256, stale: canonical(stale) });
 	}
-	if (unclaimed.size > 0) {
-		const list = Array.from(unclaimed, (entry) => `${entry.file} ${entry.version} sha256:${entry.sha256}`).join(", ");
-		problems.push(`zod cores older than 4.${MINIMUM.minor}.${MINIMUM.patch} outside the pinned exposures: ${list}`);
+	if (problems.length > 0) {
+		throw new Error(`${SDK_NAME} ${allowance.sdkVersion} at ${sdk.dir} does not match the reviewed stale zod sources:\n  ${problems.join("\n  ")}`);
 	}
-	return problems;
+	return sources;
+}
+
+/** Version pin, then source hashes; returns the stale copies each allowed output location must hold. */
+function verifiedSdk(allowance, sdk) {
+	assertSdkPinned(allowance, sdk);
+	const sources = assertClaudeAgentSdkSources(allowance, sdk);
+	const reached = sources.find((source) => source.path === allowance.reachedSource);
+	if (reached === undefined) throw new Error(`the reached SDK source ${allowance.reachedSource} is not a pinned source`);
+	return { sources, expected: reached.stale };
+}
+
+/** Problems when a location's stale copies differ from `expected` (exact versions and counts; none is a failure too). */
+function checkLocation(name, entries, expected, copies) {
+	const found = entries.map((entry) => entry.version);
+	if (listOf(found) === listOf(expected)) {
+		copies.push(...entries);
+		return [];
+	}
+	const retire = found.length === 0 ? `; retire the allowance if ${SDK_NAME} no longer reaches this output` : "";
+	const files = [...new Set(entries.map((entry) => entry.file))].filter((file) => file !== name);
+	if (files.length > 0) name = `${name} (${files.join(", ")})`;
+	return [`${name}: expected stale zod ${listOf(expected)}, found ${listOf(found)}${retire}`];
+}
+
+/** Allowed copies by file, then in canonical version order. */
+function sortCopies(copies) {
+	const order = (version) => canonical(copies.map((entry) => entry.version)).indexOf(version);
+	return copies.sort((left, right) => left.file.localeCompare(right.file) || order(left.version) - order(right.version));
+}
+
+/** Report lines for a passing scan: the SDK version and source hashes, then every allowed stale copy. */
+export function describeStaleZodAllowances({ sdkVersion, sources, copies }) {
+	const label = (version) => (version === "3.x" ? "zod/v3 layer" : `zod ${version} core`);
+	return [
+		...sources.map((source) => `pinned stale zod source: ${SDK_NAME} ${sdkVersion} ${source.path} sha256:${source.sha256} (${source.stale.map(label).join(", ")})`),
+		...copies.map((entry) => `allowed stale zod copy: ${SDK_NAME} ${sdkVersion} ${entry.file} ${label(entry.version)}`),
+	];
 }
 
 /**
  * Scans compiled executables (`bun build --compile` embeds the bundled JS as text, so the same banners are present).
- * The embedded files' names are lost, so the SDK's pinned copies are matched by zod version and bytes: each
- * `allowance.binary` row must be found exactly once, with its pinned sha256, in each binary; anything else older than
- * 4.6.6, any other zod 3.x copy, and a binary embedding no current (4.6.6 or newer) core at all, fails. The SDK version
- * must be the pinned one first. Returns the allowed stale copies it checked, each with its hash.
+ * Each binary must hold exactly the reached SDK source's stale copies and at least one current (4.6.6 or newer) core.
  */
 export function assertBinaryZodCores(binaries, allowance = STALE_ZOD_ALLOWANCE, sdk = readClaudeAgentSdkVersions()) {
 	if (binaries.length === 0) throw new Error("cannot scan the binaries for zod cores: no binary to scan");
-	assertSdkPinned(allowance, sdk);
+	const { sources, expected } = verifiedSdk(allowance, sdk);
 	const problems = [];
-	const checked = [];
+	const copies = [];
 	for (const binary of binaries) {
 		let text;
 		try {
@@ -206,33 +231,36 @@ export function assertBinaryZodCores(binaries, allowance = STALE_ZOD_ALLOWANCE, 
 		} catch (error) {
 			throw new Error(`cannot scan the binary for zod cores: ${binary} is unreadable (${error.code ?? error.message})`);
 		}
-		const cores = scanText(text, binary, "latin1");
+		const cores = scanText(text, binary);
 		if (!cores.some((entry) => !isStale(entry))) {
 			problems.push(`${binary}: no current zod core (4.${MINIMUM.minor}.${MINIMUM.patch} or newer) found; a binary that must embed one scanned nothing`);
 		}
-		problems.push(...matchAllowance(cores.filter(isStale), allowance.binary, allowance.sdkVersion, checked));
+		problems.push(...checkLocation(binary, cores.filter(isStale), expected, copies));
 	}
-	checked.sort((left, right) => left.file.localeCompare(right.file));
 	if (problems.length > 0) {
 		throw new Error(`stale zod cores in compiled binaries (allowance: ${SDK_NAME} ${allowance.sdkVersion} only):\n  ${problems.join("\n  ")}`);
 	}
-	return checked;
+	return { sdkVersion: allowance.sdkVersion, sources, copies: sortCopies(copies) };
 }
 
 /**
- * Fails unless the stale zod copies in `bundleDir` are exactly `allowance.bundle`, under the pinned SDK version: each row
- * claims the occurrences whose file matches its pattern and whose zod version equals its version, must claim exactly one,
- * and that one must carry the row's sha256; an occurrence no row claims fails. Returns the allowed stale copies it
- * checked, each with its hash.
+ * Fails unless every stale zod copy in `bundleDir` sits in an allowed file and each allowed file (pattern) holds exactly the
+ * reached SDK source's stale copies, under the pinned SDK version and source hashes.
  */
 export function assertBundleZodCores(bundleDir, allowance = STALE_ZOD_ALLOWANCE, sdk = readClaudeAgentSdkVersions()) {
-	assertSdkPinned(allowance, sdk);
+	const { sources, expected } = verifiedSdk(allowance, sdk);
 	const stale = scanZodCores(bundleDir).filter(isStale);
-	const checked = [];
-	const problems = matchAllowance(stale, allowance.bundle, allowance.sdkVersion, checked);
-	checked.sort((left, right) => left.file.localeCompare(right.file));
+	const problems = [];
+	const copies = [];
+	for (const location of allowance.bundle) {
+		problems.push(...checkLocation(String(location), stale.filter((entry) => fileMatches(location, entry.file)), expected, copies));
+	}
+	const outside = stale.filter((entry) => !allowance.bundle.some((location) => fileMatches(location, entry.file)));
+	if (outside.length > 0) {
+		problems.push(`zod cores older than 4.${MINIMUM.minor}.${MINIMUM.patch} outside the allowed files: ${outside.map((entry) => `${entry.file} ${entry.version}`).join(", ")}`);
+	}
 	if (problems.length > 0) {
 		throw new Error(`stale zod cores in ${bundleDir} (allowance: ${SDK_NAME} ${allowance.sdkVersion} only):\n  ${problems.join("\n  ")}`);
 	}
-	return checked;
+	return { sdkVersion: allowance.sdkVersion, sources, copies: sortCopies(copies) };
 }
