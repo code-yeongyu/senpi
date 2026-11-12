@@ -20,6 +20,7 @@ import { type LandedFile, outcomeIn, readLanding } from "./landed-file.ts";
 import { type MoveAnswer, MoveFencedError, type MoveLedger } from "./move-ledger.ts";
 import { moveStep } from "./move-steps.ts";
 import { type NameFolding, refuseNamesThatFold } from "./name-folding.ts";
+import { STAGED_PAYLOADS, stagedName, stagedNames } from "./staged-layout.ts";
 import { headerSessionId, type MoveId, SESSION_MOVED_IN, sessionOwnership } from "./ownership.ts";
 import { requeueInput } from "./requeue.ts";
 import { isCheckoutOfRepository, MoveRefusedError } from "./repository-check.ts";
@@ -167,9 +168,10 @@ export async function importMovedSession(
 	};
 	if (await landed()) return confirmLanded();
 	// Every listed file is written under the session folder: two that are one name on its file system cannot both be.
-	// Refused before the move is touched, so it stays importable into a folder that keeps them apart.
+	// The names a staged move writes are not the bundle's paths, so both layouts are asked. Refused before the move is
+	// touched, so it stays importable into a folder that keeps them apart.
 	await refuseNamesThatFold(
-		listedFiles(manifest).map((file) => file.path),
+		[listedFiles(manifest).map((file) => file.path), stagedNames(manifest)],
 		sessionDir,
 		options.probeNameFolding,
 	);
@@ -251,7 +253,6 @@ async function replacePredecessor(target: string, sessionId: string, sessionDir:
 }
 
 /** Payload files are staged here, next to the staged session file, and placed from this checked copy. */
-const STAGED_PAYLOADS = ".payloads";
 
 const extensionStateFiles = (manifest: MoveManifest) =>
 	manifest.payloads.filter((payload) => payload.kind === EXTENSION_STATE_PAYLOAD).flatMap((p) => p.files);
@@ -282,7 +283,7 @@ async function stage(bundleDir: string, manifest: MoveManifest, staging: string,
 	if (!((await pathExists(file)) && (await movedInFor(file, manifest.moveId)))) {
 		await rm(staging, { recursive: true, force: true });
 		for (const item of [manifest.session, ...manifest.sidecars]) {
-			const to = item === manifest.session ? file : join(staging, item.path.replace(/^files\//, ""));
+			const to = item === manifest.session ? file : join(staging, stagedName(manifest, item));
 			await mkdir(dirname(to), { recursive: true });
 			await copyFile(join(bundleDir, item.path), to);
 		}

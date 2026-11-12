@@ -114,20 +114,20 @@ describe("refuseNamesThatFold", () => {
 	const pair = ["files/Notes.txt", "files/notes.txt"];
 
 	it("#given two paths that are one name where case folds #when the folder's file system folds case #then the bundle is refused as invalid", async () => {
-		await expect(refuseNamesThatFold(pair, root, async () => LETTER_CASE)).rejects.toBeInstanceOf(
+		await expect(refuseNamesThatFold([pair], root, async () => LETTER_CASE)).rejects.toBeInstanceOf(
 			MoveBundleInvalidError,
 		);
 	});
 
 	it("#given the same two #when the folder's file system keeps them apart #then they are accepted", async () => {
-		await expect(refuseNamesThatFold(pair, root, async () => APART)).resolves.toBeUndefined();
+		await expect(refuseNamesThatFold([pair], root, async () => APART)).resolves.toBeUndefined();
 	});
 
 	// The list is looked at before the folder is asked: that look must see every pair one folding alone makes one name.
 	it("#given a capital with a combining mark and the same letter small #when the folder's file system folds only letter case #then the folder is asked and the bundle is refused", async () => {
 		const probe = vi.fn(async () => LETTER_CASE);
 
-		await expect(refuseNamesThatFold([CAPITAL_WITH_MARK, SMALL_WITH_MARK], root, probe)).rejects.toBeInstanceOf(
+		await expect(refuseNamesThatFold([[CAPITAL_WITH_MARK, SMALL_WITH_MARK]], root, probe)).rejects.toBeInstanceOf(
 			MoveBundleInvalidError,
 		);
 		expect(probe).toHaveBeenCalledTimes(1);
@@ -136,8 +136,26 @@ describe("refuseNamesThatFold", () => {
 	it("#given paths with no such pair #then the folder is never asked", async () => {
 		const probe = vi.fn(async () => LETTER_CASE);
 
-		await refuseNamesThatFold(["files/a", "files/b/c", "state/d"], root, probe);
+		await refuseNamesThatFold([["files/a", "files/b/c", "state/d"]], root, probe);
 
 		expect(probe).not.toHaveBeenCalled();
+	});
+
+	it("#given a pair that folds in the second layout only #then the bundle is refused, and the folder is asked once", async () => {
+		const probe = vi.fn(async () => LETTER_CASE);
+
+		await expect(refuseNamesThatFold([["files/a"], pair], root, probe)).rejects.toBeInstanceOf(
+			MoveBundleInvalidError,
+		);
+		expect(probe).toHaveBeenCalledTimes(1);
+	});
+
+	// The first layout holds a pair only Unicode form makes one name, so the folder is asked; it folds letter case only.
+	it("#given two names that fold only across two layouts #then they are accepted: names are compared within a layout", async () => {
+		const probe = vi.fn(async () => LETTER_CASE);
+		const first = ["files/Notes.txt", "files/caf\u00e9", "files/cafe\u0301"];
+
+		await expect(refuseNamesThatFold([first, ["files/notes.txt"]], root, probe)).resolves.toBeUndefined();
+		expect(probe).toHaveBeenCalledTimes(1);
 	});
 });
