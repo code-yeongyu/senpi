@@ -7087,7 +7087,7 @@ Emitted when the turn's model fallback chain runs out: the primary and every fal
 - `lastError`: the error of the rung that ran last.
 - `primaryError` (optional): the failure that started the fallback walk, the turn's first failed rung, as `{ model, reason, error }`. `reason` is `transient`, `refusal`, `hard-error` or `billing`.
 - `failures` (optional): every rung that failed this turn, in the order it ran, the primary first. An exact repeat of the previous entry is dropped.
-- `pinned` (optional, `true`): the session runs with model fallback off (a model it was opened or started with explicitly, or `--no-model-fallback`), so no other model was tried. `chainKey` is that model, and the turn ended on its failure. Sent once per run, when the run settles on that failure.
+- `pinned` (optional, `true`): the session runs with model fallback off (a model it was opened or started with explicitly, or `--no-model-fallback`), so no other model was tried. `chainKey` is that model, and the turn ended on its failure. Sent once per run, when the run settles on that failure, for a failure another model could have answered (a rate limit, an overload, a billing or quota refusal). Like a spent chain, a pinned usage-limit failure also sets `agent_settled.fallbackExhausted`, so a goal waits for the stated reset instead of retrying straight away.
 
 `primaryError` and `failures` are present together when the session recorded at least one rung failure, and absent otherwise. Account usage-limit text in `lastError` and in each `error` is replaced by its account-limit description. Clients that ignore unknown fields keep working with `chainKey` and `lastError`.
 

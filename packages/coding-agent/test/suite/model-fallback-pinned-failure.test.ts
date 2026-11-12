@@ -53,4 +53,76 @@ describe("a pinned model's failure is reported as a typed exhaustion (omo#13243)
 
 		expect(harness.eventsOfType("retry_fallback_exhausted")).toStrictEqual([]);
 	});
+	it("reports a non-retryable failure on a pinned model too", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }, { id: "faux-2" }],
+			settings: {
+				retry: {
+					enabled: true,
+					baseDelayMs: 1,
+					maxRetries: 0,
+					modelFallback: false,
+					fallbackChains: { [primary]: [fallback] },
+				},
+			},
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "billing error: insufficient_quota" }),
+		]);
+
+		await harness.session.prompt("pinned hard error");
+
+		expect(harness.eventsOfType("retry_fallback_exhausted")).toMatchObject([
+			{ chainKey: primary, pinned: true, failures: [{ model: primary, reason: "hard-error" }] },
+		]);
+	});
+
+	it("tells an extension's agent_settled that the pinned model's limit ended the run", async () => {
+		const settled: Array<{ fallbackExhausted?: { resumeAt?: number } }> = [];
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }],
+			settings: { retry: { enabled: true, baseDelayMs: 1, maxRetries: 0, modelFallback: false } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("agent_settled", (event: { fallbackExhausted?: { resumeAt?: number } }) => {
+						settled.push({
+							...(event.fallbackExhausted === undefined ? {} : { fallbackExhausted: event.fallbackExhausted }),
+						});
+						return undefined;
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage:
+					'429 {"error":{"type":"rate_limit_error","message":"You have hit your session limit; resets 11pm"}}',
+			}),
+		]);
+
+		await harness.session.prompt("pinned limit");
+		await harness.session.waitForSettledSessionWork();
+
+		expect(harness.eventsOfType("retry_fallback_exhausted")).toMatchObject([{ pinned: true }]);
+		expect(settled.at(-1)?.fallbackExhausted).toBeDefined();
+	});
+
+	it("reports a pinned failure once, not again on the next settle", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }],
+			settings: { retry: { enabled: true, baseDelayMs: 1, maxRetries: 0, modelFallback: false } },
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" })]);
+		await harness.session.prompt("pinned once");
+		expect(harness.eventsOfType("retry_fallback_exhausted")).toHaveLength(1);
+
+		// A later settle with no assistant reply of its own (an admission that produced none) reports nothing.
+		(harness.session as unknown as { _reportPinnedModelFailure(): void })._reportPinnedModelFailure();
+
+		expect(harness.eventsOfType("retry_fallback_exhausted")).toHaveLength(1);
+	});
 });

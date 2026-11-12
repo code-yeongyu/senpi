@@ -3099,9 +3099,12 @@ export class AgentSession {
 	private _reportPinnedModelFailure(): void {
 		if (this._runFallbackExhausted) return;
 		if (this.settingsManager.getRetryFallbackSettings().modelFallback) return;
-		const last = this.agent.state.messages.at(-1);
-		if (last?.role !== "assistant" || last.stopReason !== "error") return;
-		const hardError = !this._isRetryableError(last) && this._isHardErrorFallbackEligible(last);
+		// Only this run's own failure: a run that settled with no assistant reply (a refused admission) reports nothing.
+		const last = this._runLastAssistant;
+		this._runLastAssistant = undefined;
+		if (last === undefined || last.stopReason !== "error") return;
+		// The class alone: whether a fallback could serve it is always no here, since fallback is off.
+		const hardError = !this._isRetryableError(last) && this._isHardErrorFallbackClass(last);
 		if (!hardError && !this._isRetryableError(last)) return;
 		const model = `${last.provider}/${last.model}`;
 		const error = last.errorMessage || "Unknown error";
@@ -3732,6 +3735,8 @@ export class AgentSession {
 
 	// Track last assistant message for auto-compaction check
 	private _lastAssistantMessage: AssistantMessage | undefined = undefined;
+	/** The last assistant reply of the current run, kept until the run settles (pinned failure report). */
+	private _runLastAssistant: AssistantMessage | undefined = undefined;
 	private _requestSelectedModel: SelectedModel | undefined;
 	private readonly _endSelectedModels = new WeakMap<AgentEvent, SelectedModel>();
 
@@ -4334,6 +4339,7 @@ export class AgentSession {
 			// Track assistant message for auto-compaction (checked on agent_end)
 			if (event.message.role === "assistant") {
 				this._lastAssistantMessage = event.message;
+				this._runLastAssistant = event.message;
 
 				const assistantMsg = event.message as AssistantMessage;
 				const succeeded =
@@ -13162,6 +13168,14 @@ export class AgentSession {
 
 	private _isHardErrorFallbackEligible(message: AssistantMessage): boolean {
 		return (
+			this._isHardErrorFallbackClass(message) &&
+			this._retryFallback.canTryFallback(isRequestLevelRefusal(message) ? message.provider : undefined)
+		);
+	}
+
+	/** A failure another model could answer, whether or not this session may fall back (senpi#6524 pinned report). */
+	private _isHardErrorFallbackClass(message: AssistantMessage): boolean {
+		return (
 			!message.errorMessage?.startsWith(TURN_RETRY_SUPPRESSION_PREFIX) &&
 			!this._isLocalFailure(message) &&
 			!isModelConfigFailure(message) &&
@@ -13173,8 +13187,7 @@ export class AgentSession {
 			!this._isCursorPayloadOverflow(message) &&
 			!isCursorZeroTokenResourceExhausted(message) &&
 			!isClassifierRefusal(message) &&
-			!message.content.some((content) => content.type === "toolCall") &&
-			this._retryFallback.canTryFallback(isRequestLevelRefusal(message) ? message.provider : undefined)
+			!message.content.some((content) => content.type === "toolCall")
 		);
 	}
 
