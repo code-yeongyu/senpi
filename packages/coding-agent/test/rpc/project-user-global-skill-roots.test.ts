@@ -23,6 +23,7 @@ import {
 const PACKAGE_SKILL = "pkg-skill";
 const DEV_SKILL = "dev-skill";
 const HOME_SKILL = "ugr-home-skill";
+const ROOT_SKILL = "root-skill";
 const AGENT_CONTEXT = `${PROJECT_CONFIG_DIR}/agent/AGENTS.md`;
 const SERVER = { command: "node", args: ["server.js"] };
 const NOT_ALLOWED = { success: false, errorCode: "project_file_not_allowed" };
@@ -125,12 +126,76 @@ describe("project verbs: skill paths added at run time are user-global roots (se
 	});
 });
 
-describe("project verbs: a loader without getUserSkillRoots (senpi#6558)", () => {
-	it("still refuses the agent dir and ~/.agents/skills, without throwing", async () => {
+describe("project verbs: a folder the loader scans for root-level skill files (senpi#6558 round 2)", () => {
+	it.each([
+		{
+			name: "a --skill folder",
+			args: ["--skill", "dev-skills"],
+			settings: (): Record<string, unknown> => ({}),
+			prepare: (home: string) => writeSkill(join(home, "dev-skills"), DEV_SKILL),
+			folder: "dev-skills",
+		},
+		{
+			name: "a user package's skills folder",
+			args: [],
+			settings: (home: string): Record<string, unknown> => ({ packages: [join(home, "pkg")] }),
+			prepare: (home: string) => writeSkill(join(home, "pkg", "skills"), PACKAGE_SKILL),
+			folder: "pkg/skills",
+		},
+	])("$name: refuses creating an instruction file there, which would load as a user skill", async (variant) => {
 		const host = await startHomeHost({
+			args: variant.args,
+			settings: ({ cwd }) => variant.settings(cwd),
+			prepare: variant.prepare,
+		});
+		await host.trust();
+		for (const name of ["AGENTS.md", "CLAUDE.md"]) {
+			const path = `${variant.folder}/${name}`;
+			expect(
+				await host.call("write_project_file", { path, content: skillSource("injected"), ifEtag: null }),
+			).toMatchObject(NOT_ALLOWED);
+			expect(existsSync(join(host.cwd, path))).toBe(false);
+		}
+	});
+});
+
+describe("project verbs: a project that is itself a package with a root-level SKILL.md (senpi#6558 round 2)", () => {
+	it.each([
+		{ name: "skills ['.'], installed globally", skills: ["."], global: true, args: [] },
+		{ name: "skills ['.'], loaded with -e .", skills: ["."], global: false, args: ["-e", "."] },
+		{ name: "skills ['SKILL.md'], installed globally", skills: ["SKILL.md"], global: true, args: [] },
+	])("$name: keeps its instruction file and MCP file, refuses its SKILL.md", async (variant) => {
+		const host = await startFolderHost({
+			settings: ({ cwd }) => (variant.global ? { packages: [cwd] } : {}),
+			args: variant.args,
+			prepare: ({ cwd }) => {
+				writeFileSync(
+					join(cwd, "package.json"),
+					JSON.stringify({ name: ROOT_SKILL, pi: { skills: variant.skills } }),
+				);
+				writeFileSync(join(cwd, "SKILL.md"), skillSource(ROOT_SKILL));
+			},
+		});
+		await host.trust();
+
+		expect(
+			await host.call("write_project_file", { path: "AGENTS.md", content: "# Rules\n", ifEtag: null }),
+		).toMatchObject({ success: true });
+		expect(await host.call("set_project_mcp_servers", { patch: { alpha: SERVER }, ifEtag: null })).toMatchObject({
+			success: true,
+		});
+		expect(await host.call("read_project_skill_file", { skill: ROOT_SKILL })).toMatchObject(NOT_ALLOWED);
+	});
+});
+
+describe("project verbs: a loader without getUserSkillRoots (senpi#6558)", () => {
+	it("still refuses the agent dir, ~/.agents/skills and every loaded user skill, without throwing", async () => {
+		const host = await startHomeHost({
+			args: ["--skill", "dev-skills"],
 			prepare: (home) => {
 				writeFileSync(join(home, AGENT_CONTEXT), "# Global rules\n");
 				writeSkill(join(home, ".agents", "skills"), HOME_SKILL);
+				writeSkill(join(home, "dev-skills"), DEV_SKILL);
 			},
 		});
 		await host.trust();
@@ -139,6 +204,7 @@ describe("project verbs: a loader without getUserSkillRoots (senpi#6558)", () =>
 		try {
 			expect(await host.call("read_project_file", { path: AGENT_CONTEXT })).toMatchObject(NOT_ALLOWED);
 			expect(await host.call("read_project_skill_file", { skill: HOME_SKILL })).toMatchObject(NOT_ALLOWED);
+			expect(await host.call("read_project_skill_file", { skill: DEV_SKILL })).toMatchObject(NOT_ALLOWED);
 		} finally {
 			if (method !== undefined) Object.defineProperty(DefaultResourceLoader.prototype, "getUserSkillRoots", method);
 		}
