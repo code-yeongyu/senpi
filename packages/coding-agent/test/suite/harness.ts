@@ -17,8 +17,8 @@ import type {
 } from "@earendil-works/pi-ai/compat";
 import { registerFauxProvider, streamSimple } from "@earendil-works/pi-ai/compat";
 import type { RetryPolicyProfile } from "@earendil-works/pi-ai/utils/retry-profile/types";
-import { afterAll, afterEach } from "vitest";
 import { makeTempDir, onTempCleanup } from "../../../../scripts/vitest-temp.ts";
+import { trackCleanup } from "../support/pending-cleanups.ts";
 import type { ToolRuntimeKind } from "../../src/cli/tool-runtime.ts";
 import { AgentSession, type AgentSessionEvent } from "../../src/core/agent-session.ts";
 import { settledFallbackLoggers } from "../../src/core/retry-fallback/log.ts";
@@ -201,20 +201,6 @@ onTempCleanup(() => {
 	for (const dispose of [...disposals].reverse()) dispose();
 });
 
-// cleanup() is called unawaited by most suites, so every removal it starts is joined here before the next test starts.
-// Each recorded removal already has a handler, so an unawaited failure is never an unhandled rejection; the hook
-// rethrows it, failing the test that left it behind. Hooks run in reverse registration order, so these run after the
-// importing file's own afterEach/afterAll that call cleanup().
-const pendingCleanups = new Set<Promise<void>>();
-async function joinPendingCleanups(): Promise<void> {
-	const results = await Promise.allSettled([...pendingCleanups]);
-	pendingCleanups.clear();
-	const failure = results.find((result) => result.status === "rejected");
-	if (failure !== undefined) throw failure.reason;
-}
-afterEach(joinPendingCleanups);
-afterAll(joinPendingCleanups);
-
 export async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
 	const tempDir = makeTempDir(join(tmpdir(), "pi-suite-"));
 	const sibling = options.siblingOf;
@@ -391,9 +377,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 						resolve();
 					})
 				: settledCredentialBlockLogsWithin(tempDir).then(removeTempDir);
-		pendingCleanups.add(removal);
-		removal.catch(() => {});
-		return removal;
+		return trackCleanup(removal);
 	};
 	return {
 		agent,

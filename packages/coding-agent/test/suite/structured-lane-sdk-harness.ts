@@ -1,5 +1,6 @@
 import { createAgentSession } from "../../src/core/sdk.ts";
 import { createHarness, type Harness, type HarnessOptions } from "./harness.ts";
+import { trackCleanup } from "../support/pending-cleanups.ts";
 
 export type StructuredHarness = Pick<
 	Harness,
@@ -28,10 +29,13 @@ export async function createStructuredHarness(
 			...fixture,
 			agent: session.agent,
 			session,
-			cleanup: async () => {
-				session.dispose();
-				await fixture.cleanup();
-			},
+			cleanup: () =>
+				trackCleanup(
+					Promise.resolve().then(() => {
+						session.dispose();
+						return fixture.cleanup();
+					}),
+				),
 		};
 	} catch (error) {
 		fixture.cleanup();

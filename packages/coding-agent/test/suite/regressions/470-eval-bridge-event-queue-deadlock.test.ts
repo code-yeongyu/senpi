@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
+import { trackCleanup } from "../../support/pending-cleanups.ts";
 import type { AgentSession } from "../../../src/core/agent-session.ts";
 import { DefaultResourceLoader } from "../../../src/core/resource-loader.ts";
 import { SettingsManager } from "../../../src/core/settings-manager.ts";
@@ -40,9 +41,8 @@ async function createBridgeHarness(extensionFactory: ExtensionFactory): Promise<
 	await harness.session.bindExtensions({});
 	return {
 		...harness,
-		async cleanup() {
-			await harness.cleanup();
-			rmSync(tempDir, { recursive: true, force: true });
+		cleanup() {
+			return trackCleanup(harness.cleanup().then(() => rmSync(tempDir, { recursive: true, force: true })));
 		},
 	};
 }
