@@ -3,7 +3,7 @@
  * `copy` already lets it, and the import opens the landed session on the importing connection, so a move to another
  * host needs no separate `open_session`. A failed open never undoes an import that landed.
  */
-import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { getDefaultSessionDir } from "../../src/core/session-manager.ts";
@@ -76,6 +76,26 @@ describe("move_session import: sessionDir and open (senpi#6267)", () => {
 		expect((await move(b, { op: "status", moveId: "move-d2" })).data).toEqual({ state: "receiving" });
 		expect(await move(b, importFields)).toMatchObject({ success: true, data: { session_id: SESSION_ID } });
 	});
+
+	// Permission bits say nothing to root, and Windows keeps none for a folder: there the import itself still fails.
+	it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+		"#given a sessionDir that is a folder this host may read but not write into #then import refuses it and the move stays importable",
+		async () => {
+			const { fixture, a, b, importFields } = await readyToImport("move-d3");
+			await using _a = a;
+			await using _b = b;
+			const readOnly = join(fixture.base, "read-only");
+			mkdirSync(readOnly);
+			chmodSync(readOnly, 0o555);
+
+			const refused = await move(b, { ...importFields, sessionDir: readOnly });
+			chmodSync(readOnly, 0o755);
+
+			expect(refused).toMatchObject({ success: false, errorCode: "invalid_move_request" });
+			expect((await move(b, { op: "status", moveId: "move-d3" })).data).toEqual({ state: "receiving" });
+			expect(await move(b, importFields)).toMatchObject({ success: true, data: { session_id: SESSION_ID } });
+		},
+	);
 
 	it("#given open asked #when the import lands #then the same answer carries the opened session and B hosts it for the caller", async () => {
 		const { a, b, importFields } = await readyToImport("move-o1");

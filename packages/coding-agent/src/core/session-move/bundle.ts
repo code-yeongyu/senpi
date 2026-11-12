@@ -72,6 +72,29 @@ export function nestsTooDeep(path: string): boolean {
 	return path.split(/[\\/]/).length > MAX_BUNDLE_PATH_SEGMENTS;
 }
 
+/** A path as an error may show it: quoted, and cut short only when it is long. */
+export const shown = (path: string): string => JSON.stringify(path.length > 120 ? `${path.slice(0, 120)}...` : path);
+
+/**
+ * A file the move would carry sits deeper than a bundle path may be, so a receiver would refuse the bundle. The
+ * sender refuses first: before it seals the session where it still can, and before it writes a bundle where the
+ * session was sealed already (by a version that did not look).
+ */
+export class MovePathTooDeepError extends Error {
+	readonly code = "move_path_too_deep";
+
+	constructor(path: string, sealedAlready: boolean) {
+		super(
+			`A file of this session is nested deeper than a move can carry (${MAX_BUNDLE_PATH_SEGMENTS} path segments): ${shown(path)}. ${
+				sealedAlready
+					? "No bundle was written. The session is sealed for this move: finish the move as declined to take it back."
+					: "The session was not sealed for the move and nothing was written."
+			}`,
+		);
+		this.name = "MovePathTooDeepError";
+	}
+}
+
 function parseFile(value: unknown): BundleFile {
 	const file = value as Partial<BundleFile> | null;
 	if (typeof file !== "object" || file === null || !isString(file.path) || !isString(file.sha256))
@@ -79,7 +102,7 @@ function parseFile(value: unknown): BundleFile {
 	if (leavesBundle(file.path)) throw new MoveBundleInvalidError(`a listed path leaves the bundle: ${file.path}`);
 	if (nestsTooDeep(file.path))
 		throw new MoveBundleInvalidError(
-			`a listed path is nested deeper than ${MAX_BUNDLE_PATH_SEGMENTS} segments: ${file.path.slice(0, 120)}...`,
+			`a listed path is nested deeper than ${MAX_BUNDLE_PATH_SEGMENTS} segments: ${shown(file.path)}`,
 		);
 	return { path: file.path, sha256: file.sha256 };
 }
@@ -152,6 +175,28 @@ export async function readManifest(bundleDir: string): Promise<MoveManifest> {
 		throw unreadable(error);
 	}
 	return parseManifest(text);
+}
+
+/**
+ * What a sender reads back from the bundle it kept: the move it is for, and the queued input the release took out,
+ * in a format this version knows. Nothing else is checked. The bundle is the sender's own, and a rule about its paths that is newer than the bundle
+ * (the depth cap) must not stop the sender from finishing its move.
+ */
+export async function readKeptBundle(bundleDir: string): Promise<Pick<MoveManifest, "moveId" | "droppedUserMessages">> {
+	let raw: unknown;
+	try {
+		raw = JSON.parse(await readFile(join(bundleDir, MANIFEST_FILE), "utf8"));
+	} catch (error) {
+		throw unreadable(error);
+	}
+	if (typeof raw !== "object" || raw === null) throw new MoveBundleInvalidError("the manifest is not an object");
+	// The format says what the two fields read below mean: a bundle of another format is left for a version that knows it.
+	const format: unknown = Reflect.get(raw, "format");
+	if (format !== MOVE_BUNDLE_FORMAT) throw new MoveBundleInvalidError(`unknown bundle format ${String(format)}`);
+	const queued: unknown = Reflect.get(raw, "droppedUserMessages");
+	const droppedUserMessages = Array.isArray(queued) ? queued : [];
+	if (!droppedUserMessages.every(isString)) throw new MoveBundleInvalidError("malformed queued input");
+	return { moveId: parseMoveId(Reflect.get(raw, "moveId")), droppedUserMessages };
 }
 
 /** The manifest from its own text: an inline bundle's manifest is read before any of its files is written. */
