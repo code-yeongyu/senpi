@@ -163,13 +163,17 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 		if (cause instanceof SessionMovedAwayError) {
 			answer = refusal(command.id, cause.code, {
 				detail: cause.message,
-				...(interrupted ? { interrupted: true, dropped } : {}),
+				...(interrupted
+					? { interrupted: true, dropped, taken_from: first.session.sessionManager.getSessionId() }
+					: {}),
 			});
 			return answer;
 		}
 		answer = refusal(command.id, RPC_ERROR_RELEASE_FAILED, {
 			detail: cause instanceof Error ? cause.message : String(cause),
-			...(interrupted ? { interrupted: true, dropped } : {}),
+			...(interrupted
+				? { interrupted: true, dropped, taken_from: first.session.sessionManager.getSessionId() }
+				: {}),
 		});
 		return answer;
 	} finally {
@@ -195,18 +199,12 @@ async function claimAndRelease(
 	stateAttempt: string | undefined,
 	onSealed: () => void,
 ): Promise<RpcResponse> {
-	const taken = interrupted ? { interrupted: true, dropped } : undefined;
-	const ready = releasable(port, command, taken);
+	// After an interrupt every refusal says which session the taken input came out of: the one this release began on.
+	const taken = interrupted
+		? { interrupted: true, dropped, taken_from: first.sessionManager.getSessionId() }
+		: undefined;
+	const ready = releasable(port, command, taken, first);
 	if (!("session" in ready)) return ready;
-	// The session behind the route was replaced while this release awaited (a move's export, an interrupt's settle, a
-	// first header write). What was staged and taken belongs to the session the release began on: nothing is sealed on
-	// its successor, whether or not the caller sent `expectSessionId` (senpi#6484).
-	if (ready.session !== first)
-		return refusal(command.id, RPC_ERROR_SESSION_MISMATCH, {
-			detail: "the session behind this route was replaced while the release was in progress; nothing was released",
-			...(command.expectSessionId === undefined ? {} : { expected: command.expectSessionId }),
-			...(taken === undefined ? {} : { ...taken, taken_from: first.sessionManager.getSessionId() }),
-		});
 	const stillBusy = busySignals(port, command.sessionId, ready.session);
 	if (stillBusy.length > 0) {
 		return refusal(command.id, busyCode(stillBusy), {
@@ -292,11 +290,15 @@ function busyCode(signals: readonly ReleaseBusySignal[]): string {
 		: RPC_ERROR_SESSION_BUSY;
 }
 
-/** `taken`: what an interrupt already took out of the session, merged into any refusal's `errorData`. */
+/**
+ * `taken`: what an interrupt already took out of the session, merged into any refusal's `errorData`.
+ * `first`: at the second lookup, the session the release began on.
+ */
 function releasable(
 	port: SessionReleasePort,
 	command: ReleaseSessionCommand,
 	taken: Readonly<Record<string, unknown>> | undefined,
+	first?: AgentSession,
 ): Releasable | RpcResponse {
 	const refuse = (code: string, data?: Readonly<Record<string, unknown>>): RpcResponse =>
 		refusal(command.id, code, data || taken ? { ...data, ...taken } : undefined);
@@ -313,7 +315,16 @@ function releasable(
 	// After an interrupt, what was taken came out of the expected session, which the handle no longer names.
 	const expected = command.expectSessionId;
 	if (expected !== undefined && session.sessionManager.getSessionId() !== expected)
-		return refuse(RPC_ERROR_SESSION_MISMATCH, { expected, ...(taken === undefined ? {} : { taken_from: expected }) });
+		return refuse(RPC_ERROR_SESSION_MISMATCH, { expected });
+	// The session behind the route was replaced while this release awaited (a move's export, an interrupt's settle, a
+	// first header write). What was staged and taken belongs to the session the release began on: nothing is sealed on
+	// its successor, whether or not the caller sent `expectSessionId` (senpi#6484). Checked before the `attached` and
+	// busy checks: either refusal invites a retry (with `force`, or later), and that retry would release the successor.
+	if (first !== undefined && session !== first)
+		return refuse(RPC_ERROR_SESSION_MISMATCH, {
+			detail: "the session behind this route was replaced while the release was in progress; nothing was released",
+			...(expected === undefined ? {} : { expected }),
+		});
 	// The file of the session this release acts on, read from that session and never from the host's record of the handle:
 	// the answer, the staged state and the teardown name what was sealed (senpi#6484).
 	const sessionPath = session.sessionFile;

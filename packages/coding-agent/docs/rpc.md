@@ -3626,8 +3626,9 @@ file and the durable id of the session that was sealed, read from that session i
   before the release - and checks again. Still busy answers the same refusal with `errorData.interrupted: true`
   and `errorData.dropped`; otherwise the entry records `interrupted: true`. Every refusal after the interrupt
   (still busy, `attached` because a client attached while it waited, `unknown_session`, `session_closing`)
-  reopens admission on the session the host keeps and carries `interrupted: true` and `dropped` in `errorData`,
-  since the queues were already emptied.
+  reopens admission on the session the host keeps and carries `interrupted: true`, `dropped` and `taken_from` in
+  `errorData`, since the queues were already emptied. `taken_from` is the durable id of the session that input was
+  taken from (the one the release began on), whichever refusal it is.
 - A refusal whose `busy` names `queued` also carries `errorData.retry_with: { interrupt: true }` and a `hint`:
   queued user input is owed a turn even when none is running (an aborted run leaves it queued), and only an
   interrupt release takes it out and hands it back in `dropped.user_messages`.
@@ -3666,7 +3667,10 @@ file and the durable id of the session that was sealed, read from that session i
 - A release that a replacement crosses is refused, with or without `expectSessionId`: when the session behind the
   route is replaced while the release waits (for a move's extension export, an interrupt to settle, or a first
   header write), the answer is `session_mismatch` and nothing is released: nothing is sealed on the successor, and
-  what the extensions staged for the move is removed. Without the field `errorData` carries no `expected`; after an
+  what the extensions staged for the move is removed. This check runs before the `attached` and busy checks, so a
+  crossed release answers `session_mismatch` even when another client is attached or the successor is busy: either
+  of those refusals would invite a retry (with `force`, or later), and that retry would release the successor.
+  Without the field `errorData` carries no `expected`; after an
   interrupt it carries `interrupted`, `dropped` and `taken_from`, the durable id of the session that input was
   taken from. A client that does not know the code reads it as any refusal: the release did not happen.
   `session_mismatch` with no `expected` means the session behind the route was rebuilt or replaced while the release
@@ -3682,7 +3686,7 @@ file and the durable id of the session that was sealed, read from that session i
   its last state read named, never the handle and never an empty string.
 - A hand-over that fails after it began - the header or the `session_released` entry cannot be written
   (`EACCES`, `ENOSPC`, a removed directory), or the teardown throws - answers `release_failed` with
-  `errorData { detail }` (the error message), plus `interrupted: true` and `dropped` after an interrupt. When
+  `errorData { detail }` (the error message), plus `interrupted: true`, `dropped` and `taken_from` after an interrupt. When
   the entry could not be written the session stays on this host as it was: admission reopened, no
   `session_released` entry on disk or in memory, and a later release can be retried. A teardown that fails
   after it claimed the session leaves it closing.

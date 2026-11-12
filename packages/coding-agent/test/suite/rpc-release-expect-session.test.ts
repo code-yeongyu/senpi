@@ -261,4 +261,23 @@ describe("release_session { expectSessionId } (senpi#6484)", () => {
 		expect(sealedTranscripts(dirname(s1.sessionPath))).toEqual([]);
 		expect(await replaced).toMatchObject({ success: true });
 	}, 120_000);
+
+	it("a 512-character id is a valid id: it is compared, not refused as invalid", async () => {
+		await using host = await startReleaseHost(gatewayFixture().extension);
+		const s1 = await host.open("s1");
+		const longest = "a".repeat(512);
+
+		const answer = await host.send(
+			send({
+				type: "release_session",
+				id: "release",
+				sessionId: s1.sessionId,
+				reason: "takeover",
+				expectSessionId: longest,
+			}),
+		);
+
+		expect(answer).toMatchObject({ success: false, errorCode: "session_mismatch", errorData: { expected: longest } });
+		expect(sealedTranscripts(dirname(s1.sessionPath))).toEqual([]);
+	}, 120_000);
 });

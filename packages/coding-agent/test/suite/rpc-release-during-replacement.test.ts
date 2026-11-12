@@ -268,4 +268,75 @@ describe("a release or an unload while a replacement is still telling extensions
 		const state = await host.send(send({ type: "get_state", id: "state", sessionId: s1.sessionId }));
 		expect(state.data).toMatchObject({ sessionId: s1.session.sessionId });
 	}, 120_000);
+
+	it.each([{ crossed: true }, { crossed: false }])(
+		"an interrupting release refused after another client attached says which session its taken input came from (crossed by a replacement: $crossed)",
+		async ({ crossed }) => {
+			let exportEntered!: () => void;
+			const exporting = new Promise<void>((resolve) => {
+				exportEntered = resolve;
+			});
+			let letExportGo!: () => void;
+			const exportHeld = new Promise<void>((resolve) => {
+				letExportGo = resolve;
+			});
+			let newSessionStarted!: () => void;
+			const successorStarted = new Promise<void>((resolve) => {
+				newSessionStarted = resolve;
+			});
+			const gateway = gatewayFixture();
+			const extension: ExtensionFactory = (pi) => {
+				gateway.extension(pi);
+				pi.on("session_move_export", async () => {
+					exportEntered();
+					await exportHeld;
+				});
+				pi.on("session_start", (event) => {
+					if (event.reason === "new") newSessionStarted();
+				});
+			};
+			await using host = await startReleaseHost(extension);
+			host.faux.setResponses([fauxAssistantMessage("seed reply"), heldTurn]);
+			const s1 = await host.open("s1");
+			const folder = dirname(s1.sessionPath);
+			const takenFrom = s1.session.sessionId;
+			const started = nextEvent(s1.session, "agent_start");
+			await host.send(send({ type: "prompt", id: "work", sessionId: s1.sessionId, message: "long work" }));
+			await started;
+			await host.send(send({ type: "follow_up", id: "queued", sessionId: s1.sessionId, message: "after the work" }));
+
+			const releasing = host.send(
+				send({
+					type: "release_session",
+					id: "release",
+					sessionId: s1.sessionId,
+					reason: "move",
+					moveId: "move-6484",
+					target: "device-b",
+					interrupt: true,
+				}),
+			);
+			await exporting;
+			expect(await host.attach(s1.sessionPath, "second-client")).toMatchObject({ success: true });
+			if (crossed) {
+				const replaced = host.send(
+					send({ type: "new_session", id: "replace", sessionId: s1.sessionId }),
+					"replacer",
+				);
+				await successorStarted;
+				await bindingSettled(host, s1.sessionId);
+				expect(await replaced).toMatchObject({ success: true });
+			}
+			letExportGo();
+			const answer = await releasing;
+
+			expect(answer).toMatchObject({
+				success: false,
+				errorCode: crossed ? "session_mismatch" : "attached",
+				errorData: { interrupted: true, dropped: { user_messages: ["after the work"] }, taken_from: takenFrom },
+			});
+			expect(sealedTranscripts(folder)).toEqual([]);
+		},
+		120_000,
+	);
 });
