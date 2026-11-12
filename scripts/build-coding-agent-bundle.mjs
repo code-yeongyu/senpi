@@ -91,6 +91,28 @@ const httpsProxyAgentNamedExportPlugin = {
 	},
 };
 
+/**
+ * The MCP SDK imports `zod/v4`, `zod/v4-mini` and `zod/v3` and parses remote-server responses with them.
+ * Which zod those subpaths reach depends on the install layout: npm hoists a 3.25.x root copy whose `zod/v4`
+ * reports 4.0.0, bun hoists 4.6.x. Pin every such import to the zod that coding-agent depends on, so one
+ * layout-independent copy ships. Only the MCP SDK is redirected: other packages (sandbox-runtime) keep the
+ * zod their own range selects. The Claude agent SDK embeds a minified zod inside sdk.mjs rather than importing
+ * it, so no resolver can reach that copy.
+ */
+export function zodSingleCopyPlugin(resolveDir = codingAgentDir) {
+	return {
+		name: "zod-single-copy",
+		setup(build) {
+			build.onResolve({ filter: /^zod(\/.*)?$/ }, async (args) => {
+				if (args.pluginData === "zod-single-copy") return undefined;
+				if (!/[/\\]@modelcontextprotocol[/\\]sdk[/\\]/.test(args.importer)) return undefined;
+				const resolved = await build.resolve(args.path, { kind: args.kind, resolveDir, pluginData: "zod-single-copy" });
+				return resolved.errors.length > 0 ? undefined : resolved;
+			});
+		},
+	};
+}
+
 export function commonBuildOptions() {
 	return {
 		absWorkingDir: repoRoot,
@@ -117,7 +139,7 @@ export function commonBuildOptions() {
 		minifySyntax: true,
 		minifyWhitespace: true,
 		platform: "node",
-		plugins: [httpsProxyAgentNamedExportPlugin, bunRuntimeModulesPlugin, fileAttributePlugin],
+		plugins: [httpsProxyAgentNamedExportPlugin, bunRuntimeModulesPlugin, fileAttributePlugin, zodSingleCopyPlugin()],
 		sourcemap: false,
 		target: "node22.19",
 		// Do not apply the monorepo's source-oriented path aliases while bundling

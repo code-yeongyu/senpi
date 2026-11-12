@@ -83,3 +83,62 @@ describe("build-coding-agent-bundle", () => {
 		}
 	});
 });
+
+import { readFileSync, readdirSync } from "node:fs";
+
+describe("zod single copy", () => {
+	it("redirects MCP SDK zod subpath imports to the coding-agent zod whatever the hoisted layout", async () => {
+		// Given: an npm-style layout whose hoisted zod/v4 is a 4.0.0 copy, imported by a fake MCP SDK
+		const scratch = mkdtempSync(join(tmpdir(), "senpi-bundle-zod-"));
+		try {
+			const mcp = join(scratch, "node_modules", "@modelcontextprotocol", "sdk");
+			mkdirSync(mcp, { recursive: true });
+			writeFileSync(join(mcp, "package.json"), JSON.stringify({ name: "@modelcontextprotocol/sdk", type: "module", main: "index.js" }));
+			writeFileSync(join(mcp, "index.js"), 'import * as z from "zod/v4"; console.log(z.z.string().parse("x"));');
+			const old = join(scratch, "node_modules", "zod");
+			mkdirSync(join(old, "v4"), { recursive: true });
+			writeFileSync(join(old, "package.json"), JSON.stringify({ name: "zod", version: "3.25.76", exports: { "./v4": "./v4/index.js" } }));
+			writeFileSync(join(old, "v4", "index.js"), "export const z = { string: () => ({ parse: (v) => v }) }; export const version = { major: 4, minor: 0, patch: 0 };");
+
+			// When
+			const result = await build({
+				...commonBuildOptions(),
+				stdin: { contents: 'import "@modelcontextprotocol/sdk";', loader: "js", resolveDir: scratch, sourcefile: "probe.js" },
+				write: false,
+			});
+
+			// Then: the hoisted 4.0.0 copy is not bundled and the pinned copy is
+			assert.equal(Object.keys(result.metafile.inputs).some((input) => input.includes("senpi-bundle-zod-") && input.includes("/zod/")), false);
+			assert.doesNotMatch(result.outputFiles[0].text, /major:\s*4,\s*minor:\s*0,\s*patch:\s*0/);
+		} finally {
+			rmSync(scratch, { force: true, recursive: true });
+		}
+	});
+
+	it("ships no zod 4.x core older than 4.6.6 in the built bundle outside the Claude agent SDK's embedded copy", () => {
+		// Given: the built bundle (a full build runs before the script tests in CI)
+		const bundleDir = join(repoRoot, "packages", "coding-agent", "dist", "bundle");
+		let files;
+		try {
+			files = readdirSync(bundleDir, { recursive: true }).map(String).filter((file) => file.endsWith(".js"));
+		} catch {
+			return;
+		}
+
+		// When
+		const found = [];
+		for (const file of files) {
+			for (const match of readFileSync(join(bundleDir, file), "utf8").matchAll(/major:4,minor:(\d+),patch:(\d+)/g)) {
+				found.push({ file, version: `4.${match[1]}.${match[2]}`, minor: Number(match[1]), patch: Number(match[2]) });
+			}
+		}
+
+		// Then: 4.6.2 is only the SDK-embedded copy, which sits in the SDK's own chunk
+		const stale = found.filter((entry) => entry.minor < 6 || (entry.minor === 6 && entry.patch < 6));
+		assert.deepEqual(
+			stale.filter((entry) => entry.version !== "4.6.2"),
+			[],
+		);
+		assert.ok(stale.every((entry) => /^chunks\/(sdk|session-worker)/.test(entry.file)), JSON.stringify(stale));
+	});
+});
