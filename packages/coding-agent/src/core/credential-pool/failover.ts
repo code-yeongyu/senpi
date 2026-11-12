@@ -56,7 +56,7 @@ export type RunCredentialFailoverOptions<TEvent, TSlot extends RunSlot> = {
 	 */
 	errorFromEvent?: (event: TEvent) => unknown | undefined;
 	/** Persisted BEFORE a replacement slot is selected so a crash never forgets a block. */
-	persistBlock: (slot: TSlot, block: CredentialBlock) => void | Promise<void>;
+	persistBlock: (slot: TSlot, block: CredentialBlock, error?: unknown) => void | Promise<void>;
 	onRotate?: (event: CredentialFailoverEvent<TSlot>) => void | Promise<void>;
 	onSuccess?: (slot: TSlot) => void | Promise<void>;
 	/**
@@ -349,7 +349,7 @@ export async function* runCredentialFailover<TEvent, TSlot extends RunSlot>(
 				}
 
 				unsettled = undefined;
-				await options.persistBlock(slot, action.block);
+				await options.persistBlock(slot, action.block, error);
 				attempted.add(slot.name);
 				const failure = new CredentialFailoverError(action, error);
 				lastError = failure;
