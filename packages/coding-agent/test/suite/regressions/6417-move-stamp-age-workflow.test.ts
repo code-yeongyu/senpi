@@ -1,7 +1,9 @@
 /**
- * senpi#6417: the macOS measurement of the move-record stamp's premise (added by senpi#6463, the pull request that
- * followed that issue's fix) runs only for the files its path filter
- * names. These rows hold that the filter names every file its rule says it must and none that is gone, that both
+ * senpi#6417: the macOS measurement of the move-record stamp's premise runs only for the files its path filter
+ * names. The stamp's age is read from the machine's uptime since that issue's fix, senpi#6463; the measurement of
+ * that premise was added by senpi#6543.
+ *
+ * These rows hold that the filter names every file its rule says it must and none that is gone, that both
  * triggers carry the same list, that it runs under the versions the macOS job of CI runs under, and that the
  * runner's clock is put back.
  *
@@ -47,7 +49,7 @@ function pinOf(document: unknown, job: string, action: string, field: string): u
 	return at(step, "with", field);
 }
 
-describe("the macOS measurement of the move-record stamp (senpi#6463)", () => {
+describe("the macOS measurement of the move-record stamp (senpi#6417, added by senpi#6543)", () => {
 	it("#given the rule its header states #then it runs for every production source file that chooses, writes or reads a stamp's clock, and for itself", () => {
 		expect(stated, "the workflow's header states the rule's pattern on a stamp-files line").toBeDefined();
 		const rule = new RegExp(stated ?? "$^");
