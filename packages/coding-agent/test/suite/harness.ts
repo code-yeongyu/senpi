@@ -3,7 +3,8 @@ import { createInMemoryModelRegistry, createModelRegistry, getModelRuntime } fro
  * Local test harness for the new coding-agent test suite.
  */
 
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage, AgentOptions, AgentTool } from "@earendil-works/pi-agent-core";
@@ -185,12 +186,15 @@ export interface Harness {
 	getExtensionRunner(): ExtensionRunner;
 	eventsOfType<T extends AgentSessionEvent["type"]>(type: T): Extract<AgentSessionEvent, { type: T }>[];
 	tempDir: string;
-	cleanup: () => void;
+	/** Disposes the session and removes the temp dir; the removal waits for writes still landing in it (senpi#6488). */
+	cleanup: () => Promise<void>;
 }
 
-const cleanups = new Set<() => void>();
+// A harness its test never cleaned up is disposed here; its temp dir is tracked by makeTempDir, so cleanupTempDirs
+// removes it with the awaited, guarded rm right after.
+const disposals = new Set<() => void>();
 onTempCleanup(() => {
-	for (const cleanup of [...cleanups].reverse()) cleanup();
+	for (const dispose of [...disposals].reverse()) dispose();
 });
 
 export async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
@@ -348,13 +352,16 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		events.push(event);
 	});
 
-	const cleanup = () => {
-		if (!cleanups.delete(cleanup)) return;
+	const dispose = () => {
+		if (!disposals.delete(dispose)) return;
 		session.dispose();
 		if (!sibling) fauxProvider.unregister();
-		if (existsSync(tempDir)) rmSync(tempDir, { recursive: true });
 	};
-	cleanups.add(cleanup);
+	disposals.add(dispose);
+	const cleanup = async () => {
+		dispose();
+		await rm(tempDir, { recursive: true, force: true });
+	};
 	return {
 		agent,
 		session,
