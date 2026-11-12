@@ -286,20 +286,27 @@ async function stage(bundleDir: string, manifest: MoveManifest, staging: string,
 	const file = join(staging, manifest.sessionFileName);
 	if (!((await pathExists(file)) && (await movedInFor(file, manifest.moveId)))) {
 		await rm(staging, { recursive: true, force: true });
-		for (const item of [manifest.session, ...manifest.sidecars]) {
-			const to = item === manifest.session ? file : join(staging, stagedName(manifest, item));
-			await mkdir(dirname(to), { recursive: true });
-			await copyFile(join(bundleDir, item.path), to);
+		const listed = [manifest.session, ...manifest.sidecars];
+		const stagedAt = (item: (typeof listed)[number]) =>
+			item === manifest.session ? file : join(staging, stagedName(manifest, item));
+		for (const item of listed) {
+			await mkdir(dirname(stagedAt(item)), { recursive: true });
+			await copyFile(join(bundleDir, item.path), stagedAt(item));
 		}
 		await stagePayloads(bundleDir, manifest, staging);
-		// The entry below names the listed session's hash, and a retry trusts a staged file that carries it. So what
-		// was staged is hashed first: the entry never attests bytes that are not the listed session's (senpi#6575).
-		if ((await sha256File(file)) !== manifest.session.sha256)
-			throw new MoveBundleInvalidError(`${manifest.session.path} changed in transit`);
+		// The entry below names the listed session's hash, a retry trusts a staged file that carries it, and sidecars
+		// land with the session. So every staged copy of the session file and of a sidecar is hashed first, once all
+		// are in place: neither the entry nor the landing carries bytes that are not the listed ones (senpi#6575).
+		// Payload files are hashed as they are staged.
+		for (const item of listed)
+			if ((await sha256File(stagedAt(item))) !== item.sha256)
+				throw new MoveBundleInvalidError(`${item.path} changed in transit`);
 		(await SessionManager.openAsync(file, staging)).appendCustomEntry(SESSION_MOVED_IN, {
 			move_id: manifest.moveId,
 			session_id: manifest.sessionId,
 			from,
+			// The hash of the session's bytes as they were staged from the bundle. The landed file is not those bytes:
+			// this entry and the queued input are appended to it. Nothing in this repository reads the field.
 			bundle_sha256: manifest.session.sha256,
 			moved_in_at: new Date().toISOString(),
 		});
