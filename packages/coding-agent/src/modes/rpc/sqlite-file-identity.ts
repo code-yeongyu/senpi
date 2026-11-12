@@ -46,9 +46,9 @@ const DESCRIPTOR_DIRECTORY: Partial<Record<NodeJS.Platform, string>> = { linux: 
  * device it names can block the process (a serial tty without CLOCAL). With `noFollow` (SQLITE_OPEN_NOFOLLOW) a link
  * found while SQLite resolves `path` is refused. The open after that resolution applies O_NOFOLLOW to the last
  * component only, so a directory swapped for a symbolic link between the resolution and the open is still followed
- * (an attacker with write access to a directory on the path, normally the same user). Without `noFollow` (node:sqlite
- * takes no open flags), `path` is checked once more right before the open, and a link swapped in between that `lstat`
- * and SQLite's own is still followed. A device node put at `path` itself needs `mknod` privilege or a hard link to a
+ * (an attacker with write access to the directory holding the swapped component, normally the same user). Without
+ * `noFollow` (node:sqlite takes no open flags), `path` is checked once more right before the open, and a link swapped in
+ * between that `lstat` and SQLite's own is still followed (the same attacker). A device node put at `path` itself needs `mknod` privilege or a hard link to a
  * device file on the same filesystem (limited by Linux protected_hardlinks); a file on a FUSE mount the user mounted
  * can also block an open.
  */
