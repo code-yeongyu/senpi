@@ -1,5 +1,14 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	utimesSync,
+	writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import {
@@ -116,7 +125,7 @@ it("removes a directory whose owner record does not parse, on the same age rule 
 	expect({ aged: existsSync(aged), fresh: existsSync(fresh) }).toEqual({ aged: false, fresh: true });
 });
 
-it("checks a live owner's liveness without blocking the event loop", async () => {
+it("checks a live owner's liveness with the signal check, never the synchronous ps", async () => {
 	const root = tempRoot(0o700);
 	const directory = join(root, `${SHORT_SERVER_ENDPOINT_PREFIX}l1veown0`);
 	mkdirSync(directory, { mode: 0o700 });
@@ -125,21 +134,19 @@ it("checks a live owner's liveness without blocking the event loop", async () =>
 		JSON.stringify({ pid: process.pid, processStartTime: "Thu Jan  1 00:00:00 2026" }),
 	);
 	writeFileSync(join(directory, "server.sock"), "");
-	// A ps that answers nothing after a second: the start-time probe gives no identity, so the matcher falls back to its
-	// liveness check. The synchronous default would run this same ps through execFileSync and stall the loop for it.
+	// A ps that records its arguments and answers nothing: the start-time probe finds no identity, so the matcher falls
+	// back to its liveness check. The synchronous default would run `ps -o stat= -p <pid>` (process-identity.ts).
 	const binDir = tempRoot(0o700);
-	writeFileSync(join(binDir, "ps"), "#!/bin/sh\nsleep 1\nexit 0\n", { mode: 0o755 });
+	const calls = join(binDir, "ps-calls.log");
+	writeFileSync(join(binDir, "ps"), `#!/bin/sh\necho "$*" >> ${JSON.stringify(calls)}\nexit 0\n`, { mode: 0o755 });
 	vi.stubEnv("PATH", `${binDir}:${process.env.PATH ?? ""}`);
-	let last = performance.now();
-	let longestStallMs = 0;
-	const ticker = setInterval(() => {
-		const now = performance.now();
-		longestStallMs = Math.max(longestStallMs, now - last);
-		last = now;
-	}, 25);
 
 	await reapOrphanedServerEndpoints([root]);
 
-	clearInterval(ticker);
-	expect({ kept: existsSync(directory), blocked: longestStallMs >= 700 }).toEqual({ kept: true, blocked: false });
-}, 60_000);
+	const logged = existsSync(calls) ? readFileSync(calls, "utf8").trim().split("\n") : [];
+	expect({
+		kept: existsSync(directory),
+		startTimeProbes: logged.filter((line) => line === `-o stat=,lstart= -p ${process.pid}`).length >= 2,
+		syncLivenessProbes: logged.filter((line) => line === `-o stat= -p ${process.pid}`).length,
+	}).toEqual({ kept: true, startTimeProbes: true, syncLivenessProbes: 0 });
+});
