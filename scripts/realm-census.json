@@ -6903,6 +6903,14 @@
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
 		},
+		"packages/coding-agent/src/core/session-move/identity.ts#MARKER": {
+			"class": "constant",
+			"reason": "bytes of a constant string built once at load and only searched for (indexOf); never written after load"
+		},
+		"packages/coding-agent/src/core/session-move/identity.ts#READ_FLAGS": {
+			"class": "constant",
+			"reason": "value derived from constants at load; never written after load"
+		},
 		"packages/coding-agent/src/core/session-move/move-landing.ts#COMMIT_SETTLE_AFTER_MS": {
 			"class": "constant",
 			"reason": "value derived from constants at load; never written after load"
@@ -8990,6 +8998,26 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/coding-agent/src/modes/rpc/method-classes-schema-host.ts#MoveInlineFile": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/method-classes-schema-host.ts#RepositoryIdentity": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/method-classes-schema-host.ts#_cwd": {
+			"class": "constant",
+			"reason": "value computed or aliased at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/method-classes-schema-host.ts#_sessionPath": {
+			"class": "constant",
+			"reason": "value computed or aliased at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/method-classes-schema-host.ts#moveImportOpenProperties": {
+			"class": "constant",
+			"reason": "value computed or aliased at load; never written after load"
+		},
 		"packages/coding-agent/src/modes/rpc/method-classes-schema-host.ts#openProperties": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
@@ -9203,6 +9231,14 @@
 		"packages/coding-agent/src/modes/rpc/session-move-commands.ts#RENAMED_CODES": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/session-move-request.ts#OPEN_FIELDS_THE_IMPORT_SETS": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/session-move-wire.ts#MOVE_SESSION_INLINE_MAX_BYTES_CAPABILITY": {
+			"class": "constant",
+			"reason": "value derived from constants at load; never written after load"
 		},
 		"packages/coding-agent/src/modes/rpc/session-release-interrupt.ts#NOTHING_DROPPED": {
 			"class": "constant",
