@@ -68,7 +68,9 @@ async function openDatabase(path: string): Promise<Database> {
 }
 
 async function checked<T>(path: string, open: () => T, close: (opened: T) => void): Promise<T> {
-	const result = await openExpectedFile(path, () => precreatePrivate(path), open, close);
+	// The store's path is not canonicalized and may name a symlinked directory, which SQLITE_OPEN_NOFOLLOW would refuse:
+	// under both drivers its name is checked once more right before SQLite's open instead (sqlite-file-identity.ts).
+	const result = await openExpectedFile(path, () => precreatePrivate(path), open, close, false);
 	if ("replaced" in result) throw new EndpointReservationError("store_insecure", result.replaced);
 	// Not provable now: the descriptor listings could not single out SQLite's descriptor, because this process opened
 	// another file during the open, or the store was already open here and SQLite added no descriptor of it, or the

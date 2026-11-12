@@ -72,7 +72,13 @@ describe.skipIf(!listable)("SQLite file identity proof", () => {
 	it("refuses a swap undone after the open as replaced when no connection of this process has the file open", async () => {
 		const { root, path, expected } = await seeded();
 		const closed: DatabaseSync[] = [];
-		const result = await openExpectedFile(path, async () => expected, swappedOpen(root, path), closing(closed));
+		const result = await openExpectedFile(
+			path,
+			async () => expected,
+			swappedOpen(root, path),
+			closing(closed),
+			false,
+		);
 		expect(result).toHaveProperty("replaced");
 		expect(closed).toHaveLength(1);
 	});
@@ -81,7 +87,13 @@ describe.skipIf(!listable)("SQLite file identity proof", () => {
 		const { root, path, expected } = await seeded();
 		holders.push(new DatabaseSync(path));
 		const closed: DatabaseSync[] = [];
-		const result = await openExpectedFile(path, async () => expected, swappedOpen(root, path), closing(closed));
+		const result = await openExpectedFile(
+			path,
+			async () => expected,
+			swappedOpen(root, path),
+			closing(closed),
+			false,
+		);
 		expect(result).not.toHaveProperty("opened");
 		expect(result).toHaveProperty("busy");
 		expect(closed).toHaveLength(1);
@@ -95,6 +107,7 @@ describe.skipIf(!listable)("SQLite file identity proof", () => {
 			async () => expected,
 			() => new DatabaseSync(path),
 			closing([]),
+			false,
 		);
 		expect(result).toHaveProperty("opened");
 		if ("opened" in result) holders.push(result.opened);
@@ -110,6 +123,7 @@ describe.skipIf(!listable)("SQLite file identity proof", () => {
 			async () => first.expected,
 			() => new DatabaseSync(first.path),
 			closing([]),
+			false,
 		);
 		const two = openExpectedFile(
 			second.path,
@@ -119,6 +133,7 @@ describe.skipIf(!listable)("SQLite file identity proof", () => {
 				return new DatabaseSync(second.path);
 			},
 			closing([]),
+			false,
 		);
 		void one.then(() => {
 			firstSettled = true;
@@ -138,6 +153,7 @@ describe.skipIf(!listable)("SQLite file identity proof", () => {
 			async () => expected,
 			() => new DatabaseSync(path),
 			closing(closed),
+			false,
 		);
 		expect(result).not.toHaveProperty("opened");
 		expect(result).toHaveProperty("busy");
@@ -153,12 +169,14 @@ describe.skipIf(!listable)("SQLite file identity proof", () => {
 				throw new Error("open failed");
 			},
 			closing([]),
+			false,
 		);
 		const next = openExpectedFile(
 			path,
 			async () => expected,
 			() => new DatabaseSync(path),
 			closing([]),
+			false,
 		);
 		await expect(failing).rejects.toThrow("open failed");
 		const result = await next;
