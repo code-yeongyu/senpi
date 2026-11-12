@@ -152,8 +152,8 @@ import {
 	ContinueFromLeafError,
 	trackTurnAdmission,
 } from "./continue-from-leaf.ts";
-import { accountCanServe, getCredentialAccounts } from "./credential-accounts.ts";
-import { subscriptionLimits } from "./subscription-limits/limit-store.ts";
+import { accountCanServe, accountsNeedingUser, getCredentialAccounts } from "./credential-accounts.ts";
+import { type AccountLimits, subscriptionLimits } from "./subscription-limits/limit-store.ts";
 import { refreshSubscriptionUsage } from "./subscription-limits/usage-poller.ts";
 import { credentialRecoveryRevision } from "./credential-recovery-revision.ts";
 import { admitCursorHistory, cursorAdmissionBudgetBytes } from "./cursor-history-admission.ts";
@@ -6050,6 +6050,24 @@ export class AgentSession {
 		return { usable, accountsOut };
 	}
 
+	/**
+	 * The reported usage of this provider's accounts, without the ones only the user can bring back (a re-login, a
+	 * disabled or signed-out account): the pool skips those whatever their usage reads, so their usage must not
+	 * release the provider's hold (senpi#6536). Accounts the summary does not name keep their usage, so a provider
+	 * holding one credential still releases on its own reading.
+	 */
+	private async _usageOfSelectableAccounts(provider: string): Promise<readonly AccountLimits[]> {
+		const usage = subscriptionLimits.snapshot();
+		const storage = this._modelRuntime.authStorage;
+		if (storage === undefined) return usage;
+		try {
+			const blocked = new Set(accountsNeedingUser(await getCredentialAccounts(storage, provider)));
+			return blocked.size === 0 ? usage : usage.filter((limits) => !blocked.has(limits.account));
+		} catch {
+			return usage;
+		}
+	}
+
 	async prompt(text: string, options?: PromptOptions): Promise<void> {
 		this._standingRecovery = undefined;
 		const barrierError = options?.toolBarrier === undefined ? undefined : toolBarrierSpecError(options.toolBarrier);
@@ -6344,7 +6362,10 @@ export class AgentSession {
 				// account, so a loop never probes a held account more often than the poll does (senpi#6536, senpi#3131).
 				if (model && !this._pendingModelSwitch && this._retryFallback.isProviderSpent(model.provider)) {
 					if (attributionOf(options) === "user") await refreshSubscriptionUsage(model.provider);
-					this._retryFallback.releaseAccountHoldShownServable(model.provider, subscriptionLimits.snapshot());
+					this._retryFallback.releaseAccountHoldShownServable(
+						model.provider,
+						await this._usageOfSelectableAccounts(model.provider),
+					);
 				}
 				if (
 					model &&

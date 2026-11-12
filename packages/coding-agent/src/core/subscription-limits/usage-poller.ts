@@ -31,7 +31,7 @@ export const POLL_INTERVAL_MS: Readonly<Record<UsageProvider, number>> = {
 };
 const TICK_MS = 30_000;
 /** A person's turn on a held provider re-reads its accounts' usage at most this often (senpi#6536). */
-export const REFRESH_MIN_AGE_MS = 60_000;
+const REFRESH_MIN_AGE_MS = 60_000;
 const MAX_BACKOFF_MS = 60 * 60_000;
 /** Intervals to wait before asking again about a login only `/login` can fix. */
 const SIGNED_OUT_INTERVALS = 5;
