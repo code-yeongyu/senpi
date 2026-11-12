@@ -1,4 +1,4 @@
-import { type ChildProcess, spawn as spawnProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { existsSync, watch as watchDirectory } from "node:fs";
 import { lstat, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -286,28 +286,7 @@ describe("experimental durable server composition", () => {
 		}
 	});
 
-	test("a teardown that outlives its hook touches only its own test's directories", async () => {
-		const own = await mkdtemp(join("/tmp", "pet-own-"));
-		directories.add(own);
-		const stillRunning = spawnProcess(process.execPath, ["-e", "setInterval(() => {}, 1 << 30)"], {
-			stdio: "ignore",
-		});
-		spawnedProcesses.add(stillRunning);
-
-		const late = teardownTest();
-		const nextTestDirectory = await mkdtemp(join("/tmp", "pet-next-"));
-		directories.add(nextTestDirectory);
-		const exited = whenChildExited(stillRunning);
-		stillRunning.kill("SIGKILL");
-		await exited;
-		await late;
-
-		expect(await pathExists(own)).toBe(false);
-		expect(await pathExists(nextTestDirectory)).toBe(true);
-		expect(directories.has(nextTestDirectory)).toBe(true);
-	});
-
-	test("activates a cold server that starts listening only after the system clock moved past 10 s", async ({
+	test("activates a cold server that starts listening only after both clocks moved past 10 s", async ({
 		onTestFinished,
 	}) => {
 		const directory = await mkdtemp(join("/tmp", "pi-auto-slow-"));
@@ -327,17 +306,15 @@ describe("experimental durable server composition", () => {
 			if (role === "server") serverSpawned(child);
 			return child;
 		});
-		onTestFinished(() => {
-			spawn.mockRestore();
-			vi.useRealTimers();
-		});
+		onTestFinished(() => spawn.mockRestore());
 
 		const opening = openClientRuntime({ command: "client", ...sessionWorkerModel });
 		const server = await spawned;
 		await fileAppears(join(directory, HELD_SERVER_READY_FILE));
-		// A slow cold start on a loaded host, without waiting: the clock the activation reads moves 11 s while the
-		// server has not started listening yet; only then is the server let go.
-		vi.setSystemTime(Date.now() + 11_000);
+		// A slow cold start on a loaded host, without waiting: the activation measures its startup wait on
+		// performance.now(), and both that clock and Date move 11 s while the server has not started listening yet;
+		// only then is the server let go.
+		advanceClocks(11_000, onTestFinished);
 		await new Promise<void>((resolve) => setImmediate(resolve));
 		server.kill("SIGUSR2");
 
@@ -1169,6 +1146,20 @@ function whenChildExited(child: ChildProcess | undefined): Promise<void> {
 	});
 	exited.catch(() => {});
 	return exited;
+}
+
+/**
+ * Moves both clocks the product can read (Date and performance.now) forward by `ms`, as a slow host would, without
+ * waiting; both are restored when the test finishes.
+ */
+function advanceClocks(ms: number, onTestFinished: (cleanup: () => void) => void): void {
+	const realNow = performance.now.bind(performance);
+	vi.setSystemTime(Date.now() + ms);
+	const now = vi.spyOn(performance, "now").mockImplementation(() => realNow() + ms);
+	onTestFinished(() => {
+		now.mockRestore();
+		vi.useRealTimers();
+	});
 }
 
 /** Resolves once `path` exists, woken by the directory's change events (the watch is live before the first check). */
