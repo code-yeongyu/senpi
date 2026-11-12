@@ -12,6 +12,35 @@
 
 ### Removed
 
+## [2026.11.12] - 2026-11-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- A running eval cell no longer makes the TUI below it jump while parallel nested tool calls with different output heights stream ([#6406](https://github.com/code-yeongyu/senpi/pull/6406))
+
+### Removed
+
+## [2026.11.11] - 2026-11-11
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- The Python sqlite permission guard no longer depends on `urllib.parse`, which cell code could rebind to crash the guard (Python 3.11) or bypass a read-only check (#6376). A `%00` inside the URI can no longer make the guard skip the check while SQLite opens the real file.
+- `show_html_page` called from an eval cell is refused with an error that says to call it directly; before, the page never reached the reader while the tool reported it as shown ([#6393](https://github.com/code-yeongyu/senpi/pull/6393))
+
+### Removed
+
 ## [2026.11.10-3] - 2026-11-10
 
 ### Breaking Changes

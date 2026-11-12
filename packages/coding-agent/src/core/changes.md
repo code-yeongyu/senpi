@@ -1,3 +1,144 @@
+## 2026-11-11 - A denied default-extension seed is reported as a warning (senpi#6378)
+
+### What changed
+
+- `packages/coding-agent/src/core/resource-loader.ts`: when the extensions directory refuses a write (EROFS, EACCES or EPERM), `seedWritable()` records the path and the loader adds an extension warning for it. Loading still continues with the shim already on disk, or none.
+- The read-only extensions-dir regression test now proves the stale shim's live target actually runs and that a denied seed is reported.
+
+### Why
+
+A permission problem in a normal agent dir used to drop the default extensions with no message (review finding on #6298).
+
+### Why an extension could not handle it
+
+The seeding runs in the resource loader before any extension loads, so no extension sees the refused write.
+
+### Expected merge conflict zones
+
+`seedWritable()` and `ensureGlobalDefaultExtensions()` in `resource-loader.ts`, and the extension-warnings merge in the main reload path.
+
+### Fixed
+
+- #6378
+
+## 2026-11-11 - An import that overlaps another import's landing answers the landed session (senpi#6413)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-move/import.ts`: `importMovedSession` looked for this move's landed file once, before it verified the bundle. When `beginReceive` or `commit` then refused with `move_fenced` because another import of the same move had stamped or accepted the record meanwhile, the refusal went out as it was. It now looks at the target again on such a refusal and, when this move's file is there, confirms the landing and answers that session, as a later re-import does. Every other fence still refuses: a cancelled, never readied, expired or failed move, a move that landed in another folder, and a commit that stopped without landing.
+- `packages/coding-agent/docs/rpc.md`: says so in "Moving a session to another device".
+
+### Why
+
+- A caller that asked for the import a second time while the first was still running was answered `move_fenced` although the move landed. A caller that reads `move_fenced` as "nothing landed here" then takes the session back, and both hosts hold a writable copy.
+
+### Why an extension could not handle it
+
+- The move core owns the import and its ledger.
+
+### Expected merge conflict zones
+
+- None upstream: `core/session-move/` is fork-only. LOW against other move work: the two `catch` paths around `beginReceive` and `commit` in `importMovedSession`.
+
+## 2026-11-11 — Claude account summaries carry the check's provider diagnostics
+
+### What changed
+- `packages/coding-agent/src/core/credential-accounts.ts` adds the stored check's optional redacted `message` and HTTP `status` to account summaries and RPC.
+- `packages/coding-agent/src/core/agent-session.ts` declares the same optional `message` / `status` on the sign-in event's `check`, matching `packages/coding-agent/src/modes/rpc/rpc-session-state-types.ts`, so the typed RPC contract states what `get_provider_accounts` already sends.
+
+### Why
+- The provider response was thrown away before any client could explain a rejected test.
+
+### Why an extension could not handle it
+- The generic RPC account summary is engine-owned. A client extension cannot recover diagnostics the engine never passed on.
+
+### Expected merge conflict zones
+- `storedCheck` in the credential summary parser. Keep both fields optional and additive.
+
+## 2026-11-11 — Revert the legacy default cleanup and summary diagnostics from #6380
+
+### What changed
+- `packages/coding-agent/src/core/anthropic-legacy-sign-out.ts` and `packages/coding-agent/src/core/credential-accounts.ts` are back to their state before #6380.
+
+### Why
+- The cleanup removed a real pooled account named `default` on read and added `accounts: []` and sentinel fields to a flat subscription credential. That broke the auth-storage, provider-rename migration, credential-rotation and account-display regression tests on main.
+
+### Why an extension could not handle it
+- This is a revert of engine-owned auth-store loading. No extension is involved.
+
+### Expected merge conflict zones
+- The subscription branch of the legacy sign-out migration and the credential summary parser, when #6380 is re-landed.
+
+## 2026-11-11 - Opus 5.5 falls back to Fable 5.2 before Opus 5 (senpi#6385)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/settings.ts`: `DEFAULT_FALLBACK_CHAINS["claude-opus-5-5"]` is `["claude-fable-5-2", "claude-opus-5"]` (was `["claude-opus-5"]`).
+
+### Why
+
+- Anthropic meters Opus on its own quota window, so a rate limit on Opus 5.5 also holds Opus 5 on that account or gateway pool. The only shipped rung could never serve the turn.
+
+### Why an extension could not handle it
+
+- The shipped default chains are core settings resolution; an extension can only add user chains on top.
+
+### Expected merge conflict zones
+
+- LOW: the `DEFAULT_FALLBACK_CHAINS` literal and its doc comment.
+
+## 2026-11-11 - Usage-limit holds release once the stated reset passes (senpi#4085)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/cooldown.ts`: every suppression also records its wall-clock deadline and ends when either the monotonic or the wall-clock deadline passes; `wallClock()` exposes the wall clock stated resets are read on.
+- `packages/coding-agent/src/core/retry-fallback/controller-types.ts`, `controller.ts`, `credential-recovery.ts`: a new billing pin records the reset its usage limit stated (`pinnedUntil`); `releaseOnLimitReset` releases the pin and the original's cooldown, unusable mark and circuit at the next boundary after that reset.
+
+### Why
+
+- An account blocked for a usage limit stayed out after its reset until a re-login: a usage-limit billing pin ignored the stated reset (senpi#3038), and the monotonic clock stops while the machine sleeps, so a hold outlived a reset that passed during a sleep.
+
+### Why an extension could not handle it
+
+- Session cooldowns and fallback pins are private state of the retry-fallback controller inside `AgentSession`.
+
+### Expected merge conflict zones
+
+- LOW: `SelectorCooldowns` fields, `applyCandidate` state assembly, `maybeRestorePrimary` release steps.
+
+## 2026-11-11 — Claude account diagnostics survive summaries and legacy defaults are removed
+
+### What changed
+- `packages/coding-agent/src/core/credential-accounts.ts` preserves optional redacted provider message and HTTP status in stored account summaries and RPC.
+- `packages/coding-agent/src/core/anthropic-legacy-sign-out.ts` replaces flat legacy subscription credentials with an empty account list, removes previously migrated default placeholders and their stale pin, rotation order and slot state (also on an entry migrated before this change), leaves a non-OAuth subscription entry exactly as stored, and preserves genuine named CLI accounts, a real CLI `default` included.
+
+### Why
+- The provider response was discarded before clients could explain a rejected test. A legacy placeholder must not look like a separately saved account. Repeated migration remains idempotent.
+
+### Why an extension could not handle it
+- Authentication-store loading and the generic RPC summary are engine-owned boundaries. A consumer extension cannot safely repair their persisted data or recover discarded diagnostics.
+
+### Expected merge conflict zones
+- The credential summary parser and subscription branch of the legacy sign-out migration. Preserve named CLI accounts, unrelated API keys, and diagnostic redaction.
+
+## 2026-11-09 - Seeding default extensions tolerates a read-only extensions dir (senpi#6287)
+
+### What changed
+
+- `packages/coding-agent/src/core/resource-loader.ts`: `ensureGlobalDefaultExtensions()` wraps the `extensions/` mkdir and both shim writes in `seedWritable()`. An `EROFS`, `EACCES` or `EPERM` keeps the shim already on disk (or none) and loading continues; any other error still throws.
+
+### Why
+
+- Review-role task children run under a sandbox that makes the live tool tree read-only (senpi#6287). A real RPC child with `<agentDir>/extensions` read-only exited at startup with `EROFS ... extensions/diff.js` whenever its seeded shim differed from the running engine's or was missing.
+
+### Why an extension could not handle it
+
+- Shim seeding runs inside `DefaultResourceLoader.reload()` before any extension loads, so no extension can intercept the throw.
+
+### Expected merge conflict zones
+
+- LOW: the new `seedWritable()` helper above `buildGlobalDefaultExtensionShim`, and the three wrapped calls in `ensureGlobalDefaultExtensions()`.
+
 ## 2026-11-10 - A turn follows the permission setting of the machine it runs on; no origin outlives its turn (senpi#6342)
 
 ### What changed

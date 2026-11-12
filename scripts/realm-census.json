@@ -3194,6 +3194,22 @@
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
+		"packages/coding-agent/src/core/credential-pool/block-log.ts#EMAIL": {
+			"class": "per-copy-safe",
+			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
+		},
+		"packages/coding-agent/src/core/credential-pool/block-log.ts#PREFIXED_ID": {
+			"class": "per-copy-safe",
+			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
+		},
+		"packages/coding-agent/src/core/credential-pool/block-log.ts#UUID": {
+			"class": "per-copy-safe",
+			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
+		},
+		"packages/coding-agent/src/core/credential-pool/block-log.ts#pendingWrites": {
+			"class": "per-copy-safe",
+			"reason": "write-order chain per log path for the credential block log, a diagnostic file the engine only appends to and never reads back; a split can interleave two copies' appends or rollovers, as other processes already can; not A1-A3 (design 3.3)"
+		},
 		"packages/coding-agent/src/core/credential-pool/classify.ts#AUTH_ERROR_CODES": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
@@ -3273,6 +3289,10 @@
 		"packages/coding-agent/src/core/credential-pool/state-file.ts#queueTails": {
 			"class": "per-copy-safe",
 			"reason": "state-file write queue; the state-file lock coordinates copies like processes (design 3.2)"
+		},
+		"packages/coding-agent/src/core/credential-pool/state-store.ts#KNOWN_SLOT_STATE_FIELDS": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
 		},
 		"packages/coding-agent/src/core/credential-pool/state-store.ts#documentSchema": {
 			"class": "constant",
@@ -6883,15 +6903,23 @@
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
 		},
-		"packages/coding-agent/src/core/session-move/move-ledger.ts#DECLINE_REASONS": {
+		"packages/coding-agent/src/core/session-move/move-landing.ts#COMMIT_SETTLE_AFTER_MS": {
 			"class": "constant",
-			"reason": "lookup data literal; never written after load"
+			"reason": "value derived from constants at load; never written after load"
 		},
-		"packages/coding-agent/src/core/session-move/move-ledger.ts#FAIL_REASONS": {
+		"packages/coding-agent/src/core/session-move/move-ledger-lock.ts#LOCK_OPTIONS": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
 		"packages/coding-agent/src/core/session-move/move-ledger.ts#FINAL_STATES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/session-move/move-record.ts#DECLINE_REASONS": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/session-move/move-record.ts#FAIL_REASONS": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
@@ -10946,6 +10974,18 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/tui/src/components/markdown-source.ts#locations": {
+			"class": "per-copy-safe",
+			"reason": "side table keyed by objects this copy creates and reads; a key from another copy is never presented to it"
+		},
+		"packages/tui/src/components/markdown-source.ts#sourceExtensions": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/tui/src/components/markdown-source.ts#tokenSources": {
+			"class": "per-copy-safe",
+			"reason": "side table keyed by objects this copy creates and reads; a key from another copy is never presented to it"
+		},
 		"packages/tui/src/components/markdown.ts#blockMathTokenizer": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
@@ -10953,6 +10993,10 @@
 		"packages/tui/src/components/markdown.ts#contentKeyCache": {
 			"class": "per-copy-safe",
 			"reason": "terminal or TUI render state and stats of the copy that owns the terminal; a split only loses caches or counters"
+		},
+		"packages/tui/src/components/markdown.ts#enclosedTokens": {
+			"class": "per-copy-safe",
+			"reason": "side table keyed by objects this copy creates and reads; a key from another copy is never presented to it"
 		},
 		"packages/tui/src/components/markdown.ts#highlightCache": {
 			"class": "per-copy-safe",
@@ -10987,6 +11031,14 @@
 			"reason": "terminal or TUI render state and stats of the copy that owns the terminal; a split only loses caches or counters"
 		},
 		"packages/tui/src/components/markdown.ts#renderCache": {
+			"class": "per-copy-safe",
+			"reason": "terminal or TUI render state and stats of the copy that owns the terminal; a split only loses caches or counters"
+		},
+		"packages/tui/src/components/markdown.ts#sourceParseCache": {
+			"class": "per-copy-safe",
+			"reason": "terminal or TUI render state and stats of the copy that owns the terminal; a split only loses caches or counters"
+		},
+		"packages/tui/src/components/markdown.ts#sourceRenderCache": {
 			"class": "per-copy-safe",
 			"reason": "terminal or TUI render state and stats of the copy that owns the terminal; a split only loses caches or counters"
 		},
@@ -11085,6 +11137,14 @@
 		"packages/tui/src/program-status.ts#INVISIBLE_FORMATTING_PATTERN": {
 			"class": "per-copy-safe",
 			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
+		},
+		"packages/tui/src/selection-source.ts#sources": {
+			"class": "per-copy-safe",
+			"reason": "source mapping for text selection, keyed by rendered line arrays; no A1-A3 decision; a split only makes a selection copy the rendered text instead of its source"
+		},
+		"packages/tui/src/source-ranges.ts#emptyRanges": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
 		},
 		"packages/tui/src/stdin-buffer.ts#LINE_BREAK": {
 			"class": "per-copy-safe",

@@ -1683,9 +1683,6 @@
   "packages/tui/src/autocomplete.ts": {
     "typescript/no-non-null-assertion": 2
   },
-  "packages/tui/src/components/box.ts": {
-    "typescript/no-non-null-assertion": 1
-  },
   "packages/tui/src/components/editor.ts": {
     "typescript/no-non-null-assertion": 11
   },
