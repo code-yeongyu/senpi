@@ -60,7 +60,7 @@ export async function createServerEndpoint(
 ): Promise<ServerEndpoint> {
 	if (socketPathFits(preferredPath)) return { path: preferredPath, release: async () => {} };
 	const name = `${SHORT_SERVER_ENDPOINT_PREFIX}${randomUUID().slice(0, 8)}`;
-	const roots = options.roots ?? [tmpdir(), "/tmp"];
+	const roots = options.roots ?? defaultServerEndpointRoots();
 	await reapOrphanedServerEndpoints(roots);
 	let root: string | undefined;
 	for (const candidate of roots) {
@@ -100,8 +100,21 @@ async function guardedRoot(root: string): Promise<boolean> {
  * Removes `senpi-xs-*` endpoint directories under `roots` that belong to this user and whose recorded server is
  * provably gone, as a killed server leaves them behind. The owner start time is written and read in UTC
  * (`readAliasOwnerStartTime`), so a server and a later sweep running under different TZ values read the same instant. A directory without a readable owner record, with an owner start
- * time that was never read, or whose owner's identity cannot be read now, is kept: it may belong to a live server.
+ * time that was never read, is kept for OWNERLESS_MIN_AGE_MS and removed after that; one whose owner's identity cannot be
+ * read now is kept: it may belong to a live server.
  */
+/**
+ * The OS temp directory first, then the per-user runtime directory, then the shared `/tmp`; each is used only when it
+ * is guarded, so an unguarded TMPDIR falls back to this user's runtime directory before the shared root.
+ */
+function defaultServerEndpointRoots(): readonly string[] {
+	const runtimeDir = process.env.XDG_RUNTIME_DIR;
+	return [...new Set([tmpdir(), ...(runtimeDir === undefined || runtimeDir === "" ? [] : [runtimeDir]), "/tmp"])];
+}
+
+/** A directory with no usable owner record is removed only once no starting server could still be writing one. */
+const OWNERLESS_MIN_AGE_MS = 300_000;
+
 export async function reapOrphanedServerEndpoints(roots: readonly string[]): Promise<void> {
 	const uid = process.getuid?.();
 	await Promise.all(
@@ -113,17 +126,25 @@ export async function reapOrphanedServerEndpoints(roots: readonly string[]): Pro
 					.map(async (entry) => {
 						const directory = join(root, entry.name);
 						try {
-							if (uid !== undefined && (await lstat(directory)).uid !== uid) return;
-							const owner: unknown = JSON.parse(await readFile(join(directory, ".owner"), "utf8"));
-							if (typeof owner !== "object" || owner === null) return;
-							const pid: unknown = Reflect.get(owner, "pid");
-							const processStartTime: unknown = Reflect.get(owner, "processStartTime");
+							const stats = await lstat(directory);
+							if (uid !== undefined && stats.uid !== uid) return;
+							const ownerless = stats.mtimeMs <= Date.now() - OWNERLESS_MIN_AGE_MS;
+							const raw = await readFile(join(directory, ".owner"), "utf8").catch(() => undefined);
+							const owner: unknown = raw === undefined ? undefined : JSON.parse(raw);
+							const pid: unknown =
+								typeof owner === "object" && owner !== null ? Reflect.get(owner, "pid") : undefined;
+							const processStartTime: unknown =
+								typeof owner === "object" && owner !== null
+									? Reflect.get(owner, "processStartTime")
+									: undefined;
 							if (
 								typeof pid !== "number" ||
 								typeof processStartTime !== "string" ||
 								processStartTime.length === 0
-							)
+							) {
+								if (ownerless) await rm(directory, { recursive: true, force: true });
 								return;
+							}
 							const alive = await processMatchesPidFile(
 								{ pid, processStartTime },
 								readAliasOwnerStartTime,
