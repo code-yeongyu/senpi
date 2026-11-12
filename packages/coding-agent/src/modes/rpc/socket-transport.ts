@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { constants } from "node:fs";
-import { chmod, link, mkdir, open, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
+import { chmod, link, lstat, mkdir, open, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import type { Socket } from "node:net";
 import { basename, dirname, join, win32 } from "node:path";
 import { acquireOwnershipSafeLock } from "./ownership-safe-lock.ts";
@@ -25,8 +25,8 @@ export async function ensureSocketSecret(path: string): Promise<Buffer> {
 	const existing = await readSecretEntry(path);
 	if (existing?.length === SOCKET_SECRET_BYTES) return existing;
 	await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-	const lock = await socketSecretLock(path);
-	const release = await acquireOwnershipSafeLock(lock.path, { expectedFile: lock.file });
+	const lockPath = await socketSecretLockPath(path);
+	const release = await acquireOwnershipSafeLock(lockPath, { validateFile: () => validateSocketSecretLock(lockPath) });
 	try {
 		// The first read is only a hint (design 4.4): a contender may have published or repaired since.
 		const current = await readSecretEntry(path);
@@ -168,16 +168,44 @@ async function syncDirectory(dir: string): Promise<void> {
 /**
  * The per-secret mutation lock (design 4.2): `<canonical parent>/<name>.publish.lock`, so every spelling of one
  * physical secret takes the same lock. It holds only the SQLite lock database, is created owner-only, must be a regular
- * file, and is never removed. SQLite reopens it by name, and Windows has no O_NOFOLLOW for the check below, so the
- * lock is taken only when the file SQLite opened is the one checked here (`expectedFile`).
+ * file, and is never removed. SQLite reopens it by name, and Windows has no O_NOFOLLOW for the check in
+ * `validateSocketSecretLock`, so the lock is taken only when the file SQLite opened is the one checked there.
  */
-async function socketSecretLock(path: string): Promise<{ path: string; file: FileIdentity }> {
-	const lockPath = join(await realpath(dirname(path)), `${basename(path)}.publish.lock`);
-	const handle = await open(lockPath, constants.O_RDONLY | constants.O_CREAT | (constants.O_NOFOLLOW ?? 0), 0o600);
+async function socketSecretLockPath(path: string): Promise<string> {
+	return join(await realpath(dirname(path)), `${basename(path)}.publish.lock`);
+}
+
+/**
+ * Checks the lock file without ever opening an existing one: closing any descriptor of it would drop this process's
+ * SQLite locks on it (senpi#6478), and an open of a FIFO would block. Absent, it is created owner-only (`O_EXCL`, so
+ * never through a link and never on another entry) and the new file's identity is answered; present, it must be a
+ * regular file by `lstat`. Passed to the lock as `validateFile`, so it runs after this process's earlier holders of the
+ * lock released it, inside the checked-open section, whose descriptor proof checks SQLite opened exactly this file.
+ */
+async function validateSocketSecretLock(lockPath: string): Promise<FileIdentity> {
+	const created = await createLockFile(lockPath);
+	if (created !== undefined) return created;
+	const info = await lstat(lockPath, { bigint: true });
+	if (!info.isFile()) throw new Error(`RPC socket secret lock is not a regular file: ${lockPath}`);
+	return { dev: info.dev, ino: info.ino };
+}
+
+/**
+ * Creates the lock file owner-only and answers its identity, or `undefined` when an entry is already there. Closing this
+ * descriptor drops no lock: the file is new, and nothing else of this process opens it before `validateFile` returns.
+ */
+async function createLockFile(lockPath: string): Promise<FileIdentity | undefined> {
+	let handle: Awaited<ReturnType<typeof open>>;
+	try {
+		const flags = constants.O_RDONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0);
+		handle = await open(lockPath, flags | (constants.O_NONBLOCK ?? 0), 0o600);
+	} catch (error: unknown) {
+		if (isNodeErrorCode(error, "EEXIST")) return undefined;
+		throw error;
+	}
 	try {
 		const info = await handle.stat({ bigint: true });
-		if (!info.isFile()) throw new Error(`RPC socket secret lock is not a regular file: ${lockPath}`);
-		return { path: lockPath, file: { dev: info.dev, ino: info.ino } };
+		return { dev: info.dev, ino: info.ino };
 	} finally {
 		await handle.close();
 	}

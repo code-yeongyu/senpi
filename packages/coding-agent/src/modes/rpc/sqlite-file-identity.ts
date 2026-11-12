@@ -37,15 +37,21 @@ interface OpenFile extends FileIdentity {
 const DESCRIPTOR_DIRECTORY: Partial<Record<NodeJS.Platform, string>> = { linux: "/proc/self/fd", darwin: "/dev/fd" };
 
 /**
- * The checked opens of this process, one at a time: a contender's own open of `expected` inside another's listing window
- * would otherwise count as that one's added descriptor and hide its impostor. Each link settles either way, so one
- * failed open never stalls the next.
+ * The checked opens of this process, one at a time, each with its caller's validation open: a contender's own open of
+ * `expected` inside another's listing window would otherwise count as that one's added descriptor and hide its impostor.
+ * Each link settles either way, so one failed open never stalls the next, and none waits on a file: `validate` must not
+ * block (the callers open a file only to create it, `O_EXCL | O_NONBLOCK`, and `lstat` an existing one), and the
+ * listings and the SQLite open do not wait on the file either.
  */
 let checkedOpens: Promise<unknown> = Promise.resolve();
 
 /**
- * Runs `open`, a synchronous SQLite open of `path`, and checks the file it opened is `expected`. Unless that is proven,
- * it closes what was opened and answers `replaced`, or `busy` when only a later open can tell.
+ * Runs `validate`, the caller's check of `path` that returns the identity it found and throws to refuse the file, then
+ * `open`, a synchronous SQLite open of `path`, and checks the file SQLite opened is that identity (`expected` below).
+ * `validate` never opens an existing file: closing that descriptor would drop this process's SQLite locks on it
+ * (senpi#6478). Both run inside the one-at-a-time section (`checkedOpens`), so no validation open of a
+ * checked file can land in another checked open's listing window. Unless the identity is proven, it closes what was
+ * opened and answers `replaced`, or `busy` when only a later open can tell.
  *
  * - Linux and macOS: the regular files open before and after `open` are listed, each by descriptor and identity, so a
  *   descriptor number reused for another file still counts as added. `descriptorRefusal` decides from the two listings.
@@ -57,29 +63,35 @@ let checkedOpens: Promise<unknown> = Promise.resolve();
  */
 export function openExpectedFile<T>(
 	path: string,
-	expected: FileIdentity,
+	validate: () => Promise<FileIdentity>,
 	open: () => T,
 	close: (opened: T) => void,
 ): Promise<CheckedOpen<T>> {
-	const run = checkedOpens.then(() => checkedOpen(path, expected, open, close));
+	const run = checkedOpens.then(() => checkedOpen(path, validate, open, close));
 	checkedOpens = run.catch(() => undefined);
 	return run;
 }
 
 async function checkedOpen<T>(
 	path: string,
-	expected: FileIdentity,
+	validate: () => Promise<FileIdentity>,
 	open: () => T,
 	close: (opened: T) => void,
 ): Promise<CheckedOpen<T>> {
+	const expected = await validate();
 	const before = await openFiles();
 	const opened = open();
 	const after = before && (await openFiles());
-	const refusal =
-		(before && after && descriptorRefusal(path, expected, before, after)) ?? (await nameRefusal(path, expected));
-	if (refusal === undefined) return { opened };
+	const refusal = before
+		? after
+			? descriptorRefusal(path, expected, before, after)
+			: // The table was listable before the open: without the second listing the proof is missing, never skipped.
+				{ busy: `the descriptor listing after SQLite's open of ${path} failed` }
+		: undefined;
+	const checked = refusal ?? (await nameRefusal(path, expected));
+	if (checked === undefined) return { opened };
 	close(opened);
-	return refusal;
+	return checked;
 }
 
 /**
@@ -92,12 +104,15 @@ async function checkedOpen<T>(
  * named, which was open before. A swap makes both name the impostor, and SQLite parks none for a file it never locked,
  * so a swap shows as an added descriptor that is not `expected`.
  *
- * Other work in this process can still open files during the listings (checked opens are serialized, other opens are
- * not): an added descriptor is not necessarily SQLite's. With E = some added descriptor is `expected`, U = some added
- * regular file is not, B = `expected` was already open before:
+ * Other work in this process can still open files during the listings (checked opens and their callers' validation
+ * opens are serialized, other opens are not): an added descriptor is not necessarily SQLite's. With E = some added
+ * descriptor is `expected`, U = some added regular file is not, B = `expected` was already open before:
  * - E and not U: proven. A new SQLite descriptor is `expected`, since every added one is. A reused one is a parked
- *   descriptor of the inode `path` named; for that to be an impostor, an attacker would have to link in a file this
- *   process itself holds SQLite locks on, while this process opens `expected` outside a checked open in the same window.
+ *   descriptor of the inode `path` named, and then the added `expected` descriptor is some other open of `expected`.
+ *   Every open of a checked file in this package is either SQLite's or its caller's `validate` (which opens only a file
+ *   it creates), and both run only inside the one-at-a-time section, so no such other open can fall in the window. What remains is call discipline: code that
+ *   opened `expected` outside `openExpectedFile`, while an attacker linked in a file this process holds SQLite locks on
+ *   for exactly that window, would make an impostor pass here.
  * - U, not E, not B: replaced. Nothing of `expected` was open, so SQLite could reuse none of it; its descriptor is new,
  *   among the added ones, and none of them is `expected`.
  * - U, not E, with B (the already-open case): busy. Either SQLite opened an impostor (the swap) or it reused a parked
@@ -109,8 +124,8 @@ async function checkedOpen<T>(
  *   descriptors are closed, and the next open adds a new descriptor that the listing proves or refuses.
  * - neither, without B: replaced. SQLite added no descriptor and none of `expected` was open, so it cannot hold it.
  *
- * The name check alone therefore never decides when `expected` was already open: every such open is proven by an added
- * descriptor, or retried.
+ * The name check alone therefore never decides when `expected` was already open, nor once the table was listable before
+ * the open: every such open is proven by an added descriptor, or retried.
  */
 function descriptorRefusal(
 	path: string,
