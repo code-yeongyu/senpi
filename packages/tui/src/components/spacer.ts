@@ -1,4 +1,5 @@
 import { type Component, nextRenderRevision } from "../tui.ts";
+import { setLineSource } from "../selection-source.ts";
 
 /**
  * Spacer component that renders empty lines
@@ -33,6 +34,7 @@ export class Spacer implements Component {
 		const result: string[] = [];
 		for (let i = 0; i < this.lines; i++) {
 			result.push("");
+			setLineSource(result, i, null);
 		}
 		return result;
 	}
