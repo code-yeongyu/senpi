@@ -8,6 +8,7 @@ import { encodedSessionId, serializeByKey } from "../session-sidecar-store.ts";
 import { pathExists } from "../tools/path-utils.ts";
 import {
 	EXTENSION_STATE_PREFIX,
+	listedFiles,
 	MoveBundleInvalidError,
 	type MoveManifest,
 	readManifest,
@@ -18,6 +19,7 @@ import { EXTENSION_STATE_PAYLOAD, movedStateDir } from "./extension-state.ts";
 import { type LandedFile, outcomeIn, readLanding } from "./landed-file.ts";
 import { type MoveAnswer, MoveFencedError, type MoveLedger } from "./move-ledger.ts";
 import { moveStep } from "./move-steps.ts";
+import { type NameFolding, refuseNamesThatFold } from "./name-folding.ts";
 import { headerSessionId, type MoveId, SESSION_MOVED_IN, sessionOwnership } from "./ownership.ts";
 import { requeueInput } from "./requeue.ts";
 import { isCheckoutOfRepository, MoveRefusedError } from "./repository-check.ts";
@@ -34,6 +36,8 @@ export interface ImportMovedSessionOptions {
 	/** The sha256 each file of an inline bundle was sent with (senpi#6267); checked beside the manifest's. */
 	readonly sent?: ReadonlyMap<string, string>;
 	readonly readIdentity?: (dir: string) => Promise<RepositoryIdentity | undefined>;
+	/** How the session folder's file system folds names (senpi#6472); asked of the folder itself unless a test says. */
+	readonly probeNameFolding?: (folder: string) => Promise<NameFolding>;
 }
 
 export class MoveTargetOccupiedError extends Error {
@@ -162,6 +166,13 @@ export async function importMovedSession(
 		return { sessionFile: target };
 	};
 	if (await landed()) return confirmLanded();
+	// Every listed file is written under the session folder: two that are one name on its file system cannot both be.
+	// Refused before the move is touched, so it stays importable into a folder that keeps them apart.
+	await refuseNamesThatFold(
+		listedFiles(manifest).map((file) => file.path),
+		sessionDir,
+		options.probeNameFolding,
+	);
 	try {
 		await verifyBundle(options.bundleDir, manifest, options.sent);
 	} catch (error) {
