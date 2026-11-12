@@ -1,8 +1,8 @@
-import { mkdtempSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { lockGrantsFile } from "../../src/core/extensions/builtin/mcp/env-grants-store.ts";
+import { addGrant, lockGrantsFile } from "../../src/core/extensions/builtin/mcp/env-grants-store.ts";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -41,5 +41,14 @@ describe("an MCP grants writer that lost its lock without learning it (senpi#643
 		expect(first.lost()).toBeDefined();
 		await second.release();
 		expect(() => statSync(lockDir)).toThrow();
+	});
+});
+
+describe("an MCP grant saved through the real store (senpi#6431)", () => {
+	it("#given a normal grant write #when it completes #then neither the lock directory nor its owner token is left behind", async () => {
+		const { file } = target();
+		rmSync(file);
+		await addGrant(file, "a".repeat(64), { project: "p", skill: "s", server: "srv" }, ["TOKEN"]);
+		expect(readdirSync(dirname(file)).sort()).toEqual(["mcp-env-grants.json"]);
 	});
 });

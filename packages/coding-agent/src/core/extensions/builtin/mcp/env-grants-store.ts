@@ -341,7 +341,9 @@ function ownerCheckedFs(ownToken: () => string | undefined, onForeign: () => voi
 		}
 		nodeFs.rmdirSync(lockDir);
 	};
-	// A plain object, never a prototype write: under Bun the node:fs namespace is frozen.
+	// Deliberately plain node:fs, not the library's default graceful-fs: a grants write takes one lock at a time, so
+	// graceful-fs's EMFILE retry buys nothing here. A plain object, never a prototype write: under Bun the node:fs
+	// namespace is frozen.
 	const copy: Record<string, unknown> = {};
 	for (const key in nodeFs) copy[key] = (nodeFs as unknown as Record<string, unknown>)[key];
 	return Object.assign(copy, { rmdir, rmdirSync }) as unknown as typeof nodeFs;
@@ -372,6 +374,8 @@ export async function lockGrantsFile(
 			lost ??= error;
 		},
 	});
+	// Residual (tracked in #6431): a writer that stalls past the stale bound between the library's mkdir and this
+	// token write can still overwrite the next writer's token; the same suspend-class stall as the lockSync callers.
 	try {
 		const next = randomUUID();
 		await writeFile(`${lockDir}.owner`, next, { mode: 0o600 });
