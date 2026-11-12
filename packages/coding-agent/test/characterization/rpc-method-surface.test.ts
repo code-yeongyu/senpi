@@ -23,6 +23,14 @@ type WireRecord = Record<string, unknown>;
 
 const LEAN_ARGS = ["--mode", "rpc", "--multi-session", "--no-extensions", "--no-skills", "--no-context-files"];
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
+/** What an ordinary command is given to answer. */
+const COMMAND_MS = 20_000;
+/**
+ * What the first command is given (senpi#6506). It is an `open_session` that builds the whole runtime, and the test
+ * runner compiles what that loads on first use: alone on a busy 40-core machine it took 5.8 to 22.9 s, so the
+ * ordinary allowance failed the test with nothing wrong. Every later command keeps the ordinary one.
+ */
+const FIRST_COMMAND_MS = 120_000;
 
 async function startHost() {
 	const scratch = mkdtempSync(join(tmpdir(), "senpi-x14-"));
@@ -68,9 +76,10 @@ async function startHost() {
 		scratch,
 		send(command: WireRecord): Promise<WireRecord> {
 			const id = `x14-${++serial}`;
+			const allowance = serial === 1 ? FIRST_COMMAND_MS : COMMAND_MS;
 			client.write(`${JSON.stringify({ ...command, id })}\n`);
 			return new Promise<WireRecord>((resolve, reject) => {
-				const timer = setTimeout(() => reject(new Error(`no answer to ${String(command.type)}`)), 20_000);
+				const timer = setTimeout(() => reject(new Error(`no answer to ${String(command.type)}`)), allowance);
 				answers.set(id, (record) => {
 					clearTimeout(timer);
 					resolve(record);
