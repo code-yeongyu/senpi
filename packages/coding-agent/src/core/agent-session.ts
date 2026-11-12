@@ -6054,8 +6054,8 @@ export class AgentSession {
 
 	/**
 	 * The reported usage of this provider's accounts, without the ones only the user can bring back (a re-login, a
-	 * disabled or signed-out account): the pool skips those whatever their usage reads, so their usage must not
-	 * release the provider's hold (senpi#6536). Accounts the summary does not name keep their usage, so a provider
+	 * disabled, signed-out, billing- or organization-blocked account): the pool skips those whatever their usage reads,
+	 * so their usage must not release the provider's hold (senpi#6536). An account out only on a usage limit keeps it. Accounts the summary does not name keep their usage, so a provider
 	 * holding one credential still releases on its own reading.
 	 */
 	private async _usageOfSelectableAccounts(provider: string): Promise<readonly AccountLimits[]> {

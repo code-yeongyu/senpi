@@ -34,6 +34,14 @@ describe("usage from an account the pool cannot select never releases the hold (
 		expect(accountsNeedingUser([limited])).toEqual([]);
 	});
 
+	// senpi#6549 review (MEDIUM): a ChatGPT usage-limit pause reaches the summary as a block with no reason, the same
+	// shape as a Claude billing block, but it is a usage limit and its own usage reading must still release the hold.
+	it("keeps a ChatGPT account paused on its usage limit", () => {
+		const paused = summary("default", { blocked: true, paused: true });
+
+		expect(accountsNeedingUser([paused])).toEqual([]);
+	});
+
 	it("names nothing when every account can serve", () => {
 		expect(accountsNeedingUser([summary("a"), summary("b")])).toEqual([]);
 	});

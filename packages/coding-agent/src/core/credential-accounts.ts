@@ -50,8 +50,9 @@ export type CredentialAccountBlockedReason = "auth_error" | "rate_limit" | "disa
 /**
  * The accounts no usage reading can bring back, so usage they report must not release a session's hold on the
  * provider (senpi#6536): a slot of the other credential kind (senpi#3486), a signed-out account, and every account
- * blocked for anything but a usage limit. Only `rate_limit` is lifted by usage; a summary carries no reason for the
- * Claude lane's billing and organization blocks, so an unnamed reason counts as needing the user too.
+ * blocked for anything but a usage limit. A usage limit is a `rate_limit` block or a `paused` one (a ChatGPT
+ * subscription's usage-limit pause, which carries no reason). The Claude lane's billing and organization blocks also
+ * reach a summary with no reason but are not paused, so they count as needing the user.
  */
 export function accountsNeedingUser(summaries: readonly CredentialAccountSummary[]): string[] {
 	return summaries
@@ -59,7 +60,7 @@ export function accountsNeedingUser(summaries: readonly CredentialAccountSummary
 			(account) =>
 				account.unused === true ||
 				account.signedOut === true ||
-				(account.blocked && account.blockedReason !== "rate_limit"),
+				(account.blocked && account.blockedReason !== "rate_limit" && account.paused !== true),
 		)
 		.map((account) => account.name);
 }
