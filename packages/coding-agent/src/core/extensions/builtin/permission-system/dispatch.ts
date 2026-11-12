@@ -62,6 +62,17 @@ export function hasDispatchAuthorizer(session: object): boolean {
 	return authorizers.has(session);
 }
 
+/**
+ * The decision a call would get now, without asking or recording an approval. It refuses exactly where
+ * `authorizeToolDispatch` refuses before it asks: no authorizer, a retired one, or a policy that cannot decide.
+ */
+export function decideDispatchPolicy(session: object, request: DispatchRequest, ctx: ExtensionContext): DispatchPolicy {
+	const registration = authorizers.get(session);
+	if (!registration) throw new Error("Permission authorizer is unavailable");
+	registration.retired.signal.throwIfAborted();
+	return registration.authorizer.policy(request, ctx);
+}
+
 /** Keep the policy and operation that were actually presented, not their post-reply replacements. */
 export function prepareDispatchApproval(session: object, request: DispatchRequest, policy: DispatchPolicy): () => void {
 	const registration = authorizers.get(session);

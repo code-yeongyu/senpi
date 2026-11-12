@@ -2,7 +2,7 @@ import { parsePermissionPresetName } from "./extensions/builtin/permission-syste
 import { registerDecisionPresetOverride } from "./extensions/builtin/permission-system/preset-registry.ts";
 import type { PermissionPresetName } from "./extensions/builtin/permission-system/types.ts";
 import type { SessionManager } from "./session-manager.ts";
-import { decidingTurnIsDelegated } from "./turn-origin.ts";
+import { decidingTurnIsDelegated, recordIsDelegated } from "./turn-origin.ts";
 
 type DecisionSessionManager = Pick<SessionManager, "getEntries" | "getHeader" | "getSessionId">;
 
@@ -33,6 +33,18 @@ export function bindDecisionPreset(session: DecisionSession): void {
 export function releaseDecisionPreset(sessionManager: DecisionSessionManager): void {
 	const id = sessionManager.getSessionId();
 	if (liveSessions.get(id)?.sessionManager === sessionManager) liveSessions.delete(id);
+}
+
+/**
+ * The preset the record being handled must be decided on, by rule 2 above for its own origin rather than the session's
+ * current turn: `undefined` when the live preset applies (a local record, a session a client named a mode for, or a
+ * session no rule is bound to).
+ */
+export function recordDecisionPreset(sessionManager: DecisionSessionManager): PermissionPresetName | undefined {
+	if (!recordIsDelegated()) return undefined;
+	const session = liveSessions.get(sessionManager.getSessionId());
+	if (session === undefined || session.sessionManager !== sessionManager) return undefined;
+	return session.namedPreset() === undefined ? delegatedPreset(session) : undefined;
 }
 
 function decisionPreset(session: DecisionSession, visited: Set<DecisionSession>): PermissionPresetName | undefined {

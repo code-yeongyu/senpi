@@ -57,6 +57,12 @@ export const RPC_ERROR_PROJECT_NOT_TRUSTED = "project_not_trusted";
 /** `set_project_setting` while the project settings file does not parse; fix the file first. */
 export const RPC_ERROR_PROJECT_SETTINGS_UNREADABLE = "project_settings_unreadable";
 
+/** `set_project_setting` on a key outside the allowlist that the session's permission rules would ask for. */
+export const RPC_ERROR_PROJECT_SETTING_NEEDS_PERMISSION = "project_setting_needs_permission";
+
+/** `set_project_setting` on a key outside the allowlist that the session's permission rules deny or cannot decide. */
+export const RPC_ERROR_PROJECT_SETTING_DENIED = "project_setting_denied";
+
 /** `read_project_file`/`write_project_file` on a path outside the instruction-file allowlist or the workspace. */
 export const RPC_ERROR_PROJECT_FILE_NOT_ALLOWED = "project_file_not_allowed";
 
@@ -222,6 +228,8 @@ export type RpcErrorCode =
 	| typeof RPC_ERROR_PROJECT_SETTINGS_WRITE_FAILED
 	| typeof RPC_ERROR_PROJECT_NOT_TRUSTED
 	| typeof RPC_ERROR_PROJECT_SETTINGS_UNREADABLE
+	| typeof RPC_ERROR_PROJECT_SETTING_NEEDS_PERMISSION
+	| typeof RPC_ERROR_PROJECT_SETTING_DENIED
 	| typeof RPC_ERROR_PROJECT_FILE_NOT_ALLOWED
 	| typeof RPC_ERROR_PROJECT_FILE_CONFLICT
 	| typeof RPC_ERROR_PROJECT_FILE_TOO_LARGE
