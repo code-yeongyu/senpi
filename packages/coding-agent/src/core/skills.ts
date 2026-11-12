@@ -381,9 +381,10 @@ export interface LoadSkillsOptions {
 
 /**
  * The user-global skill roots every session loads regardless of its folder: the agent dir's skills root, the
- * shared `~/.agents/skills` root, and any user-selected root. One list for two consumers: the loader's skill
- * allowlist and the RPC project verbs' refusal of user-global files both derive from it, so a root the engine
- * loads is refused by those verbs without a second list to keep in sync (senpi#6547 review LOWs).
+ * shared `~/.agents/skills` root, and the given roots. Two consumers share it: the loader's skill allowlist (given
+ * the selected roots, a package's whole folder included, to contain its skills) and the RPC project verbs' refusal
+ * of user-global files (given `ResourceLoader.getUserSkillRoots`, each loaded user skill's own folder), so the two
+ * fixed roots cannot drift apart (senpi#6547 review LOWs, senpi#6558).
  */
 export function userGlobalSkillRoots(
 	resolvedAgentDir: string,

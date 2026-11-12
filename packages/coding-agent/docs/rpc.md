@@ -6478,9 +6478,11 @@ answered.
 For both, `data` is `{ cwd, skill, path, exists, content, etag, projectTrusted }`, with `path` relative to the session's folder.
 Only a listed skill whose file lies inside the session's folder is reachable; a skill that lives elsewhere (a global
 skill) or is reached through a folder link or a file link is refused. A file whose real path lies in the agent dir or
-in any user-global skill root the engine loads (`~/.agents/skills`, a selected skill root) is user-global
-configuration and is refused even when the session's folder contains it (a session opened in `$HOME`); the same holds
-for the project MCP file and the instruction files of `read_project_file`. A write passes the same trust and permission
+in any user-global skill root the engine loads (`~/.agents/skills`, a selected skill root, the folder of a user skill
+loaded from a package, `-e`, an extension or `--skill`) is user-global configuration and is refused even when the
+session's folder contains it (a session opened in `$HOME`); the same holds for the project MCP file and the
+instruction files of `read_project_file`. A package's own folder is not such a root, so a project that is itself an
+installed package (or loaded with `-e .`) keeps its project files; only its package skills are refused. A write passes the same trust and permission
 gates as `set_project_mcp_servers` and answers the read after it. Errors: `project_skill_not_listed`
 (`errorData: { skill }`), `project_file_not_allowed`, `invalid_argument`, `project_not_trusted`,
 `project_file_conflict`, `project_file_permission_denied`, `project_file_too_large`, and

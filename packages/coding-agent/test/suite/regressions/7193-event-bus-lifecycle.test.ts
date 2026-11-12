@@ -33,7 +33,6 @@ describe("issue #7193 extension event-bus lifecycle", () => {
 		const resourceLoader: ResourceLoader = {
 			getExtensions: () => extensionsResult,
 			getSkills: () => ({ skills: [], diagnostics: [] }),
-			getUserSkillRoots: () => [],
 			getPrompts: () => ({ prompts: [], diagnostics: [] }),
 			getThemes: () => ({ themes: [], diagnostics: [] }),
 			getAgentsFiles: () => ({ agentsFiles: [] }),

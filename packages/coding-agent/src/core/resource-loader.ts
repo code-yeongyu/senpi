@@ -8,7 +8,7 @@ import {
 	unlinkSync,
 	writeFileSync,
 } from "node:fs";
-import { dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { detectCapabilities, getTerminalColorMode, type TerminalColorMode } from "@earendil-works/pi-tui";
 import chalk from "chalk";
@@ -197,8 +197,12 @@ export interface ResourceLoader {
 	emitExtensionEvent?(channel: string, data: unknown): void;
 	onExtensionEvent?(channel: string, handler: (data: unknown) => void): () => void;
 	getSkills(): { skills: Skill[]; diagnostics: ResourceDiagnostic[] };
-	/** The user-global skill roots this loader loads from, besides the session folder's own roots (senpi#6547). */
-	getUserSkillRoots(): readonly string[];
+	/**
+	 * The user-global skill roots this loader loaded skills from, besides the agent dir's and `~/.agents/skills`, which
+	 * every session refuses anyway: the RPC project verbs refuse files in them (senpi#6547, senpi#6558). Optional, so a
+	 * custom loader without it keeps working; such a loader has only those two roots refused.
+	 */
+	getUserSkillRoots?(): readonly string[];
 	getPrompts(): { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] };
 	getThemes(): { themes: Theme[]; diagnostics: ResourceDiagnostic[] };
 	getAgentsFiles(): { agentsFiles: ContextFile[]; diagnostics?: ResourceDiagnostic[] };
@@ -593,13 +597,26 @@ export class DefaultResourceLoader implements ResourceLoader {
 		return { skills: this.skills, diagnostics: this.skillDiagnostics };
 	}
 
+	/**
+	 * The globally selected skill roots plus the own folder (or file) of every skill loaded with user provenance,
+	 * wherever it came from (a package, `-e`, an extension's `resources_discover`, `--skill`, the SDK's
+	 * `additionalSkillPaths`). Never the selected root such a skill was found under: for a package that root is the
+	 * whole package folder, and a project that is itself an installed package (or loaded with `-e .`) keeps its own
+	 * files (senpi#6558).
+	 */
 	getUserSkillRoots(): readonly string[] {
 		return [
-			...this.userSkillRoots,
-			...(this.settingsManager.getGlobalSettings().skills ?? [])
-				.filter((path) => !/^[!+-]/.test(path))
-				.map((path) => resolvePath(path, this.agentDir, { trim: true })),
+			...this.selectedGlobalSkillRoots(),
+			...this.skills
+				.filter((skill) => skill.provenance?.kind === "user")
+				.map((skill) => (basename(skill.filePath) === "SKILL.md" ? skill.baseDir : skill.filePath)),
 		];
+	}
+
+	private selectedGlobalSkillRoots(): string[] {
+		return (this.settingsManager.getGlobalSettings().skills ?? [])
+			.filter((path) => !/^[!+-]/.test(path))
+			.map((path) => resolvePath(path, this.agentDir, { trim: true }));
 	}
 
 	getPrompts(): { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] } {
@@ -1204,7 +1221,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 						metadataByPath?.get(path)?.skillProvenance ?? { kind: "user", selectedRoot: path },
 					]),
 				),
-				userSkillRoots: this.getUserSkillRoots(),
+				userSkillRoots: [...this.userSkillRoots, ...this.selectedGlobalSkillRoots()],
 			});
 		}
 		const resolvedSkills = this.skillsOverride ? this.skillsOverride(skillsResult) : skillsResult;

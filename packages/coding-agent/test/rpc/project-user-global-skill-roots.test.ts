@@ -105,7 +105,11 @@ describe("project verbs: skill paths added at run time are user-global roots (se
 				home = scratch;
 				writeSkill(join(scratch, "dev-skills"), DEV_SKILL);
 			},
-			extensions: [(pi) => pi.on("resources_discover", () => ({ skillPaths: [join(home, "dev-skills")] }))],
+			extensions: [
+				(pi) => {
+					pi.on("resources_discover", () => ({ skillPaths: [join(home, "dev-skills")] }));
+				},
+			],
 		});
 		await host.trust();
 		expect(await host.call("read_project_skill_file", { skill: DEV_SKILL })).toMatchObject(NOT_ALLOWED);
@@ -146,7 +150,11 @@ describe("project verbs: a user-global root that does not exist yet (senpi#6558)
 		const host = await startHomeHost({ stubHome: "link" });
 		await host.trust();
 		expect(
-			await host.call("write_project_file", { path: ".agents/skills/AGENTS.md", content: "# Pwned\n", ifEtag: null }),
+			await host.call("write_project_file", {
+				path: ".agents/skills/AGENTS.md",
+				content: "# Pwned\n",
+				ifEtag: null,
+			}),
 		).toMatchObject(NOT_ALLOWED);
 		expect(existsSync(join(host.cwd, ".agents", "skills", "AGENTS.md"))).toBe(false);
 	});

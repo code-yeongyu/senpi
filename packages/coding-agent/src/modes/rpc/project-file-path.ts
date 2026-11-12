@@ -12,7 +12,7 @@
 
 import { constants } from "node:fs";
 import { lstat, mkdir, realpath } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { userGlobalSkillRoots } from "../../core/skills.ts";
 
 /** Under the host's 1,000,000-character message limit, so an oversized write reaches this typed refusal. */
@@ -87,16 +87,23 @@ export async function resolveProjectFile(cwd: string, file: ProjectFilePath): Pr
 	return { ok: true, absolute, exists: true, missingFolders };
 }
 
-/** True when `absolute` equals `root` or lies inside it, `root` by real path (missing roots compare lexically). */
-async function insideRealRoot(root: string, absolute: string): Promise<boolean> {
-	let real: string;
+/**
+ * The real path of `path`; a missing path is its nearest existing parent's real path plus the missing rest, so a root
+ * not created yet still compares by real path when a parent (such as `$HOME`) is a link (senpi#6558).
+ */
+async function realpathOfNearest(path: string): Promise<string> {
 	try {
-		real = await realpath(root);
+		return await realpath(path);
 	} catch (error) {
 		if (!isMissing(error)) throw error;
-		real = resolve(root);
+		const parent = dirname(path);
+		return parent === path ? path : join(await realpathOfNearest(parent), basename(path));
 	}
-	const path = relative(real, absolute);
+}
+
+/** True when `absolute` equals `root` or lies inside it, `root` by real path. */
+async function insideRealRoot(root: string, absolute: string): Promise<boolean> {
+	const path = relative(await realpathOfNearest(resolve(root)), absolute);
 	return path === "" || (!isAbsolute(path) && path !== ".." && !path.startsWith(`..${sep}`));
 }
 
@@ -110,8 +117,8 @@ export async function insideAgentDir(agentDir: string, absolute: string): Promis
 
 /**
  * True when the resolved `absolute` lies in any user-global root the engine loads: the agent dir (its context file,
- * its skills, the global MCP file) or any user-global skill root, taken from `userGlobalSkillRoots` — the same list
- * that builds the loader's skill allowlist, never a second hard-coded one. Such a file is user-global
+ * its skills, the global MCP file) or any user-global skill root, taken from `userGlobalSkillRoots` over the loader's
+ * `getUserSkillRoots` (each loaded user skill's own folder, never a whole package folder). Such a file is user-global
  * configuration, never a project file, even when the session folder contains the root (a session opened in `$HOME`)
  * or reaches it through a link; the comparison is by real path (senpi#6547 review LOWs).
  */

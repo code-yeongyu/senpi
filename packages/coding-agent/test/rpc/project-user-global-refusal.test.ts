@@ -3,7 +3,7 @@
  * configuration. A session whose folder is the PARENT of a user-global root (a session opened in `$HOME`, whose
  * folder holds the agent dir and `~/.agents`) is refused on every project verb when the file it names is
  * user-global, compared by real path: the agent dir (its context file, its skills, the global MCP file) and every
- * user-global skill root the engine loads — the one list that also builds the loader's skill allowlist. The
+ * user-global skill root the engine loads (project-user-global-skill-roots covers which roots those are). The
  * folder's own project files keep working in the same session, and a link from inside the folder into a global
  * root is refused by real path too.
  */

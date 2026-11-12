@@ -96,7 +96,11 @@ async function readMcpState(session: AgentSession): Promise<McpFileState | Proje
 	const resolved = await resolveProjectFile(cwd, MCP_FILE);
 	if (
 		!resolved.ok ||
-		(await insideUserGlobalRoots(session.agentDir, session.resourceLoader.getUserSkillRoots(), resolved.absolute))
+		(await insideUserGlobalRoots(
+			session.agentDir,
+			session.resourceLoader.getUserSkillRoots?.() ?? [],
+			resolved.absolute,
+		))
 	) {
 		return notAllowed(MCP_FILE.relative);
 	}

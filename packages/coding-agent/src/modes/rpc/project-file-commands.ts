@@ -90,7 +90,11 @@ async function readFileState(
 	const resolved = await resolveProjectFile(cwd, file);
 	if (
 		!resolved.ok ||
-		(await insideUserGlobalRoots(session.agentDir, session.resourceLoader.getUserSkillRoots(), resolved.absolute))
+		(await insideUserGlobalRoots(
+			session.agentDir,
+			session.resourceLoader.getUserSkillRoots?.() ?? [],
+			resolved.absolute,
+		))
 	) {
 		return notAllowed(file.relative);
 	}

@@ -190,7 +190,6 @@ async function makeHarness(tempDir: string): Promise<Harness> {
 		emitExtensionEvent: eventBus.emit,
 		onExtensionEvent: eventBus.on,
 		getSkills: () => ({ skills, diagnostics: [] }),
-		getUserSkillRoots: () => [],
 		getPrompts: () => ({ prompts: [], diagnostics: [] }),
 		getThemes: () => ({ themes: [], diagnostics: [] }),
 		getAgentsFiles: () => ({ agentsFiles: [] }),
