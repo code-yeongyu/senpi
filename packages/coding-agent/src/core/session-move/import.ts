@@ -31,6 +31,8 @@ export interface ImportMovedSessionOptions {
 	readonly ledger: MoveLedger;
 	readonly sessionDir?: string;
 	readonly from?: string;
+	/** The sha256 each file of an inline bundle was sent with (senpi#6267); checked beside the manifest's. */
+	readonly sent?: ReadonlyMap<string, string>;
 	readonly readIdentity?: (dir: string) => Promise<RepositoryIdentity | undefined>;
 }
 
@@ -127,7 +129,7 @@ export async function importMovedSession(
 	};
 	if (await landed()) return confirmLanded();
 	try {
-		await verifyBundle(options.bundleDir, manifest);
+		await verifyBundle(options.bundleDir, manifest, options.sent);
 	} catch (error) {
 		if (error instanceof MoveBundleInvalidError)
 			await options.ledger.fail(manifest.moveId, "bundle_invalid", { unlessLanded: landed });
@@ -165,7 +167,12 @@ export async function importMovedSession(
 		await rm(staging, { recursive: true, force: true });
 		return { sessionFile };
 	} catch (error) {
-		if (error instanceof MoveFencedError && (await landed())) return confirmLanded();
+		// Another import landed this move; what this one staged after that import cleaned up is not kept. The folder is
+		// clutter only, so a removal that fails never replaces the answer the landed file gives.
+		if (error instanceof MoveFencedError && (await landed())) {
+			await rm(staging, { recursive: true, force: true }).catch(() => undefined);
+			return confirmLanded();
+		}
 		if (!(error instanceof MoveFencedError))
 			await options.ledger.fail(
 				manifest.moveId,

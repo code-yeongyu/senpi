@@ -82,6 +82,15 @@ export async function move(rig: Rig, fields: MoveFields): Promise<Record<string,
 	return { ...response };
 }
 
+/** A `move_session` sent as `connection`, so a session the command opens is attached to that connection. */
+export async function moveAs(rig: Rig, connection: string, fields: MoveFields): Promise<Record<string, unknown>> {
+	const response = await rig.send(connection, { type: "move_session", id: "mv", ...fields } as RpcCommand & {
+		id: string;
+	});
+	if (response === undefined) throw new Error("move_session answered nothing");
+	return { ...response };
+}
+
 export async function hostAndRelease(rig: Rig, cwd: string, sessionPath: string, moveId: string) {
 	const session = opened(await rig.open("conn-a", { cwd, sessionPath, retain_on_disconnect: true }), 0);
 	await rig.drop("conn-a");
