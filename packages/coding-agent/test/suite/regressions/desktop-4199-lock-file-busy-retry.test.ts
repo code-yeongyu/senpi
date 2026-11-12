@@ -51,32 +51,33 @@ describe.skipIf(process.platform !== "linux" && process.platform !== "darwin")("
 		for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 	});
 
-	async function heldLock(): Promise<{ root: string; lockPath: string; expectedFile: FileIdentity }> {
+	async function heldLock(): Promise<{ root: string; lockPath: string; validateFile: () => Promise<FileIdentity> }> {
 		const root = await realpath(await mkdtemp(join(tmpdir(), "rpc4199-lock-busy-")));
 		roots.push(root);
 		const lockPath = join(root, "rpc.sock.secret.publish.lock");
 		writeFileSync(lockPath, "", { mode: 0o600 });
 		const info = statSync(lockPath, { bigint: true });
 		holders.push(new DatabaseSync(lockPath));
-		return { root, lockPath, expectedFile: { dev: info.dev, ino: info.ino } };
+		const identity: FileIdentity = { dev: info.dev, ino: info.ino };
+		return { root, lockPath, validateFile: async () => identity };
 	}
 
 	it("retries a lock open swapped on every attempt as busy and refuses it at the deadline", async () => {
-		const { root, lockPath, expectedFile } = await heldLock();
+		const { root, lockPath, validateFile } = await heldLock();
 		attacker.swap = { path: lockPath, root, persistent: true, opens: 0 };
 		const swap = attacker.swap;
 		await expect(
-			acquireOwnershipSafeLock(lockPath, { expectedFile, retries: { retries: 5, minTimeout: 1, maxTimeout: 10 } }),
+			acquireOwnershipSafeLock(lockPath, { validateFile, retries: { retries: 5, minTimeout: 1, maxTimeout: 10 } }),
 		).rejects.toMatchObject({ code: "ELOCK_FILE_BUSY" });
 		expect(swap.opens).toBeGreaterThan(1);
 	});
 
 	it("takes the real lock on the retry after a one-time swap", async () => {
-		const { root, lockPath, expectedFile } = await heldLock();
+		const { root, lockPath, validateFile } = await heldLock();
 		attacker.swap = { path: lockPath, root, persistent: false, opens: 0 };
 		const swap = attacker.swap;
 		const release = await acquireOwnershipSafeLock(lockPath, {
-			expectedFile,
+			validateFile,
 			retries: { retries: 50, minTimeout: 1, maxTimeout: 10 },
 		});
 		try {

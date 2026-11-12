@@ -7,8 +7,12 @@ export interface OwnershipSafeLockOptions {
 		readonly minTimeout: number;
 		readonly maxTimeout: number;
 	};
-	/** The lock file the caller validated through its own descriptor; SQLite must open exactly that file. */
-	readonly expectedFile?: FileIdentity;
+	/**
+	 * The caller's validation of the lock file through its own descriptor (open, fstat, close), returning the identity it
+	 * found; SQLite must open exactly that file. It runs before each open attempt, inside the same one-at-a-time section as
+	 * the SQLite open (`openExpectedFile`).
+	 */
+	readonly validateFile?: () => Promise<FileIdentity>;
 }
 
 /** The lock file SQLite opened is not the one the caller validated: a lock taken there would serialize nothing. */
@@ -61,12 +65,15 @@ interface LockDatabase {
 node:sqlite for npm-installed Node executions. Both drive the same kernel
 advisory locks on the same file, so cross-runtime contenders exclude each
 other (verified empirically; see the changes.md entry). */
-async function openLockDatabase(lockPath: string, expectedFile: FileIdentity | undefined): Promise<LockDatabase> {
+async function openLockDatabase(
+	lockPath: string,
+	validateFile: (() => Promise<FileIdentity>) | undefined,
+): Promise<LockDatabase> {
 	if (typeof (globalThis as { Bun?: unknown }).Bun !== "undefined") {
 		const { Database } = await import("bun:sqlite");
 		const database = await openChecked(
 			lockPath,
-			expectedFile,
+			validateFile,
 			() => new Database(lockPath, { create: true }),
 			(opened) => opened.close(false),
 		);
@@ -75,7 +82,7 @@ async function openLockDatabase(lockPath: string, expectedFile: FileIdentity | u
 	const { DatabaseSync } = await import("node:sqlite");
 	const database = await openChecked(
 		lockPath,
-		expectedFile,
+		validateFile,
 		() => new DatabaseSync(lockPath),
 		(opened) => opened.close(),
 	);
@@ -84,18 +91,18 @@ async function openLockDatabase(lockPath: string, expectedFile: FileIdentity | u
 
 /**
  * The identity proof is part of this function's lazy loading boundary, like the SQLite driver above: it loads only when a
- * caller passes `expectedFile` (the socket secret's repair lock), so it stays out of the lifecycle supervisor's startup
+ * caller passes `validateFile` (the socket secret's repair lock), so it stays out of the lifecycle supervisor's startup
  * graph, which imports this module (`test/supervisor-import-graph.test.ts`).
  */
 async function openChecked<T>(
 	lockPath: string,
-	expectedFile: FileIdentity | undefined,
+	validateFile: (() => Promise<FileIdentity>) | undefined,
 	open: () => T,
 	close: (opened: T) => void,
 ): Promise<T> {
-	if (expectedFile === undefined) return open();
+	if (validateFile === undefined) return open();
 	const { openExpectedFile } = await import("./sqlite-file-identity.ts");
-	const checked = await openExpectedFile(lockPath, expectedFile, open, close);
+	const checked = await openExpectedFile(lockPath, validateFile, open, close);
 	if ("replaced" in checked) throw new LockFileReplacedError(lockPath, checked.replaced);
 	if ("busy" in checked) throw new LockFileBusyError(lockPath, checked.busy);
 	return checked.opened;
@@ -118,7 +125,7 @@ export async function acquireOwnershipSafeLock(
 		const busyMs = Math.max(1, Math.min(retries.maxTimeout, deadline - Date.now()));
 		let database: LockDatabase | undefined;
 		try {
-			database = await openLockDatabase(lockPath, options.expectedFile);
+			database = await openLockDatabase(lockPath, options.validateFile);
 			database.exec(`PRAGMA busy_timeout = ${busyMs}; BEGIN EXCLUSIVE;`);
 			let released = false;
 			const held = database;

@@ -24,12 +24,12 @@ export interface Database {
 
 /**
  * Opens the store at `path` once the file and its rollback journal are validated, and only when the file SQLite opened
- * is the validated one (`openExpectedFile`: SQLite's own descriptor on Linux and macOS, the name everywhere). Nothing is
- * read before the journal check, so SQLite has not looked at the journal yet.
+ * is the validated one (`openExpectedFile`: SQLite's own descriptor on Linux and macOS, the name everywhere). The file's
+ * validation runs inside that checked open, with SQLite's. Nothing is read before the journal check, so SQLite has not
+ * looked at the journal yet.
  */
 export async function openReservationDatabase(path: string): Promise<Database> {
-	const validated = await precreatePrivate(path);
-	const database = await openDatabase(path, validated);
+	const database = await openDatabase(path);
 	try {
 		await validateJournal(`${path}-journal`);
 	} catch (error: unknown) {
@@ -40,12 +40,11 @@ export async function openReservationDatabase(path: string): Promise<Database> {
 }
 
 /** bun:sqlite inside the Bun binary, node:sqlite under Node; the same loading boundary as ownership-safe-lock.ts. */
-async function openDatabase(path: string, validated: FileIdentity): Promise<Database> {
+async function openDatabase(path: string): Promise<Database> {
 	if (typeof (globalThis as { Bun?: unknown }).Bun !== "undefined") {
 		const { Database } = await import("bun:sqlite");
 		const database = await checked(
 			path,
-			validated,
 			() => new Database(path),
 			(opened) => opened.close(false),
 		);
@@ -58,7 +57,6 @@ async function openDatabase(path: string, validated: FileIdentity): Promise<Data
 	const { DatabaseSync } = await import("node:sqlite");
 	const database = await checked(
 		path,
-		validated,
 		() => new DatabaseSync(path),
 		(opened) => opened.close(),
 	);
@@ -69,16 +67,13 @@ async function openDatabase(path: string, validated: FileIdentity): Promise<Data
 	};
 }
 
-async function checked<T>(
-	path: string,
-	validated: FileIdentity,
-	open: () => T,
-	close: (opened: T) => void,
-): Promise<T> {
-	const result = await openExpectedFile(path, validated, open, close);
+async function checked<T>(path: string, open: () => T, close: (opened: T) => void): Promise<T> {
+	const result = await openExpectedFile(path, () => precreatePrivate(path), open, close);
 	if ("replaced" in result) throw new EndpointReservationError("store_insecure", result.replaced);
-	// Not provable now (another connection of this process has the store open): store_busy, which retryWhenBusy retries
-	// and refuses at its bound, never an open of an unproven file.
+	// Not provable now: the descriptor listings could not single out SQLite's descriptor, because this process opened
+	// another file during the open, or the store was already open here and SQLite added no descriptor of it, or the
+	// listing after the open failed. A holder connection alone is not busy when SQLite adds a new descriptor of the
+	// store. store_busy, which retryWhenBusy retries and refuses at its bound, never an open of an unproven file.
 	if ("busy" in result) throw new EndpointReservationError("store_busy", result.busy);
 	return result.opened;
 }
@@ -86,7 +81,8 @@ async function checked<T>(
 /**
  * Creates the database file owner-only when absent and validates an existing one through a no-follow descriptor before
  * SQLite opens it: a regular file, owned by this user, with no group or other permission bits (POSIX). Windows DACL
- * validation belongs to the native bridge and is not done here.
+ * validation belongs to the native bridge and is not done here. Runs as `openExpectedFile`'s `validate`, inside the
+ * checked-open section.
  */
 async function precreatePrivate(path: string): Promise<FileIdentity> {
 	let handle: Awaited<ReturnType<typeof open>>;

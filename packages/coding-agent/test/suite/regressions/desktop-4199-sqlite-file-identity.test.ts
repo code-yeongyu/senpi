@@ -3,8 +3,24 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { type FileIdentity, openExpectedFile } from "../../../src/modes/rpc/sqlite-file-identity.ts";
+
+// One outcome per descriptor listing, in order: an errno code fails that listing's readdir; undefined lets it run.
+const listings = vi.hoisted(() => ({ outcomes: [] as (string | undefined)[] }));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:fs/promises")>();
+	return {
+		...actual,
+		readdir: (async (...args: Parameters<typeof actual.readdir>) => {
+			const descriptors = String(args[0]) === "/proc/self/fd" || String(args[0]) === "/dev/fd";
+			const code = descriptors ? listings.outcomes.shift() : undefined;
+			if (code !== undefined) throw Object.assign(new Error(`${code}: injected listing failure`), { code });
+			return actual.readdir(...args);
+		}) as typeof actual.readdir,
+	};
+});
 
 // Regression coverage for https://github.com/sisyphuslabs/omo-desktop-app/issues/4199 (design 4.2a). Security contract:
 // a SQLite open of a file validated through its own descriptor is accepted only when the file SQLite holds is that one.
@@ -17,6 +33,7 @@ describe.skipIf(!listable)("SQLite file identity proof", () => {
 	const holders: DatabaseSync[] = [];
 
 	afterEach(async () => {
+		listings.outcomes = [];
 		for (const holder of holders.splice(0)) holder.close();
 		for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 	});
@@ -55,7 +72,7 @@ describe.skipIf(!listable)("SQLite file identity proof", () => {
 	it("refuses a swap undone after the open as replaced when no connection of this process has the file open", async () => {
 		const { root, path, expected } = await seeded();
 		const closed: DatabaseSync[] = [];
-		const result = await openExpectedFile(path, expected, swappedOpen(root, path), closing(closed));
+		const result = await openExpectedFile(path, async () => expected, swappedOpen(root, path), closing(closed));
 		expect(result).toHaveProperty("replaced");
 		expect(closed).toHaveLength(1);
 	});
@@ -64,7 +81,7 @@ describe.skipIf(!listable)("SQLite file identity proof", () => {
 		const { root, path, expected } = await seeded();
 		holders.push(new DatabaseSync(path));
 		const closed: DatabaseSync[] = [];
-		const result = await openExpectedFile(path, expected, swappedOpen(root, path), closing(closed));
+		const result = await openExpectedFile(path, async () => expected, swappedOpen(root, path), closing(closed));
 		expect(result).not.toHaveProperty("opened");
 		expect(result).toHaveProperty("busy");
 		expect(closed).toHaveLength(1);
@@ -73,7 +90,12 @@ describe.skipIf(!listable)("SQLite file identity proof", () => {
 	it("opens the validated file while a holder connection has it open", async () => {
 		const { path, expected } = await seeded();
 		holders.push(new DatabaseSync(path));
-		const result = await openExpectedFile(path, expected, () => new DatabaseSync(path), closing([]));
+		const result = await openExpectedFile(
+			path,
+			async () => expected,
+			() => new DatabaseSync(path),
+			closing([]),
+		);
 		expect(result).toHaveProperty("opened");
 		if ("opened" in result) holders.push(result.opened);
 	});
@@ -83,10 +105,15 @@ describe.skipIf(!listable)("SQLite file identity proof", () => {
 		const second = await seeded("second.db");
 		let firstSettled = false;
 		let firstSettledBySecondOpen: boolean | undefined;
-		const one = openExpectedFile(first.path, first.expected, () => new DatabaseSync(first.path), closing([]));
+		const one = openExpectedFile(
+			first.path,
+			async () => first.expected,
+			() => new DatabaseSync(first.path),
+			closing([]),
+		);
 		const two = openExpectedFile(
 			second.path,
-			second.expected,
+			async () => second.expected,
 			() => {
 				firstSettledBySecondOpen = firstSettled;
 				return new DatabaseSync(second.path);
@@ -100,17 +127,39 @@ describe.skipIf(!listable)("SQLite file identity proof", () => {
 		expect(firstSettledBySecondOpen).toBe(true);
 	});
 
+	// The listing before the open succeeded, so the descriptor proof was available; a failed listing after it (EMFILE
+	// after SQLite reused a parked descriptor and needed no new one) must not fall back to the name check alone.
+	it("answers busy, never opened, when the descriptor listing after the open fails", async () => {
+		const { path, expected } = await seeded();
+		listings.outcomes = [undefined, "EMFILE"];
+		const closed: DatabaseSync[] = [];
+		const result = await openExpectedFile(
+			path,
+			async () => expected,
+			() => new DatabaseSync(path),
+			closing(closed),
+		);
+		expect(result).not.toHaveProperty("opened");
+		expect(result).toHaveProperty("busy");
+		expect(closed).toHaveLength(1);
+	});
+
 	it("keeps serving checked opens after one of them throws", async () => {
 		const { path, expected } = await seeded();
 		const failing = openExpectedFile(
 			path,
-			expected,
+			async () => expected,
 			(): DatabaseSync => {
 				throw new Error("open failed");
 			},
 			closing([]),
 		);
-		const next = openExpectedFile(path, expected, () => new DatabaseSync(path), closing([]));
+		const next = openExpectedFile(
+			path,
+			async () => expected,
+			() => new DatabaseSync(path),
+			closing([]),
+		);
 		await expect(failing).rejects.toThrow("open failed");
 		const result = await next;
 		expect(result).toHaveProperty("opened");
