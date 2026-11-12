@@ -1,5 +1,41 @@
 # changes — senpi-monorepo root
 
+## 2026-11-11 - The node-forge override moves to 1.4.3 (senpi#6402)
+
+### What changed
+
+- `package.json` `overrides`: node-forge 1.4.2 -> 1.4.3 for both `@earendil-works/gondolin` and `@anthropic-ai/sandbox-runtime`. The lockfiles are regenerated to match.
+
+### Why
+
+- node-forge <=1.4.2 carries GHSA-6889-vf6x-f3g5, GHSA-w4xr-hqv8-ch44, GHSA-6cv4-p8m7-4r25 and GHSA-j8rw-jp99-435v, all patched in 1.4.3 (published 2026-11-04, past `min-release-age=2`). npm reported no fix only because the override pinned 1.4.2 exactly.
+
+### Why an extension could not handle it
+
+- Dependency resolution for the monorepo is set by the root manifest.
+
+### Expected merge conflict zones
+
+- LOW: the two node-forge lines in the `overrides` block; the lockfiles regenerate on any conflict.
+
+## 2026-11-11 - Root overrides move to the patched qs, fast-uri, ip-address, express-rate-limit and body-parser (senpi#6395)
+
+### What changed
+
+- `package.json` `overrides`: qs 6.16.0 -> 6.16.2, fast-uri 3.1.8 -> 3.1.9, ip-address 10.7.2 -> 10.7.6, express-rate-limit 8.7.0 -> 8.7.3, and a new body-parser 2.4.0 override. `package-lock.json`, `bun.lock` and `packages/coding-agent/install-lock` are regenerated to match.
+
+### Why
+
+- `npm audit --omit=dev --audit-level=moderate` failed on main (GHSA-27r3-jxmh-p828, GHSA-6pq8-jhm2-2vcw, four fast-uri advisories, GHSA-rxp7-6hxx-x8q5). The overrides pinned the vulnerable versions exactly, so `npm audit fix` could not move them. Each target is the smallest fixed version inside its current major that the repo's `min-release-age=2` allows (express-rate-limit 8.7.4 is too new; 8.7.3 is enough, because it was flagged only via ip-address).
+
+### Why an extension could not handle it
+
+- Dependency resolution for the whole monorepo is set by the root manifest and its lockfiles.
+
+### Expected merge conflict zones
+
+- LOW: the `overrides` block in `package.json`; the lockfiles regenerate on any conflict.
+
 ## 2026-11-09 - The sqlite-bun package carries the complete bun:sqlite declaration (senpi#6255)
 
 ### What changed

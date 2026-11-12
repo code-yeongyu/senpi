@@ -12,6 +12,25 @@
 
 ### Removed
 
+## [2026.11.12] - 2026-11-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- A credential-pool block no longer erases what the same account already recorded: a rejected-token block keeps the account's model-scoped limits and last success, fields written by another senpi version survive, and a 401 on an account listed during another request's probe now lands on that token ([#5097](https://github.com/code-yeongyu/senpi/issues/5097)).
+- Dependencies with published security fixes are updated: undici 8.12.4, re2js 2.8.8, and (through the root overrides) qs, fast-uri, ip-address, express-rate-limit and body-parser ([#6395](https://github.com/code-yeongyu/senpi/pull/6395))
+- minimatch is updated to 11.0.5, which fixes a denial of service through globparts amplification ([#6397](https://github.com/code-yeongyu/senpi/pull/6397))
+- The engine's direct zod dependency is updated to 4.6.7, which fixes GHSA-mrhx-c7xc-m3w5 for that copy. A zod 3.x copy that other dependencies require is still affected and is tracked in #6399 ([#6402](https://github.com/code-yeongyu/senpi/pull/6402))
+- A `move_session` import that overlapped another import of the same move was refused `move_fenced` although the session had landed. It now answers the landed session, so a caller is no longer told that a move which landed did not ([#6416](https://github.com/code-yeongyu/senpi/pull/6416)).
+- When the extensions directory cannot be written, each default extension that could not be refreshed is now reported as an extension warning instead of being dropped silently (#6378).
+
+### Removed
+
 ## [2026.11.11] - 2026-11-11
 
 ### Breaking Changes

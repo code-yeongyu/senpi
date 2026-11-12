@@ -1,3 +1,57 @@
+## 2026-11-11 - zod 4.6.7 (senpi#6402)
+
+### What changed
+
+- `packages/coding-agent/package.json`: zod 4.6.5 -> 4.6.7.
+
+### Why
+
+- zod <4.6.6 can exhaust memory while validating oversized constrained collections (GHSA-mrhx-c7xc-m3w5); 4.6.7 is the newest patch past the fix.
+
+### Why an extension could not handle it
+
+- zod is a direct dependency of the engine.
+
+### Expected merge conflict zones
+
+- LOW: the zod line in `packages/coding-agent/package.json`.
+
+## 2026-11-11 - minimatch 11.0.5 (senpi#6397)
+
+### What changed
+
+- `packages/coding-agent/package.json`: minimatch 10.2.6 -> 11.0.5. `package-lock.json`, `bun.lock` and `packages/coding-agent/install-lock` are regenerated to match.
+
+### Why
+
+- minimatch >=7.0.0 <11.0.1 is open to a denial of service through globparts amplification (GHSA-g3hv-75wg-m249), which fails the `npm audit` workflow. No 10.x release has the fix. 11.0.5 is the newest 11.x older than the repo's `min-release-age=2`.
+
+### Why an extension could not handle it
+
+- minimatch is a direct dependency of the engine (`core/model-resolver.ts`, `core/package-manager.ts`).
+
+### Expected merge conflict zones
+
+- LOW: the minimatch line in `packages/coding-agent/package.json`; the lockfiles regenerate on any conflict.
+
+## 2026-11-11 - undici 8.12.4 and re2js 2.8.8 (senpi#6395)
+
+### What changed
+
+- `packages/coding-agent/package.json`: undici 8.10.2 -> 8.12.4 and re2js 2.8.6 -> 2.8.8.
+
+### Why
+
+- undici 8.0.0-8.12.1 carries eight advisories (fixed in 8.12.2) and re2js <2.8.7 carries GHSA-gg6h-894w-4m9c; both failed the `npm audit` workflow. Both stay inside their current minor or patch line.
+
+### Why an extension could not handle it
+
+- These are the engine's own direct dependencies.
+
+### Expected merge conflict zones
+
+- LOW: the two dependency lines in `packages/coding-agent/package.json`.
+
 ## 2026-11-10 - Bundled Claude Agent SDK 0.3.321 (senpi#3893)
 
 ### What changed

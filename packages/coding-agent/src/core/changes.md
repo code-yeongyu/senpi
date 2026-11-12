@@ -1,3 +1,45 @@
+## 2026-11-11 - A denied default-extension seed is reported as a warning (senpi#6378)
+
+### What changed
+
+- `packages/coding-agent/src/core/resource-loader.ts`: when the extensions directory refuses a write (EROFS, EACCES or EPERM), `seedWritable()` records the path and the loader adds an extension warning for it. Loading still continues with the shim already on disk, or none.
+- The read-only extensions-dir regression test now proves the stale shim's live target actually runs and that a denied seed is reported.
+
+### Why
+
+A permission problem in a normal agent dir used to drop the default extensions with no message (review finding on #6298).
+
+### Why an extension could not handle it
+
+The seeding runs in the resource loader before any extension loads, so no extension sees the refused write.
+
+### Expected merge conflict zones
+
+`seedWritable()` and `ensureGlobalDefaultExtensions()` in `resource-loader.ts`, and the extension-warnings merge in the main reload path.
+
+### Fixed
+
+- #6378
+
+## 2026-11-11 - An import that overlaps another import's landing answers the landed session (senpi#6413)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-move/import.ts`: `importMovedSession` looked for this move's landed file once, before it verified the bundle. When `beginReceive` or `commit` then refused with `move_fenced` because another import of the same move had stamped or accepted the record meanwhile, the refusal went out as it was. It now looks at the target again on such a refusal and, when this move's file is there, confirms the landing and answers that session, as a later re-import does. Every other fence still refuses: a cancelled, never readied, expired or failed move, a move that landed in another folder, and a commit that stopped without landing.
+- `packages/coding-agent/docs/rpc.md`: says so in "Moving a session to another device".
+
+### Why
+
+- A caller that asked for the import a second time while the first was still running was answered `move_fenced` although the move landed. A caller that reads `move_fenced` as "nothing landed here" then takes the session back, and both hosts hold a writable copy.
+
+### Why an extension could not handle it
+
+- The move core owns the import and its ledger.
+
+### Expected merge conflict zones
+
+- None upstream: `core/session-move/` is fork-only. LOW against other move work: the two `catch` paths around `beginReceive` and `commit` in `importMovedSession`.
+
 ## 2026-11-11 — Claude account summaries carry the check's provider diagnostics
 
 ### What changed

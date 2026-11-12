@@ -12,6 +12,20 @@
 
 ### Removed
 
+## [2026.11.12] - 2026-11-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- A running eval cell no longer makes the TUI below it jump while parallel nested tool calls with different output heights stream ([#6406](https://github.com/code-yeongyu/senpi/pull/6406))
+
+### Removed
+
 ## [2026.11.11] - 2026-11-11
 
 ### Breaking Changes
