@@ -6,7 +6,14 @@
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, posix, relative, sep } from "node:path";
-import { leavesBundle, listedFiles, MANIFEST_FILE, MoveBundleInvalidError, parseManifest } from "./bundle.ts";
+import {
+	leavesBundle,
+	listedFiles,
+	MANIFEST_FILE,
+	MoveBundleInvalidError,
+	nestsTooDeep,
+	parseManifest,
+} from "./bundle.ts";
 import { filesUnder } from "./export.ts";
 
 export interface InlineBundleFile {
@@ -54,10 +61,12 @@ const shown = (path: string): string => JSON.stringify(path.length > 120 ? `${pa
 
 /**
  * A path an inline file may be written at: relative, with no empty, `.` or `..` segment under either separator, no
- * NUL, and no segment or whole path too long to be a file where the bundle is staged.
+ * NUL, no segment or whole path too long to be a file where the bundle is staged, and no deeper than any bundle path
+ * may be (`MAX_BUNDLE_PATH_SEGMENTS`).
  */
 function staysInBundle(path: string): boolean {
-	if (leavesBundle(path) || path.includes("\0") || Buffer.byteLength(path) > MAX_PATH_BYTES) return false;
+	if (leavesBundle(path) || nestsTooDeep(path) || path.includes("\0") || Buffer.byteLength(path) > MAX_PATH_BYTES)
+		return false;
 	return segmentsOf(path).every(
 		(segment) => segment !== "" && segment !== "." && Buffer.byteLength(segment) <= MAX_SEGMENT_BYTES,
 	);

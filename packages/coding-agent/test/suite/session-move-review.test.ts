@@ -2,7 +2,7 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync
 import { basename, dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { getDefaultSessionDir, SessionManager } from "../../src/core/session-manager.ts";
-import { MoveBundleInvalidError } from "../../src/core/session-move/bundle.ts";
+import { MAX_BUNDLE_PATH_SEGMENTS, MoveBundleInvalidError } from "../../src/core/session-move/bundle.ts";
 import { exportSessionForMove } from "../../src/core/session-move/export.ts";
 import { finishMove } from "../../src/core/session-move/finish.ts";
 import { answerMoveStatus, importMovedSession } from "../../src/core/session-move/import.ts";
@@ -101,6 +101,28 @@ describe("session move review fixes (senpi#3631)", () => {
 		await expect(importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity })).rejects.toBeInstanceOf(
 			MoveBundleInvalidError,
 		);
+	});
+
+	it("#given a bundle folder whose manifest lists a path one folder deeper than a bundle path may be #then the import refuses it and makes no folder for it, and the move stays importable", async () => {
+		const { cwdB, bundleDir, ledger, readIdentity } = await setup();
+		const original = readFileSync(join(bundleDir, "manifest.json"), "utf8");
+		const tooDeep = `files/${"d/".repeat(MAX_BUNDLE_PATH_SEGMENTS - 1)}x`;
+		mkdirSync(dirname(join(bundleDir, tooDeep)), { recursive: true });
+		writeFileSync(join(bundleDir, tooDeep), "x");
+		editManifest(bundleDir, (manifest) => {
+			manifest.sidecars = [{ path: tooDeep, sha256: "0".repeat(64) }];
+		});
+		const sessionDir = getDefaultSessionDir(cwdB);
+
+		await expect(importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity })).rejects.toBeInstanceOf(
+			MoveBundleInvalidError,
+		);
+
+		// Refused when the manifest is read: before the receive begins and before anything is staged.
+		expect(existsSync(join(sessionDir, ".move-staging"))).toBe(false);
+		writeFileSync(join(bundleDir, "manifest.json"), original);
+		const landed = await importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity });
+		expect(existsSync(landed.sessionFile)).toBe(true);
 	});
 
 	it("#given a bundle with a payload kind this version does not know #then the import refuses it", async () => {
