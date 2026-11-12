@@ -13,6 +13,7 @@
  * Modes use this class and add their own I/O layer on top.
  */
 
+import { modelSwitchMarker } from "./model-switch-marker.ts";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
@@ -1612,6 +1613,8 @@ export class AgentSession {
 	/** Messages queued to be included with the next user prompt as context ("asides"). */
 	private _pendingNextTurnMessages: CustomMessage[] = [];
 	private _pendingCustomMessages: CustomMessage[] = [];
+	/** Fallback switch notes waiting for the next request boundary, where the model reads them (omo#13243). */
+	private _pendingModelSwitchMarkers: CustomMessage[] = [];
 	/** Deliveries from other sessions: admitted once into the queues below, tracked until their entry is written. */
 	readonly externalAdmission = new ExternalAdmission({
 		isBusy: () => this._isAgentRunActive || this._promptStartPending,
@@ -1930,7 +1933,11 @@ export class AgentSession {
 		this._unsubscribeSettingsSource = this.settingsManager.subscribeToSourceSelection((source) => {
 			this._emit({ type: "settings_source_selected", ...source });
 		});
+		// A model chosen explicitly at launch (`--model`) is a pin: a failed turn stays failed and names that
+		// model instead of moving to another one (omo#13243). Sessions without an explicit model keep fallback.
+		const explicitModelPin = config.sessionStartEvent?.initialModelProvenance === "cli";
 		const noModelFallback =
+			explicitModelPin ||
 			config.resourceLoader.getExtensions().runtime.flagValues.get("no-model-fallback") === true ||
 			envValue("NO_FALLBACK") === "1";
 		if (noModelFallback) {
@@ -2047,6 +2054,7 @@ export class AgentSession {
 			circuits: this._fallbackCircuits,
 			logger: fallbackLogger,
 			switchModel: async (model, thinking, reason) => {
+				const from = this.model ? `${this.model.provider}/${this.model.id}` : undefined;
 				await this._switchActiveModel(model, {
 					persistDefault: false,
 					appendSessionEntry: true,
@@ -2059,6 +2067,9 @@ export class AgentSession {
 					allowDeferral: false,
 					repairWithSlice: true,
 				});
+				this._pendingModelSwitchMarkers.push(
+					modelSwitchMarker({ from, to: `${model.provider}/${model.id}`, reason }),
+				);
 			},
 			isCandidateRefusal: (error) => error instanceof ModelUsabilityBudgetError,
 			emit: (event) => this._emit(event),
@@ -6327,6 +6338,7 @@ export class AgentSession {
 		if (!this.isStreaming) {
 			try {
 				await this._maybeRestoreFallbackPrimary();
+				this._flushModelSwitchMarkers();
 				const model = this.model;
 				// A turn the user started asks the provider again unless it stated when the limit resets (senpi#5568);
 				// automated turns keep the remembered hold so a loop never hammers a spent account (senpi#3131).
@@ -8604,6 +8616,13 @@ export class AgentSession {
 		notify(() => this._emitEntryAppended(entryId));
 		notify(() => this._emit(start));
 		notify(() => this._emit({ type: "message_end", message: appMessage }));
+	}
+
+	/** Writes the fallback switch notes before a request starts, so the model sees which model it is. */
+	private _flushModelSwitchMarkers(): void {
+		const pending = this._pendingModelSwitchMarkers;
+		this._pendingModelSwitchMarkers = [];
+		for (const message of pending) this._appendCustomMessage(message);
 	}
 
 	private _flushPendingCustomMessages(): void {
@@ -11760,6 +11779,7 @@ export class AgentSession {
 					if (this._continueWithQueuedInput) {
 						// Joined input of a start that never ran: the transcript tail may be anything, even empty.
 						this._continueWithQueuedInput = false;
+						this._flushModelSwitchMarkers();
 						await this.agent.continueWithQueuedMessages(options);
 					} else if (this._scheduledContinuationRecompacted) {
 						const tail = this.agent.state.messages.at(-1);
@@ -11770,8 +11790,10 @@ export class AgentSession {
 								this._incrementMessageRevision();
 							}
 						}
+						this._flushModelSwitchMarkers();
 						await this.agent.continueWithQueuedMessages(options);
 					} else {
+						this._flushModelSwitchMarkers();
 						await this.agent.continue(options);
 					}
 				},

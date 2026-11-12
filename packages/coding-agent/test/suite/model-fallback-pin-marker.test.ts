@@ -1,0 +1,87 @@
+import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { afterEach, describe, expect, it } from "vitest";
+import { MODEL_SWITCH_MARKER_TYPE } from "../../src/core/model-switch-marker.ts";
+import { createHarness, type Harness } from "./harness.ts";
+
+// omo#13243: a model chosen at launch is a pin, and a fallback switch is written where the model reads it.
+const primary = "faux/faux-1";
+const fallback = "faux/faux-2";
+const fallbackSettings = {
+	retry: { enabled: true, baseDelayMs: 1, maxRetries: 0, fallbackChains: { [primary]: [fallback] } },
+};
+
+function markerTexts(harness: Harness): string[] {
+	return harness.session.messages.flatMap((message) =>
+		message.role === "custom" &&
+		message.customType === MODEL_SWITCH_MARKER_TYPE &&
+		typeof message.content === "string"
+			? [message.content]
+			: [],
+	);
+}
+
+describe("model fallback pin and switch marker (omo#13243)", () => {
+	const harnesses: Harness[] = [];
+	afterEach(() => {
+		while (harnesses.length > 0) harnesses.pop()?.cleanup();
+	});
+
+	it("keeps a launch-chosen model: the failed turn ends on that model with no fallback entry", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }, { id: "faux-2" }],
+			settings: fallbackSettings,
+			sessionStartEvent: { type: "session_start", reason: "startup", initialModelProvenance: "cli" },
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "429 rate_limit_error: too many requests" }),
+			fauxAssistantMessage("must not be reached"),
+		]);
+
+		await harness.session.prompt("stay on the chosen model");
+
+		expect(harness.eventsOfType("retry_fallback_applied")).toStrictEqual([]);
+		const fallbackEntries = harness.sessionManager
+			.getEntries()
+			.filter((entry) => entry.type === "model_change" && entry.reason === "fallback");
+		expect(fallbackEntries).toStrictEqual([]);
+		const last = harness.session.messages.at(-1);
+		expect(last?.role).toBe("assistant");
+		if (last?.role !== "assistant") throw new Error("expected the failed assistant turn");
+		expect(`${last.provider}/${last.model}`).toBe(primary);
+		expect(last.stopReason).toBe("error");
+		expect(last.errorMessage).toContain("429");
+	});
+
+	it("tells the model on its next request that another model now answers", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }, { id: "faux-2" }],
+			settings: fallbackSettings,
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
+			fauxAssistantMessage("recovered"),
+		]);
+
+		await harness.session.prompt("fall back when the first model is overloaded");
+
+		expect(harness.eventsOfType("retry_fallback_applied")).toMatchObject([{ from: primary, to: fallback }]);
+		const markers = markerTexts(harness);
+		expect(markers).toHaveLength(1);
+		expect(markers[0]).toContain(`${primary} failed`);
+		expect(markers[0]).toContain(`written by ${fallback}`);
+		// The note sits in the context before the reply the fallback model wrote, so that request carried it.
+		const markerIndex = harness.session.messages.findIndex(
+			(message) => message.role === "custom" && message.customType === MODEL_SWITCH_MARKER_TYPE,
+		);
+		const replyIndex = harness.session.messages.findIndex(
+			(message) => message.role === "assistant" && message.stopReason !== "error",
+		);
+		expect(markerIndex).toBeGreaterThanOrEqual(0);
+		expect(replyIndex).toBeGreaterThan(markerIndex);
+		const reply = harness.session.messages[replyIndex];
+		if (reply?.role !== "assistant") throw new Error("expected the recovered reply");
+		expect(`${reply.provider}/${reply.model}`).toBe(fallback);
+	});
+});
