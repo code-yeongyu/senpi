@@ -10,7 +10,7 @@
 
 import { constants } from "node:fs";
 import { lstat, mkdir, realpath } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 /** Under the host's 1,000,000-character message limit, so an oversized write reaches this typed refusal. */
 export const PROJECT_FILE_MAX_BYTES = 512 * 1024;
@@ -82,6 +82,22 @@ export async function resolveProjectFile(cwd: string, file: ProjectFilePath): Pr
 	if (stat === undefined) return { ok: true, absolute, exists: false, missingFolders };
 	if (stat.isSymbolicLink() || !stat.isFile()) return { ok: false };
 	return { ok: true, absolute, exists: true, missingFolders };
+}
+
+/**
+ * True when the resolved `absolute` is the agent dir or lies inside it, compared by real path: that is the machine's
+ * global config, never a project file, even when the session folder is the agent dir's parent (or `$HOME`).
+ */
+export async function insideAgentDir(agentDir: string, absolute: string): Promise<boolean> {
+	let root: string;
+	try {
+		root = await realpath(agentDir);
+	} catch (error) {
+		if (!isMissing(error)) throw error;
+		root = resolve(agentDir);
+	}
+	const path = relative(root, absolute);
+	return path === "" || (!isAbsolute(path) && path !== ".." && !path.startsWith(`..${sep}`));
 }
 
 /**

@@ -1,7 +1,8 @@
 /**
  * The multi-session host the folder MCP and skill-file verb tests (senpi#6485) drive: the host's own dispatch on the
  * in-process registry with a faux provider. The project carries a project skill, so trust gates it, and `prepare`
- * lays out files (links, a stored mcp.json, extra skills) before the session opens and lists its skills.
+ * lays out files (links, a stored mcp.json, extra skills) before the session opens and lists its skills. `layout` places
+ * the session folder and the agent dir inside the scratch folder (by default side by side).
  */
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -48,19 +49,21 @@ export async function disposeFolderHosts(): Promise<void> {
 export async function startFolderHost(
 	options: {
 		readonly settings?: WireRecord;
+		readonly layout?: (scratch: string) => Pick<FolderLayout, "cwd" | "agentDir">;
 		readonly prepare?: (layout: FolderLayout) => void;
 	} = {},
 ): Promise<FolderHost> {
 	const scratch = realpathSync(mkdtempSync(join(tmpdir(), "senpi-pfm-")));
 	const layout: FolderLayout = {
 		cwd: join(scratch, "project"),
-		outside: join(scratch, "outside"),
 		agentDir: join(scratch, "agent"),
+		...options.layout?.(scratch),
+		outside: join(scratch, "outside"),
 	};
 	const { cwd, agentDir } = layout;
 	mkdirSync(join(cwd, CONFIG_DIR_NAME, "skills", SKILL_NAME), { recursive: true });
 	mkdirSync(layout.outside);
-	mkdirSync(agentDir);
+	mkdirSync(agentDir, { recursive: true });
 	writeFileSync(join(cwd, CONFIG_DIR_NAME, "skills", SKILL_NAME, "SKILL.md"), skillSource(SKILL_NAME));
 	writeFileSync(
 		join(agentDir, "settings.json"),

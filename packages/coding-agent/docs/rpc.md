@@ -6441,7 +6441,9 @@ The merge is one level deep: each `patch` entry replaces the server of that name
 server and top-level key stays as stored, so a rename is one atomic write. The merged file is checked with the
 engine's own MCP config loader before anything is written. The write needs the folder to be trusted at the moment it
 commits and gets the same permission decision a `write` of that file gets in the session (rules, preset, saved
-answers, or a prompt). The response carries the same `data` as `get_project_mcp_servers`, read after the write.
+answers, or a prompt). A decision that asks is answered by the session's UI, which in an RPC session is the connected
+client: it receives the permission prompt as an `extension_ui_request`, the same as for the `write` tool in that
+session. The response carries the same `data` as `get_project_mcp_servers`, read after the write.
 Errors: `invalid_argument` when `patch` is not an object or `ifEtag` is neither a string nor `null`,
 `project_not_trusted`, `project_file_conflict` (`errorData: { currentEtag, exists }`),
 `project_mcp_config_unparseable` (`errorData: { parseError }`; a file that does not parse is never written over),
@@ -6467,7 +6469,9 @@ answered.
 
 For both, `data` is `{ cwd, skill, path, exists, content, etag, projectTrusted }`, with `path` relative to the session's folder.
 Only a listed skill whose file lies inside the session's folder is reachable; a skill that lives elsewhere (a global
-skill) or is reached through a folder link or a file link is refused. A write passes the same trust and permission
+skill) or is reached through a folder link or a file link is refused. A file whose real path lies in the agent dir is
+global config and is refused even when the session's folder contains it (a session opened in `$HOME`); the same holds
+for the project MCP file. A write passes the same trust and permission
 gates as `set_project_mcp_servers` and answers the read after it. Errors: `project_skill_not_listed`
 (`errorData: { skill }`), `project_file_not_allowed`, `invalid_argument`, `project_not_trusted`,
 `project_file_conflict`, `project_file_permission_denied`, `project_file_too_large`, and
