@@ -1,3 +1,26 @@
+## 2026-11-10 - Every core owns the code; the smallest-change rule is gone (senpi#6358)
+
+### What changed
+
+- The ownership rule from `dynamic-prompt/changes.md` (same date) is stated in every core that carried the smallest-change rule, in that core's own register, opening with the guide's sentence verbatim as senpi#6360 shipped it for Fable 5.2 (`claude-fable-5-2.ts` keeps that opening and gains the owner-behavior and defect sentences; its senpi#6356 regression stays as is): Scope paragraph of `claude-fable-5-1.ts`, `claude-fable-5-2.ts`, `claude-opus-5.ts`, `claude-opus-5-5.ts`, `claude-sonnet-5-5.ts`, `claude-haiku-5-5.ts`, `kimi-k3.ts`, `kimi-k3-1.ts` and `deepseek-v4-1-flash.ts`; Style paragraph of `claude-fable-5.ts`, `grok-4.6.ts`, `grok-4.7.ts` and `gpt-5.5.ts`; "Pragmatism & Scope" of `gpt-5.6.ts` ("The best change is usually the smallest correct change ... A bug fix is not surrounding cleanup" is replaced); "Scope and Recovery" of `gpt-6-astra.ts` ("in the smallest correct change" is replaced). Kept in each: the request sets the scope, no helpers or abstractions for hypothetical needs, no defensive checks inside trusted code (the Claude 5.x and Kimi cores use senpi#6360's "Add no helpers ..." form), validate only at system boundaries, the test-sizing and surgical-edit sentences.
+- The same rule in other words is gone: `gpt-5.5.ts` "no drive-by refactors"; the change-ask route's "diagnose and fix minimally" in the Claude, Kimi and DeepSeek cores and `claude-fable-5.ts` (now "fix at the cause"); `grok-4.6.ts` / `grok-4.7.ts` "fix minimally from the error" (now "fix the error at its cause"), `grok-4.6.ts` "open-ended ones take the smallest path" (now "get what fully satisfies the goal and nothing beyond it"), `grok-4.7.ts` refactor route "make the smallest change" (now "make the change").
+- Pre-existing problems: the Kimi K3 / K3.1 Scope lead and the DeepSeek Scope paragraph say a defect in the code being changed is fixed now and a problem elsewhere is a follow-up (was "a pre-existing bug ... is a follow-up ... unless the requested behavior cannot work without it"). Every core's claim-audit sentence reads "Fix failures your change caused and any that sit in the code you changed; note other pre-existing failures separately" (`grok-4.5.ts` in the orchestrator's voice, `gpt-6-astra.ts` with "report").
+- `test/suite/prompt-presets-native-baseline.json`: all 204 hashes recaptured (every preset renders a changed sentence); `sourceCommit` unchanged as the generation suite asserts it.
+
+### Why
+
+- See `dynamic-prompt/changes.md` (senpi#6358): the owner's ruling reverses the senpi#6314 decision to leave the Fable 5.2 guide's ownership sentence out; senpi#6360 applied it to Fable 5.2 alone, this entry extends it to every core.
+
+### Why an extension could not handle it
+
+- These lines are the preset cores themselves.
+
+### Expected merge conflict zones
+
+- Fork-only files. The Scope / Style / Pragmatism paragraphs, the change-ask route bullet and the claim-audit sentence in each listed preset.
+
+---
+
 ## 2026-11-10 - Fable 5.2 uses the guide's codebase-ownership sentence (senpi#6360, fixes #6356)
 
 ### What changed

@@ -1,9 +1,26 @@
 // allow: SIZE_OK - existing markdown renderer is oversized; this merge only preserves behavior and cache-key correctness.
 import { Marked, type Token, Tokenizer, type TokenizerExtension, type Tokens } from "marked";
+import {
+	copyLineSources,
+	getLineSources,
+	type SourceLine,
+	type SourceDocument,
+	type SourceRange,
+	setLineSource,
+	setLineSources,
+} from "../selection-source.ts";
+import { concatRanges, emptyRanges, rangeAt, repeatedRange, sliceRanges, type SourceRanges } from "../source-ranges.ts";
 import { getCapabilities, hyperlink, isImageLine } from "../terminal-image.ts";
 import { type Component, nextRenderRevision } from "../tui.ts";
-import { applyBackgroundToLine, flattenLines, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
+import {
+	applyBackgroundToLine,
+	flattenLines,
+	stripTerminalSequences,
+	visibleWidth,
+	wrapTextWithAnsi,
+} from "../utils.ts";
 import { latexToUnicode } from "./latex.ts";
+import { lexWithSources, sourceExtensions, tokenSource } from "./markdown-source.ts";
 
 const STRICT_STRIKETHROUGH_REGEX = /^(~~)(?=[^\s~])((?:\\.|[^\\])*?(?:\\.|[^\s~\\]))\1(?=[^~]|$)/;
 
@@ -50,6 +67,22 @@ function isLatexToken(token: Token): token is LatexToken {
 		"text" in token &&
 		typeof token.text === "string"
 	);
+}
+
+function formulaRanges(token: LatexToken, rendered: string): SourceRanges {
+	const source = tokenSource(token);
+	if (!source) return repeatedRange(null, rendered.length);
+	const { raw, text } = source;
+	const end = raw.text.trimEnd().length;
+	if (raw.text === rendered) return raw.ranges;
+	if (raw.text.trim() === rendered) {
+		return sliceRanges(raw.ranges, raw.text.length - raw.text.trimStart().length, end);
+	}
+	if (text?.text === rendered) return text.ranges;
+	// A converted glyph has no reliable character-level correspondence to TeX.
+	const first = rangeAt(raw.ranges, 0);
+	const last = rangeAt(raw.ranges, end - 1);
+	return repeatedRange(first && last ? { start: first.start, end: last.end } : null, rendered.length);
 }
 
 function previousRawCharacter(tokens: Token[]): string | undefined {
@@ -296,21 +329,27 @@ function trimPartialClosingFences(tokens: readonly Token[]): void {
 
 const markdownParser = new Marked();
 markdownParser.use({ extensions: [blockMathTokenizer, inlineMathTokenizer] });
+markdownParser.use({ extensions: sourceExtensions });
 markdownParser.setOptions({
 	tokenizer: new StrictStrikethroughTokenizer(),
 });
 
 const RENDER_CACHE_MAX = 256;
 const PARSE_CACHE_MAX = 128;
+// Original-source work is paid only on copy, with a small cache separate from normal rendering.
+const SOURCE_CACHE_MAX = 8;
 const CONTENT_KEY_CACHE_MAX = 128;
 const HIGHLIGHT_CACHE_MAX = 512;
 const MAX_HIGHLIGHT_BYTES = 200_000;
 const MAX_HIGHLIGHT_LINES = 2000;
-const renderCache = new Map<string, { source: string; lines: string[] }>();
+const renderCache = new Map<string, { source: string; transformed: string; lines: string[] }>();
 const parseCache = new Map<string, { source: string; tokens: Token[] }>();
+const sourceRenderCache = new Map<string, { source: string; transformed: string; lines: string[] }>();
+const sourceParseCache = new Map<string, { source: string; tokens: Token[] }>();
 const contentKeyCache = new Map<string, string>();
 const highlightCache = new Map<string, string[]>();
 const objectIds = new WeakMap<object, number>();
+const enclosedTokens = new WeakSet<Token>();
 let nextObjectId = 0;
 let markdownHighlightCallCount = 0;
 
@@ -351,6 +390,8 @@ function contentKey(text: string): string {
 export function clearRenderCache(): void {
 	renderCache.clear();
 	parseCache.clear();
+	sourceRenderCache.clear();
+	sourceParseCache.clear();
 	contentKeyCache.clear();
 	highlightCache.clear();
 }
@@ -436,6 +477,8 @@ export class Markdown implements Component {
 	private theme: MarkdownTheme;
 	private options: MarkdownOptions;
 	private defaultStylePrefix?: string;
+	private activeSourceDocument?: SourceDocument;
+	private collectSources = false;
 
 	// Cache for rendered output
 	private cachedText?: string;
@@ -468,6 +511,7 @@ export class Markdown implements Component {
 		this.cachedText = undefined;
 		this.cachedWidth = undefined;
 		this.cachedLines = undefined;
+		this.activeSourceDocument = undefined;
 		this.markRevision();
 	}
 
@@ -501,12 +545,10 @@ export class Markdown implements Component {
 			return result;
 		}
 
-		// Replace tabs with 3 spaces for consistent rendering
-		const normalizedText = text.replace(/\t/g, "   ");
-		const normalizedContentKey = contentKey(normalizedText);
 		const styleKey = this.defaultTextStyle ? objectId(this.defaultTextStyle) : -1;
 		const renderKey = [
-			normalizedContentKey,
+			contentKey(this.text),
+			contentKey(text),
 			width,
 			contentWidth,
 			this.paddingX,
@@ -520,49 +562,71 @@ export class Markdown implements Component {
 			getCapabilities().images ?? "",
 			getCapabilities().hyperlinks ? 1 : 0,
 		].join("\x00");
-		const cachedRender = renderCache.get(renderKey);
-		if (cachedRender?.source === normalizedText) {
+		const selectedRenderCache = this.collectSources ? sourceRenderCache : renderCache;
+		const cachedRender = selectedRenderCache.get(renderKey);
+		if (cachedRender?.source === this.text && cachedRender.transformed === text) {
 			this.cachedText = this.text;
 			this.cachedWidth = width;
-			this.cachedLines = cachedRender.lines;
-			return cachedRender.lines;
+			this.cachedLines = this.ownSources(cachedRender.lines);
+			return this.cachedLines;
 		}
 
 		// Parse markdown to HTML-like tokens
-		const cachedParse = parseCache.get(normalizedContentKey);
+		const parseKey = contentKey(text);
+		const selectedParseCache = this.collectSources ? sourceParseCache : parseCache;
+		const cachedParse = selectedParseCache.get(parseKey);
 		let tokens: Token[];
-		if (cachedParse?.source === normalizedText) {
+		if (cachedParse?.source === text) {
 			tokens = cachedParse.tokens;
 		} else {
-			tokens = markdownParser.lexer(normalizedText);
+			tokens = this.collectSources
+				? lexWithSources(text, markdownParser.defaults)
+				: markdownParser.lexer(text.replace(/\t/g, "   "));
 			trimPartialClosingFences(tokens);
-			cacheSet(parseCache, normalizedContentKey, { source: normalizedText, tokens }, PARSE_CACHE_MAX);
+			cacheSet(
+				selectedParseCache,
+				parseKey,
+				{ source: text, tokens },
+				this.collectSources ? SOURCE_CACHE_MAX : PARSE_CACHE_MAX,
+			);
 		}
 
 		// Convert tokens to styled terminal output
+		this.activeSourceDocument = this.collectSources
+			? (tokens.map((token) => tokenSource(token)?.raw.document).find((document) => document) ?? {
+					text,
+					enclosures: [],
+				})
+			: undefined;
 		const renderedLines: string[] = [];
 
 		for (let i = 0; i < tokens.length; i++) {
 			const token = tokens[i];
 			const nextToken = tokens[i + 1];
 			const tokenLines = this.renderToken(token, contentWidth, nextToken?.type);
+			const offset = renderedLines.length;
 			for (const tokenLine of tokenLines) {
 				renderedLines.push(tokenLine);
 			}
+			copyLineSources(tokenLines, renderedLines, offset);
 		}
 
 		// Wrap lines (NO padding, NO background yet)
 		const wrappedLines: string[] = [];
-		for (const line of renderedLines) {
+		for (let row = 0; row < renderedLines.length; row++) {
+			const line = renderedLines[row];
+			const mapping = getLineSources(renderedLines)?.[row];
+			const offset = wrappedLines.length;
 			if (isImageLine(line)) {
 				wrappedLines.push(line);
 			} else {
-				for (const wrappedLine of wrapTextWithAnsi(line, contentWidth)) {
+				const fragments = this.wrapSource(line, contentWidth, mapping);
+				for (const wrappedLine of fragments) {
 					wrappedLines.push(wrappedLine);
 				}
+				copyLineSources(fragments, wrappedLines, offset);
 			}
 		}
-
 		// Add margins and background to each wrapped line
 		const leftMargin = " ".repeat(this.paddingX);
 		const rightMargin = " ".repeat(this.paddingX);
@@ -587,6 +651,8 @@ export class Markdown implements Component {
 			}
 		}
 
+		copyLineSources(wrappedLines, contentLines, 0, this.paddingX);
+
 		// Add top/bottom padding (empty lines)
 		const emptyLine = " ".repeat(width);
 		const emptyLines: string[] = [];
@@ -597,15 +663,140 @@ export class Markdown implements Component {
 
 		// Combine top padding, content, and bottom padding
 		const result = emptyLines.concat(contentLines, emptyLines);
+		copyLineSources(contentLines, result, this.paddingY);
+		const mapped = getLineSources(result);
+		const document = mapped?.find((line) => line)?.document;
+		if (document) {
+			setLineSources(
+				result,
+				result.map((_, row) => mapped?.[row] ?? { document, ranges: emptyRanges }),
+			);
+		}
+		if (text !== this.text) {
+			const transformedDocument = { text: this.text, enclosures: [] };
+			setLineSources(
+				result,
+				result.map(() => ({ document: transformedDocument, ranges: emptyRanges, renderedFallback: true })),
+			);
+		} else if (!this.collectSources) {
+			// Capture values, not this component. Old cached frames must retain their own source.
+			const sourceText = this.text;
+			const { paddingX, paddingY, theme, defaultTextStyle } = this;
+			const options = { ...this.options, transform: undefined };
+			const deferred: SourceDocument = {
+				text: sourceText,
+				enclosures: [],
+				resolveLines: () => {
+					const markdown = new Markdown(sourceText, paddingX, paddingY, theme, defaultTextStyle, options);
+					markdown.collectSources = true;
+					const sourceLines = markdown.render(width);
+					if (sourceLines.length !== result.length || sourceLines.some((line, row) => line !== result[row])) {
+						return undefined;
+					}
+					return getLineSources(sourceLines);
+				},
+			};
+			setLineSources(
+				result,
+				result.map((_, sourceRow) => ({
+					document: deferred,
+					ranges: emptyRanges,
+					sourceRow,
+				})),
+			);
+		}
 		flattenLines(result);
 
 		// Update cache
 		this.cachedText = this.text;
 		this.cachedWidth = width;
-		this.cachedLines = result;
-		cacheSet(renderCache, renderKey, { source: normalizedText, lines: result }, RENDER_CACHE_MAX);
+		this.cachedLines = this.ownSources(result);
+		cacheSet(
+			selectedRenderCache,
+			renderKey,
+			{ source: this.text, transformed: text, lines: result },
+			this.collectSources ? SOURCE_CACHE_MAX : RENDER_CACHE_MAX,
+		);
 
-		return result.length > 0 ? result : [""];
+		return this.cachedLines.length > 0 ? this.cachedLines : [""];
+	}
+
+	/** Shared render caches must not make two separate messages one source interval. */
+	private ownSources(lines: string[]): string[] {
+		const mapping = getLineSources(lines);
+		if (!mapping) return lines;
+		const original = mapping.find((line) => line)?.document;
+		if (!original) return lines;
+		const document = { ...original };
+		const result = [...lines];
+		setLineSources(
+			result,
+			mapping.map((line) => line && { ...line, document }),
+		);
+		return result;
+	}
+
+	private wrapSource(text: string, width: number, source?: SourceLine | null): string[] {
+		const mapping: SourceLine[] = [];
+		const lines = wrapTextWithAnsi(
+			text,
+			width,
+			source
+				? (start, end) => {
+						mapping.push({ ...source, ranges: sliceRanges(source.ranges, start, end) });
+					}
+				: undefined,
+		);
+		if (source === null)
+			setLineSources(
+				lines,
+				lines.map(() => null),
+			);
+		else if (source) setLineSources(lines, mapping);
+		return lines;
+	}
+
+	private enclose(token: Token, ranges: SourceRanges): void {
+		if (
+			![
+				"heading",
+				"strong",
+				"em",
+				"del",
+				"codespan",
+				"code",
+				"link",
+				"image",
+				"escape",
+				"latex_inline",
+				"latex_block",
+				"table",
+				"blockquote",
+			].includes(token.type)
+		)
+			return;
+		if (enclosedTokens.has(token)) return;
+		const source = tokenSource(token)?.raw;
+		if (!source) return;
+		const rawEnd =
+			token.type === "latex_block" ? source.text.trimEnd().length : source.text.replace(/\n+$/, "").length;
+		const start = rangeAt(source.ranges, 0)?.start;
+		const end = rangeAt(source.ranges, rawEnd - 1)?.end;
+		if (start === undefined || end === undefined) return;
+		let contentStart = Infinity;
+		let contentEnd = 0;
+		for (const { source: range } of ranges.spans) {
+			if (!range) continue;
+			contentStart = Math.min(contentStart, range.start);
+			contentEnd = Math.max(contentEnd, range.end);
+		}
+		if (contentStart === Infinity) return;
+		enclosedTokens.add(token);
+		source.document.enclosures.push({
+			start,
+			end,
+			content: { start: contentStart, end: contentEnd },
+		});
 	}
 
 	/**
@@ -740,6 +931,8 @@ export class Markdown implements Component {
 		styleContext?: InlineStyleContext,
 	): string[] {
 		const lines: string[] = [];
+		const inlineRanges: SourceRanges[] | undefined = this.collectSources ? [] : undefined;
+		const source = tokenSource(token);
 
 		switch (token.type) {
 			case "heading": {
@@ -761,8 +954,30 @@ export class Markdown implements Component {
 					stylePrefix: this.getStylePrefix(headingStyleFn),
 				};
 
-				const headingText = this.renderInlineTokens(token.tokens || [], headingStyleContext);
+				const headingText = this.renderInlineTokens(token.tokens || [], headingStyleContext, inlineRanges);
 				const styledHeading = headingLevel >= 3 ? headingStyleFn(headingPrefix) + headingText : headingText;
+				if (headingLevel >= 3 && inlineRanges) {
+					const prefix = /^( {0,3})(#{3,6})([ \t]*)/.exec(source?.raw.text ?? "");
+					if (source && prefix) {
+						const start = prefix[1].length;
+						const end = start + prefix[2].length;
+						const separatorStart = rangeAt(source.raw.ranges, end);
+						const separatorEnd = rangeAt(source.raw.ranges, end + prefix[3].length - 1);
+						inlineRanges.unshift(
+							concatRanges([
+								sliceRanges(source.raw.ranges, start, end),
+								repeatedRange(
+									prefix[3].length && separatorStart && separatorEnd
+										? { start: separatorStart.start, end: separatorEnd.end }
+										: undefined,
+									1,
+								),
+							]),
+						);
+					} else {
+						inlineRanges.unshift(repeatedRange(undefined, headingPrefix.length));
+					}
+				}
 				lines.push(styledHeading);
 				if (nextTokenType && nextTokenType !== "space") {
 					lines.push(""); // Add spacing after headings (unless space token follows)
@@ -771,7 +986,7 @@ export class Markdown implements Component {
 			}
 
 			case "paragraph": {
-				const paragraphText = this.renderInlineTokens(token.tokens || [], styleContext);
+				const paragraphText = this.renderInlineTokens(token.tokens || [], styleContext, inlineRanges);
 				lines.push(paragraphText);
 				// Don't add spacing if next token is space or list
 				if (nextTokenType && nextTokenType !== "list" && nextTokenType !== "space") {
@@ -784,6 +999,7 @@ export class Markdown implements Component {
 				if (isLatexToken(token)) {
 					const formula = this.options.renderLatex === false ? token.raw.trim() : latexToUnicode(token.text);
 					lines.push(styleContext ? styleContext.applyText(formula) : this.applyDefaultStyle(formula));
+					if (inlineRanges) inlineRanges.push(formulaRanges(token, stripTerminalSequences(lines[0])));
 					if (nextTokenType && nextTokenType !== "space") {
 						lines.push("");
 					}
@@ -791,12 +1007,63 @@ export class Markdown implements Component {
 				break;
 
 			case "text":
-				lines.push(this.renderInlineTokens([token], styleContext));
+				lines.push(this.renderInlineTokens([token], styleContext, inlineRanges));
 				break;
 
 			case "code": {
 				const indent = this.theme.codeBlockIndent ?? "  ";
 				this.renderCodeBlock(lines, token.text, token.lang, indent);
+				if (source?.text) {
+					const ranges: SourceLine[] = [];
+					let offset = 0;
+					const openingLength = /^[^\n]*/.exec(source.raw.text)?.[0].length ?? 0;
+					const openingStart = rangeAt(source.raw.ranges, 0);
+					const openingEnd = rangeAt(source.raw.ranges, openingLength - 1);
+					const open =
+						token.codeBlockStyle !== "indented" && openingStart && openingEnd
+							? { start: openingStart.start, end: openingEnd.end }
+							: undefined;
+					ranges.push({
+						document: source.raw.document,
+						ranges: repeatedRange(open, stripTerminalSequences(lines[0]).length),
+					});
+					const codeLines = token.text.split("\n");
+					for (let row = 1; row < lines.length - 1; row++) {
+						const codeLine = codeLines[row - 1] ?? "";
+						const rendered = stripTerminalSequences(lines[row]).slice(indent.length);
+						ranges.push({
+							document: source.raw.document,
+							ranges: concatRanges([
+								repeatedRange(undefined, indent.length),
+								rendered === codeLine
+									? sliceRanges(source.text.ranges, offset, offset + codeLine.length)
+									: repeatedRange(null, rendered.length),
+							]),
+						});
+						offset += codeLine.length + 1;
+					}
+					const marker = /^ {0,3}(`{3,}|~{3,})/.exec(source.raw.text)?.[1];
+					const closing = marker
+						? new RegExp(`\\n( {0,3}${marker[0]}{${marker.length},}[ \\t]*)\\n?$`).exec(source.raw.text)
+						: null;
+					const closeRanges = closing
+						? sliceRanges(
+								source.raw.ranges,
+								closing.index + (closing[0].startsWith("\n") ? 1 : 0),
+								source.raw.text.trimEnd().length,
+							)
+						: emptyRanges;
+					const closingStart = rangeAt(closeRanges, 0);
+					const closingEnd = rangeAt(closeRanges, closeRanges.length - 1);
+					const close =
+						closingStart && closingEnd ? { start: closingStart.start, end: closingEnd.end } : undefined;
+					ranges.push({
+						document: source.raw.document,
+						ranges: repeatedRange(close, stripTerminalSequences(lines[lines.length - 1]).length),
+					});
+					setLineSources(lines, ranges);
+					this.enclose(token, concatRanges(ranges.map((line) => line.ranges)));
+				}
 				if (nextTokenType && nextTokenType !== "space") {
 					lines.push(""); // Add spacing after code blocks (unless space token follows)
 				}
@@ -806,6 +1073,7 @@ export class Markdown implements Component {
 			case "list": {
 				const listLines = this.renderList(token as Tokens.List, 0, width, styleContext);
 				lines.push(...listLines);
+				copyLineSources(listLines, lines);
 				// Don't add spacing after lists if a space token follows
 				// (the space token will handle it)
 				break;
@@ -814,6 +1082,7 @@ export class Markdown implements Component {
 			case "table": {
 				const tableLines = this.renderTable(token as Tokens.Table, width, nextTokenType, styleContext);
 				lines.push(...tableLines);
+				copyLineSources(tableLines, lines);
 				break;
 			}
 
@@ -843,9 +1112,15 @@ export class Markdown implements Component {
 				for (let i = 0; i < quoteTokens.length; i++) {
 					const quoteToken = quoteTokens[i];
 					const nextQuoteToken = quoteTokens[i + 1];
-					renderedQuoteLines.push(
-						...this.renderToken(quoteToken, quoteContentWidth, nextQuoteToken?.type, quoteInlineStyleContext),
+					const childLines = this.renderToken(
+						quoteToken,
+						quoteContentWidth,
+						nextQuoteToken?.type,
+						quoteInlineStyleContext,
 					);
+					const offset = renderedQuoteLines.length;
+					renderedQuoteLines.push(...childLines);
+					copyLineSources(childLines, renderedQuoteLines, offset);
 				}
 
 				// Avoid rendering an extra empty quote line before the outer blockquote spacing.
@@ -853,12 +1128,19 @@ export class Markdown implements Component {
 					renderedQuoteLines.pop();
 				}
 
-				for (const quoteLine of renderedQuoteLines) {
+				for (let row = 0; row < renderedQuoteLines.length; row++) {
+					const quoteLine = renderedQuoteLines[row];
 					const styledLine = applyQuoteStyle(quoteLine);
-					const wrappedLines = wrapTextWithAnsi(styledLine, quoteContentWidth);
+					const wrappedLines = this.wrapSource(
+						styledLine,
+						quoteContentWidth,
+						getLineSources(renderedQuoteLines)?.[row],
+					);
+					const offset = lines.length;
 					for (const wrappedLine of wrappedLines) {
 						lines.push(this.theme.quoteBorder("│ ") + wrappedLine);
 					}
+					copyLineSources(wrappedLines, lines, offset, 2);
 				}
 				if (nextTokenType && nextTokenType !== "space") {
 					lines.push(""); // Add spacing after blockquotes (unless space token follows)
@@ -868,6 +1150,17 @@ export class Markdown implements Component {
 
 			case "hr":
 				lines.push(this.theme.hr("─".repeat(Math.min(width, 80))));
+				if (inlineRanges && source) {
+					// Every rule glyph selects the authored rule, excluding block separators.
+					const first = rangeAt(source.raw.ranges, 0);
+					const last = rangeAt(source.raw.ranges, source.raw.text.trimEnd().length - 1);
+					inlineRanges.push(
+						repeatedRange(
+							first && last ? { start: first.start, end: last.end } : null,
+							stripTerminalSequences(lines[0]).length,
+						),
+					);
+				}
 				if (nextTokenType && nextTokenType !== "space") {
 					lines.push(""); // Add spacing after horizontal rules (unless space token follows)
 				}
@@ -892,6 +1185,33 @@ export class Markdown implements Component {
 				}
 		}
 
+		if (source && !getLineSources(lines)) {
+			const ranges = inlineRanges?.length
+				? concatRanges(inlineRanges)
+				: source.text?.text === stripTerminalSequences(lines[0] ?? "")
+					? source.text.ranges
+					: source.raw.text.trim() === stripTerminalSequences(lines[0] ?? "")
+						? sliceRanges(
+								source.raw.ranges,
+								source.raw.text.length - source.raw.text.trimStart().length,
+								source.raw.text.trimEnd().length,
+							)
+						: repeatedRange(null, stripTerminalSequences(lines[0] ?? "").length);
+			setLineSources(
+				lines,
+				lines.map((_, row) => ({ document: source.raw.document, ranges: row === 0 ? ranges : emptyRanges })),
+			);
+			this.enclose(token, ranges);
+		}
+		if (!source && this.activeSourceDocument) {
+			const document = this.activeSourceDocument;
+			setLineSources(
+				lines,
+				lines.map(() => ({ document, ranges: emptyRanges, unavailable: true })),
+			);
+		} else if (token.type === "blockquote") {
+			this.enclose(token, concatRanges((getLineSources(lines) ?? []).map((line) => line?.ranges ?? emptyRanges)));
+		}
 		return lines;
 	}
 
@@ -903,15 +1223,16 @@ export class Markdown implements Component {
 		tokens: Token[],
 		styleContext: InlineStyleContext,
 		styleFn: (text: string) => string,
+		ranges?: SourceRanges[],
 	): string {
 		const innerStyleContext: InlineStyleContext = {
 			applyText: (text: string) => styleContext.applyText(styleFn(text)),
 			stylePrefix: styleContext.stylePrefix + this.getStylePrefix(styleFn),
 		};
-		return styleFn(this.renderInlineTokens(tokens, innerStyleContext)) + styleContext.stylePrefix;
+		return styleFn(this.renderInlineTokens(tokens, innerStyleContext, ranges)) + styleContext.stylePrefix;
 	}
 
-	private renderInlineTokens(tokens: Token[], styleContext?: InlineStyleContext): string {
+	private renderInlineTokens(tokens: Token[], styleContext?: InlineStyleContext, ranges?: SourceRanges[]): string {
 		let result = "";
 		const resolvedStyleContext = styleContext ?? this.getDefaultInlineStyleContext();
 		const { applyText, stylePrefix } = resolvedStyleContext;
@@ -921,6 +1242,8 @@ export class Markdown implements Component {
 		};
 
 		for (const token of tokens) {
+			const start = result.length;
+			const childRanges: SourceRanges[] | undefined = ranges ? [] : undefined;
 			switch (token.type) {
 				case "escape":
 					result += applyTextWithNewlines(this.options.preserveBackslashEscapes ? token.raw : token.text);
@@ -929,7 +1252,7 @@ export class Markdown implements Component {
 				case "text":
 					// Text tokens in list items can have nested tokens for inline formatting
 					if (token.tokens && token.tokens.length > 0) {
-						result += this.renderInlineTokens(token.tokens, resolvedStyleContext);
+						result += this.renderInlineTokens(token.tokens, resolvedStyleContext, childRanges);
 					} else {
 						result += applyTextWithNewlines(token.text);
 					}
@@ -937,25 +1260,35 @@ export class Markdown implements Component {
 
 				case "paragraph":
 					// Paragraph tokens contain nested inline tokens
-					result += this.renderInlineTokens(token.tokens || [], resolvedStyleContext);
+					result += this.renderInlineTokens(token.tokens || [], resolvedStyleContext, childRanges);
 					break;
 
 				case "strong": {
 					if (this.theme.strong) {
-						result += this.renderEmphasisHook(token.tokens || [], resolvedStyleContext, this.theme.strong);
+						result += this.renderEmphasisHook(
+							token.tokens || [],
+							resolvedStyleContext,
+							this.theme.strong,
+							childRanges,
+						);
 						break;
 					}
-					const boldContent = this.renderInlineTokens(token.tokens || [], resolvedStyleContext);
+					const boldContent = this.renderInlineTokens(token.tokens || [], resolvedStyleContext, childRanges);
 					result += this.theme.bold(boldContent) + stylePrefix;
 					break;
 				}
 
 				case "em": {
 					if (this.theme.emphasis) {
-						result += this.renderEmphasisHook(token.tokens || [], resolvedStyleContext, this.theme.emphasis);
+						result += this.renderEmphasisHook(
+							token.tokens || [],
+							resolvedStyleContext,
+							this.theme.emphasis,
+							childRanges,
+						);
 						break;
 					}
-					const italicContent = this.renderInlineTokens(token.tokens || [], resolvedStyleContext);
+					const italicContent = this.renderInlineTokens(token.tokens || [], resolvedStyleContext, childRanges);
 					result += this.theme.italic(italicContent) + stylePrefix;
 					break;
 				}
@@ -979,7 +1312,11 @@ export class Markdown implements Component {
 					break;
 
 				case "link": {
-					const linkText = this.renderInlineTokens(token.tokens || [], resolvedStyleContext);
+					const linkText = this.renderInlineTokens(
+						token.tokens || [],
+						resolvedStyleContext,
+						token.autolink ? undefined : childRanges,
+					);
 					const styledLink = this.theme.link(this.theme.underline(linkText));
 					if (getCapabilities().hyperlinks) {
 						// OSC 8: render as a clickable hyperlink. The URL is not printed inline,
@@ -1006,10 +1343,15 @@ export class Markdown implements Component {
 
 				case "del": {
 					if (this.theme.deleted) {
-						result += this.renderEmphasisHook(token.tokens || [], resolvedStyleContext, this.theme.deleted);
+						result += this.renderEmphasisHook(
+							token.tokens || [],
+							resolvedStyleContext,
+							this.theme.deleted,
+							childRanges,
+						);
 						break;
 					}
-					const delContent = this.renderInlineTokens(token.tokens || [], resolvedStyleContext);
+					const delContent = this.renderInlineTokens(token.tokens || [], resolvedStyleContext, childRanges);
 					result += this.theme.strikethrough(delContent) + stylePrefix;
 					break;
 				}
@@ -1027,6 +1369,50 @@ export class Markdown implements Component {
 						result += applyTextWithNewlines(token.text);
 					}
 			}
+			if (!ranges) continue;
+			const rendered = stripTerminalSequences(result.slice(start));
+			const source = tokenSource(token);
+			let mapped = childRanges?.length
+				? concatRanges(childRanges)
+				: source?.text?.text === rendered
+					? source.text.ranges
+					: source?.raw.text === rendered
+						? source.raw.ranges
+						: repeatedRange(null, rendered.length);
+			if (token.type === "latex_inline" && isLatexToken(token)) {
+				mapped = formulaRanges(token, rendered);
+			} else if (token.type === "link" && token.autolink && source?.text && rendered.startsWith(source.text.text)) {
+				// Marked's synthetic label has no child lexer location. A visible
+				// suffix such as " (http://www.example.com)" is presentation only.
+				mapped = concatRanges([
+					source.text.ranges,
+					repeatedRange(undefined, rendered.length - source.text.ranges.length),
+				]);
+			} else if (token.type === "link" && mapped.length < rendered.length && source?.href) {
+				mapped = concatRanges([
+					mapped,
+					repeatedRange(undefined, 2),
+					source.href.ranges,
+					repeatedRange(undefined, 1),
+				]);
+			} else if (token.type === "link" && mapped.length < rendered.length && source) {
+				// A reference destination lives elsewhere; its visible suffix selects
+				// only this link's source, never the remote definition or intervening prose.
+				const first = rangeAt(source.raw.ranges, 0);
+				const last = rangeAt(source.raw.ranges, source.raw.ranges.length - 1);
+				mapped = concatRanges([
+					mapped,
+					repeatedRange(
+						first && last ? { start: first.start, end: last.end } : null,
+						rendered.length - mapped.length,
+					),
+				]);
+			}
+			if (mapped.length < rendered.length) {
+				mapped = concatRanges([mapped, repeatedRange(null, rendered.length - mapped.length)]);
+			}
+			ranges.push(mapped);
+			this.enclose(token, token.type === "link" ? (source?.text?.ranges ?? mapped) : mapped);
 		}
 
 		while (stylePrefix && result.endsWith(stylePrefix)) {
@@ -1074,16 +1460,45 @@ export class Markdown implements Component {
 
 			for (const itemToken of item.tokens) {
 				if (itemToken.type === "list") {
-					lines.push(...this.renderList(itemToken as Tokens.List, depth + 1, width, styleContext));
+					const childLines = this.renderList(itemToken as Tokens.List, depth + 1, width, styleContext);
+					const offset = lines.length;
+					lines.push(...childLines);
+					copyLineSources(childLines, lines, offset);
 					renderedAnyLine = true;
 					continue;
 				}
 
 				const itemLines = this.renderToken(itemToken, itemWidth, undefined, styleContext);
-				for (const line of itemLines) {
-					for (const wrappedLine of wrapTextWithAnsi(line, itemWidth)) {
+				for (let row = 0; row < itemLines.length; row++) {
+					const line = itemLines[row];
+					const fragments = this.wrapSource(line, itemWidth, getLineSources(itemLines)?.[row]);
+					for (let part = 0; part < fragments.length; part++) {
+						const wrappedLine = fragments[part];
 						const linePrefix = renderedAnyLine ? continuationPrefix : firstPrefix;
 						lines.push(linePrefix + wrappedLine);
+						const source = getLineSources(fragments)?.[part];
+						if (source) {
+							let markerRange: SourceRange | undefined;
+							if (!renderedAnyLine) {
+								const raw = tokenSource(item)?.raw;
+								const prefix = /^(?: {0,3})(?:[-+*]|\d{1,9}[.)])(?:[ \t]+|$)(?:\[[ xX]\][ \t]+)?/.exec(
+									raw?.text ?? "",
+								);
+								if (raw && prefix?.[0].length) {
+									const start = rangeAt(raw.ranges, 0)?.start;
+									const end = rangeAt(raw.ranges, prefix[0].length - 1)?.end;
+									if (start !== undefined && end !== undefined) markerRange = { start, end };
+								}
+							}
+							setLineSource(lines, lines.length - 1, {
+								...source,
+								ranges: concatRanges([
+									repeatedRange(undefined, indent.length),
+									repeatedRange(markerRange, visibleWidth(linePrefix) - indent.length),
+									source.ranges,
+								]),
+							});
+						}
 						renderedAnyLine = true;
 					}
 				}
@@ -1091,11 +1506,28 @@ export class Markdown implements Component {
 
 			if (!renderedAnyLine) {
 				lines.push(firstPrefix);
+				const raw = tokenSource(item)?.raw;
+				const start = raw && rangeAt(raw.ranges, 0)?.start;
+				const end = raw && rangeAt(raw.ranges, raw.ranges.length - 1)?.end;
+				if (raw && start !== undefined && end !== undefined) {
+					setLineSource(lines, lines.length - 1, {
+						document: raw.document,
+						ranges: repeatedRange({ start, end }, visibleWidth(firstPrefix)),
+					});
+				}
 			}
 
 			if (token.loose && !isLastItem) {
 				lines.push("");
 			}
+		}
+		const document = tokenSource(token)?.raw.document;
+		if (document) {
+			const mapping = getLineSources(lines);
+			setLineSources(
+				lines,
+				lines.map((_, row) => mapping?.[row] ?? { document, ranges: emptyRanges }),
+			);
 		}
 
 		return lines;
@@ -1122,13 +1554,16 @@ export class Markdown implements Component {
 	 * Delegates to wrapTextWithAnsi() so ANSI codes + long tokens are handled
 	 * consistently with the rest of the renderer.
 	 */
-	private wrapCellText(text: string, maxWidth: number, stylePrefix = ""): string[] {
-		const lines = wrapTextWithAnsi(text, Math.max(1, maxWidth));
-		return lines.map((line, index) => {
-			// Reset text styles after each non-final fragment, then restore the surrounding style before padding and borders.
-			const styleReset = index < lines.length - 1 ? "\x1b[22;23;24;25;27;28;29;39m" : "";
-			return `${line}${styleReset}${stylePrefix}`;
-		});
+	private wrapCellText(text: string, maxWidth: number, stylePrefix = "", source?: SourceLine): string[] {
+		const lines = this.wrapSource(text, Math.max(1, maxWidth), source);
+		return copyLineSources(
+			lines,
+			lines.map((line, index) => {
+				// Reset text styles after each non-final fragment, then restore the surrounding style before padding and borders.
+				const styleReset = index < lines.length - 1 ? "\x1b[22;23;24;25;27;28;29;39m" : "";
+				return `${line}${styleReset}${stylePrefix}`;
+			}),
+		);
 	}
 
 	/**
@@ -1142,6 +1577,7 @@ export class Markdown implements Component {
 		styleContext?: InlineStyleContext,
 	): string[] {
 		const lines: string[] = [];
+		const source = tokenSource(token)?.raw;
 		const numCols = token.header.length;
 
 		if (numCols === 0) {
@@ -1154,7 +1590,13 @@ export class Markdown implements Component {
 		const availableForCells = availableWidth - borderOverhead;
 		if (availableForCells < numCols) {
 			// Too narrow to render a stable table. Fall back to raw markdown.
-			const fallbackLines = token.raw ? wrapTextWithAnsi(token.raw, availableWidth) : [];
+			const fallbackLines = token.raw
+				? this.wrapSource(
+						token.raw,
+						availableWidth,
+						source && { document: source.document, ranges: sliceRanges(source.ranges, 0, token.raw.length) },
+					)
+				: [];
 			if (nextTokenType && nextTokenType !== "space") {
 				fallbackLines.push("");
 			}
@@ -1258,8 +1700,14 @@ export class Markdown implements Component {
 
 		// Render header with wrapping
 		const headerCellLines: string[][] = token.header.map((cell, i) => {
-			const text = this.renderInlineTokens(cell.tokens || [], styleContext);
-			return this.wrapCellText(text, columnWidths[i], styleContext?.stylePrefix);
+			const ranges: SourceRanges[] | undefined = this.collectSources ? [] : undefined;
+			const text = this.renderInlineTokens(cell.tokens || [], styleContext, ranges);
+			return this.wrapCellText(
+				text,
+				columnWidths[i],
+				styleContext?.stylePrefix,
+				source && { document: source.document, ranges: concatRanges(ranges ?? []) },
+			);
 		});
 		const headerLineCount = Math.max(...headerCellLines.map((c) => c.length));
 
@@ -1270,6 +1718,7 @@ export class Markdown implements Component {
 				return this.theme.bold(padded);
 			});
 			lines.push(`│ ${rowParts.join(" │ ")} │`);
+			if (source) this.mapTableRow(lines, headerCellLines, lineIdx, columnWidths, source.document);
 		}
 
 		// Render separator
@@ -1281,8 +1730,14 @@ export class Markdown implements Component {
 		for (let rowIndex = 0; rowIndex < token.rows.length; rowIndex++) {
 			const row = token.rows[rowIndex];
 			const rowCellLines: string[][] = row.map((cell, i) => {
-				const text = this.renderInlineTokens(cell.tokens || [], styleContext);
-				return this.wrapCellText(text, columnWidths[i], styleContext?.stylePrefix);
+				const ranges: SourceRanges[] | undefined = this.collectSources ? [] : undefined;
+				const text = this.renderInlineTokens(cell.tokens || [], styleContext, ranges);
+				return this.wrapCellText(
+					text,
+					columnWidths[i],
+					styleContext?.stylePrefix,
+					source && { document: source.document, ranges: concatRanges(ranges ?? []) },
+				);
 			});
 			const rowLineCount = Math.max(...rowCellLines.map((c) => c.length));
 
@@ -1292,6 +1747,7 @@ export class Markdown implements Component {
 					return text + " ".repeat(Math.max(0, columnWidths[colIdx] - visibleWidth(text)));
 				});
 				lines.push(`│ ${rowParts.join(" │ ")} │`);
+				if (source) this.mapTableRow(lines, rowCellLines, lineIdx, columnWidths, source.document);
 			}
 
 			if (rowIndex < token.rows.length - 1) {
@@ -1306,6 +1762,31 @@ export class Markdown implements Component {
 		if (nextTokenType && nextTokenType !== "space") {
 			lines.push(""); // Add spacing after table
 		}
+		if (source) {
+			const mapping = getLineSources(lines);
+			setLineSources(
+				lines,
+				lines.map((_, row) => mapping?.[row] ?? { document: source.document, ranges: emptyRanges }),
+			);
+			this.enclose(token, concatRanges((getLineSources(lines) ?? []).map((line) => line?.ranges ?? emptyRanges)));
+		}
 		return lines;
+	}
+
+	private mapTableRow(
+		lines: string[],
+		cells: string[][],
+		row: number,
+		widths: number[],
+		document: SourceLine["document"],
+	): void {
+		const ranges: SourceRanges[] = [repeatedRange(undefined, 2)];
+		for (let col = 0; col < cells.length; col++) {
+			const text = cells[col][row] ?? "";
+			const cell = getLineSources(cells[col])?.[row];
+			ranges.push(cell?.ranges ?? emptyRanges);
+			ranges.push(repeatedRange(undefined, Math.max(0, widths[col] - visibleWidth(text)) + 3));
+		}
+		setLineSource(lines, lines.length - 1, { document, ranges: concatRanges(ranges) });
 	}
 }

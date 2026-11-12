@@ -8,7 +8,7 @@ import { basename, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { getDefaultSessionDir } from "../../src/core/session-manager.ts";
 import { createInProcessRig } from "./rpc-inprocess-host-support.ts";
-import { devices, importedOnB, move } from "./rpc-move-session-support.ts";
+import { devices, importedOnB, landedOnB, move } from "./rpc-move-session-support.ts";
 
 describe("move_session import of an already accepted move (senpi#4004)", () => {
 	for (const revoked of [true, false]) {
@@ -27,9 +27,11 @@ describe("move_session import of an already accepted move (senpi#4004)", () => {
 				error: "move_fenced",
 			});
 			expect(existsSync(elsewhere)).toBe(false);
-			expect((await move(b, { op: "status", moveId })).data).toEqual(
-				revoked ? { state: "accepted", revoked: true } : { state: "accepted" },
-			);
+			expect((await move(b, { op: "status", moveId })).data).toEqual({
+				state: "accepted",
+				...(revoked ? { revoked: true } : {}),
+				...landedOnB(fixture, onB),
+			});
 
 			expect(await move(b, { op: "import", bundleDir, cwd: fixture.repoB, from: "device-a" })).toMatchObject({
 				success: true,

@@ -1,3 +1,21 @@
+## 2026-11-09 - Startup fillers are released only while the process still holds them (senpi#6282)
+
+### What changed
+
+- `packages/coding-agent/src/private-fd-startup-fillers.ts`: `releaseInheritedStartupFillers()` closes a listed filler slot only when, on POSIX, the startup pipe at `STARTUP_EVENT_FD` is still a socket and the slot is a socket that is not a copy of stdin, stdout, stderr or that pipe. Otherwise the slot is left open; the list is still stripped from the hand-off. Windows keeps the plain list.
+
+### Why
+
+- A compiled omo launch re-execs itself (the engine trust exec) after Bun marked every inherited descriptor from 4 up close-on-exec, so the host's first entry held a filler list for slots it no longer had while Bun's own copies of stdout and stderr sat at 5 and 6. Closing them by number made the internal bootstrap's first stderr write fail with `EBADF: bad file descriptor, write`, and the task host exited within seconds of every spawn (senpi#6282).
+
+### Why an extension could not handle it
+
+- The release runs in the startup stub every host and supervisor entry imports before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the new helpers above `releaseInheritedStartupFillers` and its loop condition.
+
 ## 2026-11-09 - Isolated CLI re-launch no longer replays the caller's eval entry mode (senpi#2952)
 
 ### What changed

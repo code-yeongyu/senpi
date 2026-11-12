@@ -12,6 +12,54 @@
 
 ### Removed
 
+## [2026.11.12] - 2026-11-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- A credential-pool block no longer erases what the same account already recorded: a rejected-token block keeps the account's model-scoped limits and last success, fields written by another senpi version survive, and a 401 on an account listed during another request's probe now lands on that token ([#5097](https://github.com/code-yeongyu/senpi/issues/5097)).
+- Dependencies with published security fixes are updated: undici 8.12.4, re2js 2.8.8, and (through the root overrides) qs, fast-uri, ip-address, express-rate-limit and body-parser ([#6395](https://github.com/code-yeongyu/senpi/pull/6395))
+- minimatch is updated to 11.0.5, which fixes a denial of service through globparts amplification ([#6397](https://github.com/code-yeongyu/senpi/pull/6397))
+- The engine's direct zod dependency is updated to 4.6.7, which fixes GHSA-mrhx-c7xc-m3w5 for that copy. A zod 3.x copy that other dependencies require is still affected and is tracked in #6399 ([#6402](https://github.com/code-yeongyu/senpi/pull/6402))
+- A `move_session` import that overlapped another import of the same move was refused `move_fenced` although the session had landed. It now answers the landed session, so a caller is no longer told that a move which landed did not ([#6416](https://github.com/code-yeongyu/senpi/pull/6416)).
+- When the extensions directory cannot be written, each default extension that could not be refreshed is now reported as an extension warning instead of being dropped silently (#6378).
+
+### Removed
+
+## [2026.11.11] - 2026-11-11
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Every built-in system prompt now tells the model the codebase is its own ("This codebase is yours: what it's for and how it's built are your call, and you'll keep building on it") and to change it the way its owner would: build on the code that already does the job instead of adding a parallel copy, fit new behavior into the structure that is there, leave no duplicate or dead code behind, and fix a defect in the code being changed instead of only noting it. This extends what [#6360](https://github.com/code-yeongyu/senpi/pull/6360) did for Fable 5.2 to every core. The "smallest correct change wins: no refactors beside a focused fix" rule and its rewordings ("no drive-by refactors", "diagnose and fix minimally", "the best change is usually the smallest correct change") are removed from every core so the two cannot cancel each other; the request still sets the scope, and a problem outside the code being changed is still a follow-up for the summary ([#6358](https://github.com/code-yeongyu/senpi/issues/6358)).
+- A rate-limited Opus 5.5 turn falls back to Fable 5.2 first, then Opus 5: Opus 5 shares the Opus quota, so stepping to it alone could not serve the turn ([#6389](https://github.com/code-yeongyu/senpi/pull/6389)).
+
+### Fixed
+
+- `senpi host gc` no longer removes a Windows endpoint whose socket secret is missing or invalid; it keeps it with reason `credential_unavailable` ([#4293](https://github.com/code-yeongyu/senpi/pull/4293))
+- Starting fresh from the handoff hint no longer prints a stale extension context error under the brief, and the `handoff_hint` `accepted` event is delivered by the replacement session; a cancelled switch still reports no acceptance ([#4051](https://github.com/code-yeongyu/senpi/issues/4051))
+- The `bun:sqlite` `Database` declaration moved out of `coding-agent` into the sqlite-bun package, where it is declared once; the package now type-checks standalone and no CLI behavior changes ([#6255](https://github.com/code-yeongyu/senpi/pull/6255))
+- Task hosts started from the compiled binary no longer exit with `EBADF: bad file descriptor, write` seconds after spawn: the startup stub releases only filler descriptors the process still holds ([#6285](https://github.com/code-yeongyu/senpi/pull/6285))
+- The engine starts when its agent dir's `extensions/` is read-only (a sandboxed child): seeding the default extension shims keeps the existing copies instead of exiting with `EROFS` ([#6298](https://github.com/code-yeongyu/senpi/pull/6298))
+- The relay's peer lane for agent messages is no longer refused by the session attachment check once attachment becomes mandatory (senpi#6305).
+- Wait for correlated host readiness before opening sessions in the RPC worker routing fixture, and compose its test deadlines from host startup, worker response and cleanup phases while preserving the runtime's opening deadline ([#6372](https://github.com/code-yeongyu/senpi/pull/6372)).
+- Claude subscription connection tests retain the redacted provider error and HTTP status, and an older test cannot mark a replacement credential failed. Legacy flat credentials and migrated placeholder `default` accounts no longer appear in subscription lists (desktop#6444, desktop#6445).
+- An account blocked for a usage limit serves again once the reset it named has passed, without a re-login: a fallback pinned by the limit returns to the original, and a hold no longer outlives a reset that passed while the machine slept ([#6384](https://github.com/code-yeongyu/senpi/pull/6384)).
+- A goal whose subscription accounts are all limited keeps waiting for the reset instead of blocking after eight refused wakes, re-checks a limit that named no reset, re-checks no sooner than the provider backoff and pauses after 48 re-checks of a limit that never clears, and resumes at once after a sign-in or an account block reset ([#6388](https://github.com/code-yeongyu/senpi/pull/6388)).
+- Reverted the Claude subscription diagnostics and legacy `default` cleanup from #6380. It also dropped a pooled credential's real first account named `default` and reshaped a freshly stored flat subscription credential. Both behave as before again until the fix is re-landed.
+- Claude subscription connection tests keep the redacted provider error and HTTP status, so a failed test says why it failed. A result for an older credential can no longer mark a replacement sign-in as failed (re-land of #6380 without its legacy `default` cleanup).
+- A goal that waited out a usage limit for eight or more wakes resumes on its own after its session restarts or a config reload, instead of waiting for a message ([#6403](https://github.com/code-yeongyu/senpi/pull/6403)).
+
+### Removed
+
 ## [2026.11.10-3] - 2026-11-10
 
 ### Breaking Changes

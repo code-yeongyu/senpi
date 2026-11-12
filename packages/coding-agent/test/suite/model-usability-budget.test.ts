@@ -103,14 +103,14 @@ describe("model usability budget", () => {
 			contextWindow: 16_000,
 			liveContextTokens: 0,
 			systemPromptTokens: 1,
-			activeToolSchemaTokens: 1_273,
+			activeToolSchemaTokens: 1_279,
 			outputReserveTokens: 4_000,
 			compactionReserveTokens: 16_384,
 			speculationLeadTokens: 8_192,
 			safetyMarginTokens: 8_192,
 			safetyMarginProfile: "default",
-			requiredTokens: 38_042,
-			shortfallTokens: 22_042,
+			requiredTokens: 38_048,
+			shortfallTokens: 22_048,
 			usable: false,
 		});
 	});
