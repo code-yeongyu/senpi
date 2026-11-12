@@ -115,14 +115,16 @@ export class MoveLedger {
 		return this.locked(moveId, async () => {
 			const record = await this.current(moveId);
 			const landing = await this.#file.landing(moveId);
+			const receiving = landsAt(record, landing, target);
+			// A move readied or already received for a folder is received only for that folder; one with none keeps this
+			// one. The folder itself is compared: two folders can map to the same landing file.
+			if ((record?.state === "ready" || receiving) && landing.cwd !== undefined && landing.cwd !== options.cwd)
+				throw new MoveFencedError(moveId, record, heldElsewhere(landing));
 			if (record?.state === "ready") {
-				// A move readied for a folder is received only for that folder; one readied for none keeps this one.
-				if (landing.cwd !== undefined && landing.cwd !== options.cwd)
-					throw new MoveFencedError(moveId, record, heldElsewhere(landing));
 				await this.#file.write(moveId, { state: "receiving" }, settledAt({ cwd: options.cwd }, target));
 				return;
 			}
-			if (landsAt(record, landing, target)) return;
+			if (receiving) return;
 			if (record?.state === "receiving" || record?.state === "accepted")
 				throw new MoveFencedError(moveId, record, landedElsewhere(record, landing));
 			if (record !== undefined) throw new MoveFencedError(moveId, record);
