@@ -76,6 +76,7 @@ describe("multi-session RPC protocol info", () => {
 					"move_session_identity", // senpi#6435: a session's recorded repository, read without a release.
 					"move_session_prepare_repository", // senpi#6435: prepare checks the folder's repository.
 					"move_session_status_landed_path", // senpi#6436: where an accepted move landed.
+					"move_session_status_writable", // senpi#6473: whether the landed copy can still be written.
 					"move_session_status_landing",
 					"session_relocation",
 					"session_context",

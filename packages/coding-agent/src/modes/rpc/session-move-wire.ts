@@ -41,6 +41,12 @@ export const MOVE_SESSION_PREPARE_REPOSITORY_CAPABILITY = "move_session_prepare_
  * into another folder, a `prepare` for another folder), answer where it landed (senpi#6436).
  */
 export const MOVE_SESSION_STATUS_LANDED_PATH_CAPABILITY = "move_session_status_landed_path";
+
+/**
+ * Capability: where an accepted move landed is answered with `writable`, and with `sealed_by` when the copy there is
+ * read-only (senpi#6473).
+ */
+export const MOVE_SESSION_STATUS_WRITABLE_CAPABILITY = "move_session_status_writable";
 /**
  * Capability: `status` takes `landing`, the place the move would have landed, and answers from the session file there
  * before it answers from its record. A move that landed and whose record was lost then answers `accepted`.
@@ -139,10 +145,27 @@ export interface RpcMoveStatusLanding {
 }
 
 /**
- * Where an accepted move landed: the session file its record names, with the id and the folder that file's header
- * names. `landed_file: "gone"` when no file is there or the file there no longer records the move.
+ * The move that made a landed copy read-only here, as the ownership rule reads it from the file: a later move that
+ * released the session (`moving` until it ends, then `moved`), or the landed move's own revoke (`moved`, with `target`
+ * the device the session went back to).
  */
-export type RpcMoveLanded = { session_path: string; session_id: string; cwd: string } | { landed_file: "gone" };
+export interface RpcMoveSealedBy {
+	move_id: string;
+	state: "moving" | "moved";
+	target: string;
+}
+
+/**
+ * Where an accepted move landed: the session file its record names, with the id and the folder that file's header
+ * names, and whether that copy can still be written here (`sealed_by` beside `writable: false`, senpi#6473).
+ * `landed_file: "gone"` when no file is there or the file there no longer records the move.
+ */
+export type RpcMoveLanded =
+	| ({ session_path: string; session_id: string; cwd: string } & (
+			| { writable: true }
+			| { writable: false; sealed_by: RpcMoveSealedBy }
+	  ))
+	| { landed_file: "gone" };
 
 /**
  * The receiver's record of a move as a client sees it; `expires_at` while it waits for the bundle, and where it landed
