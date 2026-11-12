@@ -235,6 +235,17 @@ const SURFACE_AND_ACCOUNT_SCHEMAS = {
 		content: Str,
 		ifEtag: Type.Union([Id, Type.Null()]),
 	}),
+	get_project_mcp_servers: session("get_project_mcp_servers", {}),
+	set_project_mcp_servers: session("set_project_mcp_servers", {
+		patch: Type.Unknown(),
+		ifEtag: Type.Union([Id, Type.Null()]),
+	}),
+	read_project_skill_file: session("read_project_skill_file", { skill: Id }),
+	write_project_skill_file: session("write_project_skill_file", {
+		skill: Id,
+		content: Str,
+		ifEtag: Type.Union([Id, Type.Null()]),
+	}),
 	extension_request: session("extension_request", { name: Id, data: Opt(Type.Unknown()) }),
 	"eval_cells.list": session("eval_cells.list", {}),
 	"eval_cells.peek": session("eval_cells.peek", { cellId: Id, tailBytes: OptNum }),

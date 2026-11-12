@@ -26,6 +26,8 @@ const observations: ReadonlySet<string> = new Set([
 	"get_project_trust",
 	"get_project_settings",
 	"read_project_file",
+	"get_project_mcp_servers",
+	"read_project_skill_file",
 	"get_media",
 	"get_auth_providers",
 	"get_provider_accounts",

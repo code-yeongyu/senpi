@@ -69,6 +69,18 @@ export const RPC_ERROR_PROJECT_FILE_TOO_LARGE = "project_file_too_large";
 /** `write_project_file` whose write failed (permissions, disk). */
 export const RPC_ERROR_PROJECT_FILE_WRITE_FAILED = "project_file_write_failed";
 
+/** A folder-file write over RPC the machine's own permission decision for that edit refused (senpi#6485). */
+export const RPC_ERROR_PROJECT_FILE_PERMISSION_DENIED = "project_file_permission_denied";
+
+/** `set_project_mcp_servers` while the stored project MCP file does not parse; `errorData.parseError` says why. */
+export const RPC_ERROR_PROJECT_MCP_CONFIG_UNPARSEABLE = "project_mcp_config_unparseable";
+
+/** `set_project_mcp_servers` whose merged file the engine's MCP config loader would reject. */
+export const RPC_ERROR_PROJECT_MCP_CONFIG_INVALID = "project_mcp_config_invalid";
+
+/** `read_project_skill_file`/`write_project_skill_file` for a skill the engine does not list for the session. */
+export const RPC_ERROR_PROJECT_SKILL_NOT_LISTED = "project_skill_not_listed";
+
 /** `open_session.context` broke a documented cap (key count, key syntax, value or total bytes). */
 export const RPC_ERROR_INVALID_SESSION_CONTEXT = "invalid_session_context";
 
@@ -226,6 +238,10 @@ export type RpcErrorCode =
 	| typeof RPC_ERROR_PROJECT_FILE_CONFLICT
 	| typeof RPC_ERROR_PROJECT_FILE_TOO_LARGE
 	| typeof RPC_ERROR_PROJECT_FILE_WRITE_FAILED
+	| typeof RPC_ERROR_PROJECT_FILE_PERMISSION_DENIED
+	| typeof RPC_ERROR_PROJECT_MCP_CONFIG_UNPARSEABLE
+	| typeof RPC_ERROR_PROJECT_MCP_CONFIG_INVALID
+	| typeof RPC_ERROR_PROJECT_SKILL_NOT_LISTED
 	| typeof RPC_ERROR_INVALID_SESSION_CONTEXT
 	| typeof RPC_ERROR_INVALID_SUBSCRIPTION
 	| typeof RPC_ERROR_UNKNOWN_SUBSCRIPTION

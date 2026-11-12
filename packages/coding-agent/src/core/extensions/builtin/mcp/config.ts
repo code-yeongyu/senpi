@@ -104,10 +104,27 @@ function readTrustedConfig(
 	env: Record<string, string | undefined>,
 	raw = readConfigJson(path, true).raw,
 ): RawConfig | undefined {
+	const config = resolveTrustedConfig(raw, path, env);
+	rememberMcpReferenceOrigins(config?.mcpServers, path);
+	return config;
+}
+
+/**
+ * Throws the `McpConfigValidationError` loading `raw` as the trusted file at `path` would throw, without loading it:
+ * a candidate is checked with the loader's own steps before anything writes it (senpi#6485).
+ */
+export function assertLoadableMcpConfig(raw: unknown, path: string, env = trustedEnv): void {
+	resolveTrustedConfig(raw, path, env);
+}
+
+function resolveTrustedConfig(
+	raw: unknown,
+	path: string,
+	env: Record<string, string | undefined>,
+): RawConfig | undefined {
 	const config = interpolateConfig(validateRaw(raw, path), env);
 	const endpointError = config ? getServerEndpointValidationError(config) : undefined;
 	if (endpointError) throw new McpConfigValidationError(`Invalid MCP config at ${endpointError}`);
-	rememberMcpReferenceOrigins(config?.mcpServers, path);
 	return config;
 }
 

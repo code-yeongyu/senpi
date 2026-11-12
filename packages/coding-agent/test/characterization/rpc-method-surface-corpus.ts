@@ -146,6 +146,13 @@ export const TODAY: { readonly [M in RpcCommand["type"]]: string } = {
 	read_project_file: '{"path":"AGENTS.md"} => ok{content,cwd,etag,exists,path,projectTrusted}',
 	write_project_file:
 		'{"path":"x14.ts","content":"x","ifEtag":null} => no:project_file_not_allowed:x14.ts is not an instruction file inside this workspace (AGENTS.md, CLAUDE.md or .omo/rules/**).',
+	get_project_mcp_servers: "ok{cwd,etag,exists,mcpServers,parseError,path,projectTrusted}",
+	set_project_mcp_servers:
+		'{"patch":"x14","ifEtag":null} => no:invalid_argument:set_project_mcp_servers requires an object \'patch\' (server name to entry, or null to remove) and \'ifEtag\' (the etag read, or null to create).',
+	read_project_skill_file:
+		'{"skill":"x14-none"} => no:project_skill_not_listed:No skill named "x14-none" is listed for this session.',
+	write_project_skill_file:
+		'{"skill":"x14-none","content":"x","ifEtag":null} => no:project_skill_not_listed:No skill named "x14-none" is listed for this session.',
 	extension_request: '{"name":"x14-none"} => no::Unknown extension RPC request: x14-none',
 	"eval_cells.list": "ok:object",
 	"eval_cells.peek": '{"cellId":"$NO"} => no:eval_cell_not_found:Unknown detached eval cell "<uuid>"',

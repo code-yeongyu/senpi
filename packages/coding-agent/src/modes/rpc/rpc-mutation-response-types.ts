@@ -16,6 +16,8 @@ import type { ApiKeyVerification } from "../../core/verify-api-key.ts";
 
 import type { ClientMessageAdmission } from "./client-admission-record.ts";
 import type { RpcProjectFile } from "./project-file-commands.ts";
+import type { RpcProjectMcpServers } from "./project-mcp-commands.ts";
+import type { RpcProjectSkillFile } from "./project-skill-commands.ts";
 import type { RpcProjectSettings, RpcProjectTrust } from "./project-workspace-commands.ts";
 import type { RpcAbortQuiesce, RpcEffectAnswer, RpcQueuedInputChange } from "./rpc-effect-answer-types.ts";
 import type { EditAssistantMessageResult, EditUserMessageResult, NavigateTreeResult } from "./rpc-result-types.ts";
@@ -158,6 +160,8 @@ export type RpcMutationResponse =
 	| { id?: string; type: "response"; command: "set_project_trust"; success: true; data: RpcProjectTrust }
 	| { id?: string; type: "response"; command: "set_project_setting"; success: true; data: RpcProjectSettings }
 	| { id?: string; type: "response"; command: "write_project_file"; success: true; data: RpcProjectFile }
+	| { id?: string; type: "response"; command: "set_project_mcp_servers"; success: true; data: RpcProjectMcpServers }
+	| { id?: string; type: "response"; command: "write_project_skill_file"; success: true; data: RpcProjectSkillFile }
 	| { id?: string; type: "response"; command: "set_follow_up_mode"; success: true }
 	| { id?: string; type: "response"; command: "compact"; success: true; data: CompactionResult }
 	| { id?: string; type: "response"; command: "set_auto_compaction"; success: true }
