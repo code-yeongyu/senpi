@@ -242,8 +242,10 @@ export async function listRotationSlots(
 							lane: "stored" as const,
 							pinned: (credential as PooledCredential).pinned === slot.name,
 							storedRevision,
+							// A 401 on this slot after the lease ends is a verdict on this token (senpi#5097).
+							materialRevision,
 						},
-						(state) => state?.credentialRevision === storedRevision,
+						(state) => applicableStoredState(state, revisions) !== undefined,
 						now(),
 					);
 					if (inFlight !== undefined) slots.push(inFlight);
