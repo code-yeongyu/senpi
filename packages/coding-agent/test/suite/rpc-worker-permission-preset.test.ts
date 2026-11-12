@@ -121,12 +121,12 @@ it("moves a live worker session to the permission preset a later attach names, k
 				sessionPath,
 				...(preset === undefined ? {} : { permissionPreset: preset }),
 			});
-		expect((await attach("ask")).data).toMatchObject({ sessionId, attached: true });
+		expect(await attach("ask")).toMatchObject({ success: true, data: { sessionId, attached: true } });
 		const strict = await runBash(first, sessionId);
 		expect(strict.asked).toBe(1);
 		expect(strict.output).not.toContain("permission-proof");
 
-		expect((await attach()).data).toMatchObject({ sessionId, attached: true });
+		expect(await attach()).toMatchObject({ success: true, data: { sessionId, attached: true } });
 		expect((await runBash(first, sessionId)).asked).toBe(1);
 
 		// An unknown preset: the same outcome as a session opened with it.
@@ -134,10 +134,10 @@ it("moves a live worker session to the permission preset a later attach names, k
 		const openOutcome = await runBash(first, String(misspelled.data?.sessionId));
 		expect(openOutcome.asked).toBe(0);
 		expect(openOutcome.output).toContain('Permission setup failed: Invalid --permission-preset "full-acess"');
-		expect((await attach("full-acess")).data).toMatchObject({ sessionId, attached: true });
+		expect(await attach("full-acess")).toMatchObject({ success: true, data: { sessionId, attached: true } });
 		expect(await runBash(first, sessionId)).toEqual(openOutcome);
 
-		expect((await attach("full-access")).data).toMatchObject({ sessionId, attached: true });
+		expect(await attach("full-access")).toMatchObject({ success: true, data: { sessionId, attached: true } });
 		expect(await runBash(first, sessionId)).toEqual({ asked: 0, output: "bash:permission-proof" });
 	} finally {
 		await host.dispose();

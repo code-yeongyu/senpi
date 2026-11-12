@@ -16,6 +16,7 @@ import { close } from "./session-router-close.ts";
 import type { RouterContext } from "./session-router-context.ts";
 import { code, detail, error } from "./session-router-errors.ts";
 import { sweepDrain } from "./session-router-occupancy.ts";
+import { openSessionFolder } from "./open-session-folder.ts";
 import { invalidSpawnedBy, validatedOpenProfile } from "./session-router-open-profile.ts";
 import { holdOpenConnection, type OpenReplyAs, ownOpen, publishOpen, replyOpen } from "./session-router-open-result.ts";
 import { closePark } from "./session-router-park.ts";
@@ -92,14 +93,17 @@ export async function open(
 		readonly park?: (opened: OpenRpcSession) => void;
 	},
 ): Promise<RpcResponse | undefined> {
-	const profile = validatedOpenProfile(host, command, options);
-	if ("type" in profile) return profile;
+	const validated = validatedOpenProfile(host, command, options);
+	if ("type" in validated) return validated;
 	let opened: OpenRpcSession | undefined;
 	const timer = startOpenTimer(`host-open:${command.id ?? "-"}`);
 	const assertSessionNotHeld = sessionHeldCheck(
 		(observedStarts) => host.registry.holderPids?.(observedStarts) ?? Promise.resolve([]),
 	);
 	try {
+		// An open that names no folder resumes a session file where its header says, not where this host runs
+		// (senpi#6427). Inside the try: a file it cannot read refuses the open, and that refusal is this open's answer.
+		const profile = { ...validated, cwd: await openSessionFolder(command, validated.cwd) };
 		await assertSessionNotHeld(command.sessionPath);
 		timer.mark("held_check");
 		options?.signal?.throwIfAborted();

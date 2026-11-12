@@ -970,8 +970,10 @@ export function flattenLines(lines: readonly string[]): void {
 	for (const line of lines) Number(line);
 }
 
-export function wrapTextWithAnsi(text: string, width: number): string[] {
+/** onLine receives each output line's consumed UTF-16 interval in the ANSI-stripped input. */
+export function wrapTextWithAnsi(text: string, width: number, onLine?: (start: number, end: number) => void): string[] {
 	if (!text) {
+		onLine?.(0, 0);
 		return [""];
 	}
 
@@ -980,28 +982,38 @@ export function wrapTextWithAnsi(text: string, width: number): string[] {
 	const inputLines = text.split(/\r\n|\r|\n/);
 	const result: string[] = [];
 	const tracker = new AnsiCodeTracker();
+	let sourceOffset = 0;
+	const separators = onLine ? (text.match(/\r\n|\r|\n/g) ?? []) : [];
 
-	for (const inputLine of inputLines) {
+	for (let index = 0; index < inputLines.length; index++) {
+		const inputLine = inputLines[index];
 		// Prepend active ANSI codes from previous lines (except for first line)
 		const prefix = result.length > 0 ? tracker.getActiveCodes() : "";
-		const wrappedLines = wrapSingleLine(prefix + inputLine, width);
+		const wrappedLines = wrapSingleLine(
+			prefix + inputLine,
+			width,
+			onLine && ((start, end) => onLine(sourceOffset + start, sourceOffset + end)),
+		);
 		for (const wrappedLine of wrappedLines) {
 			result.push(wrappedLine);
 		}
 		// Update tracker with codes from this line for next iteration
 		updateTrackerFromText(inputLine, tracker);
+		if (onLine) sourceOffset += stripTerminalSequences(inputLine).length + (separators[index]?.length ?? 0);
 	}
 
 	return result.length > 0 ? result : [""];
 }
 
-function wrapSingleLine(line: string, width: number): string[] {
+function wrapSingleLine(line: string, width: number, onLine?: (start: number, end: number) => void): string[] {
 	if (!line) {
+		onLine?.(0, 0);
 		return [""];
 	}
 
 	const visibleLength = visibleWidth(line);
 	if (visibleLength <= width) {
+		onLine?.(0, stripTerminalSequences(line).length);
 		return [line];
 	}
 
@@ -1011,8 +1023,15 @@ function wrapSingleLine(line: string, width: number): string[] {
 
 	let currentLine = "";
 	let currentVisibleLength = 0;
+	let sourceOffset = 0;
+	let lineStart = 0;
+	const emit = (text: string): void => {
+		onLine?.(lineStart, lineStart + stripTerminalSequences(text.trimEnd()).length);
+	};
 
 	for (const token of tokens) {
+		const tokenStart = sourceOffset;
+		if (onLine) sourceOffset += stripTerminalSequences(token).length;
 		const tokenVisibleLength = visibleWidth(token);
 		const isWhitespace = token.trim() === "";
 
@@ -1025,12 +1044,23 @@ function wrapSingleLine(line: string, width: number): string[] {
 					currentLine += lineEndReset;
 				}
 				wrapped.push(currentLine);
+				emit(currentLine);
 				currentLine = "";
 				currentVisibleLength = 0;
 			}
 
 			// Break long token - breakLongWord handles its own resets
-			const broken = breakLongWord(token, width, tracker);
+			const broken = breakLongWord(
+				token,
+				width,
+				tracker,
+				onLine &&
+					((start, end) => {
+						onLine(tokenStart + start, tokenStart + end);
+					}),
+			);
+			// The final fragment remains in currentLine and is emitted with the next token.
+			if (onLine) lineStart = sourceOffset - stripTerminalSequences(broken[broken.length - 1]).length;
 			for (let i = 0; i < broken.length - 1; i++) {
 				wrapped.push(broken[i]!);
 			}
@@ -1050,13 +1080,16 @@ function wrapSingleLine(line: string, width: number): string[] {
 				lineToWrap += lineEndReset;
 			}
 			wrapped.push(lineToWrap);
+			emit(lineToWrap);
 			if (isWhitespace) {
 				// Don't start new line with whitespace
 				currentLine = tracker.getActiveCodes();
 				currentVisibleLength = 0;
+				lineStart = sourceOffset;
 			} else {
 				currentLine = tracker.getActiveCodes() + token;
 				currentVisibleLength = tokenVisibleLength;
+				lineStart = tokenStart;
 			}
 		} else {
 			// Add to current line
@@ -1070,6 +1103,7 @@ function wrapSingleLine(line: string, width: number): string[] {
 	if (currentLine) {
 		// No reset at end of final line - let caller handle it
 		wrapped.push(currentLine);
+		emit(currentLine);
 	}
 
 	// Trailing whitespace can cause lines to exceed the requested width
@@ -1085,10 +1119,17 @@ export function isWhitespaceChar(char: string): boolean {
 	return /\s/.test(char);
 }
 
-function breakLongWord(word: string, width: number, tracker: AnsiCodeTracker): string[] {
+function breakLongWord(
+	word: string,
+	width: number,
+	tracker: AnsiCodeTracker,
+	onLine?: (start: number, end: number) => void,
+): string[] {
 	const lines: string[] = [];
 	let currentLine = tracker.getActiveCodes();
 	let currentWidth = 0;
+	let sourceOffset = 0;
+	let lineStart = 0;
 
 	// First, separate ANSI codes from visible content
 	// We need to handle ANSI codes specially since they're not graphemes
@@ -1138,12 +1179,15 @@ function breakLongWord(word: string, width: number, tracker: AnsiCodeTracker): s
 				currentLine += lineEndReset;
 			}
 			lines.push(currentLine);
+			onLine?.(lineStart, sourceOffset);
+			lineStart = sourceOffset;
 			currentLine = tracker.getActiveCodes();
 			currentWidth = 0;
 		}
 
 		currentLine += grapheme;
 		currentWidth += graphemeWidth;
+		sourceOffset += grapheme.length;
 	}
 
 	if (currentLine) {
