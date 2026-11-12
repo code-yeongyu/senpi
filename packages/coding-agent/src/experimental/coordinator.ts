@@ -12,7 +12,12 @@ import {
 } from "./process.ts";
 
 export const COORDINATOR_PROTOCOL_VERSION = 3;
-const COORDINATOR_START_TIMEOUT_MS = 10_000;
+/**
+ * A coordinator this server started gets this long to accept on its control socket while it is alive; the wait ends at
+ * once when it accepts or exits. Measured on the monotonic clock: a cold start under host load can exceed 10 s
+ * (senpi#6487), and a system clock step must not end the wait.
+ */
+const COORDINATOR_STARTUP_HANG_MS = 120_000;
 const COORDINATOR_RETRY_MS = 10;
 
 const CoordinatorMessageSchema = Type.Union([
@@ -188,12 +193,12 @@ export async function ensureCoordinator(publicPath: string, controlPath: string)
 	const existing = await tryConnect(controlPath);
 	if (existing) return { close: () => existing.destroy() };
 	const child = spawnInternalProcess("coordinator", [publicPath, controlPath]);
-	const deadline = Date.now() + COORDINATOR_START_TIMEOUT_MS;
+	const deadline = performance.now() + COORDINATOR_STARTUP_HANG_MS;
 	while (true) {
 		const socket = await tryConnect(controlPath);
 		if (socket) return { close: () => socket.destroy() };
 		if (child.exitCode !== null || child.signalCode !== null) throw new Error("Coordinator exited during startup");
-		if (Date.now() >= deadline) throw new Error("Timed out waiting for coordinator startup");
+		if (performance.now() >= deadline) throw new Error("Timed out waiting for coordinator startup");
 		await new Promise<void>((resolve) => setTimeout(resolve, COORDINATOR_RETRY_MS));
 	}
 }

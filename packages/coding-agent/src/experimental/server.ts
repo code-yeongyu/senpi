@@ -144,6 +144,12 @@ const ACTIVATION_RETRY_MS = 10;
  * measured on the monotonic clock, so a system clock step cannot end the wait early either.
  */
 const ACTIVATION_STARTUP_HANG_MS = 120_000;
+/**
+ * How long an activator waits for another activator's lock. The holder may legitimately spend its whole startup wait
+ * on a slow cold start, so this outlasts that bound; measured on the monotonic clock like the startup wait.
+ */
+const ACTIVATION_LOCK_WAIT_MS = ACTIVATION_STARTUP_HANG_MS + ACTIVATION_TIMEOUT_MS;
+const ACTIVATION_LOCK_RETRY_MS = 25;
 
 export interface ActivatedServer {
 	readonly client: Client;
@@ -220,18 +226,22 @@ export async function acquireServerActivation(
 	directory: string,
 	serverId: ServerId,
 ): Promise<Pick<HeldFileLock, "release" | "assertHeld">> {
-	return lockWithLossHandling(join(directory, `activation-${serverId}`), {
-		realpath: false,
-		stale: ACTIVATION_TIMEOUT_MS * 2,
-		update: ACTIVATION_TIMEOUT_MS,
-		retries: {
-			retries: Math.ceil(ACTIVATION_TIMEOUT_MS / 25),
-			factor: 1,
-			minTimeout: 25,
-			maxTimeout: 25,
-			maxRetryTime: ACTIVATION_TIMEOUT_MS,
-		},
-	});
+	// One lock attempt at a time on the monotonic clock: the library's own retry budget is measured on the wall clock.
+	const deadline = performance.now() + ACTIVATION_LOCK_WAIT_MS;
+	while (true) {
+		try {
+			return await lockWithLossHandling(join(directory, `activation-${serverId}`), {
+				realpath: false,
+				stale: ACTIVATION_TIMEOUT_MS * 2,
+				update: ACTIVATION_TIMEOUT_MS,
+				retries: 0,
+			});
+		} catch (error) {
+			const held = error instanceof Error && "code" in error && error.code === "ELOCKED";
+			if (!held || performance.now() >= deadline) throw error;
+			await new Promise<void>((resolve) => setTimeout(resolve, ACTIVATION_LOCK_RETRY_MS));
+		}
+	}
 }
 
 async function connect(route: UnixServerRoute): Promise<Client | undefined> {

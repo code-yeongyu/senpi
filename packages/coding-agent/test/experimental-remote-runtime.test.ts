@@ -1,12 +1,15 @@
 import type { ChildProcess } from "node:child_process";
-import { existsSync, watch as watchDirectory } from "node:fs";
+import nodeFs, { existsSync, watch as watchDirectory } from "node:fs";
 import { lstat, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { syncBuiltinESMExports } from "node:module";
+import nodeNet, { type Socket } from "node:net";
 import { fileURLToPath } from "node:url";
 import { type Context, createFacetHost, defineFacet, defineService } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { Client, ServerError as ClientServerError } from "@earendil-works/pi-client";
 import { createUnixTransportFactory } from "@earendil-works/pi-client/unix";
+import { isServerId } from "@earendil-works/pi-protocol";
 import { Server } from "@earendil-works/pi-server";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ExampleFacetService } from "../examples/plugins/pi-example-plugin/src/contract.ts";
@@ -14,7 +17,7 @@ import { runClient } from "../src/experimental/client.ts";
 import { activateBuiltinClientServices, openClientRuntime } from "../src/experimental/client-runtime.ts";
 import { createPresentationFacetLoaders } from "../src/experimental/plugins/bundled.ts";
 import * as processRuntime from "../src/experimental/process.ts";
-import { type RunningServer, startServer } from "../src/experimental/server.ts";
+import { acquireServerActivation, type RunningServer, startServer } from "../src/experimental/server.ts";
 import { AgentController } from "../src/experimental/services/agent-controller.ts";
 import { createSessionServiceSource, type SessionAttachmentState } from "../src/experimental/services/connection.ts";
 import { Models } from "../src/experimental/services/models.ts";
@@ -28,6 +31,7 @@ import {
 	readExperimentalSessionState,
 } from "./experimental-session-support.ts";
 import { HOLD_SERVER_DISCONNECT_ENV } from "./fixtures/faux-session-worker.ts";
+import { HELD_COORDINATOR_READY_FILE } from "./fixtures/held-coordinator-entry.ts";
 import { HELD_SERVER_READY_FILE } from "./fixtures/held-server-entry.ts";
 import { KeyedProbe } from "./fixtures/keyed-service.ts";
 
@@ -36,6 +40,7 @@ const clients = new Set<Client>();
 const directories = new Set<string>();
 const fauxWorkerEntryUrl = new URL("fixtures/faux-session-worker.ts", import.meta.url);
 const heldServerEntryUrl = new URL("fixtures/held-server-entry.ts", import.meta.url);
+const heldCoordinatorEntryUrl = new URL("fixtures/held-coordinator-entry.ts", import.meta.url);
 const realSpawnInternalProcess = processRuntime.spawnInternalProcess;
 /**
  * Every internal process (server, coordinator, session worker) a test started. `server.close()` resolves when a
@@ -324,6 +329,107 @@ describe("experimental durable server composition", () => {
 		} finally {
 			await runtime.dispose();
 		}
+	});
+
+	test("starts a server whose coordinator accepts only after both clocks moved past 10 s", async ({
+		onTestFinished,
+	}) => {
+		const directory = await mkdtemp(join("/tmp", "pes-slow-coordinator-"));
+		directories.add(directory);
+		let coordinatorSpawned = (_child: ChildProcess): void => {};
+		const spawned = new Promise<ChildProcess>((resolve) => {
+			coordinatorSpawned = resolve;
+		});
+		const spawn = vi.spyOn(processRuntime, "spawnInternalProcess").mockImplementation((role, args, options) => {
+			const child = spawnTracked(
+				role,
+				args,
+				role === "coordinator" ? { ...options, entryUrl: heldCoordinatorEntryUrl } : options,
+			);
+			if (role === "coordinator") coordinatorSpawned(child);
+			return child;
+		});
+		onTestFinished(() => spawn.mockRestore());
+
+		// The startup wait connects first and reads its deadline after a failed attempt, so the coordinator is let go only
+		// once an attempt made on the moved clocks has failed: by the next turn the waiter has read the moved clock.
+		const controlPath = join(directory, "control-");
+		let failedAfterJump = (): void => {};
+		const attemptFailed = new Promise<void>((resolve) => {
+			failedAfterJump = resolve;
+		});
+		let jumped = false;
+		const realCreateConnection = nodeNet.createConnection;
+		const connections = vi.spyOn(nodeNet, "createConnection").mockImplementation(((...args: unknown[]) => {
+			const socket: Socket = Reflect.apply(realCreateConnection, nodeNet, args);
+			if (jumped && typeof args[0] === "string" && args[0].startsWith(controlPath)) {
+				socket.once("error", () => failedAfterJump());
+			}
+			return socket;
+		}) as typeof nodeNet.createConnection);
+		syncBuiltinESMExports();
+		onTestFinished(() => {
+			connections.mockRestore();
+			syncBuiltinESMExports();
+		});
+
+		const starting = startServer({ ...sessionWorkerModel, directory });
+		const coordinator = await spawned;
+		await fileAppears(join(directory, HELD_COORDINATOR_READY_FILE));
+		// The server measures its coordinator startup wait on performance.now(); both clocks move 11 s while the
+		// coordinator is held.
+		advanceClocks(11_000, onTestFinished);
+		jumped = true;
+		await Promise.race([attemptFailed.then(() => new Promise<void>((resolve) => setImmediate(resolve))), starting]);
+		coordinator.kill("SIGUSR2");
+
+		const runtime = await starting;
+		servers.add(runtime);
+		expect(processExists(coordinator.pid ?? -1)).toBe(true);
+	});
+
+	test("waits for another activator's lock after both clocks moved past 10 s", async ({ onTestFinished }) => {
+		const directory = await mkdtemp(join("/tmp", "pes-activation-lock-"));
+		directories.add(directory);
+		const serverId = "00000000-0000-4000-8000-000000000001";
+		if (!isServerId(serverId)) throw new Error("fixture server id is not a ServerId");
+		const holder = await acquireServerActivation(directory, serverId);
+		const lockPath = join(directory, `activation-${serverId}.lock`);
+		// proper-lockfile reports a held lock only after it stats the lock directory to judge staleness, so a stat that
+		// completed after the clocks moved means the waiter has made one full attempt on the moved clocks.
+		let statAfterJump = (): void => {};
+		const attempted = new Promise<void>((resolve) => {
+			statAfterJump = resolve;
+		});
+		let jumped = false;
+		const realStat = nodeFs.stat;
+		const stat = vi.spyOn(nodeFs, "stat").mockImplementation(((...args: unknown[]) => {
+			const callback = args.at(-1);
+			if (args[0] !== lockPath || !jumped || typeof callback !== "function") {
+				return Reflect.apply(realStat, nodeFs, args);
+			}
+			return Reflect.apply(realStat, nodeFs, [
+				...args.slice(0, -1),
+				(...results: unknown[]) => {
+					Reflect.apply(callback, undefined, results);
+					statAfterJump();
+				},
+			]);
+		}) as typeof nodeFs.stat);
+		syncBuiltinESMExports();
+		onTestFinished(() => {
+			stat.mockRestore();
+			syncBuiltinESMExports();
+		});
+
+		const waiting = acquireServerActivation(directory, serverId);
+		advanceClocks(11_000, onTestFinished);
+		jumped = true;
+		await attempted;
+		await holder.release();
+
+		const acquired = await waiting;
+		await acquired.release();
 	});
 
 	test("retires a cold server after its only Session attachment disconnects", async () => {
