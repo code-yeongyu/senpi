@@ -23,6 +23,22 @@ export class LockFileReplacedError extends Error {
 	}
 }
 
+/**
+ * Which file SQLite opened could not be proven (`busy` in sqlite-file-identity.ts), as while another connection of this
+ * process has the lock file open. Retried like contention until the deadline, then thrown; each attempt closes its
+ * connection first, so no lock is ever taken on a file that was not proven.
+ */
+export class LockFileBusyError extends Error {
+	readonly code = "ELOCK_FILE_BUSY" as const;
+	readonly lockPath: string;
+
+	constructor(lockPath: string, detail: string) {
+		super(`Lock file could not be proven yet: ${detail}`);
+		this.name = "LockFileBusyError";
+		this.lockPath = lockPath;
+	}
+}
+
 export class LegacyLockArtifactError extends Error {
 	readonly code = "ELEGACY_LOCK_ARTIFACT" as const;
 	readonly lockPath: string;
@@ -81,6 +97,7 @@ async function openChecked<T>(
 	const { openExpectedFile } = await import("./sqlite-file-identity.ts");
 	const checked = await openExpectedFile(lockPath, expectedFile, open, close);
 	if ("replaced" in checked) throw new LockFileReplacedError(lockPath, checked.replaced);
+	if ("busy" in checked) throw new LockFileBusyError(lockPath, checked.busy);
 	return checked.opened;
 }
 
@@ -123,7 +140,9 @@ export async function acquireOwnershipSafeLock(
 			// A directory can appear between the stat guard and the open; surface
 			// it as the typed legacy error instead of a raw SQLITE_CANTOPEN.
 			await rejectLegacyDirectory(lockPath);
-			if (!(error instanceof LockFileReplacedError) && isBusy(error) && Date.now() < deadline) {
+			const retryable =
+				error instanceof LockFileBusyError || (!(error instanceof LockFileReplacedError) && isBusy(error));
+			if (retryable && Date.now() < deadline) {
 				await new Promise((resolve) =>
 					setTimeout(resolve, Math.min(retries.minTimeout, Math.max(1, deadline - Date.now()))),
 				);

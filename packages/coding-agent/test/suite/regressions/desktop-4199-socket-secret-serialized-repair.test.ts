@@ -16,6 +16,8 @@ const opened = vi.hoisted(() => ({
 // Runs `before` and `after` around SQLite's own open of `path` (node:sqlite under vitest).
 const sqliteOpen = vi.hoisted(() => ({
 	around: undefined as { path: string; before: () => void; after: () => void } | undefined,
+	// Runs on every SQLite open of `path`, before it.
+	each: undefined as { path: string; run: () => void } | undefined,
 }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -47,6 +49,7 @@ vi.mock("node:sqlite", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("node:sqlite")>();
 	class DatabaseSync extends actual.DatabaseSync {
 		constructor(...args: ConstructorParameters<typeof actual.DatabaseSync>) {
+			if (sqliteOpen.each?.path === String(args[0])) sqliteOpen.each.run();
 			const hook = sqliteOpen.around?.path === String(args[0]) ? sqliteOpen.around : undefined;
 			if (hook) sqliteOpen.around = undefined;
 			hook?.before();
@@ -149,6 +152,7 @@ describe("socket-secret lock file identity", () => {
 	afterEach(async () => {
 		opened.afterClose = undefined;
 		sqliteOpen.around = undefined;
+		sqliteOpen.each = undefined;
 		for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 	});
 
@@ -173,28 +177,99 @@ describe("socket-secret lock file identity", () => {
 		expect(await readFile(secretPath)).toEqual(Buffer.alloc(8, 3));
 	});
 
+	/** Swaps `lockPath` for an impostor around SQLite's next open of it, and swaps it back once SQLite holds the impostor. */
+	function swapOnlyWhileSqliteOpens(root: string, lockPath: string): void {
+		const parked = join(root, "parked.lock");
+		const impostor = join(root, "impostor.lock");
+		sqliteOpen.around = {
+			path: lockPath,
+			before: () => {
+				writeFileSync(impostor, "", { mode: 0o600 });
+				renameSync(lockPath, parked);
+				renameSync(impostor, lockPath);
+			},
+			after: () => {
+				renameSync(lockPath, impostor);
+				renameSync(parked, lockPath);
+			},
+		};
+	}
+
 	// Only a descriptor check catches a swap that is undone once SQLite holds the other file; it needs a listable
 	// descriptor table.
 	it.skipIf(process.platform !== "linux" && process.platform !== "darwin")(
 		"refuses a repair when the lock path is swapped only while SQLite opens it",
 		async () => {
 			const { root, secretPath, lockPath } = await seeded();
-			const parked = join(root, "parked.lock");
-			const impostor = join(root, "impostor.lock");
-			sqliteOpen.around = {
-				path: lockPath,
-				before: () => {
-					writeFileSync(impostor, "", { mode: 0o600 });
-					renameSync(lockPath, parked);
-					renameSync(impostor, lockPath);
-				},
-				after: () => {
-					renameSync(lockPath, impostor);
-					renameSync(parked, lockPath);
-				},
-			};
+			swapOnlyWhileSqliteOpens(root, lockPath);
 			await expect(ensureSocketSecret(secretPath)).rejects.toMatchObject({ code: "ELOCK_FILE_REPLACED" });
 			expect(await readFile(secretPath)).toEqual(Buffer.alloc(8, 3));
+		},
+	);
+
+	// The validated lock file already open in this process (here: a holder of the lock) must not turn the descriptor
+	// check off: the swapped open is retried as busy instead of being taken, so the repair cannot run while the holder
+	// holds the real lock, and it repairs under the real lock once the holder releases.
+	it.skipIf(process.platform !== "linux" && process.platform !== "darwin")(
+		"a repair swapped only while SQLite opens it, while this process holds the lock, never runs under the impostor",
+		async () => {
+			const { root, secretPath, lockPath } = await seeded();
+			const release = await acquireOwnershipSafeLock(lockPath);
+			let repair: Promise<Buffer> | undefined;
+			try {
+				let opens = 0;
+				const reopened = new Promise<"retried">((resolve) => {
+					sqliteOpen.each = {
+						path: lockPath,
+						run: () => {
+							opens += 1;
+							if (opens === 2) resolve("retried");
+						},
+					};
+				});
+				swapOnlyWhileSqliteOpens(root, lockPath);
+				repair = ensureSocketSecret(secretPath);
+				// A taken impostor lock would let the repair finish while the holder still holds the real one, and never reopen.
+				const first = await Promise.race([repair.then(() => "repaired while held" as const), reopened]);
+				expect(first).toBe("retried");
+				expect(await readFile(secretPath)).toEqual(Buffer.alloc(8, 3));
+			} finally {
+				await release();
+			}
+			const repaired = await repair;
+			expect(repaired).toHaveLength(32);
+			expect(await readFile(secretPath)).toEqual(repaired);
+		},
+	);
+
+	// A contender in this process whose lock attempt was busy closes while the holder still has the lock, so SQLite parks
+	// its descriptor and the next open reuses it, adding none: that open is unproven and retried like contention, never
+	// taken and never refused, and the open after the holder's release adds a descriptor the listing proves.
+	it.skipIf(process.platform !== "linux" && process.platform !== "darwin")(
+		"a repair contending in-process for the lock waits through SQLite's reused descriptor and then repairs",
+		async () => {
+			const { secretPath, lockPath } = await seeded();
+			const release = await acquireOwnershipSafeLock(lockPath);
+			let opens = 0;
+			const reopenedTwice = new Promise<void>((resolve) => {
+				sqliteOpen.each = {
+					path: lockPath,
+					run: () => {
+						opens += 1;
+						if (opens === 3) resolve();
+					},
+				};
+			});
+			const repair = ensureSocketSecret(secretPath);
+			try {
+				// The third open starts only after the second, on the parked descriptor, was judged and retried.
+				await reopenedTwice;
+			} finally {
+				await release();
+			}
+			const repaired = await repair;
+			expect(repaired).toHaveLength(32);
+			expect(await readFile(secretPath)).toEqual(repaired);
 		},
 	);
 });

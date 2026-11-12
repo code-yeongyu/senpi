@@ -77,6 +77,9 @@ async function checked<T>(
 ): Promise<T> {
 	const result = await openExpectedFile(path, validated, open, close);
 	if ("replaced" in result) throw new EndpointReservationError("store_insecure", result.replaced);
+	// Not provable now (another connection of this process has the store open): store_busy, which retryWhenBusy retries
+	// and refuses at its bound, never an open of an unproven file.
+	if ("busy" in result) throw new EndpointReservationError("store_busy", result.busy);
 	return result.opened;
 }
 

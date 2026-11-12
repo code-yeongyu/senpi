@@ -77,6 +77,23 @@ describe("endpoint reservation store file", () => {
 		},
 	);
 
+	// A connection of this process that already holds the validated file open must not turn that check off: the swapped
+	// open is refused as store_busy (retryable, like contention), never opened.
+	it.skipIf(process.platform !== "linux" && process.platform !== "darwin")(
+		"refuses a store swapped only while SQLite opens it as busy while this process holds the store open",
+		async () => {
+			const { root, path } = await scratch();
+			const holder = await openEndpointReservationStore(path);
+			try {
+				swapWhileOpening(root, path, true);
+				await expect(openEndpointReservationStore(path)).rejects.toMatchObject({ reason: "store_busy" });
+				expect(await readFile(join(root, "impostor.db"))).toHaveLength(0);
+			} finally {
+				holder.close();
+			}
+		},
+	);
+
 	it.skipIf(process.platform === "win32")("refuses a rollback journal path that is a symlink", async () => {
 		const { root, path } = await scratch();
 		await writeFile(join(root, "victim"), "keep", { mode: 0o600 });
