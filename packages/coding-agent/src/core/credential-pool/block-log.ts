@@ -1,4 +1,5 @@
 import { appendFile, chmod, rename, stat } from "node:fs/promises";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import { redactSecrets } from "../sensitive-output.ts";
 import type { CredentialBlock, RateLimitResetSource } from "./classify.ts";
 
@@ -60,6 +61,23 @@ export function appendCredentialBlockLog(path: string, entry: CredentialBlockLog
 /** Resolves once every entry appended to `path` so far is on disk (or was dropped as unwritable). */
 export function flushCredentialBlockLog(path: string): Promise<void> {
 	return pendingWrites.get(path) ?? Promise.resolve();
+}
+
+/**
+ * Resolves once every entry appended so far to a log inside `directory` is on disk. A caller that removes a tree
+ * holding a pool state file (a test teardown, senpi#6488) joins here first: an append still running would
+ * otherwise create the log while the removal walks the tree, and the removal fails with ENOTEMPTY.
+ */
+export async function settledCredentialBlockLogsWithin(directory: string): Promise<void> {
+	await Promise.all(
+		[...pendingWrites.keys()].filter((path) => contains(directory, path)).map(flushCredentialBlockLog),
+	);
+}
+
+// Lexical containment, as the host gc pass registry: another spelling of the same directory is not joined.
+function contains(parent: string, child: string): boolean {
+	const path = relative(resolve(parent), resolve(child));
+	return path === "" || (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path));
 }
 
 async function writeEntry(path: string, entry: CredentialBlockLogEntry): Promise<void> {

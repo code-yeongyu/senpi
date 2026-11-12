@@ -8,10 +8,16 @@
  * `finally` or `afterAll`. So the join sits at the removal itself, for every test in this package:
  * `fs.promises.rm` (the `node:fs/promises` export too) waits for every overlapping pass first, and
  * `fs.rmSync`, which cannot wait, refuses while one is in flight.
+ *
+ * senpi#6488: the credential pool appends its block log without awaiting it (senpi#5992), next to the pool state
+ * file a test keeps in its temp tree. The same `fs.promises.rm` join waits for those appends inside the tree too,
+ * so a teardown that removes the tree with an awaited `rm` cannot race the log's creation. `fs.rmSync` is left
+ * as it is for them: an append that lands after a finished removal fails quietly and leaves nothing behind.
  */
 import fs, { type PathLike, type RmOptions } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { fileURLToPath } from "node:url";
+import { settledCredentialBlockLogsWithin } from "../../src/core/credential-pool/block-log.ts";
 import {
 	opportunisticHostGcWithin,
 	settledOpportunisticHostGcWithin,
@@ -43,7 +49,9 @@ function pathOf(path: PathLike): string {
 export function installHostScratchRemovalGuard(): void {
 	const registry: PassRegistry = {
 		within: opportunisticHostGcWithin,
-		settledWithin: settledOpportunisticHostGcWithin,
+		settledWithin: async (path) => {
+			await Promise.all([settledOpportunisticHostGcWithin(path), settledCredentialBlockLogsWithin(path)]);
+		},
 	};
 	const installed: unknown = Reflect.get(globalThis, HOLDER);
 	if (isRegistryHolder(installed)) {
