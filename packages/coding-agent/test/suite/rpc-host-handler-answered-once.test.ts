@@ -17,6 +17,8 @@ import { statusHost } from "./rpc-session-status-support.ts";
 const FAILURE = "the handler failed";
 const LIST: RpcCommand = { id: "r1", type: "list_sessions" };
 const ANSWER = { id: "r1", type: "response", command: "list_sessions", success: true, data: { sessions: [] } };
+const CLOSE: RpcCommand = { id: "c1", type: "close_session", sessionId: "s-closed" };
+const CLOSED = { id: "c1", type: "response", command: "close_session", success: true };
 
 afterEach(() => {
 	vi.restoreAllMocks();
@@ -147,6 +149,48 @@ describe("a host-level handler's throw is answered once (senpi#6483's review)", 
 		expect(values()).toEqual([]);
 		expect(stderr()).toContain(`senpi rpc connection peer failed: ${FAILURE}\n`);
 	}, 120_000);
+
+	it("#given a handler that answers a close itself and then throws #then its connection receives that one answer, the close's own", async () => {
+		await using host = await statusHost();
+		const peer = host.client("peer");
+		quietStderr();
+		const closesThenThrows = {
+			dispatch: async () => {
+				host.writer.enqueueClosedResponse("s-closed", CLOSED);
+				throw new Error(FAILURE);
+			},
+		};
+
+		await host.writer.withConnection("peer", () => answerLine(host.writer, "peer", closesThenThrows, CLOSE));
+		// This answer is queued behind everything the line above queued for the connection.
+		await peer.request({ type: "get_protocol_info" });
+
+		expect(peer.inbox.filter((record) => record.type === "response" && record.id === "c1")).toEqual([
+			expect.objectContaining({ command: "close_session", success: true, sessionId: "s-closed" }),
+		]);
+	}, 120_000);
+
+	it("#given a close reply taken for another connection under the same id while a command is handled #when that command's handler throws #then the command is still answered: a reply for one connection does not answer for another", async () => {
+		await using host = await statusHost();
+		host.client("other");
+		const peer = host.client("peer");
+		quietStderr();
+		const closesElsewhereThenThrows = {
+			dispatch: async () => {
+				host.writer.withConnection("other", () =>
+					host.writer.enqueueClosedResponse("s-closed", { ...CLOSED, id: "r1" }),
+				);
+				throw new Error(FAILURE);
+			},
+		};
+
+		await host.writer.withConnection("peer", () => answerLine(host.writer, "peer", closesElsewhereThenThrows, LIST));
+		await peer.request({ type: "get_protocol_info" });
+
+		expect(peer.inbox.filter((record) => record.type === "response" && record.id === "r1")).toEqual([
+			expect.objectContaining({ command: "list_sessions", success: false, errorCode: "internal_error" }),
+		]);
+	}, 120_000);
 });
 
 describe("which requests in flight were answered", () => {
@@ -174,5 +218,15 @@ describe("which requests in flight were answered", () => {
 
 		expect(first.answered()).toBe(true);
 		expect(second.answered()).toBe(false);
+	});
+
+	it("#given a watch that is done #when an answer under its id is taken afterwards #then the finished watch is not told: the ledger no longer holds it", () => {
+		const answered = new AnsweredRequests();
+		const watch = answered.watch("peer", "r1");
+		watch.done();
+
+		answered.taken("peer", { id: "r1", type: "response" });
+
+		expect(watch.answered()).toBe(false);
 	});
 });

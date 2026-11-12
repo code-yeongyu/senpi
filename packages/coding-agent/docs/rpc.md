@@ -893,10 +893,12 @@ registry refusal) is answered with that code, as a session-scoped command alread
 the failure on stderr, as `senpi rpc connection <id> failed: <cause>` (or `senpi rpc stdio request failed: <cause>`).
 `internal_error` is a refusal like any other: a client that does not know the code reads `success: false`.
 
-A request gets one answer. A handler that had already answered under the request's `id` and then failed keeps that
-answer as the only one (a compact `open_session` that fails after it was accepted ends with its own refusal, which
-carries its `admissionId`), and a command sent without an `id` is owed no answer and gets none; the stderr line is
-written in both cases.
+A request gets one answer. The host answers a handler's failure only when no answer under the request's `id` was
+queued for that connection while its line was handled: a control answer (a compact `open_session` that fails after it
+was accepted ends with its own refusal, which carries its `admissionId`) or a `close_session` reply. A reply that a
+compact `open_session` or `subscribe_sessions` hands to its admission baseline is written later by the connection and
+is not seen that way; for it the one answer rests on the handler returning right after it hands the reply over
+(senpi#6561). A command sent without an `id` is owed no answer and gets none. The stderr line is written in every case.
 
 #### get_recovery_page
 

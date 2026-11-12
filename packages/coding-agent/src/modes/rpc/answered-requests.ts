@@ -2,9 +2,9 @@
  * Which requests in flight already had an answer taken for writing, so the one place that answers a handler's throw
  * (`answerLine`) does not give a request a second answer (senpi#6483's review).
  *
- * A request is watched from the dispatch of its line until that line is done, and no longer. The set therefore holds
- * the lines in flight and nothing else: it cannot grow on a long-lived connection, and an id that a later line uses
- * again on the same connection starts unanswered.
+ * A request is watched from the dispatch of its line until that line is done, and no longer. The ledger keeps the
+ * watches themselves and nothing else, so there is nothing a finished line can leave behind: it does not grow on a
+ * long-lived connection, and an id that a later line uses again on the same connection starts unanswered.
  */
 export interface AnswerWatch {
 	/** Whether the writer took a response under the watched id for the watched connection since the watch began. */
@@ -13,8 +13,13 @@ export interface AnswerWatch {
 	done(): void;
 }
 
+interface Watching {
+	readonly connection: string | undefined;
+	readonly id: string;
+	answered: boolean;
+}
+
 const UNWATCHED: AnswerWatch = { answered: () => false, done: () => {} };
-const keyOf = (connection: string | undefined, id: string): string => `${connection ?? ""}\u0000${id}`;
 
 function responseId(value: object): string | undefined {
 	if (!("type" in value) || value.type !== "response" || !("id" in value)) return undefined;
@@ -22,21 +27,17 @@ function responseId(value: object): string | undefined {
 }
 
 export class AnsweredRequests {
-	readonly #watching = new Map<string, Set<{ answered: boolean }>>();
+	readonly #watching = new Set<Watching>();
 
 	/** Watches one request. A request sent without an id is owed no answer and is not watched. */
 	watch(connection: string | undefined, id: string | undefined): AnswerWatch {
 		if (id === undefined) return UNWATCHED;
-		const key = keyOf(connection, id);
-		const watchers = this.#watching.get(key) ?? new Set();
-		const state = { answered: false };
-		watchers.add(state);
-		this.#watching.set(key, watchers);
+		const watching: Watching = { connection, id, answered: false };
+		this.#watching.add(watching);
 		return {
-			answered: () => state.answered,
+			answered: () => watching.answered,
 			done: () => {
-				watchers.delete(state);
-				if (watchers.size === 0) this.#watching.delete(key);
+				this.#watching.delete(watching);
 			},
 		};
 	}
@@ -46,6 +47,7 @@ export class AnsweredRequests {
 		if (this.#watching.size === 0) return;
 		const id = responseId(value);
 		if (id === undefined) return;
-		for (const state of this.#watching.get(keyOf(connection, id)) ?? []) state.answered = true;
+		for (const watching of this.#watching)
+			if (watching.connection === connection && watching.id === id) watching.answered = true;
 	}
 }
