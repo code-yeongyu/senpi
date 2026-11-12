@@ -69,9 +69,12 @@ export function flushCredentialBlockLog(path: string): Promise<void> {
  * otherwise create the log while the removal walks the tree, and the removal fails with ENOTEMPTY.
  */
 export async function settledCredentialBlockLogsWithin(directory: string): Promise<void> {
-	await Promise.all(
-		[...pendingWrites.keys()].filter((path) => contains(directory, path)).map(flushCredentialBlockLog),
-	);
+	await Promise.all(pendingCredentialBlockLogsWithin(directory).map(flushCredentialBlockLog));
+}
+
+/** The block logs inside `directory` with an append still pending, for a caller that cannot wait (a synchronous removal). */
+export function pendingCredentialBlockLogsWithin(directory: string): string[] {
+	return [...pendingWrites.keys()].filter((path) => contains(directory, path));
 }
 
 // Lexical containment, as the host gc pass registry: another spelling of the same directory is not joined.

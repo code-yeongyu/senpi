@@ -3,21 +3,22 @@ import { rm } from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { appendCredentialBlockLog } from "../../../src/core/credential-pool/block-log.ts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import * as blockLog from "../../../src/core/credential-pool/block-log.ts";
+import { PendingBlockLogRemovalError } from "../../support/host-scratch-removal-guard.ts";
 
 // senpi#6488: the pool appends its block log without awaiting it (senpi#5992). A teardown that removed the test's
 // temp tree while that append was creating the log failed with ENOTEMPTY. The test setup's removal guard makes an
-// awaited `rm` of a tree join the appends still writing inside it; this parks one append and checks the join.
+// awaited `rm` of a tree join the appends still writing inside it, and makes `rmSync` refuse while one is pending.
 
-/** Event-loop turns an unguarded removal of a near-empty tree needs to finish; a turn budget, not a sleep. */
-const REMOVAL_TURNS = 2_000;
 const realAppendFile = fs.promises.appendFile;
+const realSettledWithin = blockLog.settledCredentialBlockLogsWithin;
 let restoreAppendFile: (() => void) | undefined;
 
 afterEach(() => {
 	restoreAppendFile?.();
 	restoreAppendFile = undefined;
+	vi.restoreAllMocks();
 });
 
 function parkAppends(): {
@@ -49,31 +50,54 @@ function parkAppends(): {
 	return { reached, release, directoryAtAppend: () => directoryPresent };
 }
 
-async function turns(count: number): Promise<"turns"> {
-	for (let turn = 0; turn < count; turn++) await new Promise<void>((resolve) => setImmediate(resolve));
-	return "turns";
+async function parkedAppendIn(dir: string): Promise<{ logPath: string; append: ReturnType<typeof parkAppends> }> {
+	const logPath = join(dir, "credential-pool-blocks.jsonl");
+	const append = parkAppends();
+	blockLog.appendCredentialBlockLog(logPath, {
+		at: new Date(0).toISOString(),
+		provider: "test",
+		slot: "default",
+		reason: "rate_limit",
+	});
+	expect(await append.reached).toBe(logPath);
+	return { logPath, append };
 }
 
 describe("removing a tree with a block-log append in flight", () => {
-	it("waits for the append to land before it removes anything", async () => {
+	it("an awaited rm lets the append land before it removes anything", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "senpi-6488-"));
-		const logPath = join(dir, "credential-pool-blocks.jsonl");
-		const append = parkAppends();
-		appendCredentialBlockLog(logPath, {
-			at: new Date(0).toISOString(),
-			provider: "test",
-			slot: "default",
-			reason: "rate_limit",
+		const { logPath, append } = await parkedAppendIn(dir);
+		const events: string[] = [];
+		// The parked append is released once the removal is seen joining it, or, if it never joins, once it is done.
+		vi.spyOn(blockLog, "settledCredentialBlockLogsWithin").mockImplementation((directory) => {
+			events.push("removal-joins");
+			append.release();
+			return realSettledWithin(directory);
 		});
-		expect(await append.reached).toBe(logPath);
 
-		const removal = rm(dir, { recursive: true, force: true });
-		const first = await Promise.race([removal.then(() => "removed" as const), turns(REMOVAL_TURNS)]);
-		expect(first).toBe("turns");
+		events.push("removal-start");
+		const removal = rm(dir, { recursive: true, force: true }).then(() => {
+			events.push("removal-done");
+			append.release();
+		});
+		const appended = blockLog.flushCredentialBlockLog(logPath).then(() => events.push("append-settled"));
+		await Promise.all([removal, appended]);
+
+		expect(events).toEqual(["removal-start", "removal-joins", "append-settled", "removal-done"]);
+		expect(append.directoryAtAppend()).toBe(true);
+		expect(existsSync(dir)).toBe(false);
+	});
+
+	it("rmSync refuses while the append is pending and removes the tree once it landed", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "senpi-6488-"));
+		const { logPath, append } = await parkedAppendIn(dir);
+
+		expect(() => fs.rmSync(dir, { recursive: true, force: true })).toThrow(PendingBlockLogRemovalError);
+		expect(existsSync(dir)).toBe(true);
 
 		append.release();
-		await removal;
-		expect(append.directoryAtAppend()).toBe(true);
+		await blockLog.flushCredentialBlockLog(logPath);
+		fs.rmSync(dir, { recursive: true, force: true });
 		expect(existsSync(dir)).toBe(false);
 	});
 });
