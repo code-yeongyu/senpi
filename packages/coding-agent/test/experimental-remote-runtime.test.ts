@@ -1,6 +1,7 @@
-import type { ChildProcess } from "node:child_process";
+import { type ChildProcess, spawn as spawnProcess } from "node:child_process";
+import { existsSync, watch as watchDirectory } from "node:fs";
 import { lstat, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type Context, createFacetHost, defineFacet, defineService } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
@@ -27,12 +28,14 @@ import {
 	readExperimentalSessionState,
 } from "./experimental-session-support.ts";
 import { HOLD_SERVER_DISCONNECT_ENV } from "./fixtures/faux-session-worker.ts";
+import { HELD_SERVER_READY_FILE } from "./fixtures/held-server-entry.ts";
 import { KeyedProbe } from "./fixtures/keyed-service.ts";
 
 const servers = new Set<RunningServer>();
 const clients = new Set<Client>();
 const directories = new Set<string>();
 const fauxWorkerEntryUrl = new URL("fixtures/faux-session-worker.ts", import.meta.url);
+const heldServerEntryUrl = new URL("fixtures/held-server-entry.ts", import.meta.url);
 const realSpawnInternalProcess = processRuntime.spawnInternalProcess;
 /**
  * Every internal process (server, coordinator, session worker) a test started. `server.close()` resolves when a
@@ -42,9 +45,11 @@ const realSpawnInternalProcess = processRuntime.spawnInternalProcess;
  * and their session-file locks are released, where killing it would orphan them holding those locks.
  */
 const spawnedProcesses = new Set<ChildProcess>();
+const spawnedRoles = new WeakMap<ChildProcess, processRuntime.InternalProcessRole>();
 const spawnTracked: typeof realSpawnInternalProcess = (role, args, options) => {
 	const child = realSpawnInternalProcess(role, args, options);
 	spawnedProcesses.add(child);
+	spawnedRoles.set(child, role);
 	return child;
 };
 const sessionWorkerModel = { provider: "anthropic", model: "claude-sonnet-4-5" } as const;
@@ -54,8 +59,12 @@ const sessionWorkerModel = { provider: "anthropic", model: "claude-sonnet-4-5" }
  * regression this pins), and the budget only lets the run finish once nothing overtakes it.
  */
 const STALLED_PEER_TURNS = 20_000;
-/** Upper bound for a worker-exit wait; kept below the 30 s test timeout so a hang reports itself. */
+/**
+ * Upper bound for a process-exit wait; kept below the 30 s test timeout and below TEARDOWN_TIMEOUT_MS, the hook
+ * timeout of the afterEach that waits on it (Vitest's default hook timeout is 10 s), so a hang reports itself.
+ */
 const WORKER_EXIT_TIMEOUT_MS = 20_000;
+const TEARDOWN_TIMEOUT_MS = 30_000;
 /** Cancels for worker-exit waits still pending; afterEach runs them so no patch outlives its test. */
 const pendingWorkerWaits = new Set<() => void>();
 type ServerByteConnection = Parameters<Server["accept"]>[0];
@@ -99,18 +108,31 @@ async function attachClient(runtime: RunningServer, sessionId: string): Promise<
 	return client;
 }
 
-afterEach(async () => {
+/** Empties a per-test set and returns what it held, so a cleanup works only on the test that started it. */
+function takeAll<T>(items: Set<T>): T[] {
+	const taken = [...items];
+	items.clear();
+	return taken;
+}
+
+/**
+ * Takes everything this test registered before its first await: a teardown that outlives its hook timeout keeps
+ * running, and must not dispose, wait on or remove what the next test has registered by then.
+ */
+async function teardownTest(): Promise<void> {
 	for (const cancel of [...pendingWorkerWaits]) cancel();
-	await Promise.all([...clients].map((client) => client.dispose()));
-	clients.clear();
-	await Promise.all([...servers].map((server) => server.close()));
-	servers.clear();
-	await Promise.all([...spawnedProcesses].map(whenChildExited));
-	spawnedProcesses.clear();
+	const ownClients = takeAll(clients);
+	const ownServers = takeAll(servers);
+	const ownProcesses = takeAll(spawnedProcesses);
+	const ownDirectories = takeAll(directories);
 	vi.unstubAllEnvs();
-	await Promise.all([...directories].map((directory) => rm(directory, { recursive: true, force: true })));
-	directories.clear();
-});
+	await Promise.all(ownClients.map((client) => client.dispose()));
+	await Promise.all(ownServers.map((server) => server.close()));
+	await Promise.all(ownProcesses.map(whenChildExited));
+	await Promise.all(ownDirectories.map((directory) => rm(directory, { recursive: true, force: true })));
+}
+
+afterEach(teardownTest, TEARDOWN_TIMEOUT_MS);
 
 describe("experimental durable server composition", () => {
 	test("uses PI_SERVER_DIR and PI_SERVER_ID", async () => {
@@ -261,6 +283,69 @@ describe("experimental durable server composition", () => {
 			expect(createPresentationFacetLoaders(presentationPlugins)).toHaveLength(1);
 		} finally {
 			await second.dispose();
+		}
+	});
+
+	test("a teardown that outlives its hook touches only its own test's directories", async () => {
+		const own = await mkdtemp(join("/tmp", "pet-own-"));
+		directories.add(own);
+		const stillRunning = spawnProcess(process.execPath, ["-e", "setInterval(() => {}, 1 << 30)"], {
+			stdio: "ignore",
+		});
+		spawnedProcesses.add(stillRunning);
+
+		const late = teardownTest();
+		const nextTestDirectory = await mkdtemp(join("/tmp", "pet-next-"));
+		directories.add(nextTestDirectory);
+		const exited = whenChildExited(stillRunning);
+		stillRunning.kill("SIGKILL");
+		await exited;
+		await late;
+
+		expect(await pathExists(own)).toBe(false);
+		expect(await pathExists(nextTestDirectory)).toBe(true);
+		expect(directories.has(nextTestDirectory)).toBe(true);
+	});
+
+	test("activates a cold server that starts listening only after the system clock moved past 10 s", async ({
+		onTestFinished,
+	}) => {
+		const directory = await mkdtemp(join("/tmp", "pi-auto-slow-"));
+		directories.add(directory);
+		vi.stubEnv("PI_SERVER_DIR", directory);
+		vi.stubEnv("PI_SERVER_ID", "00000000-0000-4000-8000-000000000001");
+		let serverSpawned = (_child: ChildProcess): void => {};
+		const spawned = new Promise<ChildProcess>((resolve) => {
+			serverSpawned = resolve;
+		});
+		const spawn = vi.spyOn(processRuntime, "spawnInternalProcess").mockImplementation((role, args, options) => {
+			const child = spawnTracked(
+				role,
+				args,
+				role === "server" ? { ...options, entryUrl: heldServerEntryUrl } : options,
+			);
+			if (role === "server") serverSpawned(child);
+			return child;
+		});
+		onTestFinished(() => {
+			spawn.mockRestore();
+			vi.useRealTimers();
+		});
+
+		const opening = openClientRuntime({ command: "client", ...sessionWorkerModel });
+		const server = await spawned;
+		await fileAppears(join(directory, HELD_SERVER_READY_FILE));
+		// A slow cold start on a loaded host, without waiting: the clock the activation reads moves 11 s while the
+		// server has not started listening yet; only then is the server let go.
+		vi.setSystemTime(Date.now() + 11_000);
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		server.kill("SIGUSR2");
+
+		const runtime = await opening;
+		try {
+			expect(runtime.servers).toHaveLength(1);
+		} finally {
+			await runtime.dispose();
 		}
 	});
 
@@ -573,7 +658,7 @@ describe("experimental durable server composition", () => {
 		const spawn = vi
 			.spyOn(processRuntime, "spawnInternalProcess")
 			.mockImplementation((role, args, options) =>
-				realSpawnInternalProcess(
+				spawnTracked(
 					role,
 					args,
 					role === "session-worker" ? { ...options, entryUrl: fauxWorkerEntryUrl } : options,
@@ -621,13 +706,14 @@ describe("experimental durable server composition", () => {
 
 		await facetHost.dispose();
 		await expect(services.dispose(BACKGROUND_CONTEXT)).resolves.toBeUndefined();
+		expect(spawnedProcesses.size).toBeGreaterThan(0);
 	});
 
 	test("streams prompt events through the worker-owned service provider", async ({ onTestFinished }) => {
 		const spawn = vi
 			.spyOn(processRuntime, "spawnInternalProcess")
 			.mockImplementation((role, args, options) =>
-				realSpawnInternalProcess(
+				spawnTracked(
 					role,
 					args,
 					role === "session-worker" ? { ...options, entryUrl: fauxWorkerEntryUrl } : options,
@@ -660,13 +746,14 @@ describe("experimental durable server composition", () => {
 		);
 		// The run's terminal event closes the stream the committed entry belongs to.
 		expect(eventTypes.indexOf("run_end")).toBeGreaterThan(eventTypes.lastIndexOf("entry_added"));
+		expect(spawnedProcesses.size).toBeGreaterThan(0);
 	});
 
 	test("streams every prompt event before the prompt response when the peer stalls", async ({ onTestFinished }) => {
 		const spawn = vi
 			.spyOn(processRuntime, "spawnInternalProcess")
 			.mockImplementation((role, args, options) =>
-				realSpawnInternalProcess(
+				spawnTracked(
 					role,
 					args,
 					role === "session-worker" ? { ...options, entryUrl: fauxWorkerEntryUrl } : options,
@@ -759,13 +846,14 @@ describe("experimental durable server composition", () => {
 		);
 		expect(runEndFrame).toBeGreaterThanOrEqual(0);
 		expect(promptResponseFrame).toBeGreaterThan(runEndFrame);
+		expect(spawnedProcesses.size).toBeGreaterThan(0);
 	});
 
 	test("replicates terminal operation state after consecutive prompts", async ({ onTestFinished }) => {
 		const spawn = vi
 			.spyOn(processRuntime, "spawnInternalProcess")
 			.mockImplementation((role, args, options) =>
-				realSpawnInternalProcess(
+				spawnTracked(
 					role,
 					args,
 					role === "session-worker" ? { ...options, entryUrl: fauxWorkerEntryUrl } : options,
@@ -793,6 +881,7 @@ describe("experimental durable server composition", () => {
 		} finally {
 			await services.dispose(BACKGROUND_CONTEXT);
 		}
+		expect(spawnedProcesses.size).toBeGreaterThan(0);
 	});
 
 	test("stops an idle Session worker after its client disconnects", async ({ onTestFinished }) => {
@@ -1070,7 +1159,8 @@ function whenChildExited(child: ChildProcess | undefined): Promise<void> {
 	if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
 	const exited = new Promise<void>((resolve, reject) => {
 		const timer = setTimeout(() => {
-			reject(new Error(`Session worker process ${child.pid} did not exit within ${WORKER_EXIT_TIMEOUT_MS} ms`));
+			const role = spawnedRoles.get(child) ?? "session-worker";
+			reject(new Error(`Internal ${role} process ${child.pid} did not exit within ${WORKER_EXIT_TIMEOUT_MS} ms`));
 		}, WORKER_EXIT_TIMEOUT_MS);
 		child.once("exit", () => {
 			clearTimeout(timer);
@@ -1079,6 +1169,20 @@ function whenChildExited(child: ChildProcess | undefined): Promise<void> {
 	});
 	exited.catch(() => {});
 	return exited;
+}
+
+/** Resolves once `path` exists, woken by the directory's change events (the watch is live before the first check). */
+function fileAppears(path: string): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const settle = (): void => {
+			if (!existsSync(path)) return;
+			watcher.close();
+			resolve();
+		};
+		const watcher = watchDirectory(dirname(path), settle);
+		watcher.once("error", reject);
+		settle();
+	});
 }
 
 async function pathExists(path: string): Promise<boolean> {
