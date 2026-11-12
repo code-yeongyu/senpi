@@ -21,7 +21,7 @@ import { runWithSessionAttribution } from "./session-attribution.ts";
 import { dispatchSessionBinding } from "./session-held.ts";
 import { moveSession } from "./session-move-commands.ts";
 import { releaseSession } from "./session-release.ts";
-import { releaseConnection } from "./session-router-attachments.ts";
+import { otherAttachments, releaseConnection } from "./session-router-attachments.ts";
 import { close, tearDownUnloaded } from "./session-router-close.ts";
 import type { RouterContext } from "./session-router-context.ts";
 import { code, detail, error } from "./session-router-errors.ts";
@@ -92,23 +92,6 @@ function admitted(host: RouterContext, command: RpcCommand): Promise<RpcResponse
 			if (host.draining) sweepDrain(host);
 		}),
 	);
-}
-
-/**
- * Attachments held by OTHER clients (senpi#6443): every hold of every connection of the caller's own client is
- * excluded, not only the asking connection's. One client holds a session through more than one connection of its own
- * (a second connection for an automated send), and counting those as another client's refuses an unload for nobody.
- * A connection that declared no `client_id` is its own client, which is the rule as it was.
- */
-function otherAttachments(host: RouterContext, caller: string | undefined, sessionId: string): number {
-	const total = host.registry.peek(sessionId)?.attachments ?? 0;
-	if (caller === undefined) return Math.max(0, total);
-	const client = host.clientIds.get(caller);
-	let own = 0;
-	for (const [connection, held] of host.sessionsByConnection)
-		if (connection === caller || (client !== undefined && host.clientIds.get(connection) === client))
-			own += held.get(sessionId) ?? 0;
-	return Math.max(0, total - own);
 }
 
 export async function dispatch(
