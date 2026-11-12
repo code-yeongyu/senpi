@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { constants } from "node:fs";
-import { chmod, link, mkdir, open, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
+import { chmod, link, mkdir, open, readFile, realpath, rename, statfs, unlink, writeFile } from "node:fs/promises";
 import type { Socket } from "node:net";
 import { basename, dirname, join, win32 } from "node:path";
 import { acquireOwnershipSafeLock } from "./ownership-safe-lock.ts";
@@ -33,7 +33,9 @@ export async function ensureSocketSecret(path: string): Promise<Buffer> {
 		if (process.platform === "win32") return await writeSocketSecretInPlace(path);
 		const candidate = randomBytes(SOCKET_SECRET_BYTES);
 		if (current === undefined) {
-			if ((await publishSocketSecretIfAbsent(path, candidate)) === "published") return candidate;
+			if ((await publishSocketSecretIfAbsent(path, candidate, emitSocketSecretWarning)) === "published") {
+				return candidate;
+			}
 			const winner = await readSecretEntry(path);
 			if (winner?.length === SOCKET_SECRET_BYTES) return winner;
 			throw new Error(`RPC socket secret is invalid and was not replaced: ${path}`);
@@ -79,14 +81,18 @@ async function readSecretEntry(path: string): Promise<Buffer | undefined> {
  * Publishes a fresh secret at `path` unless one is already there (design 4.3). A valid regular file already at the
  * path, or published by a concurrent creator, is returned unchanged; an invalid one is refused, never replaced.
  * Windows keeps the in-place writer until the native no-replace bridge (senpi#4310, loaded by #4312) is wired.
+ * `warn` receives the warnings of a publication that succeeded; the interactive TUI shows them in its notice line.
  */
-export async function createSocketSecret(path: string): Promise<Buffer> {
+export async function createSocketSecret(
+	path: string,
+	warn: SocketSecretWarn = emitSocketSecretWarning,
+): Promise<Buffer> {
 	if (process.platform === "win32") return writeSocketSecretInPlace(path);
 	await mkdir(dirname(path), { recursive: true, mode: 0o700 });
 	const candidate = randomBytes(SOCKET_SECRET_BYTES);
 	if (
 		(await readSecretEntry(path)) === undefined &&
-		(await publishSocketSecretIfAbsent(path, candidate)) === "published"
+		(await publishSocketSecretIfAbsent(path, candidate, warn)) === "published"
 	) {
 		return candidate;
 	}
@@ -105,8 +111,24 @@ export async function createSocketSecret(path: string): Promise<Buffer> {
  */
 type SocketSecretPublication = "published" | "collision";
 
-/** What `link()` fails with on a filesystem without hard links (FAT/exFAT, some network and FUSE mounts). */
-const NO_HARD_LINK_CODES = ["EPERM", "ENOTSUP", "EOPNOTSUPP", "ENOSYS"] as const;
+/** What `link()` fails with only on a filesystem without hard links (some network and FUSE mounts, FAT on macOS). */
+const NO_HARD_LINK_CODES = ["ENOTSUP", "EOPNOTSUPP", "ENOSYS"] as const;
+
+/** Linux statfs magic numbers of filesystems without hard links, whose `link()` fails EPERM: msdos/vfat, exfat. */
+const NO_HARD_LINK_FILESYSTEMS = new Set([0x4d44, 0x2011bab0]);
+
+/** A warning about a secret that was published anyway; never carries the secret. */
+interface SocketSecretWarning {
+	readonly code: string;
+	readonly message: string;
+	readonly path: string;
+	readonly cause: string;
+}
+type SocketSecretWarn = (warning: SocketSecretWarning) => void;
+
+function emitSocketSecretWarning({ code, message, path, cause }: SocketSecretWarning): void {
+	process.emitWarning(message, { code, detail: JSON.stringify({ path, cause }) });
+}
 
 /**
  * First publication without hard links: the only other way to publish is to write the final path itself, which this
@@ -128,44 +150,86 @@ class SocketSecretHardLinksUnsupportedError extends Error {
 }
 
 /**
+ * `link()` failed EPERM on a filesystem not known to lack hard links: a sandbox or MAC policy, or an immutable or
+ * append-only directory, refused it. Refused like the case above, naming the `link()` error as its `cause`.
+ */
+class SocketSecretLinkRefusedError extends Error {
+	readonly reason = "link_refused";
+	readonly path: string;
+
+	constructor(path: string, cause: unknown) {
+		super(
+			`RPC socket secret cannot be published at ${path}: its hard link was refused by a permission or policy check (sandbox, MAC policy, or an immutable or append-only directory) (EPERM)`,
+			{ cause },
+		);
+		this.name = "SocketSecretLinkRefusedError";
+		this.path = path;
+	}
+}
+
+/** EPERM is also a policy refusal, so it means "no hard links" only on a filesystem known to have none. */
+async function lacksHardLinks(dir: string, error: unknown): Promise<boolean> {
+	if (NO_HARD_LINK_CODES.some((code) => isNodeErrorCode(error, code))) return true;
+	if (!isNodeErrorCode(error, "EPERM")) return false;
+	// A failed statfs is no evidence of a filesystem without hard links; the refusal keeps the link() error as cause.
+	const stats = await statfs(dir).catch(() => undefined);
+	return stats !== undefined && NO_HARD_LINK_FILESYSTEMS.has(stats.type);
+}
+
+/**
  * Publishes `candidate` at `path` unless an entry already exists there. POSIX only. Once `link()` succeeded the
  * secret at `path` is this candidate and cannot be taken back, so a later directory fsync or staging cleanup failure
  * is a warning, never the outcome; a failed `link()` is reported over a failed cleanup after it.
  */
-async function publishSocketSecretIfAbsent(path: string, candidate: Buffer): Promise<SocketSecretPublication> {
+async function publishSocketSecretIfAbsent(
+	path: string,
+	candidate: Buffer,
+	warn: SocketSecretWarn,
+): Promise<SocketSecretPublication> {
 	const staging = stagingPath(path);
 	await writeStaging(staging, candidate);
 	try {
 		await link(staging, path);
 	} catch (error: unknown) {
-		await removeStaging(staging);
+		await removeStaging(staging, warn);
 		if (isNodeErrorCode(error, "EEXIST")) return "collision";
-		if (NO_HARD_LINK_CODES.some((code) => isNodeErrorCode(error, code))) {
-			throw new SocketSecretHardLinksUnsupportedError(path, error);
-		}
+		if (await lacksHardLinks(dirname(path), error)) throw new SocketSecretHardLinksUnsupportedError(path, error);
+		if (isNodeErrorCode(error, "EPERM")) throw new SocketSecretLinkRefusedError(path, error);
 		throw error;
 	}
+	await syncInstalledDirectory(path, "publishing", warn);
+	await removeStaging(staging, warn);
+	return "published";
+}
+
+/** The fsync after `link()` or `rename()` installed the secret; the secret stays, so a failure only warns. */
+async function syncInstalledDirectory(path: string, after: string, warn: SocketSecretWarn): Promise<void> {
 	await syncDirectory(dirname(path)).catch((error: unknown) => {
 		warnPublication(
+			warn,
 			"SENPI_RPC_SOCKET_SECRET_DIRECTORY_SYNC_FAILED",
-			"directory fsync failed after publishing",
+			`directory fsync failed after ${after}`,
 			path,
 			error,
 		);
 	});
-	await removeStaging(staging);
-	return "published";
 }
 
-async function removeStaging(staging: string): Promise<void> {
+async function removeStaging(staging: string, warn: SocketSecretWarn): Promise<void> {
 	await unlink(staging).catch((error: unknown) => {
 		if (isNodeErrorCode(error, "ENOENT")) return;
-		warnPublication("SENPI_RPC_SOCKET_SECRET_STAGING_LEFT_BEHIND", "staging file was not removed", staging, error);
+		warnPublication(
+			warn,
+			"SENPI_RPC_SOCKET_SECRET_STAGING_LEFT_BEHIND",
+			"staging file was not removed",
+			staging,
+			error,
+		);
 	});
 }
 
-function warnPublication(code: string, what: string, path: string, error: unknown): void {
-	process.emitWarning(`RPC socket secret ${what}`, { code, detail: JSON.stringify({ path, cause: String(error) }) });
+function warnPublication(warn: SocketSecretWarn, code: string, what: string, path: string, error: unknown): void {
+	warn({ code, message: `RPC socket secret ${what}`, path, cause: String(error) });
 }
 
 async function writeStaging(staging: string, candidate: Buffer): Promise<void> {
@@ -224,7 +288,10 @@ async function socketSecretLockPath(path: string): Promise<string> {
 	return lockPath;
 }
 
-/** Replaces an invalid secret with `candidate` in one rename; the old entry stays until that rename (design 4.4). */
+/**
+ * Replaces an invalid secret with `candidate` in one rename; the old entry stays until that rename (design 4.4). Once
+ * the rename landed the candidate is the secret, so a failed directory fsync after it only warns.
+ */
 async function replaceSocketSecret(path: string, candidate: Buffer): Promise<void> {
 	const staging = stagingPath(path);
 	await writeStaging(staging, candidate);
@@ -234,7 +301,7 @@ async function replaceSocketSecret(path: string, candidate: Buffer): Promise<voi
 		await unlink(staging).catch(() => undefined);
 		throw error;
 	}
-	await syncDirectory(dirname(path));
+	await syncInstalledDirectory(path, "repairing", emitSocketSecretWarning);
 }
 
 function stagingPath(path: string): string {
