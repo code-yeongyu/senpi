@@ -9,6 +9,7 @@ import { getDefaultSessionDirPath } from "../../core/session-manager.ts";
 import { answerMoveStatusAndLanding, type StatusFile } from "../../core/session-move/import.ts";
 import type { LandedFile } from "../../core/session-move/landed-file.ts";
 import { MoveFencedError, type MoveLedger } from "../../core/session-move/move-ledger.ts";
+import { MoveRecordLockWaitError } from "../../core/session-move/move-ledger-lock.ts";
 import type { MoveId } from "../../core/session-move/ownership.ts";
 import { normalizePath, resolvePath } from "../../utils/paths.ts";
 import type { StatusNamedFile } from "./session-move-request.ts";
@@ -54,15 +55,37 @@ export async function statusAnswer(
  * What a `move_fenced` refusal's `errorData` gains when the move it refuses is already accepted here, whichever op
  * was refused (an `import` into another folder, a `prepare` for another folder): where the move landed, and
  * `revoked: true` when that copy was sealed, so a caller learns that binding it would answer `session_moved_away`.
- * It only adds to a refusal: if the record or the landed file cannot be read now, the refusal goes out without it.
+ *
+ * It only adds to a refusal. When the read of the record and the landed file fails with a file-system error, or
+ * because the record's lock stayed taken for the whole wait, the refusal goes out without it. Any other failure of
+ * that read is `unexpected`, with its message: the caller is answered that, not the refusal as if nothing were wrong.
+ * Either way one line on stderr names the kind and the move, and nothing else.
  */
 export async function landedWhenFenced(
 	ledger: MoveLedger,
 	cause: unknown,
-): Promise<(RpcMoveLanded & { revoked?: true }) | undefined> {
-	if (!(cause instanceof MoveFencedError) || cause.record?.state !== "accepted") return undefined;
-	const read = await answerMoveStatusAndLanding(ledger, cause.moveId, undefined).catch(() => undefined);
-	const where = wireLanded(read?.landed);
-	if (read === undefined || where === undefined) return undefined;
-	return "revoked" in read.answer ? { ...where, revoked: true } : where;
+): Promise<{ readonly landed?: RpcMoveLanded & { revoked?: true } } | { readonly unexpected: string }> {
+	if (!(cause instanceof MoveFencedError) || cause.record?.state !== "accepted") return {};
+	const read = await answerMoveStatusAndLanding(ledger, cause.moveId, undefined).then(
+		(value) => ({ value }),
+		(failure: unknown) => ({ failure }),
+	);
+	if ("failure" in read) {
+		const kind = landedReadFailureKind(read.failure);
+		process.stderr.write(`senpi rpc move_landed_read_failed: kind=${kind} move=${cause.moveId}\n`);
+		if (kind !== "unexpected") return {};
+		return { unexpected: read.failure instanceof Error ? read.failure.message : String(read.failure) };
+	}
+	const where = wireLanded(read.value.landed);
+	if (where === undefined) return {};
+	return { landed: "revoked" in read.value.answer ? { ...where, revoked: true } : where };
+}
+
+/** A file-system error is named by its errno code, a record lock that stayed taken `lock_wait`, anything else `unexpected`. */
+function landedReadFailureKind(failure: unknown): string {
+	if (failure instanceof MoveRecordLockWaitError) return "lock_wait";
+	if (typeof failure !== "object" || failure === null || !("errno" in failure) || !("code" in failure))
+		return "unexpected";
+	const { errno, code } = failure;
+	return typeof errno === "number" && typeof code === "string" && /^E[A-Z0-9]+$/.test(code) ? code : "unexpected";
 }

@@ -44,6 +44,16 @@ export class MoveRecordLocks {
 	}
 }
 
+/** A move record's lock stayed taken for the whole wait: someone else holds it, and nothing was read or written. */
+export class MoveRecordLockWaitError extends Error {
+	readonly code = "move_record_lock_wait";
+
+	constructor(file: string, waitedMs: number, cause: unknown) {
+		super(`Move record ${file} stayed locked for ${waitedMs}ms`, { cause });
+		this.name = "MoveRecordLockWaitError";
+	}
+}
+
 /** Takes a move record's cross-process lock, retrying with backoff for up to `LOCK_WAIT_MS`. */
 export async function acquireMoveRecordLock(file: string): Promise<HeldFileLock> {
 	const startedAt = Date.now();
@@ -53,8 +63,7 @@ export async function acquireMoveRecordLock(file: string): Promise<HeldFileLock>
 		} catch (error) {
 			if (!isLockError(error)) throw error;
 			const waited = Date.now() - startedAt;
-			if (waited >= LOCK_WAIT_MS)
-				throw new Error(`Move record ${file} stayed locked for ${waited}ms`, { cause: error });
+			if (waited >= LOCK_WAIT_MS) throw new MoveRecordLockWaitError(file, waited, error);
 			const delay = Math.min(
 				FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS * 2 ** attempt,
 				FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS,

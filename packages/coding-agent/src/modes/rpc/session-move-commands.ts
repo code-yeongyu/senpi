@@ -76,6 +76,8 @@ export async function moveSession(
 		return open_error === undefined ? undefined : answer(command.id, { ...landed, open_error });
 	} catch (cause) {
 		if (cause instanceof MoveRefusal) return refusal(command.id, cause.code, cause.message);
+		const where = await landedWhenFenced(ledger, cause);
+		if ("unexpected" in where) return refusal(command.id, RPC_ERROR_MOVE_FAILED, where.unexpected);
 		const code = typeof cause === "object" && cause !== null && "code" in cause ? cause.code : undefined;
 		const detail = cause instanceof Error ? cause.message : String(cause);
 		return refusal(
@@ -84,7 +86,7 @@ export async function moveSession(
 				? (RENAMED_CODES[code] ?? (CORE_CODES.has(code) ? code : RPC_ERROR_MOVE_FAILED))
 				: RPC_ERROR_MOVE_FAILED,
 			detail,
-			await landedWhenFenced(ledger, cause),
+			where.landed,
 		);
 	}
 }
