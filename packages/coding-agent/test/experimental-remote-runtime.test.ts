@@ -34,6 +34,19 @@ const clients = new Set<Client>();
 const directories = new Set<string>();
 const fauxWorkerEntryUrl = new URL("fixtures/faux-session-worker.ts", import.meta.url);
 const realSpawnInternalProcess = processRuntime.spawnInternalProcess;
+/**
+ * Every internal process (server, coordinator, session worker) a test started. `server.close()` resolves when a
+ * worker's peer disconnects, before the OS process exits, and leaves the coordinator running; a process still
+ * writing into the agent directory after `afterEach` removed it left `pi-experimental-agent-*` behind (senpi#6487).
+ * Teardown waits for each to exit on its own: a server stops the workers it started (which this process cannot see)
+ * and their session-file locks are released, where killing it would orphan them holding those locks.
+ */
+const spawnedProcesses = new Set<ChildProcess>();
+const spawnTracked: typeof realSpawnInternalProcess = (role, args, options) => {
+	const child = realSpawnInternalProcess(role, args, options);
+	spawnedProcesses.add(child);
+	return child;
+};
 const sessionWorkerModel = { provider: "anthropic", model: "claude-sonnet-4-5" } as const;
 /**
  * Event-loop turns the injected stalled peer takes to drain one write. It is a turn budget, not a
@@ -50,6 +63,7 @@ const SecondPluginService = defineService<{ read(context: Context): Promise<stri
 let agentDir: string;
 
 beforeEach(async () => {
+	vi.spyOn(processRuntime, "spawnInternalProcess").mockImplementation(spawnTracked);
 	agentDir = await mkdtemp(join("/tmp", "pi-experimental-agent-"));
 	directories.add(agentDir);
 	await configureExperimentalWorkerModel(agentDir);
@@ -91,6 +105,8 @@ afterEach(async () => {
 	clients.clear();
 	await Promise.all([...servers].map((server) => server.close()));
 	servers.clear();
+	await Promise.all([...spawnedProcesses].map(whenChildExited));
+	spawnedProcesses.clear();
 	vi.unstubAllEnvs();
 	await Promise.all([...directories].map((directory) => rm(directory, { recursive: true, force: true })));
 	directories.clear();
@@ -1036,7 +1052,7 @@ function recordWorkerChildren(
 ): ReadonlyMap<number, ChildProcess> {
 	const children = new Map<number, ChildProcess>();
 	const spawn = vi.spyOn(processRuntime, "spawnInternalProcess").mockImplementation((role, args, options) => {
-		const child = realSpawnInternalProcess(
+		const child = spawnTracked(
 			role,
 			args,
 			role === "session-worker" && workerEntryUrl !== undefined ? { ...options, entryUrl: workerEntryUrl } : options,
