@@ -28,6 +28,7 @@ import type { HeldFileLock } from "../core/file-lock.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { CoordinatorConnection, type CoordinatorStartupLease, ensureCoordinator } from "./coordinator.ts";
 import { waitForFileLock } from "./lock-wait.ts";
+import { assertSocketPathFits, createServerEndpoint, type ServerEndpoint } from "./socket-path.ts";
 import { createPresentationFacetData } from "./plugins/bundled.ts";
 import {
 	createServerPluginPackage,
@@ -234,6 +235,9 @@ export async function activateServer(options: ActivateServerOptions): Promise<Ac
 	const serverId = profile.serverId;
 	await profile.release();
 	const route = { serverId, path: getUnixSocketPath(serverId, options.directory) };
+	// Refuse a directory whose sockets nothing could connect to before starting a server there (senpi#6522).
+	assertSocketPathFits("public", route.path);
+	assertSocketPathFits("control", join(options.directory, `control-${serverId}.sock`));
 	const activation = await acquireServerActivation(options.directory, serverId);
 	try {
 		const existing = await connect(route);
@@ -658,6 +662,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 	let startupLease: CoordinatorStartupLease | undefined;
 	let workers: SessionWorkerManager | undefined;
 	let relay: RadiusRelayHost | undefined;
+	let serverEndpoint: ServerEndpoint | undefined;
 	let released = false;
 	try {
 		await ensurePrivateServerDirectory(directory);
@@ -733,8 +738,11 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 		};
 		const socketPath = getUnixSocketPath(serverId, directory);
 		const controlPath = join(directory, `control-${serverId}.sock`);
+		assertSocketPathFits("public", socketPath);
+		assertSocketPathFits("control", controlPath);
 		const serverNonce = randomUUID().replaceAll("-", "").slice(0, 12);
-		const serverPath = join(directory, `server-${serverId}-${serverNonce}.sock`);
+		serverEndpoint = await createServerEndpoint(join(directory, `server-${serverId}-${serverNonce}.sock`));
+		const serverPath = serverEndpoint.path;
 		startupLease = await ensureCoordinator(socketPath, controlPath, assertHeld);
 		coordinator = new CoordinatorConnection({ controlPath, endpoint: serverPath });
 		const sessionDir = resolveSessionDirectory(options.sessionDir);
@@ -772,6 +780,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 		const activeCoordinator = coordinator;
 		const activeWorkers = workers;
 		const activeRelay = relay;
+		const activeEndpoint = serverEndpoint;
 		void activeCoordinator.replaced
 			.then(async () => {
 				lifetime.stop();
@@ -801,6 +810,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 							else await activeWorkers.shutdown();
 						} finally {
 							activeCoordinator.close();
+							await activeEndpoint.release();
 						}
 					}
 				})();
@@ -822,6 +832,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 			backend?.close(),
 			coordinator?.wasReplaced ? undefined : workers?.shutdown(),
 			Promise.resolve(coordinator?.close()),
+			serverEndpoint?.release(),
 			released ? undefined : release(),
 		]);
 		const cleanupErrors = cleanup.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));

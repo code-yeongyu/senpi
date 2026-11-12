@@ -726,6 +726,38 @@ describe("experimental durable server composition", () => {
 		expect(coordinator.exitCode !== null || coordinator.signalCode !== null).toBe(true);
 	});
 
+	test("serves clients from a server directory too deep for its own socket path", async () => {
+		const base = await mkdtemp(join("/tmp", "pes-long-"));
+		directories.add(base);
+		// 50 bytes: the public (92) and control (100) sockets fit the 103-byte limit; the server socket (112) does not.
+		const directory = join(base, "d".repeat(50 - Buffer.byteLength(base) - 1));
+		expect(Buffer.byteLength(directory)).toBe(50);
+		const runtime = await startServer({ ...sessionWorkerModel, directory });
+		servers.add(runtime);
+
+		const client = await Client.connect({
+			serverId: runtime.serverId,
+			transportFactory: createUnixTransportFactory({ path: runtime.socketPath }),
+		});
+		clients.add(client);
+		expect((await readdir(directory)).filter((entry) => entry.startsWith("server-"))).toEqual([]);
+	});
+
+	test("refuses a server directory too deep for its public socket with the path and its length", async () => {
+		const base = await mkdtemp(join("/tmp", "pes-too-long-"));
+		directories.add(base);
+		const directory = join(base, "d".repeat(70 - Buffer.byteLength(base) - 1));
+		vi.stubEnv("PI_SERVER_DIR", directory);
+		vi.stubEnv("PI_SERVER_ID", "00000000-0000-4000-8000-000000000001");
+
+		await expect(openClientRuntime({ command: "client", ...sessionWorkerModel })).rejects.toMatchObject({
+			code: "socket_path_too_long",
+			path: join(directory, "00000000-0000-4000-8000-000000000001.sock"),
+			bytes: 112,
+			limit: 103,
+		});
+	});
+
 	test("retires a cold server after its only Session attachment disconnects", async () => {
 		const directory = await mkdtemp(join("/tmp", "pi-auto-session-"));
 		directories.add(directory);
