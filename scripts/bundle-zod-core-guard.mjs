@@ -9,11 +9,15 @@ import { join } from "node:path";
 /** The banner zod 4.x's core emits, as esbuild and bun minify it. */
 const ZOD_CORE_BANNER = /major:\s*4,\s*minor:\s*(\d+),\s*patch:\s*(\d+)/g;
 /**
- * The enum zod 3.x's classic build assigns (`ZodFirstPartyTypeKind.ZodEffects = "ZodEffects"`); minifiers keep the
- * string, so it survives in bun and esbuild output. zod 4 has no ZodEffects (it uses ZodPipe/ZodTransform) and 3.x
- * carries no version banner, so a copy is reported as "3.x". Verified against zod 3.25.76 built by both.
+ * The emoji pattern string of an UNPATCHED zod 3.x classic build: `^(\p{Extended_Pictographic}|\p{Emoji_Component})+$`.
+ * `ZodEffects` is not usable: zod 4.x ships the same classic build as its `zod/v3` compatibility layer, which the
+ * MCP SDK and our MCP schemas import. That layer carries the same enum, but zod 4.6.x hardened it, and one of the
+ * changes rewrote this pattern to a character class (`^[\p{Extended_Pictographic}\p{Emoji_Component}]+$`).
+ * So this alternation form is unique to a real zod 3.x copy. String literals survive minification, so it appears in
+ * esbuild and bun output alike (checked against zod 3.25.76 and zod 4.6.7's `zod/v3`, built by both). 3.x carries no
+ * version banner, so a copy is reported as "3.x".
  */
-const ZOD_V3_MARKER = /ZodEffects\s*=\s*["']ZodEffects["']/g;
+const ZOD_V3_MARKER = /Extended_Pictographic\}\|\\{1,2}p\{Emoji_Component\}\)\+\$/g;
 const MINIMUM = { minor: 6, patch: 6 };
 
 /**
@@ -22,11 +26,25 @@ const MINIMUM = { minor: 6, patch: 6 };
  * and it parses the local Claude Code subprocess's output, not a remote server's. It appears once in the SDK's own
  * split chunk and once in the session worker, whose graph is bundled whole (splitting off). A copy anywhere else, a
  * second copy in one of these files or a different version is a new exposure; a copy that disappears means the SDK
- * moved on and its row here is retired.
+ * moved on and its row here is retired. The same SDK build also embeds zod's unpatched `zod/v3` classic layer next to
+ * each of those cores (zod 4.6.2 predates the hardening), so each file carries one "3.x" row too.
  */
 export const EXPECTED_STALE_ZOD_CORES = [
 	{ file: /^chunks\/sdk-[^/]+\.js$/, version: "4.6.2", count: 1 },
 	{ file: "chunks/session-worker.js", version: "4.6.2", count: 1 },
+	{ file: /^chunks\/sdk-[^/]+\.js$/, version: "3.x", count: 1 },
+	{ file: "chunks/session-worker.js", version: "3.x", count: 1 },
+];
+
+/**
+ * What one compiled senpi binary embeds of the same exposures, measured on a real `bun build --compile` of the CLI
+ * (build-binaries.sh's flags): the compile dedupes the SDK's zod into one module, so the pinned 4.6.2 core and its
+ * unpatched `zod/v3` layer each appear once, not once per bundle file. The names are lost in a binary, so the counts
+ * are all that can tell an injected copy from the SDK's own.
+ */
+export const EXPECTED_BINARY_STALE_ZOD_CORES = [
+	{ version: "4.6.2", count: 1 },
+	{ version: "3.x", count: 1 },
 ];
 
 function isStale({ major, minor, patch }) {
@@ -70,11 +88,11 @@ function scanText(text, file) {
 
 /**
  * Scans compiled executables (`bun build --compile` embeds the bundled JS as text, so the same banners are present).
- * The embedded files' names are lost, so the pinned SDK copies are matched by version alone: each `EXPECTED_STALE_ZOD_CORES`
- * version may appear at most as often as its rows' counts sum to, across all binaries of one build; anything else
- * older than 4.6.6, and any zod 3.x copy, fails. Returns the stale occurrences it checked.
+ * The embedded files' names are lost, so the pinned SDK copies are matched by version alone: each
+ * `EXPECTED_BINARY_STALE_ZOD_CORES` version may appear at most as often as its rows' counts sum to, in each binary; anything else older than 4.6.6, any
+ * zod 3.x copy, and a binary embedding no current (4.6.6 or newer) core at all, fails. Returns the stale occurrences it checked.
  */
-export function assertBinaryZodCores(binaries, expected = EXPECTED_STALE_ZOD_CORES) {
+export function assertBinaryZodCores(binaries, expected = EXPECTED_BINARY_STALE_ZOD_CORES) {
 	if (binaries.length === 0) throw new Error("cannot scan the binaries for zod cores: no binary to scan");
 	const problems = [];
 	const checked = [];
@@ -85,7 +103,11 @@ export function assertBinaryZodCores(binaries, expected = EXPECTED_STALE_ZOD_COR
 		} catch (error) {
 			throw new Error(`cannot scan the binary for zod cores: ${binary} is unreadable (${error.code ?? error.message})`);
 		}
-		const stale = scanText(text, binary).filter(isStale);
+		const cores = scanText(text, binary);
+		if (!cores.some((entry) => !isStale(entry))) {
+			problems.push(`${binary}: no current zod core (4.${MINIMUM.minor}.${MINIMUM.patch} or newer) found; a binary that must embed one scanned nothing`);
+		}
+		const stale = cores.filter(isStale);
 		checked.push(...stale);
 		const outside = [];
 		for (const version of new Set(stale.map((entry) => entry.version))) {

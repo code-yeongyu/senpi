@@ -5,16 +5,16 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { describe, it } from "node:test";
 import { assertBinaryZodCores } from "./bundle-zod-core-guard.mjs";
+import { realZodOutput } from "./zod-real-output.test-support.mjs";
 
 // senpi#6497 follow-up: `bun build --compile` embeds the bundled JS in the executable, so the compiled binaries get
-// their own scan for stale zod cores: the Claude agent SDK's pinned 4.6.2 (at most the two copies the bundle pins) is
-// allowed, anything else older than 4.6.6, and any zod 3.x copy, fails the build.
+// their own scan for stale zod cores: the Claude agent SDK's pinned 4.6.2 and its zod/v3 layer (one copy each, as a real
+// compile embeds them) are allowed, anything else older than 4.6.6, and any further zod 3.x copy, fails the build.
 
 const core = (version) => {
 	const [, minor, patch] = version.split(".");
 	return `var v={major:4,minor:${minor},patch:${patch}};`;
 };
-const ZOD3_COPY = 'var e;(function(r){r.ZodEffects="ZodEffects"})(e||(e={}));';
 
 /** A fake executable: binary noise around the embedded JS text. */
 function withBinary(embedded, check) {
@@ -29,15 +29,15 @@ function withBinary(embedded, check) {
 }
 
 describe("compiled binary zod core guard", () => {
-	it("accepts current cores and the SDK's pinned 4.6.2 copies", () => {
-		withBinary(core("4.6.7") + core("4.6.2") + core("4.6.2"), (file) => {
-			assert.deepEqual(assertBinaryZodCores([file]).map((entry) => entry.version), ["4.6.2", "4.6.2"]);
+	it("accepts current cores and the SDK's pinned 4.6.2 copy", () => {
+		withBinary(core("4.6.7") + core("4.6.2"), (file) => {
+			assert.deepEqual(assertBinaryZodCores([file]).map((entry) => entry.version), ["4.6.2"]);
 		});
 	});
 
-	it("fails on a third 4.6.2 copy", () => {
-		withBinary(core("4.6.2").repeat(3), (file) => {
-			assert.throws(() => assertBinaryZodCores([file]), /at most 2 zod 4\.6\.2 core\(s\), found 3/);
+	it("fails on a second 4.6.2 copy", () => {
+		withBinary(core("4.6.7") + core("4.6.2").repeat(2), (file) => {
+			assert.throws(() => assertBinaryZodCores([file]), /at most 1 zod 4\.6\.2 core\(s\), found 2/);
 		});
 	});
 
@@ -47,9 +47,28 @@ describe("compiled binary zod core guard", () => {
 		});
 	});
 
-	it("fails on a zod 3.x copy", () => {
-		withBinary(core("4.6.7") + ZOD3_COPY, (file) => {
-			assert.throws(() => assertBinaryZodCores([file]), /outside the pinned exposures: .*pi 3\.x/);
+	it("fails on a real zod 3.25.76 copy, and accepts zod 4.6.7's zod/v3 layer", async () => {
+		const zod3 = await realZodOutput("zod-3.25.76");
+		const v4 = await realZodOutput("zod-4.6.7-v4");
+		const v4v3 = await realZodOutput("zod-4.6.7-v3");
+		// The SDK's own unpatched layer appears once in a compiled binary; a second copy is a new exposure.
+		withBinary(v4 + zod3.repeat(2), (file) => {
+			assert.throws(() => assertBinaryZodCores([file]), /at most 1 zod 3\.x core\(s\), found 2/);
+		});
+		withBinary(v4 + zod3, (file) => {
+			assert.equal(assertBinaryZodCores([file]).length, 1);
+		});
+		withBinary(v4 + v4v3, (file) => {
+			assert.deepEqual(assertBinaryZodCores([file]), []);
+		});
+	});
+
+	it("fails closed on a binary that embeds no zod core, or only stale ones", () => {
+		withBinary("console.log(1)", (file) => {
+			assert.throws(() => assertBinaryZodCores([file]), /no current zod core/);
+		});
+		withBinary(core("4.6.2"), (file) => {
+			assert.throws(() => assertBinaryZodCores([file]), /no current zod core/);
 		});
 	});
 
