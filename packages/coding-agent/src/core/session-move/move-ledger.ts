@@ -83,7 +83,8 @@ export class MoveLedger {
 			}
 			if (record.state !== "ready" && record.state !== "receiving" && record.state !== "accepted")
 				throw new MoveFencedError(moveId, record);
-			if (cwd !== undefined && landing.cwd === undefined)
+			// A commit stamp is never rewritten: its time is what settles it, and a rewrite would start that time again.
+			if (cwd !== undefined && landing.cwd === undefined && landing.committing !== true)
 				await this.#file.write(moveId, record, { ...landing, cwd });
 			return record;
 		});
