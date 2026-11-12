@@ -88,14 +88,7 @@ async function readFileState(
 > {
 	const cwd = session.sessionManager.getCwd();
 	const resolved = await resolveProjectFile(cwd, file);
-	if (
-		!resolved.ok ||
-		(await insideUserGlobalRoots(
-			session.agentDir,
-			session.resourceLoader.getUserSkillRoots?.() ?? [],
-			resolved.absolute,
-		))
-	) {
+	if (!resolved.ok || (await insideUserGlobalRoots(session, resolved.absolute))) {
 		return notAllowed(file.relative);
 	}
 	const read: Stored = resolved.exists ? await readStored(resolved.absolute) : { kind: "missing" };

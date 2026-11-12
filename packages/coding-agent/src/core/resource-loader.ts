@@ -8,7 +8,7 @@ import {
 	unlinkSync,
 	writeFileSync,
 } from "node:fs";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { detectCapabilities, getTerminalColorMode, type TerminalColorMode } from "@earendil-works/pi-tui";
 import chalk from "chalk";
@@ -198,11 +198,16 @@ export interface ResourceLoader {
 	onExtensionEvent?(channel: string, handler: (data: unknown) => void): () => void;
 	getSkills(): { skills: Skill[]; diagnostics: ResourceDiagnostic[] };
 	/**
-	 * The user-global skill roots this loader loaded skills from, besides the agent dir's and `~/.agents/skills`, which
-	 * every session refuses anyway: the RPC project verbs refuse files in them (senpi#6547, senpi#6558). Optional, so a
-	 * custom loader without it keeps working; such a loader has only those two roots refused.
+	 * The user-selected skill roots, besides the agent dir's and `~/.agents/skills`, which every session refuses anyway:
+	 * the RPC project verbs refuse every file in them (senpi#6547, senpi#6558). The verbs refuse the folder of every
+	 * user-provenance skill from `getSkills()` themselves. Optional: a custom loader without it has no extra roots.
 	 */
 	getUserSkillRoots?(): readonly string[];
+	/**
+	 * The folders this loader walks for user-provenance skills, where a new top-level `*.md` file would load as a skill:
+	 * the RPC project verbs refuse creating or editing one there (senpi#6558). Optional, like `getUserSkillRoots`.
+	 */
+	getUserSkillScanDirs?(): readonly string[];
 	getPrompts(): { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] };
 	getThemes(): { themes: Theme[]; diagnostics: ResourceDiagnostic[] };
 	getAgentsFiles(): { agentsFiles: ContextFile[]; diagnostics?: ResourceDiagnostic[] };
@@ -597,20 +602,18 @@ export class DefaultResourceLoader implements ResourceLoader {
 		return { skills: this.skills, diagnostics: this.skillDiagnostics };
 	}
 
-	/**
-	 * The globally selected skill roots plus the own folder (or file) of every skill loaded with user provenance,
-	 * wherever it came from (a package, `-e`, an extension's `resources_discover`, `--skill`, the SDK's
-	 * `additionalSkillPaths`). Never the selected root such a skill was found under: for a package that root is the
-	 * whole package folder, and a project that is itself an installed package (or loaded with `-e .`) keeps its own
-	 * files (senpi#6558).
-	 */
+	/** The global `skills` settings roots; never a package folder, which only contains a package's skills (senpi#6558). */
 	getUserSkillRoots(): readonly string[] {
-		return [
-			...this.selectedGlobalSkillRoots(),
-			...this.skills
-				.filter((skill) => skill.provenance?.kind === "user")
-				.map((skill) => (basename(skill.filePath) === "SKILL.md" ? skill.baseDir : skill.filePath)),
-		];
+		return this.selectedGlobalSkillRoots();
+	}
+
+	/**
+	 * Every folder walked for user-provenance skills: a package's or a settings entry's skill folder (from the package
+	 * manager) and a skill directory passed straight to `loadSkills` (`--skill`, an extension's `resources_discover`,
+	 * the SDK's `additionalSkillPaths`). Both walks load a top-level `*.md` file there as a skill (senpi#6558).
+	 */
+	getUserSkillScanDirs(): readonly string[] {
+		return this.skillScanDirs;
 	}
 
 	private selectedGlobalSkillRoots(): string[] {
@@ -735,6 +738,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.userSkillRoots = [...(resolvedPaths.skillRoots ?? []), ...(cliExtensionPaths.skillRoots ?? [])]
 			.filter((selection) => selection.kind === "user")
 			.map((selection) => selection.selectedRoot);
+		this.packageSkillScanDirs = [...(resolvedPaths.skillScanDirs ?? []), ...(cliExtensionPaths.skillScanDirs ?? [])];
 		this.ignoredSkillFiles = this.noSkills ? [] : [...(resolvedPaths.ignoredSkills ?? [])];
 		time("packageResolve", "extensions");
 		// Keep package metadata available for later extendResources() passes.
@@ -1204,8 +1208,24 @@ export class DefaultResourceLoader implements ResourceLoader {
 	}
 
 	private userSkillRoots: string[] = [];
+	private packageSkillScanDirs: string[] = [];
+	private skillScanDirs: string[] = [];
 	private ignoredSkillFiles: string[] = [];
 	private updateSkillsFromPaths(skillPaths: string[], metadataByPath?: Map<string, PathMetadata>): void {
+		const provenanceByPath = new Map<string, SkillProvenance>(
+			skillPaths.map((path) => [
+				path,
+				metadataByPath?.get(path)?.skillProvenance ?? { kind: "user", selectedRoot: path },
+			]),
+		);
+		this.skillScanDirs = [
+			...this.packageSkillScanDirs,
+			...skillPaths.flatMap((path) => {
+				if (provenanceByPath.get(path)?.kind !== "user") return [];
+				const resolved = resolvePath(path, this.cwd, { trim: true });
+				return statSync(resolved, { throwIfNoEntry: false })?.isDirectory() ? [resolved] : [];
+			}),
+		];
 		let skillsResult: { skills: Skill[]; diagnostics: ResourceDiagnostic[] };
 		if (this.noSkills && skillPaths.length === 0) {
 			skillsResult = { skills: [], diagnostics: [] };
@@ -1215,12 +1235,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 				agentDir: this.agentDir,
 				skillPaths,
 				includeDefaults: false,
-				provenanceByPath: new Map<string, SkillProvenance>(
-					skillPaths.map((path) => [
-						path,
-						metadataByPath?.get(path)?.skillProvenance ?? { kind: "user", selectedRoot: path },
-					]),
-				),
+				provenanceByPath,
 				userSkillRoots: [...this.userSkillRoots, ...this.selectedGlobalSkillRoots()],
 			});
 		}

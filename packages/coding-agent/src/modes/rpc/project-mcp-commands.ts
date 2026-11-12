@@ -94,14 +94,7 @@ function storedServers(raw: Readonly<Record<string, unknown>>): Record<string, u
 async function readMcpState(session: AgentSession): Promise<McpFileState | ProjectWriteRefusal> {
 	const cwd = session.sessionManager.getCwd();
 	const resolved = await resolveProjectFile(cwd, MCP_FILE);
-	if (
-		!resolved.ok ||
-		(await insideUserGlobalRoots(
-			session.agentDir,
-			session.resourceLoader.getUserSkillRoots?.() ?? [],
-			resolved.absolute,
-		))
-	) {
+	if (!resolved.ok || (await insideUserGlobalRoots(session, resolved.absolute))) {
 		return notAllowed(MCP_FILE.relative);
 	}
 	const stored: Stored = resolved.exists ? await readStored(resolved.absolute) : { kind: "missing" };

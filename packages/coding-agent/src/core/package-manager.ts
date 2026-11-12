@@ -87,6 +87,11 @@ export interface ResolvedResource {
 
 export interface ResolvedPaths {
 	skillRoots?: readonly SkillProvenance[];
+	/**
+	 * Folders walked for user-provenance skills (a package's `skills` folder, a manifest or settings skill folder): the
+	 * walk loads a top-level `*.md` file there as a skill, so the RPC project verbs refuse creating one (senpi#6558).
+	 */
+	skillScanDirs?: readonly string[];
 	/** SKILL.md files of auto-discovered skill folders that an ignore file hid (senpi#5060). */
 	ignoredSkills?: readonly string[];
 	extensions: ResolvedResource[];
@@ -186,6 +191,7 @@ interface ResourceAccumulator {
 	themes: Map<string, { metadata: PathMetadata; enabled: boolean }>;
 	hooks: Map<string, { metadata: PathMetadata; enabled: boolean }>;
 	ignoredSkills: Set<string>;
+	skillScanDirs: Set<string>;
 }
 
 /**
@@ -546,8 +552,14 @@ function collectAutoExtensionEntries(dir: string): string[] {
  * Collect resource files from a directory based on resource type.
  * Extensions use smart discovery (index.ts in subdirs), others use recursive collection.
  */
-function collectResourceFiles(dir: string, resourceType: ResourceType, provenance?: SkillProvenance): string[] {
+function collectResourceFiles(
+	dir: string,
+	resourceType: ResourceType,
+	provenance: SkillProvenance | undefined,
+	scanDirs: Set<string>,
+): string[] {
 	if (resourceType === "skills") {
+		if (provenance?.kind === "user") scanDirs.add(dir);
 		return collectSkillEntries(dir, "pi", undefined, undefined, { provenance });
 	}
 	if (resourceType === "extensions") {
@@ -850,6 +862,7 @@ export class DefaultPackageManager implements PackageManager {
 					origin: "top-level",
 				},
 				projectBaseDir,
+				accumulator.skillScanDirs,
 			);
 			this.resolveLocalEntries(
 				globalEntries,
@@ -861,6 +874,7 @@ export class DefaultPackageManager implements PackageManager {
 					origin: "top-level",
 				},
 				globalBaseDir,
+				accumulator.skillScanDirs,
 			);
 		}
 
@@ -2127,12 +2141,13 @@ export class DefaultPackageManager implements PackageManager {
 			for (const resourceType of RESOURCE_TYPES) {
 				const patterns = filter[resourceType];
 				const target = this.getTargetMap(accumulator, resourceType);
+				const scanDirs = accumulator.skillScanDirs;
 				if (filter.autoload === false) {
-					this.applyPackageDeltaFilter(packageRoot, patterns ?? [], resourceType, target, metadata);
+					this.applyPackageDeltaFilter(packageRoot, patterns ?? [], resourceType, target, metadata, scanDirs);
 				} else if (patterns !== undefined) {
-					this.applyPackageFilter(packageRoot, patterns, resourceType, target, metadata);
+					this.applyPackageFilter(packageRoot, patterns, resourceType, target, metadata, scanDirs);
 				} else {
-					this.collectDefaultResources(packageRoot, resourceType, target, metadata);
+					this.collectDefaultResources(packageRoot, resourceType, target, metadata, scanDirs);
 				}
 			}
 			return true;
@@ -2147,6 +2162,7 @@ export class DefaultPackageManager implements PackageManager {
 					resourceType,
 					this.getTargetMap(accumulator, resourceType),
 					metadata,
+					accumulator.skillScanDirs,
 				);
 			}
 			return true;
@@ -2157,7 +2173,7 @@ export class DefaultPackageManager implements PackageManager {
 			const dir = join(packageRoot, resourceType);
 			if (existsSync(dir)) {
 				// Collect all files from the directory (all enabled by default)
-				const files = collectResourceFiles(dir, resourceType, metadata.skillProvenance);
+				const files = collectResourceFiles(dir, resourceType, metadata.skillProvenance, accumulator.skillScanDirs);
 				for (const f of files) {
 					this.addResource(this.getTargetMap(accumulator, resourceType), f, metadata, true);
 				}
@@ -2172,17 +2188,18 @@ export class DefaultPackageManager implements PackageManager {
 		resourceType: ResourceType,
 		target: Map<string, { metadata: PathMetadata; enabled: boolean }>,
 		metadata: PathMetadata,
+		scanDirs: Set<string>,
 	): void {
 		const manifest = readPiManifest(join(packageRoot, "package.json"));
 		const entries = manifest?.[resourceType];
 		if (entries) {
-			this.addManifestEntries(entries, packageRoot, resourceType, target, metadata);
+			this.addManifestEntries(entries, packageRoot, resourceType, target, metadata, scanDirs);
 			return;
 		}
 		const dir = join(packageRoot, resourceType);
 		if (existsSync(dir)) {
 			// Collect all files from the directory (all enabled by default)
-			const files = collectResourceFiles(dir, resourceType, metadata.skillProvenance);
+			const files = collectResourceFiles(dir, resourceType, metadata.skillProvenance, scanDirs);
 			for (const f of files) {
 				this.addResource(target, f, metadata, true);
 			}
@@ -2195,8 +2212,9 @@ export class DefaultPackageManager implements PackageManager {
 		resourceType: ResourceType,
 		target: Map<string, { metadata: PathMetadata; enabled: boolean }>,
 		metadata: PathMetadata,
+		scanDirs: Set<string>,
 	): void {
-		const { allFiles } = this.collectManifestFiles(packageRoot, resourceType, metadata.skillProvenance);
+		const { allFiles } = this.collectManifestFiles(packageRoot, resourceType, metadata.skillProvenance, scanDirs);
 
 		if (userPatterns.length === 0) {
 			// Empty array explicitly disables all resources of this type
@@ -2221,12 +2239,13 @@ export class DefaultPackageManager implements PackageManager {
 		resourceType: ResourceType,
 		target: Map<string, { metadata: PathMetadata; enabled: boolean }>,
 		metadata: PathMetadata,
+		scanDirs: Set<string>,
 	): void {
 		if (userPatterns.length === 0) {
 			return;
 		}
 
-		const { allFiles } = this.collectManifestFiles(packageRoot, resourceType, metadata.skillProvenance);
+		const { allFiles } = this.collectManifestFiles(packageRoot, resourceType, metadata.skillProvenance, scanDirs);
 		const enabledByUser = applyAutoloadDisabledPatterns(allFiles, userPatterns, packageRoot);
 		for (const [filePath, enabled] of enabledByUser) {
 			this.addResource(target, filePath, metadata, enabled);
@@ -2241,12 +2260,19 @@ export class DefaultPackageManager implements PackageManager {
 	private collectManifestFiles(
 		packageRoot: string,
 		resourceType: ResourceType,
-		provenance?: SkillProvenance,
+		provenance: SkillProvenance | undefined,
+		scanDirs: Set<string>,
 	): { allFiles: string[]; enabledByManifest: Set<string> } {
 		const manifest = readPiManifest(join(packageRoot, "package.json"));
 		const entries = manifest?.[resourceType];
 		if (entries && entries.length > 0) {
-			const allFiles = this.collectFilesFromManifestEntries(entries, packageRoot, resourceType, provenance);
+			const allFiles = this.collectFilesFromManifestEntries(
+				entries,
+				packageRoot,
+				resourceType,
+				provenance,
+				scanDirs,
+			);
 			const manifestPatterns = entries.filter(isOverridePattern);
 			const enabledByManifest =
 				manifestPatterns.length > 0 ? applyPatterns(allFiles, manifestPatterns, packageRoot) : new Set(allFiles);
@@ -2257,7 +2283,7 @@ export class DefaultPackageManager implements PackageManager {
 		if (!existsSync(conventionDir)) {
 			return { allFiles: [], enabledByManifest: new Set() };
 		}
-		const allFiles = collectResourceFiles(conventionDir, resourceType, provenance);
+		const allFiles = collectResourceFiles(conventionDir, resourceType, provenance, scanDirs);
 		return { allFiles, enabledByManifest: new Set(allFiles) };
 	}
 
@@ -2267,10 +2293,17 @@ export class DefaultPackageManager implements PackageManager {
 		resourceType: ResourceType,
 		target: Map<string, { metadata: PathMetadata; enabled: boolean }>,
 		metadata: PathMetadata,
+		scanDirs: Set<string>,
 	): void {
 		if (!entries) return;
 
-		const allFiles = this.collectFilesFromManifestEntries(entries, root, resourceType, metadata.skillProvenance);
+		const allFiles = this.collectFilesFromManifestEntries(
+			entries,
+			root,
+			resourceType,
+			metadata.skillProvenance,
+			scanDirs,
+		);
 		const patterns = entries.filter(isOverridePattern);
 		const enabledPaths = applyPatterns(allFiles, patterns, root);
 
@@ -2285,7 +2318,8 @@ export class DefaultPackageManager implements PackageManager {
 		entries: string[],
 		root: string,
 		resourceType: ResourceType,
-		provenance?: SkillProvenance,
+		provenance: SkillProvenance | undefined,
+		scanDirs: Set<string>,
 	): string[] {
 		const sourceEntries = entries.filter((entry) => !isOverridePattern(entry));
 		const resolved = sourceEntries.flatMap((entry) => {
@@ -2295,7 +2329,7 @@ export class DefaultPackageManager implements PackageManager {
 
 			return expandPackageGlob(entry, root);
 		});
-		return this.collectFilesFromPaths(resolved, resourceType, provenance);
+		return this.collectFilesFromPaths(resolved, resourceType, provenance, scanDirs);
 	}
 
 	private resolveLocalEntries(
@@ -2304,6 +2338,7 @@ export class DefaultPackageManager implements PackageManager {
 		target: Map<string, { metadata: PathMetadata; enabled: boolean }>,
 		metadata: PathMetadata,
 		baseDir: string,
+		scanDirs: Set<string>,
 	): void {
 		if (entries.length === 0) return;
 
@@ -2314,7 +2349,7 @@ export class DefaultPackageManager implements PackageManager {
 		const allFiles = resolvedPlain.flatMap((path) => {
 			const selected =
 				resourceType === "skills" ? this.selectSkillRoot(path, metadata, "project-selected") : metadata;
-			const files = this.collectFilesFromPaths([path], resourceType, selected.skillProvenance);
+			const files = this.collectFilesFromPaths([path], resourceType, selected.skillProvenance, scanDirs);
 			for (const file of files) metadataByFile.set(file, selected);
 			return files;
 		});
@@ -2585,7 +2620,12 @@ export class DefaultPackageManager implements PackageManager {
 		};
 	}
 
-	private collectFilesFromPaths(paths: string[], resourceType: ResourceType, provenance?: SkillProvenance): string[] {
+	private collectFilesFromPaths(
+		paths: string[],
+		resourceType: ResourceType,
+		provenance: SkillProvenance | undefined,
+		scanDirs: Set<string>,
+	): string[] {
 		const files: string[] = [];
 		for (const p of paths) {
 			if (!existsSync(p)) continue;
@@ -2595,7 +2635,7 @@ export class DefaultPackageManager implements PackageManager {
 				if (stats.isFile()) {
 					files.push(p);
 				} else if (stats.isDirectory()) {
-					files.push(...collectResourceFiles(p, resourceType, provenance));
+					files.push(...collectResourceFiles(p, resourceType, provenance, scanDirs));
 				}
 			} catch {
 				// Ignore errors
@@ -2644,6 +2684,7 @@ export class DefaultPackageManager implements PackageManager {
 			themes: new Map(),
 			hooks: new Map(),
 			ignoredSkills: new Set(),
+			skillScanDirs: new Set(),
 		};
 	}
 
@@ -2677,6 +2718,7 @@ export class DefaultPackageManager implements PackageManager {
 			themes: mapToResolved(accumulator.themes),
 			hooks: mapToResolved(accumulator.hooks),
 			ignoredSkills: [...accumulator.ignoredSkills].sort(),
+			skillScanDirs: [...accumulator.skillScanDirs],
 		};
 	}
 
