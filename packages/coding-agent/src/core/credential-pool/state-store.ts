@@ -81,6 +81,9 @@ const documentSchema = z.looseObject({
 
 export type CredentialPoolStateDocument = z.infer<typeof documentSchema>;
 
+/** The local block log (senpi#3216), kept beside the state file. */
+export const BLOCK_LOG_FILENAME = "credential-pool-blocks.jsonl";
+
 export function credentialPoolStatePath(agentDir: string = getAgentDir()): string {
 	return join(agentDir, CREDENTIAL_POOL_STATE_FILENAME);
 }
@@ -182,6 +185,11 @@ export class CredentialSlotRepository {
 	constructor(path: string = credentialPoolStatePath(), options: { readonly lockWaitBudgetMs?: number } = {}) {
 		this.path = path;
 		this.lockWaitBudgetMs = options.lockWaitBudgetMs ?? FILE_STORAGE_LOCK_RETRY_BUDGET_MS;
+	}
+
+	/** The local block log sits beside the state file, so a test or alternate agent dir keeps both together. */
+	blockLogPath(): string {
+		return join(dirname(this.path), BLOCK_LOG_FILENAME);
 	}
 
 	/**
