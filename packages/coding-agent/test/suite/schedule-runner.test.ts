@@ -510,7 +510,7 @@ describe("schedule runner", () => {
 				lockFile,
 				JSON.stringify({
 					pid: gone.pid,
-					bootAtMs: processBootAtMs(),
+					bootAtMs: await processBootAtMs(),
 					processStartedAtMs: 1,
 					deliveryPid: delivery.pid,
 					deliveryStartedAtMs: Math.floor(Date.now() / 1000) * 1000,
@@ -557,7 +557,7 @@ describe("schedule runner", () => {
 			lockFile,
 			JSON.stringify({
 				pid: gone.pid,
-				bootAtMs: processBootAtMs(),
+				bootAtMs: await processBootAtMs(),
 				processStartedAtMs: 1,
 				deliveryPid: unrelated.pid,
 				deliveryStartedAtMs: 1,
@@ -585,7 +585,7 @@ describe("schedule runner", () => {
 				lockFile,
 				JSON.stringify({
 					pid: gone.pid,
-					bootAtMs: processBootAtMs(),
+					bootAtMs: await processBootAtMs(),
 					processStartedAtMs: 1,
 					deliveryPid: leader.pid,
 					deliveryStartedAtMs: Math.floor(Date.now() / 1000) * 1000,
@@ -606,7 +606,7 @@ describe("schedule runner", () => {
 		const gone = spawn(process.execPath, ["-e", ""]);
 		await new Promise<void>((resolve) => gone.once("exit", () => resolve()));
 		const lockFile = join(dir, "sessions", `${encodeURIComponent("session-a")}.lock`);
-		const deadRunner = { pid: gone.pid, bootAtMs: processBootAtMs(), processStartedAtMs: 1, gated: false };
+		const deadRunner = { pid: gone.pid, bootAtMs: await processBootAtMs(), processStartedAtMs: 1, gated: false };
 		await writeAtomic(lockFile, JSON.stringify({ ...deadRunner, maxDeliveryMs: 3_600_000 }));
 		const withinLimit = await acquireSessionDeliveryLock(dir, "session-a");
 		await writeAtomic(lockFile, JSON.stringify({ ...deadRunner, maxDeliveryMs: 0 }));
@@ -725,7 +725,7 @@ describe("schedule runner", () => {
 		await writeFile(sessionFile, "", "utf8");
 		const job = await createScheduledJob(join(root, "schedule"), jobInput({ sessionId: "s", sessionFile }), T0);
 
-		const hold = holdSessionFile(sessionFile, "s", { expectExisting: true });
+		const hold = await holdSessionFile(sessionFile, "s", { expectExisting: true });
 		const whileOpen = await deferWhileSessionOpen(job);
 		hold.release();
 		const afterClose = await deferWhileSessionOpen(job);

@@ -46,11 +46,12 @@ vi.mock("@earendil-works/pi-pty", () => pty);
 import { TerminalRuntimeSession } from "../../src/core/extensions/builtin/terminal/runtime-session.ts";
 import { loadTerminalSettings } from "../../src/core/extensions/builtin/terminal/settings.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
+import { processBootAtMs } from "../../src/core/extensions/builtin/terminal/process-identity.ts";
 
 describe("persistent terminal output redaction", () => {
 	it("keeps a PEM opener and body private across idle pauses", async () => {
 		vi.useFakeTimers();
-		const runtime = new TerminalRuntimeSession("synthetic", { redactSecretsInOutput: true });
+		const runtime = new TerminalRuntimeSession("synthetic", { redactSecretsInOutput: true }, await processBootAtMs());
 		const session = pty.sessions.at(-1);
 		const fixture = secretOutputCases().find(({ name }) => name === "PEM");
 		assert(session && fixture);
@@ -90,7 +91,7 @@ describe("persistent terminal output redaction", () => {
 		"eye",
 	])("flushes idle prompt text and complete controls: %j", async (input) => {
 		vi.useFakeTimers();
-		const runtime = new TerminalRuntimeSession("synthetic", { redactSecretsInOutput: true });
+		const runtime = new TerminalRuntimeSession("synthetic", { redactSecretsInOutput: true }, await processBootAtMs());
 		const session = pty.sessions.at(-1);
 		assert(session);
 		const observed: string[] = [];
@@ -111,7 +112,7 @@ describe("persistent terminal output redaction", () => {
 	});
 	it("preserves ordinary words continued across repeated idle pauses", async () => {
 		vi.useFakeTimers();
-		const runtime = new TerminalRuntimeSession("synthetic", { redactSecretsInOutput: true });
+		const runtime = new TerminalRuntimeSession("synthetic", { redactSecretsInOutput: true }, await processBootAtMs());
 		const session = pty.sessions.at(-1);
 		assert(session);
 		try {
@@ -140,7 +141,11 @@ describe("persistent terminal output redaction", () => {
 						? 3
 						: 4;
 				for (let split = 1; split < fixture.input.length; split++) {
-					const runtime = new TerminalRuntimeSession("synthetic", { redactSecretsInOutput: true });
+					const runtime = new TerminalRuntimeSession(
+						"synthetic",
+						{ redactSecretsInOutput: true },
+						await processBootAtMs(),
+					);
 					const session = pty.sessions.at(-1);
 					assert(session);
 					try {
@@ -174,7 +179,7 @@ describe("persistent terminal output redaction", () => {
 	});
 	it("withholds a split Bearer body from observers, retained output and screen", async () => {
 		vi.useFakeTimers();
-		const runtime = new TerminalRuntimeSession("synthetic", { redactSecretsInOutput: true });
+		const runtime = new TerminalRuntimeSession("synthetic", { redactSecretsInOutput: true }, await processBootAtMs());
 		const session = pty.sessions.at(-1);
 		assert(session);
 		const observed: string[] = [];
@@ -201,7 +206,11 @@ describe("persistent terminal output redaction", () => {
 	});
 
 	it.each([false, true])("protects observers, delta, retained output and screen (enabled=%s)", async (enabled) => {
-		const runtime = new TerminalRuntimeSession("synthetic", { redactSecretsInOutput: enabled });
+		const runtime = new TerminalRuntimeSession(
+			"synthetic",
+			{ redactSecretsInOutput: enabled },
+			await processBootAtMs(),
+		);
 		const session = pty.sessions.at(-1);
 		assert(session);
 		const observed: string[] = [];

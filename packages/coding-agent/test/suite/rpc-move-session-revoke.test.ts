@@ -98,7 +98,7 @@ describe("move_session revoke (senpi#4003)", () => {
 		await using a = createInProcessRig(fixture.agentA);
 		await using b = createInProcessRig(fixture.agentB);
 		const onB = await importedOnB(a, b, fixture, "move-r5");
-		const otherGeneration = holdSessionFile(onB, SESSION_ID, { expectExisting: true });
+		const otherGeneration = await holdSessionFile(onB, SESSION_ID, { expectExisting: true });
 
 		const refused = await move(b, { op: "revoke", sessionPath: onB, moveId: "move-r5" });
 		otherGeneration.release();

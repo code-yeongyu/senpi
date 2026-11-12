@@ -6,7 +6,7 @@ import type {
 	TerminalSessionOptions,
 } from "@earendil-works/pi-pty";
 import { SecretOutputRedactor } from "../../../tools/secret-output-redactor.ts";
-import { type ChildProcessIdentity, processBootAtMs } from "./process-identity.ts";
+import type { ChildProcessIdentity } from "./process-identity.ts";
 import { loadPty } from "./pty.lazy.ts";
 import { DEFAULT_SCROLLBACK, MAX_SESSION_OUTPUT_CHARS } from "./shared.ts";
 
@@ -57,7 +57,11 @@ export class TerminalRuntimeSession {
 	private readonly disposeListeners = new Set<() => void>();
 	private unsubscribeData: (() => void) | null = null;
 
-	constructor(command: string, options: TerminalRuntimeOptions) {
+	/** The boot instant this process recorded for its children, resolved by the async creator (the read is async). */
+	readonly bootAtMs: number;
+
+	constructor(command: string, options: TerminalRuntimeOptions, bootAtMs: number) {
+		this.bootAtMs = bootAtMs;
 		this.redactor = options.redactSecretsInOutput === true ? new SecretOutputRedactor() : undefined;
 		this.command = command;
 		this.argv = [options.command ?? command, ...(options.args ?? [])];
@@ -126,7 +130,7 @@ export class TerminalRuntimeSession {
 			pid,
 			...(processGroupId === undefined ? {} : { processGroupId }),
 			startedAtMs: this.startedAtMs,
-			bootAtMs: processBootAtMs(),
+			bootAtMs: this.bootAtMs,
 			argv: this.argv,
 		};
 	}

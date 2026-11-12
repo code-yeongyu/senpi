@@ -35,7 +35,7 @@ function probesFor(world: World, pid: number, host = "host-a"): WriterProbes {
 		host: () => host,
 		pidAlive: (candidate) => world.alive.has(candidate),
 		readProcessStartMs: async (candidate) => world.starts.get(candidate),
-		bootAtMs: () => world.boot,
+		bootAtMs: async () => world.boot,
 		self: () => ({ pid, processStartedAtMs: world.starts.get(pid) ?? 0 }),
 	};
 }

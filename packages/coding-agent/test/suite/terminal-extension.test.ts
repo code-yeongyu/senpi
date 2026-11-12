@@ -16,6 +16,7 @@ import { createKillBashTool } from "../../src/core/extensions/builtin/terminal/t
 import type { ExtensionAPI, ExtensionContext } from "../../src/core/extensions/types.ts";
 import type { Harness } from "./harness.ts";
 import { createHarness } from "./harness.ts";
+import { processBootAtMs } from "../../src/core/extensions/builtin/terminal/process-identity.ts";
 
 const autoDetachSpawn = vi.hoisted(() => ({
 	enabled: false,
@@ -194,7 +195,7 @@ describe("terminal builtin extension — real session execution (pipe fallback)"
 });
 
 describe("terminal runtime session startup ordering", () => {
-	it("subscribes to output before starting a fast session", () => {
+	it("subscribes to output before starting a fast session", async () => {
 		const calls: string[] = [];
 		const start = vi.spyOn(TerminalSession.prototype, "start").mockImplementation(function (this: TerminalSession) {
 			calls.push("start");
@@ -206,7 +207,7 @@ describe("terminal runtime session startup ordering", () => {
 		});
 		const onExit = vi.spyOn(TerminalSession.prototype, "onExit").mockReturnValue(() => {});
 
-		const runtime = new TerminalRuntimeSession("fast-exit", { command: "true" });
+		const runtime = new TerminalRuntimeSession("fast-exit", { command: "true" }, await processBootAtMs());
 		try {
 			expect(calls).toEqual(["onData", "start"]);
 		} finally {

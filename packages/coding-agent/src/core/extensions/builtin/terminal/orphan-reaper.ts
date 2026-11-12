@@ -17,7 +17,7 @@ export interface OwnerProbes {
 	readonly platform?: NodeJS.Platform;
 	readonly isProcessAlive?: (pid: number) => boolean;
 	readonly readProcessEvidence?: (pid: number) => Promise<ProcessEvidence | undefined>;
-	readonly bootAtMs?: () => number;
+	readonly bootAtMs?: () => Promise<number>;
 }
 
 export interface KillTreeOptions {
@@ -111,7 +111,7 @@ export async function confirmOwner(
 ): Promise<OwnerVerdict> {
 	const platform = probes.platform ?? process.platform;
 	try {
-		if (!sameBoot(runtime.bootAtMs, (probes.bootAtMs ?? processBootAtMs)())) return "dead";
+		if (!sameBoot(runtime.bootAtMs, await (probes.bootAtMs ?? processBootAtMs)())) return "dead";
 		if (!(probes.isProcessAlive ?? isProcessAlive)(runtime.pid)) return "dead";
 		const evidence = await (probes.readProcessEvidence ?? defaultEvidenceReader(platform))(runtime.pid);
 		if (evidence?.startedAtMs === undefined || !Number.isFinite(evidence.startedAtMs)) return "unverifiable";

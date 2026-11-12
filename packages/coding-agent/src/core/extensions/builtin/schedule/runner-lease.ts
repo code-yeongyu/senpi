@@ -44,10 +44,11 @@ export async function writeRunnerLease(
 	now: number,
 ): Promise<void> {
 	await mkdir(runnersDir(dir), { recursive: true, mode: 0o700 });
+	const bootAtMs = await processBootAtMs();
 	const identity = ownRunnerIdentity();
 	await publishReplace(
 		leasePath(dir, identity.pid),
-		JSON.stringify({ ...identity, bootAtMs: processBootAtMs(), beatAt: now, ...lease }),
+		JSON.stringify({ ...identity, bootAtMs, beatAt: now, ...lease }),
 		PRIVATE,
 	);
 }
@@ -171,7 +172,7 @@ async function orphanedDelivery(raw: string, lockAgeMs: number, probes: LockProb
 	if (typeof parsed !== "object" || parsed === null) return undefined;
 	const field = (key: string): unknown => (key in parsed ? Reflect.get(parsed, key) : undefined);
 	const boot = field("bootAtMs");
-	if (typeof boot !== "number" || !sameBoot(boot, processBootAtMs())) return undefined;
+	if (typeof boot !== "number" || !sameBoot(boot, await processBootAtMs())) return undefined;
 	const pid = field("deliveryPid");
 	const startedAt = field("deliveryStartedAtMs");
 	if (typeof pid !== "number" || typeof startedAt !== "number") {
@@ -204,7 +205,7 @@ export async function acquireSessionDeliveryLock(
 	const path = sessionLockPath(dir, sessionId);
 	const identity = {
 		pid: process.pid,
-		bootAtMs: processBootAtMs(),
+		bootAtMs: await processBootAtMs(),
 		processStartedAtMs: ownProcessStartedAtMs(),
 		gated: options.gated ?? process.platform !== "win32",
 		maxDeliveryMs: options.maxDeliveryMs ?? DEFAULT_MAX_DELIVERY_MS,

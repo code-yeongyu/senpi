@@ -1,5 +1,5 @@
-import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { uptime as osUptimeSeconds } from "node:os";
 import { workerData } from "node:worker_threads";
 
@@ -22,14 +22,21 @@ const wholeSeconds = (ms: number): number => Math.round(ms / 1000) * 1000;
  * is one recorded value, not `now - uptime`, so two reads agree to the second however they straddle an uptime tick
  * (senpi#3152), and a wall-clock step moves it for every process alike. Undefined where neither is readable.
  */
-function readKernelBootEpochSeconds(platform: NodeJS.Platform): number | undefined {
+async function readKernelBootEpochSeconds(platform: NodeJS.Platform): Promise<number | undefined> {
 	try {
 		if (platform === "linux") {
-			const match = /^btime (\d+)$/m.exec(readFileSync("/proc/stat", "utf8"));
+			const match = /^btime (\d+)$/m.exec(await readFile("/proc/stat", "utf8"));
 			return match ? Number(match[1]) : undefined;
 		}
 		if (platform === "darwin") {
-			const raw = execFileSync("/usr/sbin/sysctl", ["-n", "kern.boottime"], { encoding: "utf8", timeout: 2_000 });
+			const raw = await new Promise<string>((resolve, reject) => {
+				execFile(
+					"/usr/sbin/sysctl",
+					["-n", "kern.boottime"],
+					{ encoding: "utf8", timeout: 2_000 },
+					(error, stdout) => (error ? reject(error) : resolve(stdout)),
+				);
+			});
 			const match = /sec = (\d+)/.exec(raw);
 			return match ? Number(match[1]) : undefined;
 		}
@@ -38,21 +45,28 @@ function readKernelBootEpochSeconds(platform: NodeJS.Platform): number | undefin
 }
 
 /**
- * The kernel's boot record, read once per process and platform: it cannot change while the machine is up, and the
- * darwin read spawns a synchronous `sysctl`. Only a value the kernel actually returned is kept; the uptime
- * fallback is computed on every read.
+ * The kernel's boot record, read once per process and platform: it cannot change while the machine is up. The read
+ * is asynchronous (darwin spawns `sysctl`), so one session never blocks the shared host on it, and every later caller
+ * awaits the same promise. A read that found no value is dropped, so the next call reads again; the uptime fallback is
+ * computed on every read.
  */
-const kernelBootRecords = new Map<NodeJS.Platform, number>();
-function kernelBootEpochSeconds(platform: NodeJS.Platform): number | undefined {
+const kernelBootRecords = new Map<NodeJS.Platform, Promise<number | undefined>>();
+function kernelBootEpochSeconds(platform: NodeJS.Platform): Promise<number | undefined> {
 	const known = kernelBootRecords.get(platform);
 	if (known !== undefined) return known;
-	const read = readKernelBootEpochSeconds(platform);
-	if (read !== undefined) kernelBootRecords.set(platform, read);
+	const read = readKernelBootEpochSeconds(platform).then((seconds) => {
+		if (seconds === undefined) kernelBootRecords.delete(platform);
+		return seconds;
+	});
+	kernelBootRecords.set(platform, read);
 	return read;
 }
 
-export function processBootAtMs(now: () => number = Date.now, platform: NodeJS.Platform = process.platform): number {
-	const bootSeconds = kernelBootEpochSeconds(platform);
+export async function processBootAtMs(
+	now: () => number = Date.now,
+	platform: NodeJS.Platform = process.platform,
+): Promise<number> {
+	const bootSeconds = await kernelBootEpochSeconds(platform);
 	if (bootSeconds !== undefined) return bootSeconds * 1000;
 	return wholeSeconds(now() - osUptimeSeconds() * 1000);
 }

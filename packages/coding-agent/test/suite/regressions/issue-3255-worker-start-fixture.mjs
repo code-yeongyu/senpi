@@ -6,7 +6,7 @@ import { holdSessionFile } from "../../../src/core/session-holders.ts";
 // worker writes names the host OS process, not the worker isolate.
 const { hostProcessStartedAtMs, file, id, cwd } = workerData;
 if (typeof hostProcessStartedAtMs !== "number") throw new Error("hostProcessStartedAtMs is required");
-const hold = holdSessionFile(file, id, { cwd, expectExisting: true });
+const hold = await holdSessionFile(file, id, { cwd, expectExisting: true });
 parentPort?.on("message", () => {
 	hold.release();
 	parentPort.close();

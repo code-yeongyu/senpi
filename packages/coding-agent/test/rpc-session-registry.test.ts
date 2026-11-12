@@ -1,12 +1,13 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, statSync, utimesSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { getApiProvider, registerApiProvider } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
 	AgentSessionRuntime,
+	createAgentSessionRuntime,
 	type CreateAgentSessionRuntimeFactory,
 	type CreateAgentSessionRuntimeResult,
 } from "../src/core/agent-session-runtime.ts";
@@ -463,6 +464,106 @@ describe("RPC session registry", () => {
 		expect(entry.runtime).not.toBe(initialRuntime);
 		expect(entry.runtime?.session.sessionManager.getCwd()).toBe(replacementCwd);
 		expect(registry.list()[0]?.cwd).toBe(replacementCwd);
+		await registry.close(opened.sessionId);
+	});
+
+	/** This process's holder record for a session whose file lives in `dir`, if one is published. */
+	function ownHolderRecord(dir: string): string | undefined {
+		const holders = join(dir, "session-holders");
+		if (!existsSync(holders)) return undefined;
+		return readdirSync(holders, { recursive: true, encoding: "utf8" })
+			.map((name) => join(holders, name))
+			.find((path) => path.endsWith(`${process.pid}.json`));
+	}
+
+	test("releases the hold it took for a runtime whose construction throws", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "senpi-rpc-hold-throw-"));
+		directories.push(dir);
+		const failure = new Error("runtime construction failed");
+		const createRuntime: CreateAgentSessionRuntimeFactory = async (options) => {
+			const result = runtime(options);
+			// The creator reads the session manager once to take the hold; the constructor's own read of it (to bind the
+			// permission mode) throws, so construction fails after the hold exists.
+			let managerReads = 0;
+			const session = new Proxy(result.session, {
+				get: (target, property, receiver) => {
+					if (property === "sessionManager" && ++managerReads > 1) throw failure;
+					return Reflect.get(target, property, receiver);
+				},
+			});
+			return { ...result, session };
+		};
+
+		await expect(
+			createAgentSessionRuntime(createRuntime, {
+				cwd: dir,
+				agentDir: dir,
+				sessionManager: SessionManager.open(join(dir, "throwing.jsonl"), undefined, dir),
+			}),
+		).rejects.toBe(failure);
+
+		expect(ownHolderRecord(dir)).toBeUndefined();
+	});
+
+	test("constructs a runtime around a passed-in hold without touching the holder record", async () => {
+		const { dir, registry } = await createRegistry();
+		const opened = await registry.openSession(profile(dir, join(dir, "passed-hold.jsonl")));
+		const live = registry.getForCommand(opened.sessionId, "prompt").runtime;
+		if (!live) throw new Error("expected an open runtime");
+		expect(ownHolderRecord(dir)).toBeDefined();
+		live.releaseSessionHold();
+		expect(ownHolderRecord(dir)).toBeUndefined();
+		const hold = { release: vi.fn() };
+
+		const replacement = new AgentSessionRuntime(
+			live.session,
+			live.services,
+			async () => {
+				throw new Error("not used");
+			},
+			[],
+			undefined,
+			live.launchProfile,
+			hold,
+		);
+		// A hold the constructor started would publish once the cached boot instant resolves: let that run first.
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		expect(ownHolderRecord(dir)).toBeUndefined();
+		replacement.releaseSessionHold();
+		expect(hold.release).toHaveBeenCalledTimes(1);
+		await registry.close(opened.sessionId);
+	});
+
+	test("takes the replacement runtime's session hold before the switched runtime releases its own", async () => {
+		const { dir, registry } = await createRegistry();
+		const initialCwd = await mkdtemp(join(tmpdir(), "senpi-rpc-initial-"));
+		const replacementCwd = await mkdtemp(join(tmpdir(), "senpi-rpc-replacement-"));
+		directories.push(initialCwd, replacementCwd);
+		const opened = await registry.openSession(profile(initialCwd, join(dir, "initial.jsonl")));
+		const entry = registry.getForCommand(opened.sessionId, "switch_session");
+		const initialRuntime = entry.runtime;
+		if (!initialRuntime) throw new Error("expected an open runtime");
+		const switchRuntime = initialRuntime.switchSession.bind(initialRuntime);
+		let record: string | undefined;
+		vi.spyOn(initialRuntime, "switchSession").mockImplementation(async (sessionPath, options) => {
+			const result = await switchRuntime(sessionPath, options);
+			// The switched runtime now holds the replacement session; mark its holder record so a re-publish shows.
+			const holders = join(dirname(sessionPath), "session-holders");
+			record = readdirSync(holders, { recursive: true, encoding: "utf8" })
+				.map((name) => join(holders, name))
+				.find((path) => path.endsWith(`${process.pid}.json`));
+			if (record !== undefined) utimesSync(record, 1_000, 1_000);
+			return result;
+		});
+
+		const switchSession = entry.switchSession;
+		if (!switchSession) throw new Error("expected a multi-session switch");
+		await switchSession(join(dir, "replacement.jsonl"), { cwdOverride: replacementCwd });
+
+		// Released first, the shared record would be deleted and published again with a fresh mtime.
+		if (record === undefined) throw new Error("the switched-to session published no holder record");
+		expect(statSync(record).mtimeMs).toBe(1_000_000);
 		await registry.close(opened.sessionId);
 	});
 

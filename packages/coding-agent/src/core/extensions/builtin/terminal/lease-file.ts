@@ -141,7 +141,7 @@ export async function reclaimLockState(lock: string, probes: LockProbes = {}): P
 		);
 		return age > UNREADABLE_LOCK_STALE_MS ? { state: "stale", raw } : { state: "held" };
 	}
-	if (!sameBoot(holder.bootAtMs, processBootAtMs())) return { state: "stale", raw };
+	if (!sameBoot(holder.bootAtMs, await processBootAtMs())) return { state: "stale", raw };
 	if (holder.pid === process.pid) {
 		// Our own pid: held only by this very process (another reclaim in flight here), never by a
 		// crashed earlier process whose pid this one now wears.
@@ -180,7 +180,7 @@ export async function breakStaleLock(lock: string, raw: string): Promise<void> {
 async function takeReclaimLock(lock: string, probes: LockProbes): Promise<string | { holder?: ReclaimLockHolder }> {
 	const mine = JSON.stringify({
 		pid: process.pid,
-		bootAtMs: processBootAtMs(),
+		bootAtMs: await processBootAtMs(),
 		processStartedAtMs: ownProcessStartedAtMs(),
 	});
 	for (let attempt = 0; attempt < 3; attempt += 1) {

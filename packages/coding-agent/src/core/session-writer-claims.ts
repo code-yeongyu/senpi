@@ -30,7 +30,7 @@ export interface WriterClaim {
 export interface WriterProbes {
 	readonly pidAlive: (pid: number) => boolean;
 	readonly readProcessStartMs: (pid: number) => Promise<number | undefined>;
-	readonly bootAtMs: () => number;
+	readonly bootAtMs: () => Promise<number>;
 	readonly host: () => string;
 	readonly self: () => { readonly pid: number; readonly processStartedAtMs: number };
 }
@@ -78,16 +78,19 @@ export async function acquireWriterClaim(
 	canonicalPath: string,
 	probes: WriterProbes = realWriterProbes,
 ): Promise<WriterClaim> {
+	// Resolved before the claim check, so nothing yields between proving the owner gone and publishing the next claim.
+	const bootAtMs = await probes.bootAtMs();
 	await mkdir(dir, { recursive: true });
 	const current = await latestClaim(dir);
-	if (current !== undefined && !(await ownerGone(dir, current, probes))) throw new SessionWriterBusyError(current);
+	if (current !== undefined && !(await ownerGone(dir, current, probes, bootAtMs)))
+		throw new SessionWriterBusyError(current);
 	const self = probes.self();
 	const claim: WriterClaim = {
 		generation: (current?.generation ?? 0) + 1,
 		nonce: randomUUID(),
 		host: probes.host(),
 		pid: self.pid,
-		bootAtMs: probes.bootAtMs(),
+		bootAtMs,
 		processStartedAtMs: self.processStartedAtMs,
 		canonicalPath,
 	};
@@ -132,11 +135,11 @@ async function latestClaim(dir: string): Promise<WriterClaim | undefined> {
 	return parseClaim(await readFile(join(dir, `${last}.json`), "utf8"), dir);
 }
 
-async function ownerGone(dir: string, claim: WriterClaim, probes: WriterProbes): Promise<boolean> {
+async function ownerGone(dir: string, claim: WriterClaim, probes: WriterProbes, bootAtMs: number): Promise<boolean> {
 	if (await releasedWith(dir, claim)) return true;
 	// A writer on another host (a shared or network directory) cannot be probed from here: never displace it.
 	if (claim.host !== probes.host()) return false;
-	if (!sameBoot(probes.bootAtMs(), claim.bootAtMs)) return true;
+	if (!sameBoot(bootAtMs, claim.bootAtMs)) return true;
 	if (!probes.pidAlive(claim.pid)) return true;
 	const startedAtMs = await probes.readProcessStartMs(claim.pid);
 	if (startedAtMs === undefined) return false;

@@ -42,7 +42,7 @@ describe("move_session lock scope (senpi#3678)", () => {
 	it("#given another process holds the session #when finish runs #then it refuses session_held and re-queues nothing", async () => {
 		const { rig, sessionPath } = await exported("move-8");
 		await using a = rig;
-		const otherGeneration = holdSessionFile(sessionPath, SESSION_ID, { expectExisting: true });
+		const otherGeneration = await holdSessionFile(sessionPath, SESSION_ID, { expectExisting: true });
 
 		const refused = await move(a, { op: "finish", sessionPath, moveId: "move-8", answer: declined });
 		otherGeneration.release();
@@ -93,9 +93,9 @@ describe("move_session lock scope (senpi#3678)", () => {
 			target: "device-b",
 			droppedUserMessages: [],
 			bundleDir: join(dirname(fixture.sessionPath), "bundle-move-10"),
-			lockedGuard: () => {
+			lockedGuard: async () => {
 				try {
-					holdSessionFile(fixture.sessionPath, SESSION_ID, { expectExisting: true }).release();
+					(await holdSessionFile(fixture.sessionPath, SESSION_ID, { expectExisting: true })).release();
 					observed = "free";
 				} catch (error) {
 					observed = error instanceof Error && "code" in error ? String(error.code) : "other";

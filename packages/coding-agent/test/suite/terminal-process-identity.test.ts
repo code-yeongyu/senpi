@@ -8,19 +8,19 @@ import {
 } from "../../src/core/extensions/builtin/terminal/process-identity.ts";
 
 describe("terminal process identity", () => {
-	it("derives a whole-second boot instant that two consecutive reads agree on", () => {
-		const boot = processBootAtMs();
+	it("derives a whole-second boot instant that two consecutive reads agree on", async () => {
+		const boot = await processBootAtMs();
 		expect(Number.isInteger(boot)).toBe(true);
 		expect(boot % 1000).toBe(0);
 		expect(boot).toBeLessThan(Date.now());
-		expect(processBootAtMs()).toBe(boot);
+		expect(await processBootAtMs()).toBe(boot);
 	});
 
-	it.runIf(process.platform === "darwin")("matches the kernel boot time on darwin within the tolerance", () => {
+	it.runIf(process.platform === "darwin")("matches the kernel boot time on darwin within the tolerance", async () => {
 		const raw = execFileSync("sysctl", ["-n", "kern.boottime"], { encoding: "utf8" });
 		const seconds = Number(/sec = (\d+)/.exec(raw)?.[1]);
 		expect(Number.isFinite(seconds)).toBe(true);
-		expect(Math.abs(processBootAtMs() - seconds * 1000)).toBeLessThanOrEqual(BOOT_INSTANT_TOLERANCE_MS);
+		expect(Math.abs((await processBootAtMs()) - seconds * 1000)).toBeLessThanOrEqual(BOOT_INSTANT_TOLERANCE_MS);
 	});
 
 	it("reports the own process start within a few seconds of now for a fresh process", () => {

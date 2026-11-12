@@ -117,7 +117,7 @@ describe("moved path resolution (#2898)", () => {
 
 	it("a holder claim on the old path is a claim on the new path", async () => {
 		const { newSession, oldSession } = movedSession();
-		const hold = holdSessionFile(oldSession, SESSION_ID, { expectExisting: true });
+		const hold = await holdSessionFile(oldSession, SESSION_ID, { expectExisting: true });
 		try {
 			expect((await liveSessionHolders(newSession, SESSION_ID)).map((holder) => holder.pid)).toEqual([process.pid]);
 			await expect(
