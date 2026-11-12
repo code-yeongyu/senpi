@@ -99,7 +99,7 @@ async function sessionFiles(agentDir: string): Promise<string[]> {
 	return files;
 }
 
-/** A host without an agent directory (the worker runtime) keeps no session files to look in. */
+/** A host built with no agent directory at all keeps no session files to look in; every host this package starts has one. */
 const RPC_ERROR_FIND_SESSION_UNSUPPORTED = "find_session_unsupported";
 const RPC_ERROR_FIND_SESSION_TOO_MANY = "find_session_too_many";
 

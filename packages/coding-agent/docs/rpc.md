@@ -6141,7 +6141,7 @@ The command is a read: it opens, claims, unloads, seals and rewrites nothing, an
 
 It needs the standing a path-naming `open_session` needs, so on a delegated connection it needs `device_admin`. A caller without that standing is refused before the lookup runs, and the refusal is the same for an id this host knows and one it does not, so it learns nothing either way.
 
-It is bounded: a host holding more than 20,000 session files answers `find_session_too_many` instead of a partial answer, and no file is read before that bound is decided. A `durableSessionId` that is missing, empty or not a string is `invalid_argument`. A host with no agent directory of its own (a worker-runtime host) answers `find_session_unsupported`.
+It is bounded: a host holding more than 20,000 session files answers `find_session_too_many` instead of a partial answer, and no file is read before that bound is decided. A `durableSessionId` that is missing, empty or not a string is `invalid_argument`. Every host this package starts keeps an agent directory, whichever runtime its sessions use, so all of them answer `find_session`, a host that runs its sessions in workers included. `find_session_unsupported` remains for a host built with no agent directory at all; no host this package starts answers it.
 
 After a `found`, open the session with `open_session { sessionPath, cwd }` and compare the answer's `state.sessionId` with the durable id before binding to it: the id is the proof, the path only a hint.
 
