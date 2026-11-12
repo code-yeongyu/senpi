@@ -7,6 +7,7 @@ import type { RpcInboundRecord } from "./rpc-types.ts";
 import { RPC_ERROR_SESSION_HELD } from "./rpc-types.ts";
 import type { RpcSessionBinding } from "./session-binding.ts";
 import { type RpcSessionEntry, RpcSessionRegistryError } from "./session-registry-types.ts";
+import { processKeyFromStart } from "../../core/extensions/builtin/terminal/process-key.ts";
 
 // Admission is conservative: a new command must pass the guard unless it is explicitly
 // a read or a control needed to finish/cancel an already-admitted turn.
@@ -102,6 +103,16 @@ export function sessionHeldCheck(
 	return async (sessionFile, sessionId) => {
 		const holders = await foreignSessionHolders(sessionFile, sessionId, {
 			holderEnded: (generation) => holderGenerationEnded(generation),
+			// Off Linux a key comes from the same one snapshot as the start times, never from one `ps` per holder.
+			...(process.platform === "linux"
+				? {}
+				: {
+						readProcessKey: async (pid: number) => {
+							processStarts ??= readProcessStarts();
+							const start = (await processStarts)?.get(pid);
+							return start === undefined ? undefined : processKeyFromStart(start);
+						},
+					}),
 			readProcessStartMs: (pid) => {
 				let probe = pidStarts.get(pid);
 				if (!probe) {

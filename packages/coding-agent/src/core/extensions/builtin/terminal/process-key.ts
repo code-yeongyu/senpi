@@ -8,8 +8,9 @@
  *   (`/proc/<pid>/stat`). Since kernel 5.6 those ticks are reported in the READER's time namespace, so two readers in
  *   different time namespaces (a CRIU-restored or `unshare -T` process) compute different keys for one live process.
  *   The view part names the namespace, and keys from different views are not compared (the millisecond rule decides).
- * - macOS: `kern.bootsessionuuid` and `p_starttime` as `ps -o lstart=` prints it in UTC; that instant is stored at fork,
- *   so a later step does not change it. The resolution is 1 s, which is safe because XNU hands out pids sequentially up
+ * - macOS: `kern.bootsessionuuid` and `p_starttime` in epoch seconds, parsed from `ps -o lstart=` exactly as the
+ *   one-snapshot `ps -axo pid=,lstart=` reader parses it, so both give the same key. The instant is stored at fork, so a
+ *   later step does not change it. The resolution is 1 s, which is safe because XNU hands out pids sequentially up
  *   to 99,999 before wrapping: reusing one pid within the same second would take about 100,000 forks in that second.
  * - Elsewhere: none; callers fall back to the millisecond rule.
  * Two keys from the same view are compared exactly: equal is the same process, different is another one (a reboot
@@ -17,6 +18,7 @@
  */
 import { execFile } from "node:child_process";
 import { readFile, readlink } from "node:fs/promises";
+import { processStartTimeMs } from "../../../../utils/process-identity.ts";
 
 type KeyPlatform = NodeJS.Platform;
 
@@ -54,10 +56,9 @@ async function readStart(pid: number, platform: KeyPlatform): Promise<string | u
 		return ticks !== undefined && /^\d+$/.test(ticks) ? ticks : undefined;
 	}
 	if (platform === "darwin") {
-		const text = (
-			await run("ps", ["-o", "lstart=", "-p", String(pid)], { TZ: "UTC", LC_ALL: "C", LANG: "C" })
-		).trim();
-		return text.length > 0 ? text.replace(/\s+/g, " ") : undefined;
+		const text = (await run("ps", ["-o", "lstart=", "-p", String(pid)], { LC_ALL: "C", LANG: "C" })).trim();
+		const startMs = text.length > 0 ? processStartTimeMs(text) : undefined;
+		return startMs === undefined ? undefined : darwinStart(startMs);
 	}
 	return undefined;
 }
@@ -127,4 +128,19 @@ export function sameBootByKey(recorded: unknown, own: string | undefined): boole
 export async function withOwnProcessKey<T extends object>(record: T): Promise<T & { processKey?: string }> {
 	const key = await ownProcessKey();
 	return key === undefined ? record : { ...record, processKey: key };
+}
+
+const darwinStart = (startMs: number): string => String(Math.floor(startMs / 1000));
+
+/**
+ * The key of a process whose start instant a caller already read from one `ps -axo pid=,lstart=` snapshot, so a check
+ * over many holders spawns no `ps` per holder. macOS only; `undefined` elsewhere (Linux reads `/proc` without a spawn).
+ */
+export async function processKeyFromStart(
+	startMs: number,
+	platform: NodeJS.Platform = process.platform,
+): Promise<string | undefined> {
+	if (platform !== "darwin") return undefined;
+	const boot = await bootId(platform);
+	return boot === undefined ? undefined : `${boot}:${darwinStart(startMs)}`;
 }
