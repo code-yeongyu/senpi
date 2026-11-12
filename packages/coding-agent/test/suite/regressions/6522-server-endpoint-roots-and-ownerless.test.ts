@@ -10,8 +10,8 @@ import {
 } from "../../../src/experimental/socket-path.ts";
 
 // senpi#6522: an endpoint directory a server never finished claiming (no usable owner record) is removed once no
-// starting server could still be writing one, and the per-user runtime directory is preferred over the shared temp
-// roots when it is guarded.
+// starting server could still be writing one. A guarded TMPDIR is used first; this user's XDG_RUNTIME_DIR only when
+// TMPDIR is unguarded, and the shared /tmp last.
 const roots: string[] = [];
 afterEach(() => {
 	vi.unstubAllEnvs();

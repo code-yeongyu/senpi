@@ -120,8 +120,10 @@ const OWNERLESS_MIN_AGE_MS = 300_000;
  * The probe that reads an owner's start time, bounded so a starved `ps` cannot hold a sweep (or a server's own
  * startup) for long; it reads in UTC, like the record, so a server and a later sweep in different time zones agree.
  *
- * Worst case per directory in a sweep: `processMatchesPidFile` retries, so about 5 attempts of 5 s plus its own 2 s,
- * near 36 s; the writer spends at most two attempts, near 10 s. Both stay inside the activator's 120 s startup wait.
+ * Worst case per directory in a sweep: `processMatchesPidFile` makes up to 5 attempts of this 5 s probe with 200 ms
+ * between them, about 26 s, all asynchronous (the sweep checks liveness with a signal, never a synchronous `ps`, so it
+ * never blocks the event loop); the writer spends at most two attempts, about 10 s. Both stay inside the activator's
+ * 120 s startup wait.
  */
 const OWNER_PROBE_TIMEOUT_MS = 5_000;
 export function readEndpointOwnerStartTime(pid: number): Promise<string | undefined> {
@@ -131,13 +133,6 @@ export function readEndpointOwnerStartTime(pid: number): Promise<string | undefi
 	});
 }
 
-/**
- * Removes this user's `senpi-xs-*` endpoint directories under `roots` whose server is gone, as a killed server leaves
- * them behind. ONE rule decides: a record naming a pid holds the directory for as long as that process lives - proved
- * by its recorded start time where there is one, and by the pid alone where the start time could not be read - and a
- * directory whose record is missing, unreadable or unparsable is held for OWNERLESS_MIN_AGE_MS, while a server could
- * still be writing one.
- */
 function parseOwnerRecord(raw: string): unknown {
 	try {
 		return JSON.parse(raw);
@@ -146,6 +141,13 @@ function parseOwnerRecord(raw: string): unknown {
 	}
 }
 
+/**
+ * Removes this user's `senpi-xs-*` endpoint directories under `roots` whose server is gone, as a killed server leaves
+ * them behind. ONE rule decides: a record naming a pid holds the directory for as long as that process lives - proved
+ * by its recorded start time where there is one, and by the pid alone where the start time could not be read - and a
+ * directory whose record is missing, unreadable or unparsable is held for OWNERLESS_MIN_AGE_MS, while a server could
+ * still be writing one.
+ */
 export async function reapOrphanedServerEndpoints(roots: readonly string[]): Promise<void> {
 	const uid = process.getuid?.();
 	await Promise.all(
@@ -183,9 +185,12 @@ export async function reapOrphanedServerEndpoints(roots: readonly string[]): Pro
 								if (!processIsLive(pid)) await rm(directory, { recursive: true, force: true });
 								return;
 							}
+							// `processIsLive` is a signal, not the default synchronous `ps`: a sweep over several live servers'
+							// directories never blocks the event loop. It counts a zombie as alive, which only holds a directory.
 							const alive = await processMatchesPidFile(
 								{ pid, processStartTime },
 								readEndpointOwnerStartTime,
+								processIsLive,
 							).catch((error: unknown) => {
 								if (error instanceof ProcessIdentityUnreadableError) return true;
 								throw error;
