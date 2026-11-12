@@ -110,6 +110,13 @@ export const RPC_ERROR_INVALID_SESSION_ID = "invalid_session_id";
 export const RPC_ERROR_SESSION_ID_IN_USE = "session_id_in_use";
 
 /**
+ * `release_session.expectSessionId` names another session than the one behind the route now (it was replaced): nothing
+ * was released. `errorData.expected` repeats the caller's id; after an interrupt, `taken_from` says the input in
+ * `dropped` came out of that session, which the handle no longer names.
+ */
+export const RPC_ERROR_SESSION_MISMATCH = "session_mismatch";
+
+/**
  * Sent only by hosts released before senpi#2207, which declined NEW worker sessions above an RSS
  * watermark with `errorData { rssMb, retry_after_ms }`. Current hosts never refuse an open for
  * memory; clients keep recognizing the code while older generations may still answer.

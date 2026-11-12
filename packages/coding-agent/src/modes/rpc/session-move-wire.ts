@@ -6,6 +6,8 @@ export const MOVE_SESSION_CAPABILITY = "move_session";
 export const MOVE_SESSION_REVOKE_CAPABILITY = "move_session_revoke";
 /** Capability: `move_session` answers op `copy`, which copies a session into a new one under a given id (senpi#5889). */
 export const MOVE_SESSION_COPY_CAPABILITY = "move_session_copy";
+/** The host honours `release_session.expectSessionId` (senpi#6484); an engine without it ignores the field. */
+export const RELEASE_SESSION_EXPECT_ID_CAPABILITY = "release_session_expect_id";
 
 /** A `move_session` request whose fields do not parse (op, move id, paths, answer). */
 export const RPC_ERROR_INVALID_MOVE_REQUEST = "invalid_move_request";

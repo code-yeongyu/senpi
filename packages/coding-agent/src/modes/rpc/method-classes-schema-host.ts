@@ -87,6 +87,7 @@ export const HOST_RECORD_SCHEMAS = {
 		target: OptId,
 		interrupt: OptBool,
 		force: OptBool,
+		expectSessionId: OptId,
 	}),
 	unload_session: command("unload_session", {
 		sessionId: Id,

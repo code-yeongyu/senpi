@@ -53,6 +53,7 @@ import {
 	MOVE_SESSION_CAPABILITY,
 	MOVE_SESSION_COPY_CAPABILITY,
 	MOVE_SESSION_REVOKE_CAPABILITY,
+	RELEASE_SESSION_EXPECT_ID_CAPABILITY,
 } from "./session-move-wire.ts";
 
 /** `unload_session` and `session_parked.reason` (senpi#3225). */
@@ -140,6 +141,8 @@ export function multiSessionHostCapabilities(options: {
 			MOVE_SESSION_CAPABILITY,
 			MOVE_SESSION_REVOKE_CAPABILITY,
 			MOVE_SESSION_COPY_CAPABILITY,
+			// ...and its release compares the session the caller expects (senpi#6484).
+			RELEASE_SESSION_EXPECT_ID_CAPABILITY,
 			// A host session asks the client that offers it to continue the session elsewhere (`host_request`).
 			SESSION_RELOCATION_CAPABILITY,
 			SESSION_CONTEXT_CAPABILITY,
