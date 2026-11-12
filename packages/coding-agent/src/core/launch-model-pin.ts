@@ -4,7 +4,7 @@ import type { SessionRetryFallbackProfile } from "./agent-session-runtime.ts";
  * The fallback policy of a session whose model was chosen explicitly (omo#13243): that model answers
  * or the turn fails with its own error. No chain, so the shipped defaults never apply either.
  */
-export const PINNED_MODEL_RETRY_FALLBACK: SessionRetryFallbackProfile = Object.freeze({
+const PINNED_MODEL_RETRY_FALLBACK: SessionRetryFallbackProfile = Object.freeze({
 	modelFallback: false,
 	fallbackChains: Object.freeze({}),
 });

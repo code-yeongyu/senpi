@@ -1,6 +1,7 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { MODEL_SWITCH_MARKER_TYPE } from "../../src/core/model-switch-marker.ts";
+import { registerFallbackModels } from "./fallback-provider-fixture.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
 // omo#13243: a fallback switch is written where the model reads it.
@@ -87,5 +88,30 @@ describe("model fallback switch marker (omo#13243)", () => {
 		const request = harness.faux.getCallLog().at(-1);
 		if (!request) throw new Error("Missing the woken request");
 		expect(JSON.stringify(request.context.messages)).toContain(`moved this session to ${fallback}`);
+	});
+	it("writes the note for a switch made at the turn start before that turn's request", async () => {
+		const accountLimit =
+			'429 {"error":{"type":"rate_limit_error","message":"You have hit your session limit; resets 11pm"}}';
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }, { id: "faux-2" }],
+			settings: { retry: { enabled: true, baseDelayMs: 1, maxRetries: 0 } },
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: accountLimit }),
+			fauxAssistantMessage("answered by the spare account"),
+		]);
+		// The first turn spends the account; no other provider serves yet, so it ends on the limit.
+		await harness.session.prompt("first turn");
+		registerFallbackModels(harness, "spare", ["faux-2"]);
+		harness.settingsManager.applyOverrides({ retry: { fallbackChains: { [primary]: ["spare/faux-2"] } } });
+
+		// The next turn starts on the spent account and is routed to the spare before its request.
+		await harness.session.prompt("second turn");
+
+		const request = harness.faux.getCallLog().at(-1);
+		if (!request) throw new Error("Missing the routed request");
+		expect(request.modelId).toBe("faux-2");
+		expect(JSON.stringify(request.context.messages)).toContain("moved this session to spare/faux-2");
 	});
 });
