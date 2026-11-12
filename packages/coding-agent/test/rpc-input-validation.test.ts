@@ -18,6 +18,42 @@ describe("RPC input validation", () => {
 		expect(rpcCommandShapeError(command)).toBe("RPC command must be a JSON object.");
 	});
 
+	// senpi#6443
+	it.each([
+		[
+			"dryRun that is a string",
+			{ type: "unload_session", sessionId: "s", dryRun: "yes" },
+			"dryRun must be a boolean.",
+		],
+		["dryRun that is a number", { type: "unload_session", sessionId: "s", dryRun: 1 }, "dryRun must be a boolean."],
+		[
+			"an empty client_id",
+			{ type: "set_client_info", client_id: "" },
+			"client_id must be a string of 1 to 256 characters.",
+		],
+		[
+			"a client_id of 257 characters",
+			{ type: "set_client_info", client_id: "c".repeat(257) },
+			"client_id must be a string of 1 to 256 characters.",
+		],
+		[
+			"a client_id that is a number",
+			{ type: "set_client_info", client_id: 7 },
+			"client_id must be a string of 1 to 256 characters.",
+		],
+	])("rejects %s", (_case, command, message) => {
+		expect(rpcCommandPayloadError(command)).toBe(message);
+	});
+
+	it.each([
+		["a dry run flag", { type: "unload_session", sessionId: "s", dryRun: true }],
+		["a client_id of one character", { type: "set_client_info", client_id: "c" }],
+		["a client_id of 256 characters", { type: "set_client_info", client_id: "c".repeat(256) }],
+		["a declaration with no client_id", { type: "set_client_info", width: 80 }],
+	])("accepts %s", (_case, command) => {
+		expect(rpcCommandPayloadError(command)).toBeUndefined();
+	});
+
 	it("accepts object-shaped command input", () => {
 		expect(rpcCommandShapeError({ type: "get_commands" })).toBeUndefined();
 	});
