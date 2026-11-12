@@ -51,14 +51,14 @@ describe("move_session crash probes from the #4004 review", () => {
 			override commit<T>(
 				moveId: Parameters<MoveLedger["commit"]>[0],
 				target: string,
-				rename: () => T | Promise<T>,
+				rename: (stampStands: () => Promise<void>) => T | Promise<T>,
 				prepare?: () => void,
 			) {
 				return super.commit(
 					moveId,
 					target,
-					async () => {
-						await rename();
+					async (stampStands) => {
+						await rename(stampStands);
 						throw new Error("disk error after the rename");
 					},
 					prepare,

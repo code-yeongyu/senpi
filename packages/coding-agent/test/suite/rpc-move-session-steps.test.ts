@@ -72,14 +72,16 @@ async function inject(fixture: Fixture, step: MoveStep, mode: "crash" | "throw",
 
 /**
  * A commit stamp with no landed file is settled failed only once it is older than the settle bound (senpi#6417). The
- * follow-ups replayed here come after that, so a stamp the fault left behind is aged past it.
+ * follow-ups replayed here come after that, so a stamp the fault left behind is aged past it: on the wall clock and on
+ * the machine's uptime, since a reader on the stamp's machine counts it old only when both say so.
  */
 function ageCommitStamp(fixture: Fixture, moveId: string): void {
 	const file = join(fixture.agentB, "session-moves", "ledger", `${moveId}.json`);
 	if (!existsSync(file)) return;
 	const record: unknown = JSON.parse(readFileSync(file, "utf8"));
-	if (typeof record === "object" && record !== null && "committing" in record)
-		writeFileSync(file, `${JSON.stringify({ ...record, at: new Date(0).toISOString() })}\n`);
+	if (typeof record !== "object" || record === null || !("committing" in record)) return;
+	const up = "up" in record && typeof record.up === "number" ? record.up : 0;
+	writeFileSync(file, `${JSON.stringify({ ...record, at: new Date(0).toISOString(), up: up - 60 * 60_000 })}\n`);
 }
 
 interface Copies {

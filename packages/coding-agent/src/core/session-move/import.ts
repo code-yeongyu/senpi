@@ -173,7 +173,7 @@ export async function importMovedSession(
 		const sessionFile = await options.ledger.commit(
 			manifest.moveId,
 			target,
-			() => rebindSessionFile(staged, targetCwd, sessionDir),
+			(stampStands) => rebindSessionFile(staged, targetCwd, sessionDir, { beforeRename: stampStands }),
 			async () => {
 				await replacePredecessor(target, manifest.sessionId, sessionDir);
 				// Before the rename: a crash here re-copies on retry, and after it the state is already in place.
