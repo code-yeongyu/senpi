@@ -10,8 +10,19 @@ import { SessionHeldError } from "../../core/session-hold-errors.ts";
 export const RELEASED_BEFORE_STOPPED_DETAIL =
 	"This session had not finished stopping on this host when it was released, so nothing was exported. Give it back with finish and a declined answer.";
 
-export const FINISH_BEFORE_STOPPED_DETAIL =
+const FINISH_BEFORE_STOPPED_DETAIL =
 	"This session has not finished stopping on this host, so it was not given back. Send finish again.";
+
+const EXPORT_BEFORE_STOPPED_DETAIL =
+	"This session has not finished stopping on this host, so it was not exported. Send export again once it has stopped.";
 
 export const heldByThisProcessOnly = (cause: unknown): boolean =>
 	cause instanceof SessionHeldError && cause.holders.every((holder) => holder.pid === process.pid);
+
+/** What a refused `finish` or `export` op says instead of that error's text; `undefined` for every other refusal. */
+export function stillStoppingHereDetail(op: string, cause: unknown): string | undefined {
+	if (!heldByThisProcessOnly(cause)) return undefined;
+	if (op === "finish") return FINISH_BEFORE_STOPPED_DETAIL;
+	if (op === "export") return EXPORT_BEFORE_STOPPED_DETAIL;
+	return undefined;
+}
