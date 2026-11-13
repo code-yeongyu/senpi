@@ -14,6 +14,7 @@ import { importMovedSession } from "../../src/core/session-move/import.ts";
 import { withStagingAttempt } from "../../src/core/session-move/import-staging.ts";
 import type { MoveId } from "../../src/core/session-move/ownership.ts";
 import { MOVE, SESSION_ID, setup } from "./session-move-fixture.ts";
+import { anHourLater } from "./session-move-later.ts";
 
 type World = Awaited<ReturnType<typeof setup>>;
 
@@ -69,7 +70,7 @@ describe("an age sweep that takes a live attempt's staging inside its commit (se
 			(error: unknown) => ({ refused: error instanceof Error ? error.message : String(error) }),
 		);
 		const landed = existsSync(landingOf(world));
-		const status = await world.ledger.answerStatus(MOVE, {
+		const status = await anHourLater(world.ledger).answerStatus(MOVE, {
 			movedIn: false,
 			landed: async (target) => (existsSync(target) ? "moved_in" : "absent"),
 		});
