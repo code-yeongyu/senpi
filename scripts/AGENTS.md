@@ -62,11 +62,16 @@ suite, tag or push; `--dry-run` too) and `publish.mjs` (before staging any packa
 a registry failure that is not a 404 stops them with its own error. The `Registry packages published` workflow
 runs `node scripts/npm-registry.mjs` on a PR that changes the publish set and on main. For each unknown name:
 
-1. With an npm login that maintains the scope, publish a placeholder once: a directory holding only a
-   `package.json` (`name`, `version` `0.0.0`, `repository`), then `npm publish --access public`.
+1. With an npm login that maintains the scope, publish a placeholder once on a dist-tag that is not
+   `latest`, so no install resolves it before the real version lands: a directory holding only a
+   `package.json` (`name`, `version` `0.0.0-reserve.0`, `repository`), then
+   `npm publish --access public --tag reserve`.
 2. Attach the trusted publisher: `npm trust github <name> --repo code-yeongyu/senpi --file publish-npm.yml
    --allow-publish` (or the package's access page on npmjs.com: GitHub Actions, user `code-yeongyu`,
    repository `senpi`, workflow `publish-npm.yml`, no environment).
+
+Both steps ask for the npm account's second factor (a CLI web login and the package settings page both stop
+at it), so they need the account owner present; the settings page form is the alternative to `npm trust`.
 
 ## Release entry graph validation
 

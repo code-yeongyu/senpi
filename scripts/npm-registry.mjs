@@ -37,7 +37,7 @@ export function assertRegistryPackagesKnown(
 		[
 			`the npm registry does not know these publish-set packages (scripts/registry-packages.mjs): ${unknown.join(", ")}`,
 			"npm trusted publishing cannot do a first publish. For each name, before releasing (scripts/AGENTS.md, Manual first publish):",
-			"  1. With an npm login that maintains the scope, publish a placeholder once: a directory holding only a package.json (name, version 0.0.0, repository), then npm publish --access public.",
+			"  1. With an npm login that maintains the scope, publish a placeholder once on a dist-tag that is not latest, so no install resolves it: a directory holding only a package.json (name, version 0.0.0-reserve.0, repository), then npm publish --access public --tag reserve.",
 			"  2. Attach the trusted publisher: npm trust github <name> --repo code-yeongyu/senpi --file publish-npm.yml --allow-publish",
 		].join("\n"),
 	);

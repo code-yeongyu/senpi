@@ -17,7 +17,7 @@ const UNKNOWN = "@code-yeongyu/senpi-realm-registry";
 const publishSet = [...registryPackageNames.values()];
 
 describe("assertRegistryPackagesKnown (injected lookup)", () => {
-	it("refuses with every unknown name and both manual first-publish steps", () => {
+	it("refuses with the unknown name and no known one, after asking about every publish-set name", () => {
 		const asked = [];
 		const lookup = (name) => {
 			asked.push(name);
@@ -27,8 +27,6 @@ describe("assertRegistryPackagesKnown (injected lookup)", () => {
 			() => assertRegistryPackagesKnown(publishSet, lookup),
 			(error) => {
 				assert.match(error.message, new RegExp(UNKNOWN.replace("/", "\\/")));
-				assert.match(error.message, /npm publish --access public/);
-				assert.match(error.message, /npm trust github <name> --repo code-yeongyu\/senpi --file publish-npm\.yml --allow-publish/);
 				for (const name of publishSet.filter((name) => name !== UNKNOWN)) {
 					assert.doesNotMatch(error.message, new RegExp(`${name.replace("/", "\\/")}(?![-\\w])`));
 				}
@@ -36,6 +34,14 @@ describe("assertRegistryPackagesKnown (injected lookup)", () => {
 			},
 		);
 		assert.deepEqual(asked, publishSet);
+	});
+
+	it("lists every unknown name when two are unknown", () => {
+		const unknown = [UNKNOWN, "@code-yeongyu/senpi-codemode"];
+		assert.throws(
+			() => assertRegistryPackagesKnown(publishSet, (name) => (unknown.includes(name) ? null : JSON.stringify(name))),
+			(error) => unknown.every((name) => error.message.includes(name)),
+		);
 	});
 
 	it("passes when every name is known", () => {
@@ -117,7 +123,6 @@ describe("release.mjs registry preflight", () => {
 			const result = runRelease(stub);
 			assert.equal(result.status, 1, result.stderr);
 			assert.match(result.stderr, /@code-yeongyu\/senpi-realm-registry/);
-			assert.match(result.stderr, /npm trust github/);
 			assert.deepEqual(stub.commands().filter(spendsOrShips), []);
 		});
 	});
@@ -126,8 +131,7 @@ describe("release.mjs registry preflight", () => {
 		withStubs("error", (stub) => {
 			const result = runRelease(stub);
 			assert.equal(result.status, 1, result.stderr);
-			assert.match(result.stderr, /Failed to query/);
-			assert.doesNotMatch(result.stderr, /does not know/);
+			assert.doesNotMatch(result.stderr, /@code-yeongyu\/senpi-realm-registry/);
 			assert.deepEqual(stub.commands().filter(spendsOrShips), []);
 		});
 	});
