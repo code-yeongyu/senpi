@@ -30,7 +30,7 @@ upstream.json  Accepted upstream baseline recorded by merges (read by scripts)
 ## CONVENTIONS
 
 - GitHub Actions are pinned by full commit SHA (e.g. `actions/checkout@df4cb1c0...`); never reference floating tags.
-- Workflows install with `npm ci --ignore-scripts` and run the root scripts through npm (`npm run check`, `npm run build`, `npm run test:scripts`); `test-workspaces` also runs `bun run test:scripts` under pinned bun 1.4.4 to prove the bun path of the root scripts and runs the workspace suites through `scripts/run-workspaces.mjs`; `rpc-windows` runs its suites through `bunx vitest`.
+- Workflows install with `npm ci --ignore-scripts` and run the root scripts through npm (`npm run check`, `npm run build`, `npm run test:scripts`); `test-scripts` also runs `bun run test:scripts` under pinned bun 1.4.4 to prove the bun path of the root scripts; the `test-workspaces` matrix runs the workspace suites through `scripts/run-workspaces.mjs`, one group per runner, and `scripts/ci-workspace-coverage.test.mjs` checks every workspace `test` script runs in exactly one job; `rpc-windows` runs its suites through `bunx vitest`.
 - The release driver emits a final stdout status line: `RELEASE_DECISION: RELEASE | SKIP | FAILED`.
   The merge agent emits `MERGE_RESULT: CLEAN_PR_READY | NO_RELEASE_NEEDED | CONFLICTS | QA_FAILED | AGENT_FAILED`.
 - Release runs only after the upstream PR is merge-committed into `main`, a fresh `/cl`

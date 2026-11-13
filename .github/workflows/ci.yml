@@ -107,8 +107,6 @@ jobs:
 
       - name: Eval regression gate
         run: node scripts/run-tests.mjs bun run --cwd packages/senpi-codemode gate --baseline test/gate/baseline.json
-      - name: Codemode package tests (including gate regressions)
-        run: bun run --cwd packages/senpi-codemode test -- test/gate
       - name: Gate harness types
         run: bun check --no-script --all -p packages/senpi-codemode/scripts/tsconfig.gate.json
       - name: Upload gate report
@@ -118,6 +116,55 @@ jobs:
           name: codemode-gate-report
           path: packages/senpi-codemode/gate-report.json
           if-no-files-found: error
+      - name: Check OS temp after tests
+        if: always() && steps.test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: node scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
+
+  # The whole senpi-codemode package suite, in parallel with the eval regression gate above (senpi#6620). It reads
+  # nothing the gate writes (the gate's only output is gate-report.json, which only the upload step reads), so it
+  # needs the same toolchains and workspace build but not the history the baseline review compares against. This is
+  # the one CI run of this package's `test` script; test-workspaces does not list it.
+  codemode-tests:
+    name: codemode-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.4"
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+      - name: Setup Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1.327.0
+        with:
+          ruby-version: "4.0"
+      - name: Setup Julia
+        uses: julia-actions/setup-julia@e89cce584bf1958661244c90fdf08fea80dadbd1 # v3.0.2 + 16 commits (includes upstream #416)
+        with:
+          version: "1.12"
+      - name: Install Ruby prelude dependency
+        run: gem install base64 --version 0.3.0 --no-document
+      - name: Install dependencies
+        run: bun install --ignore-scripts --frozen-lockfile
+      - name: Build workspace entries
+        run: bun packages/senpi-codemode/scripts/gate-build.ts
+      - name: Snapshot OS temp before tests
+        id: test_temp_snapshot
+        shell: bash
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
+
+      - name: Codemode package tests (including gate regressions)
+        run: bun run --cwd packages/senpi-codemode test -- test/gate
       - name: Check OS temp after tests
         if: always() && steps.test_temp_snapshot.outcome == 'success'
         shell: bash
@@ -1389,8 +1436,83 @@ jobs:
         run: bun scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
 
 
+  # The non-coding-agent workspace suites, split across parallel runners (senpi#6620). Each leg runs the same
+  # run-workspaces command for its group. Groups are sized from main run 43347262747, where the suites ran one after
+  # another in one 13-minute step: ai 148 s; agent 58 s, tui 56 s, pty 19 s and the small packages under 10 s together.
+  # packages/senpi-codemode is not listed: the codemode-gate job runs its whole `test` script, so listing it here ran
+  # that 8-minute suite twice per run. packages/coding-agent runs in test-coding-agent.
+  # scripts/ci-workspace-coverage.test.mjs fails when a workspace with a `test` script is in no CI job.
   test-workspaces:
-    name: Test (workspaces + scripts)
+    name: Test (workspaces ${{ matrix.group }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: ai
+            workspaces: --workspace packages/ai
+          - group: agent, tui and the rest
+            workspaces: >-
+              --workspace packages/agent
+              --workspace packages/client
+              --workspace packages/machine-ops
+              --workspace packages/protocol
+              --workspace packages/pty
+              --workspace packages/realm-registry
+              --workspace packages/server
+              --workspace packages/telemetry
+              --workspace packages/tui
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.4"
+
+      - name: Install system dependencies
+        timeout-minutes: 5
+        run: |
+          bash scripts/install-ci-system-deps.sh \
+            fd-find ripgrep
+          sudo ln -sf "$(which fdfind)" /usr/local/bin/fd
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Snapshot OS temp before tests
+        id: test_temp_snapshot
+        shell: bash
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
+
+      # The workspace runner is the same code path root `npm run test` / `bun run test` use.
+      - name: Workspace tests
+        timeout-minutes: 25
+        run: node scripts/run-workspaces.mjs --if-present ${{ matrix.workspaces }} test
+
+      - name: Workflow summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Test (workspaces ${{ matrix.group }})"
+            echo "- Status: ${{ job.status }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Check OS temp after tests
+        if: always() && steps.test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: node scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
+
+  test-scripts:
+    name: Test (scripts)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -1470,31 +1592,12 @@ jobs:
       - name: Script tests (bun)
         run: bun run test:scripts
 
-      # The workspace runner is the same code path root `npm run test` / `bun run test` use.
-      - name: Workspace tests (all but coding-agent)
-        timeout-minutes: 25
-        run: >
-          node scripts/run-workspaces.mjs
-          --if-present
-          --workspace packages/agent
-          --workspace packages/ai
-          --workspace packages/client
-          --workspace packages/machine-ops
-          --workspace packages/protocol
-          --workspace packages/pty
-          --workspace packages/realm-registry
-          --workspace packages/senpi-codemode
-          --workspace packages/server
-          --workspace packages/telemetry
-          --workspace packages/tui
-          test
-
       - name: Workflow summary
         if: always()
         shell: bash
         run: |
           {
-            echo "## Test (workspaces + scripts)"
+            echo "## Test (scripts)"
             echo "- Status: ${{ job.status }}"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Check OS temp after tests
@@ -1563,6 +1666,7 @@ jobs:
         platform-scope,
         check,
         codemode-gate,
+        codemode-tests,
         test-coding-agent,
         fused-equivalence,
         rpc-owner-lifetime,
@@ -1580,6 +1684,7 @@ jobs:
         python-kernel-windows,
         bash-grandchild-console-windows,
         test-workspaces,
+        test-scripts,
       ]
     if: always()
     runs-on: ubuntu-latest
@@ -1608,6 +1713,7 @@ jobs:
             echo "- platform-scope: ${{ needs.platform-scope.result }} (full=${{ needs.platform-scope.outputs.full }})"
             echo "- check: ${{ needs.check.result }}"
             echo "- codemode-gate: ${{ needs.codemode-gate.result }}"
+            echo "- codemode-tests: ${{ needs.codemode-tests.result }}"
             echo "- test-coding-agent: ${{ needs.test-coding-agent.result }}"
             echo "- fused-equivalence: ${{ needs.fused-equivalence.result }}"
             echo "- rpc-owner-lifetime: ${{ needs.rpc-owner-lifetime.result }}"
@@ -1622,6 +1728,7 @@ jobs:
             echo "- python-kernel-windows: ${{ needs.python-kernel-windows.result }}"
             echo "- bash-grandchild-console-windows: ${{ needs.bash-grandchild-console-windows.result }}"
             echo "- test-workspaces: ${{ needs.test-workspaces.result }}"
+            echo "- test-scripts: ${{ needs.test-scripts.result }}"
           } >> "$GITHUB_STEP_SUMMARY"
 
   # One runner per head, with an independent temp owner for each former macOS leg (#3130).
