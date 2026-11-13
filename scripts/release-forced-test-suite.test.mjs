@@ -65,7 +65,11 @@ describe("planForcedTestSuite (senpi#6139)", () => {
 
 	it("covers the real repository's tested workspaces exactly once, as npm test does", async () => {
 		const manifest = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
-		assert.equal(manifest.scripts.test, "npm run test:scripts && node scripts/run-workspaces.mjs --if-present test");
+		assert.equal(
+			manifest.scripts.test,
+			"npm run test:scripts && node scripts/run-workspaces.mjs --if-present --alongside packages/coding-agent test",
+		);
+		assert.equal(manifest.scripts["test:serial"], "npm run test:scripts && node scripts/run-workspaces.mjs --if-present test");
 		const workspaces = await resolveWorkspaceDirectories(repoRoot);
 		const plan = suite.planForcedTestSuite({ rootDirectory: repoRoot, workspaces });
 		const tested = workspaces.filter((entry) => typeof entry.scripts.test === "string").map((entry) => entry.relativePath);
