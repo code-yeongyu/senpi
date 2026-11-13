@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2026.11.13] - 2026-11-13
 
 ### Breaking Changes
 
@@ -9,6 +9,8 @@
 ### Changed
 
 ### Fixed
+
+- The permission state a kernel reports for cross-session kernel tools, and the kernels a session revocation reaches, are shared by every loaded copy of the extension ([#6422](https://github.com/code-yeongyu/senpi/pull/6422)).
 
 ### Removed
 

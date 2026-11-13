@@ -1,10 +1,12 @@
 # Changelog
 
-## [Unreleased]
+## [2026.11.13] - 2026-11-13
 
 ### Breaking Changes
 
 ### Added
+
+- Fullscreen Markdown selections copy original syntax and line breaks, including horizontal rules, reference links, autolinks and TeX formulas. Rules, reference-link URL suffixes and converted formulas select their whole source construct; changed display transforms copy rendered text. Source maps are generated on copy and kept in bounded caches.
 
 ### Changed
 
