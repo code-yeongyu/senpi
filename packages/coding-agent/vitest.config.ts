@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { configDefaults, defineConfig, mergeConfig } from "vitest/config";
 import { quarantineVitestAgentDir } from "../../scripts/vitest-agent-dir-quarantine.mjs";
 import baseConfig, { workspaceSourcePaths } from "../../vitest.base.ts";
+import { dotReporters } from "../../scripts/vitest-dot-reporters.mjs";
 
 const aiSrcProviderScope = fileURLToPath(new URL("../ai/src/node/provider-scope.ts", import.meta.url));
 const ptySrcIndex = fileURLToPath(new URL("../pty/src/index.ts", import.meta.url));
@@ -27,7 +28,7 @@ export default mergeConfig(
 			// Vitest runs on Node, so the Node.js runtime notice is off unless a test unstubs it.
 			env: { PI_OFFLINE: "1", PI_SKIP_RUNTIME_NOTICE: "1" },
 			unstubEnvs: true,
-			reporters: process.env.GITHUB_ACTIONS ? ["dot", "github-actions"] : ["dot"],
+			reporters: dotReporters(),
 			silent: "passed-only",
 			// Cap fork concurrency when CI is set. This suite's subprocess-lifecycle tests
 			// (MCP keep-alive/ping-on-call fixtures, the default-on terminal PTY builtin,
