@@ -9,11 +9,14 @@ import { RPC_ERROR_PROJECT_CWD_MISMATCH } from "./rpc-error-types.ts";
 /** The project writes that may state the folder they mean. */
 const PROJECT_WRITES: ReadonlySet<string> = new Set(["set_project_trust", "set_project_setting", "write_project_file"]);
 
-/** A folder path for comparison: surrounding whitespace and trailing separators dropped; a bare root stays itself. */
+/**
+ * A folder path for comparison: trailing separators of the path's own style dropped (only `/` for a POSIX path; `\\` or
+ * `/` for a drive or UNC path); a bare root stays itself. Nothing is trimmed: on POSIX `"/w/app "` and `"/w/app\\"` are
+ * other directories than `"/w/app"`.
+ */
 export function comparableFolder(path: string): string {
-	const trimmed = path.trim();
-	const stripped = trimmed.replace(/[/\\]+$/u, "");
-	return stripped.length === 0 ? trimmed.slice(0, 1) : stripped;
+	if (path.startsWith("/")) return path.replace(/\/+$/u, "") || "/";
+	return path.replace(/[/\\]+$/u, "");
 }
 
 export interface CwdMismatch {
