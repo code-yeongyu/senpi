@@ -173,6 +173,14 @@ export class MoveLedger {
 		});
 	}
 
+	/**
+	 * Throws unless this process still holds the move's lock. For what a commit's `prepare` removes or copies: each is a
+	 * write under this lock, and a holder that lost it must stop before the next one.
+	 */
+	assertHeld(moveId: MoveId): void {
+		this.#locks.assertHeld(this.#file.path(moveId));
+	}
+
 	/** Cancel, expiry or a refused chunk: only before the bundle was verified and receiving began, never after. */
 	decline(moveId: MoveId, reason: DeclineReason): Promise<MoveRecord> {
 		return this.settle(moveId, { state: "declined", reason }, ["receiving"]);
