@@ -13,6 +13,7 @@
  *
  * Settings: the project settings file is read as stored (reading runs nothing, so trust does not gate it) and written
  * one top-level key at a time through `SettingsManager`'s own project write path, which refuses an untrusted project.
+ * Only allowlisted keys are written as given; every other key is decided first (`project-setting-policy.ts`).
  */
 
 import { createHeadlessProjectTrustContext } from "../../cli/project-trust-headless.ts";
@@ -21,6 +22,7 @@ import { emitProjectTrustEvent } from "../../core/extensions/runner.ts";
 import { getSettingsPath, type ProjectSettingsFile } from "../../core/settings-manager.ts";
 import { getProjectTrustOptions, type ProjectTrustOption, ProjectTrustStore } from "../../core/trust-manager.ts";
 import { hasTrustRequiringProjectResourcesAsync } from "../../core/trust-requiring-resources.ts";
+import { refuseProjectSettingWrite } from "./project-setting-policy.ts";
 import {
 	RPC_ERROR_INVALID_ARGUMENT,
 	RPC_ERROR_PROJECT_NOT_TRUSTED,
@@ -191,6 +193,9 @@ export async function writeProjectSetting(
 	if (file.error !== null) {
 		return { ok: false, message: file.error, errorCode: RPC_ERROR_PROJECT_SETTINGS_UNREADABLE };
 	}
+	// Decided synchronously right before the write starts: nothing can change the decision in between.
+	const refusal = refuseProjectSettingWrite(session, key, value);
+	if (refusal !== undefined) return { ok: false, ...refusal };
 	try {
 		await settings.setProjectSetting(key, value);
 	} catch (error) {

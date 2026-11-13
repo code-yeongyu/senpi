@@ -6327,17 +6327,23 @@ Reads the project settings file as stored. Reading runs nothing, so it works whi
 #### set_project_setting
 
 Writes one top-level key of the project settings file through the same locked, merge-on-write path the
-terminal's project setters use; `"value": null` removes the key. The value is stored as given, like an edit to
-the file: values the session reads when it starts (default model and thinking level, steering and follow-up
-modes) apply after `reload` or in the next session.
+terminal's project setters use; `"value": null` removes the key. Project settings writes use a key allowlist:
+the thinking-level and UI preference keys (`defaultThinkingLevel`, `modelThinkingLevels`,
+`modelLastOnThinkingLevels`, `steeringMode`, `followUpMode`, `markdown`, the TUI and fullscreen display
+keys) are checked against the type the setting declares and written. Any other key, and its removal, is decided
+like an edit of the project settings file together with a shell command, by the session's permission rules for
+the connection's origin, without a prompt: it is written only when both are allowed. Values the session reads
+when it starts apply after `reload` or in the next session.
 
 ```json
 {"type": "set_project_setting", "key": "defaultThinkingLevel", "value": "high"}
 ```
 
 The response carries the same `data` as `get_project_settings`, read after the write. Errors:
-`invalid_argument` when `key` is not an identifier (`[A-Za-z][A-Za-z0-9_]*`) or `value` is missing,
-`project_not_trusted` while the project is untrusted (trust it first), `project_settings_unreadable` when the
+`invalid_argument` when `key` is not an identifier (`[A-Za-z][A-Za-z0-9_]*`), `value` is missing, or an
+allowlisted key's value has the wrong type, `project_setting_needs_permission` when the permission rules would ask,
+`project_setting_denied` when they deny or no permission decision can be made (no permission system, an invalid
+permission preset), `project_not_trusted` while the project is untrusted (trust it first), `project_settings_unreadable` when the
 existing file does not parse (nothing is written), and `project_settings_write_failed` when writing the file fails
 (permissions, a held lock).
 
