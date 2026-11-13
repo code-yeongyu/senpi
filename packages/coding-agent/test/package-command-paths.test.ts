@@ -642,7 +642,9 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 			const printed = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			expect(printed).toContain("HTTP 403");
 			expect(printed).toContain("https://github.com/code-yeongyu/senpi/releases/latest");
-			expect(() => selfUpdatePlanAfterLookupFailure("npm", "HTTP 503")).toThrow(/Could not determine latest .* version: HTTP 503/);
+			expect(() => selfUpdatePlanAfterLookupFailure("npm", "HTTP 503")).toThrow(
+				/Could not determine latest .* version: HTTP 503/,
+			);
 			expect(() => selfUpdatePlanAfterLookupFailure("npm", "")).toThrow(/Could not determine latest .* version\./);
 		} finally {
 			logSpy.mockRestore();
