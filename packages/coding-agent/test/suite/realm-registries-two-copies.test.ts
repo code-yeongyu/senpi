@@ -288,13 +288,14 @@ describe("T-B session writers across two copies (omo#12965)", () => {
 		b.unregisterSessionWriter(self);
 	});
 
-	it("(payload) skips a writer that lacks the owner methods", async () => {
+	it("(payload) counts a writer that lacks the owner methods as another live writer", async () => {
 		const [, b] = await twoCopies(load);
 		const writers = registryAt("@code-yeongyu/senpi/session-writers/v1");
 		const malformed = {};
 		(writers.register as (owner: object) => void)(malformed);
 		const self = { getSessionFile: () => "/x12965/self.jsonl", isPersisted: () => true };
-		expect(b.hasOtherLiveSessionWriter("/x12965/self.jsonl", self)).toBe(false);
+		// An owner this copy cannot read is not skipped: last-owner cleanup must not proceed past a writer it cannot see.
+		expect(b.hasOtherLiveSessionWriter("/x12965/self.jsonl", self)).toBe(true);
 		expect(b.liveSessionWritePaths()).not.toContain(undefined);
 		(writers.unregister as (owner: object) => void)(malformed);
 	});
@@ -493,18 +494,20 @@ describe("F2 a session is served by one engine copy: tables keyed by the process
 	});
 });
 
-describe("F3d a session writer owner another copy shaped differently is skipped, and that is deliberate (omo#12965 re-read)", () => {
-	it("last-owner cleanup proceeds and the isolate snapshot omits it", async () => {
+describe("F3d a session writer owner another copy shaped differently counts as another live writer (omo#12965 re-read)", () => {
+	it("last-owner cleanup does not proceed past it; a readable writer of another file is unaffected", async () => {
 		const [a, b] = await twoCopies(async () => import("../../src/core/session-write-reservation.ts"));
 		const writers = registryAt("@code-yeongyu/senpi/session-writers/v1");
 		const unreadable = { getSessionFile: () => "/x12965/f3d.jsonl" };
 		(writers.register as (owner: object) => void)(unreadable);
 		const self = { getSessionFile: () => "/x12965/f3d.jsonl", isPersisted: () => true };
 		a.registerSessionWriter(self);
+		expect(b.hasOtherLiveSessionWriter("/x12965/f3d.jsonl", self)).toBe(true);
+		(writers.unregister as (owner: object) => void)(unreadable);
 		expect(b.hasOtherLiveSessionWriter("/x12965/f3d.jsonl", self)).toBe(false);
+		// The snapshot lists paths, and an owner that cannot be read has none to list.
 		expect(b.liveSessionWritePaths()).toEqual(["/x12965/f3d.jsonl"]);
 		a.unregisterSessionWriter(self);
-		(writers.unregister as (owner: object) => void)(unreadable);
 	});
 });
 
