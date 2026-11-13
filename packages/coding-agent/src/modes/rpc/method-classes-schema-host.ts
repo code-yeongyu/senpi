@@ -79,7 +79,14 @@ export const HOST_RECORD_SCHEMAS = {
 	park_session: command("park_session", { cwd: PathStr, kind: Opt(SessionKind), context: Opt(SessionContext) }),
 	close_session: command("close_session", { sessionId: Id }),
 	move_session: Type.Union([
-		move({ op: Type.Literal("prepare"), moveId: Id, cwd: OptPath, repository: Opt(RepositoryIdentity) }),
+		move({
+			op: Type.Literal("prepare"),
+			moveId: Id,
+			cwd: OptPath,
+			repository: Opt(RepositoryIdentity),
+			session: Opt(Type.Object({ id: Id, fileName: Id })),
+			sessionDir: OptPath,
+		}),
 		move({ op: Type.Literal("cancel"), moveId: Id }),
 		move({ op: Type.Literal("identity"), sessionPath: PathStr }),
 		move({ op: Type.Literal("identity"), cwd: PathStr }),

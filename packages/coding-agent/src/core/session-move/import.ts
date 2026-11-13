@@ -10,11 +10,12 @@ import { listedFiles, MoveBundleInvalidError, readManifest, verifyBundle } from 
 import { movedStateDir } from "./extension-state.ts";
 import { assertSidecarsLanded, placeExtensionState, stageSession, withStagingAttempt } from "./import-staging.ts";
 import { type LandedFile, outcomeIn, readLanding } from "./landed-file.ts";
+import { landingFile, MoveTargetOccupiedError } from "./landing-occupied.ts";
 import { type MoveAnswer, MoveFencedError, type MoveLedger } from "./move-ledger.ts";
 import { moveStep } from "./move-steps.ts";
 import { type NameFolding, refuseNamesThatFold } from "./name-folding.ts";
 import { stagedNames } from "./staged-layout.ts";
-import { headerSessionId, type MoveId, SESSION_MOVED_IN, sessionOwnership } from "./ownership.ts";
+import { type MoveId, SESSION_MOVED_IN } from "./ownership.ts";
 import { isCheckoutOfRepository, MoveRefusedError } from "./repository-check.ts";
 import { moveLockKey } from "./session-lock.ts";
 
@@ -31,17 +32,6 @@ export interface ImportMovedSessionOptions {
 	readonly readIdentity?: (dir: string) => Promise<RepositoryIdentity | undefined>;
 	/** How the session folder's file system folds names (senpi#6472); asked of the folder itself unless a test says. */
 	readonly probeNameFolding?: (folder: string) => Promise<NameFolding>;
-}
-
-export class MoveTargetOccupiedError extends Error {
-	readonly code = "move_target_occupied";
-
-	constructor(target: string) {
-		super(
-			`A session that can still be written already sits at ${target}; the moved session was not imported over it. Close or move that session first, then send it again.`,
-		);
-		this.name = "MoveTargetOccupiedError";
-	}
 }
 
 const movedInFor = async (file: string, moveId: MoveId): Promise<boolean> =>
@@ -231,11 +221,9 @@ async function replacePredecessor(
 	sessionDir: string,
 	assertHeld: () => void,
 ): Promise<void> {
-	if (!(await pathExists(target))) return;
-	const entries = await loadEntriesFromFileAsync(target);
-	if (headerSessionId(entries) !== sessionId || sessionOwnership(entries).writable) {
-		throw new MoveTargetOccupiedError(target);
-	}
+	const found = await landingFile(target, sessionId);
+	if (found === "free") return;
+	if (found === "occupied") throw new MoveTargetOccupiedError(target);
 	const extensions = join(sessionDir, "extensions");
 	if (await pathExists(extensions)) {
 		for (const extension of await readdir(extensions, { withFileTypes: true })) {

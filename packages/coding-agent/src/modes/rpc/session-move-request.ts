@@ -26,6 +26,9 @@ export type MoveRequest =
 			readonly moveId: MoveId;
 			readonly cwd: string | undefined;
 			readonly repository: RepositoryIdentity | undefined;
+			/** The session the move brings, as its sender names it; with it the landing file is looked at (senpi#6471). */
+			readonly session: { readonly id: string; readonly fileName: string } | undefined;
+			readonly sessionDir: string | undefined;
 	  }
 	| { readonly op: "cancel"; readonly moveId: MoveId }
 	| { readonly op: "identity"; readonly sessionPath: string }
@@ -94,10 +97,38 @@ function parsePrepare(raw: Record<string, unknown>, moveId: MoveId): MoveRequest
 	if (cwd !== undefined && !isAbsolute(cwd)) return "prepare cwd must be an absolute path.";
 	if (raw.repository !== undefined && cwd === undefined)
 		return "prepare needs cwd, the folder the move lands in, together with repository.";
-	if (raw.repository === undefined) return { op: "prepare", moveId, cwd, repository: undefined };
+	const landing = parsePrepareLanding(raw, cwd);
+	if (typeof landing === "string") return landing;
+	if (raw.repository === undefined) return { op: "prepare", moveId, cwd, repository: undefined, ...landing };
 	if (!wellShapedRepository(raw.repository))
 		return "prepare repository must be { rootCommits: string[], originUrl?: string }, as the identity op answers it.";
-	return { op: "prepare", moveId, cwd, repository: parseRepositoryIdentity(raw.repository) };
+	return { op: "prepare", moveId, cwd, repository: parseRepositoryIdentity(raw.repository), ...landing };
+}
+
+type PrepareLanding = Pick<Extract<MoveRequest, { op: "prepare" }>, "session" | "sessionDir">;
+
+/**
+ * The session a `prepare` names and the session folder its import will be given (senpi#6471). A `sessionDir` with no
+ * `session` is refused: nothing would be looked at, and the caller would believe something had been.
+ */
+function parsePrepareLanding(raw: Record<string, unknown>, cwd: string | undefined): PrepareLanding | string {
+	const { session, sessionDir } = raw;
+	if (session === undefined) {
+		return sessionDir === undefined
+			? { session: undefined, sessionDir: undefined }
+			: "prepare needs session, the session the move brings, together with sessionDir.";
+	}
+	if (cwd === undefined) return "prepare needs cwd, the folder the move lands in, together with session.";
+	if (typeof session !== "object" || session === null || Array.isArray(session))
+		return "prepare session must be { id, fileName }: the session's id and its file's name.";
+	const id = "id" in session ? session.id : undefined;
+	const fileName = "fileName" in session ? session.fileName : undefined;
+	if (!isPlainId(id)) return `prepare session id must be a plain id: ${PLAIN_ID_RULE}.`;
+	if (!isSessionFileName(fileName))
+		return "prepare session fileName must be a session file's own name, with no folder in it.";
+	if (sessionDir !== undefined && (!text(sessionDir) || !isAbsolute(sessionDir)))
+		return "sessionDir must be an absolute path.";
+	return { session: { id, fileName }, sessionDir };
 }
 
 function parseCopy(raw: Record<string, unknown>): MoveRequest | string {
