@@ -5,9 +5,9 @@
  * between the imports gives copy B its own module graph while both share the realm's `globalThis`, which is exactly the
  * two-copy arrangement. Design: approved #12965 class fix, tests T-A, T-B and the T-C payload cases.
  */
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import type { KillGuardRuntime } from "../../src/core/kill-guard/runtime.ts";
 
@@ -399,5 +399,238 @@ describe("T-B kernel-tools contexts across two copies (omo#12965)", () => {
 		const [a, b] = await twoCopies(load);
 		const malformed = { capabilities: { invokeScope: true } } as unknown as typeof tools;
 		expect(b.kernelToolsStorage.run(malformed, () => a.activeKernelTools())).toBeUndefined();
+	});
+});
+
+function failureOf(run: () => unknown): unknown {
+	try {
+		run();
+	} catch (error) {
+		return error;
+	}
+	return undefined;
+}
+
+describe("F1 an unreadable kernel-tool invoker is refused, never read as none (omo#12965 re-read)", () => {
+	const load = async () => import("../../src/core/extensions/kernel-tools-context.ts");
+
+	it("reads nothing entered as none, and a readable invoker as itself", async () => {
+		const [a, b] = await twoCopies(load);
+		expect(a.activeKernelToolInvoker()).toBeUndefined();
+		expect(b.kernelToolInvokerStorage.run({ sessionId: "x12965-f1" }, () => a.activeKernelToolInvoker())).toEqual({
+			sessionId: "x12965-f1",
+		});
+	});
+
+	it("refuses an invoker another copy entered that has no string sessionId, with a typed error", async () => {
+		const [a, b] = await twoCopies(load);
+		for (const unreadable of [{ session: "x12965-f1" }, { sessionId: 7 }, null, "x12965-f1"]) {
+			const error = failureOf(() =>
+				b.kernelToolInvokerStorage.run(unreadable as never, () => a.activeKernelToolInvoker()),
+			);
+			expect(error, JSON.stringify(unreadable)).toMatchObject({ code: "PI_KERNEL_TOOL_INVOKER_UNREADABLE" });
+		}
+	});
+});
+
+describe("F3c the kill-guard reader of a copy with no holder, under an unreadable active record (omo#12965 re-read)", () => {
+	it("builds no guard variables, as before, and warns once per copy that the record cannot be read", async () => {
+		const [, b] = await twoCopies(async () => import("../../src/core/kill-guard/runtime.ts"));
+		const runtimes = registryAt("@code-yeongyu/senpi/kill-guard/v1");
+		const planter = {};
+		(runtimes.activate as (holder: object, agentDir: string, make: () => unknown) => unknown)(
+			planter,
+			tempDir("x12965-kg-f3c-"),
+			() => Object.freeze({ dir: 7 }),
+		);
+		const warning = vi.spyOn(process, "emitWarning").mockImplementation(() => undefined);
+		try {
+			expect(b.activeKillGuardEnvironment({ PATH: "" })).toEqual({});
+			expect(b.withKillGuardRuntime({ PATH: "" })).toEqual({ PATH: "" });
+			expect(warning).toHaveBeenCalledTimes(1);
+			expect(warning.mock.calls[0]).toEqual([
+				expect.stringContaining("kill guard"),
+				expect.objectContaining({ code: "PI_KILL_GUARD_RECORD_UNREADABLE" }),
+			]);
+		} finally {
+			warning.mockRestore();
+			(runtimes.release as (holder: object) => void)(planter);
+		}
+	});
+});
+
+describe("F2 a session is served by one engine copy: tables keyed by the process id are per copy (omo#12965 re-read)", () => {
+	it("session holder records: a second copy's hold is not counted by the first copy's release", async () => {
+		const [a, b] = await twoCopies(async () => import("../../src/core/session-holders.ts"));
+		const file = join(tempDir("x12965-f2-holders-"), "session.jsonl");
+		const first = a.holdSessionFile(file, "x12965-f2", { expectExisting: false });
+		const second = b.holdSessionFile(file, "x12965-f2", { expectExisting: false });
+		expect(await a.liveSessionHolders(file, "x12965-f2")).toHaveLength(1);
+
+		first.release();
+		// One copy would still list this process (two holds, one released). Two copies do not: the record the first copy
+		// published is removed by its own release while the second copy still holds the session.
+		expect(await b.liveSessionHolders(file, "x12965-f2")).toHaveLength(0);
+		second.release();
+	});
+
+	it("terminal manifest leases: a second copy takes the lease of a live session of the first copy", async () => {
+		const [a, b] = await twoCopies(
+			async () => import("../../src/core/extensions/builtin/terminal/manifest-lease.ts"),
+		);
+		const dir = tempDir("x12965-f2-lease-");
+		const options = { dir, encodedSessionId: "x12965-f2" };
+		const held = await a.acquireTerminalLease(options);
+		const sameCopy = await a.acquireTerminalLease(options);
+		const second = await b.acquireTerminalLease(options);
+
+		expect(held.acquired).toBe(true);
+		// Same copy: the live token makes the lease a live foreign holder. Other copy: its token set has no such token.
+		expect(sameCopy.acquired).toBe(false);
+		expect(second.acquired).toBe(true);
+		if (second.acquired) await b.releaseTerminalLease(second);
+		if (held.acquired) await a.releaseTerminalLease(held);
+	});
+});
+
+describe("F3d a session writer owner another copy shaped differently is skipped, and that is deliberate (omo#12965 re-read)", () => {
+	it("last-owner cleanup proceeds and the isolate snapshot omits it", async () => {
+		const [a, b] = await twoCopies(async () => import("../../src/core/session-write-reservation.ts"));
+		const writers = registryAt("@code-yeongyu/senpi/session-writers/v1");
+		const unreadable = { getSessionFile: () => "/x12965/f3d.jsonl" };
+		(writers.register as (owner: object) => void)(unreadable);
+		const self = { getSessionFile: () => "/x12965/f3d.jsonl", isPersisted: () => true };
+		a.registerSessionWriter(self);
+		expect(b.hasOtherLiveSessionWriter("/x12965/f3d.jsonl", self)).toBe(false);
+		expect(b.liveSessionWritePaths()).toEqual(["/x12965/f3d.jsonl"]);
+		a.unregisterSessionWriter(self);
+		(writers.unregister as (owner: object) => void)(unreadable);
+	});
+});
+
+describe("F5a per-copy tables whose coordination is a file lock behave as two processes (omo#12965 re-read)", () => {
+	it("a credential state-file lock held through copy A makes copy B wait out its budget, then lets it in", async () => {
+		const [a, b] = await twoCopies(async () => import("../../src/core/credential-pool/state-file.ts"));
+		const path = join(tempDir("x12965-f5-state-"), "state.json");
+		const held = await a.acquireStateFileLock(path, 2_000);
+		await expect(b.acquireStateFileLock(path, 150)).rejects.toMatchObject({ name: "CredentialStoreBusyError" });
+		await held.release();
+		const next = await b.acquireStateFileLock(path, 2_000);
+		await next.release();
+	});
+
+	it("a token refresh of one credential through two copies exchanges once", async () => {
+		const [a, b] = await twoCopies(async () => ({
+			refresh: await import("../../../ai/src/auth/oauth-refresh.ts"),
+			store: await import("../../../ai/src/auth/credential-store.ts"),
+		}));
+		// A lock like the persistent stores' refresh lock: one holder at a time, in arrival order.
+		class LockedStore extends a.store.InMemoryCredentialStore {
+			#tail: Promise<unknown> = Promise.resolve();
+			withRefreshLock<T>(_provider: string, _slot: string, fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
+				const run = this.#tail.then(() => fn(new AbortController().signal));
+				this.#tail = run.catch(() => undefined);
+				return run;
+			}
+		}
+		const credentials = new LockedStore();
+		const stale = { type: "oauth" as const, refresh: "old", access: "old", expires: 1 };
+		await credentials.modify("x12965-f5", async () => stale);
+		let exchanges = 0;
+		const oauth = {
+			name: "x12965",
+			refresh: async () => {
+				exchanges += 1;
+				return { type: "oauth" as const, refresh: "new", access: "new", expires: 4_102_444_800_000 };
+			},
+		};
+		const request = {
+			credentials,
+			providerId: "x12965-f5",
+			oauth: oauth as never,
+			stale,
+			isStale: (credential: { refresh: string }) => credential.refresh === "old",
+			owning: true,
+		};
+		const [fromA, fromB] = await Promise.all([
+			a.refresh.refreshOAuthCredential({ ...request, signal: new AbortController().signal }),
+			b.refresh.refreshOAuthCredential({ ...request, signal: new AbortController().signal }),
+		]);
+
+		expect(exchanges).toBe(1);
+		expect([fromA, fromB].map((credential) => credential?.type === "oauth" && credential.refresh)).toEqual([
+			"new",
+			"new",
+		]);
+	});
+});
+
+describe("F5d the v1 members of each registry are permanent (omo#12965 re-read)", () => {
+	const members: ReadonlyArray<[string, readonly string[], () => Promise<unknown>]> = [
+		["decision-sessions", ["bind", "release", "get"], async () => import("../../src/core/permission-decision.ts")],
+		["turn-origin", ["run", "delegated", "closeAtRunStart"], async () => import("../../src/core/turn-origin.ts")],
+		["kill-guard", ["activate", "release", "active"], async () => import("../../src/core/kill-guard/runtime.ts")],
+		[
+			"session-writers",
+			["installReservation", "reserve", "register", "unregister", "hasOtherLive", "livePaths"],
+			async () => import("../../src/core/session-write-reservation.ts"),
+		],
+		[
+			"file-mutation-queue",
+			["acquire", "withQueue", "withQueues", "stuck"],
+			async () => import("../../src/core/tools/file-mutation-queue.ts"),
+		],
+		[
+			"kernel-tools",
+			["storage", "invokerStorage"],
+			async () => import("../../src/core/extensions/kernel-tools-context.ts"),
+		],
+	];
+	for (const [name, expected, load] of members) {
+		it(`${name} keeps ${expected.join(", ")}`, async () => {
+			await load();
+			const registry = registryAt(`@code-yeongyu/senpi/${name}/v1`);
+			for (const member of expected) expect(Reflect.get(registry, member), member).toBeDefined();
+		});
+	}
+});
+
+describe("F6 the decision record answers from the engine copy that bound it last (omo#12965 re-read)", () => {
+	it("a runtime of copy A binding after the session of copy B takes the id, and B's release leaves it bound", async () => {
+		const [a, b] = await twoCopies(decisionModules);
+		const stub = decisionStub("x12965-f6-parent", { recorded: "read-only" });
+		const sessions = registryAt("@code-yeongyu/senpi/decision-sessions/v1");
+		const child = decisionStub("x12965-f6-child", { parent: "x12965-f6-parent" });
+		b.decision.bindDecisionPreset(stub);
+		b.decision.bindDecisionPreset(child);
+		a.decision.bindDecisionPreset(stub);
+		const delegated = {};
+		b.origin.markInputTurnOrigin(delegated, "delegated");
+		b.origin.noteUserMessageStart(stub.sessionManager, delegated);
+
+		// The session's own copy knows the turn is delegated; the record bound last is A's and does not.
+		expect(b.origin.decidingTurnIsDelegated(stub.sessionManager)).toBe(true);
+		expect(b.presets.readDecisionPresetOverride(child.sessionManager)).toBeUndefined();
+		b.decision.releaseDecisionPreset(stub.sessionManager);
+		expect(sessions.get("x12965-f6-parent" as never)).toBeDefined();
+		a.decision.releaseDecisionPreset(stub.sessionManager);
+		expect(sessions.get("x12965-f6-parent" as never)).toBeUndefined();
+		b.decision.releaseDecisionPreset(child.sessionManager);
+	});
+});
+
+describe("F4c the console redactor reads one copy's sealed context, so it has no production importer (omo#12965 re-read)", () => {
+	it("no production source imports core/egress/console-redactor", () => {
+		const srcRoot = join(import.meta.dirname, "..", "..", "..");
+		const importers: string[] = [];
+		for (const entry of readdirSync(srcRoot, { recursive: true, withFileTypes: true })) {
+			if (!entry.isFile() || !/\.(?:ts|mts|js|mjs)$/u.test(entry.name)) continue;
+			const path = join(entry.parentPath, entry.name);
+			const relativePath = relative(srcRoot, path).split("\\").join("/");
+			if (!/^[^/]+\/src\//u.test(relativePath) || relativePath.endsWith("core/egress/console-redactor.ts")) continue;
+			if (/from\s+["'][^"']*console-redactor(?:\.[jt]s)?["']/u.test(readFileSync(path, "utf8")))
+				importers.push(relativePath);
+		}
+		expect(importers).toEqual([]);
 	});
 });

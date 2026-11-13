@@ -2,7 +2,7 @@
 // T-D (design #12965, 5.4): the realm census derives the expected root set and fails on any unclassified binding.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
@@ -103,6 +103,45 @@ describe("fixture tree", () => {
 		]);
 		assert.deepEqual(grounded.report.problems, []);
 		assert.equal(grounded.status, 0);
+	});
+
+	it("(vi) F4a: a reason cannot turn a registry into a per-copy table, nor a per-copy table into a registry", () => {
+		const key = "packages/lib/src/registry.ts#shared";
+		const relabelled = census([
+			"--root",
+			treeWith("registry.ts", { [key]: { class: "per-copy-safe", reason: "a split only loses reuse" } }),
+		]);
+		assert.equal(relabelled.status, 1);
+		assert.deepEqual(relabelled.report.problems, [
+			`entry ${key} is initialised by realmRegistry() but classified per-copy-safe`,
+		]);
+		const honest = census(["--root", treeWith("registry.ts", { [key]: { class: "realm-registry", reason: "x" } })]);
+		assert.deepEqual(honest.report.problems, []);
+
+		const mapKey = "packages/lib/src/new-map.ts#cache";
+		const claimed = census([
+			"--root",
+			treeWith("new-map.ts", { [mapKey]: { class: "realm-registry", reason: "claims a registry" } }),
+		]);
+		assert.equal(claimed.status, 1);
+		assert.deepEqual(claimed.report.problems, [
+			`entry ${mapKey} is classified realm-registry but its file creates no realm registry`,
+		]);
+	});
+
+	it("(vii) F4b: a vendored directory is part of the population; a generated one is not", () => {
+		const { status, report } = census(["--root", treeWith("vendor/state.ts")]);
+		assert.equal(status, 1);
+		const key = "packages/lib/src/vendor/state.ts#compiled";
+		assert.ok(
+			report.problems.some((problem) => problem.startsWith(`unclassified binding ${key} `)),
+			report.problems.join("\n"),
+		);
+		const generated = treeWith();
+		const dir = join(generated, "packages", "lib", "src", "gen");
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(join(dir, "schema.ts"), "export const registry = new Map<string, number>();\n");
+		assert.deepEqual(census(["--root", generated]).report.problems, []);
 	});
 
 	it("an entry whose binding is gone is reported stale", () => {
