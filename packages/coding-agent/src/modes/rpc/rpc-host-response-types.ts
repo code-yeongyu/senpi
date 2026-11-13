@@ -110,6 +110,17 @@ export type RpcHostCommandResponse =
 	| {
 			id?: string;
 			type: "response";
+			command: "find_session";
+			success: true;
+			/**
+			 * Which session file of this host carries the durable id (senpi#6429). `open` says an engine holds it now.
+			 * `ambiguous` names no file: two of them carry that id. `unknown`: no session file of this host does.
+			 */
+			data: { found: { sessionPath: string; cwd: string; open: boolean } } | { ambiguous: true } | { unknown: true };
+	  }
+	| {
+			id?: string;
+			type: "response";
 			command: "detach_connection";
 			success: true;
 			/**

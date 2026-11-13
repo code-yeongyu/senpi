@@ -14,6 +14,8 @@ export function routeMoveSession(
 	host: RouterContext,
 	command: RpcMoveSessionCommand,
 ): Promise<RpcResponse | undefined> {
+	// The registry's directory only, never the host's own: a host that runs its sessions in workers has a directory and
+	// still does not move sessions. `find_session` reads the host's own; that must not switch this on.
 	const agentDir = host.registry.agentDir;
 	if (agentDir === undefined)
 		return Promise.resolve(

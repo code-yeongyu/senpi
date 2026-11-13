@@ -121,6 +121,7 @@ export const admissionCommands = [
 	"detach_connection",
 	"get_subscription_limits",
 	"list_sessions",
+	"find_session",
 	"list_hands",
 	"select_hand",
 	"subscribe_sessions",
