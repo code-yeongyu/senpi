@@ -55,6 +55,17 @@ function matrixGroups() {
 	});
 }
 
+// The jobs that own a suite; each must gate merges through the "Check and test" fan-in, or its failure is ignored.
+const SUITE_JOBS = ["test-workspaces", "test-coding-agent", "codemode-tests", "test-scripts"];
+
+test("every job that owns a suite is in the Check and test fan-in", () => {
+	const needs = jobBlock("check-and-test").match(/\n {4}needs:\s*\[([^\]]*)\]/)?.[1];
+	assert.ok(needs, "check-and-test must list its needs as a [...] list");
+	const listed = needs.split(",").map((name) => name.trim()).filter(Boolean);
+	const missing = SUITE_JOBS.filter((name) => !listed.includes(name));
+	assert.deepEqual(missing, [], `add these jobs to check-and-test.needs in ${WORKFLOW}`);
+});
+
 test("every workspace test script runs in exactly one CI job or is named as not run in hosted CI", async () => {
 	const tested = (await resolveWorkspaceDirectories(root))
 		.filter((workspace) => typeof workspace.scripts.test === "string")
