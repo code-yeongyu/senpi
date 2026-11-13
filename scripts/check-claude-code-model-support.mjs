@@ -99,6 +99,15 @@ function checkCatalog() {
 		join(repoRoot, "packages", "ai", "src", "providers", "data", "anthropic.json");
 	const catalog = JSON.parse(readFileSync(catalogPath, "utf8"));
 	const ids = catalogClaudeIds(catalog);
+	if (ids.length === 0) {
+		// A key-format change that yields no ids must fail loudly: with no ids
+		// the check below would print "knows all 0 catalog Claude ids" and
+		// pass, exactly the vacuous pass senpi#6310 fixed for the old filter.
+		console.error(
+			"check-claude-code-model-support: catalog yields 0 Claude ids; refusing to pass vacuously (check the catalog key format)",
+		);
+		return 1;
+	}
 	const binary = process.env.SENPI_CHECK_BINARY_PATH ?? bundledBinary();
 	if (!binary) {
 		console.error("check-claude-code-model-support: no bundled Claude Code binary; reinstall without --omit=optional");

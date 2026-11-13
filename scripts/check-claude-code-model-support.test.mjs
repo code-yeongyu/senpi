@@ -83,4 +83,34 @@ describe("--strict with a fixture binary (senpi#6310)", () => {
 			rmSync(dir, { recursive: true, force: true });
 		}
 	});
+
+	it("exits 1 naming the empty catalog when no Claude ids are found (senpi#6586)", () => {
+		// A key-format change that yields zero ids must fail loudly: without
+		// this guard the check printed "knows all 0 catalog Claude ids" and
+		// passed vacuously, the same shape senpi#6310 fixed for the old filter.
+		const dir = mkdtempSync(join(tmpdir(), "senpi-6310-"));
+		try {
+			const catalogPath = join(dir, "anthropic.json");
+			writeFileSync(catalogPath, JSON.stringify({ "anthropic-messages": {} }));
+			const binaryPath = join(dir, "claude");
+			// Binary contains the control id, so only the empty catalog can fail it.
+			writeFileSync(binaryPath, "binary blob claude-sonnet-4-5 padding");
+			const strict = runStrict(catalogPath, binaryPath);
+			assert.equal(strict.status, 1, `expected exit 1, got ${strict.status}: ${strict.stdout}${strict.stderr}`);
+			assert.match(strict.stderr, /catalog yields 0 Claude ids/u);
+			// The refusal is not --strict-gated: report mode must fail too.
+			const report = spawnSync(process.execPath, [script], {
+				encoding: "utf8",
+				env: {
+					...process.env,
+					SENPI_CHECK_CATALOG_PATH: catalogPath,
+					SENPI_CHECK_BINARY_PATH: binaryPath,
+				},
+			});
+			assert.equal(report.status, 1, `expected exit 1, got ${report.status}: ${report.stdout}${report.stderr}`);
+			assert.match(report.stderr, /catalog yields 0 Claude ids/u);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
 });
