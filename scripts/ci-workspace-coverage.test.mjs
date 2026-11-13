@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { test } from "node:test";
 import { dirname } from "node:path";
+import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { parse } from "yaml";
 import { resolveWorkspaceDirectories } from "./run-workspaces.mjs";
 
 // Contract (senpi#6620): every workspace with a `test` script runs in exactly one hosted CI job, or is named below as
@@ -12,7 +11,7 @@ import { resolveWorkspaceDirectories } from "./run-workspaces.mjs";
 // (its suite would then silently stop running) or to list one twice (running it twice per run, as senpi-codemode was).
 const WORKFLOW = ".github/workflows/ci.yml";
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const { jobs } = parse(readFileSync(new URL(`../${WORKFLOW}`, import.meta.url), "utf8"));
+const workflow = readFileSync(new URL(`../${WORKFLOW}`, import.meta.url), "utf8");
 
 /** Workspaces with a `test` script that no hosted CI job runs today, each with the reason. */
 const NOT_IN_HOSTED_CI = {
@@ -22,26 +21,34 @@ const NOT_IN_HOSTED_CI = {
 	"packages/session-backends/sqlite-node": "no hosted job has run this suite; see senpi#6621",
 };
 
+const jobBlock = (name) => {
+	const block = workflow.match(new RegExp(`^  ${name}:\\n[\\s\\S]*?(?=^  [\\w-]+:|$(?![\\s\\S]))`, "m"))?.[0];
+	assert.ok(block, `${WORKFLOW} has no ${name} job`);
+	return block;
+};
+
 /** Workspaces whose whole `test` script runs in a dedicated job instead of the test-workspaces matrix. */
 function dedicatedJobs() {
-	const shard = jobs["test-coding-agent"].steps.find((step) => step.name === "Test shard");
-	assert.equal(shard["working-directory"], "packages/coding-agent");
-	assert.match(shard.run, /vitest run --shard=/);
-	const codemode = jobs["codemode-tests"].steps.find((step) => /^Codemode package tests/.test(step.name ?? ""));
+	const shards = jobBlock("test-coding-agent");
+	assert.match(shards, /run: node \.\.\/\.\.\/scripts\/run-tests\.mjs vitest run --shard=.*\n\s+working-directory: packages\/coding-agent\n/);
 	// `test/` is already in the package's own test script, so the extra filter selects nothing new: the whole suite runs.
-	assert.equal(codemode.run, "bun run --cwd packages/senpi-codemode test -- test/gate");
+	assert.match(jobBlock("codemode-tests"), /\n\s+run: bun run --cwd packages\/senpi-codemode test -- test\/gate\n/);
 	return { "packages/coding-agent": "test-coding-agent", "packages/senpi-codemode": "codemode-tests" };
 }
 
 function matrixGroups() {
-	const job = jobs["test-workspaces"];
-	const step = job.steps.find((entry) => entry.name === "Workspace tests");
-	assert.equal(step.run, "node scripts/run-workspaces.mjs --if-present ${{ matrix.workspaces }} test");
-	return job.strategy.matrix.include.map(({ group, workspaces }) => {
-		const tokens = workspaces.trim().split(/\s+/);
+	const job = jobBlock("test-workspaces");
+	assert.match(job, /\n\s+run: node scripts\/run-workspaces\.mjs --if-present \$\{\{ matrix\.workspaces \}\} test\n/);
+	const include = job.match(/\n {8}include:\n([\s\S]*?)\n {4}runs-on:/)?.[1];
+	assert.ok(include, "test-workspaces must list its groups under strategy.matrix.include");
+	return include.split(/\n {10}- /).filter((entry) => entry.trim()).map((entry) => {
+		const group = entry.match(/group: (.+)/)?.[1];
+		const value = entry.slice(entry.indexOf("workspaces:") + "workspaces:".length).replace(/^ >-/, "").trim();
+		const tokens = value.split(/\s+/);
+		assert.ok(group && tokens.length % 2 === 0, `unreadable matrix entry: ${entry}`);
 		const paths = [];
 		for (let index = 0; index < tokens.length; index += 2) {
-			assert.equal(tokens[index], "--workspace", `group "${group}": ${workspaces}`);
+			assert.equal(tokens[index], "--workspace", `group "${group}": ${value}`);
 			paths.push(tokens[index + 1]);
 		}
 		return { group, paths };
