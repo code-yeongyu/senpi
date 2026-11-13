@@ -28,6 +28,13 @@ const listed =
 	(files: InlineFile[]) =>
 		withListed(files, ...paths.map((path) => inlineFile(path, BYTES)));
 
+/** The bundle with its manifest sent once more, under `path`: the same bytes, so only the second name can be wrong. */
+const manifestAlsoAt = (path: string) => (files: InlineFile[]) => {
+	const manifest = files.find((file) => file.path === "manifest.json");
+	if (manifest === undefined) throw new Error("the export sent no manifest");
+	return [...files, { ...manifest, path }];
+};
+
 describe("move_session import with files: the paths it takes (senpi#6267)", () => {
 	it.each([
 		["a parent segment", () => "../escaped.txt"],
@@ -60,6 +67,9 @@ describe("move_session import with files: the paths it takes (senpi#6267)", () =
 				{ path: `${"d/".repeat(40)}extra.bin`, sha256: "nope", base64: BYTES.toString("base64") },
 			],
 		],
+		["the manifest sent once more, under its own name behind a dot segment", manifestAlsoAt("./manifest.json")],
+		["a listed path with a dot segment", listed("files/./x")],
+		["a listed path with an empty segment", listed("files//x")],
 		["a listed path with a dot segment after a backslash", listed("files\\.\\x")],
 		["a listed path with an empty segment after a backslash", listed("files\\\\x")],
 		["a listed path with a NUL character", listed("files/a\0b")],

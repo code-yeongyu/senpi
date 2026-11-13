@@ -6,12 +6,15 @@
  */
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { getDefaultSessionDir } from "../../src/core/session-manager.ts";
 import { MoveBundleInvalidError, parseManifest } from "../../src/core/session-move/bundle.ts";
+import { movedStateDir } from "../../src/core/session-move/extension-state.ts";
+import { finishMove } from "../../src/core/session-move/finish.ts";
 import { importMovedSession } from "../../src/core/session-move/import.ts";
-import { SESSION_ID, setup } from "./session-move-fixture.ts";
+import { SESSION_RECLAIMED } from "../../src/core/session-move/ownership.ts";
+import { appendUserMessage, customTypes, MOVE, SESSION_ID, setup } from "./session-move-fixture.ts";
 
 interface Listing {
 	sessionFileName: string;
@@ -61,5 +64,28 @@ describe("a bundle's listed paths are plain", () => {
 
 		await expect(refused).rejects.toBeInstanceOf(MoveBundleInvalidError);
 		expect(existsSync(join(getDefaultSessionDir(cwdB), "extensions", "x", `${SESSION_ID}.json`))).toBe(false);
+	});
+
+	it("#given a bundle an earlier version wrote, whose manifest lists extension state under a name with a backslash beside a '.' #when it is imported #then the import is refused as an invalid bundle and nothing lands, #and the sender's declined finish takes the session back", async () => {
+		const { source, cwdB, bundleDir, ledger, readIdentity } = await setup();
+		const path = "state/probe/a\\.\\b.json";
+		mkdirSync(dirname(join(bundleDir, path)), { recursive: true });
+		writeFileSync(join(bundleDir, path), BYTES);
+		const file = join(bundleDir, "manifest.json");
+		const manifest: unknown = JSON.parse(readFileSync(file, "utf8"));
+		const sha256 = createHash("sha256").update(BYTES).digest("hex");
+		const payloads = [{ kind: "extension-state", files: [{ path, sha256 }] }];
+		writeFileSync(file, JSON.stringify({ ...Object(manifest), payloads }));
+
+		const refused = importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity });
+
+		await expect(refused).rejects.toBeInstanceOf(MoveBundleInvalidError);
+		const target = join(getDefaultSessionDir(cwdB), basename(source));
+		expect([existsSync(target), existsSync(movedStateDir(target, MOVE))]).toEqual([false, false]);
+		const declined = { state: "declined", reason: "cancelled" } as const;
+		expect(await ledger.decline(MOVE, "cancelled")).toEqual(declined);
+		await finishMove({ sessionFile: source, bundleDir, moveId: MOVE, answer: declined });
+		expect(customTypes(source).at(-1)).toBe(SESSION_RECLAIMED);
+		expect(() => appendUserMessage(source, "back on A")).not.toThrow();
 	});
 });
