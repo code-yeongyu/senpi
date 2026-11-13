@@ -23,6 +23,7 @@ import {
 	CONFIG_DIR_NAME,
 	DISPLAY_VERSION,
 	detectInstallMethod,
+	type InstallMethod,
 	getAgentDir,
 	getInstallPackageDir,
 	getSelfUpdateCommand,
@@ -657,12 +658,26 @@ function printSelfUpdateNote(note: string): void {
 	console.log();
 }
 
-interface SelfUpdatePlan {
+export interface SelfUpdatePlan {
 	packageName: string;
 	installSpec: string;
 	version: string;
 	shouldRun: boolean;
 	note?: string;
+}
+
+/**
+ * The latest-version lookup failed. A standalone binary cannot update itself in place, and since senpi#6633 its lookup
+ * asks the unauthenticated GitHub API (60 requests per hour per IP), so a failed lookup points it at the download page
+ * instead of failing `update --self`. Every other install still fails, because it would run an install command.
+ */
+export function selfUpdatePlanAfterLookupFailure(installMethod: InstallMethod, reason: string): SelfUpdatePlan {
+	if (installMethod !== "bun-binary") {
+		throw new Error(`Could not determine latest ${APP_NAME} version${reason ? `: ${reason}` : "."}`);
+	}
+	console.log(chalk.yellow(`Could not check the latest ${APP_NAME} release${reason ? ` (${reason})` : ""}.`));
+	console.log(chalk.cyan("Download from: https://github.com/code-yeongyu/senpi/releases/latest"));
+	return { packageName: PACKAGE_NAME, installSpec: PACKAGE_NAME, version: VERSION, shouldRun: false };
 }
 
 async function getSelfUpdatePlan(force: boolean): Promise<SelfUpdatePlan> {
@@ -682,12 +697,14 @@ async function getSelfUpdatePlan(force: boolean): Promise<SelfUpdatePlan> {
 	try {
 		latestRelease = await getLatestPiRelease(VERSION, { retry: true });
 	} catch (error: unknown) {
-		throw new Error(`Could not determine latest ${APP_NAME} version: ${formatVersionCheckError(error)}`, {
-			cause: error,
-		});
+		try {
+			return selfUpdatePlanAfterLookupFailure(detectInstallMethod(), formatVersionCheckError(error));
+		} catch (planError: unknown) {
+			throw planError instanceof Error ? Object.assign(planError, { cause: error }) : planError;
+		}
 	}
 	if (!latestRelease) {
-		throw new Error(`Could not determine latest ${APP_NAME} version.`);
+		return selfUpdatePlanAfterLookupFailure(detectInstallMethod(), "");
 	}
 
 	const packageName = latestRelease.packageName ?? PACKAGE_NAME;
