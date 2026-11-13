@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { CompactAdmissionError } from "./compact-admissions.ts";
 import type { EventLease } from "./compact-recovery-types.ts";
 import { statusSnapshot } from "./compact-status-snapshot.ts";
-import { admissionBaseline } from "./compact-admission-baseline.ts";
+import { admissionBaseline, type BaselineAnswer } from "./compact-admission-baseline.ts";
 import type { RpcCommand } from "./rpc-types.ts";
 import type { RouterContext } from "./session-router-context.ts";
 import { error } from "./session-router-errors.ts";
@@ -22,7 +22,7 @@ export async function compactSubscribe(
 	const fingerprint = createHash("sha256")
 		.update(JSON.stringify(Object.entries(request).sort(([a], [b]) => a.localeCompare(b))))
 		.digest("hex");
-	let delivery: ReturnType<typeof Promise.withResolvers<Readonly<Record<string, unknown>> | undefined>> | undefined;
+	let delivery: BaselineAnswer | undefined;
 	let baseline: (() => void) | undefined;
 	const cancelledAnswer = async () => {
 		const result = await host.admissions?.result(socketEpoch, admissionId);
@@ -61,19 +61,17 @@ export async function compactSubscribe(
 			if (!pending) throw new CompactAdmissionError("storage_unavailable");
 			const eventLease = lease;
 			const identity = { sessionId: subscriptionId, admissionId, generation: 0 };
-			delivery = Promise.withResolvers();
-			const reply = delivery.promise;
+			const reply = host.writer.baselineAnswer(peer);
+			delivery = reply;
 			let live = true;
-			let installed = false;
-			baseline = () => {
-				if (installed) return;
-				installed = true;
-				host.writer.installAdmissionBaseline(
-					peer,
-					admissionBaseline(reply, { ...identity, eventLease, componentRef: "record" }, () => live),
-					() => host.writer.socketEpochOf(peer) === socketEpoch,
+			baseline = () =>
+				reply.install(() =>
+					host.writer.installAdmissionBaseline(
+						peer,
+						admissionBaseline(reply.answer, { ...identity, eventLease, componentRef: "record" }, () => live),
+						() => host.writer.socketEpochOf(peer) === socketEpoch,
+					),
 				);
-			};
 			const { snapshot: _snapshot, ...data } = subscribed.answer.data;
 			return {
 				answer: { ...subscribed.answer, ...identity, data: { ...data, recovery: eventLease } },
@@ -103,13 +101,13 @@ export async function compactSubscribe(
 			};
 		});
 		if (host.writer.socketEpochOf(peer) !== socketEpoch) {
-			delivery?.resolve(undefined);
+			delivery?.hand(undefined);
 			return undefined;
 		}
 		const response = { ...((await cancelledAnswer()) ?? answer), id };
 		if (delivery) {
 			baseline?.();
-			delivery.resolve(response);
+			delivery.hand(response);
 		} else await host.writer.enqueueControl(response, peer);
 		return undefined;
 	} catch (cause) {
@@ -123,7 +121,7 @@ export async function compactSubscribe(
 			});
 		if (delivery) {
 			baseline?.();
-			delivery.resolve({ ...refusal });
+			delivery.hand({ ...refusal });
 			return undefined;
 		}
 		return refusal;

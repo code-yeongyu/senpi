@@ -1,4 +1,5 @@
 import type { EventLeases } from "./compact-event-leases.ts";
+import { BaselineAnswer } from "./compact-admission-baseline.ts";
 import { captureAdmissionReply } from "./compact-admission-reply.ts";
 import { AdmissionRoutingActor } from "./compact-admission-routing.ts";
 import { CompactRequiredStreams } from "./compact-required-streams.ts";
@@ -119,10 +120,16 @@ export abstract class SessionEventWriterRecovery extends SessionEventWriterLifec
 			registered.actor.remember(sessionId, this.fanout.checkpoints, registered.socketEpoch);
 		}
 	}
-	installAdmissionBaseline(peer: string, cursor: LegacyViewCursor, live: () => boolean): void {
+	/** Answers whether the peer's queue took the baseline; one it did not take is released and writes nothing. */
+	installAdmissionBaseline(peer: string, cursor: LegacyViewCursor, live: () => boolean): boolean {
 		const actor = this.fanout.get(peer)?.actor;
-		if (actor) actor.installBaseline(cursor, live);
-		else cursor.release();
+		if (actor) return actor.installBaseline(cursor, live);
+		cursor.release();
+		return false;
+	}
+	/** The answer a request of `peer` writes through an admission baseline; its hand-over is noted as an answer. */
+	baselineAnswer(peer: string): BaselineAnswer {
+		return new BaselineAnswer((answer) => this.answered.taken(peer, answer));
 	}
 	/** Internal S14 source identity; callers must establish the requesting token's scoped claim first. */
 	recoveryLane(sessionId: string) {
