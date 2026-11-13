@@ -53,6 +53,21 @@ cell grid. Prefixes encode role:
   `check-ts-relative-imports.mjs`, `check-browser-smoke.mjs`, `diff-model-catalog.mjs`,
   `publish-model-catalog.mjs`, `generate-thinking-capabilities.mjs` — `bun run check` chains them.
 
+## Manual first publish (senpi#6636)
+
+npm trusted publishing (`publish-npm.yml`, OIDC only) cannot do a package's first publish: the package must
+exist on the registry before a trusted publisher can be attached to it. `release.mjs` (first, before any build,
+suite, tag or push; `--dry-run` too) and `publish.mjs` (before staging any package) refuse while a value of
+`registryPackageNames` is unknown to the registry, through `assertRegistryPackagesKnown` in `npm-registry.mjs`;
+a registry failure that is not a 404 stops them with its own error. The `Registry packages published` workflow
+runs `node scripts/npm-registry.mjs` on a PR that changes the publish set and on main. For each unknown name:
+
+1. With an npm login that maintains the scope, publish a placeholder once: a directory holding only a
+   `package.json` (`name`, `version` `0.0.0`, `repository`), then `npm publish --access public`.
+2. Attach the trusted publisher: `npm trust github <name> --repo code-yeongyu/senpi --file publish-npm.yml
+   --allow-publish` (or the package's access page on npmjs.com: GitHub Actions, user `code-yeongyu`,
+   repository `senpi`, workflow `publish-npm.yml`, no environment).
+
 ## Release entry graph validation
 
 No native build is needed: every Bun build of the release entry graph keeps linkedom's optional

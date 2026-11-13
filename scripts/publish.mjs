@@ -10,7 +10,7 @@ import { buildPublishArgs } from "./publish-command.mjs";
 import { rewritePublishManifest } from "./publish-manifest.mjs";
 import { parseNpmPackJson } from "./npm-pack-json.mjs";
 import { assertPublishedWorkspacePackFiles, assertSenpiPackedWorkspaceFiles } from "./senpi-publish-pack-checks.mjs";
-import { queryNpmRegistry } from "./npm-registry.mjs";
+import { assertRegistryPackagesKnown, queryNpmRegistry } from "./npm-registry.mjs";
 import { getPublicWorkspacePackages } from "./release-packages.mjs";
 import { registryPackageNames } from "./registry-packages.mjs";
 
@@ -152,6 +152,9 @@ if (versions.length !== 1) {
 }
 
 const publishArgs = dryRun ? undefined : buildPublishArgs({ githubActions: process.env.GITHUB_ACTIONS === "true" });
+
+// Before any package is staged or published: a name npm does not know would publish part of the set (senpi#6636).
+assertRegistryPackagesKnown();
 
 console.log(`Publishing senpi packages at ${versions[0]}${dryRun ? " (dry run)" : ""}\n`);
 
