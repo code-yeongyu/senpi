@@ -12,6 +12,14 @@
 import { randomUUID } from "node:crypto";
 import { link, open, readFile, rename, stat, unlink } from "node:fs/promises";
 import { ownProcessStartedAtMs, processBootAtMs, sameBootAsOwn, sameProcessStart } from "./process-identity.ts";
+import {
+	ownProcessKey,
+	processKeyFromStart,
+	type ProcessKeyReader,
+	readProcessKey,
+	sameProcessKey,
+	withOwnProcessKey,
+} from "./process-key.ts";
 import { readProcessStartMs as defaultReadProcessStartMs } from "./process-start-probe.ts";
 
 export function errorCode(error: unknown): string | undefined {
@@ -97,6 +105,7 @@ function pidAlive(pid: number): boolean {
 export interface LockProbes {
 	readonly isProcessAlive?: (pid: number) => boolean;
 	readonly readProcessStartMs?: (pid: number) => Promise<number | undefined>;
+	readonly readProcessKey?: ProcessKeyReader;
 }
 
 /** Who holds a reclaim lock: the same identity a lease records, so a reused pid is never mistaken for it. */
@@ -104,6 +113,8 @@ export interface ReclaimLockHolder {
 	readonly pid: number;
 	readonly bootAtMs: number;
 	readonly processStartedAtMs: number;
+	/** The holder's step-invariant identity (`process-key.ts`), when its platform has one. */
+	readonly processKey?: string;
 }
 
 type LockState =
@@ -123,7 +134,9 @@ function readLockHolder(raw: string): ReclaimLockHolder | undefined {
 		if (typeof pid !== "number" || typeof bootAtMs !== "number" || typeof processStartedAtMs !== "number") {
 			return undefined;
 		}
-		return { pid, bootAtMs, processStartedAtMs };
+		const processKey =
+			"processKey" in parsed && typeof parsed.processKey === "string" ? parsed.processKey : undefined;
+		return { pid, bootAtMs, processStartedAtMs, ...(processKey === undefined ? {} : { processKey }) };
 	} catch {
 		return undefined;
 	}
@@ -141,20 +154,53 @@ export async function reclaimLockState(lock: string, probes: LockProbes = {}): P
 		);
 		return age > UNREADABLE_LOCK_STALE_MS ? { state: "stale", raw } : { state: "held" };
 	}
-	if (!(await sameBootAsOwn(holder.bootAtMs))) return { state: "stale", raw };
 	if (holder.pid === process.pid) {
 		// Our own pid: held only by this very process (another reclaim in flight here), never by a
 		// crashed earlier process whose pid this one now wears.
-		return sameProcessStart(holder.processStartedAtMs, ownProcessStartedAtMs())
-			? { state: "held", holder }
-			: { state: "stale", raw };
+		const byKey = sameProcessKey(holder.processKey, await ownProcessKey());
+		const self = byKey ?? sameProcessStart(holder.processStartedAtMs, ownProcessStartedAtMs());
+		return self ? { state: "held", holder } : { state: "stale", raw };
 	}
 	if (!(probes.isProcessAlive ?? pidAlive)(holder.pid)) return { state: "stale", raw };
-	const observed = await (probes.readProcessStartMs ?? defaultReadProcessStartMs)(holder.pid).catch(() => undefined);
+	// A step-invariant key decides exactly where both sides have one: the same key is the same process whatever the
+	// clock did, another key (a reboot or a reused pid) is someone else. A record without a key costs no key read.
+	// One start read per holder per check: on macOS the key's start half is that same instant, so the key costs no
+	// second `ps`.
+	let startRead: Promise<number | undefined> | undefined;
+	const readStart = (pid: number): Promise<number | undefined> => {
+		startRead ??= (probes.readProcessStartMs ?? defaultReadProcessStartMs)(pid);
+		return startRead;
+	};
+	const readKey =
+		probes.readProcessKey ??
+		(process.platform === "darwin"
+			? async (pid: number) => {
+					const start = await readStart(pid).catch(() => undefined);
+					return start === undefined ? undefined : processKeyFromStart(start);
+				}
+			: readProcessKey);
+	if (holder.processKey !== undefined) {
+		const byKey = sameProcessKey(holder.processKey, await readKey(holder.pid));
+		if (byKey === false) return { state: "stale", raw };
+		if (byKey === true) {
+			// The start-time probe still runs for a live holder: callers learn its start through it (the session-held
+			// check recognises this daemon's own previous generation by it).
+			await readStart(holder.pid).catch(() => undefined);
+			return { state: "held", holder };
+		}
+	}
+	// A live pid is judged by its start time first: a wall-clock step moves the kernel's recorded boot instant, so a live
+	// holder whose record predates the step reads as another boot while its pid and start time still match.
+	const observed = await readStart(holder.pid).catch(() => undefined);
+	if (observed !== undefined)
+		return sameProcessStart(holder.processStartedAtMs, observed)
+			? { state: "held", holder }
+			: { state: "stale", raw };
+	// Only without a start time does the boot instant decide: a pid alive in another boot is someone else's.
+	if (!(await sameBootAsOwn(holder.bootAtMs))) return { state: "stale", raw };
 	// An unreadable start time cannot tell the holder from a process wearing its reused pid: held, but
 	// `unproven`, so a caller with positive evidence of the holder's death may still reclaim it.
-	if (observed === undefined) return { state: "held", holder, unproven: true };
-	return sameProcessStart(holder.processStartedAtMs, observed) ? { state: "held", holder } : { state: "stale", raw };
+	return { state: "held", holder, unproven: true };
 }
 
 /** Remove a stale lock only if it still holds `raw`; a lock someone took meanwhile is put back. */
@@ -178,11 +224,13 @@ export async function breakStaleLock(lock: string, raw: string): Promise<void> {
 }
 
 async function takeReclaimLock(lock: string, probes: LockProbes): Promise<string | { holder?: ReclaimLockHolder }> {
-	const mine = JSON.stringify({
-		pid: process.pid,
-		bootAtMs: await processBootAtMs(),
-		processStartedAtMs: ownProcessStartedAtMs(),
-	});
+	const mine = JSON.stringify(
+		await withOwnProcessKey({
+			pid: process.pid,
+			bootAtMs: await processBootAtMs(),
+			processStartedAtMs: ownProcessStartedAtMs(),
+		}),
+	);
 	for (let attempt = 0; attempt < 3; attempt += 1) {
 		try {
 			await publishExclusive(lock, mine);

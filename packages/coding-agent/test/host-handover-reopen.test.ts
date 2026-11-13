@@ -106,8 +106,13 @@ describe("an entry its live writer still holds resident (senpi#6190)", () => {
 		expect(open).not.toHaveBeenCalled();
 		expect(await readHandoverParkedSessions(daemonDir)).toHaveLength(1);
 
-		// The same pid now belongs to a process started at another time: the writer that stamped it is gone.
-		const reused = { ...live, processStartedAtMs: live.processStartedAtMs - 10 * BOOT_INSTANT_TOLERANCE_MS };
+		// The same pid now belongs to a process started at another time: the writer that stamped it is gone. Its start
+		// time differs, and so does its process key where the platform has one.
+		const reused = {
+			...live,
+			processStartedAtMs: live.processStartedAtMs - 10 * BOOT_INSTANT_TOLERANCE_MS,
+			...(live.processKey === undefined ? {} : { processKey: `${live.processKey}-earlier` }),
+		};
 		await recordHandoverParkedSession(daemonDir, { ...park, residentWriter: reused });
 		passes = 0;
 		await reopenHandoverParkedSessions(open, agentDir, socket, onePass);
