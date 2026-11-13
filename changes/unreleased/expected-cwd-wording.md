@@ -1,0 +1,10 @@
+<!-- changes-log: packages/coding-agent/src/modes/rpc/changes.md -->
+## 2026-11-14 - comparableFolder's docstring says what a bare drive root becomes (senpi PR)
+
+### What changed
+
+- `project-expected-cwd.ts`: the docstring now says a bare drive root becomes `X:\` (`C:`, `C:/` and `c:\` all become `C:\`), which is what the code does; `docs/rpc.md` loses a stray blank line before "The folder a project write is for". Prose only, no behaviour change.
+
+### Why
+
+- senpi#6659's review (LOWs L3 and L4).
