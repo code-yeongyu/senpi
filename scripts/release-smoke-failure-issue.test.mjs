@@ -64,6 +64,8 @@ describe("smoke failure after npm: issue content (senpi#6628)", () => {
 		assert.match(issue.title, /macos-latest, windows-latest/);
 		assert.ok(issue.body.includes(ROLLBACK), issue.body);
 		assert.ok(issue.body.includes("https://run/1"));
+		assert.match(issue.body, /last known-good version/);
+		assert.match(issue.body, /published right before this one was `2026\.11\.12`; if that release was itself rolled back/);
 		const unknown = smokeFailureIssue({ version: "2026.11.13", previous: null, runners: ["macos-latest"], runUrl: "u" });
 		assert.ok(unknown.body.includes("npm dist-tag add @code-yeongyu/senpi@<previous> latest"));
 		assert.match(unknown.body, /replace `<previous>`/);
@@ -130,8 +132,9 @@ describe("build-binaries.yml reports a smoke failure after npm (senpi#6628)", ()
 		}
 	});
 
-	it("has the minimum permissions, and no other job can write issues", () => {
-		assert.match(text, /\n {4}permissions:\n {6}actions: read\n {6}issues: write\n {4}env:/);
+	it("has the minimum permissions its steps need (contents: read for the checkout), and no other job can write issues", () => {
+		assert.match(text, /uses: actions\/checkout@/, "the job checks out the release scripts, so it needs contents: read");
+		assert.match(text, /\n {4}permissions:\n {6}actions: read\n {6}contents: read\n {6}issues: write\n {4}env:/);
 		assert.match(workflow, /\npermissions: \{\}\n/);
 		assert.equal(workflow.match(/issues: write/g).length, 1);
 		const commands = workflow.split("\n").filter((line) => !/^\s*#/.test(line)).join("\n");

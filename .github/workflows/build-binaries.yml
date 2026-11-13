@@ -368,6 +368,7 @@ jobs:
     if: ${{ always() && inputs.dry_run != true && needs.publish-npm.result == 'success' && needs.smoke-test-binaries.result == 'failure' }}
     permissions:
       actions: read
+      contents: read
       issues: write
     env:
       GH_REPO: ${{ github.repository }}
