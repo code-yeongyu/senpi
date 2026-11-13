@@ -145,7 +145,7 @@ async function scannedSkillFile(dir: string, absolute: string): Promise<boolean>
  * True when the resolved `absolute` is the agent dir or lies inside it, compared by real path: that is the machine's
  * global config, never a project file, even when the session folder is the agent dir's parent (or `$HOME`).
  */
-export async function insideAgentDir(agentDir: string, absolute: string): Promise<boolean> {
+async function insideAgentDir(agentDir: string, absolute: string): Promise<boolean> {
 	return insideRealRoot(agentDir, absolute);
 }
 
