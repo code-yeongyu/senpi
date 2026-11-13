@@ -12,6 +12,10 @@ on:
         required: false
         type: string
         default: ''
+    outputs:
+      ready:
+        description: "'true' when every target's prebuild was reused or built in this run (see job ready)"
+        value: ${{ jobs.ready.outputs.ready }}
   workflow_dispatch:
     inputs:
       native_package_dir:
@@ -31,6 +35,9 @@ on:
       - 'packages/pty/**'
       - 'packages/coding-agent/native/**'
       - 'scripts/probe-native-grep*.mjs'
+      - 'scripts/probe-native-pty-lifecycle.mjs'
+      - 'scripts/native-prebuild-*'
+      - 'rust-toolchain.toml'
       - 'scripts/ci/**'
   push:
     branches: [main]
@@ -44,6 +51,9 @@ on:
       - 'packages/pty/**'
       - 'packages/coding-agent/native/**'
       - 'scripts/probe-native-grep*.mjs'
+      - 'scripts/probe-native-pty-lifecycle.mjs'
+      - 'scripts/native-prebuild-*'
+      - 'rust-toolchain.toml'
       - 'scripts/ci/**'
 
 permissions:
@@ -60,79 +70,169 @@ env:
   ZIG_VERSION: 0.14.1
 
 jobs:
+  # senpi#6622: each target's prebuild is keyed by every input that shapes it
+  # (scripts/native-prebuild-key.mjs). This ubuntu job restores the targets whose key already has a
+  # prebuild in the Actions cache, verifies each file's sha256 against the record the build job wrote,
+  # and re-uploads it under the artifact name the build job would have used. Only the remaining
+  # targets reach the build matrix, so a release whose inputs main already built starts no macOS job.
+  # The cache is scoped by GitHub per branch: a run reads its own ref's entries and the default
+  # branch's, so a pull request (including a fork) can never write an entry a release on main reads.
+  plan:
+    name: Plan native prebuilds
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      keys: ${{ steps.keys.outputs.keys }}
+      rustc: ${{ steps.keys.outputs.rustc }}
+      reused: ${{ steps.select.outputs.reused }}
+      matrix: ${{ steps.select.outputs.matrix }}
+      missing: ${{ steps.select.outputs.missing }}
+      missing_count: ${{ steps.select.outputs.missing_count }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.ref || '' }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+
+      # The same toolchain resolution the build rows run; rust-toolchain.toml selects the channel.
+      - name: Resolve Rust toolchain
+        run: |
+          set -euo pipefail
+
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          {
+            echo "RUSTC_VV<<RUSTC_VV_EOF"
+            rustc -vV
+            echo "RUSTC_VV_EOF"
+          } >> "${GITHUB_ENV}"
+
+      - name: Compute reuse keys
+        id: keys
+        run: node scripts/native-prebuild-reuse.mjs keys
+
+      - name: Restore native-prebuild-win32-x64
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .native-prebuild-cache/native-prebuild-win32-x64
+          key: ${{ fromJSON(steps.keys.outputs.keys)['native-prebuild-win32-x64'] }}
+
+      - name: Restore native-prebuild-win32-arm64
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .native-prebuild-cache/native-prebuild-win32-arm64
+          key: ${{ fromJSON(steps.keys.outputs.keys)['native-prebuild-win32-arm64'] }}
+
+      - name: Restore native-prebuild-darwin-x64
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .native-prebuild-cache/native-prebuild-darwin-x64
+          key: ${{ fromJSON(steps.keys.outputs.keys)['native-prebuild-darwin-x64'] }}
+
+      - name: Restore native-prebuild-darwin-arm64
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .native-prebuild-cache/native-prebuild-darwin-arm64
+          key: ${{ fromJSON(steps.keys.outputs.keys)['native-prebuild-darwin-arm64'] }}
+
+      - name: Restore native-prebuild-linux-x64
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .native-prebuild-cache/native-prebuild-linux-x64
+          key: ${{ fromJSON(steps.keys.outputs.keys)['native-prebuild-linux-x64'] }}
+
+      - name: Restore native-prebuild-linux-arm64
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .native-prebuild-cache/native-prebuild-linux-arm64
+          key: ${{ fromJSON(steps.keys.outputs.keys)['native-prebuild-linux-arm64'] }}
+
+      - name: Select targets to reuse or build
+        id: select
+        env:
+          KEYS: ${{ steps.keys.outputs.keys }}
+          RUSTC: ${{ steps.keys.outputs.rustc }}
+        run: node scripts/native-prebuild-reuse.mjs select --cache-root .native-prebuild-cache
+
+      - name: Upload reused native-prebuild-win32-x64
+        if: ${{ contains(fromJSON(steps.select.outputs.reused), 'native-prebuild-win32-x64') }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-prebuild-win32-x64
+          path: .native-prebuild-cache/native-prebuild-win32-x64
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload reused native-prebuild-win32-arm64
+        if: ${{ contains(fromJSON(steps.select.outputs.reused), 'native-prebuild-win32-arm64') }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-prebuild-win32-arm64
+          path: .native-prebuild-cache/native-prebuild-win32-arm64
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload reused native-prebuild-darwin-x64
+        if: ${{ contains(fromJSON(steps.select.outputs.reused), 'native-prebuild-darwin-x64') }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-prebuild-darwin-x64
+          path: .native-prebuild-cache/native-prebuild-darwin-x64
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload reused native-prebuild-darwin-arm64
+        if: ${{ contains(fromJSON(steps.select.outputs.reused), 'native-prebuild-darwin-arm64') }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-prebuild-darwin-arm64
+          path: .native-prebuild-cache/native-prebuild-darwin-arm64
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload reused native-prebuild-linux-x64
+        if: ${{ contains(fromJSON(steps.select.outputs.reused), 'native-prebuild-linux-x64') }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-prebuild-linux-x64
+          path: .native-prebuild-cache/native-prebuild-linux-x64
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload reused native-prebuild-linux-arm64
+        if: ${{ contains(fromJSON(steps.select.outputs.reused), 'native-prebuild-linux-arm64') }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-prebuild-linux-arm64
+          path: .native-prebuild-cache/native-prebuild-linux-arm64
+          if-no-files-found: error
+          retention-days: 14
+
   build:
     name: Build ${{ matrix.artifact }}
+    needs: plan
+    if: ${{ needs.plan.outputs.missing_count != '0' }}
     runs-on: ${{ matrix.runner }}
     continue-on-error: ${{ matrix.best_effort }}
     timeout-minutes: 75
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          # cross_compile gates the on-runner test/probe steps (target arch != runner arch).
-          # napi_cross_compile passes --cross-compile to napi, which requires zig (or
-          # cargo-xwin); darwin cross builds use Apple's native toolchain instead, so they
-          # keep napi_cross_compile false.
-          - artifact: native-prebuild-win32-x64
-            runner: windows-latest
-            napi_target: x86_64-pc-windows-msvc
-            rust_target: x86_64-pc-windows-msvc
-            node_platform: win32
-            node_arch: x64
-            cross_compile: false
-            napi_cross_compile: false
-            linux: false
-            best_effort: false
-          - artifact: native-prebuild-win32-arm64
-            runner: windows-latest
-            napi_target: aarch64-pc-windows-msvc
-            rust_target: aarch64-pc-windows-msvc
-            node_platform: win32
-            node_arch: arm64
-            cross_compile: true
-            napi_cross_compile: true
-            linux: false
-            best_effort: true
-          - artifact: native-prebuild-darwin-x64
-            runner: macos-latest
-            napi_target: x86_64-apple-darwin
-            rust_target: x86_64-apple-darwin
-            node_platform: darwin
-            node_arch: x64
-            cross_compile: true
-            napi_cross_compile: false
-            linux: false
-            best_effort: false
-          - artifact: native-prebuild-darwin-arm64
-            runner: macos-latest
-            napi_target: aarch64-apple-darwin
-            rust_target: aarch64-apple-darwin
-            node_platform: darwin
-            node_arch: arm64
-            cross_compile: false
-            napi_cross_compile: false
-            linux: false
-            best_effort: false
-          - artifact: native-prebuild-linux-x64
-            runner: ubuntu-latest
-            napi_target: x86_64-unknown-linux-gnu.2.17
-            rust_target: x86_64-unknown-linux-gnu
-            node_platform: linux
-            node_arch: x64
-            cross_compile: true
-            napi_cross_compile: true
-            linux: true
-            best_effort: false
-          - artifact: native-prebuild-linux-arm64
-            runner: ubuntu-latest
-            napi_target: aarch64-unknown-linux-gnu.2.17
-            rust_target: aarch64-unknown-linux-gnu
-            node_platform: linux
-            node_arch: arm64
-            cross_compile: true
-            napi_cross_compile: true
-            linux: true
-            best_effort: false
+      # Rows live in scripts/native-prebuild-targets.json; plan passes only the targets it could not
+      # reuse, each with its reuse key. cross_compile gates the on-runner test/probe steps (target arch
+      # != runner arch). napi_cross_compile passes --cross-compile to napi, which requires zig (or
+      # cargo-xwin); darwin cross builds use Apple's native toolchain instead, so they keep
+      # napi_cross_compile false.
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
 
     defaults:
       run:
@@ -365,6 +465,18 @@ jobs:
             if [[ -n "${secret_line}" ]]; then echo "${secret_line}"; fi
           } > "${artifact_dir}/manifest.txt"
 
+      # Written only after the lifecycle tests and the probe passed (earlier steps), so a reused
+      # prebuild carries the evidence that its build ran them.
+      - name: Record prebuild digest
+        env:
+          TARGET_ARTIFACT: ${{ matrix.artifact }}
+          KEY: ${{ matrix.key }}
+        run: |
+          set -euo pipefail
+
+          export RUSTC_VV="$(rustc -vV)"
+          node scripts/native-prebuild-reuse.mjs record --artifact-dir "${RUNNER_TEMP}/native-prebuild-artifact"
+
       - name: Upload native prebuild
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -372,3 +484,115 @@ jobs:
           path: ${{ runner.temp }}/native-prebuild-artifact
           if-no-files-found: error
           retention-days: 14
+
+  # Saves each freshly built target under the key plan computed, after checking its record against
+  # that key and plan's rustc; a build that resolved another rustc is left unsaved.
+  save:
+    name: Save native prebuilds
+    needs: [plan, build]
+    # Runs after a partly failed build too, so the rows that did build are saved; a target that was
+    # not built has no artifact and is skipped.
+    if: ${{ !cancelled() && needs.plan.outputs.missing_count != '0' && needs.build.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.ref || '' }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+
+      - name: Download built prebuilds
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: native-prebuild-*
+          path: .native-prebuild-download
+
+      - name: Verify built prebuilds
+        id: collect
+        env:
+          KEYS: ${{ needs.plan.outputs.keys }}
+          RUSTC: ${{ needs.plan.outputs.rustc }}
+          MISSING: ${{ needs.plan.outputs.missing }}
+        run: node scripts/native-prebuild-reuse.mjs collect --download-root .native-prebuild-download --cache-root .native-prebuild-cache
+
+      - name: Save native-prebuild-win32-x64
+        if: ${{ contains(fromJSON(steps.collect.outputs.save), 'native-prebuild-win32-x64') }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .native-prebuild-cache/native-prebuild-win32-x64
+          key: ${{ fromJSON(needs.plan.outputs.keys)['native-prebuild-win32-x64'] }}
+
+      - name: Save native-prebuild-win32-arm64
+        if: ${{ contains(fromJSON(steps.collect.outputs.save), 'native-prebuild-win32-arm64') }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .native-prebuild-cache/native-prebuild-win32-arm64
+          key: ${{ fromJSON(needs.plan.outputs.keys)['native-prebuild-win32-arm64'] }}
+
+      - name: Save native-prebuild-darwin-x64
+        if: ${{ contains(fromJSON(steps.collect.outputs.save), 'native-prebuild-darwin-x64') }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .native-prebuild-cache/native-prebuild-darwin-x64
+          key: ${{ fromJSON(needs.plan.outputs.keys)['native-prebuild-darwin-x64'] }}
+
+      - name: Save native-prebuild-darwin-arm64
+        if: ${{ contains(fromJSON(steps.collect.outputs.save), 'native-prebuild-darwin-arm64') }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .native-prebuild-cache/native-prebuild-darwin-arm64
+          key: ${{ fromJSON(needs.plan.outputs.keys)['native-prebuild-darwin-arm64'] }}
+
+      - name: Save native-prebuild-linux-x64
+        if: ${{ contains(fromJSON(steps.collect.outputs.save), 'native-prebuild-linux-x64') }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .native-prebuild-cache/native-prebuild-linux-x64
+          key: ${{ fromJSON(needs.plan.outputs.keys)['native-prebuild-linux-x64'] }}
+
+      - name: Save native-prebuild-linux-arm64
+        if: ${{ contains(fromJSON(steps.collect.outputs.save), 'native-prebuild-linux-arm64') }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .native-prebuild-cache/native-prebuild-linux-arm64
+          key: ${{ fromJSON(needs.plan.outputs.keys)['native-prebuild-linux-arm64'] }}
+
+  # A caller cannot read this workflow's result from needs.<job>.result: when every target is reused,
+  # build and save are skipped, and a skipped job inside a called workflow can surface to the caller as
+  # a non-success result. This job always runs and states the outcome as an output instead.
+  ready:
+    name: Native prebuilds ready
+    needs: [plan, build]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      ready: ${{ steps.result.outputs.ready }}
+    steps:
+      - name: Check plan and build results
+        id: result
+        env:
+          PLAN_RESULT: ${{ needs.plan.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          MISSING_COUNT: ${{ needs.plan.outputs.missing_count }}
+        run: |
+          set -euo pipefail
+
+          echo "plan=${PLAN_RESULT} build=${BUILD_RESULT} missing_count=${MISSING_COUNT}"
+          test "${PLAN_RESULT}" = success || { echo "::error::plan did not succeed"; exit 1; }
+          if [[ "${MISSING_COUNT}" == "0" ]]; then
+            test "${BUILD_RESULT}" = skipped || { echo "::error::build ran although every target was reused"; exit 1; }
+          else
+            test "${BUILD_RESULT}" = success || { echo "::error::build did not succeed"; exit 1; }
+          fi
+          echo "ready=true" >> "${GITHUB_OUTPUT}"
