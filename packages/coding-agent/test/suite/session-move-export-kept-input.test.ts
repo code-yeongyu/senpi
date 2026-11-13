@@ -18,11 +18,22 @@ function world() {
 	return { sessionFile: writeSession(cwd), bundleDir: join(base, "outgoing", MOVE) };
 }
 
-const exportedAgain = ({ sessionFile, bundleDir }: ReturnType<typeof world>) =>
-	exportSessionForMove({ sessionFile, moveId: MOVE, target: "device-b", bundleDir }).then(
+const exportedAgain = ({ sessionFile, bundleDir }: ReturnType<typeof world>, sent?: readonly string[]) =>
+	exportSessionForMove({
+		sessionFile,
+		moveId: MOVE,
+		target: "device-b",
+		bundleDir,
+		...(sent === undefined ? {} : { droppedUserMessages: sent }),
+	}).then(
 		() => "exported",
 		(error: unknown) => (error instanceof Error ? error.message : String(error)),
 	);
+
+function keep(bundleDir: string, manifest: Record<string, unknown>): void {
+	mkdirSync(bundleDir, { recursive: true });
+	writeFileSync(join(bundleDir, "manifest.json"), JSON.stringify(manifest));
+}
 
 const inputIn = (bundleDir: string): unknown =>
 	(JSON.parse(readFileSync(join(bundleDir, "manifest.json"), "utf8")) as { droppedUserMessages?: unknown })
@@ -31,11 +42,7 @@ const inputIn = (bundleDir: string): unknown =>
 describe("the queued input a kept bundle records, when its move is exported again without a list (senpi#6454)", () => {
 	it("#given a kept bundle that holds only its format, its move id and the queued input #when the move is exported again with no list #then the new bundle's manifest lists that input", async () => {
 		const kept = world();
-		mkdirSync(kept.bundleDir, { recursive: true });
-		writeFileSync(
-			join(kept.bundleDir, "manifest.json"),
-			JSON.stringify({ format: 1, moveId: MOVE, droppedUserMessages: ["queued follow-up"] }),
-		);
+		keep(kept.bundleDir, { format: 1, moveId: MOVE, droppedUserMessages: ["queued follow-up"] });
 
 		const outcome = await exportedAgain(kept);
 
@@ -55,6 +62,33 @@ describe("the queued input a kept bundle records, when its move is exported agai
 				existsSync(join(kept.bundleDir, "manifest.json")) &&
 				statSync(join(kept.bundleDir, "manifest.json")).isDirectory(),
 		}).toEqual({ exported: false, keptStillThere: true });
+	});
+
+	it("#given a kept bundle that records queued input #when the move is exported again with an empty list #then the new bundle's manifest still lists that input", async () => {
+		const kept = world();
+		keep(kept.bundleDir, { format: 1, moveId: MOVE, droppedUserMessages: ["queued follow-up"] });
+
+		const outcome = await exportedAgain(kept, []);
+
+		expect({ outcome, input: inputIn(kept.bundleDir) }).toEqual({ outcome: "exported", input: ["queued follow-up"] });
+	});
+
+	it("#given a kept bundle that records queued input #when the move is exported again with a list that names input #then the list sent is written, not merged with the kept one", async () => {
+		const kept = world();
+		keep(kept.bundleDir, { format: 1, moveId: MOVE, droppedUserMessages: ["queued follow-up"] });
+
+		const outcome = await exportedAgain(kept, ["sent now"]);
+
+		expect({ outcome, input: inputIn(kept.bundleDir) }).toEqual({ outcome: "exported", input: ["sent now"] });
+	});
+
+	it("#given a bundle of another move at the move's place #when the move is exported with no list #then it is exported with no input", async () => {
+		const kept = world();
+		keep(kept.bundleDir, { format: 1, moveId: "move-of-another", droppedUserMessages: ["another move's input"] });
+
+		const outcome = await exportedAgain(kept);
+
+		expect({ outcome, input: inputIn(kept.bundleDir) }).toEqual({ outcome: "exported", input: [] });
 	});
 
 	it("#given no bundle at the move's place #when the move is exported with no list #then it is exported with no input", async () => {
