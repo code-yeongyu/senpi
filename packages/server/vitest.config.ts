@@ -21,6 +21,7 @@ export default defineConfig({
 			{ find: /^@earendil-works\/pi-ai$/, replacement: src("../ai/src/index.ts") },
 			{ find: /^@earendil-works\/pi-ai\/(.+)$/, replacement: `${src("../ai/src/")}$1.ts` },
 			{ find: /^@earendil-works\/pi-telemetry$/, replacement: src("../telemetry/src/index.ts") },
+			{ find: /^@earendil-works\/pi-realm-registry$/, replacement: src("../realm-registry/src/index.ts") },
 			{ find: /^@earendil-works\/pi-protocol$/, replacement: src("../protocol/src/index.ts") },
 		],
 	},

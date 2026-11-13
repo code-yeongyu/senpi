@@ -20,6 +20,7 @@ const PRIVATE_UPSTREAM_WORKSPACES = [
 	{ packageJsonPath: "packages/tui/package.json", packageName: "@earendil-works/pi-tui" },
 	{ packageJsonPath: "packages/pty/package.json", packageName: "@earendil-works/pi-pty" },
 	{ packageJsonPath: "packages/telemetry/package.json", packageName: "@earendil-works/pi-telemetry" },
+	{ packageJsonPath: "packages/realm-registry/package.json", packageName: "@earendil-works/pi-realm-registry" },
 ];
 const INDEPENDENT_UPSTREAM_WORKSPACES = [
 	{
@@ -33,6 +34,7 @@ const OWNED_REGISTRY_ALIASES = [
 	"@code-yeongyu/senpi-tui",
 	"@code-yeongyu/senpi-pty",
 	"@code-yeongyu/senpi-telemetry",
+	"@code-yeongyu/senpi-realm-registry",
 	"@code-yeongyu/senpi-codemode",
 	"@code-yeongyu/senpi",
 ];

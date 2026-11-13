@@ -23,6 +23,9 @@
 			"@earendil-works/chord/node": [
 				"./packages/chord/src/node.ts"
 			],
+			"@earendil-works/pi-realm-registry": [
+				"./packages/realm-registry/src/index.ts"
+			],
 			"@earendil-works/pi-telemetry": [
 				"./packages/telemetry/src/index.ts"
 			],

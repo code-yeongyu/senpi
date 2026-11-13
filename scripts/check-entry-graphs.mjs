@@ -22,6 +22,7 @@ const WORKSPACE = {
 	"@earendil-works/chord": "packages/chord/src",
 	"@earendil-works/pi-ai": "packages/ai/src",
 	"@earendil-works/pi-agent-core": "packages/agent/src",
+	"@earendil-works/pi-realm-registry": "packages/realm-registry/src",
 	"@earendil-works/pi-telemetry": "packages/telemetry/src",
 	"@earendil-works/pi-tui": "packages/tui/src",
 };
