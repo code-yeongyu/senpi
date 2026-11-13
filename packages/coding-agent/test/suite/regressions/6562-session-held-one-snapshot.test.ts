@@ -94,7 +94,14 @@ it("reads three live keyed holders on macOS with one ps snapshot and no ps per h
 });
 
 it("parses ps lstart printed under TZ=UTC as UTC, whatever this process's own time zone", () => {
-	expect(lstartUtcMs("Sun Nov  1 01:30:00 2026")).toBe(Date.UTC(2026, 10, 1, 1, 30, 0));
+	const zone = process.env.TZ;
+	process.env.TZ = "America/New_York";
+	try {
+		expect(lstartUtcMs("Sun Nov  1 01:30:00 2026")).toBe(Date.UTC(2026, 10, 1, 1, 30, 0));
+	} finally {
+		if (zone === undefined) delete process.env.TZ;
+		else process.env.TZ = zone;
+	}
 });
 
 it("judges a keyed live holder on macOS with one ps under TZ=UTC, deriving the key from the start it read", async () => {
