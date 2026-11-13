@@ -46,6 +46,17 @@ function run(args, env) {
 }
 
 describe("native prebuild reuse steps", () => {
+	it("keys prints one key per target for the normalized rustc of this checkout", () => {
+		const vv = "rustc 1.91.0\ncommit-hash: f8297e351a40c1439a467bbbb6879088047f50b3\nhost: x86_64-unknown-linux-gnu\nrelease: 1.91.0\n";
+		const { outputs } = run(["keys"], { RUSTC_VV: vv });
+		assert.equal(outputs.rustc, rustc);
+		const printed = JSON.parse(outputs.keys);
+		assert.deepEqual(Object.keys(printed), targets.map((target) => target.artifact));
+		for (const [artifact, key] of Object.entries(printed)) assert.match(key, new RegExp(`^native-prebuild-v1-${artifact}-[0-9a-f]{64}$`));
+		assert.equal(new Set(Object.values(printed)).size, targets.length, "two targets share a key");
+		assert.equal(run(["keys"], { RUSTC_VV: vv.replace("host: x86_64-unknown-linux-gnu", "host: aarch64-apple-darwin") }).outputs.keys, outputs.keys, "the runner host changed the keys");
+	});
+
 	it("select reuses verified cache entries and passes every other target, with its key, to the build matrix", () => {
 		const cacheRoot = scratch();
 		const [winX64, , , darwinArm64] = targets;
