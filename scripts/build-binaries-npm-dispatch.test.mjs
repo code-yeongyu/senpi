@@ -3,14 +3,29 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
-import { parse } from "yaml";
 
-const { jobs } = parse(readFileSync(new URL("../.github/workflows/build-binaries.yml", import.meta.url), "utf8"));
+const workflow = readFileSync(new URL("../.github/workflows/build-binaries.yml", import.meta.url), "utf8");
 const codingAgentPackage = JSON.parse(readFileSync(new URL("../packages/coding-agent/package.json", import.meta.url), "utf8"));
 
+// The text of one top-level job: from its `  name:` line to the next job or the end of the file.
+function jobText(name) {
+	const lines = workflow.split("\n");
+	const start = lines.indexOf(`  ${name}:`);
+	assert.ok(start >= 0, `no job ${name} in build-binaries.yml`);
+	const rest = lines.slice(start + 1);
+	const end = rest.findIndex((line) => /^ {2}[\w-]+:\s*$/.test(line) || /^\S/.test(line));
+	return (end < 0 ? rest : rest.slice(0, end)).join("\n");
+}
+
+// A job's direct `needs:`, in any of the three YAML shapes the workflow uses.
 function needsOf(name) {
-	const needs = jobs[name]?.needs ?? [];
-	return Array.isArray(needs) ? needs : [needs];
+	const text = jobText(name);
+	const inline = /^ {4}needs:\s*\[([^\]]*)\]/m.exec(text);
+	if (inline) return inline[1].split(",").map((need) => need.trim()).filter(Boolean);
+	const scalar = /^ {4}needs:\s*([\w-]+)\s*$/m.exec(text);
+	if (scalar) return [scalar[1]];
+	const block = /^ {4}needs:\s*\n((?: {6}- [\w-]+\n?)+)/m.exec(text);
+	return block ? block[1].trim().split("\n").map((line) => line.replace(/^\s*-\s*/, "").trim()) : [];
 }
 
 // Every job the named job waits for, directly or through another job.
@@ -37,7 +52,12 @@ describe("build-binaries.yml npm dispatch and binary smoke (senpi#6627)", () => 
 	});
 
 	it("keeps the GitHub Release, which ships the smoked binaries, gated on the full smoke matrix", () => {
-		assert.deepEqual([...jobs["smoke-test-binaries"].strategy.matrix.runner].sort(), ["macos-latest", "ubuntu-latest", "windows-latest"]);
+		const runners = /^ {8}runner:\s*\n((?: {10}- \S+\n?)+)/m.exec(jobText("smoke-test-binaries"));
+		assert.ok(runners, "the smoke matrix lists no runners");
+		assert.deepEqual(
+			runners[1].trim().split("\n").map((line) => line.replace(/^\s*-\s*/, "").trim()).sort(),
+			["macos-latest", "ubuntu-latest", "windows-latest"],
+		);
 		for (const job of ["stage-github-release", "publish-github-release"]) {
 			assert.ok(upstream(job).has("smoke-test-binaries"), `${job} no longer waits for the binary smoke`);
 		}
@@ -49,5 +69,4 @@ describe("build-binaries.yml npm dispatch and binary smoke (senpi#6627)", () => 
 		// coding-agent tarball's files list never includes that directory.
 		assert.ok(!codingAgentPackage.files.some((entry) => entry.replace(/^\.?\//, "").startsWith("binaries")));
 	});
-
 });
