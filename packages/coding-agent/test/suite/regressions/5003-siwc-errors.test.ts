@@ -193,6 +193,53 @@ describe("SIWC structured recovery through HTTP and SSE", () => {
 		expect(result.message.errorMessage).toContain(siwc ? "terminal response event" : "without a stop reason");
 	});
 
+	// senpi#6643: a token whose account lacks Responses access is refused with a 401 naming the missing scope.
+	// A re-login cannot change that, so the account is not parked as auth_error and the user is told why.
+	it("a 401 naming the missing Responses scope fails the turn with guidance and leaves the account healthy", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "siwc-scope-"));
+		try {
+			const repository = new CredentialSlotRepository(join(dir, "pool.json"));
+			const credential: PooledCredential = {
+				type: "oauth",
+				access: "managed",
+				refresh: "managed",
+				expires: Date.UTC(2030, 0, 1),
+				accounts: [{ name: "alpha", access: "alpha-access", refresh: "alpha-refresh", source: "login" }],
+			};
+			const message =
+				"You have insufficient permissions for this operation. Missing scopes: api.responses.write. " +
+				"Check that you have the correct role in your organization (Reader, Writer, Owner) and project.";
+			const events: AssistantMessageEvent[] = [];
+			for await (const event of streamWithCredentialRotation({
+				sources: {
+					providerId: model.provider,
+					credential,
+					env: () => undefined,
+					repository,
+					policy: { affinity: false },
+					now: () => Date.UTC(2026, 9, 30),
+				},
+				runAttempt: async function* () {
+					const result = await run(() =>
+						Response.json(
+							{ error: { message, type: "invalid_request_error", param: null, code: null } },
+							{ status: 401 },
+						),
+					);
+					yield result.event;
+				},
+			}))
+				events.push(event);
+			const last = events.at(-1);
+			if (last?.type !== "error") throw new Error("expected the turn to fail");
+			expect(last.error.errorMessage).toContain("Signing in again will not change that");
+			const health = await repository.listSlots(model.provider, "stored");
+			expect(health.alpha?.blockReason).toBeUndefined();
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
 	it.each([
 		["subscription_sharing_usage_unavailable", 503, ["alpha", "alpha"], undefined],
 		["subscription_sharing_user_unavailable", 503, ["alpha", "alpha"], undefined],
