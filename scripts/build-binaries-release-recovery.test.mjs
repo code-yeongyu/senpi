@@ -46,6 +46,17 @@ describe("build-binaries.yml release recovery wiring (senpi#4173)", () => {
 		assert.match(job.steps[findIndex].run, /run_id=.*>>\s*"\$\{GITHUB_OUTPUT\}"/);
 	});
 
+	it("cleanup-draft-github-release runs whenever a draft can exist and staging, npm or the release publish did not succeed", () => {
+		const job = jobs["cleanup-draft-github-release"];
+		assert.deepEqual([...job.needs].sort(), ["build", "publish-github-release", "publish-npm", "stage-github-release"]);
+		const clauses = job.if.replace(/^\$\{\{\s*|\s*\}\}$/g, "");
+		assert.match(clauses, /^always\(\) && /, "cleanup must run after failed or cancelled jobs");
+		assert.match(clauses, /needs\.stage-github-release\.result != 'skipped'/, "no draft exists when staging was skipped");
+		for (const job of ["stage-github-release", "publish-npm", "publish-github-release"]) {
+			assert.match(clauses, new RegExp(`needs\\.${job}\\.result != 'success'`), `cleanup no longer runs when ${job} fails`);
+		}
+	});
+
 	it("cleanup-draft-github-release passes the publish run to the cleanup script", () => {
 		const job = jobs["cleanup-draft-github-release"];
 		assert.ok(job.needs.includes("publish-npm"));
