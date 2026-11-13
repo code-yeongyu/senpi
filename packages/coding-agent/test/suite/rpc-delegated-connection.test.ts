@@ -173,10 +173,14 @@ describe("senpi#5632: delegated connections are decided by the engine's own clas
 		expect(ranges.flatMap(([, types]) => types)).toEqual(TYPES);
 	});
 
-	it("builds, for each record the validator must refuse, a record it refuses", async () => {
-		for (const type of VALIDATOR_REFUSED)
-			expect(validateRpcInboundRecord({ ...(await recordFor(type)), id: "x" }).ok, type).toBe(false);
-	}, SEVERAL_OPENS_MS);
+	it(
+		"builds, for each record the validator must refuse, a record it refuses",
+		async () => {
+			for (const type of VALIDATOR_REFUSED)
+				expect(validateRpcInboundRecord({ ...(await recordFor(type)), id: "x" }).ok, type).toBe(false);
+		},
+		SEVERAL_OPENS_MS,
+	);
 
 	it.each(ranges)(
 		"runs every permitted type of the table as on a local connection and refuses the rest, for each grant set (range %s)",
@@ -427,36 +431,40 @@ describe("senpi#5808: a session opened over a delegated connection outlives that
 			});
 	});
 
-	it("decides at line receipt: an open whose delegated connection ends before it is dispatched is retained", async () => {
-		// Its own host (senpi#6534): the test counts the sessions that appear, so nothing else may open one beside it. On
-		// the shared host a sweep cut off at its bound left an open in flight, and this test counted that one too.
-		const own = await startHost();
-		try {
-			const lister = await own.proven();
-			const listed = async () =>
-				((await lister.send({ type: "list_sessions" })).data as { sessions: Row[] }).sessions;
-			const id = "x5808-ends-before-dispatch";
-			own.writer.registerConnection(
-				id,
-				{ writeRaw: () => {}, waitForBackpressure: async () => {} },
-				{ launchProof: "proven" },
-			);
-			const line = (record: WireRecord) =>
-				own.writer.withConnection(id, () => own.core.handle(JSON.stringify(record)));
-			await line({ type: "declare_delegation", principal: PRINCIPAL, granted: FORWARDABLE });
-			const before = new Set((await listed()).map((row) => row.sessionId));
-			// handle() reads the line synchronously up to its first await; the connection ends right behind that.
-			const opening = line({ type: "open_session" });
-			own.writer.unregisterConnection(id);
-			await opening;
-			await own.core.router.releaseConnection(id);
-			const opened = (await listed()).filter((row) => !before.has(row.sessionId));
-			expect(opened).toHaveLength(1);
-			expect(opened[0]).toMatchObject({ attachments: 0, retain_on_disconnect: true });
-		} finally {
-			await own.dispose();
-		}
-	}, SEVERAL_OPENS_MS);
+	it(
+		"decides at line receipt: an open whose delegated connection ends before it is dispatched is retained",
+		async () => {
+			// Its own host (senpi#6534): the test counts the sessions that appear, so nothing else may open one beside it. On
+			// the shared host a sweep cut off at its bound left an open in flight, and this test counted that one too.
+			const own = await startHost();
+			try {
+				const lister = await own.proven();
+				const listed = async () =>
+					((await lister.send({ type: "list_sessions" })).data as { sessions: Row[] }).sessions;
+				const id = "x5808-ends-before-dispatch";
+				own.writer.registerConnection(
+					id,
+					{ writeRaw: () => {}, waitForBackpressure: async () => {} },
+					{ launchProof: "proven" },
+				);
+				const line = (record: WireRecord) =>
+					own.writer.withConnection(id, () => own.core.handle(JSON.stringify(record)));
+				await line({ type: "declare_delegation", principal: PRINCIPAL, granted: FORWARDABLE });
+				const before = new Set((await listed()).map((row) => row.sessionId));
+				// handle() reads the line synchronously up to its first await; the connection ends right behind that.
+				const opening = line({ type: "open_session" });
+				own.writer.unregisterConnection(id);
+				await opening;
+				await own.core.router.releaseConnection(id);
+				const opened = (await listed()).filter((row) => !before.has(row.sessionId));
+				expect(opened).toHaveLength(1);
+				expect(opened[0]).toMatchObject({ attachments: 0, retain_on_disconnect: true });
+			} finally {
+				await own.dispose();
+			}
+		},
+		SEVERAL_OPENS_MS,
+	);
 
 	it("keeps a connection that never declared on today's rule: closed with it unless it asked to be retained", async () => {
 		const local = await host.proven();
