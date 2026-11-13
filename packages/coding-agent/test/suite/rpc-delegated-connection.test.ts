@@ -111,6 +111,9 @@ const VALIDATOR_REFUSED: ReadonlySet<RpcMethodType> = new Set<RpcMethodType>([
 	"set_retry_fallback",
 ]);
 
+/** For a test that opens several sessions or starts a host of its own: such a test took up to 21 s on a busy machine. */
+const SEVERAL_OPENS_MS = 120_000;
+
 let host: DelegatedHost;
 
 function sendFor(peer: Peer, type: RpcMethodType, record: WireRecord): Promise<WireRecord | undefined> {
@@ -159,7 +162,10 @@ describe("senpi#5632: delegated connections are decided by the engine's own clas
 		const types = TYPES.slice(index * RANGE_SIZE, (index + 1) * RANGE_SIZE);
 		return [`${index + 1} of ${RANGES}, ${types[0]} to ${types[types.length - 1]}`, types] as const;
 	});
-	/** The slowest whole sweep measured alone took 366 s. A range is a quarter of that, and this is three times a range. */
+	/**
+	 * Measured alone on a busy machine, the slowest range took 178 s and the four together 476 s. The single test they
+	 * replace took 368 s of a 400 s bound on the same machine.
+	 */
 	const RANGE_BOUND_MS = 300_000;
 
 	it("cuts the table into ranges that cover every type once, in the table's order", () => {
@@ -170,7 +176,7 @@ describe("senpi#5632: delegated connections are decided by the engine's own clas
 	it("builds, for each record the validator must refuse, a record it refuses", async () => {
 		for (const type of VALIDATOR_REFUSED)
 			expect(validateRpcInboundRecord({ ...(await recordFor(type)), id: "x" }).ok, type).toBe(false);
-	});
+	}, SEVERAL_OPENS_MS);
 
 	it.each(ranges)(
 		"runs every permitted type of the table as on a local connection and refuses the rest, for each grant set (range %s)",
@@ -450,7 +456,7 @@ describe("senpi#5808: a session opened over a delegated connection outlives that
 		} finally {
 			await own.dispose();
 		}
-	});
+	}, SEVERAL_OPENS_MS);
 
 	it("keeps a connection that never declared on today's rule: closed with it unless it asked to be retained", async () => {
 		const local = await host.proven();
