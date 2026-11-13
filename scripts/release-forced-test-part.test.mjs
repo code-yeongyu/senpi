@@ -18,37 +18,32 @@ const PART_CLI = fileURLToPath(new URL("./release-forced-test-part.mjs", import.
 const workspaceOf = (step) => step.args[step.args.indexOf("--workspace") + 1];
 
 describe("selectForcedTestPart (senpi#6642 MUST 4)", () => {
-	it("runs every workspace but coding-agent in the rest job: the pinned 2026-11-13 list", async () => {
-		const plan = planForcedTestSuite({
-			rootDirectory: repoRoot,
-			workspaces: await resolveWorkspaceDirectories(repoRoot),
-			shards: FORCED_SHARD_JOBS,
-		});
-		const rest = selectForcedTestPart(plan, "rest");
-		assert.deepEqual(rest.parallel, []);
-		// The spec's list (scripts, agent, ai, chord, client, evals, machine-ops, protocol, pty, realm-registry,
-		// senpi-codemode, server, both session backends, telemetry) plus tui, which also has a test script.
-		assert.deepEqual(
-			rest.serial.map((step) => step.label),
-			[
-				"scripts",
-				"packages/agent",
-				"packages/ai",
-				"packages/chord",
-				"packages/client",
-				"packages/evals",
-				"packages/machine-ops",
-				"packages/protocol",
-				"packages/pty",
-				"packages/realm-registry",
-				"packages/senpi-codemode",
-				"packages/server",
-				"packages/session-backends/sqlite-bun",
-				"packages/session-backends/sqlite-node",
-				"packages/telemetry",
-				"packages/tui",
-			],
-		);
+	// The expectation is derived, never a hand-written list (release-train ruling on senpi#6642): what run-workspaces
+	// resolves from the root `workspaces` field today, minus coding-agent, so a new workspace can never be silently
+	// dropped from forced cuts. Workspaces without a `test` script are skipped, as `npm test` (`--if-present`) skips them.
+	it("runs test:scripts and every tested workspace run-workspaces resolves, minus coding-agent, in the rest job", async () => {
+		const workspaces = await resolveWorkspaceDirectories(repoRoot);
+		const expectedRest = (resolved) => [
+			"scripts",
+			...resolved
+				.filter((workspace) => typeof workspace.scripts.test === "string")
+				.map((workspace) => workspace.relativePath)
+				.filter((path) => path !== "packages/coding-agent"),
+		];
+		const restLabels = (resolved) =>
+			selectForcedTestPart(
+				planForcedTestSuite({ rootDirectory: repoRoot, workspaces: resolved, shards: FORCED_SHARD_JOBS }),
+				"rest",
+			).serial.map((step) => step.label);
+		const expected = expectedRest(workspaces);
+		assert.ok(expected.length > 2, `run-workspaces resolved too few tested workspaces: ${expected.join(", ")}`);
+		assert.deepEqual(restLabels(workspaces), expected);
+		assert.deepEqual(selectForcedTestPart(planForcedTestSuite({ rootDirectory: repoRoot, workspaces, shards: 2 }), "rest").parallel, []);
+		// Negative control: a rest plan missing any one tested workspace fails the same comparison.
+		for (const dropped of expected.slice(1)) {
+			const rest = restLabels(workspaces).filter((label) => label !== dropped);
+			assert.throws(() => assert.deepEqual(rest, expected), undefined, `dropping ${dropped} stayed green`);
+		}
 	});
 
 	it("runs exactly coding-agent shard i of N in shard job i", async () => {
