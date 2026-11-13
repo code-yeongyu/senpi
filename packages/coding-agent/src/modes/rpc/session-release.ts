@@ -26,20 +26,24 @@ import type { AgentSession } from "../../core/agent-session.ts";
 import { isMoveId, isPlainId, parseMoveId } from "../../core/session-move/bundle.ts";
 import { assertMoveFits } from "../../core/session-move/export.ts";
 import { prepareOutgoingState, STATE_ATTEMPT_FIELD } from "../../core/session-move/extension-state.ts";
+import { assertValidSessionId } from "../../core/session-manager.ts";
 import { SessionMovedAwayError } from "../../core/session-move/ownership.ts";
 import { isHandoffBusy } from "./handoff-activity.ts";
 import {
 	RPC_ERROR_ATTACHED,
 	RPC_ERROR_HOST_DRAINING,
 	RPC_ERROR_INVALID_RELEASE_REASON,
+	RPC_ERROR_INVALID_SESSION_ID,
 	RPC_ERROR_RELEASE_FAILED,
 	RPC_ERROR_RELEASE_UNSUPPORTED,
 	RPC_ERROR_SESSION_BUSY,
 	RPC_ERROR_SESSION_CLOSING,
+	RPC_ERROR_SESSION_MISMATCH,
 	RPC_ERROR_TURN_ACTIVE,
 	type RpcCommand,
 	type RpcResponse,
 } from "./rpc-types.ts";
+import { RPC_INBOUND_LIMITS } from "./method-classes-schema-fields.ts";
 import type { RpcSessionEntry } from "./session-registry.ts";
 import {
 	abortAndSettle,
@@ -101,12 +105,19 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 	// Export and the receiver's ledger accept only a plain move id; a release under any other id could never finish.
 	const validMove = command.reason === "move" && isMoveId(command.moveId);
 	if (command.reason !== "takeover" && !validMove) return refusal(command.id, RPC_ERROR_INVALID_RELEASE_REASON);
+	if (command.expectSessionId !== undefined && !isDurableId(command.expectSessionId))
+		return refusal(command.id, RPC_ERROR_INVALID_SESSION_ID, {
+			detail:
+				"expectSessionId is the durable id of the session (get_state's sessionId); an absent field means no expectation",
+		});
 	if (port.draining()) return refusal(command.id, RPC_ERROR_HOST_DRAINING);
-	const first = releasable(port, command, undefined);
+	const first = releasable(port, command, undefined, "first lookup");
 	if (!("session" in first)) return first;
+	// Read once, before any wait: what an interrupt takes came out of this session, and the object's id is not read again.
+	const beganOn = first.session.sessionManager.getSessionId();
 	// The seal records the session's own id, which the bundle and the receiver use as a folder name: a move of a session
 	// whose id is not a plain id is refused here, before anything is interrupted or sealed (never sanitized).
-	if (command.reason === "move" && !isPlainId(first.session.sessionManager.getSessionId())) {
+	if (command.reason === "move" && !isPlainId(beganOn)) {
 		return refusal(command.id, RPC_ERROR_RELEASE_UNSUPPORTED, { detail: "session_id_not_plain" });
 	}
 	const busy = busySignals(port, command.sessionId, first.session);
@@ -149,21 +160,30 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 			// State a bundle could not carry refuses the release here, before the seal: the session stays live.
 			await assertMoveFits(first.sessionPath, manager.getSessionId(), stagedState.dir, false);
 		}
-		answer = await claimAndRelease(port, command, interrupted, dropped, stagedState?.attempt, () => {
-			sealed = true;
-		});
+		answer = await claimAndRelease(
+			port,
+			command,
+			first.session,
+			beganOn,
+			interrupted,
+			dropped,
+			stagedState?.attempt,
+			() => {
+				sealed = true;
+			},
+		);
 		return answer;
 	} catch (cause) {
 		if (cause instanceof SessionMovedAwayError) {
 			answer = refusal(command.id, cause.code, {
 				detail: cause.message,
-				...(interrupted ? { interrupted: true, dropped } : {}),
+				...(interrupted ? { interrupted: true, dropped, taken_from: beganOn } : {}),
 			});
 			return answer;
 		}
 		answer = refusal(command.id, RPC_ERROR_RELEASE_FAILED, {
 			detail: cause instanceof Error ? cause.message : String(cause),
-			...(interrupted ? { interrupted: true, dropped } : {}),
+			...(interrupted ? { interrupted: true, dropped, taken_from: beganOn } : {}),
 		});
 		return answer;
 	} finally {
@@ -183,13 +203,16 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 async function claimAndRelease(
 	port: SessionReleasePort,
 	command: ReleaseSessionCommand,
+	first: AgentSession,
+	beganOn: string,
 	interrupted: boolean,
 	dropped: ReleaseDropped,
 	stateAttempt: string | undefined,
 	onSealed: () => void,
 ): Promise<RpcResponse> {
-	const taken = interrupted ? { interrupted: true, dropped } : undefined;
-	const ready = releasable(port, command, taken);
+	// After an interrupt every refusal says which session the taken input came out of: the one this release began on.
+	const taken = interrupted ? { interrupted: true, dropped, taken_from: beganOn } : undefined;
+	const ready = releasable(port, command, taken, first);
 	if (!("session" in ready)) return ready;
 	const stillBusy = busySignals(port, command.sessionId, ready.session);
 	if (stillBusy.length > 0) {
@@ -235,7 +258,13 @@ async function claimAndRelease(
 		type: "response",
 		command: "release_session",
 		success: true,
-		data: { released: true, session_path: ready.sessionPath, attachments: ready.attachments, dropped },
+		data: {
+			released: true,
+			session_path: ready.sessionPath,
+			session_id: ready.session.sessionManager.getSessionId(),
+			attachments: ready.attachments,
+			dropped,
+		},
 	};
 }
 
@@ -270,11 +299,16 @@ function busyCode(signals: readonly ReleaseBusySignal[]): string {
 		: RPC_ERROR_SESSION_BUSY;
 }
 
-/** `taken`: what an interrupt already took out of the session, merged into any refusal's `errorData`. */
+/**
+ * `taken`: what an interrupt already took out of the session, merged into any refusal's `errorData`.
+ * `began`: required, so no caller can leave the replaced-session check out by omission: the first lookup says so, and
+ * every later lookup passes the session the release began on.
+ */
 function releasable(
 	port: SessionReleasePort,
 	command: ReleaseSessionCommand,
 	taken: Readonly<Record<string, unknown>> | undefined,
+	began: AgentSession | "first lookup",
 ): Releasable | RpcResponse {
 	const refuse = (code: string, data?: Readonly<Record<string, unknown>>): RpcResponse =>
 		refusal(command.id, code, data || taken ? { ...data, ...taken } : undefined);
@@ -287,11 +321,37 @@ function releasable(
 	if (entry.state !== "open") return refuse(RPC_ERROR_SESSION_CLOSING);
 	const session = entry.runtime?.session;
 	if (session === undefined) return refuse(RPC_ERROR_RELEASE_UNSUPPORTED, { detail: "worker_runtime" });
-	const sessionPath = entry.sessionPath ?? session.sessionFile;
+	// Compared at both lookups: before anything is taken out of the session, and again in the synchronous step that seals.
+	// After an interrupt, what was taken came out of the expected session, which the handle no longer names.
+	const expected = command.expectSessionId;
+	if (expected !== undefined && session.sessionManager.getSessionId() !== expected)
+		return refuse(RPC_ERROR_SESSION_MISMATCH, { expected });
+	// The session behind the route was replaced while this release awaited (a move's export, an interrupt's settle, a
+	// first header write). What was staged and taken belongs to the session the release began on: nothing is sealed on
+	// its successor, whether or not the caller sent `expectSessionId` (senpi#6484). Checked before the `attached` and
+	// busy checks: either refusal invites a retry (with `force`, or later), and that retry would release the successor.
+	if (began !== "first lookup" && session !== began)
+		return refuse(RPC_ERROR_SESSION_MISMATCH, {
+			detail: "the session behind this route was replaced while the release was in progress; nothing was released",
+			...(expected === undefined ? {} : { expected }),
+		});
+	// The file of the session this release acts on, read from that session and never from the host's record of the handle:
+	// the answer, the staged state and the teardown name what was sealed (senpi#6484).
+	const sessionPath = session.sessionFile;
 	if (sessionPath === undefined) return refuse(RPC_ERROR_RELEASE_UNSUPPORTED, { detail: "no_session_file" });
 	const elsewhere = port.otherAttachments(command.sessionId);
 	if (elsewhere > 0 && command.force !== true) return refuse(RPC_ERROR_ATTACHED, { attachments: elsewhere });
 	return { session, sessionPath, attachments: entry.attachments };
+}
+
+function isDurableId(value: unknown): value is string {
+	if (typeof value !== "string" || value.length > RPC_INBOUND_LIMITS.identifierCharacters) return false;
+	try {
+		assertValidSessionId(value);
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 function refusal(id: string | undefined, code: string, data?: Readonly<Record<string, unknown>>): RpcResponse {

@@ -81,6 +81,8 @@ describe("multi-session RPC protocol info", () => {
 					"move_session_status_landed_path", // senpi#6436: where an accepted move landed.
 					"move_session_status_writable", // senpi#6473: whether the landed copy can still be written.
 					"move_session_status_landing",
+					"release_session_expect_id",
+					"move_session_ownership",
 					"session_relocation",
 					"session_context",
 					"session_kind",

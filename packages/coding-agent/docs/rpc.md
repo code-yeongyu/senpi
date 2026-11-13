@@ -3632,8 +3632,10 @@ is the picker). It is a teardown, not a transfer: nothing is replayed. The host 
 `session_released` (`{ reason, interrupted, attachments, host_instance, released_at }`, a bookkeeping entry the
 model never sees) to the transcript - writing the header first if the file was still buffered - then drains
 every attachment, disposes the runtime, releases the path reservation (in-process and the cross-generation claim
-in `reservations/`) and answers `{ released: true, session_path, attachments, dropped }`. From then on `list_sessions`
-no longer lists it and the handle answers `unknown_session`.
+in `reservations/`) and answers `{ released: true, session_path, session_id, attachments, dropped }`. From then on
+`list_sessions` no longer lists it and the handle answers `unknown_session`. `session_path` and `session_id` are the
+file and the durable id of the session that was sealed, read from that session itself: after `new_session`,
+`switch_session`, `fork` or `clone` the handle names the new session, and so does the answer.
 
 - It hands over only a QUIET session: no agent run, no `prompt` still in preflight (its command already answered,
   its run not started), no queued user steer/follow-up (`queued`: still owed a turn even after the stream it was
@@ -3649,8 +3651,9 @@ no longer lists it and the handle answers `unknown_session`.
   before the release - and checks again. Still busy answers the same refusal with `errorData.interrupted: true`
   and `errorData.dropped`; otherwise the entry records `interrupted: true`. Every refusal after the interrupt
   (still busy, `attached` because a client attached while it waited, `unknown_session`, `session_closing`)
-  reopens admission on the session the host keeps and carries `interrupted: true` and `dropped` in `errorData`,
-  since the queues were already emptied.
+  reopens admission on the session the host keeps and carries `interrupted: true`, `dropped` and `taken_from` in
+  `errorData`, since the queues were already emptied. `taken_from` is the durable id of the session that input was
+  taken from (the one the release began on), whichever refusal it is.
 - A refusal whose `busy` names `queued` also carries `errorData.retry_with: { interrupt: true }` and a `hint`:
   queued user input is owed a turn even when none is running (an aborted run leaves it queued), and only an
   interrupt release takes it out and hands it back in `dropped.user_messages`.
@@ -3677,9 +3680,38 @@ no longer lists it and the handle answers `unknown_session`.
   elsewhere and must NOT be reopened on this host.
 - A draining host answers `host_draining`; a worker-isolate session or one with no file answers
   `release_unsupported`.
+- `expectSessionId` (capability `release_session_expect_id`) is the DURABLE id of the session the caller means:
+  `get_state`'s `sessionId`, or `durableSessionId` in the open answer. It is never the handle `sessionId`. The host
+  compares it with the session behind the route twice: before anything is taken out of the session, and again in
+  the synchronous step that seals. When they differ (the handle's session was replaced) nothing is released and the
+  answer is `session_mismatch` with `errorData { expected }`, which names nothing of the other session. A mismatch
+  found after an interrupt also carries `interrupted`, `dropped` and `taken_from` (equal to `expected`): that input
+  came out of the expected session, which the handle no longer names, so it goes back to that session by its file,
+  never to the handle. A value that is empty, longer than 512 characters or not a session id is refused
+  `invalid_session_id`; only an absent field means no expectation.
+- A release that a replacement crosses is refused, with or without `expectSessionId`: when the session behind the
+  route is replaced while the release waits (for a move's extension export, an interrupt to settle, or a first
+  header write), the answer is `session_mismatch` and nothing is released: nothing is sealed on the successor, and
+  what the extensions staged for the move is removed. This check runs before the `attached` and busy checks, so a
+  crossed release answers `session_mismatch` even when another client is attached or the successor is busy: either
+  of those refusals would invite a retry (with `force`, or later), and that retry would release the successor.
+  Without the field `errorData` carries no `expected`; after an
+  interrupt it carries `interrupted`, `dropped` and `taken_from`, the durable id of the session that input was
+  taken from. A client that does not know the code reads it as any refusal: the release did not happen.
+  `session_mismatch` with no `expected` means the session behind the route was rebuilt or replaced while the release
+  was in progress (a switch back to the same session rebuilds it too): nothing was released. The release can be
+  asked again, and a second ask acts on the session that is behind the route then. With `expectSessionId` that is
+  safe by itself: after a real replacement the compare refuses again. Without the field a second ask releases
+  whichever session is there, the successor included, so a client that cannot send the field reads the state first
+  and asks again only if it still names the session it means.
+- A host that does not advertise `release_session_expect_id` ignores the field and releases whichever session the
+  route names. So a client reads the capability from the host that holds the session, over that session's own
+  route, for that request; without it the client does not send the field, does not assume the release compared
+  anything, and never reads the absence of `session_mismatch` as a match. With it, the client sends the durable id
+  its last state read named, never the handle and never an empty string.
 - A hand-over that fails after it began - the header or the `session_released` entry cannot be written
   (`EACCES`, `ENOSPC`, a removed directory), or the teardown throws - answers `release_failed` with
-  `errorData { detail }` (the error message), plus `interrupted: true` and `dropped` after an interrupt. When
+  `errorData { detail }` (the error message), plus `interrupted: true`, `dropped` and `taken_from` after an interrupt. When
   the entry could not be written the session stays on this host as it was: admission reopened, no
   `session_released` entry on disk or in memory, and a later release can be retried. A teardown that fails
   after it claimed the session leaves it closing.
@@ -3697,8 +3729,9 @@ A move hands a session to another host under the same id (capability `move_sessi
 | `export` | sender | `sessionPath`, `moveId`, `target`, `droppedUserMessages?`, `inline?`, `inlineMaxBytes?` | `{ move_id, session_id, bundle_dir, files }`; `bundle_dir` is the folder to send, kept until `finish`. With `inline`, also `inline_files` when the bundle is small: see "Moving without a bundle folder" |
 | `import` | receiver | `cwd` (absolute), `bundleDir` (absolute) or `files`, `from?`, `sessionDir?` (absolute), `open?` | `{ session_id, session_path }`; the session lands in this host's session folder for `cwd`, or in `sessionDir`. With `open`, the opened session's data sits beside it. A move lands in one file only: see below |
 | `status` | receiver | `moveId`, `sessionPath?` or `landing?` | the answer for the sender: `receiving`, `accepted`, or `declined` / `failed` with `reason`; an unknown move is recorded `declined` (`no_record`) before the answer. `accepted` carries `revoked: true` once the import was revoked, with or without `sessionPath`; `revoked: true` wins over `accepted` for writability: that copy refuses every write (`session_moved_away`). A `sessionPath` whose file is not this move's import is refused with `move_mismatch`. Beside `accepted` it says where the move landed (`session_path`, `session_id`, `cwd`, or `landed_file: "gone"`): see below; capability `move_session_status_landed_path`. With the path it says whether that copy can still be written (`writable`, and `sealed_by` when it cannot); capability `move_session_status_writable`. With `landing` the answer comes from the file at the place the move would have landed, before the record: see below; capability `move_session_status_landing` |
-| `finish` | sender | `sessionPath`, `moveId`, `answer` (the `status` data, `revoked` included; the fields that say where the move landed are not read) | `{ ownership: "moved" \| "writable" \| "moving" }`; an answer with `revoked: true` takes the session back (`writable`), and is refused with `move_already_moved` if the file was already marked moved |
+| `finish` | sender | `sessionPath`, `moveId`, `answer` (the `status` data, `revoked` included; the fields that say where the move landed are not read) | `{ ownership: "moved" \| "writable" \| "moving" }`, plus `held_this_move` when `writable`: `false` means the file never held this move and nothing was changed (a move's bundle and staged state are kept per host and folder, so a finish for another file must not remove them); an answer with `revoked: true` takes the session back (`writable`), and is refused with `move_already_moved` if the file was already marked moved |
 | `revoke` | receiver | `sessionPath` (the imported copy), `moveId` | `{ ownership: "moved" }`; capability `move_session_revoke` |
+| `ownership` | sender | `sessionPath`, `moveId` | `{ ownership, sealed_for_move, held_this_move }`: a read of the session file that changes nothing (no lock, no record; the bundle and the staged state are not touched). `sealed_for_move` is true when the file is `moving` for exactly this move, the check an `export` makes; `held_this_move` when the file holds an ownership entry for the move of its own session. Use it to learn which file a release sealed: an `export` rewrites the bundle and a `finish` ends the move. A path with no session file (missing, or no session header) is refused `not_a_session_file`, never answered `writable`. `sealed_for_move: true` does not promise that an `export` will go: the export also refuses a file this host holds open and a session with live holders. The op takes no lock, so its answer is a snapshot: use it to name the sealed file, never as a lease. Capability `move_session_ownership` |
 | `copy` | either | `sessionPath`, `sessionId` (a plain id), `sessionDir?` (absolute) | `{ session_id, session_path }`: a new writable session with the source's history; capability `move_session_copy` |
 | `identity` | either | `sessionPath` (a session file of this host) or `cwd` (a folder), exactly one | `{ repository: { rootCommits, originUrl? } }`, or `{}` when there is none; reads only, changes nothing; capability `move_session_identity` |
 
@@ -4041,7 +4074,7 @@ names a valid preset.
 | `select_hand` | `sessionId`, `device: string \| null` | `{ sessionId, selected }` | Records which hand runs the session's tools (`null` = this process). Refusals: `hand_not_listed`, `hand_unreachable` (`errorData.device`), `session_busy`, `hand_selection_unsupported`, `unknown_session`, `session_closing`. Method class `device_admin`. |
 | `list_sessions` | `include_workers?` (default false) | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status, attachments, retain_on_disconnect, kind, context? }] }` | Includes `opening`/`closing` entries. `retain_on_disconnect` is true when the session outlives its last attachment (an open or attach asked for it; retention is never revoked), so no client's release or disconnect can end it. Internally quarantined workers remain externally `closing` until exit. `attachments` is the session's live client attachment count; `0` on an `open` row is a retained session with no client attached. Every row carries `kind`. Rows with `kind: "worker"` are omitted unless `include_workers: true`, and `context` is published ONLY on that listing — a default listing carries no `context` at all. |
 | `detach_connection` | - | `{ deferred: string[] }` | Multi-session hosts that advertise `detach_connection`. Meant as the connection's last request: the host releases every session attachment this connection holds and answers only after that, so another connection's next `list_sessions` no longer counts it. `deferred` names the sessions that still count it (see `#### detach_connection`). Closing the socket afterwards releases nothing more. `senpi host session` sends it before closing, bounded at 5 s; on a host without the capability, or after a request timed out or the connection was lost, it relies on the release at socket close. |
-| `release_session` | `sessionId`, `reason: "takeover" \| "move"`, `moveId?` (required for `move`), `target?`, `interrupt?`, `force?` | `{ released: true, session_path, attachments, dropped }` | Hands the session to a runtime outside this host. See "Handing a session over (`release_session`)" below. |
+| `release_session` | `sessionId`, `reason: "takeover" \| "move"`, `moveId?` (required for `move`), `target?`, `interrupt?`, `force?`, `expectSessionId?` | `{ released: true, session_path, session_id, attachments, dropped }` | Hands the session to a runtime outside this host. See "Handing a session over (`release_session`)" below. |
 | `move_session` | `op` and its fields (see "Moving a session to another device (`move_session`)") | per `op` | Drives one step of a session move between hosts. Capability `move_session`. |
 | `host_response` | `id`, `data?`, `error?` | `{ type: "response", command: "host_response", success }` | Answers one `host_request` of the session (see "Continuing a session on another computer"). Capability `session_relocation`. |
 | `wake` | `sessionId`, `delivery_ids?` | `{ admitted: [{ delivery_id, kind }] }` | Runs the session's registered inbox drain once. See "Waking a host session (`wake`)" below. |

@@ -13,7 +13,7 @@ import { finishMove } from "../../core/session-move/finish.ts";
 import { readSessionRepositoryIdentity } from "../../core/session-move/identity.ts";
 import { readInlineBundle } from "../../core/session-move/inline-bundle.ts";
 import { MoveLedger, type MoveRecord } from "../../core/session-move/move-ledger.ts";
-import { type MoveId, sessionOwnership } from "../../core/session-move/ownership.ts";
+import { headerSessionId, heldByMove, type MoveId, sessionOwnership } from "../../core/session-move/ownership.ts";
 import { prepareMove } from "../../core/session-move/prepare.ts";
 import { revokeImportedMove } from "../../core/session-move/revoke.ts";
 import { orderedRealPath, realSessionPath } from "../../core/session-move/session-lock.ts";
@@ -25,6 +25,7 @@ import {
 	RPC_ERROR_INVALID_MOVE_REQUEST,
 	RPC_ERROR_MOVE_FAILED,
 	RPC_ERROR_MOVE_NOT_RELEASED,
+	RPC_ERROR_NOT_A_SESSION_FILE,
 	RPC_ERROR_SESSION_OPEN_HERE,
 	type RpcMoveLanded,
 	type RpcMoveRecord,
@@ -159,7 +160,7 @@ async function run(
 		}
 		case "finish": {
 			const sessionFile = await orderedRealPath(parsed.sessionPath);
-			await finishMove({
+			const settled = await finishMove({
 				sessionFile,
 				bundleDir: outgoing(parsed.moveId),
 				moveId: parsed.moveId,
@@ -171,7 +172,25 @@ async function run(
 						"This session is open on this host, so its runtime would not see the move end. Close it here, then finish the move.",
 					),
 			});
-			return ownershipOf(sessionFile);
+			const ownership = await ownershipOf(sessionFile);
+			return ownership.ownership === "writable" ? { ...ownership, held_this_move: settled.heldThisMove } : ownership;
+		}
+		case "ownership": {
+			// The sender's read-only question (senpi#6484): no lock, no write, no record, and the bundle is never read.
+			const sessionFile = await orderedRealPath(parsed.sessionPath);
+			const entries = await loadEntriesFromFileAsync(sessionFile);
+			// A missing file reads as no entries, and no entries read as writable: a stale path must not look taken back.
+			if (headerSessionId(entries) === undefined)
+				throw new MoveRefusal(
+					RPC_ERROR_NOT_A_SESSION_FILE,
+					"There is no session file at that path: the file is missing or has no session header.",
+				);
+			const ownership = sessionOwnership(entries);
+			return {
+				ownership: ownership.writable ? "writable" : ownership.state,
+				sealed_for_move: !ownership.writable && ownership.state === "moving" && ownership.moveId === parsed.moveId,
+				held_this_move: heldByMove(entries, parsed.moveId),
+			} as const;
 		}
 		case "revoke": {
 			const sessionFile = await orderedRealPath(parsed.sessionPath);
