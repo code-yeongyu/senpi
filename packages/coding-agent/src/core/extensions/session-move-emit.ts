@@ -1,5 +1,6 @@
 import { type ExtensionHandlerBudget, type ExtensionHandlerStall, runBudgetedHandler } from "./handler-budget.ts";
 import type { SessionMoveExportEvent, SessionMoveImportEvent } from "./types.ts";
+import { extensionFailureFields, type UserFacingErrorInfo } from "./user-facing-error.ts";
 
 /** A move event as the host emits it; each handler receives it with the budget's own `signal`. */
 export type SessionMoveEmission = Omit<SessionMoveExportEvent, "signal"> | Omit<SessionMoveImportEvent, "signal">;
@@ -9,6 +10,7 @@ export interface SessionMoveFailure {
 	readonly extensionPath: string;
 	readonly error: string;
 	readonly stack?: string;
+	readonly userFacing?: UserFacingErrorInfo;
 }
 
 export interface SessionMoveHandlerCall {
@@ -50,7 +52,7 @@ export async function runSessionMoveHandlers(
 				const { error } = outcome;
 				failures.push({
 					extensionPath,
-					error: error instanceof Error ? error.message : String(error),
+					...extensionFailureFields(error),
 					...(error instanceof Error && error.stack !== undefined ? { stack: error.stack } : {}),
 				});
 				break;

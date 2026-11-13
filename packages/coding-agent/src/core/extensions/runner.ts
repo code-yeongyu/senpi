@@ -57,6 +57,7 @@ import {
 	runBudgetedHandler,
 	runBudgetedSequence,
 } from "./handler-budget.ts";
+import { recordExtensionFailure } from "./error-notice.ts";
 import { type ExtensionKernelTools, kernelToolInvokerStorage, kernelToolsStorage } from "./kernel-tools-context.ts";
 import { drainPendingProviderRegistrations } from "./loader.ts";
 import { runSessionMoveHandlers, type SessionMoveEmission, type SessionMoveFailure } from "./session-move-emit.ts";
@@ -141,6 +142,7 @@ import type {
 	UserBashEventResult,
 } from "./types.ts";
 import { type ExtensionRuntimeContext, RUNTIME_EXTENSION_PATH } from "./types.ts";
+import { extensionFailureFields } from "./user-facing-error.ts";
 import {
 	servesForwardedHandler,
 	toolEventHandlers,
@@ -560,8 +562,7 @@ export async function emitProjectTrustEvent(
 				errors.push({
 					extensionPath: ext.path,
 					event: event.type,
-					error: error instanceof Error ? error.message : String(error),
-					stack: error instanceof Error ? error.stack : undefined,
+					...extensionFailureFields(error),
 				});
 			}
 		}
@@ -741,7 +742,7 @@ export class ExtensionRunner {
 		this.emitError({
 			extensionPath: RUNTIME_EXTENSION_PATH,
 			event: "session_start",
-			error: error instanceof Error ? error.message : String(error),
+			...extensionFailureFields(error),
 		}),
 	);
 	private shortcutDiagnostics: ResourceDiagnostic[] = [];
@@ -956,8 +957,7 @@ export class ExtensionRunner {
 				this.emitError({
 					extensionPath: registration.extensionPath,
 					event: "register_provider",
-					error: err instanceof Error ? err.message : String(err),
-					stack: err instanceof Error ? err.stack : undefined,
+					...extensionFailureFields(err),
 				});
 			}
 		}
@@ -972,8 +972,7 @@ export class ExtensionRunner {
 				this.emitError({
 					extensionPath,
 					event: "register_virtual_model",
-					error: err instanceof Error ? err.message : String(err),
-					stack: err instanceof Error ? err.stack : undefined,
+					...extensionFailureFields(err),
 				});
 			}
 		}
@@ -1369,7 +1368,7 @@ export class ExtensionRunner {
 			this.emitError({
 				extensionPath: RUNTIME_EXTENSION_PATH,
 				event: "session_start",
-				error: error instanceof Error ? error.message : String(error),
+				...extensionFailureFields(error),
 			});
 		};
 		try {
@@ -1457,8 +1456,7 @@ export class ExtensionRunner {
 		this.emitError({
 			extensionPath,
 			event,
-			error: err instanceof Error ? err.message : String(err),
-			stack: err instanceof Error ? err.stack : undefined,
+			...extensionFailureFields(err),
 		});
 	}
 
@@ -1483,6 +1481,7 @@ export class ExtensionRunner {
 	}
 
 	emitError(error: ExtensionError): void {
+		recordExtensionFailure(error);
 		for (const listener of this.errorListeners) {
 			listener(error);
 		}
@@ -1896,7 +1895,7 @@ export class ExtensionRunner {
 						runner.emitError({
 							extensionPath: excludeBeforeProviderRequestExtensionPath ?? RUNTIME_EXTENSION_PATH,
 							event: "user_activity",
-							error: error instanceof Error ? error.message : String(error),
+							...extensionFailureFields(error),
 						});
 					}
 				});
@@ -2151,8 +2150,8 @@ export class ExtensionRunner {
 					this.emitError({
 						extensionPath: path,
 						event: baseEvent.type,
+						...extensionFailureFields(err),
 						error: `Invalid boundary entries: ${err instanceof Error ? err.message : String(err)}`,
-						stack: err instanceof Error ? err.stack : undefined,
 					});
 				}
 			},
@@ -2340,13 +2339,10 @@ export class ExtensionRunner {
 						}
 					}
 				} catch (err) {
-					const message = err instanceof Error ? err.message : String(err);
-					const stack = err instanceof Error ? err.stack : undefined;
 					this.emitError({
 						extensionPath: ext.path,
 						event: event.type,
-						error: message,
-						stack,
+						...extensionFailureFields(err),
 					});
 				}
 			}
@@ -2388,13 +2384,10 @@ export class ExtensionRunner {
 						}
 					}
 				} catch (err) {
-					const message = err instanceof Error ? err.message : String(err);
-					const stack = err instanceof Error ? err.stack : undefined;
 					this.emitError({
 						extensionPath: ext.path,
 						event: "model_select",
-						error: message,
-						stack,
+						...extensionFailureFields(err),
 					});
 				}
 			}
@@ -2494,15 +2487,13 @@ export class ExtensionRunner {
 						modified = true;
 					}
 				} catch (err) {
-					const message = err instanceof Error ? err.message : String(err);
-					const stack = err instanceof Error ? err.stack : undefined;
+					const failure = extensionFailureFields(err);
 					endStatus = "failed";
-					errorMessage = message;
+					errorMessage = failure.error;
 					this.emitError({
 						extensionPath: ext.path,
 						event: "tool_result",
-						error: message,
-						stack,
+						...failure,
 					});
 				} finally {
 					hookRun.end(endStatus, errorMessage);
@@ -2582,13 +2573,10 @@ export class ExtensionRunner {
 					}
 					return handlerResult;
 				} catch (err) {
-					const message = err instanceof Error ? err.message : String(err);
-					const stack = err instanceof Error ? err.stack : undefined;
 					this.emitError({
 						extensionPath: ext.path,
 						event: "user_bash",
-						error: message,
-						stack,
+						...extensionFailureFields(err),
 					});
 					throw err;
 				}
@@ -2668,13 +2656,10 @@ export class ExtensionRunner {
 						currentPayload = handlerResult;
 					}
 				} catch (err) {
-					const message = err instanceof Error ? err.message : String(err);
-					const stack = err instanceof Error ? err.stack : undefined;
 					this.emitError({
 						extensionPath: ext.path,
 						event: "before_provider_request",
-						error: message,
-						stack,
+						...extensionFailureFields(err),
 					});
 				}
 			}
@@ -2697,13 +2682,10 @@ export class ExtensionRunner {
 					};
 					await handler(event, this.createContext(ext.path));
 				} catch (err) {
-					const message = err instanceof Error ? err.message : String(err);
-					const stack = err instanceof Error ? err.stack : undefined;
 					this.emitError({
 						extensionPath: ext.path,
 						event: "before_provider_headers",
-						error: message,
-						stack,
+						...extensionFailureFields(err),
 					});
 				}
 			}
@@ -2816,13 +2798,10 @@ export class ExtensionRunner {
 						});
 					}
 				} catch (err) {
-					const message = err instanceof Error ? err.message : String(err);
-					const stack = err instanceof Error ? err.stack : undefined;
 					this.emitError({
 						extensionPath: ext.path,
 						event: "before_agent_start",
-						error: message,
-						stack,
+						...extensionFailureFields(err),
 					});
 				}
 			}
@@ -2881,13 +2860,10 @@ export class ExtensionRunner {
 						hookPaths.push(...result.hookPaths.map((entry) => toEntry(entry, ext.path)));
 					}
 				} catch (err) {
-					const message = err instanceof Error ? err.message : String(err);
-					const stack = err instanceof Error ? err.stack : undefined;
 					this.emitError({
 						extensionPath: ext.path,
 						event: "resources_discover",
-						error: message,
-						stack,
+						...extensionFailureFields(err),
 					});
 				}
 			}
@@ -2950,8 +2926,7 @@ export class ExtensionRunner {
 					this.emitError({
 						extensionPath: ext.path,
 						event: "input",
-						error: err instanceof Error ? err.message : String(err),
-						stack: err instanceof Error ? err.stack : undefined,
+						...extensionFailureFields(err),
 					});
 				}
 			}

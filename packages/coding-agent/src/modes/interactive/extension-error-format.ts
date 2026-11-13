@@ -1,4 +1,5 @@
-import { RUNTIME_EXTENSION_PATH } from "../../core/extensions/types.ts";
+import { type ExtensionErrorNotice, extensionErrorNoticeLines } from "../../core/extensions/error-notice.ts";
+import type { NoticeSpec } from "../../core/extensions/notice/index.ts";
 
 /**
  * Strip terminal control sequences from text that reaches an ANSI-preserving
@@ -15,23 +16,13 @@ export function sanitizeTuiErrorMessage(value: string): string {
 		.replace(/[ \t\f\v]+/g, " ");
 }
 
-/**
- * Headline for an extension-error line in the chat log.
- *
- * Errors emitted by the session runtime itself (extensionPath `<runtime>`,
- * e.g. background session-title generation) are not extension failures, so
- * they render as runtime errors labeled with the emitting event instead of a
- * confusing `Extension "<runtime>" error:` attribution.
- */
-export function formatExtensionErrorHeadline(error: {
-	readonly extensionPath: string;
-	readonly event?: string;
-	readonly error: string;
-}): string {
-	const message = sanitizeTuiErrorMessage(error.error);
-	if (error.extensionPath === RUNTIME_EXTENSION_PATH) {
-		const event = error.event ? sanitizeTuiErrorMessage(error.event) : undefined;
-		return event ? `Runtime error (${event}): ${message}` : `Runtime error: ${message}`;
-	}
-	return `Extension "${sanitizeTuiErrorMessage(error.extensionPath)}" error: ${message}`;
+export function extensionErrorNoticeSpec(notice: ExtensionErrorNotice): NoticeSpec {
+	const lines = extensionErrorNoticeLines(notice);
+	const [title = notice.title, why = "", ...extra] = lines;
+	return {
+		title: sanitizeTuiErrorMessage(title),
+		tone: "warning",
+		why: sanitizeTuiErrorMessage(why),
+		extra: extra.map((text) => ({ text: sanitizeTuiErrorMessage(text) })),
+	};
 }

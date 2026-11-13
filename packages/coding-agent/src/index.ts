@@ -284,6 +284,9 @@ export {
 	isReadToolResult,
 	isToolCallEventType,
 	isWriteToolResult,
+	UserFacingError,
+	type UserFacingErrorInfo,
+	userFacingErrorOf,
 	wrapRegisteredTool,
 	wrapRegisteredTools,
 } from "./core/extensions/index.ts";

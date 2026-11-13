@@ -10,6 +10,7 @@ import type {
 	ExtensionContext,
 	ExtensionError,
 } from "./types.ts";
+import { extensionFailureFields } from "./user-facing-error.ts";
 
 type HandlerSnapshot = { ext: Extension; handlers: NonNullable<ReturnType<Extension["handlers"]["get"]>> };
 
@@ -106,13 +107,10 @@ export async function dispatchContextMessages(
 					? restoreSystemMessages(currentMessages, visibleSnapshot, returned)
 					: returned;
 			} catch (err) {
-				const message = err instanceof Error ? err.message : String(err);
-				const stack = err instanceof Error ? err.stack : undefined;
 				input.emitError({
 					extensionPath: ext.path,
 					event: "context",
-					error: message,
-					stack,
+					...extensionFailureFields(err),
 				});
 			}
 		}
@@ -138,13 +136,10 @@ export async function dispatchContextMessages(
 					});
 				}
 			} catch (err) {
-				const message = err instanceof Error ? err.message : String(err);
-				const stack = err instanceof Error ? err.stack : undefined;
 				input.emitError({
 					extensionPath: ext.path,
 					event: "context_with_system",
-					error: message,
-					stack,
+					...extensionFailureFields(err),
 				});
 			}
 		}
