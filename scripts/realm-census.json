@@ -3178,6 +3178,10 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/coding-agent/src/core/credential-accounts.ts#NEEDS_USER": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
 		"packages/coding-agent/src/core/credential-accounts.ts#UNBLOCKED": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
