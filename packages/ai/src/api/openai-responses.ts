@@ -44,6 +44,7 @@ import {
 } from "../utils/provider-diagnostic-sources.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
+import { isSiwcMissingResponsesScope, SIWC_MISSING_RESPONSES_SCOPE_GUIDANCE } from "../utils/siwc-errors.ts";
 import { sendWithForcedToolChoiceFallback } from "../utils/tool-choice-fallback.ts";
 import { getDeclaredTools, normalizeContext, resolveTranscript } from "../utils/transcript.ts";
 import { isCloudflareProvider, resolveCloudflareBaseUrl } from "./cloudflare.ts";
@@ -257,6 +258,9 @@ function formatOpenAIResponsesError(error: unknown, provider: string, siwc = fal
 	if (siwc && error instanceof Error && Reflect.get(error, "code") === "subscription_sharing_unsupported_capability") {
 		const param = Reflect.get(error, "param");
 		if (typeof param === "string") errorMessage += `\nUnsupported parameter: ${param}`;
+	}
+	if (siwc && isSiwcMissingResponsesScope(errorMessage)) {
+		errorMessage += `\n${SIWC_MISSING_RESPONSES_SCOPE_GUIDANCE}`;
 	}
 	// Sign in with ChatGPT shares the subscription's usage limit with other apps.
 	return errorMessage.includes("subscription_sharing_usage_limit_exceeded")
