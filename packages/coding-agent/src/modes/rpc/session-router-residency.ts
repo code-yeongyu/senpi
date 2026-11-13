@@ -107,10 +107,17 @@ export function followRetainedRecord(host: RouterContext, sessionId: string): vo
 }
 
 /** An explicit close or reclaim ends the session for good: drop every key its record was written under. */
-export async function clearRetainedRecord(host: RouterContext, entry: RpcSessionEntry | undefined): Promise<void> {
+export function clearRetainedRecord(host: RouterContext, entry: RpcSessionEntry | undefined): Promise<void> {
 	const dir = host.handoverParkedDir;
-	if (dir === undefined || entry === undefined) return;
+	if (dir === undefined || entry === undefined) return Promise.resolve();
 	const keys = new Set([entry.recordedPath, entry.sessionPath, entry.runtime?.session.sessionFile]);
 	entry.recordedPath = undefined;
-	for (const key of keys) if (key !== undefined) await clearHandoverParkedSession(dir, key).catch(() => {});
+	// Chained like the writes: a stamped write issued before this close must not land after it and leave the closed
+	// session's record behind as resident (senpi#6594).
+	const clear = async () => {
+		for (const key of keys) if (key !== undefined) await clearHandoverParkedSession(dir, key).catch(() => {});
+	};
+	const next = (entry.recordWrite ?? Promise.resolve()).then(clear, clear);
+	entry.recordWrite = next.catch(() => {});
+	return next;
 }
