@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
-export const RECORD_SCHEMA = 1;
+const RECORD_SCHEMA = 1;
 // Bounds how far a reused prebuild can trail the hosted runner images and SDKs, which the key
 // cannot see; an older record is a miss and the target is rebuilt.
 export const MAX_RECORD_AGE_DAYS = 14;

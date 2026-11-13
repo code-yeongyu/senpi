@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-export const KEY_VERSION = "v1";
+const KEY_VERSION = "v1";
 
 // Inputs of every target. The workflow file carries the build script, the matrix wiring and the
 // pinned napi, zig, cargo-zigbuild and Node versions; the probe scripts are the lifecycle checks
