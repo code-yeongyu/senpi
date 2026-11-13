@@ -880,6 +880,27 @@ and the session keeps running.
 A worker session sends a record deeper than 1,024 levels to the host as JSON text, so the host's structured-clone
 reader (which stops near 4,000 levels on Node) never drops it.
 
+A host-level command whose handler fails unexpectedly is answered too (senpi#6483). On the multi-session host such
+a request used to get no response at all: the failure went to the host's stderr and the caller waited out its own
+timeout. The caller now receives, for the same `id`,
+
+```json
+{"id":"<request id>","type":"response","command":"<command>","success":false,"error":"internal_error","errorCode":"internal_error","errorData":{"detail":"<cause>"}}
+```
+
+and the connection keeps answering later requests. A failure that carries a refusal code of its own (a session
+registry refusal) is answered with that code, as a session-scoped command already answers it. The host still reports
+the failure on stderr, as `senpi rpc connection <id> failed: <cause>` (or `senpi rpc stdio request failed: <cause>`).
+`internal_error` is a refusal like any other: a client that does not know the code reads `success: false`.
+
+A request gets one answer. The host answers a handler's failure only when no answer under the request's `id` was
+queued for that connection while its line was handled: a control answer (a compact `open_session` that fails after it
+was accepted ends with its own refusal, which carries its `admissionId`) or a `close_session` reply. A reply that a
+compact `open_session`, `subscribe_sessions` or `reset_stream` hands to its admission baseline is written later by
+the connection. It counts as that answer from the moment it is handed to a baseline the connection holds. When
+that baseline ends before it handed the reply out, the reply is written the ordinary way, once, for the socket the
+request was made on (senpi#6561, senpi#6587). A command sent without an `id` is owed no answer and gets none. The stderr line is written in every case.
+
 #### get_recovery_page
 
 Behind the same flag, one bounded page of a frozen checkpoint component, through the recovery-token owner
