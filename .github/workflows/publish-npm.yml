@@ -83,9 +83,10 @@ jobs:
     steps:
       # senpi#6645: a dispatch on any other ref runs that ref's YAML with the push token and id-token: write, even when
       # its sha input names a main commit. Only a dry run may go further there; the steps that stamp, tag, push or
-      # publish below carry the same condition.
+      # publish below carry the same condition. A publish-only run checks out the TAG, whose publish.mjs may predate the in-code
+      # ref guard, so off main it is refused even as a dry run.
       - name: Refuse a live release from any ref but main
-        if: inputs.dry_run != true && github.ref != 'refs/heads/main'
+        if: github.ref != 'refs/heads/main' && (inputs.dry_run != true || inputs.publish-only == true)
         env:
           DISPATCHED_REF: ${{ github.ref }}
         run: |

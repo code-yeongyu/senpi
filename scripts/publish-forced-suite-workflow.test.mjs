@@ -285,9 +285,12 @@ describe("forced-suite matrix jobs (senpi#6642)", () => {
 							github: { ref, sha: "77ab284f3b36f62f0ca3d5c058d6c241d30b6ddf" },
 							inputs: { dry_run: dryRun, "publish-only": publishOnly, force_tests: true, sha, version: "2026.11.13" },
 						};
+						// A publish-only dispatch checks out the TAG, whose own publish.mjs predates the in-code ref guard, so on a
+						// branch even a dry run is refused before the job reaches npm (review of abfe92a6b5, finding 1).
+						const refused = ref === branch && (!dryRun || publishOnly);
 						const live = ref === branch && !dryRun;
 						const label = `${ref} dry_run=${dryRun} publish-only=${publishOnly} sha=${sha || "(empty)"}`;
-						assert.equal(isTruthy(evaluateExpression(stepIf(refusal), context)), live, `refusal step, ${label}`);
+						assert.equal(isTruthy(evaluateExpression(stepIf(refusal), context)), refused, `refusal step, ${label}`);
 						for (const step of mutating) {
 							const runs = isTruthy(evaluateExpression(stepIf(step.text), context));
 							if (live) assert.equal(runs, false, `${step.name} reachable on ${label}`);
