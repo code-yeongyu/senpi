@@ -38,6 +38,7 @@ describe("release package versioning", () => {
 			"packages/server/package.json",
 			"packages/pty/package.json",
 			"packages/telemetry/package.json",
+			"packages/realm-registry/package.json",
 			"packages/senpi-codemode/package.json",
 			"packages/tui/package.json",
 		]) {
