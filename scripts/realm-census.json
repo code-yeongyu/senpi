@@ -9078,6 +9078,10 @@
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
 		},
+		"packages/coding-agent/src/modes/rpc/project-expected-cwd.ts#PROJECT_WRITES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
 		"packages/coding-agent/src/modes/rpc/project-file-commands.ts#writeChains": {
 			"class": "per-copy-safe",
 			"reason": "promise chain or queue ordering this copy's own async work; a split only loses ordering between copies, holds no A1-A3 asset"
