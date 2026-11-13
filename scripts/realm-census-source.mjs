@@ -6,8 +6,10 @@ import { parseSync } from "oxc-parser";
 
 const SOURCE_FILE = /\.(?:ts|mts|js|mjs)$/u;
 const EXCLUDED_FILE = /\.(?:test|spec)\.|\.d\.(?:ts|mts)$|\.(?:generated|gen)\.(?:ts|mts|js|mjs)$/u;
-// The same production-source boundary as the oxlint `packages/*/src/**` override: tests, fixtures, generated and
-// vendored third-party trees are not engine state we own.
+// The production-source boundary: tests, fixtures and generated trees are skipped. Vendored trees are NOT skipped
+// (omo#12965 re-read, F4b): the vendored sandbox runtime runs in the engine realm. `gen` and `_generated` hold
+// generated protobuf descriptors only (two files under packages/ai/src/api, 21139 lines of frozen schema objects); a
+// hand-written binding in one is invisible to the census, so state never goes in a generated directory.
 const EXCLUDED_DIRS = new Set([
 	"node_modules",
 	"test",
@@ -19,7 +21,6 @@ const EXCLUDED_DIRS = new Set([
 	"__fixtures__",
 	"_generated",
 	"gen",
-	"vendor",
 ]);
 // Type positions never carry a runtime package reference.
 const TYPE_KEYS = new Set(["typeAnnotation", "typeParameters", "typeArguments", "returnType", "superTypeArguments"]);

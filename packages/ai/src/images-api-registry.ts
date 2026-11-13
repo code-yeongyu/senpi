@@ -55,7 +55,8 @@ function getActiveImagesProviderScope(): ImagesProviderScopeAccess | undefined {
 		if (!isImagesProviderScopeAccess(scope)) throw new Error("Provider scope is closed");
 		return scope;
 	}
-	const strict = strictModeBeforeRegistry || (registry?.imagesStrictMode() ?? false) !== false;
+	// With an instance, strict mode is on unless it is exactly false (undefined and null read as on).
+	const strict = strictModeBeforeRegistry || (registry !== undefined && registry.imagesStrictMode() !== false);
 	if (strict) throw new Error("Provider scope is required in strict mode");
 	return undefined;
 }

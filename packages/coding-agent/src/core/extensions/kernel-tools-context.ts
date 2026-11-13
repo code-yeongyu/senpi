@@ -42,7 +42,9 @@ type KernelToolInvoker = { readonly sessionId: string };
  * two stores are one realm registry. `storage` is the public `kernelToolsStorage` export. `invokerStorage` was not
  * exported, and the registry makes it reachable to code in the realm; that adds no reach, because the raw `invoke` of
  * the public store already takes the invoker from its caller (`options.invoker`).
- * A reader validates what it finds: a store value another copy shaped differently reads as absent.
+ * A reader validates what it finds: a tools store another copy shaped differently reads as absent, but an invoker it cannot
+ * read refuses (`PI_KERNEL_TOOL_INVOKER_UNREADABLE`): it is never taken for "no invoker", which would stamp the runner's
+ * own session on a cross-session call.
  */
 interface KernelToolContexts {
 	readonly storage: AsyncLocalStorage<ExtensionKernelTools>;
@@ -90,8 +92,24 @@ export function activeKernelTools(): ExtensionKernelTools | undefined {
 	return isKernelTools(tools) ? tools : undefined;
 }
 
-/** The host dispatcher identity entered for this async context by any engine copy; an ill-typed one reads as absent. */
+/** An invoker was entered but this copy cannot read it: another engine copy shaped it differently. */
+class KernelToolInvokerUnreadableError extends Error {
+	readonly code = "PI_KERNEL_TOOL_INVOKER_UNREADABLE";
+	constructor() {
+		super(
+			"The active kernel-tool invoker cannot be read: another engine copy in this process shaped it differently.",
+		);
+		this.name = "KernelToolInvokerUnreadableError";
+	}
+}
+
+/**
+ * The host dispatcher identity entered for this async context by any engine copy, or undefined when none was entered.
+ * An invoker that was entered but cannot be read refuses with a typed error (omo#12965).
+ */
 export function activeKernelToolInvoker(): KernelToolInvoker | undefined {
 	const invoker: unknown = kernelToolInvokerStorage.getStore();
-	return isKernelToolInvoker(invoker) ? invoker : undefined;
+	if (invoker === undefined) return undefined;
+	if (!isKernelToolInvoker(invoker)) throw new KernelToolInvokerUnreadableError();
+	return invoker;
 }

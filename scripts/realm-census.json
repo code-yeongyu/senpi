@@ -3372,12 +3372,12 @@
 		},
 		"packages/coding-agent/src/core/egress/console-redactor.ts#sealedContext": {
 			"class": "per-copy-safe",
-			"reason": "no A1-A3 decision (the secret set is the shared redaction registry); a split costs which redactor seals console writes made by another copy's code inside a sealed window",
+			"reason": "not a secret-set decision today: no production source imports this module (pinned by a test), so nothing reaches it; but a split writes a sealed secret in the clear (omo#12965 re-read F4c, measured): the console wrapper is installed once per realm and reads the installing copy's context and window count, so another copy's runSealed is not seen. It needs a realm registry before its first production caller",
 			"ground": "ii"
 		},
 		"packages/coding-agent/src/core/egress/console-redactor.ts#sealedWindows": {
 			"class": "per-copy-safe",
-			"reason": "count of this copy's open sealed console windows (egress named exception sealed-window-counter)"
+			"reason": "count of this copy's open sealed console windows (egress named exception sealed-window-counter); the installed console wrapper reads the installing copy's count only, so a split hides another copy's sealed window (omo#12965 re-read F4c); the module has no production caller"
 		},
 		"packages/coding-agent/src/core/egress/credential-fields.ts#POOLED_CREDENTIAL_FIELDS": {
 			"class": "constant",
@@ -3446,6 +3446,10 @@
 		"packages/coding-agent/src/core/export-html/tool-renderer.ts#ANSI_ESCAPE_REGEX": {
 			"class": "per-copy-safe",
 			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
+		},
+		"packages/coding-agent/src/core/export-html/vendor/highlight.min.js#hljs": {
+			"class": "constant",
+			"reason": "vendored highlight.js asset: the HTML export reads the file as text and embeds it in the exported page; nothing evaluates it in the engine realm (omo#12965 re-read F4b)"
 		},
 		"packages/coding-agent/src/core/extensions/builtin/account-list-view.ts#DAY": {
 			"class": "constant",
@@ -3921,7 +3925,7 @@
 		},
 		"packages/coding-agent/src/core/extensions/builtin/compaction/log.ts#pendingLines": {
 			"class": "per-copy-safe",
-			"reason": "state keyed by session, conversation, connection or path, written and read by the copy that serves it; a split only loses reuse or a learned fallback"
+			"reason": "lines this copy has yet to append to a compaction log file, in order, by one writer per file; a split gives two writers per file, so lines of two copies interleave at line granularity and rotate by each copy's own size reading (logging only) (omo#12965 re-read F4d)"
 		},
 		"packages/coding-agent/src/core/extensions/builtin/compaction/log.ts#reportedWriteFailure": {
 			"class": "per-copy-safe",
@@ -5465,7 +5469,7 @@
 		},
 		"packages/coding-agent/src/core/extensions/builtin/schedule/live-delivery.ts#leaseHolders": {
 			"class": "per-copy-safe",
-			"reason": "state keyed by session, conversation, connection or path, written and read by the copy that serves it; a split only loses reuse or a learned fallback"
+			"reason": "count of this copy's live delivery sessions per schedule directory, beside a runner lease file per process id; right only while a session is served by one engine copy (omo#12965 re-read F2): with two copies the last release in one removes the per-pid runner lease while the other still has a live session (read from the code, not run); not a permission, secret or sandbox decision"
 		},
 		"packages/coding-agent/src/core/extensions/builtin/schedule/store.ts#STATE_DIRS": {
 			"class": "constant",
@@ -5517,11 +5521,11 @@
 		},
 		"packages/coding-agent/src/core/extensions/builtin/terminal/manifest-lease.ts#generationTokens": {
 			"class": "per-copy-safe",
-			"reason": "state keyed by session, conversation, connection or path, written and read by the copy that serves it; a split only loses reuse or a learned fallback"
+			"reason": "liveness of the terminal manifest leases this copy minted, beside lease files keyed by the process id; right only while a session is served by one engine copy (omo#12965 re-read F2): a second copy of one process takes the lease of a live session of the first (measured); not a permission, secret or sandbox decision"
 		},
 		"packages/coding-agent/src/core/extensions/builtin/terminal/manifest-lease.ts#liveTokens": {
 			"class": "per-copy-safe",
-			"reason": "state keyed by session, conversation, connection or path, written and read by the copy that serves it; a split only loses reuse or a learned fallback"
+			"reason": "liveness of the terminal manifest leases this copy minted, beside lease files keyed by the process id; right only while a session is served by one engine copy (omo#12965 re-read F2): a second copy of one process takes the lease of a live session of the first (measured); not a permission, secret or sandbox decision"
 		},
 		"packages/coding-agent/src/core/extensions/builtin/terminal/monitor-notify.ts#systemScheduler": {
 			"class": "constant",
@@ -6410,6 +6414,10 @@
 			"class": "per-copy-safe",
 			"reason": "the record each of this copy's holders uses, read only when the shared kill-guard/v1 active record is unreadable, so the guard stays on (design 3.1 payload rule)"
 		},
+		"packages/coding-agent/src/core/kill-guard/runtime.ts#reportedUnreadableActiveRecord": {
+			"class": "per-copy-safe",
+			"reason": "whether this copy already warned that the active kill guard record is unreadable and it holds none of its own; a split only repeats the warning once per copy"
+		},
 		"packages/coding-agent/src/core/kill-guard/shim-script.ts#ALL_PROCESSES": {
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
@@ -6865,7 +6873,7 @@
 		},
 		"packages/coding-agent/src/core/session-holders.ts#holderRecordRefCounts": {
 			"class": "per-copy-safe",
-			"reason": "reference counts of the session holder records this copy published; the lease files themselves coordinate processes"
+			"reason": "reference counts of the holder records this copy published; the record path carries the process id, so the count is right only while a session is served by one engine copy (omo#12965 re-read F2): with one session held through two engine copies of one process, the first copy's release removes the record the second still relies on (measured); not a permission, secret or sandbox decision"
 		},
 		"packages/coding-agent/src/core/session-import/jsonl-import.ts#jsonlFiles": {
 			"class": "constant",
@@ -7045,7 +7053,7 @@
 		},
 		"packages/coding-agent/src/core/settings-manager.ts#selfWritesByPath": {
 			"class": "per-copy-safe",
-			"reason": "state keyed by session, conversation, connection or path, written and read by the copy that serves it; a split only loses reuse or a learned fallback"
+			"reason": "hashes of settings content this copy wrote in the last 15 s, so its own file-watch events are not read as edits; a split makes another copy's write read as an external edit and reload once (omo#12965 re-read F4d)"
 		},
 		"packages/coding-agent/src/core/settings-retired-keys.ts#RETIRED_NESTED_KEYS": {
 			"class": "constant",
@@ -9502,7 +9510,7 @@
 		},
 		"packages/coding-agent/src/modes/rpc/tool-media-store.ts#reserved": {
 			"class": "per-copy-safe",
-			"reason": "state keyed by session, conversation, connection or path, written and read by the copy that serves it; a split only loses reuse or a learned fallback"
+			"reason": "bytes stored per media root: scanned from disk on first use, then adjusted by this copy's writes; a split lets a second copy serving the same root miss them until it rescans, so the per-session size cap can be overshot (a size cap, not an A1-A3 decision; a session is served by one engine copy) (omo#12965 re-read F4d)"
 		},
 		"packages/coding-agent/src/modes/rpc/ui-answer-ledger.ts#ledgers": {
 			"class": "per-copy-safe",
@@ -10733,6 +10741,18 @@
 		"packages/senpi-codemode/src/kernels/sandbox/sandbox-cell.ts#ERROR_CODES": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
+		},
+		"packages/senpi-codemode/src/kernels/sandbox/vendor/pi-codemode/runtime/host.ts#RESERVED_GLOBALS": {
+			"class": "constant",
+			"reason": "vendored sandbox runtime: names a guest may not define, built once and only read (omo#12965 re-read F4b)"
+		},
+		"packages/senpi-codemode/src/kernels/sandbox/vendor/pi-codemode/runtime/prelude-source.ts#PRELUDE_SOURCE": {
+			"class": "constant",
+			"reason": "vendored sandbox runtime: the guest prelude source, a string built once (omo#12965 re-read F4b)"
+		},
+		"packages/senpi-codemode/src/kernels/sandbox/vendor/pi-codemode/wasm.ts#modules": {
+			"class": "per-copy-safe",
+			"reason": "vendored sandbox runtime: compiled QuickJS wasm modules per path, read and compiled once per path by this copy; a split only compiles again (omo#12965 re-read F4b)"
 		},
 		"packages/senpi-codemode/src/kernels/shared/cell-authority-registry.ts#cellAuthority": {
 			"class": "realm-registry",
