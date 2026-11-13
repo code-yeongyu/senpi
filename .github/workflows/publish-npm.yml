@@ -78,6 +78,17 @@ jobs:
     # 15 min in the 2026-11 forced cuts): 45 min, keeping prepare 20 + shards 40 + release 45 within 110 min.
     timeout-minutes: ${{ inputs.force_tests && (inputs.publish-only && 180 || 45) || 60 }}
     steps:
+      # senpi#6645: a dispatch on any other ref runs that ref's YAML with the push token and id-token: write, even when
+      # its sha input names a main commit. Only a dry run may go further there; the steps that stamp, tag, push or
+      # publish below carry the same condition.
+      - name: Refuse a live release from any ref but main
+        if: inputs.dry_run != true && github.ref != 'refs/heads/main'
+        env:
+          DISPATCHED_REF: ${{ github.ref }}
+        run: |
+          echo "::error::a release that is not a dry run must be dispatched on refs/heads/main, not ${DISPATCHED_REF}" >&2
+          exit 1
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -241,7 +252,7 @@ jobs:
           merge-multiple: true
 
       - name: Run release
-        if: inputs.publish-only != true
+        if: inputs.publish-only != true && (inputs.dry_run == true || github.ref == 'refs/heads/main')
         env:
           GH_TOKEN: ${{ secrets.UPSTREAM_AUTOMATION_TOKEN }}
           SENPI_SKIP_PM_VERIFY: '1'
@@ -278,7 +289,7 @@ jobs:
           npm run release -- "${ARGS[@]}"
 
       - name: Publish prepared version
-        if: inputs.publish-only == true
+        if: inputs.publish-only == true && (inputs.dry_run == true || github.ref == 'refs/heads/main')
         env:
           EXPECTED_VERSION: ${{ inputs.version }}
           DRY_RUN: ${{ inputs.dry_run }}
@@ -307,7 +318,7 @@ jobs:
           if [ "${{ inputs.publish-only }}" = true ]; then
             commit="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
           else
-            commit="${{ inputs.sha || github.sha }}"
+            commit="${{ inputs.force_tests && needs.prepare.outputs.tested_sha || inputs.sha || github.sha }}"
           fi
           {
             echo "## Release"

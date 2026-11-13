@@ -156,6 +156,13 @@ describe("forced-suite matrix jobs (senpi#6642)", () => {
 			}
 		}
 		assert.match(workflowJob(workflow, "release"), /\n    needs: \[native-prebuilds, prepare, forced-rest, forced-shard\]\n/);
+		const prepareRuns = (forceTests, publishOnly) =>
+			isTruthy(evaluateExpression(jobExpression(workflowJob(workflow, "prepare"), "if"), { inputs: { force_tests: forceTests, "publish-only": publishOnly } }));
+		assert.deepEqual(
+			[prepareRuns(true, false), prepareRuns(false, false), prepareRuns(true, true), prepareRuns(false, true)],
+			[true, false, false, false],
+			"prepare (and with it the matrix) runs only for force_tests outside publish-only",
+		);
 	});
 
 	it("keeps the publishing release job and its identity in publish-npm.yml", () => {
@@ -260,24 +267,59 @@ describe("forced-suite matrix jobs (senpi#6642)", () => {
 		}
 	});
 
-	it("reads the base only from prepare's base_sha output in every job after prepare", () => {
-		for (const name of TESTED_JOBS) {
-			assert.doesNotMatch(workflowJob(workflow, name), /inputs\.sha|github\.sha|github\.ref|origin\/main/, name);
+	// Release-train ruling and review finding 1 on senpi#6645: a branch dispatch runs that branch's YAML with the push
+	// token and id-token: write. Even with the sha input set to a main commit, no step that can stamp, tag, push or
+	// publish may run unless the ref is main or the run is a dry run. Evaluates every such step's real `if:`.
+	it("never reaches a step that can stamp, tag, push or publish from a branch ref unless dry_run, even with sha = a main commit", () => {
+		const release = workflowJob(workflow, "release");
+		const stepIf = (text) => text.match(/\n {8}if: (.*)\n/)?.[1] ?? "success()";
+		const mutating = jobSteps(release).filter((step) => /npm run release|scripts\/publish\.mjs/.test(step.text));
+		assert.deepEqual(mutating.map((step) => step.name), ["Run release", "Publish prepared version"]);
+		const refusal = jobStep(release, "Refuse a live release from any ref but main");
+		const branch = "refs/heads/ci/6642-forced-suite-matrix";
+		for (const ref of ["refs/heads/main", branch]) {
+			for (const dryRun of [false, true]) {
+				for (const publishOnly of [false, true]) {
+					for (const sha of ["", "a48cbcbfbe2ec209cc299ba23a9f32a562fbb444"]) {
+						const context = {
+							github: { ref, sha: "77ab284f3b36f62f0ca3d5c058d6c241d30b6ddf" },
+							inputs: { dry_run: dryRun, "publish-only": publishOnly, force_tests: true, sha, version: "2026.11.13" },
+						};
+						const live = ref === branch && !dryRun;
+						const label = `${ref} dry_run=${dryRun} publish-only=${publishOnly} sha=${sha || "(empty)"}`;
+						assert.equal(isTruthy(evaluateExpression(stepIf(refusal), context)), live, `refusal step, ${label}`);
+						for (const step of mutating) {
+							const runs = isTruthy(evaluateExpression(stepIf(step.text), context));
+							if (live) assert.equal(runs, false, `${step.name} reachable on ${label}`);
+						}
+						if (!live) {
+							assert.equal(isTruthy(evaluateExpression(stepIf(mutating[0].text), context)), !publishOnly, `Run release, ${label}`);
+							assert.equal(isTruthy(evaluateExpression(stepIf(mutating[1].text), context)), publishOnly, `Publish, ${label}`);
+						}
+					}
+				}
+			}
 		}
-		const prepare = jobStep(workflowJob(workflow, "prepare"), "Regenerate the model catalog on the release commit");
-		assert.match(prepare, /--github-output "\$GITHUB_OUTPUT"/);
-		const release = jobStep(workflowJob(workflow, "release"), "Run release");
-		assert.match(release, /TESTED_BASE_SHA: \$\{\{ needs\.prepare\.outputs\.base_sha \}\}/);
+		assert.ok(release.indexOf("- name: Refuse a live release from any ref but main") < release.indexOf("- name: Checkout"));
+		assert.match(refusal, /exit 1/);
 	});
 
-	it("prepares the release's version and tested commit once and hands them to the release job", () => {
-		const prepare = workflowJob(workflow, "prepare");
-		for (const output of ["base_sha", "tested_sha", "tested_tree", "version", "bundle"]) {
-			assert.match(prepare, new RegExp(`\\n      ${output}: \\$\\{\\{ steps\\.prepare\\.outputs\\.${output} \\}\\}\\n`));
-		}
-		assert.match(jobExpression(prepare, "if"), /inputs\.force_tests == true && inputs\.publish-only != true/);
-		assert.match(jobStep(prepare, "Regenerate the model catalog on the release commit"), /node scripts\/release-forced-prepare\.mjs/);
-		const run = jobStep(workflowJob(workflow, "release"), "Run release");
-		assert.match(run, /RELEASE_VERSION: \$\{\{ inputs\.version \|\| needs\.prepare\.outputs\.version \}\}/);
+	// Review finding 6 on senpi#6645: under force_tests the summary names the commit the matrix tested and the release
+	// tags (prepare's tested_sha); otherwise the dispatched sha input, else the run's commit.
+	it("reports the tested commit in the workflow summary under force_tests", () => {
+		const summary = jobStep(workflowJob(workflow, "release"), "Workflow summary");
+		const expression = summary.match(/commit="\$\{\{ (.*) \}\}"/)?.[1];
+		assert.ok(expression, "expected the summary's commit expression");
+		const commit = (forceTests, testedSha, sha) =>
+			evaluateExpression(expression, {
+				inputs: { force_tests: forceTests, sha },
+				needs: { prepare: { outputs: { tested_sha: testedSha } } },
+				github: { sha: "GITHUBSHA" },
+			});
+		assert.equal(commit(true, "TESTED", ""), "TESTED");
+		assert.equal(commit(true, "TESTED", "PINNED"), "TESTED");
+		assert.equal(commit(false, "", "PINNED"), "PINNED");
+		assert.equal(commit(false, "", ""), "GITHUBSHA");
+		assert.equal(commit(true, "", ""), "GITHUBSHA", "a failed prepare falls back to the run's commit");
 	});
 });
