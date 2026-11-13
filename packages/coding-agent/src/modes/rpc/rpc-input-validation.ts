@@ -151,10 +151,17 @@ export function rpcCommandPayloadError(command: unknown): string | undefined {
 	) {
 		return "path must be a non-empty string of at most 4096 characters.";
 	}
+	if (
+		value.type === "set_client_info" &&
+		value.client_id !== undefined &&
+		!(typeof value.client_id === "string" && value.client_id.length >= 1 && value.client_id.length <= 256)
+	) {
+		return "client_id must be a string of 1 to 256 characters.";
+	}
 	if (value.type === "unload_session") {
 		if (value.children !== undefined && value.children !== "refuse" && value.children !== "detach")
 			return 'children must be "refuse" or "detach".';
-		for (const flag of ["interrupt", "clearQueue", "force"] as const)
+		for (const flag of ["interrupt", "clearQueue", "force", "dryRun"] as const)
 			if (value[flag] !== undefined && typeof value[flag] !== "boolean") return `${flag} must be a boolean.`;
 	}
 	if (
