@@ -24,6 +24,7 @@
 import { rm } from "node:fs/promises";
 import type { AgentSession } from "../../core/agent-session.ts";
 import { isMoveId, isPlainId, parseMoveId } from "../../core/session-move/bundle.ts";
+import { assertMoveFits } from "../../core/session-move/export.ts";
 import { prepareOutgoingState, STATE_ATTEMPT_FIELD } from "../../core/session-move/extension-state.ts";
 import { SessionMovedAwayError } from "../../core/session-move/ownership.ts";
 import { isHandoffBusy } from "./handoff-activity.ts";
@@ -145,6 +146,8 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 			});
 			if (failed !== undefined)
 				throw new Error(`${failed.extensionPath} could not write its state for the move: ${failed.error}`);
+			// State a bundle could not carry refuses the release here, before the seal: the session stays live.
+			await assertMoveFits(first.sessionPath, manager.getSessionId(), stagedState.dir, false);
 		}
 		answer = await claimAndRelease(port, command, interrupted, dropped, stagedState?.attempt, () => {
 			sealed = true;
