@@ -109,17 +109,19 @@ async function startShutdown(options: {
 	});
 	// Record every signal the shutdown asks for, in order: the SIGTERM grace step is
 	// only observable here — the child is reaped by SIGKILL either way. No signal reaches
-	// the OS. The child ignores SIGTERM; SIGKILL ends it, and its exit is delivered on the
-	// next microtask: after `waitForChildExit` has subscribed (it is called synchronously
-	// after the signal) and before any fake time can advance toward the kill-exit bound.
+	// the OS. Like the real child it replaces, the stand-in ignores SIGTERM and any other
+	// signal ends it, with the signal it RECEIVED from the code under test (#6660 review L2).
+	// The exit is delivered on the next microtask: after `waitForChildExit` has subscribed
+	// (it is called synchronously after the signal), before fake time can move.
 	const signals: string[] = [];
 	const kill = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
-		signals.push(typeof signal === "string" ? signal : "SIGTERM");
-		if (pid !== childPid || signal !== "SIGKILL") return true;
-		clock.sigkillAt = Date.now();
+		const received = typeof signal === "string" ? signal : "SIGTERM";
+		signals.push(received);
+		if (pid !== childPid || received === "SIGTERM" || child.signalCode !== null) return true;
+		if (received === "SIGKILL") clock.sigkillAt = Date.now();
 		queueMicrotask(() => {
-			(child as { signalCode: NodeJS.Signals | null }).signalCode = "SIGKILL";
-			child.emit("exit", null, "SIGKILL");
+			(child as { signalCode: string | null }).signalCode = received;
+			child.emit("exit", null, received);
 		});
 		return true;
 	});
