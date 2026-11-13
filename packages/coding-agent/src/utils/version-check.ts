@@ -1,5 +1,5 @@
 import { compare, valid } from "semver";
-import { PACKAGE_NAME } from "../config.ts";
+import { detectInstallMethod, type InstallMethod, PACKAGE_NAME } from "../config.ts";
 import { type BrandUpdateChannel, brandProfile, envValue } from "../core/brand.ts";
 import { fetchWithRetry } from "./management-http.ts";
 import { getPiUserAgent } from "./pi-user-agent.ts";
@@ -12,6 +12,20 @@ function latestVersionUrl(channel: BrandUpdateChannel | undefined): string {
 	return channel
 		? `${REGISTRY_BASE_URL}/-/package/${encodeURIComponent(channel.packageName)}/dist-tags`
 		: LATEST_VERSION_URL;
+}
+
+// A standalone binary can only be updated from a GitHub Release ("Download from: .../releases/latest" in config.ts),
+// and npm can publish before that release exists (senpi#6633), so a binary reads the latest release, never npm.
+const LATEST_RELEASE_URL = "https://api.github.com/repos/code-yeongyu/senpi/releases/latest";
+
+/** Version of the latest GitHub Release, from its tag; drafts and prereleases are not installable. */
+export function readLatestReleaseVersion(payload: unknown): string | undefined {
+	if (typeof payload !== "object" || payload === null) return undefined;
+	const release = payload as Record<string, unknown>;
+	if (release.draft === true || release.prerelease === true) return undefined;
+	const tag = typeof release.tag_name === "string" ? release.tag_name.trim() : "";
+	const version = tag.startsWith("v") ? tag.slice(1) : tag;
+	return version || undefined;
 }
 
 /** Reads the available version out of whichever registry document was fetched. */
@@ -104,9 +118,16 @@ export function getReleaseChangelogUrl(version: string): string {
 	return `${RELEASE_CHANGELOG_BASE_URL}/${tag}/${RELEASE_CHANGELOG_PATH}`;
 }
 
+export interface VersionCheckOptions {
+	timeoutMs?: number;
+	retry?: boolean;
+	/** Defaults to the running install; tests pass it explicitly. */
+	installMethod?: InstallMethod;
+}
+
 export async function getLatestPiRelease(
 	currentVersion: string,
-	options: { timeoutMs?: number; retry?: boolean } = {},
+	options: VersionCheckOptions = {},
 ): Promise<LatestPiRelease | undefined> {
 	if (envValue("OFFLINE")) return undefined;
 
@@ -117,12 +138,13 @@ export async function getLatestPiRelease(
 		// advertising them would send the user after an update they cannot apply.
 		return undefined;
 	}
+	const fromRelease = !channel && (options.installMethod ?? detectInstallMethod()) === "bun-binary";
 	const response = await fetchWithRetry(
-		latestVersionUrl(channel),
+		fromRelease ? LATEST_RELEASE_URL : latestVersionUrl(channel),
 		{
 			headers: {
 				"User-Agent": getPiUserAgent(currentVersion),
-				accept: "application/json",
+				accept: fromRelease ? "application/vnd.github+json" : "application/json",
 			},
 		},
 		{
@@ -132,6 +154,10 @@ export async function getLatestPiRelease(
 	);
 	if (!response.ok) return undefined;
 
+	if (fromRelease) {
+		const releaseVersion = readLatestReleaseVersion(await response.json());
+		return releaseVersion ? { version: releaseVersion } : undefined;
+	}
 	const data = (await response.json()) as { packageName?: unknown; version?: unknown; note?: unknown };
 	const availableVersion = readAvailableVersion(data, channel);
 	if (!availableVersion) {
@@ -148,16 +174,19 @@ export async function getLatestPiRelease(
 
 export async function getLatestPiVersion(
 	currentVersion: string,
-	options: { timeoutMs?: number; retry?: boolean } = {},
+	options: VersionCheckOptions = {},
 ): Promise<string | undefined> {
 	return (await getLatestPiRelease(currentVersion, options))?.version;
 }
 
-export async function checkForNewPiVersion(currentVersion: string): Promise<LatestPiRelease | undefined> {
+export async function checkForNewPiVersion(
+	currentVersion: string,
+	options: Pick<VersionCheckOptions, "installMethod"> = {},
+): Promise<LatestPiRelease | undefined> {
 	if (envValue("SKIP_VERSION_CHECK")) return undefined;
 
 	try {
-		const latestRelease = await getLatestPiRelease(currentVersion);
+		const latestRelease = await getLatestPiRelease(currentVersion, options);
 		if (latestRelease && isNewerPackageVersion(latestRelease.version, currentVersion)) {
 			return latestRelease;
 		}
