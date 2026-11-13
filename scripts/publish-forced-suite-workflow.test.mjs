@@ -175,8 +175,8 @@ describe("forced-suite matrix jobs (senpi#6642)", () => {
 		for (const name of MATRIX_JOBS) assert.doesNotMatch(workflowJob(workflow, name), /scripts\/publish\.mjs|npm publish/);
 	});
 
-	it("gives the new jobs read-only contents permission and no secrets", () => {
-		for (const name of MATRIX_JOBS) {
+	it("gives the new jobs, and require-version (it only checks an input), read-only contents permission and no secrets", () => {
+		for (const name of [...MATRIX_JOBS, "require-version"]) {
 			const job = workflowJob(workflow, name);
 			assert.match(job, /\n    permissions:\n      contents: read\n(?! {6}\S)/, `${name} must have exactly contents: read`);
 			assert.doesNotMatch(job, /id-token|: write|secrets\./, `${name} must not get write access or secrets`);

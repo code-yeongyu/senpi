@@ -44,6 +44,9 @@ jobs:
     # checkout of refs/tags/v in native-prebuilds (which would also skip the release job and any later guard).
     if: ${{ inputs.publish-only == true }}
     runs-on: ubuntu-latest
+    # It only checks an input, so it gets read-only contents and nothing else (least privilege, senpi#6642).
+    permissions:
+      contents: read
     steps:
       - name: Require a version for publish-only
         env:
