@@ -8,10 +8,20 @@
  * `finally` or `afterAll`. So the join sits at the removal itself, for every test in this package:
  * `fs.promises.rm` (the `node:fs/promises` export too) waits for every overlapping pass first, and
  * `fs.rmSync`, which cannot wait, refuses while one is in flight.
+ *
+ * senpi#6488: the credential pool appends its block log without awaiting it (senpi#5992), next to the pool state
+ * file a test keeps in its temp tree. The same `fs.promises.rm` join waits for those appends inside the tree too,
+ * so a teardown that removes the tree with an awaited `rm` cannot race the log's creation. `fs.rmSync` cannot wait,
+ * and an append already running on the thread pool can create the log while its walk is under way, so it refuses with
+ * a `PendingBlockLogRemovalError` naming the pending logs.
  */
 import fs, { type PathLike, type RmOptions } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { fileURLToPath } from "node:url";
+import {
+	pendingCredentialBlockLogsWithin,
+	settledCredentialBlockLogsWithin,
+} from "../../src/core/credential-pool/block-log.ts";
 import {
 	opportunisticHostGcWithin,
 	settledOpportunisticHostGcWithin,
@@ -19,7 +29,21 @@ import {
 
 interface PassRegistry {
 	readonly within: (path: string) => readonly string[];
+	readonly blockLogsWithin: (path: string) => readonly string[];
 	readonly settledWithin: (path: string) => Promise<void>;
+}
+
+export class PendingBlockLogRemovalError extends Error {
+	readonly code = "EBLOCKLOGPENDING";
+	readonly pending: readonly string[];
+
+	constructor(path: string, pending: readonly string[]) {
+		super(
+			`rmSync(${path}) while a credential block-log append into ${pending.join(", ")} is still pending (senpi#6488): remove the tree with an awaited fs.promises.rm, which waits for it`,
+		);
+		this.name = "PendingBlockLogRemovalError";
+		this.pending = pending;
+	}
 }
 
 interface RegistryHolder {
@@ -43,7 +67,10 @@ function pathOf(path: PathLike): string {
 export function installHostScratchRemovalGuard(): void {
 	const registry: PassRegistry = {
 		within: opportunisticHostGcWithin,
-		settledWithin: settledOpportunisticHostGcWithin,
+		blockLogsWithin: pendingCredentialBlockLogsWithin,
+		settledWithin: async (path) => {
+			await Promise.all([settledOpportunisticHostGcWithin(path), settledCredentialBlockLogsWithin(path)]);
+		},
 	};
 	const installed: unknown = Reflect.get(globalThis, HOLDER);
 	if (isRegistryHolder(installed)) {
@@ -73,6 +100,8 @@ export function installHostScratchRemovalGuard(): void {
 				throw new Error(
 					`rmSync(${pathOf(path)}) while ensureHost's gc pass for ${pending.join(", ")} is still writing into it (senpi#4382): await settledOpportunisticHostGc or removeHostScratch first`,
 				);
+			const pendingLogs = holder.current.blockLogsWithin(pathOf(path));
+			if (pendingLogs.length > 0) throw new PendingBlockLogRemovalError(pathOf(path), pendingLogs);
 			rmSync(path, options);
 		},
 	});

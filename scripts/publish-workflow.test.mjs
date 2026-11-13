@@ -23,6 +23,9 @@ describe("publish-only workflow", () => {
 
 	it("calls native prebuilds and stages their consumer-ready artifacts before building", () => {
 		assert.match(nativePrebuildWorkflow, /workflow_call:/);
+		// The call's readiness is an output of the always-running ready job, not needs.<call>.result.
+		assert.match(nativePrebuildWorkflow, /    outputs:\n      ready:\n[\s\S]*?value: \$\{\{ jobs\.ready\.outputs\.ready \}\}/);
+		assert.doesNotMatch(workflow, /needs\.native-prebuilds\.result/);
 		assert.match(
 			nativePrebuildWorkflow,
 			/path: \$\{\{ runner\.temp \}\}\/native-prebuild-artifact\s*$/m,
@@ -31,7 +34,7 @@ describe("publish-only workflow", () => {
 		assert.match(workflow, /native-prebuilds:\s+needs: require-version\s+if: \$\{\{ inputs\.publish-only == true \}\}\s+uses:/);
 		assert.match(
 			workflow,
-			/needs: native-prebuilds\s+if: \$\{\{ always\(\) && \(inputs\.publish-only != true \|\| needs\.native-prebuilds\.result == 'success'\) \}\}/,
+			/needs: native-prebuilds\s+(?:#[^\n]*\s+)*if: \$\{\{ always\(\) && \(inputs\.publish-only != true \|\| needs\.native-prebuilds\.outputs\.ready == 'true'\) \}\}/,
 		);
 		const nativeDownload = workflow.match(/- name: Download native prebuilds[\s\S]*?(?=\n      - name: Build all workspaces)/)?.[0];
 		assert.ok(nativeDownload, "expected native prebuild download before workspace builds");

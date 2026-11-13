@@ -1,4 +1,5 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AssistantMessageEventStream, OAuthCredential } from "@earendil-works/pi-ai";
@@ -10,10 +11,10 @@ import { addOpenAiWebSearchToPayload } from "../../../src/core/extensions/builti
 import { ModelRuntime } from "../../../src/core/model-runtime.ts";
 
 let directory: string;
-afterEach(() => {
+afterEach(async () => {
 	vi.unstubAllGlobals();
 	vi.unstubAllEnvs();
-	if (directory) rmSync(directory, { recursive: true, force: true });
+	if (directory) await rm(directory, { recursive: true, force: true });
 });
 
 async function finish(stream: AssistantMessageEventStream) {

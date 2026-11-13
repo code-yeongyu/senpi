@@ -48,7 +48,8 @@
 		"node": ">=24.0.0"
 	},
 	"dependencies": {
-		"@earendil-works/pi-pty": "^2026.11.12"
+		"@earendil-works/pi-pty": "^2026.11.12",
+		"@earendil-works/pi-realm-registry": "^2026.11.12"
 	},
 	"devDependencies": {
 		"@types/node": "26.6.2"
