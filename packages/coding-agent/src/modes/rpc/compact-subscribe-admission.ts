@@ -61,7 +61,7 @@ export async function compactSubscribe(
 			if (!pending) throw new CompactAdmissionError("storage_unavailable");
 			const eventLease = lease;
 			const identity = { sessionId: subscriptionId, admissionId, generation: 0 };
-			const reply = host.writer.baselineAnswer(peer);
+			const reply = host.writer.baselineAnswer(peer, socketEpoch);
 			delivery = reply;
 			let live = true;
 			baseline = () =>

@@ -106,7 +106,7 @@ it("#given a compact open cancelled while it ran, whose route retirement fails a
 	expect(answers.map((record) => record.code ?? record.errorCode)).toEqual(["attempt_cancelled"]);
 }, 120_000);
 
-it("#given the same open whose baseline the connection did not take #then nothing writes the answer it handed over, so the open's own refusal is its one answer, #and the retirement is attempted once", async () => {
+it("#given the same open whose baseline the connection did not take #then the answer it handed over is written the ordinary way and is its one answer, #and the retirement is attempted once", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
 	await using host = await statusHost();
 	const peer = host.client("peer");
@@ -119,7 +119,7 @@ it("#given the same open whose baseline the connection did not take #then nothin
 
 	const answers = await answersUnder(peer, "open-1");
 	expect(answers).toHaveLength(1);
-	expect(answers[0]).toMatchObject({ success: false, admissionId: "a1" });
+	expect(answers.map((record) => record.code ?? record.errorCode)).toEqual(["attempt_cancelled"]);
 	expect(retired).toHaveBeenCalledTimes(1);
 }, 120_000);
 
@@ -138,7 +138,7 @@ describe("an answer handed to an admission baseline, at the writer", () => {
 		]);
 	}, 120_000);
 
-	it("#given a baseline the connection did not take, an empty view #then the answer handed to it is not an answer: the throw gets the host's one answer", async () => {
+	it("#given a baseline the connection did not take, an empty view #then the answer handed to it is written the ordinary way, and the throw gets no second answer", async () => {
 		await using host = await statusHost();
 		const peer = host.client("peer");
 		quietStderr();
@@ -147,7 +147,9 @@ describe("an answer handed to an admission baseline, at the writer", () => {
 			answerLine(host.writer, "peer", handsOverThenThrows(host, "empty", ANSWER), LIST),
 		);
 
-		expect(await answersUnder(peer, "r1")).toEqual([expect.objectContaining({ success: false })]);
+		expect(await answersUnder(peer, "r1")).toEqual([
+			expect.objectContaining({ command: "list_sessions", success: true }),
+		]);
 	}, 120_000);
 
 	it("#given a handler that ends its baseline with nothing to write, and then throws #then the throw gets the host's one answer", async () => {

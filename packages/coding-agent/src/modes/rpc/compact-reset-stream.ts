@@ -37,7 +37,7 @@ export async function resetStream(host: RouterContext, command: Extract<RpcComma
 		generation,
 		data: { recovery: { token: token.id, componentRef: "manifest" } },
 	};
-	const reply = host.writer.baselineAnswer(peer);
+	const reply = host.writer.baselineAnswer(peer, socketEpoch);
 	reply.install(() =>
 		host.writer.installAdmissionBaseline(
 			peer,

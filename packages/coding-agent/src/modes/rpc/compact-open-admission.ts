@@ -85,7 +85,7 @@ export async function compactOpen(
 				const token = frozen.value.token;
 				const identity = { sessionId, admissionId, generation: token.admission.generation, token: token.id };
 				let active = true;
-				const reply = host.writer.baselineAnswer(peer);
+				const reply = host.writer.baselineAnswer(peer, socketEpoch);
 				delivery = reply;
 				host.writer.registerAdmission(peer, admissionId, sessionId);
 				baseline = () =>

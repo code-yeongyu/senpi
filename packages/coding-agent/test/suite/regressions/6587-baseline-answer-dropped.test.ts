@@ -28,7 +28,7 @@ const update = (full: string) => ({
 });
 
 /** A connection of the real writer with a small queue, whose transport is held so that what is queued piles up. */
-function heldPeer() {
+function heldPeer(socket?: string) {
 	const writer = new SessionEventWriter(() => {});
 	const records: Record<string, unknown>[] = [];
 	const drain = Promise.withResolvers<void>();
@@ -47,7 +47,7 @@ function heldPeer() {
 	writer.setConnectionCapabilities("peer", [EVENT_RESYNC_CAPABILITY]);
 	writer.attachConnectionToSession("peer", "rpc-1");
 	writer.enqueue("rpc-1", { type: "message_start", message: message("") });
-	const reply = writer.baselineAnswer("peer");
+	const reply = socket === undefined ? writer.baselineAnswer("peer") : writer.baselineAnswer("peer", socket);
 	return {
 		/** Queues updates until the queue overflowed; six are enough for a second overflow, which makes the recovery stale. */
 		overflow: (updates: number) => {
@@ -66,7 +66,7 @@ function heldPeer() {
 			});
 			return taken;
 		},
-		hand: () => reply.hand(ANSWER),
+		hand: (answer: Readonly<Record<string, unknown>> = ANSWER) => reply.hand(answer),
 		/** Releases the transport; returns what the connection received under the request's id, and the gap notices. */
 		received: async () => {
 			held = false;
@@ -119,6 +119,18 @@ describe("an answer handed to an admission baseline that does not write it, on t
 		expect(answers).toEqual(THE_ANSWER);
 	});
 
+	it("#given a baseline the queue took, and an answer too large to fit beside what the queue holds #when the queue overflows before the baseline is written #then the connection still receives that answer, once: it is written after the cut, not inside it", async () => {
+		const peer = heldPeer();
+		const taken = peer.install();
+		peer.hand({ ...ANSWER, data: { note: "y".repeat(360) } });
+
+		peer.overflow(2);
+
+		const { answers, gaps } = await peer.received();
+		expect([taken, gaps > 0]).toEqual([true, true]);
+		expect(answers).toEqual(THE_ANSWER);
+	});
+
 	it("#given a connection with no recovery pending #when a request's answer is handed to its admission baseline #then the baseline writes it, and the connection receives it once", async () => {
 		const peer = heldPeer();
 
@@ -127,6 +139,17 @@ describe("an answer handed to an admission baseline that does not write it, on t
 
 		expect(taken).toBe(true);
 		expect((await peer.received()).answers).toEqual(THE_ANSWER);
+	});
+
+	it("#given a request made on an earlier socket of the connection #when its baseline is not taken #then its answer is not written to the socket that replaced it", async () => {
+		const peer = heldPeer("an-earlier-socket");
+		peer.overflow(6);
+
+		const taken = peer.install();
+		peer.hand();
+
+		expect(taken).toBe(false);
+		expect((await peer.received()).answers).toEqual([]);
 	});
 });
 
