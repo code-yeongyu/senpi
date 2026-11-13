@@ -10,6 +10,12 @@ import { createHarness, getAssistantTexts, getMessageText, type Harness } from "
  * after the real prompt. Skip it so response routing still keys off the prompt.
  */
 const HIDDEN_RESTORATION_PREFIX = "[restore checkpointed session agent configuration after compaction]";
+/** The fallback switch note (omo#13243) reaches the retried request the same way, after the prompt. */
+const MODEL_SWITCH_NOTE_PREFIX = "[model fallback";
+
+function isModelSwitchNote(message: Context["messages"][number]): boolean {
+	return message.role === "user" && getMessageText(message).startsWith(MODEL_SWITCH_NOTE_PREFIX);
+}
 
 function lastUserText(context: Context): string {
 	for (let index = context.messages.length - 1; index >= 0; index--) {
@@ -17,6 +23,7 @@ function lastUserText(context: Context): string {
 		if (message?.role !== "user") continue;
 		const text = getMessageText(message);
 		if (text.startsWith(HIDDEN_RESTORATION_PREFIX)) continue;
+		if (text.startsWith(MODEL_SWITCH_NOTE_PREFIX)) continue;
 		if (typeof message.content === "string") return text;
 		const lastText = message.content.findLast((part) => part.type === "text");
 		return lastText?.text ?? text;
@@ -120,7 +127,7 @@ describe("Regression: compaction state during model fallback", () => {
 		]);
 		expect(fallbackPromptContexts).toHaveLength(2);
 		for (const context of fallbackPromptContexts) {
-			const userMessages = context.messages.filter((message) => message.role === "user");
+			const userMessages = context.messages.filter((message) => message.role === "user" && !isModelSwitchNote(message));
 			const prompt = userMessages.at(-1);
 			expect(prompt?.content).toHaveLength(1);
 			expect(prompt && lastUserText({ ...context, messages: [prompt] })).toBe("trigger fallback");
