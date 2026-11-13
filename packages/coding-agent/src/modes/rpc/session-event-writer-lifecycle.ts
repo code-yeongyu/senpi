@@ -1,3 +1,4 @@
+import { AnsweredRequests } from "./answered-requests.ts";
 import { withReceipt } from "./command-authority.ts";
 import { serializeJsonLine } from "./jsonl.ts";
 import type { RpcSessionClosedEvent, RpcSessionClosedReason, RpcSessionParkedEvent } from "./rpc-types.ts";
@@ -9,6 +10,9 @@ import { isCorrelatedReply } from "./socket-peer-recovery.ts";
 
 /** Session lifecycle: `session_opened`, close, seal, close-reply admission and forgetting a handle. */
 export abstract class SessionEventWriterLifecycle extends SessionEventWriterPresenters {
+	/** Which requests in flight already had an answer taken into a queue; asked by the one place that answers a throw. */
+	readonly answered = new AnsweredRequests();
+
 	/** Who caused a change: the client whose command is being dispatched, else `fallback`. */
 	protected changeActor(fallback: SessionStatusActor): SessionStatusActor {
 		return this.connectionContext.getStore() === undefined ? fallback : "client";
@@ -65,18 +69,7 @@ export abstract class SessionEventWriterLifecycle extends SessionEventWriterPres
 			this.fanout.deliverToSession(sessionId, serializeJsonLine(lifecycle));
 		else this.fanout.broadcast(serializeJsonLine(lifecycle));
 		this.sealStatus(sessionId, lifecycle);
-		const taggedResponse = { ...response, sessionId };
-		const registered = targetId === undefined ? undefined : this.fanout.get(targetId);
-		if (registered)
-			registered.actor.enqueue(
-				serializeJsonLine(taggedResponse),
-				undefined,
-				undefined,
-				undefined,
-				isCorrelatedReply(response),
-			);
-		else this.appendSessionRecord(sessionId, taggedResponse, targetId);
-		this.requestFlush();
+		this.takeClosedReply(sessionId, response, targetId);
 	}
 
 	/**
@@ -191,7 +184,15 @@ export abstract class SessionEventWriterLifecycle extends SessionEventWriterPres
 	}
 
 	private appendClosedResponse(sessionId: string, response: object): void {
-		const targetId = this.connectionContext.getStore();
+		this.takeClosedReply(sessionId, response, this.connectionContext.getStore());
+	}
+
+	/**
+	 * Takes a close's reply for writing: tagged with its session, to the connection's actor or onto the shared output.
+	 * Every close reply is taken here and nowhere else, so this is where the ledger of answered requests is told of
+	 * it (senpi#6483's review): a close that returned before this point wrote nothing and is not an answer.
+	 */
+	private takeClosedReply(sessionId: string, response: object, targetId: string | undefined): void {
 		const taggedResponse = { ...response, sessionId };
 		const registered = targetId === undefined ? undefined : this.fanout.get(targetId);
 		if (registered)
@@ -203,6 +204,7 @@ export abstract class SessionEventWriterLifecycle extends SessionEventWriterPres
 				isCorrelatedReply(response),
 			);
 		else this.appendSessionRecord(sessionId, taggedResponse, targetId);
+		this.answered.taken(targetId, taggedResponse);
 		this.requestFlush();
 	}
 
