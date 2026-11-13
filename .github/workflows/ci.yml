@@ -1654,6 +1654,47 @@ jobs:
           npm ci --ignore-scripts
           npm run build
 
+      # senpi#6127: retain the path regressions in this existing macOS runner.
+      - name: Snapshot OS temp before path-resolution tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        id: path_resolution_test_temp_snapshot
+        shell: bash
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/path-resolution-test-temp-before.json --export-env
+
+      - name: Path-resolution filesystem regressions
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.path_resolution_test_temp_snapshot.outcome == 'success' }}
+        working-directory: packages/machine-ops
+        run: node ../../scripts/run-tests.mjs vitest run test/filesystem-resolution.test.ts test/operation-errors.test.ts --reporter=verbose
+
+      - name: Path-resolution cancelled-write regression
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.path_resolution_test_temp_snapshot.outcome == 'success' }}
+        working-directory: packages/machine-ops
+        run: node ../../scripts/run-tests.mjs vitest run test/local-conformance.test.ts -t "cancelled request" --reporter=verbose
+
+      - name: Path-resolution guard regressions
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.path_resolution_test_temp_snapshot.outcome == 'success' }}
+        working-directory: packages/coding-agent
+        run: >
+          node ../../scripts/run-tests.mjs vitest run
+          test/suite/moved-path-guard-cancellation.test.ts
+          test/suite/moved-path-guard-step-timeouts.test.ts
+          test/suite/moved-path-guard-trust.test.ts
+          test/suite/moved-path-guard-reused.test.ts
+          --reporter=verbose
+
+      - name: Path-resolution integration (Node)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.path_resolution_test_temp_snapshot.outcome == 'success' }}
+        run: node scripts/run-tests.mjs node scripts/qa/path-resolution-smoke.ts
+
+      - name: Path-resolution integration (Bun)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.path_resolution_test_temp_snapshot.outcome == 'success' }}
+        run: node scripts/run-tests.mjs bun scripts/qa/path-resolution-smoke.ts
+
+      - name: Check OS temp after path-resolution tests
+        if: always() && steps.path_resolution_test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: node scripts/test-temp-guard.mjs check local-ignore/path-resolution-test-temp-before.json
+
       - name: Show the crash-handling environment
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         shell: bash
@@ -1889,6 +1930,11 @@ jobs:
           node-version: "24"
           cache: npm
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.4"
+
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
@@ -1900,6 +1946,31 @@ jobs:
         id: test_temp_snapshot
         shell: bash
         run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
+
+      # senpi#6127: use this existing Linux/Windows matrix, not a feature-specific workflow.
+      - name: Path-resolution filesystem regressions
+        working-directory: packages/machine-ops
+        run: node ../../scripts/run-tests.mjs vitest run test/filesystem-resolution.test.ts test/operation-errors.test.ts --reporter=verbose
+
+      - name: Path-resolution cancelled-write regression
+        working-directory: packages/machine-ops
+        run: node ../../scripts/run-tests.mjs vitest run test/local-conformance.test.ts -t "cancelled request" --reporter=verbose
+
+      - name: Path-resolution guard regressions
+        working-directory: packages/coding-agent
+        run: >
+          node ../../scripts/run-tests.mjs vitest run
+          test/suite/moved-path-guard-cancellation.test.ts
+          test/suite/moved-path-guard-step-timeouts.test.ts
+          test/suite/moved-path-guard-trust.test.ts
+          test/suite/moved-path-guard-reused.test.ts
+          --reporter=verbose
+
+      - name: Path-resolution integration (Node)
+        run: node scripts/run-tests.mjs node scripts/qa/path-resolution-smoke.ts
+
+      - name: Path-resolution integration (Bun)
+        run: node scripts/run-tests.mjs bun scripts/qa/path-resolution-smoke.ts
 
       - name: PTY package tests
         run: npm run test --workspace @earendil-works/pi-pty

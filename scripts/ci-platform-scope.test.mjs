@@ -186,6 +186,40 @@ describe("ci.yml wiring", () => {
 		assert.match(classifyStep.run, /--workflow \.github\/workflows\/ci\.yml$/);
 		assert.equal(jobs["platform-scope"]["runs-on"], "ubuntu-latest");
 	});
+
+	it("runs the retained path-resolution regressions in the existing per-OS jobs (senpi#6127)", () => {
+		const suites = {
+			"packages/machine-ops": ["filesystem-resolution.test.ts", "operation-errors.test.ts", "local-conformance.test.ts"],
+			"packages/coding-agent": [
+				"moved-path-guard-cancellation.test.ts", "moved-path-guard-step-timeouts.test.ts",
+				"moved-path-guard-trust.test.ts", "moved-path-guard-reused.test.ts",
+			],
+		};
+		for (const name of ["terminal-cross-os", "macos-combined"]) {
+			const job = jobs[name];
+			assert.ok(job.steps.some((step) => step.uses?.startsWith("oven-sh/setup-bun@")), `${name}: Bun installed`);
+			for (const [directory, files] of Object.entries(suites)) {
+				for (const file of files) {
+					const step = job.steps.find((step) => step["working-directory"] === directory && step.run?.includes(file));
+					assert.ok(step, `${name}: ${directory}/${file}`);
+					assert.match(step.run, /scripts\/run-tests\.mjs vitest run/);
+					assert.match(step.run, /--reporter=verbose/);
+					assert.notEqual(step["continue-on-error"], true);
+					if (file === "local-conformance.test.ts") assert.match(step.run, /-t "cancelled request"/);
+				}
+			}
+			for (const runtime of ["node", "bun"]) {
+				const command = `node scripts/run-tests.mjs ${runtime} scripts/qa/path-resolution-smoke.ts`;
+				assert.ok(job.steps.some((step) => step.run === command), `${name}: ${runtime} smoke`);
+			}
+		}
+		const files = platformJobFiles(readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8"));
+		for (const path of [
+			"packages/machine-ops/test/filesystem-resolution.test.ts",
+			"packages/coding-agent/test/suite/moved-path-guard-cancellation.test.ts",
+			"scripts/qa/path-resolution-smoke.ts",
+		]) assert.equal(isPlatformPath(path, files), true, path);
+	});
 });
 
 describe("run-full-ci label workflow", () => {
