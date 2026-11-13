@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { after, describe, it } from "node:test";
 import { MAX_RECORD_AGE_DAYS, recordFileName, verifyRecord, writeRecord } from "./native-prebuild-record.mjs";
 
@@ -65,6 +65,16 @@ describe("native prebuild record", () => {
 		const extra = stagedArtifact();
 		writeFileSync(join(extra, "extra.node"), "x\n");
 		assert.match(verifyRecord({ artifactDir: extra, ...expected }).reason, /file set/);
+	});
+
+	it("rejects a symlink in the artifact even when it adds no regular file", () => {
+		const dir = stagedArtifact();
+		const outside = join(mkdtempSync(join(tmpdir(), "native-prebuild-outside-")), "payload.node");
+		roots.push(dirname(outside));
+		writeFileSync(outside, "not recorded\n");
+		symlinkSync(outside, join(dir, "native/prebuilds/darwin-arm64/extra.node"));
+		assert.match(verifyRecord({ artifactDir: dir, ...expected }).reason, /non-regular entries: native\/prebuilds\/darwin-arm64\/extra\.node/);
+		assert.throws(() => writeRecord({ artifactDir: dir, target, key, rustc, builtAt }), /non-regular entries/);
 	});
 
 	it("rejects a record for another key, artifact or rustc", () => {

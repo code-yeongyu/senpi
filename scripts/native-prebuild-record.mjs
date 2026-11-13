@@ -22,12 +22,17 @@ function expectedLifecycle(target) {
 	return target.cross_compile ? "not-run-cross-compile" : "passed";
 }
 
+// Every entry must be a regular file or a directory: the reused-artifact upload follows symlinks, so a
+// symlink (or any other special entry) would ship bytes the record never hashed.
 function listFiles(dir) {
 	const files = [];
+	const special = [];
 	for (const entry of readdirSync(dir, { withFileTypes: true, recursive: true })) {
-		if (entry.isFile()) files.push(relative(dir, join(entry.parentPath, entry.name)).split(sep).join("/"));
+		const path = relative(dir, join(entry.parentPath, entry.name)).split(sep).join("/");
+		if (entry.isFile()) files.push(path);
+		else if (!entry.isDirectory()) special.push(path);
 	}
-	return files.sort();
+	return { files: files.sort(), special: special.sort() };
 }
 
 function sha256(path) {
@@ -36,7 +41,9 @@ function sha256(path) {
 
 function digestFiles(artifactDir, recordName) {
 	const files = {};
-	for (const path of listFiles(artifactDir)) {
+	const { files: paths, special } = listFiles(artifactDir);
+	if (special.length > 0) throw new Error(`refusing to record non-regular entries: ${special.join(", ")}`);
+	for (const path of paths) {
 		if (path !== recordName) files[path] = sha256(join(artifactDir, path));
 	}
 	return files;
@@ -83,7 +90,9 @@ export function verifyRecord({ artifactDir, target, key, rustc, now = new Date()
 		return { ok: false, reason: `record built ${record.built_at} is older than ${MAX_RECORD_AGE_DAYS} days` };
 	}
 	const recorded = Object.keys(record.files ?? {}).sort();
-	const present = listFiles(artifactDir).filter((path) => path !== name);
+	const listing = listFiles(artifactDir);
+	if (listing.special.length > 0) return { ok: false, reason: `non-regular entries: ${listing.special.join(", ")}` };
+	const present = listing.files.filter((path) => path !== name);
 	if (JSON.stringify(recorded) !== JSON.stringify(present)) {
 		return { ok: false, reason: `file set differs from the record: recorded ${JSON.stringify(recorded)}, present ${JSON.stringify(present)}` };
 	}

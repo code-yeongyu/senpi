@@ -55,6 +55,12 @@ describe("native prebuild reuse steps", () => {
 		for (const [artifact, key] of Object.entries(printed)) assert.match(key, new RegExp(`^native-prebuild-v1-${artifact}-[0-9a-f]{64}$`));
 		assert.equal(new Set(Object.values(printed)).size, targets.length, "two targets share a key");
 		assert.equal(run(["keys"], { RUSTC_VV: vv.replace("host: x86_64-unknown-linux-gnu", "host: aarch64-apple-darwin") }).outputs.keys, outputs.keys, "the runner host changed the keys");
+		const newerRelease = JSON.parse(run(["keys"], { RUSTC_VV: vv.replaceAll("1.91.0", "1.91.1") }).outputs.keys);
+		const newerCommit = JSON.parse(run(["keys"], { RUSTC_VV: vv.replace("f8297e351a40c1439a467bbbb6879088047f50b3", "0".repeat(40)) }).outputs.keys);
+		for (const target of targets) {
+			assert.notEqual(newerRelease[target.artifact], printed[target.artifact], `${target.artifact}: a new rustc release kept the key`);
+			assert.notEqual(newerCommit[target.artifact], printed[target.artifact], `${target.artifact}: a new rustc commit kept the key`);
+		}
 	});
 
 	it("select reuses verified cache entries and passes every other target, with its key, to the build matrix", () => {
