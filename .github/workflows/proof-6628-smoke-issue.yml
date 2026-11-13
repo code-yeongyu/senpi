@@ -1,0 +1,58 @@
+name: Proof for senpi#6628 (never merged)
+
+# Runs the report-smoke-failure-after-npm job's permissions, checkout and script inside Actions, in --dry-run,
+# so no issue is opened. The second job drops contents: read to show what the checkout needs.
+on:
+  pull_request:
+
+permissions: {}
+
+jobs:
+  same-permissions-as-the-job:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    env:
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: v2026.11.13
+    steps:
+      - name: Checkout release scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts
+          sparse-checkout-cone-mode: true
+
+      - name: Open an issue for the failed smoke and fail (dry run against a real past release run)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: "43462776895"
+          RUN_ATTEMPT: "1"
+          RUN_URL: https://github.com/code-yeongyu/senpi/actions/runs/43462776895
+        run: node scripts/release-smoke-failure-issue.mjs --dry-run
+
+  without-contents-read:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      issues: write
+    env:
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: v2026.11.13
+    steps:
+      - name: Checkout release scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts
+          sparse-checkout-cone-mode: true
+
+      - name: Open an issue for the failed smoke and fail (dry run against a real past release run)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: "43462776895"
+          RUN_ATTEMPT: "1"
+          RUN_URL: https://github.com/code-yeongyu/senpi/actions/runs/43462776895
+        run: node scripts/release-smoke-failure-issue.mjs --dry-run
