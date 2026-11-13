@@ -71,6 +71,10 @@ import type {
 	TUI,
 } from "@earendil-works/pi-tui";
 import type { Static, TSchema } from "typebox";
+// A type-only namespace import, on purpose. The same type written inline as a `typeof` of an import expression reads as
+// a dynamic import to the tool child's import-graph audit (test/suite/no-session-write-in-tool-child.test.ts), which
+// then puts the engine barrel, and every session writer behind it, in the child's graph.
+import type * as EngineNamespace from "../../index.ts";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import type { BashResult } from "../bash-executor.ts";
 import type { BrowserEngine } from "../browser-engine.ts";
@@ -2648,6 +2652,12 @@ export interface ExtensionAPI {
 	 * of a shared host and still gate itself per session.
 	 */
 	readonly sessionContext: SessionContext;
+	/**
+	 * The engine this extension is running in: the namespace the loader serves for `@code-yeongyu/senpi`. An extension
+	 * that needs the running engine's exports reads them here instead of importing that specifier, because on some
+	 * runtimes its own import evaluates a second copy of the engine (omo#12965). Read-only; it adds no authority.
+	 */
+	readonly engine: typeof EngineNamespace;
 
 	// =========================================================================
 	// Event Subscription

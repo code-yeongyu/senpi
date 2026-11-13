@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -29,10 +30,10 @@ beforeEach(() => {
 	repository = new CredentialSlotRepository(join(directory, "state.json"));
 });
 
-afterEach(() => {
+afterEach(async () => {
 	vi.restoreAllMocks();
 	vi.useRealTimers();
-	rmSync(directory, { recursive: true, force: true });
+	await rm(directory, { recursive: true, force: true });
 });
 
 function report(provider: string, windows: readonly LimitWindow[], all = false): void {

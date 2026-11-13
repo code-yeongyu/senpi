@@ -1,4 +1,5 @@
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AssistantMessage, AssistantMessageEvent } from "@earendil-works/pi-ai";
@@ -32,7 +33,7 @@ beforeEach(() => {
 afterEach(async () => {
 	await held?.();
 	held = undefined;
-	rmSync(dir, { recursive: true, force: true });
+	await rm(dir, { recursive: true, force: true });
 });
 
 async function holdLock(): Promise<void> {
