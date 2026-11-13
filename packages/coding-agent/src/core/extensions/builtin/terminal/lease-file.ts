@@ -14,6 +14,7 @@ import { link, open, readFile, rename, stat, unlink } from "node:fs/promises";
 import { ownProcessStartedAtMs, processBootAtMs, sameBootAsOwn, sameProcessStart } from "./process-identity.ts";
 import {
 	ownProcessKey,
+	processKeyFromStart,
 	type ProcessKeyReader,
 	readProcessKey,
 	sameProcessKey,
@@ -163,9 +164,23 @@ export async function reclaimLockState(lock: string, probes: LockProbes = {}): P
 	if (!(probes.isProcessAlive ?? pidAlive)(holder.pid)) return { state: "stale", raw };
 	// A step-invariant key decides exactly where both sides have one: the same key is the same process whatever the
 	// clock did, another key (a reboot or a reused pid) is someone else. A record without a key costs no key read.
-	const readStart = probes.readProcessStartMs ?? defaultReadProcessStartMs;
+	// One start read per holder per check: on macOS the key's start half is that same instant, so the key costs no
+	// second `ps`.
+	let startRead: Promise<number | undefined> | undefined;
+	const readStart = (pid: number): Promise<number | undefined> => {
+		startRead ??= (probes.readProcessStartMs ?? defaultReadProcessStartMs)(pid);
+		return startRead;
+	};
+	const readKey =
+		probes.readProcessKey ??
+		(process.platform === "darwin"
+			? async (pid: number) => {
+					const start = await readStart(pid).catch(() => undefined);
+					return start === undefined ? undefined : processKeyFromStart(start);
+				}
+			: readProcessKey);
 	if (holder.processKey !== undefined) {
-		const byKey = sameProcessKey(holder.processKey, await (probes.readProcessKey ?? readProcessKey)(holder.pid));
+		const byKey = sameProcessKey(holder.processKey, await readKey(holder.pid));
 		if (byKey === false) return { state: "stale", raw };
 		if (byKey === true) {
 			// The start-time probe still runs for a live holder: callers learn its start through it (the session-held

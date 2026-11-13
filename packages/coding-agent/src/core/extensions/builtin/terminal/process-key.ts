@@ -18,7 +18,7 @@
  */
 import { execFile } from "node:child_process";
 import { readFile, readlink } from "node:fs/promises";
-import { processStartTimeMs } from "../../../../utils/process-identity.ts";
+import { lstartUtcMs } from "../../../../utils/process-identity.ts";
 
 type KeyPlatform = NodeJS.Platform;
 
@@ -56,8 +56,10 @@ async function readStart(pid: number, platform: KeyPlatform): Promise<string | u
 		return ticks !== undefined && /^\d+$/.test(ticks) ? ticks : undefined;
 	}
 	if (platform === "darwin") {
-		const text = (await run("ps", ["-o", "lstart=", "-p", String(pid)], { LC_ALL: "C", LANG: "C" })).trim();
-		const startMs = text.length > 0 ? processStartTimeMs(text) : undefined;
+		const text = (
+			await run("ps", ["-o", "lstart=", "-p", String(pid)], { TZ: "UTC", LC_ALL: "C", LANG: "C" })
+		).trim();
+		const startMs = lstartUtcMs(text);
 		return startMs === undefined ? undefined : darwinStart(startMs);
 	}
 	return undefined;

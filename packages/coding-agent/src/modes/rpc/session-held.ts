@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { readProcessStartMs } from "../../core/extensions/builtin/terminal/process-start-probe.ts";
 import { foreignSessionHolders } from "../../core/foreign-session-holders.ts";
-import { processStartTimeMs } from "../../utils/process-identity.ts";
+import { lstartUtcMs, processStartTimeMs } from "../../utils/process-identity.ts";
 import { holderGenerationEnded } from "./host-stalled-evidence.ts";
 import type { RpcInboundRecord } from "./rpc-types.ts";
 import { RPC_ERROR_SESSION_HELD } from "./rpc-types.ts";
@@ -75,7 +75,7 @@ function readProcessStarts(): Promise<ReadonlyMap<number, number> | undefined> {
 				timeout: windows ? 5_000 : 1_000,
 				maxBuffer: 4 * 1024 * 1024,
 				windowsHide: true,
-				...(windows ? {} : { env: { ...process.env, LC_ALL: "C", LANG: "C" } }),
+				...(windows ? {} : { env: { ...process.env, TZ: "UTC", LC_ALL: "C", LANG: "C" } }),
 			},
 			(error, stdout) => {
 				if (error) return resolve(undefined);
@@ -83,7 +83,7 @@ function readProcessStarts(): Promise<ReadonlyMap<number, number> | undefined> {
 				for (const line of stdout.split("\n")) {
 					const row = /^\s*(\d+)\s+(.+)$/.exec(line);
 					if (!row) continue;
-					const start = processStartTimeMs(row[2]);
+					const start = windows ? processStartTimeMs(row[2]) : lstartUtcMs(row[2]);
 					if (start !== undefined) starts.set(Number(row[1]), start);
 				}
 				resolve(starts);
