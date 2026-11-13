@@ -15,6 +15,7 @@ import { writeHostRegistration } from "../../../src/modes/rpc/host-daemon-regist
 import { SupervisorActivity } from "../../../src/modes/rpc/host-lifecycle-activity.ts";
 import { SupervisorDrain } from "../../../src/modes/rpc/host-lifecycle-drain.ts";
 import { performShutdown, type SupervisorState } from "../../../src/modes/rpc/host-lifecycle-shutdown.ts";
+import { CHILD_KILL_EXIT_TIMEOUT_MS } from "../../../src/modes/rpc/host-stop-intent.ts";
 
 interface ShutdownRig {
 	readonly root: string;
@@ -25,6 +26,8 @@ interface ShutdownRig {
 	readonly signals: readonly string[];
 	/** The `process.kill` seam `signalChild` calls: every call, with its pid. */
 	readonly kill: ReturnType<typeof vi.spyOn>;
+	/** Fake-clock time of the SIGKILL and of the supervisor's exit (NaN until each happens). */
+	readonly clock: { readonly sigkillAt: number; readonly exitAt: number };
 	readonly drainStop: ReturnType<typeof vi.spyOn>;
 	readonly stopWatchers: ReturnType<typeof vi.fn>;
 	readonly flushAdmission: ReturnType<typeof vi.spyOn>;
@@ -99,7 +102,9 @@ async function startShutdown(options: {
 	});
 	const flushAdmission = vi.spyOn(admission, "flush");
 	const exit = new Error("observed supervisor exit");
+	const clock = { sigkillAt: Number.NaN, exitAt: Number.NaN };
 	const exitProcess = vi.spyOn(process, "exit").mockImplementation(() => {
+		clock.exitAt = Date.now();
 		throw exit;
 	});
 	// Record every signal the shutdown asks for, in order: the SIGTERM grace step is
@@ -110,11 +115,12 @@ async function startShutdown(options: {
 	const signals: string[] = [];
 	const kill = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
 		signals.push(typeof signal === "string" ? signal : "SIGTERM");
-		if (pid === childPid && signal === "SIGKILL")
-			queueMicrotask(() => {
-				(child as { signalCode: NodeJS.Signals | null }).signalCode = "SIGKILL";
-				child.emit("exit", null, "SIGKILL");
-			});
+		if (pid !== childPid || signal !== "SIGKILL") return true;
+		clock.sigkillAt = Date.now();
+		queueMicrotask(() => {
+			(child as { signalCode: NodeJS.Signals | null }).signalCode = "SIGKILL";
+			child.emit("exit", null, "SIGKILL");
+		});
 		return true;
 	});
 	vi.useFakeTimers();
@@ -146,6 +152,7 @@ async function startShutdown(options: {
 		exitProcess,
 		signals,
 		kill,
+		clock,
 		drainStop,
 		stopWatchers,
 		flushAdmission,
@@ -242,6 +249,11 @@ it("reaps the child when drain.stop throws before the child is signalled", async
 		expect(rig.signals).toEqual(["SIGTERM", "SIGKILL"]);
 		expectSignalledAtSeam(rig);
 		expect(rig.child.signalCode).toBe("SIGKILL");
+		// #6657 follow-up: the recovery's SIGKILL wait OBSERVED the exit through
+		// `waitForChildExit`'s listener, so shutdown ended before the kill-exit breaker could
+		// fire. An unobserved exit is swallowed by the recovery and ends shutdown only after
+		// the full bound, with the same signals and calls as above.
+		expect(rig.clock.exitAt - rig.clock.sigkillAt).toBeLessThan(CHILD_KILL_EXIT_TIMEOUT_MS);
 		// The failure aborted shutdown before the child stop, so no later step ran
 		// and no stop intent was written: the recovery reap drove the signals.
 		expect(rig.drainStop).toHaveBeenCalledTimes(1);
