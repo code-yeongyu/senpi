@@ -7,14 +7,13 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AgentSessionRuntime } from "../../src/core/agent-session-runtime.ts";
-import type { ExtensionFactory } from "../../src/core/extensions/types.ts";
 import { SessionHeldError } from "../../src/core/session-hold-errors.ts";
 import { cleanupIssue2184, spawnModuleChild, srcUrl } from "./regressions/issue-2184-support.ts";
 import { opened } from "./rpc-inprocess-host-metrics.ts";
 import { createInProcessRig } from "./rpc-inprocess-host-support.ts";
 import { customTypes, devices, move, type Rig } from "./rpc-move-session-support.ts";
 import { startReleaseHost } from "./rpc-release-host-support.ts";
+import { fileHoldLetGo, heldShutdown } from "./rpc-release-slow-teardown-support.ts";
 import { SESSION_ID } from "./session-move-fixture.ts";
 
 const MOVE = "move-failed-export-1";
@@ -44,19 +43,6 @@ const givingBack = (id: string, sessionPath: string) =>
 		moveId: MOVE,
 		answer: { state: "declined", reason: "cancelled" },
 	}) as const;
-
-/** Resolves when a runtime lets go of its session file, which is the last step of its dispose. The call goes through. */
-function fileHoldLetGo(): Promise<void> {
-	return new Promise((resolve) => {
-		const letGo = AgentSessionRuntime.prototype.releaseSessionHold;
-		vi.spyOn(AgentSessionRuntime.prototype, "releaseSessionHold").mockImplementation(function (
-			this: AgentSessionRuntime,
-		) {
-			letGo.call(this);
-			resolve();
-		});
-	});
-}
 
 type Fixture = Awaited<ReturnType<typeof devices>>;
 
@@ -125,20 +111,8 @@ describe("an export that fails after the seal (senpi#6267 P1)", () => {
 	});
 
 	it("#given a session whose shutdown handler outlives the host's close grace #when it is released for a move with an export #then the release answers and its export reports session_held in this host's own words, the session stays sealed with no bundle written, a give-back sent while that runtime is still stopping is refused and changes nothing, and once it has stopped the give-back makes the session writable and whole again", async () => {
-		// The real host closes a session within a 2 s grace; a shutdown handler under its own 10 s budget keeps the
-		// runtime, and with it the session's file hold, alive past that grace.
-		let releaseHandler = () => {};
-		const handlerGate = new Promise<void>((resolve) => {
-			releaseHandler = resolve;
-		});
-		let handlerRan = false;
-		const slowShutdown: ExtensionFactory = (pi) => {
-			pi.on("session_shutdown", async () => {
-				handlerRan = true;
-				await handlerGate;
-			});
-		};
-		await using host = await startReleaseHost(slowShutdown);
+		const shutdown = heldShutdown();
+		await using host = await startReleaseHost(shutdown.extension);
 		const { sessionId, sessionPath } = await host.open("slow-teardown");
 
 		// The handler is held past the release's answer, so the first give-back meets a runtime that is still stopping.
@@ -160,12 +134,12 @@ describe("an export that fails after the seal (senpi#6267 P1)", () => {
 			const bundleWritten = existsSync(join(agentDir, "session-moves", "outgoing", MOVE));
 			const early = await host.send(givingBack("give-back-while-stopping", sessionPath));
 			const afterEarly = readFileSync(sessionPath, "utf8");
-			releaseHandler();
+			shutdown.letGo();
 			await letGo;
 			const finished = await host.send(givingBack("give-back", sessionPath));
 			const reopened = await host.attach(sessionPath);
 
-			expect(handlerRan).toBe(true);
+			expect(shutdown.ran()).toBe(true);
 			expect(released.success).toBe(true);
 			expect(exportOf(released)).toMatchObject({ ok: false, error: "session_held" });
 			expect(sealedTypes).toEqual(["session_released"]);
@@ -178,7 +152,7 @@ describe("an export that fails after the seal (senpi#6267 P1)", () => {
 			expect(detailOf(early)).toBe(NOT_GIVEN_BACK_YET);
 			expect(exportOf(released)?.detail).toBe(STILL_STOPPING_HERE);
 		} finally {
-			releaseHandler();
+			shutdown.letGo();
 		}
 	});
 

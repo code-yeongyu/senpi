@@ -27,7 +27,7 @@ import {
 	type RpcMoveSessionCommand,
 	type RpcMoveSessionData,
 } from "./session-move-wire.ts";
-import { FINISH_BEFORE_STOPPED_DETAIL, heldByThisProcessOnly } from "./session-move-held-here.ts";
+import { stillStoppingHereDetail } from "./session-move-held-here.ts";
 import { importMoved, type MoveImportPort, openLanded, sessionDirRefusal } from "./session-move-import.ts";
 import { type MoveRequest, parseMoveRequest } from "./session-move-request.ts";
 
@@ -77,8 +77,7 @@ export async function moveSession(
 		return open_error === undefined ? undefined : answer(command.id, { ...landed, open_error });
 	} catch (cause) {
 		const { code, detail } = moveRefusalOf(cause instanceof Error ? cause : new Error(String(cause)));
-		const stillStoppingHere = parsed.op === "finish" && heldByThisProcessOnly(cause);
-		return refusal(command.id, code, stillStoppingHere ? FINISH_BEFORE_STOPPED_DETAIL : detail);
+		return refusal(command.id, code, stillStoppingHereDetail(parsed.op, cause) ?? detail);
 	}
 }
 
