@@ -62,6 +62,12 @@ export interface Skill {
 export interface LoadSkillsResult {
 	skills: Skill[];
 	diagnostics: ResourceDiagnostic[];
+	/**
+	 * The given skill paths that are folders walked for user-provenance skills, where a top-level `*.md` file loads as a
+	 * skill; taken from the stat each path gets anyway, so the RPC project verbs learn them at no extra filesystem cost
+	 * (senpi#6558).
+	 */
+	userScanDirs?: string[];
 }
 
 /**
@@ -422,6 +428,7 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 	const realPathSet = new Set<string>();
 	const allDiagnostics: ResourceDiagnostic[] = [];
 	const collisionDiagnostics: ResourceDiagnostic[] = [];
+	const userScanDirs: string[] = [];
 
 	function addSkills(result: LoadSkillsResult) {
 		allDiagnostics.push(...result.diagnostics);
@@ -518,6 +525,7 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 				projectRoot,
 			};
 			if (stats.isDirectory()) {
+				if (provenance.kind === "user") userScanDirs.push(resolvedPath);
 				addSkills(
 					loadSkillsFromDirInternal(resolvedPath, source, true, undefined, undefined, provenance, allowedSet),
 				);
@@ -540,6 +548,7 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 	return {
 		skills: Array.from(skillMap.values()),
 		diagnostics: [...allDiagnostics, ...collisionDiagnostics],
+		userScanDirs,
 	};
 }
 

@@ -60,7 +60,7 @@ import { loadPromptTemplates } from "./prompt-templates.ts";
 import { memoizeResolvedPaths, resolvedPathsMemoKey } from "./resolved-paths-memo.ts";
 import { SettingsManager } from "./settings-manager.ts";
 import type { SkillProvenance } from "./skill-access.ts";
-import type { Skill } from "./skills.ts";
+import type { LoadSkillsResult, Skill } from "./skills.ts";
 import { ignoredSkillDiagnostics, loadSkills } from "./skills.ts";
 import { warnIfLargeSkillCatalog } from "./skills-prompt.ts";
 import {
@@ -1218,15 +1218,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 				metadataByPath?.get(path)?.skillProvenance ?? { kind: "user", selectedRoot: path },
 			]),
 		);
-		this.skillScanDirs = [
-			...this.packageSkillScanDirs,
-			...skillPaths.flatMap((path) => {
-				if (provenanceByPath.get(path)?.kind !== "user") return [];
-				const resolved = resolvePath(path, this.cwd, { trim: true });
-				return statSync(resolved, { throwIfNoEntry: false })?.isDirectory() ? [resolved] : [];
-			}),
-		];
-		let skillsResult: { skills: Skill[]; diagnostics: ResourceDiagnostic[] };
+		let skillsResult: LoadSkillsResult;
 		if (this.noSkills && skillPaths.length === 0) {
 			skillsResult = { skills: [], diagnostics: [] };
 		} else {
@@ -1239,6 +1231,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 				userSkillRoots: [...this.userSkillRoots, ...this.selectedGlobalSkillRoots()],
 			});
 		}
+		this.skillScanDirs = [...this.packageSkillScanDirs, ...(skillsResult.userScanDirs ?? [])];
 		const resolvedSkills = this.skillsOverride ? this.skillsOverride(skillsResult) : skillsResult;
 		this.skills = resolvedSkills.skills.map((skill) => ({
 			...skill,
