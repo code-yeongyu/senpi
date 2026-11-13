@@ -3355,6 +3355,8 @@ export interface ProviderConfig {
 		context: TranscriptContext,
 		options?: SimpleStreamOptions,
 	) => AssistantMessageEventStream;
+	/** Custom streamSimple accepts history plus system intent without fabricating user input. Absent means unsupported. */
+	supportsNonUserContinuation?(model: Model<Api>): boolean;
 	/** Image-generation implementations keyed by image API. */
 	images?: Partial<Record<ImageApi, ProviderImages>>;
 	/** Classifier implementations keyed by classifier API. */

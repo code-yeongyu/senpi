@@ -24,12 +24,14 @@ export type ApiStreamSimpleFunction = (
 
 export interface ApiProvider<TApi extends Api = Api, TOptions extends StreamOptions = StreamOptions> {
 	api: TApi;
+	supportsNonUserContinuation?(model: Model<TApi>): boolean;
 	stream: StreamFunction<TApi, TOptions>;
 	streamSimple: StreamFunction<TApi, SimpleStreamOptions>;
 }
 
 export interface ApiProviderInternal {
 	api: Api;
+	supportsNonUserContinuation?(model: Model<Api>): boolean;
 	stream: ApiStreamFunction;
 	streamSimple: ApiStreamSimpleFunction;
 }
@@ -111,6 +113,8 @@ function createRegisteredProvider<TApi extends Api, TOptions extends StreamOptio
 	return {
 		provider: {
 			api: provider.api,
+			supportsNonUserContinuation: (model) =>
+				model.api === provider.api && provider.supportsNonUserContinuation?.(model as Model<TApi>) === true,
 			stream: wrapStream(provider.api, provider.stream),
 			streamSimple: wrapStreamSimple(provider.api, provider.streamSimple),
 		},
@@ -163,6 +167,7 @@ function resolveApiProvider(api: Api, scope: ProviderScopeAccess | undefined): A
 	if (faux) {
 		return {
 			api: faux.api,
+			supportsNonUserContinuation: faux.supportsNonUserContinuation,
 			stream: wrapStream(faux.api, faux.stream),
 			streamSimple: wrapStreamSimple(faux.api, faux.streamSimple),
 		};

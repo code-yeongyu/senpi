@@ -6306,6 +6306,10 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/coding-agent/src/core/external-wake.ts#writtenExternalWakes": {
+			"class": "constant",
+			"reason": "reducer methods never change; initial allocates each session history's own mutable map"
+		},
 		"packages/coding-agent/src/core/generated-shim-banner.ts#ACCEPTED_SHIM_BANNERS": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"

@@ -233,6 +233,9 @@ export interface Provider<TApi extends Api = Api> {
 		credential: Credential | undefined,
 	): readonly ProviderModel<TApi>[];
 
+	/** Whether this model's actual transport accepts system-led continuation without fabricating user input. */
+	supportsNonUserContinuation?(model: Model<TApi>): boolean;
+
 	/** Stream a normalized transcript. `Models` normalizes the caller's `Context` before dispatching here. */
 	stream<T extends TApi>(
 		model: Model<T>,
@@ -1231,6 +1234,7 @@ export function createProvider<TApi extends Api = Api>(input: CreateProviderOpti
 			: undefined,
 		filterModels: input.filterModels,
 		filterAllModels: input.filterAllModels,
+		supportsNonUserContinuation: (model) => apiFor(model)?.supportsNonUserContinuation?.(model) === true,
 		stream: (model, context, options) => dispatch(model, (streams) => streams.stream(model, context, options)),
 		streamSimple: (model, context, options) =>
 			dispatch(model, (streams) => streams.streamSimple(model, context, options)),

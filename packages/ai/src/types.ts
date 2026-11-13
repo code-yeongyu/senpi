@@ -273,6 +273,8 @@ export interface ProviderRequestOptions<TModel = Model<Api>> {
 }
 
 export interface StreamOptions extends ProviderRequestOptions<Model<Api>> {
+	/** Runtime must refuse transports that fabricate user input, including auth-selected and fallback transports. */
+	requiresNonUserContinuation?: boolean;
 	/**
 	 * Optional observer for each parsed provider stream event before Pi normalization.
 	 * Event data is adapter-owned and must be treated as read-only.
@@ -388,6 +390,8 @@ export type ApiStreamOptions<TApi extends Api> = TApi extends keyof ApiOptionsMa
  * `Provider.stream()` via `ApiStreamOptions`.
  */
 export interface ProviderStreams {
+	/** Accepts history plus system intent without fabricating user input. Absent means unsupported. */
+	supportsNonUserContinuation?(model: Model<Api>): boolean;
 	stream(model: Model<Api>, context: TranscriptContext, options?: StreamOptions): AssistantMessageEventStream;
 	streamSimple(
 		model: Model<Api>,

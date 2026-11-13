@@ -6,11 +6,13 @@
  */
 
 import type {
+	ExternalWakeSource,
 	RegisterControlEndpointOptions,
 	SessionControlActions,
 	SessionControlRegistration,
 } from "./extensions/session-control-types.ts";
 import type { ExternalAdmission } from "./external-admission.ts";
+import type { ExternalWake } from "./external-wake.ts";
 import type { SessionManager } from "./session-manager.ts";
 import { RELOCATION_NOT_OFFERED, type SessionRelocationHost } from "./session-relocation.ts";
 
@@ -20,6 +22,7 @@ export interface ControlEndpointHost {
 
 export interface SessionControlActionDeps {
 	readonly admission: ExternalAdmission;
+	readonly externalWake: ExternalWake;
 	readonly sessionManager: SessionManager;
 	readonly host: () => ControlEndpointHost | undefined;
 	readonly relocationHost: () => SessionRelocationHost | undefined;
@@ -37,8 +40,15 @@ export interface GenerationSessionControlActions extends SessionControlActions {
 
 export function createSessionControlActions(deps: SessionControlActionDeps): GenerationSessionControlActions {
 	const owned = new Set<Extract<SessionControlRegistration, { readonly status: "registered" }>>();
+	const wakeSources = new Set<ExternalWakeSource>();
 	let retired = false;
 	return {
+		registerExternalWakeSource: (options) => {
+			if (retired) throw new Error("Stale extension generation after reload");
+			const source = deps.externalWake.register(options);
+			wakeSources.add(source);
+			return source;
+		},
 		registerControlEndpoint: async (options) => {
 			const host = deps.host();
 			if (host === undefined) return { status: "unsupported", reason: "unsupported_mode" };
@@ -68,6 +78,8 @@ export function createSessionControlActions(deps: SessionControlActionDeps): Gen
 		},
 		retire: async () => {
 			retired = true;
+			for (const source of wakeSources) source.dispose();
+			wakeSources.clear();
 			const registrations = [...owned];
 			owned.clear();
 			await Promise.all(registrations.map((registration) => registration.dispose()));
@@ -88,6 +100,7 @@ export function unboundSessionControlActions(): SessionControlActions {
 		throw new Error("Extension runtime not initialized. pi.session cannot be used during extension loading.");
 	};
 	return {
+		registerExternalWakeSource: notBound,
 		registerControlEndpoint: () => Promise.reject(new Error("Extension runtime not initialized")),
 		admissionGate: notBound,
 		admitExternalMessage: notBound,

@@ -23,6 +23,7 @@ import {
 	type Provider,
 	type ProviderClassifier,
 	type ProviderImages,
+	type ProviderStreams,
 	type RefreshModelsContext,
 	type SimpleStreamOptions,
 	type StreamOptions,
@@ -118,6 +119,7 @@ export interface ProviderConfigInput {
 		context: TranscriptContext,
 		options?: SimpleStreamOptions,
 	) => AssistantMessageEventStream;
+	supportsNonUserContinuation?: ProviderStreams["supportsNonUserContinuation"];
 	images?: Partial<Record<ImageApi, ProviderImages>>;
 	classifiers?: Partial<Record<ClassifierApi, ProviderClassifier>>;
 	headers?: Record<string, string>;
@@ -629,6 +631,20 @@ export function composeModelProvider(
 	const refreshBase = providerId === "ollama" && config?.models?.length ? undefined : base?.refreshModels?.bind(base);
 
 	const supportsBaseApi = (model: Model<Api>) => base?.getModels().some((entry) => entry.api === model.api) ?? false;
+	const customStream = extension?.streamSimple;
+	const customTransport: ProviderStreams | undefined = customStream
+		? {
+				stream: (model, context, options) => customStream(model, context, options as SimpleStreamOptions),
+				streamSimple: customStream,
+				supportsNonUserContinuation: extension?.supportsNonUserContinuation,
+			}
+		: undefined;
+	// Streaming and capability inspection must resolve the same implementation, including overrides.
+	const transportFor = (model: Model<Api>): ProviderStreams | undefined => {
+		if (customTransport && model.api === extension?.api) return customTransport;
+		if (base && supportsBaseApi(model)) return base;
+		return getApiProvider(model.api);
+	};
 	const streamWith = (
 		model: Model<Api>,
 		context: TranscriptContext,
@@ -644,15 +660,7 @@ export function composeModelProvider(
 				const innerStream = streamWith(model, transformedContext, options, simple);
 				return wrapStreamWithToolCallMiddleware(innerStream, protocol, tools);
 			}
-			if (extension?.streamSimple && model.api === extension.api) {
-				return extension.streamSimple(model, context, options as SimpleStreamOptions);
-			}
-			if (base && supportsBaseApi(model)) {
-				return simple
-					? base.streamSimple(model, context, options as SimpleStreamOptions)
-					: base.stream(model, context, options);
-			}
-			const api = getApiProvider(model.api);
+			const api = transportFor(model);
 			if (!api) {
 				throw new Error(
 					`No API provider registered for api: ${model.api} (model "${model.provider}/${model.id}"). ` +
@@ -710,6 +718,8 @@ export function composeModelProvider(
 			: undefined,
 		stream: (model, context, options) => streamWith(model, context, options, false),
 		streamSimple: (model, context, options) => streamWith(model, context, options, true),
+		supportsNonUserContinuation: (model) =>
+			!getToolCallFormat(model) && transportFor(model)?.supportsNonUserContinuation?.(model) === true,
 	};
 
 	const fetchDeferred = base?.fetchDeferred;
