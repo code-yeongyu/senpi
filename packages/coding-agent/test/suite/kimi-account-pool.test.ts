@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createModels, fauxAssistantMessage, fauxProvider, type AuthType, type Model } from "@earendil-works/pi-ai";
@@ -24,11 +25,12 @@ beforeEach(() => {
 	}
 });
 
-afterEach(() => {
+afterEach(async () => {
 	vi.useRealTimers();
 	vi.unstubAllGlobals();
 	vi.unstubAllEnvs();
-	rmSync(dir, { recursive: true, force: true });
+	// The pool appends its block log into `dir` without awaiting it; an awaited rm waits for that append (senpi#6488).
+	await rm(dir, { recursive: true, force: true });
 });
 
 async function loginPair(type: AuthType) {
