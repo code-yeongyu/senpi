@@ -250,11 +250,16 @@ class HoldsCommit extends MoveLedger {
 	readonly stamped = signal();
 	readonly gate = signal();
 
-	override commit<T>(moveId: MoveId, target: string, rename: () => T | Promise<T>, prepare?: () => void): Promise<T> {
-		const held = async () => {
+	override commit<T>(
+		moveId: MoveId,
+		target: string,
+		rename: (stampStands: () => Promise<void>) => T | Promise<T>,
+		prepare?: () => void,
+	): Promise<T> {
+		const held = async (stampStands: () => Promise<void>) => {
 			this.stamped.resolve();
 			await this.gate.promise;
-			return rename();
+			return rename(stampStands);
 		};
 		return super.commit(moveId, target, held, prepare);
 	}

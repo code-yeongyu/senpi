@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AssistantMessageEvent, type Model, normalizeContext } from "@earendil-works/pi-ai";
@@ -239,7 +240,7 @@ describe("SIWC structured recovery through HTTP and SSE", () => {
 			expect(health.alpha?.blockedUntil).toBeUndefined();
 			expect(events.at(-1)?.type).toBe(blockReason === "account_disabled" ? "done" : "error");
 		} finally {
-			rmSync(dir, { recursive: true, force: true });
+			await rm(dir, { recursive: true, force: true });
 		}
 	});
 });

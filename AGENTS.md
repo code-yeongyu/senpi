@@ -40,6 +40,7 @@ Senpi is an extension-first coding-agent monorepo. Keep changes scoped, preserve
 | `packages/tui/` | Differential terminal renderer and editor primitives |
 | `packages/protocol/`, `packages/server/`, `packages/client/` | Framed-CBOR wire protocol plus its server and client for remote sessions |
 | `packages/telemetry/` | Vendor-neutral telemetry contracts and typed schema utilities |
+| `packages/realm-registry/` | Zero-dependency helper: one pinned, versioned registry per JavaScript realm for state several engine copies share |
 | `packages/session-backends/` | Session backend adapters; `sqlite-node/` Node sqlite session store |
 | `packages/evals/` | Model-backed eval suites over real `AgentSession`; spends tokens by design |
 | `packages/pty/` | TypeScript PTY loader, sessions, registry, vendored prebuilds, pipe fallback |
@@ -141,7 +142,7 @@ Method source: openclaw test-audit skill.
 - Keep shared environment surfaces synchronized: dependency, Node, provider/env, QA-channel, build-command, and forwarded-port changes must update `scripts/devenv-setup.mjs`, `.devcontainer/devcontainer.json`, and related references together, keeping root `package.json` workspaces and `pnpm-workspace.yaml` aligned with any workspace-package move or rename.
 - Never publish an `npm-shrinkwrap.json`. Regenerate `packages/coding-agent/install-lock/` with `bun run install-lock:coding-agent`.
 - External registry entries in root and installer locks must preserve both npm tarball `resolved` URLs and `integrity` hashes; incomplete merge results are invalid even when dependency topology still resolves.
-- `@earendil-works/pi-telemetry` is a runtime dependency and must stay in Senpi's owned CalVer alias and publish sets. `@earendil-works/pi-storage-sqlite-node` remains private and independently versioned because it is not reachable from the shipped coding-agent runtime.
+- `@earendil-works/pi-telemetry` and `@earendil-works/pi-realm-registry` are runtime dependencies and must stay in Senpi's owned CalVer alias and publish sets. `@earendil-works/pi-storage-sqlite-node` remains private and independently versioned because it is not reachable from the shipped coding-agent runtime.
 - Dependencies with lifecycle scripts require package/version review and an explicit justified generator allowlist entry; never add one silently to pass the gate.
 
 ## GIT AND DELIVERY

@@ -22,7 +22,7 @@ Entry-surface discipline and the API-provider scope model. Directory structure i
 - A closed scope throws on any lookup/mutation; no silent fallback.
 - Builtin entries register once and retain immutable identity for active scopes; `getBuiltinProvider*` must keep working while a scope holds unrelated overlay entries.
 - The images registry (`images-api-registry.ts`) is scoped identically.
-- `providerScopeStrictMode` makes scope-less lookup throw instead of using the global registry.
+- Strict mode makes scope-less lookup throw instead of using the global registry. Strict mode and the active scope live in one realm registry (`provider-scope-registry.ts`, created only by `node/provider-scope.ts`), so every pi-ai copy in a process sees them; provider entries stay per copy (omo#12965).
 
 ## CONVENTIONS
 

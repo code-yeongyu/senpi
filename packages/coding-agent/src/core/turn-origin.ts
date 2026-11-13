@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { hasFunctions, realmRegistry } from "@earendil-works/pi-realm-registry";
 
 /**
  * Who started a turn, for the remote approval-mode rule (senpi#6342: a turn follows the permission setting of the machine
@@ -15,12 +16,46 @@ export type ConnectionOrigin = "local" | "delegated";
 
 const inputMarks = new WeakMap<object, InputTurnMark>();
 const currentOrigins = new WeakMap<object, TurnOrigin>();
-// The record being handled, for the work its own handling creates (senpi#6342). It lives in that record's async
-// context, so no other record can change or clear it. The first run that record starts takes the origin and closes it,
-// so later engine work that merely descends from that run (an extension's follow-up) does not inherit it.
-type RecordScope = { readonly origin: ConnectionOrigin; open: boolean };
-const recordScopes = new AsyncLocalStorage<RecordScope>();
 const continuingTurns = new WeakSet<object>();
+
+/**
+ * The record being handled, for the work its own handling creates (senpi#6342). It lives in that record's async
+ * context, so no other record can change or clear it. The first run that record starts takes the origin and closes it,
+ * so later engine work that merely descends from that run (an extension's follow-up) does not inherit it.
+ *
+ * It is a realm registry (omo#12965): the RPC handler of one engine copy enters it, and the session that takes the
+ * input or starts the run may belong to another copy. The store and its mutable record never leave the closure.
+ */
+interface RecordScopes {
+	run<T>(origin: ConnectionOrigin, handle: () => Promise<T>): Promise<T>;
+	delegated(): boolean;
+	/** Reads whether an open delegated record starts this run, and closes the record. */
+	closeAtRunStart(): boolean;
+}
+
+const recordScope = realmRegistry(
+	"@code-yeongyu/senpi/turn-origin/v1",
+	(): RecordScopes => {
+		const scopes = new AsyncLocalStorage<{ readonly origin: ConnectionOrigin; open: boolean }>();
+		const delegated = () => {
+			const scope = scopes.getStore();
+			return scope?.open === true && scope.origin === "delegated";
+		};
+		return {
+			// Any origin other than "local" (one a newer copy defines) is treated as delegated: it fails closed.
+			run: (origin, handle) =>
+				scopes.run({ origin: origin === "local" ? "local" : "delegated", open: true }, handle),
+			delegated,
+			closeAtRunStart: () => {
+				const opened = delegated();
+				const scope = scopes.getStore();
+				if (scope !== undefined) scope.open = false;
+				return opened;
+			},
+		};
+	},
+	(value): value is RecordScopes => hasFunctions(value, ["run", "delegated", "closeAtRunStart"]),
+);
 
 /** The mark an input gets where it is created: explicit for client records, `local` for the TUI, else `engine`. */
 export function inputTurnMark(input: {
@@ -51,13 +86,12 @@ export function hasInputTurnMark(message: object): boolean {
 
 /** Runs `handle`, and every async task it starts, as the record `origin` describes. */
 export function runInRecordScope<T>(origin: ConnectionOrigin, handle: () => Promise<T>): Promise<T> {
-	return recordScopes.run({ origin, open: true }, handle);
+	return recordScope.run(origin, handle);
 }
 
 /** Whether the work being created belongs to an open cross-account record's own handling. */
 export function recordIsDelegated(): boolean {
-	const scope = recordScopes.getStore();
-	return scope?.open === true && scope.origin === "delegated";
+	return recordScope.delegated() === true;
 }
 
 /**
@@ -66,10 +100,7 @@ export function recordIsDelegated(): boolean {
  */
 export function noteRunStart(sessionManager: object): void {
 	if (continuingTurns.has(sessionManager)) return;
-	const delegated = recordIsDelegated();
-	const scope = recordScopes.getStore();
-	if (scope !== undefined) scope.open = false;
-	currentOrigins.set(sessionManager, delegated ? "delegated" : "engine");
+	currentOrigins.set(sessionManager, recordScope.closeAtRunStart() === true ? "delegated" : "engine");
 }
 
 /** A retry or recovery run repeats the turn it continues, so it keeps that turn's origin until the continuation ends. */
