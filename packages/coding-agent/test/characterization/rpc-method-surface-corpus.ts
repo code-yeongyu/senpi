@@ -145,7 +145,7 @@ export const TODAY: { readonly [M in RpcCommand["type"]]: string } = {
 		'{"key":"1x14","value":true} => no:invalid_argument:set_project_setting requires an identifier \'key\' and a JSON \'value\' (null removes the key).',
 	read_project_file: '{"path":"AGENTS.md"} => ok{content,cwd,etag,exists,path,projectTrusted}',
 	write_project_file:
-		'{"path":"x14.ts","content":"x","ifEtag":null} => no:project_file_not_allowed:x14.ts is not an instruction file inside this workspace (AGENTS.md, CLAUDE.md or .omo/rules/**).',
+		'{"path":"x14.ts","content":"x","ifEtag":null} => no:project_file_not_allowed:x14.ts is not an instruction file inside this workspace (AGENTS.md, CLAUDE.md or .omo/rules/**), or is user-global configuration (the agent dir or a user-global skill root).',
 	get_project_mcp_servers: "ok{cwd,etag,exists,mcpServers,parseError,path,projectTrusted}",
 	set_project_mcp_servers:
 		'{"patch":"x14","ifEtag":null} => no:invalid_argument:set_project_mcp_servers requires an object \'patch\' (server name to entry, or null to remove) and \'ifEtag\' (the etag read, or null to create).',

@@ -6372,7 +6372,11 @@ below it, or a file under `.omo/rules/`. Reading runs nothing, so it works while
 
 `path` is relative to the session's folder, `/`-separated and canonical: no empty, `.` or `..` segment, no `\\`, `:`
 or NUL, and never through `.git` or `node_modules`. A file that does not exist yet is a success with `exists: false`
-and `content`/`etag` `null`. `etag` is an opaque version of the stored bytes: compare it, never parse it.
+and `content`/`etag` `null`. `etag` is an opaque version of the stored bytes: compare it, never parse it. An
+instruction file that is user-global configuration (the agent dir, a user-global skill root, a user skill's folder,
+or a file the next load would take as a user skill; the full rule is under `write_project_skill_file`) is not a
+project file and is refused — the case of a session opened in `$HOME`, whose folder holds the agent dir and
+`~/.agents`.
 Errors: `invalid_argument` when `path` is not a string, `project_file_not_allowed` (`errorData: { path }`) for any
 other path, or when a folder on the way or the file itself is a symlink or not a regular file and folder, and
 `project_file_too_large` (`errorData: { limitBytes }`) for a stored file over 512 KiB.
@@ -6426,7 +6430,12 @@ Reading runs nothing, so it works while the project is untrusted.
 
 `mcpServers` holds the entries as stored (placeholders unexpanded); it is `null` when the file is missing or does
 not parse. `parseError` says why a stored file does not parse (not JSON, not a JSON object, or `mcpServers` not an
-object). Errors: `project_file_not_allowed` when the config folder or the file is a symlink or not a regular
+object). Server entries can hold literal credentials in their env values, and the reply returns them as stored;
+that is acceptable because this verb is `device_admin` (the class that already reads host files), while
+`set_project_mcp_servers` stays gated. A project MCP file whose real path is user-global configuration — it lies in
+the agent dir (a flat agent dir with the session in its parent) or in a user-global skill root the engine loads — is
+refused. Errors:
+`project_file_not_allowed` when the config folder or the file is a symlink or not a regular
 file and folder, and `project_file_too_large` for a stored file over 512 KiB.
 
 #### set_project_mcp_servers
@@ -6469,9 +6478,23 @@ answered.
 
 For both, `data` is `{ cwd, skill, path, exists, content, etag, projectTrusted }`, with `path` relative to the session's folder.
 Only a listed skill whose file lies inside the session's folder is reachable; a skill that lives elsewhere (a global
-skill) or is reached through a folder link or a file link is refused. A file whose real path lies in the agent dir is
-global config and is refused even when the session's folder contains it (a session opened in `$HOME`); the same holds
-for the project MCP file. A write passes the same trust and permission
+skill) or is reached through a folder link or a file link is refused. A file is user-global configuration, and is
+refused even when the session's folder contains it (a session opened in `$HOME`), when its real path:
+
+- lies in the agent dir, in `~/.agents/skills`, or in a skill root selected in the global `skills` setting;
+- lies in the folder of a skill loaded with user provenance (from a package, `-e`, an extension, `--skill` or the
+  SDK), or is that skill's file when the skill is a top-level `*.md` file. When the folder of such a `SKILL.md`
+  holds the session's folder (a project that is itself a package whose manifest lists `.` or `SKILL.md`), only that
+  `SKILL.md` is refused;
+- is a top-level `*.md` file directly in a folder the engine walks for user skills (a package's `skills` folder or
+  a manifest skill folder, a `--skill`, extension or SDK skill folder, a folder in the global `skills` setting),
+  because the next load takes such a file as a skill. A folder holding a `SKILL.md` file is exempt: the walk stops
+  there and loads no other top-level file. Only that folder's own top-level files are refused, never a folder above
+  it.
+
+The same rule holds for the project MCP file and the instruction files of `read_project_file`. A package's own folder
+is not refused as a whole, so a project that is itself an installed package (or loaded with `-e .`) keeps its
+`AGENTS.md` and MCP file; only its package skills are refused. A write passes the same trust and permission
 gates as `set_project_mcp_servers` and answers the read after it. Errors: `project_skill_not_listed`
 (`errorData: { skill }`), `project_file_not_allowed`, `invalid_argument`, `project_not_trusted`,
 `project_file_conflict`, `project_file_permission_denied`, `project_file_too_large`, and

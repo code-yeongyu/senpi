@@ -62,6 +62,12 @@ export interface Skill {
 export interface LoadSkillsResult {
 	skills: Skill[];
 	diagnostics: ResourceDiagnostic[];
+	/**
+	 * The given skill paths that are folders walked for user-provenance skills, where a top-level `*.md` file loads as a
+	 * skill; taken from the stat each path gets anyway, so the RPC project verbs learn them at no extra filesystem cost
+	 * (senpi#6558).
+	 */
+	userScanDirs?: string[];
 }
 
 /**
@@ -380,6 +386,20 @@ export interface LoadSkillsOptions {
 }
 
 /**
+ * The user-global skill roots every session loads regardless of its folder: the agent dir's skills root, the
+ * shared `~/.agents/skills` root, and the given roots. Two consumers share it: the loader's skill allowlist (given
+ * the selected roots, a package's whole folder included, to contain its skills) and the RPC project verbs' refusal
+ * of user-global files (given `ResourceLoader.getUserSkillRoots`, the global `skills` settings roots), so the two
+ * fixed roots cannot drift apart (senpi#6547 review LOWs, senpi#6558).
+ */
+export function userGlobalSkillRoots(
+	resolvedAgentDir: string,
+	userSkillRoots: readonly string[] = [],
+): readonly string[] {
+	return [join(resolvedAgentDir, "skills"), join(homedir(), ".agents", "skills"), ...userSkillRoots];
+}
+
+/**
  * Load skills from all configured locations.
  * Returns skills and any validation diagnostics.
  */
@@ -392,9 +412,7 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 	const projectRoot = skillProjectRoot(resolvedCwd);
 	const projectSkillsPath = resolve(resolvedCwd, CONFIG_DIR_NAME, "skills");
 	const allowedSet = buildSkillAllowedSet([
-		join(resolvedAgentDir, "skills"),
-		join(homedir(), ".agents", "skills"),
-		...(options.userSkillRoots ?? []),
+		...userGlobalSkillRoots(resolvedAgentDir, options.userSkillRoots),
 		...skillPaths
 			.map((path) => resolvePath(path, resolvedCwd, { trim: true }))
 			.filter((path) => {
@@ -410,6 +428,7 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 	const realPathSet = new Set<string>();
 	const allDiagnostics: ResourceDiagnostic[] = [];
 	const collisionDiagnostics: ResourceDiagnostic[] = [];
+	const userScanDirs: string[] = [];
 
 	function addSkills(result: LoadSkillsResult) {
 		allDiagnostics.push(...result.diagnostics);
@@ -506,6 +525,7 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 				projectRoot,
 			};
 			if (stats.isDirectory()) {
+				if (provenance.kind === "user") userScanDirs.push(resolvedPath);
 				addSkills(
 					loadSkillsFromDirInternal(resolvedPath, source, true, undefined, undefined, provenance, allowedSet),
 				);
@@ -528,6 +548,7 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 	return {
 		skills: Array.from(skillMap.values()),
 		diagnostics: [...allDiagnostics, ...collisionDiagnostics],
+		userScanDirs,
 	};
 }
 

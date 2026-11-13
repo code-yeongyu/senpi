@@ -48,7 +48,7 @@ const RPC_WRITE_IDENTITY = { owner: {}, metadata: "rpc:project-folder-file" };
 export function notAllowed(relative: string): ProjectWriteRefusal {
 	return {
 		ok: false,
-		message: `${relative} is not a file this folder lets an RPC client edit (outside the folder, or through a link).`,
+		message: `${relative} is not a file this folder lets an RPC client edit (outside the folder, through a link, or user-global configuration).`,
 		errorCode: RPC_ERROR_PROJECT_FILE_NOT_ALLOWED,
 		errorData: { path: relative },
 	};

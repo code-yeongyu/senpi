@@ -3,7 +3,10 @@
  * client with no filesystem access to the machine (a remote desktop) edits Rules the way a local one does.
  *
  * Reading runs nothing, so trust does not gate it; writing is refused while the project is untrusted, like
- * `set_project_setting`. Every write names the version it replaces (`ifEtag`, `null` to create), is refused as a
+ * `set_project_setting`. A file whose real path lies in the agent dir or in any user-global skill root the engine
+ * loads is user-global configuration (the global context file, global skills), never a project file, and is refused
+ * even when the workspace contains the root — the case of a session opened in `$HOME` (senpi#6547 review LOWs).
+ * Every write names the version it replaces (`ifEtag`, `null` to create), is refused as a
  * conflict carrying the current etag when the file moved on, and lands by temp file + rename so a reader never sees a
  * half-written file. Writes to one file are serialized inside the engine.
  */
@@ -12,6 +15,7 @@ import { join } from "node:path";
 import type { AgentSession } from "../../core/agent-session.ts";
 import {
 	createMissingFolders,
+	insideUserGlobalRoots,
 	PROJECT_FILE_MAX_BYTES,
 	type ProjectFilePath,
 	parseProjectFilePath,
@@ -54,7 +58,7 @@ type Refusal = Extract<ProjectFileResult, { ok: false }>;
 function notAllowed(path: string): Refusal {
 	return {
 		ok: false,
-		message: `${path} is not an instruction file inside this workspace (AGENTS.md, CLAUDE.md or .omo/rules/**).`,
+		message: `${path} is not an instruction file inside this workspace (AGENTS.md, CLAUDE.md or .omo/rules/**), or is user-global configuration (the agent dir or a user-global skill root).`,
 		errorCode: RPC_ERROR_PROJECT_FILE_NOT_ALLOWED,
 		errorData: { path },
 	};
@@ -84,7 +88,9 @@ async function readFileState(
 > {
 	const cwd = session.sessionManager.getCwd();
 	const resolved = await resolveProjectFile(cwd, file);
-	if (!resolved.ok) return notAllowed(file.relative);
+	if (!resolved.ok || (await insideUserGlobalRoots(session, resolved.absolute))) {
+		return notAllowed(file.relative);
+	}
 	const read: Stored = resolved.exists ? await readStored(resolved.absolute) : { kind: "missing" };
 	if (read.kind === "refused") return notAllowed(file.relative);
 	if (read.kind === "too_large") return tooLarge(file.relative);
