@@ -59,14 +59,20 @@ export function catalogChangedSinceHead(cwd) {
  * @param {string} cwd repository root
  */
 export function changedCatalogPaths(cwd) {
-	const status = execFileSync("git", ["status", "--porcelain", "--untracked-files=all", "--", ...REGENERATED_CATALOG_PATHS], {
+	// -z: paths come unquoted and NUL-terminated. A rename or copy entry is followed by its source path, which is skipped:
+	// the rename is already staged, and its source no longer exists for `git add -A --` to match.
+	const records = execFileSync("git", ["status", "--porcelain", "-z", "--untracked-files=all", "--", ...REGENERATED_CATALOG_PATHS], {
 		cwd,
 		encoding: "utf8",
-	});
-	return status
-		.split("\n")
-		.map((line) => line.slice(3).trim())
-		.filter(Boolean);
+	}).split("\0");
+	const paths = [];
+	for (let index = 0; index < records.length; index++) {
+		const record = records[index];
+		if (record.length < 4) continue;
+		paths.push(record.slice(3));
+		if (/[RC]/.test(record.slice(0, 2))) index++;
+	}
+	return paths;
 }
 
 export const CATALOG_MANIFEST = "packages/ai/src/providers/data/.manifest.json";
@@ -89,14 +95,7 @@ export function isTimestampOnlyManifestChange(before, after) {
  * @returns {boolean} whether the stamp-only change was discarded
  */
 export function discardTimestampOnlyCatalogChange(cwd) {
-	const status = execFileSync("git", ["status", "--porcelain", "--untracked-files=all", "--", ...REGENERATED_CATALOG_PATHS], {
-		cwd,
-		encoding: "utf8",
-	});
-	const changed = status
-		.split("\n")
-		.map((line) => line.slice(3).trim())
-		.filter(Boolean);
+	const changed = changedCatalogPaths(cwd);
 	if (changed.length !== 1 || changed[0] !== CATALOG_MANIFEST) return false;
 	const before = execFileSync("git", ["show", `HEAD:${CATALOG_MANIFEST}`], { cwd, encoding: "utf8" });
 	const after = readFileSync(join(cwd, CATALOG_MANIFEST), "utf8");

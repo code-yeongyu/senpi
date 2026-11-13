@@ -58,6 +58,10 @@ export function assertHeadOnOriginMain({ runCommand, capture, log }) {
 	log("git fetch origin main");
 	runCommand("git", ["fetch", "origin", "main"]);
 	const head = capture("git", ["rev-parse", "HEAD"]).trim();
+	// Plain ancestry, not first-parent: a merged PR's head is reachable from origin/main too and passes here. That is
+	// acceptable for this second layer, which refuses commits main never received; the first-parent guarantee (main's own
+	// commits only) is the --sha path's `assertReleasableCommit` in release-pin.mjs, run first for every pinned or
+	// --tested-sha release, while a default release releases the checked-out main tip itself.
 	const onMain = (sha) => {
 		try {
 			runCommand("git", ["merge-base", "--is-ancestor", sha, "origin/main"]);
