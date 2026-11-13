@@ -198,6 +198,8 @@ describe("SIWC structured recovery through HTTP and SSE", () => {
 		["subscription_sharing_user_unavailable", 503, ["alpha", "alpha"], undefined],
 		["subscription_sharing_user_not_eligible", 403, ["alpha", "bravo"], "account_disabled"],
 		["subscription_sharing_route_not_supported", 403, ["alpha"], undefined],
+		// senpi#6643: a request-shape 400 fails the turn and leaves the account healthy.
+		["subscription_sharing_unsupported_capability", 400, ["alpha"], undefined],
 	] as const)("%s persists the intended account health", async (code, status, expectedAttempts, blockReason) => {
 		const dir = mkdtempSync(join(tmpdir(), "siwc-errors-"));
 		try {
