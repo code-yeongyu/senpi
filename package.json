@@ -88,6 +88,9 @@
 		"node": ">=24.0.0"
 	},
 	"overrides": {
+		"@modelcontextprotocol/sdk": {
+			"zod": "4.6.7"
+		},
 		"@hono/node-server": "2.1.8",
 		"express-rate-limit": "8.7.3",
 		"hono": "4.13.18",

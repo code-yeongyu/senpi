@@ -64,7 +64,9 @@ jobs:
 
   release:
     needs: native-prebuilds
-    if: ${{ always() && (inputs.publish-only != true || needs.native-prebuilds.result == 'success') }}
+    # native-prebuilds reuses prebuilt targets and then skips its build jobs (senpi#6622), so its readiness
+    # is read from the output its ready job sets, not from the call's result.
+    if: ${{ always() && (inputs.publish-only != true || needs.native-prebuilds.outputs.ready == 'true') }}
     runs-on: ubuntu-latest
     # The release never re-runs the test suite (senpi#2943): its test evidence is the release
     # commit's green sharded CI run ("Check and test"). A regenerated catalog is pushed to main
