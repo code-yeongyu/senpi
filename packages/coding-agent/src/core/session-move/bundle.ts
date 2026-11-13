@@ -72,8 +72,19 @@ export function nestsTooDeep(path: string): boolean {
 	return path.split(/[\\/]/).length > MAX_BUNDLE_PATH_SEGMENTS;
 }
 
+/** A "." or an empty segment names a file another way than its plain path does. Both separators count. */
+export function hasIdleSegment(path: string): boolean {
+	return path.split(/[\\/]/).some((segment) => segment === "." || segment === "");
+}
+
 /** A path as an error may show it: quoted, and cut short only when it is long. */
 export const shown = (path: string): string => JSON.stringify(path.length > 120 ? `${path.slice(0, 120)}...` : path);
+
+/** What a sender's refusal says was done: it refuses before the seal where it still can, else before a bundle. */
+const refusedBefore = (sealedAlready: boolean): string =>
+	sealedAlready
+		? "No bundle was written. The session is sealed for this move: finish the move as declined to take it back."
+		: "The session was not sealed for the move and nothing was written.";
 
 /**
  * A file the move would carry sits deeper than a bundle path may be, so a receiver would refuse the bundle. The
@@ -85,13 +96,26 @@ export class MovePathTooDeepError extends Error {
 
 	constructor(path: string, sealedAlready: boolean) {
 		super(
-			`A file of this session is nested deeper than a move can carry (${MAX_BUNDLE_PATH_SEGMENTS} path segments): ${shown(path)}. ${
-				sealedAlready
-					? "No bundle was written. The session is sealed for this move: finish the move as declined to take it back."
-					: "The session was not sealed for the move and nothing was written."
-			}`,
+			`A file of this session is nested deeper than a move can carry (${MAX_BUNDLE_PATH_SEGMENTS} path segments): ${shown(path)}. ${refusedBefore(sealedAlready)}`,
 		);
 		this.name = "MovePathTooDeepError";
+	}
+}
+
+/**
+ * A file the move would carry has a name its bundle path cannot be listed under: read with either separator, the path
+ * leaves the bundle or has a "." or an empty segment, so a receiver would refuse the bundle. Off Windows a backslash
+ * is an ordinary character of a name, which is how a file gets such a path. The sender refuses first, where
+ * `MovePathTooDeepError` does.
+ */
+export class MovePathNotPlainError extends Error {
+	readonly code = "move_path_not_plain";
+
+	constructor(path: string, sealedAlready: boolean) {
+		super(
+			`A file of this session has a name a move cannot carry: ${shown(path)}. Read with "/" or "\\" as the separator, that path leaves the bundle or has a "." or an empty segment. Rename the file to move this session. ${refusedBefore(sealedAlready)}`,
+		);
+		this.name = "MovePathNotPlainError";
 	}
 }
 
@@ -100,6 +124,10 @@ function parseFile(value: unknown): BundleFile {
 	if (typeof file !== "object" || file === null || !isString(file.path) || !isString(file.sha256))
 		throw new MoveBundleInvalidError("a listed file is malformed");
 	if (leavesBundle(file.path)) throw new MoveBundleInvalidError(`a listed path leaves the bundle: ${file.path}`);
+	// Later readers classify a listed file by its path as text, and what moves it reads the disk: only a plain path is
+	// one file to both.
+	if (hasIdleSegment(file.path))
+		throw new MoveBundleInvalidError(`a listed path has a "." or an empty segment: ${shown(file.path)}`);
 	if (nestsTooDeep(file.path))
 		throw new MoveBundleInvalidError(
 			`a listed path is nested deeper than ${MAX_BUNDLE_PATH_SEGMENTS} segments: ${shown(file.path)}`,

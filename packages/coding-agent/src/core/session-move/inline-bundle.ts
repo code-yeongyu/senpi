@@ -6,7 +6,15 @@
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, posix, relative, sep } from "node:path";
-import { leavesBundle, listedFiles, MANIFEST_FILE, MoveBundleInvalidError, parseManifest, shown } from "./bundle.ts";
+import {
+	hasIdleSegment,
+	leavesBundle,
+	listedFiles,
+	MANIFEST_FILE,
+	MoveBundleInvalidError,
+	parseManifest,
+	shown,
+} from "./bundle.ts";
 import { filesUnder } from "./export.ts";
 
 export interface InlineBundleFile {
@@ -55,10 +63,10 @@ const segmentsOf = (path: string): string[] => path.split(/[\\/]/);
  * the manifest's rule (`MAX_BUNDLE_PATH_SEGMENTS`): every sent path is either listed there or refused as unlisted.
  */
 function staysInBundle(path: string): boolean {
-	if (leavesBundle(path) || path.includes("\0") || Buffer.byteLength(path) > MAX_PATH_BYTES) return false;
-	return segmentsOf(path).every(
-		(segment) => segment !== "" && segment !== "." && Buffer.byteLength(segment) <= MAX_SEGMENT_BYTES,
-	);
+	// The rule about "." and empty segments is the manifest parser's own, asked here too so the two cannot drift.
+	if (leavesBundle(path) || hasIdleSegment(path)) return false;
+	if (path.includes("\0") || Buffer.byteLength(path) > MAX_PATH_BYTES) return false;
+	return segmentsOf(path).every((segment) => Buffer.byteLength(segment) <= MAX_SEGMENT_BYTES);
 }
 
 /** Refuses a sent path that is also the folder of another sent path: only one of the two can be written. */

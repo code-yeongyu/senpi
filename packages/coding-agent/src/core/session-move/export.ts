@@ -8,9 +8,12 @@ import { encodedSessionId } from "../session-sidecar-store.ts";
 import { pathExists } from "../tools/path-utils.ts";
 import {
 	type BundleFile,
+	hasIdleSegment,
+	leavesBundle,
 	MANIFEST_FILE,
 	MOVE_BUNDLE_FORMAT,
 	type MoveManifest,
+	MovePathNotPlainError,
 	MovePathTooDeepError,
 	nestsTooDeep,
 	parseMoveId,
@@ -143,8 +146,10 @@ async function writeMoveBundle(options: ExportSessionForMoveOptions): Promise<Mo
 }
 
 /**
- * Refuses a move one of whose files would sit in the bundle deeper than a bundle path may be (senpi#6469): the
- * session's resident blobs, and the extension state staged for the move. Whoever seals a session for a move asks
+ * Refuses a move one of whose files a bundle could not list, as the receiver's parser would refuse the bundle: a path
+ * deeper than a bundle path may be (senpi#6469), or one that leaves the bundle or has a "." or an empty segment, which
+ * off Windows a backslash in a name makes. It looks at every file the export lists beside the session file: the
+ * sidecars, the resident blobs, and the extension state staged for the move. Whoever seals a session for a move asks
  * first, so a session a receiver would refuse is never sealed.
  */
 export async function assertMoveFits(
@@ -154,16 +159,18 @@ export async function assertMoveFits(
 	sealedAlready: boolean,
 ): Promise<void> {
 	const sessionDir = dirname(sessionFile);
-	const blobs = await filesUnder(join(sessionDir, "resident-blobs", sessionId));
-	const paths = blobs.map((source) => bundlePath("files", sessionDir, source));
+	const paths = (await sidecarSources(sessionDir, sessionId)).map((source) => bundlePath("files", sessionDir, source));
 	if (stateDir !== undefined) {
 		for (const source of await filesUnder(stateDir)) paths.push(bundlePath("state", stateDir, source));
 	}
+	const notPlain = paths.find((path) => leavesBundle(path) || hasIdleSegment(path));
+	if (notPlain !== undefined) throw new MovePathNotPlainError(notPlain, sealedAlready);
 	const tooDeep = paths.find(nestsTooDeep);
 	if (tooDeep !== undefined) throw new MovePathTooDeepError(tooDeep, sealedAlready);
 }
 
-async function copySidecars(sessionDir: string, sessionId: string, staging: string): Promise<BundleFile[]> {
+/** What a bundle lists under `files/` beside the session file: each extension's sidecar, and the resident blobs. */
+async function sidecarSources(sessionDir: string, sessionId: string): Promise<string[]> {
 	const sources: string[] = [];
 	const extensions = join(sessionDir, "extensions");
 	const sidecarName = `${encodedSessionId(sessionId)}.json`;
@@ -174,8 +181,12 @@ async function copySidecars(sessionDir: string, sessionId: string, staging: stri
 		}
 	}
 	sources.push(...(await filesUnder(join(sessionDir, "resident-blobs", sessionId))));
+	return sources;
+}
+
+async function copySidecars(sessionDir: string, sessionId: string, staging: string): Promise<BundleFile[]> {
 	const files: BundleFile[] = [];
-	for (const source of sources) {
+	for (const source of await sidecarSources(sessionDir, sessionId)) {
 		const path = bundlePath("files", sessionDir, source);
 		await mkdir(dirname(join(staging, path)), { recursive: true });
 		await copyFile(source, join(staging, path));
