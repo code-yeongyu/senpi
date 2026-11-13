@@ -17,18 +17,34 @@ function jobText(name) {
 	return (end < 0 ? rest : rest.slice(0, end)).join("\n");
 }
 
-// A job's direct `needs:`, in any of the three YAML shapes the workflow uses.
+// A job's direct `needs:`: an inline list, a scalar or a block list, each line with an optional trailing comment.
+// Any other shape fails, never reads as fewer needs, or upstream() would silently drop that branch.
 function needsOf(name) {
-	const text = jobText(name);
-	const inline = /^ {4}needs:\s*\[([^\]]*)\]/m.exec(text);
-	if (inline) return inline[1].split(",").map((need) => need.trim()).filter(Boolean);
-	const scalar = /^ {4}needs:\s*([\w-]+)\s*$/m.exec(text);
-	if (scalar) return [scalar[1]];
-	const block = /^ {4}needs:\s*\n((?: {6}- [\w-]+\n?)+)/m.exec(text);
-	if (block) return block[1].trim().split("\n").map((line) => line.replace(/^\s*-\s*/, "").trim());
-	// A needs: this parser cannot read must fail, never read as "no needs", or upstream() would drop that branch.
-	assert.doesNotMatch(text, /^ {4}needs:/m, `job ${name} has a needs: form this test cannot parse`);
-	return [];
+	const lines = jobText(name).split("\n");
+	const at = lines.findIndex((line) => /^ {4}needs:/.test(line));
+	if (at < 0) return [];
+	const uncomment = (line) => line.replace(/\s+#.*$/, "").trimEnd();
+	const value = uncomment(lines[at]).replace(/^ {4}needs:\s*/, "");
+	const fail = (detail) => assert.fail(`job ${name} has a needs: form this test cannot parse: ${detail}`);
+	if (value.startsWith("[")) {
+		const inline = /^\[([\w\s,-]*)\]$/.exec(value);
+		if (!inline) fail(value);
+		return inline[1].split(",").map((need) => need.trim()).filter(Boolean);
+	}
+	if (value) {
+		if (!/^[\w-]+$/.test(value)) fail(value);
+		return [value];
+	}
+	const needs = [];
+	for (const line of lines.slice(at + 1)) {
+		if (line.trim() === "" || /^\s*#/.test(line)) continue;
+		if (!/^ {6}/.test(line)) break;
+		const entry = /^ {6}- ([\w-]+)$/.exec(uncomment(line));
+		if (!entry) fail(line.trim());
+		needs.push(entry[1]);
+	}
+	if (needs.length === 0) fail("an empty block");
+	return needs;
 }
 
 function jobNames() {
