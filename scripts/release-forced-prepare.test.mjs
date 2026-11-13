@@ -2,11 +2,12 @@
 // senpi#6642: the forced-suite prepare job regenerates the model catalog once, commits a changed catalog on the release
 // only, and hands that exact commit to every matrix job as a git bundle. Release contract (MUST 2 no-change path).
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 import { formatPrepareOutputs, prepareTestedCommit, TESTED_COMMIT_REF } from "./release-forced-prepare.mjs";
 
 const MANIFEST = "packages/ai/src/providers/data/.manifest.json";
@@ -87,5 +88,64 @@ describe("prepareTestedCommit (senpi#6642)", () => {
 			assert.match(formatPrepareOutputs(result, "2026.11.13"), /^bundle=true$/m);
 			assert.match(formatPrepareOutputs(result, "2026.11.13"), /^version=2026\.11\.13$/m);
 			assert.match(formatPrepareOutputs(result, "2026.11.13"), new RegExp(`^base_sha=${base}$`, "m"));
+		}));
+});
+
+const PREPARE_CLI = fileURLToPath(new URL("./release-forced-prepare.mjs", import.meta.url));
+
+// Release-train ruling on senpi#6642: the base commit is resolved once, here, and printed as a full sha (a step output
+// and a log line); every later job and release.mjs use that output and never resolve main again.
+describe("release-forced-prepare CLI resolves the base once", () => {
+	function runPrepare({ root, dir, args }) {
+		const bin = join(root, "bin");
+		mkdirSync(bin, { recursive: true });
+		// npm runs the catalog regeneration, the provider-defaults check and the pinned reinstall/build: no-ops here.
+		writeFileSync(join(bin, "npm"), `#!${process.execPath}\n`);
+		chmodSync(join(bin, "npm"), 0o755);
+		const output = join(root, "github-output");
+		writeFileSync(output, "");
+		const result = spawnSync(
+			process.execPath,
+			[PREPARE_CLI, "--version", "2026.11.13", "--bundle", join(root, "b.bundle"), "--github-output", output, ...args],
+			{ cwd: dir, env: { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH}` }, encoding: "utf8", timeout: 30_000 },
+		);
+		const outputs = Object.fromEntries(
+			readFileSync(output, "utf8")
+				.split("\n")
+				.filter(Boolean)
+				.map((line) => line.split("=")),
+		);
+		return { result, outputs };
+	}
+
+	it("without --sha, prints and outputs the checked-out commit as the full 40-character base", () =>
+		withRepo(({ root, dir, base }) => {
+			const { result, outputs } = runPrepare({ root, dir, args: [] });
+			assert.equal(result.status, 0, result.stderr + result.stdout);
+			assert.equal(outputs.base_sha, base);
+			assert.match(outputs.base_sha, /^[0-9a-f]{40}$/);
+			assert.equal(result.stdout.match(/base commit for every later job: ([0-9a-f]+)/g)?.length, 1, result.stdout);
+			assert.match(result.stdout, new RegExp(`base commit for every later job: ${base}\\n`));
+		}));
+
+	it("with --sha, outputs that pinned commit as the base, not the checkout it started from", () =>
+		withRepo(({ root, dir, base, git, write }) => {
+			const origin = join(root, "origin.git");
+			git(root, "init", "-q", "--bare", "-b", "main", origin);
+			write("package-lock.json", "{}\n");
+			git(dir, "add", "-A");
+			git(dir, "commit", "-q", "-m", "lock");
+			const pinned = git(dir, "rev-parse", "HEAD");
+			write("README.md", "later\n");
+			git(dir, "add", "-A");
+			git(dir, "commit", "-q", "-m", "main moved");
+			git(dir, "remote", "add", "origin", origin);
+			git(dir, "push", "-q", "origin", "main");
+			const { result, outputs } = runPrepare({ root, dir, args: ["--sha", pinned] });
+			assert.equal(result.status, 0, result.stderr + result.stdout);
+			assert.notEqual(pinned, base);
+			assert.equal(outputs.base_sha, pinned);
+			assert.equal(outputs.tested_sha, pinned);
+			assert.match(result.stdout, new RegExp(`base commit for every later job: ${pinned}\\n`));
 		}));
 });

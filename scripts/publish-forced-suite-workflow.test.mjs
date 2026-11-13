@@ -4,7 +4,7 @@
 // identity contract: npm trusted publishing binds this workflow file and its release job.
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -202,6 +202,72 @@ describe("forced-suite matrix jobs (senpi#6642)", () => {
 		}
 		const prepare = workflowJob(workflow, "prepare");
 		for (const step of PREPARE_SETUP) assert.equal(jobStep(prepare, step), releaseStep(step), `prepare: ${step} drifted`);
+	});
+
+	// Release-train ruling on senpi#6642: with force_tests the release takes its base only from prepare's base_sha
+	// output, even when the dispatch named a sha; without force_tests the dispatched sha passes through as before.
+	it("passes release.mjs prepare's base_sha as --sha under force_tests, and the dispatched sha otherwise", () => {
+		const step = jobStep(workflowJob(workflow, "release"), "Run release");
+		const script = step.match(/run: \|\n([\s\S]*)/)?.[1].replace(/^ {10}/gm, "");
+		assert.ok(script, "expected the Run release script");
+		const root = mkdtempSync(join(tmpdir(), "run-release-"));
+		try {
+			const bin = join(root, "bin");
+			mkdirSync(bin);
+			const calls = join(root, "npm-args.json");
+			writeFileSync(join(bin, "npm"), `#!${process.execPath}\nrequire("node:fs").writeFileSync(${JSON.stringify(calls)}, JSON.stringify(process.argv.slice(2)));\n`);
+			writeFileSync(join(bin, "git"), "#!/bin/sh\nexit 0\n");
+			for (const name of ["npm", "git"]) chmodSync(join(bin, name), 0o755);
+			const argsFor = ({ forceTests, releaseSha }) => {
+				const rendered = script
+					.replaceAll("${{ inputs.force_tests }}", String(forceTests))
+					.replaceAll("${{ inputs.dry_run }}", "true");
+				assert.doesNotMatch(rendered, /\$\{\{/, "unrendered expression in the Run release script");
+				const result = spawnSync("bash", ["-c", rendered], {
+					cwd: root,
+					env: {
+						PATH: `${bin}:${process.env.PATH}`,
+						GH_TOKEN: "t",
+						GITHUB_REPOSITORY: "o/r",
+						RELEASE_SHA: releaseSha,
+						RELEASE_VERSION: "2026.11.13",
+						TESTED_SHA: "c".repeat(40),
+						TESTED_BASE_SHA: "b".repeat(40),
+						FORCED_SUITE_RESULTS: "/results",
+					},
+					encoding: "utf8",
+				});
+				assert.equal(result.status, 0, result.stderr);
+				return JSON.parse(readFileSync(calls, "utf8"));
+			};
+			const shaArgs = (args) => args.flatMap((arg, index) => (arg === "--sha" ? [args[index + 1]] : []));
+			for (const releaseSha of ["", "a".repeat(40)]) {
+				const forced = argsFor({ forceTests: true, releaseSha });
+				assert.deepEqual(shaArgs(forced), ["b".repeat(40)], `force_tests with inputs.sha=${releaseSha || "(empty)"}`);
+				assert.deepEqual(forced.slice(forced.indexOf("--tested-sha"), forced.indexOf("--tested-sha") + 4), [
+					"--tested-sha",
+					"c".repeat(40),
+					"--shard-results",
+					"/results",
+				]);
+			}
+			assert.deepEqual(shaArgs(argsFor({ forceTests: false, releaseSha: "a".repeat(40) })), ["a".repeat(40)]);
+			const plain = argsFor({ forceTests: false, releaseSha: "" });
+			assert.deepEqual(shaArgs(plain), []);
+			assert.equal(plain.includes("--tested-sha"), false);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("reads the base only from prepare's base_sha output in every job after prepare", () => {
+		for (const name of TESTED_JOBS) {
+			assert.doesNotMatch(workflowJob(workflow, name), /inputs\.sha|github\.sha|github\.ref|origin\/main/, name);
+		}
+		const prepare = jobStep(workflowJob(workflow, "prepare"), "Regenerate the model catalog on the release commit");
+		assert.match(prepare, /--github-output "\$GITHUB_OUTPUT"/);
+		const release = jobStep(workflowJob(workflow, "release"), "Run release");
+		assert.match(release, /TESTED_BASE_SHA: \$\{\{ needs\.prepare\.outputs\.base_sha \}\}/);
 	});
 
 	it("prepares the release's version and tested commit once and hands them to the release job", () => {

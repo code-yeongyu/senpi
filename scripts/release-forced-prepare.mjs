@@ -7,7 +7,8 @@
  * It does what `release.mjs` did in-job before the suite ran: pin `--sha` if given, regenerate the model catalog,
  * check the bundled provider defaults against it, and commit a changed catalog on the release only. Then it hands the
  * result to the matrix jobs: `tested_sha` (that commit, or the dispatched one when nothing changed), `tested_tree`,
- * `base_sha`, the release `version` fixed now (a suite that crosses 00:00 UTC must not change it), and, only when a
+ * `base_sha` (the base resolved once, here; printed in full and used by every later job and `release.mjs --sha`), the
+ * release `version` fixed now (a suite that crosses 00:00 UTC must not change it), and, only when a
  * catalog commit exists, a git bundle carrying it, since that commit is never pushed before the release tags it.
  */
 
@@ -113,6 +114,10 @@ function main() {
 		bundlePath: values.bundle,
 		log,
 	});
+	// The base is resolved here, once: the matrix jobs and release.mjs --sha take this output and never look at main
+	// again (release-train ruling on senpi#6642).
+	if (!/^[0-9a-f]{40}$/.test(result.baseSha)) throw new Error(`resolved base ${JSON.stringify(result.baseSha)} is not a full sha`);
+	log(`base commit for every later job: ${result.baseSha}`);
 	appendFileSync(values["github-output"], formatPrepareOutputs(result, version));
 }
 

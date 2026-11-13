@@ -268,14 +268,12 @@ jobs:
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             ARGS+=(--dry-run)
           fi
-          if [ -n "$RELEASE_SHA" ]; then
-            ARGS+=(--sha "$RELEASE_SHA")
-          fi
           if [ "${{ inputs.force_tests }}" = "true" ]; then
-            if [ -z "$RELEASE_SHA" ]; then
-              ARGS+=(--sha "$TESTED_BASE_SHA")
-            fi
-            ARGS+=(--tested-sha "$TESTED_SHA" --shard-results "$FORCED_SUITE_RESULTS")
+            # prepare resolved the base once (the dispatch's sha input, else its commit) and every job since used that
+            # output; the release takes it too and never resolves main or the sha input again (senpi#6642).
+            ARGS+=(--sha "$TESTED_BASE_SHA" --tested-sha "$TESTED_SHA" --shard-results "$FORCED_SUITE_RESULTS")
+          elif [ -n "$RELEASE_SHA" ]; then
+            ARGS+=(--sha "$RELEASE_SHA")
           fi
           npm run release -- "${ARGS[@]}"
 

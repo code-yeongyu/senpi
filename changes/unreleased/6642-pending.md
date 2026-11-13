@@ -7,7 +7,7 @@
 - `scripts/release-pin.mjs`: `assertReleasableCommit`, the read-only checks of `pinReleaseCommit`, is exported for the tested-commit path.
 - `scripts/release-test-gate.mjs`: `catalogCommitMessage` names the release-only catalog commit in both paths.
 - `scripts/release-forced-test-suite.mjs`: `FORCED_SHARD_JOBS` (6) is the matrix's coding-agent shard count, and `runForcedTestSuite` takes an `observe` line hook. The in-job `--force-tests` path keeps its 2 shards.
-- `scripts/release-forced-prepare.mjs` (new): the prepare job. It pins `--sha`, regenerates and checks the catalog, commits a changed catalog on the release only, bundles that commit, and writes `base_sha`, `tested_sha`, `tested_tree`, `version` and `bundle`. When nothing changed, it outputs the dispatched commit and writes no bundle.
+- `scripts/release-forced-prepare.mjs` (new): the prepare job. It pins `--sha`, regenerates and checks the catalog, commits a changed catalog on the release only, bundles that commit, and writes `base_sha`, `tested_sha`, `tested_tree`, `version` and `bundle`. When nothing changed, it outputs the dispatched commit and writes no bundle. The base commit is resolved once there and printed in full as a log line and the `base_sha` output. With `force_tests`, every later job and `release.mjs --sha` use that output, including when the dispatch named a sha.
 - `scripts/release-forced-test-part.mjs` (new): one matrix job. It runs `rest` (scripts and every workspace but coding-agent) or coding-agent `--shard=i/6` on the tested commit only, and writes its result file.
 - `scripts/release-forced-suite-results.mjs` (new): writes the per-part result files and checks all of them. `scripts/release-tested-lineage.mjs` (new): the lineage rule.
 
