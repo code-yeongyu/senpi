@@ -1,12 +1,20 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { createInterface } from "node:readline";
 import { describe, it } from "node:test";
 import { detectParallelism, MIN_PARALLELISM_FOR_SECOND_LANE } from "./run-workspaces-lanes.mjs";
 import { parseArguments } from "./run-workspaces.mjs";
-import { createFixture, driverPath, THREE_WORKSPACES, writeManifest } from "./run-workspaces.test-support.mjs";
+import {
+	createFixture,
+	driverPath,
+	THREE_WORKSPACES,
+	WAITER_SOURCE,
+	waitForClose,
+	writeManifest,
+} from "./run-workspaces.test-support.mjs";
 
 // Each lane records start and end as files; `needs` names files that must already
 // exist when the lane starts (ordering), `waitFor` a file it waits for (overlap).
@@ -145,6 +153,101 @@ describe("run-workspaces --alongside", () => {
 			assert.deepEqual(markers.map((marker) => marker.name).sort(), ["@fixture/a", "@fixture/b", "@fixture/z"]);
 			assert.match(result.stdout, /FAIL packages\/a \(@fixture\/a\) - exit 4/);
 		} finally {
+			await fixture.dispose();
+		}
+	});
+
+	it("reports a bad RUN_WORKSPACES_PARALLELISM as a usage error that names --alongside", async () => {
+		// Given
+		const fixture = await createFixture(THREE_WORKSPACES);
+		try {
+			// When
+			const result = runWithParallelism(fixture, "many", ["--if-present", "--alongside", "packages/c", "test"]);
+
+			// Then: the usage exit code and line, no stack trace, and no workspace ran
+			assert.equal(result.status, 2, result.stdout + result.stderr);
+			assert.match(result.stderr, /RUN_WORKSPACES_PARALLELISM must be a positive integer, got "many"/);
+			assert.match(result.stderr, /^usage: .*\[--parallel \| --alongside <name\|path>\]/m);
+			assert.doesNotMatch(result.stderr, /\n\s+at /);
+			assert.deepEqual(await fixture.markers(), []);
+		} finally {
+			await fixture.dispose();
+		}
+	});
+
+	it("after a signal starts no further workspace and re-raises it once both lanes closed", { skip: process.platform === "win32" }, async () => {
+		// Given: the alongside lane z and the first sequential workspace a wait; b would run after a
+		const fixture = await createFixture({
+			workspaces: ["packages/*"],
+			packages: { "packages/b": { name: "@fixture/b", scripts: { wait: 0 } } },
+		});
+		const waiter = join(fixture.root, "wait.cjs").replaceAll("\\", "/");
+		await writeFile(join(fixture.root, "wait.cjs"), WAITER_SOURCE);
+		for (const name of ["a", "z"]) {
+			await writeManifest(fixture.root, `packages/${name}`, {
+				name: `@fixture/${name}`,
+				version: "1.0.0",
+				private: true,
+				scripts: { wait: `node "${waiter}"` },
+			});
+		}
+		const driver = spawn(process.execPath, [driverPath, "--alongside", "packages/z", "wait"], {
+			cwd: fixture.root,
+			stdio: ["ignore", "pipe", "inherit"],
+			env: {
+				...process.env,
+				RUN_WORKSPACES_MARKER_FILE: fixture.markerFile,
+				RUN_WORKSPACES_PARALLELISM: String(MIN_PARALLELISM_FOR_SECOND_LANE),
+			},
+		});
+		const lines = createInterface({ input: driver.stdout });
+		const events = [];
+		const waiters = new Set();
+		lines.on("line", (line) => {
+			const json = line.replace(/^\[[^\]]+\] /, "");
+			if (!json.startsWith('{"event":')) return;
+			events.push(JSON.parse(json));
+			for (const check of waiters) check();
+		});
+		const seen = (event, count, timeoutMs) =>
+			new Promise((resolvePromise, reject) => {
+				const timer = setTimeout(() => {
+					waiters.delete(check);
+					reject(new Error(`timed out waiting for ${count} ${event} event(s)`));
+				}, timeoutMs);
+				function check() {
+					const matching = events.filter((entry) => entry.event === event);
+					if (matching.length < count) return;
+					clearTimeout(timer);
+					waiters.delete(check);
+					resolvePromise(matching);
+				}
+				waiters.add(check);
+				check();
+			});
+		try {
+			const started = await seen("started", 2, 5_000);
+			const terminated = seen("terminated", 2, 3_000);
+			const closed = waitForClose(driver, 5_000);
+
+			// When
+			driver.kill("SIGTERM");
+			const [ended, exit] = await Promise.all([terminated, closed]);
+
+			// Then: both running lanes got the signal, b never started, the driver re-raised it
+			assert.deepEqual(
+				ended.map((entry) => entry.pid).sort(),
+				started.map((entry) => entry.pid).sort(),
+			);
+			assert.deepEqual(await fixture.markers(), []);
+			assert.equal(exit.signal, "SIGTERM");
+		} finally {
+			lines.close();
+			if (driver.exitCode === null && driver.signalCode === null) {
+				const closedLate = waitForClose(driver, 5_000);
+				driver.kill("SIGTERM");
+				await closedLate;
+			}
 			await fixture.dispose();
 		}
 	});

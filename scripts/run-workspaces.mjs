@@ -216,6 +216,16 @@ async function runInParallel(pm, pmArgs, workspaces, childEnv) {
 	}
 }
 
+/** A bad RUN_WORKSPACES_PARALLELISM is a caller error: report it like any other bad argument (usage, exit 2). */
+function parallelismOrUsageError(env) {
+	try {
+		return detectParallelism(env);
+	} catch (error) {
+		if (error instanceof RangeError) throw new UsageError(error.message);
+		throw error;
+	}
+}
+
 export async function runWorkspaces(argv, { rootDirectory = process.cwd(), env = process.env } = {}) {
 	const { script, ifPresent, parallel, alongside, workspaces: selectors, forwarded } = parseArguments(argv);
 	const all = await resolveWorkspaceDirectories(rootDirectory);
@@ -239,7 +249,7 @@ export async function runWorkspaces(argv, { rootDirectory = process.cwd(), env =
 			: { workspace, verdict: "FAIL", detail: `exit ${status}`, status };
 	const results = [];
 	const running = selected.filter((workspace) => !missing.includes(workspace));
-	const parallelism = alongsideWorkspace ? detectParallelism(env) : 0;
+	const parallelism = alongsideWorkspace ? parallelismOrUsageError(env) : 0;
 	if (alongsideWorkspace && running.includes(alongsideWorkspace) && secondLaneFits(parallelism)) {
 		console.log(
 			`[${LABEL}] ${describe(alongsideWorkspace)} runs alongside the other workspaces (parallelism ${parallelism})`,
@@ -296,7 +306,7 @@ async function main() {
 		if (error instanceof UsageError) {
 			console.error(`[${LABEL}] ${error.message}`);
 			console.error(
-				"usage: node scripts/run-workspaces.mjs [--if-present] [--parallel] [--workspace <name|path>]... <script> [-- <args>]",
+				"usage: node scripts/run-workspaces.mjs [--if-present] [--parallel | --alongside <name|path>] [--workspace <name|path>]... <script> [-- <args>]",
 			);
 			process.exitCode = 2;
 			return;

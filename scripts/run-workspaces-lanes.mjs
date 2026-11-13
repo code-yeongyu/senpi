@@ -10,9 +10,12 @@
 //
 // The second lane only starts when the machine has room for it. The alongside
 // workspace's Vitest pool already takes `availableParallelism() - 1` workers
-// (Vitest's default), so a second lane always oversubscribes the CPU a little;
-// below MIN_PARALLELISM_FOR_SECOND_LANE that oversubscription turns into test
-// timeouts, so the run stays fully sequential there, exactly as without the
+// (Vitest's default), and each second-lane workspace that runs Vitest starts a
+// pool of the same size, so while both lanes run the worker count is about twice
+// the core count. coding-agent's subprocess-heavy tests leave cores idle, which
+// is what the second lane uses (measured on 8 cores: same test results, shorter
+// wall); below MIN_PARALLELISM_FOR_SECOND_LANE the oversubscription turns into
+// test timeouts, so the run stays fully sequential there, exactly as without the
 // flag. RUN_WORKSPACES_PARALLELISM overrides the detected count, for containers
 // whose CPU quota `availableParallelism()` does not see.
 
