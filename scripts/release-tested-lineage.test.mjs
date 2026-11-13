@@ -3,10 +3,12 @@
 // commit may differ from the dispatched one only by the release-only model catalog commit. Release contract.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
+import { GENERATED_HEADER, isRegeneratedCatalogPath } from "./release-test-gate.mjs";
 import { assertTestedLineage } from "./release-tested-lineage.mjs";
 
 function withRepo(run) {
@@ -78,6 +80,39 @@ describe("assertTestedLineage (senpi#6642 MUST 1, MUST 2)", () => {
 			assert.throws(() => assertTestedLineage({ base, tested, capture }), /providers-extra\.ts/);
 		}));
 
+	// Review of senpi#6645, finding 3: the catalog allow-list is what generate-models.ts writes, never the whole
+	// providers directory, which also holds hand-written provider runtime code.
+	it("refuses a catalog child that also touches a hand-written provider runtime file", () =>
+		withRepo(({ base, commit, capture }) => {
+			const tested = commit("catalog plus runtime", {
+				"packages/ai/src/providers/data/nvidia.json": "{}\n",
+				"packages/ai/src/providers/anthropic.ts": "export {};\n",
+			});
+			assert.throws(() => assertTestedLineage({ base, tested, capture }), /packages\/ai\/src\/providers\/anthropic\.ts/);
+		}));
+
+	it("accepts a child that regenerates, adds and prunes generator-written .models.ts shards", () =>
+		withRepo(({ git, commit, capture }) => {
+			commit("shards", { "packages/ai/src/providers/old.models.ts": `${GENERATED_HEADER}\nold\n` });
+			const parent = git("rev-parse", "HEAD");
+			git("rm", "-q", "packages/ai/src/providers/old.models.ts");
+			const tested = commit("regenerate", { "packages/ai/src/providers/new.models.ts": `${GENERATED_HEADER}\nnew\n` });
+			assert.equal(assertTestedLineage({ base: parent, tested, capture }), "catalog");
+		}));
+
+	// The generator leaves fork-owned shards alone (FORK_OWNED_MODEL_SHARDS in packages/ai/scripts/model-shards.ts):
+	// they carry no generator header, so a change to one is hand-written code, not catalog.
+	it("refuses a catalog child that edits a hand-written, fork-owned .models.ts shard", () =>
+		withRepo(({ git, commit, capture }) => {
+			commit("fork shard", { "packages/ai/src/providers/kimi-coding.models.ts": "/** Kimi, owned by the fork. */\nexport {};\n" });
+			const parent = git("rev-parse", "HEAD");
+			const tested = commit("edit it", {
+				"packages/ai/src/providers/kimi-coding.models.ts": "/** Kimi, owned by the fork. */\nexport const X = 1;\n",
+				"packages/ai/src/providers/data/kimi.json": "{}\n",
+			});
+			assert.throws(() => assertTestedLineage({ base: parent, tested, capture }), /kimi-coding\.models\.ts/);
+		}));
+
 	it("refuses a merge commit even when its first parent is the dispatched commit", () =>
 		withRepo(({ base, git, commit, capture }) => {
 			git("checkout", "-q", "-b", "side");
@@ -98,4 +133,24 @@ describe("assertTestedLineage (senpi#6642 MUST 1, MUST 2)", () => {
 		withRepo(({ base, capture }) => {
 			assert.throws(() => assertTestedLineage({ base, tested: base.slice(0, 12), capture }), /40-character/);
 		}));
+});
+
+describe("isRegeneratedCatalogPath matches what generate-models.ts writes (senpi#6645 review, finding 3)", () => {
+	it("covers every tracked generator output in packages/ai/src and nothing hand-written", () => {
+		const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+		const tracked = execFileSync("git", ["ls-files", "--", "packages/ai/src"], { cwd: repoRoot, encoding: "utf8" })
+			.split("\n")
+			.filter(Boolean);
+		// The generator's own marker: every TypeScript file it writes starts with this header; its JSON goes to data/.
+		const generated = (path) =>
+			path.startsWith("packages/ai/src/providers/data/") ||
+			(path.endsWith(".ts") && readFileSync(join(repoRoot, path), "utf8").startsWith(GENERATED_HEADER));
+		const content = (path) => readFileSync(join(repoRoot, path), "utf8");
+		const mismatched = tracked.filter((path) => isRegeneratedCatalogPath(path, content(path)) !== generated(path));
+		assert.deepEqual(mismatched, []);
+		assert.ok(tracked.filter(generated).length > 40, "expected the generated catalog in the tree");
+		assert.equal(isRegeneratedCatalogPath("packages/ai/src/providers/anthropic.ts", content("packages/ai/src/providers/anthropic.ts")), false);
+		assert.equal(isRegeneratedCatalogPath("packages/ai/src/providers/kimi-coding.models.ts", content("packages/ai/src/providers/kimi-coding.models.ts")), false);
+		assert.equal(isRegeneratedCatalogPath("packages/ai/src/providers/openai.models.ts", content("packages/ai/src/providers/openai.models.ts")), true);
+	});
 });

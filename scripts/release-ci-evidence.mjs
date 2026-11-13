@@ -14,6 +14,7 @@ import {
 	awaitCiEvidence,
 	catalogChangedSinceHead,
 	catalogCommitMessage,
+	changedCatalogPaths,
 	discardTimestampOnlyCatalogChange,
 	planCiEvidence,
 	REGENERATED_CATALOG_PATHS,
@@ -128,7 +129,7 @@ export function secureCiEvidence(version, dryRun, forceTests, pinnedSha) {
 		log(
 			"the regeneration changed the model catalog; committing it on the release only (the forced suite and checks run on it)",
 		);
-		runCommand("git", ["add", "--", ...REGENERATED_CATALOG_PATHS]);
+		runCommand("git", ["add", "-A", "--", ...changedCatalogPaths(process.cwd())]);
 		gitCommit(catalogCommitMessage(version), false);
 	}
 	if (forceTests) {

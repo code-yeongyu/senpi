@@ -58,6 +58,7 @@ import {
 	stageChangedFiles,
 } from "./release-commands.mjs";
 import { syncRemoteMainBeforePush } from "./release-git.mjs";
+import { assertHeadOnOriginMain } from "./release-tested-lineage.mjs";
 import { applyWorkspaceVersions, runSyncVersions } from "./release-packages.mjs";
 import { preparePinnedRelease, syncPinnedReleaseIntoMain } from "./release-pin.mjs";
 import {
@@ -76,7 +77,10 @@ function preflight(dryRun) {
 		process.stderr.write(`[release] error: must be on main branch, currently on "${branch || "<detached>"}"\n`);
 		process.exit(1);
 	}
-	log("on branch main");
+	// The name alone proves nothing (`git checkout -B main` names any commit main): HEAD must be on origin/main, or the
+	// release-only catalog commit on top of a commit that is (senpi#6645).
+	const onMain = assertHeadOnOriginMain({ runCommand, capture: captureCommand, log });
+	log(onMain === "on-main" ? "on branch main, at a commit origin/main reaches" : "on branch main, at the release-only catalog commit on origin/main");
 
 	const status = captureCommand("git", ["status", "--porcelain"]);
 	if (status.trim().length === 0) {

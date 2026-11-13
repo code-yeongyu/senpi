@@ -142,10 +142,83 @@ describe("release.mjs --tested-sha (senpi#6642)", () => {
 			assert.equal(git(repo, "rev-parse", "HEAD"), tested, "a refused release committed");
 		}));
 
+	// Review of senpi#6645, finding 2: the guard that stops a branch dispatch on the --tested-sha path is that --sha must
+	// be on origin/main, whatever the local branch is called.
+	it("refuses --tested-sha when --sha is a branch commit origin/main does not reach, even on a branch named main", () =>
+		withReleaseRepo(({ repo, base, results, git, release, originRefs }) => {
+			git(repo, "checkout", "-q", "-B", "main", base);
+			writeFileSync(join(repo, "README.md"), "branch work\n");
+			git(repo, "add", "-A");
+			git(repo, "commit", "-q", "-m", "feature commit");
+			const feature = git(repo, "rev-parse", "HEAD");
+			for (const part of FORCED_SUITE_PARTS) writeForcedSuiteResult(results, { testedSha: feature, part, exitCode: 0, files: 1, tests: 1 });
+			const before = originRefs();
+			const run = release(["--sha", feature, "--tested-sha", feature, "--shard-results", results]);
+			assert.notEqual(run.status, 0);
+			assert.match(run.stderr, /is not on main/);
+			assert.equal(originRefs(), before);
+			assert.equal(git(repo, "rev-parse", "HEAD"), feature, "a refused release committed");
+		}));
+
 	it("needs --sha and --shard-results with --tested-sha, and refuses --force-tests with it", () =>
 		withReleaseRepo(({ base, tested, results, release }) => {
 			assert.match(release(["--tested-sha", tested, "--shard-results", results]).stderr, /--sha/);
 			assert.match(release(["--sha", base, "--tested-sha", tested]).stderr, /--shard-results/);
 			assert.match(release(["--sha", base, "--tested-sha", tested, "--shard-results", results, "--force-tests"]).stderr, /--force-tests/);
+		}));
+});
+
+// Release-train ruling on senpi#6645: the release's preflight never trusts the local branch name. `git checkout -B main`
+// on any commit used to satisfy it; now HEAD must be reachable from the fetched origin/main, or be the single
+// catalog-only child of a commit that is. Release contract (what may be stamped, tagged and pushed).
+describe("release.mjs preflight requires HEAD on origin/main, not a branch named main (senpi#6645)", () => {
+	const refused = (run) => {
+		assert.notEqual(run.status, 0, run.stdout);
+		assert.match(run.stderr, /not reachable from origin\/main/);
+	};
+
+	it("refuses a local branch named main whose HEAD origin/main does not reach, in a dry run", () =>
+		withReleaseRepo(({ repo, base, git, release, originRefs }) => {
+			git(repo, "checkout", "-q", "-B", "main", base);
+			writeFileSync(join(repo, "README.md"), "unreviewed\n");
+			git(repo, "add", "-A");
+			git(repo, "commit", "-q", "-m", "not on main");
+			assert.equal(git(repo, "branch", "--show-current"), "main");
+			const before = originRefs();
+			refused(release(["--dry-run"]));
+			assert.equal(originRefs(), before);
+		}));
+
+	it("refuses it in a live release too, before the catalog, the suite, any commit or any push", () =>
+		withReleaseRepo(({ repo, base, git, release, originRefs }) => {
+			git(repo, "checkout", "-q", "-B", "main", base);
+			writeFileSync(join(repo, "README.md"), "unreviewed\n");
+			git(repo, "add", "-A");
+			git(repo, "commit", "-q", "-m", "not on main");
+			const head = git(repo, "rev-parse", "HEAD");
+			const before = originRefs();
+			const run = release(["--force-tests"]);
+			refused(run);
+			assert.equal(run.commands.some((args) => args.includes("generate-models")), false, JSON.stringify(run.commands));
+			assert.equal(git(repo, "rev-parse", "HEAD"), head, "a refused release committed");
+			assert.equal(originRefs(), before);
+		}));
+
+	it("refuses a second catalog commit on top of the catalog-only child", () =>
+		withReleaseRepo(({ repo, git, release }) => {
+			writeFileSync(join(repo, "packages/ai/src/models.generated.ts"), "newer\n");
+			git(repo, "add", "-A");
+			git(repo, "commit", "-q", "-m", "catalog again");
+			refused(release(["--dry-run"]));
+		}));
+
+	it("accepts HEAD equal to origin/main and the single catalog-only child of it", () =>
+		withReleaseRepo(({ repo, base, git, release }) => {
+			const child = release(["--dry-run"]);
+			assert.equal(child.status, 0, child.stderr + child.stdout);
+			assert.match(child.stdout, /would have prepared/);
+			git(repo, "checkout", "-q", "-B", "main", base);
+			const onMain = release(["--dry-run"]);
+			assert.equal(onMain.status, 0, onMain.stderr + onMain.stdout);
 		}));
 });

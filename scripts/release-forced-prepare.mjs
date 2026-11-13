@@ -23,8 +23,8 @@ import { preparePinnedRelease } from "./release-pin.mjs";
 import {
 	catalogChangedSinceHead,
 	catalogCommitMessage,
+	changedCatalogPaths,
 	discardTimestampOnlyCatalogChange,
-	REGENERATED_CATALOG_PATHS,
 } from "./release-test-gate.mjs";
 
 /** The ref the bundle carries the tested commit under; the matrix jobs fetch it by this name. */
@@ -48,7 +48,7 @@ export function prepareTestedCommit({ cwd, version, regenerate, bundlePath, log 
 		log(`the regeneration changed nothing; the matrix jobs test the dispatched commit ${baseSha.slice(0, 12)}`);
 		return { baseSha, testedSha: baseSha, testedTree: git("rev-parse", "HEAD^{tree}"), bundle: false };
 	}
-	git("add", "--", ...REGENERATED_CATALOG_PATHS);
+	git("add", "-A", "--", ...changedCatalogPaths(cwd));
 	git("commit", "-q", "-m", catalogCommitMessage(version));
 	const testedSha = git("rev-parse", "HEAD");
 	git("update-ref", TESTED_COMMIT_REF, testedSha);
