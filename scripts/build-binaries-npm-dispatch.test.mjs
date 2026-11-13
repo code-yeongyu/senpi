@@ -25,7 +25,14 @@ function needsOf(name) {
 	const scalar = /^ {4}needs:\s*([\w-]+)\s*$/m.exec(text);
 	if (scalar) return [scalar[1]];
 	const block = /^ {4}needs:\s*\n((?: {6}- [\w-]+\n?)+)/m.exec(text);
-	return block ? block[1].trim().split("\n").map((line) => line.replace(/^\s*-\s*/, "").trim()) : [];
+	if (block) return block[1].trim().split("\n").map((line) => line.replace(/^\s*-\s*/, "").trim());
+	// A needs: this parser cannot read must fail, never read as "no needs", or upstream() would drop that branch.
+	assert.doesNotMatch(text, /^ {4}needs:/m, `job ${name} has a needs: form this test cannot parse`);
+	return [];
+}
+
+function jobNames() {
+	return [...workflow.matchAll(/^ {2}([\w-]+):\s*$/gm)].map((match) => match[1]);
 }
 
 // Every job the named job waits for, directly or through another job.
@@ -62,6 +69,14 @@ describe("build-binaries.yml npm dispatch and binary smoke (senpi#6627)", () => 
 			assert.ok(upstream(job).has("smoke-test-binaries"), `${job} no longer waits for the binary smoke`);
 		}
 		assert.ok(upstream("publish-github-release").has("publish-npm"), "the GitHub Release must still wait for npm");
+	});
+
+	it("parses the needs: of every job in the workflow", () => {
+		const names = jobNames();
+		assert.ok(names.includes("publish-npm") && names.includes("smoke-test-binaries"), names.join(", "));
+		for (const name of names) {
+			for (const need of needsOf(name)) assert.ok(names.includes(need), `${name} needs unknown job ${need}`);
+		}
 	});
 
 	it("smokes binaries that the npm packages do not ship", () => {
