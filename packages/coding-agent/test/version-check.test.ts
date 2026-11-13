@@ -7,6 +7,7 @@ import {
 	getLatestPiVersion,
 	getReleaseChangelogUrl,
 	isNewerPackageVersion,
+	readLatestReleaseVersion,
 } from "../src/utils/version-check.ts";
 import { allowNetwork } from "./test-network-env.ts";
 
@@ -162,5 +163,62 @@ describe("unparseable version pairs", () => {
 		const label = "omo@c6e7dd7 2026-09-04 10:17 +09:00";
 		expect(isNewerPackageVersion("2026.9.3-3", label)).toBe(false);
 		expect(isNewerPackageVersion(label, "2026.9.3-3")).toBe(false);
+	});
+});
+
+describe("binary install update channel (senpi#6633)", () => {
+	const NPM_LATEST_URL = "https://registry.npmjs.org/%40code-yeongyu%2Fsenpi/latest";
+	const LATEST_RELEASE_URL = "https://api.github.com/repos/code-yeongyu/senpi/releases/latest";
+
+	function stubUpdateSources(npmVersion: string, release: Response | Record<string, unknown>): string[] {
+		const asked: string[] = [];
+		vi.stubGlobal("fetch", async (input: string | URL | Request) => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+			asked.push(url);
+			if (url === NPM_LATEST_URL) return Response.json({ version: npmVersion });
+			if (url === LATEST_RELEASE_URL) return release instanceof Response ? release : Response.json(release);
+			return new Response("not found", { status: 404 });
+		});
+		return asked;
+	}
+
+	it("npm newer + GitHub Release older: no notice for a binary install, and only the release is asked", async () => {
+		const asked = stubUpdateSources("2026.11.14-1", { tag_name: "v2026.11.13-1" });
+
+		expect(await checkForNewPiVersion("2026.11.13-1", { installMethod: "bun-binary" })).toBeUndefined();
+		expect(asked).toEqual([LATEST_RELEASE_URL]);
+	});
+
+	it("the same pair still notifies an npm install, from npm only", async () => {
+		const asked = stubUpdateSources("2026.11.14-1", { tag_name: "v2026.11.13-1" });
+
+		expect((await checkForNewPiVersion("2026.11.13-1", { installMethod: "npm" }))?.version).toBe("2026.11.14-1");
+		expect(asked).toEqual([NPM_LATEST_URL]);
+	});
+
+	it("notifies a binary install once the GitHub Release is published", async () => {
+		stubUpdateSources("2026.11.14-1", { tag_name: "v2026.11.14-1" });
+
+		expect((await checkForNewPiVersion("2026.11.13-1", { installMethod: "bun-binary" }))?.version).toBe(
+			"2026.11.14-1",
+		);
+	});
+
+	it("gives a binary install no notice when GitHub refuses the lookup or the latest release is a prerelease", async () => {
+		stubUpdateSources("2026.11.14-1", new Response('{"message":"API rate limit exceeded"}', { status: 403 }));
+		expect(await checkForNewPiVersion("2026.11.13-1", { installMethod: "bun-binary" })).toBeUndefined();
+
+		stubUpdateSources("2026.11.14-1", { tag_name: "v2026.11.14-1", prerelease: true });
+		expect(await checkForNewPiVersion("2026.11.13-1", { installMethod: "bun-binary" })).toBeUndefined();
+	});
+
+	it("reads the version from the release tag and refuses drafts, prereleases and malformed payloads", () => {
+		expect(readLatestReleaseVersion({ tag_name: "v2026.11.13-1" })).toBe("2026.11.13-1");
+		expect(readLatestReleaseVersion({ tag_name: "2026.11.13" })).toBe("2026.11.13");
+		expect(readLatestReleaseVersion({ tag_name: "v2026.11.13-1", draft: true })).toBeUndefined();
+		expect(readLatestReleaseVersion({ tag_name: "v2026.11.13-1", prerelease: true })).toBeUndefined();
+		expect(readLatestReleaseVersion({ tag_name: "" })).toBeUndefined();
+		expect(readLatestReleaseVersion({})).toBeUndefined();
+		expect(readLatestReleaseVersion(null)).toBeUndefined();
 	});
 });
