@@ -26,9 +26,9 @@ const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
 /** What an ordinary command is given to answer. */
 const COMMAND_MS = 20_000;
 /**
- * What the first command is given (senpi#6506). It is an `open_session` that builds the whole runtime, and the test
- * runner compiles what that loads on first use: alone on a busy 40-core machine it took 5.8 to 22.9 s, so the
- * ordinary allowance failed the test with nothing wrong. Every later command keeps the ordinary one.
+ * What the first `open_session` is given (senpi#6506), which must be the first command: it builds the whole runtime,
+ * and the test runner compiles what that loads on first use. Alone on a busy 40-core machine it took 5.8 to 22.9 s, so
+ * the ordinary allowance failed the test with nothing wrong. Every later command keeps the ordinary one.
  */
 const FIRST_COMMAND_MS = 120_000;
 
@@ -72,11 +72,18 @@ async function startHost() {
 		if (record.type === "response" && typeof record.id === "string") answers.get(record.id)?.(record);
 	});
 	let serial = 0;
+	let opened = false;
 	return {
 		scratch,
 		send(command: WireRecord): Promise<WireRecord> {
 			const id = `x14-${++serial}`;
-			const allowance = serial === 1 ? FIRST_COMMAND_MS : COMMAND_MS;
+			// The first command builds the runtime; anything sent before it would be timed with that cost.
+			if (!opened && command.type !== "open_session")
+				throw new Error(
+					`the first command must be the open_session that builds the runtime, not ${String(command.type)}`,
+				);
+			const allowance = !opened && command.type === "open_session" ? FIRST_COMMAND_MS : COMMAND_MS;
+			if (command.type === "open_session") opened = true;
 			client.write(`${JSON.stringify({ ...command, id })}\n`);
 			return new Promise<WireRecord>((resolve, reject) => {
 				const timer = setTimeout(() => reject(new Error(`no answer to ${String(command.type)}`)), allowance);
