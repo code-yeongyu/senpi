@@ -76,6 +76,25 @@ describe("release-draft-cleanup.sh: npm side (senpi#4173)", () => {
 		);
 	});
 
+	// senpi#6627: npm no longer waits for staging, so staging can fail after it created the draft while npm
+	// published. That draft may lack assets: the advice must be to re-stage it, never to publish it.
+	it("never advises publishing a kept draft whose staging job did not succeed", () => {
+		for (const stage of ["failure", "cancelled"]) {
+			const outcome = cleanup(NPM_HAS_IT, { PUBLISH_JOB_RESULT: "success", STAGE_JOB_RESULT: stage });
+			assertKept(outcome);
+			assert.doesNotMatch(outcome.output, /--draft=false/, `${stage}: advised publishing a draft whose staging did not finish`);
+			assert.match(outcome.output, /staging did not finish/);
+			assert.match(outcome.output, /gh release delete v2026\.10\.24-1 --yes/);
+			assert.match(outcome.output, /release-assets-v2026\.10\.24-1/);
+		}
+	});
+
+	it("keeps the publish advice when staging succeeded", () => {
+		const outcome = cleanup(NPM_HAS_IT, { PUBLISH_JOB_RESULT: "failure", STAGE_JOB_RESULT: "success" });
+		assertKept(outcome);
+		assert.match(outcome.output, /gh release edit v2026\.10\.24-1 --draft=false/);
+	});
+
 	it("keeps the draft when the npm lookup itself fails", () => {
 		const outcome = cleanup(`echo "npm error code ETIMEDOUT" >&2\nexit 1`);
 		assertKept(outcome);

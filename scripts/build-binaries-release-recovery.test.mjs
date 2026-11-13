@@ -59,5 +59,12 @@ describe("build-binaries.yml release recovery wiring (senpi#4173)", () => {
 			step.env.PUBLISH_JOB_RESULT,
 			/^\$\{\{\s*needs\.publish-npm\.result\s*\}\}$/,
 		);
+		// senpi#6627: npm and staging run in parallel, so the script must know whether staging finished
+		// before it advises publishing a kept draft.
+		assert.ok(job.needs.includes("stage-github-release"));
+		assert.match(
+			step.env.STAGE_JOB_RESULT ?? "",
+			/^\$\{\{\s*needs\.stage-github-release\.result\s*\}\}$/,
+		);
 	});
 });

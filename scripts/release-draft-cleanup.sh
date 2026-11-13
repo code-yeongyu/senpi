@@ -14,6 +14,7 @@
 #   RELEASE_TAG         release tag, e.g. v2026.10.24-1 (required)
 #   PUBLISH_RUN_ID      id of the dispatched publish-npm.yml run, when the publish-npm job found it
 #   PUBLISH_JOB_RESULT  result of the publish-npm job; "skipped" means nothing was dispatched
+#   STAGE_JOB_RESULT    result of the stage-github-release job; anything but "success" means the draft may lack assets
 #   NPM_PACKAGE         package that marks the npm side as published (default @code-yeongyu/senpi)
 #   GH_BIN              gh executable (default gh)
 #   NPM_BIN             npm executable (default npm)
@@ -23,6 +24,7 @@ set -euo pipefail
 : "${RELEASE_TAG:?RELEASE_TAG is required}"
 PUBLISH_RUN_ID="${PUBLISH_RUN_ID:-}"
 PUBLISH_JOB_RESULT="${PUBLISH_JOB_RESULT:-}"
+STAGE_JOB_RESULT="${STAGE_JOB_RESULT:-}"
 NPM_PACKAGE="${NPM_PACKAGE:-@code-yeongyu/senpi}"
 GH_BIN="${GH_BIN:-gh}"
 NPM_BIN="${NPM_BIN:-npm}"
@@ -43,6 +45,17 @@ npm_out="$(printf '%s' "${npm_out}" | tr -d '[:space:]')"
 
 if [[ "${npm_status}" -eq 0 && "${npm_out}" == "${version}" ]]; then
 	echo "::error::npm already has ${spec}, so the draft GitHub Release ${RELEASE_TAG} was kept instead of deleted."
+	# npm publishes in parallel with staging (senpi#6627), so a failed or cancelled staging job can leave a draft
+	# with missing assets next to a published npm version. Never publish that draft: stage it again.
+	if [[ -n "${STAGE_JOB_RESULT}" && "${STAGE_JOB_RESULT}" != "success" ]]; then
+		echo "::error::stage-github-release ended '${STAGE_JOB_RESULT}': staging did not finish, so the draft may lack assets. Do not publish it."
+		echo "Re-stage it from this run's release-assets-${RELEASE_TAG} artifact, or re-run this run's failed jobs (staging deletes and re-creates the draft):"
+		echo "  gh release delete ${RELEASE_TAG} --yes"
+		echo "  gh run download <this run id> --name release-assets-${RELEASE_TAG} --dir release-assets"
+		echo "  gh release create ${RELEASE_TAG} --verify-tag --draft --title ${RELEASE_TAG} --notes-file release-assets/RELEASE_NOTES.md <the release-assets files except RELEASE_NOTES.md>"
+		echo "Publish the re-created draft only after its asset list matches and 'sha256sum -c SHA256SUMS' passes."
+		exit 1
+	fi
 	echo "Recover by publishing the kept draft after verifying both sides:"
 	echo "  npm view ${spec} version"
 	echo "  gh release view ${RELEASE_TAG} --json isDraft,assets"

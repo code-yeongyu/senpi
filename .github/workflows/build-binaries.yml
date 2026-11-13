@@ -415,4 +415,5 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PUBLISH_RUN_ID: ${{ needs.publish-npm.outputs.run_id }}
           PUBLISH_JOB_RESULT: ${{ needs.publish-npm.result }}
+          STAGE_JOB_RESULT: ${{ needs.stage-github-release.result }}
         run: bash scripts/release-draft-cleanup.sh

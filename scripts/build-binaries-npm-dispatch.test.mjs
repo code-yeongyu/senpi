@@ -50,12 +50,4 @@ describe("build-binaries.yml npm dispatch and binary smoke (senpi#6627)", () => 
 		assert.ok(!codingAgentPackage.files.some((entry) => entry.replace(/^\.?\//, "").startsWith("binaries")));
 	});
 
-	it("still cleans up a staged draft whenever staging, npm or the release publish fails", () => {
-		const cleanup = jobs["cleanup-draft-github-release"];
-		for (const need of ["build", "stage-github-release", "publish-npm", "publish-github-release"]) {
-			assert.ok(needsOf("cleanup-draft-github-release").includes(need), `cleanup no longer needs ${need}`);
-		}
-		assert.match(cleanup.if, /needs\.stage-github-release\.result != 'skipped'/);
-		assert.match(cleanup.if, /needs\.publish-npm\.result != 'success'/);
-	});
 });
