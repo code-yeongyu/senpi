@@ -6,7 +6,7 @@
  *
  * It does what `release.mjs` did in-job before the suite ran: pin `--sha` if given, regenerate the model catalog,
  * check the bundled provider defaults against it, and commit a changed catalog on the release only. Then it hands the
- * result to the matrix jobs: `tested_sha` (that commit, or the dispatched one when nothing changed), `tested_tree`,
+ * result to the matrix jobs: `tested_sha` (that commit, or the dispatched one when nothing changed),
  * `base_sha` (the base resolved once, here; printed in full and used by every later job and `release.mjs --sha`), the
  * release `version` fixed now (a suite that crosses 00:00 UTC must not change it), and, only when a
  * catalog commit exists, a git bundle carrying it, since that commit is never pushed before the release tags it.
@@ -35,7 +35,7 @@ const VERSION_RE = /^\d{4}\.\d{1,2}\.\d{1,2}(-\d+)?$/;
 /**
  * Regenerate the catalog in `cwd` and commit it on top of HEAD when it changed.
  * @param {{cwd: string, version: string, regenerate: () => void, bundlePath: string, log: (line: string) => void}} input
- * @returns {{baseSha: string, testedSha: string, testedTree: string, bundle: boolean}}
+ * @returns {{baseSha: string, testedSha: string, bundle: boolean}}
  */
 export function prepareTestedCommit({ cwd, version, regenerate, bundlePath, log }) {
 	const git = (...args) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
@@ -46,7 +46,7 @@ export function prepareTestedCommit({ cwd, version, regenerate, bundlePath, log 
 	}
 	if (!catalogChangedSinceHead(cwd)) {
 		log(`the regeneration changed nothing; the matrix jobs test the dispatched commit ${baseSha.slice(0, 12)}`);
-		return { baseSha, testedSha: baseSha, testedTree: git("rev-parse", "HEAD^{tree}"), bundle: false };
+		return { baseSha, testedSha: baseSha, bundle: false };
 	}
 	git("add", "-A", "--", ...changedCatalogPaths(cwd));
 	git("commit", "-q", "-m", catalogCommitMessage(version));
@@ -55,15 +55,14 @@ export function prepareTestedCommit({ cwd, version, regenerate, bundlePath, log 
 	mkdirSync(dirname(bundlePath), { recursive: true });
 	git("bundle", "create", "-q", bundlePath, TESTED_COMMIT_REF, `^${baseSha}`);
 	log(`the regeneration changed the model catalog; the matrix jobs test the release-only commit ${testedSha.slice(0, 12)}`);
-	return { baseSha, testedSha, testedTree: git("rev-parse", "HEAD^{tree}"), bundle: true };
+	return { baseSha, testedSha, bundle: true };
 }
 
 /** `$GITHUB_OUTPUT` lines for the prepare job's outputs. */
-export function formatPrepareOutputs({ baseSha, testedSha, testedTree, bundle }, version) {
+export function formatPrepareOutputs({ baseSha, testedSha, bundle }, version) {
 	return `${[
 		`base_sha=${baseSha}`,
 		`tested_sha=${testedSha}`,
-		`tested_tree=${testedTree}`,
 		`version=${version}`,
 		`bundle=${bundle}`,
 	].join("\n")}\n`;
