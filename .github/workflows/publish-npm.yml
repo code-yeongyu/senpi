@@ -257,7 +257,9 @@ jobs:
       - name: Run release
         if: inputs.publish-only != true && (inputs.dry_run == true || github.ref == 'refs/heads/main')
         env:
-          GH_TOKEN: ${{ secrets.UPSTREAM_AUTOMATION_TOKEN }}
+          # senpi#6645: only a run on main gets the push token. A dry run on any other ref reaches this step with an empty
+          # token and an uncredentialed origin (checkout used persist-credentials: false), so nothing here can push.
+          GH_TOKEN: ${{ github.ref == 'refs/heads/main' && secrets.UPSTREAM_AUTOMATION_TOKEN || '' }}
           SENPI_SKIP_PM_VERIFY: '1'
           RELEASE_SHA: ${{ inputs.sha }}
           # force_tests (senpi#6642): prepare fixed the version before the suite ran, and its tested commit, the
@@ -270,11 +272,15 @@ jobs:
           # senpi#4022): on the default ~4 GB heap the check ran out of memory in the 2026.10.23-1 release.
           NODE_OPTIONS: --max-old-space-size=10240
         run: |
-          test -n "$GH_TOKEN" || {
-            echo "::error::UPSTREAM_AUTOMATION_TOKEN is required to push release commits and tags through branch protection."
-            exit 1
-          }
-          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then
+            test -n "$GH_TOKEN" || {
+              echo "::error::UPSTREAM_AUTOMATION_TOKEN is required to push release commits and tags through branch protection."
+              exit 1
+            }
+            git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          else
+            echo "Dry run on ${GITHUB_REF}: no push token, origin left read-only"
+          fi
           ARGS=()
           if [ -n "$RELEASE_VERSION" ]; then
             ARGS+=(--version "$RELEASE_VERSION")

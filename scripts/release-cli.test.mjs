@@ -69,10 +69,10 @@ appendFileSync(${JSON.stringify(calls)}, JSON.stringify([${JSON.stringify(name)}
 if (${JSON.stringify(name)} === "git") {
 	if (args[0] === "branch") process.stdout.write("main\\n");
 	if (args[0] === "status" && ${catalogDirty} && args.some((arg) => arg.startsWith("packages/ai/src/providers"))) {
-		process.stdout.write(" M packages/ai/src/providers/data/nvidia.json\\n");
+		process.stdout.write(" M packages/ai/src/providers/data/nvidia.json" + (args.includes("-z") ? "\\0" : "\\n"));
 	}
 	if (args[0] === "status" && ${manifestStampOnly} && args.some((arg) => arg.startsWith("packages/ai/src/providers")) && !existsSync(${JSON.stringify(join("RESTORED"))})) {
-		process.stdout.write(" M ${MANIFEST}\\n");
+		process.stdout.write(" M ${MANIFEST}" + (args.includes("-z") ? "\\0" : "\\n"));
 	}
 	if (args[0] === "show" && args[1] === "HEAD:${MANIFEST}") process.stdout.write(${JSON.stringify(manifestText("2026-10-01T00:00:00.000Z"))});
 	if (args[0] === "checkout" && args[2] === "${MANIFEST}") writeFileSync("RESTORED", "");
@@ -106,7 +106,8 @@ if (${JSON.stringify(name)} === "gh") {
 				cwd: root,
 				// Without npm_* (set when this runs under `npm run`), run-workspaces resolves the stubbed npm from PATH.
 				env: {
-					...Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^npm_/i.test(key))),
+					// GITHUB_ACTIONS/GITHUB_REF are dropped: under CI they would trip the main-only lock (release-ref-guard.mjs).
+					...Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(npm_|GITHUB_ACTIONS$|GITHUB_REF$)/i.test(key))),
 					PATH: `${bin}${delimiter}${dirname(process.execPath)}`,
 				},
 				encoding: "utf8",

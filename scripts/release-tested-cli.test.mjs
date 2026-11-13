@@ -57,12 +57,14 @@ function withReleaseRepo(run) {
 			writeFileSync(join(bin, name), `#!${process.execPath}\n${body}`);
 			chmodSync(join(bin, name), 0o755);
 		}
-		const release = (args) => {
+		const release = (args, extraEnv = {}) => {
 			const result = spawnSync(process.execPath, [RELEASE, "--version", VERSION, ...args], {
 				cwd: repo,
+				// GITHUB_ACTIONS/GITHUB_REF are dropped: under CI they would trip the main-only lock (release-ref-guard.mjs).
 				env: {
-					...Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^npm_/i.test(key))),
+					...Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(npm_|GITHUB_ACTIONS$|GITHUB_REF$)/i.test(key))),
 					PATH: `${bin}${delimiter}${process.env.PATH}`,
+					...extraEnv,
 				},
 				encoding: "utf8",
 				timeout: 30_000,
@@ -220,5 +222,32 @@ describe("release.mjs preflight requires HEAD on origin/main, not a branch named
 			git(repo, "checkout", "-q", "-B", "main", base);
 			const onMain = release(["--dry-run"]);
 			assert.equal(onMain.status, 0, onMain.stderr + onMain.stdout);
+		}));
+});
+
+// senpi#6645 review (32e83a5610, finding 1): inside GitHub Actions a live release refuses any ref but main in code, a
+// lock independent of the workflow's step conditions; a dry run there, and any local run, still work.
+describe("release.mjs refuses a live run in GitHub Actions off refs/heads/main (senpi#6645)", () => {
+	it("refuses before pinning, stamping, committing or pushing, even for a main commit", () =>
+		withReleaseRepo(({ repo, base, tested, results, git, release, originRefs }) => {
+			const before = originRefs();
+			const run = release(["--sha", base, "--tested-sha", tested, "--shard-results", results], {
+				GITHUB_ACTIONS: "true",
+				GITHUB_REF: "refs/heads/ci/6642-forced-suite-matrix",
+			});
+			assert.notEqual(run.status, 0);
+			assert.match(run.stderr, /only from refs\/heads\/main/);
+			assert.deepEqual(run.commands, [], "the refused release ran a command");
+			assert.equal(originRefs(), before);
+			assert.equal(git(repo, "rev-parse", "HEAD"), tested);
+		}));
+
+	it("still runs a dry run there, and a live run on refs/heads/main", () =>
+		withReleaseRepo(({ base, tested, results, release }) => {
+			const branch = { GITHUB_ACTIONS: "true", GITHUB_REF: "refs/heads/ci/6642-forced-suite-matrix" };
+			const dry = release(["--dry-run", "--sha", base, "--tested-sha", tested, "--shard-results", results], branch);
+			assert.equal(dry.status, 0, dry.stderr + dry.stdout);
+			const live = release(["--sha", base, "--tested-sha", tested, "--shard-results", results], { GITHUB_ACTIONS: "true", GITHUB_REF: "refs/heads/main" });
+			assert.equal(live.status, 0, live.stderr + live.stdout);
 		}));
 });

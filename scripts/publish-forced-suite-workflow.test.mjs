@@ -304,6 +304,57 @@ describe("forced-suite matrix jobs (senpi#6642)", () => {
 		assert.match(refusal, /exit 1/);
 	});
 
+	// senpi#6645 review (32e83a5610, finding 1): a dry run on another ref may reach Run release, so the push token must
+	// not: GH_TOKEN evaluates empty off main and the script never writes a credential into origin's URL there.
+	it("gives Run release no push token and no credentialed origin on any ref but main", () => {
+		const step = jobStep(workflowJob(workflow, "release"), "Run release");
+		const tokenExpression = step.match(/\n {10}GH_TOKEN: \$\{\{ (.*) \}\}\n/)?.[1];
+		assert.ok(tokenExpression, "expected GH_TOKEN as an expression");
+		const token = (ref) => evaluateExpression(tokenExpression, { github: { ref }, secrets: { UPSTREAM_AUTOMATION_TOKEN: "PAT" } });
+		assert.equal(token("refs/heads/main"), "PAT");
+		for (const ref of ["refs/heads/ci/6642-forced-suite-matrix", "refs/tags/v2026.11.13"]) assert.equal(isTruthy(token(ref)), false, ref);
+		assert.equal((workflow.match(/secrets\.UPSTREAM_AUTOMATION_TOKEN/g) ?? []).length, 1, "the push token appears anywhere else");
+
+		const script = step.match(/run: \|\n([\s\S]*)/)?.[1].replace(/^ {10}/gm, "");
+		assert.ok(script);
+		const root = mkdtempSync(join(tmpdir(), "run-release-token-"));
+		try {
+			const bin = join(root, "bin");
+			mkdirSync(bin);
+			const log = join(root, "calls.jsonl");
+			for (const name of ["npm", "git"]) {
+				writeFileSync(join(bin, name), `#!${process.execPath}\nrequire("node:fs").appendFileSync(${JSON.stringify(log)}, JSON.stringify([${JSON.stringify(name)}, ...process.argv.slice(2)]) + "\\n");\n`);
+				chmodSync(join(bin, name), 0o755);
+			}
+			const run = (ref, ghToken) => {
+				rmSync(log, { force: true });
+				const rendered = script.replaceAll("${{ inputs.force_tests }}", "false").replaceAll("${{ inputs.dry_run }}", "true");
+				const result = spawnSync("bash", ["-c", rendered], {
+					cwd: root,
+					env: { PATH: `${bin}:${process.env.PATH}`, GH_TOKEN: ghToken, GITHUB_REF: ref, GITHUB_REPOSITORY: "o/r", RELEASE_SHA: "", RELEASE_VERSION: "" },
+					encoding: "utf8",
+				});
+				let calls = [];
+				try {
+					calls = readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map(JSON.parse);
+				} catch {}
+				return { result, calls, setUrl: calls.some((args) => args[0] === "git" && args[1] === "remote" && args[2] === "set-url") };
+			};
+			const branch = run("refs/heads/ci/6642-forced-suite-matrix", token("refs/heads/ci/6642-forced-suite-matrix"));
+			assert.equal(branch.result.status, 0, branch.result.stderr);
+			assert.equal(branch.setUrl, false, "a branch dry run wrote a credential into origin");
+			assert.ok(branch.calls.some((args) => args[0] === "npm" && args.includes("--dry-run")), JSON.stringify(branch.calls));
+			const main = run("refs/heads/main", token("refs/heads/main"));
+			assert.equal(main.result.status, 0, main.result.stderr);
+			assert.equal(main.setUrl, true);
+			const mainWithoutToken = run("refs/heads/main", "");
+			assert.notEqual(mainWithoutToken.result.status, 0);
+			assert.match(mainWithoutToken.result.stdout, /UPSTREAM_AUTOMATION_TOKEN is required/);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	// Review finding 6 on senpi#6645: under force_tests the summary names the commit the matrix tested and the release
 	// tags (prepare's tested_sha); otherwise the dispatched sha input, else the run's commit.
 	it("reports the tested commit in the workflow summary under force_tests", () => {

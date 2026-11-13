@@ -58,6 +58,7 @@ import {
 	stageChangedFiles,
 } from "./release-commands.mjs";
 import { syncRemoteMainBeforePush } from "./release-git.mjs";
+import { assertLiveRunOnMain } from "./release-ref-guard.mjs";
 import { assertHeadOnOriginMain } from "./release-tested-lineage.mjs";
 import { applyWorkspaceVersions, runSyncVersions } from "./release-packages.mjs";
 import { preparePinnedRelease, syncPinnedReleaseIntoMain } from "./release-pin.mjs";
@@ -194,6 +195,8 @@ async function main() {
 		process.exit(0);
 	}
 
+	// Inside GitHub Actions a live release runs only from refs/heads/main (senpi#6645), whatever the workflow allowed.
+	assertLiveRunOnMain({ dryRun: args.dryRun, env: process.env, what: "the release" });
 	const capture = (bin, cmdArgs) => captureCommand(bin, cmdArgs);
 	if (args.testedSha !== null) {
 		// The forced-suite matrix jobs tested this commit and the release job checked it out (senpi#6642).
