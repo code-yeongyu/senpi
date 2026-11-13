@@ -71,4 +71,21 @@ describe("a project write that states its folder", () => {
 		const answer = await host.write("AGENTS.md", "rules", null);
 		expect(answer).toMatchObject({ success: true, command: "write_project_file" });
 	});
+
+	it("is refused when the session's folder differs only by surrounding whitespace or a POSIX backslash", async () => {
+		const host = await startHost();
+		await host.trust();
+		for (const stated of [`${host.cwd} `, `${host.cwd}\\`]) {
+			const answer = await host.send({
+				type: "write_project_file",
+				sessionId: host.sessionId,
+				path: "AGENTS.md",
+				content: "rules",
+				ifEtag: null,
+				expectedCwd: stated,
+			});
+			expect(answer).toMatchObject({ success: false, errorCode: "project_cwd_mismatch" });
+		}
+		expect(existsSync(join(host.cwd, "AGENTS.md"))).toBe(false);
+	});
 });
