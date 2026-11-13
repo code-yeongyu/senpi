@@ -10,8 +10,13 @@ afterEach(() => {
 	harness = undefined;
 });
 
+// The fallback switch note (omo#13243) reaches the retried request as a trailing user message; route on the prompt.
+const MODEL_SWITCH_NOTE_PREFIX = "[model fallback";
+
 function lastUser(context: Context): string {
-	const message = context.messages.findLast((message) => message.role === "user");
+	const message = context.messages.findLast(
+		(message) => message.role === "user" && !getMessageText(message).startsWith(MODEL_SWITCH_NOTE_PREFIX),
+	);
 	return message ? getMessageText(message) : "";
 }
 
