@@ -36,7 +36,7 @@ afterEach(() => {
 	vi.unstubAllEnvs();
 });
 
-function aTrashCommand(base: string): string {
+function aTrashCommand(base: string, options: { readonly refusesSidecars?: boolean } = {}): string {
 	const bin = join(base, "bin");
 	const trash = join(base, "trash");
 	mkdirSync(bin, { recursive: true });
@@ -45,6 +45,7 @@ function aTrashCommand(base: string): string {
 	chmodSync(join(bin, "trash"), 0o755);
 	vi.stubEnv("PATH", `${bin}${delimiter}${process.env.PATH ?? ""}`);
 	vi.stubEnv("FAKE_TRASH", trash);
+	if (options.refusesSidecars) vi.stubEnv("FAKE_TRASH_REFUSES_SIDECARS", "1");
 	return trash;
 }
 
@@ -102,5 +103,25 @@ describe.skipIf(onWindows)("deleting a session where a trash command exists (sen
 			inTheTrash: [session.file, session.goal, session.todo, session.blobs].sort(),
 			restored: whole,
 		});
+	});
+
+	it("#given a trash command that takes the session file and refuses its sidecars #when the session is deleted #then the sidecars are still in the folder, none was removed for good, and the result names them", async () => {
+		const session = aSessionWithState();
+		const whole = session.read();
+		const trash = aTrashCommand(session.base, { refusesSidecars: true });
+
+		const result = await deleteSessionFile(session.file);
+
+		expect({ ok: result.ok, method: result.method, inTheFolder: session.read(), inTheTrash: trashed(trash) }).toEqual(
+			{
+				ok: true,
+				method: "trash",
+				inTheFolder: { ...whole, file: "absent" },
+				inTheTrash: [session.file],
+			},
+		);
+		expect(result.sidecarError).toContain(session.goal);
+		expect(result.sidecarError).toContain(session.todo);
+		expect(result.sidecarError).toContain(session.blobs);
 	});
 });

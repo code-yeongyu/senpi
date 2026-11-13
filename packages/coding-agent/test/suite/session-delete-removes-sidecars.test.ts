@@ -5,7 +5,7 @@
  * skips a sidecar whose destination already exists, so the session landed with the state it had when it left, and
  * an extension the returning bundle does not list kept state the session no longer has.
  */
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { getDefaultSessionDir } from "../../src/core/session-manager.ts";
@@ -21,6 +21,7 @@ const AWAY = "move-away-1" as MoveId;
 const BACK = "move-back-1" as MoveId;
 const OTHER_SESSION = "0197f6e4-4cf9-7f44-a2d8-f8f7f49ee9d4";
 const readIdentity = async () => REPO;
+const runningAsRoot = typeof process.getuid === "function" && process.getuid() === 0;
 
 const stateFile = (sessionDir: string, extension: string, sessionId = SESSION_ID) =>
 	join(sessionDir, "extensions", extension, `${sessionId}.json`);
@@ -143,4 +144,28 @@ describe("deleting a session from the selector removes its sidecars (senpi#6445 
 			todo: "absent",
 		});
 	});
+
+	it.skipIf(runningAsRoot)(
+		"#given a session whose extension state file cannot be removed #when it is deleted #then the session file is gone and the result names the file that was left, instead of claiming a clean delete",
+		async () => {
+			const cwd = join(root(), "repo");
+			mkdirSync(cwd, { recursive: true });
+			const session = writeSession(cwd);
+			const goal = stateFile(getDefaultSessionDir(cwd), "goal");
+			chmodSync(dirname(goal), 0o500);
+
+			try {
+				const result = await deleteSessionFile(session);
+
+				expect({ deleted: result.ok, file: existsSync(session), goal: textOf(goal) }).toEqual({
+					deleted: true,
+					file: false,
+					goal: '{"goal":"ship"}\n',
+				});
+				expect(result.sidecarError).toContain(goal);
+			} finally {
+				chmodSync(dirname(goal), 0o700);
+			}
+		},
+	);
 });
