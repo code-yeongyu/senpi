@@ -10,7 +10,7 @@ import { SessionManager } from "../../src/core/session-manager.ts";
 import { MAX_BUNDLE_PATH_SEGMENTS, MOVE_BUNDLE_FORMAT } from "../../src/core/session-move/bundle.ts";
 import { exportSessionForMove } from "../../src/core/session-move/export.ts";
 import { SESSION_RELEASED } from "../../src/core/session-move/ownership.ts";
-import { MOVE, root, SESSION_ID, writeSession } from "./session-move-fixture.ts";
+import { appendUserMessage, customTypes, MOVE, root, SESSION_ID, writeSession } from "./session-move-fixture.ts";
 
 // One rename that puts something at the bundle's place fails, as a process that died right there would leave it.
 const fsHooks = vi.hoisted(() => ({ failRenameOnto: undefined as ((to: string) => boolean) | undefined }));
@@ -130,6 +130,20 @@ it("#given such kept input whose manifest is there and cannot be read, a folder 
 
 	await expect(exportWith(undefined, [])).rejects.toThrow();
 
+	expect(readdirSync(bundleDir)).toEqual(["manifest.json"]);
+	expect(statSync(manifest).isDirectory()).toBe(true);
+	expect(readdirSync(base).filter((name) => name.startsWith("bundle."))).toEqual([]);
+});
+
+it("#given a session still writable, and a manifest at the bundle's place that is there and cannot be read, a folder in its place #when the move is exported without the list #then the export fails before the seal: the session has no release entry and can still be written to, #and the place is as it was (senpi#6603)", async () => {
+	const { base, source, bundleDir, exportWith } = world();
+	const manifest = join(bundleDir, "manifest.json");
+	mkdirSync(manifest, { recursive: true });
+
+	await expect(exportWith(undefined, [])).rejects.toThrow();
+
+	expect(customTypes(source)).toEqual([]);
+	expect(() => appendUserMessage(source, "still here")).not.toThrow();
 	expect(readdirSync(bundleDir)).toEqual(["manifest.json"]);
 	expect(statSync(manifest).isDirectory()).toBe(true);
 	expect(readdirSync(base).filter((name) => name.startsWith("bundle."))).toEqual([]);
