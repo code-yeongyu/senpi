@@ -59,66 +59,111 @@ function stepsOf(block) {
 			const literal = /^\|/.test(value);
 			run = body.join(literal ? "\n" : " ").replace(/\\\n\s*/g, " ").replace(/[ \t]+/g, " ").trim();
 		}
-		return { run, cwd: step.match(/^ {8}working-directory: (\S+)/m)?.[1] };
+		return { run, cwd: step.match(/^ {8}working-directory: (\S+)/m)?.[1], name: step.match(/^ {8}name: (.+)$/m)?.[1] };
 	});
 }
 
 const byName = new Map(workspaces.flatMap((workspace) => [[workspace.name, workspace.relativePath], [workspace.relativePath, workspace.relativePath]]));
 const MANAGERS = new Set(["npm", "pnpm", "bun", "yarn"]);
-// Package-manager options that take a value, and what the value selects.
+// Package-manager options that take a value, and what the value selects; other known options take none.
 const DIR_FLAGS = new Set(["--cwd", "--prefix", "--dir", "-C"]);
 const WORKSPACE_FLAGS = new Set(["--workspace", "-w", "--filter", "-F"]);
+const ALL_WORKSPACES_FLAGS = new Set(["--workspaces", "-ws", "--recursive", "-r"]);
+const PLAIN_FLAGS = new Set(["--if-present", "--silent", "-s"]);
+// `npm test` and its aliases `npm t` / `npm tst` (pnpm and yarn accept `test` too).
+const TEST_WORDS = new Set(["test", "t", "tst"]);
 
-/** A workspace path from a name, a path, or a path with "./" or a trailing "/". */
-const workspaceOf = (value, from = ".") => {
-	const path = posix.normalize(posix.join(from, value)).replace(/\/$/, "");
-	return byName.get(value) ?? (path === "." ? "root" : path);
+/** A workspace path from a name, a path, or a path with "./" or a trailing "/"; "root" for the repository root. */
+const workspaceOf = (value, from = "root") => {
+	if (byName.has(value)) return byName.get(value);
+	const path = posix.normalize(posix.join(from === "root" ? "." : from, value)).replace(/\/$/, "");
+	return path === "." ? "root" : path;
 };
 
 /**
- * The script one package-manager call runs and the workspace it runs in, or undefined when it runs no script:
- * `<pm> [options] run <script>` or `<pm> [options] test` (npm, pnpm, yarn), with the workspace from
- * --workspace/-w/--filter/-F, else from --cwd/--prefix/--dir/-C, else the shell's directory. `bun test` is Bun's own
- * test runner on the files it is given, not the package's `test` script, so it is not counted.
+ * One shell command, from its first word: environment assignments are skipped and the
+ * `node scripts/run-tests.mjs <command>` wrapper is looked through. A package manager counts only here, never as an
+ * argument of another command (`echo npm test`, `node scripts/foo.mjs --pm npm test`).
  */
-function scriptCall(tokens, dir) {
-	const manager = tokens[0];
-	let workspace;
-	let at = dir;
-	const positional = [];
-	for (let index = 1; index < tokens.length && tokens[index] !== "--"; index += 1) {
-		const [flag, inline] = tokens[index].split(/=(.*)/s);
-		if (DIR_FLAGS.has(flag) || WORKSPACE_FLAGS.has(flag)) {
-			const value = inline ?? tokens[(index += 1)];
-			if (WORKSPACE_FLAGS.has(flag)) workspace = workspaceOf(value);
-			else at = workspaceOf(value, dir === "root" ? "." : dir);
-		} else if (!flag.startsWith("-")) positional.push(flag);
-	}
-	const script = positional[0] === "run" || positional[0] === "run-script" ? positional[1] : positional[0] === "test" && manager !== "bun" ? "test" : undefined;
-	return script && { script, workspace: workspace ?? at };
+function commandWords(command) {
+	const words = command.split(/\s+/).filter(Boolean);
+	while (/^[A-Za-z_][\w]*=/.test(words[0] ?? "")) words.shift();
+	if (words[0] === "node" && /(^|\/)run-tests\.mjs$/.test(words[1] ?? "")) words.splice(0, 2);
+	return words;
 }
 
-/** The suites one step runs in full: workspace paths, "scripts", or "matrix" for the run-workspaces matrix command. */
+/**
+ * The script a package-manager call runs and where: { script, target } with target a workspace path or "root", or
+ * { unresolved: true } when it runs a test script the parser cannot place. Shapes: `<pm> [options] run <script>`,
+ * `<pm> [options] test` (not `bun test`, Bun's own runner on the files it names), and `yarn workspace <name> <script>`.
+ */
+function scriptCall(words, dir) {
+	const [manager, ...rest] = words;
+	const forwarded = rest.indexOf("--");
+	const args = forwarded === -1 ? rest : rest.slice(0, forwarded);
+	let target = dir;
+	let workspace;
+	let unknownFlag = false;
+	const positional = [];
+	for (let index = 0; index < args.length; index += 1) {
+		const [flag, inline] = args[index].split(/=(.*)/s);
+		if (DIR_FLAGS.has(flag)) target = workspaceOf(inline ?? args[(index += 1)], dir);
+		else if (WORKSPACE_FLAGS.has(flag)) workspace = inline ?? args[(index += 1)];
+		else if (ALL_WORKSPACES_FLAGS.has(flag)) workspace = "root";
+		else if (flag.startsWith("-")) unknownFlag ||= !PLAIN_FLAGS.has(flag);
+		else positional.push(flag);
+	}
+	if (manager === "yarn" && positional[0] === "workspace") workspace = positional.splice(0, 2)[1];
+	const script = positional[0] === "run" || positional[0] === "run-script" ? positional[1] : TEST_WORDS.has(positional[0]) && manager !== "bun" ? "test" : undefined;
+	// `bun test <files>` runs Bun's own test runner on those files, which is not the package's `test` script.
+	if (manager === "bun" && positional[0] === "test" && !unknownFlag) return undefined;
+	const mentionsTest = args.some((word) => TEST_WORDS.has(word) || word === "test:scripts");
+	// An option the parser does not know may take a value, so the words after it cannot be read as the script.
+	if (mentionsTest && (unknownFlag || (script !== "test" && script !== "test:scripts"))) return { unresolved: true };
+	if (!script) return undefined;
+	const resolved = workspace === undefined ? target : workspace === "root" ? "root" : workspaceOf(workspace);
+	return { script, target: resolved };
+}
+
+/**
+ * The suites one step runs in full (workspace paths, "scripts", or "matrix" for the run-workspaces matrix command),
+ * plus every package-manager test command whose target the parser could not place: the check fails on those
+ * instead of reading them as running nothing.
+ */
 function suitesRunBy({ run, cwd }) {
 	const suites = [];
+	const unrecognised = [];
 	const runner = run.match(/run-workspaces\.mjs ((?:\S+ )*?)test(?![\w:-])/);
 	if (runner) {
 		if (runner[1].includes("${{ matrix.workspaces }}")) suites.push("matrix");
 		const listed = [...runner[1].matchAll(/--workspace[= ](\S+)/g)].map((match) => byName.get(match[1]) ?? match[1]);
 		suites.push(...(listed.length > 0 || runner[1].includes("matrix") ? listed : tested.map((workspace) => workspace.relativePath)));
 	}
-	let dir = cwd ?? "root";
-	for (const command of run.split(/\n|&&|\|\||;|\|/)) {
-		const tokens = command.trim().split(/\s+/).filter(Boolean);
-		if (tokens[0] === "cd" && tokens[1]) dir = workspaceOf(tokens[1], dir === "root" ? "." : dir);
-		const from = tokens.findIndex((token) => MANAGERS.has(token));
-		const call = from === -1 ? undefined : scriptCall(tokens.slice(from), dir);
-		if (call?.script === "test") suites.push(...(call.workspace === "root" ? tested.map((workspace) => workspace.relativePath) : [call.workspace]));
+	const paths = new Set(tested.map((workspace) => workspace.relativePath));
+	const dirs = [cwd ?? "root"];
+	for (const raw of run.split(/\n|&&|\|\||;|\|/)) {
+		const opens = (raw.match(/^\s*\(+/)?.[0].trim().length) ?? 0;
+		const closes = (raw.match(/\)+\s*$/)?.[0].trim().length) ?? 0;
+		for (let index = 0; index < opens; index += 1) dirs.push(dirs.at(-1));
+		const command = raw.replace(/^\s*\(+/, "").replace(/\)+\s*$/, "").trim();
+		const words = commandWords(command);
+		if (words[0] === "cd" && words[1]) dirs[dirs.length - 1] = workspaceOf(words[1], dirs.at(-1));
+		const call = MANAGERS.has(words[0]) ? scriptCall(words, dirs.at(-1)) : undefined;
+		if (call?.unresolved) unrecognised.push(command);
+		else if (call?.script === "test") {
+			if (call.target === "root") suites.push(...paths);
+			else if (paths.has(call.target)) suites.push(call.target);
+			else unrecognised.push(command);
+		}
 		// `bun run test:scripts` is the deliberate Bun-launched twin of the npm run, so only npm counts as the scripts suite.
-		if (call?.script === "test:scripts" && tokens[from] === "npm" && call.workspace === "root") suites.push("scripts");
+		else if (call?.script === "test:scripts" && words[0] === "npm") {
+			if (call.target === "root") suites.push("scripts");
+			else unrecognised.push(command);
+		}
+		for (let index = 0; index < closes && dirs.length > 1; index += 1) dirs.pop();
 	}
 	if (cwd === "packages/coding-agent" && /\bvitest run --shard=/.test(run)) suites.push("packages/coding-agent");
-	return suites;
+	return { suites, unrecognised };
 }
 
 function matrixGroups(block) {
@@ -145,14 +190,18 @@ function matrixGroups(block) {
 function suiteOwnership(text) {
 	const owners = new Map();
 	const claim = (suite, label) => owners.set(suite, [...(owners.get(suite) ?? []), label]);
+	const unrecognised = [];
 	for (const [id, block] of jobsOf(text)) {
-		for (const step of stepsOf(block)) {
-			for (const suite of suitesRunBy(step)) {
+		for (const [index, step] of stepsOf(block).entries()) {
+			const found = suitesRunBy(step);
+			for (const command of found.unrecognised) unrecognised.push(`unrecognised test invocation in ${id}/${step.name ?? `step ${index + 1}`}: ${command}; teach the parser or rewrite the step`);
+			for (const suite of found.suites) {
 				if (suite !== "matrix") claim(suite, id);
 				else for (const { group, paths } of matrixGroups(block)) for (const path of paths) claim(path, `${id} (${group})`);
 			}
 		}
 	}
+	assert.deepEqual(unrecognised, [], "every package-manager test command must name a workspace the parser can resolve");
 	for (const [suite, jobs] of Object.entries(EXTRA_RUNS)) {
 		for (const job of Object.keys(jobs)) {
 			const list = owners.get(suite) ?? [];
@@ -213,6 +262,9 @@ test("a second run is caught in another job, the same job, a block scalar, and e
 		["test-scripts", "      - run: bun --cwd packages/ai run test\n", ai],
 		["test-scripts", "      - run: cd packages/ai && npm test\n", ai],
 		["test-scripts", "      - run: npm run --cwd ./packages/ai test\n", ai],
+		["test-scripts", "      - run: yarn workspace @earendil-works/pi-ai test\n", ai],
+		["test-scripts", "      - run: (cd packages/ai && npm test)\n", ai],
+		["test-scripts", "      - run: npm t -w packages/ai\n", ai],
 	];
 	const missed = cases.filter(([job, step, expected]) => !runTwice(suiteOwnership(withStep(workflow, job, step)).owners).includes(expected))
 		.map(([job, step]) => `${job}: ${step.trim()}`);
@@ -220,6 +272,21 @@ test("a second run is caught in another job, the same job, a block scalar, and e
 	// `bun test <files>` is Bun's own runner on the files it names, not the package's `test` script.
 	const bunRunner = withStep(workflow, "test-scripts", "      - working-directory: packages/ai\n        run: bun test test/stream.test.ts\n");
 	assert.deepEqual(runTwice(suiteOwnership(bunRunner).owners), []);
+});
+
+test("a test command the parser cannot place fails the check instead of counting as no run", () => {
+	for (const command of ["npm --loglevel warn test --workspace packages/ai", "cd crates/senpi-pty && npm test", "yarn workspace @earendil-works/not-a-package test"]) {
+		const text = withStep(workflow, "test-scripts", `      - name: Probe\n        run: ${command}\n`);
+		assert.throws(() => suiteOwnership(text), (error) => error.message.includes(
+			`unrecognised test invocation in test-scripts/Probe: ${command.replace(/^cd \S+ && /, "")}; teach the parser or rewrite the step`), command);
+	}
+});
+
+test("a package manager counts only where a command starts, not as another command's argument", () => {
+	for (const command of ["echo npm test", "node scripts/foo.mjs --pm npm test", "FOO=1 echo npm run test"]) {
+		const text = withStep(workflow, "test-scripts", `      - name: Probe\n        run: ${command}\n`);
+		assert.deepEqual(runTwice(suiteOwnership(text).owners), [], command);
+	}
 });
 
 test("no suite job is a platform job the fan-in lets a non-full run skip", () => {
