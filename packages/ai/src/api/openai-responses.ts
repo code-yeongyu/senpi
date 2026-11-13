@@ -740,7 +740,18 @@ function buildParams(
 		context.messages,
 		resolveResponsesDeferredToolsMode(compat) !== undefined,
 	);
-	const requestedReasoningEffort = options?.reasoningEffort ?? (options?.reasoningSummary ? "medium" : undefined);
+	// Sign in with ChatGPT rejects configuration_update items (senpi#6607), so the newest one, the level in
+	// force, becomes the request effort instead of the cache baseline the session sends, as upstream does.
+	const configuredEffort =
+		compat.siwc && compat.supportsConfigurationUpdate
+			? context.messages.findLast((message) => message.role === "configurationUpdate")?.effort
+			: undefined;
+	const requestedReasoningEffort =
+		configuredEffort === undefined
+			? (options?.reasoningEffort ?? (options?.reasoningSummary ? "medium" : undefined))
+			: configuredEffort === "off"
+				? undefined
+				: (configuredEffort as NonNullable<OpenAIResponsesOptions["reasoningEffort"]>);
 	const thinkingLevelMap = inferOpenAIThinkingLevelMap(model);
 	const mappedReasoningEffort =
 		requestedReasoningEffort === undefined ? undefined : thinkingLevelMap?.[requestedReasoningEffort];
