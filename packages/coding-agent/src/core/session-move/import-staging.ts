@@ -4,7 +4,7 @@
  * one move overlap when a caller sends the import again while the first still runs. So an attempt writes, commits
  * from and removes only its own folder, and never reuses what another attempt staged: a retry stages again.
  */
-import { access, copyFile, mkdir, mkdtemp, readdir, rm, rmdir, stat } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readdir, rm, rmdir, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { SessionManager } from "../session-manager.ts";
 import { encodedSessionId } from "../session-sidecar-store.ts";
@@ -96,12 +96,12 @@ export async function withStagingAttempt<T>(
 	}
 }
 
-class MovedSidecarMissingError extends Error {
+class MovedSidecarNotLandedError extends Error {
 	constructor(sidecar: string) {
 		super(
-			`The moved session was not imported: its ${sidecar} was not in place when it was about to land, so nothing was landed. The move is recorded failed; the sender keeps the session.`,
+			`The moved session was not imported: its ${sidecar} in the session folder is missing or is not the one the bundle carries, so nothing was landed. The move is recorded failed; the sender keeps the session.`,
 		);
-		this.name = "MovedSidecarMissingError";
+		this.name = "MovedSidecarNotLandedError";
 	}
 }
 
@@ -117,17 +117,18 @@ function landsWithTheSession(name: string, sessionId: string): boolean {
 }
 
 /**
- * Before the rename that lands the session: every sidecar the commit lands with it is in the session folder. The
- * commit moves them out of staging and skips one that is not there, so a sweep that took this attempt's folder inside
- * its commit (senpi#6445's custody review) would land the session without them, accepted. Failing here lands nothing.
+ * Before the rename that lands the session: every sidecar the commit lands with it is in the session folder and is
+ * the bundle's own, by its hash. The commit moves them out of staging and skips one that is not there or whose
+ * destination already exists. So a sweep that took this attempt's folder inside its commit would land the session
+ * without them, and a sidecar of the same session left there by an import that died would land in place of the
+ * bundle's (senpi#6445's custody reviews). Failing here lands nothing.
  */
 export async function assertSidecarsLanded(manifest: MoveManifest, sessionDir: string): Promise<void> {
 	for (const sidecar of manifest.sidecars) {
 		const name = sidecar.path.replace(/^files\//, "");
 		if (!landsWithTheSession(name, manifest.sessionId)) continue;
-		await access(join(sessionDir, name)).catch(() => {
-			throw new MovedSidecarMissingError(name);
-		});
+		const landed = await sha256File(join(sessionDir, name)).catch(() => undefined);
+		if (landed !== sidecar.sha256) throw new MovedSidecarNotLandedError(name);
 	}
 }
 
