@@ -826,6 +826,8 @@ export type AgentSessionEvent =
 			failures?: FallbackRungFailure[];
 			/** Rungs this turn's walk could not switch to (senpi#3447), each with the guard's reason and numbers. */
 			refusals?: readonly FallbackRungRefusal[];
+			/** The session's model is pinned (fallback off): `chainKey` names that model and nothing else was tried (omo#13243). */
+			pinned?: true;
 	  }
 	| ModelConfigErrorEvent
 	| {
@@ -3089,6 +3091,41 @@ export class AgentSession {
 		this._emitEntryAppended(entry.id);
 	}
 
+	/**
+	 * A run on a pinned model (fallback off: an explicitly chosen model, `--no-model-fallback`) that ended on a
+	 * failure fallback would have answered reports it the typed way a spent chain does, naming the model and
+	 * the error, so every surface tells a pinned failure from a chain that ran out (omo#13243).
+	 */
+	private _reportPinnedModelFailure(): void {
+		// Only this run's own failure: read and clear first, on every settle, so a reply this run kept (fallback on,
+		// or an exhaustion already reported) can never be reported by a later reply-less settle.
+		const last = this._runLastAssistant;
+		this._runLastAssistant = undefined;
+		if (this._runFallbackExhausted) return;
+		if (this.settingsManager.getRetryFallbackSettings().modelFallback) return;
+		if (last === undefined || last.stopReason !== "error") return;
+		// The class alone: whether a fallback could serve it is always no here, since fallback is off.
+		const hardError = !this._isRetryableError(last) && this._isHardErrorFallbackClass(last);
+		if (!hardError && !this._isRetryableError(last)) return;
+		const model = `${last.provider}/${last.model}`;
+		const error = last.errorMessage || "Unknown error";
+		const reason: FallbackRungFailure["reason"] = hardError
+			? "hard-error"
+			: isBillingErrorMessage(error)
+				? "billing"
+				: "transient";
+		const failures: FallbackRungFailure[] =
+			this._fallbackTurnFailures.length > 0 ? [...this._fallbackTurnFailures] : [{ model, reason, error }];
+		this._emit({
+			type: "retry_fallback_exhausted",
+			chainKey: model,
+			lastError: error,
+			primaryError: failures[0],
+			failures,
+			pinned: true,
+		});
+	}
+
 	private _emitFallbackExhausted(chainKey: string, lastError: string): void {
 		const failures = [...this._fallbackTurnFailures];
 		const primaryError = failures[0];
@@ -3478,6 +3515,7 @@ export class AgentSession {
 		let deferredTurnClaims: DeferredTurnClaim[] = [];
 		this._agentSettledDelivery.begin(this._userAbortGeneration);
 		const settlementEpoch = ++this._settlementEpoch;
+		this._reportPinnedModelFailure();
 		const fallbackExhausted = this._takeRunFallbackExhaustion();
 		try {
 			// agent_settled is notification-only: the run has settled, so subscribers (RPC clients, the TUI) hear it now.
@@ -3701,6 +3739,8 @@ export class AgentSession {
 
 	// Track last assistant message for auto-compaction check
 	private _lastAssistantMessage: AssistantMessage | undefined = undefined;
+	/** The last assistant reply of the current run, kept until the run settles (pinned failure report). */
+	private _runLastAssistant: AssistantMessage | undefined = undefined;
 	private _requestSelectedModel: SelectedModel | undefined;
 	private readonly _endSelectedModels = new WeakMap<AgentEvent, SelectedModel>();
 
@@ -4303,6 +4343,7 @@ export class AgentSession {
 			// Track assistant message for auto-compaction (checked on agent_end)
 			if (event.message.role === "assistant") {
 				this._lastAssistantMessage = event.message;
+				this._runLastAssistant = event.message;
 
 				const assistantMsg = event.message as AssistantMessage;
 				const succeeded =
@@ -13128,6 +13169,14 @@ export class AgentSession {
 
 	private _isHardErrorFallbackEligible(message: AssistantMessage): boolean {
 		return (
+			this._isHardErrorFallbackClass(message) &&
+			this._retryFallback.canTryFallback(isRequestLevelRefusal(message) ? message.provider : undefined)
+		);
+	}
+
+	/** A failure another model could answer, whether or not this session may fall back (senpi#6524 pinned report). */
+	private _isHardErrorFallbackClass(message: AssistantMessage): boolean {
+		return (
 			!message.errorMessage?.startsWith(TURN_RETRY_SUPPRESSION_PREFIX) &&
 			!this._isLocalFailure(message) &&
 			!isModelConfigFailure(message) &&
@@ -13139,8 +13188,7 @@ export class AgentSession {
 			!this._isCursorPayloadOverflow(message) &&
 			!isCursorZeroTokenResourceExhausted(message) &&
 			!isClassifierRefusal(message) &&
-			!message.content.some((content) => content.type === "toolCall") &&
-			this._retryFallback.canTryFallback(isRequestLevelRefusal(message) ? message.provider : undefined)
+			!message.content.some((content) => content.type === "toolCall")
 		);
 	}
 

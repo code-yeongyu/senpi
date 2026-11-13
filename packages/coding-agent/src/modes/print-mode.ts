@@ -136,9 +136,8 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 					`Model fallback: ${event.from} -> ${event.to} (${usageLimitCause(event.from, event.limit) ?? event.reason})`,
 				);
 			} else if (event.type === "retry_fallback_exhausted") {
-				console.error(
-					`Model fallback exhausted: ${event.chainKey} (${describeFallbackExhaustion(event).replaceAll("\n", "; ")})`,
-				);
+				const lead = event.pinned === true ? "Pinned model failed" : "Model fallback exhausted";
+				console.error(`${lead}: ${event.chainKey} (${describeFallbackExhaustion(event).replaceAll("\n", "; ")})`);
 				for (const refusal of event.refusals ?? []) {
 					console.error(`Model fallback refused ${refusal.model}: ${refusal.detail}`);
 				}
