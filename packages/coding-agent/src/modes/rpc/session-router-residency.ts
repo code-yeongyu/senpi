@@ -23,16 +23,32 @@ const reportRecordFailure = (sessionId: string) => (cause: unknown) => {
  * the entry it was recorded under before when the session has since moved to another transcript (senpi#6190).
  * `resident` stamps the writing process: the session is open here. A park writes it unstamped.
  */
-export async function recordRetainedSession(
+export function recordRetainedSession(
 	host: RouterContext,
 	retained: RpcSessionEntry,
 	sessionPath: string,
 	resident: boolean,
 ): Promise<void> {
 	const dir = host.handoverParkedDir;
-	if (dir === undefined) return;
+	if (dir === undefined) return Promise.resolve();
 	const previous = retained.recordedPath;
 	retained.recordedPath = sessionPath;
+	// One session's writes land in the order they were issued. A stamped write that first clears a switched-from entry
+	// would otherwise reach the record after a park issued later, leaving the parked session stamped resident.
+	const write = () => writeRetainedRecord(host, dir, retained, sessionPath, previous, resident);
+	const next = (retained.recordWrite ?? Promise.resolve()).then(write, write);
+	retained.recordWrite = next.catch(() => {});
+	return next;
+}
+
+async function writeRetainedRecord(
+	host: RouterContext,
+	dir: string,
+	retained: RpcSessionEntry,
+	sessionPath: string,
+	previous: string | undefined,
+	resident: boolean,
+): Promise<void> {
 	if (previous !== undefined && previous !== sessionPath) await clearHandoverParkedSession(dir, previous);
 	const durableSessionId = retained.runtime?.session.sessionId ?? retained.durableSessionId;
 	await recordHandoverParkedSession(dir, {

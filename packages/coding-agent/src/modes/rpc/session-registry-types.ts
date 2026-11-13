@@ -65,6 +65,8 @@ export interface RpcSessionEntry {
 	retainOnDisconnect?: boolean;
 	/** The session path this host's handover-parked record entry is keyed by; it follows a transcript switch. */
 	recordedPath?: string;
+	/** The last record write issued for this session; the next one runs after it, so writes land in issue order. */
+	recordWrite?: Promise<void>;
 	/** Timestamp of the last routed command / observed activity; drives idle eviction. */
 	lastCommandAt: number;
 	/**
