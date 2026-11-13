@@ -1439,9 +1439,9 @@ jobs:
   # The non-coding-agent workspace suites, split across parallel runners (senpi#6620). Each leg runs the same
   # run-workspaces command for its group. Groups are sized from main run 43347262747, where the suites ran one after
   # another in one 13-minute step: ai 148 s; agent 58 s, tui 56 s, pty 19 s and the small packages under 10 s together.
-  # packages/senpi-codemode is not listed: the codemode-gate job runs its whole `test` script, so listing it here ran
+  # packages/senpi-codemode is not listed: the codemode-tests job runs its whole `test` script, so listing it here ran
   # that 8-minute suite twice per run. packages/coding-agent runs in test-coding-agent.
-  # scripts/ci-workspace-coverage.test.mjs fails when a workspace with a `test` script is in no CI job.
+  # scripts/ci-workspace-coverage.test.mjs fails when a workspace with a `test` script is in no CI job or in two.
   # Some suites import workspace packages through their built `dist` (pi-ai's lazy-module probes load
   # pi-realm-registry's dist/index.js), so each leg restores the build test-coding-agent uses.
   test-workspaces:
