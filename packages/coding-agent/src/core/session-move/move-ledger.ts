@@ -7,9 +7,13 @@ import {
 	landsAt,
 	moveFolder,
 	parseLanding,
-	recordAge,
+	type StampClock,
+	type StampClockOptions,
 	settledAt,
 	settledLanding,
+	stampAge,
+	stampClock,
+	stampFields,
 } from "./move-landing.ts";
 import { MoveRecordLocks } from "./move-ledger-lock.ts";
 import { MoveRecordFile } from "./move-record-file.ts";
@@ -39,9 +43,7 @@ export const READY_TTL_MS = 10 * 60_000;
 
 const FINAL_STATES: readonly MoveRecord["state"][] = ["accepted", "declined", "failed"];
 
-export interface MoveLedgerOptions {
-	readonly now?: () => number;
-}
+export type MoveLedgerOptions = StampClockOptions;
 
 /** What a receive brings to `beginReceive`. */
 export interface BeginReceiveOptions {
@@ -56,14 +58,14 @@ export interface BeginReceiveOptions {
  */
 export class MoveLedger {
 	readonly dir: string;
-	private readonly now: () => number;
+	private readonly clock: StampClock;
 	readonly #locks = new MoveRecordLocks();
 	readonly #file: MoveRecordFile;
 
 	constructor(dir: string, options: MoveLedgerOptions = {}) {
 		this.dir = dir;
-		this.#file = new MoveRecordFile(dir, this.#locks);
-		this.now = options.now ?? Date.now;
+		this.clock = stampClock(options);
+		this.#file = new MoveRecordFile(dir, this.#locks, () => stampFields(this.clock));
 	}
 
 	/**
@@ -79,7 +81,10 @@ export class MoveLedger {
 			if (cwd !== undefined && landing.cwd !== undefined && landing.cwd !== cwd)
 				throw new MoveFencedError(moveId, record, heldElsewhere(landing));
 			if (record === undefined) {
-				const ready = { state: "ready", expiresAt: new Date(this.now() + READY_TTL_MS).toISOString() } as const;
+				const ready = {
+					state: "ready",
+					expiresAt: new Date(this.clock.now() + READY_TTL_MS).toISOString(),
+				} as const;
 				await this.#file.write(moveId, ready, cwd === undefined ? {} : { cwd });
 				return ready;
 			}
@@ -195,18 +200,20 @@ export class MoveLedger {
 	 * `committing` before the rename, so a crash or failure on either side of it never lets the move land again; the
 	 * file at the target then decides (`confirmLanded`, `reconcile`). Only the recorded target may be renamed into.
 	 * `prepare` runs before the stamp: whatever it does or refuses lands nothing, so a refusal there still records failed.
+	 * `rename` is handed `stampStands`, to call right before the step that lands the file: whatever comes before that
+	 * step (waiting for the session's lock, rewriting the file) can outlast the lock's stale bound too.
 	 */
 	commit<T>(
 		moveId: MoveId,
 		target: string,
-		rename: () => T | Promise<T>,
+		rename: (stampStands: () => Promise<void>) => T | Promise<T>,
 		prepare?: () => void | Promise<void>,
 	): Promise<T> {
 		return this.locked(moveId, async () => {
 			await this.#file.assertLandsAt(moveId, target);
 			await prepare?.();
-			// `prepare` can outlast the lock's stale bound: whoever took the lock may have settled the move since the first look.
-			this.#locks.assertHeld(this.#file.path(moveId));
+			// `prepare` can outlast the lock's stale bound: whoever took the lock may have settled the move since the first
+			// look. The stamp's own write refuses a holder that was told its lock is gone.
 			const landing = await this.#file.assertLandsAt(moveId, target);
 			const stamp = await this.#file.write(
 				moveId,
@@ -214,8 +221,11 @@ export class MoveLedger {
 				{ ...settledAt(landing, target), committing: true },
 			);
 			moveStep("import:stamped");
-			await this.#file.assertStampStands(moveId, stamp);
-			const result = await rename();
+			const stampStands = () => this.#file.assertStampStands(moveId, stamp);
+			await stampStands();
+			// The last look before the landing: the stamp check awaited above, and the lock itself, with nothing awaited between.
+			this.#locks.assertHeld(this.#file.path(moveId));
+			const result = await rename(stampStands);
 			moveStep("import:renamed");
 			await this.#file.write(moveId, { state: "accepted" }, settledAt(landing, target));
 			return result;
@@ -258,7 +268,7 @@ export class MoveLedger {
 		const stored = await this.#file.raw(moveId);
 		const { target, cwd, committing } = parseLanding(stored);
 		if (landed === undefined || target === undefined) return record;
-		const next = settledLanding(record, committing === true, await landed(target), recordAge(stored, this.now()));
+		const next = settledLanding(record, committing === true, await landed(target), stampAge(stored, this.clock));
 		if (next === undefined) return record;
 		await this.#file.write(moveId, next, settledAt({ cwd }, target));
 		return next;
@@ -309,7 +319,7 @@ export class MoveLedger {
 	/** The record, with a ready move whose window has passed declined as expired first (on disk, under the lock). */
 	private async current(moveId: MoveId): Promise<MoveRecord | undefined> {
 		const record = await this.#file.read(moveId);
-		if (record?.state !== "ready" || this.now() < Date.parse(record.expiresAt)) return record;
+		if (record?.state !== "ready" || this.clock.now() < Date.parse(record.expiresAt)) return record;
 		const expired = { state: "declined", reason: "expired" } as const;
 		await this.#file.write(moveId, expired);
 		return expired;

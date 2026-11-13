@@ -13,11 +13,16 @@ import type { MoveId } from "./ownership.ts";
 export class MoveRecordFile {
 	readonly dir: string;
 	readonly #locks: MoveRecordLocks;
+	readonly #stamp: () => Readonly<Record<string, unknown>>;
 
-	/** `locks` is the ledger's own registry: a write here needs the lock the ledger took for the move. */
-	constructor(dir: string, locks: MoveRecordLocks) {
+	/**
+	 * `locks` is the ledger's own registry: a write here needs the lock the ledger took for the move. `stamp` is what
+	 * every write carries beside its time, so a reader on the same machine can age it without the wall clock.
+	 */
+	constructor(dir: string, locks: MoveRecordLocks, stamp: () => Readonly<Record<string, unknown>> = () => ({})) {
 		this.dir = dir;
 		this.#locks = locks;
+		this.#stamp = stamp;
 	}
 
 	path(moveId: MoveId): string {
@@ -56,7 +61,7 @@ export class MoveRecordFile {
 		const temp = `${file}.${process.pid}.tmp`;
 		const at = new Date().toISOString();
 		this.#locks.assertHeld(file);
-		await writeFile(temp, `${JSON.stringify({ ...record, ...landing, at })}\n`);
+		await writeFile(temp, `${JSON.stringify({ ...record, ...landing, at, ...this.#stamp() })}\n`);
 		this.#locks.assertHeld(file);
 		await renameFile(temp, file);
 		return at;

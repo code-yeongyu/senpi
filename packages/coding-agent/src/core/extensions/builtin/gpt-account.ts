@@ -57,7 +57,10 @@ async function showAccounts(ctx: ExtensionCommandContext): Promise<void> {
 				: undefined;
 		const states =
 			override === undefined
-				? [describeCredentialAccount(account), ...(account.paused ? ["paused"] : [])]
+				? [
+						describeCredentialAccount(account, `run /gpt-account reauthorize ${account.name}`),
+						...(account.paused ? ["paused"] : []),
+					]
 				: [accountLabel(account), account.source, override, ...(account.pinned ? ["pinned"] : [])];
 		if (account.active) states.push("active");
 		if (account.route) states.push(account.route === "siwc" ? "SIWC" : "legacy");
