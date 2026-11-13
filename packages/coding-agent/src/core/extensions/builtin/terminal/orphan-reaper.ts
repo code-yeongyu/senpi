@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { type ChildProcessIdentity, processBootAtMs, sameBoot } from "./process-identity.ts";
 import { readProcessStartMs } from "./process-start-probe.ts";
+import { lstartUtcMs } from "../../../../utils/process-identity.ts";
 
 export type OwnerVerdict = "confirmed" | "dead" | "unverifiable";
 
@@ -77,7 +78,7 @@ async function readDarwinEvidence(pid: number): Promise<ProcessEvidence | undefi
 	const text = (await execText("ps", ["-o", "lstart=,command=", "-p", String(pid)], { TZ: "UTC" })).trim();
 	if (text.length <= LSTART_LENGTH) return undefined;
 	return {
-		startedAtMs: Date.parse(`${text.slice(0, LSTART_LENGTH)} UTC`),
+		startedAtMs: lstartUtcMs(text.slice(0, LSTART_LENGTH)),
 		argv: text.slice(LSTART_LENGTH).trim(),
 	};
 }
