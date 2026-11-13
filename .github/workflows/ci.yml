@@ -1482,6 +1482,7 @@ jobs:
           --workspace packages/machine-ops
           --workspace packages/protocol
           --workspace packages/pty
+          --workspace packages/realm-registry
           --workspace packages/senpi-codemode
           --workspace packages/server
           --workspace packages/telemetry

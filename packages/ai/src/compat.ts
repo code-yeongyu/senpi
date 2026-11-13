@@ -99,6 +99,7 @@ export {
 import {
 	clearApiProviders,
 	getApiProvider,
+	getApiProviderAtEvaluation,
 	registerApiProvider,
 	registerBuiltinApiProvider,
 	unregisterApiProviders,
@@ -151,10 +152,11 @@ const builtinApiProviderInstances = new Map<Api, ReturnType<typeof getApiProvide
 export function registerBuiltInApiProviders(): void {
 	for (const [api, streams] of BUILTIN_APIS) {
 		registerBuiltinApiProvider({ api, stream: streams.stream, streamSimple: streams.streamSimple });
-		if (!getApiProvider(api)) {
+		// This runs while the module evaluates, so it must not throw for the realm's strict mode (omo#12965).
+		if (!getApiProviderAtEvaluation(api)) {
 			registerApiProvider({ api, stream: streams.stream, streamSimple: streams.streamSimple });
 		}
-		builtinApiProviderInstances.set(api, getApiProvider(api));
+		builtinApiProviderInstances.set(api, getApiProviderAtEvaluation(api));
 	}
 }
 

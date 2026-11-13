@@ -485,6 +485,9 @@ function createExtensionAPI(
 		cwd,
 		sessionKind: session.sessionKind,
 		sessionContext: session.sessionContext,
+		get engine() {
+			return _bundledPiCodingAgent;
+		},
 
 		// Registration methods - write to extension
 		on(

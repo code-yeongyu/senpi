@@ -3,6 +3,7 @@ import { activeModelBlockUntil, pruneModelBlocks } from "../../../credential-poo
 import { roundRobinState } from "../../../credential-pool/round-robin-state.ts";
 import { type AccountStrategy, orderAccounts, preferHeadroom } from "../../../credential-pool/selection-order.ts";
 import { subscriptionLimits } from "../../../subscription-limits/limit-store.ts";
+import { usageShowsCapacity } from "../../../subscription-limits/usage-capacity.ts";
 import type { AccountSlot } from "./accounts.ts";
 
 export const DEFAULT_AFFINITY_KEY = "claude-sdk-oauth-default";
@@ -139,14 +140,35 @@ export function isBlockedFor(account: AccountSlot, now: number, model?: string):
 }
 
 /**
+ * A usage-limit block the account's own usage, read after the block was stored, contradicts: the provider lifted
+ * the limit before the reset it stated (senpi#6536). Auth, billing and organization blocks need the user, so only
+ * a rate-limit block lifts this way.
+ */
+export function isLimitLiftedEarly(
+	account: Pick<AccountSlot, "name" | "blockReason" | "blockedAt" | "blockedUntil">,
+	now: number,
+): boolean {
+	if (account.blockReason !== "rate_limit" || account.blockedAt === undefined) return false;
+	if (account.blockedUntil === undefined || account.blockedUntil <= now) return false;
+	const limits = subscriptionLimits
+		.snapshot()
+		.find((entry) => entry.provider === "anthropic-subscription" && entry.account === account.name);
+	return limits !== undefined && usageShowsCapacity(limits, account.blockedAt, now);
+}
+
+/**
  * Removes elapsed blocks, auth blocks included: an auth block lasts until its
  * re-probe time (senpi#3264), and one persisted before re-probe times existed
  * has no expiry and clears at once, so the next request probes the account.
+ * A limit block newer usage contradicts is removed too (senpi#6536).
  */
 export function clearExpiredBlocks(accounts: readonly AccountSlot[], now = Date.now()): AccountSlot[] {
 	return accounts.map((account) => {
 		let available = account;
-		if (account.blockReason !== undefined && (account.blockedUntil === undefined || account.blockedUntil <= now)) {
+		if (
+			(account.blockReason !== undefined && (account.blockedUntil === undefined || account.blockedUntil <= now)) ||
+			isLimitLiftedEarly(account, now)
+		) {
 			const {
 				blockedUntil: _blockedUntil,
 				blockReason: _blockReason,
