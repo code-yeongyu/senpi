@@ -18,6 +18,9 @@ export const REQUIRED_CHECK_NAME = "Check and test";
 /** What `packages/ai/scripts/generate-models.ts` writes: the aggregator and the provider shards/data. */
 export const REGENERATED_CATALOG_PATHS = ["packages/ai/src/models.generated.ts", "packages/ai/src/providers"];
 
+/** The release-only commit a changed catalog gets, in the in-job release and the forced-suite prepare job alike. */
+export const catalogCommitMessage = (version) => `chore(ai): regenerate the model catalog for v${version}`;
+
 /**
  * True when the release's catalog regeneration left the catalog different from HEAD (a changed or a
  * new file). HEAD's CI ran on the old catalog, so it says nothing about the regenerated one (senpi#2645).
