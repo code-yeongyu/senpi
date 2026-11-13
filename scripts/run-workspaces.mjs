@@ -15,11 +15,15 @@
 // the root manifest, and reports one PASS / SKIP / FAIL summary.
 //
 // Usage:
-//   node scripts/run-workspaces.mjs [--if-present] [--parallel] [--workspace <name|path>]... <script> [-- <args>]
+//   node scripts/run-workspaces.mjs [--if-present] [--parallel | --alongside <name|path>] [--workspace <name|path>]... <script> [-- <args>]
 //
 //   --if-present            skip workspaces that do not define <script> instead of failing
 //   --parallel              start every selected workspace at once; each output line is prefixed
 //                           with the workspace directory name and one Ctrl-C reaches every lane
+//   --alongside <selector>  run that workspace in its own lane while the other selected workspaces run
+//                           one at a time in path order in a second lane; the second lane starts only
+//                           when the machine has room for it (run-workspaces-lanes.mjs), otherwise
+//                           the whole run stays sequential
 //   --workspace <selector>  run only that workspace (package name or repo-relative path); repeatable
 //   -- <args>               forwarded verbatim to every workspace script
 //
@@ -38,13 +42,21 @@ import {
 	runScriptArguments,
 	spawnPackageManager,
 } from "./package-manager.mjs";
+import { detectParallelism, MIN_PARALLELISM_FOR_SECOND_LANE, runAlongside, secondLaneFits } from "./run-workspaces-lanes.mjs";
 
 const LABEL = "run-workspaces";
 
 export class UsageError extends Error {}
 
 export function parseArguments(argv) {
-	const parsed = { script: undefined, ifPresent: false, parallel: false, workspaces: [], forwarded: [] };
+	const parsed = {
+		script: undefined,
+		ifPresent: false,
+		parallel: false,
+		alongside: undefined,
+		workspaces: [],
+		forwarded: [],
+	};
 	for (let index = 0; index < argv.length; index++) {
 		const argument = argv[index];
 		if (argument === "--") {
@@ -57,6 +69,14 @@ export function parseArguments(argv) {
 		}
 		if (argument === "--parallel") {
 			parsed.parallel = true;
+			continue;
+		}
+		if (argument === "--alongside") {
+			const selector = argv[++index];
+			if (selector === undefined || selector === "--")
+				throw new UsageError("--alongside requires a package name or path");
+			if (parsed.alongside !== undefined) throw new UsageError("--alongside may be given once");
+			parsed.alongside = selector;
 			continue;
 		}
 		if (argument === "--workspace") {
@@ -77,6 +97,9 @@ export function parseArguments(argv) {
 		parsed.script = argument;
 	}
 	if (parsed.script === undefined) throw new UsageError("script name is required");
+	if (parsed.parallel && parsed.alongside !== undefined) {
+		throw new UsageError("--parallel and --alongside cannot be combined");
+	}
 	return parsed;
 }
 
@@ -194,8 +217,12 @@ async function runInParallel(pm, pmArgs, workspaces, childEnv) {
 }
 
 export async function runWorkspaces(argv, { rootDirectory = process.cwd(), env = process.env } = {}) {
-	const { script, ifPresent, parallel, workspaces: selectors, forwarded } = parseArguments(argv);
-	const selected = selectWorkspaces(await resolveWorkspaceDirectories(rootDirectory), selectors);
+	const { script, ifPresent, parallel, alongside, workspaces: selectors, forwarded } = parseArguments(argv);
+	const all = await resolveWorkspaceDirectories(rootDirectory);
+	const selected = selectWorkspaces(all, selectors);
+	// A narrowed run (`bun run test --workspace packages/ai`) may leave the alongside workspace out; it then runs as usual.
+	const [alongsideWorkspace] =
+		alongside === undefined ? [] : selectWorkspaces(all, [alongside]).filter((workspace) => selected.includes(workspace));
 	const missing = selected.filter((workspace) => typeof workspace.scripts[script] !== "string");
 	if (missing.length > 0 && !ifPresent) {
 		for (const workspace of missing) console.error(`[${LABEL}] ${describe(workspace)}: no "${script}" script`);
@@ -211,8 +238,19 @@ export async function runWorkspaces(argv, { rootDirectory = process.cwd(), env =
 			? { workspace, verdict: "PASS", detail: "" }
 			: { workspace, verdict: "FAIL", detail: `exit ${status}`, status };
 	const results = [];
-	if (parallel) {
-		const running = selected.filter((workspace) => !missing.includes(workspace));
+	const running = selected.filter((workspace) => !missing.includes(workspace));
+	const parallelism = alongsideWorkspace ? detectParallelism(env) : 0;
+	if (alongsideWorkspace && running.includes(alongsideWorkspace) && secondLaneFits(parallelism)) {
+		console.log(
+			`[${LABEL}] ${describe(alongsideWorkspace)} runs alongside the other workspaces (parallelism ${parallelism})`,
+		);
+		const rest = running.filter((workspace) => workspace !== alongsideWorkspace);
+		const statuses = await runAlongside(pm, pmArgs, alongsideWorkspace, rest, { env: childEnv, label: LABEL });
+		for (const workspace of selected) {
+			if (missing.includes(workspace)) results.push({ workspace, verdict: "SKIP", detail: `no "${script}" script` });
+			else if (statuses.has(workspace)) results.push(verdictOf(workspace, statuses.get(workspace)));
+		}
+	} else if (parallel) {
 		const statuses = await runInParallel(pm, pmArgs, running, childEnv);
 		for (const workspace of selected) {
 			const index = running.indexOf(workspace);
@@ -223,6 +261,11 @@ export async function runWorkspaces(argv, { rootDirectory = process.cwd(), env =
 			);
 		}
 	} else {
+		if (alongsideWorkspace && running.includes(alongsideWorkspace)) {
+			console.log(
+				`[${LABEL}] sequential run: parallelism ${parallelism} is below ${MIN_PARALLELISM_FOR_SECOND_LANE}, the minimum for a second lane`,
+			);
+		}
 		for (const workspace of selected) {
 			if (missing.includes(workspace)) {
 				results.push({ workspace, verdict: "SKIP", detail: `no "${script}" script` });

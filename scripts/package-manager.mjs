@@ -143,6 +143,8 @@ export function createSignalFanout({ forward = signalGroup, signals = process } 
 	return {
 		attach: (child) => children.add(child),
 		detach: (child) => children.delete(child),
+		/** True once a termination signal arrived, so a caller stops starting new children. */
+		signalled: () => forwarded !== undefined,
 		/** Drains forwarding before the caller re-raises the recorded signal. */
 		async release() {
 			for (const [signal, handler] of handlers) signals.off(signal, handler);
