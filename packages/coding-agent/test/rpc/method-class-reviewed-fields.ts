@@ -228,7 +228,18 @@ export const REVIEWED_FIELDS = {
 	clone: { fields: ["admissionId", "id", "sessionId", "type"] },
 	close_session: { fields: ["admissionId", "id", "sessionId", "type"] },
 	unload_session: {
-		fields: ["admissionId", "children", "clearQueue", "effectId", "force", "id", "interrupt", "sessionId", "type"],
+		fields: [
+			"admissionId",
+			"children",
+			"clearQueue",
+			"dryRun",
+			"effectId",
+			"force",
+			"id",
+			"interrupt",
+			"sessionId",
+			"type",
+		],
 	},
 	set_session_context: { fields: ["admissionId", "id", "patch", "sessionId", "type"] },
 	attach_session: {

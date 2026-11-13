@@ -34,6 +34,12 @@ export const RPC_ERROR_RESPONSE_TOO_LARGE = "response_too_large";
  */
 export const RPC_ERROR_RESPONSE_UNWRITABLE = "response_unwritable";
 
+/**
+ * A host-level command's handler failed unexpectedly; `errorData.detail` carries the message. Sent in place of the reply
+ * so the caller is never left waiting (senpi#6483).
+ */
+export const RPC_ERROR_INTERNAL = "internal_error";
+
 export const RPC_ERROR_OPEN_FAILED = "open_failed";
 
 export const RPC_ERROR_OWNER_CHANGED = "owner_changed";
@@ -108,6 +114,14 @@ export const RPC_ERROR_INVALID_SESSION_ID = "invalid_session_id";
  * subagent and team attribution) would collide. Close the holder, or open with a different id.
  */
 export const RPC_ERROR_SESSION_ID_IN_USE = "session_id_in_use";
+
+/**
+ * `release_session`: the session behind the route is not the one the release is about, so nothing was released. Either
+ * `expectSessionId` names another session (`errorData.expected` repeats the caller's id), or the session was replaced
+ * while the release was in progress (no `expected` unless the caller sent one). After an interrupt, `taken_from` is the
+ * durable id of the session the input in `dropped` came out of, which the handle no longer names.
+ */
+export const RPC_ERROR_SESSION_MISMATCH = "session_mismatch";
 
 /**
  * Sent only by hosts released before senpi#2207, which declined NEW worker sessions above an RSS
@@ -263,4 +277,5 @@ export type RpcErrorCode =
 	| typeof RPC_ERROR_RELEASE_UNSUPPORTED
 	| typeof RPC_ERROR_RELEASE_FAILED
 	| typeof RPC_ERROR_HOST_DRAINING
-	| typeof RPC_ERROR_RESPONSE_UNWRITABLE;
+	| typeof RPC_ERROR_RESPONSE_UNWRITABLE
+	| typeof RPC_ERROR_INTERNAL;

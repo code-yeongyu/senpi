@@ -4,7 +4,10 @@
 		"outDir": "./dist",
 		"rootDir": "./src",
 		"module": "NodeNext",
-		"moduleResolution": "NodeNext"
+		"moduleResolution": "NodeNext",
+		"paths": {
+			"@earendil-works/pi-realm-registry": ["../realm-registry/dist/index.d.ts"]
+		}
 	},
 	"include": ["src/**/*.ts"],
 	"exclude": ["node_modules", "dist", "**/*.d.ts", "src/**/*.d.ts"]

@@ -1,6 +1,6 @@
 import { detachConnection } from "./connection-detach.ts";
 import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
-import { compactAdmissionGate, declareSocketClient } from "./compact-socket-commands.ts";
+import { compactAdmissionGate, declareSessionless, preDeclare } from "./compact-socket-commands.ts";
 import { invalidCompactAdmission, unknownCompactAdmission } from "./compact-admission-validation.ts";
 import { compactSubscribe } from "./compact-subscribe-admission.ts";
 import { withAdmissionRequest } from "./compact-admission-reply.ts";
@@ -19,9 +19,10 @@ import { attachSession, reclaimSession, releaseAttachment } from "./session-atta
 import { attachmentGate } from "./session-attachment-gate.ts";
 import { runWithSessionAttribution } from "./session-attribution.ts";
 import { dispatchSessionBinding } from "./session-held.ts";
+import { findSession } from "./find-session.ts";
 import { routeMoveSession } from "./session-move-router.ts";
 import { releaseSession } from "./session-release.ts";
-import { releaseConnection } from "./session-router-attachments.ts";
+import { otherAttachments, releaseConnection } from "./session-router-attachments.ts";
 import { close, tearDownUnloaded } from "./session-router-close.ts";
 import type { RouterContext } from "./session-router-context.ts";
 import { code, detail, error } from "./session-router-errors.ts";
@@ -61,12 +62,10 @@ function admitted(host: RouterContext, command: RpcCommand): Promise<RpcResponse
 	// RULING-111 (LEAK-B/C): the host-side pre-declaration belongs to the compact negotiation; with the flag off a
 	// session-scoped declaration reaches its session exactly as on main.
 	if (command.type === "set_client_info" && compactUpdatesEnabled()) {
-		const reply = declareSocketClient(host, command);
-		if (!reply.success) return Promise.resolve(reply);
-		const peer = host.writer.currentConnection();
-		if (command.capabilities !== undefined && peer !== undefined)
-			command = { ...command, capabilities: [...(host.pendingCapabilities.get(peer) ?? [])] };
-		if (command.id === undefined && command.capabilities === undefined) return Promise.resolve(undefined);
+		const declared = preDeclare(host, command);
+		if (declared === "done") return Promise.resolve(undefined);
+		if ("success" in declared) return Promise.resolve(declared);
+		command = declared;
 	}
 	const sessionId = "sessionId" in command ? command.sessionId : undefined;
 	// A parked handle is answered by its terminal record and connection close, never unknown_session.
@@ -92,12 +91,6 @@ function admitted(host: RouterContext, command: RpcCommand): Promise<RpcResponse
 			if (host.draining) sweepDrain(host);
 		}),
 	);
-}
-
-/** Attachments held by connections other than the caller: every one of the caller's own holds is excluded. */
-function otherAttachments(host: RouterContext, caller: string | undefined, sessionId: string): number {
-	const own = caller === undefined ? 0 : (host.sessionsByConnection.get(caller)?.get(sessionId) ?? 0);
-	return Math.max(0, (host.registry.peek(sessionId)?.attachments ?? 0) - own);
 }
 
 export async function dispatch(
@@ -126,6 +119,13 @@ export async function dispatch(
 	if (command.type === "attach_session") return attachSession(host, command);
 	if (command.type === "release_attachment") return releaseAttachment(host, command);
 	if (command.type === "reclaim_session") return reclaimSession(host, command);
+	if (command.type === "find_session")
+		return findSession(
+			// The host's own directory when the registry carries none: a worker-runtime host runs its sessions in workers and
+			// still keeps the session files. Only this lookup reads it; `move_session` reads the registry's and stays refused.
+			{ agentDir: host.registry.agentDir ?? host.defaults.agentDir, hosted: () => host.registry.list() },
+			command,
+		);
 	if (command.type === "close_session") return close(host, command);
 	if (command.type === "release_session")
 		return releaseSession(
@@ -171,8 +171,7 @@ export async function dispatch(
 			command,
 		);
 	}
-	if (command.type === "set_client_info" && !command.sessionId)
-		return command.id === undefined && compactUpdatesEnabled() ? undefined : declareSocketClient(host, command);
+	if (command.type === "set_client_info" && !command.sessionId) return declareSessionless(host, command);
 	if (command.type === "subscribe_sessions") {
 		if (host.admissions && command.admissionId !== undefined) return compactSubscribe(host, command);
 		const connection = host.writer.currentConnection();

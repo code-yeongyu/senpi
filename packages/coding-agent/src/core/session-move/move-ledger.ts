@@ -173,6 +173,14 @@ export class MoveLedger {
 		});
 	}
 
+	/**
+	 * Throws unless this process still holds the move's lock. For what a commit's `prepare` removes or copies: each is a
+	 * write under this lock, and a holder that lost it must stop before the next one.
+	 */
+	assertHeld(moveId: MoveId): void {
+		this.#locks.assertHeld(this.#file.path(moveId));
+	}
+
 	/** Cancel, expiry or a refused chunk: only before the bundle was verified and receiving began, never after. */
 	decline(moveId: MoveId, reason: DeclineReason): Promise<MoveRecord> {
 		return this.settle(moveId, { state: "declined", reason }, ["receiving"]);
@@ -221,10 +229,13 @@ export class MoveLedger {
 				{ ...settledAt(landing, target), committing: true },
 			);
 			moveStep("import:stamped");
-			const stampStands = () => this.#file.assertStampStands(moveId, stamp);
+			// The stamp check, then the lock: the check's read is awaited, and a lock taken during it shows only after it.
+			// `commit` runs both before it calls the landing, and the landing runs both again right before its rename.
+			const stampStands = async () => {
+				await this.#file.assertStampStands(moveId, stamp);
+				this.#locks.assertHeld(this.#file.path(moveId));
+			};
 			await stampStands();
-			// The last look before the landing: the stamp check awaited above, and the lock itself, with nothing awaited between.
-			this.#locks.assertHeld(this.#file.path(moveId));
 			const result = await rename(stampStands);
 			moveStep("import:renamed");
 			await this.#file.write(moveId, { state: "accepted" }, settledAt(landing, target));

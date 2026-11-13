@@ -88,6 +88,20 @@ export function ownershipStep(
 	return sameMove && continuesMove ? { kind: "apply", next } : REFUSED;
 }
 
+/**
+ * Whether the file holds an ownership entry for `moveId` of its own session, so the move held this file at some point.
+ * An entry naming another session (inherited by a copy or a branch) does not count, as in `ownershipStep`.
+ */
+export function heldByMove(entries: readonly EntryLike[], moveId: MoveId): boolean {
+	const sessionId = headerSessionId(entries);
+	return entries.some((entry) => {
+		if (entry.type !== "custom" || !isOwnershipEntryType(entry.customType)) return false;
+		if (field(entry.data, "move_id") !== moveId) return false;
+		const owner = field(entry.data, "session_id");
+		return owner === undefined || sessionId === undefined || owner === sessionId;
+	});
+}
+
 export function headerSessionId(entries: readonly EntryLike[]): string | undefined {
 	const header = entries.find((entry) => entry.type === "session");
 	return typeof header?.id === "string" ? header.id : undefined;

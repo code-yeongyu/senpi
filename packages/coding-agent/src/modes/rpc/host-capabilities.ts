@@ -58,20 +58,33 @@ import {
 	MOVE_SESSION_IMPORT_OPEN_CAPABILITY,
 	MOVE_SESSION_IMPORT_SESSION_DIR_CAPABILITY,
 	MOVE_SESSION_INLINE_MAX_BYTES_CAPABILITY,
+	MOVE_SESSION_OWNERSHIP_CAPABILITY,
+	MOVE_SESSION_PREPARE_OCCUPIED_CAPABILITY,
 	MOVE_SESSION_PREPARE_REPOSITORY_CAPABILITY,
 	MOVE_SESSION_REVOKE_CAPABILITY,
 	MOVE_SESSION_STATUS_LANDED_PATH_CAPABILITY,
 	MOVE_SESSION_STATUS_LANDING_CAPABILITY,
+	MOVE_SESSION_STATUS_WRITABLE_CAPABILITY,
+	RELEASE_SESSION_EXPECT_ID_CAPABILITY,
 } from "./session-move-wire.ts";
 
 /** `unload_session` and `session_parked.reason` (senpi#3225). */
 export const UNLOAD_SESSION_CAPABILITY = "unload_session";
+
+/** `unload_session { dryRun: true }`: what the unload would do now, and nothing else (senpi#6443). */
+const UNLOAD_SESSION_DRY_RUN_CAPABILITY = "unload_session_dry_run";
+
+/** `set_client_info { client_id }`: holds are counted per CLIENT, so a client's own second connection is not "another" (senpi#6443). */
+const CLIENT_IDENTITY_CAPABILITY = "client_identity";
 
 /** `get_subscription_limits` and the `subscription_limits` host record (senpi#3370). */
 export const SUBSCRIPTION_LIMITS_CAPABILITY = "subscription_limits";
 
 /** `resolve_path`: which file a message's path means, the engine's one rule (senpi#3415). */
 export const RESOLVE_PATH_CAPABILITY = "resolve_path";
+
+/** `find_session`: which session file of this host carries a durable id, read-only (senpi#6429). */
+const FIND_SESSION_CAPABILITY = "find_session";
 
 /** `set_permission_preset`: a live session's approval mode can be set and is echoed back (classic and multi-session). */
 export const SET_PERMISSION_PRESET_CAPABILITY = "set_permission_preset_v1";
@@ -108,6 +121,9 @@ export function multiSessionHostCapabilities(options: {
 			EFFECT_LEDGER_CAPABILITY,
 			SUBSCRIPTION_LIMITS_CAPABILITY,
 			RESOLVE_PATH_CAPABILITY,
+			// Every multi-session host keeps the agent directory whose session files this looks in, whichever runtime its
+			// sessions use: the router reads the host's own directory when the session registry carries none.
+			FIND_SESSION_CAPABILITY,
 			STEER_WHEN_IDLE_CAPABILITY,
 			CONTINUE_FROM_LEAF_CAPABILITY,
 			EVAL_CELLS_CAPABILITY,
@@ -145,6 +161,8 @@ export function multiSessionHostCapabilities(options: {
 			SAME_ACCOUNT_DELEGATION_CAPABILITY,
 			// Only a multi-session host keeps sessions loaded that a client can ask it to free.
 			UNLOAD_SESSION_CAPABILITY,
+			UNLOAD_SESSION_DRY_RUN_CAPABILITY,
+			CLIENT_IDENTITY_CAPABILITY,
 			// Only a multi-session host owns a move ledger and the hosted-session list export checks against.
 			MOVE_SESSION_CAPABILITY,
 			MOVE_SESSION_REVOKE_CAPABILITY,
@@ -158,10 +176,17 @@ export function multiSessionHostCapabilities(options: {
 			// ...and answers a session's or a folder's recorded repository, and checks it before a release (senpi#6435).
 			MOVE_SESSION_IDENTITY_CAPABILITY,
 			MOVE_SESSION_PREPARE_REPOSITORY_CAPABILITY,
+			// ...and refuses a landing file that is already taken, before the release (senpi#6471).
+			MOVE_SESSION_PREPARE_OCCUPIED_CAPABILITY,
 			// ...and says where an accepted move landed (senpi#6436).
 			MOVE_SESSION_STATUS_LANDED_PATH_CAPABILITY,
+			// ...and whether the copy there can still be written (senpi#6473).
+			MOVE_SESSION_STATUS_WRITABLE_CAPABILITY,
 			// ...and a `status` that names where the move would have landed is answered from the file there first.
 			MOVE_SESSION_STATUS_LANDING_CAPABILITY,
+			// ...and its release compares the session the caller expects (senpi#6484).
+			RELEASE_SESSION_EXPECT_ID_CAPABILITY,
+			MOVE_SESSION_OWNERSHIP_CAPABILITY,
 			// A host session asks the client that offers it to continue the session elsewhere (`host_request`).
 			SESSION_RELOCATION_CAPABILITY,
 			SESSION_CONTEXT_CAPABILITY,

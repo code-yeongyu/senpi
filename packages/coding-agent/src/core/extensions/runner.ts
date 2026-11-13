@@ -57,7 +57,7 @@ import {
 	runBudgetedHandler,
 	runBudgetedSequence,
 } from "./handler-budget.ts";
-import { type ExtensionKernelTools, kernelToolInvokerStorage, kernelToolsStorage } from "./kernel-tools-context.ts";
+import { activeKernelToolInvoker, activeKernelTools, type ExtensionKernelTools } from "./kernel-tools-context.ts";
 import { drainPendingProviderRegistrations } from "./loader.ts";
 import { runSessionMoveHandlers, type SessionMoveEmission, type SessionMoveFailure } from "./session-move-emit.ts";
 import type { RuntimeUiBroker } from "../runtime/ui-broker.ts";
@@ -1809,7 +1809,7 @@ export class ExtensionRunner {
 			},
 			get kernelTools() {
 				runner.assertActive();
-				const tools = kernelToolsStorage.getStore();
+				const tools = activeKernelTools();
 				if (!tools) return undefined;
 				return {
 					capabilities: tools.capabilities,
@@ -1818,7 +1818,7 @@ export class ExtensionRunner {
 						runner.assertActive();
 						return tools.invoke(request, {
 							...(options && ("aborted" in options ? { signal: options } : options)),
-							invoker: kernelToolInvokerStorage.getStore() ?? {
+							invoker: activeKernelToolInvoker() ?? {
 								sessionId: runner.boundSessionManager().getSessionId(),
 							},
 						});

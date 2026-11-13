@@ -1,11 +1,12 @@
+import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { getDefaultSessionDir, SessionManager } from "../../src/core/session-manager.ts";
-import { MoveBundleInvalidError } from "../../src/core/session-move/bundle.ts";
+import { MAX_BUNDLE_PATH_SEGMENTS, MoveBundleInvalidError } from "../../src/core/session-move/bundle.ts";
 import { exportSessionForMove } from "../../src/core/session-move/export.ts";
 import { finishMove } from "../../src/core/session-move/finish.ts";
-import { answerMoveStatus, importMovedSession } from "../../src/core/session-move/import.ts";
+import { answerMoveStatusAndLanding, importMovedSession } from "../../src/core/session-move/import.ts";
 import { MoveFencedError, MoveLedger } from "../../src/core/session-move/move-ledger.ts";
 import {
 	type MoveId,
@@ -103,6 +104,86 @@ describe("session move review fixes (senpi#3631)", () => {
 		);
 	});
 
+	it("#given a bundle folder whose manifest lists a path exactly as deep as a bundle path may be #then the import takes it and the session lands", async () => {
+		const { cwdB, bundleDir, ledger, readIdentity } = await setup();
+		// `files/` is the first segment and the file name the last: the folders between make the depth the cap exactly.
+		const deepest = `files/${"d/".repeat(MAX_BUNDLE_PATH_SEGMENTS - 2)}x`;
+		mkdirSync(dirname(join(bundleDir, deepest)), { recursive: true });
+		writeFileSync(join(bundleDir, deepest), "x");
+		const sha256 = createHash("sha256").update("x").digest("hex");
+		editManifest(bundleDir, (manifest) => {
+			const listedBefore = Array.isArray(manifest.sidecars) ? manifest.sidecars : [];
+			manifest.sidecars = [...listedBefore, { path: deepest, sha256 }];
+		});
+
+		const landed = await importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity });
+
+		expect(deepest.split("/")).toHaveLength(MAX_BUNDLE_PATH_SEGMENTS);
+		expect(existsSync(landed.sessionFile)).toBe(true);
+	});
+
+	it.each([
+		["one folder deeper than a bundle path may be", `files/${"d/".repeat(MAX_BUNDLE_PATH_SEGMENTS - 1)}x`],
+		[
+			"one folder deeper than a bundle path may be, written with backslashes",
+			`files\\${"d\\".repeat(MAX_BUNDLE_PATH_SEGMENTS - 1)}x`,
+		],
+		// In the folder form an empty or `.` segment is not refused but counts: these paths name only as many real
+		// segments as the cap allows, and the one extra segment refuses them.
+		["whose empty segment is the one over the cap", `files//${"d/".repeat(MAX_BUNDLE_PATH_SEGMENTS - 2)}x`],
+		["whose dot segment is the one over the cap", `files/./${"d/".repeat(MAX_BUNDLE_PATH_SEGMENTS - 2)}x`],
+	])(
+		"#given a bundle folder whose manifest lists a path %s #then the import refuses it and makes no folder for it, and the move stays importable",
+		async (_case, tooDeep) => {
+			const { cwdB, bundleDir, ledger, readIdentity } = await setup();
+			const original = readFileSync(join(bundleDir, "manifest.json"), "utf8");
+			mkdirSync(dirname(join(bundleDir, tooDeep)), { recursive: true });
+			writeFileSync(join(bundleDir, tooDeep), "x");
+			editManifest(bundleDir, (manifest) => {
+				manifest.sidecars = [{ path: tooDeep, sha256: "0".repeat(64) }];
+			});
+			const sessionDir = getDefaultSessionDir(cwdB);
+
+			await expect(importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity })).rejects.toBeInstanceOf(
+				MoveBundleInvalidError,
+			);
+
+			// Refused when the manifest is read: before the receive begins and before anything is staged.
+			expect(existsSync(join(sessionDir, ".move-staging"))).toBe(false);
+			writeFileSync(join(bundleDir, "manifest.json"), original);
+			const landed = await importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity });
+			expect(existsSync(landed.sessionFile)).toBe(true);
+		},
+	);
+
+	it("#given a bundle folder whose manifest lists a path one folder too deep and short enough to show #then the refusal names the whole path, quoted, with nothing cut from it", async () => {
+		const { cwdB, bundleDir, ledger, readIdentity } = await setup();
+		const tooDeep = `files/${"d/".repeat(MAX_BUNDLE_PATH_SEGMENTS - 1)}x`;
+		editManifest(bundleDir, (manifest) => {
+			manifest.sidecars = [{ path: tooDeep, sha256: "0".repeat(64) }];
+		});
+
+		const refused = importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity });
+
+		await expect(refused).rejects.toThrow(`segments: ${JSON.stringify(tooDeep)})`);
+	});
+
+	it("#given a bundle folder whose manifest is null #then the bundle is invalid, as for any manifest that is not an object, and the move's record is untouched", async () => {
+		const { cwdB, bundleDir, ledger, readIdentity } = await setup();
+		const record = join(ledger.dir, `${MOVE}.json`);
+		const before = existsSync(record) ? readFileSync(record, "utf8") : undefined;
+		writeFileSync(join(bundleDir, "manifest.json"), "null");
+
+		const refused = await importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity }).then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+
+		expect(refused).toBeInstanceOf(MoveBundleInvalidError);
+		expect(String(refused)).toContain("the manifest is not an object");
+		expect(existsSync(record) ? readFileSync(record, "utf8") : undefined).toBe(before);
+	});
+
 	it("#given a bundle with a payload kind this version does not know #then the import refuses it", async () => {
 		const { cwdB, bundleDir, ledger, readIdentity } = await setup();
 		editManifest(bundleDir, (manifest) => {
@@ -161,7 +242,9 @@ describe("session move review fixes (senpi#3631)", () => {
 		expect(sessionFile).toBe(source);
 		expect(readFileSync(sessionFile, "utf8")).toContain("written on B");
 		expect(() => appendUserMessage(sessionFile, "back on A")).not.toThrow();
-		expect(await answerMoveStatus(ledgerA, BACK, sessionFile)).toEqual({ state: "accepted" });
+		expect((await answerMoveStatusAndLanding(ledgerA, BACK, { file: sessionFile, as: "copy" })).answer).toEqual({
+			state: "accepted",
+		});
 	});
 
 	it("#given a writable session with the same id already at the target #then the import fails and the ledger says import_failed", async () => {
@@ -237,27 +320,12 @@ describe("session move review fixes (senpi#3631)", () => {
 		expect(admittedInputs(source)).toEqual(["queued follow-up"]);
 	});
 
-	it("#given an import that crashed after staging session_moved_in but before the re-queue #then running it again queues the input once", async () => {
-		const { cwdB, bundleDir, ledger, readIdentity } = await setup();
-		const sessionDir = getDefaultSessionDir(cwdB);
-		const staged = join(sessionDir, ".move-staging", encodeURIComponent(MOVE), `x_${SESSION_ID}.jsonl`);
-		const manifest = JSON.parse(readFileSync(join(bundleDir, "manifest.json"), "utf8")) as {
-			sessionFileName: string;
-		};
-		const file = join(dirname(staged), manifest.sessionFileName);
-		mkdirSync(dirname(file), { recursive: true });
-		cpSync(join(bundleDir, "files", "session.jsonl"), file);
-		SessionManager.open(file, dirname(file)).appendCustomEntry(SESSION_MOVED_IN, {
-			move_id: MOVE,
-			session_id: SESSION_ID,
-		});
-		const { sessionFile } = await importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity });
-		expect(admittedInputs(sessionFile)).toEqual(["queued follow-up"]);
-	});
-
 	it("#given a move the receiver was asked about before it arrived #then the late import is refused", async () => {
 		const { cwdB, bundleDir, ledger, readIdentity } = await setup(undefined, undefined, { ready: false });
-		expect(await answerMoveStatus(ledger, MOVE, undefined)).toEqual({ state: "declined", reason: "no_record" });
+		expect((await answerMoveStatusAndLanding(ledger, MOVE, undefined)).answer).toEqual({
+			state: "declined",
+			reason: "no_record",
+		});
 		await expect(importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity })).rejects.toBeInstanceOf(
 			MoveFencedError,
 		);

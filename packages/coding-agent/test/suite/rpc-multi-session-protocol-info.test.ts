@@ -41,6 +41,7 @@ describe("multi-session RPC protocol info", () => {
 					"effect_ledger",
 					"subscription_limits",
 					"resolve_path",
+					"find_session", // senpi#6429: which session file carries a durable id, read-only.
 					"steer_when_idle",
 					"continue_from_leaf",
 					"eval_cells",
@@ -65,6 +66,8 @@ describe("multi-session RPC protocol info", () => {
 					"peer_agent_role_v1",
 					"same_account_delegation_v1",
 					"unload_session",
+					"unload_session_dry_run",
+					"client_identity",
 					"move_session",
 					"move_session_revoke",
 					"move_session_copy",
@@ -75,8 +78,12 @@ describe("multi-session RPC protocol info", () => {
 					"move_session_inline_max_bytes:1048576",
 					"move_session_identity", // senpi#6435: a session's recorded repository, read without a release.
 					"move_session_prepare_repository", // senpi#6435: prepare checks the folder's repository.
+					"move_session_prepare_occupied", // senpi#6471: prepare refuses a landing file that is already taken.
 					"move_session_status_landed_path", // senpi#6436: where an accepted move landed.
+					"move_session_status_writable", // senpi#6473: whether the landed copy can still be written.
 					"move_session_status_landing",
+					"release_session_expect_id",
+					"move_session_ownership",
 					"session_relocation",
 					"session_context",
 					"session_kind",

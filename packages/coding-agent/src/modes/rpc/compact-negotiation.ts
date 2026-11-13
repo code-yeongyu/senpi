@@ -1,6 +1,11 @@
 import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
 import type { RpcConnectionOptions } from "./connection-handler.ts";
-import { CONNECTION_ROLE_FIXED, DELEGATION_INCARNATION_STALE, type RoleDeclaration } from "./connection-roles.ts";
+import {
+	CONNECTION_ROLE_FIXED,
+	DELEGATION_INCARNATION_STALE,
+	type RoleDeclaration,
+	roleConnection,
+} from "./connection-roles.ts";
 import type { RpcCommand } from "./rpc-types.ts";
 import { COMPACT_EVENTS_CAPABILITY } from "./custom-capability.ts";
 import { EVENT_RESYNC_CAPABILITY } from "./socket-peer-recovery.ts";
@@ -87,6 +92,10 @@ export function sessionDeclaration(
 	incarnation: number | undefined,
 ) {
 	const caps = command.capabilities;
+	// senpi#6443: a name is kept only from a declaration that is not stale, capabilities or not, and that is accepted.
+	const connection = roleConnection(options.clientInfo?.connectionId());
+	if (command.client_id !== undefined && options.connectionRoles?.isStale(connection, incarnation) === true)
+		return { capabilities: current, refusal: DELEGATION_INCARNATION_STALE };
 	if (caps !== undefined) {
 		if (!options.clientInfo && compactUpdatesEnabled() && caps.includes(COMPACT_UPDATES_CAPABILITY))
 			return { capabilities: current, refusal: "compact_endpoint_unsupported" };
@@ -97,6 +106,8 @@ export function sessionDeclaration(
 		else if (options.clientInfo.setCapabilities(options.clientInfo.connectionId(), caps, incarnation) === "stale")
 			return { capabilities: current, refusal: DELEGATION_INCARNATION_STALE };
 	}
+	if (command.client_id !== undefined)
+		options.clientInfo?.setClientId?.(options.clientInfo.connectionId(), command.client_id);
 	return {
 		capabilities: caps ?? current,
 		refusal: undefined,

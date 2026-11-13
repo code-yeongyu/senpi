@@ -94,7 +94,10 @@ export type RpcHostCommandResponse =
 			 */
 			data: {
 				released: true;
+				/** The file of the session that was sealed. */
 				session_path: string;
+				/** The durable id of the session that was sealed (the id its `session_released` entry records). */
+				session_id: string;
 				attachments: number;
 				dropped: { deliveries: readonly string[]; user_messages: readonly string[] };
 			};
@@ -106,6 +109,17 @@ export type RpcHostCommandResponse =
 			success: true;
 			/** `unsupported`: this host's session runtime cannot be warmed from the host process (worker isolates). */
 			data: { state: "warmed" | "already_warm" | "unsupported" };
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "find_session";
+			success: true;
+			/**
+			 * Which session file of this host carries the durable id (senpi#6429). `open` says an engine holds it now.
+			 * `ambiguous` names no file: two of them carry that id. `unknown`: no session file of this host does.
+			 */
+			data: { found: { sessionPath: string; cwd: string; open: boolean } } | { ambiguous: true } | { unknown: true };
 	  }
 	| {
 			id?: string;

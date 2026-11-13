@@ -116,6 +116,7 @@ export class SessionEventWriter extends SessionEventWriterDestinations {
 		const registered = targetId === undefined ? undefined : this.fanout.get(targetId);
 		if (registered) {
 			registered.actor.enqueue(serializeJsonLine(value), undefined, undefined, undefined, isCorrelatedReply(value));
+			this.answered.taken(targetId, value);
 			this.requestFlush();
 			return Promise.resolve();
 		}
@@ -135,6 +136,8 @@ export class SessionEventWriter extends SessionEventWriterDestinations {
 		const completion = new Promise<void>((resolve, reject) => {
 			this.records.append(queue, { ...value }, undefined, resolve, reject);
 		});
+		// Told only here and above, where the value is taken: a value refused before this point was not an answer.
+		this.answered.taken(targetId, value);
 		this.markReady(queue);
 		this.requestFlush();
 		return completion;

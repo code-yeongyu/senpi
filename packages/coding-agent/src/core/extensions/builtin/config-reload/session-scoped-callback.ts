@@ -9,6 +9,9 @@ import { activeProviderScope, bindToProviderScope } from "@earendil-works/pi-ai/
  * its session was torn down, and a dead session has nothing left to reload. Throwing
  * "Provider scope is closed" out of a timer nobody awaits is what leaked those watchers
  * on the shared host (senpi#1905).
+ *
+ * Inside a scope this copy of pi-ai cannot read, the bind refuses (`activeProviderScope` throws): the callback is
+ * never handed back unbound to a caller that is inside a session (omo#12965).
  */
 export function bindSessionScopedCallback<TArgs extends unknown[]>(
 	callback: (...args: TArgs) => void,

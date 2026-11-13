@@ -5,7 +5,11 @@
  */
 import { join } from "node:path";
 import { readRepositoryIdentity } from "../../core/repository-identity.ts";
-import { getDefaultSessionDir, loadEntriesFromFileAsync } from "../../core/session-manager.ts";
+import {
+	getDefaultSessionDir,
+	getDefaultSessionDirPath,
+	loadEntriesFromFileAsync,
+} from "../../core/session-manager.ts";
 import { copySessionAs } from "../../core/session-move/copy.ts";
 import { exportSessionForMoveAndRead } from "../../core/session-move/export.ts";
 import { sealedOutgoingStateDir } from "../../core/session-move/extension-state.ts";
@@ -13,7 +17,7 @@ import { finishMove } from "../../core/session-move/finish.ts";
 import { readSessionRepositoryIdentity } from "../../core/session-move/identity.ts";
 import { readInlineBundle } from "../../core/session-move/inline-bundle.ts";
 import { MoveLedger, type MoveRecord } from "../../core/session-move/move-ledger.ts";
-import { type MoveId, sessionOwnership } from "../../core/session-move/ownership.ts";
+import { headerSessionId, heldByMove, type MoveId, sessionOwnership } from "../../core/session-move/ownership.ts";
 import { prepareMove } from "../../core/session-move/prepare.ts";
 import { revokeImportedMove } from "../../core/session-move/revoke.ts";
 import { orderedRealPath, realSessionPath } from "../../core/session-move/session-lock.ts";
@@ -25,6 +29,7 @@ import {
 	RPC_ERROR_INVALID_MOVE_REQUEST,
 	RPC_ERROR_MOVE_FAILED,
 	RPC_ERROR_MOVE_NOT_RELEASED,
+	RPC_ERROR_NOT_A_SESSION_FILE,
 	RPC_ERROR_SESSION_OPEN_HERE,
 	type RpcMoveLanded,
 	type RpcMoveRecord,
@@ -36,6 +41,23 @@ import { type MoveRequest, parseMoveRequest } from "./session-move-request.ts";
 
 export interface MoveSessionPort extends MoveImportPort {
 	hostedPaths(): readonly string[];
+}
+
+/**
+ * Where a `prepare` that names its session would land (senpi#6471): the session folder is picked exactly as the
+ * import of that move picks it, so both steps look at the same file. It is only named here, never created: a `prepare`
+ * reads, and the import makes the folder when the session lands.
+ */
+function prepareLanding(parsed: Extract<MoveRequest, { op: "prepare" }>, agentDir: string) {
+	if (parsed.session === undefined || parsed.cwd === undefined) return undefined;
+	return {
+		sessionId: parsed.session.id,
+		sessionFileName: parsed.session.fileName,
+		sessionDir:
+			parsed.sessionDir === undefined
+				? getDefaultSessionDirPath(resolvePath(parsed.cwd), agentDir)
+				: normalizePath(parsed.sessionDir),
+	};
 }
 
 /** Refusal codes the move core throws (`error.code`), passed through to the wire as they are. */
@@ -66,9 +88,11 @@ export async function moveSession(
 	const root = join(port.agentDir, "session-moves");
 	const ledger = new MoveLedger(join(root, "ledger"));
 	try {
+		if (parsed.op === "import" || parsed.op === "prepare") {
+			const notAFolder = await sessionDirRefusal(parsed.sessionDir);
+			if (notAFolder !== undefined) return refusal(command.id, RPC_ERROR_INVALID_MOVE_REQUEST, notAFolder);
+		}
 		if (parsed.op !== "import") return answer(command.id, await run(parsed, port, ledger, root));
-		const notAFolder = await sessionDirRefusal(parsed.sessionDir);
-		if (notAFolder !== undefined) return refusal(command.id, RPC_ERROR_INVALID_MOVE_REQUEST, notAFolder);
 		const landed = await importMoved(parsed, port, ledger, root);
 		const open = command.op === "import" ? command.open : undefined;
 		if (open === undefined) return answer(command.id, landed);
@@ -104,6 +128,7 @@ async function run(
 					moveId: parsed.moveId,
 					cwd: parsed.cwd,
 					repository: parsed.repository,
+					landing: prepareLanding(parsed, port.agentDir),
 				}),
 			);
 		case "identity": {
@@ -159,7 +184,7 @@ async function run(
 		}
 		case "finish": {
 			const sessionFile = await orderedRealPath(parsed.sessionPath);
-			await finishMove({
+			const settled = await finishMove({
 				sessionFile,
 				bundleDir: outgoing(parsed.moveId),
 				moveId: parsed.moveId,
@@ -171,7 +196,25 @@ async function run(
 						"This session is open on this host, so its runtime would not see the move end. Close it here, then finish the move.",
 					),
 			});
-			return ownershipOf(sessionFile);
+			const ownership = await ownershipOf(sessionFile);
+			return ownership.ownership === "writable" ? { ...ownership, held_this_move: settled.heldThisMove } : ownership;
+		}
+		case "ownership": {
+			// The sender's read-only question (senpi#6484): no lock, no write, no record, and the bundle is never read.
+			const sessionFile = await orderedRealPath(parsed.sessionPath);
+			const entries = await loadEntriesFromFileAsync(sessionFile);
+			// A missing file reads as no entries, and no entries read as writable: a stale path must not look taken back.
+			if (headerSessionId(entries) === undefined)
+				throw new MoveRefusal(
+					RPC_ERROR_NOT_A_SESSION_FILE,
+					"There is no session file at that path: the file is missing or has no session header.",
+				);
+			const ownership = sessionOwnership(entries);
+			return {
+				ownership: ownership.writable ? "writable" : ownership.state,
+				sealed_for_move: !ownership.writable && ownership.state === "moving" && ownership.moveId === parsed.moveId,
+				held_this_move: heldByMove(entries, parsed.moveId),
+			} as const;
 		}
 		case "revoke": {
 			const sessionFile = await orderedRealPath(parsed.sessionPath);

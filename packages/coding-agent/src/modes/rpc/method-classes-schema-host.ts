@@ -79,7 +79,14 @@ export const HOST_RECORD_SCHEMAS = {
 	park_session: command("park_session", { cwd: PathStr, kind: Opt(SessionKind), context: Opt(SessionContext) }),
 	close_session: command("close_session", { sessionId: Id }),
 	move_session: Type.Union([
-		move({ op: Type.Literal("prepare"), moveId: Id, cwd: OptPath, repository: Opt(RepositoryIdentity) }),
+		move({
+			op: Type.Literal("prepare"),
+			moveId: Id,
+			cwd: OptPath,
+			repository: Opt(RepositoryIdentity),
+			session: Opt(Type.Object({ id: Id, fileName: Id })),
+			sessionDir: OptPath,
+		}),
 		move({ op: Type.Literal("cancel"), moveId: Id }),
 		move({ op: Type.Literal("identity"), sessionPath: PathStr }),
 		move({ op: Type.Literal("identity"), cwd: PathStr }),
@@ -109,6 +116,7 @@ export const HOST_RECORD_SCHEMAS = {
 		}),
 		move({ op: Type.Literal("finish"), sessionPath: PathStr, moveId: Id, answer: Type.Unknown() }),
 		move({ op: Type.Literal("revoke"), sessionPath: PathStr, moveId: Id }),
+		move({ op: Type.Literal("ownership"), sessionPath: PathStr, moveId: Id }),
 		move({ op: Type.Literal("copy"), sessionPath: PathStr, sessionId: Id, sessionDir: OptPath }),
 	]),
 	release_session: command("release_session", {
@@ -118,6 +126,7 @@ export const HOST_RECORD_SCHEMAS = {
 		target: OptId,
 		interrupt: OptBool,
 		force: OptBool,
+		expectSessionId: OptId,
 	}),
 	unload_session: command("unload_session", {
 		sessionId: Id,
@@ -126,8 +135,10 @@ export const HOST_RECORD_SCHEMAS = {
 		clearQueue: OptBool,
 		children: Opt(literals("refuse", "detach")),
 		force: OptBool,
+		dryRun: OptBool,
 	}),
 	detach_connection: command("detach_connection", {}),
+	find_session: command("find_session", { durableSessionId: Id }),
 	get_subscription_limits: command("get_subscription_limits", { observe: OptBool }),
 	list_sessions: command("list_sessions", { include_workers: OptBool, observe: OptBool }),
 	subscribe_sessions: command("subscribe_sessions", {

@@ -21,9 +21,9 @@
  */
 import type { AgentSession } from "../../core/agent-session.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
-import { beginEffect, effectAnswer, isEffectBegin } from "./effect-commands.ts";
+import { beginEffect, effectAnswer, isEffectBegin, recordedEffect } from "./effect-answers.ts";
 import { EffectLedger } from "./effect-ledger.ts";
-import type { EffectActor } from "./effect-record.ts";
+import type { EffectActor, EffectStatus } from "./effect-record.ts";
 import type { RpcCommand, RpcResponse, RpcUnloadAnswer, UnloadRefusalReason } from "./rpc-types.ts";
 import type { RpcSessionEntry } from "./session-registry.ts";
 import { abortAndSettle, type ReleaseSettlePort } from "./session-release-interrupt.ts";
@@ -71,19 +71,22 @@ export async function unloadSession(port: SessionUnloadPort, command: UnloadSess
 	const first = loaded(port, command.sessionId);
 	if ("reason" in first) return answer(command, refused(first));
 	const { effectId } = command;
+	// Before the effect ledger: a dry run records nothing, so its effectId stays free for the real call. An id the
+	// ledger already holds is answered as the real call would be: the replay, or the conflict for another payload.
+	if (command.dryRun === true) {
+		const recorded =
+			effectId === undefined ? undefined : recordedEffect(first.session, "unload", { ...command, effectId });
+		if (recorded === undefined)
+			return dryRunAnswer(command, blockers(port, command, first.session, first.durableSessionId));
+		return "type" in recorded ? recorded : answer(command, replayed(recorded, command.sessionId));
+	}
 	if (effectId !== undefined) {
 		const begun = await beginEffect({ session: first.session, by: port.by, sessionId: command.sessionId }, "unload", {
 			...command,
 			effectId,
 		});
 		if (!isEffectBegin(begun)) return begun;
-		if ("replay" in begun)
-			return answer(command, {
-				outcome: begun.replay.state === "failed" ? "refused" : "unloaded",
-				// A replayed refusal answers the same reason, detail and action as the first one.
-				...refusalFields(begun.replay.outcome),
-				...effectAnswer(begun.replay, command.sessionId, true),
-			});
+		if ("replay" in begun) return answer(command, replayed(begun.replay, command.sessionId));
 	}
 	const blocked = blockers(port, command, first.session, first.durableSessionId);
 	// Never stop work for an unload that would still be refused: only interruptible blockers are interrupted.
@@ -118,6 +121,27 @@ async function claimAndUnload(port: SessionUnloadPort, command: UnloadSessionCom
 		outcome: "unloaded",
 		sessionPath: ready.sessionPath,
 		...(effect === undefined ? {} : effectAnswer(effect, command.sessionId)),
+	});
+}
+
+/** A recorded unload answered again: a replayed refusal carries the same reason, detail and action as the first one. */
+function replayed(recorded: EffectStatus, sessionId: string): RpcUnloadAnswer {
+	return {
+		outcome: recorded.state === "failed" ? "refused" : "unloaded",
+		...refusalFields(recorded.outcome),
+		...effectAnswer(recorded, sessionId, true),
+	};
+}
+
+/** What the real call would do now, from the same blockers, in the same order: it refuses on the first standing one. */
+function dryRunAnswer(command: UnloadSessionCommand, blocked: readonly Refusal[]): RpcResponse {
+	const stops = (refusal: Refusal) => interruptible(refusal) && command.interrupt === true;
+	const standing = blocked.filter((refusal) => !stops(refusal));
+	const first = standing[0];
+	return answer(command, {
+		...(first === undefined ? { outcome: "ready" as const } : refused(first)),
+		blockers: standing,
+		interruptible: blocked.filter(stops),
 	});
 }
 
@@ -182,7 +206,8 @@ function loaded(
 	if (entry.state !== "open") return { reason: "session_closing", detail: "the session is already closing" };
 	const session = entry.runtime?.session;
 	if (session === undefined) return { reason: "unsupported", detail: "a worker isolate owns this session's runtime" };
-	const sessionPath = entry.sessionPath ?? session.sessionFile;
+	// Read from the session this unload acts on, never from the host's record of the handle (senpi#6484).
+	const sessionPath = session.sessionFile;
 	if (sessionPath === undefined)
 		return {
 			reason: "unsupported",
@@ -227,5 +252,6 @@ function refused(refusal: Refusal): RpcUnloadAnswer {
 }
 
 function answer(command: UnloadSessionCommand, data: RpcUnloadAnswer): RpcResponse {
-	return { id: command.id, type: "response", command: "unload_session", success: true, data };
+	const marked = command.dryRun === true ? { ...data, dry_run: true as const } : data;
+	return { id: command.id, type: "response", command: "unload_session", success: true, data: marked };
 }

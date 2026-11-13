@@ -35,17 +35,33 @@ export const MOVE_SESSION_INLINE_MAX_BYTES_CAPABILITY = `move_session_inline_max
 export const MOVE_SESSION_IDENTITY_CAPABILITY = "move_session_identity";
 /** Capability: op `prepare` checks `cwd` against `repository`, and the import lands only there (senpi#6435). */
 export const MOVE_SESSION_PREPARE_REPOSITORY_CAPABILITY = "move_session_prepare_repository";
+/**
+ * Capability: op `prepare` takes `session` (and `sessionDir`) and refuses `move_target_occupied` when the landing file
+ * is already taken, before the sender releases anything (senpi#6471). A host without it readies the move and ignores
+ * both fields; its import still refuses.
+ */
+export const MOVE_SESSION_PREPARE_OCCUPIED_CAPABILITY = "move_session_prepare_occupied";
 
 /**
- * Capability: `status` for an accepted move, and an `import` refused because the move already landed, answer where it
- * landed (senpi#6436).
+ * Capability: `status` for an accepted move, and a `move_fenced` refusal of a move already accepted here (an `import`
+ * into another folder, a `prepare` for another folder), answer where it landed (senpi#6436).
  */
 export const MOVE_SESSION_STATUS_LANDED_PATH_CAPABILITY = "move_session_status_landed_path";
+
+/**
+ * Capability: where an accepted move landed is answered with `writable`, and with `sealed_by` when the copy there is
+ * read-only (senpi#6473).
+ */
+export const MOVE_SESSION_STATUS_WRITABLE_CAPABILITY = "move_session_status_writable";
 /**
  * Capability: `status` takes `landing`, the place the move would have landed, and answers from the session file there
  * before it answers from its record. A move that landed and whose record was lost then answers `accepted`.
  */
 export const MOVE_SESSION_STATUS_LANDING_CAPABILITY = "move_session_status_landing";
+/** The host honours `release_session.expectSessionId` (senpi#6484); an engine without it ignores the field. */
+export const RELEASE_SESSION_EXPECT_ID_CAPABILITY = "release_session_expect_id";
+/** `move_session { op: "ownership" }`: the sender's read-only question about a file and a move (senpi#6484). */
+export const MOVE_SESSION_OWNERSHIP_CAPABILITY = "move_session_ownership";
 
 /** A `move_session` request whose fields do not parse (op, move id, paths, answer). */
 export const RPC_ERROR_INVALID_MOVE_REQUEST = "invalid_move_request";
@@ -53,6 +69,8 @@ export const RPC_ERROR_INVALID_MOVE_REQUEST = "invalid_move_request";
 export const RPC_ERROR_SESSION_OPEN_HERE = "session_open_here";
 /** `export` of a session file that is not sealed for this move by a `release_session` reason `move`. */
 export const RPC_ERROR_MOVE_NOT_RELEASED = "move_not_released";
+/** `ownership` of a path with no session file (missing, or no session header): never read as a writable session. */
+export const RPC_ERROR_NOT_A_SESSION_FILE = "not_a_session_file";
 /** A move step that failed for a reason with no code of its own; `errorData.detail` says what happened. */
 export const RPC_ERROR_MOVE_FAILED = "move_failed";
 
@@ -63,7 +81,14 @@ export const RPC_ERROR_MOVE_FAILED = "move_failed";
  * side: `copy`, a new writable session from one that is read-only here.
  */
 export type RpcMoveSessionCommand = { id?: string; type: "move_session" } & (
-	| { op: "prepare"; moveId: string; cwd?: string; repository?: RpcRepositoryIdentity }
+	| {
+			op: "prepare";
+			moveId: string;
+			cwd?: string;
+			repository?: RpcRepositoryIdentity;
+			session?: { id: string; fileName: string };
+			sessionDir?: string;
+	  }
 	| { op: "identity"; sessionPath: string }
 	| { op: "identity"; cwd: string }
 	| { op: "cancel"; moveId: string }
@@ -92,6 +117,7 @@ export type RpcMoveSessionCommand = { id?: string; type: "move_session" } & (
 	  }
 	| { op: "finish"; sessionPath: string; moveId: string; answer: MoveAnswer }
 	| { op: "revoke"; sessionPath: string; moveId: string }
+	| { op: "ownership"; sessionPath: string; moveId: string }
 	| { op: "copy"; sessionPath: string; sessionId: string; sessionDir?: string }
 );
 
@@ -139,10 +165,31 @@ export interface RpcMoveStatusLanding {
 }
 
 /**
- * Where an accepted move landed: the session file its record names, with the id and the folder that file's header
- * names. `landed_file: "gone"` when no file is there or the file there no longer records the move.
+ * The move that made a landed copy read-only here, as the ownership rule reads it from the file: a later move that
+ * released the session (`moving` until it ends, then `moved`), or the landed move's own revoke (`moved`, with `target`
+ * the device the session went back to).
  */
-export type RpcMoveLanded = { session_path: string; session_id: string; cwd: string } | { landed_file: "gone" };
+export interface RpcMoveSealedBy {
+	move_id: string;
+	state: "moving" | "moved";
+	/**
+	 * The device the sealing release named. Absent when it named none: the destination is not known here, and a caller
+	 * shows that as another device, as the `session_moved_away` refusal words it. Never the empty string.
+	 */
+	target?: string;
+}
+
+/**
+ * Where an accepted move landed: the session file its record names, with the id and the folder that file's header
+ * names, and whether that copy can still be written here (`sealed_by` beside `writable: false`, senpi#6473).
+ * `landed_file: "gone"` when no file is there or the file there no longer records the move.
+ */
+export type RpcMoveLanded =
+	| ({ session_path: string; session_id: string; cwd: string } & (
+			| { writable: true }
+			| { writable: false; sealed_by: RpcMoveSealedBy }
+	  ))
+	| { landed_file: "gone" };
 
 /**
  * The receiver's record of a move as a client sees it; `expires_at` while it waits for the bundle, and where it landed
@@ -158,7 +205,13 @@ export type RpcMoveSessionData =
 	| { move_id: string; session_id: string; bundle_dir: string; files: number; inline_files?: RpcMoveInlineFile[] }
 	| RpcMoveImportData
 	| { repository?: RpcRepositoryIdentity }
-	| { ownership: "writable" | "moving" | "moved" };
+	| {
+			ownership: "writable" | "moving" | "moved";
+			/** On `finish` for a writable file: whether this move held it (only then are its bundle and staged state removed). */
+			held_this_move?: boolean;
+			/** On `ownership`: the file is sealed for exactly this move (an export's own check). */
+			sealed_for_move?: boolean;
+	  };
 
 export interface RpcMoveSessionResponse {
 	id?: string;

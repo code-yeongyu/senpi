@@ -12,7 +12,7 @@ export type Opened = { sessionId: string; state: { sessionFile: string } };
 export const NO_ID = "00000000-0000-7000-8000-000000000000";
 /** Host commands carry no `sessionId` routing envelope; every other method is routed to the fresh session. */
 const HOST_METHODS = new Set(
-	"get_protocol_info open_session park_session claim_session close_session release_session unload_session detach_connection get_subscription_limits list_sessions subscribe_sessions unsubscribe_sessions set_session_context warm attach_session release_attachment reclaim_session move_session list_hands select_hand".split(
+	"get_protocol_info open_session park_session claim_session close_session release_session unload_session detach_connection get_subscription_limits list_sessions find_session subscribe_sessions unsubscribe_sessions set_session_context warm attach_session release_attachment reclaim_session move_session list_hands select_hand".split(
 		" ",
 	),
 );
@@ -31,7 +31,8 @@ export const TODAY: { readonly [M in RpcCommand["type"]]: string } = {
 		"ok{agentDir,capabilities,engineOrdinal,engineVersion,generation,instanceId,launch_profile,memory_pressure,method_classes,mode,path_identity_resolver,protocolVersion,serverVersion}",
 	open_session: "ok{permissionPreset,permissionPresetSource,permissionPresetStatus,sessionId,state}",
 	close_session: '{"sessionId":"$SID"} => ok{}',
-	release_session: '{"sessionId":"$SID","reason":"takeover"} => ok{attachments,dropped,released,session_path}',
+	release_session:
+		'{"sessionId":"$SID","reason":"takeover"} => ok{attachments,dropped,released,session_id,session_path}',
 	unload_session: '{"sessionId":"$SID"} => ok{outcome,sessionPath}',
 	detach_connection: "ok{deferred}",
 	get_subscription_limits: "ok{accounts}",
@@ -51,6 +52,7 @@ export const TODAY: { readonly [M in RpcCommand["type"]]: string } = {
 	reclaim_session:
 		'{"sessionPath":"$PATH","durableSessionId":"$NO","expectedHostInstance":"$NO"} => no:session_identity_mismatch:session_identity_mismatch',
 	move_session: '{"op":"status","moveId":"$NO"} => ok{reason,state}',
+	find_session: '{"durableSessionId":"$NO"} => ok{unknown}',
 	prompt: '{"message":"Hello."} => ok{disposition,turnId}',
 	release_tool_barrier: '{"barrierId":"$NO"} => ok{released}',
 	send_custom_message: '{"customType":"x14","content":"note","display":false} => ok',

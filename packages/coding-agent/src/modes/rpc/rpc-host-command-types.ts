@@ -153,6 +153,14 @@ type RpcCommandBody =
 			target?: string;
 			interrupt?: boolean;
 			force?: boolean;
+			/**
+			 * The DURABLE id of the session the caller means (`get_state`'s `sessionId`, `durableSessionId` in the open answer),
+			 * never the handle `sessionId`. When the session behind the route has another durable id, nothing is released and
+			 * the answer is `session_mismatch`. A value that is empty, over 512 characters or not a session id is refused
+			 * `invalid_session_id`; only an absent field
+			 * means no expectation. Honoured when the host advertises `release_session_expect_id`.
+			 */
+			expectSessionId?: string;
 	  }
 	| {
 			id?: string;
@@ -169,6 +177,11 @@ type RpcCommandBody =
 			clearQueue?: boolean;
 			children?: "refuse" | "detach";
 			force?: boolean;
+			/**
+			 * Answer what this unload would do now and do nothing (senpi#6443): every standing blocker, and what it
+			 * would interrupt. Nothing is interrupted, unloaded or recorded. Advertised as `unload_session_dry_run`.
+			 */
+			dryRun?: boolean;
 	  }
 	| {
 			id?: string;
@@ -184,6 +197,16 @@ type RpcCommandBody =
 			type: "get_subscription_limits";
 			/** An observing read, as on `get_protocol_info`. */
 			observe?: boolean;
+	  }
+	| {
+			id?: string;
+			/**
+			 * Which session FILE of this host carries `durableSessionId`, for a client whose session is closed and
+			 * unlisted so its routing key names nothing (senpi#6429). A read: it opens, claims and changes nothing.
+			 * Capability `find_session`.
+			 */
+			type: "find_session";
+			durableSessionId: string;
 	  }
 	| {
 			id?: string;

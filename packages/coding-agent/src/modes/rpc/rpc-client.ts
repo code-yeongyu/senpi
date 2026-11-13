@@ -415,8 +415,12 @@ export class RpcClient {
 	// Command Methods
 	// =========================================================================
 
-	async setClientInfo(width: number, capabilities?: string[]): Promise<void> {
-		await this.send({ type: "set_client_info", width, capabilities }, this.sessionId !== undefined);
+	/** `clientId` names this client on every connection it opens (capability `client_identity`); send it each time. */
+	async setClientInfo(width: number, capabilities?: string[], clientId?: string): Promise<void> {
+		await this.send(
+			{ type: "set_client_info", width, capabilities, ...(clientId !== undefined && { client_id: clientId }) },
+			this.sessionId !== undefined,
+		);
 	}
 
 	async openSession(options: RpcOpenOptions & { admissionId: string }): Promise<CompactOpenResult>;

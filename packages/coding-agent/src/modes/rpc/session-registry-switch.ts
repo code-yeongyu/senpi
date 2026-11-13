@@ -13,6 +13,7 @@ export function createEntrySwitchSession(
 	entry: RpcSessionEntry,
 	createRuntime: PreparableRuntimeFactory,
 	syncRuntimeMetadata: () => void,
+	followRunningSession: () => void,
 ): SessionRuntime["switchSession"] {
 	return (sessionPath, options) => {
 		const operation = entry.lifecycleMutex.then(async () => {
@@ -38,6 +39,7 @@ export function createEntrySwitchSession(
 				runtime.launchProfile,
 			);
 			replacement.setRebindSession(entry.rebindSession);
+			replacement.setAfterSessionSwap(followRunningSession);
 			ClientAdmissions.sealQueuedOnReplace(replacement);
 			EffectLedger.sealOnReplace(replacement);
 			runtime.releaseSessionHold();
