@@ -7,6 +7,7 @@
 import { access, copyFile, mkdir, mkdtemp, readdir, rm, rmdir, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { SessionManager } from "../session-manager.ts";
+import { encodedSessionId } from "../session-sidecar-store.ts";
 import { EXTENSION_STATE_PREFIX, MoveBundleInvalidError, type MoveManifest, sha256File } from "./bundle.ts";
 import { EXTENSION_STATE_PAYLOAD } from "./extension-state.ts";
 import { type MoveId, SESSION_MOVED_IN } from "./ownership.ts";
@@ -105,15 +106,27 @@ class MovedSidecarMissingError extends Error {
 }
 
 /**
- * Before the rename that lands the session: every sidecar the manifest lists is in the session folder. The commit moves
- * them out of staging and skips one that is not there, so a sweep that took this attempt's folder inside its commit
- * (senpi#6445's custody review) would land the session without them, accepted. Failing here lands nothing instead.
+ * Whether the commit lands a listed sidecar with the session: its extension state files and its resident blobs, the
+ * two kinds `moveSessionSidecars` moves (session-rebind.ts). A manifest may list a sidecar at any other path; that one
+ * is staged and never landed, and the bundle still imports.
+ */
+function landsWithTheSession(name: string, sessionId: string): boolean {
+	const [kind, owner, ...rest] = name.split("/");
+	if (kind === "resident-blobs") return owner === sessionId && rest.length > 0;
+	return kind === "extensions" && rest.length === 1 && rest[0] === `${encodedSessionId(sessionId)}.json`;
+}
+
+/**
+ * Before the rename that lands the session: every sidecar the commit lands with it is in the session folder. The
+ * commit moves them out of staging and skips one that is not there, so a sweep that took this attempt's folder inside
+ * its commit (senpi#6445's custody review) would land the session without them, accepted. Failing here lands nothing.
  */
 export async function assertSidecarsLanded(manifest: MoveManifest, sessionDir: string): Promise<void> {
 	for (const sidecar of manifest.sidecars) {
-		const landed = join(sessionDir, sidecar.path.replace(/^files\//, ""));
-		await access(landed).catch(() => {
-			throw new MovedSidecarMissingError(sidecar.path.replace(/^files\//, ""));
+		const name = sidecar.path.replace(/^files\//, "");
+		if (!landsWithTheSession(name, manifest.sessionId)) continue;
+		await access(join(sessionDir, name)).catch(() => {
+			throw new MovedSidecarMissingError(name);
 		});
 	}
 }
