@@ -27,6 +27,8 @@ session-release-interrupt.ts  An `interrupt` release: take queued input (`droppe
 session-release-busy.ts   What makes a session too busy to release: the signals, their refusal code and data
 session-release-export.ts The export a `release_session` reason `move` carries: its request, read before anything is
                           sealed, and the export run after the release answered, which never changes that answer
+session-move-held-here.ts The lines a move step answers when the session's only holder is this host's own process: the
+                          runtime of a session it released that has not stopped yet (still `session_held`)
 session-attribution.ts    AsyncLocalStorage {sessionId, tool} the stall watchdog blames by
 loop-lag-watchdog.ts      200 ms drift probe -> stderr line + `host_stalled` record
 host-memory-sampler.ts    30 s footprint sampler (core/process-footprint.ts) -> `host_memory_pressure`; halves the idle window

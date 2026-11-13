@@ -9,6 +9,7 @@
  */
 import { parseMoveId } from "../../core/session-move/bundle.ts";
 import { exportMoveBundle, type MoveExportPort, moveRefusalOf } from "./session-move-commands.ts";
+import { heldByThisProcessOnly, RELEASED_BEFORE_STOPPED_DETAIL } from "./session-move-held-here.ts";
 import { isRecord, parseInlineRequest } from "./session-move-request.ts";
 import type { RpcMoveSessionData } from "./session-move-wire.ts";
 
@@ -76,6 +77,6 @@ export async function exportForRelease(
 	} catch (cause) {
 		// Never rethrown: a cause with no code of its own is reported as move_failed with its message.
 		const { code, detail } = moveRefusalOf(cause instanceof Error ? cause : new Error(String(cause)));
-		return { ok: false, error: code, detail };
+		return { ok: false, error: code, detail: heldByThisProcessOnly(cause) ? RELEASED_BEFORE_STOPPED_DETAIL : detail };
 	}
 }

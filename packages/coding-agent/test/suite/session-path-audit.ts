@@ -49,6 +49,7 @@ export const SESSION_PATH_ROOT_DIRECTORY = "src/core/tools";
 export const MOVE_PATH_DIRECTORY = "src/core/session-move";
 export const MOVE_PATH_EXTRA_FILES = [
 	"src/modes/rpc/session-move-commands.ts",
+	"src/modes/rpc/session-move-held-here.ts",
 	"src/modes/rpc/session-move-import.ts",
 	"src/modes/rpc/session-release-export.ts",
 	"src/core/session-rebind.ts",
