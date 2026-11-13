@@ -1094,8 +1094,6 @@
       "packages/coding-agent/src/modes/interactive/theme/system-theme.ts": ["relativeLuminance"],
       // pre-existing at origin main aceb1cc1d9: unused exports validateThemeJson
       "packages/coding-agent/src/modes/interactive/theme/theme.ts": ["validateThemeJson"],
-      // pre-existing at origin main aceb1cc1d9: unused exports formatWorkingStatusTextFrame
-      "packages/coding-agent/src/modes/interactive/working-status.ts": ["formatWorkingStatusTextFrame"],
       // pre-existing at origin main aceb1cc1d9: unused exports stringifyProviderNative
       "packages/coding-agent/src/modes/provider-native-rendering.ts": ["stringifyProviderNative"],
       // pre-existing at origin main aceb1cc1d9: unused exports isHostMintedId
