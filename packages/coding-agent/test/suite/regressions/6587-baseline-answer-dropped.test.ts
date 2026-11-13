@@ -7,6 +7,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { admissionBaseline } from "../../../src/modes/rpc/compact-admission-baseline.ts";
+import { CompactAdmissions } from "../../../src/modes/rpc/compact-admissions.ts";
 import { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.ts";
 import { EVENT_RESYNC_CAPABILITY } from "../../../src/modes/rpc/socket-peer-recovery.ts";
 import { statusHost } from "../rpc-session-status-support.ts";
@@ -153,33 +154,33 @@ describe("an answer handed to an admission baseline that does not write it, on t
 	});
 });
 
+type Host = Awaited<ReturnType<typeof statusHost>>;
+const PAIR = ["compact_message_updates_v1", "event_resync"];
+
+/** A compact client of the host, and a way to send it a request under a fixed id and read what came back under it. */
+async function compactPeer(host: Host) {
+	const peer = host.client("peer");
+	expect(await peer.request({ type: "get_protocol_info" })).toMatchObject({
+		data: { capabilities: expect.arrayContaining(PAIR) },
+	});
+	expect(await peer.request({ type: "set_client_info", capabilities: PAIR })).toMatchObject({ success: true });
+	return {
+		peer,
+		/** Sends `command` while the queue refuses every admission baseline, as it does while it drops records. */
+		answersWhenRefused: async (command: Record<string, unknown> & { id: string }) => {
+			vi.spyOn(host.writer, "installAdmissionBaseline").mockImplementation((_peer, cursor) => {
+				cursor.release();
+				return false;
+			});
+			await host.writer.withConnection("peer", () => host.core.handle(JSON.stringify(command)));
+			// This answer is queued behind everything the line above queued for the connection.
+			await peer.request({ type: "get_protocol_info" });
+			return peer.inbox.filter((record) => record.type === "response" && record.id === command.id);
+		},
+	};
+}
+
 describe("through the real handlers, when the queue does not take their baseline (senpi#6587)", () => {
-	type Host = Awaited<ReturnType<typeof statusHost>>;
-	const PAIR = ["compact_message_updates_v1", "event_resync"];
-
-	/** A compact client of the host, and a way to send it a request under a fixed id and read what came back under it. */
-	async function compactPeer(host: Host) {
-		const peer = host.client("peer");
-		expect(await peer.request({ type: "get_protocol_info" })).toMatchObject({
-			data: { capabilities: expect.arrayContaining(PAIR) },
-		});
-		expect(await peer.request({ type: "set_client_info", capabilities: PAIR })).toMatchObject({ success: true });
-		return {
-			peer,
-			/** Sends `command` while the queue refuses every admission baseline, as it does while it drops records. */
-			answersWhenRefused: async (command: Record<string, unknown> & { id: string }) => {
-				vi.spyOn(host.writer, "installAdmissionBaseline").mockImplementation((_peer, cursor) => {
-					cursor.release();
-					return false;
-				});
-				await host.writer.withConnection("peer", () => host.core.handle(JSON.stringify(command)));
-				// This answer is queued behind everything the line above queued for the connection.
-				await peer.request({ type: "get_protocol_info" });
-				return peer.inbox.filter((record) => record.type === "response" && record.id === command.id);
-			},
-		};
-	}
-
 	it("#given a compact open_session #then the connection receives its answer, once", async () => {
 		await using host = await statusHost();
 		const { answersWhenRefused } = await compactPeer(host);
@@ -214,5 +215,42 @@ describe("through the real handlers, when the queue does not take their baseline
 		const answers = await answersWhenRefused({ id: "reset-1", type: "reset_stream", sessionId, admissionId: "a0" });
 
 		expect(answers).toEqual([expect.objectContaining({ command: "reset_stream", success: true, admissionId: "a0" })]);
+	}, 120_000);
+});
+
+describe("a baseline the queue took and that is handed no answer (senpi#6573 review)", () => {
+	it("#given a compact subscribe_sessions whose baseline the queue took #when the handler fails before it hands its answer over #then the baseline is ended: the request gets the host's one answer, #and the connection goes on receiving", async () => {
+		// A queue held behind that baseline delivers nothing: the bound makes that fail by name, well inside the row's own.
+		await using host = await statusHost({ deadlineMs: 30_000 });
+		const { peer } = await compactPeer(host);
+		vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+		const installed = vi.spyOn(host.writer, "installAdmissionBaseline");
+		const made = vi.spyOn(host.writer, "baselineAnswer");
+		// The handler reads the attempt's stored result between the activation, which installs the baseline, and the
+		// hand-over.
+		const failed = Promise.withResolvers<void>();
+		vi.spyOn(CompactAdmissions.prototype, "result").mockImplementationOnce(async () => {
+			failed.resolve();
+			throw new Error("reading the attempt's result failed");
+		});
+
+		const handled = host.writer.withConnection("peer", () =>
+			host.core.handle(JSON.stringify({ id: "sub-1", type: "subscribe_sessions", admissionId: "s1" })),
+		);
+		void handled.catch(() => {});
+		try {
+			await failed.promise;
+			// The state this row is about was reached: the queue took the baseline before the handler failed.
+			expect(installed.mock.results.map((result) => result.value)).toEqual([true]);
+			// The host answers a handler that failed, and that answer is queued behind the baseline.
+			const answer = await peer.waitFor((record) => record.type === "response" && record.id === "sub-1");
+			expect(answer).toMatchObject({ command: "subscribe_sessions", success: false });
+			await handled;
+			await peer.request({ type: "get_protocol_info" });
+			expect(peer.inbox.filter((record) => record.type === "response" && record.id === "sub-1")).toHaveLength(1);
+		} finally {
+			// A host whose queue is held behind a baseline cannot be disposed: end it whatever this row found.
+			for (const reply of made.mock.results) if (reply.type === "return") reply.value.hand(undefined);
+		}
 	}, 120_000);
 });
