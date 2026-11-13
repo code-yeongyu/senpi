@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, posix } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { PLATFORM_JOBS } from "./ci-platform-scope.mjs";
@@ -56,14 +56,47 @@ function stepsOf(block) {
 					body.push(line);
 				}
 			} else body.push(value);
-			run = body.join(" ").replace(/\\\s/g, " ").replace(/\s+/g, " ").trim();
+			const literal = /^\|/.test(value);
+			run = body.join(literal ? "\n" : " ").replace(/\\\n\s*/g, " ").replace(/[ \t]+/g, " ").trim();
 		}
 		return { run, cwd: step.match(/^ {8}working-directory: (\S+)/m)?.[1] };
 	});
 }
 
 const byName = new Map(workspaces.flatMap((workspace) => [[workspace.name, workspace.relativePath], [workspace.relativePath, workspace.relativePath]]));
-const SCRIPT = /(?<![\w:-])test(?![\w:-])/;
+const MANAGERS = new Set(["npm", "pnpm", "bun", "yarn"]);
+// Package-manager options that take a value, and what the value selects.
+const DIR_FLAGS = new Set(["--cwd", "--prefix", "--dir", "-C"]);
+const WORKSPACE_FLAGS = new Set(["--workspace", "-w", "--filter", "-F"]);
+
+/** A workspace path from a name, a path, or a path with "./" or a trailing "/". */
+const workspaceOf = (value, from = ".") => {
+	const path = posix.normalize(posix.join(from, value)).replace(/\/$/, "");
+	return byName.get(value) ?? (path === "." ? "root" : path);
+};
+
+/**
+ * The script one package-manager call runs and the workspace it runs in, or undefined when it runs no script:
+ * `<pm> [options] run <script>` or `<pm> [options] test` (npm, pnpm, yarn), with the workspace from
+ * --workspace/-w/--filter/-F, else from --cwd/--prefix/--dir/-C, else the shell's directory. `bun test` is Bun's own
+ * test runner on the files it is given, not the package's `test` script, so it is not counted.
+ */
+function scriptCall(tokens, dir) {
+	const manager = tokens[0];
+	let workspace;
+	let at = dir;
+	const positional = [];
+	for (let index = 1; index < tokens.length && tokens[index] !== "--"; index += 1) {
+		const [flag, inline] = tokens[index].split(/=(.*)/s);
+		if (DIR_FLAGS.has(flag) || WORKSPACE_FLAGS.has(flag)) {
+			const value = inline ?? tokens[(index += 1)];
+			if (WORKSPACE_FLAGS.has(flag)) workspace = workspaceOf(value);
+			else at = workspaceOf(value, dir === "root" ? "." : dir);
+		} else if (!flag.startsWith("-")) positional.push(flag);
+	}
+	const script = positional[0] === "run" || positional[0] === "run-script" ? positional[1] : positional[0] === "test" && manager !== "bun" ? "test" : undefined;
+	return script && { script, workspace: workspace ?? at };
+}
 
 /** The suites one step runs in full: workspace paths, "scripts", or "matrix" for the run-workspaces matrix command. */
 function suitesRunBy({ run, cwd }) {
@@ -74,14 +107,18 @@ function suitesRunBy({ run, cwd }) {
 		const listed = [...runner[1].matchAll(/--workspace[= ](\S+)/g)].map((match) => byName.get(match[1]) ?? match[1]);
 		suites.push(...(listed.length > 0 || runner[1].includes("matrix") ? listed : tested.map((workspace) => workspace.relativePath)));
 	}
-	for (const match of run.matchAll(/\b(?:npm|pnpm|bun) run --cwd (\S+) test(?![\w:-])/g)) suites.push(match[1]);
-	for (const match of run.matchAll(/\b(?:npm|pnpm) (?:run )?test(?![\w:-])((?: --?[\w-]+(?:[= ](?!-)\S+)?)*)/g)) {
-		const named = match[1].match(/--workspace[= ](\S+)/)?.[1];
-		suites.push(named ? (byName.get(named) ?? named) : (cwd ?? "root"));
+	let dir = cwd ?? "root";
+	for (const command of run.split(/\n|&&|\|\||;|\|/)) {
+		const tokens = command.trim().split(/\s+/).filter(Boolean);
+		if (tokens[0] === "cd" && tokens[1]) dir = workspaceOf(tokens[1], dir === "root" ? "." : dir);
+		const from = tokens.findIndex((token) => MANAGERS.has(token));
+		const call = from === -1 ? undefined : scriptCall(tokens.slice(from), dir);
+		if (call?.script === "test") suites.push(...(call.workspace === "root" ? tested.map((workspace) => workspace.relativePath) : [call.workspace]));
+		// `bun run test:scripts` is the deliberate Bun-launched twin of the npm run, so only npm counts as the scripts suite.
+		if (call?.script === "test:scripts" && tokens[from] === "npm" && call.workspace === "root") suites.push("scripts");
 	}
 	if (cwd === "packages/coding-agent" && /\bvitest run --shard=/.test(run)) suites.push("packages/coding-agent");
-	if (/\bnpm run test:scripts(?![\w:-])/.test(run)) suites.push("scripts");
-	return suites.filter((suite) => suite !== "root" || SCRIPT.test(run));
+	return suites;
 }
 
 function matrixGroups(block) {
@@ -156,23 +193,33 @@ test("the fan-in check follows the workflow's own suite jobs, whatever they are 
 	assert.deepEqual(missingFromFanIn(renamed), ["codemode-suite"]);
 });
 
-test("a suite run a second time is caught in another job, the same job, a block scalar, or another command shape", () => {
+test("a second run is caught in another job, the same job, a block scalar, and each package-manager shape listed", () => {
+	const ai = "packages/ai: test-workspaces (ai), test-scripts";
 	const cases = [
 		// The codemode package suite added back to codemode-gate would run it twice per CI run again.
-		[withStep(workflow, "codemode-gate", "      - run: bun run --cwd packages/senpi-codemode test\n"), "packages/senpi-codemode: codemode-gate, codemode-tests"],
+		["codemode-gate", "      - run: bun run --cwd packages/senpi-codemode test\n", "packages/senpi-codemode: codemode-gate, codemode-tests"],
 		// A second step of the job that already owns the suite.
-		[withStep(workflow, "codemode-tests", "      - run: bun run --cwd packages/senpi-codemode test\n"), "packages/senpi-codemode: codemode-tests, codemode-tests"],
+		["codemode-tests", "      - run: bun run --cwd packages/senpi-codemode test\n", "packages/senpi-codemode: codemode-tests, codemode-tests"],
 		// The same command in a block scalar, on the line after `run: |`.
-		[withStep(workflow, "codemode-gate", "      - name: Again\n        run: |\n          echo start\n          bun run --cwd packages/senpi-codemode test\n"), "packages/senpi-codemode: codemode-gate, codemode-tests"],
-		// A matrix-owned workspace run again through another command shape.
-		[withStep(workflow, "test-scripts", "      - run: bun run --cwd packages/ai test\n"), "packages/ai: test-workspaces (ai), test-scripts"],
-		[withStep(workflow, "test-scripts", "      - run: npm run test --workspace @earendil-works/pi-ai\n"), "packages/ai: test-workspaces (ai), test-scripts"],
-		[withStep(workflow, "test-scripts", "      - working-directory: packages/ai\n        run: npm test\n"), "packages/ai: test-workspaces (ai), test-scripts"],
+		["codemode-gate", "      - name: Again\n        run: |\n          echo start\n          bun run --cwd packages/senpi-codemode test\n", "packages/senpi-codemode: codemode-gate, codemode-tests"],
+		// A matrix-owned workspace run again through each package-manager shape.
+		["test-scripts", "      - run: bun run --cwd packages/ai test\n", ai],
+		["test-scripts", "      - run: npm run test --workspace @earendil-works/pi-ai\n", ai],
+		["test-scripts", "      - working-directory: packages/ai\n        run: npm test\n", ai],
+		["test-scripts", "      - working-directory: packages/ai\n        run: bun run test\n", ai],
+		["test-scripts", "      - run: npm test -w packages/ai\n", ai],
+		["test-scripts", "      - run: npm run test -w @earendil-works/pi-ai\n", ai],
+		["test-scripts", "      - run: pnpm --filter @earendil-works/pi-ai test\n", ai],
+		["test-scripts", "      - run: bun --cwd packages/ai run test\n", ai],
+		["test-scripts", "      - run: cd packages/ai && npm test\n", ai],
+		["test-scripts", "      - run: npm run --cwd ./packages/ai test\n", ai],
 	];
-	for (const [text, expected] of cases) {
-		assert.notEqual(text, workflow);
-		assert.ok(runTwice(suiteOwnership(text).owners).includes(expected), `${expected} not reported: ${runTwice(suiteOwnership(text).owners)}`);
-	}
+	const missed = cases.filter(([job, step, expected]) => !runTwice(suiteOwnership(withStep(workflow, job, step)).owners).includes(expected))
+		.map(([job, step]) => `${job}: ${step.trim()}`);
+	assert.deepEqual(missed, [], "these second runs were not reported");
+	// `bun test <files>` is Bun's own runner on the files it names, not the package's `test` script.
+	const bunRunner = withStep(workflow, "test-scripts", "      - working-directory: packages/ai\n        run: bun test test/stream.test.ts\n");
+	assert.deepEqual(runTwice(suiteOwnership(bunRunner).owners), []);
 });
 
 test("no suite job is a platform job the fan-in lets a non-full run skip", () => {
