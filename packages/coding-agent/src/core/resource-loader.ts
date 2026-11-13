@@ -205,7 +205,11 @@ export interface ResourceLoader {
 	getUserSkillRoots?(): readonly string[];
 	/**
 	 * The folders this loader walks for user-provenance skills, where a new top-level `*.md` file would load as a skill:
-	 * the RPC project verbs refuse creating or editing one there (senpi#6558). Optional, like `getUserSkillRoots`.
+	 * the RPC project verbs refuse creating or editing one there (senpi#6558). Optional, like `getUserSkillRoots`: a
+	 * custom loader without it keeps the refusal of the agent dir, `~/.agents/skills`, its `getUserSkillRoots` and every
+	 * user-provenance skill from `getSkills()`, but loses this refusal, so the verbs may create a top-level `*.md` file
+	 * in a folder it walks, which its next load takes as a skill. `getSkills()` cannot stand in: a walked folder with no
+	 * skill yet (the one such a file would plant a skill in) lists nothing. Implement it when the loader walks folders.
 	 */
 	getUserSkillScanDirs?(): readonly string[];
 	getPrompts(): { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] };

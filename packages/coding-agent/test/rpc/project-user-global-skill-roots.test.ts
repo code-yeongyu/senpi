@@ -157,6 +157,27 @@ describe("project verbs: a folder the loader scans for root-level skill files (s
 			expect(existsSync(join(host.cwd, path))).toBe(false);
 		}
 	});
+
+	// senpi#6558 delta-2 review LOW: both walkers walk past a SKILL.md their ignore files hide, so it exempts nothing.
+	it.each([".gitignore", ".ignore", ".fdignore"])(
+		"a SKILL.md there that %s hides: still refuses a top-level instruction file",
+		async (ignoreFile) => {
+			const host = await startHomeHost({
+				args: ["--skill", "dev-skills"],
+				prepare: (home) => {
+					writeSkill(join(home, "dev-skills"), DEV_SKILL);
+					writeFileSync(join(home, "dev-skills", "SKILL.md"), skillSource("hidden"));
+					writeFileSync(join(home, "dev-skills", ignoreFile), "SKILL.md\n");
+				},
+			});
+			await host.trust();
+			const path = "dev-skills/AGENTS.md";
+			expect(
+				await host.call("write_project_file", { path, content: skillSource("injected"), ifEtag: null }),
+			).toMatchObject(NOT_ALLOWED);
+			expect(existsSync(join(host.cwd, path))).toBe(false);
+		},
+	);
 });
 
 describe("project verbs: a project that is itself a package with a root-level SKILL.md (senpi#6558 round 2)", () => {
@@ -188,27 +209,30 @@ describe("project verbs: a project that is itself a package with a root-level SK
 	});
 });
 
-describe("project verbs: a loader without getUserSkillRoots (senpi#6558)", () => {
-	it("still refuses the agent dir, ~/.agents/skills and every loaded user skill, without throwing", async () => {
-		const host = await startHomeHost({
-			args: ["--skill", "dev-skills"],
-			prepare: (home) => {
-				writeFileSync(join(home, AGENT_CONTEXT), "# Global rules\n");
-				writeSkill(join(home, ".agents", "skills"), HOME_SKILL);
-				writeSkill(join(home, "dev-skills"), DEV_SKILL);
-			},
-		});
-		await host.trust();
-		const method = Object.getOwnPropertyDescriptor(DefaultResourceLoader.prototype, "getUserSkillRoots");
-		Reflect.deleteProperty(DefaultResourceLoader.prototype, "getUserSkillRoots");
-		try {
-			expect(await host.call("read_project_file", { path: AGENT_CONTEXT })).toMatchObject(NOT_ALLOWED);
-			expect(await host.call("read_project_skill_file", { skill: HOME_SKILL })).toMatchObject(NOT_ALLOWED);
-			expect(await host.call("read_project_skill_file", { skill: DEV_SKILL })).toMatchObject(NOT_ALLOWED);
-		} finally {
-			if (method !== undefined) Object.defineProperty(DefaultResourceLoader.prototype, "getUserSkillRoots", method);
-		}
-	});
+describe("project verbs: a loader without the optional getUserSkillRoots / getUserSkillScanDirs (senpi#6558)", () => {
+	it.each(["getUserSkillRoots", "getUserSkillScanDirs"])(
+		"without %s: still refuses the agent dir, ~/.agents/skills and every loaded user skill, without throwing",
+		async (member) => {
+			const host = await startHomeHost({
+				args: ["--skill", "dev-skills"],
+				prepare: (home) => {
+					writeFileSync(join(home, AGENT_CONTEXT), "# Global rules\n");
+					writeSkill(join(home, ".agents", "skills"), HOME_SKILL);
+					writeSkill(join(home, "dev-skills"), DEV_SKILL);
+				},
+			});
+			await host.trust();
+			const method = Object.getOwnPropertyDescriptor(DefaultResourceLoader.prototype, member);
+			Reflect.deleteProperty(DefaultResourceLoader.prototype, member);
+			try {
+				expect(await host.call("read_project_file", { path: AGENT_CONTEXT })).toMatchObject(NOT_ALLOWED);
+				expect(await host.call("read_project_skill_file", { skill: HOME_SKILL })).toMatchObject(NOT_ALLOWED);
+				expect(await host.call("read_project_skill_file", { skill: DEV_SKILL })).toMatchObject(NOT_ALLOWED);
+			} finally {
+				if (method !== undefined) Object.defineProperty(DefaultResourceLoader.prototype, member, method);
+			}
+		},
+	);
 });
 
 describe("project verbs: a user-global root that does not exist yet (senpi#6558)", () => {

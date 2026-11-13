@@ -11,9 +11,11 @@
  */
 
 import { constants } from "node:fs";
-import { lstat, mkdir, realpath, stat } from "node:fs/promises";
+import { lstat, mkdir, readdir, realpath, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import ignore from "ignore";
 import type { AgentSession } from "../../core/agent-session.ts";
+import { addIgnoreRules } from "../../core/skill-discovery.ts";
 import { type Skill, userGlobalSkillRoots } from "../../core/skills.ts";
 
 /** Under the host's 1,000,000-character message limit, so an oversized write reaches this typed refusal. */
@@ -127,14 +129,18 @@ async function insideUserSkill(skill: Skill, cwd: string, absolute: string): Pro
 
 /**
  * True when `absolute` is a top-level `*.md` file of a folder the loader walks for user skills, which the next load
- * would take as a skill. A walk stops at a `SKILL.md` file there, so a folder holding one loads no other top-level
- * file; that `SKILL.md` is a loaded skill `insideUserSkill` covers (senpi#6558).
+ * would take as a skill. A walk stops at a `SKILL.md` file there that the folder's ignore files do not hide (the
+ * walkers' own `addIgnoreRules`), so a folder holding one loads no other top-level file; that `SKILL.md` is a loaded
+ * skill `insideUserSkill` covers. A hidden `SKILL.md` stops nothing and exempts nothing (senpi#6558).
  */
 async function scannedSkillFile(dir: string, absolute: string): Promise<boolean> {
 	const folder = await realpathOfNearest(resolve(dir));
 	if (dirname(absolute) !== folder || !absolute.endsWith(".md")) return false;
 	try {
-		return !(await stat(join(folder, "SKILL.md"))).isFile();
+		if (!(await stat(join(folder, "SKILL.md"))).isFile()) return true;
+		const ig = ignore();
+		addIgnoreRules(ig, folder, folder, await readdir(folder, { withFileTypes: true }));
+		return ig.ignores("SKILL.md");
 	} catch (error) {
 		if (isMissing(error)) return true;
 		throw error;
@@ -154,7 +160,8 @@ async function insideAgentDir(agentDir: string, absolute: string): Promise<boole
  * context file, its skills, the global MCP file) or in a user-global skill root (`userGlobalSkillRoots` over the
  * loader's optional `getUserSkillRoots`); a loaded user skill's file or folder (`insideUserSkill`, from the required
  * `getSkills()`, so a loader without the optional methods still has every user skill refused); or a top-level `*.md`
- * file of a folder walked for user skills (`scannedSkillFile` over the optional `getUserSkillScanDirs`). Such a file
+ * file of a folder walked for user skills (`scannedSkillFile` over the optional `getUserSkillScanDirs`; a loader
+ * without it keeps every refusal above and loses only this one). Such a file
  * is never a project file, even when the session folder contains it (a session opened in `$HOME`) or reaches it
  * through a link; the comparison is by real path (senpi#6547 review LOWs, senpi#6558).
  */
