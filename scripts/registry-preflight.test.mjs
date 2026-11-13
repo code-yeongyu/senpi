@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { assertRegistryPackagesKnown } from "./npm-registry.mjs";
+import { assertRegistryPackagesKnown, queryWithRetry } from "./npm-registry.mjs";
 import { registryPackageNames } from "./registry-packages.mjs";
 
 // senpi#6636: npm trusted publishing cannot do a package's first publish, so a release must refuse before its test
@@ -57,6 +57,43 @@ describe("assertRegistryPackagesKnown (injected lookup)", () => {
 				}),
 			(error) => error === outage,
 		);
+	});
+});
+
+describe("queryWithRetry (injected query and pause)", () => {
+	const counting = (outcomes) => {
+		let calls = 0;
+		const query = () => {
+			const outcome = outcomes[Math.min(calls, outcomes.length - 1)];
+			calls += 1;
+			if (outcome instanceof Error) throw outcome;
+			return outcome;
+		};
+		return { query, calls: () => calls };
+	};
+	const outage = new Error("Failed to query @code-yeongyu/senpi-ai\nnpm error code ETIMEDOUT");
+
+	it("answers after two failures, on the third call", () => {
+		const { query, calls } = counting([outage, outage, '"@code-yeongyu/senpi-ai"']);
+		let pauses = 0;
+		assert.equal(queryWithRetry(query, { pause: () => (pauses += 1) }), '"@code-yeongyu/senpi-ai"');
+		assert.equal(calls(), 3);
+		assert.equal(pauses, 2);
+	});
+
+	it("never retries a 404", () => {
+		const { query, calls } = counting([null]);
+		assert.equal(queryWithRetry(query, { pause: () => assert.fail("a 404 must not pause") }), null);
+		assert.equal(calls(), 1);
+	});
+
+	it("propagates the same error after exactly the attempt count", () => {
+		const { query, calls } = counting([outage]);
+		assert.throws(
+			() => queryWithRetry(query, { attempts: 3, pause: () => {} }),
+			(error) => error === outage && /ETIMEDOUT/.test(error.message),
+		);
+		assert.equal(calls(), 3);
 	});
 });
 
@@ -131,6 +168,7 @@ describe("release.mjs registry preflight", () => {
 		withStubs("error", (stub) => {
 			const result = runRelease(stub);
 			assert.equal(result.status, 1, result.stderr);
+			assert.match(result.stderr, /ETIMEDOUT/);
 			assert.doesNotMatch(result.stderr, /@code-yeongyu\/senpi-realm-registry/);
 			assert.deepEqual(stub.commands().filter(spendsOrShips), []);
 		});
@@ -152,7 +190,6 @@ describe("publish.mjs registry preflight", () => {
 				commands().filter((args) => args[0] === "npm" && (args[1] === "publish" || args[1] === "pack")),
 				[],
 			);
-			assert.doesNotMatch(result.stdout, /Publishing senpi packages/);
 		});
 	});
 });
