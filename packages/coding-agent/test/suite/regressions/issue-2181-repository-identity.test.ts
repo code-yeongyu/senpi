@@ -67,6 +67,24 @@ describe("issue #2181 repository identity", () => {
 		expect(await readRepositoryIdentity(tempDir())).toBeUndefined();
 	});
 
+	// senpi#6435: a client takes the one-trip move only when two identities compare "same", so an identity that names
+	// at least one root commit must be the same repository as itself, whatever else it carries.
+	it.each([
+		["one root commit", { rootCommits: ["a".repeat(40)] }],
+		["a root commit and an origin", { rootCommits: ["b".repeat(40)], originUrl: "example.com/owner/repo" }],
+		["several root commits", { rootCommits: ["c".repeat(40), "d".repeat(64)] }],
+		["a checkout's own identity", undefined],
+	])(
+		"#given an identity naming at least one root commit (%s) #then it is the same repository as itself",
+		async (_case, given) => {
+			const identity = given ?? (await readRepositoryIdentity(repoWithCommit("self\n")));
+
+			expect(identity?.rootCommits.length ?? 0).toBeGreaterThan(0);
+			expect(compareRepositoryIdentities(identity, identity)).toBe("same");
+			expect(compareRepositoryIdentities(identity, structuredClone(identity))).toBe("same");
+		},
+	);
+
 	it("falls back to the origin remote when a side has no commits", () => {
 		const empty = { rootCommits: [], originUrl: "github.com/acme/app" };
 		expect(

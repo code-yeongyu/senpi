@@ -1,8 +1,10 @@
 // Regression for sisyphuslabs/omo-desktop-app#3137 (desktop#4008 handover): a re-run import after a lost `accepted` write.
 
+import { uptime } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { answerMoveStatus, importMovedSession } from "../../src/core/session-move/import.ts";
+import { COMMIT_SETTLE_AFTER_MS } from "../../src/core/session-move/move-landing.ts";
 import { MoveFencedError, MoveLedger } from "../../src/core/session-move/move-ledger.ts";
 import type { MoveId } from "../../src/core/session-move/ownership.ts";
 import { customTypes, MOVE, setup } from "./session-move-fixture.ts";
@@ -16,12 +18,17 @@ class LosesAcceptedWrite extends MoveLedger {
 		this.renames = renames;
 	}
 
-	override commit<T>(moveId: MoveId, target: string, rename: () => T | Promise<T>, prepare?: () => void): Promise<T> {
+	override commit<T>(
+		moveId: MoveId,
+		target: string,
+		rename: (stampStands: () => Promise<void>) => T | Promise<T>,
+		prepare?: () => void,
+	): Promise<T> {
 		return super.commit(
 			moveId,
 			target,
-			async () => {
-				if (this.renames) this.landed = String(await rename());
+			async (stampStands) => {
+				if (this.renames) this.landed = String(await rename(stampStands));
 				throw new Error("the accepted write failed");
 			},
 			prepare,
@@ -54,7 +61,13 @@ describe("a re-run move import with the session file as the authority", () => {
 
 		const again = importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity });
 		await expect(again).rejects.toBeInstanceOf(MoveFencedError);
-		expect(await answerMoveStatus(ledger, MOVE, undefined)).toEqual({
+		// A commit stamp with no file is settled once it is old enough that no stalled commit can still land (senpi#6417).
+		expect(await answerMoveStatus(ledger, MOVE, undefined)).toEqual({ state: "receiving" });
+		const afterTheBound = new MoveLedger(ledger.dir, {
+			now: () => Date.now() + COMMIT_SETTLE_AFTER_MS,
+			uptime: () => uptime() * 1000 + COMMIT_SETTLE_AFTER_MS,
+		});
+		expect(await answerMoveStatus(afterTheBound, MOVE, undefined)).toEqual({
 			state: "failed",
 			reason: "import_failed",
 		});

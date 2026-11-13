@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AssistantMessage, AssistantMessageEvent, ProviderDiagnostic } from "@earendil-works/pi-ai";
@@ -27,8 +28,8 @@ beforeEach(() => {
 	repository = new CredentialSlotRepository(join(dir, "credential-pool-state.json"));
 });
 
-afterEach(() => {
-	rmSync(dir, { recursive: true, force: true });
+afterEach(async () => {
+	await rm(dir, { recursive: true, force: true });
 });
 
 function twoAccounts(): PooledCredential {

@@ -8,6 +8,15 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getPackageDir } from "../../config.ts";
+import type { NativePublishResult } from "./socket-secret-publish.ts";
+
+export type {
+	LeftBehindStaging,
+	NativeLeftBehindStaging,
+	NativePublishResult,
+	SocketSecretPublication,
+} from "./socket-secret-publish.ts";
+export { publishSocketSecretNoReplace, SocketSecretPublishError } from "./socket-secret-publish.ts";
 
 /** ABI of the bridge's exports, not the package CalVer. Keep aligned with crates/senpi-socket-secret. */
 const NATIVE_SOCKET_SECRET_ABI_VERSION = "1";
@@ -24,35 +33,6 @@ export interface NativeVolumeLocality {
 	readonly locality: "local" | "not_local";
 	readonly reason: string | null;
 	readonly reportedFileSystem: string | null;
-}
-
-/** A staging file whose delete disposition failed; it is still at `path` and the caller removes it. */
-export interface NativeLeftBehindStaging {
-	readonly path: string;
-	readonly windowsError: number;
-}
-
-/** The bridge's `#[napi(string_enum = "lowercase")] PublishResultOutcome`: exactly these three strings. */
-type NativePublishOutcome = "published" | "collision" | "failed";
-
-/**
- * `publishNoReplace` result. napi-rs leaves an absent optional field `undefined`. `failure.code` is the failed call's
- * Windows error, absent only for `owner_sid_utf16`, where no Windows call failed.
- */
-export interface NativePublishResult {
-	readonly outcome: NativePublishOutcome;
-	readonly failure?: { readonly step: string; readonly code?: number | null } | null;
-	readonly stagingLeftBehind?: NativeLeftBehindStaging | null;
-}
-
-export interface LeftBehindStaging extends NativeLeftBehindStaging {
-	/** What the caller must do; names the path, never the secret. */
-	readonly action: string;
-}
-
-export interface SocketSecretPublication {
-	readonly outcome: "published" | "collision";
-	readonly stagingLeftBehind: LeftBehindStaging | null;
 }
 
 export interface NativeSocketSecretBinding {
@@ -200,52 +180,6 @@ export class SocketSecretNativeUnavailableError extends Error {
 		this.name = "SocketSecretNativeUnavailableError";
 		this.attemptedPaths = attemptedPaths;
 	}
-}
-
-/** The bridge could not publish; `stagingLeftBehind` is set when its staging file also survived. */
-export class SocketSecretPublishError extends Error {
-	readonly code = "socket-secret-publish-failed";
-	readonly step: string;
-	readonly windowsError: number | null;
-	readonly stagingLeftBehind: LeftBehindStaging | null;
-
-	constructor(step: string, windowsError: number | null, stagingLeftBehind: LeftBehindStaging | null) {
-		const cause = windowsError === null ? step : `${step} failed with Windows error ${windowsError}`;
-		const leftover = stagingLeftBehind ? `; ${stagingLeftBehind.action}` : "";
-		super(`Publishing the socket secret failed: ${cause}${leftover}`);
-		this.name = "SocketSecretPublishError";
-		this.step = step;
-		this.windowsError = windowsError;
-		this.stagingLeftBehind = stagingLeftBehind;
-	}
-}
-
-/**
- * First publication through the bridge (design 4.3): resolves `published` or `collision` (read the winner), throws
- * `SocketSecretPublishError` otherwise. Either way a staging file the bridge could not delete is returned typed.
- */
-export function publishSocketSecretNoReplace(
-	binding: Pick<NativeSocketSecretBinding, "publishNoReplace">,
-	stagingPath: string,
-	finalPath: string,
-	bytes: Buffer,
-): SocketSecretPublication {
-	const result = binding.publishNoReplace(stagingPath, finalPath, bytes);
-	const native = result.stagingLeftBehind;
-	const stagingLeftBehind = native
-		? {
-				path: native.path,
-				windowsError: native.windowsError,
-				action: `Delete the leftover socket-secret staging file ${native.path}`,
-			}
-		: null;
-	if (result.outcome === "published" || result.outcome === "collision") {
-		return { outcome: result.outcome, stagingLeftBehind };
-	}
-	if (result.outcome === "failed" && result.failure) {
-		throw new SocketSecretPublishError(result.failure.step, result.failure.code ?? null, stagingLeftBehind);
-	}
-	throw new SocketSecretPublishError(`unexpected bridge outcome ${String(result.outcome)}`, null, stagingLeftBehind);
 }
 
 export class SocketSecretNativeAbiMismatchError extends Error {

@@ -1,3 +1,49 @@
+## 2026-11-10 - The attachment gate admits the forwarder's peer lane; the roles refusal names peer_agent (senpi#6305)
+
+### What changed
+
+- `session-attachment-gate.ts`: `attachmentGate` lets an `admit_external_message` through when the connection's host-mode delegation was granted `peer_agent` by the forwarder (`ConnectionRoles.grantedByForwarder`). The relay daemon's peer lane delivers an agent's message without attaching to the session, and `SENPI_RPC_REQUIRE_ATTACH=1` would otherwise refuse it. Every other command on that connection still needs an attachment.
+- `delegation-declaration.ts`: the duplicate-role refusal lists `peer_agent` among the declarable roles.
+- `test/suite/regressions/6305-peer-agent-attachment-gate.test.ts`: under `SENPI_RPC_REQUIRE_ATTACH=1`, a `peer_agent` connection's admit passes, an admit from a delegated connection without the role is refused, and a `prompt` from the `peer_agent` connection is refused.
+- `peer_agent` is an admission fact only (senpi#6347): it decides whether the attachment gate admits the peer lane's `admit_external_message`, never which permission a turn runs under. A cross-account delivery on that lane still asks.
+
+## 2026-11-09 - The bun:sqlite declaration moves out of coding-agent (senpi#6255)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/bun-sqlite.d.ts` (kept as a reference to the single source): the `Database` class declaration moved to `packages/session-backends/sqlite-bun/src/bun-sqlite.d.ts`, the single source for the workspace's `bun:sqlite` declaration. `packages/coding-agent/src/modes/rpc/ownership-safe-lock.ts` resolves `bun:sqlite` through that shared declaration — via the reference in this file under the coding-agent build tsconfig, and via the session-backends include under the root tsconfig; no other file referenced the old declaration file.
+
+### Why
+
+- The class was declared in the wrong package: a standalone consumer of the sqlite-bun package never loaded this file, so the package did not type-check on its own (senpi#5996).
+
+### Why an extension could not handle it
+
+- The declaration is a compile-time property of the packages' own sources; no extension event sees it.
+
+### Expected merge conflict zones
+
+- LOW: `ownership-safe-lock.ts` (the only coding-agent value user of `bun:sqlite`).
+
+## 2026-10-26 - gc keeps a Windows endpoint whose socket secret cannot be read (senpi#4293)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-gc-evidence.ts`: on win32 `socketSilence` returns `credential_unavailable` instead of `socket_absent` when the socket secret is missing or has the wrong length; `endpointInUse` reports it as the new `EndpointInUse` value for the public socket and for every `.next-*` successor bind.
+- `packages/coding-agent/src/modes/rpc/host-gc.ts`: `gcEndpoint` keeps such an endpoint with reason `credential_unavailable`, without the stale-engine judgement; the header's reason table lists it.
+
+### Why
+
+- The win32 pipe name derives from the secret, so a failed credential read proves nothing about whether a host still serves the pipe. Reading it as `socket_absent` let gc delete a live endpoint's directory (sisyphuslabs/omo-desktop-app#4199, design test 7).
+
+### Why an extension could not handle it
+
+- gc evidence and endpoint removal run in the RPC host lifecycle, outside any extension.
+
+### Expected merge conflict zones
+
+- LOW: `socketSilence` and `endpointInUse` in `host-gc-evidence.ts`, and the keep condition in `gcEndpoint`.
+
 ## 2026-11-10 - Same-account devices follow the host's own setting (senpi#6342)
 
 ### What changed

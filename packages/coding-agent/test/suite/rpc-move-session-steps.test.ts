@@ -6,14 +6,14 @@
  * and after each the rules of the table must hold: at most one writable copy, the record agrees with the files, and a
  * revoke mark is never lost.
  */
-import { cpSync, existsSync, rmSync } from "node:fs";
+import { cpSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { getDefaultSessionDir, loadEntriesFromFile } from "../../src/core/session-manager.ts";
 import { MOVE_STEPS, type MoveStep, setMoveStepHook } from "../../src/core/session-move/move-steps.ts";
 import { sessionOwnership } from "../../src/core/session-move/ownership.ts";
 import { createInProcessRig } from "./rpc-inprocess-host-support.ts";
-import { devices, exportedForB, move, type Rig } from "./rpc-move-session-support.ts";
+import { devices, exportedForB, landedOnB, move, type Rig } from "./rpc-move-session-support.ts";
 import { admittedInputs } from "./session-move-fixture.ts";
 
 type Fixture = Awaited<ReturnType<typeof devices>>;
@@ -68,6 +68,20 @@ async function inject(fixture: Fixture, step: MoveStep, mode: "crash" | "throw",
 	setMoveStepHook(undefined);
 	restore?.();
 	expect(fired, `the flow never reached ${step}`).toBe(true);
+}
+
+/**
+ * A commit stamp with no landed file is settled failed only once it is older than the settle bound (senpi#6417). The
+ * follow-ups replayed here come after that, so a stamp the fault left behind is aged past it: on the wall clock and on
+ * the machine's uptime, since a reader on the stamp's machine counts it old only when both say so.
+ */
+function ageCommitStamp(fixture: Fixture, moveId: string): void {
+	const file = join(fixture.agentB, "session-moves", "ledger", `${moveId}.json`);
+	if (!existsSync(file)) return;
+	const record: unknown = JSON.parse(readFileSync(file, "utf8"));
+	if (typeof record !== "object" || record === null || !("committing" in record)) return;
+	const up = "up" in record && typeof record.up === "number" ? record.up : 0;
+	writeFileSync(file, `${JSON.stringify({ ...record, at: new Date(0).toISOString(), up: up - 60 * 60_000 })}\n`);
 }
 
 interface Copies {
@@ -154,6 +168,7 @@ describe("move_session survives a fault at every durable step (senpi#4004)", () 
 							await inject(run.fixture, row.step, mode, () =>
 								move(run.b, { op: "import", bundleDir, cwd: run.fixture.repoB, from: "device-a" }),
 							);
+							ageCommitStamp(run.fixture, run.moveId);
 						} else {
 							await imported(run);
 							await inject(run.fixture, row.step, mode, () =>
@@ -162,7 +177,7 @@ describe("move_session survives a fault at every durable step (senpi#4004)", () 
 							expect(
 								await status(run.b, run.moveId, run.copies, false, `${label}: before the repeated revoke`),
 								`${label}: the revoke mark was lost`,
-							).toEqual({ state: "accepted", revoked: true });
+							).toEqual({ state: "accepted", revoked: true, ...landedOnB(run.fixture, run.copies.here) });
 							expect(
 								await move(run.b, { op: "revoke", sessionPath: run.copies.here, moveId: run.moveId }),
 							).toMatchObject({ success: true });
@@ -174,7 +189,12 @@ describe("move_session survives a fault at every durable step (senpi#4004)", () 
 
 						const answer = await status(run.b, run.moveId, run.copies, deleted, label);
 						expect(answer.state, `${label}: still receiving after the retry`).not.toBe("receiving");
-						if (row.flow === "revoke") expect(answer).toEqual({ state: "accepted", revoked: true });
+						if (row.flow === "revoke")
+							expect(answer).toEqual({
+								state: "accepted",
+								revoked: true,
+								...(deleted ? { landed_file: "gone" } : landedOnB(run.fixture, run.copies.here)),
+							});
 						expect(
 							await move(run.a, { op: "finish", sessionPath: run.copies.sender, moveId: run.moveId, answer }),
 						).toMatchObject({ success: true });

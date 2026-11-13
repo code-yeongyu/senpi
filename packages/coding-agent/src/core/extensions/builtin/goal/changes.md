@@ -1,3 +1,47 @@
+## 2026-11-11 - A goal waiting out a limit resumes when its session reopens (senpi#4085)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/session-start-continuation.ts` (new): `readTrailingGoalContinuations()` replaces `countTrailingGoalContinuationEntries()` from `index.ts`. It does not count a continuation whose turn the provider refused for a usage or rate limit (every answer of the turn is an error and at least one passes `isLimitRefusal`), and it reports whether the newest continuation was such a refusal. `queueGoalContinuation()` and `SessionStartContinuationOptions` moved here from `lifecycle-helpers.ts`, unchanged apart from the new `limitWait` option.
+- `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`, `packages/coding-agent/src/core/extensions/builtin/goal/reload-reengagement.ts`: the load-time flood guard (startup, resume and reload) uses that count, and a session opened in the middle of a limit wait queues its first wake as a limit re-check.
+- `packages/coding-agent/src/core/extensions/builtin/goal/continuation.ts`: `limitWait` is honoured on the `sessionStart` path as well as `providerRecovery`, so that wake spends neither the continuation cap nor the no-progress budget.
+- `packages/coding-agent/src/core/extensions/builtin/goal/lifecycle-helpers.ts`: loses the two moved symbols and their private helpers.
+- `packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts`: comment only. The ladder park no longer stays parked until input (senpi#6388).
+- Correction to the senpi#6388 entry: `isLimitRefusal` also accepts a status-only 429 (`unknown` with HTTP 429).
+
+### Why
+
+- senpi#6388 lets a goal wait a limit out for any number of wakes, and each refused wake leaves a `goal-continuation` entry in the session. With eight or more of them since the last user message, a restart or a config reload hit the load-time flood guard, which exists for continuations that ran, so the goal stopped until a message arrived.
+
+### Why an extension could not handle it
+
+- The goal is a builtin extension; this is that extension's own load-time admission.
+
+### Expected merge conflict zones
+
+- LOW: the `session_start` handler in `index.ts`, the `reengageGoalAfterReload` options, the `limitWait` condition in `evaluateGoalContinuation`.
+
+## 2026-11-11 - A goal outlasts accounts that stay limited (senpi#4085)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/continuation.ts`: a `providerRecovery` wake marked `limitWait` skips the continuation cap and the no-progress budget.
+- `packages/coding-agent/src/core/extensions/builtin/goal/lifecycle-helpers.ts`, `store.ts`: such a delivery increments no continuation counter (`countStreak: false`).
+- `packages/coding-agent/src/core/extensions/builtin/goal/provider-retry.ts`: `isLimitRefusal` reads a `rate_limit` or `quota` diagnostic on the last failure.
+- `packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts`: tracks a limit wait; a limit-exhausted ladder with no reset re-checks on the provider backoff instead of waiting for input (changes the unknown-reset case of senpi#3709); `accounts_changed` with a `login` or `reset` remedy fires a parked limit wait at once. Every limit wait is re-checked no sooner than the provider backoff (15 s doubling to 30 min); after `GOAL_LIMIT_WAIT_WAKE_LIMIT` (48) re-checks the goal parks, still active, publishing `goal_limit_wait_parked`, until a sign-in, a block reset or input.
+
+### Why
+
+- Refused wakes while every account stayed limited used up the continuation cap, so the goal blocked and never continued after the reset; a no-reset ladder and a login or block reset left the goal waiting for input.
+
+### Why an extension could not handle it
+
+- The goal is a builtin extension; this is that extension's own continuation policy.
+
+### Expected merge conflict zones
+
+- LOW: `evaluateGoalContinuation` guards, `recordContinuationDelivered` options, `MonitorAwareGoalContinuation` provider-retry paths.
+
 ## 2026-11-09 - A crashed goal-continuation stop recovers its session entries on reopen (senpi#3015)
 
 ### What changed
