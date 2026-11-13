@@ -125,5 +125,10 @@ export async function compactSubscribe(
 			return undefined;
 		}
 		return refusal;
+	} finally {
+		// The activation above installs the baseline before this handler hands its answer over, and a baseline the queue
+		// took waits for that answer with the rest of the connection's queue behind it. So whatever ended the request,
+		// the baseline is ended here. Only the first hand-over counts: this changes nothing once an answer was handed.
+		delivery?.hand(undefined);
 	}
 }
