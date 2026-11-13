@@ -3,7 +3,7 @@
 // Inputs arrive through env, never through the step's shell text.
 //
 //   keys                       RUSTC_VV                   -> outputs keys, rustc
-//   select  --cache-root <d>   KEYS, RUSTC                -> outputs reused, matrix, missing, missing_count
+//   select  --cache-root <d>   KEYS, MATCHED_KEYS, RUSTC  -> outputs reused, matrix, missing, missing_count
 //   record  --artifact-dir <d> TARGET_ARTIFACT, KEY, RUSTC_VV
 //   collect --download-root <d> --cache-root <d>  KEYS, RUSTC, MISSING -> outputs save
 
@@ -43,6 +43,7 @@ function keys() {
 // A restored cache directory is reused only when its record verifies; anything else is built.
 function select(cacheRoot) {
 	const map = JSON.parse(requireEnv("KEYS"));
+	const matched = JSON.parse(requireEnv("MATCHED_KEYS"));
 	const rustc = requireEnv("RUSTC");
 	const reused = [];
 	const include = [];
@@ -50,7 +51,11 @@ function select(cacheRoot) {
 		const key = map[target.artifact];
 		if (!key) throw new Error(`KEYS has no key for ${target.artifact}`);
 		const dir = join(cacheRoot, target.artifact);
-		const verdict = existsSync(dir) ? verifyRecord({ artifactDir: dir, target, key, rustc }) : { ok: false, reason: "no cache entry" };
+		const verdict = !existsSync(dir)
+			? { ok: false, reason: "no cache entry" }
+			: matched[target.artifact] !== key
+				? { ok: false, reason: `restored entry ${matched[target.artifact] || "(none)"} is not the exact key` }
+				: verifyRecord({ artifactDir: dir, target, key, rustc });
 		console.error(`${target.artifact}: ${verdict.ok ? "REUSE" : `BUILD (${verdict.reason})`}`);
 		if (verdict.ok) reused.push(target.artifact);
 		else include.push({ ...target, key });

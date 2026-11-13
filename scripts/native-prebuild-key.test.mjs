@@ -72,6 +72,25 @@ describe("native prebuild reuse key", () => {
 		assert.notEqual(added, base, "a new file in a native crate is not covered");
 	});
 
+	it("never lets a prebuild built by an older build script, workflow or probe match the current key", () => {
+		const older = {
+			".github/workflows/native-prebuilds.yml": "name: Native Prebuilds\n# older build step\n",
+			"scripts/probe-native-pty-lifecycle.mjs": "// older probe\n",
+			"scripts/probe-native-grep.mjs": "// older probe\n",
+			"scripts/native-prebuild-record.mjs": "// older record format\n",
+		};
+		const current = fixtureRepo();
+		for (const target of [darwin, win]) {
+			const now = computeKey({ repoRoot: current, target, rustc: RUSTC });
+			for (const [path, content] of Object.entries(older)) {
+				assert.notEqual(computeKey({ repoRoot: fixtureRepo({ [path]: content }), target, rustc: RUSTC }), now, `${target.artifact}: an older ${path} produced the current key`);
+			}
+		}
+		for (const target of loadTargets(join(import.meta.dirname, ".."))) {
+			assert.ok(coveredInputs(target).includes(".github/workflows/native-prebuilds.yml"), `${target.artifact}: build workflow not covered`);
+		}
+	});
+
 	it("changes with the resolved rustc and with the target row", () => {
 		const root = fixtureRepo();
 		const base = computeKey({ repoRoot: root, target: darwin, rustc: RUSTC });

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
@@ -53,7 +53,7 @@ describe("native prebuild reuse steps", () => {
 		builtArtifact(join(cacheRoot, winX64.artifact), winX64);
 		writeFileSync(join(cacheRoot, winX64.artifact, "manifest.txt"), "tampered\n");
 
-		const { outputs, stderr } = run(["select", "--cache-root", cacheRoot], { KEYS: JSON.stringify(keys), RUSTC: rustc });
+		const { outputs, stderr } = run(["select", "--cache-root", cacheRoot], { KEYS: JSON.stringify(keys), MATCHED_KEYS: JSON.stringify(keys), RUSTC: rustc });
 
 		assert.deepEqual(JSON.parse(outputs.reused), [darwinArm64.artifact]);
 		const matrix = JSON.parse(outputs.matrix);
@@ -70,10 +70,21 @@ describe("native prebuild reuse steps", () => {
 	it("select builds nothing when every target verifies", () => {
 		const cacheRoot = scratch();
 		for (const target of targets) builtArtifact(join(cacheRoot, target.artifact), target);
-		const { outputs } = run(["select", "--cache-root", cacheRoot], { KEYS: JSON.stringify(keys), RUSTC: rustc });
+		const { outputs } = run(["select", "--cache-root", cacheRoot], { KEYS: JSON.stringify(keys), MATCHED_KEYS: JSON.stringify(keys), RUSTC: rustc });
 		assert.equal(outputs.missing_count, "0");
 		assert.deepEqual(JSON.parse(outputs.matrix), { include: [] });
 		assert.equal(JSON.parse(outputs.reused).length, 6);
+	});
+
+	it("select rebuilds a target whose restored entry was matched by prefix rather than by the exact key", () => {
+		const cacheRoot = scratch();
+		const target = targets[3];
+		builtArtifact(join(cacheRoot, target.artifact), target);
+		const matched = { ...keys, [target.artifact]: `${keys[target.artifact]}-longer` };
+		const { outputs, stderr } = run(["select", "--cache-root", cacheRoot], { KEYS: JSON.stringify(keys), MATCHED_KEYS: JSON.stringify(matched), RUSTC: rustc });
+		assert.deepEqual(JSON.parse(outputs.reused), []);
+		assert.equal(outputs.missing_count, "6");
+		assert.match(stderr, /native-prebuild-darwin-arm64: BUILD \(restored entry .*-longer is not the exact key\)/);
 	});
 
 	it("record writes the builder's rustc and the planned key into the artifact", () => {
@@ -121,6 +132,9 @@ describe("native-prebuilds.yml reuse wiring", () => {
 		for (const { artifact } of targets) {
 			const path = `path: .native-prebuild-cache/${artifact}\n`;
 			const restore = plan.match(new RegExp(`- name: Restore ${artifact}\\n[\\s\\S]*?(?=\\n\\n)`))?.[0];
+			const id = `restore_${artifact.replace("native-prebuild-", "").replace("-", "_")}`;
+			assert.ok(restore?.includes(`id: ${id}\n`), `${artifact}: restore step id`);
+			assert.ok(plan.includes(`"${artifact}": "\${{ steps.${id}.outputs.cache-matched-key }}"`), `${artifact}: matched key passed to select`);
 			assert.ok(restore?.includes(path) && restore.includes(`key: \${{ fromJSON(steps.keys.outputs.keys)['${artifact}'] }}`), `${artifact}: restore step`);
 			const upload = plan.match(new RegExp(`- name: Upload reused ${artifact}\\n[\\s\\S]*?(?=\\n\\n|$)`))?.[0];
 			assert.ok(upload?.includes(path) && upload.includes(`name: ${artifact}\n`), `${artifact}: reused upload step`);
@@ -162,5 +176,41 @@ describe("native-prebuilds.yml reuse wiring", () => {
 		assert.equal(readyFor("success", "skipped", "2"), false, "missing targets never built");
 		assert.equal(readyFor("success", "success", "0"), false, "build ran with nothing missing");
 		assert.equal(readyFor("failure", "skipped", ""), false, "plan failed");
+	});
+});
+
+// The Actions cache is scoped per ref, not per workflow: any job running with the default branch's ref can
+// write an entry a release on main restores. Workflows that react to outside input (issues, comments,
+// pull_request_target, workflow_run) run in that scope, so none of them may execute code from an
+// untrusted ref or give an agent a shell (senpi#6622 threat model, point 1).
+describe("default-branch cache scope writers", () => {
+	const workflowsDir = join(repoRoot, ".github/workflows");
+	const outsideTriggers = /^  (issues|issue_comment|pull_request_target|workflow_run|discussion|discussion_comment|pull_request_review|pull_request_review_comment):/m;
+	const files = readdirSync(workflowsDir).filter((file) => file.endsWith(".yml"));
+
+	it("finds the workflows that run in the default-branch scope on outside input", () => {
+		const outside = files.filter((file) => outsideTriggers.test(readFileSync(join(workflowsDir, file), "utf8"))).sort();
+		assert.deepEqual(outside, ["issue-analysis.yml", "issue-triage-labels.yml", "publish-model-catalog.yml", "remove-inprogress-on-close.yml", "review-claims.yml"], "a new outside-input workflow needs a review against the native prebuild cache before it joins this list");
+	});
+
+	it("never checks out a pull request head, and gates workflow_run to this repository's own pushes to main", () => {
+		for (const file of files) {
+			const text = readFileSync(join(workflowsDir, file), "utf8");
+			if (!outsideTriggers.test(text)) continue;
+			assert.doesNotMatch(text, /github\.event\.pull_request\.head\.(sha|ref)|refs\/pull\//, `${file} checks out a pull request ref in the default-branch scope`);
+			assert.doesNotMatch(text, /actions\/cache\/save|actions\/cache@|Swatinem\/rust-cache/, `${file} writes cache entries directly`);
+			if (/^  workflow_run:/m.test(text)) {
+				for (const [, condition] of text.matchAll(/^    if: \$\{\{ (github\.event_name != 'workflow_run' \|\|[^\n]*|[^\n]*workflow_run[^\n]*) \}\}$/gm)) {
+					assert.match(condition, /head_repository\.full_name == github\.repository/, `${file}: workflow_run job not limited to this repository`);
+					assert.match(condition, /workflow_run\.event == 'push'/, `${file}: workflow_run job not limited to pushes`);
+				}
+			}
+		}
+	});
+
+	it("runs the issue analysis agent without a shell", () => {
+		const text = readFileSync(join(workflowsDir, "issue-analysis.yml"), "utf8");
+		assert.match(text, /--tools read,grep,find,ls\b/);
+		assert.match(text, /--permission "bash=deny,edit=deny,external_directory=deny"/);
 	});
 });
