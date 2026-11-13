@@ -9,6 +9,8 @@ import { build } from "esbuild";
 import { bundleRequiredInputs, lazyEntryPoints } from "./bundle-entry-points.mjs";
 import { fileAttributePlugin } from "./bundle-file-attribute-plugin.mjs";
 import { assertRedactionRegistryCopies } from "./bundle-redaction-registry-guard.mjs";
+import { assertBundleZodCores } from "./bundle-zod-core-guard.mjs";
+import { zodSingleCopyPlugin } from "./bundle-zod-single-copy-plugin.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
@@ -117,7 +119,7 @@ export function commonBuildOptions() {
 		minifySyntax: true,
 		minifyWhitespace: true,
 		platform: "node",
-		plugins: [httpsProxyAgentNamedExportPlugin, bunRuntimeModulesPlugin, fileAttributePlugin],
+		plugins: [httpsProxyAgentNamedExportPlugin, bunRuntimeModulesPlugin, fileAttributePlugin, zodSingleCopyPlugin()],
 		sourcemap: false,
 		target: "node22.19",
 		// Do not apply the monorepo's source-oriented path aliases while bundling
@@ -272,6 +274,8 @@ async function buildBundle() {
 	const metafiles = [mainResult.metafile, lazyResult.metafile, supervisorResult.metafile];
 	validateExternalImports(metafiles);
 	assertRedactionRegistryCopies(bundleDir);
+	// senpi#6497: no emitted file may carry a zod core older than 4.6.6 beyond the pinned Claude agent SDK copies.
+	assertBundleZodCores(bundleDir);
 	chmodSync(join(bundleDir, "cli.js"), 0o755);
 	chmodSync(join(bundleDir, "rpc-entry.js"), 0o755);
 	writeRuntimeManifest(metafiles);
