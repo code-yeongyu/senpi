@@ -14,7 +14,8 @@ function stubUpdateSources(npmVersion: string, releaseTag: string): string[] {
 		const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
 		asked.push(url);
 		if (url === NPM_LATEST_URL) return Response.json({ version: npmVersion });
-		if (url === GITHUB_LATEST_RELEASE_URL) return Response.json({ tag_name: releaseTag, draft: false, prerelease: false });
+		if (url === GITHUB_LATEST_RELEASE_URL)
+			return Response.json({ tag_name: releaseTag, draft: false, prerelease: false });
 		return new Response("not found", { status: 404 });
 	});
 	return asked;
@@ -44,7 +45,9 @@ describe("binary install update channel (senpi#6633)", () => {
 	test("a binary install is notified once the GitHub Release is published", async () => {
 		stubUpdateSources("2026.11.14-1", "v2026.11.14-1");
 
-		expect((await checkForNewPiVersion("2026.11.13-1", { installMethod: "bun-binary" }))?.version).toBe("2026.11.14-1");
+		expect((await checkForNewPiVersion("2026.11.13-1", { installMethod: "bun-binary" }))?.version).toBe(
+			"2026.11.14-1",
+		);
 	});
 
 	test("reads the version from the release tag and refuses drafts, prereleases and malformed payloads", () => {
