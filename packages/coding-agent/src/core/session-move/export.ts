@@ -105,7 +105,9 @@ async function writeMoveBundle(options: ExportSessionForMoveOptions): Promise<Mo
 		throw new SessionMovedAwayError(sessionFile, ownership);
 	}
 	// Before the seal and before anything is staged: a kept bundle that cannot be read refuses the export unchanged.
-	const dropped = options.droppedUserMessages ?? (await keptQueuedInput(options.bundleDir, moveId)) ?? [];
+	const dropped = options.droppedUserMessages?.length
+		? options.droppedUserMessages
+		: ((await keptQueuedInput(options.bundleDir, moveId)) ?? []);
 	if (ownership.writable) {
 		(await SessionManager.openAsync(sessionFile)).appendCustomEntry(SESSION_RELEASED, {
 			reason: "move",
