@@ -3,11 +3,11 @@
  * next. A later export may be sent without the list (a caller that restarted no longer has it), and the bundle that
  * takes the kept file's place must never leave that place without a manifest.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, sep } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { SessionManager } from "../../src/core/session-manager.ts";
-import { MAX_BUNDLE_PATH_SEGMENTS } from "../../src/core/session-move/bundle.ts";
+import { MAX_BUNDLE_PATH_SEGMENTS, MOVE_BUNDLE_FORMAT } from "../../src/core/session-move/bundle.ts";
 import { exportSessionForMove } from "../../src/core/session-move/export.ts";
 import { SESSION_RELEASED } from "../../src/core/session-move/ownership.ts";
 import { MOVE, root, SESSION_ID, writeSession } from "./session-move-fixture.ts";
@@ -118,4 +118,40 @@ it("#given such kept input #when the bundle that takes its place is stopped afte
 	const manifest = JSON.parse(readFileSync(join(bundleDir, "manifest.json"), "utf8")) as Record<string, unknown>;
 	if (manifest.session !== undefined) expect(existsSync(join(bundleDir, "files", "session.jsonl"))).toBe(true);
 	expect(manifest.droppedUserMessages).toEqual(QUEUED);
+});
+
+it("#given such kept input whose manifest is there and cannot be read, a folder in its place #when the move is exported again without the list #then the export fails, #and the place is as it was: nothing is staged and nothing replaces what is there", async () => {
+	const { base, source, bundleDir, exportWith } = world();
+	sealed(source);
+	await expect(exportWith(tooDeep(base), QUEUED)).rejects.toThrow();
+	const manifest = join(bundleDir, "manifest.json");
+	rmSync(manifest);
+	mkdirSync(manifest);
+
+	await expect(exportWith(undefined, [])).rejects.toThrow();
+
+	expect(readdirSync(bundleDir)).toEqual(["manifest.json"]);
+	expect(statSync(manifest).isDirectory()).toBe(true);
+	expect(readdirSync(base).filter((name) => name.startsWith("bundle."))).toEqual([]);
+});
+
+it("#given a manifest of another move at the bundle's place #when this move is exported without the list #then the bundle's manifest lists no queued input: another move's input is not this one's", async () => {
+	const { source, bundleDir, exportWith } = world();
+	sealed(source);
+	mkdirSync(bundleDir, { recursive: true });
+	const other = { format: MOVE_BUNDLE_FORMAT, moveId: "move-other", droppedUserMessages: ["theirs"] };
+	writeFileSync(join(bundleDir, "manifest.json"), JSON.stringify(other));
+
+	await exportWith(undefined, []);
+
+	expect(droppedAt(bundleDir)).toEqual([]);
+});
+
+it("#given nothing at the bundle's place #when the move is exported without the list #then the bundle's manifest lists no queued input", async () => {
+	const { source, bundleDir, exportWith } = world();
+	sealed(source);
+
+	await exportWith(undefined, []);
+
+	expect(droppedAt(bundleDir)).toEqual([]);
 });

@@ -6,21 +6,7 @@
 import { readdir, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { pathExists } from "../tools/path-utils.ts";
-import { MANIFEST_FILE, readKeptBundle } from "./bundle.ts";
-
-/**
- * The queued input this export carries. A call that sends none, as a caller that restarted after a failed export does,
- * carries what is kept at the place for this move; a call that sends a list carries that list.
- */
-export async function queuedInputToCarry(
-	bundleDir: string,
-	moveId: string,
-	sent: readonly string[],
-): Promise<string[]> {
-	if (sent.length > 0 || !(await pathExists(bundleDir))) return [...sent];
-	const kept = await readKeptBundle(bundleDir).catch(() => undefined);
-	return kept?.moveId === moveId ? [...kept.droppedUserMessages] : [];
-}
+import { MANIFEST_FILE } from "./bundle.ts";
 
 /**
  * Puts a staged bundle at its place. A folder cannot be renamed over one that holds files, so when the place is taken

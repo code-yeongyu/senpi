@@ -18,8 +18,9 @@ import {
 	SESSION_BUNDLE_PATH,
 	sha256File,
 } from "./bundle.ts";
-import { putAtPlace, queuedInputToCarry } from "./bundle-place.ts";
+import { putAtPlace } from "./bundle-place.ts";
 import { EXTENSION_STATE_PAYLOAD } from "./extension-state.ts";
+import { keptQueuedInput } from "./kept-input.ts";
 import {
 	headerSessionId,
 	type MoveId,
@@ -102,6 +103,12 @@ async function writeMoveBundle(options: ExportSessionForMoveOptions): Promise<Mo
 	if (!ownership.writable && !(ownership.state === "moving" && ownership.moveId === moveId)) {
 		throw new SessionMovedAwayError(sessionFile, ownership);
 	}
+	// The queued input this export carries: the list the call sent, or with none sent, what an earlier export of this
+	// move kept at the bundle's place. Read before the seal, so a kept manifest that cannot be read fails the export
+	// with nothing changed.
+	const dropped = options.droppedUserMessages?.length
+		? options.droppedUserMessages
+		: ((await keptQueuedInput(options.bundleDir, moveId)) ?? []);
 	if (ownership.writable) {
 		// Refused here, the session is not sealed for a move whose bundle a receiver would refuse (senpi#6469). That
 		// covers a state folder given as a path. One given as a function is asked only after the seal, since it may
@@ -132,7 +139,6 @@ async function writeMoveBundle(options: ExportSessionForMoveOptions): Promise<Mo
 	await copyFile(sessionFile, join(staging, SESSION_BUNDLE_PATH));
 	const sidecars = await copySidecars(dirname(sessionFile), sessionId, staging);
 	const stateFiles = await copyExtensionState(stateDir, staging);
-	const queued = await queuedInputToCarry(options.bundleDir, moveId, options.droppedUserMessages);
 	const manifest: MoveManifest = {
 		format: MOVE_BUNDLE_FORMAT,
 		moveId,
@@ -142,7 +148,7 @@ async function writeMoveBundle(options: ExportSessionForMoveOptions): Promise<Mo
 		repository: await readRecordedRepositoryIdentity(sessionFile),
 		session: { path: SESSION_BUNDLE_PATH, sha256: await sha256File(join(staging, SESSION_BUNDLE_PATH)) },
 		sidecars,
-		droppedUserMessages: queued,
+		droppedUserMessages: [...dropped],
 		payloads: stateFiles.length > 0 ? [{ kind: EXTENSION_STATE_PAYLOAD, files: stateFiles }] : [],
 	};
 	await writeFile(join(staging, MANIFEST_FILE), `${JSON.stringify(manifest, null, 1)}\n`);
