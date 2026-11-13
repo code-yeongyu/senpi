@@ -88,4 +88,21 @@ describe("a project write that states its folder", () => {
 		}
 		expect(existsSync(join(host.cwd, "AGENTS.md"))).toBe(false);
 	});
+
+	it("refuses a present expectedCwd that is not a string as invalid_argument, and writes nothing", async () => {
+		const host = await startHost();
+		await host.trust();
+		for (const stated of [123, {}, ["/other"]]) {
+			const answer = await host.send({
+				type: "write_project_file",
+				sessionId: host.sessionId,
+				path: "AGENTS.md",
+				content: "rules",
+				ifEtag: null,
+				expectedCwd: stated,
+			});
+			expect(answer).toMatchObject({ success: false, errorCode: "invalid_argument" });
+		}
+		expect(existsSync(join(host.cwd, "AGENTS.md"))).toBe(false);
+	});
 });
