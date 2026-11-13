@@ -1,28 +1,20 @@
-import { copyFile, mkdir, readdir, rm } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { readdir, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { normalizePath, resolvePath } from "../../utils/paths.ts";
 import type { RepositoryIdentity } from "../repository-identity.ts";
-import { getDefaultSessionDir, loadEntriesFromFileAsync, SessionManager } from "../session-manager.ts";
+import { getDefaultSessionDir, loadEntriesFromFileAsync } from "../session-manager.ts";
 import { readSessionCwd, rebindSessionFile } from "../session-rebind.ts";
 import { encodedSessionId, serializeByKey } from "../session-sidecar-store.ts";
 import { pathExists } from "../tools/path-utils.ts";
-import {
-	EXTENSION_STATE_PREFIX,
-	listedFiles,
-	MoveBundleInvalidError,
-	type MoveManifest,
-	readManifest,
-	sha256File,
-	verifyBundle,
-} from "./bundle.ts";
-import { EXTENSION_STATE_PAYLOAD, movedStateDir } from "./extension-state.ts";
+import { listedFiles, MoveBundleInvalidError, readManifest, verifyBundle } from "./bundle.ts";
+import { movedStateDir } from "./extension-state.ts";
+import { assertSidecarsLanded, placeExtensionState, stageSession, withStagingAttempt } from "./import-staging.ts";
 import { type LandedFile, outcomeIn, readLanding } from "./landed-file.ts";
 import { type MoveAnswer, MoveFencedError, type MoveLedger } from "./move-ledger.ts";
 import { moveStep } from "./move-steps.ts";
 import { type NameFolding, refuseNamesThatFold } from "./name-folding.ts";
-import { STAGED_PAYLOADS, stagedName, stagedNames } from "./staged-layout.ts";
+import { stagedNames } from "./staged-layout.ts";
 import { headerSessionId, type MoveId, SESSION_MOVED_IN, sessionOwnership } from "./ownership.ts";
-import { requeueInput } from "./requeue.ts";
 import { isCheckoutOfRepository, MoveRefusedError } from "./repository-check.ts";
 import { moveLockKey } from "./session-lock.ts";
 
@@ -124,10 +116,10 @@ export async function answerMoveStatusAndLanding(
 
 /**
  * Brings a moved session in. The bundle is verified, the folder must be the same repository (the `--rebind` rule),
- * and everything is assembled in a staging folder: the session file gains its queued input back and then
- * `session_moved_in`, so the rename into the session directory, run under the move's ledger lock, is the single
- * commit point. A read-only copy of the same session already here (it moved away earlier) is replaced; a writable
- * one is refused. Importing a bundle already imported returns the session without changing it.
+ * and everything is assembled in a staging folder of this attempt's own (`import-staging.ts`): the session file gains
+ * `session_moved_in` and its queued input back, so the rename into the session directory, run under the move's ledger
+ * lock, is the single commit point. A read-only copy of the same session already here (it moved away earlier) is
+ * replaced; a writable one is refused. Importing a bundle already imported returns the session without changing it.
  */
 export async function importMovedSession(
 	options: ImportMovedSessionOptions,
@@ -187,30 +179,37 @@ export async function importMovedSession(
 		throw error;
 	}
 	moveStep("import:received");
-	const staging = join(sessionDir, ".move-staging", encodeURIComponent(manifest.moveId));
 	try {
-		const staged = await stage(options.bundleDir, manifest, staging, options.from ?? "");
-		const sessionFile = await options.ledger.commit(
-			manifest.moveId,
-			target,
-			(stampStands) => rebindSessionFile(staged, targetCwd, sessionDir, { beforeRename: stampStands }),
-			async () => {
-				const assertHeld = () => options.ledger.assertHeld(manifest.moveId);
-				await replacePredecessor(target, manifest.sessionId, sessionDir, assertHeld);
-				// Before the rename: a crash here re-copies on retry, and after it the state is already in place.
-				await placeExtensionState(staging, manifest, movedStateDir(target, manifest.moveId), assertHeld);
-			},
-		);
-		moveStep("import:accepted");
-		await rm(staging, { recursive: true, force: true });
+		const sessionFile = await withStagingAttempt(sessionDir, manifest.moveId, async (staging) => {
+			const staged = await stageSession(staging, {
+				bundleDir: options.bundleDir,
+				manifest,
+				from: options.from ?? "",
+			});
+			const landedFile = await options.ledger.commit(
+				manifest.moveId,
+				target,
+				(stampStands) =>
+					rebindSessionFile(staged, targetCwd, sessionDir, {
+						beforeRename: async () => {
+							await assertSidecarsLanded(manifest, sessionDir);
+							await stampStands();
+						},
+					}),
+				async () => {
+					const assertHeld = () => options.ledger.assertHeld(manifest.moveId);
+					await replacePredecessor(target, manifest.sessionId, sessionDir, assertHeld);
+					// Before the rename: a crash here re-copies on retry, and after it the state is already in place.
+					await placeExtensionState(staging, manifest, movedStateDir(target, manifest.moveId), assertHeld);
+				},
+			);
+			moveStep("import:accepted");
+			return landedFile;
+		});
 		return { sessionFile };
 	} catch (error) {
-		// Another import landed this move; what this one staged after that import cleaned up is not kept. The folder is
-		// clutter only, so a removal that fails never replaces the answer the landed file gives.
-		if (error instanceof MoveFencedError && (await landed())) {
-			await rm(staging, { recursive: true, force: true }).catch(() => undefined);
-			return confirmLanded();
-		}
+		// Another import landed this move: the landed file answers.
+		if (error instanceof MoveFencedError && (await landed())) return confirmLanded();
 		if (!(error instanceof MoveFencedError))
 			await options.ledger.fail(
 				manifest.moveId,
@@ -250,61 +249,4 @@ async function replacePredecessor(
 	await rm(join(sessionDir, "resident-blobs", sessionId), { recursive: true, force: true });
 	assertHeld();
 	await rm(target, { force: true });
-}
-
-/** Payload files are staged here, next to the staged session file, and placed from this checked copy. */
-
-const extensionStateFiles = (manifest: MoveManifest) =>
-	manifest.payloads.filter((payload) => payload.kind === EXTENSION_STATE_PAYLOAD).flatMap((p) => p.files);
-
-/** Copies the payload files into staging and checks each copy, so nothing changed after `verifyBundle` is placed. */
-async function stagePayloads(bundleDir: string, manifest: MoveManifest, staging: string): Promise<void> {
-	for (const file of manifest.payloads.flatMap((payload) => payload.files)) {
-		const to = join(staging, STAGED_PAYLOADS, file.path);
-		await mkdir(dirname(to), { recursive: true });
-		await copyFile(join(bundleDir, file.path), to);
-		if ((await sha256File(to)) !== file.sha256) throw new MoveBundleInvalidError(`${file.path} changed in transit`);
-	}
-}
-
-async function placeExtensionState(
-	staging: string,
-	manifest: MoveManifest,
-	dir: string,
-	assertHeld: () => void,
-): Promise<void> {
-	const files = extensionStateFiles(manifest);
-	if (files.length === 0) return;
-	assertHeld();
-	await rm(dir, { recursive: true, force: true });
-	for (const file of files) {
-		const to = join(dir, file.path.slice(EXTENSION_STATE_PREFIX.length));
-		assertHeld();
-		await mkdir(dirname(to), { recursive: true });
-		assertHeld();
-		await copyFile(join(staging, STAGED_PAYLOADS, file.path), to);
-	}
-}
-
-async function stage(bundleDir: string, manifest: MoveManifest, staging: string, from: string): Promise<string> {
-	const file = join(staging, manifest.sessionFileName);
-	if (!((await pathExists(file)) && (await movedInFor(file, manifest.moveId)))) {
-		await rm(staging, { recursive: true, force: true });
-		for (const item of [manifest.session, ...manifest.sidecars]) {
-			const to = item === manifest.session ? file : join(staging, stagedName(manifest, item));
-			await mkdir(dirname(to), { recursive: true });
-			await copyFile(join(bundleDir, item.path), to);
-		}
-		await stagePayloads(bundleDir, manifest, staging);
-		(await SessionManager.openAsync(file, staging)).appendCustomEntry(SESSION_MOVED_IN, {
-			move_id: manifest.moveId,
-			session_id: manifest.sessionId,
-			from,
-			bundle_sha256: manifest.session.sha256,
-			moved_in_at: new Date().toISOString(),
-		});
-	}
-	// Ids are stable per move, so a staging pass that crashed after some of these replays them instead of doubling.
-	await requeueInput(file, manifest.moveId, manifest.droppedUserMessages);
-	return file;
 }

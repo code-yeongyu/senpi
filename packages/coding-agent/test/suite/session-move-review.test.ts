@@ -320,24 +320,6 @@ describe("session move review fixes (senpi#3631)", () => {
 		expect(admittedInputs(source)).toEqual(["queued follow-up"]);
 	});
 
-	it("#given an import that crashed after staging session_moved_in but before the re-queue #then running it again queues the input once", async () => {
-		const { cwdB, bundleDir, ledger, readIdentity } = await setup();
-		const sessionDir = getDefaultSessionDir(cwdB);
-		const staged = join(sessionDir, ".move-staging", encodeURIComponent(MOVE), `x_${SESSION_ID}.jsonl`);
-		const manifest = JSON.parse(readFileSync(join(bundleDir, "manifest.json"), "utf8")) as {
-			sessionFileName: string;
-		};
-		const file = join(dirname(staged), manifest.sessionFileName);
-		mkdirSync(dirname(file), { recursive: true });
-		cpSync(join(bundleDir, "files", "session.jsonl"), file);
-		SessionManager.open(file, dirname(file)).appendCustomEntry(SESSION_MOVED_IN, {
-			move_id: MOVE,
-			session_id: SESSION_ID,
-		});
-		const { sessionFile } = await importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity });
-		expect(admittedInputs(sessionFile)).toEqual(["queued follow-up"]);
-	});
-
 	it("#given a move the receiver was asked about before it arrived #then the late import is refused", async () => {
 		const { cwdB, bundleDir, ledger, readIdentity } = await setup(undefined, undefined, { ready: false });
 		expect((await answerMoveStatusAndLanding(ledger, MOVE, undefined)).answer).toEqual({
