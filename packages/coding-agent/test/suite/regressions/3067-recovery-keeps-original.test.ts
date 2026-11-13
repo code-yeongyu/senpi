@@ -38,13 +38,14 @@ vi.mock("../../../src/modes/rpc/host-supervisor-log.ts", async (importOriginal) 
 const slowRead = vi.hoisted(() => {
 	// Captured before any test installs fake timers, so a turn here is always a real event-loop turn.
 	const realSetImmediate = setImmediate;
-	return { turns: 0, realTurn: () => new Promise<void>((resolve) => realSetImmediate(resolve)) };
+	return { turns: 0 as number | "never", realTurn: () => new Promise<void>((resolve) => realSetImmediate(resolve)) };
 });
 vi.mock("../../../src/modes/rpc/host-stop-intent.ts", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("../../../src/modes/rpc/host-stop-intent.ts")>();
 	return {
 		...actual,
 		readStopIntent: async (...args: Parameters<typeof actual.readStopIntent>) => {
+			if (slowRead.turns === "never") return new Promise<never>(() => {});
 			for (let turn = 0; turn < slowRead.turns; turn += 1) await slowRead.realTurn();
 			return actual.readStopIntent(...args);
 		},
@@ -66,7 +67,9 @@ async function deadPid(): Promise<number> {
 // is logged and the original error is lost. The recovery must log both — the recovery error
 // in stopChild, the original once in performShutdown — and the original must still be the
 // error shutdown reports.
-async function recoveryKeepsOriginal(readTurns: number): Promise<void> {
+const MAX_REAL_TURNS = 10_000;
+
+async function recoveryKeepsOriginal(readTurns: number | "never"): Promise<void> {
 	slowRead.turns = readTurns;
 	const root = await mkdtemp(join(tmpdir(), "shutdown-recovery-"));
 	const pid = await deadPid();
@@ -153,7 +156,6 @@ async function recoveryKeepsOriginal(readTurns: number): Promise<void> {
 		// promise: the resolved side always wins the race, so that form can never
 		// observe the shutdown settling (verified: it returns false even for an
 		// already-resolved promise).
-		settled = false;
 		stopped.then(
 			() => {
 				settled = true;
@@ -166,12 +168,18 @@ async function recoveryKeepsOriginal(readTurns: number): Promise<void> {
 		// (the stop-intent read, the registration release) finish. A loop that advanced a fixed number of slices
 		// ran out before a slow read finished on a loaded host, and the recovery's timers were never reached
 		// (senpi#6582).
+		// Both waits are bounded: fake time by 120 s, real work by a count of real turns, so real work that never
+		// finishes fails here with the assertion instead of running into the test's own timeout.
 		const startedAtMs = Date.now();
-		while (!settled && Date.now() - startedAtMs < 120_000) {
+		let realTurns = 0;
+		while (!settled && Date.now() - startedAtMs < 120_000 && realTurns < MAX_REAL_TURNS) {
 			if (vi.getTimerCount() > 0) await vi.advanceTimersByTimeAsync(1_000);
-			else await slowRead.realTurn();
+			else {
+				realTurns += 1;
+				await slowRead.realTurn();
+			}
 		}
-		expect(settled, "shutdown did not settle within 120 s of fake time").toBe(true);
+		expect(settled, `shutdown did not settle within 120 s of fake time or ${MAX_REAL_TURNS} real turns`).toBe(true);
 		await expect(stopped).resolves.toBe("exited");
 		expect(exitProcess).toHaveBeenCalledWith(1);
 		expect(killProcess).toHaveBeenCalledWith(pid, "SIGTERM");
@@ -206,4 +214,8 @@ it("keeps the pre-signal error when the shutdown recovery itself throws", async 
 
 it("reaches the recovery's timers when the stop-intent read finishes only after many real turns (loaded host)", async () => {
 	await recoveryKeepsOriginal(400);
+});
+
+it("fails with the settle assertion, not the test timeout, when the stop-intent read never finishes", async () => {
+	await expect(recoveryKeepsOriginal("never")).rejects.toThrow("shutdown did not settle");
 });
