@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, posix, relative, sep } from "node:path";
 import { SessionHeldError } from "../session-hold-errors.ts";
 import { liveSessionHolders } from "../session-holders.ts";
@@ -17,6 +17,7 @@ import {
 	sha256File,
 } from "./bundle.ts";
 import { EXTENSION_STATE_PAYLOAD } from "./extension-state.ts";
+import { keptQueuedInput } from "./kept-input.ts";
 import {
 	headerSessionId,
 	type MoveId,
@@ -104,7 +105,7 @@ async function writeMoveBundle(options: ExportSessionForMoveOptions): Promise<Mo
 		throw new SessionMovedAwayError(sessionFile, ownership);
 	}
 	// Before the seal and before anything is staged: a kept bundle that cannot be read refuses the export unchanged.
-	const dropped = options.droppedUserMessages ?? (await keptDroppedUserMessages(options.bundleDir, moveId));
+	const dropped = options.droppedUserMessages ?? (await keptQueuedInput(options.bundleDir, moveId)) ?? [];
 	if (ownership.writable) {
 		(await SessionManager.openAsync(sessionFile)).appendCustomEntry(SESSION_RELEASED, {
 			reason: "move",
@@ -139,45 +140,6 @@ async function writeMoveBundle(options: ExportSessionForMoveOptions): Promise<Mo
 	await rm(options.bundleDir, { recursive: true, force: true });
 	await rename(staging, options.bundleDir);
 	return manifest;
-}
-
-class KeptBundleUnreadableError extends Error {
-	constructor(bundleDir: string, why: string) {
-		super(
-			`The bundle kept for this move (${bundleDir}) could not be read (${why}), so the move was not exported again: the new bundle would replace it and lose the queued input it records. Nothing was changed.`,
-		);
-		this.name = "KeptBundleUnreadableError";
-	}
-}
-
-/**
- * The queued input the bundle already at this move's place records, when an export is sent again without a list.
- * Read leniently, by its format, move id and input alone: an export that failed after the seal keeps no more than
- * that, and the receiver's parser (`readManifest`) would refuse it. Only a bundle that is not there reads as no input.
- * One that is there and cannot be read or understood refuses the export, because the bundle that replaces it would
- * erase what it records. Another move's bundle records none of this move's input.
- */
-async function keptDroppedUserMessages(bundleDir: string, moveId: MoveId): Promise<readonly string[]> {
-	let text: string;
-	try {
-		text = await readFile(join(bundleDir, MANIFEST_FILE), "utf8");
-	} catch (error) {
-		if (error instanceof Error && "code" in error && error.code === "ENOENT") return [];
-		throw new KeptBundleUnreadableError(bundleDir, error instanceof Error ? error.message : String(error));
-	}
-	let kept: unknown;
-	try {
-		kept = JSON.parse(text);
-	} catch {
-		throw new KeptBundleUnreadableError(bundleDir, "its manifest is not JSON");
-	}
-	if (typeof kept !== "object" || kept === null || !("format" in kept) || kept.format !== MOVE_BUNDLE_FORMAT)
-		throw new KeptBundleUnreadableError(bundleDir, "its manifest is not one this version writes");
-	if (!("moveId" in kept) || kept.moveId !== moveId) return [];
-	const input = "droppedUserMessages" in kept ? kept.droppedUserMessages : undefined;
-	if (!Array.isArray(input) || !input.every((message): message is string => typeof message === "string"))
-		throw new KeptBundleUnreadableError(bundleDir, "its manifest does not list its queued input");
-	return input;
 }
 
 async function copySidecars(sessionDir: string, sessionId: string, staging: string): Promise<BundleFile[]> {
