@@ -52,9 +52,9 @@ export function isProcessAlive(pid: number): boolean {
 	}
 }
 
-function execText(command: string, args: readonly string[]): Promise<string> {
+function execText(command: string, args: readonly string[], extraEnv: Record<string, string> = {}): Promise<string> {
 	return new Promise((resolve, reject) => {
-		const env = { ...process.env, LC_ALL: "C" };
+		const env = { ...process.env, LC_ALL: "C", ...extraEnv };
 		execFile(command, [...args], { encoding: "utf8", timeout: 5_000, windowsHide: true, env }, (error, stdout) => {
 			if (error) reject(error);
 			else resolve(stdout);
@@ -72,9 +72,14 @@ async function readLinuxEvidence(pid: number): Promise<ProcessEvidence> {
 }
 
 async function readDarwinEvidence(pid: number): Promise<ProcessEvidence | undefined> {
-	const text = (await execText("ps", ["-o", "lstart=,command=", "-p", String(pid)])).trim();
+	// Printed and parsed in UTC: a local-time lstart is ambiguous in the repeated fall-back hour, which would put the
+	// start an hour off the recorded instant and leave a real orphan "unverifiable".
+	const text = (await execText("ps", ["-o", "lstart=,command=", "-p", String(pid)], { TZ: "UTC" })).trim();
 	if (text.length <= LSTART_LENGTH) return undefined;
-	return { startedAtMs: new Date(text.slice(0, LSTART_LENGTH)).getTime(), argv: text.slice(LSTART_LENGTH).trim() };
+	return {
+		startedAtMs: Date.parse(`${text.slice(0, LSTART_LENGTH)} UTC`),
+		argv: text.slice(LSTART_LENGTH).trim(),
+	};
 }
 
 async function readWindowsEvidence(pid: number): Promise<ProcessEvidence | undefined> {
