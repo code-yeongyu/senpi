@@ -278,9 +278,13 @@ jobs:
   # (workflow_ref), so this workflow must never publish directly. Dispatch
   # publish-npm.yml in publish-only mode — the same mechanism used for manual
   # release recovery — and gate the public GitHub Release on its result.
+  # The dispatch waits for build only (senpi#6627): the smoke matrix checks the
+  # standalone binaries, which ship in the GitHub Release and never in the npm
+  # packages, and its macos-latest row could hold the npm publish for 30+ minutes
+  # in the account's runner queue. The GitHub Release still needs the full smoke.
   publish-npm:
     runs-on: ubuntu-latest
-    needs: stage-github-release
+    needs: build
     if: ${{ inputs.dry_run != true }}
     # The dispatched run can sit queued for hosted runners for hours (senpi#4173);
     # the await below keeps its own ceiling (AWAIT_MAX_SECONDS) under this limit.
