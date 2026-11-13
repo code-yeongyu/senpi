@@ -295,3 +295,4 @@ mod windows {
         sddl
     }
 }
+// senpi#6625 run 3: a win32-only input change; reverted in the next commit.
