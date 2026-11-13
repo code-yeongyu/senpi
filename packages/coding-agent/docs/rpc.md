@@ -6488,9 +6488,10 @@ refused even when the session's folder contains it (a session opened in `$HOME`)
   `SKILL.md` is refused;
 - is a top-level `*.md` file directly in a folder the engine walks for user skills (a package's `skills` folder or
   a manifest skill folder, a `--skill`, extension or SDK skill folder, a folder in the global `skills` setting),
-  because the next load takes such a file as a skill. A folder holding a `SKILL.md` file is exempt: the walk stops
-  there and loads no other top-level file. Only that folder's own top-level files are refused, never a folder above
-  it.
+  because the next load takes such a file as a skill. A folder holding a `SKILL.md` file that its `.gitignore`,
+  `.ignore` or `.fdignore` does not hide is exempt: the walk stops there and loads no other top-level file. Only that
+  folder's own top-level files are refused, never a folder above it. A custom SDK `ResourceLoader` without the
+  optional `getUserSkillScanDirs` loses this refusal and keeps the others.
 
 The same rule holds for the project MCP file and the instruction files of `read_project_file`. A package's own folder
 is not refused as a whole, so a project that is itself an installed package (or loaded with `-e .`) keeps its
