@@ -29,11 +29,24 @@ function jobsOf(text) {
 	return new Map([...body.matchAll(/^  ([\w-]+):\n[\s\S]*?(?=^  [\w-]+:\n|$(?![\s\S]))/gm)].map((match) => [match[1], match[0]]));
 }
 
-/** The only job whose text matches `pattern`; a suite run by no job or by two would break the one-owner contract. */
-function onlyJob(jobs, pattern, what) {
-	const owners = [...jobs].filter(([, block]) => pattern.test(block)).map(([id]) => id);
-	assert.equal(owners.length, 1, `${what} must run in exactly one job of ${WORKFLOW}; found: ${owners.join(", ") || "none"}`);
-	return owners[0];
+/**
+ * The commands that run a whole suite. Every step of every job is scanned, so a second run of a suite (in another
+ * job, or in a second step of the same one) fails the one-owner contract instead of running the suite twice.
+ * `bun run test:scripts` is not listed: it is the deliberate bun-launched twin of `npm run test:scripts`.
+ */
+const WHOLE_SUITE_COMMANDS = {
+	"the workspace matrix": /\brun: node scripts\/run-workspaces\.mjs --if-present \$\{\{ matrix\.workspaces \}\} test\b/,
+	"the coding-agent shards": /\bvitest run --shard=|\b(?:bun|npm|pnpm) run --cwd packages\/coding-agent test\b/,
+	"the senpi-codemode suite": /\b(?:bun|npm|pnpm) run --cwd packages\/senpi-codemode test\b|working-directory: packages\/senpi-codemode\n[\s\S]*\brun: (?:bun|npm|pnpm) (?:run )?test\b|\brun: (?:bun|npm|pnpm) (?:run )?test\b[\s\S]*\n\s+working-directory: packages\/senpi-codemode\b/,
+	"the scripts suite": /\brun: npm run test:scripts\b/,
+};
+
+/** The one job whose steps run `what`; a suite run by no step or by two would break the one-owner contract. */
+function onlyJob(jobs, what) {
+	const runs = [...jobs].flatMap(([id, block]) =>
+		block.split(/\n {6}- /).slice(1).filter((step) => WHOLE_SUITE_COMMANDS[what].test(step)).map(() => id));
+	assert.equal(runs.length, 1, `${what} must run in exactly one step of ${WORKFLOW}; found in: ${runs.join(", ") || "none"}`);
+	return runs[0];
 }
 
 function matrixGroups(block) {
@@ -61,14 +74,14 @@ function suiteOwnership(text) {
 	const jobs = jobsOf(text);
 	const owners = new Map();
 	const claim = (path, owner) => owners.set(path, [...(owners.get(path) ?? []), owner]);
-	const matrix = onlyJob(jobs, /\n\s+run: node scripts\/run-workspaces\.mjs --if-present \$\{\{ matrix\.workspaces \}\} test\n/, "the workspace matrix");
+	const matrix = onlyJob(jobs, "the workspace matrix");
 	for (const { group, paths } of matrixGroups(jobs.get(matrix))) for (const path of paths) claim(path, `${matrix} (${group})`);
-	const shards = onlyJob(jobs, /run: node \.\.\/\.\.\/scripts\/run-tests\.mjs vitest run --shard=.*\n\s+working-directory: packages\/coding-agent\n/, "the coding-agent shards");
+	const shards = onlyJob(jobs, "the coding-agent shards");
 	claim("packages/coding-agent", shards);
 	// `test/` is already in the package's own test script, so the extra filter selects nothing new: the whole suite runs.
-	const codemode = onlyJob(jobs, /\n\s+run: bun run --cwd packages\/senpi-codemode test -- test\/gate\n/, "the senpi-codemode suite");
+	const codemode = onlyJob(jobs, "the senpi-codemode suite");
 	claim("packages/senpi-codemode", codemode);
-	const scripts = onlyJob(jobs, /\n\s+run: npm run test:scripts\n/, "the scripts suite");
+	const scripts = onlyJob(jobs, "the scripts suite");
 	return { owners, suiteJobs: [matrix, shards, codemode, scripts] };
 }
 
@@ -88,6 +101,16 @@ test("the fan-in check follows the workflow's own suite jobs, whatever they are 
 	// A renamed suite job that is also dropped from the fan-in must be reported under its new name.
 	const renamed = workflow.replace(/^  codemode-tests:\n/m, "  codemode-suite:\n").replace(/^ {8}codemode-tests,\n/m, "");
 	assert.deepEqual(missingFromFanIn(renamed), ["codemode-suite"]);
+});
+
+test("a suite run a second time anywhere in the workflow fails the runs-once check", () => {
+	// The codemode package suite added back to codemode-gate would run it twice per CI run again.
+	const twice = workflow.replace(
+		/(\n {6}- name: Eval regression gate\n)/,
+		"\n      - name: Codemode package tests again\n        run: bun run --cwd packages/senpi-codemode test\n$1",
+	);
+	assert.notEqual(twice, workflow);
+	assert.throws(() => suiteOwnership(twice), /the senpi-codemode suite must run in exactly one step of .*found in: codemode-gate, codemode-tests/);
 });
 
 test("no suite job is a platform job the fan-in lets a non-full run skip", () => {
