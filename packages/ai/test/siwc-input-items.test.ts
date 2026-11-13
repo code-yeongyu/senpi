@@ -91,16 +91,19 @@ describe("SIWC input items (senpi#6607)", () => {
 		expect(body.reasoning?.effort).toBe(model.thinkingLevelMap?.high ?? "high");
 	});
 
-	// senpi#6655: an update to `off` drops the requested effort instead of keeping the baseline. No flagged
-	// subscription model can turn reasoning off (`thinkingLevelMap.off` is null), so no effort is sent at all.
-	it("carries an update to off as no requested effort", async () => {
+	// senpi#6655: an update to `off` drops the requested effort instead of sending `off` or the baseline. The
+	// map leaves `off` unset so the model's off effort (`none`) is what a missing branch could not produce.
+	it("carries an update to off as the model's off effort", async () => {
+		const catalog = siwcModel("gpt-6.1-sol");
+		const { off: _off, ...levels } = catalog.thinkingLevelMap ?? {};
+		const model = { ...catalog, thinkingLevelMap: levels };
 		const messages: Message[] = [
 			{ role: "user", content: "start", timestamp: 1 },
 			{ role: "configurationUpdate", content: [], effort: "off", timestamp: 2 },
 			{ role: "user", content: "next", timestamp: 3 },
 		];
-		const body = await sentBody(siwcModel("gpt-6.1-sol"), messages, "medium");
-		expect(body.reasoning).toBeUndefined();
+		const body = await sentBody(model, messages, "medium");
+		expect(body.reasoning?.effort).toBe("none");
 	});
 
 	it("keeps the requested effort when the history carries no update", async () => {

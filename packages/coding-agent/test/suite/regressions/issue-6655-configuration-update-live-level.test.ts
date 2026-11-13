@@ -1,11 +1,11 @@
-import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { type FauxResponseFactory, fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHarness, type Harness } from "../harness.ts";
 
 // senpi#6655: on a model flagged `supportsConfigurationUpdate`, the newest `configuration_update` in the
-// transcript is the effort the request carries (replayed as an item, or folded into reasoning.effort on
-// Sign in with ChatGPT). A level that reached the session without an update entry, such as a fallback
-// rung's `:low`, must not leave an older update in force.
+// request is the effort it carries (replayed as an item, or folded into reasoning.effort on Sign in with
+// ChatGPT). A fallback rung's level must be that update for the rung's requests, and must never reach the
+// session file, where a resume inside the fallback window would pin it over the user's level.
 
 function flagCatalog(harness: Harness): void {
 	harness.modelRegistry.registerProvider("openai", {
@@ -27,18 +27,27 @@ function flagCatalog(harness: Harness): void {
 	});
 }
 
-function newestUpdateEffort(harness: Harness): string | undefined {
-	return harness.agent.state.messages.findLast((message) => message.role === "configurationUpdate")?.effort;
+function requestUpdate(seen: Array<string | undefined>): FauxResponseFactory {
+	return (context) => {
+		seen.push(context.messages.findLast((message) => message.role === "configurationUpdate")?.effort);
+		return fauxAssistantMessage("fallback answer");
+	};
 }
 
-describe("the newest configuration_update follows the live level (senpi#6655)", () => {
+function persistedEfforts(harness: Harness): string[] {
+	return harness.sessionManager
+		.getBranch()
+		.flatMap((entry) => (entry.type === "configuration_update" ? [entry.reasoning.effort] : []));
+}
+
+describe("a fallback rung's level is the configuration_update in force (senpi#6655)", () => {
 	const harnesses: Harness[] = [];
 
 	afterEach(() => {
 		while (harnesses.length > 0) harnesses.pop()?.cleanup();
 	});
 
-	it("a fallback rung's level is what the flagged fallback model's request carries", async () => {
+	it("the rung's request carries its level, and the session file keeps the user's", async () => {
 		const harness = await createHarness({
 			api: "openai-responses",
 			provider: "openai",
@@ -63,16 +72,18 @@ describe("the newest configuration_update follows the live level (senpi#6655)", 
 		await harness.session.setModel(primary);
 		harness.session.setThinkingLevel("medium");
 		harness.session.setThinkingLevel("high");
-		expect(newestUpdateEffort(harness)).toBe("high");
+		const seen: Array<string | undefined> = [];
 		harness.setResponses([
 			fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
-			fauxAssistantMessage("fallback answer"),
+			requestUpdate(seen),
 		]);
 
 		await harness.session.prompt("trigger fallback");
 
 		expect(harness.session.model?.id).toBe("luna-b");
 		expect(harness.session.thinkingLevel).toBe("low");
-		expect(newestUpdateEffort(harness)).toBe("low");
+		expect(seen).toEqual(["low"]);
+		// A resume inside the fallback window rebuilds this context: its newest update is still the user's level.
+		expect(persistedEfforts(harness).at(-1)).toBe("high");
 	});
 });

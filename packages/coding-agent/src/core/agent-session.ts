@@ -354,7 +354,7 @@ import { NestedToolCallRunner } from "./nested-tool-calls.ts";
 import { type PendingInputSnapshot, type PendingInputUpdate, SessionPendingInputs } from "./pending-input-session.ts";
 import { PROMPT_CACHE_SAFE_WAIT_ENV, resolvePromptCacheSafeWaitSeconds } from "./prompt-cache-budget.ts";
 import { PromptCachePrefixBuilds } from "./prompt-cache-prefix-request.ts";
-import { hasStaleConfigurationUpdate, requestThinkingLevel } from "./reasoning-baseline.ts";
+import { requestThinkingLevel, withLiveConfigurationUpdate } from "./reasoning-baseline.ts";
 import type { PromptSizeInventory } from "./prompt-size-startup.ts";
 import { expandPromptTemplateWithMetadata, type PromptTemplate } from "./prompt-templates.ts";
 import {
@@ -2789,10 +2789,14 @@ export class AgentSession {
 			// The idle path tokenizes agent.state.messages in place; every provider
 			// request re-hydrates here so tokens can never reach a model.
 			this.sessionManager.getResidentStore().materializeInPlace(messages);
-			const transformed = this._requestShapeRecovery.apply(
+			const model = this.model;
+			const shaped = this._requestShapeRecovery.apply(
 				previousTransformContext ? await previousTransformContext(messages, signal) : messages,
 			);
-			const model = this.model;
+			const transformed =
+				model !== undefined && supportsConfigurationUpdate(model)
+					? withLiveConfigurationUpdate(shaped, this.agent.state.thinkingLevel, Date.now())
+					: shaped;
 			if (model?.provider !== "cursor" && model?.provider !== "cursor-cli-oauth") return transformed;
 			this._applyObservedCursorContextWindow(model);
 			const budgetBytes = cursorAdmissionBudgetBytes(model.contextWindow);
@@ -9723,15 +9727,6 @@ export class AgentSession {
 				opts.admittedLiveContextTokens ??
 				(opts.repairWithSlice ? this._reduceForSwitchTarget(model, liveContextTokens) : liveContextTokens);
 			this._assertModelUsableForSwitch(model, admittedLiveContextTokens);
-			// A switch can bring a level with no configuration_update entry (a fallback rung's level); on a flagged model
-			// the newest update is what the request carries, so record the live level (senpi#6655).
-			if (
-				supportsConfigurationUpdate(model) &&
-				hasStaleConfigurationUpdate(this.agent.state.messages, this.agent.state.thinkingLevel)
-			) {
-				this.sessionManager.appendConfigurationUpdate(this.agent.state.thinkingLevel);
-				this.agent.state.messages = this.sessionManager.buildSessionContext().messages;
-			}
 			if (opts.appendSessionEntry) {
 				this.sessionManager.appendModelChange(
 					model.provider,

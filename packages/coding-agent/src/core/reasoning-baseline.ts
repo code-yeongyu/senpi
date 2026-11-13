@@ -1,5 +1,6 @@
-import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { isValidThinkingLevel } from "../cli/args.ts";
+import type { ConfigurationUpdateMessage } from "./messages.ts";
 import type { SessionEntry } from "./session-manager.ts";
 
 /**
@@ -11,17 +12,33 @@ export function requestThinkingLevel(baseline: string | undefined, thinkingLevel
 	return baseline !== undefined && isValidThinkingLevel(baseline) ? baseline : thinkingLevel;
 }
 
+function isConfigurationUpdate(message: AgentMessage): message is ConfigurationUpdateMessage {
+	return message.role === "configurationUpdate";
+}
+
 /**
- * Whether the newest `configuration_update` in a transcript names another level than the live one. On a flagged
- * model that update is the effort the request carries, so a level that arrived without one (a fallback rung's
- * level) would otherwise leave the older update in force (senpi#6655).
+ * The request context with the live level in force. On a flagged model the newest `configuration_update` is the
+ * effort a request carries, and a level that arrived without one (a fallback rung's, a favourite cycle's) would
+ * leave an older update in force. The live level rides the request only, never the session file, so a resumed
+ * session keeps the user's level (senpi#6655). It goes before the turn's user message, like a recorded update.
  */
-export function hasStaleConfigurationUpdate(
-	messages: readonly { role: string; effort?: string }[],
+export function withLiveConfigurationUpdate(
+	messages: AgentMessage[],
 	thinkingLevel: ThinkingLevel,
-): boolean {
-	const newest = messages.findLast((message) => message.role === "configurationUpdate");
-	return newest !== undefined && newest.effort !== thinkingLevel;
+	timestamp: number,
+): AgentMessage[] {
+	const newestIndex = messages.findLastIndex(isConfigurationUpdate);
+	const newest = messages[newestIndex];
+	if (newest === undefined || !isConfigurationUpdate(newest) || newest.effort === thinkingLevel) return messages;
+	const update: ConfigurationUpdateMessage = {
+		role: "configurationUpdate",
+		content: [],
+		effort: thinkingLevel,
+		timestamp,
+	};
+	const lastUserIndex = messages.findLastIndex((message) => message.role === "user");
+	const at = lastUserIndex > newestIndex ? lastUserIndex : messages.length;
+	return [...messages.slice(0, at), update, ...messages.slice(at)];
 }
 
 /**
