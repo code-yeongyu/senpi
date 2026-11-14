@@ -6381,7 +6381,8 @@ other path, or when a folder on the way or the file itself is a symlink or not a
 
 #### The folder a project write is for
 
-`set_project_trust`, `set_project_setting` and `write_project_file` take an optional `expectedCwd`: the folder the
+`set_project_trust`, `set_project_setting`, `write_project_file`, `set_project_mcp_servers` and
+`write_project_skill_file` take an optional `expectedCwd`: the folder the
 caller means. A client that reaches a session by a key that can since name another session (a remote desktop, through
 a relay) states it, so the write lands only in that folder's project. When it is given and the session's working
 directory is another folder, the write is refused with `project_cwd_mismatch` and nothing is written or applied. Both
@@ -6458,7 +6459,8 @@ commits and gets the same permission decision a `write` of that file gets in the
 answers, or a prompt). In an RPC session that prompt goes to the session's client, as it does for the session's own
 `write` tool, so the client that sent the write answers it. The response carries the same `data` as
 `get_project_mcp_servers`, read after the write.
-Errors: `invalid_argument` when `patch` is not an object or `ifEtag` is neither a string nor `null`,
+Errors: `invalid_argument` when `patch` is not an object, `ifEtag` is neither a string nor `null`, or `expectedCwd`
+is not a string, `project_cwd_mismatch` when `expectedCwd` names another folder (nothing is written),
 `project_not_trusted`, `project_file_conflict` (`errorData: { currentEtag, exists }`),
 `project_mcp_config_unparseable` (`errorData: { parseError }`; a file that does not parse is never written over),
 `project_mcp_config_invalid` when the loader rejects the merged file, `project_file_permission_denied`,
@@ -6486,7 +6488,8 @@ Only a listed skill whose file lies inside the session's folder is reachable; a 
 skill, also when the agent's directory lies inside the session's folder) or is reached through a folder link or a
 file link is refused. A write passes the same trust and permission
 gates as `set_project_mcp_servers` and answers the read after it. Errors: `project_skill_not_listed`
-(`errorData: { skill }`), `project_file_not_allowed`, `invalid_argument`, `project_not_trusted`,
+(`errorData: { skill }`), `project_file_not_allowed`, `invalid_argument`, `project_cwd_mismatch` (a write whose
+`expectedCwd` names another folder), `project_not_trusted`,
 `project_file_conflict`, `project_file_permission_denied`, `project_file_too_large`, and
 `project_file_write_failed`.
 

@@ -243,12 +243,14 @@ const SURFACE_AND_ACCOUNT_SCHEMAS = {
 	set_project_mcp_servers: session("set_project_mcp_servers", {
 		patch: Type.Unknown(),
 		ifEtag: Type.Union([Id, Type.Null()]),
+		expectedCwd: OptStr,
 	}),
 	read_project_skill_file: session("read_project_skill_file", { skill: Id }),
 	write_project_skill_file: session("write_project_skill_file", {
 		skill: Id,
 		content: Str,
 		ifEtag: Type.Union([Id, Type.Null()]),
+		expectedCwd: OptStr,
 	}),
 	extension_request: session("extension_request", { name: Id, data: Opt(Type.Unknown()) }),
 	"eval_cells.list": session("eval_cells.list", {}),

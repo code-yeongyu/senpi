@@ -351,9 +351,22 @@ export type RpcSessionCommand =
 			expectedCwd?: string;
 	  }
 	| { id?: string; type: "get_project_mcp_servers" }
-	| { id?: string; type: "set_project_mcp_servers"; patch: Record<string, unknown>; ifEtag: string | null }
+	| {
+			id?: string;
+			type: "set_project_mcp_servers";
+			patch: Record<string, unknown>;
+			ifEtag: string | null;
+			expectedCwd?: string;
+	  }
 	| { id?: string; type: "read_project_skill_file"; skill: string }
-	| { id?: string; type: "write_project_skill_file"; skill: string; content: string; ifEtag: string | null }
+	| {
+			id?: string;
+			type: "write_project_skill_file";
+			skill: string;
+			content: string;
+			ifEtag: string | null;
+			expectedCwd?: string;
+	  }
 	| { id?: string; type: "extension_request"; name: string; data?: unknown }
 	| { id?: string; type: "eval_cells.list" }
 	| { id?: string; type: "eval_cells.peek"; cellId: string; tailBytes?: number }
