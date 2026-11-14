@@ -1947,16 +1947,19 @@ jobs:
         shell: bash
         run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
 
-      # senpi#6127: use this existing Linux/Windows matrix, not a feature-specific workflow.
+      # senpi#6127: retain every suite after a test failure, but stop on cancellation or failed setup.
       - name: Path-resolution filesystem regressions
+        if: ${{ !cancelled() && steps.test_temp_snapshot.outcome == 'success' }}
         working-directory: packages/machine-ops
         run: node ../../scripts/run-tests.mjs vitest run test/filesystem-resolution.test.ts test/operation-errors.test.ts --reporter=verbose
 
       - name: Path-resolution cancelled-write regression
+        if: ${{ !cancelled() && steps.test_temp_snapshot.outcome == 'success' }}
         working-directory: packages/machine-ops
         run: node ../../scripts/run-tests.mjs vitest run test/local-conformance.test.ts -t "cancelled request" --reporter=verbose
 
       - name: Path-resolution guard regressions
+        if: ${{ !cancelled() && steps.test_temp_snapshot.outcome == 'success' }}
         working-directory: packages/coding-agent
         run: >
           node ../../scripts/run-tests.mjs vitest run
@@ -1967,15 +1970,19 @@ jobs:
           --reporter=verbose
 
       - name: Path-resolution integration (Node)
+        if: ${{ !cancelled() && steps.test_temp_snapshot.outcome == 'success' }}
         run: node scripts/run-tests.mjs node scripts/qa/path-resolution-smoke.ts
 
       - name: Path-resolution integration (Bun)
+        if: ${{ !cancelled() && steps.test_temp_snapshot.outcome == 'success' }}
         run: node scripts/run-tests.mjs bun scripts/qa/path-resolution-smoke.ts
 
       - name: PTY package tests
+        if: ${{ !cancelled() && steps.test_temp_snapshot.outcome == 'success' }}
         run: npm run test --workspace @earendil-works/pi-pty
 
       - name: Terminal extension + shell resolution tests
+        if: ${{ !cancelled() && steps.test_temp_snapshot.outcome == 'success' }}
         shell: bash
         run: node ../../scripts/run-tests.mjs vitest run test/suite/terminal-extension.test.ts test/suite/terminal-settings-notify.test.ts test/suite/shell-config-kind.test.ts test/suite/regressions/issue-1229-win-fswatch-noncanonical-abort.test.ts
         working-directory: packages/coding-agent

@@ -187,6 +187,41 @@ describe("ci.yml wiring", () => {
 		assert.equal(jobs["platform-scope"]["runs-on"], "ubuntu-latest");
 	});
 
+	it("keeps path and terminal suites running after a failure, but stops them on cancellation (senpi#6127)", () => {
+		const job = jobs["terminal-cross-os"];
+		assert.notEqual(job["continue-on-error"], true);
+		for (const name of [
+			"Path-resolution filesystem regressions",
+			"Path-resolution cancelled-write regression",
+			"Path-resolution guard regressions",
+			"Path-resolution integration (Node)",
+			"Path-resolution integration (Bun)",
+			"PTY package tests",
+			"Terminal extension + shell resolution tests",
+		]) {
+			const step = job.steps.find((step) => step.name === name);
+			assert.ok(step, name);
+			assert.notEqual(step["continue-on-error"], true, name);
+			// GitHub applies success() implicitly when no status-check function is present.
+			const expression = String(step.if ?? "success()").replace(/^\$\{\{\s*|\s*\}\}$/g, "");
+			const condition = Function("cancelled", "success", "steps", `return (${expression});`);
+			for (const state of [
+				{ failed: false, cancelled: false, setup: "success", expected: true },
+				{ failed: true, cancelled: false, setup: "success", expected: true },
+				{ failed: true, cancelled: true, setup: "success", expected: false },
+				{ failed: true, cancelled: false, setup: "skipped", expected: false },
+			]) {
+				const hasStatusCheck = /\b(?:success|failure|cancelled|always)\s*\(/.test(expression);
+				const implicitSuccess = hasStatusCheck || !state.failed;
+				assert.equal(implicitSuccess && condition(
+					() => state.cancelled,
+					() => !state.failed,
+					{ test_temp_snapshot: { outcome: state.setup } },
+				), state.expected, `${name}: ${JSON.stringify(state)}`);
+			}
+		}
+	});
+
 	it("runs the retained path-resolution regressions in the existing per-OS jobs (senpi#6127)", () => {
 		const suites = {
 			"packages/machine-ops": ["filesystem-resolution.test.ts", "operation-errors.test.ts", "local-conformance.test.ts"],
