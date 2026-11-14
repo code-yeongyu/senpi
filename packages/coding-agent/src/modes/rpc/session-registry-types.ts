@@ -8,6 +8,7 @@ import { EMPTY_SESSION_CONTEXT } from "../../core/extensions/types.ts";
 import type { SessionPathReservations } from "./host-reservations.ts";
 import type { PreparableRuntimeFactory } from "./host-warm.ts";
 import type { SessionAcceptanceLane } from "./session-acceptance-lane.ts";
+import type { SessionActivity } from "./session-activity.ts";
 import type { SessionContextOverlay } from "./session-context-patch.ts";
 import type { PublishedSessionContext } from "./session-status.ts";
 import type { SessionWorkerClient } from "./session-worker-client.ts";
@@ -168,8 +169,12 @@ export interface RpcSessionRow {
 	tool_child: { state: "none" | "live" | "exited"; generation?: number; pid?: number };
 	/** The session file's archived flag (`set_session_archived`); a thread list hides archived rows by default. */
 	archived: boolean;
-	/** `running` while a turn is in flight (the `session_status` streaming state), else `idle`. */
-	activity: "running" | "idle";
+	/** Derived from the same live status as `session_status.status` (`session-activity.ts`). */
+	activity: SessionActivity;
+	/** The last turn's failure category; present only with `activity: "errored"`. */
+	error_code?: string;
+	/** The current turn's id, or the most recent one's; absent before the session's first turn. */
+	turn_id?: string;
 	/** The session's current model; absent while unknown (an opening session). */
 	model?: { provider: string; id: string };
 }

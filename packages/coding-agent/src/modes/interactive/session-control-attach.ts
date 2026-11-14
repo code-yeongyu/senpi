@@ -17,7 +17,7 @@ import { isSessionArchived } from "../../core/session-archived.ts";
 import { ConnectionRoles } from "../rpc/connection-roles.ts";
 import { SessionEventWriter } from "../rpc/session-event-writer.ts";
 import { subscribeSessionRecords } from "../rpc/session-record-stream.ts";
-import type { SessionStatusEntryView } from "../rpc/session-status.ts";
+import type { SessionStatusEntryView, SessionStatusRuntimeView } from "../rpc/session-status.ts";
 import { sessionRuntimeView } from "../rpc/session-status-source.ts";
 import type { ControlConnection } from "./session-control-server.ts";
 import type { TerminalPresenterSurface } from "./terminal-presenter-surface.ts";
@@ -29,24 +29,28 @@ export class ControlAttachments {
 	private readonly attached = new Set<string>();
 	private readonly stopRecords: () => void;
 	private readonly session: AgentSession;
+	private readonly pendingQuestions: () => number;
 	/** The terminal's MCP form presenters (D11 S3-6b), when enforcement is on. */
 	readonly presenters: TerminalPresenterSurface | undefined;
 
 	constructor(session: AgentSession, pendingQuestions: () => number, presenters?: TerminalPresenterSurface) {
 		this.session = session;
+		this.pendingQuestions = pendingQuestions;
 		this.presenters = presenters;
 		this.writer.status.setSource({
 			sessionIds: () => [this.handle],
 			entryView: (id) => (id === this.handle ? this.entryView() : undefined),
-			view: (id) =>
-				id === this.handle
-					? { entry: this.entryView(), runtime: sessionRuntimeView(session, pendingQuestions()) }
-					: undefined,
+			view: (id) => (id === this.handle ? { entry: this.entryView(), runtime: this.runtimeView() } : undefined),
 		});
 		// A permanent, never-attached connection keeps the writer off its stdio lane: records reach attached
 		// connections and the replay snapshot only, and nothing queues for a sink that writes nowhere.
 		this.writer.registerConnection(NULL_CONNECTION, { writeRaw: () => {}, waitForBackpressure: async () => {} });
 		this.stopRecords = subscribeSessionRecords(session, (record) => this.writer.enqueue(this.handle, record));
+	}
+
+	/** The runtime half of this terminal's `session_status` row; its `list_sessions` row reads the same view. */
+	runtimeView(): SessionStatusRuntimeView {
+		return sessionRuntimeView(this.session, this.pendingQuestions());
 	}
 
 	/** The routing handle records carry: this terminal's session id. */

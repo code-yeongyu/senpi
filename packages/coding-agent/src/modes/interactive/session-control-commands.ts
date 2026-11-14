@@ -27,6 +27,7 @@ import { answerGetEntries } from "../rpc/get-entries-command.ts";
 import { answeredUiRequestId, settledQuestionStatus, unansweredQuestionIds } from "../rpc/extension-ui-response.ts";
 import { describeRpcMethodClasses } from "../rpc/method-classes.ts";
 import { buildRpcSessionState } from "../rpc/rpc-session-state.ts";
+import { deriveSessionActivity } from "../rpc/session-activity.ts";
 import { sessionUiAnswerLedger } from "../rpc/ui-answer-ledger.ts";
 import type { ControlAttachments } from "./session-control-attach.ts";
 import type { ControlFeed } from "./session-control-feed.ts";
@@ -106,7 +107,7 @@ export async function runControlCommand(
 			});
 		}
 		case "list_sessions":
-			return success(id, type, { sessions: [sessionRow(session)] });
+			return success(id, type, { sessions: [sessionRow(session, context.attachments)] });
 		case "get_state":
 			return success(id, type, {
 				...buildRpcSessionState(session),
@@ -155,7 +156,7 @@ export async function runControlCommand(
 	}
 }
 
-function sessionRow(session: AgentSession): Readonly<Record<string, unknown>> {
+function sessionRow(session: AgentSession, attachments: ControlAttachments): Readonly<Record<string, unknown>> {
 	const manager = session.sessionManager;
 	const created = manager.getHeader()?.timestamp ?? null;
 	const last = manager.getEntries().at(-1);
@@ -173,7 +174,7 @@ function sessionRow(session: AgentSession): Readonly<Record<string, unknown>> {
 		// A release here never ends the terminal's own session.
 		retain_on_disconnect: true,
 		archived: isSessionArchived(manager),
-		activity: session.isStreaming ? "running" : "idle",
+		...deriveSessionActivity(attachments.runtimeView()),
 		...(session.model !== undefined ? { model: { provider: session.model.provider, id: session.model.id } } : {}),
 	};
 }

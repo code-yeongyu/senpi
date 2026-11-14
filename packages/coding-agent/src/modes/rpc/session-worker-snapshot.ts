@@ -4,6 +4,7 @@ import { buildRpcSessionState } from "./connection-handler.ts";
 import { isHandoffBusy } from "./handoff-activity.ts";
 import { canonicalSessionPath } from "./session-path-key.ts";
 import type { RpcSessionEntry } from "./session-registry.ts";
+import { sessionTurnView } from "./session-status-source.ts";
 import type { WorkerSnapshot } from "./session-worker-protocol.ts";
 
 /** The worker isolate's whole-state snapshot of its one session, built only when a message carries it. */
@@ -23,5 +24,6 @@ export function workerSnapshot(entry: RpcSessionEntry | undefined): WorkerSnapsh
 		handoffBusy: isHandoffBusy(session.activitySnapshot),
 		streaming: session.isStreaming,
 		archived: isSessionArchived(session.sessionManager),
+		...sessionTurnView(session),
 	};
 }

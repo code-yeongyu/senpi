@@ -77,6 +77,10 @@ export interface SessionStatusRuntimeView {
 	readonly steering: number;
 	readonly followUp: number;
 	readonly pendingQuestions: number;
+	/** The current turn's id, or the most recent one's; absent before the runtime's first turn. */
+	readonly turnId?: string;
+	/** The last turn's failure category (`agent_end.failure.category`); absent when it did not fail. */
+	readonly errorCode?: string;
 }
 
 /** The fanout's pending `question` frames for the session (replayed on attach); undefined when the count is unknown. */
@@ -131,7 +135,10 @@ export interface SessionStatusRecord {
 	readonly lastChange: { readonly at: string; readonly cause: SessionStatusCause; readonly by: SessionStatusActor };
 }
 
-function liveStatus(runtime: SessionStatusRuntimeView, fanout: SessionStatusFanoutView): SessionStatusValue {
+/** The status of an open session with a live runtime. */
+export type LiveSessionStatus = Extract<SessionStatusValue, "waiting_input" | "compacting" | "running" | "idle">;
+
+export function liveStatus(runtime: SessionStatusRuntimeView, fanout: SessionStatusFanoutView): LiveSessionStatus {
 	// A question is asked from inside a running turn, and compaction can run inside one too: the narrower
 	// state wins, so a supervisor sees "waiting on the user" rather than a turn that merely looks busy.
 	// An unknown fanout count is no evidence either way: the runtime's own count decides.
