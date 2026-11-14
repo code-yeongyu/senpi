@@ -19,7 +19,7 @@ import { rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { bindPipelineWitness } from "./execution/pipeline-witness.ts";
-import { runExecuteToolOnHost } from "./execute-tool-on-host.ts";
+import { runExecuteToolOnHost, unrecordableArguments } from "./execute-tool-on-host.ts";
 import { carryPreflightFacts } from "./execution/preflight-carry.ts";
 import type {
 	Agent,
@@ -5495,6 +5495,9 @@ export class AgentSession {
 				activeTools,
 			);
 		}
+
+		const unrecordable = unrecordableArguments(prepared.args);
+		if (unrecordable !== undefined) throw new ExecuteToolError("invalid_params", toolName, unrecordable, activeTools);
 
 		const { result, hook } = await runExecuteToolOnHost(
 			{

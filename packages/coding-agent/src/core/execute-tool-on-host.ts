@@ -5,11 +5,12 @@ import {
 	type AgentToolUpdateCallback,
 	BatchStoreMissingError,
 	createPreparedToolHost,
+	noPreflightCarry,
 	type PreparedAgentToolCall,
+	toStoreValue,
 } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { carryPreflightFacts } from "./execution/preflight-carry.ts";
 
 type HostAgent = Pick<Agent, "batchStoreFactory" | "executionScope" | "getExecutionScope" | "onExecutionPipeline">;
 
@@ -68,10 +69,21 @@ function thrownResult(error: unknown): AgentToolResult<unknown> {
 	};
 }
 
+/** Why the host cannot record these arguments as JSON (a BigInt, a cycle), or undefined when it can (senpi#5861). */
+export function unrecordableArguments(args: unknown): string | undefined {
+	try {
+		toStoreValue(args);
+		return undefined;
+	} catch (error) {
+		return `Tool arguments are not JSON: ${error instanceof Error ? error.message : String(error)}`;
+	}
+}
+
 /**
  * Runs a call `executeTool()` already prepared and preflighted on the in-process prepared ToolHost (S19a). The host
- * freezes the preflighted arguments; the caller's own signal and `onUpdate` reach the body, since `executeTool()` never
- * raced an abort.
+ * records a JSON copy of the preflighted arguments, while the body runs on the preflighted object itself, as before
+ * the host (senpi#5861): a hook's non-JSON value and the body's in-place edits reach the body and the `tool_result`
+ * chain unchanged. The caller's own signal and `onUpdate` reach the body, since `executeTool()` never raced an abort.
  */
 export async function runExecuteToolOnHost(
 	session: ExecuteToolHostSession,
@@ -89,9 +101,9 @@ export async function runExecuteToolOnHost(
 		// The `tool_call` chain may rewrite the arguments, and its contract is that they are not validated again.
 		parameters: { value: PREFLIGHTED_ARGUMENTS },
 		execute: {
-			value: async (toolCallId: string, args: unknown): Promise<AgentToolResult<unknown>> => {
+			value: async (toolCallId: string): Promise<AgentToolResult<unknown>> => {
 				try {
-					return await tool.execute(toolCallId, args, options.signal, options.onUpdate);
+					return await tool.execute(toolCallId, prepared.args, options.signal, options.onUpdate);
 				} catch (error) {
 					threw = true;
 					return thrownResult(error);
@@ -101,11 +113,8 @@ export async function runExecuteToolOnHost(
 	});
 	const host = createPreparedToolHost(
 		{
-			afterToolFreeze: carryPreflightFacts,
-			beforeToolCall: async ({ args }) => {
-				carryPreflightFacts(prepared.args, args);
-				return undefined;
-			},
+			// The body never sees the host's copies, so no preflight fact needs carrying to them.
+			afterToolFreeze: noPreflightCarry,
 			afterToolCall: async ({ result, isError }) => {
 				try {
 					settled = { result, hook: await session.afterHooks(prepared, result, isError || threw) };
