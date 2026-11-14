@@ -166,6 +166,7 @@ describe("run-workspaces", () => {
 			script: "test",
 			ifPresent: true,
 			parallel: false,
+			alongside: undefined,
 			workspaces: ["packages/a"],
 			forwarded: ["--if-present", "x"],
 		});
