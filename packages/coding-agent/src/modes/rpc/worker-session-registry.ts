@@ -17,6 +17,7 @@ import {
 } from "./session-registry.ts";
 import { SessionWorkerClient } from "./session-worker-client.ts";
 import type { SessionWriteGrant } from "./session-worker-protocol.ts";
+import { sessionRowStatusFields } from "./session-status-source.ts";
 import type { WorkerSessionClaims } from "./worker-session-claims.ts";
 import { openWorkerSession } from "./worker-session-open.ts";
 import type { WorkerCapacity } from "./worker-capacity.ts";
@@ -182,6 +183,7 @@ export class WorkerSessionRegistry {
 				idleMs: Math.max(0, now - entry.lastCommandAt),
 				// A worker isolate's session has no tool child of its own yet (senpi#3566 todo 4 serves the in-process host).
 				tool_child: { state: "none" },
+				...sessionRowStatusFields(entry),
 			};
 		});
 	}

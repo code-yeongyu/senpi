@@ -74,6 +74,7 @@ import type {
 import { ExtensionRpcRequestNotFoundError } from "../../core/extensions/runner.ts";
 import { attachMcpGrantPresentation } from "../../core/mcp-grant-presentations.ts";
 import { describeUsageLimitEntry, describeUsageLimitMessage } from "../../core/retry-fallback/usage-limit.ts";
+import { setSessionArchived } from "../../core/session-archived.ts";
 import { carryRecovery } from "../../core/session-recovery-identity.ts";
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { storedKeyHint, verifyApiKey } from "../../core/verify-api-key.ts";
@@ -2180,6 +2181,12 @@ export function createRpcConnectionHandler(
 				}
 				session.setSessionName(name);
 				return success(id, "set_session_name");
+			}
+
+			case "set_session_archived": {
+				setSessionArchived(session.sessionManager, command.archived);
+				outputEvent({ type: "session_archived_changed", archived: command.archived });
+				return success(id, "set_session_archived");
 			}
 
 			case "record_user_activity": {

@@ -60,6 +60,7 @@ import {
 	loadedContentFingerprints,
 	loadedFileIdentities,
 } from "./session-file-identity.ts";
+import { archivedFlagOf } from "./session-archived.ts";
 import { replaceFileAtomically } from "./session-file-replace.ts";
 import { type HistoryReducer, HistoryReductions } from "./session-history-reduce.ts";
 import type { SpawnedBy } from "./session-lifecycle-types.ts";
@@ -1283,6 +1284,9 @@ export class SessionManager {
 		source: FileEntry[];
 	} | null = null;
 	private sessionNameCache: string | undefined = undefined;
+	// The newest `session_archived` entry naming this session (senpi#6677), kept like the usage totals: a trimmed
+	// mirror cannot recompute it, so `_buildIndex` leaves it alone while the mirror is trimmed.
+	private archivedCache = false;
 	// Running usage totals over ALL entries (not branch-scoped), maintained
 	// incrementally on assistant-message append and rebuilt from scratch in
 	// _buildIndex()/newSession. Usage fields are numeric and unaffected by
@@ -1553,6 +1557,7 @@ export class SessionManager {
 		this.labelTimestampsById.clear();
 		this.leafId = null;
 		this.sessionNameCache = undefined;
+		this.archivedCache = false;
 		this.usageTotals = {
 			input: 0,
 			output: 0,
@@ -1605,7 +1610,11 @@ export class SessionManager {
 		const history = this.fileEntries.filter((entry): entry is SessionEntry => entry.type !== "session");
 		this.usageTotals = emptyUsageTotals();
 		this.fullEntryCount = history.length;
-		for (const entry of history) this._accumulateUsage(entry);
+		this.archivedCache = false;
+		for (const entry of history) {
+			this._accumulateUsage(entry);
+			this._noteArchived(entry);
+		}
 		for (const id of tail.trimmedIds) this.trimmedIds.add(id);
 		this.mirrorTrimmed = true;
 		this.fileEntries = tail.retained;
@@ -1623,7 +1632,10 @@ export class SessionManager {
 		this.leafId = null;
 		this.sessionNameCache = undefined;
 		// A trimmed mirror cannot replace the full-history totals, like the count below.
-		if (!this.mirrorTrimmed) this.usageTotals = emptyUsageTotals();
+		if (!this.mirrorTrimmed) {
+			this.usageTotals = emptyUsageTotals();
+			this.archivedCache = false;
+		}
 		let fullEntryCount = 0;
 		for (const [order, entry] of this.fileEntries.entries()) {
 			if (entry.type === "session") continue;
@@ -1631,7 +1643,10 @@ export class SessionManager {
 			this.byId.set(entry.id, entry);
 			this.entryOrdersById.set(entry.id, order);
 			this.leafId = entry.id;
-			if (!this.mirrorTrimmed) this._accumulateUsage(entry);
+			if (!this.mirrorTrimmed) {
+				this._accumulateUsage(entry);
+				this._noteArchived(entry);
+			}
 			if (entry.type === "session_info") {
 				// Empty names explicitly clear the session title.
 				this.sessionNameCache = entry.name?.trim() || undefined;
@@ -2193,7 +2208,13 @@ export class SessionManager {
 		this.leafId = residentEntry.id;
 		this.fullEntryCount++;
 		this._accumulateUsage(residentEntry);
+		this._noteArchived(residentEntry);
 		this.mutationCount++;
+	}
+
+	private _noteArchived(entry: SessionEntry): void {
+		const archived = archivedFlagOf(entry, this.sessionId);
+		if (archived !== undefined) this.archivedCache = archived;
 	}
 
 	/**
@@ -2570,6 +2591,14 @@ export class SessionManager {
 	 */
 	getSessionName(): string | undefined {
 		return this.sessionNameCache;
+	}
+
+	/**
+	 * Whether the newest `session_archived` entry naming this session archives it (senpi#6677). O(1): kept on append
+	 * and index rebuilds, so a listing never materializes the history of an idle trimmed session.
+	 */
+	isArchived(): boolean {
+		return this.archivedCache;
 	}
 
 	/**

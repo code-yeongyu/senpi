@@ -4,9 +4,10 @@
  * Identity is read from the runtime first, because a `new_session`/`switch_session` moves the durable id
  * and file before the registry's own metadata sync runs.
  */
+import { isSessionArchived } from "../../core/session-archived.ts";
 import { sessionQuestionBridges } from "./connection-question-bridge.ts";
 import { publishedSessionContext } from "./session-context-patch.ts";
-import type { RpcSessionEntry } from "./session-registry-types.ts";
+import type { RpcSessionEntry, RpcSessionRow } from "./session-registry-types.ts";
 import type { SessionStatusEntryView, SessionStatusRuntimeView } from "./session-status.ts";
 import type { SessionStatusSource } from "./session-status-stream.ts";
 
@@ -53,6 +54,8 @@ function entryView(entry: RpcSessionEntry): SessionStatusEntryView {
 	const durableSessionId = session?.sessionId ?? state?.sessionId ?? entry.durableSessionId;
 	const sessionPath = session?.sessionFile ?? state?.sessionFile ?? entry.sessionPath;
 	const name = session?.sessionManager.getSessionName() ?? state?.sessionName;
+	const archived =
+		session !== undefined ? isSessionArchived(session.sessionManager) : entry.worker?.snapshot?.archived;
 	return {
 		state: entry.state,
 		kind: entry.kind,
@@ -61,8 +64,19 @@ function entryView(entry: RpcSessionEntry): SessionStatusEntryView {
 		...(durableSessionId !== undefined ? { durableSessionId } : {}),
 		...(sessionPath !== undefined ? { sessionPath } : {}),
 		...(name !== undefined ? { name } : {}),
+		...(archived !== undefined ? { archived } : {}),
 		context: publishedSessionContext(entry.context, entry.contextOverlay),
 		openContext: entry.context,
+	};
+}
+
+/** The `list_sessions` row fields read from the same views a `session_status` row is derived from. */
+export function sessionRowStatusFields(entry: RpcSessionEntry): Pick<RpcSessionRow, "archived" | "activity" | "model"> {
+	const runtime = runtimeView(entry);
+	return {
+		archived: entryView(entry).archived === true,
+		activity: runtime?.isStreaming === true ? "running" : "idle",
+		...(runtime?.model !== undefined ? { model: runtime.model } : {}),
 	};
 }
 

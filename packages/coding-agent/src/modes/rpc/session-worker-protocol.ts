@@ -77,6 +77,8 @@ export interface WorkerSnapshot {
 	/** Turn/request activity, excluding durable wake-source holds. */
 	handoffBusy?: boolean;
 	streaming: boolean;
+	/** The session file's archived flag, read in the isolate that owns the file. */
+	archived: boolean;
 }
 
 import type { AdmissionReplyScope } from "./compact-admission-reply.ts";

@@ -2619,12 +2619,13 @@ A connection without an attachment receives `errorCode: "session_not_attached"` 
 ```json
 {"type": "session_status", "subscriptionId": "sub-1", "seq": 4, "sessionId": "rpc-1", "durableSessionId": "<id>", "sessionPath": "<path>",
  "kind": "interactive", "cwd": "<cwd>", "status": "idle", "reason": "aborted", "attachments": 3,
- "model": {"provider": "anthropic", "id": "<model>"}, "thinkingLevel": "high", "pendingQueue": {"steering": 1, "followUp": 0},
+ "archived": false, "model": {"provider": "anthropic", "id": "<model>"}, "thinkingLevel": "high", "pendingQueue": {"steering": 1, "followUp": 0},
  "lastChange": {"at": "2026-10-12T08:00:00.000Z", "cause": "abort", "by": "client"}}
 ```
 
 - `status`: `opening`, `idle`, `running`, `waiting_input` (a question is pending), `compacting`, `unloaded` (the routing handle ended and the session reopens by `sessionPath`; `reason` is `idle`, `unload_session` or `handoff`), or `closed` (`reason` is the `session_closed.reason`). After an abort ends a run, `idle` carries `reason: "aborted"`.
-- `lastChange.cause`: `open`, `prompt`, `agent_end`, `agent_idle`, `abort`, `question`, `compaction`, `set_model`, `queue`, `attach`, `detach`, `replace`, `park`, `close` or `context`; `by` is `client`, `agent` or `host`.
+- `lastChange.cause`: `open`, `prompt`, `agent_end`, `agent_idle`, `abort`, `question`, `compaction`, `set_model`, `queue`, `attach`, `detach`, `replace`, `park`, `close`, `context` or `archive` (`set_session_archived`); `by` is `client`, `agent` or `host`.
+- `archived` is the session file's archived flag (`set_session_archived`); it is always present.
 - `context` is present only with `include_context`. `lastEffect: { effectId, kind, state }` names the session's most recent effect receipt (an input with a `clientMessageId`, an abort, a model or thinking-level switch) and is absent on hosts without the `effect_ledger` capability or before the session's first effect.
 - On `new_session`, `switch_session` or `fork` the routing id stays; the record carries the new `durableSessionId` and `sessionPath` with cause `replace`.
 
@@ -3475,7 +3476,8 @@ registrant opens no socket and writes no registry directory.
     `instanceId`, `commands`: every command this endpoint accepts, and `method_classes`: the same table and digest a
     host's answer carries (one builder serves both). A terminal from before the session controls below lists no
     `commands`; one from before senpi#6158 carries no `method_classes`.
-  - `list_sessions`: exactly one row, `kind: "interactive"`, `surface: "tui"`, `attachments: 1`.
+  - `list_sessions`: exactly one row, `kind: "interactive"`, `surface: "tui"`, `attachments: 1`, plus the same
+    `archived`, `activity` and `model?` fields a host row carries.
   - `get_state`: the RPC session state plus `turn_epoch`, `blocking_question`, `compacting`,
     `editor_has_draft` and `state_version`.
   - `get_messages`.
@@ -4012,7 +4014,7 @@ names a valid preset.
 | `close_session` | `sessionId` | `{}` | Refused with `unknown_session` when the requesting connection never attached to that handle (a close releases the CALLER's attachment, and `list_sessions` publishes every handle). Otherwise aborts active work, awaits agent idle + settled persistence for up to the host grace window (default 10s), then quarantines any worker that has not exited without releasing its path reservation; its response is the LAST record tagged with that handle for the first closer — no events after (test-pinned). An admitted concurrent close joins the same teardown and receives its own successful response; output saturation rejects admission with the bounded close-overflow/resync notice described above. |
 | `list_hands` | `sessionId?` | `{ hands: [{ device, label, platform, reachable }], selected? }` | Headless engine with a hand directory only (capability `hand_selection`; otherwise `hand_selection_unsupported`). See "Hand selection (headless engine)". |
 | `select_hand` | `sessionId`, `device: string \| null` | `{ sessionId, selected }` | Records which hand runs the session's tools (`null` = this process). Refusals: `hand_not_listed`, `hand_unreachable` (`errorData.device`), `session_busy`, `hand_selection_unsupported`, `unknown_session`, `session_closing`. Method class `device_admin`. |
-| `list_sessions` | `include_workers?` (default false) | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status, attachments, retain_on_disconnect, kind, context? }] }` | Includes `opening`/`closing` entries. `retain_on_disconnect` is true when the session outlives its last attachment (an open or attach asked for it; retention is never revoked), so no client's release or disconnect can end it. Internally quarantined workers remain externally `closing` until exit. `attachments` is the session's live client attachment count; `0` on an `open` row is a retained session with no client attached. Every row carries `kind`. Rows with `kind: "worker"` are omitted unless `include_workers: true`, and `context` is published ONLY on that listing — a default listing carries no `context` at all. |
+| `list_sessions` | `include_workers?` (default false) | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status, attachments, retain_on_disconnect, kind, context?, archived, activity, model? }] }` | Includes `opening`/`closing` entries. `archived` is the session file's archived flag (see `set_session_archived`); a thread list hides archived rows by default, and the host lists them like any other row. `activity` is `running` while a turn is in flight (the same streaming state `session_status` reports as `running`) and `idle` otherwise, including an opening row. `model` is the session's current `{ provider, id }`, the same value `session_status.model` carries, and is absent while it is unknown. `retain_on_disconnect` is true when the session outlives its last attachment (an open or attach asked for it; retention is never revoked), so no client's release or disconnect can end it. Internally quarantined workers remain externally `closing` until exit. `attachments` is the session's live client attachment count; `0` on an `open` row is a retained session with no client attached. Every row carries `kind`. Rows with `kind: "worker"` are omitted unless `include_workers: true`, and `context` is published ONLY on that listing — a default listing carries no `context` at all. |
 | `detach_connection` | - | `{ deferred: string[] }` | Multi-session hosts that advertise `detach_connection`. Meant as the connection's last request: the host releases every session attachment this connection holds and answers only after that, so another connection's next `list_sessions` no longer counts it. `deferred` names the sessions that still count it (see `#### detach_connection`). Closing the socket afterwards releases nothing more. `senpi host session` sends it before closing, bounded at 5 s; on a host without the capability, or after a request timed out or the connection was lost, it relies on the release at socket close. |
 | `release_session` | `sessionId`, `reason: "takeover" \| "move"`, `moveId?` (required for `move`), `target?`, `interrupt?`, `force?` | `{ released: true, session_path, attachments }` | Hands the session to a runtime outside this host. See "Handing a session over (`release_session`)" below. |
 | `move_session` | `op` and its fields (see "Moving a session to another device (`move_session`)") | per `op` | Drives one step of a session move between hosts. Capability `move_session`. |
@@ -6026,6 +6028,27 @@ Response:
 ```
 
 The current session name is available via `get_state` in the `sessionName` field. To set the initial name when starting RPC mode, pass `--name <name>` or `-n <name>` to the `senpi --mode rpc` process.
+
+#### set_session_archived
+
+Archive or unarchive the session (method class `drive`). The flag is written into the session file as a `custom` entry (`customType: "session_archived"`, `data: { archived, sessionId }`), so every surface that reads the file (the desktop app, the CLI, the terminal, a relay listing on another device) sees the same value; the newest such entry wins and a session without one is not archived. Archiving changes nothing else: the session stays open, listed and drivable.
+
+An entry counts only for the session id it names. A fork or clone (`fork`, `clone`, `move_session` `op: "copy"`, `senpi --fork`) is a new thread under a new id: it copies the source's entries but starts unarchived, while the source keeps its flag. Reopening or moving a session keeps its id, so it keeps its flag. Reading the flag never loads the session's history: the host keeps it current as entries are appended, so listing an idle compacted session leaves its trimmed history on disk.
+
+```json
+{"type": "set_session_archived", "sessionId": "rpc-1", "archived": true}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "set_session_archived",
+  "success": true
+}
+```
+
+Every attached connection then receives `session_archived_changed { archived }`, and every matching `subscribe_sessions` subscriber, attached or not, receives a `session_status` with `archived` set and `lastChange.cause: "archive"`. `list_sessions` reports the flag on each row as `archived`. Like every custom entry, the flag reaches the file with the session's next persisted write: a session that has never had a message stays unsaved, so its flag lasts only as long as the session is open.
 
 #### record_user_activity
 
