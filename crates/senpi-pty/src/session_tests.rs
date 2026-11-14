@@ -50,6 +50,179 @@ fn pty_session_reports_shell_pid_and_process_group_after_exit() {
     assert_eq!(session.process_group_id(), Some(process_group));
 }
 
+#[cfg(unix)]
+fn child_env(options: PtySessionOptions) -> String {
+    let output = Arc::new(Mutex::new(Vec::new()));
+    let seen = Arc::clone(&output);
+    let mut session = PtySession::start(options.arg("-c").arg("env"), move |chunk| {
+        seen.lock().unwrap().extend_from_slice(chunk)
+    })
+    .unwrap();
+    assert_eq!(session.wait().unwrap().exit_code, Some(0));
+    let text = String::from_utf8_lossy(&output.lock().unwrap()).replace('\r', "");
+    text
+}
+
+// Cargo puts CARGO_MANIFEST_DIR in the test binary's OS environment, so it stands in for a variable the JS caller
+// deleted from process.env but the OS environment still holds (omo#12157), without a racy set_var.
+#[cfg(unix)]
+#[test]
+fn pty_session_with_exact_env_drops_every_inherited_variable_the_env_leaves_out() {
+    let probe = "CARGO_MANIFEST_DIR";
+    assert!(
+        std::env::var_os(probe).is_some(),
+        "{probe} must be in the test environment"
+    );
+    let path = std::env::var("PATH").unwrap();
+    let home = std::env::temp_dir().to_string_lossy().into_owned();
+    let given = PtySessionOptions::new("/bin/sh")
+        .exact_env()
+        .env("PATH", path.clone())
+        .env("HOME", home.clone());
+    let inherited = PtySessionOptions::new("/bin/sh").env("HOME", home.clone());
+
+    let cleared = child_env(given);
+    let overlaid = child_env(inherited);
+
+    assert!(
+        !cleared.contains(&format!("{probe}=")),
+        "cleared env leaked {probe}: {cleared}"
+    );
+    assert!(
+        cleared.lines().any(|line| line == format!("PATH={path}")),
+        "PATH missing: {cleared}"
+    );
+    assert!(cleared.lines().any(|line| *line == format!("HOME={home}")));
+    assert!(
+        overlaid.contains(&format!("{probe}=")),
+        "the control must still inherit {probe}"
+    );
+}
+
+// senpi#5519 on Windows: a deleted inherited variable (the engine trust closure) never reaches the child, while
+// portable-pty's registry environment still does - including a value added after this process started, and a
+// user's own registry value for a name the caller deleted from the inherited environment.
+#[cfg(windows)]
+fn has_var(output: &str, name: &str) -> bool {
+    let upper = output.to_ascii_uppercase();
+    let needle = format!("{name}=");
+    upper.match_indices(&needle).any(|(index, _)| {
+        index == 0 || {
+            let before = upper.as_bytes()[index - 1];
+            !before.is_ascii_alphanumeric() && before != b'_'
+        }
+    })
+}
+
+#[cfg(windows)]
+struct RegistryValues(&'static [&'static str]);
+
+#[cfg(windows)]
+impl RegistryValues {
+    fn add(
+        names_and_values: &'static [(&'static str, &'static str)],
+        names: &'static [&'static str],
+    ) -> Self {
+        for (name, value) in names_and_values {
+            let status = std::process::Command::new("reg")
+                .args([
+                    "add",
+                    "HKCU\\Environment",
+                    "/v",
+                    name,
+                    "/t",
+                    "REG_SZ",
+                    "/d",
+                    value,
+                    "/f",
+                ])
+                .status()
+                .unwrap();
+            assert!(status.success(), "reg add {name} failed");
+        }
+        Self(names)
+    }
+}
+
+#[cfg(windows)]
+impl Drop for RegistryValues {
+    fn drop(&mut self) {
+        for name in self.0 {
+            let _ = std::process::Command::new("reg")
+                .args(["delete", "HKCU\\Environment", "/v", name, "/f"])
+                .status();
+        }
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn pty_session_with_exact_env_keeps_the_windows_registry_environment_and_drops_the_closure() {
+    let probe = "CARGO_MANIFEST_DIR";
+    assert!(
+        std::env::var_os(probe).is_some(),
+        "{probe} must be in the test environment"
+    );
+    // The closure an engine was exec'd with, then deleted from its JS environment.
+    std::env::set_var("SSL_CERT_FILE", "C:\\senpi-closure\\empty.pem");
+    std::env::set_var("SSL_CERT_DIR", "C:\\senpi-closure\\empty.d");
+    // Set by the user in System Properties after the engine started.
+    let _registry = RegistryValues::add(
+        &[
+            ("SENPI_PTY_REG_ADDED", "reg-added"),
+            ("SSL_CERT_DIR", "C:\\user-certs"),
+        ],
+        &["SENPI_PTY_REG_ADDED", "SSL_CERT_DIR"],
+    );
+    let shell = std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".to_string());
+    let mut options = PtySessionOptions::new(shell)
+        .arg("/d")
+        .arg("/s")
+        .arg("/c")
+        .arg("set")
+        .exact_env()
+        .timeout(Duration::from_secs(120));
+    for (key, value) in std::env::vars() {
+        let deleted = [probe, "SSL_CERT_FILE", "SSL_CERT_DIR"];
+        if !deleted.iter().any(|name| key.eq_ignore_ascii_case(name)) {
+            options = options.env(key, value);
+        }
+    }
+    let output = Arc::new(Mutex::new(Vec::new()));
+    let seen = Arc::clone(&output);
+    let mut session = PtySession::start(options, move |chunk| {
+        seen.lock().unwrap().extend_from_slice(chunk)
+    })
+    .unwrap();
+    let exit = session.wait().unwrap();
+    std::env::remove_var("SSL_CERT_FILE");
+    std::env::remove_var("SSL_CERT_DIR");
+    let text = String::from_utf8_lossy(&output.lock().unwrap()).into_owned();
+    let upper = text.to_ascii_uppercase();
+
+    assert_eq!(exit.exit_code, Some(0), "default shell failed: {text}");
+    for name in ["PATH", "SYSTEMROOT", "COMSPEC", "USERPROFILE", "TEMP"] {
+        assert!(
+            has_var(&text, name),
+            "{name} missing from the child environment: {text}"
+        );
+    }
+    // Absence is checked on the raw output: a ConPTY escape sequence right before a name cannot hide a leak.
+    assert!(
+        !upper.contains(&format!("{probe}=")),
+        "a deleted inherited variable leaked: {text}"
+    );
+    assert!(!upper.contains("SENPI-CLOSURE"), "the closure leaked: {text}");
+    assert!(
+        upper.contains("SENPI_PTY_REG_ADDED=REG-ADDED"),
+        "a post-start registry value was lost: {text}"
+    );
+    assert!(
+        upper.contains("SSL_CERT_DIR=C:\\USER-CERTS"),
+        "the user's registry value was dropped: {text}"
+    );
+}
+
 #[test]
 fn background_wait_does_not_complete_before_reader_drain() {
     let output = Arc::new(Mutex::new(Vec::new()));
