@@ -25,9 +25,11 @@ export interface ToolSearchRuntime {
 	getAllTools(): ToolInfo[];
 	getActiveTools(): string[];
 	setActiveTools(names: readonly string[]): void;
+	/** Stage tools for the next request without activating them; hosts without it ignore staging. */
+	setStagedTools?(names: readonly string[]): void;
 }
 
-type RuntimeApi = Pick<ExtensionAPI, "getActiveTools" | "getAllTools" | "setActiveTools">;
+type RuntimeApi = Pick<ExtensionAPI, "getActiveTools" | "getAllTools" | "setActiveTools" | "setStagedTools">;
 
 /** Redirect text for a tool the model may name but cannot call directly (eval-only bash, removed tools). */
 export interface HiddenToolHint {
@@ -186,6 +188,18 @@ export class ToolSearchService {
 		if (doc === undefined) return false;
 		this.#feeds.get(doc.source)?.hooks.activate([name]);
 		return this.#runtime.getActiveTools().includes(name);
+	}
+
+	/**
+	 * Make matches callable in the next request without activating them (issue #6219): transports
+	 * whose tool-call parsing depends on the request `tools` array silently drop a call for a tool
+	 * that is not listed, so a search's matches ride along for one request. A by-name call then
+	 * activates through the normal lazy path.
+	 */
+	stage(names: readonly string[]): void {
+		this.#assertLive();
+		if (names.length === 0) return;
+		this.#runtime.setStagedTools?.(names);
 	}
 
 	/** Replay ownership-aware and legacy MCP history once per catalog generation. */

@@ -103,6 +103,7 @@ export default function toolSearchExtension(pi: ExtensionAPI): void | Promise<vo
 		getAllTools: () => pi.getAllTools(),
 		getActiveTools: () => pi.getActiveTools(),
 		setActiveTools: (names: readonly string[]) => pi.setActiveTools([...names]),
+		setStagedTools: (names: readonly string[]) => pi.setStagedTools?.([...names]),
 	};
 	const service = new ToolSearchService(runtime);
 	if (hasProviderScope()) installScopedToolSearchService(service);
