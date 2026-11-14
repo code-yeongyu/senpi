@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const NPM_PACKAGE = "@code-yeongyu/senpi";
+const NPM_PACKAGE = "@code-yeongyu/senpi";
 const SMOKE_JOB = /^smoke-test-binaries \((.+)\)$/;
 const FAILED = new Set(["failure", "timed_out"]);
 
