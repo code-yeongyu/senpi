@@ -1,4 +1,4 @@
-import { type Component, truncateToWidth } from "@earendil-works/pi-tui";
+import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { AgentSession } from "../../../core/agent-session.ts";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
 import { getGrokChromeTokens } from "./chrome-tokens.ts";
@@ -16,7 +16,7 @@ export class GrokFooter implements Component {
 	}
 
 	setAutoCompactEnabled(_enabled: boolean): void {
-		// The grok footer intentionally presents model and cwd only.
+		// Auto-compaction is not shown in the compact footer.
 	}
 
 	invalidate(): void {
@@ -31,6 +31,12 @@ export class GrokFooter implements Component {
 		const tokens = getGrokChromeTokens();
 		const cwd = this.session.sessionManager.getCwd();
 		const model = this.session.state.model?.id ?? "no-model";
-		return [truncateToWidth(`${tokens.cwd(cwd)} ${tokens.modelLabel(model)}`, width, "")];
+		const level = this.session.supportsThinking() ? `:${this.session.thinkingLevel}` : "";
+		const modelLabel = tokens.modelLabel(
+			`${truncateToWidth(model, Math.max(0, width - visibleWidth(level)), "")}${level}`,
+		);
+		const cwdWidth = Math.max(0, width - visibleWidth(modelLabel) - 1);
+		const prefix = cwdWidth > 0 ? `${truncateToWidth(tokens.cwd(cwd), cwdWidth, "")} ` : "";
+		return [truncateToWidth(`${prefix}${modelLabel}`, width, "")];
 	}
 }

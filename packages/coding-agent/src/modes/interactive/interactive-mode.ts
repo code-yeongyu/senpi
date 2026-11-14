@@ -5497,7 +5497,6 @@ export class InteractiveMode {
 			case "thinking_level_changed":
 				this.footer.invalidate();
 				this.updateEditorBorderColor();
-				this.showStatus(`Thinking level: ${event.level}`);
 				break;
 
 			case "model_change_skipped":
