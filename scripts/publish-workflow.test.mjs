@@ -23,15 +23,20 @@ describe("publish-only workflow", () => {
 
 	it("calls native prebuilds and stages their consumer-ready artifacts before building", () => {
 		assert.match(nativePrebuildWorkflow, /workflow_call:/);
+		// The call's readiness is an output of the always-running ready job, not needs.<call>.result.
+		assert.match(nativePrebuildWorkflow, /    outputs:\n      ready:\n[\s\S]*?value: \$\{\{ jobs\.ready\.outputs\.ready \}\}/);
+		assert.doesNotMatch(workflow, /needs\.native-prebuilds\.result/);
 		assert.match(
 			nativePrebuildWorkflow,
 			/path: \$\{\{ runner\.temp \}\}\/native-prebuild-artifact\s*$/m,
 		);
 		assert.match(workflow, /native-prebuilds:\s+(?:needs: require-version\s+)?(?:if: [^\n]+\s+)?uses: \.\/\.github\/workflows\/native-prebuilds\.yml/);
 		assert.match(workflow, /native-prebuilds:\s+needs: require-version\s+if: \$\{\{ inputs\.publish-only == true \}\}\s+uses:/);
+		// senpi#6642 added the forced-suite jobs to the release job's needs; publish-only still gates on the ready output
+		// (scripts/publish-forced-suite-workflow.test.mjs evaluates the whole condition).
 		assert.match(
 			workflow,
-			/needs: native-prebuilds\s+if: \$\{\{ always\(\) && \(inputs\.publish-only != true \|\| needs\.native-prebuilds\.result == 'success'\) \}\}/,
+			/needs: \[native-prebuilds, [^\]\n]*\]\s+(?:#[^\n]*\s+)*if: \$\{\{ always\(\) && \(inputs\.publish-only != true \|\| needs\.native-prebuilds\.outputs\.ready == 'true'\) && /,
 		);
 		const nativeDownload = workflow.match(/- name: Download native prebuilds[\s\S]*?(?=\n      - name: Build all workspaces)/)?.[0];
 		assert.ok(nativeDownload, "expected native prebuild download before workspace builds");

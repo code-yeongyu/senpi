@@ -1,3 +1,136 @@
+## 2026-11-11 - move_session status answers from the file at the landing it is given (senpi#6436)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-move-request.ts`: `status` parses `landing: { cwd, sessionFileName, sessionDir? }` (`parseStatusFile`); the parsed request names at most one file, `sessionPath` or `landing` (`StatusNamedFile`). `landing` with `sessionPath`, a `cwd` or `sessionDir` that is not absolute, and a `sessionFileName` that is not a plain session file name are `invalid_move_request`.
+- `packages/coding-agent/src/modes/rpc/session-move-landed.ts`: `statusFile` resolves a landing to the path `import` lands a session at, from the same three values and this host's agent directory, with the path function that makes no folder; `statusAnswer` takes the file the request named.
+- `packages/coding-agent/src/modes/rpc/session-move-commands.ts`: the `status` case passes that file.
+- `packages/coding-agent/src/modes/rpc/session-move-wire.ts`, `packages/coding-agent/src/modes/rpc/method-classes-schema-host.ts`, `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: `RpcMoveStatusLanding` on the `status` command, its inbound schema, and the capability `move_session_status_landing`.
+- `packages/coding-agent/docs/rpc.md`: the `status` row and the paragraph and table on `landing`.
+
+### Why
+
+- A move's record can be lost while its session landed. `status` then answers `declined: no_record`, and a sender that takes that as "never arrived" takes the session back, leaving two writable copies. A `status` that names the landing answers `accepted` from the file, so `no_record` is answered only when no landing is there.
+- The landing is where a session of that name lands, so a move back to a host the session was on before finds the copy the earlier move left. That file is not this move's landing; answering `move_mismatch` for it would leave such a move with no answer a sender can act on.
+
+### Why an extension could not handle it
+
+- `move_session` and the move ledger are the RPC host's own surface.
+
+### Expected merge conflict zones
+
+- LOW: the `status` variant in `session-move-wire.ts`, `session-move-request.ts` and `method-classes-schema-host.ts`, and the capability list in `host-capabilities.ts`, against other move work that adds fields beside them.
+
+## 2026-11-11 - move_session status answers where an accepted move landed (senpi#6436)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-move-landed.ts` (new): `statusAnswer` adds `session_path`, `session_id` and `cwd` (or `landed_file: "gone"`) beside an `accepted` answer; `landedWhenFenced` gives the same fields to the `errorData` of an `import` refused `move_fenced` because its move already landed, with `revoked: true` when that copy was sealed.
+- `packages/coding-agent/src/modes/rpc/session-move-commands.ts`: `status` answers through `statusAnswer`, and a refusal carries what `landedWhenFenced` returns.
+- `packages/coding-agent/src/modes/rpc/session-move-wire.ts`, `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: the type `RpcMoveLanded` and the capability `move_session_status_landed_path`.
+- `packages/coding-agent/docs/rpc.md`: the `status` row and a paragraph on where an accepted move landed.
+
+### Why
+
+- Only the `import`'s own answer named the landed session. A caller that lost that answer and no longer had the bundle could not bind a session that had landed: `status` answered `{ state: "accepted" }` and a landed file nobody opened is in no listing.
+
+### Why an extension could not handle it
+
+- The landing target is the hidden part of the host's move record; no extension reads the move ledger.
+
+### Expected merge conflict zones
+
+- LOW: the `status` case and the refusal in `session-move-commands.ts`, `RpcMoveRecord` in `session-move-wire.ts`, and the capability list in `host-capabilities.ts`.
+
+## 2026-11-11 - move_session answers a repository identity and checks it at prepare (senpi#6435)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-move-wire.ts`: op `identity` in two forms (`sessionPath` or `cwd`, exactly one), `cwd` and `repository` on op `prepare`, the answer shape `{ repository? }`, and the capabilities `move_session_identity` and `move_session_prepare_repository`. The `identity` answer's `repository` is typed `RpcRepositoryIdentity`, the one name for that wire shape.
+- `packages/coding-agent/src/modes/rpc/session-move-request.ts`: parses both, including the identity shape; a `repository` without `cwd`, a relative path, both identity forms at once or neither is `invalid_move_request` before anything is read.
+- `packages/coding-agent/src/modes/rpc/session-move-commands.ts`: `prepare` goes through `prepareMove`, and `identity` reads either this host's session folder or the named folder. The `identity` answer is a plain copy in the wire shape.
+- `packages/coding-agent/src/modes/rpc/method-classes-schema-host.ts`: the two new `move_session` union members and the bounded repository shape. The method class is unchanged: `move_session` stays `connection_local` needing `device_admin` on a delegated connection, so `identity` needs what `export` needs.
+- `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: both capabilities are advertised by multi-session hosts.
+
+### Why
+
+- A client has to be able to decide a move before it releases anything, and it can only do that if the engine answers the two identities and compares them where the move is readied. The capabilities let an older client keep today's order against an older host.
+
+### Why an extension could not handle it
+
+- `move_session`, its capability list and the host's own method-class table are the RPC host's surface.
+
+### Expected merge conflict zones
+
+- LOW: the `move_session` union in `session-move-wire.ts` and `method-classes-schema-host.ts`, the op switch in `session-move-commands.ts`, and the capability list in `host-capabilities.ts`.
+
+## 2026-11-11 - An open_session by path with no cwd works where the file's header says (senpi#6427)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/open-session-folder.ts` (new): `openSessionFolder` decides the folder an `open_session` works in. A `cwd` the open names wins. An open that names none and a `sessionPath` at which a session file exists takes the folder that file's header names; any other open takes the host's default.
+- `packages/coding-agent/src/modes/rpc/session-router-open.ts`: `open` puts that folder into the launch profile before the registry sees it, so the in-process and the worker runtime, the listed row, `session_opened` and a later park all carry it. The registry maps a folder the desktop moved (`resolveMovedProfile`) and refuses one that is not on this host (`assertSessionCwdExists`), as it does for a named `cwd`.
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts`, `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: the capability `open_session_header_cwd`.
+- `packages/coding-agent/src/core/session-header-cwd.ts` (new): `readHeaderCwd` reads the folder a session file's header names, finding that header as the session manager does (blank and unparseable leading lines skipped, the first parsed entry decides). Only ENOENT and ENOTDIR mean "no file yet"; every other failure to read an existing file throws, so an unreadable file is never taken for one that names no folder.
+- `packages/coding-agent/src/modes/rpc/session-router-open.ts`: the folder is decided inside the open's `try`, so a refusal from it is answered as the open's failure.
+- `packages/coding-agent/src/modes/rpc/rpc-host-command-types.ts`, `packages/coding-agent/docs/rpc.md`: what an omitted `cwd` means, and that an open never falls back to the host's folder for a file it could not read.
+
+### Why
+
+- From this PR's review: a `cwd` of `null` reached the decision as a named folder where the launch profile treats it as none, so such an open failed where it used to work; the header was read strictly from line 1 with every error swallowed, so a blank first line (and an unreadable file) opened in the host's folder; and a moved-path probe whose step timed out read the old spelling unmapped and fell back to the host's folder, which is this PR's own defect on a stalled mount.
+- The launch profile's `cwd` was `command.cwd ?? host default`, never undefined, and the registry passed it to `SessionManager.open` as the override that beats the header. A session reopened by path alone therefore ran in the folder the host was started in: its tools ran there and its file gained a rules scan of that folder. Every caller that re-opens a session after a host restart with only its path hit this.
+
+### Why an extension could not handle it
+
+- The folder is fixed by the host's launch profile before any extension of the session loads.
+
+### Expected merge conflict zones
+
+- LOW: the first lines of `open` in `session-router-open.ts`, and the capability list in `host-capabilities.ts`.
+
+## 2026-11-11 - the socket-secret publish wrapper fails typed on every bridge failure (senpi#6434)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/socket-secret-publish.ts` (new): `publishSocketSecretNoReplace`, `SocketSecretPublishError` and the publish result types move here from `socket-secret-native.ts`, which re-exports them, so existing imports keep working.
+- `publishSocketSecretNoReplace` throws `SocketSecretPublishError` in three more cases. A binding call that throws (the bridge's `unsupported platform`, or an N-API argument conversion) becomes `bridge call threw: ...` and keeps the original error as `cause`. A non-object result becomes `unexpected bridge result ...` instead of a `TypeError` from reading `stagingLeftBehind`. A truthy `failure` or `stagingLeftBehind` that is not an object with the expected field types (`step` string and `code` number; `path` string and `windowsError` number) also becomes `unexpected bridge result: ...`, instead of a typed error with `undefined` fields.
+
+### Why
+
+- The bridge result crosses a native boundary, and every failure of a public-secret publication must reach the caller as the typed error (review follow-up for senpi#4312 and senpi#6434, sisyphuslabs/omo-desktop-app#4199).
+
+### Why an extension could not handle it
+
+- The socket-secret bridge loader runs in the RPC host lifecycle, outside any extension.
+
+### Expected merge conflict zones
+
+- LOW: the re-export lines at the top of `socket-secret-native.ts`; `socket-secret-publish.ts` is new.
+
+## 2026-11-11 - move_session carries a small bundle inline, and import lands and opens where the caller says (senpi#6267)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-move-wire.ts`, `packages/coding-agent/src/modes/rpc/session-move-request.ts`: `export` takes `inline` and `inlineMaxBytes`; `import` takes `files` in place of `bundleDir`, plus `sessionDir` and `open`. Five capability strings (`move_session_export_inline`, `move_session_import_files`, `move_session_import_session_dir`, `move_session_import_open`, and `move_session_inline_max_bytes:<n>`, which states the cap) and the inline limits (`MOVE_INLINE_MAX_BYTES`, 1 MiB; `MOVE_INLINE_MAX_FILES`, 1,024).
+- `packages/coding-agent/src/modes/rpc/session-move-commands.ts`: `export` answers `inline_files` when the bundle fits, read under the move lock. The `import` op moved to `packages/coding-agent/src/modes/rpc/session-move-import.ts` (new), which takes the bundle as a folder or inline, lands it in `sessionDir` when given, and opens the landed session when asked, in the folder the import named (`cwd`), not the host's own (senpi#6427). `sessionDirRefusal` refuses a `sessionDir` with a file in its place or above it as a request error, before the move is touched.
+- `packages/coding-agent/src/modes/rpc/session-move-router.ts` (new): the router's move port, moved out of `packages/coding-agent/src/modes/rpc/session-router-routing.ts`, plus the open an import asks for, behind the draining check and the compact admission gate an `open_session` meets.
+- `packages/coding-agent/src/modes/rpc/session-router-open.ts`, `packages/coding-agent/src/modes/rpc/session-router-open-result.ts`: an open can reply as another command (`OpenReplyAs`), so the import's answer carries the open's data at the keys `open_session` uses and leaves on the session's queue like an `open_session` reply.
+- `packages/coding-agent/src/modes/rpc/open-retention.ts` (new), `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: the line-receipt rule that retains an open on a delegated connection, and an unasked one on a machine-owned host (senpi#5808), moved out of the host's line handler into `withOpenRetention`, which also covers the open an `import` asks for.
+- `packages/coding-agent/src/modes/rpc/method-classes-schema-host.ts`, `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: the inbound schema for the new fields and the advertised capabilities.
+- `packages/coding-agent/docs/rpc.md`: the `export` and `import` rows, and "Moving without a bundle folder" at the end of the `move_session` chapter.
+
+### Why
+
+- A move between two hosts paid transport round trips that only carried the bundle folder (a listing and reads on the way out, writes and a removal on the way in), and one more to open the landed session. With the bundle inline a move whose source is remote goes from 6-7 round trips to 4, and one whose target is remote from 4-5 to 2.
+
+### Why an extension could not handle it
+
+- `move_session` and its capability list are the RPC host's own surface, and the open runs on the router's own open path.
+
+### Expected merge conflict zones
+
+- LOW: the `move_session` union in `method-classes-schema-host.ts` and `session-move-wire.ts`, the capability list in `host-capabilities.ts`, the `gate.dispatch` call in `multi-session-host.ts`'s line handler, the `export` branch of `session-move-commands.ts`, and the reply at the end of `open()` in `session-router-open.ts`.
+
 ## 2026-11-10 - The attachment gate admits the forwarder's peer lane; the roles refusal names peer_agent (senpi#6305)
 
 ### What changed

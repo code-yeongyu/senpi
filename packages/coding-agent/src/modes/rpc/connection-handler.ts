@@ -1,3 +1,4 @@
+import { projectCwdMismatch } from "./project-expected-cwd.ts";
 import {
 	isHostOwnedToolRuntimeCapability,
 	type ToolRuntimeKind,
@@ -1349,6 +1350,8 @@ export function createRpcConnectionHandler(
 		requestContext?: ExtensionRpcRequestContext,
 	): Promise<RpcResponse | undefined> => {
 		const id = command.id;
+		const cwdMismatch = projectCwdMismatch(command, session.sessionManager.getCwd());
+		if (cwdMismatch !== undefined) return error(id, command.type, cwdMismatch.message, cwdMismatch.errorCode);
 
 		switch (command.type) {
 			case "get_protocol_info":

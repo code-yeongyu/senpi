@@ -1,3 +1,25 @@
+## 2026-11-11 - Provider strict mode and scope are one registry per realm (omo#12965)
+
+### What changed
+
+- `packages/ai/src/provider-scope-registry.ts` (new): the browser-neutral lookup of the realm's `provider-scope/v1` registry (`lookupProviderScopeRegistry`, never creates one) and the structural check of a scope object another pi-ai copy may have placed.
+- `packages/ai/src/node/provider-scope.ts`: creates that registry through `@earendil-works/pi-realm-registry`. The `AsyncLocalStorage` and both strict modes live in its closure. `activeProviderScope`, `runWithProviderScope` and `bindToProviderScope` go through it. A scope whose members another copy shaped differently refuses: the lookups read it as a closed scope, and `activeProviderScope()` throws an error whose `code` is `PI_PROVIDER_SCOPE_UNREADABLE` instead of reading it as no scope. It no longer installs scope accessors.
+- `packages/ai/src/api-registry.ts`, `packages/ai/src/images-api-registry.ts`: strict mode and the active scope are read from the registry at call time; with no registry in the realm they keep the module-local strict mode and no scope. A strict mode that is not a boolean reads as on. `getApiProviderAtEvaluation` is the non-throwing lookup for registration that runs while a module evaluates.
+- `packages/ai/src/api-registry.ts`, `packages/ai/src/images-api-registry.ts`: `installProviderScopeAccessor` and `installImagesProviderScopeAccessor` are removed. They installed a per-copy lookup of the active scope; the registry is that lookup now, and a per-copy one would split it again. Their only callers were in `node/provider-scope.ts`.
+- `packages/ai/src/compat.ts`: `registerBuiltInApiProviders()` uses `getApiProviderAtEvaluation` for its two lookups, so a pi-ai copy evaluated while the realm's strict mode is on still loads. Every runtime lookup keeps strict mode.
+
+### Why
+
+- A process can hold more than one copy of pi-ai in one realm (the bundled engine next to the SDK graph a plugin imports). Strict mode and the scope were module state, so a second copy resolved providers from its global registry while the first one refused.
+
+### Why an extension could not handle it
+
+- The state belongs to pi-ai's registries; an extension cannot make two copies of a module share module state.
+
+### Expected merge conflict zones
+
+- MEDIUM: the scope lookup at the top of `api-registry.ts` and `images-api-registry.ts`, and `registerBuiltInApiProviders()` in `compat.ts`.
+
 ## 2026-11-10 - Export the shared Ultrafast documented-model list (senpi#2978)
 
 ### What changed

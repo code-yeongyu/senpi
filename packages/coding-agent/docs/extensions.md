@@ -2598,6 +2598,16 @@ pi.on("tool_call", () => {
 });
 ```
 
+### pi.engine
+
+The engine this extension is running in: the same exports `import * as engine from "@code-yeongyu/senpi"` gives when the loader serves that specifier. Read the running engine's exports here when your extension is bundled or loaded in a way where its own import of that specifier could evaluate a second copy of the engine. The property is read-only and gives nothing an import does not.
+
+```typescript
+export default function (pi: ExtensionAPI) {
+  const { createAgentSession } = pi.engine;
+}
+```
+
 ### pi.getSubscriptionLimits()
 
 Every subscription account's latest limit windows, the same records RPC `get_subscription_limits` serves: `{ provider, account, windows, reportedAt, plan?, error? }`. The engine polls each signed-in Claude and ChatGPT subscription account's usage endpoint (interactive and RPC modes) and turns update the same records, so an account's windows are known before its first turn. An account nothing has reported for is absent. `error` says why the last poll failed (for example `auth stale - run /login`); the windows beside it are the last ones reported.

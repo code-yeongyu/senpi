@@ -12,6 +12,7 @@ export const WORKSPACE_PACKAGES = [
 	"packages/server/package.json",
 	"packages/pty/package.json",
 	"packages/telemetry/package.json",
+	"packages/realm-registry/package.json",
 	"packages/senpi-codemode/package.json",
 	"packages/machine-ops/package.json",
 	"packages/tui/package.json",

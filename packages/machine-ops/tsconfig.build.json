@@ -5,7 +5,8 @@
 		"rootDir": ".",
 		"paths": {
 			"@earendil-works/pi-pty": ["../pty/dist/index.d.ts"],
-			"@earendil-works/pi-pty/*": ["../pty/dist/*.d.ts"]
+			"@earendil-works/pi-pty/*": ["../pty/dist/*.d.ts"],
+			"@earendil-works/pi-realm-registry": ["../realm-registry/dist/index.d.ts"]
 		}
 	},
 	"include": ["src/**/*.ts", "test/conformance/**/*.ts"],

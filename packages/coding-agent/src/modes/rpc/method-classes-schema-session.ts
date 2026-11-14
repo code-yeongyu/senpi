@@ -226,14 +226,18 @@ const SURFACE_AND_ACCOUNT_SCHEMAS = {
 	get_commands: session("get_commands", {}),
 	get_loaded_surfaces: session("get_loaded_surfaces", {}),
 	get_project_trust: session("get_project_trust", {}),
-	set_project_trust: session("set_project_trust", { choice: literals("trust", "trust_parent", "do_not_trust") }),
+	set_project_trust: session("set_project_trust", {
+		choice: literals("trust", "trust_parent", "do_not_trust"),
+		expectedCwd: OptStr,
+	}),
 	get_project_settings: session("get_project_settings", {}),
-	set_project_setting: session("set_project_setting", { key: Id, value: Type.Unknown() }),
+	set_project_setting: session("set_project_setting", { key: Id, value: Type.Unknown(), expectedCwd: OptStr }),
 	read_project_file: session("read_project_file", { path: PathStr }),
 	write_project_file: session("write_project_file", {
 		path: PathStr,
 		content: Str,
 		ifEtag: Type.Union([Id, Type.Null()]),
+		expectedCwd: OptStr,
 	}),
 	get_project_mcp_servers: session("get_project_mcp_servers", {}),
 	set_project_mcp_servers: session("set_project_mcp_servers", {

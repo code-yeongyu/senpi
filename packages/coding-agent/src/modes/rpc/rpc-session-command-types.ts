@@ -332,12 +332,24 @@ export type RpcSessionCommand =
 
 	// The session workspace's project trust and project-scope settings (senpi#6176)
 	| { id?: string; type: "get_project_trust" }
-	| { id?: string; type: "set_project_trust"; choice: "trust" | "trust_parent" | "do_not_trust" }
+	| {
+			id?: string;
+			type: "set_project_trust";
+			choice: "trust" | "trust_parent" | "do_not_trust";
+			expectedCwd?: string;
+	  }
 	| { id?: string; type: "get_project_settings" }
-	| { id?: string; type: "set_project_setting"; key: string; value: unknown }
+	| { id?: string; type: "set_project_setting"; key: string; value: unknown; expectedCwd?: string }
 	// The workspace's instruction files: AGENTS.md, CLAUDE.md, .omo/rules/**
 	| { id?: string; type: "read_project_file"; path: string }
-	| { id?: string; type: "write_project_file"; path: string; content: string; ifEtag: string | null }
+	| {
+			id?: string;
+			type: "write_project_file";
+			path: string;
+			content: string;
+			ifEtag: string | null;
+			expectedCwd?: string;
+	  }
 	| { id?: string; type: "get_project_mcp_servers" }
 	| { id?: string; type: "set_project_mcp_servers"; patch: Record<string, unknown>; ifEtag: string | null }
 	| { id?: string; type: "read_project_skill_file"; skill: string }

@@ -3691,7 +3691,7 @@ A move lands in one file only. The first `import` that starts receiving a move r
 
 This is what makes `declined` (`no_record`) safe to act on. A record can be lost while the session it described landed; a sender that reads "no record" as "never arrived" would take the session back and leave two writable copies. A `status` that names the landing answers `accepted` for such a move, so `no_record` is answered only when no landing is there. `landing` together with `sessionPath`, a `cwd` or `sessionDir` that is not absolute, and a `sessionFileName` that is not a plain session file name (a path separator, `..`, another extension) are refused `invalid_move_request` and nothing is recorded. Send this `status` only after the import answered or its deadline passed: on a move this host has no record of, the answer records the fence.
 
-An interrupted step never leaves two writable copies, and the record always ends up agreeing with the files. Before the import renames the session into place, the record is stamped `committing`, so a crash or a failure on either side of the rename never lets the move land again: a failure after the rename never records `failed` beside the landed copy. `status` then settles the move from the file at the recorded landing target. If this move's file is there, the move is `accepted` (with `revoked: true` if it is sealed); if no file is there, the move is `failed` once the stamp is 30 seconds old, and the sender takes the session back. Until then `status` answers `receiving`: a commit holds the move's lock from its stamp to its rename, so a younger stamp may belong to a commit whose process stalled until its lock was taken over, and that commit can still land the file when it runs again. A commit checks the record again at the two points where a stalled process may have lost its lock: right before it writes its stamp it must still hold the lock and find the move receiving for its target, and right before it lands the file it must still hold the lock and find its own stamp. A commit that finds the move settled by another process at either check stamps or lands nothing and is refused `move_fenced`. The checks cannot cover what follows them: the stamp's own write, and the landing itself, which waits up to 5 seconds for the session's move lock and rewrites the session file before it renames it. A process that stalls there until its lock is taken over can still land a second writable copy if another process settles the move `failed` meanwhile (through another import's failure during the stamp's write, or through `status` once the stamp is 30 seconds old during the landing). A same-file `import` confirms a landed file the same way and keeps its revoke mark, and `status` also restores a revoke mark a crash lost after the copy was sealed. A repeated `finish` re-queues the dropped input once and removes the bundle.
+An interrupted step never leaves two writable copies, and the record always ends up agreeing with the files. Before the import renames the session into place, the record is stamped `committing`, so a crash or a failure on either side of the rename never lets the move land again: a failure after the rename never records `failed` beside the landed copy. `status` then settles the move from the file at the recorded landing target. If this move's file is there, the move is `accepted` (with `revoked: true` if it is sealed); if no file is there, the move is `failed` once the stamp is 30 seconds old, and the sender takes the session back. Until then `status` answers `receiving`: a commit holds the move's lock from its stamp to its rename, so a younger stamp may belong to a commit whose process stalled until its lock was taken over, and that commit can still land the file when it runs again. A commit checks the record again wherever a stalled process may have lost its lock: right before it writes its stamp it must find the move receiving for its target, and the stamp's own write refuses a holder that was told its lock is gone; right after the stamp it must still hold the lock and find its own stamp; and it checks that once more right before the rename that lands the file, after the wait for the session's move lock (up to 5 seconds) and the rewrite of the session file. A commit that finds the move settled by another process at any check stamps or lands nothing and is refused `move_fenced`; a copy it had already rewritten is removed and the sidecars it had moved go back. A stamp's age is not read from the wall clock alone: the stamp also carries its machine's uptime, and a reader on the same machine counts it old only when both clocks say so, so a wall clock that was stepped forward does not settle a healthy commit `failed`. A reader on another machine, a reader after a restart, and a reader of a stamp an older version wrote go by the wall clock alone, where a stamp dated after now counts as old. What the checks cannot cover: a process that stalls between its last check and the rename itself for longer than the settle bound, or during the stamp's own write while another import of the move fails, can still land a second writable copy once another process has settled the move `failed`. A same-file `import` confirms a landed file the same way and keeps its revoke mark, and `status` also restores a revoke mark a crash lost after the copy was sealed. A repeated `finish` re-queues the dropped input once and removes the bundle.
 
 `revoke` seals the copy this host imported for a move after the sender took the session back, so two writable copies never exist. It appends `session_moved` with `reason: "revoked"` (and `target` set to the import's `from`), and from then on any write to the copy is refused with `session_moved_away`. It runs under the same move lock as `export` and `finish` (`session_held`, `session_open_here`). Only a file whose latest ownership entry is this move's `session_moved_in` is revoked; a repeat for the same move changes nothing and answers the same, and any other file (another move's import, the sender's released copy, a session that was never imported) is refused with `move_mismatch`. A client checks for the `move_session_revoke` capability before relying on it.
 
@@ -6287,12 +6287,12 @@ as they would on `reload`, and the next session opened in the folder gets the sa
 implied by `open_session` or by a permission preset; only this explicit request saves a decision.
 
 ```json
-{"type": "set_project_trust", "choice": "trust"}
+{"type": "set_project_trust", "choice": "trust", "expectedCwd": "/home/me/project"}
 ```
 
-`choice` is `trust` (this folder), `trust_parent` (the parent folder; clears this folder's own entry, as `/trust`
+`expectedCwd` is optional, as on every project write: see [The folder a project write is for](#the-folder-a-project-write-is-for). `choice` is `trust` (this folder), `trust_parent` (the parent folder; clears this folder's own entry, as `/trust`
 does) or `do_not_trust`. The response carries the same `data` as `get_project_trust`, read after the change.
-Errors: `invalid_argument` for an unknown choice, `project_trust_locked` when the launch named the trust, and
+Errors: `invalid_argument` for an unknown choice or an `expectedCwd` that is not a string, `project_cwd_mismatch` when `expectedCwd` names another folder than the session's (nothing is saved or applied), `project_trust_locked` when the launch named the trust, and
 `project_trust_extension_decided` when a `project_trust` handler of an extension loaded before trust (never a
 project extension) decides the other way: such a handler decides before any saved choice when a session opens, so
 the request is refused and nothing is saved or applied. A folder with nothing trust gates stays trusted whatever is
@@ -6332,11 +6332,12 @@ the file: values the session reads when it starts (default model and thinking le
 modes) apply after `reload` or in the next session.
 
 ```json
-{"type": "set_project_setting", "key": "defaultThinkingLevel", "value": "high"}
+{"type": "set_project_setting", "key": "defaultThinkingLevel", "value": "high", "expectedCwd": "/home/me/project"}
 ```
 
 The response carries the same `data` as `get_project_settings`, read after the write. Errors:
-`invalid_argument` when `key` is not an identifier (`[A-Za-z][A-Za-z0-9_]*`) or `value` is missing,
+`invalid_argument` when `key` is not an identifier (`[A-Za-z][A-Za-z0-9_]*`), `value` is missing or `expectedCwd` is
+not a string, `project_cwd_mismatch` when `expectedCwd` names another folder (nothing is written),
 `project_not_trusted` while the project is untrusted (trust it first), `project_settings_unreadable` when the
 existing file does not parse (nothing is written), and `project_settings_write_failed` when writing the file fails
 (permissions, a held lock).
@@ -6377,19 +6378,32 @@ Errors: `invalid_argument` when `path` is not a string, `project_file_not_allowe
 other path, or when a folder on the way or the file itself is a symlink or not a regular file and folder, and
 `project_file_too_large` (`errorData: { limitBytes }`) for a stored file over 512 KiB.
 
+
+#### The folder a project write is for
+
+`set_project_trust`, `set_project_setting` and `write_project_file` take an optional `expectedCwd`: the folder the
+caller means. A client that reaches a session by a key that can since name another session (a remote desktop, through
+a relay) states it, so the write lands only in that folder's project. When it is given and the session's working
+directory is another folder, the write is refused with `project_cwd_mismatch` and nothing is written or applied. Both
+paths are compared with only trailing separators of the path's own style dropped (`/` for a POSIX path; `\` or `/`
+for a drive or UNC path) and a Windows drive letter in either case; nothing is trimmed and the rest of the path is
+compared as written. A present `expectedCwd` that is not a string is refused with `invalid_argument`. Without it, a
+write behaves as before.
+
 #### write_project_file
 
 Replaces (or creates) one of the files `read_project_file` reads, naming the version it replaces.
 
 ```json
-{"type": "write_project_file", "path": "AGENTS.md", "content": "# Project rules\n", "ifEtag": "sha256-…"}
+{"type": "write_project_file", "path": "AGENTS.md", "content": "# Project rules\n", "ifEtag": "sha256-…", "expectedCwd": "/home/me/project"}
 ```
 
 `ifEtag` is required: the `etag` last read, or `null` to create a file that must not exist yet. Missing parent
 folders are created. The file lands by a temporary file and a rename, so a reader never sees a partial write, and
 writes to one file are applied one at a time. The response carries the same `data` as `read_project_file`, read
 after the write. The session reads its instruction files when they are next loaded (a new session or `reload`).
-Errors: `invalid_argument` when `content` is not a string or `ifEtag` is neither a string nor `null`,
+Errors: `invalid_argument` when `content` is not a string, `ifEtag` is neither a string nor `null`, or `expectedCwd` is
+not a string, `project_cwd_mismatch` when `expectedCwd` names another folder (nothing is written),
 `project_not_trusted` while the project is untrusted, `project_file_not_allowed` as for `read_project_file`,
 `project_file_too_large` (`errorData: { limitBytes }`) for content over 512 KiB or a stored file over 512 KiB (its
 version cannot be checked without reading it), `project_file_conflict` when

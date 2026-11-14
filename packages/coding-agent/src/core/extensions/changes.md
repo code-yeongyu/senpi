@@ -1,3 +1,26 @@
+## 2026-11-11 - pi.engine, and the kernel-tool contexts are one registry per realm (omo#12965)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionAPI` gains the read-only `engine` property, typed as the engine index namespace.
+- `packages/coding-agent/src/core/extensions/loader.ts`: the API object's `engine` getter returns the namespace the loader already serves extensions for `@code-yeongyu/senpi`.
+- `packages/coding-agent/src/core/extensions/kernel-tools-context.ts`: `kernelToolsStorage` and `kernelToolInvokerStorage` are the two members of the realm's `kernel-tools/v1` registry. `activeKernelTools()` and `activeKernelToolInvoker()` read them and treat a store value missing its members as absent.
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/session-scoped-callback.ts`: comment only. `bindSessionScopedCallback` now refuses inside a provider scope this copy of pi-ai cannot read, because `activeProviderScope()` throws there.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `ExtensionContext.kernelTools` reads through those two functions.
+- `packages/coding-agent/src/core/extensions/builtin/kill-guard/index.ts`: passes a `warn` callback, used when the shared kill-guard record cannot be read and this copy's own record is used.
+
+### Why
+
+- On Node a plugin bundle's own import of the engine evaluates a second copy of it. `pi.engine` lets the plugin run on the engine that loaded it, and the kernel-tool contexts must be visible to the runner whichever copy entered them.
+
+### Why an extension could not handle it
+
+- This is the extension API and the loader themselves.
+
+### Expected merge conflict zones
+
+- LOW: the session-context block at the top of `ExtensionAPI` in `types.ts`, the first lines of the API object in `createExtensionAPI`, and the `kernelTools` getter in `runner.ts`.
+
 ## 2026-11-09 - Provider access declarations on provider hooks, and a hand's request-hook dispatch (custody CK21, senpi#6278)
 
 ### What changed
