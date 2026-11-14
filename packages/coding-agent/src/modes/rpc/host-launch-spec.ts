@@ -6,8 +6,9 @@
  * it is a trust boundary rather than a convenience format. Four properties are proven before any
  * process is started, and each maps to a refusal a caller can branch on:
  *
- *   - `launch_spec_insecure` - the file is not owned by this uid, or it is group/world writable.
- *     Anyone who can rewrite the spec can choose the daemon's extensions.
+ *   - `launch_spec_insecure` - the file is owned by neither this uid nor root, or it is group/world
+ *     writable. Anyone who can rewrite the spec can choose the daemon's extensions; root can already
+ *     replace the binary itself, so a root-owned spec (a system-wide install) adds no new writer.
  *   - `launch_spec_path_escape` - an extension path leaves the spec directory's tree, lexically or
  *     through a symlink. The spec directory is the profile; a path outside it is somebody else's.
  *   - `launch_spec_env_denied` - an `env` key outside `^(SENPI|OMO|PI)_[A-Z0-9_]+$`. The spec may
@@ -157,8 +158,11 @@ async function assertTrustedFile(absolute: string, platform: NodeJS.Platform): P
 		throw new HostLaunchSpecError("launch_spec_unreadable", error instanceof Error ? error.message : absolute);
 	});
 	const uid = process.getuid?.();
-	if (uid !== undefined && stats.uid !== uid) {
-		throw new HostLaunchSpecError("launch_spec_insecure", `${absolute} is owned by uid ${stats.uid}, not ${uid}`);
+	if (uid !== undefined && stats.uid !== uid && stats.uid !== 0) {
+		throw new HostLaunchSpecError(
+			"launch_spec_insecure",
+			`${absolute} is owned by uid ${stats.uid}, not ${uid} or root`,
+		);
 	}
 	if ((stats.mode & 0o022) !== 0) {
 		throw new HostLaunchSpecError(
