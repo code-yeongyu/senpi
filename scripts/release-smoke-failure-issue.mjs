@@ -53,12 +53,13 @@ export function smokeFailureIssue({ version, previous, runners, runUrl }) {
 			"The GitHub Release for this tag stays unpublished. npm `latest` still points at this version.",
 			"",
 			"If the failure is a real startup bug that npm users would also hit, point npm `latest` back at the last known-good version.",
-			`The version published right before this one was ${previous ? `\`${previous}\`` : "not readable from npm"}; if that release was itself rolled back, use the newest version before it that was not:`,
+			previous
+				? `The version published right before this one was \`${previous}\`; if that release was itself rolled back, use the newest version before it that was not:`
+				: "The previous version could not be read from npm, so the command below has a `<previous>` placeholder: replace it with the newest earlier version that was not rolled back.",
 			"",
 			"```sh",
 			`npm dist-tag add ${NPM_PACKAGE}@${target} latest`,
 			"```",
-			...(previous ? [] : ["", "The previous version could not be read from npm; replace `<previous>` with it."]),
 			"",
 			"Then fix the binary, cut a new release, and close this issue.",
 		].join("\n"),
