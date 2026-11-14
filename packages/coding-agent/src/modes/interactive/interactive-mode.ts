@@ -304,7 +304,11 @@ import {
 	type ScopedResource,
 } from "./loaded-resource-scopes.ts";
 import { describeLoginFailure, type LoginFailureNotice } from "./login-outcome.ts";
-import { refreshModelCatalogs } from "./model-catalog-refresh.ts";
+import {
+	describeModelRefreshErrors,
+	refreshModelCatalogs,
+	refreshModelCatalogsOnRequest,
+} from "./model-catalog-refresh.ts";
 import {
 	liveModelChangeNotice,
 	type ModelChangeNotice,
@@ -8373,11 +8377,12 @@ export class InteractiveMode {
 			controller.abort();
 		}, 15_000);
 		try {
-			const result = await refreshModelCatalogs(this.session.modelRuntime, controller.signal);
+			const result = await refreshModelCatalogsOnRequest(this.session.modelRuntime, controller.signal);
+			const refreshErrors = describeModelRefreshErrors(result.errors);
 			if (result.aborted && timedOut) {
 				this.showWarning("Model refresh timed out; searching cached models.");
-			} else if (result.errors.size > 0) {
-				this.showWarning(`Could not refresh ${[...result.errors.keys()].join(", ")}; searching cached models.`);
+			} else if (refreshErrors) {
+				this.showWarning(refreshErrors);
 			}
 		} catch (error) {
 			this.showWarning(
@@ -8753,7 +8758,7 @@ export class InteractiveMode {
 					},
 				},
 			);
-			void refreshModelCatalogs(this.session.modelRuntime, controller.signal)
+			void refreshModelCatalogsOnRequest(this.session.modelRuntime, controller.signal)
 				.then((result) => {
 					if (disposed) return;
 					availableModels = [...this.session.modelRuntime.getAvailableSnapshot()];
