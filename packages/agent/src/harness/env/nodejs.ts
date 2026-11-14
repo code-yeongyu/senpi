@@ -951,6 +951,7 @@ export class NodeExecutionEnv implements ExecutionEnv {
 		try {
 			const entries = await readdir(resolved, { withFileTypes: true });
 			const infos: FileInfo[] = [];
+			let skippedMissing = false;
 			for (const entry of entries) {
 				const loopAbort = abortResult<FileInfo[]>(signal, resolved);
 				if (loopAbort) return loopAbort;
@@ -961,8 +962,21 @@ export class NodeExecutionEnv implements ExecutionEnv {
 				} catch (error) {
 					// Another process can remove an entry after readdir listed it (a released lock
 					// directory, a renamed staging file); the listing omits it as if readdir had run later.
-					if (isNodeError(error) && error.code === "ENOENT") continue;
+					if (isNodeError(error) && error.code === "ENOENT") {
+						skippedMissing = true;
+						continue;
+					}
 					return err(toFileError(error, entryPath));
+				}
+			}
+			if (skippedMissing) {
+				// The listed directory itself may have been removed mid-call, in which case every
+				// remaining lstat reported ENOENT and the listing above is partial. Re-check the
+				// directory so a removed directory fails with not_found, as a later readdir would.
+				try {
+					await lstat(resolved);
+				} catch (error) {
+					return err(toFileError(error, resolved));
 				}
 			}
 			return ok(infos);

@@ -308,7 +308,9 @@ export interface FileSystem {
 	renameFile(sourcePath: string, destinationPath: string, context: Context): Promise<Result<void, FileError>>;
 	/** Return metadata for the addressed path without following symlinks. */
 	fileInfo(path: string, context: Context): Promise<Result<FileInfo, FileError>>;
-	/** List direct children of a directory without following symlinks. */
+	/** List direct children of a directory without following symlinks. Entries that disappear
+	 * between the directory read and their stat are omitted; if the listed directory itself
+	 * disappears mid-call, the call fails with `not_found`. */
 	listDir(path: string, context: Context): Promise<Result<FileInfo[], FileError>>;
 	/** Return the canonical path for an existing path, resolving symlinks where supported. */
 	canonicalPath(path: string, context: Context): Promise<Result<string, FileError>>;
