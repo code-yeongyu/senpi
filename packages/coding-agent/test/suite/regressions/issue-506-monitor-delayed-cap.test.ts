@@ -177,6 +177,7 @@ describe("issue #506: monitor-delayed continuation cap", () => {
 						lastTurnStuckOnContextOverflow: false,
 						recentNormalizedOutputHashes: [],
 						toollessContinuationStreak: 0,
+						liveChannelToollessStreak: 0,
 						continuationPending: false,
 					},
 					content: () => "Continue",
