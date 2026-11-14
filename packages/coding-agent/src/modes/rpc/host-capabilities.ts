@@ -58,6 +58,7 @@ import {
 	MOVE_SESSION_IMPORT_OPEN_CAPABILITY,
 	MOVE_SESSION_IMPORT_SESSION_DIR_CAPABILITY,
 	MOVE_SESSION_INLINE_MAX_BYTES_CAPABILITY,
+	MOVE_SESSION_PREPARE_OCCUPIED_CAPABILITY,
 	MOVE_SESSION_PREPARE_REPOSITORY_CAPABILITY,
 	MOVE_SESSION_REVOKE_CAPABILITY,
 	MOVE_SESSION_STATUS_LANDED_PATH_CAPABILITY,
@@ -158,6 +159,8 @@ export function multiSessionHostCapabilities(options: {
 			// ...and answers a session's or a folder's recorded repository, and checks it before a release (senpi#6435).
 			MOVE_SESSION_IDENTITY_CAPABILITY,
 			MOVE_SESSION_PREPARE_REPOSITORY_CAPABILITY,
+			// ...and refuses a landing file that is already taken, before the release (senpi#6471).
+			MOVE_SESSION_PREPARE_OCCUPIED_CAPABILITY,
 			// ...and says where an accepted move landed (senpi#6436).
 			MOVE_SESSION_STATUS_LANDED_PATH_CAPABILITY,
 			// ...and a `status` that names where the move would have landed is answered from the file there first.
