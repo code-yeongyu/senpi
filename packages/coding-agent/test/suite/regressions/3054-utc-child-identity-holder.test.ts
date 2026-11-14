@@ -4,10 +4,11 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { createSessionPathReservations } from "../../../src/modes/rpc/host-reservations.ts";
 import { writeJsonAtomic } from "../../../src/modes/rpc/host-state-json.ts";
-import { readProcessIdentity, readProcessStartTime } from "../../../src/utils/process-identity.ts";
+import { processStartTimeMs, readProcessIdentity, readProcessStartTime } from "../../../src/utils/process-identity.ts";
 import { startSessionHolder } from "./issue-2951-holder-support.ts";
 
-// The child's start time is recorded UTC-tagged but probed in local form: same instant, still a holder.
+// The child's start time is recorded UTC-tagged and probed in UTC (senpi#3067 L1):
+// same instant, still a holder.
 let root: string;
 beforeEach(async () => {
 	root = await mkdtemp(join(tmpdir(), "utc-child-identity-"));
@@ -26,7 +27,7 @@ it.skipIf(process.platform === "win32")(
 		const utc = await readProcessIdentity(holder.pid, process.platform, 1_000, undefined, "UTC");
 		const local = await readProcessStartTime(holder.pid);
 		if (utc.kind !== "present" || local === undefined) throw new Error("holder start time unreadable");
-		expect(utc.identity).not.toBe(local);
+		expect(processStartTimeMs(local)).toBe(processStartTimeMs(utc.identity));
 
 		const generationDir = join(root, "generations", "child");
 		await mkdir(generationDir, { recursive: true });

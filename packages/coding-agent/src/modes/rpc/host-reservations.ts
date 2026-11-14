@@ -186,8 +186,9 @@ export function createSessionPathReservations(options: {
 							: undefined;
 					}
 					const current = await readProcessStartTime(pid, process.platform, 1_000).catch(() => undefined);
-					// Recorded identities may carry an explicit UTC tag (host-child.pid, #3054) while this probe
-					// reads the local form: compare the parsed instant, never the raw text.
+					// Recorded identities may carry an explicit UTC tag (host-child.pid, #3054); the probe
+					// reads in UTC too (senpi#3067 L1), and legacy local-format records still parse as
+					// local time: compare the parsed instant, never the raw text.
 					const observed = current === undefined ? undefined : processStartTimeMs(current);
 					return observed !== undefined &&
 						owners.some(
