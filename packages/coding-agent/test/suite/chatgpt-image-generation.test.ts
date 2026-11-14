@@ -1,7 +1,7 @@
 import type { Model } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import imageGenExtension from "../../src/core/extensions/builtin/imagegen/index.ts";
-import { setImageGenRegistry, setNativeBypass } from "../../src/core/extensions/builtin/imagegen/state.ts";
+import { setImageGenRegistry } from "../../src/core/extensions/builtin/imagegen/state.ts";
 import type { GenerateImageDetails } from "../../src/core/extensions/builtin/imagegen/tool.ts";
 import { supportsNativeOpenAiImageGeneration } from "../../src/core/extensions/builtin/openai-image-gen/gate.ts";
 import openaiImageGenExtension from "../../src/core/extensions/builtin/openai-image-gen/index.ts";
@@ -35,7 +35,6 @@ const harnesses: Harness[] = [];
 
 afterEach(() => {
 	setImageGenRegistry(undefined);
-	setNativeBypass(false);
 	while (harnesses.length > 0) harnesses.pop()?.cleanup();
 });
 

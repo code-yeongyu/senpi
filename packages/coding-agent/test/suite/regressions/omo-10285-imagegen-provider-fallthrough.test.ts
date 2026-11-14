@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ImageGenAuthModel, ImageGenAuthRegistry } from "../../../src/core/extensions/builtin/imagegen/auth.ts";
-import { setImageGenRegistry, setNativeBypass } from "../../../src/core/extensions/builtin/imagegen/state.ts";
+import { setImageGenRegistry } from "../../../src/core/extensions/builtin/imagegen/state.ts";
 import {
 	generateImageTool,
 	type GenerateImageDetails as ImageDetails,
@@ -69,7 +69,6 @@ describe("omo#10285: generate_image never silently strands on a gateway without 
 		harness = await createHarness({ extensionFactories: [(pi) => pi.registerTool(generateImageTool)] });
 		await harness.session.bindExtensions({});
 		harness.session.setActiveToolsByName([...harness.session.getActiveToolNames(), TOOL_NAME]);
-		setNativeBypass(false);
 	});
 
 	afterEach(async () => {
