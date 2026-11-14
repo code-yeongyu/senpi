@@ -223,6 +223,28 @@ describe("provider retry classification", () => {
 		).toBe(true);
 	});
 
+	// senpi#3826: a connection-level failure (no HTTP status, no provider verdict) is transient. Bun reports a
+	// refused connect as "Unable to connect" / FailedToOpenSocket and Node as bare errno codes; each must retry
+	// the same model instead of ending the attempt as an unknown, non-retryable failure.
+	it.each([
+		"ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
+		"ConnectionRefused: Unable to connect. Is the computer able to access the url?",
+		"FailedToOpenSocket: Was there a typo in the url or port?",
+		"ConnectionClosed: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()",
+		"ECONNRESET: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()",
+		"connect ECONNREFUSED 127.0.0.1:443",
+		"read ECONNRESET",
+		"connect ETIMEDOUT 203.0.113.7:443",
+		"connect EHOSTUNREACH 203.0.113.7:443",
+		"connect ENETUNREACH 203.0.113.7:443",
+		"write EPIPE",
+		"ECONNABORTED: connection aborted",
+		// oh-my-openagent#10121: a Go-based gateway reports the peer reset only as prose.
+		"read tcp 192.0.2.10:52814->203.0.113.7:443: read: connection reset by peer",
+	])("classifies the connection-level failure %s as retryable", (errorMessage) => {
+		expect(isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage }))).toBe(true);
+	});
+
 	it("matches Codex upstream websocket unavailability", () => {
 		expect(
 			isRetryableAssistantError(
