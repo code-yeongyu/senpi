@@ -1,4 +1,5 @@
 import type { SessionRegistry, SessionRegistryCapacityError, TerminalSession } from "@earendil-works/pi-pty";
+import { processBootAtMs } from "./process-identity.ts";
 import { loadedPty, loadPty } from "./pty.lazy.ts";
 import type { TerminalRuntimeOptions, TerminalRuntimeSession } from "./runtime-session.ts";
 import { DEFAULT_MAX_SESSIONS } from "./shared.ts";
@@ -63,6 +64,7 @@ export class TerminalManager {
 
 	/** Spawn a new terminal session and register it under an allocated `bash_N` id. */
 	async create(command: string, options: TerminalRuntimeOptions): Promise<CreatedTerminalSession> {
+		const bootAtMs = await processBootAtMs();
 		const pty = await loadPty();
 		const release = this.reserve();
 		if (!release) throw new pty.SessionRegistryCapacityError(this.maxSessions);
@@ -73,7 +75,7 @@ export class TerminalManager {
 		const registry = this.registry;
 		const runtimeOptions: TerminalRuntimeOptions = { ...options, scrollback: this.scrollback };
 		const { TerminalRuntimeSession } = await import("./runtime-session.ts");
-		const runtime = new TerminalRuntimeSession(command, runtimeOptions);
+		const runtime = new TerminalRuntimeSession(command, runtimeOptions, bootAtMs);
 		let entry: { id: string };
 		try {
 			entry = await registry.create({ command, session: runtime.session });

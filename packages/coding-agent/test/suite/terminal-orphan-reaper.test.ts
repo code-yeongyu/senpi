@@ -22,7 +22,7 @@ function probes(platform: NodeJS.Platform, evidence: Evidence | undefined, alive
 		platform,
 		isProcessAlive: vi.fn((_pid: number) => alive),
 		readProcessEvidence: vi.fn(async (_pid: number) => evidence),
-		bootAtMs: () => RUNTIME.bootAtMs + 30_000,
+		bootAtMs: async () => RUNTIME.bootAtMs + 30_000,
 		kill: vi.fn((_pid: number, _signal: NodeJS.Signals) => {}),
 		wait: async (_ms: number) => {},
 	};
@@ -106,7 +106,7 @@ describe("orphan reaper", () => {
 	it("(d) boot mismatch -> dead without probing the recycled pid", async () => {
 		const p = {
 			...probes("linux", { startedAtMs: RUNTIME.startedAtMs, environ: `SENPI_MONITOR_ID=${MONITOR_ID}\0` }),
-			bootAtMs: () => RUNTIME.bootAtMs + 600_000,
+			bootAtMs: async () => RUNTIME.bootAtMs + 600_000,
 		};
 		await expect(confirmOwner(RUNTIME, MONITOR_ID, p)).resolves.toBe("dead");
 		await expect(reapBeforeRespawn(RUNTIME, MONITOR_ID, p)).resolves.toEqual({ action: "none" });
@@ -172,7 +172,7 @@ describe("orphan reaper", () => {
 				pid,
 				processGroupId: pid,
 				startedAtMs: Date.now(),
-				bootAtMs: processBootAtMs(),
+				bootAtMs: await processBootAtMs(),
 				argv: ["sh", "-c", script],
 			};
 			// "spawn" fires once execve passes its point of no return, before the kernel has installed the new

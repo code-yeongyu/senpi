@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { processBootAtMs } from "../../../src/core/extensions/builtin/terminal/process-identity.ts";
-import { liveSessionHolders } from "../../../src/core/session-holders.ts";
+import { liveSessionHolders, type HolderRecord } from "../../../src/core/session-holders.ts";
 import { SessionManager } from "../../../src/core/session-manager.ts";
 import { encodedSessionId } from "../../../src/core/session-sidecar-store.ts";
 import * as fence from "../../../src/core/session-write-fence.ts";
@@ -31,11 +31,11 @@ beforeEach(async () => {
 		record,
 		JSON.stringify({
 			pid: 4242,
-			bootAtMs: processBootAtMs(),
+			bootAtMs: await processBootAtMs(),
 			processStartedAtMs: 1_700_000_000_000,
 			host_instance: "frozen-generation",
 			host_daemon_dir: join(root, "daemon"),
-		}),
+		} satisfies HolderRecord),
 	);
 });
 

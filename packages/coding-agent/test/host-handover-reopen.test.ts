@@ -97,7 +97,7 @@ describe("an entry its live writer still holds resident (senpi#6190)", () => {
 		const { agentDir, socket, daemonDir } = await parkedRig();
 		const [park] = await readHandoverParkedSessions(daemonDir);
 		if (!park) throw new Error("missing park");
-		const live = currentResidentWriter();
+		const live = await currentResidentWriter();
 		await recordHandoverParkedSession(daemonDir, { ...park, residentWriter: live });
 		const open = vi.fn(async () => {});
 		let passes = 0;

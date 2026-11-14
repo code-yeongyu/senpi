@@ -46,7 +46,7 @@ export async function recordRetainedSession(
 			Object.keys(host.defaults.hostContext ?? {}),
 		),
 		parkedBy: host.defaults.hostContext?.host_instance ?? hostInstanceId(),
-		...(resident ? { residentWriter: currentResidentWriter() } : {}),
+		...(resident ? { residentWriter: await currentResidentWriter() } : {}),
 	});
 }
 

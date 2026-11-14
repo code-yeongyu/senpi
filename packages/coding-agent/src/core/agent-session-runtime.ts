@@ -178,6 +178,7 @@ export class AgentSessionRuntime {
 		_diagnostics: AgentSessionRuntimeDiagnostic[] = [],
 		_modelFallbackMessage?: string,
 		launchProfile?: Readonly<AgentSessionLaunchProfile>,
+		sessionHold?: SessionHold,
 	) {
 		this._session = _session;
 		this._services = _services;
@@ -187,11 +188,8 @@ export class AgentSessionRuntime {
 		this._launchProfile = launchProfile;
 		markHostDefaultPresetFlag(_session, launchProfile);
 		applyClientPermissionMode(_session, clientNamedPreset(launchProfile), { announce: false });
-		this._sessionHold = holdActiveSession(
-			_session.sessionManager,
-			wasFlushed(_session.sessionManager),
-			launchProfile?.holderEndpoint,
-		);
+		// Taken by the async creator (the holder record needs the async boot instant); the constructor never touches it.
+		this._sessionHold = sessionHold;
 	}
 
 	/** Stops advertising the open session to other processes; a runtime that replaces this one holds its own. */
@@ -203,7 +201,11 @@ export class AgentSessionRuntime {
 	/** A speculative host session becomes durable only when a caller claims its already-built runtime. */
 	async persistSession(): Promise<void> {
 		await this.session.sessionManager.enablePersistence();
-		this._sessionHold ??= holdActiveSession(this.session.sessionManager, false, this._launchProfile?.holderEndpoint);
+		this._sessionHold ??= await holdActiveSession(
+			this.session.sessionManager,
+			false,
+			this._launchProfile?.holderEndpoint,
+		);
 	}
 
 	get services(): AgentSessionServices {
@@ -490,7 +492,7 @@ export class AgentSessionRuntime {
 
 	private async apply(result: CreateAgentSessionRuntimeResult, hold?: SessionHold): Promise<void> {
 		this._sessionHold =
-			hold ?? holdActiveSession(result.session.sessionManager, false, this._launchProfile?.holderEndpoint);
+			hold ?? (await holdActiveSession(result.session.sessionManager, false, this._launchProfile?.holderEndpoint));
 		// The replacement was built from the profile read before its runtime was created; an attach
 		// that moved a setting while it was being built reached only the retired session (senpi#2842).
 		// Its project trust follows the CURRENT preset before it goes live: a replacement built while the
@@ -547,7 +549,11 @@ export class AgentSessionRuntime {
 		const sessionManager = SessionManager.open(sessionPath, undefined, options?.cwdOverride);
 		assertSessionCwdExists(sessionManager, this.cwd);
 		// Held before the current session is torn down: a session being moved fails the switch here.
-		const hold = holdActiveSession(sessionManager, wasFlushed(sessionManager), this._launchProfile?.holderEndpoint);
+		const hold = await holdActiveSession(
+			sessionManager,
+			wasFlushed(sessionManager),
+			this._launchProfile?.holderEndpoint,
+		);
 		time("open", "switch");
 		try {
 			await this.teardownCurrent("resume", sessionManager.getSessionFile(), sessionManager.getSessionId());
@@ -810,11 +816,11 @@ function wasFlushed(sessionManager: SessionManager): boolean {
 	return sessionManager.getEntries().some((entry) => entry.type === "message" && entry.message.role === "assistant");
 }
 
-function holdActiveSession(
+async function holdActiveSession(
 	sessionManager: SessionManager,
 	expectExisting: boolean,
 	holderEndpoint?: SessionHolderEndpoint,
-): SessionHold | undefined {
+): Promise<SessionHold | undefined> {
 	const sessionFile = sessionManager.getSessionFile();
 	if (!sessionManager.isPersisted() || sessionFile === undefined) return undefined;
 	return holdSessionFile(sessionFile, sessionManager.getSessionId(), {
@@ -842,14 +848,33 @@ export async function createAgentSessionRuntime(
 ): Promise<AgentSessionRuntime> {
 	assertSessionCwdExists(options.sessionManager, options.cwd);
 	const result = await createRuntime(options);
-	return new AgentSessionRuntime(
-		result.session,
-		result.services,
-		createRuntime,
-		result.diagnostics,
-		result.modelFallbackMessage,
-		options.launchProfile,
-	);
+	const hold = await holdRuntimeSession(result.session.sessionManager, options.launchProfile?.holderEndpoint);
+	try {
+		return new AgentSessionRuntime(
+			result.session,
+			result.services,
+			createRuntime,
+			result.diagnostics,
+			result.modelFallbackMessage,
+			options.launchProfile,
+			hold,
+		);
+	} catch (error) {
+		// A runtime that never came to exist cannot release the hold taken for it.
+		hold?.release();
+		throw error;
+	}
+}
+
+/**
+ * Takes the hold a new runtime for `sessionManager`'s session carries. The caller passes it to the constructor and
+ * releases it itself if the runtime is never handed over.
+ */
+export function holdRuntimeSession(
+	sessionManager: SessionManager,
+	holderEndpoint?: SessionHolderEndpoint,
+): Promise<SessionHold | undefined> {
+	return holdActiveSession(sessionManager, wasFlushed(sessionManager), holderEndpoint);
 }
 
 export {

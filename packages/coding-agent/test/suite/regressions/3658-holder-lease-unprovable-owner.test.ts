@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { processBootAtMs } from "../../../src/core/extensions/builtin/terminal/process-identity.ts";
-import { liveSessionHolders } from "../../../src/core/session-holders.ts";
+import { liveSessionHolders, type HolderRecord } from "../../../src/core/session-holders.ts";
 import { encodedSessionId } from "../../../src/core/session-sidecar-store.ts";
 
 // #3658, third layer: after a tree kill on Windows, the dead host child's session-holder lease stood
@@ -26,11 +26,11 @@ beforeEach(async () => {
 		record,
 		JSON.stringify({
 			pid: 4242,
-			bootAtMs: processBootAtMs(),
+			bootAtMs: await processBootAtMs(),
 			processStartedAtMs: RECORDED_START,
 			host_instance: "dead-generation",
 			host_daemon_dir: join(root, "daemon"),
-		}),
+		} satisfies HolderRecord),
 	);
 });
 
