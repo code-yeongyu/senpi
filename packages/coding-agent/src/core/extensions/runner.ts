@@ -166,6 +166,7 @@ const RUNTIME_CONTEXT_MEMBERS: ReadonlySet<string> = new Set<keyof ExtensionRunt
 	"getImageSettings",
 	"getRegisteredMcpServers",
 	"extensionConnectsMcpServers",
+	"signal",
 ]);
 
 /** Session identity a context of a runner without a session does not have; dispatchers treat its absence as context-free. */
