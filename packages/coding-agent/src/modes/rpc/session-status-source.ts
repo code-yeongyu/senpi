@@ -4,8 +4,10 @@
  * Identity is read from the runtime first, because a `new_session`/`switch_session` moves the durable id
  * and file before the registry's own metadata sync runs.
  */
+import { providerFailureOf } from "../../core/provider-failure.ts";
 import { isSessionArchived } from "../../core/session-archived.ts";
 import { sessionQuestionBridges } from "./connection-question-bridge.ts";
+import { deriveSessionActivity } from "./session-activity.ts";
 import { publishedSessionContext } from "./session-context-patch.ts";
 import type { RpcSessionEntry, RpcSessionRow } from "./session-registry-types.ts";
 import type { SessionStatusEntryView, SessionStatusRuntimeView } from "./session-status.ts";
@@ -16,6 +18,21 @@ function modelOf(model: { readonly provider: string; readonly id: string } | und
 }
 
 type LiveSession = NonNullable<NonNullable<RpcSessionEntry["runtime"]>["session"]>;
+
+/**
+ * The current or most recent turn's id (its admission epoch, the `turnId` a prompt response names) and the failure
+ * category `agent_end` reported when the last turn ended with a provider error.
+ */
+export function sessionTurnView(
+	session: Pick<LiveSession, "externalAdmission" | "messages">,
+): Pick<SessionStatusRuntimeView, "turnId" | "errorCode"> {
+	const epoch = session.externalAdmission.turnEpoch;
+	const errorCode = providerFailureOf(session.messages)?.category;
+	return {
+		...(epoch > 0 ? { turnId: String(epoch) } : {}),
+		...(errorCode !== undefined ? { errorCode } : {}),
+	};
+}
 
 /** What a live in-process session contributes; `pendingQuestions` defaults to its RPC question bridge. */
 export function sessionRuntimeView(session: LiveSession, pendingQuestions?: number): SessionStatusRuntimeView {
@@ -28,14 +45,16 @@ export function sessionRuntimeView(session: LiveSession, pendingQuestions?: numb
 		steering: typeof session.getSteeringMessages === "function" ? session.getSteeringMessages().length : 0,
 		followUp: typeof session.getFollowUpMessages === "function" ? session.getFollowUpMessages().length : 0,
 		pendingQuestions: pendingQuestions ?? sessionQuestionBridges.get(session)?.pendingQuestions()?.length ?? 0,
+		...sessionTurnView(session),
 	};
 }
 
 function runtimeView(entry: RpcSessionEntry): SessionStatusRuntimeView | undefined {
 	const session = entry.runtime?.session;
 	if (session !== undefined) return sessionRuntimeView(session);
-	const state = entry.worker?.snapshot?.state;
-	if (state === undefined) return undefined;
+	const snapshot = entry.worker?.snapshot;
+	const state = snapshot?.state;
+	if (snapshot === undefined || state === undefined) return undefined;
 	const model = modelOf(state.model ?? undefined);
 	return {
 		isStreaming: state.isStreaming,
@@ -45,6 +64,8 @@ function runtimeView(entry: RpcSessionEntry): SessionStatusRuntimeView | undefin
 		steering: state.steering.length,
 		followUp: state.followUp.length,
 		pendingQuestions: state.pendingQuestions?.length ?? 0,
+		...(snapshot.turnId !== undefined ? { turnId: snapshot.turnId } : {}),
+		...(snapshot.errorCode !== undefined ? { errorCode: snapshot.errorCode } : {}),
 	};
 }
 
@@ -71,11 +92,13 @@ function entryView(entry: RpcSessionEntry): SessionStatusEntryView {
 }
 
 /** The `list_sessions` row fields read from the same views a `session_status` row is derived from. */
-export function sessionRowStatusFields(entry: RpcSessionEntry): Pick<RpcSessionRow, "archived" | "activity" | "model"> {
+export function sessionRowStatusFields(
+	entry: RpcSessionEntry,
+): Pick<RpcSessionRow, "archived" | "activity" | "error_code" | "turn_id" | "model"> {
 	const runtime = runtimeView(entry);
 	return {
 		archived: entryView(entry).archived === true,
-		activity: runtime?.isStreaming === true ? "running" : "idle",
+		...deriveSessionActivity(runtime),
 		...(runtime?.model !== undefined ? { model: runtime.model } : {}),
 	};
 }

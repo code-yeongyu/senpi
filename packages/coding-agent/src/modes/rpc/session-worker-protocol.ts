@@ -79,6 +79,10 @@ export interface WorkerSnapshot {
 	streaming: boolean;
 	/** The session file's archived flag, read in the isolate that owns the file. */
 	archived: boolean;
+	/** The current or most recent turn's id (`sessionTurnView`); absent before the session's first turn. */
+	turnId?: string;
+	/** The last turn's failure category (`sessionTurnView`); absent when it did not fail. */
+	errorCode?: string;
 }
 
 import type { AdmissionReplyScope } from "./compact-admission-reply.ts";
