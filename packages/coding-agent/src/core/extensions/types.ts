@@ -783,6 +783,7 @@ export type ExtensionRuntimeContext = Pick<
 	| "getImageSettings"
 	| "getRegisteredMcpServers"
 	| "extensionConnectsMcpServers"
+	| "signal"
 >;
 
 /** Provider request prefix of the next user turn (see `ExtensionContext.getPromptCachePrefixRequest`). */

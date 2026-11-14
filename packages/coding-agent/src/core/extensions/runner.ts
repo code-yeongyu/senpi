@@ -166,6 +166,7 @@ const RUNTIME_CONTEXT_MEMBERS: ReadonlySet<string> = new Set<keyof ExtensionRunt
 	"getImageSettings",
 	"getRegisteredMcpServers",
 	"extensionConnectsMcpServers",
+	"signal",
 ]);
 
 /** Session identity a context of a runner without a session does not have; dispatchers treat its absence as context-free. */
@@ -2538,7 +2539,16 @@ export class ExtensionRunner {
 				(index) => async () => options.forward?.toolCall(ext.path, index, event),
 			);
 			for (const handler of handlers) {
-				const hookRun = this.beginToolHookRun(this.createContext(), {
+				const baseContext = this.createContext();
+				if (options.signal !== undefined) {
+					const callSignal = options.signal;
+					Object.defineProperty(baseContext, "signal", {
+						get: () => callSignal,
+						configurable: true,
+						enumerable: true,
+					});
+				}
+				const hookRun = this.beginToolHookRun(baseContext, {
 					hookName: "PreToolUse",
 					toolName: event.toolName,
 					toolCallId: event.toolCallId,
