@@ -414,6 +414,7 @@ import {
 	describeUsageLimitEntry,
 	describeUsageLimitMessage,
 	usageLimitScope,
+	withAccountsOut,
 } from "./retry-fallback/usage-limit.ts";
 import { type FallbackRungFailure, recordRungFailure } from "./retry-fallback/exhaustion.ts";
 import { limitResetAt } from "./retry-fallback/limit-reset.ts";
@@ -3127,7 +3128,7 @@ export class AgentSession {
 			event = {
 				...event,
 				messages: event.messages.map((message) =>
-					message.role === "assistant" ? describeUsageLimitMessage(message) : message,
+					message.role === "assistant" ? this._describeUsageLimit(message) : message,
 				),
 			};
 		}
@@ -3137,7 +3138,7 @@ export class AgentSession {
 			(event.type === "message_end" || event.type === "message_start" || event.type === "message_update") &&
 			event.message.role === "assistant"
 		) {
-			const message = describeUsageLimitMessage(event.message);
+			const message = this._describeUsageLimit(event.message);
 			event =
 				event.type === "message_update"
 					? {
@@ -3701,6 +3702,8 @@ export class AgentSession {
 	private _lastAssistantMessage: AssistantMessage | undefined = undefined;
 	private _requestSelectedModel: SelectedModel | undefined;
 	private readonly _endSelectedModels = new WeakMap<AgentEvent, SelectedModel>();
+	/** A failed turn's pooled accounts, each with why it cannot serve, named in its surfaced error (senpi#5963). */
+	private readonly _accountsOutOf = new WeakMap<AgentMessage, string>();
 
 	/** Internal handler for agent events - shared by subscribe and reconnect */
 	private _handleAgentEvent = (event: AgentEvent, signal: AbortSignal): void => {
@@ -4234,6 +4237,17 @@ export class AgentSession {
 			} catch (error) {
 				this._transcriptWriteFailures.record(event.message, error);
 			}
+		}
+		// A fresh process's cooling probe (senpi#3771) that failed on a spent pool names its accounts, as the
+		// turn-boundary refusal does (senpi#5963).
+		if (
+			event.type === "message_end" &&
+			event.message.role === "assistant" &&
+			event.message.stopReason === "error" &&
+			usageLimitScope(event.message) === "account"
+		) {
+			const pool = await this._pooledAccountHealth(event.message.provider, event.message.model);
+			if (pool && !pool.usable) this._accountsOutOf.set(event.message, pool.accountsOut);
 		}
 		this._recoveryIdentity?.hint(event, consumedEntry);
 		this._bridgedCallKeys.observe(event);
@@ -6029,6 +6043,14 @@ export class AgentSession {
 	 * Undefined for a single-credential provider, or when pool health cannot be read (the hold then stays).
 	 * Reads pool health only, never key material.
 	 */
+	private _describeUsageLimit(message: AssistantMessage): AssistantMessage {
+		const described = describeUsageLimitMessage(message);
+		const accountsOut = this._accountsOutOf.get(message);
+		return accountsOut === undefined || described.errorMessage === undefined
+			? described
+			: { ...described, errorMessage: withAccountsOut(described.errorMessage, accountsOut) };
+	}
+
 	private async _pooledAccountHealth(
 		provider: string,
 		modelId: string,

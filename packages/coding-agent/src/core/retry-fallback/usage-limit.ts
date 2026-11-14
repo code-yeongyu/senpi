@@ -34,9 +34,14 @@ export class AccountUsageLimitError extends Error {
 			families === undefined || families.length === 0
 				? message
 				: `${message} The limit named no model family; it was confirmed on ${families.join(" and ")}.`;
-		super(accountsOut === undefined ? withFamilies : `${withFamilies} No account can serve: ${accountsOut}.`);
+		super(withAccountsOut(withFamilies, accountsOut));
 		this.name = "AccountUsageLimitError";
 	}
+}
+
+/** Appends a pooled provider's accounts, each with why it cannot serve (senpi#5590, senpi#5963). */
+export function withAccountsOut(message: string | undefined, accountsOut: string | undefined): string | undefined {
+	return accountsOut === undefined ? message : `${message} No account can serve: ${accountsOut}.`;
 }
 
 // The same reader-local time plus timezone the credential pool's blocked message uses.
