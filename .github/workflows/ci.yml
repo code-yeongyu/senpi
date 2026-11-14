@@ -139,7 +139,7 @@ jobs:
           cache: npm
 
       - name: Install system dependencies
-        timeout-minutes: 5
+        timeout-minutes: 12
         run: |
           bash scripts/install-ci-system-deps.sh \
             libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
@@ -291,7 +291,7 @@ jobs:
           cache: npm
 
       - name: Install system dependencies
-        timeout-minutes: 5
+        timeout-minutes: 12
         run: |
           bash scripts/install-ci-system-deps.sh \
             libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
@@ -453,7 +453,7 @@ jobs:
           bun-version: "1.4.4"
 
       - name: Install system dependencies
-        timeout-minutes: 5
+        timeout-minutes: 12
         run: bash scripts/install-ci-system-deps.sh ripgrep
 
       - name: Install dependencies
@@ -1409,7 +1409,7 @@ jobs:
           bun-version: "1.4.4"
 
       - name: Install system dependencies
-        timeout-minutes: 5
+        timeout-minutes: 12
         run: |
           bash scripts/install-ci-system-deps.sh \
             fd-find ripgrep
