@@ -2,6 +2,21 @@ import type { Base64ImageSource, ContentBlockParam } from "./sdk-boundary.ts";
 
 const IMAGE_MEDIA_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"] as const;
 
+const TOOL_OUTPUT_MARKER = "[tool output] ";
+
+/**
+ * Claude Code runs a user text block that starts with `/` as one of its own slash commands. Tool output is
+ * untrusted text, so every text block appended from `from` on that would start with `/` gets a marker first.
+ */
+export function neutralizeToolResultText(blocks: ContentBlockParam[], from: number): void {
+	for (let index = from; index < blocks.length; index++) {
+		const block = blocks[index];
+		if (block?.type === "text" && block.text.trimStart().startsWith("/")) {
+			blocks[index] = { ...block, text: `${TOOL_OUTPUT_MARKER}${block.text}` };
+		}
+	}
+}
+
 export function appendSdkContentBlocks(blocks: ContentBlockParam[], content: string | readonly unknown[]): boolean {
 	if (typeof content === "string") {
 		if (content.length > 0) blocks.push({ type: "text", text: content });

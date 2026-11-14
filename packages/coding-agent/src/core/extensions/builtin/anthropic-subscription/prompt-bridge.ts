@@ -1,6 +1,6 @@
 import type { AssistantMessage, Context } from "@earendil-works/pi-ai";
 import { replayHistoryImages } from "./cold-seed-images.ts";
-import { appendSdkContentBlocks } from "./content-blocks.ts";
+import { appendSdkContentBlocks, neutralizeToolResultText } from "./content-blocks.ts";
 import type { PromptCacheTtl } from "./prompt-cache-ttl.ts";
 import type { ContentBlockParam, SDKUserMessage } from "./sdk-boundary.ts";
 import { mapPiToolNameToSdk } from "./tools.ts";
@@ -117,8 +117,10 @@ export function buildPromptBlocks(
 			pushPrefix(
 				`TOOL RESULT (historical ${mapPiToolNameToSdk(message.toolName, customToolNameToSdk)}, id=${message.toolCallId}):`,
 			);
+			const toolResultStart = blocks.length;
 			if (!appendContentBlocks(blocks, replayedImages.history.get(index) ?? message.content))
 				pushText("(see attached image)");
+			neutralizeToolResultText(blocks, toolResultStart);
 		}
 		if (options.cacheBreakpoint !== undefined) markCacheBreakpoint(blocks, historyStart, options.cacheBreakpoint);
 		pushText(CONVERSATION_HISTORY_CLOSER);

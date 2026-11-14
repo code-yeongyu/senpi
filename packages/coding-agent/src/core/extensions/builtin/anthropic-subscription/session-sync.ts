@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Context, Message } from "@earendil-works/pi-ai";
-import { appendSdkContentBlocks } from "./content-blocks.ts";
+import { appendSdkContentBlocks, neutralizeToolResultText } from "./content-blocks.ts";
 import { longContextAvailable } from "./long-context.ts";
 import type { AnthropicSubscriptionAuthLane } from "./options.ts";
 import type { ContentBlockParam, Options } from "./sdk-boundary.ts";
@@ -183,7 +183,9 @@ export function buildDeltaPromptBlocks(
 				text: `Tool result (${mapPiToolNameToSdk(message.toolName, customToolNameToSdk)}, id=${message.toolCallId}):\n`,
 			});
 		}
+		const contentStart = blocks.length;
 		appendContent(blocks, message.content);
+		if (message.role === "toolResult") neutralizeToolResultText(blocks, contentStart);
 	}
 	return blocks;
 }
