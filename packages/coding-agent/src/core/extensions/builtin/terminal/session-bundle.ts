@@ -112,6 +112,7 @@ export class TerminalSessionBundle {
 		const stopped = await this.manager.stop(id);
 		if (stopped && runtime.exited) return;
 		this.#interruptStops.delete(id);
+		if (!stopped) throw new Error(`the terminal manager has no session ${id} to stop`);
 		throw new Error(`${id} was still running after the stop (TERM, then KILL)`);
 	}
 

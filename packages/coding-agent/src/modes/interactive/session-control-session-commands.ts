@@ -6,6 +6,7 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Model } from "@earendil-works/pi-ai";
 import type { AgentSession } from "../../core/agent-session.ts";
+import { interruptBackgroundError } from "../rpc/pause-command-validation.ts";
 import {
 	availableModelsData,
 	interruptRunningTurn,
@@ -49,12 +50,15 @@ export async function runSessionControlCommand(
 			controls.selectThinkingLevel(level, command.scope !== "turn");
 			return success(id, type);
 		}
-		case "interrupt":
+		case "interrupt": {
+			const backgroundError = interruptBackgroundError(command.background);
+			if (backgroundError !== undefined) return failure(id, type, backgroundError);
 			return success(
 				id,
 				type,
 				await interruptRunningTurn(session, command.turnId, () => controls.interruptTurn(), command.background),
 			);
+		}
 		default:
 			return undefined;
 	}

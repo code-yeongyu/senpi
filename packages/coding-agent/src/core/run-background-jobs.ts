@@ -47,19 +47,22 @@ export class RunBackgroundJobs {
 		return () => this.#drop(turnId, job);
 	}
 
+	/** Stops the turn's jobs all at once, so jobs that ignore TERM cost one grace period, not one each; lists keep start order. */
 	async stop(turnId: string): Promise<RunBackgroundStopOutcome> {
 		const jobs = [...(this.#byTurn.get(turnId) ?? [])];
 		this.#byTurn.delete(turnId);
+		const results = await Promise.allSettled(jobs.map(async (job) => job.stop(turnId)));
 		const stopped: StoppedRunBackgroundJob[] = [];
 		const failed: FailedRunBackgroundJob[] = [];
-		for (const job of jobs) {
-			try {
-				await job.stop(turnId);
+		jobs.forEach((job, index) => {
+			const result = results[index];
+			if (result?.status === "fulfilled") {
 				stopped.push(named(job));
-			} catch (error) {
-				failed.push({ ...named(job), reason: error instanceof Error ? error.message : String(error) });
+				return;
 			}
-		}
+			const error: unknown = result?.reason;
+			failed.push({ ...named(job), reason: error instanceof Error ? error.message : String(error) });
+		});
 		return { stopped, failed };
 	}
 
