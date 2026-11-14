@@ -37,8 +37,8 @@ export const MOVE_SESSION_IDENTITY_CAPABILITY = "move_session_identity";
 export const MOVE_SESSION_PREPARE_REPOSITORY_CAPABILITY = "move_session_prepare_repository";
 
 /**
- * Capability: `status` for an accepted move, and an `import` refused because the move already landed, answer where it
- * landed (senpi#6436).
+ * Capability: `status` for an accepted move, and a `move_fenced` refusal of a move already accepted here (an `import`
+ * into another folder, a `prepare` for another folder), answer where it landed (senpi#6436).
  */
 export const MOVE_SESSION_STATUS_LANDED_PATH_CAPABILITY = "move_session_status_landed_path";
 /**

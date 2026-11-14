@@ -4,11 +4,11 @@
  * session that had landed. The path is the target the move's record stores, read under the record's lock, and it is
  * answered only while the file there still records this move.
  */
-import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createInProcessRig } from "./rpc-inprocess-host-support.ts";
-import { devices, importedOnB, move } from "./rpc-move-session-support.ts";
+import { cloneOf, devices, importedOnB, landedOnB, move } from "./rpc-move-session-support.ts";
 import { SESSION_ID } from "./session-move-fixture.ts";
 
 const ledgerFile = (agentDir: string, moveId: string) => join(agentDir, "session-moves", "ledger", `${moveId}.json`);
@@ -87,6 +87,39 @@ describe("move_session status answers where an accepted move landed (senpi#6436)
 			error: "move_fenced",
 			errorData: { detail: expect.any(String), session_path: onB, session_id: SESSION_ID, cwd: fixture.repoB },
 		});
+	});
+
+	it("#given a move readied for one folder and accepted there #when prepare names another folder #then the move_fenced refusal carries where the move landed", async () => {
+		const fixture = await devices();
+		const third = cloneOf(fixture.repoA, join(fixture.base, "c", "repo"));
+		await using a = createInProcessRig(fixture.agentA);
+		await using b = createInProcessRig(fixture.agentB);
+		const repository = { rootCommits: [fixture.root] };
+		expect(await move(b, { op: "prepare", moveId: "move-p11", cwd: fixture.repoB, repository })).toMatchObject({
+			success: true,
+		});
+		const onB = await importedOnB(a, b, fixture, "move-p11");
+
+		const refused = await move(b, { op: "prepare", moveId: "move-p11", cwd: third, repository });
+
+		expect(refused).toMatchObject({ success: false, error: "move_fenced" });
+		expect(refused.errorData).toEqual({ detail: expect.any(String), ...landedOnB(fixture, onB) });
+	});
+
+	// Where the move landed only adds to a refusal: a read of it that fails never replaces the refusal.
+	it("#given a folder stands at the landed path, so reading it fails #when an import of the same move into another folder is refused #then the caller still receives move_fenced, without the landed fields", async () => {
+		const fixture = await devices();
+		await using a = createInProcessRig(fixture.agentA);
+		await using b = createInProcessRig(fixture.agentB);
+		const onB = await importedOnB(a, b, fixture, "move-p12");
+		const bundleDir = join(fixture.agentA, "session-moves", "outgoing", "move-p12");
+		rmSync(onB);
+		mkdirSync(onB);
+
+		const refused = await move(b, { op: "import", bundleDir, cwd: fixture.repoA, from: "device-a" });
+
+		expect(refused).toMatchObject({ success: false, error: "move_fenced" });
+		expect(refused.errorData).toEqual({ detail: expect.any(String) });
 	});
 
 	it("#given the target revoked its import #when the same move is imported again elsewhere #then the refusal says revoked beside the landed path", async () => {

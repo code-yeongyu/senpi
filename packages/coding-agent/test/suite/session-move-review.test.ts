@@ -5,7 +5,7 @@ import { getDefaultSessionDir, SessionManager } from "../../src/core/session-man
 import { MoveBundleInvalidError } from "../../src/core/session-move/bundle.ts";
 import { exportSessionForMove } from "../../src/core/session-move/export.ts";
 import { finishMove } from "../../src/core/session-move/finish.ts";
-import { answerMoveStatus, importMovedSession } from "../../src/core/session-move/import.ts";
+import { answerMoveStatusAndLanding, importMovedSession } from "../../src/core/session-move/import.ts";
 import { MoveFencedError, MoveLedger } from "../../src/core/session-move/move-ledger.ts";
 import {
 	type MoveId,
@@ -161,7 +161,9 @@ describe("session move review fixes (senpi#3631)", () => {
 		expect(sessionFile).toBe(source);
 		expect(readFileSync(sessionFile, "utf8")).toContain("written on B");
 		expect(() => appendUserMessage(sessionFile, "back on A")).not.toThrow();
-		expect(await answerMoveStatus(ledgerA, BACK, sessionFile)).toEqual({ state: "accepted" });
+		expect((await answerMoveStatusAndLanding(ledgerA, BACK, { file: sessionFile, as: "copy" })).answer).toEqual({
+			state: "accepted",
+		});
 	});
 
 	it("#given a writable session with the same id already at the target #then the import fails and the ledger says import_failed", async () => {
@@ -257,7 +259,10 @@ describe("session move review fixes (senpi#3631)", () => {
 
 	it("#given a move the receiver was asked about before it arrived #then the late import is refused", async () => {
 		const { cwdB, bundleDir, ledger, readIdentity } = await setup(undefined, undefined, { ready: false });
-		expect(await answerMoveStatus(ledger, MOVE, undefined)).toEqual({ state: "declined", reason: "no_record" });
+		expect((await answerMoveStatusAndLanding(ledger, MOVE, undefined)).answer).toEqual({
+			state: "declined",
+			reason: "no_record",
+		});
 		await expect(importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity })).rejects.toBeInstanceOf(
 			MoveFencedError,
 		);
