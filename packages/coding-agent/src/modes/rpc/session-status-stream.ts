@@ -26,6 +26,7 @@ import {
 	type SessionStatusActor,
 	type SessionStatusCause,
 	type SessionStatusEntryView,
+	type SessionStatusFanoutView,
 	type SessionStatusLastEffect,
 	type SessionStatusRecord,
 	type SessionStatusRuntimeView,
@@ -275,11 +276,16 @@ export class SessionStatusStream {
 		return live ?? this.lastViews.get(sessionId);
 	}
 
+	/** The fanout half a `session_status` row is derived from; a `list_sessions` row reads the same one. */
+	fanoutView(sessionId: string): SessionStatusFanoutView {
+		return { pendingQuestions: this.delivery.pendingQuestions(sessionId) };
+	}
+
 	private derive(sessionId: string, view: SessionView, cause?: SessionStatusCause): DerivedSessionStatus {
 		return deriveSessionStatus(
 			view.entry,
 			view.runtime,
-			{ pendingQuestions: this.delivery.pendingQuestions(sessionId) },
+			this.fanoutView(sessionId),
 			this.terminals.get(sessionId),
 			cause,
 		);

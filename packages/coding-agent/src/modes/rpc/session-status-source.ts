@@ -10,7 +10,7 @@ import { sessionQuestionBridges } from "./connection-question-bridge.ts";
 import { deriveSessionActivity } from "./session-activity.ts";
 import { publishedSessionContext } from "./session-context-patch.ts";
 import type { RpcSessionEntry, RpcSessionRow } from "./session-registry-types.ts";
-import type { SessionStatusEntryView, SessionStatusRuntimeView } from "./session-status.ts";
+import type { SessionStatusEntryView, SessionStatusFanoutView, SessionStatusRuntimeView } from "./session-status.ts";
 import type { SessionStatusSource } from "./session-status-stream.ts";
 
 function modelOf(model: { readonly provider: string; readonly id: string } | undefined) {
@@ -91,14 +91,18 @@ function entryView(entry: RpcSessionEntry): SessionStatusEntryView {
 	};
 }
 
-/** The `list_sessions` row fields read from the same views a `session_status` row is derived from. */
+/**
+ * The `list_sessions` row fields read from the same views a `session_status` row is derived from. `fanout` is the
+ * status stream's own fanout view (`SessionStatusStream.fanoutView`); without it the runtime's count alone decides.
+ */
 export function sessionRowStatusFields(
 	entry: RpcSessionEntry,
+	fanout?: SessionStatusFanoutView,
 ): Pick<RpcSessionRow, "archived" | "activity" | "error_code" | "turn_id" | "model"> {
 	const runtime = runtimeView(entry);
 	return {
 		archived: entryView(entry).archived === true,
-		...deriveSessionActivity(runtime),
+		...deriveSessionActivity(runtime, fanout),
 		...(runtime?.model !== undefined ? { model: runtime.model } : {}),
 	};
 }

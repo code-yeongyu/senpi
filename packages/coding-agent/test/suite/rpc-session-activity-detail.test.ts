@@ -6,6 +6,7 @@
 import { type AssistantMessage, fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, expect, it } from "vitest";
 import type { QuestionRequest } from "../../src/core/extensions/types.ts";
+import { sessionRuntimeView } from "../../src/modes/rpc/session-status-source.ts";
 import { controlData } from "../helpers/session-control-client.ts";
 import { type EndpointFixture, startEndpoint } from "../helpers/session-control-fixture.ts";
 import { createHarness } from "./harness.ts";
@@ -26,6 +27,14 @@ const QUESTION: QuestionRequest = {
 function failedTurn(): AssistantMessage {
 	return {
 		...fauxAssistantMessage("", { stopReason: "error", errorMessage: "rejected" }),
+		providerDiagnostic: { category: "auth", httpStatus: 401, evidence: "structured_status" },
+	};
+}
+
+/** A turn the provider ended as aborted; the diagnostic it carries must not make it read as a failure. */
+function abortedTurn(): AssistantMessage {
+	return {
+		...fauxAssistantMessage("", { stopReason: "aborted", errorMessage: "aborted" }),
 		providerDiagnostic: { category: "auth", httpStatus: 401, evidence: "structured_status" },
 	};
 }
@@ -147,6 +156,32 @@ it("lists a session with a pending question as awaiting_approval, and idle once 
 	expect((await listedRow(owner, sessionId)).activity).toBe("idle");
 }, 120_000);
 
+it("lists awaiting_approval when only the host's fanout holds the pending question, as session_status reads it", async () => {
+	await using host = await statusHost({ capabilities: ["question"] });
+	const owner = host.client("owner");
+	const subscriptionId = await subscribe(owner);
+	const sessionId = await openSession(owner);
+	const session = host.core.peekSession(sessionId)?.runtime?.session;
+	if (session === undefined) throw new Error("no live session");
+
+	// A question frame the writer accepted for the session that its own question bridge never asked.
+	const waiting = owner.waitFor(statusOf(subscriptionId, sessionId, (record) => record.status === "waiting_input"));
+	host.writer.enqueue(sessionId, {
+		type: "extension_ui_request",
+		id: "fanout-only",
+		method: "question",
+		questions: QUESTION.questions,
+	});
+	await waiting;
+	expect(sessionRuntimeView(session).pendingQuestions).toBe(0);
+	expect((await listedRow(owner, sessionId)).activity).toBe("awaiting_approval");
+
+	const resolved = owner.waitFor(statusOf(subscriptionId, sessionId, (record) => record.status === "idle"));
+	host.writer.enqueue(sessionId, { type: "question_resolved", id: "fanout-only" });
+	await resolved;
+	expect((await listedRow(owner, sessionId)).activity).toBe("idle");
+}, 120_000);
+
 it("lists a running session holding a follow-up as queued", async () => {
 	await using host = await statusHost();
 	const owner = host.client("owner");
@@ -195,6 +230,21 @@ it("lists a session whose last turn failed as errored with the failure's code, u
 	const recovered = await listedRow(owner, sessionId);
 	expect(recovered).toMatchObject({ activity: "idle", turn_id: nextId });
 	expect(recovered).not.toHaveProperty("error_code");
+}, 120_000);
+
+it("lists a session whose last turn was aborted as idle, not errored, with no error_code", async () => {
+	await using host = await statusHost();
+	const owner = host.client("owner");
+	const sessionId = await openSession(owner);
+	host.faux.setResponses([abortedTurn()]);
+	const turnId = await promptToIdle(host, owner, sessionId, "this turn is aborted");
+	const session = host.core.peekSession(sessionId)?.runtime?.session;
+	const last = session?.messages.findLast((message) => message.role === "assistant");
+	expect(last).toMatchObject({ role: "assistant", stopReason: "aborted" });
+
+	const row = await listedRow(owner, sessionId);
+	expect(row).toMatchObject({ activity: "idle", turn_id: turnId });
+	expect(row).not.toHaveProperty("error_code");
 }, 120_000);
 
 const endpoints: EndpointFixture[] = [];
