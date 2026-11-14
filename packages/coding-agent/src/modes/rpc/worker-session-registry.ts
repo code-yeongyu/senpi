@@ -17,6 +17,7 @@ import {
 } from "./session-registry.ts";
 import { SessionWorkerClient } from "./session-worker-client.ts";
 import type { SessionWriteGrant } from "./session-worker-protocol.ts";
+import type { SessionStatusFanoutView } from "./session-status.ts";
 import { sessionRowStatusFields } from "./session-status-source.ts";
 import type { WorkerSessionClaims } from "./worker-session-claims.ts";
 import { openWorkerSession } from "./worker-session-open.ts";
@@ -164,7 +165,8 @@ export class WorkerSessionRegistry {
 		if (timer) clearTimeout(timer);
 	}
 
-	list(): RpcSessionRow[] {
+	/** `fanoutOf` is the status stream's fanout view, so a row's `activity` reads what `session_status` reads. */
+	list(fanoutOf?: (sessionId: string) => SessionStatusFanoutView): RpcSessionRow[] {
 		const now = this.now();
 		return [...this.entries].map(([sessionId, entry]) => {
 			const state = entry.worker?.snapshot?.state;
@@ -183,7 +185,7 @@ export class WorkerSessionRegistry {
 				idleMs: Math.max(0, now - entry.lastCommandAt),
 				// A worker isolate's session has no tool child of its own yet (senpi#3566 todo 4 serves the in-process host).
 				tool_child: { state: "none" },
-				...sessionRowStatusFields(entry),
+				...sessionRowStatusFields(entry, fanoutOf?.(sessionId)),
 			};
 		});
 	}

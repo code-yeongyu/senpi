@@ -6,6 +6,7 @@ import { publishedSessionContext } from "./session-context-patch.ts";
 import { attachLiveSession, markPathAttached } from "./session-live-attachment.ts";
 import { beginPendingClaim, type PendingClaims, syncRuntimeMetadata } from "./session-registry-claims.ts";
 import { openRegistrySession } from "./session-registry-open.ts";
+import type { SessionStatusFanoutView } from "./session-status.ts";
 import { sessionRowStatusFields } from "./session-status-source.ts";
 
 import {
@@ -209,7 +210,8 @@ export class RpcSessionRegistry {
 		return closeMarkedSession(this.teardownHost, handle);
 	}
 
-	list(): RpcSessionRow[] {
+	/** `fanoutOf` is the status stream's fanout view, so a row's `activity` reads what `session_status` reads. */
+	list(fanoutOf?: (sessionId: string) => SessionStatusFanoutView): RpcSessionRow[] {
 		this.syncRuntimeMetadata();
 		const now = this.now();
 		return [...this.entries]
@@ -228,7 +230,7 @@ export class RpcSessionRegistry {
 				status: entry.state === "quarantined" ? "closing" : entry.state,
 				idleMs: Math.max(0, now - entry.lastCommandAt),
 				tool_child: entry.runtime?.session.toolChildRow() ?? { state: "none" },
-				...sessionRowStatusFields(entry),
+				...sessionRowStatusFields(entry, fanoutOf?.(sessionId)),
 			}));
 	}
 

@@ -65,7 +65,8 @@ export function answerListSessions(
 ): RpcResponse {
 	// Worker sessions are machine-driven work: a client sees them only by asking, and
 	// the opaque context blob travels only on that listing, never to every connection.
-	const rows = host.registry.list();
+	// The status stream's own fanout view: a row's `activity` counts the questions `session_status` counts.
+	const rows = host.registry.list((sessionId) => host.writer.status.fanoutView(sessionId));
 	const presence = host.defaults.sessionPresence;
 	const withMemory = rows.map((row) => ({
 		...row,

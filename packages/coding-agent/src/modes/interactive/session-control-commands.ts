@@ -174,7 +174,7 @@ function sessionRow(session: AgentSession, attachments: ControlAttachments): Rea
 		// A release here never ends the terminal's own session.
 		retain_on_disconnect: true,
 		archived: isSessionArchived(manager),
-		...deriveSessionActivity(attachments.runtimeView()),
+		...deriveSessionActivity(attachments.runtimeView(), attachments.writer.status.fanoutView(attachments.handle)),
 		...(session.model !== undefined ? { model: { provider: session.model.provider, id: session.model.id } } : {}),
 	};
 }

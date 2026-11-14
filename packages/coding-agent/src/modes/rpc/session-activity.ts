@@ -1,6 +1,8 @@
 /**
- * The `activity`, `error_code` and `turn_id` a `list_sessions` row carries (N3), derived from the same runtime view
- * and the same live status a `session_status` row is derived from, so the two never disagree.
+ * The `activity`, `error_code` and `turn_id` a `list_sessions` row carries (N3), derived from the same runtime view,
+ * the same fanout view (`SessionStatusStream.fanoutView`, whose pending-question count `session_status` also reads)
+ * and the same live status a `session_status` row is derived from, so the two never disagree. A caller that passes
+ * no fanout view lets the runtime's own count decide.
  *
  * | live status (`session_status.status`) | runtime                      | activity            |
  * |---------------------------------------|------------------------------|---------------------|
