@@ -57,7 +57,7 @@ export function appendToolResultUserWords(messages: Message[]): Message[] {
 	let pending: TextContent[] = [];
 	let source: ToolResultMessage | undefined;
 	const flush = (next: Message | undefined) => {
-		if (source && !startsWithBlocks(next, pending)) result.push(wordMessage(pending, source));
+		if (source && !startsWithBlocks(next, pending)) result.push(followerMessage(pending, source));
 		pending = [];
 		source = undefined;
 	};
@@ -81,7 +81,7 @@ export function appendToolResultUserWords(messages: Message[]): Message[] {
  * only while the result still matches it; the copy is then sealed with the word message's own
  * fingerprint, since it is rebuilt on every conversion and cannot keep a seal from an earlier one.
  */
-function wordMessage(content: TextContent[], source: ToolResultMessage): Message {
+export function followerMessage(content: TextContent[], source: Message): Message {
 	const message: Message = { role: "user", content, timestamp: source.timestamp };
 	const provenance = getContextProvenance(source);
 	if (!provenance) return message;
