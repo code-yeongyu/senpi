@@ -165,6 +165,11 @@ export function cleanupManagedInstall(): void {
 	if (!managedRoot) return;
 
 	try {
+		// senpi#6431: proper-lockfile releases this lock by path without checking it is still this holder's (the
+		// race #6430 fixed for lockWithLossHandling). This lock uses the library's default 10 s stale bound and a sync holder
+		// cannot refresh it, while the critical section below is a recursive delete of the staging trees: a slow delete alone
+		// can outlast the bound, let the update path take the lock over, and then this release removes the update's lock.
+		// Not fixed here; tracked in #6431.
 		const releaseLock = lockfile.lockSync(join(managedRoot, "update"), { realpath: false });
 		try {
 			cleanupManagedStaging(managedRoot);
