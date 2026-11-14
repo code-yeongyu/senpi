@@ -6,12 +6,13 @@ const TOOL_OUTPUT_MARKER = "[tool output] ";
 
 /**
  * Claude Code runs a user text block that starts with `/` as one of its own slash commands. Tool output is
- * untrusted text, so every text block appended from `from` on that would start with `/` gets a marker first.
+ * untrusted text, so every non-empty text block appended from `from` on gets a marker first, whatever its first
+ * character is (invisible characters such as a zero-width space or a BOM included).
  */
 export function neutralizeToolResultText(blocks: ContentBlockParam[], from: number): void {
 	for (let index = from; index < blocks.length; index++) {
 		const block = blocks[index];
-		if (block?.type === "text" && block.text.trimStart().startsWith("/")) {
+		if (block?.type === "text" && block.text.length > 0) {
 			blocks[index] = { ...block, text: `${TOOL_OUTPUT_MARKER}${block.text}` };
 		}
 	}
