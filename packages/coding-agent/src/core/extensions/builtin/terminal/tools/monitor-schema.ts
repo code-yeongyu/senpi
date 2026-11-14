@@ -26,7 +26,7 @@ export const monitorSchema = Type.Object({
 		Type.String({
 			minLength: 1,
 			description:
-				'Create, rpc branch: "children" (sessions this one spawned, including ones spawned later), "all" (every session on every host and terminal of this user) or one session id, path or st_ task id.',
+				'Create, rpc branch: "children" (sessions this one spawned, including ones spawned later), "all" (every session on every host and terminal of this user) or one session id, path or st_ task id; a session on another device is <device>/<session> (e.g. "laptop/abc123").',
 		}),
 	),
 	events: Type.Optional(
