@@ -11,6 +11,8 @@ import {
 	MANIFEST_FILE,
 	MOVE_BUNDLE_FORMAT,
 	type MoveManifest,
+	MovePathTooDeepError,
+	nestsTooDeep,
 	parseMoveId,
 	parsePlainId,
 	SESSION_BUNDLE_PATH,
@@ -100,6 +102,9 @@ async function writeMoveBundle(options: ExportSessionForMoveOptions): Promise<Mo
 		throw new SessionMovedAwayError(sessionFile, ownership);
 	}
 	if (ownership.writable) {
+		// Refused here, the session is never sealed for a move whose bundle a receiver would refuse (senpi#6469).
+		const given = typeof options.extensionStateDir === "string" ? options.extensionStateDir : undefined;
+		await assertMoveFits(sessionFile, sessionId, given, false);
 		(await SessionManager.openAsync(sessionFile)).appendCustomEntry(SESSION_RELEASED, {
 			reason: "move",
 			move_id: moveId,
@@ -111,6 +116,8 @@ async function writeMoveBundle(options: ExportSessionForMoveOptions): Promise<Mo
 	const stateDir =
 		typeof options.extensionStateDir === "function" ? await options.extensionStateDir() : options.extensionStateDir;
 	if (stateDir !== undefined && !(await pathExists(stateDir))) throw new MovedStateMissingError(stateDir);
+	// A session sealed before anything looked (an earlier version's release) is refused before a bundle is written.
+	await assertMoveFits(sessionFile, sessionId, stateDir, true);
 	const staging = `${options.bundleDir}.partial-${process.pid}`;
 	await rm(staging, { recursive: true, force: true });
 	await mkdir(join(staging, dirname(SESSION_BUNDLE_PATH)), { recursive: true });
@@ -133,6 +140,27 @@ async function writeMoveBundle(options: ExportSessionForMoveOptions): Promise<Mo
 	await rm(options.bundleDir, { recursive: true, force: true });
 	await rename(staging, options.bundleDir);
 	return manifest;
+}
+
+/**
+ * Refuses a move one of whose files would sit in the bundle deeper than a bundle path may be (senpi#6469): the
+ * session's resident blobs, and the extension state staged for the move. Whoever seals a session for a move asks
+ * first, so a session a receiver would refuse is never sealed.
+ */
+export async function assertMoveFits(
+	sessionFile: string,
+	sessionId: string,
+	stateDir: string | undefined,
+	sealedAlready: boolean,
+): Promise<void> {
+	const sessionDir = dirname(sessionFile);
+	const blobs = await filesUnder(join(sessionDir, "resident-blobs", sessionId));
+	const paths = blobs.map((source) => bundlePath("files", sessionDir, source));
+	if (stateDir !== undefined) {
+		for (const source of await filesUnder(stateDir)) paths.push(bundlePath("state", stateDir, source));
+	}
+	const tooDeep = paths.find(nestsTooDeep);
+	if (tooDeep !== undefined) throw new MovePathTooDeepError(tooDeep, sealedAlready);
 }
 
 async function copySidecars(sessionDir: string, sessionId: string, staging: string): Promise<BundleFile[]> {
