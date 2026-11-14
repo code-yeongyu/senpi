@@ -1,7 +1,11 @@
 import type { CredentialStore } from "@earendil-works/pi-ai";
+import { getAgentDir } from "../config.ts";
+import { replayExtensionProviderRegistrations } from "../core/agent-session-services.ts";
 import { resolveCliModel } from "../core/model-resolver.ts";
 import { ModelRuntime } from "../core/model-runtime.ts";
 import { InMemoryCodingAgentModelsStore } from "../core/models-store.ts";
+import { DefaultResourceLoader, type DefaultResourceLoaderOptions } from "../core/resource-loader.ts";
+import { SettingsManager } from "../core/settings-manager.ts";
 import type { Args } from "./args.ts";
 import { AuthCommandError, getAuthCredential, validateAuthCommandArgs } from "./auth-command.ts";
 
@@ -63,11 +67,52 @@ export async function getProviderCredential(
 	return getAuthCredential(await modelRuntime.getAuth(providerId));
 }
 
-export async function createAuthCheckModelRuntime(credentials: CredentialStore): Promise<ModelRuntime> {
-	return ModelRuntime.create({
+export interface AuthCheckRuntimeOptions {
+	cwd: string;
+	agentDir?: string;
+	resourceLoaderOptions?: Pick<
+		DefaultResourceLoaderOptions,
+		"additionalExtensionPaths" | "extensionFactories" | "noExtensions"
+	>;
+}
+
+/**
+ * A runtime holding every provider a generation can use: the built-in catalog plus the providers
+ * extensions register (`anthropic-subscription` is one), so `auth check` cannot report
+ * `provider_not_found` for a provider that generations reach (senpi#2191). Extensions are loaded
+ * the way session services load them, but the caller's credential store stays the only one: session
+ * services would open a writable `auth.json`, which a `--no-refresh` check must never create.
+ */
+export async function createAuthCheckModelRuntime(
+	credentials: CredentialStore,
+	options: AuthCheckRuntimeOptions,
+): Promise<ModelRuntime> {
+	const modelRuntime = await ModelRuntime.create({
 		credentials,
 		modelsStore: new InMemoryCodingAgentModelsStore(),
 		allowModelNetwork: false,
 		refreshOnCreate: false,
 	});
+	const agentDir = options.agentDir ?? getAgentDir();
+	const settingsManager = SettingsManager.create(options.cwd, agentDir);
+	const resourceLoader = new DefaultResourceLoader({
+		...options.resourceLoaderOptions,
+		cwd: options.cwd,
+		agentDir,
+		settingsManager,
+		noSkills: true,
+		noPromptTemplates: true,
+		noThemes: true,
+		noContextFiles: true,
+	});
+	await resourceLoader.reload();
+	modelRuntime.setSettingsManager(settingsManager);
+	const { registeredProviders } = replayExtensionProviderRegistrations(
+		modelRuntime,
+		resourceLoader.getExtensions().runtime,
+	);
+	if (registeredProviders.size > 0) {
+		await modelRuntime.refresh({ allowNetwork: false, providers: [...registeredProviders] });
+	}
+	return modelRuntime;
 }

@@ -165,7 +165,77 @@ describe("auth check command", () => {
 	});
 
 	test("creates an auth-check runtime without catalog storage", async () => {
-		const runtime = await createAuthCheckModelRuntime(AuthStorage.inMemory());
+		const runtime = await createAuthCheckModelRuntime(AuthStorage.inMemory(), {
+			cwd: tempDir,
+			agentDir: join(tempDir, "agent"),
+		});
 		expect(runtime.getProvider("openai")).toBeDefined();
+	});
+
+	test("sees the built-in anthropic-subscription provider that generations use (senpi#2191)", async () => {
+		const runtime = await createAuthCheckModelRuntime(AuthStorage.inMemory(), {
+			cwd: tempDir,
+			agentDir: join(tempDir, "agent"),
+		});
+
+		expect(runtime.getProvider("anthropic-subscription")).toBeDefined();
+		await expect(
+			checkProviderAuth(parseArgs(["--provider", "anthropic-subscription"]), runtime),
+		).resolves.not.toMatchObject({ reason: "provider_not_found" });
+	});
+
+	test("reports a provider an extension registers as ready, by --provider and by --model (senpi#2191)", async () => {
+		const runtime = await createAuthCheckModelRuntime(
+			AuthStorage.inMemory({ "local-ext": { type: "api_key", key: "test-key" } }),
+			{
+				cwd: tempDir,
+				agentDir: join(tempDir, "agent"),
+				resourceLoaderOptions: {
+					extensionFactories: [
+						(pi) =>
+							pi.registerProvider("local-ext", {
+								baseUrl: "http://127.0.0.1:9/v1",
+								api: "openai-completions",
+								models: [
+									{
+										id: "local-model",
+										name: "Local Model",
+										reasoning: false,
+										input: ["text"],
+										cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+										contextWindow: 128000,
+										maxTokens: 4096,
+									},
+								],
+							}),
+					],
+				},
+			},
+		);
+
+		await expect(checkProviderAuth(parseArgs(["--provider", "local-ext"]), runtime)).resolves.toEqual({
+			status: "ready",
+			provider: "local-ext",
+			authType: "api_key",
+		});
+		await expect(checkProviderAuth(parseArgs(["--model", "local-ext/local-model"]), runtime)).resolves.toEqual({
+			status: "ready",
+			provider: "local-ext",
+			authType: "api_key",
+		});
+	});
+
+	test("loading extension providers through a read-only store creates no auth file", async () => {
+		const agentDir = join(tempDir, "agent");
+		const runtime = await createAuthCheckModelRuntime(new ReadOnlyAuthStorage(join(agentDir, "auth.json")), {
+			cwd: tempDir,
+			agentDir,
+		});
+
+		await expect(checkProviderAuth(parseArgs(["--provider", "openai"]), runtime)).resolves.toMatchObject({
+			status: "not_ready",
+		});
+		expect(existsSync(join(agentDir, "auth.json"))).toBe(false);
+		expect(existsSync(agentDir)).toBe(false);
 	});
 });
