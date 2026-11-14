@@ -240,10 +240,12 @@ export class SharedMcpConnection {
 		this.#disposed = true;
 		this.#clearIdle();
 		clearInterval(this.#keepAliveTimer);
-		disposeMcpReconnect(this.connection);
+		const reconnectSettled = disposeMcpReconnect(this.connection);
 		for (const lease of [...this.leases]) await lease.dispose();
 		this.#onDispose();
 		await this.connection.dispose();
+		// The close ends a reconnect attempt in flight; wait for it so nothing it started writes later (senpi#4642).
+		await reconnectSettled;
 	}
 	async invalidate(): Promise<void> {
 		this.#catalog = undefined;
