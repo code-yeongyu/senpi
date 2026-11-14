@@ -66,9 +66,15 @@ describe("smoke failure after npm: issue content (senpi#6628)", () => {
 		assert.ok(issue.body.includes("https://run/1"));
 		assert.match(issue.body, /last known-good version/);
 		assert.match(issue.body, /published right before this one was `2026\.11\.12`; if that release was itself rolled back/);
+	});
+
+	it("without a readable previous version, gives the placeholder command once and the npm note once, with nothing pointing at a missing release (senpi#6628 review L1)", () => {
 		const unknown = smokeFailureIssue({ version: "2026.11.13", previous: null, runners: ["macos-latest"], runUrl: "u" });
-		assert.ok(unknown.body.includes("npm dist-tag add @code-yeongyu/senpi@<previous> latest"));
-		assert.match(unknown.body, /replace `<previous>`/);
+		const count = (needle) => unknown.body.split(needle).length - 1;
+		assert.equal(count("npm dist-tag add @code-yeongyu/senpi@<previous> latest"), 1);
+		assert.equal(count("could not be read from npm"), 1);
+		assert.equal(count("that release"), 0, unknown.body);
+		assert.ok(!unknown.body.includes("published right before this one was"));
 	});
 });
 
