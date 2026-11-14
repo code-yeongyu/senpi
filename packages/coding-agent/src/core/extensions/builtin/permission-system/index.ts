@@ -322,8 +322,9 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		dispatchSignal?: AbortSignal,
 	): Promise<ToolCallEventResult | undefined> => {
 		// A `tool_call` hook gets no signal argument, so its prompt ends with the turn: an abort releases a prompt
-		// nobody answers (a child's dialog forwarded to a host that never shows it), senpi#6670.
-		const signal = dispatchSignal ?? ctx.signal;
+		// nobody answers (a child's dialog forwarded to a host that never shows it), senpi#6670. A context with no
+		// session (the hand of a split session) has no turn, so its `signal` is unbound and must not be read.
+		const signal = dispatchSignal ?? (ctx.sessionManager === undefined ? undefined : ctx.signal);
 		attachWithoutSession(ctx);
 		followPresetFlag(ctx.cwd, ctx.agentDir);
 		if (setupError !== null) {
