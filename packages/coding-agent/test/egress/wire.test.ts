@@ -26,6 +26,7 @@ const HAND_LOCAL = [
 	"onProviderStreamEvent",
 	"onResponse",
 	"onTransportActivity",
+	"requiresNonUserContinuation",
 	"signal",
 	"telemetryContext",
 ] as const;

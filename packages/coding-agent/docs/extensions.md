@@ -1887,13 +1887,14 @@ there is no setter. See [Session kind and context](rpc.md#session-kind-and-conte
 
 ### pi.session
 
-The session's control surface: how a message another local session sent is admitted into this one, and how the
-session is exposed to those senders. Nothing here keeps a queue of its own; an admitted delivery waits in the
-runtime's steering or follow-up queue like the user's queued input. The protocol side is
+The session's control surface: how another local session's message is admitted, how a local extension requests
+an idle run to inspect external data, and how the session is exposed to senders. Admitted messages use the
+runtime's steering or follow-up queue. Native external wake requests never enter a delivery queue. The protocol side is
 [Interactive sessions expose a control endpoint](rpc.md#interactive-sessions-expose-a-control-endpoint).
 
 | Method | Returns | Behaviour |
 |---|---|---|
+| `registerExternalWakeSource({ source, readTool })` | `ExternalWakeSource` | Registers a local data source and its active read tool for this extension generation. The handle prepares and requests a native idle run without adding a user message. See [Native external wake](#native-external-wake). |
 | `registerControlEndpoint({ inboxDir, drain, isSessionReferenced? })` | `Promise<SessionControlRegistration>` | POSIX interactive session: binds the `tui` control endpoint and answers `{ status: "registered", socket, dispose }`. On a multi-session host with a public socket it binds nothing and `socket` is the host's. Otherwise `{ status: "unsupported", reason: "unsupported_platform" \| "unsupported_mode" }`, or `{ status: "failed", reason }` when a registration step failed. `drain(event)` runs on every [`session_control_wake`](#session_control_wake) edge and answers `{ admitted: [{ delivery_id, kind }] }`. `inboxDir` is created 0700 and its entry creations and deletions wake the drain. At clean exit a header-only session file is removed unless `isSessionReferenced()` answers `true`. An endpoint lives for one extension generation: a reload disposes the endpoints the retiring generation registered (also one whose registration finishes after the reload began, which answers `failed`), so register again from `session_start` with reason `reload`. Repeated failures of `drain` show one notice until a pass succeeds. |
 | `admissionGate()` | `{ can_admit, hold_reason?, editor_revision, turn_epoch }` | Read-only pre-check; `hold_reason` is `draft` while the user composes or their submission is still on its way into the runtime. |
 | `admitExternalMessage({ delivery_id, text, deliverAs, expected_turn_id?, sender?, display_text?, whenIdle? })` | `{ kind, turn_epoch }` | Decides and acts in one synchronous call. `whenIdle` (`start`, the default, or `queue`) is what an idle session does with it: start a turn, or hold it (`queued`) in the `deliverAs` queue for the next turn. `kind` is `started`, `queued`, `steered`, `turn_conflict` (stale epoch, or a steer without one), `held_draft` (nothing enqueued; retry on the next wake) or `already_admitted` (also for a delivery whose entry the file refused, until the run that refused it has settled and the file's last write succeeded). The delivery becomes a `custom` entry `session_control_delivery` whose `details.delivery_id` proves it was applied. Throws once a host started handing the session over (`release_session`). `sender` (`{ kind: "agent", session_id, name? }`, `{ kind: "command_line", user? }` or `{ kind: "external", platform, author? }`) and `display_text` (the message as written) go to the entry's `details`: the terminal labels the message by its sender over `display_text`, while the model reads `text`. |
@@ -1918,6 +1919,53 @@ export default function ({ pi }) {
   });
 }
 ```
+
+#### Native external wake
+
+Use `registerExternalWakeSource` when a trusted local integration needs an idle session to inspect pending data.
+Register it from `session_start`, after registering the tool named by `readTool`. Both identifiers belong to the
+local extension; the wake API accepts no message body, subject, sender or instruction text. The model retrieves
+the external data through a real call to that tool, and the tool result does not grant additional permissions.
+
+```typescript
+const source = pi.session.registerExternalWakeSource({
+  source: "mailbox",
+  readTool: "mailbox_inbox",
+});
+
+// In the integration's pending-data callback; reuse wakeId for one intent.
+const prepared = source.prepare({ deadline: Date.now() + 5_000, signal });
+if (prepared.status === "ready") {
+  const result = await source.wake({ wake_id: wakeId, permit: prepared.permit });
+  // Inspect result.status; "started" does not prove that the tool was read.
+}
+```
+
+`prepare` returns an opaque permit or `{ status: "refused", reason }`. Its absolute Unix-millisecond deadline
+must be in the future and at most 60 seconds away. A permit captures the session, extension generation, turn,
+editor and Stop revisions. It cannot be copied, serialized or transferred to another source. Admission is checked
+again after asynchronous preparation, immediately before claiming the native run. A draft, Stop, cancellation,
+expired deadline, busy session or retired generation prevents a late start. `dispose()` invalidates the source's
+permits and cancels its active run; reload also retires the old handles.
+
+`wake` resolves after settlement. Concurrent repeats of the same source and `wake_id` join the original result.
+`{ status: "started", turn_epoch }` proves a run began; consumption of external data needs its own receipt.
+A refusal is terminal and is never saved for a later turn or replayed on reopen. `failed` reports a preparation
+or runtime error. The compact `session_control_external_wake` transcript entry records the local source, wake ID
+and turn epoch for the UI. It is excluded from model input. The fixed instruction to inspect the registered read
+tool belongs only to that run and is removed before the next ordinary turn.
+
+Native wake uses the current history, normal model/compaction admission and the existing preview-safe system
+preparation. Only `before_agent_start` handlers registered with `previewSafe: true` receive this preview; configured
+rules, prompt presets and MCP instructions are preserved. Pending message and user context stays available to the
+next ordinary prompt. A preview that needs to add a message cannot start a native wake. Normal run, tool and
+settlement events still describe the resulting work.
+
+The model transport must explicitly support continuation from history and system context without inserting a
+user message. Other transports return `refused` with reason `unsupported`; extensions must handle that result.
+An extension supplying a custom `streamSimple` declares `supportsNonUserContinuation(model)` only when its actual
+transport preserves that property. It inherits no support from an overridden API's name. Auth-selected and retry
+transports are checked again before sending each request.
 
 ### pi.on(event, handler)
 

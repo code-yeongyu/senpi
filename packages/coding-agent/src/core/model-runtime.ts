@@ -1280,9 +1280,16 @@ export class ModelRuntime implements Models {
 				...prepared,
 				options: withLimitCapture(prepared.options, prepared.model.provider, limitAccountOf(slotAuth)),
 			};
-			const inner = await this.providerSemaphores.bracket(prepared.model.provider, prepared.options.signal, () =>
-				send(capturing),
-			);
+			const inner = await this.providerSemaphores.bracket(prepared.model.provider, prepared.options.signal, () => {
+				prepared.options.signal?.throwIfAborted();
+				// Auth and routing may replace the selected API. Inspect the actual transport at dispatch,
+				// after the semaphore wait; neither an earlier model check nor its API name is sufficient.
+				if (options?.requiresNonUserContinuation &&
+					prepared.provider.supportsNonUserContinuation?.(prepared.model) !== true) {
+					throw new Error("The selected transport does not support non-user continuation.");
+				}
+				return send(capturing);
+			});
 			const stream = wrapStreamWithModelRecovery(inner, model, getCurrentTools(transcript.messages));
 			this.servedCredentials.observe(stream.result(), {
 				provider: prepared.model.provider,

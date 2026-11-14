@@ -123,12 +123,14 @@ export function lazyStream(
  * loads. Load failures terminate the returned stream with an error event.
  */
 export interface LazyApiCapabilities {
+	supportsNonUserContinuation?: ProviderStreams["supportsNonUserContinuation"];
 	fetchDeferred?: boolean;
 	cancelDeferred?: boolean;
 }
 
 export function lazyApi(load: () => Promise<ProviderStreams>, capabilities?: LazyApiCapabilities): ProviderStreams {
 	const api: ProviderStreams = {
+		supportsNonUserContinuation: capabilities?.supportsNonUserContinuation,
 		stream: (model, context, options) =>
 			lazyStream(model, async () => (await load()).stream(model, context, options)),
 		streamSimple: (model, context, options) =>

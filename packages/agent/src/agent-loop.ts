@@ -491,6 +491,7 @@ function applyLoopUpdate(config: AgentLoopConfig, update: AgentRequestUpdate): A
 		thinkingSelection:
 			update.thinkingSelection === undefined ? config.thinkingSelection : (update.thinkingSelection ?? undefined),
 		abortServerSideFallback: update.abortServerSideFallback ?? config.abortServerSideFallback,
+		requiresNonUserContinuation: update.requiresNonUserContinuation ?? config.requiresNonUserContinuation,
 	};
 }
 
