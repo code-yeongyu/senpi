@@ -14,7 +14,7 @@ export type SentMessage = {
 	readonly options:
 		| {
 				readonly triggerTurn?: boolean;
-				readonly deliverAs?: "steer" | "followUp";
+				readonly deliverAs?: "steer" | "followUp" | "nextTurn";
 		  }
 		| undefined;
 };

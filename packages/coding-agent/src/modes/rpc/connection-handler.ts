@@ -1534,20 +1534,30 @@ export function createRpcConnectionHandler(
 					);
 				if (command.intent === "stop") {
 					// A Stop names the user's intent, not one turn: an automatic turn that started after the named one stops too.
-					const stopped = await interruptRunningTurn(session, undefined, () => {
-						ClientAdmissions.forSession(session).noteAbort(effectContext().by);
-						return session.stop();
-					});
+					const stopped = await interruptRunningTurn(
+						session,
+						undefined,
+						() => {
+							ClientAdmissions.forSession(session).noteAbort(effectContext().by);
+							return session.stop();
+						},
+						command.background,
+					);
 					if (!stopped.interrupted) await session.stop();
 					return success(id, "interrupt", stopped);
 				}
 				return success(
 					id,
 					"interrupt",
-					await interruptRunningTurn(session, command.turnId, () => {
-						ClientAdmissions.forSession(session).noteAbort(effectContext().by);
-						return session.abort();
-					}),
+					await interruptRunningTurn(
+						session,
+						command.turnId,
+						() => {
+							ClientAdmissions.forSession(session).noteAbort(effectContext().by);
+							return session.abort();
+						},
+						command.background,
+					),
 				);
 
 			case "hold_input": {

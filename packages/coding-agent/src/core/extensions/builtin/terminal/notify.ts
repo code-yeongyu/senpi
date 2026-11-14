@@ -15,7 +15,7 @@ export interface TerminalNotifierDeps {
 	/** Deliver a model-visible notification without rendering synthetic user input. */
 	readonly sendMessage: (
 		message: { customType: string; content: string; display: boolean; details?: unknown },
-		options: { triggerTurn: boolean; deliverAs: "steer" | "followUp" },
+		options: { triggerTurn: boolean; deliverAs: "steer" | "followUp" | "nextTurn" },
 	) => void;
 	readonly getContext: () => ExtensionContext | undefined;
 	readonly getMode: () => NotifyMode;
@@ -25,7 +25,10 @@ export interface TerminalNotifierDeps {
 export const NOTICE_TAIL_MAX_CHARS = 2000;
 
 export interface TerminalNotificationDelivery {
-	readonly send: (content: string, options?: { readonly forceWake?: boolean; readonly details?: unknown }) => void;
+	readonly send: (
+		content: string,
+		options?: { readonly forceWake?: boolean; readonly nextTurn?: boolean; readonly details?: unknown },
+	) => void;
 }
 
 /** Shared terminal-notification guard and notify-mode mapping. */
@@ -46,10 +49,12 @@ export function getTerminalNotificationDelivery(
 					display: false,
 					...(options?.details === undefined ? {} : { details: options.details }),
 				},
-				{
-					triggerTurn: true,
-					deliverAs: mode === "wake" || options?.forceWake === true ? "steer" : "followUp",
-				},
+				options?.nextTurn === true
+					? { triggerTurn: false, deliverAs: "nextTurn" }
+					: {
+							triggerTurn: true,
+							deliverAs: mode === "wake" || options?.forceWake === true ? "steer" : "followUp",
+						},
 			),
 	};
 }
@@ -102,7 +107,12 @@ function buildNotice(id: string, runtime: TerminalExitView, trustText: string | 
 		tailSection = `\nFinal output:\n${shown}${note}`;
 	}
 	const trustSection = trustText === undefined ? "" : `\n${trustText}`;
-	return `<system-reminder>Background terminal session ${id} finished: ${status}${codeText}.${reapText}${tailSection}${trustSection}</system-reminder>`;
+	const interrupted = runtime.stoppedByInterrupt;
+	const ended =
+		interrupted === undefined
+			? `finished: ${status}${codeText}.`
+			: `was stopped when turn ${interrupted.turnId} was interrupted (${status}${codeText}).`;
+	return `<system-reminder>Background terminal session ${id} ${ended}${reapText}${tailSection}${trustSection}</system-reminder>`;
 }
 
 /**
@@ -156,9 +166,9 @@ export class TerminalNotifier {
 			exitCode: runtime.exitResult?.exitCode ?? null,
 			output: runtime.fullOutput(),
 		});
-		delivery.send(
-			buildNotice(id, runtime, annotation?.text),
-			annotation === undefined ? undefined : { details: { trust: annotation.trust } },
-		);
+		delivery.send(buildNotice(id, runtime, annotation?.text), {
+			...(runtime.stoppedByInterrupt === undefined ? {} : { nextTurn: true }),
+			...(annotation === undefined ? {} : { details: { trust: annotation.trust } }),
+		});
 	}
 }

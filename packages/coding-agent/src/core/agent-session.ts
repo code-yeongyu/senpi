@@ -418,6 +418,11 @@ import {
 import { type FallbackRungFailure, recordRungFailure } from "./retry-fallback/exhaustion.ts";
 import { limitResetAt } from "./retry-fallback/limit-reset.ts";
 import { validateFallbackChains } from "./retry-fallback/validate.ts";
+import {
+	type RunBackgroundJob,
+	RunBackgroundJobs,
+	type RunBackgroundStopOutcome,
+} from "./run-background-jobs.ts";
 import { type InheritResult, type ReleaseInheritedResult, RunHolds, type RunRef } from "./run-holds.ts";
 import { startRunResumeTurn } from "./run-resume-turn.ts";
 import { SecurityNoticeSnapshot } from "./security-notices.ts";
@@ -1555,6 +1560,7 @@ export class AgentSession {
 	private readonly _humanInputListeners = new Set<(event: HumanInputAdmittedEvent) => void>();
 	private readonly _heldInputs: HeldInputs;
 	private readonly _runHolds: RunHolds;
+	private readonly _runBackgroundJobs = new RunBackgroundJobs();
 	private readonly _resumeEffects = new Map<string, ResumeSessionAnswer>();
 	private _stopInterrupt: StopInterrupt | undefined;
 	private _deliveredHeldInputIds: string[] = [];
@@ -5242,6 +5248,17 @@ export class AgentSession {
 	/** The running turn's id (its admission epoch); undefined while no turn runs. A steer names it as `expectedTurnId`. */
 	get currentTurnId(): string | undefined {
 		return this._isAgentRunActive ? String(this.externalAdmission.turnEpoch) : undefined;
+	}
+
+	/** Record a background job under the running turn; outside a turn nothing is recorded. */
+	registerRunBackgroundJob(job: RunBackgroundJob): () => void {
+		const turnId = this.currentTurnId;
+		return turnId === undefined ? () => {} : this._runBackgroundJobs.register(turnId, job);
+	}
+
+	/** Stop the background jobs `turnId` started (`interrupt { background: "stop" }`). */
+	stopRunBackgroundJobs(turnId: string): Promise<RunBackgroundStopOutcome> {
+		return this._runBackgroundJobs.stop(turnId);
 	}
 
 	/** True while a provider retry is in flight; the deadline lease treats it as turn progress. */
@@ -12422,6 +12439,7 @@ export class AgentSession {
 				getPauseState: () => this._pauseState(),
 				fenceRun: (runRef) => this._runHolds.fence(runRef),
 				releaseRunFence: (runRef) => this._runHolds.releaseFences("run_cancelled", [runRef]),
+				registerRunBackgroundJob: (job) => this.registerRunBackgroundJob(job),
 				questionInput: () => {
 					this._humanInputAdmitted("answer");
 					// Under the parent's run pause the answer is held like every person input: nothing is released or run (senpi#3811).

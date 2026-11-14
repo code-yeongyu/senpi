@@ -13,6 +13,7 @@ import type { SessionControlAdmission } from "../../core/extensions/types.ts";
 import type { PermissionModeReply } from "../../core/permission-mode.ts";
 
 import type { ApiKeyVerification } from "../../core/verify-api-key.ts";
+import type { InterruptOutcome } from "./session-control-actions-data.ts";
 
 import type { ClientMessageAdmission } from "./client-admission-record.ts";
 import type { RpcProjectFile } from "./project-file-commands.ts";
@@ -98,7 +99,7 @@ export type RpcMutationResponse =
 			type: "response";
 			command: "interrupt";
 			success: true;
-			data: { interrupted: boolean; turnId?: string };
+			data: InterruptOutcome;
 	  }
 	| { id?: string; type: "response"; command: "abort_compaction"; success: true }
 	| { id?: string; type: "response"; command: "reload"; success: true; data: { cancelled: boolean; reason?: string } }

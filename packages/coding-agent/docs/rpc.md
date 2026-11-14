@@ -4676,6 +4676,20 @@ answers after the turn settled.
 {"type": "response", "command": "interrupt", "success": true, "data": {"interrupted": true, "turnId": "3"}}
 ```
 
+With `"background": "stop"` the command also stops the background jobs the interrupted turn started: each bash
+session that turn ran with `run_in_background`, or that auto-detached from the foreground, while that turn was running.
+Sessions an earlier turn started keep running. The stop happens after the turn settled, and the answer then carries
+`background: { stopped, failed }`: `stopped` names each job as `{ kind: "bash", id, description? }`, and `failed`
+names a job it could not stop with its `reason` (a session on the tool child under `--tool-runtime child`, or one
+still running after TERM then KILL). An idle session, or a `turnId` naming another turn, answers both lists empty.
+A stopped session's exit notice does not start a turn: the model reads `Background terminal session <id> was stopped
+when turn <turnId> was interrupted` at its next turn. Without the field nothing but the turn stops, as before.
+
+```json
+{"type": "interrupt", "turnId": "3", "background": "stop"}
+{"type": "response", "command": "interrupt", "success": true, "data": {"interrupted": true, "turnId": "3", "background": {"stopped": [{"kind": "bash", "id": "bash_1", "description": "sleep 60"}], "failed": []}}}
+```
+
 With `"intent": "stop"` (on `abort` or `interrupt`) the command is a user Stop: the session is paused before the
 turn is stopped, and automatic wakes that arrive later (terminal and monitor notices, detached eval cells, goal
 continuations, task and team deliveries) are kept as notices instead of starting a turn. Only a connection that

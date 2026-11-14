@@ -9196,6 +9196,10 @@
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
 		},
+		"packages/coding-agent/src/modes/rpc/session-control-actions-data.ts#NOTHING_STOPPED": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load (the empty background-stop outcome an idle interrupt answers)"
+		},
 		"packages/coding-agent/src/modes/rpc/session-effect-status.ts#dirty": {
 			"class": "per-copy-safe",
 			"reason": "promise chain or queue ordering this copy's own async work; a split only loses ordering between copies, holds no A1-A3 asset"

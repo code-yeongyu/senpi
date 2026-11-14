@@ -109,7 +109,7 @@ export type RpcSessionCommand =
 			/** `stop` is a user Stop: the session is paused until human input or resume_session (senpi#3811). */
 			intent?: "stop" | "abort";
 	  }
-	| { id?: string; type: "interrupt"; turnId?: string; intent?: "stop" | "abort" }
+	| { id?: string; type: "interrupt"; turnId?: string; intent?: "stop" | "abort"; background?: "stop" }
 	/** Human input held for a paused session, delivered when it resumes; idempotent by inputId (senpi#3811). */
 	| {
 			id?: string;

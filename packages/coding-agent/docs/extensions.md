@@ -493,6 +493,12 @@ journaled terminal. Later wakes tagged with the run are admitted again, fences f
 run that has no fence does nothing. A fence alone does not pause the session, so fencing or releasing only a fence
 emits no `session_paused`/`session_resumed` and no `session_hold_changed`; each pause gets exactly one resume.
 
+`ctx.registerRunBackgroundJob({ kind, id, description?, stop })` records a background job under the turn running at
+that moment (outside a turn it records nothing), and returns the release to call once the job ended on its own. An RPC
+`interrupt` with `background: "stop"` calls `stop(turnId)` for each job that turn recorded and names it in its answer;
+`stop` ends the job without waking the session and rejects with the reason it could not. The terminal builtin records
+every background bash session this way.
+
 #### held_wakes_released
 
 `pi.on("held_wakes_released", (event, ctx) => ...)` receives
