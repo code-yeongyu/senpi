@@ -8863,13 +8863,19 @@ export class AgentSession {
 
 	/**
 	 * Removes one queued input before it reaches a turn, from the visible lists and the native queue alike.
-	 * An input already drained into a turn answers `already_delivered`.
+	 * An input already drained into a turn answers `already_delivered`. An input in durable custody (admitted
+	 * with a client id) is not changed here: its record is the authority, so this answers `conflict` and
+	 * leaves the copy untouched; change it through `changeQueuedInput` (senpi#4087).
 	 */
 	dequeueQueuedInput(queuedId: string, options?: QueuedInputChangeOptions): QueuedInputChange {
 		return this._changeQueuedInput(queuedId, undefined, options?.expectedRevision);
 	}
 
-	/** Replaces the text of one queued input in place, keeping its order and identity, and bumps its revision. */
+	/**
+	 * Replaces the text of one queued input in place, keeping its order and identity, and bumps its revision.
+	 * An input in durable custody (admitted with a client id) is not changed here: its record is the authority,
+	 * so this answers `conflict` and leaves the copy untouched; change it through `changeQueuedInput` (senpi#4087).
+	 */
 	editQueuedInput(queuedId: string, text: string, options?: QueuedInputChangeOptions): QueuedInputChange {
 		return this._changeQueuedInput(queuedId, text, options?.expectedRevision);
 	}
@@ -8895,16 +8901,19 @@ export class AgentSession {
 							...(options?.expectedRevision === undefined ? {} : { expectedRevision: options.expectedRevision }),
 							...(options?.effectId === undefined ? {} : { effectId: options.effectId }),
 						},
-						() => this._changeQueuedInput(queuedId, text, undefined),
+						() => this._changeQueuedInput(queuedId, text, undefined, true),
 					);
 		return durable ?? this._changeQueuedInput(queuedId, text, options?.expectedRevision);
 	}
 
 	// Synchronous from the revision check to the change: nothing else on the session loop can land in between.
+	// `viaStore` is the store-backed `changeQueuedInput` applying the native half of a change its record
+	// already carries; the synchronous public methods call with it unset.
 	private _changeQueuedInput(
 		queuedId: string,
 		nextText: string | undefined,
 		expectedRevision: number | undefined,
+		viaStore = false,
 	): QueuedInputChange {
 		const index = this._queuedInputOrder.findIndex((input) => input.queuedId === queuedId);
 		if (index === -1) return this._deliveredQueuedIds.has(queuedId) ? "already_delivered" : "not_found";
@@ -8934,6 +8943,24 @@ export class AgentSession {
 			// replacing the message with itself is a read-only probe of that queue.
 			const queued =
 				message !== undefined && (deferredIndex !== -1 || this.agent.replaceQueuedMessage(message, message));
+			return queued ? "conflict" : "already_delivered";
+		}
+		// A durable copy changes only through the store-backed path (senpi#4087): the record is the authority,
+		// and a synchronous change would leave it behind, so a reopen would queue the input again. This check
+		// must run before the probe below: removing/replacing the message to test whether it is still queued
+		// already changes the native queue, so a refused durable change would still lose or rewrite it. The
+		// read here is non-destructive (`peekQueuedMessages`). An input the store never admitted (no client id,
+		// or a restored input whose store never opened) keeps the legacy sync answers, and the store-backed
+		// call itself passes `viaStore` and is not refused here. A drained durable copy still answers
+		// `already_delivered`, as before.
+		if (
+			!viaStore &&
+			record.clientMessageId !== undefined &&
+			this._pendingInputs.hasAdmitted(record.clientMessageId)
+		) {
+			const queued =
+				message !== undefined &&
+				(deferredIndex !== -1 || this.agent.peekQueuedMessages({ all: true }).includes(message));
 			return queued ? "conflict" : "already_delivered";
 		}
 		const stillQueued =
