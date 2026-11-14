@@ -33,15 +33,15 @@ describe.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
 			mkdirSync(logsDir);
 			chmodSync(logsDir, 0o500);
 			const logger = createConfigReloadLogger(agentDir);
-			expect(logger.info("watcher_started", { targetCount: 1 })).toEqual({ written: false, disabled: true });
+			expect(logger.info("watcher_started", { targetCount: 1 })).toEqual({ written: false, paused: true });
 
 			// when the directory takes writes again and the retry window passes
 			chmodSync(logsDir, 0o700);
-			expect(logger.info("watcher_started", { targetCount: 2 })).toEqual({ written: false, disabled: true });
+			expect(logger.info("watcher_started", { targetCount: 2 })).toEqual({ written: false, paused: true });
 			vi.advanceTimersByTime(LOG_SINK_RETRY_MS);
 
 			// then the next line is written instead of the sink staying off for the process lifetime
-			expect(logger.info("watcher_started", { targetCount: 3 })).toEqual({ written: true, disabled: false });
+			expect(logger.info("watcher_started", { targetCount: 3 })).toEqual({ written: true, paused: false });
 			expect(readFileSync(join(logsDir, "config-reload.log"), "utf8")).toContain('"targetCount":3');
 		});
 
