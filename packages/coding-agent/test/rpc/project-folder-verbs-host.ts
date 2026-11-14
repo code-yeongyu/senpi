@@ -49,13 +49,15 @@ export async function startFolderHost(
 	options: {
 		readonly settings?: WireRecord;
 		readonly prepare?: (layout: FolderLayout) => void;
+		/** Puts the agent dir inside the session folder, as when the session's cwd is $HOME. */
+		readonly agentDirInsideFolder?: boolean;
 	} = {},
 ): Promise<FolderHost> {
 	const scratch = realpathSync(mkdtempSync(join(tmpdir(), "senpi-pfm-")));
 	const layout: FolderLayout = {
 		cwd: join(scratch, "project"),
 		outside: join(scratch, "outside"),
-		agentDir: join(scratch, "agent"),
+		agentDir: options.agentDirInsideFolder === true ? join(scratch, "project", "agent") : join(scratch, "agent"),
 	};
 	const { cwd, agentDir } = layout;
 	mkdirSync(join(cwd, CONFIG_DIR_NAME, "skills", SKILL_NAME), { recursive: true });

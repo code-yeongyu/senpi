@@ -3,7 +3,7 @@
  * for the session folder, contained to that folder, so a remote client edits skills the way a local one does.
  * One test per gate and per refusal; every accepted write answers the read-back `read_project_skill_file` gives.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ProjectTrustStore } from "../../src/core/trust-manager.ts";
@@ -167,6 +167,40 @@ describe("write_project_skill_file: refusals", () => {
 describe("project skill file verbs: containment", () => {
 	it("refuses a listed skill whose file lies outside the folder (a global skill)", async () => {
 		const host = await startFolderHost({
+			prepare: ({ agentDir }) => {
+				mkdirSync(join(agentDir, "skills", "global-skill"), { recursive: true });
+				writeFileSync(join(agentDir, "skills", "global-skill", "SKILL.md"), skillSource("global-skill"));
+			},
+		});
+		await host.trust();
+		expect(await read(host, "global-skill")).toMatchObject({ success: false, errorCode: "project_file_not_allowed" });
+		expect(await write(host, "global-skill", EDITED, null)).toMatchObject({
+			success: false,
+			errorCode: "project_file_not_allowed",
+		});
+		expect(readFileSync(join(host.agentDir, "skills", "global-skill", "SKILL.md"), "utf8")).toBe(
+			skillSource("global-skill"),
+		);
+	});
+
+	it("writes a hard-linked skill file by replacing the link, leaving the other name's bytes alone (senpi#6532 review L1)", async () => {
+		const host = await startFolderHost({
+			prepare: (layout) => {
+				const target = join(projectSkillDir(layout, SKILL_NAME), "SKILL.md");
+				const elsewhere = join(layout.outside, "SKILL.md");
+				renameSync(target, elsewhere);
+				linkSync(elsewhere, target);
+			},
+		});
+		const before = await trustedRead(host);
+		expect(await write(host, SKILL_NAME, EDITED, before.etag)).toMatchObject({ success: true });
+		expect(onDisk(host)).toBe(EDITED);
+		expect(readFileSync(join(host.outside, "SKILL.md"), "utf8")).toBe(ORIGINAL);
+	});
+
+	it("refuses a global skill even when the agent dir lies inside the session folder (senpi#6532 review L2)", async () => {
+		const host = await startFolderHost({
+			agentDirInsideFolder: true,
 			prepare: ({ agentDir }) => {
 				mkdirSync(join(agentDir, "skills", "global-skill"), { recursive: true });
 				writeFileSync(join(agentDir, "skills", "global-skill", "SKILL.md"), skillSource("global-skill"));

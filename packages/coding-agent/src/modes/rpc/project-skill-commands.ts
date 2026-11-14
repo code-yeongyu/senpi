@@ -65,6 +65,10 @@ function folderRelative(root: string, filePath: string): ProjectFilePath | undef
 async function locateSkillFile(session: AgentSession, skill: string): Promise<ProjectFilePath | ProjectWriteRefusal> {
 	const listed = session.resourceLoader.getSkills().skills.find((candidate) => candidate.name === skill);
 	if (listed === undefined) return notListed(skill);
+	// A skill under the agent dir is global even when that dir lies inside the session folder (a cwd of $HOME).
+	for (const root of new Set([session.agentDir, await realpath(session.agentDir)])) {
+		if (folderRelative(root, listed.filePath) !== undefined) return notAllowed(listed.filePath);
+	}
 	const cwd = session.sessionManager.getCwd();
 	for (const root of new Set([cwd, await realpath(cwd)])) {
 		const file = folderRelative(root, listed.filePath);

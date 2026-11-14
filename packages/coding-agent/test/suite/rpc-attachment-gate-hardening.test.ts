@@ -36,8 +36,9 @@ it("exempts exactly the reviewed commands from the attach gate", () => {
 			"get_media",
 			"get_messages",
 			"get_pending_inputs",
-			// senpi#6485: reads the folder's MCP servers file without effect, like read_project_file;
-			// set_project_mcp_servers stays gated.
+			// senpi#6485: reads the folder's MCP servers file without effect, like read_project_file. Its entries are
+			// returned as stored, so a literal `env` secret in the file reaches this connection too; the verb is
+			// device_admin (method-classes.ts), the class read_project_file already has. set_project_mcp_servers stays gated.
 			"get_project_mcp_servers",
 			// senpi#6176/#6185: the workspace's saved trust and project settings file, read without effect like
 			// get_loaded_surfaces and resolve_path; set_project_trust and set_project_setting stay gated.
