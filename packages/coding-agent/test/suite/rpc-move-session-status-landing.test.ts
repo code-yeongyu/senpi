@@ -4,9 +4,10 @@
  * that reads "no record" as "never arrived" then takes the session back and two copies are writable. With `landing`,
  * a landed move answers `accepted` from its file, and `declined: no_record` only when no landing is there.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { getDefaultSessionDirPath } from "../../src/core/session-manager.ts";
 import { createInProcessRig } from "./rpc-inprocess-host-support.ts";
 import { devices, hostAndRelease, importedOnB, landedOnB, move } from "./rpc-move-session-support.ts";
 
@@ -152,4 +153,57 @@ describe("move_session status answers from the file at the landing it is given",
 			expect(existsSync(ledgerFile(fixture.agentB, "move-bad"))).toBe(false);
 		},
 	);
+});
+
+// The cases above lose the record first. These keep it: the record is asked, and what it says about where the move
+// landed is the answer, whatever landing the status names (senpi#6456's review).
+describe("move_session status given a landing while the move's record is still here", () => {
+	it("#given a landed move whose record is here #when status names its landing #then it answers accepted at the recorded file and the record stays byte for byte", async () => {
+		const fixture = await devices();
+		await using a = createInProcessRig(fixture.agentA);
+		await using b = createInProcessRig(fixture.agentB);
+		const onB = await importedOnB(a, b, fixture, "move-r1");
+		const before = readFileSync(ledgerFile(fixture.agentB, "move-r1"), "utf8");
+
+		const answer = await move(b, { op: "status", moveId: "move-r1", landing: landingOnB(fixture) });
+
+		expect(answer.data).toEqual({ state: "accepted", ...landedOnB(fixture, onB) });
+		expect(readFileSync(ledgerFile(fixture.agentB, "move-r1"), "utf8")).toBe(before);
+	});
+
+	it("#given a landed move whose record is here, and a copy of its file in another folder #when status names that folder as the landing #then the record wins: it answers accepted at the recorded file, not at the copy", async () => {
+		const fixture = await devices();
+		await using a = createInProcessRig(fixture.agentA);
+		await using b = createInProcessRig(fixture.agentB);
+		const onB = await importedOnB(a, b, fixture, "move-r2");
+		const elsewhere = join(fixture.base, "another-folder");
+		mkdirSync(elsewhere);
+		copyFileSync(onB, join(elsewhere, basename(onB)));
+
+		const answer = await move(b, {
+			op: "status",
+			moveId: "move-r2",
+			landing: { ...landingOnB(fixture), sessionDir: elsewhere },
+		});
+
+		expect(answer.data).toEqual({ state: "accepted", ...landedOnB(fixture, onB) });
+		expect(recorded(fixture.agentB, "move-r2").state).toBe("accepted");
+	});
+
+	it("#given a landed move whose record is here #when status names another work folder, where no file is #then the record answers: accepted at the recorded file, and no session folder is made for that work folder", async () => {
+		const fixture = await devices();
+		await using a = createInProcessRig(fixture.agentA);
+		await using b = createInProcessRig(fixture.agentB);
+		const onB = await importedOnB(a, b, fixture, "move-r3");
+		const otherWork = join(fixture.base, "another-work-folder");
+
+		const answer = await move(b, {
+			op: "status",
+			moveId: "move-r3",
+			landing: { ...landingOnB(fixture), cwd: otherWork },
+		});
+
+		expect(answer.data).toEqual({ state: "accepted", ...landedOnB(fixture, onB) });
+		expect(existsSync(getDefaultSessionDirPath(otherWork, fixture.agentB))).toBe(false);
+	});
 });
