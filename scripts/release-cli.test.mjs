@@ -68,16 +68,18 @@ const args = process.argv.slice(2);
 appendFileSync(${JSON.stringify(calls)}, JSON.stringify([${JSON.stringify(name)}, ...args]) + "\\n");
 if (${JSON.stringify(name)} === "git") {
 	if (args[0] === "branch") process.stdout.write("main\\n");
-	if (args[0] === "status" && ${catalogDirty} && args.includes("packages/ai/src/providers")) {
-		process.stdout.write(" M packages/ai/src/providers/data/nvidia.json\\n");
+	if (args[0] === "status" && ${catalogDirty} && args.some((arg) => arg.startsWith("packages/ai/src/providers"))) {
+		process.stdout.write(" M packages/ai/src/providers/data/nvidia.json" + (args.includes("-z") ? "\\0" : "\\n"));
 	}
-	if (args[0] === "status" && ${manifestStampOnly} && args.includes("packages/ai/src/providers") && !existsSync(${JSON.stringify(join("RESTORED"))})) {
-		process.stdout.write(" M ${MANIFEST}\\n");
+	if (args[0] === "status" && ${manifestStampOnly} && args.some((arg) => arg.startsWith("packages/ai/src/providers")) && !existsSync(${JSON.stringify(join("RESTORED"))})) {
+		process.stdout.write(" M ${MANIFEST}" + (args.includes("-z") ? "\\0" : "\\n"));
 	}
 	if (args[0] === "show" && args[1] === "HEAD:${MANIFEST}") process.stdout.write(${JSON.stringify(manifestText("2026-10-01T00:00:00.000Z"))});
 	if (args[0] === "checkout" && args[2] === "${MANIFEST}") writeFileSync("RESTORED", "");
 	if (args[0] === "rev-parse" && args[1] === "origin/main") { process.stdout.write("fixture-main\\n"); process.exit(0); }
 	if (args[0] === "rev-parse") process.stdout.write("fixture-sha\\n");
+	// The fixture's HEAD is a main commit: preflight's reachability check from origin/main passes (senpi#6645).
+	if (args[0] === "merge-base" && args[2] === "fixture-sha" && args[3] === "origin/main") process.exit(0);
 	if (args[0] === "merge-base") process.exit(1);
 	if (args[0] === "merge") process.exit(${mergeStatus});
 }
@@ -106,7 +108,8 @@ if (${JSON.stringify(name)} === "gh") {
 				cwd: root,
 				// Without npm_* (set when this runs under `npm run`), run-workspaces resolves the stubbed npm from PATH.
 				env: {
-					...Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^npm_/i.test(key))),
+					// GITHUB_ACTIONS/GITHUB_REF are dropped: under CI they would trip the main-only lock (release-ref-guard.mjs).
+					...Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(npm_|GITHUB_ACTIONS$|GITHUB_REF$)/i.test(key))),
 					PATH: `${bin}${delimiter}${dirname(process.execPath)}`,
 				},
 				encoding: "utf8",

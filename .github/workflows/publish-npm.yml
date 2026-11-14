@@ -24,7 +24,7 @@ name: Release
         type: boolean
         default: false
       force_tests:
-        description: 'Run the CI=1 test suite inside this release job instead of waiting for the release commit''s green "Check and test" CI run (use when CI runners are backlogged; needs a full local suite receipt at the release sha).'
+        description: 'Run the CI=1 test suite in this run''s forced-suite matrix jobs (prepare, coding-agent shards, rest) instead of waiting for the release commit''s green "Check and test" CI run (use when CI runners are backlogged or the catalog changed).'
         required: false
         type: boolean
         default: false
@@ -44,6 +44,9 @@ jobs:
     # checkout of refs/tags/v in native-prebuilds (which would also skip the release job and any later guard).
     if: ${{ inputs.publish-only == true }}
     runs-on: ubuntu-latest
+    # It only checks an input, so it gets read-only contents and nothing else (least privilege, senpi#6642).
+    permissions:
+      contents: read
     steps:
       - name: Require a version for publish-only
         env:
@@ -63,20 +66,33 @@ jobs:
       ref: refs/tags/v${{ inputs.version }}
 
   release:
-    needs: native-prebuilds
+    needs: [native-prebuilds, prepare, forced-rest, forced-shard]
     # native-prebuilds reuses prebuilt targets and then skips its build jobs (senpi#6622), so its readiness
-    # is read from the output its ready job sets, not from the call's result.
-    if: ${{ always() && (inputs.publish-only != true || needs.native-prebuilds.outputs.ready == 'true') }}
+    # is read from the output its ready job sets, not from the call's result. With force_tests (and not publish-only)
+    # prepare, forced-rest and every forced-shard must each have succeeded (senpi#6642); otherwise they are skipped.
+    if: ${{ always() && (inputs.publish-only != true || needs.native-prebuilds.outputs.ready == 'true') && (inputs.publish-only == true || inputs.force_tests != true || (needs.prepare.result == 'success' && needs.forced-rest.result == 'success' && needs.forced-shard.result == 'success')) }}
     runs-on: ubuntu-latest
     # The release never re-runs the test suite (senpi#2943): its test evidence is the release
     # commit's green sharded CI run ("Check and test"). A regenerated catalog is pushed to main
     # first and CI tests it there. The job waits up to 40 min for that CI result (CI walls
     # measured at 7-22 min), plus about 10 min of install, build and push, so 60 min clears it.
     # A release whose HEAD already has green CI finishes in a few minutes.
-    # force_tests runs the whole suite in this job instead, coding-agent as parallel vitest shards (~60 min, estimated from
-    # the 2026-11-06 forced run, bounded at 110 min by scripts/release-forced-test-suite.mjs), so that mode gets 180 min.
-    timeout-minutes: ${{ inputs.force_tests && 180 || 60 }}
+    # force_tests runs the suite in the matrix jobs above (senpi#6642), so this job only checks, stamps and pushes (about
+    # 15 min in the 2026-11 forced cuts): 45 min, keeping prepare 20 + shards 40 + release 45 within 110 min.
+    timeout-minutes: ${{ inputs.force_tests && (inputs.publish-only && 180 || 45) || 60 }}
     steps:
+      # senpi#6645: a dispatch on any other ref runs that ref's YAML with the push token and id-token: write, even when
+      # its sha input names a main commit. Only a dry run may go further there; the steps that stamp, tag, push or
+      # publish below carry the same condition. A publish-only run checks out the TAG, whose publish.mjs may predate the in-code
+      # ref guard, so off main it is refused even as a dry run.
+      - name: Refuse a live release from any ref but main
+        if: github.ref != 'refs/heads/main' && (inputs.dry_run != true || inputs.publish-only == true)
+        env:
+          DISPATCHED_REF: ${{ github.ref }}
+        run: |
+          echo "::error::a release that is not a dry run must be dispatched on refs/heads/main, not ${DISPATCHED_REF}" >&2
+          exit 1
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -98,6 +114,32 @@ jobs:
             exit 1
           }
           echo "Publishing v${EXPECTED_VERSION} from its tagged commit ${tag_commit}"
+
+      - name: Download the tested commit
+        if: inputs.force_tests == true && inputs.publish-only != true && needs.prepare.outputs.bundle == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: forced-suite-tested-commit
+          path: ${{ runner.temp }}/tested-commit
+
+      # force_tests (senpi#6642): build, check and release exactly the commit the forced-suite matrix jobs tested.
+      - name: Check out the tested commit
+        if: inputs.force_tests == true && inputs.publish-only != true
+        env:
+          TESTED_SHA: ${{ needs.prepare.outputs.tested_sha }}
+          TESTED_BUNDLE: ${{ runner.temp }}/tested-commit/tested-commit.bundle
+        run: |
+          set -euo pipefail
+          if [ -f "$TESTED_BUNDLE" ]; then
+            git bundle verify -q "$TESTED_BUNDLE"
+            git fetch -q --no-tags "$TESTED_BUNDLE" refs/forced-suite/tested
+          fi
+          git checkout -B main "$TESTED_SHA"
+          test "$(git rev-parse HEAD)" = "$TESTED_SHA" || {
+            echo "::error::HEAD is $(git rev-parse HEAD), not the tested commit ${TESTED_SHA}" >&2
+            exit 1
+          }
+          echo "On the tested commit ${TESTED_SHA}"
 
       - name: Configure git identity
         run: |
@@ -205,38 +247,59 @@ jobs:
           node_file=$(ls senpi_grep.*.node)
           echo "SENPI_GREP_NATIVE_PATH=$PWD/$node_file" >> "$GITHUB_ENV"
 
+      - name: Download the forced-suite results
+        if: inputs.force_tests == true && inputs.publish-only != true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: forced-suite-result-*
+          path: ${{ runner.temp }}/forced-suite-results
+          merge-multiple: true
+
       - name: Run release
-        if: inputs.publish-only != true
+        if: inputs.publish-only != true && (inputs.dry_run == true || github.ref == 'refs/heads/main')
         env:
-          GH_TOKEN: ${{ secrets.UPSTREAM_AUTOMATION_TOKEN }}
+          # senpi#6645: only a run on main gets the push token. A dry run on any other ref reaches this step with an empty
+          # token and an uncredentialed origin (checkout used persist-credentials: false), so nothing here can push.
+          GH_TOKEN: ${{ github.ref == 'refs/heads/main' && secrets.UPSTREAM_AUTOMATION_TOKEN || '' }}
           SENPI_SKIP_PM_VERIFY: '1'
           RELEASE_SHA: ${{ inputs.sha }}
+          # force_tests (senpi#6642): prepare fixed the version before the suite ran, and its tested commit, the
+          # commit it descends from and the matrix jobs' result files are what release.mjs --tested-sha verifies.
+          RELEASE_VERSION: ${{ inputs.version || needs.prepare.outputs.version }}
+          TESTED_SHA: ${{ needs.prepare.outputs.tested_sha }}
+          TESTED_BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
+          FORCED_SUITE_RESULTS: ${{ runner.temp }}/forced-suite-results
           # The release runs the same `npm run check` as CI, so it needs CI's TypeScript heap (ci.yml Check,
           # senpi#4022): on the default ~4 GB heap the check ran out of memory in the 2026.10.23-1 release.
           NODE_OPTIONS: --max-old-space-size=10240
         run: |
-          test -n "$GH_TOKEN" || {
-            echo "::error::UPSTREAM_AUTOMATION_TOKEN is required to push release commits and tags through branch protection."
-            exit 1
-          }
-          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then
+            test -n "$GH_TOKEN" || {
+              echo "::error::UPSTREAM_AUTOMATION_TOKEN is required to push release commits and tags through branch protection."
+              exit 1
+            }
+            git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          else
+            echo "Dry run on ${GITHUB_REF}: no push token, origin left read-only"
+          fi
           ARGS=()
-          if [ -n "${{ inputs.version }}" ]; then
-            ARGS+=(--version "${{ inputs.version }}")
+          if [ -n "$RELEASE_VERSION" ]; then
+            ARGS+=(--version "$RELEASE_VERSION")
           fi
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             ARGS+=(--dry-run)
           fi
-          if [ -n "$RELEASE_SHA" ]; then
-            ARGS+=(--sha "$RELEASE_SHA")
-          fi
           if [ "${{ inputs.force_tests }}" = "true" ]; then
-            ARGS+=(--force-tests)
+            # prepare resolved the base once (the dispatch's sha input, else its commit) and every job since used that
+            # output; the release takes it too and never resolves main or the sha input again (senpi#6642).
+            ARGS+=(--sha "$TESTED_BASE_SHA" --tested-sha "$TESTED_SHA" --shard-results "$FORCED_SUITE_RESULTS")
+          elif [ -n "$RELEASE_SHA" ]; then
+            ARGS+=(--sha "$RELEASE_SHA")
           fi
           npm run release -- "${ARGS[@]}"
 
       - name: Publish prepared version
-        if: inputs.publish-only == true
+        if: inputs.publish-only == true && (inputs.dry_run == true || github.ref == 'refs/heads/main')
         env:
           EXPECTED_VERSION: ${{ inputs.version }}
           DRY_RUN: ${{ inputs.dry_run }}
@@ -265,7 +328,7 @@ jobs:
           if [ "${{ inputs.publish-only }}" = true ]; then
             commit="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
           else
-            commit="${{ inputs.sha || github.sha }}"
+            commit="${{ inputs.force_tests && needs.prepare.outputs.tested_sha || inputs.sha || github.sha }}"
           fi
           {
             echo "## Release"
@@ -279,3 +342,293 @@ jobs:
             echo "| Version | ${{ inputs.version || 'auto' }} |"
             echo "| Commit | $commit |"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # force_tests (senpi#6642): the suite runs as matrix jobs of this run, each on its own runner, instead of inside the
+  # release job (a forced cut spent 74.6 of 89.6 min there in one job). prepare regenerates the catalog once and fixes the
+  # version; forced-shard runs coding-agent shards 1..N (FORCED_SHARD_JOBS in scripts/release-forced-test-suite.mjs)
+  # and forced-rest every other workspace, all on prepare's tested_sha. A release-only catalog commit never reaches the
+  # remote before the tag, so it travels as a git bundle artifact. None of these jobs can write or publish.
+  prepare:
+    name: Forced suite (prepare)
+    if: ${{ inputs.force_tests == true && inputs.publish-only != true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      base_sha: ${{ steps.prepare.outputs.base_sha }}
+      tested_sha: ${{ steps.prepare.outputs.tested_sha }}
+      tested_tree: ${{ steps.prepare.outputs.tested_tree }}
+      version: ${{ steps.prepare.outputs.version }}
+      bundle: ${{ steps.prepare.outputs.bundle }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Configure git identity
+        run: |
+          git config --global user.name "YeonGyu-Kim"
+          git config --global user.email "code.yeon.gyu@gmail.com"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org/'
+          package-manager-cache: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.4.4'
+
+      - name: Assert bun 1.4 toolchain
+        run: bash scripts/assert-bun-toolchain.sh
+
+      - name: Install dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Build all workspaces (so husky pre-commit type check resolves)
+        run: npm run build
+
+      - name: Reset auto-generated and npm-install drift files (not part of release diff)
+        run: git checkout -- packages/ai/src/models.generated.ts package-lock.json
+
+      # The regeneration release.mjs used to run in-job: pin inputs.sha, regenerate the catalog, check the provider
+      # defaults, and commit a changed catalog on the release only.
+      - name: Regenerate the model catalog on the release commit
+        id: prepare
+        env:
+          RELEASE_SHA: ${{ inputs.sha }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          ARGS=(--bundle "$RUNNER_TEMP/tested-commit/tested-commit.bundle" --github-output "$GITHUB_OUTPUT")
+          if [ -n "$RELEASE_SHA" ]; then
+            ARGS+=(--sha "$RELEASE_SHA")
+          fi
+          if [ -n "$RELEASE_VERSION" ]; then
+            ARGS+=(--version "$RELEASE_VERSION")
+          fi
+          node scripts/release-forced-prepare.mjs "${ARGS[@]}"
+
+      - name: Upload the tested commit
+        if: steps.prepare.outputs.bundle == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: forced-suite-tested-commit
+          path: ${{ runner.temp }}/tested-commit/tested-commit.bundle
+          retention-days: 1
+          if-no-files-found: error
+
+  # Every setup step below is a byte copy of the release job's step of the same name (scripts/publish-forced-suite-workflow.test.mjs
+  # fails on drift), so the matrix tests the tree the release job builds, with the same toolchain and the native grep addon.
+  forced-rest:
+    name: Forced suite (rest)
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.base_sha }}
+
+      - name: Download the tested commit
+        if: inputs.force_tests == true && inputs.publish-only != true && needs.prepare.outputs.bundle == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: forced-suite-tested-commit
+          path: ${{ runner.temp }}/tested-commit
+
+      - name: Check out the tested commit
+        if: inputs.force_tests == true && inputs.publish-only != true
+        env:
+          TESTED_SHA: ${{ needs.prepare.outputs.tested_sha }}
+          TESTED_BUNDLE: ${{ runner.temp }}/tested-commit/tested-commit.bundle
+        run: |
+          set -euo pipefail
+          if [ -f "$TESTED_BUNDLE" ]; then
+            git bundle verify -q "$TESTED_BUNDLE"
+            git fetch -q --no-tags "$TESTED_BUNDLE" refs/forced-suite/tested
+          fi
+          git checkout -B main "$TESTED_SHA"
+          test "$(git rev-parse HEAD)" = "$TESTED_SHA" || {
+            echo "::error::HEAD is $(git rev-parse HEAD), not the tested commit ${TESTED_SHA}" >&2
+            exit 1
+          }
+          echo "On the tested commit ${TESTED_SHA}"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org/'
+          package-manager-cache: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.4.4'
+
+      - name: Assert bun 1.4 toolchain
+        run: bash scripts/assert-bun-toolchain.sh
+
+      - name: Install dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Provision ripgrep and fd
+        run: sudo apt-get update && sudo apt-get install -y ripgrep fd-find
+
+      - name: Build all workspaces (so husky pre-commit type check resolves)
+        run: npm run build
+
+      - name: Reset auto-generated and npm-install drift files (not part of release diff)
+        run: git checkout -- packages/ai/src/models.generated.ts package-lock.json
+
+      - name: Setup Rust
+        if: inputs.publish-only != true
+        run: |
+          toolchain=stable
+          if [ -f rust-toolchain.toml ]; then
+            toolchain=$(python3 -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml", "rb"))["toolchain"]["channel"])')
+          fi
+          rustup toolchain install "$toolchain" --profile minimal
+          rustup default "$toolchain"
+
+      - name: Cache Rust
+        if: inputs.publish-only != true
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Build native grep addon
+        if: inputs.publish-only != true
+        working-directory: crates/senpi-grep
+        run: |
+          npm exec --yes --package @napi-rs/cli@3.7.2 -- napi build --platform --release -- --locked
+          node_file=$(ls senpi_grep.*.node)
+          echo "SENPI_GREP_NATIVE_PATH=$PWD/$node_file" >> "$GITHUB_ENV"
+
+      - name: Run the forced-suite part
+        env:
+          TESTED_SHA: ${{ needs.prepare.outputs.tested_sha }}
+        run: node scripts/release-forced-test-part.mjs --part rest --tested-sha "$TESTED_SHA" --out-dir "$RUNNER_TEMP/forced-suite-results"
+
+      - name: Upload the result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: forced-suite-result-rest
+          path: ${{ runner.temp }}/forced-suite-results/
+          retention-days: 1
+          if-no-files-found: error
+
+  forced-shard:
+    name: Forced suite (coding-agent ${{ matrix.shard }}/6)
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.base_sha }}
+
+      - name: Download the tested commit
+        if: inputs.force_tests == true && inputs.publish-only != true && needs.prepare.outputs.bundle == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: forced-suite-tested-commit
+          path: ${{ runner.temp }}/tested-commit
+
+      - name: Check out the tested commit
+        if: inputs.force_tests == true && inputs.publish-only != true
+        env:
+          TESTED_SHA: ${{ needs.prepare.outputs.tested_sha }}
+          TESTED_BUNDLE: ${{ runner.temp }}/tested-commit/tested-commit.bundle
+        run: |
+          set -euo pipefail
+          if [ -f "$TESTED_BUNDLE" ]; then
+            git bundle verify -q "$TESTED_BUNDLE"
+            git fetch -q --no-tags "$TESTED_BUNDLE" refs/forced-suite/tested
+          fi
+          git checkout -B main "$TESTED_SHA"
+          test "$(git rev-parse HEAD)" = "$TESTED_SHA" || {
+            echo "::error::HEAD is $(git rev-parse HEAD), not the tested commit ${TESTED_SHA}" >&2
+            exit 1
+          }
+          echo "On the tested commit ${TESTED_SHA}"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org/'
+          package-manager-cache: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.4.4'
+
+      - name: Assert bun 1.4 toolchain
+        run: bash scripts/assert-bun-toolchain.sh
+
+      - name: Install dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Provision ripgrep and fd
+        run: sudo apt-get update && sudo apt-get install -y ripgrep fd-find
+
+      - name: Build all workspaces (so husky pre-commit type check resolves)
+        run: npm run build
+
+      - name: Reset auto-generated and npm-install drift files (not part of release diff)
+        run: git checkout -- packages/ai/src/models.generated.ts package-lock.json
+
+      - name: Setup Rust
+        if: inputs.publish-only != true
+        run: |
+          toolchain=stable
+          if [ -f rust-toolchain.toml ]; then
+            toolchain=$(python3 -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml", "rb"))["toolchain"]["channel"])')
+          fi
+          rustup toolchain install "$toolchain" --profile minimal
+          rustup default "$toolchain"
+
+      - name: Cache Rust
+        if: inputs.publish-only != true
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Build native grep addon
+        if: inputs.publish-only != true
+        working-directory: crates/senpi-grep
+        run: |
+          npm exec --yes --package @napi-rs/cli@3.7.2 -- napi build --platform --release -- --locked
+          node_file=$(ls senpi_grep.*.node)
+          echo "SENPI_GREP_NATIVE_PATH=$PWD/$node_file" >> "$GITHUB_ENV"
+
+      - name: Run the forced-suite part
+        env:
+          TESTED_SHA: ${{ needs.prepare.outputs.tested_sha }}
+        run: node scripts/release-forced-test-part.mjs --part "${{ matrix.shard }}" --tested-sha "$TESTED_SHA" --out-dir "$RUNNER_TEMP/forced-suite-results"
+
+      - name: Upload the result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: forced-suite-result-coding-agent-${{ matrix.shard }}
+          path: ${{ runner.temp }}/forced-suite-results/
+          retention-days: 1
+          if-no-files-found: error

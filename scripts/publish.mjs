@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { prepareSenpiBundledWorkspaces } from "./prepare-senpi-bundled-workspaces.mjs";
 import { rewriteOwnedRegistryAliases } from "./prepare-senpi-publish-manifest.mjs";
 import { buildPublishArgs } from "./publish-command.mjs";
+import { assertLiveRunOnMain } from "./release-ref-guard.mjs";
 import { rewritePublishManifest } from "./publish-manifest.mjs";
 import { parseNpmPackJson } from "./npm-pack-json.mjs";
 import { assertPublishedWorkspacePackFiles, assertSenpiPackedWorkspaceFiles } from "./senpi-publish-pack-checks.mjs";
@@ -151,6 +152,8 @@ if (versions.length !== 1) {
 	throw new Error(`Publish packages are not lockstep versioned: ${versions.join(", ")}`);
 }
 
+// senpi#6645: on a ref other than main the publish-only job still holds id-token: write; refuse a live publish there.
+assertLiveRunOnMain({ dryRun, env: process.env, what: "npm publish" });
 const publishArgs = dryRun ? undefined : buildPublishArgs({ githubActions: process.env.GITHUB_ACTIONS === "true" });
 
 // Before any package is staged or published: a name npm does not know would publish part of the set (senpi#6636). This

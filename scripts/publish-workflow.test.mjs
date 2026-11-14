@@ -32,9 +32,11 @@ describe("publish-only workflow", () => {
 		);
 		assert.match(workflow, /native-prebuilds:\s+(?:needs: require-version\s+)?(?:if: [^\n]+\s+)?uses: \.\/\.github\/workflows\/native-prebuilds\.yml/);
 		assert.match(workflow, /native-prebuilds:\s+needs: require-version\s+if: \$\{\{ inputs\.publish-only == true \}\}\s+uses:/);
+		// senpi#6642 added the forced-suite jobs to the release job's needs; publish-only still gates on the ready output
+		// (scripts/publish-forced-suite-workflow.test.mjs evaluates the whole condition).
 		assert.match(
 			workflow,
-			/needs: native-prebuilds\s+(?:#[^\n]*\s+)*if: \$\{\{ always\(\) && \(inputs\.publish-only != true \|\| needs\.native-prebuilds\.outputs\.ready == 'true'\) \}\}/,
+			/needs: \[native-prebuilds, [^\]\n]*\]\s+(?:#[^\n]*\s+)*if: \$\{\{ always\(\) && \(inputs\.publish-only != true \|\| needs\.native-prebuilds\.outputs\.ready == 'true'\) && /,
 		);
 		const nativeDownload = workflow.match(/- name: Download native prebuilds[\s\S]*?(?=\n      - name: Build all workspaces)/)?.[0];
 		assert.ok(nativeDownload, "expected native prebuild download before workspace builds");
