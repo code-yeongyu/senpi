@@ -38,7 +38,12 @@ export function stampClock(options: StampClockOptions = {}): StampClock {
 }
 
 /** What a record carries beside its `at`, so a reader on the same machine can age it without the wall clock. */
-export function stampFields(clock: StampClock): { readonly up: number; readonly host: string } {
+export interface UptimeStamp {
+	readonly up: number;
+	readonly host: string;
+}
+
+export function stampFields(clock: StampClock): UptimeStamp {
 	return { up: Math.round(clock.uptime()), host: clock.host };
 }
 

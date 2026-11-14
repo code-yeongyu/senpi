@@ -253,7 +253,8 @@ describe("platform-only legs of the other PR workflows", () => {
 		});
 
 		it("cancels a superseded PR run but gives every main commit its own uncancelled group", () => {
-			for (const file of files) {
+			// move-stamp-age-macos.yml runs on its own triggers, never under the label run, so only this rule is its.
+			for (const file of [...files, "move-stamp-age-macos.yml"]) {
 				const { group, "cancel-in-progress": cancel } = workflow(file).concurrency;
 				assert.equal(evaluate(group, pr("W", "a")), evaluate(group, pr("W", "b")), file);
 				assert.equal(evaluate(cancel, pr("W")), "true", file);
