@@ -18,10 +18,15 @@ import type {
 import { registerFauxProvider, streamSimple } from "@earendil-works/pi-ai/compat";
 import type { RetryPolicyProfile } from "@earendil-works/pi-ai/utils/retry-profile/types";
 import { makeTempDir, onTempCleanup } from "../../../../scripts/vitest-temp.ts";
+import { trackCleanup } from "../support/pending-cleanups.ts";
 import type { ToolRuntimeKind } from "../../src/cli/tool-runtime.ts";
 import { AgentSession, type AgentSessionEvent } from "../../src/core/agent-session.ts";
 import { settledFallbackLoggers } from "../../src/core/retry-fallback/log.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
+import {
+	pendingCredentialBlockLogsWithin,
+	settledCredentialBlockLogsWithin,
+} from "../../src/core/credential-pool/block-log.ts";
 import type { ExtensionRunner, ExtensionUIContext } from "../../src/core/extensions/index.ts";
 import type { SessionStartEvent } from "../../src/core/extensions/types.ts";
 import { convertToLlmForTransport } from "../../src/core/messages.ts";
@@ -185,12 +190,15 @@ export interface Harness {
 	getExtensionRunner(): ExtensionRunner;
 	eventsOfType<T extends AgentSessionEvent["type"]>(type: T): Extract<AgentSessionEvent, { type: T }>[];
 	tempDir: string;
-	cleanup: () => void;
+	/** Disposes the session and removes the temp dir; the removal waits for writes still landing in it (senpi#6488). */
+	cleanup: () => Promise<void>;
 }
 
-const cleanups = new Set<() => void>();
+// A harness its test never cleaned up is disposed here; its temp dir is tracked by makeTempDir, so cleanupTempDirs
+// removes it with the awaited, guarded rm right after.
+const disposals = new Set<() => void>();
 onTempCleanup(() => {
-	for (const cleanup of [...cleanups].reverse()) cleanup();
+	for (const dispose of [...disposals].reverse()) dispose();
 });
 
 export async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
@@ -348,13 +356,29 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		events.push(event);
 	});
 
-	const cleanup = () => {
-		if (!cleanups.delete(cleanup)) return;
+	const dispose = () => {
+		if (!disposals.delete(dispose)) return;
 		session.dispose();
 		if (!sibling) fauxProvider.unregister();
+	};
+	disposals.add(dispose);
+	// The removal stays synchronous, as before: an async walk lets the suite's own in-process writers land files in the
+	// tree mid-removal (ENOTEMPTY). Only a pending credential block-log append, which the guard's rmSync refuses
+	// (senpi#6488), is waited for first.
+	const removeTempDir = (): void => {
 		if (existsSync(tempDir)) rmSync(tempDir, { recursive: true });
 	};
-	cleanups.add(cleanup);
+	const cleanup = (): Promise<void> => {
+		dispose();
+		const removal =
+			pendingCredentialBlockLogsWithin(tempDir).length === 0
+				? new Promise<void>((resolve) => {
+						removeTempDir();
+						resolve();
+					})
+				: settledCredentialBlockLogsWithin(tempDir).then(removeTempDir);
+		return trackCleanup(removal);
+	};
 	return {
 		agent,
 		session,

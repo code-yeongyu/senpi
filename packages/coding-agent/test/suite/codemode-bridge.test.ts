@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it, vi } from "vitest";
+import { trackCleanup } from "../support/pending-cleanups.ts";
 import { CONFIG_DIR_NAME } from "../../src/config.ts";
 import { DefaultResourceLoader } from "../../src/core/resource-loader.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
@@ -102,8 +103,7 @@ async function createCodemodeHarness(options: {
 	return {
 		...harness,
 		cleanup() {
-			harness.cleanup();
-			rmSync(tempDir, { recursive: true, force: true });
+			return trackCleanup(harness.cleanup().then(() => rmSync(tempDir, { recursive: true, force: true })));
 		},
 	};
 }
