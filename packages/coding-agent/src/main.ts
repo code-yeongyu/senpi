@@ -84,6 +84,7 @@ import { ModelUsabilityBudgetError } from "./core/extensions/builtin/compaction/
 import { resolveMovedPath } from "./core/extensions/builtin/moved-path-guard/resolve.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
 import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dispatcher.ts";
+import { launchRetryFallback } from "./core/launch-model-pin.ts";
 import { installMemoryReportSignal } from "./core/memory-report/memory-report-write.ts";
 import {
 	getModelNarrowingPatterns,
@@ -967,7 +968,13 @@ export function createCliRuntimeFactory(
 			projectTrustLocked: parsed.projectTrustOverride !== undefined,
 		});
 		// The opener's per-session fallback policy is an in-memory override: never saved, never shared.
-		if (launchProfile?.retryFallback) applyRetryFallbackProfile(runtimeSettingsManager, launchProfile.retryFallback);
+		// A host session's policy comes from its open (`validatedOpenProfile` pins a named model there); a
+		// standalone run's `--model` is its explicit choice and pins it the same way (omo#13243).
+		const retryFallback =
+			launchProfile === undefined
+				? launchRetryFallback({ namedModel: parsed.model !== undefined, retryFallback: undefined })
+				: launchProfile.retryFallback;
+		if (retryFallback) applyRetryFallbackProfile(runtimeSettingsManager, retryFallback);
 		const services = await createAgentSessionServices({
 			cwd,
 			agentDir,

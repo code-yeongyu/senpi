@@ -3,6 +3,7 @@ import type { Context, FauxResponseFactory } from "@earendil-works/pi-ai/compat"
 import { afterEach, describe, expect, it } from "vitest";
 import compactionExtension from "../../../src/core/extensions/builtin/compaction/index.ts";
 import { createHarness, getAssistantTexts, getMessageText, type Harness } from "../harness.ts";
+import { modelSwitchMarker } from "../../../src/core/model-switch-marker.ts";
 
 /**
  * The compaction extension delivers its post-compact restoration payload as a
@@ -10,6 +11,22 @@ import { createHarness, getAssistantTexts, getMessageText, type Harness } from "
  * after the real prompt. Skip it so response routing still keys off the prompt.
  */
 const HIDDEN_RESTORATION_PREFIX = "[restore checkpointed session agent configuration after compaction]";
+// Derived from the note itself (the shared head of its fallback and fallback-ended texts), so rewording
+// the note cannot silently re-route these tests.
+const MODEL_SWITCH_NOTE_PREFIX = commonPrefix(
+	String(modelSwitchMarker({ from: "a", to: "b", reason: "fallback" }).content),
+	String(modelSwitchMarker({ from: "a", to: "b", reason: "fallback-revert" }).content),
+);
+
+function commonPrefix(left: string, right: string): string {
+	let index = 0;
+	while (index < left.length && left[index] === right[index]) index++;
+	return left.slice(0, index);
+}
+
+function isModelSwitchNote(message: Context["messages"][number]): boolean {
+	return message.role === "user" && getMessageText(message).startsWith(MODEL_SWITCH_NOTE_PREFIX);
+}
 
 function lastUserText(context: Context): string {
 	for (let index = context.messages.length - 1; index >= 0; index--) {
@@ -17,6 +34,7 @@ function lastUserText(context: Context): string {
 		if (message?.role !== "user") continue;
 		const text = getMessageText(message);
 		if (text.startsWith(HIDDEN_RESTORATION_PREFIX)) continue;
+		if (text.startsWith(MODEL_SWITCH_NOTE_PREFIX)) continue;
 		if (typeof message.content === "string") return text;
 		const lastText = message.content.findLast((part) => part.type === "text");
 		return lastText?.text ?? text;
@@ -120,7 +138,9 @@ describe("Regression: compaction state during model fallback", () => {
 		]);
 		expect(fallbackPromptContexts).toHaveLength(2);
 		for (const context of fallbackPromptContexts) {
-			const userMessages = context.messages.filter((message) => message.role === "user");
+			const userMessages = context.messages.filter(
+				(message) => message.role === "user" && !isModelSwitchNote(message),
+			);
 			const prompt = userMessages.at(-1);
 			expect(prompt?.content).toHaveLength(1);
 			expect(prompt && lastUserText({ ...context, messages: [prompt] })).toBe("trigger fallback");

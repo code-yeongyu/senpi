@@ -350,6 +350,7 @@ import { ModelRegistry } from "./model-registry.ts";
 import { type AvailableModelsSource, getModelNarrowingPatterns, resolveModelScope } from "./model-resolver.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
 import { ModelSwitchAuthError } from "./model-switch-auth-error.ts";
+import { modelSwitchMarker } from "./model-switch-marker.ts";
 import { NestedToolCallRunner } from "./nested-tool-calls.ts";
 import { type PendingInputSnapshot, type PendingInputUpdate, SessionPendingInputs } from "./pending-input-session.ts";
 import { PROMPT_CACHE_SAFE_WAIT_ENV, resolvePromptCacheSafeWaitSeconds } from "./prompt-cache-budget.ts";
@@ -1614,6 +1615,8 @@ export class AgentSession {
 	/** Messages queued to be included with the next user prompt as context ("asides"). */
 	private _pendingNextTurnMessages: CustomMessage[] = [];
 	private _pendingCustomMessages: CustomMessage[] = [];
+	/** Fallback switch notes waiting for the next request boundary, where the model reads them (omo#13243). */
+	private _pendingModelSwitchMarkers: CustomMessage[] = [];
 	/** Deliveries from other sessions: admitted once into the queues below, tracked until their entry is written. */
 	readonly externalAdmission = new ExternalAdmission({
 		isBusy: () => this._isAgentRunActive || this._promptStartPending,
@@ -2051,6 +2054,7 @@ export class AgentSession {
 			circuits: this._fallbackCircuits,
 			logger: fallbackLogger,
 			switchModel: async (model, thinking, reason) => {
+				const from = this.model ? `${this.model.provider}/${this.model.id}` : undefined;
 				await this._switchActiveModel(model, {
 					persistDefault: false,
 					appendSessionEntry: true,
@@ -2063,6 +2067,9 @@ export class AgentSession {
 					allowDeferral: false,
 					repairWithSlice: true,
 				});
+				this._pendingModelSwitchMarkers.push(
+					modelSwitchMarker({ from, to: `${model.provider}/${model.id}`, reason }),
+				);
 			},
 			isCandidateRefusal: (error) => error instanceof ModelUsabilityBudgetError,
 			emit: (event) => this._emit(event),
@@ -3639,6 +3646,9 @@ export class AgentSession {
 			}
 			this.agent.abortServerSideFallback =
 				this.settingsManager.getAbortServerSideFallback() && this._retryFallback.hasConfiguredChain();
+			// Every switch made before this request (a revert at the turn boundary, routing around a spent account
+			// or a held family, one made while idle) is written here, so the model that answers reads it.
+			if (!this.agent.state.isStreaming) this._flushModelSwitchMarkers();
 			await this.agent.prompt(messages);
 			// AgentSession's subscriber intentionally queues event work instead of
 			// blocking Agent core. Wait for this run's queued recovery decision
@@ -8648,6 +8658,13 @@ export class AgentSession {
 		notify(() => this._emit({ type: "message_end", message: appMessage }));
 	}
 
+	/** Writes the fallback switch notes before a request starts, so the model sees which model it is. */
+	private _flushModelSwitchMarkers(): void {
+		const pending = this._pendingModelSwitchMarkers;
+		this._pendingModelSwitchMarkers = [];
+		for (const message of pending) this._appendCustomMessage(message);
+	}
+
 	private _flushPendingCustomMessages(): void {
 		const pending = this._pendingCustomMessages;
 		this._pendingCustomMessages = [];
@@ -11802,6 +11819,7 @@ export class AgentSession {
 					if (this._continueWithQueuedInput) {
 						// Joined input of a start that never ran: the transcript tail may be anything, even empty.
 						this._continueWithQueuedInput = false;
+						this._flushModelSwitchMarkers();
 						await this.agent.continueWithQueuedMessages(options);
 					} else if (this._scheduledContinuationRecompacted) {
 						const tail = this.agent.state.messages.at(-1);
@@ -11812,8 +11830,10 @@ export class AgentSession {
 								this._incrementMessageRevision();
 							}
 						}
+						this._flushModelSwitchMarkers();
 						await this.agent.continueWithQueuedMessages(options);
 					} else {
+						this._flushModelSwitchMarkers();
 						await this.agent.continue(options);
 					}
 				},

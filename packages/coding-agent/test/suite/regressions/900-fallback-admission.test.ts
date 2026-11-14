@@ -3,6 +3,7 @@ import type { Context, FauxResponseFactory } from "@earendil-works/pi-ai/compat"
 import { afterEach, expect, it } from "vitest";
 import compactionExtension from "../../../src/core/extensions/builtin/compaction/index.ts";
 import { createHarness, getMessageText, type Harness } from "../harness.ts";
+import { modelSwitchMarker } from "../../../src/core/model-switch-marker.ts";
 
 let harness: Harness | undefined;
 afterEach(() => {
@@ -10,8 +11,23 @@ afterEach(() => {
 	harness = undefined;
 });
 
+// Derived from the note itself (the shared head of its fallback and fallback-ended texts), so rewording
+// the note cannot silently re-route these tests.
+const MODEL_SWITCH_NOTE_PREFIX = commonPrefix(
+	String(modelSwitchMarker({ from: "a", to: "b", reason: "fallback" }).content),
+	String(modelSwitchMarker({ from: "a", to: "b", reason: "fallback-revert" }).content),
+);
+
+function commonPrefix(left: string, right: string): string {
+	let index = 0;
+	while (index < left.length && left[index] === right[index]) index++;
+	return left.slice(0, index);
+}
+
 function lastUser(context: Context): string {
-	const message = context.messages.findLast((message) => message.role === "user");
+	const message = context.messages.findLast(
+		(message) => message.role === "user" && !getMessageText(message).startsWith(MODEL_SWITCH_NOTE_PREFIX),
+	);
 	return message ? getMessageText(message) : "";
 }
 
