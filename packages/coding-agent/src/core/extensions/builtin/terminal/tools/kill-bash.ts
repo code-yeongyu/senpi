@@ -27,10 +27,23 @@ export function createKillBashTool(ctx: TerminalToolContext) {
 			// An explicit kill ends a standing watch for good, so its restore state dir goes with it.
 			// A process death does NOT come through here and keeps the dir for the next restore.
 			const terminalDir = terminalStateDir(ctx.getSessionContext?.());
+			// The watch is already stopped when this runs, so a failed removal is a note on the
+			// success, never the result (senpi#2883).
+			const cleanupFailures: string[] = [];
 			const dropStateDir = async (monitorId: string | undefined): Promise<void> => {
-				if (terminalDir !== undefined && monitorId !== undefined)
+				if (terminalDir === undefined || monitorId === undefined) return;
+				try {
 					await removeMonitorStateDir(terminalDir, monitorId);
+				} catch (error) {
+					cleanupFailures.push(`${monitorId}: ${error instanceof Error ? error.message : String(error)}`);
+				}
 			};
+			const killed = (text: string): TerminalToolResult =>
+				textResult(
+					cleanupFailures.length === 0
+						? text
+						: `${text}\nCould not remove the restore state dir (${cleanupFailures.join("; ")}).`,
+				);
 			if (input.all) {
 				const terminalCount = ctx.manager.size;
 				const monitorIds = (ctx.monitorRegistry?.snapshot() ?? []).map((entry) => entry.monitorId);
@@ -38,20 +51,20 @@ export function createKillBashTool(ctx: TerminalToolContext) {
 				const rpcCount = ctx.monitorRegistry?.stopAllRpc() ?? 0;
 				await ctx.manager.teardown();
 				for (const monitorId of monitorIds) await dropStateDir(monitorId);
-				return textResult(`Killed ${terminalCount + fileCount + rpcCount} session(s).`);
+				return killed(`Killed ${terminalCount + fileCount + rpcCount} session(s).`);
 			}
 			if (!input.bash_id) return errorResult("Provide `bash_id` or set `all:true`.");
 			const sessionId = resolveTerminalId(ctx.manager, input.bash_id);
 			const monitorId = input.bash_id.startsWith("mon_") ? input.bash_id : ctx.manager.monitorIdOf?.(sessionId);
 			if ((await ctx.monitorRegistry?.stopFile(sessionId)) || ctx.monitorRegistry?.stopRpc(sessionId)) {
 				await dropStateDir(monitorId);
-				return textResult(`Killed ${input.bash_id}.`);
+				return killed(`Killed ${input.bash_id}.`);
 			}
 			const runtime = ctx.manager.get(sessionId);
 			if (!runtime) return errorResult(`No terminal session found with id: ${input.bash_id}`);
 			await ctx.manager.stop(sessionId);
 			await dropStateDir(monitorId);
-			return textResult(`Killed ${input.bash_id}.`);
+			return killed(`Killed ${input.bash_id}.`);
 		},
 	};
 }
