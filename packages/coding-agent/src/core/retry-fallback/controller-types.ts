@@ -34,6 +34,7 @@ export interface FallbackRungRefusal {
 export interface FallbackSettings {
 	modelFallback: boolean;
 	chains: Readonly<Record<string, readonly string[]>>;
+	revertPolicy?: "cooldown-expiry" | "never";
 }
 
 export interface RetryFallbackControllerDeps {
