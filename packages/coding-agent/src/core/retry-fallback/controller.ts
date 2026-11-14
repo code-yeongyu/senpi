@@ -22,6 +22,7 @@ import type {
 	RetryFallbackControllerDeps,
 } from "./controller-types.ts";
 import { releaseOnCredentialChange, releaseOnLimitReset } from "./credential-recovery.ts";
+import type { AccountLimits } from "../subscription-limits/limit-store.ts";
 import { pinAfterSwitch } from "./pin.ts";
 import { isPureNetworkTransient } from "./transient-network.ts";
 import { type UsageLimitScopeProbe, UnusableEntries } from "./unusable.ts";
@@ -103,6 +104,10 @@ export class RetryFallbackController {
 
 	releaseAccountHold(provider: string): boolean {
 		return this.unusable.releaseAccountHold(provider);
+	}
+
+	releaseAccountHoldShownServable(provider: string, usage: readonly AccountLimits[]): boolean {
+		return this.unusable.releaseAccountHoldShownServable(provider, usage);
 	}
 
 	resetTurn(): void {

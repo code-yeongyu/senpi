@@ -1,5 +1,97 @@
 # changes — senpi-monorepo root
 
+## 2026-11-13 - The hono and @hono/node-server overrides move past their npm audit advisories (senpi#6624)
+
+### What changed
+
+- `package.json` `overrides`: `hono` 4.13.11 -> 4.13.18 and `@hono/node-server` 2.1.3 -> 2.1.8. The lockfiles (`package-lock.json`, `bun.lock`) are regenerated to match.
+
+### Why
+
+- hono <=4.13.15 carries GHSA-4m76-xfj5-7975, GHSA-h7mg-cq63-vhpq, GHSA-3gg2-335m-rxc6 (low), GHSA-46wx-v44x-9hh2 and GHSA-4h7h-rv7c-7m2v (first fixes in 4.13.16). 4.13.17 additionally sits inside four medium advisories published in the hono repository's own security advisories on 2026-11-11 and named in the v4.13.18 release notes: GHSA-h25j-2p75-qj33 (>=4.13.16 <=4.13.17; mount forwards a wrong path with a custom getPath), GHSA-74fm-fwc7-3fwp (>=4.13.11 <=4.13.17; serveStatic with allowPercentInPath decodes twice), GHSA-39q9-qp46-w8xg (>=4.12.16 <=4.13.17; bodyLimit keeps every transfer chunk) and GHSA-92p4-j3wq-jmqx (>=4.5.1 <=4.13.17; validator skips on Content-Type parameter formatting). All four are patched in 4.13.18, which is past `min-release-age=2` (published 2026-11-11T08:54:02Z). These ids are not yet in the GitHub global advisory database, so `npm audit` is silent on 4.13.17 today; the same database lag turned GHSA-4m76-xfj5-7975 red 11 days after its repo publication, so the scheduled audit would flag 4.13.17 within days. `@hono/node-server` <2.1.6 carries GHSA-qv5m-9pm6-hqp3 and GHSA-jpvv-r467-5p4w (fixed in 2.1.6), and >=2.1.3 <2.1.7 carries GHSA-fj57-4f93-cfw6 (serveStatic with allowPercentInPath decodes the path twice; published in the node-server repository's advisories on 2026-11-11), so the floor is 2.1.7+ and the override takes 2.1.8. Both were flagged by the scheduled npm audit workflow; the overrides pinned the vulnerable versions exactly, so `npm audit fix` could not move them.
+
+### Why an extension could not handle it
+
+- Dependency resolution for the monorepo is set by the root manifest.
+
+### Expected merge conflict zones
+
+- LOW: the two override lines in `package.json`; the lockfiles regenerate on any conflict.
+
+## 2026-11-12 - Root overrides pin the MCP SDK's zod to 4.6.7 in every lockfile (senpi#6497)
+
+### What changed
+
+- Root `package.json` `overrides`: `@modelcontextprotocol/sdk` takes `zod` 4.6.7. `package-lock.json` is refreshed under that override (`npm update zod --package-lock-only`, which `npm install --package-lock-only` alone did not apply to an existing lockfile): zod 4.6.7 is the hoisted root copy, `@anthropic-ai/sandbox-runtime` keeps its 3.25.76 nested, and the knip and coding-agent nested copies dedupe into the root. `bun.lock` already had this layout; `packages/coding-agent/install-lock/package-lock.json` is regenerated from the root lockfile.
+
+### Why
+
+- `npm ci` (CI shards, the standalone binaries' `scripts/build-binaries.sh`) and the npm release install resolve the MCP SDK's `zod/v4` through this lockfile; with the root copy at 3.25.76 every one of them reached a 4.0.0 core. The refreshed lockfile gives npm and bun installs the same zod for the MCP SDK, so the esbuild bundle, the `bun build --compile` binaries and a developer's `npm ci` tree all carry one 4.6.7.
+
+### Why an extension could not handle it
+
+- Install resolution is repo-level.
+
+### Expected merge conflict zones
+
+- LOW: the root `overrides` block; the `node_modules/zod` entries in `package-lock.json`.
+
+## 2026-11-11 - Workspace wiring for the realm-registry helper and the realm census check (omo#12965)
+
+### What changed
+
+- `package.json`: adds `check:realm-census` and runs it at the end of `check`.
+- `tsconfig.json`, `vitest.base.ts`: map `@earendil-works/pi-realm-registry` to its source for type checks and tests.
+- `packages/realm-registry/tsconfig.build.json` (new): the build configuration of the helper package, the same shape as the other leaf packages'.
+
+### Why
+
+- The helper is a new workspace package every engine package imports, and the census has to run wherever `bun run check` runs.
+
+### Why an extension could not handle it
+
+- Root build and check configuration is not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the `check` script chain in `package.json` and the alias lists.
+
+## 2026-11-11 - The node-forge override moves to 1.4.3 (senpi#6402)
+
+### What changed
+
+- `package.json` `overrides`: node-forge 1.4.2 -> 1.4.3 for both `@earendil-works/gondolin` and `@anthropic-ai/sandbox-runtime`. The lockfiles are regenerated to match.
+
+### Why
+
+- node-forge <=1.4.2 carries GHSA-6889-vf6x-f3g5, GHSA-w4xr-hqv8-ch44, GHSA-6cv4-p8m7-4r25 and GHSA-j8rw-jp99-435v, all patched in 1.4.3 (published 2026-11-04, past `min-release-age=2`). npm reported no fix only because the override pinned 1.4.2 exactly.
+
+### Why an extension could not handle it
+
+- Dependency resolution for the monorepo is set by the root manifest.
+
+### Expected merge conflict zones
+
+- LOW: the two node-forge lines in the `overrides` block; the lockfiles regenerate on any conflict.
+
+## 2026-11-11 - Root overrides move to the patched qs, fast-uri, ip-address, express-rate-limit and body-parser (senpi#6395)
+
+### What changed
+
+- `package.json` `overrides`: qs 6.16.0 -> 6.16.2, fast-uri 3.1.8 -> 3.1.9, ip-address 10.7.2 -> 10.7.6, express-rate-limit 8.7.0 -> 8.7.3, and a new body-parser 2.4.0 override. `package-lock.json`, `bun.lock` and `packages/coding-agent/install-lock` are regenerated to match.
+
+### Why
+
+- `npm audit --omit=dev --audit-level=moderate` failed on main (GHSA-27r3-jxmh-p828, GHSA-6pq8-jhm2-2vcw, four fast-uri advisories, GHSA-rxp7-6hxx-x8q5). The overrides pinned the vulnerable versions exactly, so `npm audit fix` could not move them. Each target is the smallest fixed version inside its current major that the repo's `min-release-age=2` allows (express-rate-limit 8.7.4 is too new; 8.7.3 is enough, because it was flagged only via ip-address).
+
+### Why an extension could not handle it
+
+- Dependency resolution for the whole monorepo is set by the root manifest and its lockfiles.
+
+### Expected merge conflict zones
+
+- LOW: the `overrides` block in `package.json`; the lockfiles regenerate on any conflict.
+
 ## 2026-11-09 - The sqlite-bun package carries the complete bun:sqlite declaration (senpi#6255)
 
 ### What changed

@@ -1,0 +1,74 @@
+[
+	{
+		"artifact": "native-prebuild-win32-x64",
+		"runner": "windows-latest",
+		"napi_target": "x86_64-pc-windows-msvc",
+		"rust_target": "x86_64-pc-windows-msvc",
+		"node_platform": "win32",
+		"node_arch": "x64",
+		"cross_compile": false,
+		"napi_cross_compile": false,
+		"linux": false,
+		"best_effort": false
+	},
+	{
+		"artifact": "native-prebuild-win32-arm64",
+		"runner": "windows-latest",
+		"napi_target": "aarch64-pc-windows-msvc",
+		"rust_target": "aarch64-pc-windows-msvc",
+		"node_platform": "win32",
+		"node_arch": "arm64",
+		"cross_compile": true,
+		"napi_cross_compile": true,
+		"linux": false,
+		"best_effort": true
+	},
+	{
+		"artifact": "native-prebuild-darwin-x64",
+		"runner": "macos-latest",
+		"napi_target": "x86_64-apple-darwin",
+		"rust_target": "x86_64-apple-darwin",
+		"node_platform": "darwin",
+		"node_arch": "x64",
+		"cross_compile": true,
+		"napi_cross_compile": false,
+		"linux": false,
+		"best_effort": false
+	},
+	{
+		"artifact": "native-prebuild-darwin-arm64",
+		"runner": "macos-latest",
+		"napi_target": "aarch64-apple-darwin",
+		"rust_target": "aarch64-apple-darwin",
+		"node_platform": "darwin",
+		"node_arch": "arm64",
+		"cross_compile": false,
+		"napi_cross_compile": false,
+		"linux": false,
+		"best_effort": false
+	},
+	{
+		"artifact": "native-prebuild-linux-x64",
+		"runner": "ubuntu-latest",
+		"napi_target": "x86_64-unknown-linux-gnu.2.17",
+		"rust_target": "x86_64-unknown-linux-gnu",
+		"node_platform": "linux",
+		"node_arch": "x64",
+		"cross_compile": true,
+		"napi_cross_compile": true,
+		"linux": true,
+		"best_effort": false
+	},
+	{
+		"artifact": "native-prebuild-linux-arm64",
+		"runner": "ubuntu-latest",
+		"napi_target": "aarch64-unknown-linux-gnu.2.17",
+		"rust_target": "aarch64-unknown-linux-gnu",
+		"node_platform": "linux",
+		"node_arch": "arm64",
+		"cross_compile": true,
+		"napi_cross_compile": true,
+		"linux": true,
+		"best_effort": false
+	}
+]

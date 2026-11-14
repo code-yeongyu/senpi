@@ -1,5 +1,23 @@
 # core/tools changes
 
+## 2026-11-11 - The grep description no longer says "inside eval" to agents that get grep as a direct tool (senpi#6426)
+
+### What changed
+
+- `grep/index.ts`: the description reads "Search file contents by pattern and path (from eval, call it as tool.grep({ pattern, path }))" instead of "with tool.grep({ pattern, path }) inside eval".
+
+### Why
+
+- grep is declared `exposure: "eval"`, but the eval-only policy is armed only when an eval tool is registered, so an agent without eval (the QA-executor agent, for one) receives grep as a direct tool and read an instruction it could not follow (code-yeongyu/oh-my-openagent#12522, finding 3).
+
+### Why an extension could not handle it
+
+- The description is the builtin tool's own.
+
+### Expected merge conflict zones
+
+- LOW: the grep description string.
+
 ## 2026-11-05 - `read` and `grep` descriptions state folding and page caps (senpi#5998)
 
 ### What changed

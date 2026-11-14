@@ -1,7 +1,10 @@
 /**
- * A move record as the receiving device keeps it and as a sender hears it: its states and reasons, and the parser that
- * reads one back from the record file or from a sender's `finish`.
+ * A move record as the receiving device keeps it and as a sender hears it: its states and reasons, the parser that
+ * reads one back from the record file or from a sender's `finish`, and the refusal a move gets once its record no
+ * longer lets it land.
  */
+import type { MoveId } from "./ownership.ts";
+
 export type DeclineReason = "no_record" | "expired" | "cancelled" | "chunk_without_ready" | "repository";
 export type FailReason = "bundle_invalid" | "import_failed";
 
@@ -20,6 +23,21 @@ export type MoveAnswer = MoveStatus | { readonly state: "accepted"; readonly rev
 
 /** `ready`: this device told the sender it can take the move; no bundle has been verified yet. */
 export type MoveRecord = MoveAnswer | { readonly state: "ready"; readonly expiresAt: string };
+
+export class MoveFencedError extends Error {
+	readonly code = "move_fenced";
+	readonly moveId: MoveId;
+	readonly record: MoveRecord | undefined;
+
+	constructor(moveId: MoveId, record: MoveRecord | undefined, detail?: string) {
+		super(
+			`Move ${moveId} can no longer be imported here: ${detail ?? `it was already answered (${record?.state ?? "no record"})`}.`,
+		);
+		this.name = "MoveFencedError";
+		this.moveId = moveId;
+		this.record = record;
+	}
+}
 
 const DECLINE_REASONS: readonly DeclineReason[] = [
 	"no_record",

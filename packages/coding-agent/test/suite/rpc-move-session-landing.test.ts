@@ -11,7 +11,7 @@ import { importMovedSession } from "../../src/core/session-move/import.ts";
 import { MoveLedger } from "../../src/core/session-move/move-ledger.ts";
 import { sessionOwnership } from "../../src/core/session-move/ownership.ts";
 import { createInProcessRig } from "./rpc-inprocess-host-support.ts";
-import { devices, exportedForB, importedOnB, move } from "./rpc-move-session-support.ts";
+import { devices, exportedForB, importedOnB, landedOnB, move } from "./rpc-move-session-support.ts";
 
 const ledgerFile = (agentDir: string, moveId: string) => join(agentDir, "session-moves", "ledger", `${moveId}.json`);
 
@@ -91,7 +91,10 @@ describe("move_session lands a move in one file (senpi#4004)", () => {
 			success: true,
 			data: { session_path: onB },
 		});
-		expect((await move(b, { op: "status", moveId: "move-l2" })).data).toEqual({ state: "accepted" });
+		expect((await move(b, { op: "status", moveId: "move-l2" })).data).toEqual({
+			state: "accepted",
+			...landedOnB(fixture, onB),
+		});
 	});
 
 	const cases = [
@@ -142,6 +145,9 @@ describe("move_session lands a move in one file (senpi#4004)", () => {
 			data: { session_path: onB },
 		});
 		expect(sessionOwnership(loadEntriesFromFile(onB)).writable).toBe(true);
-		expect((await move(b, { op: "status", moveId: "move-l6" })).data).toEqual({ state: "accepted" });
+		expect((await move(b, { op: "status", moveId: "move-l6" })).data).toEqual({
+			state: "accepted",
+			...landedOnB(fixture, onB),
+		});
 	});
 });

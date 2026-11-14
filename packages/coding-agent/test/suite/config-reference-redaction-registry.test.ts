@@ -6,13 +6,17 @@
  * in the test realm could reset it between cases, and a planted slot must exist before the first copy evaluates.
  */
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 const SOURCE = fileURLToPath(new URL("../../src/core/config-reference-redaction.ts", import.meta.url));
+// The module builds its slot with the realm-registry helper. A fresh realm outside the workspace cannot resolve that
+// package by name, so each copy gets its own copy of the helper beside it, as each engine copy inlines its own.
+const HELPER = fileURLToPath(new URL("../../../realm-registry/src/index.ts", import.meta.url));
+const HELPER_SPECIFIER = '"@earendil-works/pi-realm-registry"';
 const SLOT_KEY = "@code-yeongyu/senpi/config-reference-redaction/v1";
 const SLOT_ERROR = "SENPI_REDACTION_SLOT_INCOMPATIBLE";
 
@@ -26,7 +30,10 @@ function inFreshRealm(body: string): Record<string, unknown> {
 	roots.push(root);
 	for (const copy of ["a", "b"]) {
 		mkdirSync(join(root, copy));
-		copyFileSync(SOURCE, join(root, copy, "redaction.ts"));
+		copyFileSync(HELPER, join(root, copy, "realm-registry.ts"));
+		const source = readFileSync(SOURCE, "utf8");
+		if (!source.includes(HELPER_SPECIFIER)) throw new Error(`${SOURCE} no longer imports ${HELPER_SPECIFIER}`);
+		writeFileSync(join(root, copy, "redaction.ts"), source.replace(HELPER_SPECIFIER, '"./realm-registry.ts"'));
 	}
 	writeFileSync(
 		join(root, "main.mjs"),

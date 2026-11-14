@@ -30,6 +30,8 @@ export const POLL_INTERVAL_MS: Readonly<Record<UsageProvider, number>> = {
 	"chatgpt-subscription": 150_000,
 };
 const TICK_MS = 30_000;
+/** A person's turn on a held provider re-reads its accounts' usage at most this often (senpi#6536). */
+const REFRESH_MIN_AGE_MS = 60_000;
 const MAX_BACKOFF_MS = 60 * 60_000;
 /** Intervals to wait before asking again about a login only `/login` can fix. */
 const SIGNED_OUT_INTERVALS = 5;
@@ -52,8 +54,14 @@ export class UsagePoller {
 		this.#deps = deps;
 	}
 
-	/** One pass: adopt what siblings already read, fetch what is due and claimed by this process, publish. */
-	async pollOnce(signal: AbortSignal = new AbortController().signal): Promise<void> {
+	/**
+	 * One pass: adopt what siblings already read, fetch what is due and claimed by this process, publish. `refresh`
+	 * also makes that provider's accounts due when their reading is at least REFRESH_MIN_AGE_MS old (senpi#6536).
+	 */
+	async pollOnce(
+		signal: AbortSignal = new AbortController().signal,
+		refresh?: { readonly provider: UsageProvider },
+	): Promise<void> {
 		if (this.#running) return;
 		this.#running = true;
 		try {
@@ -62,7 +70,12 @@ export class UsagePoller {
 			const before = readUsageCache(path);
 			this.#adopt(before, accounts);
 			const now = this.#deps.now();
-			const due = [...accounts.keys()].filter((key) => isDue(before, key, now));
+			const due = [...accounts].flatMap(([key, account]) =>
+				isDue(before, key, now) ||
+				(account.provider === refresh?.provider && isDue(before, key, now, REFRESH_MIN_AGE_MS))
+					? [key]
+					: [],
+			);
 			if (due.length === 0) return;
 			const token = randomUUID();
 			writeUsageCache(path, withClaims(before, due, now, token));
@@ -146,7 +159,17 @@ function describeFailure(error: unknown, interval: number): { error: string; wai
 	return { error: /abort|timeout|timed out/i.test(message) ? "timed out" : "unreachable", waitMs: 2 * interval };
 }
 
-let running: { stop(): void } | undefined;
+let running: { stop(): void; refresh(provider: UsageProvider): Promise<void> } | undefined;
+
+/**
+ * Re-reads `provider`'s account usage now instead of at the next interval, so a limit the provider lifted early
+ * shows on the next turn a person starts (senpi#6536). A no-op where nothing polls (print mode, `--offline`, a
+ * session isolate); a failure keeps the last reading and never fails the turn.
+ */
+export async function refreshSubscriptionUsage(provider: string): Promise<void> {
+	if (running === undefined || (provider !== "anthropic-subscription" && provider !== "chatgpt-subscription")) return;
+	await running.refresh(provider);
+}
 
 /**
  * Starts the process's poller once (interactive and RPC modes; never print mode or `--offline`). The timer
@@ -185,6 +208,10 @@ export function startSubscriptionUsagePolling(options: {
 			clearInterval(timer);
 			running = undefined;
 		},
+		refresh: (provider) =>
+			poller.pollOnce(controller.signal, { provider }).catch((error: unknown) => {
+				options.report(`senpi subscription limits: usage refresh failed: ${String(error)}`);
+			}),
 	};
 	return running;
 }

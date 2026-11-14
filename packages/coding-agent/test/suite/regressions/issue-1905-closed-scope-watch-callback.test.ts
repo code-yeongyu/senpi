@@ -23,6 +23,18 @@ describe("issue 1905: watcher callbacks of a closed session scope", () => {
 		expect(calls).toEqual(["settings.json"]);
 	});
 
+	it("refuses to bind a callback inside a session scope it cannot read (omo#12965)", () => {
+		// Given: a scope entered by a pi-ai copy that shapes scopes differently
+		const registry = Reflect.get(globalThis, Symbol.for("@code-yeongyu/senpi/provider-scope/v1")) as {
+			run: (scope: unknown, fn: () => unknown) => unknown;
+		};
+
+		// When / Then: the bind refuses, so the callback is never handed back unbound inside a session
+		expect(() => registry.run({ state: "active" }, () => bindSessionScopedCallback(() => {}))).toThrow(
+			expect.objectContaining({ code: "PI_PROVIDER_SCOPE_UNREADABLE" }),
+		);
+	});
+
 	it("returns the callback unbound when no session scope is active", () => {
 		// Given: classic single-session mode, no provider scope
 		const calls: number[] = [];

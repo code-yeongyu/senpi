@@ -47,11 +47,11 @@ describe("claude-sdk-oauth content blocks (#7660)", () => {
 
 		const prompt = buildPromptBlocks(promptContext(...messages));
 		expect(imageBlocks(prompt)).toEqual([]);
-		expect(textOf(prompt)).toContain(RAW_STRING_ENTRY);
+		expect(textOf(prompt)).toContain(`[tool output] ${RAW_STRING_ENTRY}`);
 
 		const delta = buildDeltaPromptBlocks(messages);
 		expect(imageBlocks(delta)).toEqual([]);
-		expect(textOf(delta)).toContain(RAW_STRING_ENTRY);
+		expect(textOf(delta)).toContain(`[tool output] ${RAW_STRING_ENTRY}`);
 	});
 
 	it("keeps a well-formed image as an image with media_type and data", () => {

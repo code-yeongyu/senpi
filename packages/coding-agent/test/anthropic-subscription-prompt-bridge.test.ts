@@ -66,7 +66,7 @@ describe("Claude SDK OAuth prompt bridge", () => {
 				text: 'Historical tool call (non-executable): mcp__custom-tools__repoSearch args={"query":"needle"}',
 			},
 			{ type: "text", text: "\n\nTOOL RESULT (historical mcp__custom-tools__repoSearch, id=call-1):\n" },
-			{ type: "text", text: "match" },
+			{ type: "text", text: "[tool output] match" },
 			{ type: "text", text: "\n</conversation_history>" },
 			{ type: "text", text: anchor },
 			{ type: "text", text: "Explain the match" },

@@ -1,3 +1,223 @@
+## 2026-11-12 - A limit lifted before its stated reset releases the session's account hold (senpi#6536)
+
+### What changed
+
+- `packages/coding-agent/src/core/subscription-limits/usage-capacity.ts` (new): `usageShowsCapacity` (a reading reported after a given time, with no error and at least one window, every window under 100% or past its reset) and `accountsWithCapacity`.
+- `packages/coding-agent/src/core/retry-fallback/unusable.ts`: an account hold records when it began (`accountHeldSince`, wall clock); `releaseAccountHoldShownServable(provider, usage)` drops the hold when one of the provider's accounts reports capacity after that time. Every path that drops the hold drops the time.
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: `releaseAccountHoldShownServable` passes through.
+- `packages/coding-agent/src/core/agent-session.ts`: at the turn boundary a held provider is released on that evidence for any turn; a turn a person started first forces one usage re-read (`refreshSubscriptionUsage`).
+- `packages/coding-agent/src/core/subscription-limits/usage-poller.ts`, `usage-cache.ts`: `pollOnce(signal, { provider })` also makes that provider's accounts due once a healthy reading is `REFRESH_MIN_AGE_MS` (one minute) old; a failed reading keeps its backoff and a live claim still wins (`isDue(cache, key, now, minAgeMs)`). `refreshSubscriptionUsage(provider)` runs it on the process's poller and is a no-op where nothing polls.
+- `packages/coding-agent/src/core/credential-accounts.ts`: a Claude subscription slot's stored `rate_limit` block that `isLimitLiftedEarly` contradicts is listed as not blocked, so `_pooledAccountHealth` reports the pool usable. `accountsNeedingUser` names the accounts no usage reading can bring back (`auth_error`, `disabled`, signed out, another lane's slot); `AgentSession._usageOfSelectableAccounts` drops their readings before the hold release reads the snapshot, so an account the pool would still skip never releases the provider's hold. An account the summary does not name keeps its usage, so a single stored credential still releases on its own reading.
+
+### Why
+
+- A provider can lift a usage limit before the reset it stated (a usage reset the user redeemed). The hold trusted the stated reset as its only release, so the account stayed refused at 0% usage until that time. The stated reset is now a ceiling: usage the provider reports after the hold began, under every limit, releases it.
+- Only a person's turn reads usage early, at most once a minute per account and never inside an endpoint backoff, so an automated loop never probes a held account more often than the regular poll (senpi#3131, senpi#5963).
+
+### Why an extension could not handle it
+
+- The account hold and the turn-boundary gate are `AgentSession` and retry-fallback internals; the usage poller is the core process's.
+
+### Expected merge conflict zones
+
+- MEDIUM: the turn-boundary block in `agent-session.ts` around `_pooledAccountHealth` and `releaseGuessedAccountHold`.
+- LOW: the hold maps and release methods in `retry-fallback/unusable.ts`; `isDue` and `pollOnce` in `subscription-limits/`; `storedSlotBlock` in `credential-accounts.ts`.
+
+## 2026-11-12 - A commit stamp is aged by the machine's uptime, and checked right before the file lands (senpi#6417)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-move/move-landing.ts`: a commit stamp carries its machine's uptime and host beside its time; `stampAge` counts a stamp old only when the uptime and the wall clock both say so, and falls back to the wall clock for another machine, a restart, or a stamp without the fields.
+- `packages/coding-agent/src/core/session-move/move-ledger.ts`: the ledger ages a stamp with that clock, hands `commit`'s rename its stamp check, no longer checks the lock a second time before the stamp's own write, and asserts the lock as `commit`'s last statement before the landing call.
+- `packages/coding-agent/src/core/session-move/move-record-file.ts`: every write of the record carries, beside its time, the uptime and host the ledger hands it.
+- `packages/coding-agent/src/core/session-rebind.ts`: `rebindSessionFile` takes `beforeRename`, run right before the rename that lands the file; a refusal removes the rewritten copy and puts the moved sidecars back.
+- `packages/coding-agent/src/core/session-move/import.ts`: the import passes the ledger's stamp check as `beforeRename`.
+
+### Why
+
+- A forward step of the wall clock aged a healthy commit's stamp past the settle bound at once: another process settled the move failed while the commit could still land, which is two writable copies.
+- The last stamp check ran before the wait for the session's move lock and the rewrite of the session file, so a stall there was not covered.
+
+### Why an extension could not handle it
+
+- It is the move ledger's own commit path.
+
+### Expected merge conflict zones
+
+- LOW: `commit` in `move-ledger.ts`, `write` in `move-record-file.ts`, `moveSessionFile` in `session-rebind.ts`, and the lock guard's row for the landing call in `test/proper-lockfile-reference-guard.test.ts`.
+
+## 2026-11-11 - The move status reads a named landing before the ledger (senpi#6436)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-move/import.ts`: `answerMoveStatusAndLanding` takes the file a `status` asks about as `StatusFile` (`copy`: the copy the import returned; `landing`: where the move would have landed). A landing that records the move answers `accepted` (revoked when sealed) with where it landed even when the record is lost, and writes nothing; a landing that does not record the move falls back to the ledger, as no file does. A `copy` that does not record the move is still `move_mismatch`.
+- `packages/coding-agent/src/core/session-move/bundle.ts`: `isSessionFileName` is the rule the manifest's session file name is parsed by, exported for the `status` request.
+- `packages/coding-agent/src/core/session-manager.ts`: `getDefaultSessionDirPath` is exported. It computes the default session folder of a cwd without creating it, which `getDefaultSessionDir` does.
+
+### Why
+
+- The status must name the same path the import lands at, and a question must leave no folder behind; the only function that computes that path without creating it was private to `session-manager.ts`.
+
+### Why an extension could not handle it
+
+- The move core owns the status answer, and the default session folder's encoding is `session-manager.ts`'s own.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/session-manager.ts` gains one `export` keyword on `getDefaultSessionDirPath`; an upstream change to that function's signature line would conflict there. `core/session-move/` is fork-only.
+
+## 2026-11-11 - The read that settles a move's status also says where the move landed (senpi#6436)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-move/landed-file.ts` (new): `readLanding` reads the file at a move's landing target once and returns what it records for the move and, when it records it, the file's path with the id and the folder its header names; `outcomeIn` is the loop `importOutcome` had, moved as it was.
+- `packages/coding-agent/src/core/session-move/import.ts`: `answerMoveStatusAndLanding` returns the answer and, for an accepted move whose record names a target, that landing. The ledger already reads the file at the recorded target under the record's lock to settle an interrupted step; the landing comes from that same read. `answerMoveStatus` returns the answer alone, as before.
+- `packages/coding-agent/src/core/session-move/move-ledger.ts`: `MoveFencedError` keeps the move id it was raised for.
+
+### Why
+
+- See the RPC entry above. The answer the sender's `finish` takes (`MoveAnswer`) is unchanged.
+
+### Why an extension could not handle it
+
+- The move ledger and its lock are core.
+
+### Expected merge conflict zones
+
+- LOW: `answerMoveStatus` in `import.ts`, and the constructor of `MoveFencedError` in `move-ledger.ts`.
+
+## 2026-11-11 - A move that cannot land is refused before the source releases the session (senpi#6435)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-move/identity.ts` (new): the two read-only forms of `move_session` op `identity`. `readSessionRepositoryIdentity(sessionsRoot, sessionPath)` answers what a session file recorded, the value `export` writes into its bundle manifest. It takes a path from a caller, so its reach is bounded: only a session file of this host's own session folder (`<agentDir>/sessions/<folder>/<name>.jsonl`), decided on the resolved path before anything is opened, opened with `O_NOFOLLOW` and `O_NONBLOCK`, scanning at most 1 GiB in 256 KiB chunks and holding at most one 1 MiB line, parsing only lines that carry the entry type. Every path it will not read answers one identical refusal (`MoveIdentityUnreadableError`), so the answer never says which paths exist; a larger file answers `MoveIdentityTooLargeError`. The folder form is `readRepositoryIdentity` on the resolved folder, which never refuses for what the folder is.
+- `packages/coding-agent/src/core/session-move/repository-check.ts` (new): `isCheckoutOfRepository(cwd, repository, read)` resolves the folder, reads it and requires `compareRepositoryIdentities` to answer `same`. `MoveRefusedError` moved here from `import.ts` and gained an optional source folder, since `prepare` does not know one.
+- `packages/coding-agent/src/core/session-move/prepare.ts` (new): `prepareMove` readies a move, and with a `cwd` only after that folder passed the check.
+- `packages/coding-agent/src/core/session-move/move-ledger.ts`: `prepare(moveId, cwd?)` keeps the folder on the record and fences a second folder, and never rewrites a commit stamp (a rewrite would give the stamp a new time and start its settle window again); `beginReceive(moveId, target, options)` takes the import's folder, refuses a receive for another folder of a move readied or already receiving for one (two folders can map to one landing file), and keeps the folder on the receiving record; `requireReadiedFor(moveId, cwd)` is a read-only fence the import takes before its repository check. Every folder these three are given goes through `moveFolder` first, so one folder has one spelling. `commit` and `reconcile` are senpi#6417's; this change carries the folder through the commit stamp and the settled record.
+- `packages/coding-agent/src/core/session-move/move-record.ts`: `MoveFencedError` now lives here, beside the record shapes it refuses with, and `move-ledger.ts` re-exports it. The file and those shapes came with senpi#6417; this change adds only the error class to it.
+- `packages/coding-agent/src/core/session-move/move-record-file.ts` (new): the move's record file (its path, how a record and its landing are read back, the whole-file write and the two checks a commit makes against it), moved out of `move-ledger.ts` unchanged, so the ledger that now also carries senpi#6417's commit checks stays within the file-size ceiling. One body changed after the move: `assertLandsAt` reads the record once and takes the state and the landing from that one read, so a record replaced under a holder that lost its lock is never refused for a reason neither version gives.
+- `packages/coding-agent/src/core/session-move/move-landing.ts`: `Landing` gains `cwd`, the folder a move was readied for; `settledAt` is what every write keeps (target and folder, never the commit stamp) and `heldElsewhere` says why another folder is refused; `moveFolder` is the one spelling a folder is kept and compared in, resolved as the import resolves its `cwd`.
+- `packages/coding-agent/src/core/session-move/import.ts`: the inline repository comparison is now the shared one, the import takes the readied-folder fence before it, and it passes its folder to `beginReceive`.
+
+### Why
+
+- The repository check lived only in the receiver's `import`, which runs after the sender released the session, so a move that could never land still ended that session's runtime, sealed its file and took its queued input. Measured on a real pair of machines, 2 of 2 such moves left the user's thread on a key its client could no longer address.
+- The check before the release has to be the same comparison as the import's, or the two steps refuse and accept differently; one exported function is what makes that impossible.
+- `identity` answers a path a caller names, so its reach, its standing, the amount it reads and the shape of its refusal are part of the behaviour, not implementation detail.
+
+### Why an extension could not handle it
+
+- The move ledger, the bundle manifest and the session files are engine state; no extension can read a move record or refuse a `prepare`.
+
+### Expected merge conflict zones
+
+- LOW: the top of `move-ledger.ts` (the import and re-export blocks), its `prepare`, `beginReceive` and `commit` bodies, and the repository check in `import.ts`.
+
+## 2026-11-11 - A file-lock release removes the lock directory only while this holder still owns it (senpi#6430)
+
+### What changed
+
+- The wrapper now passes the lock library an explicit fs, so the library's default graceful-fs is replaced by node:fs for the lock's own mkdir/stat/utimes/rmdir calls.
+- `core/file-lock.ts`: `lockWithLossHandling` writes an owner token beside the lock directory after acquiring, and its removal of the directory checks the token first; a holder that no longer owns the lock removes nothing and is marked lost.
+
+### Why
+
+- A holder that lost its lock without learning it deleted the new holder's lock on release, allowing two writers for up to one refresh interval (senpi#6428).
+
+### Why an extension could not handle it
+
+- The lock wrapper is core.
+
+### Expected merge conflict zones
+
+- LOW: `lockWithLossHandling` in `core/file-lock.ts`.
+
+## 2026-11-11 - A move bundle can be read and staged inline (senpi#6267)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-move/inline-bundle.ts` (new): `readInlineBundle` reads a bundle folder as `{ path, sha256, base64 }` files when it fits the given limits. `withStagedInlineBundle` writes such files into a folder of its own and removes it when its caller is done. Before a folder is made it refuses a path that cannot be a file inside the bundle (either separator, NUL, an over-long segment or path), a path sent twice, a path that is also another sent path's folder, a manifest whose bytes do not match its sha256, and a file the manifest does not list. Before it writes it removes the `inline-` folders beside it that were not modified for an hour; a younger one and a folder of another name are kept.
+- `packages/coding-agent/src/core/session-move/bundle.ts`: `verifyBundle` takes the sha256 each file was sent with and refuses a file that does not match it; `leavesBundle` is exported; `parseManifest` reads a manifest from its text and `listedFiles` names every file it lists, so an inline list is checked against its manifest before anything is written.
+- `packages/coding-agent/src/core/session-move/export.ts`: `exportSessionForMoveAndRead` runs a read on the written bundle inside the move lock; `filesUnder` is exported.
+- `packages/coding-agent/src/core/session-move/import.ts`: `importMovedSession` passes `sent` to `verifyBundle`. An import whose commit was fenced by another import's landing removes the staging folder it filled before it answers the landed session, and a removal that fails does not change that answer (from the review of senpi#6416).
+
+### Why
+
+- The RPC carries a small bundle inside the move answers (senpi#6267). The core keeps one verification and one staging path, so an inline bundle is checked exactly like a folder and the move ledger is untouched.
+
+### Why an extension could not handle it
+
+- The move core owns bundle verification and the move lock.
+
+### Expected merge conflict zones
+
+- None upstream: `core/session-move/` is fork-only. LOW against other move work: `verifyBundle`'s signature and the export entry point.
+
+## 2026-11-11 - A commit that lost its move record's lock lands nothing, and its stamp is not failed while young (senpi#6417)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-move/move-ledger.ts`: `commit` checks the record again at the two points where a stalled holder may have lost its lock. Right before it writes its stamp it must still hold the record's lock and find, on disk, a receiving move whose commit has not begun, into its target (`assertLandsAt`, which also runs before `prepare`); right before the rename it must still hold the lock and find its own stamp (`assertStampStands`). A holder that lost the lock, or finds the move settled by whoever took it, stamps or renames nothing and is refused `move_fenced`. `write` answers the time it stamped. `reconcile` passes the stamp's age to `settledLanding`.
+- `packages/coding-agent/src/core/session-move/move-landing.ts`: `settledLanding` leaves a commit stamp with no landed file unsettled while it is younger than `COMMIT_SETTLE_AFTER_MS` (30 s: three stale bounds of the record lock). `status` answers `receiving` meanwhile and `failed` after. A stamp dated after now (the clock stepped back since it was written) counts as old, so its negative age cannot hold the move unsettled. `recordAge` reads a record's `at`, and `isCommitStamp` says whether a stored record is still a given commit's stamp.
+- `packages/coding-agent/src/core/session-move/move-ledger-lock.ts`: the lock's stale bound is exported as `MOVE_RECORD_LOCK_STALE_MS`.
+- `packages/coding-agent/src/core/session-move/move-record.ts` (new): the record types and parser, moved out of `move-ledger.ts` unchanged so the fix does not grow that file; `move-ledger.ts` re-exports them.
+- `packages/coding-agent/src/core/session-move/move-steps.ts`: the `import:stamped` row says so.
+- `packages/coding-agent/docs/rpc.md`: the paragraph on an interrupted step.
+
+### Why
+
+- The record lock is cross-process, but a holder that stalls for longer than its stale bound (10 s) loses it. Another process then read a commit stamp with no file and settled the move `failed`, the sender took the session back, and the stalled holder renamed its file when it ran again: a writable copy on both hosts.
+
+### Why an extension could not handle it
+
+- The move core owns the ledger and its lock.
+
+### Expected merge conflict zones
+
+- None upstream: `core/session-move/` is fork-only. LOW against other move work: `commit` and `reconcile` in `move-ledger.ts`, and the record types now living in `move-record.ts`.
+
+## 2026-11-11 - A denied default-extension seed is reported as a warning (senpi#6378)
+
+### What changed
+
+- `packages/coding-agent/src/core/resource-loader.ts`: when the extensions directory refuses a write (EROFS, EACCES or EPERM), `seedWritable()` records the path and the loader adds an extension warning for it. Loading still continues with the shim already on disk, or none.
+- The read-only extensions-dir regression test now proves the stale shim's live target actually runs and that a denied seed is reported.
+
+### Why
+
+A permission problem in a normal agent dir used to drop the default extensions with no message (review finding on #6298).
+
+### Why an extension could not handle it
+
+The seeding runs in the resource loader before any extension loads, so no extension sees the refused write.
+
+### Expected merge conflict zones
+
+`seedWritable()` and `ensureGlobalDefaultExtensions()` in `resource-loader.ts`, and the extension-warnings merge in the main reload path.
+
+### Fixed
+
+- #6378
+
+## 2026-11-11 - An import that overlaps another import's landing answers the landed session (senpi#6413)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-move/import.ts`: `importMovedSession` looked for this move's landed file once, before it verified the bundle. When `beginReceive` or `commit` then refused with `move_fenced` because another import of the same move had stamped or accepted the record meanwhile, the refusal went out as it was. It now looks at the target again on such a refusal and, when this move's file is there, confirms the landing and answers that session, as a later re-import does. Every other fence still refuses: a cancelled, never readied, expired or failed move, a move that landed in another folder, and a commit that stopped without landing.
+- `packages/coding-agent/docs/rpc.md`: says so in "Moving a session to another device".
+
+### Why
+
+- A caller that asked for the import a second time while the first was still running was answered `move_fenced` although the move landed. A caller that reads `move_fenced` as "nothing landed here" then takes the session back, and both hosts hold a writable copy.
+
+### Why an extension could not handle it
+
+- The move core owns the import and its ledger.
+
+### Expected merge conflict zones
+
+- None upstream: `core/session-move/` is fork-only. LOW against other move work: the two `catch` paths around `beginReceive` and `commit` in `importMovedSession`.
+
 ## 2026-11-11 — Claude account summaries carry the check's provider diagnostics
 
 ### What changed

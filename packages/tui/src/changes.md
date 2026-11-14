@@ -1,3 +1,45 @@
+## 2026-11-03 - Copy original Markdown from fullscreen drag selections (senpi#5617)
+
+### What changed
+
+- `packages/tui/src/components/markdown.ts` retains parser-derived source ranges beside rendered lines. The new `packages/tui/src/components/markdown-source.ts` records consumed lexer input and maps normalization back to original offsets.
+- `packages/tui/src/selection-source.ts` resolves selected graphemes to source intervals and includes syntax only when its contents are selected.
+- `packages/tui/src/selection-source.ts` and `packages/tui/src/components/markdown.ts` append row metadata without repeatedly copying the accumulated list/table map, reuse unchanged row metadata during composition, and release the active document on invalidation.
+- `packages/tui/src/source-ranges.ts` represents contiguous source text as immutable spans, including repeated ranges for normalized tabs and rendered markers. `packages/tui/src/components/markdown-source.ts` slices those spans instead of retaining an object and array entry for every source character. `packages/tui/src/selection-source.ts` checks selected source intervals for holes without expanding spans into per-character objects.
+- `packages/tui/src/components/markdown.ts` keeps ordinary rendering on the original parser and cache path. It records source ownership for each rendered row, then creates detailed provenance only when `packages/tui/src/selection-source.ts` resolves a copied selection. Separate eight-entry source caches bound repeated-copy retention; regenerated output must match the captured rendered frame before its mapping is used.
+- `packages/tui/src/utils.ts` reports consumed offsets from the existing ANSI wrapper without changing rendered bytes.
+- `packages/tui/src/tui.ts`, `packages/tui/src/components/box.ts`, `packages/tui/src/components/v-stack.ts`, and `packages/tui/src/components/scroll-view.ts` preserve line provenance when composing or caching arrays.
+- `packages/tui/src/components/box.ts` includes provenance in cache validity, preserving previously returned frame metadata when new source renders identically.
+- `packages/tui/src/components/text.ts`, `packages/tui/src/components/spacer.ts`, `packages/tui/src/components/box.ts`, and `packages/tui/src/components/v-stack.ts` identify generated vertical padding separately from unmapped plain-text rows, so mixed selections retain hard blank lines.
+- `packages/tui/src/components/markdown-source.ts` and `packages/tui/src/components/markdown.ts` map autolinks from their original labels and preserve TeX source, treating converted formulas as a single selectable source span.
+- `packages/tui/src/components/markdown.ts` maps every rendered horizontal-rule glyph to the authored rule without trailing block separators. A visible reference-link URL suffix selects that link's own source span, excluding its remote definition and surrounding prose; label interiors keep their original partial-selection behavior.
+- `packages/tui/src/selection-source.ts` and `packages/tui/src/tui-alt-screen.ts` distinguish changed display transforms, which copy the rendered selection, from invalid source intervals, which leave the clipboard intact.
+- `packages/tui/src/index.ts` exports `copyLineSources` for consumer components that copy rendered arrays.
+
+### Why
+
+- `packages/tui/src/components/markdown.ts` and `packages/tui/src/utils.ts`: rendered strings discard emphasis, source markers, original separators and wrapping boundaries.
+- `packages/tui/src/tui.ts`, `packages/tui/src/components/box.ts`, `packages/tui/src/components/v-stack.ts`, and `packages/tui/src/components/scroll-view.ts`: composition must retain the selected message's source ownership through copied arrays.
+- `packages/tui/src/components/text.ts` and `packages/tui/src/components/spacer.ts`: empty rendered rows alone cannot distinguish selected text from layout padding.
+- `packages/tui/src/tui-alt-screen.ts`: clipboard extraction must use the selected source interval rather than reconstructing Markdown from rendered characters.
+- `packages/tui/src/index.ts`: consumer components need the same metadata-preservation helper as built-in components.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/components/markdown.ts` and `packages/tui/src/utils.ts` own token normalization and wrapping before extension clipboard code can observe the result.
+- `packages/tui/src/tui.ts`, `packages/tui/src/components/box.ts`, `packages/tui/src/components/v-stack.ts`, and `packages/tui/src/components/scroll-view.ts` compose built-in transcript arrays internally.
+- `packages/tui/src/components/text.ts` and `packages/tui/src/components/spacer.ts` create built-in padding before clipboard extraction, without an extension hook that classifies those rows.
+- `packages/tui/src/tui-alt-screen.ts` owns selection coordinates and reconstruction; its clipboard callback receives text after those distinctions have been discarded.
+- `packages/tui/src/index.ts` must expose the preservation helper for consumer components; an extension cannot add a stable library export.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/components/markdown.ts`: parse/render caches, token rendering, and line wrapping.
+- `packages/tui/src/utils.ts`: wrapping and long-word splitting.
+- `packages/tui/src/tui.ts`, `packages/tui/src/components/box.ts`, `packages/tui/src/components/v-stack.ts`, `packages/tui/src/components/scroll-view.ts`: line-array composition.
+- `packages/tui/src/components/text.ts` and `packages/tui/src/components/spacer.ts`: vertical-padding construction; `packages/tui/src/components/box.ts`: source-aware cache validity.
+- `packages/tui/src/tui-alt-screen.ts`: selection extraction; `packages/tui/src/index.ts`: exports.
+
 ## 2026-11-05 - Legacy ESC-prefixed Alt chords decode while the Kitty protocol is negotiated (senpi#6058)
 
 ### What changed

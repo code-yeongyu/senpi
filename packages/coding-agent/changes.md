@@ -1,3 +1,94 @@
+## 2026-11-13 - The install lock's @hono/node-server override matches the root pin (senpi#6624)
+
+### What changed
+
+- `packages/coding-agent/package.json` `overrides`: `@hono/node-server` 2.1.1 -> 2.1.8, the same version as the root override; `packages/coding-agent/install-lock/package.json` follows. `packages/coding-agent/install-lock/package-lock.json` is regenerated to match.
+
+### Why
+
+- The engine tarball installs one copy of `@hono/node-server`; a pin older than the root's re-introduced the vulnerable 2.1.x range the audit flags (GHSA-qv5m-9pm6-hqp3, GHSA-jpvv-r467-5p4w). hono itself only enters through `@modelcontextprotocol/sdk`; no first-party source imports hono APIs, so nothing can depend on an API the bump removes.
+
+### Why an extension could not handle it
+
+- The install lock and its manifest are not extension surfaces.
+
+### Expected merge conflict zones
+
+- LOW: the `@hono/node-server` line in the `overrides` block of `packages/coding-agent/package.json`.
+
+## 2026-11-11 - coding-agent depends on the realm-registry helper (omo#12965)
+
+### What changed
+
+- `packages/coding-agent/package.json`: adds the `@earendil-works/pi-realm-registry` workspace dependency.
+- `packages/coding-agent/tsconfig.build.json`: maps that package to its built declarations.
+
+### Why
+
+- The tables one engine copy writes and another reads (`core/permission-decision.ts`, `core/turn-origin.ts`, `core/kill-guard/runtime.ts`, `core/session-write-reservation.ts`, `core/extensions/kernel-tools-context.ts`, `core/config-reference-redaction.ts`) are built through the shared helper.
+
+### Why an extension could not handle it
+
+- Package manifests and build configuration are not extension surfaces.
+
+### Expected merge conflict zones
+
+- LOW: the dependency list in `package.json` and the `paths` map in `tsconfig.build.json`.
+
+## 2026-11-11 - zod 4.6.7 (senpi#6402)
+
+### What changed
+
+- `packages/coding-agent/package.json`: zod 4.6.5 -> 4.6.7.
+
+### Why
+
+- zod <4.6.6 can exhaust memory while validating oversized constrained collections (GHSA-mrhx-c7xc-m3w5); 4.6.7 is the newest patch past the fix.
+
+### Why an extension could not handle it
+
+- zod is a direct dependency of the engine.
+
+### Expected merge conflict zones
+
+- LOW: the zod line in `packages/coding-agent/package.json`.
+
+## 2026-11-11 - minimatch 11.0.5 (senpi#6397)
+
+### What changed
+
+- `packages/coding-agent/package.json`: minimatch 10.2.6 -> 11.0.5. `package-lock.json`, `bun.lock` and `packages/coding-agent/install-lock` are regenerated to match.
+
+### Why
+
+- minimatch >=7.0.0 <11.0.1 is open to a denial of service through globparts amplification (GHSA-g3hv-75wg-m249), which fails the `npm audit` workflow. No 10.x release has the fix. 11.0.5 is the newest 11.x older than the repo's `min-release-age=2`.
+
+### Why an extension could not handle it
+
+- minimatch is a direct dependency of the engine (`core/model-resolver.ts`, `core/package-manager.ts`).
+
+### Expected merge conflict zones
+
+- LOW: the minimatch line in `packages/coding-agent/package.json`; the lockfiles regenerate on any conflict.
+
+## 2026-11-11 - undici 8.12.4 and re2js 2.8.8 (senpi#6395)
+
+### What changed
+
+- `packages/coding-agent/package.json`: undici 8.10.2 -> 8.12.4 and re2js 2.8.6 -> 2.8.8.
+
+### Why
+
+- undici 8.0.0-8.12.1 carries eight advisories (fixed in 8.12.2) and re2js <2.8.7 carries GHSA-gg6h-894w-4m9c; both failed the `npm audit` workflow. Both stay inside their current minor or patch line.
+
+### Why an extension could not handle it
+
+- These are the engine's own direct dependencies.
+
+### Expected merge conflict zones
+
+- LOW: the two dependency lines in `packages/coding-agent/package.json`.
+
 ## 2026-11-10 - Bundled Claude Agent SDK 0.3.321 (senpi#3893)
 
 ### What changed

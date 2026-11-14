@@ -1,3 +1,41 @@
+## 2026-11-11 - CI tests the realm-registry package (omo#12965)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the workspace test step lists `packages/realm-registry`.
+
+### Why
+
+- The new helper package carries the adoption contract every registry relies on, so its tests run in CI.
+
+### Why an extension could not handle it
+
+- CI configuration is not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the `--workspace` list of that step.
+
+## 2026-11-11 - The npm audit workflow fails on any advisory that is not on a reviewed, expiring exception list (senpi#6402)
+
+### What changed
+
+- `.github/workflows/npm-audit.yml`: the audit step runs `node scripts/npm-audit-gate.mjs .github/npm-audit-exceptions.json` instead of `npm audit --omit=dev --audit-level=moderate`. The threshold stays at moderate.
+- `scripts/npm-audit-gate.mjs` (new) follows each finding's `via` chain to its advisories, and passes a finding only when every advisory (id + package) is excepted. An exception that has expired, expires more than 30 days out, is missing a field, or matches no finding fails the gate.
+- `.github/npm-audit-exceptions.json` (new): one entry, GHSA-mrhx-c7xc-m3w5 for the zod 3.x copy that `@anthropic-ai/sandbox-runtime` requires (#6399), expiring 2026-12-10. An expiry that is not a real calendar date fails the gate.
+
+### Why
+
+- The zod 3.x copy required by `@anthropic-ai/sandbox-runtime` cannot take the fix (only 4.6.6+ has it), so `npm audit --audit-level=moderate` could never pass, and a red that cannot clear hides new advisories. The one exception is scoped to that advisory and package, is reviewed and expires, so any new advisory still turns the job red. node-forge and the engine's own zod pin are fixed in this PR instead (below).
+
+### Why an extension could not handle it
+
+- This is the repository's own CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the audit step in `.github/workflows/npm-audit.yml`.
+
 ## 2026-11-06 - The forced release suite's budget comment describes the sharded run (senpi#6139)
 
 ### What changed

@@ -1,3 +1,23 @@
+## 2026-11-11 - pi-ai depends on the realm-registry helper (omo#12965)
+
+### What changed
+
+- `packages/ai/package.json`: adds the `@earendil-works/pi-realm-registry` workspace dependency.
+- `packages/ai/tsconfig.build.json`: maps that package to its built declarations.
+- `packages/ai/vitest.config.ts`: aliases that package to its source, like telemetry.
+
+### Why
+
+- Provider strict mode and scope moved into a realm registry built by the shared helper (see `packages/ai/src/changes.md`).
+
+### Why an extension could not handle it
+
+- Package manifests and build configuration are not extension surfaces.
+
+### Expected merge conflict zones
+
+- LOW: the dependency list in `package.json` and the alias list in `vitest.config.ts`.
+
 ## 2026-11-10 - Claude Fable 5.2 is a released model (senpi#3893)
 
 ### What changed
