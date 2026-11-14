@@ -48,6 +48,8 @@ export function scratch(label: string): { root: string; agentDir: string; cwd: s
 	roots.push(root);
 	const agentDir = join(root, "agent");
 	const cwd = join(root, "work");
+	// The host refuses a key root writable by group or others, so the fixture owns its mode (senpi#4541).
+	mkdirSync(agentDir, { mode: 0o700 });
 	mkdirSync(join(agentDir, "extensions"), { recursive: true });
 	mkdirSync(cwd, { recursive: true });
 	writeRpcModelsJson(agentDir, "http://127.0.0.1:1");

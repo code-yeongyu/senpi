@@ -26,7 +26,8 @@ export const fixturePath = join(packageDir, "test", "fixtures", "extensions", "a
 export function makeSandbox(label) {
 	const dir = mkdtempSync(join(tmpdir(), `ask-user-${label}-`));
 	const paths = { agent: join(dir, "agent"), sessions: join(dir, "sessions"), home: join(dir, "home"), work: join(dir, "work"), tmp: join(dir, "tmp") };
-	for (const path of Object.values(paths)) mkdirSync(path, { recursive: true });
+	// The host refuses a key root writable by group or others, so the agent dir gets an explicit 0700 (senpi#4541).
+	for (const [name, path] of Object.entries(paths)) mkdirSync(path, { recursive: true, ...(name === "agent" ? { mode: 0o700 } : {}) });
 	return {
 		...paths,
 		dir,

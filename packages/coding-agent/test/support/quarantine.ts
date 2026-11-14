@@ -83,6 +83,7 @@ export function resolveQuarantineAgentDir(env: Record<string, string | undefined
 		`senpi-vitest-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
 		"agent",
 	);
-	mkdirSync(quarantineDir, { recursive: true });
+	// A host started on the default agent dir refuses it as a key root if group or others can write it (senpi#4541).
+	mkdirSync(quarantineDir, { recursive: true, mode: 0o700 });
 	return quarantineDir;
 }

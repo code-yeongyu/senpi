@@ -711,7 +711,8 @@ function scratch(label: string): Scratch {
 	const agentDir = join(root, "agent");
 	const sessionDir = join(root, "sessions");
 	const cwd = join(root, "work");
-	mkdirSync(agentDir, { recursive: true });
+	// The host refuses a key root writable by group or others, so the fixture owns its mode (senpi#4541).
+	mkdirSync(agentDir, { recursive: true, mode: 0o700 });
 	mkdirSync(sessionDir, { recursive: true });
 	mkdirSync(cwd, { recursive: true });
 	return {

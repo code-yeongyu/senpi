@@ -48,7 +48,9 @@ async function connected(): Promise<RpcClient> {
 	return client;
 }
 async function run(): Promise<void> {
-	for (const dir of [agentDir, cwd, join(root, "home"), join(root, "tmp")]) await mkdir(dir, { recursive: true });
+	// The host refuses a key root writable by group or others, so the fixture owns its mode (senpi#4541).
+	await mkdir(agentDir, { recursive: true, mode: 0o700 });
+	for (const dir of [cwd, join(root, "home"), join(root, "tmp")]) await mkdir(dir, { recursive: true });
 	await Promise.all(paths.map((path) => writeFile(path, "initial\n")));
 	fake = await fakeModel(paths);
 	writeRpcModelsJson(agentDir, fake.origin);
