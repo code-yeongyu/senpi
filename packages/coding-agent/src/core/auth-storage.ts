@@ -1127,17 +1127,26 @@ export class AuthStorage implements CredentialStore {
 			if (!oauth) return undefined;
 			let current = credential;
 			if (Date.now() >= current.expires) {
-				const refreshed = await this.modify(providerId, async (stored) => {
-					if (stored?.type !== "oauth") return stored;
-					return Date.now() < stored.expires ? stored : oauth.refresh(stored, new AbortController().signal);
-				});
-				if (refreshed?.type !== "oauth") return undefined;
+				const refreshed = await this.refreshOAuthCredential(providerId, oauth);
+				if (refreshed === undefined) return undefined;
 				current = refreshed;
 			}
 			return (await oauth.toAuth(current)).apiKey;
 		}
 		if (options.includeFallback === false) return undefined;
 		return getEnvApiKey(providerId);
+	}
+
+	/**
+	 * Refreshes the stored OAuth credential when it has expired, under the store's lock: the expiry is checked again
+	 * after the lock is held, so concurrent callers in any process share one token exchange.
+	 */
+	async refreshOAuthCredential(providerId: string, oauth: OAuthAuth): Promise<OAuthCredential | undefined> {
+		const refreshed = await this.modify(providerId, async (stored) => {
+			if (stored?.type !== "oauth") return stored;
+			return Date.now() < stored.expires ? stored : oauth.refresh(stored, new AbortController().signal);
+		});
+		return refreshed?.type === "oauth" ? refreshed : undefined;
 	}
 
 	registerOAuthProvider(providerId: string, oauth: OAuthAuth): void {
