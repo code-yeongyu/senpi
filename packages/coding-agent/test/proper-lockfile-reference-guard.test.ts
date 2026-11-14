@@ -65,7 +65,7 @@ const LOCK_SITES: Record<string, LockSite> = {
 	},
 	[`${at("core/session-move/move-ledger-lock.ts")}#acquireMoveRecordLock`]: {
 		reason:
-			"every record write goes through MoveRecordFile.write; a commit's landing rename runs under the same lock",
+			"every record write goes through MoveRecordFile.write; a commit's landing rename runs under the same lock, which the stamp check it is handed asserts last",
 		writes: [
 			{ file: at("core/session-move/move-record-file.ts"), fn: "write", op: "writeFile(temp" },
 			{ file: at("core/session-move/move-record-file.ts"), fn: "write", op: "renameFile(temp" },
