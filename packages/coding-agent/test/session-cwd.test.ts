@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { type CreateAgentSessionRuntimeFactory, createAgentSessionRuntime } from "../src/core/agent-session-runtime.ts";
-import { getMissingSessionCwdIssue, MissingSessionCwdError } from "../src/core/session-cwd.ts";
+import {
+	getMissingSessionCwdIssue,
+	MissingSessionCwdError,
+	SessionCwdNotDirectoryError,
+} from "../src/core/session-cwd.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 
 function createTempDir(name: string): string {
@@ -86,6 +90,32 @@ describe("session cwd handling", () => {
 				sessionManager,
 			}),
 		).rejects.toBeInstanceOf(MissingSessionCwdError);
+		expect(createRuntimeCalled).toBe(false);
+	});
+
+	it("#given a stored cwd that exists but is a file #when the runtime is created #then a controlled SessionCwdNotDirectoryError naming it is thrown before runtime creation", async () => {
+		const fallbackCwd = createTempDir("pi-session-cwd-file");
+		const fileCwd = join(fallbackCwd, "hostname");
+		writeFileSync(fileCwd, "a file, not a folder\n");
+		const sessionDir = createTempDir("pi-session-cwd-file-session-dir");
+		const sessionFile = join(sessionDir, "session.jsonl");
+		cleanupPaths.push(fallbackCwd, sessionDir);
+		writeSessionFile(sessionFile, fileCwd);
+
+		const sessionManager = SessionManager.open(sessionFile);
+		let createRuntimeCalled = false;
+		const createRuntime: CreateAgentSessionRuntimeFactory = async () => {
+			createRuntimeCalled = true;
+			throw new Error("should not be called");
+		};
+
+		const refused = await createAgentSessionRuntime(createRuntime, {
+			cwd: fallbackCwd,
+			agentDir: fallbackCwd,
+			sessionManager,
+		}).catch((error: unknown) => error);
+		expect(refused).toBeInstanceOf(SessionCwdNotDirectoryError);
+		expect((refused as { issue?: unknown }).issue).toMatchObject({ sessionCwd: fileCwd });
 		expect(createRuntimeCalled).toBe(false);
 	});
 });

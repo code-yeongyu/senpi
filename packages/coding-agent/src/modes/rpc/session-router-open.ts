@@ -1,3 +1,4 @@
+import { stat } from "node:fs/promises";
 import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
 import { startOpenTimer } from "../../core/open-timing.ts";
 import { compactOpen, type OpenAcceptance } from "./compact-open-admission.ts";
@@ -104,6 +105,10 @@ export async function open(
 		// An open that names no folder resumes a session file where its header says, not where this host runs
 		// (senpi#6427). Inside the try: a file it cannot read refuses the open, and that refusal is this open's answer.
 		const profile = { ...validated, cwd: await openSessionFolder(command, validated.cwd) };
+		// A folder that exists but is a file (or a socket) is refused, typed, before anything is opened or created. A missing
+		// folder, or one this host cannot stat, keeps today's answer from the registry.
+		if ((await stat(profile.cwd).catch(() => undefined))?.isDirectory() === false)
+			return error(command.id, "open_session", "session_cwd_not_directory", { cwd: profile.cwd });
 		await assertSessionNotHeld(command.sessionPath);
 		timer.mark("held_check");
 		options?.signal?.throwIfAborted();
