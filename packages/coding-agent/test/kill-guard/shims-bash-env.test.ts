@@ -77,6 +77,14 @@ describe.runIf(bashAvailable)("bash's builtin kill through BASH_ENV", () => {
 		expect(result.real).toBe("");
 	});
 
+	it("refuses a dynamic target procps would read by its first digit, without starting the judge", () => {
+		const result = f.run("bash", `${PRELUDE}\nT=-1429035; kill -9 $T; echo "status=$?"`, f.env());
+		expect(result.stdout).toContain("status=126");
+		expect(result.stderr).toContain(`${TAG} refused (R3 ALL_PROCESSES)`);
+		expect(result.judge).toBe("");
+		expect(result.real).toBe("");
+	});
+
 	it("passes job specs and a process-group target to the judge as written, then to the builtin", () => {
 		const result = f.run("bash", `${PRELUDE}\nkill %1; kill -- -${target.pid}`, f.env());
 		expect(result.status).toBe(0);

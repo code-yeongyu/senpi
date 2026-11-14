@@ -93,6 +93,36 @@ describe.runIf(posix)("PATH shims", () => {
 		},
 	);
 
+	// procps reads a target before `--` by its first digit: `kill -9 -1429035` is kill(-1) (2026-11-14 incident).
+	it.each([
+		["kill -9 -1429035", "R3 ALL_PROCESSES"],
+		["kill -s 9 -1429035", "R3 ALL_PROCESSES"],
+		["kill --signal=KILL -1429035", "R3 ALL_PROCESSES"],
+		["kill -1429035", "R3 ALL_PROCESSES"],
+		["kill -9 -15", "R3 ALL_PROCESSES"],
+		["kill -TERM 4242 -1abc", "R3 ALL_PROCESSES"],
+		["kill -9 -2429035", "R4 GROUP"],
+		["kill -94", "R4 GROUP"],
+	])("refuses `env %s` in sh with the judge missing (%s)", (command, rule) => {
+		const result = f.run("/bin/sh", `env ${command}`, f.env({}, missingJudge()));
+		expect(result.status).toBe(126);
+		expect(result.stderr).toContain(`${TAG} refused (${rule})`);
+		expect(result.stderr).toContain("`kill -9 -- -<pgid>`");
+		expect(result.real).toBe("");
+	});
+
+	it("passes a group after `--` and a signal number to the judge or the real binary as before", () => {
+		const group = f.run("/bin/sh", "env kill -9 -- -1429035", f.env());
+		expect(group.status).toBe(0);
+		expect(group.judge).toContain("[--] [kill] [-9] [--] [-1429035]\n");
+		expect(group.real).toBe("kill [-9] [--] [-1429035]\n");
+
+		const signal = f.run("/bin/sh", "env kill -15 4242", f.env());
+		expect(signal.status).toBe(0);
+		expect(signal.judge).toBe("");
+		expect(signal.real).toBe("kill [-15] [4242]\n");
+	});
+
 	it("sends a protected literal pid to the judge, and refuses it when the judge is missing (A8)", () => {
 		const judged = f.run("/bin/sh", `env kill ${PROTECTED}`, f.env({ FAKE_JUDGE_MODE: "refuse" }));
 		expect(judged.status).toBe(126);

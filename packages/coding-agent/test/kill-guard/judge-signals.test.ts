@@ -15,7 +15,7 @@ describe("kill targets", () => {
 		["kill -l"],
 		["kill -L"],
 		["kill -- -4000"],
-		["kill -TERM -4000"],
+		["kill -TERM -- -4000"],
 		["sudo kill 4242"],
 		["trap 'kill 0' EXIT; sleep 1"],
 		["docker kill web"],
@@ -34,6 +34,38 @@ describe("kill targets", () => {
 			expect(rule(judgeCommand(command, fixture().context))).toBe("R3");
 		},
 	);
+
+	// procps-ng `kill` reads a target before `--` by its first digit (kill.c `case '?'`): `kill -9 -1429035` signalled
+	// every process of the user on 2026-11-14 while the guard judged it as group 1429035.
+	it.each([
+		["kill -9 -1429035", "R3"],
+		["kill -KILL -1429035", "R3"],
+		["kill -s 9 -1429035", "R3"],
+		["kill --signal 9 -1429035", "R3"],
+		["kill --signal=KILL -1429035", "R3"],
+		["kill -1429035", "R3"],
+		["kill -1abc", "R3"],
+		["kill -9 -15", "R3"],
+		["kill -9 4242 -1429035", "R3"],
+		["kill -TERM -4000", "R4"],
+		["kill -9 -2429035", "R4"],
+		["kill -0429035", "R4"],
+		["case x in x) kill -9 -1429035;; esac", "R3"],
+		["case x in x) kill -2429035;; esac", "R4"],
+	] as const)("refuses %s, a target procps reads by its first digit -> %s", (command, expected) => {
+		const verdict = judgeCommand(command, fixture().context);
+		expect(rule(verdict)).toBe(expected);
+		expect(verdict.action === "refuse" && verdict.message).toContain("`kill -9 -- -<pgid>`");
+	});
+
+	it("keeps a group after `--` a group, and a one-digit or signal-number word what it was", () => {
+		const context = fixture().context;
+		expect(judgeCommand("kill -9 -- -1429035", context)).toEqual({ action: "allow" });
+		expect(judgeCommand("kill -s 9 -- -4000", context)).toEqual({ action: "allow" });
+		expect(judgeCommand("kill -15 4242", context)).toEqual({ action: "allow" });
+		expect(judgeCommand("kill -9 -2", context)).toEqual({ action: "allow" });
+		expect(rule(judgeCommand("kill -9 -- -400", context))).toBe("R4");
+	});
 
 	it.each([["kill 1"], ["kill 400"], ["kill 300"], [`kill -9 ${AGENT}`], ["kill -- -400"]])(
 		"refuses %s that names a protected process or its group (C22, R2/R4)",

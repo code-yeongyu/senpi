@@ -6422,6 +6422,14 @@
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
 		},
+		"packages/coding-agent/src/core/kill-guard/shim-script.ts#PROCPS_ALL": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/core/kill-guard/shim-script.ts#PROCPS_GROUP": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
 		"packages/coding-agent/src/core/kill-guard/shim-script.ts#PROTECTED_WITHOUT_JUDGE": {
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
