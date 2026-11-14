@@ -24,6 +24,7 @@ import {
 } from "./credential-pool/state-store.ts";
 import { emitProviderAccountsChanged } from "./extensions/builtin/anthropic-subscription/account-events.ts";
 import {
+	type AccountSlot,
 	isForeignAuthBlock,
 	isListedStoredSlot,
 	SENTINEL_OAUTH_FIELDS,
@@ -34,6 +35,7 @@ import {
 	isValidAccountDirId,
 	removeAccountDir,
 } from "./extensions/builtin/anthropic-subscription/claude-cli-account-dir.ts";
+import { renameAccountLink } from "./extensions/builtin/anthropic-subscription/claude-cli-account-link.ts";
 import {
 	defaultExecutableDeps,
 	resolveClaudeCodeExecutable,
@@ -449,7 +451,12 @@ export async function renameCredentialAccount(
 		) {
 			throw new Error(`Stored provider account not found: ${name}`);
 		}
-		return renameSlotDisplayName(current, name, displayName);
+		const renamed = renameSlotDisplayName(current, name, displayName);
+		await renameAccountLink(
+			claudeCliAgentDir(storage),
+			(renamed.accounts as AccountSlot[] | undefined)?.find((slot) => slot.name === name),
+		);
+		return renamed;
 	});
 	emitProviderAccountsChanged(provider);
 }
