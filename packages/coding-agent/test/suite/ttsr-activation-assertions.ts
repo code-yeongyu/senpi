@@ -17,10 +17,10 @@ export function expectTtsrActivation(entries: readonly PersistedEntry[], expecte
 		expect.objectContaining({
 			type: "custom",
 			customType: "rule-activation",
-			data: {
+			data: expect.objectContaining({
 				kind: "ttsr",
 				...expected,
-			},
+			}),
 		}),
 	);
 }

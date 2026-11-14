@@ -35,6 +35,16 @@ function detailLine(details: RuleActivationDetails): string {
 		case "project-rules":
 			return details.rules.map((rule) => `rule ${rule}`).join("\n");
 		case "ttsr":
-			return `remediation ${details.remediation} · observed ${details.rules.join(", ")}`;
+			return [
+				`remediation ${details.remediation} · observed ${details.rules.join(", ")}`,
+				...(details.reason === undefined ? [] : [`${details.stream ?? "stream"}: ${details.reason}`]),
+				...(details.detail === undefined
+					? []
+					: [
+							Object.entries(details.detail)
+								.map(([key, value]) => `${key}=${JSON.stringify(value)}`)
+								.join(" "),
+						]),
+			].join("\n");
 	}
 }

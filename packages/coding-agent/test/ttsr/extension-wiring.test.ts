@@ -141,12 +141,12 @@ describe("ttsr extension wiring", () => {
 		expect(activations).toHaveLength(1);
 		expect(activations).toContainEqual(
 			expect.objectContaining({
-				data: {
+				data: expect.objectContaining({
 					kind: "ttsr",
 					owner: "collapse-repetition",
 					rules: ["collapse-repetition"],
 					remediation: "nudge",
-				},
+				}),
 			}),
 		);
 
@@ -175,7 +175,12 @@ describe("ttsr extension wiring", () => {
 		expect(entries.filter((e) => e.type === "custom" && e.customType === RULE_ACTIVATION_ENTRY_TYPE)).toHaveLength(1);
 		expect(entries).toContainEqual(
 			expect.objectContaining({
-				data: { kind: "ttsr", owner: "collapse-repetition", rules: ["collapse-repetition"], remediation: "nudge" },
+				data: expect.objectContaining({
+					kind: "ttsr",
+					owner: "collapse-repetition",
+					rules: ["collapse-repetition"],
+					remediation: "nudge",
+				}),
 			}),
 		);
 		expect(entries.some((e) => e.type === "custom_message" && e.customType === TTSR_INJECTION_CUSTOM_TYPE)).toBe(
@@ -238,12 +243,12 @@ describe("ttsr extension wiring", () => {
 		expect(activations).toHaveLength(1);
 		expect(activations).toContainEqual(
 			expect.objectContaining({
-				data: {
+				data: expect.objectContaining({
 					kind: "ttsr",
 					owner: "control-token-leak",
 					rules: ["control-token-leak"],
 					remediation: "provider-error",
-				},
+				}),
 			}),
 		);
 

@@ -8,11 +8,19 @@ export interface ProjectRulesActivationDetails {
 	readonly toolCallId?: string;
 }
 
+/** Scalar facts a stream detector measured, such as `mechanism`, counts and a capped `sample`. */
+export type TtsrDetectionDetail = Readonly<Record<string, string | number | boolean>>;
+
 export interface TtsrActivationDetails {
 	readonly kind: "ttsr";
 	readonly owner: string;
 	readonly rules: readonly string[];
 	readonly remediation: "nudge" | "provider-error";
+	/** Which stream the detector fired in; absent on entries written before it existed and for pattern rules. */
+	readonly stream?: "text" | "thinking" | "tool";
+	/** The detector's own explanation of the hit, so a false positive can be told from a real loop. */
+	readonly reason?: string;
+	readonly detail?: TtsrDetectionDetail;
 }
 
 export type RuleActivationDetails = ProjectRulesActivationDetails | TtsrActivationDetails;
@@ -55,7 +63,27 @@ function parseTtsrActivation(value: object): TtsrActivationDetails | undefined {
 	) {
 		return undefined;
 	}
-	return { kind: "ttsr", owner, rules, remediation };
+	const stream = Reflect.get(value, "stream");
+	const reason = Reflect.get(value, "reason");
+	const detail = scalarRecord(Reflect.get(value, "detail"));
+	return {
+		kind: "ttsr",
+		owner,
+		rules,
+		remediation,
+		...(stream === "text" || stream === "thinking" || stream === "tool" ? { stream } : {}),
+		...(typeof reason === "string" && reason.length > 0 ? { reason } : {}),
+		...(detail === undefined ? {} : { detail }),
+	};
+}
+
+/** Malformed optional detail is dropped; it never invalidates the activation that carries it. */
+function scalarRecord(value: unknown): TtsrDetectionDetail | undefined {
+	if (!isObject(value)) return undefined;
+	const entries = Object.entries(value);
+	return entries.length > 0 && entries.every(([, field]) => ["string", "number", "boolean"].includes(typeof field))
+		? (value as TtsrDetectionDetail)
+		: undefined;
 }
 
 function stringList(value: unknown): readonly string[] | undefined {
