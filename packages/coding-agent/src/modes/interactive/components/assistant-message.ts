@@ -9,6 +9,7 @@ import {
 	Spacer,
 	Text,
 	truncateToWidth,
+	visibleWidth,
 } from "@earendil-works/pi-tui";
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
 import { sharedMarkdownTheme, theme } from "../theme/theme.ts";
@@ -59,6 +60,11 @@ export class AssistantMessageComponent extends Container {
 	private providerErrorOwned = false;
 	private ownsTurnNotice = false;
 	private isStreaming = false;
+	private showTimestamps: boolean;
+	private timestampEligible: boolean;
+	// Stamped once on the first update, never at render time: render() re-runs on
+	// resize, and streaming updates must retain the original arrival time.
+	private arrivedAt?: Date;
 	private thinkingVisibilityOverrides = new Map<number, boolean>();
 	private handoffOpenOverrides = new Map<number, boolean>();
 	/** Moves whenever the cached render is dropped; output is a function of the state `updateContent` records. */
@@ -71,9 +77,14 @@ export class AssistantMessageComponent extends Container {
 		hiddenThinkingLabel = "Thinking...",
 		outputPad = 1,
 		markdownTransformers: readonly MarkdownTransformer[] = [],
+		showTimestamps = false,
+		timestamp?: { readonly eligible: boolean; readonly arrivedAt?: Date },
 	) {
 		super();
 
+		this.showTimestamps = showTimestamps;
+		this.timestampEligible = timestamp?.eligible ?? true;
+		this.arrivedAt = timestamp?.arrivedAt;
 		this.hideThinkingBlock = hideThinkingBlock;
 		this.markdownTheme = markdownTheme;
 		this.hiddenThinkingLabel = hiddenThinkingLabel;
@@ -139,6 +150,35 @@ export class AssistantMessageComponent extends Container {
 		this.refreshContent();
 	}
 
+	setShowTimestamps(show: boolean): void {
+		if (this.showTimestamps === show) return;
+		this.showTimestamps = show;
+		this.invalidateRenderCache();
+	}
+
+	setTimestampEligible(eligible: boolean): void {
+		if (this.timestampEligible === eligible) return;
+		this.timestampEligible = eligible;
+		this.invalidateRenderCache();
+	}
+
+	hasVisibleContent(): boolean {
+		return this.renderDescriptors.some((descriptor) => descriptor.kind !== "spacer");
+	}
+
+	getArrivedAt(): Date | undefined {
+		return this.arrivedAt;
+	}
+
+	private timestampPrefix(): string {
+		if (!this.showTimestamps || !this.timestampEligible) return "";
+		const at = this.arrivedAt ?? new Date();
+		const hh = String(at.getHours()).padStart(2, "0");
+		const mm = String(at.getMinutes()).padStart(2, "0");
+		const ss = String(at.getSeconds()).padStart(2, "0");
+		return theme.fg("dim", `${hh}:${mm}:${ss} `);
+	}
+
 	override getRenderRevision(): number {
 		return this.revision;
 	}
@@ -149,7 +189,16 @@ export class AssistantMessageComponent extends Container {
 			return copyLineSources(this.renderCache.lines, [...this.renderCache.lines]);
 		}
 
-		const lines = super.render(width);
+		const prefix = this.timestampPrefix();
+		const prefixWidth = visibleWidth(prefix);
+		const showTimestamp = prefixWidth > 0 && width > prefixWidth;
+		let lines = super.render(showTimestamp ? width - prefixWidth : width);
+		const firstContentLineIndex = lines.findIndex((line) => visibleWidth(line) > 0);
+		if (firstContentLineIndex >= 0 && showTimestamp) {
+			const prefixedLine = prefix + lines[firstContentLineIndex];
+			if (visibleWidth(prefixedLine) <= width) lines[firstContentLineIndex] = prefixedLine;
+			else lines = super.render(width);
+		}
 		if (this.hasToolCalls || lines.length === 0) {
 			this.cacheRender(width, signature, lines);
 			return lines;
@@ -162,6 +211,7 @@ export class AssistantMessageComponent extends Container {
 	}
 
 	updateContent(message: AssistantMessage, isStreaming = this.isStreaming): void {
+		this.arrivedAt ??= new Date();
 		const previousMessage = this.lastMessage;
 		const streamingChanged = this.isStreaming !== isStreaming;
 		this.isStreaming = isStreaming;
@@ -302,6 +352,11 @@ export class AssistantMessageComponent extends Container {
 
 	private cacheRender(width: number, signature: string, lines: string[]): void {
 		this.renderCache = { lines: copyLineSources(lines, [...lines]), signature, width };
+	}
+
+	private invalidateRenderCache(): void {
+		this.renderCache = undefined;
+		this.revision = nextRenderRevision();
 	}
 
 	private refreshContent(): void {

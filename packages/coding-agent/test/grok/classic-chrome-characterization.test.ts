@@ -16,6 +16,7 @@ type HeaderFixture = {
 	registerSignalHandlers(): void;
 	resumeQuestionMouseCapture(): void;
 	getChangelogForDisplay(): undefined;
+	showManagedToolStatus(status: unknown): void;
 	fdPath: string | undefined;
 	session: { scopedModels: unknown[]; releaseSettledSessionMemory(): void };
 	options: { verbose: boolean };
@@ -101,6 +102,7 @@ function createHeaderFixture(): HeaderFixture {
 		registerSignalHandlers: () => {},
 		resumeQuestionMouseCapture: () => {},
 		getChangelogForDisplay: () => undefined,
+		showManagedToolStatus: () => {},
 		fdPath: undefined,
 		session: { scopedModels: [], releaseSettledSessionMemory: () => {} },
 		options: { verbose: true },
@@ -156,6 +158,7 @@ function createClassicRuntime(): AgentSessionRuntime {
 				getEditorPaddingX: () => 0,
 				getHideThinkingBlock: () => false,
 				getOutputPad: () => 1,
+				getShowMessageTimestamps: () => false,
 				getPackages: () => [],
 				getShowHardwareCursor: () => false,
 				getTuiMode: () => "regular",
