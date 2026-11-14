@@ -1498,6 +1498,11 @@ export class ExtensionRunner {
 		return false;
 	}
 
+	/** Paths of the extensions that registered at least one handler for `eventType`, in load order. */
+	getHandlerExtensionPaths(eventType: string): string[] {
+		return this.extensions.filter((ext) => (ext.handlers.get(eventType)?.length ?? 0) > 0).map((ext) => ext.path);
+	}
+
 	private getToolHookStatusMessage(extensionPath: string, hookName: ExtensionToolHookName): string {
 		const builtinMatch = /^<builtin:([^>]+)>$/.exec(extensionPath);
 		const builtinName = builtinMatch?.[1];

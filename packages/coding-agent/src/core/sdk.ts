@@ -664,7 +664,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			if (
 				!hasExistingSession ||
 				!(error instanceof ModelUsabilityBudgetError) ||
-				!session.settingsManager.getCompactionEnabled()
+				!(session.settingsManager.getCompactionEnabled() || session.hasCompactionOwner())
 			) {
 				throw error;
 			}
