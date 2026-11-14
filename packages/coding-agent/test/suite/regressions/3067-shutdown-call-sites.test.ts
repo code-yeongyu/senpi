@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { ChildProcess } from "node:child_process";
 import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -23,6 +23,8 @@ interface ShutdownRig {
 	readonly exitProcess: ReturnType<typeof vi.spyOn>;
 	/** Signals the shutdown asked for, in call order. */
 	readonly signals: readonly string[];
+	/** The `process.kill` seam `signalChild` calls: every call, with its pid. */
+	readonly kill: ReturnType<typeof vi.spyOn>;
 	readonly drainStop: ReturnType<typeof vi.spyOn>;
 	readonly stopWatchers: ReturnType<typeof vi.fn>;
 	readonly flushAdmission: ReturnType<typeof vi.spyOn>;
@@ -45,12 +47,16 @@ async function startShutdown(options: {
 		generation: 0,
 		launchProfileId: "shutdown-call-sites-test",
 	});
-	// The child ignores SIGTERM, so the stop escalates to SIGKILL before it is reaped.
-	// `process.kill` is stubbed below: the SIGTERM call is recorded but never delivered,
-	// so no readiness handshake is needed (nothing can kill the child before its handler
-	// is installed), while the SIGKILL is delivered for real and reaps the child.
-	const child = spawn(process.execPath, ["-e", "process.on('SIGTERM', () => {}); setTimeout(() => {}, 60_000);"]);
-	if (child.pid === undefined) throw new Error("shutdown child has no pid");
+	// #6657: the child is a `ChildProcess` stand-in, not a real process. A real child's exit
+	// arrived on the real event loop and raced the fake 30 s kill-exit bound, so a loaded host
+	// failed this test with the code under test correct. The stand-in replaces only the
+	// process: shutdown still signals it through its real seam (`signalChild` ->
+	// `process.kill`, stubbed below) and observes its end through `waitForChildExit`'s real
+	// `exit` listener. Production spawns the host child in `host-lifecycle-launch.ts`, which is
+	// not on this shutdown path. The pid is never delivered to the OS.
+	const child = new ChildProcess();
+	const childPid = 2_147_483_647;
+	(child as { pid: number | undefined }).pid = childPid;
 	let resolveChildExit!: () => void;
 	const childExitRecorded = new Promise<void>((resolve) => {
 		resolveChildExit = resolve;
@@ -97,13 +103,18 @@ async function startShutdown(options: {
 		throw exit;
 	});
 	// Record every signal the shutdown asks for, in order: the SIGTERM grace step is
-	// only observable here — the child is reaped by SIGKILL either way. Swallow SIGTERM
-	// (the child ignores it) and deliver SIGKILL for real so the child is reaped.
-	const realKill = process.kill.bind(process);
+	// only observable here — the child is reaped by SIGKILL either way. No signal reaches
+	// the OS. The child ignores SIGTERM; SIGKILL ends it, and its exit is delivered on the
+	// next microtask: after `waitForChildExit` has subscribed (it is called synchronously
+	// after the signal) and before any fake time can advance toward the kill-exit bound.
 	const signals: string[] = [];
-	vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+	const kill = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
 		signals.push(typeof signal === "string" ? signal : "SIGTERM");
-		if (signal === "SIGKILL") return realKill(pid, signal);
+		if (pid === childPid && signal === "SIGKILL")
+			queueMicrotask(() => {
+				(child as { signalCode: NodeJS.Signals | null }).signalCode = "SIGKILL";
+				child.emit("exit", null, "SIGKILL");
+			});
 		return true;
 	});
 	vi.useFakeTimers();
@@ -134,6 +145,7 @@ async function startShutdown(options: {
 		child,
 		exitProcess,
 		signals,
+		kill,
 		drainStop,
 		stopWatchers,
 		flushAdmission,
@@ -145,14 +157,6 @@ async function startShutdown(options: {
 			// while shutdown was still using it. Never let a cleanup failure mask the
 			// test's own error.
 			await settle(stopped).catch(() => undefined);
-			if (child.pid !== undefined && child.exitCode === null && child.signalCode === null) {
-				try {
-					realKill(child.pid, "SIGKILL");
-				} catch {
-					// Already gone.
-				}
-				await settle(stopped).catch(() => undefined);
-			}
 			vi.useRealTimers();
 			vi.restoreAllMocks();
 			activity.stopObserver();
@@ -161,15 +165,15 @@ async function startShutdown(options: {
 	};
 }
 
-// Captured before any test fakes the timers: the child is a real process, and its exit
-// event is delivered on the real event loop, which fake-timer advances alone never turn.
+// Captured before any test fakes the timers: shutdown's file I/O (the stop intent, the
+// generation) completes on the real event loop, which fake-timer advances alone never turn.
 const realSetTimeout = setTimeout;
 
 /**
  * Advance fake time in small steps, yielding to the real loop after each step, until the
  * awaited shutdown settles — or the bound is hit. The bound is on fake time advanced, not
  * on a fixed step count: the loop stops as soon as the promise settles, and the small steps
- * let the real loop deliver the child's exit long before the 30 s kill-exit bound can fire.
+ * let the real loop finish shutdown's file I/O between fake-time steps.
  */
 async function settle(stopped: Promise<"exited">): Promise<void> {
 	let settled = false;
@@ -184,8 +188,7 @@ async function settle(stopped: Promise<"exited">): Promise<void> {
 	const maxFakeMs = 60_000;
 	for (let advanced = 0; advanced < maxFakeMs && !settled; advanced += 100) {
 		await vi.advanceTimersByTimeAsync(100);
-		// Let the real loop deliver the child's exit: without this turn, the mocked
-		// 30 s kill wait fires before the SIGKILLed child's exit is observed.
+		// Let the real loop finish shutdown's file I/O before fake time moves on.
 		await new Promise<void>((resolve) => {
 			realSetTimeout(resolve, 0);
 		});
@@ -204,6 +207,14 @@ async function expectStopIntent(rig: ShutdownRig): Promise<void> {
 	expect(intent.reason).toBe("signal:SIGTERM");
 	expect(intent.signal).toBe("SIGTERM");
 	expect(intent.targetPid).toBe(rig.child.pid);
+}
+
+/** The stop drove the real seam (`signalChild` -> `process.kill`) at the child's pid, and nothing else. */
+function expectSignalledAtSeam(rig: ShutdownRig): void {
+	expect(rig.kill.mock.calls).toEqual([
+		[rig.child.pid, "SIGTERM"],
+		[rig.child.pid, "SIGKILL"],
+	]);
 }
 
 // #3067 L5: the `!childStopStarted` path in `performShutdown` isn't covered — one test
@@ -229,6 +240,7 @@ it("reaps the child when drain.stop throws before the child is signalled", async
 		// The recovery reap sends SIGTERM first, then SIGKILL: skipping the grace
 		// step would record only SIGKILL here.
 		expect(rig.signals).toEqual(["SIGTERM", "SIGKILL"]);
+		expectSignalledAtSeam(rig);
 		expect(rig.child.signalCode).toBe("SIGKILL");
 		// The failure aborted shutdown before the child stop, so no later step ran
 		// and no stop intent was written: the recovery reap drove the signals.
@@ -250,6 +262,7 @@ it("reaps the child when stopWatchers throws after the child stop", async () => 
 		await expect(rig.stopped).resolves.toBe("exited");
 		expect(rig.exitProcess).toHaveBeenCalledWith(1);
 		expect(rig.signals).toEqual(["SIGTERM", "SIGKILL"]);
+		expectSignalledAtSeam(rig);
 		expect(rig.child.signalCode).toBe("SIGKILL");
 		// The child stop already reaped the child (and wrote the stop intent) before
 		// stopWatchers threw, so the failure aborted shutdown here: no later step ran.
@@ -271,6 +284,7 @@ it("reaps the child when destroyAll throws after the child stop", async () => {
 		await expect(rig.stopped).resolves.toBe("exited");
 		expect(rig.exitProcess).toHaveBeenCalledWith(1);
 		expect(rig.signals).toEqual(["SIGTERM", "SIGKILL"]);
+		expectSignalledAtSeam(rig);
 		expect(rig.child.signalCode).toBe("SIGKILL");
 		// The failure aborted shutdown at the last fallible step: the child stop,
 		// stopWatchers and the admission flush all ran before it.
