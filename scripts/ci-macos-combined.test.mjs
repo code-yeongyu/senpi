@@ -51,7 +51,8 @@ test("shared setup preserves the toolchain pins and installs and builds once", (
 
 test("all original commands and execution guards remain with WebView last", () => {
 	assert.deepEqual(suites.map((step) => step.id),
-		["process", "rpc", "terminal_pty", "terminal_extension", "inspector", "webview"]);
+		["path_filesystem", "path_cancelled_write", "path_guard", "path_node", "path_bun",
+			"process", "rpc", "terminal_pty", "terminal_extension", "inspector", "webview"]);
 	for (const name of originals) {
 		const original = jobs[name];
 		let partBudget = 0;
@@ -75,8 +76,8 @@ test("all original commands and execution guards remain with WebView last", () =
 			assert.ok(combined.steps.some((candidate) => candidate.name === step.name && candidate.run === step.run), step.name);
 		}
 	}
-	assert.equal(combined.steps.filter((step) => step.run?.includes("test-temp-guard.mjs snapshot")).length, 5);
-	assert.equal(combined.steps.filter((step) => step.run?.includes("test-temp-guard.mjs check")).length, 5);
+	assert.equal(combined.steps.filter((step) => step.run?.includes("test-temp-guard.mjs snapshot")).length, 6);
+	assert.equal(combined.steps.filter((step) => step.run?.includes("test-temp-guard.mjs check")).length, 6);
 });
 
 test("suite conditions survive earlier failures but refuse failed installs, snapshots and cancellation", () => {

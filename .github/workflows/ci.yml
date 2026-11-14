@@ -1629,10 +1629,11 @@ jobs:
     if: needs.platform-scope.outputs.full == 'true'
     runs-on: macos-latest
     # Each suite step keeps the cap it had on its old leg: its own step timeout where it had one
-    # (process and WebView: 12), else its old job cap (the terminal part's two steps share its 30).
+    # (process and WebView: 12), else its old job cap. The original terminal pair shares 30 minutes;
+    # the five path-resolution steps add 10 minutes to the terminal and combined-job budgets.
     # The job cap is the sum of those step caps plus 10 minutes of shared setup, so one hung suite
     # holds the macOS runner only for its own budget and the later suites still run.
-    timeout-minutes: 99
+    timeout-minutes: 109
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1663,16 +1664,22 @@ jobs:
 
       - name: Path-resolution filesystem regressions
         if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.path_resolution_test_temp_snapshot.outcome == 'success' }}
+        id: path_filesystem
+        timeout-minutes: 2
         working-directory: packages/machine-ops
         run: node ../../scripts/run-tests.mjs vitest run test/filesystem-resolution.test.ts test/operation-errors.test.ts --reporter=verbose
 
       - name: Path-resolution cancelled-write regression
         if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.path_resolution_test_temp_snapshot.outcome == 'success' }}
+        id: path_cancelled_write
+        timeout-minutes: 2
         working-directory: packages/machine-ops
         run: node ../../scripts/run-tests.mjs vitest run test/local-conformance.test.ts -t "cancelled request" --reporter=verbose
 
       - name: Path-resolution guard regressions
         if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.path_resolution_test_temp_snapshot.outcome == 'success' }}
+        id: path_guard
+        timeout-minutes: 2
         working-directory: packages/coding-agent
         run: >
           node ../../scripts/run-tests.mjs vitest run
@@ -1684,10 +1691,14 @@ jobs:
 
       - name: Path-resolution integration (Node)
         if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.path_resolution_test_temp_snapshot.outcome == 'success' }}
+        id: path_node
+        timeout-minutes: 2
         run: node scripts/run-tests.mjs node scripts/qa/path-resolution-smoke.ts
 
       - name: Path-resolution integration (Bun)
         if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.path_resolution_test_temp_snapshot.outcome == 'success' }}
+        id: path_bun
+        timeout-minutes: 2
         run: node scripts/run-tests.mjs bun scripts/qa/path-resolution-smoke.ts
 
       - name: Check OS temp after path-resolution tests
@@ -1919,7 +1930,7 @@ jobs:
         # Windows only for a full run (senpi#3957); Linux always.
         os: ${{ fromJSON(needs.platform-scope.outputs.full == 'true' && '["ubuntu-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1938,6 +1949,10 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
+      # Node follows workspace package exports into dist; a clean install has no compiled entries.
+      - name: Build workspace package entries
+        run: npm run build
+
       # The persistent-terminal TS runtime + tool suite must pass on all three OS. Native
       # ConPTY/PTY behavior is proven separately by the Native Prebuilds cargo job; here the
       # loader falls back to the child_process pipe backend when no host prebuild is present,
@@ -1950,16 +1965,19 @@ jobs:
       # senpi#6127: retain every suite after a test failure, but stop on cancellation or failed setup.
       - name: Path-resolution filesystem regressions
         if: ${{ !cancelled() && steps.test_temp_snapshot.outcome == 'success' }}
+        timeout-minutes: 2
         working-directory: packages/machine-ops
         run: node ../../scripts/run-tests.mjs vitest run test/filesystem-resolution.test.ts test/operation-errors.test.ts --reporter=verbose
 
       - name: Path-resolution cancelled-write regression
         if: ${{ !cancelled() && steps.test_temp_snapshot.outcome == 'success' }}
+        timeout-minutes: 2
         working-directory: packages/machine-ops
         run: node ../../scripts/run-tests.mjs vitest run test/local-conformance.test.ts -t "cancelled request" --reporter=verbose
 
       - name: Path-resolution guard regressions
         if: ${{ !cancelled() && steps.test_temp_snapshot.outcome == 'success' }}
+        timeout-minutes: 2
         working-directory: packages/coding-agent
         run: >
           node ../../scripts/run-tests.mjs vitest run
@@ -1971,10 +1989,12 @@ jobs:
 
       - name: Path-resolution integration (Node)
         if: ${{ !cancelled() && steps.test_temp_snapshot.outcome == 'success' }}
+        timeout-minutes: 2
         run: node scripts/run-tests.mjs node scripts/qa/path-resolution-smoke.ts
 
       - name: Path-resolution integration (Bun)
         if: ${{ !cancelled() && steps.test_temp_snapshot.outcome == 'success' }}
+        timeout-minutes: 2
         run: node scripts/run-tests.mjs bun scripts/qa/path-resolution-smoke.ts
 
       - name: PTY package tests

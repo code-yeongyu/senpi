@@ -233,6 +233,10 @@ describe("ci.yml wiring", () => {
 		for (const name of ["terminal-cross-os", "macos-combined"]) {
 			const job = jobs[name];
 			assert.ok(job.steps.some((step) => step.uses?.startsWith("oven-sh/setup-bun@")), `${name}: Bun installed`);
+			const installAt = job.steps.findIndex((step) => step.run?.includes("npm ci --ignore-scripts"));
+			const buildAt = job.steps.findIndex((step) => step.run?.includes("npm run build"));
+			const nodeAt = job.steps.findIndex((step) => step.run === "node scripts/run-tests.mjs node scripts/qa/path-resolution-smoke.ts");
+			assert.ok(installAt >= 0 && buildAt >= installAt && nodeAt > buildAt, `${name}: build workspace exports before Node smoke`);
 			for (const [directory, files] of Object.entries(suites)) {
 				for (const file of files) {
 					const step = job.steps.find((step) => step["working-directory"] === directory && step.run?.includes(file));
