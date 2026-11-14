@@ -59,11 +59,79 @@ export function leavesBundle(path: string): boolean {
 	return posix.isAbsolute(path) || win32.isAbsolute(path) || path.split(/[\\/]/).includes("..");
 }
 
+/**
+ * The most segments a path in a bundle may have (senpi#6469). The engine's own paths are at most four deep
+ * (`files/extensions/<extension>/<id>.json`, `files/resident-blobs/<session>/<id>.blob`); extension state under
+ * `state/` is as deep as its extension makes it, and this leaves eight times the engine's depth for it. With no cap a
+ * path of 1,024 bytes names about 500 folders, and an import creates every folder of every listed path.
+ */
+export const MAX_BUNDLE_PATH_SEGMENTS = 32;
+
+/** Both separators count, as in `leavesBundle`. */
+export function nestsTooDeep(path: string): boolean {
+	return path.split(/[\\/]/).length > MAX_BUNDLE_PATH_SEGMENTS;
+}
+
+/** A "." or an empty segment names a file another way than its plain path does. Both separators count. */
+export function hasIdleSegment(path: string): boolean {
+	return path.split(/[\\/]/).some((segment) => segment === "." || segment === "");
+}
+
+/** A path as an error may show it: quoted, and cut short only when it is long. */
+export const shown = (path: string): string => JSON.stringify(path.length > 120 ? `${path.slice(0, 120)}...` : path);
+
+/** What a sender's refusal says was done: it refuses before the seal where it still can, else before a bundle. */
+const refusedBefore = (sealedAlready: boolean): string =>
+	sealedAlready
+		? "No bundle was written. The session is sealed for this move: finish the move as declined to take it back."
+		: "The session was not sealed for the move and nothing was written.";
+
+/**
+ * A file the move would carry sits deeper than a bundle path may be, so a receiver would refuse the bundle. The
+ * sender refuses first: before it seals the session where it still can, and before it writes a bundle where the
+ * session was sealed already (by a version that did not look).
+ */
+export class MovePathTooDeepError extends Error {
+	readonly code = "move_path_too_deep";
+
+	constructor(path: string, sealedAlready: boolean) {
+		super(
+			`A file of this session is nested deeper than a move can carry (${MAX_BUNDLE_PATH_SEGMENTS} path segments): ${shown(path)}. ${refusedBefore(sealedAlready)}`,
+		);
+		this.name = "MovePathTooDeepError";
+	}
+}
+
+/**
+ * A file the move would carry has a name its bundle path cannot be listed under: read with either separator, the path
+ * leaves the bundle or has a "." or an empty segment, so a receiver would refuse the bundle. Off Windows a backslash
+ * is an ordinary character of a name, which is how a file gets such a path. The sender refuses first, where
+ * `MovePathTooDeepError` does.
+ */
+export class MovePathNotPlainError extends Error {
+	readonly code = "move_path_not_plain";
+
+	constructor(path: string, sealedAlready: boolean) {
+		super(
+			`A file of this session has a name a move cannot carry: ${shown(path)}. Read with "/" or "\\" as the separator, that path leaves the bundle or has a "." or an empty segment. Rename the file to move this session. ${refusedBefore(sealedAlready)}`,
+		);
+		this.name = "MovePathNotPlainError";
+	}
+}
+
 function parseFile(value: unknown): BundleFile {
 	const file = value as Partial<BundleFile> | null;
 	if (typeof file !== "object" || file === null || !isString(file.path) || !isString(file.sha256))
 		throw new MoveBundleInvalidError("a listed file is malformed");
 	if (leavesBundle(file.path)) throw new MoveBundleInvalidError(`a listed path leaves the bundle: ${file.path}`);
+	// Later readers classify a listed file by its path as text, and what moves it reads the disk: only a plain path is
+	// one file to both.
+	if (hasIdleSegment(file.path))
+		throw new MoveBundleInvalidError(`a listed path has a "." or an empty segment: ${shown(file.path)}`);
+	if (nestsTooDeep(file.path))
+		throw new MoveBundleInvalidError(
+			`a listed path is nested deeper than ${MAX_BUNDLE_PATH_SEGMENTS} segments: ${shown(file.path)}`,
+		);
 	return { path: file.path, sha256: file.sha256 };
 }
 
@@ -135,6 +203,28 @@ export async function readManifest(bundleDir: string): Promise<MoveManifest> {
 		throw unreadable(error);
 	}
 	return parseManifest(text);
+}
+
+/**
+ * What a sender reads back from the bundle it kept: the move it is for, and the queued input the release took out,
+ * in a format this version knows. Nothing else is checked. The bundle is the sender's own, and a rule about its paths that is newer than the bundle
+ * (the depth cap) must not stop the sender from finishing its move.
+ */
+export async function readKeptBundle(bundleDir: string): Promise<Pick<MoveManifest, "moveId" | "droppedUserMessages">> {
+	let raw: unknown;
+	try {
+		raw = JSON.parse(await readFile(join(bundleDir, MANIFEST_FILE), "utf8"));
+	} catch (error) {
+		throw unreadable(error);
+	}
+	if (typeof raw !== "object" || raw === null) throw new MoveBundleInvalidError("the manifest is not an object");
+	// The format says what the two fields read below mean: a bundle of another format is left for a version that knows it.
+	const format: unknown = Reflect.get(raw, "format");
+	if (format !== MOVE_BUNDLE_FORMAT) throw new MoveBundleInvalidError(`unknown bundle format ${String(format)}`);
+	const queued: unknown = Reflect.get(raw, "droppedUserMessages");
+	const droppedUserMessages = Array.isArray(queued) ? queued : [];
+	if (!droppedUserMessages.every(isString)) throw new MoveBundleInvalidError("malformed queued input");
+	return { moveId: parseMoveId(Reflect.get(raw, "moveId")), droppedUserMessages };
 }
 
 /** The manifest from its own text: an inline bundle's manifest is read before any of its files is written. */

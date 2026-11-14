@@ -6,6 +6,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { MAX_BUNDLE_PATH_SEGMENTS } from "../../src/core/session-move/bundle.ts";
 import { move } from "./rpc-move-session-support.ts";
 import {
 	exported,
@@ -26,6 +27,13 @@ const listed =
 	(...paths: string[]) =>
 	(files: InlineFile[]) =>
 		withListed(files, ...paths.map((path) => inlineFile(path, BYTES)));
+
+/** The bundle with its manifest sent once more, under `path`: the same bytes, so only the second name can be wrong. */
+const manifestAlsoAt = (path: string) => (files: InlineFile[]) => {
+	const manifest = files.find((file) => file.path === "manifest.json");
+	if (manifest === undefined) throw new Error("the export sent no manifest");
+	return [...files, { ...manifest, path }];
+};
 
 describe("move_session import with files: the paths it takes (senpi#6267)", () => {
 	it.each([
@@ -59,12 +67,23 @@ describe("move_session import with files: the paths it takes (senpi#6267)", () =
 				{ path: `${"d/".repeat(40)}extra.bin`, sha256: "nope", base64: BYTES.toString("base64") },
 			],
 		],
+		["the manifest sent once more, under its own name behind a dot segment", manifestAlsoAt("./manifest.json")],
+		["a listed path with a dot segment", listed("files/./x")],
+		["a listed path with an empty segment", listed("files//x")],
 		["a listed path with a dot segment after a backslash", listed("files\\.\\x")],
 		["a listed path with an empty segment after a backslash", listed("files\\\\x")],
 		["a listed path with a NUL character", listed("files/a\0b")],
 		["a listed path with a segment longer than a file name may be", listed(`files/${"n".repeat(256)}`)],
 		["a listed path longer than a sent path may be", listed(`files/${"ab/".repeat(400)}x`)],
 		["a listed path that is both a file and another file's folder", listed("files/x", "files/x/y")],
+		[
+			"a listed path one folder deeper than a bundle path may be",
+			listed(`files/${"d/".repeat(MAX_BUNDLE_PATH_SEGMENTS - 1)}x`),
+		],
+		[
+			"a listed path one folder deeper than a bundle path may be, written with backslashes",
+			listed(`files\\${"d\\".repeat(MAX_BUNDLE_PATH_SEGMENTS - 1)}x`),
+		],
 	])(
 		"#given %s #then import refuses move_bundle_invalid before a folder is made and the move stays importable",
 		async (_case, tamper) => {
@@ -84,4 +103,18 @@ describe("move_session import with files: the paths it takes (senpi#6267)", () =
 			});
 		},
 	);
+
+	it("#given a listed path exactly as deep as a bundle path may be #then import takes it and the session lands", async () => {
+		const { fixture, a, b, reply } = await exported("move-p2");
+		await using _a = a;
+		await using _b = b;
+		// `files/` is the first segment and the file name the last: the folders between make the depth the cap exactly.
+		const deepest = `files/${"d/".repeat(MAX_BUNDLE_PATH_SEGMENTS - 2)}x`;
+
+		const imported = await move(b, { op: "import", files: listed(deepest)(inlineOf(reply)), cwd: fixture.repoB });
+
+		expect(deepest.split("/")).toHaveLength(MAX_BUNDLE_PATH_SEGMENTS);
+		expect(imported).toMatchObject({ success: true, data: { session_id: SESSION_ID } });
+		expect(existsSync(landedOn(fixture))).toBe(true);
+	});
 });
