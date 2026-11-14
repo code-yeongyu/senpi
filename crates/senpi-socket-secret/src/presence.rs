@@ -5,7 +5,8 @@
 //! guard leaves it only with a quiescence receipt, whose reason is the holder's `released` commit or one
 //! of the recovery order's release points (`ReleaseReason`), except that the handle a blocking wait
 //! retained (`wait_and_acquire`) leaves without one when `probe_retained` finds it inadmissible or
-//! without an identity, because that handle was never evidence. Any descriptor loss, identity change or
+//! without an identity, because that handle was never evidence. Once `probe_retained` admits it, it is
+//! the recovery guard and leaves only with a receipt like any other. Any descriptor loss, identity change or
 //! locality flip found by the pre-action check fences the registry for good; it never re-acquires and
 //! continues. The Windows backend (`LockFileEx` on byte [0,1)) lives in `presence_windows.rs`; tests drive a
 //! fake backend whose process-death and kernel-release events are separate.
@@ -96,6 +97,12 @@ struct CancelState {
 
 /// Cancels a blocking wait. Cloning shares the state. A backend registers a canceller for the wait in
 /// progress (on Windows, `CancelIoEx` on that exact I/O), so cancelling needs no polling.
+///
+/// Whether a canceller is registered is visible to this crate's tests only:
+///
+/// ```compile_fail,E0599
+/// senpi_socket_secret::presence::CancelToken::default().has_pending_wait();
+/// ```
 #[derive(Clone, Default)]
 pub struct CancelToken(std::sync::Arc<std::sync::Mutex<CancelState>>);
 
@@ -128,9 +135,12 @@ impl CancelToken {
         true
     }
 
-    /// Whether a wait's I/O is pending with its canceller registered: the moment a cancel takes the
-    /// pending-I/O path rather than the pre-cancel check.
-    pub fn has_pending_wait(&self) -> bool {
+    /// Whether a canceller is registered. A backend registers one only once its wait's I/O is issued
+    /// and pending, and it stays registered until the backend's `clear`, after that I/O has ended. So
+    /// `true` means a `cancel` from now on takes the canceller path instead of the pre-cancel check;
+    /// it does not mean the I/O is still pending. Test-only.
+    #[cfg(test)]
+    pub(crate) fn has_pending_wait(&self) -> bool {
         self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -150,9 +160,23 @@ impl CancelToken {
 /// Proof, committed by the caller before release, that this actor's authority ended (`released`), or
 /// the point of the recovery transaction order (design 4.2a, step 3-5) at which a recovered guard is
 /// released.
+///
+/// Only this crate mints one (the binding, once the caller's committed state parses as a
+/// `ReleaseReason`); code outside it cannot forge one:
+///
+/// ```compile_fail,E0451
+/// let receipt = senpi_socket_secret::presence::QuiescenceReceipt { presence_id: "p-1".to_string() };
+/// ```
 #[derive(Debug)]
 pub struct QuiescenceReceipt {
-    pub presence_id: String,
+    presence_id: String,
+}
+
+impl QuiescenceReceipt {
+    #[cfg(any(windows, test))]
+    pub(crate) const fn new(presence_id: String) -> Self {
+        Self { presence_id }
+    }
 }
 
 /// Why a guard leaves the registry: the holder's own `released` commit, or one of the three points of
@@ -189,8 +213,9 @@ struct Guard<H> {
     path: String,
     identity: FileIdentity,
     handle: H,
-    /// Retained by a blocking wait (Repair's busy-owner wait), not by `acquire`: only such a guard
-    /// may be probed in place and released without a receipt (`probe_retained`).
+    /// Retained by a blocking wait (Repair's busy-owner wait) and not yet admitted: only such a guard
+    /// may be probed in place and released without a receipt (`probe_retained`), which clears this
+    /// flag when it admits the handle.
     wait_retained: bool,
 }
 
@@ -258,9 +283,10 @@ impl<B: PresenceBackend> PresenceRegistry<B> {
     /// Repair's retained wait handle as step 3's acquisition of its object (design Revision 8, r7
     /// note 4): the probe's admissibility rule applied to a guard this registry already holds, through
     /// that handle, which is never closed and reacquired. An inadmissible handle is released at once;
-    /// a handle that no longer answers an identity query is released as `Unknown`; a guard not held,
-    /// held for another path, or held by `acquire` (the holder's own authority guard, which leaves
-    /// only with a receipt) is `NotHeld` and nothing changes.
+    /// a handle that no longer answers an identity query is released as `Unknown`; an admitted handle
+    /// becomes the recovery guard, which leaves only with a receipt. A guard not held, held for another
+    /// path, held by `acquire` (the holder's own authority guard), or already admitted is `NotHeld` and
+    /// nothing changes.
     pub fn probe_retained(
         &mut self,
         presence_id: &str,
@@ -270,7 +296,7 @@ impl<B: PresenceBackend> PresenceRegistry<B> {
         if self.fenced.is_some() {
             return LockAttempt::Fenced;
         }
-        let Some(guard) = self.guards.get(presence_id) else {
+        let Some(guard) = self.guards.get_mut(presence_id) else {
             return LockAttempt::NotHeld;
         };
         if guard.path != path || !guard.wait_retained {
@@ -287,6 +313,7 @@ impl<B: PresenceBackend> PresenceRegistry<B> {
             self.guards.remove(presence_id);
             return LockAttempt::Inadmissible;
         }
+        guard.wait_retained = false;
         LockAttempt::Acquired
     }
 
@@ -430,7 +457,8 @@ impl<B: PresenceBackend> PresenceRegistry<B> {
 
     /// Closes a guard after its `released` commit, or at one of the recovery order's release points
     /// (`ReleaseReason`). The only other way a guard leaves the registry is `probe_retained` finding a
-    /// wait-retained handle inadmissible or without an identity; an `acquire`d guard leaves only here.
+    /// wait-retained, not yet admitted handle inadmissible or without an identity; an `acquire`d or
+    /// admitted guard leaves only here.
     pub fn release_after_quiescence(&mut self, receipt: QuiescenceReceipt) -> bool {
         self.guards.remove(&receipt.presence_id).is_some()
     }
@@ -655,6 +683,32 @@ mod tests {
         assert_eq!(registry.pre_action_check("p-1", true), Ok(()));
     }
 
+    /// senpi#4470 review LOW (audit #83): once `probe_retained` admits the wait's handle it is the
+    /// recovery guard, which leaves only with a receipt. A second `probe_retained`, whatever rule it
+    /// brings, is `NotHeld` and never drops it.
+    #[test]
+    fn an_admitted_wait_guard_is_never_dropped_by_a_second_retained_probe() {
+        let mut kernel = FakeKernel::with_file(PATH, 1).held_by(PATH, "host");
+        kernel.process_dies("host");
+        kernel.released_on_wait = true;
+        let mut registry = PresenceRegistry::new(&mut kernel);
+        assert_eq!(
+            registry.wait_and_acquire("p-1", PATH, &CancelToken::default()),
+            WaitOutcome::Acquired
+        );
+        assert_eq!(
+            registry.probe_retained("p-1", PATH, |_, _, _| true),
+            LockAttempt::Acquired
+        );
+        assert_eq!(
+            registry.probe_retained("p-1", PATH, |_, _, _| false),
+            LockAttempt::NotHeld,
+            "an admitted guard is no longer a wait's unadmitted handle"
+        );
+        assert!(registry.holds("p-1"), "the recovery guard stays registered");
+        assert_eq!(registry.pre_action_check("p-1", true), Ok(()));
+    }
+
     #[test]
     fn a_retained_handle_that_lost_its_identity_is_unknown_and_released() {
         let mut kernel = FakeKernel::with_file(PATH, 1).held_by(PATH, "host");
@@ -833,9 +887,7 @@ mod tests {
         let mut kernel = FakeKernel::with_file(PATH, 1);
         let mut registry = PresenceRegistry::new(&mut kernel);
         assert_eq!(registry.acquire("p-1", PATH), LockAttempt::Acquired);
-        assert!(registry.release_after_quiescence(QuiescenceReceipt {
-            presence_id: "p-1".to_string()
-        }));
+        assert!(registry.release_after_quiescence(QuiescenceReceipt::new("p-1".to_string())));
         assert!(!registry.holds("p-1"));
     }
 

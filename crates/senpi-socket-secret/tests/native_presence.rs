@@ -1,11 +1,10 @@
 //! Native receipts for #4199 presence guards (design test 18, Windows `LockFileEx`; test 26 blocking wait).
 //! Windows only; `ci.yml` `socket-secret-native-windows` runs them and prints `RECEIPT_PRESENCE` lines.
+//! The pending-wait cancel receipt lives in `src/presence_windows.rs`, beside the crate-private probe it needs.
 
 #[cfg(windows)]
 mod windows {
-    use senpi_socket_secret::presence::{
-        CancelToken, LockAttempt, PresenceRegistry, QuiescenceReceipt, WaitOutcome,
-    };
+    use senpi_socket_secret::presence::{CancelToken, LockAttempt, PresenceRegistry, WaitOutcome};
     use senpi_socket_secret::presence_windows::WindowsPresenceBackend;
     use std::path::PathBuf;
 
@@ -28,9 +27,8 @@ mod windows {
         println!("RECEIPT_PRESENCE contend holder={first:?} prober={contended:?}");
         assert_eq!(first, LockAttempt::Acquired);
         assert_eq!(contended, LockAttempt::Occupied);
-        assert!(holder.release_after_quiescence(QuiescenceReceipt {
-            presence_id: "p-1".to_string()
-        }));
+        // Closing the holder's handle is the kernel release; receipts are minted only inside the crate.
+        drop(holder);
         let after = prober.acquire("p-1", &path);
         println!("RECEIPT_PRESENCE after_release prober={after:?}");
         assert_eq!(after, LockAttempt::Acquired);
@@ -66,47 +64,10 @@ mod windows {
             })
         };
         started_rx.recv().expect("waiter started");
-        assert!(holder.release_after_quiescence(QuiescenceReceipt {
-            presence_id: "p-1".to_string()
-        }));
+        drop(holder);
         let (outcome, held) = waiter.join().expect("waiter");
         println!("RECEIPT_PRESENCE wait_release outcome={outcome:?} held={held}");
         assert_eq!(outcome, WaitOutcome::Acquired);
         assert!(held);
-    }
-
-    #[test]
-    fn a_cancelled_blocking_wait_returns_cancelled_and_holds_nothing() {
-        let path = presence_file("cancel");
-        let mut holder = PresenceRegistry::new(WindowsPresenceBackend);
-        assert_eq!(holder.acquire("p-1", &path), LockAttempt::Acquired);
-        let cancel = CancelToken::default();
-        let (started_tx, started_rx) = std::sync::mpsc::channel();
-        let waiter = {
-            let (path, cancel) = (path.clone(), cancel.clone());
-            std::thread::spawn(move || {
-                let mut registry = PresenceRegistry::new(WindowsPresenceBackend);
-                started_tx.send(()).expect("signal");
-                let outcome = registry.wait_and_acquire("p-1", &path, &cancel);
-                (outcome, registry.holds("p-1"))
-            })
-        };
-        started_rx.recv().expect("waiter started");
-        // Cancel only once the lock is pending, so this receipt proves the CancelIoEx path and not the
-        // pre-cancel check. Bounded: the waiter issues its lock right after signalling.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-        while !cancel.has_pending_wait() {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "the wait never became pending"
-            );
-            std::thread::yield_now();
-        }
-        cancel.cancel();
-        let (outcome, held) = waiter.join().expect("waiter");
-        println!("RECEIPT_PRESENCE wait_cancel outcome={outcome:?} held={held}");
-        assert_eq!(outcome, WaitOutcome::Cancelled);
-        assert!(!held);
-        assert!(holder.holds("p-1"), "the holder keeps its guard");
     }
 }

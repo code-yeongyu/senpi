@@ -5,8 +5,29 @@
 #[cfg(windows)]
 pub use windows_dacl::OwnerOnlyDescriptor;
 
+/// Why the owner-only descriptor could not be built.
+#[cfg(any(windows, test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DescriptorError {
+    /// A Windows call failed with this `GetLastError` value.
+    #[cfg_attr(
+        not(windows),
+        expect(dead_code, reason = "only the Windows descriptor build makes Windows calls")
+    )]
+    Os(u32),
+    /// `ConvertSidToStringSidW` returned text that is not valid UTF-16; no Windows call failed.
+    SidNotUtf16,
+}
+
+/// The owner SID string from the UTF-16 units `ConvertSidToStringSidW` wrote, terminator excluded.
+#[cfg(any(windows, test))]
+fn sid_text(units: &[u16]) -> Result<String, DescriptorError> {
+    String::from_utf16(units).map_err(|_| DescriptorError::SidNotUtf16)
+}
+
 #[cfg(windows)]
 mod windows_dacl {
+    use super::{sid_text, DescriptorError};
     use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, LocalFree, HANDLE};
     use windows_sys::Win32::Security::Authorization::{
         ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
@@ -20,7 +41,7 @@ mod windows_dacl {
 
     impl OwnerOnlyDescriptor {
         /// `D:P` marks the DACL protected, so no ACE is inherited from the parent directory.
-        pub fn for_current_user() -> Result<Self, u32> {
+        pub fn for_current_user() -> Result<Self, DescriptorError> {
             let user = current_user_sid_string()?;
             let sddl: Vec<u16> = format!("D:P(A;;FA;;;{user})(A;;FA;;;SY)(A;;FA;;;BA)")
                 .encode_utf16()
@@ -38,7 +59,7 @@ mod windows_dacl {
             };
             if ok == 0 {
                 // SAFETY: reads this thread's last-error value, set by the failed conversion above.
-                return Err(unsafe { GetLastError() });
+                return Err(DescriptorError::Os(unsafe { GetLastError() }));
             }
             Ok(Self(descriptor))
         }
@@ -65,12 +86,12 @@ mod windows_dacl {
     }
 
     /// The process token's user SID in `S-1-...` form.
-    fn current_user_sid_string() -> Result<String, u32> {
+    fn current_user_sid_string() -> Result<String, DescriptorError> {
         let mut raw: HANDLE = std::ptr::null_mut();
         // SAFETY: GetCurrentProcess returns a pseudo-handle; `raw` is a writable HANDLE slot.
         if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut raw) } == 0 {
             // SAFETY: reads this thread's last-error value.
-            return Err(unsafe { GetLastError() });
+            return Err(DescriptorError::Os(unsafe { GetLastError() }));
         }
         let token = TokenHandle(raw);
         let mut buffer = vec![0u64; 32];
@@ -87,7 +108,7 @@ mod windows_dacl {
         };
         if ok == 0 {
             // SAFETY: reads this thread's last-error value.
-            return Err(unsafe { GetLastError() });
+            return Err(DescriptorError::Os(unsafe { GetLastError() }));
         }
         // SAFETY: on success the buffer starts with a TOKEN_USER whose SID points into the same buffer.
         let sid = unsafe { (*buffer.as_ptr().cast::<TOKEN_USER>()).User.Sid };
@@ -95,17 +116,29 @@ mod windows_dacl {
         // SAFETY: `sid` is valid while `buffer` lives; `text` receives a LocalAlloc'd string freed below.
         if unsafe { ConvertSidToStringSidW(sid, &mut text) } == 0 {
             // SAFETY: reads this thread's last-error value.
-            return Err(unsafe { GetLastError() });
+            return Err(DescriptorError::Os(unsafe { GetLastError() }));
         }
         // SAFETY: `text` is a NUL-terminated wide string from ConvertSidToStringSidW.
         let length = (0..)
             .take_while(|&index| unsafe { *text.add(index) } != 0)
             .count();
         // SAFETY: `length` units were just read from the same allocation.
-        let result =
-            String::from_utf16(unsafe { std::slice::from_raw_parts(text, length) }).map_err(|_| 0u32);
+        let result = sid_text(unsafe { std::slice::from_raw_parts(text, length) });
         // SAFETY: `text` came from ConvertSidToStringSidW and is freed exactly once.
         unsafe { LocalFree(text.cast()) };
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// senpi#4310 review LOW (audit #8): text that is not UTF-16 is its own reason, not Windows error 0.
+    #[test]
+    fn an_owner_sid_that_is_not_utf16_is_its_own_reason_not_a_windows_error() {
+        assert_eq!(sid_text(&[0xD800]), Err(DescriptorError::SidNotUtf16));
+        let sid: Vec<u16> = "S-1-5-18".encode_utf16().collect();
+        assert_eq!(sid_text(&sid), Ok("S-1-5-18".to_string()));
     }
 }

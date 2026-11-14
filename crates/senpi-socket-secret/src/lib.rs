@@ -156,10 +156,11 @@ const fn reason_code(reason: NotLocalReason) -> &'static str {
 
 #[napi(object)]
 pub struct PublishFailure {
-    /// The Windows call that failed (`dacl`, `create_staging`, `write`, `write_zero`, `flush`, `rename`).
+    /// The Windows call that failed (`dacl`, `create_staging`, `write`, `write_zero`, `flush`, `rename`),
+    /// or `owner_sid_utf16` when the current user's SID string was not valid UTF-16.
     pub step: String,
-    /// Its `GetLastError` value.
-    pub code: u32,
+    /// Its `GetLastError` value; absent for `owner_sid_utf16`, where no Windows call failed.
+    pub code: Option<u32>,
 }
 
 /// A staging file this attempt could not delete. It is still at `path`; the caller removes it.
@@ -170,10 +171,18 @@ pub struct LeftBehindStaging {
     pub windows_error: u32,
 }
 
+/// What one `publishNoReplace` call did; JavaScript sees exactly `published`, `collision` or `failed`.
+#[napi(string_enum = "lowercase")]
+#[derive(Debug, PartialEq, Eq)]
+pub enum PublishResultOutcome {
+    Published,
+    Collision,
+    Failed,
+}
+
 #[napi(object)]
 pub struct PublishResult {
-    /// `published`, `collision` or `failed`.
-    pub outcome: String,
+    pub outcome: PublishResultOutcome,
     /// Set when `outcome` is `failed`.
     pub failure: Option<PublishFailure>,
     pub staging_left_behind: Option<LeftBehindStaging>,
@@ -196,22 +205,26 @@ pub fn publish_no_replace_js(
 }
 
 fn publish_result(publication: Publication, staging_path: &str) -> napi::Result<PublishResult> {
-    let (outcome, failure) = match publication.result {
-        Ok(PublishOutcome::Published) => ("published", None),
-        Ok(PublishOutcome::Collision) => ("collision", None),
-        Err(PublishError::UnsupportedPlatform) => {
-            return Err(napi::Error::from_reason("publishNoReplace: unsupported platform"));
-        }
-        Err(PublishError::Os { step, code }) => (
-            "failed",
+    let failed = |step: &str, code| {
+        (
+            PublishResultOutcome::Failed,
             Some(PublishFailure {
                 step: step.to_string(),
                 code,
             }),
-        ),
+        )
+    };
+    let (outcome, failure) = match publication.result {
+        Ok(PublishOutcome::Published) => (PublishResultOutcome::Published, None),
+        Ok(PublishOutcome::Collision) => (PublishResultOutcome::Collision, None),
+        Err(PublishError::UnsupportedPlatform) => {
+            return Err(napi::Error::from_reason("publishNoReplace: unsupported platform"));
+        }
+        Err(PublishError::Os { step, code }) => failed(step, Some(code)),
+        Err(PublishError::OwnerSidNotUtf16) => failed("owner_sid_utf16", None),
     };
     Ok(PublishResult {
-        outcome: outcome.to_string(),
+        outcome,
         failure,
         staging_left_behind: publication
             .staging_left_behind
@@ -289,7 +302,7 @@ mod tests {
             staging_left_behind: Some(5),
         };
         let result = publish_result(report, STAGING).expect("collision resolves");
-        assert_eq!(result.outcome, "collision");
+        assert_eq!(result.outcome, PublishResultOutcome::Collision);
         assert!(result.failure.is_none());
         let left = result.staging_left_behind.expect("leftover staging reported");
         assert_eq!(left.path, STAGING);
@@ -306,9 +319,9 @@ mod tests {
             staging_left_behind: Some(5),
         };
         let result = publish_result(report, STAGING).expect("an OS failure is a typed result");
-        assert_eq!(result.outcome, "failed");
+        assert_eq!(result.outcome, PublishResultOutcome::Failed);
         let failure = result.failure.expect("failure carried");
-        assert_eq!((failure.step.as_str(), failure.code), ("rename", 32));
+        assert_eq!((failure.step.as_str(), failure.code), ("rename", Some(32)));
         assert_eq!(result.staging_left_behind.expect("leftover").path, STAGING);
     }
 
@@ -319,8 +332,50 @@ mod tests {
             staging_left_behind: None,
         };
         let result = publish_result(report, STAGING).expect("published");
-        assert_eq!(result.outcome, "published");
+        assert_eq!(result.outcome, PublishResultOutcome::Published);
         assert!(result.failure.is_none() && result.staging_left_behind.is_none());
+    }
+
+    /// senpi#4310 review LOW (audit #14): the outcome crosses N-API as a `string_enum`, so no other
+    /// string can reach JavaScript.
+    #[test]
+    fn the_outcome_is_a_typed_string_enum() {
+        let outcome = |result| {
+            let report = Publication {
+                result,
+                staging_left_behind: None,
+            };
+            publish_result(report, STAGING).expect("resolves").outcome
+        };
+        assert_eq!(
+            outcome(Ok(PublishOutcome::Published)),
+            PublishResultOutcome::Published
+        );
+        assert_eq!(
+            outcome(Ok(PublishOutcome::Collision)),
+            PublishResultOutcome::Collision
+        );
+        assert_eq!(
+            outcome(Err(PublishError::Os {
+                step: "rename",
+                code: 32
+            })),
+            PublishResultOutcome::Failed
+        );
+    }
+
+    /// senpi#4310 review LOW (audit #8): an owner SID that is not valid UTF-16 is its own failure
+    /// step, never `dacl` with an invented Windows error 0.
+    #[test]
+    fn an_owner_sid_that_is_not_utf16_fails_without_a_windows_error() {
+        let report = Publication {
+            result: Err(PublishError::OwnerSidNotUtf16),
+            staging_left_behind: None,
+        };
+        let result = publish_result(report, STAGING).expect("a typed failure");
+        assert_eq!(result.outcome, PublishResultOutcome::Failed);
+        let failure = result.failure.expect("failure carried");
+        assert_eq!((failure.step.as_str(), failure.code), ("owner_sid_utf16", None));
     }
 
     #[test]

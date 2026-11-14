@@ -11,16 +11,34 @@ fn presence_binding_is_unavailable_off_windows() {
 
 #[cfg(windows)]
 mod windows {
-    use senpi_socket_secret::presence::{LockAttempt, PresenceBackend, PresenceRegistry, QuiescenceReceipt};
+    use senpi_socket_secret::presence::{LockAttempt, PresenceBackend, PresenceRegistry};
     use senpi_socket_secret::presence_binding::{
         presence_acquire, presence_probe, presence_release_after_quiescence, PresenceProbe, ReleasedReceipt,
     };
     use senpi_socket_secret::presence_windows::WindowsPresenceBackend;
+    use std::path::PathBuf;
+
+    /// Removes a test's scratch directory when the test ends. Declare it before anything that opens the
+    /// object, so it runs once every local handle is closed.
+    struct Scratch(PathBuf);
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A fresh scratch directory for `label` and the guard that removes it.
+    fn scratch(label: &str) -> (PathBuf, Scratch) {
+        let dir = std::env::temp_dir().join(format!("{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        (dir.clone(), Scratch(dir))
+    }
 
     #[test]
     fn busy_probe_overrides_inadmissibility_and_release_allows_a_new_acquisition() {
-        let dir = std::env::temp_dir().join(format!("senpi-binding-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let (dir, _scratch) = scratch("senpi-binding");
         let path = dir.join("presence.lock");
         std::fs::write(&path, b"tag").unwrap();
         let path = path.to_str().unwrap().to_string();
@@ -56,8 +74,7 @@ mod windows {
 
     #[test]
     fn inadmissible_success_is_released_but_admissible_success_is_retained() {
-        let dir = std::env::temp_dir().join(format!("senpi-binding-probe-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let (dir, _scratch) = scratch("senpi-binding-probe");
         let path = dir.join("presence.lock");
         std::fs::write(&path, b"tag").unwrap();
         let path = path.to_str().unwrap().to_string();
@@ -81,11 +98,10 @@ mod windows {
             request(true, true, Some("0".into())),
         ] {
             assert_eq!(presence_probe(candidate).status, "unknown");
+            // The object is free again: an independent registry acquires it, and dropping that
+            // registry closes its handle.
             let mut independent = PresenceRegistry::new(WindowsPresenceBackend);
             assert_eq!(independent.acquire("independent", &path), LockAttempt::Acquired);
-            independent.release_after_quiescence(QuiescenceReceipt {
-                presence_id: "independent".into(),
-            });
         }
         assert_eq!(presence_probe(request(true, false, None)).status, "acquired");
         let mut independent = PresenceRegistry::new(WindowsPresenceBackend);
@@ -116,17 +132,7 @@ mod windows {
     #[test]
     fn only_the_whole_immutable_header_matches() {
         let header = b"{\"tag\":\"c0ffee\",\"schema\":1,\"createdAt\":\"2026-10-27T00:00:00.000Z\"}\n";
-        let dir = std::env::temp_dir().join(format!("senpi-binding-header-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        // Removed at the end of the test once every handle on the object is closed.
-        struct Scratch(std::path::PathBuf);
-        impl Drop for Scratch {
-            fn drop(&mut self) {
-                let _ = std::fs::remove_dir_all(&self.0);
-            }
-        }
-        let _scratch = Scratch(dir.clone());
+        let (dir, _scratch) = scratch("senpi-binding-header");
         let path = dir.join("presence.lock");
         std::fs::write(&path, header).unwrap();
         let path = path.to_str().unwrap().to_string();
@@ -155,11 +161,10 @@ mod windows {
             let verdict = presence_probe(request(partial));
             assert_eq!(verdict.status, "unknown");
             assert_eq!(verdict.reason.as_deref(), Some("inadmissible"));
+            // The object is free again: an independent registry acquires it, and dropping that
+            // registry closes its handle.
             let mut independent = PresenceRegistry::new(WindowsPresenceBackend);
             assert_eq!(independent.acquire("independent", &path), LockAttempt::Acquired);
-            independent.release_after_quiescence(QuiescenceReceipt {
-                presence_id: "independent".into(),
-            });
         }
         assert_eq!(presence_probe(request(header)).status, "acquired");
         assert_eq!(
