@@ -16,7 +16,7 @@ import {
 	createAgentSessionServices,
 } from "../../src/core/agent-session-runtime.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
-import type { ExtensionFactory } from "../../src/core/extensions/types.ts";
+import type { ExtensionFactory, InlineExtension, LoadExtensionsResult } from "../../src/core/extensions/types.ts";
 import { ModelRuntime } from "../../src/core/model-runtime.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import type { RpcCommand } from "../../src/modes/rpc/rpc-types.ts";
@@ -45,6 +45,12 @@ export interface ReleaseHostOptions {
 	readonly capabilities?: readonly string[];
 	/** Every record, with the connection whose socket received it (`undefined`: the host's default output). */
 	readonly onRecord?: (record: WireRecord, connection: string | undefined) => void;
+	/** More inline extensions every session loads. */
+	readonly extensions?: readonly InlineExtension[];
+	/** Applied to each session's loaded extensions as it is built: a test drops one from the sessions built later. */
+	readonly extensionsOverride?: (base: LoadExtensionsResult) => LoadExtensionsResult;
+	/** Awaited before each session is built: a test holds a replacement after the old session was disposed. */
+	readonly beforeBuild?: () => Promise<void>;
 }
 
 export async function startReleaseHost(extension: ExtensionFactory, options: ReleaseHostOptions = {}) {
@@ -71,12 +77,14 @@ export async function startReleaseHost(extension: ExtensionFactory, options: Rel
 		sessionManager,
 		sessionStartEvent,
 	}) => {
+		await options.beforeBuild?.();
 		const services = await createAgentSessionServices({
 			agentDir,
 			cwd: sessionCwd,
 			modelRuntime,
 			resourceLoaderOptions: {
-				extensionFactories: [registerFaux, extension],
+				extensionFactories: [registerFaux, extension, ...(options.extensions ?? [])],
+				...(options.extensionsOverride === undefined ? {} : { extensionsOverride: options.extensionsOverride }),
 				noSkills: true,
 				noPromptTemplates: true,
 				noThemes: true,

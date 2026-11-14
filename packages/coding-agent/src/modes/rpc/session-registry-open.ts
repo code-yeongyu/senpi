@@ -14,6 +14,7 @@ import { startOpenTimer } from "../../core/open-timing.ts";
 import { attachToOpenSession } from "./session-registry-attach.ts";
 import {
 	type PendingClaims,
+	followRunningSession,
 	settleClosingReservation,
 	settlePendingClaim,
 	takeCrossGenerationClaim,
@@ -119,6 +120,7 @@ export async function openRegistrySession(
 			now: host.now(),
 			createRuntime: host.options.createRuntime,
 			sync: () => host.syncRuntimeMetadata(),
+			follow: (opened) => followRunningSession(opened, host.reservations, host.options.pathReservations),
 		});
 	} catch (cause) {
 		// Give the path back before waking waiters, or they find a reservation no entry backs. A failed
@@ -172,6 +174,9 @@ export async function openRegistrySession(
 			}),
 		);
 		timer.mark("runtime");
+		entry.runtime.setAfterSessionSwap(() =>
+			followRunningSession(entry, host.reservations, host.options.pathReservations),
+		);
 		assertRequestedModelResolved(runtimeProfile, entry.runtime.diagnostics);
 		ClientAdmissions.sealQueuedOnReplace(entry.runtime);
 		EffectLedger.sealOnReplace(entry.runtime);
