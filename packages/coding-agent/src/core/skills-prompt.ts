@@ -6,6 +6,48 @@ export const COMPACT_SKILL_CATALOG_COUNT = 100;
 export const COMPACT_SKILL_CATALOG_DESCRIPTION_BYTES = 16 * 1024;
 export const MAX_SKILL_CATALOG_BYTES = 48 * 1024;
 const ONE_LINE_DESCRIPTION_MAX_CHARS = 160;
+
+/**
+ * Per-session overrides for the catalog caps (`skillCatalog` in settings). An omitted field keeps the
+ * built-in default; a non-positive or non-finite value also keeps it, so a malformed settings file cannot
+ * empty the catalog or drop every description.
+ */
+export interface SkillCatalogLimits {
+	/** Visible skills above this count switch the catalog to one line per skill. */
+	compactSkillCount?: number;
+	/** Total description bytes above which the catalog switches to one line per skill. */
+	compactDescriptionBytes?: number;
+	/** Rendered UTF-8 byte cap for the whole section, roots table and markup included. */
+	maxBytes?: number;
+}
+
+export interface ResolvedSkillCatalogLimits {
+	readonly compactSkillCount: number;
+	readonly compactDescriptionBytes: number;
+	readonly maxBytes: number;
+}
+
+const DEFAULT_SKILL_CATALOG_LIMITS: ResolvedSkillCatalogLimits = {
+	compactSkillCount: COMPACT_SKILL_CATALOG_COUNT,
+	compactDescriptionBytes: COMPACT_SKILL_CATALOG_DESCRIPTION_BYTES,
+	maxBytes: MAX_SKILL_CATALOG_BYTES,
+};
+
+function positiveLimit(value: unknown, fallback: number): number {
+	return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+}
+
+export function resolveSkillCatalogLimits(limits?: SkillCatalogLimits): ResolvedSkillCatalogLimits {
+	return {
+		compactSkillCount: positiveLimit(limits?.compactSkillCount, DEFAULT_SKILL_CATALOG_LIMITS.compactSkillCount),
+		compactDescriptionBytes: positiveLimit(
+			limits?.compactDescriptionBytes,
+			DEFAULT_SKILL_CATALOG_LIMITS.compactDescriptionBytes,
+		),
+		maxBytes: positiveLimit(limits?.maxBytes, DEFAULT_SKILL_CATALOG_LIMITS.maxBytes),
+	};
+}
+
 // A catalog whose 160-character lines overflow the section cap tries shorter lines before dropping descriptions.
 const TIGHT_ONE_LINE_DESCRIPTION_MAX_CHARS = 100;
 const MIN_FILL_CHARS = 24;
@@ -22,29 +64,32 @@ const VERB_TRIGGER_CLAUSE = new RegExp(
 const SENTENCE_END = /[.!?](?=\s|$)/g;
 
 /** A catalog this large is listed by name plus a one-line description, since it rides on every request. */
-export function isLargeSkillCatalog(skills: readonly Skill[]): boolean {
-	if (skills.length > COMPACT_SKILL_CATALOG_COUNT) return true;
+export function isLargeSkillCatalog(skills: readonly Skill[], limits?: SkillCatalogLimits): boolean {
+	const resolved = resolveSkillCatalogLimits(limits);
+	if (skills.length > resolved.compactSkillCount) return true;
 	const bytes = skills.reduce((sum, skill) => sum + Buffer.byteLength(skill.description, "utf8"), 0);
-	return bytes > COMPACT_SKILL_CATALOG_DESCRIPTION_BYTES;
+	return bytes > resolved.compactDescriptionBytes;
 }
 
-export function warnIfLargeSkillCatalog(skills: readonly Skill[]): ResourceDiagnostic[] {
-	const catalog = buildSkillCatalog(skills, "read");
+export function warnIfLargeSkillCatalog(skills: readonly Skill[], limits?: SkillCatalogLimits): ResourceDiagnostic[] {
+	const catalog = buildSkillCatalog(skills, "read", limits);
+	const resolved = resolveSkillCatalogLimits(limits);
 	if (!catalog.compact && !catalog.namesOnly) return [];
 	return [
 		{
 			type: "warning",
 			category: "size-limit",
 			message: catalog.namesOnly
-				? `The skills section is limited to ${MAX_SKILL_CATALOG_BYTES / 1024} KiB: descriptions were dropped and ${catalog.omitted} skills were omitted. Remove unused skills to shrink every request.`
-				: `The skills catalog uses one-line descriptions to limit request size (above ${COMPACT_SKILL_CATALOG_COUNT} skills, ${COMPACT_SKILL_CATALOG_DESCRIPTION_BYTES / 1024} KiB of descriptions, or ${MAX_SKILL_CATALOG_BYTES / 1024} KiB rendered). Remove unused skills to shrink every request.`,
+				? `The skills section is limited to ${resolved.maxBytes / 1024} KiB: descriptions were dropped and ${catalog.omitted} skills were omitted. Remove unused skills to shrink every request.`
+				: `The skills catalog uses one-line descriptions to limit request size (above ${resolved.compactSkillCount} skills, ${resolved.compactDescriptionBytes / 1024} KiB of descriptions, or ${resolved.maxBytes / 1024} KiB rendered). Remove unused skills to shrink every request.`,
 		},
 	];
 }
 
-function buildSkillCatalog(skills: readonly Skill[], fileReadTool: "read" | "bash") {
+function buildSkillCatalog(skills: readonly Skill[], fileReadTool: "read" | "bash", limits?: SkillCatalogLimits) {
+	const resolved = resolveSkillCatalogLimits(limits);
 	const visible = skills.filter((skill) => !skill.disableModelInvocation);
-	const compact = isLargeSkillCatalog(visible);
+	const compact = isLargeSkillCatalog(visible, limits);
 	const options = {
 		fileReadTool,
 		compact,
@@ -53,9 +98,9 @@ function buildSkillCatalog(skills: readonly Skill[], fileReadTool: "read" | "bas
 		descriptionChars: ONE_LINE_DESCRIPTION_MAX_CHARS,
 	};
 	const prompt = renderSkills(visible, options);
-	if (Buffer.byteLength(prompt) <= MAX_SKILL_CATALOG_BYTES) return { prompt, compact, namesOnly: false, omitted: 0 };
+	if (Buffer.byteLength(prompt) <= resolved.maxBytes) return { prompt, compact, namesOnly: false, omitted: 0 };
 	const compactPrompt = compact ? prompt : renderSkills(visible, { ...options, compact: true });
-	if (Buffer.byteLength(compactPrompt) <= MAX_SKILL_CATALOG_BYTES) {
+	if (Buffer.byteLength(compactPrompt) <= resolved.maxBytes) {
 		return { prompt: compactPrompt, compact: true, namesOnly: false, omitted: 0 };
 	}
 	const tightPrompt = renderSkills(visible, {
@@ -63,12 +108,12 @@ function buildSkillCatalog(skills: readonly Skill[], fileReadTool: "read" | "bas
 		compact: true,
 		descriptionChars: TIGHT_ONE_LINE_DESCRIPTION_MAX_CHARS,
 	});
-	if (Buffer.byteLength(tightPrompt) <= MAX_SKILL_CATALOG_BYTES) {
+	if (Buffer.byteLength(tightPrompt) <= resolved.maxBytes) {
 		return { prompt: tightPrompt, compact: true, namesOnly: false, omitted: 0 };
 	}
 	const minimal = { ...options, namesOnly: true };
 	const namesPrompt = renderSkills(visible, minimal);
-	if (Buffer.byteLength(namesPrompt) <= MAX_SKILL_CATALOG_BYTES) {
+	if (Buffer.byteLength(namesPrompt) <= resolved.maxBytes) {
 		return { prompt: namesPrompt, compact, namesOnly: true, omitted: 0 };
 	}
 	let low = 0;
@@ -76,7 +121,7 @@ function buildSkillCatalog(skills: readonly Skill[], fileReadTool: "read" | "bas
 	while (low < high) {
 		const count = Math.ceil((low + high) / 2);
 		const candidate = renderSkills(visible.slice(0, count), { ...minimal, omitted: visible.length - count });
-		if (Buffer.byteLength(candidate) <= MAX_SKILL_CATALOG_BYTES) low = count;
+		if (Buffer.byteLength(candidate) <= resolved.maxBytes) low = count;
 		else high = count - 1;
 	}
 	const omitted = visible.length - low;
@@ -133,8 +178,12 @@ function truncate(text: string, maxChars: number): string {
 // rule tells the model to expand aliases by joining them back to the root.
 // `fileReadTool` lets a bash-only tool set still load skills: the loading rule names
 // the tool the session actually has.
-export function formatSkillsForPrompt(skills: Skill[], fileReadTool: "read" | "bash" = "read"): string {
-	return buildSkillCatalog(skills, fileReadTool).prompt;
+export function formatSkillsForPrompt(
+	skills: Skill[],
+	fileReadTool: "read" | "bash" = "read",
+	limits?: SkillCatalogLimits,
+): string {
+	return buildSkillCatalog(skills, fileReadTool, limits).prompt;
 }
 
 function renderSkills(
@@ -152,9 +201,13 @@ function renderSkills(
 	}
 
 	const rootByPath = new Map<string, string>();
+	const rootDisplay = new Map<string, string>();
 	for (const skill of visibleSkills) {
-		const dir = skill.filePath.split("/").slice(0, -2).join("/"); // parent of <name>/SKILL.md
-		if (!rootByPath.has(dir)) rootByPath.set(dir, `r${rootByPath.size}`);
+		const dir = skillRootPath(skill.filePath); // parent of <name>/SKILL.md
+		if (!rootByPath.has(dir)) {
+			rootByPath.set(dir, `r${rootByPath.size}`);
+			rootDisplay.set(dir, promptPath(pinnedDisplayPath(skillRootDisplayPath(skill.filePath))));
+		}
 	}
 
 	const lines = [
@@ -168,7 +221,7 @@ function renderSkills(
 	];
 	for (const [dir, alias] of rootByPath) {
 		// pinnedDisplayPath: the test-only checkout pin (senpi#5067); the path itself unless SENPI_TEST_WORKSTATION pins it.
-		lines.push(`  <${alias}>${escapeXml(pinnedDisplayPath(dir))}</${alias}>`);
+		lines.push(`  <${alias}>${escapeXml(rootDisplay.get(dir) ?? dir)}</${alias}>`);
 	}
 	const oneLine = options.compact || options.namesOnly;
 	lines.push(
@@ -185,9 +238,9 @@ function renderSkills(
 			lines.push(compactSkillLine(skill, rootByPath, options.namesOnly ? undefined : options.descriptionChars));
 			continue;
 		}
-		const dir = skill.filePath.split("/").slice(0, -2).join("/");
+		const dir = skillRootPath(skill.filePath);
 		const alias = rootByPath.get(dir);
-		const relative = skill.filePath.startsWith(`${dir}/`) ? skill.filePath.slice(dir.length + 1) : skill.filePath;
+		const relative = skillRelativePath(skill.filePath, dir);
 		lines.push("  <skill>");
 		lines.push(`    <name>${escapeXml(skill.name)}</name>`);
 		if (!options.namesOnly) {
@@ -210,14 +263,37 @@ function compactSkillLine(
 	rootByPath: ReadonlyMap<string, string>,
 	descriptionChars: number | undefined,
 ): string {
-	const dir = skill.filePath.split("/").slice(0, -2).join("/");
+	const dir = skillRootPath(skill.filePath);
 	const alias = rootByPath.get(dir);
-	const relative = skill.filePath.startsWith(`${dir}/`) ? skill.filePath.slice(dir.length + 1) : skill.filePath;
+	const relative = skillRelativePath(skill.filePath, dir);
 	const location = relative === `${skill.name}/SKILL.md` ? alias : `${alias}/${relative}`;
 	const head = `- ${escapeXml(skill.name)} [${escapeXml(location ?? relative)}]`;
 	return descriptionChars === undefined
 		? head
 		: `${head}: ${escapeXml(oneLineDescription(skill.description, descriptionChars))}`;
+}
+
+/**
+ * Skill paths arrive with the host's separators: the loader joins them with `node:path`, so a Windows host hands
+ * over backslashes. The catalog is POSIX-shaped (a location joins `rN` with `/`), so normalize before splitting;
+ * otherwise every Windows path renders as one empty root and a full absolute location per skill (senpi#4569).
+ */
+function promptPath(filePath: string): string {
+	return filePath.replace(/\\/g, "/");
+}
+
+function skillRootPath(filePath: string): string {
+	return promptPath(filePath).split("/").slice(0, -2).join("/");
+}
+
+/** The same parent, keeping the host's separators so `pinnedDisplayPath` can match a real path. */
+function skillRootDisplayPath(filePath: string): string {
+	return filePath.replace(/[\\/][^\\/]+$/, "").replace(/[\\/][^\\/]+$/, "");
+}
+
+function skillRelativePath(filePath: string, root: string): string {
+	const path = promptPath(filePath);
+	return path.startsWith(`${root}/`) ? path.slice(root.length + 1) : path;
 }
 
 function escapeXml(str: string): string {

@@ -1,4 +1,5 @@
 import type { Skill } from "../skills.ts";
+import type { SkillCatalogLimits } from "../skills-prompt.ts";
 import { formatSkillsForPrompt } from "../skills.ts";
 import { buildHandoffSection } from "./handoff.ts";
 import { buildIdentitySection } from "./identity.ts";
@@ -81,6 +82,8 @@ export interface BuildDynamicSystemPromptOptions {
 	sharedSections?: SharedSections;
 	contextFiles: Array<{ path: string; content: string; scope?: "user" }>;
 	skills: Skill[];
+	/** Catalog caps from settings (`skillCatalog`); omitted fields keep the built-in defaults. */
+	skillCatalog?: SkillCatalogLimits;
 	tuningSection?: string;
 	/**
 	 * Replaces the default core sections (identity through style) with a
@@ -189,7 +192,7 @@ export function buildDynamicSystemPromptParts(options: BuildDynamicSystemPromptO
 		}
 	}
 
-	const skillsSection = formatSkillsForPrompt(options.skills);
+	const skillsSection = formatSkillsForPrompt(options.skills, "read", options.skillCatalog);
 	if (skillsSection) {
 		parts.push({ name: "skills", source: "skills", text: `\n${skillsSection}` });
 	}

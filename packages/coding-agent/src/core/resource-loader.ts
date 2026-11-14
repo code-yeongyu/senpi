@@ -1212,7 +1212,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.skillDiagnostics = [
 			...resolvedSkills.diagnostics,
 			...ignoredSkillDiagnostics(this.ignoredSkillFiles, this.skills),
-			...warnIfLargeSkillCatalog(this.skills),
+			...warnIfLargeSkillCatalog(this.skills, this.settingsManager.getSettings().skillCatalog),
 		];
 	}
 
