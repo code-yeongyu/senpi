@@ -12,7 +12,7 @@
  */
 import type { SessionEntry, SessionManager } from "./session-manager.ts";
 
-export const SESSION_ARCHIVED_CUSTOM_TYPE = "session_archived";
+const SESSION_ARCHIVED_CUSTOM_TYPE = "session_archived";
 
 /** The flag `entry` sets for session `sessionId`, or undefined when it sets none there. */
 export function archivedFlagOf(entry: SessionEntry, sessionId: string): boolean | undefined {
