@@ -3667,7 +3667,7 @@ A move hands a session to another host under the same id (capability `move_sessi
 
 | `op` | Side | Fields | `data` |
 |---|---|---|---|
-| `prepare` | receiver | `moveId`, `cwd?` (absolute), `repository?` | `{ state: "ready", expires_at }` (or `receiving` / `accepted` if it already is); the move must see its bundle within 10 minutes. With `cwd` it first checks that folder's repository and then holds the move to it; capability `move_session_prepare_repository` |
+| `prepare` | receiver | `moveId`, `cwd?` (absolute), `repository?`, `session?` (`{ id, fileName }`), `sessionDir?` (absolute) | `{ state: "ready", expires_at }` (or `receiving` / `accepted` if it already is); the move must see its bundle within 10 minutes. With `cwd` it first checks that folder's repository and then holds the move to it; capability `move_session_prepare_repository`. With `session` it also refuses a landing file that is already taken (`move_target_occupied`); capability `move_session_prepare_occupied` |
 | `cancel` | receiver | `moveId` | the record: `declined` with reason `cancelled`, unless already `receiving` or `accepted` |
 | `export` | sender | `sessionPath`, `moveId`, `target`, `droppedUserMessages?`, `inline?`, `inlineMaxBytes?` | `{ move_id, session_id, bundle_dir, files }`; `bundle_dir` is the folder to send, kept until `finish`. With `inline`, also `inline_files` when the bundle is small: see "Moving without a bundle folder" |
 | `import` | receiver | `cwd` (absolute), `bundleDir` (absolute) or `files`, `from?`, `sessionDir?` (absolute), `open?` | `{ session_id, session_path }`; the session lands in this host's session folder for `cwd`, or in `sessionDir`. With `open`, the opened session's data sits beside it. A move lands in one file only: see below |
@@ -3723,6 +3723,26 @@ A `prepare` with neither `cwd` nor `repository` behaves exactly as it always did
 The order is: the sender reads the session's repository (`identity`, alongside its `get_state`) and the receiver reads the target folder's; the receiver `prepare`s with both, which refuses a folder of another repository before anything is released; the sender releases the session with `release_session` reason `move` (usually with `interrupt: true`) and passes its `dropped.user_messages` to `export`; the transport carries `bundle_dir` to the receiver, which `import`s it; the sender asks `status` (on start, on reconnect, and when the session is opened) and `finish`es with the answer. `accepted` leaves the sender's copy read-only for good; `declined`, `failed`, or `accepted` with `revoked: true` makes it writable again with its queued input back. `receiving` changes nothing.
 
 Refusals carry `errorData.detail` (the reason and what to do): `invalid_move_request` (a field does not parse), `session_open_here` (export or finish of a session this host has open), `move_not_released` (export of a file not sealed for that move), `move_fenced` (a move already answered, a bundle for a move the receiver never readied, or an `import` or `prepare` naming a folder other than the one the move was readied for), `move_bundle_invalid`, `move_repository_mismatch` (`cwd` is not a checkout of the same repository: from `prepare` before the release, and from `import`), `move_target_occupied`, `move_mismatch`, `move_already_moved` (a revoked answer for a sender already marked moved), `session_moved_away`, `session_held`, and `move_failed` for anything else. `move_failed` also refuses an `export` whose sealing `release_session` staged extension state that is no longer on disk: the session is never bundled without it, and `finish` with a `declined` answer takes it back.
+
+
+#### Checking the landing file before the release
+
+One more reason a move cannot land was, until senpi#6471, found only by the `import`: the file the session would land in is already taken. `prepare` can look first when the caller names the session. A host that does this advertises `move_session_prepare_occupied`.
+
+`prepare { moveId, cwd, repository, session: { id, fileName }, sessionDir? }`: `id` is the moved session's id and `fileName` is its file's own name, with no folder. The landing file is `fileName` inside `sessionDir` when that is sent, and inside the default session folder of `cwd` otherwise, exactly as `import` picks it. Send `sessionDir` here whenever the import will carry one. The repository check comes first and is unchanged. Then:
+
+- no file there, or a sealed earlier copy of the same session: the move is readied. `prepare` removes nothing and creates nothing, not even the session folder; replacing that earlier copy stays the import's job, and so does making the folder.
+- another session, or a copy of the same session that can still be written: refused `move_target_occupied`, and nothing is readied, so the sender never releases.
+
+`session` without `cwd`, a `session` that is not `{ id, fileName }`, an `id` that is not a plain id, a `fileName` with a folder in it, a relative `sessionDir`, a `sessionDir` that is a file, or a `sessionDir` with no `session` is refused `invalid_move_request`, and nothing is readied.
+
+What this check does not settle:
+
+- The folder can change between `prepare` and `import`. The import makes the same check again inside its commit, and that one decides.
+- `prepare` reads the landing file without holding that session's lock. It answers what was there when it looked.
+- It looks only at the file the caller named. A caller that names one session file and then imports a bundle that carries another gets no early refusal for that other file; the import still refuses it.
+
+A host without `move_session_prepare_occupied` readies the move and ignores `session` and `sessionDir`; its import refuses an occupied landing file as it always did. Read the capability to know whether the early check happened.
 
 #### Moving without a bundle folder
 

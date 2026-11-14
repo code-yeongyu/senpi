@@ -16,9 +16,10 @@ import {
 } from "./bundle.ts";
 import { EXTENSION_STATE_PAYLOAD, movedStateDir } from "./extension-state.ts";
 import { type LandedFile, outcomeIn, readLanding } from "./landed-file.ts";
+import { landingFile, MoveTargetOccupiedError } from "./landing-occupied.ts";
 import { type MoveAnswer, MoveFencedError, type MoveLedger } from "./move-ledger.ts";
 import { moveStep } from "./move-steps.ts";
-import { headerSessionId, type MoveId, SESSION_MOVED_IN, sessionOwnership } from "./ownership.ts";
+import { type MoveId, SESSION_MOVED_IN } from "./ownership.ts";
 import { requeueInput } from "./requeue.ts";
 import { isCheckoutOfRepository, MoveRefusedError } from "./repository-check.ts";
 import { moveLockKey } from "./session-lock.ts";
@@ -34,17 +35,6 @@ export interface ImportMovedSessionOptions {
 	/** The sha256 each file of an inline bundle was sent with (senpi#6267); checked beside the manifest's. */
 	readonly sent?: ReadonlyMap<string, string>;
 	readonly readIdentity?: (dir: string) => Promise<RepositoryIdentity | undefined>;
-}
-
-export class MoveTargetOccupiedError extends Error {
-	readonly code = "move_target_occupied";
-
-	constructor(target: string) {
-		super(
-			`A session that can still be written already sits at ${target}; the moved session was not imported over it. Close or move that session first, then send it again.`,
-		);
-		this.name = "MoveTargetOccupiedError";
-	}
 }
 
 const movedInFor = async (file: string, moveId: MoveId): Promise<boolean> =>
@@ -216,11 +206,9 @@ export async function importMovedSession(
  * the session back, and nothing writable was lost here (the removed copy could not be written).
  */
 async function replacePredecessor(target: string, sessionId: string, sessionDir: string): Promise<void> {
-	if (!(await pathExists(target))) return;
-	const entries = await loadEntriesFromFileAsync(target);
-	if (headerSessionId(entries) !== sessionId || sessionOwnership(entries).writable) {
-		throw new MoveTargetOccupiedError(target);
-	}
+	const found = await landingFile(target, sessionId);
+	if (found === "free") return;
+	if (found === "occupied") throw new MoveTargetOccupiedError(target);
 	const extensions = join(sessionDir, "extensions");
 	if (await pathExists(extensions)) {
 		for (const extension of await readdir(extensions, { withFileTypes: true })) {

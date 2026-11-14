@@ -5,7 +5,11 @@
  */
 import { join } from "node:path";
 import { readRepositoryIdentity } from "../../core/repository-identity.ts";
-import { getDefaultSessionDir, loadEntriesFromFileAsync } from "../../core/session-manager.ts";
+import {
+	getDefaultSessionDir,
+	getDefaultSessionDirPath,
+	loadEntriesFromFileAsync,
+} from "../../core/session-manager.ts";
 import { copySessionAs } from "../../core/session-move/copy.ts";
 import { exportSessionForMoveAndRead } from "../../core/session-move/export.ts";
 import { sealedOutgoingStateDir } from "../../core/session-move/extension-state.ts";
@@ -38,6 +42,23 @@ export interface MoveSessionPort extends MoveImportPort {
 	hostedPaths(): readonly string[];
 }
 
+/**
+ * Where a `prepare` that names its session would land (senpi#6471): the session folder is picked exactly as the
+ * import of that move picks it, so both steps look at the same file. It is only named here, never created: a `prepare`
+ * reads, and the import makes the folder when the session lands.
+ */
+function prepareLanding(parsed: Extract<MoveRequest, { op: "prepare" }>, agentDir: string) {
+	if (parsed.session === undefined || parsed.cwd === undefined) return undefined;
+	return {
+		sessionId: parsed.session.id,
+		sessionFileName: parsed.session.fileName,
+		sessionDir:
+			parsed.sessionDir === undefined
+				? getDefaultSessionDirPath(resolvePath(parsed.cwd), agentDir)
+				: normalizePath(parsed.sessionDir),
+	};
+}
+
 /** Refusal codes the move core throws (`error.code`), passed through to the wire as they are. */
 const CORE_CODES: ReadonlySet<string> = new Set([
 	"move_fenced",
@@ -66,9 +87,11 @@ export async function moveSession(
 	const root = join(port.agentDir, "session-moves");
 	const ledger = new MoveLedger(join(root, "ledger"));
 	try {
+		if (parsed.op === "import" || parsed.op === "prepare") {
+			const notAFolder = await sessionDirRefusal(parsed.sessionDir);
+			if (notAFolder !== undefined) return refusal(command.id, RPC_ERROR_INVALID_MOVE_REQUEST, notAFolder);
+		}
 		if (parsed.op !== "import") return answer(command.id, await run(parsed, port, ledger, root));
-		const notAFolder = await sessionDirRefusal(parsed.sessionDir);
-		if (notAFolder !== undefined) return refusal(command.id, RPC_ERROR_INVALID_MOVE_REQUEST, notAFolder);
 		const landed = await importMoved(parsed, port, ledger, root);
 		const open = command.op === "import" ? command.open : undefined;
 		if (open === undefined) return answer(command.id, landed);
@@ -104,6 +127,7 @@ async function run(
 					moveId: parsed.moveId,
 					cwd: parsed.cwd,
 					repository: parsed.repository,
+					landing: prepareLanding(parsed, port.agentDir),
 				}),
 			);
 		case "identity": {
