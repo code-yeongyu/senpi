@@ -9092,7 +9092,7 @@
 		},
 		"packages/coding-agent/src/modes/rpc/project-file-store.ts#writeChains": {
 			"class": "per-copy-safe",
-			"reason": "promise chain or queue ordering this copy's own async work; a split only loses ordering between copies, holds no A1-A3 asset"
+			"reason": "per-path write chain: writes of one project file queue behind each other inside this copy, and every write is a temp file plus rename, so a split only loses ordering between copies and lets two copies land the file in either order, as other local writers already can; not A1-A3 (design 3.3)"
 		},
 		"packages/coding-agent/src/modes/rpc/project-mcp-commands.ts#MCP_FILE": {
 			"class": "constant",
