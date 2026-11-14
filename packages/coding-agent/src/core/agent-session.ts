@@ -2538,7 +2538,7 @@ export class AgentSession {
 					toolCallId: toolCall.id,
 					...(options.parentToolCallId ? { parentToolCallId: options.parentToolCallId } : {}),
 					input: args as Record<string, unknown>,
-				});
+				}, signal === undefined ? {} : { signal });
 			} catch (err) {
 				if (err instanceof Error) {
 					throw err;
@@ -5486,6 +5486,7 @@ export class AgentSession {
 
 		const beforeResult = await this.preflightToolCall(prepared.toolCall, prepared.args, {
 			waitForEventQueue: this._toolExecutionDepth === 0,
+			...(options?.signal === undefined ? {} : { signal: options.signal }),
 		});
 		if (beforeResult?.block) {
 			throw new ExecuteToolError(

@@ -41,6 +41,8 @@ export interface ToolEventDispatchOptions {
 	readonly forward?: ToolEventForwarder;
 	/** Where the loop runs: run only this one handler (a forwarded request). */
 	readonly only?: ForwardedHandler;
+	/** The call's own abort signal: a `tool_call` handler's `ctx.signal` for this call (senpi#6676). */
+	readonly signal?: AbortSignal;
 }
 
 const undeclaredHandlers = (extension: Extension, event: ExtensionEvent["type"]): HandlerFn[] =>
