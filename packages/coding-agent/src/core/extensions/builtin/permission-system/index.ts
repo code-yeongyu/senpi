@@ -319,8 +319,11 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 	const authorizeToolCall = async (
 		event: ToolCallEvent,
 		ctx: ExtensionContext,
-		signal?: AbortSignal,
+		dispatchSignal?: AbortSignal,
 	): Promise<ToolCallEventResult | undefined> => {
+		// A `tool_call` hook gets no signal argument, so its prompt ends with the turn: an abort releases a prompt
+		// nobody answers (a child's dialog forwarded to a host that never shows it), senpi#6670.
+		const signal = dispatchSignal ?? ctx.signal;
 		attachWithoutSession(ctx);
 		followPresetFlag(ctx.cwd, ctx.agentDir);
 		if (setupError !== null) {
