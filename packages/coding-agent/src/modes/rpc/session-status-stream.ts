@@ -285,14 +285,22 @@ export class SessionStatusStream {
 		);
 	}
 
+	/**
+	 * The session's last recorded change. A session that has not changed since the host started has none, so the
+	 * first time the stream sees it, it records the open at that moment and returns the same stamp from then on:
+	 * a later subscription must not report its own subscribe time as activity (senpi#6415). A published change
+	 * replaces it.
+	 */
 	private lastChangeOf(sessionId: string, at?: string): LastChange {
-		return (
-			this.lastChanges.get(sessionId) ?? {
-				at: at ?? (this.delivery.now?.() ?? new Date()).toISOString(),
-				cause: "open",
-				by: "host",
-			}
-		);
+		const known = this.lastChanges.get(sessionId);
+		if (known !== undefined) return known;
+		const opened: LastChange = {
+			at: at ?? (this.delivery.now?.() ?? new Date()).toISOString(),
+			cause: "open",
+			by: "host",
+		};
+		this.lastChanges.set(sessionId, opened);
+		return opened;
 	}
 
 	private recordFor(
