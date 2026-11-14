@@ -68,6 +68,7 @@ import {
 	runForcedTestSuite,
 } from "./release-forced-test-suite.mjs";
 import { compileFragments } from "./sync-changes-fragments.mjs";
+import { assertRegistryPackagesKnown } from "./npm-registry.mjs";
 import { fileURLToPath } from "node:url";
 
 const VERSION_RE = /^\d{4}\.\d{1,2}\.\d{1,2}(-\d+)?$/;
@@ -197,6 +198,10 @@ async function main() {
 
 	// Inside GitHub Actions a live release runs only from refs/heads/main (senpi#6645), whatever the workflow allowed.
 	assertLiveRunOnMain({ dryRun: args.dryRun, env: process.env, what: "the release" });
+	// Then, before any build, suite, tag or push: a name npm does not know stops the publish half-way (senpi#6636).
+	assertRegistryPackagesKnown();
+	log("every publish-set package is known to the npm registry");
+
 	const capture = (bin, cmdArgs) => captureCommand(bin, cmdArgs);
 	if (args.testedSha !== null) {
 		// The forced-suite matrix jobs tested this commit and the release job checked it out (senpi#6642).

@@ -6287,12 +6287,12 @@ as they would on `reload`, and the next session opened in the folder gets the sa
 implied by `open_session` or by a permission preset; only this explicit request saves a decision.
 
 ```json
-{"type": "set_project_trust", "choice": "trust"}
+{"type": "set_project_trust", "choice": "trust", "expectedCwd": "/home/me/project"}
 ```
 
-`choice` is `trust` (this folder), `trust_parent` (the parent folder; clears this folder's own entry, as `/trust`
+`expectedCwd` is optional, as on every project write: see [The folder a project write is for](#the-folder-a-project-write-is-for). `choice` is `trust` (this folder), `trust_parent` (the parent folder; clears this folder's own entry, as `/trust`
 does) or `do_not_trust`. The response carries the same `data` as `get_project_trust`, read after the change.
-Errors: `invalid_argument` for an unknown choice, `project_trust_locked` when the launch named the trust, and
+Errors: `invalid_argument` for an unknown choice or an `expectedCwd` that is not a string, `project_cwd_mismatch` when `expectedCwd` names another folder than the session's (nothing is saved or applied), `project_trust_locked` when the launch named the trust, and
 `project_trust_extension_decided` when a `project_trust` handler of an extension loaded before trust (never a
 project extension) decides the other way: such a handler decides before any saved choice when a session opens, so
 the request is refused and nothing is saved or applied. A folder with nothing trust gates stays trusted whatever is
@@ -6332,11 +6332,12 @@ the file: values the session reads when it starts (default model and thinking le
 modes) apply after `reload` or in the next session.
 
 ```json
-{"type": "set_project_setting", "key": "defaultThinkingLevel", "value": "high"}
+{"type": "set_project_setting", "key": "defaultThinkingLevel", "value": "high", "expectedCwd": "/home/me/project"}
 ```
 
 The response carries the same `data` as `get_project_settings`, read after the write. Errors:
-`invalid_argument` when `key` is not an identifier (`[A-Za-z][A-Za-z0-9_]*`) or `value` is missing,
+`invalid_argument` when `key` is not an identifier (`[A-Za-z][A-Za-z0-9_]*`), `value` is missing or `expectedCwd` is
+not a string, `project_cwd_mismatch` when `expectedCwd` names another folder (nothing is written),
 `project_not_trusted` while the project is untrusted (trust it first), `project_settings_unreadable` when the
 existing file does not parse (nothing is written), and `project_settings_write_failed` when writing the file fails
 (permissions, a held lock).
@@ -6377,19 +6378,32 @@ Errors: `invalid_argument` when `path` is not a string, `project_file_not_allowe
 other path, or when a folder on the way or the file itself is a symlink or not a regular file and folder, and
 `project_file_too_large` (`errorData: { limitBytes }`) for a stored file over 512 KiB.
 
+
+#### The folder a project write is for
+
+`set_project_trust`, `set_project_setting` and `write_project_file` take an optional `expectedCwd`: the folder the
+caller means. A client that reaches a session by a key that can since name another session (a remote desktop, through
+a relay) states it, so the write lands only in that folder's project. When it is given and the session's working
+directory is another folder, the write is refused with `project_cwd_mismatch` and nothing is written or applied. Both
+paths are compared with only trailing separators of the path's own style dropped (`/` for a POSIX path; `\` or `/`
+for a drive or UNC path) and a Windows drive letter in either case; nothing is trimmed and the rest of the path is
+compared as written. A present `expectedCwd` that is not a string is refused with `invalid_argument`. Without it, a
+write behaves as before.
+
 #### write_project_file
 
 Replaces (or creates) one of the files `read_project_file` reads, naming the version it replaces.
 
 ```json
-{"type": "write_project_file", "path": "AGENTS.md", "content": "# Project rules\n", "ifEtag": "sha256-…"}
+{"type": "write_project_file", "path": "AGENTS.md", "content": "# Project rules\n", "ifEtag": "sha256-…", "expectedCwd": "/home/me/project"}
 ```
 
 `ifEtag` is required: the `etag` last read, or `null` to create a file that must not exist yet. Missing parent
 folders are created. The file lands by a temporary file and a rename, so a reader never sees a partial write, and
 writes to one file are applied one at a time. The response carries the same `data` as `read_project_file`, read
 after the write. The session reads its instruction files when they are next loaded (a new session or `reload`).
-Errors: `invalid_argument` when `content` is not a string or `ifEtag` is neither a string nor `null`,
+Errors: `invalid_argument` when `content` is not a string, `ifEtag` is neither a string nor `null`, or `expectedCwd` is
+not a string, `project_cwd_mismatch` when `expectedCwd` names another folder (nothing is written),
 `project_not_trusted` while the project is untrusted, `project_file_not_allowed` as for `read_project_file`,
 `project_file_too_large` (`errorData: { limitBytes }`) for content over 512 KiB or a stored file over 512 KiB (its
 version cannot be checked without reading it), `project_file_conflict` when

@@ -83,6 +83,8 @@ if (${JSON.stringify(name)} === "git") {
 	if (args[0] === "merge-base") process.exit(1);
 	if (args[0] === "merge") process.exit(${mergeStatus});
 }
+// The registry preflight (senpi#6636): every publish-set name is known here.
+if (${JSON.stringify(name)} === "npm" && args[0] === "view") process.stdout.write(JSON.stringify(args[1]) + "\\n");
 if (${JSON.stringify(name)} === "npm" && args[0] === "run" && args[1] === "test:scripts") {
 	const changelog = require("node:fs").readFileSync(${JSON.stringify(join(root, CHANGELOGS[0]))}, "utf8");
 	writeFileSync(${JSON.stringify(join(root, "TEST_SAW_CHANGELOG"))}, changelog.includes("## [Unreleased]\\n\\n### Fixed\\n\\n- Fixture.") ? "unstamped" : "stamped");

@@ -53,7 +53,9 @@ function withReleaseRepo(run) {
 
 		mkdirSync(bin);
 		for (const name of ["npm", "node", "bun", "gh"]) {
-			const body = `import { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(calls)}, JSON.stringify([${JSON.stringify(name)}, ...process.argv.slice(2)]) + "\\n");\n${name === "gh" ? "process.exit(1);\n" : ""}`;
+			// The registry preflight (senpi#6636) asks npm view for every publish-set name; the fake knows them all.
+			const npmView = name === "npm" ? 'if (process.argv[2] === "view") process.stdout.write(JSON.stringify(process.argv[3]) + "\\n");\n' : "";
+			const body = `import { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(calls)}, JSON.stringify([${JSON.stringify(name)}, ...process.argv.slice(2)]) + "\\n");\n${npmView}${name === "gh" ? "process.exit(1);\n" : ""}`;
 			writeFileSync(join(bin, name), `#!${process.execPath}\n${body}`);
 			chmodSync(join(bin, name), 0o755);
 		}

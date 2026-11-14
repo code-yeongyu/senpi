@@ -3178,10 +3178,6 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/core/credential-accounts.ts#NEEDS_USER": {
-			"class": "constant",
-			"reason": "lookup collection filled at load; never written after load"
-		},
 		"packages/coding-agent/src/core/credential-accounts.ts#UNBLOCKED": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
@@ -9077,6 +9073,10 @@
 		"packages/coding-agent/src/modes/rpc/pause-command-validation.ts#RUN_REF_KINDS": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/project-expected-cwd.ts#PROJECT_WRITES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
 		},
 		"packages/coding-agent/src/modes/rpc/project-file-commands.ts#writeChains": {
 			"class": "per-copy-safe",
