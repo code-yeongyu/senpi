@@ -6,7 +6,7 @@ import type { Model } from "../types.ts";
  * (`/v1/chat/completions`). Both slices live under the same host.
  * https://commandcode.ai/docs/provider (checked 2026-10-24)
  */
-export const COMMANDCODE_PROVIDER_BASE_URL = "https://api.commandcode.ai/provider";
+const COMMANDCODE_PROVIDER_BASE_URL = "https://api.commandcode.ai/provider";
 
 const COMMANDCODE_MODELS_URL = `${COMMANDCODE_PROVIDER_BASE_URL}/v1/models`;
 
