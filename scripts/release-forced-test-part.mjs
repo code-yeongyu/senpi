@@ -23,7 +23,7 @@ import { resolveWorkspaceDirectories } from "./run-workspaces.mjs";
  * Budget for one part, inside the job's 40-minute timeout after about 10 minutes of install and build. A coding-agent
  * shard runs about 17 min (98.8 min serial on 2026-11-06, over six shards); the rest about 10.
  */
-export const FORCED_PART_TIMEOUT_MS = 30 * 60_000;
+const FORCED_PART_TIMEOUT_MS = 30 * 60_000;
 
 /**
  * The steps of one part of the forced suite's plan.
