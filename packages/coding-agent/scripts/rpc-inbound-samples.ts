@@ -177,6 +177,7 @@ export const RPC_INBOUND_SAMPLES = {
 	get_tree: { type: "get_tree" },
 	get_last_assistant_text: { type: "get_last_assistant_text" },
 	set_session_name: { type: "set_session_name", name: "rpc inbound sample" },
+	set_session_archived: { type: "set_session_archived", archived: true },
 	record_user_activity: { type: "record_user_activity", kind: "draft" },
 	import_jsonl: { type: "import_jsonl", inputPath: `${SAMPLE_PATH_ROOT}/import.jsonl` },
 	get_messages: { type: "get_messages" },

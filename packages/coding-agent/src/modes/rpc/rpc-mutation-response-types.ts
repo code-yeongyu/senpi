@@ -213,6 +213,7 @@ export type RpcMutationResponse =
 	  }
 	| { id?: string; type: "response"; command: "clone"; success: true; data: { cancelled: boolean } }
 	| { id?: string; type: "response"; command: "set_session_name"; success: true }
+	| { id?: string; type: "response"; command: "set_session_archived"; success: true }
 	| { id?: string; type: "response"; command: "record_user_activity"; success: true }
 	| { id?: string; type: "response"; command: "import_jsonl"; success: true; data: { cancelled: boolean } }
 	| {

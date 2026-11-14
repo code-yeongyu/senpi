@@ -74,6 +74,7 @@ export const admissionCommands = [
 	"get_tree",
 	"get_last_assistant_text",
 	"set_session_name",
+	"set_session_archived",
 	"record_user_activity",
 	"import_jsonl",
 	"get_messages",

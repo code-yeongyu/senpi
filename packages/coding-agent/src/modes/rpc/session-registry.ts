@@ -6,6 +6,7 @@ import { publishedSessionContext } from "./session-context-patch.ts";
 import { attachLiveSession, markPathAttached } from "./session-live-attachment.ts";
 import { beginPendingClaim, type PendingClaims, syncRuntimeMetadata } from "./session-registry-claims.ts";
 import { openRegistrySession } from "./session-registry-open.ts";
+import { sessionRowStatusFields } from "./session-status-source.ts";
 
 import {
 	type OpenRpcSession,
@@ -227,6 +228,7 @@ export class RpcSessionRegistry {
 				status: entry.state === "quarantined" ? "closing" : entry.state,
 				idleMs: Math.max(0, now - entry.lastCommandAt),
 				tool_child: entry.runtime?.session.toolChildRow() ?? { state: "none" },
+				...sessionRowStatusFields(entry),
 			}));
 	}
 

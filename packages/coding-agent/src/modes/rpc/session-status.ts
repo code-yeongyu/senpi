@@ -34,7 +34,8 @@ export type SessionStatusCause =
 	| "replace"
 	| "park"
 	| "close"
-	| "context";
+	| "context"
+	| "archive";
 
 export type SessionStatusActor = "client" | "agent" | "host";
 
@@ -56,6 +57,8 @@ export interface SessionStatusEntryView {
 	readonly durableSessionId?: string;
 	readonly sessionPath?: string;
 	readonly name?: string;
+	/** The session file's archived flag; absent reads as not archived. */
+	readonly archived?: boolean;
 	readonly context: PublishedSessionContext;
 	/**
 	 * The context the session was opened with, before any `set_session_context` patch. `childrenOf`
@@ -91,6 +94,7 @@ export interface DerivedSessionStatus {
 	readonly durableSessionId?: string;
 	readonly sessionPath?: string;
 	readonly name?: string;
+	readonly archived: boolean;
 	readonly model?: { readonly provider: string; readonly id: string };
 	readonly thinkingLevel?: string;
 	readonly pendingQueue: { readonly steering: number; readonly followUp: number };
@@ -115,6 +119,7 @@ export interface SessionStatusRecord {
 	readonly kind: SessionKind;
 	readonly cwd: string;
 	readonly name?: string;
+	readonly archived: boolean;
 	readonly status: SessionStatusValue;
 	readonly reason?: string;
 	readonly attachments: number;
@@ -181,6 +186,7 @@ export function deriveSessionStatus(
 		...(entry.durableSessionId !== undefined ? { durableSessionId: entry.durableSessionId } : {}),
 		...(entry.sessionPath !== undefined ? { sessionPath: entry.sessionPath } : {}),
 		...(entry.name !== undefined ? { name: entry.name } : {}),
+		archived: entry.archived === true,
 		...(runtime?.model !== undefined ? { model: { provider: runtime.model.provider, id: runtime.model.id } } : {}),
 		...(runtime?.thinkingLevel !== undefined ? { thinkingLevel: runtime.thinkingLevel } : {}),
 		pendingQueue: { steering: runtime?.steering ?? 0, followUp: runtime?.followUp ?? 0 },
@@ -232,6 +238,8 @@ export function causeOfRecord(record: {
 			return "park";
 		case "session_closed":
 			return "close";
+		case "session_archived_changed":
+			return "archive";
 		case "question_resolved":
 			return "question";
 		case "extension_ui_request":

@@ -216,6 +216,7 @@ const BASH_AND_TREE_SCHEMAS = {
 	get_tree: session("get_tree", {}),
 	get_last_assistant_text: session("get_last_assistant_text", {}),
 	set_session_name: session("set_session_name", { name: Str }),
+	set_session_archived: session("set_session_archived", { archived: Bool }),
 	record_user_activity: session("record_user_activity", { kind: Type.Literal("draft") }),
 	import_jsonl: session("import_jsonl", { inputPath: PathStr, cwdOverride: OptPath }),
 	get_messages: session("get_messages", {}),
