@@ -318,3 +318,16 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 function isNodeErrorCode(error: unknown, code: string): boolean {
 	return error instanceof Error && "code" in error && error.code === code;
 }
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/**
+ * A `ps -o lstart=` value printed under `TZ=UTC LC_ALL=C` ("Thu Nov 12 10:00:00 2026"), as epoch ms. Parsing it as UTC
+ * explicitly keeps the result independent of this process's own time zone and of the repeated fall-back hour.
+ */
+export function lstartUtcMs(text: string): number | undefined {
+	const match = /^\s*\w{3}\s+(\w{3})\s+(\d{1,2})\s+(\d{2}):(\d{2}):(\d{2})\s+(\d{4})\s*$/.exec(text);
+	const month = match ? MONTHS.indexOf(match[1] ?? "") : -1;
+	if (!match || month < 0) return undefined;
+	return Date.UTC(Number(match[6]), month, Number(match[2]), Number(match[3]), Number(match[4]), Number(match[5]));
+}

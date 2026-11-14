@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { processStartTimeMs } from "../../../../utils/process-identity.ts";
+import { lstartUtcMs, processStartTimeMs } from "../../../../utils/process-identity.ts";
 
 const LINUX_CLOCK_TICKS_PER_SECOND = 100;
 
@@ -37,10 +37,9 @@ function execText(command: string, args: readonly string[], env?: NodeJS.Process
 
 async function darwinProcessStartMs(pid: number): Promise<number | undefined> {
 	const text = (
-		await execText("ps", ["-o", "lstart=", "-p", String(pid)], { ...process.env, LC_ALL: "C", LANG: "C" })
+		await execText("ps", ["-o", "lstart=", "-p", String(pid)], { ...process.env, TZ: "UTC", LC_ALL: "C", LANG: "C" })
 	).trim();
-	if (text.length === 0) return undefined;
-	return processStartTimeMs(text);
+	return lstartUtcMs(text);
 }
 
 async function windowsProcessStartMs(pid: number): Promise<number | undefined> {

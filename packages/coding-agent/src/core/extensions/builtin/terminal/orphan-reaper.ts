@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { type ChildProcessIdentity, processBootAtMs, sameBoot } from "./process-identity.ts";
 import { readProcessStartMs } from "./process-start-probe.ts";
+import { lstartUtcMs } from "../../../../utils/process-identity.ts";
 
 export type OwnerVerdict = "confirmed" | "dead" | "unverifiable";
 
@@ -52,9 +53,9 @@ export function isProcessAlive(pid: number): boolean {
 	}
 }
 
-function execText(command: string, args: readonly string[]): Promise<string> {
+function execText(command: string, args: readonly string[], extraEnv: Record<string, string> = {}): Promise<string> {
 	return new Promise((resolve, reject) => {
-		const env = { ...process.env, LC_ALL: "C" };
+		const env = { ...process.env, LC_ALL: "C", ...extraEnv };
 		execFile(command, [...args], { encoding: "utf8", timeout: 5_000, windowsHide: true, env }, (error, stdout) => {
 			if (error) reject(error);
 			else resolve(stdout);
@@ -72,9 +73,14 @@ async function readLinuxEvidence(pid: number): Promise<ProcessEvidence> {
 }
 
 async function readDarwinEvidence(pid: number): Promise<ProcessEvidence | undefined> {
-	const text = (await execText("ps", ["-o", "lstart=,command=", "-p", String(pid)])).trim();
+	// Printed and parsed in UTC: a local-time lstart is ambiguous in the repeated fall-back hour, which would put the
+	// start an hour off the recorded instant and leave a real orphan "unverifiable".
+	const text = (await execText("ps", ["-o", "lstart=,command=", "-p", String(pid)], { TZ: "UTC" })).trim();
 	if (text.length <= LSTART_LENGTH) return undefined;
-	return { startedAtMs: new Date(text.slice(0, LSTART_LENGTH)).getTime(), argv: text.slice(LSTART_LENGTH).trim() };
+	return {
+		startedAtMs: lstartUtcMs(text.slice(0, LSTART_LENGTH)),
+		argv: text.slice(LSTART_LENGTH).trim(),
+	};
 }
 
 async function readWindowsEvidence(pid: number): Promise<ProcessEvidence | undefined> {
