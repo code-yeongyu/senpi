@@ -660,6 +660,7 @@ export class ExtensionRunner {
 	private engineTurnsHeldFn: () => boolean = () => false;
 	private noteHeldWakeFn: (source: string) => void = () => {};
 	private pauseActions: Pick<ExtensionContextActions, "getPauseState" | "fenceRun" | "releaseRunFence"> = {};
+	private registerRunBackgroundJobFn: ExtensionContextActions["registerRunBackgroundJob"];
 	private questionInput: ExtensionContextActions["questionInput"];
 	private personAnswerPending = false;
 	private isProjectTrustedFn: () => boolean = () => true;
@@ -881,6 +882,7 @@ export class ExtensionRunner {
 			fenceRun: contextActions.fenceRun,
 			releaseRunFence: contextActions.releaseRunFence,
 		};
+		this.registerRunBackgroundJobFn = contextActions.registerRunBackgroundJob;
 		this.questionInput = contextActions.questionInput;
 		this.isProjectTrustedFn = contextActions.isProjectTrusted;
 		this.getSignalFn = contextActions.getSignal;
@@ -1798,6 +1800,10 @@ export class ExtensionRunner {
 			releaseRunFence: (runRef) => {
 				runner.assertActive();
 				runner.pauseActions.releaseRunFence?.(runRef);
+			},
+			registerRunBackgroundJob: (job) => {
+				runner.assertActive();
+				return runner.registerRunBackgroundJobFn?.(job) ?? (() => {});
 			},
 			isProjectTrusted: () => {
 				runner.assertActive();

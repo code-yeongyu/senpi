@@ -94,7 +94,11 @@ const PROMPTING_SCHEMAS = {
 		graceMs: OptNum,
 		intent: Opt(literals("stop", "abort")),
 	}),
-	interrupt: session("interrupt", { turnId: OptId, intent: Opt(literals("stop", "abort")) }),
+	interrupt: session("interrupt", {
+		turnId: OptId,
+		intent: Opt(literals("stop", "abort")),
+		background: Opt(literals("stop")),
+	}),
 	hold_input: session("hold_input", {
 		inputId: Id,
 		revision: Num,

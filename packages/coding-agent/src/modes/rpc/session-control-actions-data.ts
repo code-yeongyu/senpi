@@ -5,6 +5,7 @@
  */
 import { modelSupportsAssistantPrefill } from "@earendil-works/pi-ai";
 import type { AgentSession } from "../../core/agent-session.ts";
+import type { RunBackgroundStopOutcome } from "../../core/run-background-jobs.ts";
 import { getSupportedThinkingLevels } from "../../core/thinking-levels.ts";
 
 export async function availableModelsData(session: AgentSession): Promise<{ models: readonly object[] }> {
@@ -37,21 +38,31 @@ export function unsupportedThinkingLevel(level: unknown): string {
 export interface InterruptOutcome {
 	readonly interrupted: boolean;
 	readonly turnId?: string;
+	/** Present when the caller asked `background: "stop"`: the interrupted turn's background jobs it stopped. */
+	readonly background?: RunBackgroundStopOutcome;
 }
 
+const NOTHING_STOPPED: RunBackgroundStopOutcome = { stopped: [], failed: [] };
+
 /**
- * `interrupt { turnId? }`: stops the running turn and only that. An idle session answers
+ * `interrupt { turnId?, background? }`: stops the running turn and only that. An idle session answers
  * `interrupted: false`; so does a `turnId` naming a turn that is no longer the running one, which
- * then answers the running turn's id. `stop` resolves once the turn has stopped.
+ * then answers the running turn's id. `stop` resolves once the turn has stopped; with `background:
+ * "stop"` the background jobs that turn started are stopped after it, and the answer names them.
  */
 export async function interruptRunningTurn(
 	session: AgentSession,
 	requestedTurnId: unknown,
 	stop: () => Promise<void>,
+	background?: unknown,
 ): Promise<InterruptOutcome> {
-	if (!session.isStreaming && session.retryAttempt === 0) return { interrupted: false };
+	const stopsBackground = background === "stop";
+	const nothing = stopsBackground ? { background: NOTHING_STOPPED } : {};
+	if (!session.isStreaming && session.retryAttempt === 0) return { interrupted: false, ...nothing };
 	const turnId = String(session.externalAdmission.turnEpoch);
-	if (typeof requestedTurnId === "string" && requestedTurnId !== turnId) return { interrupted: false, turnId };
+	if (typeof requestedTurnId === "string" && requestedTurnId !== turnId)
+		return { interrupted: false, turnId, ...nothing };
 	await stop();
-	return { interrupted: true, turnId };
+	if (!stopsBackground) return { interrupted: true, turnId };
+	return { interrupted: true, turnId, background: await session.stopRunBackgroundJobs(turnId) };
 }

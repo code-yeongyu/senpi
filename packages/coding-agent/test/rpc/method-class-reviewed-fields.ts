@@ -92,7 +92,7 @@ export const REVIEWED_FIELDS = {
 	abort: {
 		fields: ["admissionId", "awaitIdle", "clearQueue", "effectId", "graceMs", "id", "intent", "sessionId", "type"],
 	},
-	interrupt: { fields: ["admissionId", "id", "intent", "sessionId", "turnId", "type"] },
+	interrupt: { fields: ["admissionId", "background", "id", "intent", "sessionId", "turnId", "type"] },
 	abort_retry: { fields: ["admissionId", "id", "sessionId", "type"] },
 	abort_compaction: { fields: ["admissionId", "id", "sessionId", "type"] },
 	abort_branch_summary: { fields: ["admissionId", "id", "sessionId", "type"] },

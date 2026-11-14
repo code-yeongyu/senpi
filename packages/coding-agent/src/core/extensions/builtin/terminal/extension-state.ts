@@ -146,6 +146,23 @@ export function bundleSinks(pi: ExtensionAPI, state: TerminalExtensionState): Te
 	};
 }
 
+/** A background session belongs to the turn that started it, so interrupting that turn with `background: "stop"` stops it. */
+function recordRunJob(state: TerminalExtensionState, id: string, description: string): void {
+	const bundle = state.bundle;
+	if (bundle === null) return;
+	const release = withTerminalContext(
+		() =>
+			state.ctx?.registerRunBackgroundJob?.({
+				kind: "bash",
+				id,
+				description,
+				stop: (turnId) => bundle.stopForInterrupt(id, turnId),
+			}),
+		() => {},
+	);
+	if (release !== undefined) bundle.trackRunJob(id, release);
+}
+
 export function buildToolContext(pi: ExtensionAPI, state: TerminalExtensionState): TerminalToolContext {
 	const requireBundle = (): TerminalSessionBundle => {
 		// Lazily create a bundle so the tools work even when invoked directly (e.g. via the
@@ -204,6 +221,7 @@ export function buildToolContext(pi: ExtensionAPI, state: TerminalExtensionState
 				...(command === undefined ? {} : { command }),
 				...(autoReapMinutes === undefined ? {} : { autoReapMinutes }),
 			});
+			recordRunJob(state, id, description);
 			const runtime = state.bundle?.manager.get(id);
 			if (runtime) {
 				const key = withTerminalContext(

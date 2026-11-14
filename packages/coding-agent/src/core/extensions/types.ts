@@ -134,6 +134,7 @@ import type { ExtensionKernelTools } from "./kernel-tools-context.ts";
 import type { SessionControlActions, SessionControlWakeEvent } from "./session-control-types.ts";
 import type { SessionDialogApi } from "./session-dialog-api.ts";
 import type { UserActivityKind } from "./user-activity.ts";
+import type { RunBackgroundJob } from "../run-background-jobs.ts";
 
 export type { ExecOptions, ExecResult } from "../exec.ts";
 export type { AppKeybinding, KeybindingsManager } from "../keybindings.ts";
@@ -607,6 +608,11 @@ export interface ExtensionContext {
 	fenceRun?(runRef: { kind: "dag" | "task" | "workpool" | "team"; id: string }): void;
 	/** Drop this run's fence once the run is journaled cancelled; a run with no fence is a no-op (senpi#3811). */
 	releaseRunFence?(runRef: { kind: "dag" | "task" | "workpool" | "team"; id: string }): void;
+	/**
+	 * Record a background job the running turn started, so `interrupt { background: "stop" }` on that turn stops it.
+	 * Outside a turn nothing is recorded. The returned release drops the job once it ended on its own.
+	 */
+	registerRunBackgroundJob?(job: RunBackgroundJob): () => void;
 	/** Whether project-local trust is active for this context. */
 	isProjectTrusted(): boolean;
 	/** The current abort signal, or undefined when the agent is not streaming. */
@@ -3825,6 +3831,7 @@ export interface ExtensionContextActions {
 	getPauseState?: () => { pauseSeq: number; holds: SessionHoldRecord[] };
 	fenceRun?: (runRef: { kind: "dag" | "task" | "workpool" | "team"; id: string }) => void;
 	releaseRunFence?: (runRef: { kind: "dag" | "task" | "workpool" | "team"; id: string }) => void;
+	registerRunBackgroundJob?: (job: RunBackgroundJob) => () => void;
 	/** Internal delivery for a human-settled builtin question, never exposed on ExtensionAPI. */
 	questionInput?: () => void;
 	isProjectTrusted: () => boolean;
