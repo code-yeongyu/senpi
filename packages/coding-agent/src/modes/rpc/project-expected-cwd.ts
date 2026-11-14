@@ -11,11 +11,11 @@ const PROJECT_WRITES: ReadonlySet<string> = new Set(["set_project_trust", "set_p
 
 /**
  * A folder path for comparison. Trailing separators of the path's own style are dropped (only `/` for a POSIX path;
- * `\\` or `/` for a drive or UNC path), but a bare root keeps one: `"/"` stays `"/"`, and a bare drive root becomes
- * `X:\\` (`"C:"`, `"C:/"` and `"c:\\"` all become `"C:\\"`). A Windows drive letter is compared without case (`c:` and
- * `C:` are one drive). Nothing else is folded:
- * the rest of the path is compared as written, because whether a file system ignores case depends on the volume and
- * cannot be assumed; and nothing is trimmed, since on POSIX `"/w/app "` and `"/w/app\\"` are other directories.
+ * `\\` or `/` for a drive or UNC path), but a bare POSIX or drive root keeps one: `"/"` stays `"/"`, and a bare drive
+ * root becomes `"X:\\"` (`"C:"`, `"C:/"` and `"c:\\"` all become `"C:\\"`). A Windows drive letter is compared
+ * without case (`c:` and `C:` are one drive). Nothing else is folded: the rest of the path is compared as written,
+ * because whether a file system ignores case depends on the volume and cannot be assumed; and nothing is trimmed,
+ * since on POSIX `"/w/app "` and `"/w/app\\"` are other directories.
  */
 export function comparableFolder(path: string): string {
 	if (path.startsWith("/")) return path.replace(/\/+$/u, "") || "/";
