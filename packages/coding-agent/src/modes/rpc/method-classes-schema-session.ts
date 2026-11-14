@@ -248,7 +248,7 @@ const SURFACE_AND_ACCOUNT_SCHEMAS = {
 	login_cancel: session("login_cancel", { provider: Id }),
 	login_api_key: session("login_api_key", { provider: Id, key: Secret, region: OptId }),
 	logout: session("logout", { provider: Id, slotId: OptId }),
-	verify_api_key: session("verify_api_key", { provider: Id, key: Secret }),
+	verify_api_key: session("verify_api_key", { provider: Id, key: Secret, region: OptId }),
 	get_provider_accounts: session("get_provider_accounts", { provider: Id }),
 	account_pin: session("account_pin", { provider: Id, name: Type.Union([Id, Type.Null()]) }),
 	account_remove: session("account_remove", { provider: Id, name: Id }),
