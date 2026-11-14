@@ -154,12 +154,15 @@ The shared `SessionLifecycle` type is exported by `@code-yeongyu/senpi`:
   start carries the same ID, not the next observed start. This field is additive and optional:
   older clients ignore it, and clients talking to older engines without it keep their existing
   association behavior.
-- Optional `waitingOn`: `{ children, background, human, childSources?, childReports?, childReportsOmitted? }`.
+- Optional `waitingOn`: `{ children, background, human, childSources?, childReports?, childReportsOmitted?, backgroundOmitted? }`.
   `children` and each source's `activeCount` are the authoritative counts; every named list below is
   supplemental and may be incomplete, so never derive a count from a list's length. `children` is the
   larger of the nonterminal child reports and the summed `childSources` counts.
   Background entries carry `source`, `activeCount`, optional `items`, optional `omittedItems`, and
-  optional `retryAtMs`. `childSources` entries carry `source`, `activeCount`, optional `items`, and
+  optional `retryAtMs`. `background` keeps the first 32 sources; `backgroundOmitted` counts the sources cut by
+  that cap, so `background.length + (backgroundOmitted ?? 0)` is the number of background sources. A delivery
+  the session has already consumed is not a wait and is never listed, even before its run ends. The durable
+  `session-lifecycle` record stores these sources as changes; see `session-format.md`. `childSources` entries carry `source`, `activeCount`, optional `items`, and
   optional `omittedItems`. Each item is `{ id, label?, startedAt? }` (`startedAt` is ISO time), taken
   from the producer's `wake_source_state` snapshot: its `items`, or the legacy `monitors` list when
   `items` is missing or null. Terminal monitors are named by their stable `mon_` id. Each list is a
