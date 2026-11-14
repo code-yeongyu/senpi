@@ -514,8 +514,9 @@ run.
 
 A background command that keeps printing numbers (a render, a benchmark, a test run) gets a small live chart:
 once it has run for `authorAfterMs` and printed a few lines, a model reads the command and a redacted sample of
-its output once and writes a chart spec, and every update after that is computed locally from new output. Jobs
-whose output has nothing worth charting stay plain. It needs no setup; the views reach clients through the
+its output once and writes a chart spec, and every update after that is computed locally from new output. In the TUI the chart sits
+above the editor; a background command without one (silent, not yet charted, or nothing worth charting) shows
+as a plain row below the editor with how long it has run and, after it exits, whether it succeeded. It needs no setup; the views reach clients through the
 `job_widget_state` event ([RPC](rpc.md#job-widgets)).
 
 | Setting | Type | Default | Description |
