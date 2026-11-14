@@ -49,10 +49,12 @@ function realHome(): Promise<string | undefined> {
 	return real;
 }
 
-async function answer(step: ResolverStep, onTimeout: () => void): Promise<unknown> {
+async function answer(step: ResolverStep, onTimeout: () => void, signal: AbortSignal): Promise<unknown> {
+	const controller = new AbortController();
+	const stepSignal = AbortSignal.any([signal, controller.signal]);
 	const io =
 		step.op === "canonical"
-			? canonicalizeFilesystemPath(step.path)
+			? canonicalizeFilesystemPath(step.path, stepSignal)
 			: step.op === "json"
 				? readJsonFileAsync(step.file)
 				: step.op === "home"
@@ -67,6 +69,8 @@ async function answer(step: ResolverStep, onTimeout: () => void): Promise<unknow
 		return failedReply(step);
 	} catch {
 		return failedReply(step);
+	} finally {
+		controller.abort();
 	}
 }
 
@@ -78,6 +82,7 @@ async function answer(step: ResolverStep, onTimeout: () => void): Promise<unknow
 export function createMovedPathProbe(platform: PathPlatform = currentPathPlatform()): MovedPathProbe {
 	let timedOut = false;
 	let stopped = false;
+	const controller = new AbortController();
 	const reused = new Set<string>();
 	const onReused = (oldRoot: string, breadcrumb: MovedBreadcrumb, prefix: readonly string[]) =>
 		reused.add(prefixKey(oldRoot, breadcrumb, prefix));
@@ -93,6 +98,7 @@ export function createMovedPathProbe(platform: PathPlatform = currentPathPlatfor
 		},
 		stop() {
 			stopped = true;
+			controller.abort();
 		},
 		cleared(path) {
 			return knownPrefixKeys(path, platform).some((key) => reused.has(key));
@@ -100,7 +106,11 @@ export function createMovedPathProbe(platform: PathPlatform = currentPathPlatfor
 		async resolve(path) {
 			const walk = movedPathWalk(path, platform, onReused);
 			let step = walk.next();
-			while (!step.done) step = walk.next(stopped ? failedReply(step.value) : await answer(step.value, onTimeout));
+			while (!step.done) {
+				step = walk.next(
+					stopped ? failedReply(step.value) : await answer(step.value, onTimeout, controller.signal),
+				);
+			}
 			return step.value;
 		},
 	};

@@ -186,6 +186,79 @@ describe("ci.yml wiring", () => {
 		assert.match(classifyStep.run, /--workflow \.github\/workflows\/ci\.yml$/);
 		assert.equal(jobs["platform-scope"]["runs-on"], "ubuntu-latest");
 	});
+
+	it("keeps path and terminal suites running after a failure, but stops them on cancellation (senpi#6127)", () => {
+		const job = jobs["terminal-cross-os"];
+		assert.notEqual(job["continue-on-error"], true);
+		for (const name of [
+			"Path-resolution filesystem regressions",
+			"Path-resolution cancelled-write regression",
+			"Path-resolution guard regressions",
+			"Path-resolution integration (Node)",
+			"Path-resolution integration (Bun)",
+			"PTY package tests",
+			"Terminal extension + shell resolution tests",
+		]) {
+			const step = job.steps.find((step) => step.name === name);
+			assert.ok(step, name);
+			assert.notEqual(step["continue-on-error"], true, name);
+			// GitHub applies success() implicitly when no status-check function is present.
+			const expression = String(step.if ?? "success()").replace(/^\$\{\{\s*|\s*\}\}$/g, "");
+			const condition = Function("cancelled", "success", "steps", `return (${expression});`);
+			for (const state of [
+				{ failed: false, cancelled: false, setup: "success", expected: true },
+				{ failed: true, cancelled: false, setup: "success", expected: true },
+				{ failed: true, cancelled: true, setup: "success", expected: false },
+				{ failed: true, cancelled: false, setup: "skipped", expected: false },
+			]) {
+				const hasStatusCheck = /\b(?:success|failure|cancelled|always)\s*\(/.test(expression);
+				const implicitSuccess = hasStatusCheck || !state.failed;
+				assert.equal(implicitSuccess && condition(
+					() => state.cancelled,
+					() => !state.failed,
+					{ test_temp_snapshot: { outcome: state.setup } },
+				), state.expected, `${name}: ${JSON.stringify(state)}`);
+			}
+		}
+	});
+
+	it("runs the retained path-resolution regressions in the existing per-OS jobs (senpi#6127)", () => {
+		const suites = {
+			"packages/machine-ops": ["filesystem-resolution.test.ts", "operation-errors.test.ts", "local-conformance.test.ts"],
+			"packages/coding-agent": [
+				"moved-path-guard-cancellation.test.ts", "moved-path-guard-step-timeouts.test.ts",
+				"moved-path-guard-trust.test.ts", "moved-path-guard-reused.test.ts",
+			],
+		};
+		for (const name of ["terminal-cross-os", "macos-combined"]) {
+			const job = jobs[name];
+			assert.ok(job.steps.some((step) => step.uses?.startsWith("oven-sh/setup-bun@")), `${name}: Bun installed`);
+			const installAt = job.steps.findIndex((step) => step.run?.includes("npm ci --ignore-scripts"));
+			const buildAt = job.steps.findIndex((step) => step.run?.includes("npm run build"));
+			const nodeAt = job.steps.findIndex((step) => step.run === "node scripts/run-tests.mjs node scripts/qa/path-resolution-smoke.ts");
+			assert.ok(installAt >= 0 && buildAt >= installAt && nodeAt > buildAt, `${name}: build workspace exports before Node smoke`);
+			for (const [directory, files] of Object.entries(suites)) {
+				for (const file of files) {
+					const step = job.steps.find((step) => step["working-directory"] === directory && step.run?.includes(file));
+					assert.ok(step, `${name}: ${directory}/${file}`);
+					assert.match(step.run, /scripts\/run-tests\.mjs vitest run/);
+					assert.match(step.run, /--reporter=verbose/);
+					assert.notEqual(step["continue-on-error"], true);
+					if (file === "local-conformance.test.ts") assert.match(step.run, /-t "cancelled request"/);
+				}
+			}
+			for (const runtime of ["node", "bun"]) {
+				const command = `node scripts/run-tests.mjs ${runtime} scripts/qa/path-resolution-smoke.ts`;
+				assert.ok(job.steps.some((step) => step.run === command), `${name}: ${runtime} smoke`);
+			}
+		}
+		const files = platformJobFiles(readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8"));
+		for (const path of [
+			"packages/machine-ops/test/filesystem-resolution.test.ts",
+			"packages/coding-agent/test/suite/moved-path-guard-cancellation.test.ts",
+			"scripts/qa/path-resolution-smoke.ts",
+		]) assert.equal(isPlatformPath(path, files), true, path);
+	});
 });
 
 describe("run-full-ci label workflow", () => {
