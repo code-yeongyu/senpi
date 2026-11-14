@@ -34,8 +34,10 @@ permissions:
   contents: read
   id-token: write
 
+# Releases from main stay serialized in one group. Each other ref gets its own group (senpi#6645 review, L2): GitHub keeps
+# one pending run per group, so a branch dry run queued behind main's group could cancel a release pending on main.
 concurrency:
-  group: release
+  group: release-${{ github.ref == 'refs/heads/main' && 'main' || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -358,10 +360,19 @@ jobs:
     outputs:
       base_sha: ${{ steps.prepare.outputs.base_sha }}
       tested_sha: ${{ steps.prepare.outputs.tested_sha }}
-      tested_tree: ${{ steps.prepare.outputs.tested_tree }}
       version: ${{ steps.prepare.outputs.version }}
       bundle: ${{ steps.prepare.outputs.bundle }}
     steps:
+      # The release job's own refusal, run first here too (senpi#6645 review, L3): a live dispatch off main fails in
+      # seconds instead of spending the whole matrix before the release job refuses.
+      - name: Refuse a live release from any ref but main
+        if: github.ref != 'refs/heads/main' && (inputs.dry_run != true || inputs.publish-only == true)
+        env:
+          DISPATCHED_REF: ${{ github.ref }}
+        run: |
+          echo "::error::a release that is not a dry run must be dispatched on refs/heads/main, not ${DISPATCHED_REF}" >&2
+          exit 1
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

@@ -44,7 +44,6 @@ describe("prepareTestedCommit (senpi#6642)", () => {
 			const result = prepareTestedCommit({ cwd: dir, version: "2026.11.13", regenerate: () => {}, bundlePath, log: () => {} });
 			assert.equal(result.baseSha, base);
 			assert.equal(result.testedSha, base);
-			assert.equal(result.testedTree, git(dir, "rev-parse", "HEAD^{tree}"));
 			assert.equal(result.bundle, false);
 			assert.equal(existsSync(bundlePath), false, "a no-change prepare wrote a bundle");
 			assert.equal(git(dir, "rev-parse", "HEAD"), base, "a no-change prepare committed");
