@@ -49,6 +49,7 @@ export const RPC_INBOUND_SAMPLES = {
 	detach_connection: { type: "detach_connection" },
 	get_subscription_limits: { type: "get_subscription_limits" },
 	list_sessions: { type: "list_sessions" },
+	find_session: { type: "find_session", durableSessionId: SAMPLE_ID },
 	list_hands: { type: "list_hands" },
 	select_hand: { type: "select_hand", sessionId: SAMPLE_ID, device: null },
 	subscribe_sessions: { type: "subscribe_sessions", sessions: { ids: [SAMPLE_ID] } },

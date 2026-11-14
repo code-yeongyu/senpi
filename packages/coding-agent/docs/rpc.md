@@ -6117,6 +6117,34 @@ Response:
 
 Refusals carry `error` = `turn_active` or `session_busy` with `errorData.busy` (pass `"interrupt": true` to abort the work first), `attached` with `errorData.attachments` (pass `"force": true`), `invalid_release_reason`, `release_unsupported`, `release_failed` (`errorData.detail`; the session stays hosted when its entry could not be written), `host_draining`, `session_closing` or `unknown_session`.
 
+#### find_session
+
+Which session file of this host carries a durable session id, for a client whose session is closed and unlisted.
+
+```json
+{"type":"find_session","durableSessionId":"0197…"}
+```
+
+Every other command that takes a durable id works on a session the host still has open: `list_sessions` lists what is open, `claim_session` consumes a ready park, `resume_session` is the pause and resume of a user Stop, and `open_session` needs the path. A client that binds a thread to a session on another machine keeps the routing key and the durable id, not the path, so when that session closes (a move given back after its release leaves the file writable and the session not open) the key names nothing and there is no path to reopen by. This answers that path.
+
+`data` is exactly one of:
+
+```json
+{"found":{"sessionPath":"/abs/sessions/--folder--/<file>.jsonl","cwd":"/abs/folder/the/header/names","open":false}}
+{"ambiguous":true}
+{"unknown":true}
+```
+
+`open` says an engine of this host holds that session now, so a client knows whether its next step is an `open_session` or an attach. `ambiguous` is the answer when two session files carry one durable id (a caller-minted id reused while the first was parked); it names neither, and the client picks by another means. `unknown` is the answer when no session file of this host carries it.
+
+The command is a read: it opens, claims, unloads, seals and rewrites nothing, and touches no move record. It reads only this host's own session folder (`<agentDir>/sessions/<folder>/`), never a path from the request, which carries the durable id alone. Of each session file only the first line, its header, is read.
+
+It needs the standing a path-naming `open_session` needs, so on a delegated connection it needs `device_admin`. A caller without that standing is refused before the lookup runs, and the refusal is the same for an id this host knows and one it does not, so it learns nothing either way.
+
+It is bounded: a host holding more than 20,000 session files answers `find_session_too_many` instead of a partial answer, and no file is read before that bound is decided. A `durableSessionId` that is missing, empty or not a string is `invalid_argument`. Every host this package starts keeps an agent directory, whichever runtime its sessions use, so all of them answer `find_session`, a host that runs its sessions in workers included. `find_session_unsupported` remains for a host built with no agent directory at all; no host this package starts answers it.
+
+After a `found`, open the session with `open_session { sessionPath, cwd }` and compare the answer's `state.sessionId` with the durable id before binding to it: the id is the proof, the path only a hint.
+
 #### detach_connection
 
 Multi-session hosts that advertise the `detach_connection` capability only. Meant as a connection's last request before it closes: the host releases every session attachment this connection holds and answers only after that, so another connection's next `list_sessions` no longer counts it. Closing the socket afterwards releases nothing more. The host does not refuse later requests on the connection; a later `open_session` attaches as usual.
