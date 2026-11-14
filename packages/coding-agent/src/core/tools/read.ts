@@ -13,7 +13,7 @@ import type { ExtensionContext, FilesystemPolicyChecker, ToolDefinition } from "
 import { canonicalizeFilesystemPath } from "./filesystem-policy.ts";
 import { asBuffer, defaultToolMachine, type ToolMachine } from "./machine.ts";
 import { modelOnlyText } from "./model-only-text.ts";
-import { resolveReadPathAsync } from "./path-utils.ts";
+import { assertNotSpecialFile, resolveReadPathAsync } from "./path-utils.ts";
 import { type ReadRenderState, readRenderers } from "./renderers/read.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult, truncateHead } from "./truncate.ts";
@@ -99,6 +99,7 @@ export function createReadToolDefinition(
 	const customOps = options?.operations;
 	const machine = options?.machine ?? defaultToolMachine();
 	const filesystemPolicy = options?.filesystemPolicy;
+	const refuseSpecialFiles = !options?.operations;
 	return {
 		...(options?.operations !== undefined || filesystemPolicy !== undefined ? { serverPinned: true } : {}),
 		name: "read",
@@ -153,6 +154,23 @@ export function createReadToolDefinition(
 							// Check if file exists and is readable.
 							await ops.access(absolutePath);
 							if (aborted) return;
+							if (refuseSpecialFiles) {
+								await assertNotSpecialFile(
+									absolutePath,
+									path,
+									"read",
+									options?.machine
+										? async () =>
+												(
+													await machine.ops.files.stat(
+														{ path: absolutePath },
+														machine.context(signal, "caller"),
+													)
+												).type
+										: undefined,
+								);
+								if (aborted) return;
+							}
 							const mimeType = ops.detectImageMimeType ? await ops.detectImageMimeType(absolutePath) : undefined;
 							let content: (TextContent | ImageContent)[];
 							let details: ReadToolDetails | undefined;

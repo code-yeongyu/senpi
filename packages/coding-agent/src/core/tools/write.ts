@@ -5,7 +5,7 @@ import type { ExtensionContext, FilesystemPolicyChecker, ToolDefinition } from "
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
 import { canonicalizeFilesystemPath } from "./filesystem-policy.ts";
 import { defaultToolMachine, type ToolMachine } from "./machine.ts";
-import { resolveToCwd } from "./path-utils.ts";
+import { assertNotSpecialFile, resolveToCwd } from "./path-utils.ts";
 import { writeRenderers } from "./renderers/write.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import { createWriteDetails, readLocalWriteBaseline, type WriteToolDetails } from "./write-result.ts";
@@ -62,7 +62,8 @@ export function createWriteToolDefinition(
 	options?: WriteToolOptions,
 ): ToolDefinition<typeof writeSchema, WriteToolDetails | undefined> {
 	const machine = options?.machine ?? defaultToolMachine();
-	const readBaseline = options?.operations ? undefined : readLocalWriteBaseline;
+	const readBaseline = options?.operations || options?.machine ? undefined : readLocalWriteBaseline;
+	const refuseSpecialFiles = !options?.operations;
 	const filesystemPolicy = options?.filesystemPolicy;
 	return {
 		...(options?.operations !== undefined || filesystemPolicy !== undefined ? { serverPinned: true } : {}),
@@ -104,6 +105,19 @@ export function createWriteToolDefinition(
 						toolName: "write",
 					});
 					if (!decision.allow) throw new Error(decision.reason);
+					throwIfAborted();
+				}
+				if (refuseSpecialFiles) {
+					await assertNotSpecialFile(
+						absolutePath,
+						path,
+						"write",
+						options?.machine
+							? async () =>
+									(await machine.ops.files.stat({ path: absolutePath }, machine.context(signal, "caller")))
+										.type
+							: undefined,
+					);
 					throwIfAborted();
 				}
 				const baseline = readBaseline ? await readBaseline(absolutePath) : ({ kind: "unavailable" } as const);
