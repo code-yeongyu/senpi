@@ -35,6 +35,18 @@ function persistedPath(owner: object): string | undefined {
 	return typeof path === "string" && path !== "" ? path : undefined;
 }
 
+/**
+ * Whether an owner has the two methods this copy reads. One that lacks them was shaped by another engine copy
+ * (omo#12965 re-read F3d); `hasOtherLive` counts it as another live writer, since skipping it would let last-owner
+ * cleanup proceed past a writer this copy cannot see.
+ */
+function isReadableOwner(owner: object): boolean {
+	return (
+		typeof Reflect.get(owner, "isPersisted") === "function" &&
+		typeof Reflect.get(owner, "getSessionFile") === "function"
+	);
+}
+
 const sessionWriters = realmRegistry(
 	"@code-yeongyu/senpi/session-writers/v1",
 	(): SessionWriters => {
@@ -73,7 +85,8 @@ const sessionWriters = realmRegistry(
 				writerRefs.delete(owner);
 				liveWriters.delete(ref);
 			},
-			hasOtherLive: (path, self) => liveOwners().some((owner) => owner !== self && persistedPath(owner) === path),
+			hasOtherLive: (path, self) =>
+				liveOwners().some((owner) => owner !== self && (!isReadableOwner(owner) || persistedPath(owner) === path)),
 			livePaths: () =>
 				liveOwners()
 					.map(persistedPath)

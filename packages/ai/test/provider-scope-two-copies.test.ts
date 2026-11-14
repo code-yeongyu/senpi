@@ -131,6 +131,33 @@ describe("T-B provider strict mode and scope across two pi-ai copies (omo#12965)
 		).toThrow("Provider scope is closed");
 	});
 
+	it("(F3a) a strict mode that is undefined or null reads as on, for text and images, never as off", async () => {
+		const b = await nextCopy(registryOnlyCopy);
+		await nextCopy(nodeCopy);
+		const registry = Reflect.get(globalThis, Symbol.for("@code-yeongyu/senpi/provider-scope/v1")) as {
+			setStrictMode: (enabled: unknown) => void;
+			setImagesStrictMode: (enabled: unknown) => void;
+		};
+		restore = () => {
+			registry.setStrictMode(false);
+			registry.setImagesStrictMode(false);
+		};
+		for (const unreadable of [undefined, null]) {
+			registry.setStrictMode(unreadable);
+			registry.setImagesStrictMode(unreadable);
+			expect(() => b.api.getApiProvider("x12965-f3a"), String(unreadable)).toThrow(
+				"Provider scope is required in strict mode",
+			);
+			expect(() => b.images.getImagesApiProvider("x12965-f3a"), String(unreadable)).toThrow(
+				"Provider scope is required in strict mode",
+			);
+		}
+		registry.setStrictMode(false);
+		registry.setImagesStrictMode(false);
+		expect(() => b.api.getApiProvider("x12965-f3a")).not.toThrow();
+		expect(() => b.images.getImagesApiProvider("x12965-f3a")).not.toThrow();
+	});
+
 	it("(payload) refuses to name the active scope when it cannot read it, and reads no scope as none", async () => {
 		const node = await nextCopy(nodeCopy);
 		const registry = Reflect.get(globalThis, Symbol.for("@code-yeongyu/senpi/provider-scope/v1")) as {

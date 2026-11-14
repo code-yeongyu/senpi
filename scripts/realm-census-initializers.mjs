@@ -168,6 +168,12 @@ export function initializerKind(raw, declarationKind) {
 	return `${prefix}${isExemptInitializer(raw) ? "primitive" : "expression"}`;
 }
 
+/** Whether an initializer creates a realm registry (`realmRegistry(...)`): the binding must be classed realm-registry. */
+export function isRealmRegistryCall(raw) {
+	const node = unwrap(stripAsConst(raw));
+	return node?.type === "CallExpression" && calleeIdentity(node.callee)?.name === "realmRegistry";
+}
+
 export function isAsyncLocalStorage(raw) {
 	const node = unwrap(stripAsConst(raw));
 	return node?.type === "NewExpression" && calleeIdentity(node.callee)?.name === "AsyncLocalStorage";

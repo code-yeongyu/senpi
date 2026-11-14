@@ -203,6 +203,8 @@ const killGuardRuntimes = realmRegistry(
 const ownRecords = new Map<object, KillGuardRuntime>();
 /** This copy's own record per agent dir, built only when the shared record for that dir is unreadable. */
 const localRuntimes = new Map<string, KillGuardRuntime>();
+/** Whether this copy has already said that it cannot read the active record and has no record of its own. */
+let reportedUnreadableActiveRecord = false;
 
 const isNumberArray = (value: unknown): value is readonly number[] =>
 	Array.isArray(value) && value.every((entry) => typeof entry === "number");
@@ -282,6 +284,14 @@ function activeKillGuardRuntime(): KillGuardRuntime | undefined {
 	if (active === undefined || isKillGuardRuntime(active)) return active;
 	let own: KillGuardRuntime | undefined;
 	for (const record of ownRecords.values()) own = record;
+	if (own === undefined && !reportedUnreadableActiveRecord) {
+		// This copy has no holder to build a record from, so no guard variables reach this spawn: say so once.
+		reportedUnreadableActiveRecord = true;
+		process.emitWarning(
+			"[senpi:kill-guard] the active kill guard record cannot be read and this engine copy holds no record of its own; spawned commands are not judged by the runtime layer",
+			{ code: "PI_KILL_GUARD_RECORD_UNREADABLE" },
+		);
+	}
 	return own;
 }
 
