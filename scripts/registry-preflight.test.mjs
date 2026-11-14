@@ -180,7 +180,8 @@ describe("publish.mjs registry preflight", () => {
 		withStubs("unknown", ({ env, commands }) => {
 			const result = spawnSync(process.execPath, [join(repoRoot, "scripts", "publish.mjs")], {
 				cwd: repoRoot,
-				env: { ...env, GITHUB_ACTIONS: "true" },
+				// A live publish runs only from main (senpi#6645's ref guard); on any other ref it stops before this preflight.
+				env: { ...env, GITHUB_ACTIONS: "true", GITHUB_REF: "refs/heads/main" },
 				encoding: "utf8",
 				timeout: 15000,
 			});
