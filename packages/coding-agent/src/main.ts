@@ -94,7 +94,7 @@ import {
 import { ModelRuntime } from "./core/model-runtime.ts";
 import { markMovedSessions, movedHereSessionToContinue, withMovedSessions } from "./core/moved-sessions.ts";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
-import { recordProcessLifetime } from "./core/process-crash-record.ts";
+import { processHasSupervisor, recordProcessLifetime } from "./core/process-crash-record.ts";
 import { type AppMode, presetTrustsProject, resolveProjectTrusted } from "./core/project-trust.ts";
 import { resolveResumeTarget } from "./core/resume-target.ts";
 import type { CreateAgentSessionOptions } from "./core/sdk.ts";
@@ -1582,8 +1582,9 @@ export async function main(args: string[], options?: MainOptions) {
 		}
 	}
 	time("readPipedStdin");
-	// An RPC process always has a parent that watches its exit; every other mode dies unobserved.
-	recordProcessLifetime(agentDir, appMode, { supervised: appMode === "rpc" });
+	// An RPC process always has a parent that watches its exit; any other mode dies unobserved unless
+	// its launcher passed --supervised and records the death itself.
+	recordProcessLifetime(agentDir, appMode, { supervised: processHasSupervisor(appMode, parsed.supervised === true) });
 	time("recordProcessLifetime");
 
 	const { initialMessage, initialImages, initialTitlePrompt } = await prepareInitialMessage(
