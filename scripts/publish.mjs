@@ -11,7 +11,7 @@ import { assertLiveRunOnMain } from "./release-ref-guard.mjs";
 import { rewritePublishManifest } from "./publish-manifest.mjs";
 import { parseNpmPackJson } from "./npm-pack-json.mjs";
 import { assertPublishedWorkspacePackFiles, assertSenpiPackedWorkspaceFiles } from "./senpi-publish-pack-checks.mjs";
-import { queryNpmRegistry } from "./npm-registry.mjs";
+import { assertRegistryPackagesKnown, queryNpmRegistry, queryWithRetry } from "./npm-registry.mjs";
 import { getPublicWorkspacePackages } from "./release-packages.mjs";
 import { registryPackageNames } from "./registry-packages.mjs";
 
@@ -155,6 +155,10 @@ if (versions.length !== 1) {
 // senpi#6645: on a ref other than main the publish-only job still holds id-token: write; refuse a live publish there.
 assertLiveRunOnMain({ dryRun, env: process.env, what: "npm publish" });
 const publishArgs = dryRun ? undefined : buildPublishArgs({ githubActions: process.env.GITHUB_ACTIONS === "true" });
+
+// Before any package is staged or published: a name npm does not know would publish part of the set (senpi#6636). This
+// runs after the tag is pushed, so a registry hiccup is retried rather than failing the publish.
+assertRegistryPackagesKnown(publishOrder, (name) => queryWithRetry(() => queryNpmRegistry(name, "name")));
 
 console.log(`Publishing senpi packages at ${versions[0]}${dryRun ? " (dry run)" : ""}\n`);
 

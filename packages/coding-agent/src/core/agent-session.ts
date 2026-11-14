@@ -354,7 +354,7 @@ import { NestedToolCallRunner } from "./nested-tool-calls.ts";
 import { type PendingInputSnapshot, type PendingInputUpdate, SessionPendingInputs } from "./pending-input-session.ts";
 import { PROMPT_CACHE_SAFE_WAIT_ENV, resolvePromptCacheSafeWaitSeconds } from "./prompt-cache-budget.ts";
 import { PromptCachePrefixBuilds } from "./prompt-cache-prefix-request.ts";
-import { requestThinkingLevel } from "./reasoning-baseline.ts";
+import { requestThinkingLevel, withLiveConfigurationUpdate } from "./reasoning-baseline.ts";
 import type { PromptSizeInventory } from "./prompt-size-startup.ts";
 import { expandPromptTemplateWithMetadata, type PromptTemplate } from "./prompt-templates.ts";
 import {
@@ -393,7 +393,7 @@ import {
 	type ProbePhase,
 	probeBackSchedule,
 } from "./retry-fallback/hint-policy.ts";
-import { createFallbackLogger } from "./retry-fallback/log.ts";
+import { createFallbackLogger, type FallbackLogger } from "./retry-fallback/log.ts";
 import { redactAssistantErrorText } from "./assistant-error-redaction.ts";
 import {
 	createModelConfigErrorReporter,
@@ -1794,6 +1794,7 @@ export class AgentSession {
 	/** Settles once dispose() has stopped the tool child, swept what it launched, closed its in-process offload jobs, and the fallback log's first-start removal has finished. */
 	private _toolChildClosed: Promise<void> = Promise.resolve();
 	private _fallbackLogSettled: Promise<void> = Promise.resolve();
+	private _fallbackLog: FallbackLogger | undefined;
 	private _extensionRunnerRef?: { current?: ExtensionRunner };
 	private _initialActiveToolNames?: string[];
 	private _defaultToolNames?: Set<string>;
@@ -1958,6 +1959,7 @@ export class AgentSession {
 		this._modelRegistry = config.modelRegistry ?? new ModelRegistry(modelRuntime);
 		this._agentDir = config.agentDir ?? getAgentDir();
 		const fallbackLogger = createFallbackLogger(this._agentDir);
+		this._fallbackLog = fallbackLogger;
 		this._fallbackLogSettled = fallbackLogger.settled();
 		this._modelConfigErrors = createModelConfigErrorReporter(fallbackLogger, (event) => this._emit(event));
 		this._sessionLogger = createSessionLogger(this._agentDir, {
@@ -2789,10 +2791,14 @@ export class AgentSession {
 			// The idle path tokenizes agent.state.messages in place; every provider
 			// request re-hydrates here so tokens can never reach a model.
 			this.sessionManager.getResidentStore().materializeInPlace(messages);
-			const transformed = this._requestShapeRecovery.apply(
+			const model = this.model;
+			const shaped = this._requestShapeRecovery.apply(
 				previousTransformContext ? await previousTransformContext(messages, signal) : messages,
 			);
-			const model = this.model;
+			const transformed =
+				model !== undefined && supportsConfigurationUpdate(model)
+					? withLiveConfigurationUpdate(shaped, this.agent.state.thinkingLevel, Date.now())
+					: shaped;
 			if (model?.provider !== "cursor" && model?.provider !== "cursor-cli-oauth") return transformed;
 			this._applyObservedCursorContextWindow(model);
 			const budgetBytes = cursorAdmissionBudgetBytes(model.contextWindow);
@@ -6052,9 +6058,10 @@ export class AgentSession {
 
 	/**
 	 * The reported usage of this provider's accounts, without the ones only the user can bring back (a re-login, a
-	 * disabled or signed-out account): the pool skips those whatever their usage reads, so their usage must not
-	 * release the provider's hold (senpi#6536). Accounts the summary does not name keep their usage, so a provider
-	 * holding one credential still releases on its own reading.
+	 * disabled, signed-out, billing- or organization-blocked account): the pool skips those whatever their usage reads,
+	 * so their usage must not release the provider's hold (senpi#6536). An account out only on a usage limit keeps it.
+	 * Accounts the summary does not name keep their usage, so a provider holding one credential still releases on its
+	 * own reading.
 	 */
 	private async _usageOfSelectableAccounts(provider: string): Promise<readonly AccountLimits[]> {
 		const usage = subscriptionLimits.snapshot();
@@ -6063,7 +6070,12 @@ export class AgentSession {
 		try {
 			const blocked = new Set(accountsNeedingUser(await getCredentialAccounts(storage, provider)));
 			return blocked.size === 0 ? usage : usage.filter((limits) => !blocked.has(limits.account));
-		} catch {
+		} catch (error) {
+			// Unfiltered usage only widens what may release the hold; the reason it could not be narrowed is logged.
+			this._fallbackLog?.warn("usage_accounts_unread", {
+				provider,
+				error: error instanceof Error ? error.message : String(error),
+			});
 			return usage;
 		}
 	}

@@ -47,19 +47,20 @@ export type CredentialAccountSource = "login" | "import" | "env";
  */
 export type CredentialAccountBlockedReason = "auth_error" | "rate_limit" | "disabled";
 
-/** Blocks only the user can clear: a pool never selects such an account, whatever its usage reads (senpi#6536). */
-const NEEDS_USER: ReadonlySet<string> = new Set(["auth_error", "disabled"]);
-
 /**
- * The accounts no usage reading can bring back: the user must act (a re-login, a disabled or signed-out account)
- * or the pool never selects the slot. A pool skips them whatever their usage reads, so usage they report must not
- * release a session's hold on the provider.
+ * The accounts no usage reading can bring back, so usage they report must not release a session's hold on the
+ * provider (senpi#6536): a slot of the other credential kind (senpi#3486), a signed-out account, and every account
+ * blocked for anything but a usage limit. A usage limit is a `rate_limit` block or a `paused` one (a ChatGPT
+ * subscription's usage-limit pause, which carries no reason). The Claude lane's billing and organization blocks also
+ * reach a summary with no reason but are not paused, so they count as needing the user.
  */
 export function accountsNeedingUser(summaries: readonly CredentialAccountSummary[]): string[] {
 	return summaries
 		.filter(
 			(account) =>
-				account.unused === true || account.signedOut === true || NEEDS_USER.has(account.blockedReason ?? ""),
+				account.unused === true ||
+				account.signedOut === true ||
+				(account.blocked && account.blockedReason !== "rate_limit" && account.paused !== true),
 		)
 		.map((account) => account.name);
 }
