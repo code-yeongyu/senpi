@@ -75,8 +75,9 @@ async function waitForModelSwitch(
 /**
  * Runs `admit` once the session's previous turn and pending model switch have settled. `admit` awaits, and a switch
  * issued meanwhile would otherwise run while this turn does (senpi#6412 review), so admission repeats until no switch
- * other than the one already awaited is pending; a switch issued after admission applies to the next turn. Each wait
- * keeps its own admission bound and the abort signal.
+ * other than the one already awaited is pending. A switch issued after admission returns is not held: like one issued
+ * during a running turn, it calls `setModel` on the live process at once, and the next turn's admission waits for its
+ * confirmation. Each wait keeps its own admission bound and the abort signal.
  */
 export async function admitSettledTurn<T>(
 	sessionId: string,
