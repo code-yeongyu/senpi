@@ -3,7 +3,7 @@
 import { uptime } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { answerMoveStatus, importMovedSession } from "../../src/core/session-move/import.ts";
+import { answerMoveStatusAndLanding, importMovedSession } from "../../src/core/session-move/import.ts";
 import { COMMIT_SETTLE_AFTER_MS } from "../../src/core/session-move/move-landing.ts";
 import { MoveFencedError, MoveLedger } from "../../src/core/session-move/move-ledger.ts";
 import type { MoveId } from "../../src/core/session-move/ownership.ts";
@@ -62,12 +62,12 @@ describe("a re-run move import with the session file as the authority", () => {
 		const again = importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity });
 		await expect(again).rejects.toBeInstanceOf(MoveFencedError);
 		// A commit stamp with no file is settled once it is old enough that no stalled commit can still land (senpi#6417).
-		expect(await answerMoveStatus(ledger, MOVE, undefined)).toEqual({ state: "receiving" });
+		expect((await answerMoveStatusAndLanding(ledger, MOVE, undefined)).answer).toEqual({ state: "receiving" });
 		const afterTheBound = new MoveLedger(ledger.dir, {
 			now: () => Date.now() + COMMIT_SETTLE_AFTER_MS,
 			uptime: () => uptime() * 1000 + COMMIT_SETTLE_AFTER_MS,
 		});
-		expect(await answerMoveStatus(afterTheBound, MOVE, undefined)).toEqual({
+		expect((await answerMoveStatusAndLanding(afterTheBound, MOVE, undefined)).answer).toEqual({
 			state: "failed",
 			reason: "import_failed",
 		});

@@ -62,6 +62,7 @@ import {
 	MOVE_SESSION_REVOKE_CAPABILITY,
 	MOVE_SESSION_STATUS_LANDED_PATH_CAPABILITY,
 	MOVE_SESSION_STATUS_LANDING_CAPABILITY,
+	MOVE_SESSION_STATUS_WRITABLE_CAPABILITY,
 } from "./session-move-wire.ts";
 
 /** `unload_session` and `session_parked.reason` (senpi#3225). */
@@ -160,6 +161,8 @@ export function multiSessionHostCapabilities(options: {
 			MOVE_SESSION_PREPARE_REPOSITORY_CAPABILITY,
 			// ...and says where an accepted move landed (senpi#6436).
 			MOVE_SESSION_STATUS_LANDED_PATH_CAPABILITY,
+			// ...and whether the copy there can still be written (senpi#6473).
+			MOVE_SESSION_STATUS_WRITABLE_CAPABILITY,
 			// ...and a `status` that names where the move would have landed is answered from the file there first.
 			MOVE_SESSION_STATUS_LANDING_CAPABILITY,
 			// A host session asks the client that offers it to continue the session elsewhere (`host_request`).
