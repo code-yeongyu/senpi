@@ -3075,7 +3075,7 @@ The answer is always `success: true` with `data.outcome`: `unloaded` (with `sess
 
 | `reason` | When | Override |
 |---|---|---|
-| `turn_active` | an agent run, a prompt about to start, compaction, barrier-held work | `interrupt: true` aborts and waits (bounded) first |
+| `turn_active` | an agent run, a prompt about to start, compaction, barrier-held work; never a run that only waits on an unanswered dialog (a permission prompt), which the unload aborts (the dialog is cancelled) and waits for, bounded, as with `interrupt: true` | `interrupt: true` aborts and waits (bounded) first |
 | `work_pending` | bash, an admitted delivery not yet written, another request for the session | `interrupt: true` |
 | `extension_work` | extension-published work: background terminal jobs, non-persistent monitors, detached eval cells, a pending question; `detail` names the sources | `force: true` (that work is stopped; only persistent monitors come back on the reopen) |
 | `children_live` | child tasks still working, or worker sessions here whose `context` names this session as parent or root | `children: "detach"` leaves them running |

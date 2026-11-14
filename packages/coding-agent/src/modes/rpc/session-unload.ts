@@ -10,7 +10,9 @@
  * Refusals change nothing and answer `outcome: "refused"` with `reason`, `detail` and `action`:
  * - `turn_active` / `work_pending`: an agent run, a prompt in preflight, compaction, barrier-held work,
  *   bash, an admitted delivery or another request for the session. `interrupt` aborts the run and bash
- *   and waits (bounded) before the final check.
+ *   and waits (bounded) before the final check. A run whose only work is waiting on a dialog nobody
+ *   answered (a permission prompt) is no refusal: the unload aborts it, which cancels the dialog, as if
+ *   `interrupt` were set (senpi#6683).
  * - `extension_work`: a published wake source other than child tasks (background terminal jobs, monitors,
  *   detached eval cells, a pending question). The teardown stops that work and most of it does not come
  *   back on reopen, so only `force` unloads past it; the refusal names the sources.
@@ -25,6 +27,7 @@ import { beginEffect, effectAnswer, isEffectBegin } from "./effect-commands.ts";
 import { EffectLedger } from "./effect-ledger.ts";
 import type { EffectActor } from "./effect-record.ts";
 import type { RpcCommand, RpcResponse, RpcUnloadAnswer, UnloadRefusalReason } from "./rpc-types.ts";
+import { sessionDialogRequests } from "./session-extension-ui-requests.ts";
 import type { RpcSessionEntry } from "./session-registry.ts";
 import { abortAndSettle, type ReleaseSettlePort } from "./session-release-interrupt.ts";
 
@@ -52,6 +55,8 @@ interface Refusal {
 	readonly reason: UnloadRefusalReason;
 	readonly detail: string;
 	readonly action?: string;
+	/** The run only waits on an unanswered dialog: ending it stops no work, so no `interrupt` is needed. */
+	readonly parked?: true;
 }
 
 const ACTIONS = {
@@ -87,7 +92,9 @@ export async function unloadSession(port: SessionUnloadPort, command: UnloadSess
 	}
 	const blocked = blockers(port, command, first.session, first.durableSessionId);
 	// Never stop work for an unload that would still be refused: only interruptible blockers are interrupted.
-	const standing = blocked.find((refusal) => !interruptible(refusal) || command.interrupt !== true);
+	const standing = blocked.find(
+		(refusal) => !interruptible(refusal) || (command.interrupt !== true && refusal.parked !== true),
+	);
 	if (standing !== undefined) return fail(command, first.session, standing);
 	if (blocked.length > 0) await abortAndSettle(port, command.sessionId, first.session);
 	return claimAndUnload(port, command);
@@ -139,7 +146,20 @@ function blockers(
 		activity.isCompacting && "compaction",
 		activity.hasSessionWork && "session work",
 	].filter((label): label is string => typeof label === "string");
-	if (running.length > 0)
+	// The run's own `prompt` call stays pending while it streams, so `pendingPrompts` does not count against a parked run.
+	const parked =
+		activity.isStreaming &&
+		!activity.isCompacting &&
+		!activity.hasSessionWork &&
+		(sessionDialogRequests.get(session)?.snapshot().length ?? 0) > 0;
+	if (parked)
+		found.push({
+			reason: "turn_active",
+			detail: "an agent run waiting on an unanswered prompt",
+			action: ACTIONS.turn_active,
+			parked: true,
+		});
+	else if (running.length > 0)
 		found.push({ reason: "turn_active", detail: running.join(", "), action: ACTIONS.turn_active });
 	const pending = [
 		activity.isBashRunning && "a bash command",
