@@ -63,8 +63,9 @@ export function hermeticEnv(boxEnv) {
 
 /**
  * Register the primary preset model plus optional additional local mock models.
- * Additional models share the local server and provider unless explicitly
- * overridden. Supplying retry writes the isolated sandbox settings.json.
+ * Additional models share the local server; a model with a `provider` field is
+ * registered under that provider (same server, key and api), so a fallback can
+ * cross providers. Supplying retry writes the isolated sandbox settings.json.
  */
 export function writeMockModelsJson(agentDir, server, apiName, modelOverrides = {}, { models = [], retry } = {}) {
 	const preset = API_PRESETS[apiName];
@@ -91,16 +92,12 @@ export function writeMockModelsJson(agentDir, server, apiName, modelOverrides = 
 		if (modelIds.has(model.id)) throw new Error(`mock models must not repeat id ${model.id}`);
 		modelIds.add(model.id);
 	}
-	const config = {
-		providers: {
-			[preset.provider]: {
-				baseUrl,
-				apiKey: preset.apiKey,
-				api: apiName,
-				models: configuredModels,
-			},
-		},
-	};
+	const providers = {};
+	for (const { provider = preset.provider, ...model } of configuredModels) {
+		providers[provider] ??= { baseUrl, apiKey: preset.apiKey, api: apiName, models: [] };
+		providers[provider].models.push(model);
+	}
+	const config = { providers };
 	writeFileSync(join(agentDir, "models.json"), JSON.stringify(config, null, 2));
 	if (retry !== undefined) {
 		if (!retry || typeof retry !== "object" || Array.isArray(retry)) {
