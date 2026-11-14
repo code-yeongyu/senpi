@@ -185,9 +185,10 @@ export async function importMovedSession(
 			target,
 			(stampStands) => rebindSessionFile(staged, targetCwd, sessionDir, { beforeRename: stampStands }),
 			async () => {
-				await replacePredecessor(target, manifest.sessionId, sessionDir);
+				const assertHeld = () => options.ledger.assertHeld(manifest.moveId);
+				await replacePredecessor(target, manifest.sessionId, sessionDir, assertHeld);
 				// Before the rename: a crash here re-copies on retry, and after it the state is already in place.
-				await placeExtensionState(staging, manifest, movedStateDir(target, manifest.moveId));
+				await placeExtensionState(staging, manifest, movedStateDir(target, manifest.moveId), assertHeld);
 			},
 		);
 		moveStep("import:accepted");
@@ -215,7 +216,12 @@ export async function importMovedSession(
  * It is removed before the rename: if the rename then fails, the move is recorded `import_failed`, the sender takes
  * the session back, and nothing writable was lost here (the removed copy could not be written).
  */
-async function replacePredecessor(target: string, sessionId: string, sessionDir: string): Promise<void> {
+async function replacePredecessor(
+	target: string,
+	sessionId: string,
+	sessionDir: string,
+	assertHeld: () => void,
+): Promise<void> {
 	if (!(await pathExists(target))) return;
 	const entries = await loadEntriesFromFileAsync(target);
 	if (headerSessionId(entries) !== sessionId || sessionOwnership(entries).writable) {
@@ -224,11 +230,15 @@ async function replacePredecessor(target: string, sessionId: string, sessionDir:
 	const extensions = join(sessionDir, "extensions");
 	if (await pathExists(extensions)) {
 		for (const extension of await readdir(extensions, { withFileTypes: true })) {
-			if (extension.isDirectory())
+			if (extension.isDirectory()) {
+				assertHeld();
 				await rm(join(extensions, extension.name, `${encodedSessionId(sessionId)}.json`), { force: true });
+			}
 		}
 	}
+	assertHeld();
 	await rm(join(sessionDir, "resident-blobs", sessionId), { recursive: true, force: true });
+	assertHeld();
 	await rm(target, { force: true });
 }
 
@@ -248,13 +258,21 @@ async function stagePayloads(bundleDir: string, manifest: MoveManifest, staging:
 	}
 }
 
-async function placeExtensionState(staging: string, manifest: MoveManifest, dir: string): Promise<void> {
+async function placeExtensionState(
+	staging: string,
+	manifest: MoveManifest,
+	dir: string,
+	assertHeld: () => void,
+): Promise<void> {
 	const files = extensionStateFiles(manifest);
 	if (files.length === 0) return;
+	assertHeld();
 	await rm(dir, { recursive: true, force: true });
 	for (const file of files) {
 		const to = join(dir, file.path.slice(EXTENSION_STATE_PREFIX.length));
+		assertHeld();
 		await mkdir(dirname(to), { recursive: true });
+		assertHeld();
 		await copyFile(join(staging, STAGED_PAYLOADS, file.path), to);
 	}
 }
