@@ -193,7 +193,10 @@ describe("endpoint reservation store", () => {
 	it("refuses to offer a role the generation does not expect", async () => {
 		const { store: s } = await store();
 		const generation = s.reserve(ENDPOINT, OWNER, ["host"]);
+		const before = s.reservation(generation).revision;
 		expect(rejection(() => s.offer(generation, "supervisor", OWNER))).toBe("role_not_expected");
+		expect(s.reservation(generation).revision).toBe(before);
+		expect(s.roleRow({ endpoint: ENDPOINT, generation, role: "supervisor" })).toBeUndefined();
 	});
 
 	it("answers opening a store held by an exclusive writer as store_busy", async () => {
@@ -229,11 +232,18 @@ describe("endpoint reservation store", () => {
 		async (stored) => {
 			const { path, store: s } = await store();
 			const generation = s.reserve(ENDPOINT, OWNER, ["host"]);
+			// The host is offered and granted first, so only the unreadable-set rule can refuse: a second offer would
+			// otherwise be role_already_offered, and serving would otherwise commit.
+			s.offer(generation, "host", OWNER);
+			const hostLocator = { endpoint: ENDPOINT, generation, role: "host" as const };
+			s.claim(hostLocator, s.readOffer(hostLocator), SUPERVISOR);
+			s.grant(generation, "host", OWNER, SUPERVISOR, COMMITMENT);
 			const raw = new DatabaseSync(path);
 			raw.prepare("UPDATE reservations SET expected_roles = ? WHERE generation = ?").run(stored, generation);
 			raw.close();
 			expect(rejection(() => s.offer(generation, "host", OWNER))).toBe("role_not_expected");
 			expect(rejection(() => s.markServing(generation))).toBe("roles_not_granted");
+			expect(s.reservation(generation).state).toBe("pending");
 		},
 	);
 

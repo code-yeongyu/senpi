@@ -1,4 +1,5 @@
 import { stat } from "node:fs/promises";
+import type { FileIdentity } from "./sqlite-file-identity.ts";
 
 export interface OwnershipSafeLockOptions {
 	readonly retries?: {
@@ -6,6 +7,36 @@ export interface OwnershipSafeLockOptions {
 		readonly minTimeout: number;
 		readonly maxTimeout: number;
 	};
+	/** The lock file the caller validated through its own descriptor; SQLite must open exactly that file. */
+	readonly expectedFile?: FileIdentity;
+}
+
+/** The lock file SQLite opened is not the one the caller validated: a lock taken there would serialize nothing. */
+export class LockFileReplacedError extends Error {
+	readonly code = "ELOCK_FILE_REPLACED" as const;
+	readonly lockPath: string;
+
+	constructor(lockPath: string, detail: string) {
+		super(`Lock file was not the validated one: ${detail}`);
+		this.name = "LockFileReplacedError";
+		this.lockPath = lockPath;
+	}
+}
+
+/**
+ * Which file SQLite opened could not be proven (`busy` in sqlite-file-identity.ts), as while another connection of this
+ * process has the lock file open. Retried like contention until the deadline, then thrown; each attempt closes its
+ * connection first, so no lock is ever taken on a file that was not proven.
+ */
+export class LockFileBusyError extends Error {
+	readonly code = "ELOCK_FILE_BUSY" as const;
+	readonly lockPath: string;
+
+	constructor(lockPath: string, detail: string) {
+		super(`Lock file could not be proven yet: ${detail}`);
+		this.name = "LockFileBusyError";
+		this.lockPath = lockPath;
+	}
 }
 
 export class LegacyLockArtifactError extends Error {
@@ -30,15 +61,44 @@ interface LockDatabase {
 node:sqlite for npm-installed Node executions. Both drive the same kernel
 advisory locks on the same file, so cross-runtime contenders exclude each
 other (verified empirically; see the changes.md entry). */
-async function openLockDatabase(lockPath: string): Promise<LockDatabase> {
+async function openLockDatabase(lockPath: string, expectedFile: FileIdentity | undefined): Promise<LockDatabase> {
 	if (typeof (globalThis as { Bun?: unknown }).Bun !== "undefined") {
 		const { Database } = await import("bun:sqlite");
-		const database = new Database(lockPath, { create: true });
+		const database = await openChecked(
+			lockPath,
+			expectedFile,
+			() => new Database(lockPath, { create: true }),
+			(opened) => opened.close(false),
+		);
 		return { exec: (sql) => database.exec(sql), close: () => database.close(false) };
 	}
 	const { DatabaseSync } = await import("node:sqlite");
-	const database = new DatabaseSync(lockPath);
+	const database = await openChecked(
+		lockPath,
+		expectedFile,
+		() => new DatabaseSync(lockPath),
+		(opened) => opened.close(),
+	);
 	return { exec: (sql) => database.exec(sql), close: () => database.close() };
+}
+
+/**
+ * The identity proof is part of this function's lazy loading boundary, like the SQLite driver above: it loads only when a
+ * caller passes `expectedFile` (the socket secret's repair lock), so it stays out of the lifecycle supervisor's startup
+ * graph, which imports this module (`test/supervisor-import-graph.test.ts`).
+ */
+async function openChecked<T>(
+	lockPath: string,
+	expectedFile: FileIdentity | undefined,
+	open: () => T,
+	close: (opened: T) => void,
+): Promise<T> {
+	if (expectedFile === undefined) return open();
+	const { openExpectedFile } = await import("./sqlite-file-identity.ts");
+	const checked = await openExpectedFile(lockPath, expectedFile, open, close);
+	if ("replaced" in checked) throw new LockFileReplacedError(lockPath, checked.replaced);
+	if ("busy" in checked) throw new LockFileBusyError(lockPath, checked.busy);
+	return checked.opened;
 }
 
 export async function acquireOwnershipSafeLock(
@@ -58,7 +118,7 @@ export async function acquireOwnershipSafeLock(
 		const busyMs = Math.max(1, Math.min(retries.maxTimeout, deadline - Date.now()));
 		let database: LockDatabase | undefined;
 		try {
-			database = await openLockDatabase(lockPath);
+			database = await openLockDatabase(lockPath, options.expectedFile);
 			database.exec(`PRAGMA busy_timeout = ${busyMs}; BEGIN EXCLUSIVE;`);
 			let released = false;
 			const held = database;
@@ -80,7 +140,9 @@ export async function acquireOwnershipSafeLock(
 			// A directory can appear between the stat guard and the open; surface
 			// it as the typed legacy error instead of a raw SQLITE_CANTOPEN.
 			await rejectLegacyDirectory(lockPath);
-			if (isBusy(error) && Date.now() < deadline) {
+			const retryable =
+				error instanceof LockFileBusyError || (!(error instanceof LockFileReplacedError) && isBusy(error));
+			if (retryable && Date.now() < deadline) {
 				await new Promise((resolve) =>
 					setTimeout(resolve, Math.min(retries.minTimeout, Math.max(1, deadline - Date.now()))),
 				);
