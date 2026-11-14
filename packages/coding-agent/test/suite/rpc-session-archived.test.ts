@@ -72,6 +72,41 @@ it("an unattached subscriber receives the archive change, and archived:false cle
 	expect((await listedRow(watcher, (row) => row.sessionId === sessionId)).archived).toBe(false);
 }, 120_000);
 
+it("lists an idle compacted session's flag without materializing its trimmed history (senpi#3519)", async () => {
+	await using host = await statusHost();
+	const owner = host.client("owner");
+	const subscriptionId = await subscribe(owner);
+	const sessionId = await openSession(owner, { cwd: host.cwd });
+	host.faux.setResponses([
+		fauxAssistantMessage("first answer", { timestamp: 1 }),
+		fauxAssistantMessage("second answer", { timestamp: 2 }),
+	]);
+	await promptToIdle(host, owner, sessionId, "first request");
+	dataOf(await owner.request({ type: "set_session_archived", sessionId, archived: true }));
+	await promptToIdle(host, owner, sessionId, "second request");
+	const manager = host.core.peekSession(sessionId)?.runtime?.session.sessionManager;
+	if (manager === undefined) throw new Error("no live session manager");
+	const firstKept = manager
+		.getEntries()
+		.findLast((entry) => entry.type === "message" && entry.message.role === "user");
+	if (firstKept === undefined) throw new Error("missing kept entry");
+	manager.appendCompaction("summary", firstKept.id, 100);
+	manager.dropMaterializedCaches();
+	expect(manager.holdsMaterializedHistory()).toBe(false);
+
+	expect((await listedRow(owner, (row) => row.sessionId === sessionId)).archived).toBe(true);
+	expect(manager.holdsMaterializedHistory()).toBe(false);
+
+	dataOf(await owner.request({ type: "set_session_archived", sessionId, archived: false }));
+	await owner.waitFor(archiveStatus(subscriptionId, sessionId, false));
+	// The status stream's effect-receipt read (`latestSessionEffect`) loads the history on its own; release it again.
+	manager.dropMaterializedCaches();
+	expect((await listedRow(owner, (row) => row.sessionId === sessionId)).archived).toBe(false);
+	expect(manager.holdsMaterializedHistory()).toBe(false);
+	manager.getEntries();
+	expect(manager.holdsMaterializedHistory()).toBe(true);
+}, 120_000);
+
 it("lists a session with a turn in flight as running and as idle once it settles", async () => {
 	await using host = await statusHost();
 	const owner = host.client("owner");

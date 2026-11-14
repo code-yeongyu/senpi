@@ -6031,7 +6031,9 @@ The current session name is available via `get_state` in the `sessionName` field
 
 #### set_session_archived
 
-Archive or unarchive the session (method class `drive`). The flag is written into the session file as a `custom` entry (`customType: "session_archived"`, `data: { archived }`), so every surface that reads the file (the desktop app, the CLI, the terminal, a relay listing on another device) sees the same value; the newest such entry wins and a session without one is not archived. Archiving changes nothing else: the session stays open, listed and drivable.
+Archive or unarchive the session (method class `drive`). The flag is written into the session file as a `custom` entry (`customType: "session_archived"`, `data: { archived, sessionId }`), so every surface that reads the file (the desktop app, the CLI, the terminal, a relay listing on another device) sees the same value; the newest such entry wins and a session without one is not archived. Archiving changes nothing else: the session stays open, listed and drivable.
+
+An entry counts only for the session id it names. A fork or clone (`fork`, `clone`, `move_session` `op: "copy"`, `senpi --fork`) is a new thread under a new id: it copies the source's entries but starts unarchived, while the source keeps its flag. Reopening or moving a session keeps its id, so it keeps its flag. Reading the flag never loads the session's history: the host keeps it current as entries are appended, so listing an idle compacted session leaves its trimmed history on disk.
 
 ```json
 {"type": "set_session_archived", "sessionId": "rpc-1", "archived": true}
