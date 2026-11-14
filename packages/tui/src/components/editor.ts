@@ -21,6 +21,7 @@ import {
 } from "../paste-markers.ts";
 import { isSlashNamespaceItem } from "../slash-command-autocomplete.ts";
 import { normalizeWarpWslShiftEnterInput } from "../terminal.ts";
+import { normalizeWindowsTerminalCtrlJInput } from "../windows-terminal-input.ts";
 import {
 	type Component,
 	CURSOR_MARKER,
@@ -900,11 +901,15 @@ export class Editor implements Component, Focusable {
 	}
 
 	handleInput(data: string): void {
-		data = normalizeWarpWslShiftEnterInput(
-			data,
+		data = normalizeWindowsTerminalCtrlJInput(
+			normalizeWarpWslShiftEnterInput(
+				data,
+				this.terminalEnvironment,
+				this.terminalPlatform,
+				this.terminalSocketExists,
+			),
 			this.terminalEnvironment,
 			this.terminalPlatform,
-			this.terminalSocketExists,
 		);
 		const kb = getKeybindings();
 
