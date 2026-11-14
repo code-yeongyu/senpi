@@ -1,7 +1,9 @@
 import type { Api, Model, ModelThinkingLevel, ThinkingLevel } from "@earendil-works/pi-ai/compat";
 import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai/compat";
 
-const REASONING_MANDATORY_ERROR = /reasoning is mandatory/i;
+// Refusals of a reasoning-free request, as endpoints word them: OpenRouter's English line (#2163) and the
+// Chinese line an always-thinking gateway model returns ("always thinks; thinking cannot be disabled", #6548).
+const REASONING_MANDATORY_ERROR = /reasoning is mandatory|始终思考|不支持关闭思考/i;
 
 /**
  * Reasoning level for the first title request. Titles stay reasoning-free unless the catalog
