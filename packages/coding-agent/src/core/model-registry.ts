@@ -42,6 +42,8 @@ export type ResolvedRequestAuth =
 			serviceTier?: "auto" | "flex" | "priority" | "ultrafast";
 			env?: Record<string, string>;
 			ambient?: true;
+			/** The provider selects its account per request; `apiKey` only proves credentials exist and must not be sent. */
+			rotatesCredentials?: true;
 	  }
 	| { ok: false; error: string };
 export { clearApiKeyCache } from "./provider-composer.ts";
@@ -169,6 +171,7 @@ export class ModelRegistry {
 				serviceTier: compatibility.serviceTier,
 				env: resolution.env,
 				...(resolution.ambient ? { ambient: true } : {}),
+				...(this.runtime.rotatesCredentials(model) ? { rotatesCredentials: true } : {}),
 			};
 		} catch (error) {
 			const cause = error instanceof Error ? error.cause : undefined;
