@@ -112,13 +112,8 @@ import {
 	TOOL_BARRIER_CAPABILITY,
 	TASK_PARENT_CAPABILITY,
 } from "./custom-capability.ts";
-import {
-	type EffectCommandContext,
-	runAbort,
-	runGetEffectStatus,
-	runQueuedInputChange,
-	runSetThinkingLevel,
-} from "./effect-commands.ts";
+import type { EffectCommandContext } from "./effect-answers.ts";
+import { runAbort, runGetEffectStatus, runQueuedInputChange, runSetThinkingLevel } from "./effect-commands.ts";
 import { EffectLedger } from "./effect-ledger.ts";
 import { EFFECT_LEDGER_CAPABILITY } from "./effect-record.ts";
 import { handleModelCommand } from "./handlers-model.ts";
@@ -228,6 +223,8 @@ export interface RpcConnectionOptions {
 			incarnation?: number,
 		) => "stale" | void;
 		hasCapability?: (connectionId: string, capability: string) => boolean;
+		/** senpi#6443: keeps the name a connection declared, once this session accepted the declaration that carried it. */
+		setClientId?: (connectionId: string | undefined, clientId: string) => void;
 	};
 	bindSecurityPresentation?: (
 		session: AgentSessionRuntime["session"],

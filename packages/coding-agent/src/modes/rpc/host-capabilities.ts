@@ -67,6 +67,12 @@ import {
 /** `unload_session` and `session_parked.reason` (senpi#3225). */
 export const UNLOAD_SESSION_CAPABILITY = "unload_session";
 
+/** `unload_session { dryRun: true }`: what the unload would do now, and nothing else (senpi#6443). */
+const UNLOAD_SESSION_DRY_RUN_CAPABILITY = "unload_session_dry_run";
+
+/** `set_client_info { client_id }`: holds are counted per CLIENT, so a client's own second connection is not "another" (senpi#6443). */
+const CLIENT_IDENTITY_CAPABILITY = "client_identity";
+
 /** `get_subscription_limits` and the `subscription_limits` host record (senpi#3370). */
 export const SUBSCRIPTION_LIMITS_CAPABILITY = "subscription_limits";
 
@@ -145,6 +151,8 @@ export function multiSessionHostCapabilities(options: {
 			SAME_ACCOUNT_DELEGATION_CAPABILITY,
 			// Only a multi-session host keeps sessions loaded that a client can ask it to free.
 			UNLOAD_SESSION_CAPABILITY,
+			UNLOAD_SESSION_DRY_RUN_CAPABILITY,
+			CLIENT_IDENTITY_CAPABILITY,
 			// Only a multi-session host owns a move ledger and the hosted-session list export checks against.
 			MOVE_SESSION_CAPABILITY,
 			MOVE_SESSION_REVOKE_CAPABILITY,

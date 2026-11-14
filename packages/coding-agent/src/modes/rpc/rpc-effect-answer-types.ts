@@ -33,9 +33,22 @@ export interface RpcEffectAnswer {
 	replayed?: true;
 }
 
-/** What `unload_session` answers. `effect` is the ledger receipt when the command carried an `effectId`. */
+/** One reason an unload cannot proceed now, as a dry run lists it. */
+export interface UnloadBlocker {
+	reason: UnloadRefusalReason;
+	detail: string;
+	action?: string;
+}
+
+/**
+ * What `unload_session` answers. `effect` is the ledger receipt when the command carried an `effectId`. A dry run
+ * (`dry_run: true`) answers `ready` or `refused` with every standing blocker and what the call would interrupt.
+ */
 export interface RpcUnloadAnswer {
-	outcome: "unloaded" | "refused";
+	outcome: "unloaded" | "refused" | "ready";
+	dry_run?: true;
+	blockers?: UnloadBlocker[];
+	interruptible?: UnloadBlocker[];
 	sessionPath?: string;
 	reason?: UnloadRefusalReason;
 	detail?: string;
