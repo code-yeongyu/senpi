@@ -1,15 +1,25 @@
 import { loadEntriesFromFileAsync } from "../session-manager.ts";
 import { pathExists } from "../tools/path-utils.ts";
 import type { LandingOutcome } from "./move-landing.ts";
-import { type MoveId, SESSION_MOVED, SESSION_MOVED_IN } from "./ownership.ts";
+import { type MoveId, SESSION_MOVED, SESSION_MOVED_IN, type SessionOwnership, sessionOwnership } from "./ownership.ts";
 import { REVOKED } from "./revoke.ts";
 
 /**
  * Where an accepted move landed, as `status` answers it (senpi#6436): the session file the move's record names, with
  * the id and the folder that file's header names. `gone` when no file is there, or the file there no longer records
  * the move: a move lands once, so nothing else stands in for it.
+ *
+ * `ownership` is who may write that file now, by the rule that refuses the writes (senpi#6473): a later move that
+ * released the session from here, or this move's own revoke, leaves the path answered and the copy read-only.
  */
-export type LandedFile = { readonly sessionPath: string; readonly sessionId: string; readonly cwd: string } | "gone";
+export type LandedFile =
+	| {
+			readonly sessionPath: string;
+			readonly sessionId: string;
+			readonly cwd: string;
+			readonly ownership: SessionOwnership;
+	  }
+	| "gone";
 
 type Entries = Awaited<ReturnType<typeof loadEntriesFromFileAsync>>;
 
@@ -37,5 +47,6 @@ export async function readLanding(
 	const outcome = outcomeIn(entries, moveId);
 	const header = entries.find((entry) => entry.type === "session");
 	if (outcome === "absent" || header === undefined || !header.id || !header.cwd) return { outcome, file: "gone" };
-	return { outcome, file: { sessionPath: target, sessionId: header.id, cwd: header.cwd } };
+	const ownership = sessionOwnership(entries);
+	return { outcome, file: { sessionPath: target, sessionId: header.id, cwd: header.cwd, ownership } };
 }

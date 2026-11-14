@@ -28,6 +28,12 @@ describe("sessionOwnership", () => {
 		expect(verdict).toEqual({ writable: false, state: "moving", moveId: "m1", target: "laptop" });
 	});
 
+	it("#given a move release whose entry carries no target field, as an earlier version or a hand-written entry leaves it #then the verdict's target is the empty string", () => {
+		const verdict = sessionOwnership([custom(SESSION_RELEASED, { reason: "move", move_id: "m1" })]);
+
+		expect(verdict).toEqual({ writable: false, state: "moving", moveId: "m1", target: "" });
+	});
+
 	it("#given a move release then session_moved #then the session stays read-only as moved", () => {
 		const verdict = sessionOwnership([
 			custom(SESSION_RELEASED, { reason: "move", move_id: "m1", target: "laptop" }),

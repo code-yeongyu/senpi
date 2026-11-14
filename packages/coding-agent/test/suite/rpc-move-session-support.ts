@@ -91,7 +91,7 @@ export async function moveAs(rig: Rig, connection: string, fields: MoveFields): 
 	return { ...response };
 }
 
-export async function hostAndRelease(rig: Rig, cwd: string, sessionPath: string, moveId: string) {
+export async function hostAndRelease(rig: Rig, cwd: string, sessionPath: string, moveId: string, target = "device-b") {
 	const session = opened(await rig.open("conn-a", { cwd, sessionPath, retain_on_disconnect: true }), 0);
 	await rig.drop("conn-a");
 	const released = await rig.router.handle({
@@ -100,7 +100,7 @@ export async function hostAndRelease(rig: Rig, cwd: string, sessionPath: string,
 		sessionId: session.sessionId,
 		reason: "move",
 		moveId,
-		target: "device-b",
+		target,
 	});
 	await rig.settle();
 	return { session, released };
@@ -139,11 +139,22 @@ export async function importedOnB(
 	return (imported.data as { session_path: string }).session_path;
 }
 
-/** What `status` says beside `accepted` once the fixture's session landed on B at `sessionPath` (senpi#6436). */
+/**
+ * What `status` says beside `accepted` once the fixture's session landed on B at `sessionPath` (senpi#6436), while that
+ * copy can still be written (senpi#6473).
+ */
 export const landedOnB = (fixture: { readonly repoB: string }, sessionPath: string) => ({
 	session_path: sessionPath,
 	session_id: SESSION_ID,
 	cwd: fixture.repoB,
+	writable: true,
+});
+
+/** The same once B revoked its import of `moveId`: that move sealed the copy, and the session is back on the sender. */
+export const revokedLandingOnB = (fixture: { readonly repoB: string }, sessionPath: string, moveId: string) => ({
+	...landedOnB(fixture, sessionPath),
+	writable: false,
+	sealed_by: { move_id: moveId, state: "moved", target: "device-a" },
 });
 
 export const customTypes = (file: string) =>
