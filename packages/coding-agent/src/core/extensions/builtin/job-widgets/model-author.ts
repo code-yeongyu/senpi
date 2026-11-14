@@ -38,15 +38,14 @@ export interface JobWidgetModelSources {
 	readonly setting?: JobWidgetModelResolver;
 	/** A host-injected route to a cheap model (omo: its `quick` category). */
 	readonly host?: JobWidgetModelResolver;
-	readonly session?: JobWidgetModelResolver;
 }
 
 /**
- * Model resolution order: the explicit setting, then the host-injected resolver, then the
- * session's current model. The first that yields a model wins; none means no request is made.
+ * Model resolution order: the explicit setting, then the host-injected resolver. Only these
+ * designated models write specs; the session's own model never does. None means no request is made.
  */
 export function jobWidgetModelResolver(sources: JobWidgetModelSources): JobWidgetModelResolver {
-	return () => sources.setting?.() ?? sources.host?.() ?? sources.session?.();
+	return () => sources.setting?.() ?? sources.host?.();
 }
 
 export interface ModelJobWidgetAuthorOptions {
