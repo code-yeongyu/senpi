@@ -6380,7 +6380,8 @@ other path, or when a folder on the way or the file itself is a symlink or not a
 
 #### The folder a project write is for
 
-`set_project_trust`, `set_project_setting` and `write_project_file` take an optional `expectedCwd`: the folder the
+`set_project_trust`, `set_project_setting`, `write_project_file`, `set_project_mcp_servers` and
+`write_project_skill_file` take an optional `expectedCwd`: the folder the
 caller means. A client that reaches a session by a key that can since name another session (a remote desktop, through
 a relay) states it, so the write lands only in that folder's project. When it is given and the session's working
 directory is another folder, the write is refused with `project_cwd_mismatch` and nothing is written or applied. Both
@@ -6410,6 +6411,88 @@ version cannot be checked without reading it), `project_file_conflict` when
 and retry), and `project_file_write_failed` when the write fails (permissions, disk).
 
 Both are `device_admin`: they read and write a file in the session's folder.
+
+#### get_project_mcp_servers
+
+Reads the session folder's project MCP file (`.omo/mcp.json`) as stored.
+Reading runs nothing, so it works while the project is untrusted.
+
+```json
+{"type": "get_project_mcp_servers"}
+```
+
+```json
+{
+  "type": "response",
+  "command": "get_project_mcp_servers",
+  "success": true,
+  "data": {
+    "cwd": "/home/user/project",
+    "path": ".omo/mcp.json",
+    "exists": true,
+    "mcpServers": { "docs": { "command": "docs-mcp" } },
+    "parseError": null,
+    "etag": "sha256-…",
+    "projectTrusted": true
+  }
+}
+```
+
+`mcpServers` holds the entries as stored (placeholders unexpanded); it is `null` when the file is missing or does
+not parse. `parseError` says why a stored file does not parse (not JSON, not a JSON object, or `mcpServers` not an
+object). Errors: `project_file_not_allowed` when the config folder or the file is a symlink or not a regular
+file and folder, and `project_file_too_large` for a stored file over 512 KiB.
+
+#### set_project_mcp_servers
+
+Edits the servers of the project MCP file in one write, naming the version it replaces.
+
+```json
+{"type": "set_project_mcp_servers", "patch": {"old": null, "new": {"command": "docs-mcp"}}, "ifEtag": "sha256-…"}
+```
+
+The merge is one level deep: each `patch` entry replaces the server of that name, `null` removes it, and every other
+server and top-level key stays as stored, so a rename is one atomic write. The merged file is checked with the
+engine's own MCP config loader before anything is written. The write needs the folder to be trusted at the moment it
+commits and gets the same permission decision a `write` of that file gets in the session (rules, preset, saved
+answers, or a prompt). In an RPC session that prompt goes to the session's client, as it does for the session's own
+`write` tool, so the client that sent the write answers it. The response carries the same `data` as
+`get_project_mcp_servers`, read after the write.
+Errors: `invalid_argument` when `patch` is not an object, `ifEtag` is neither a string nor `null`, or `expectedCwd`
+is not a string, `project_cwd_mismatch` when `expectedCwd` names another folder (nothing is written),
+`project_not_trusted`, `project_file_conflict` (`errorData: { currentEtag, exists }`),
+`project_mcp_config_unparseable` (`errorData: { parseError }`; a file that does not parse is never written over),
+`project_mcp_config_invalid` when the loader rejects the merged file, `project_file_permission_denied`,
+`project_file_not_allowed`, `project_file_too_large`, and `project_file_write_failed`.
+
+#### read_project_skill_file
+
+Read the file of a skill the engine lists for the session, by skill name.
+
+```json
+{"type": "read_project_skill_file", "skill": "deploy"}
+```
+
+#### write_project_skill_file
+
+Replace the file of a skill the engine lists for the session, by skill name. `ifEtag` is the `etag` the last read
+answered.
+
+```json
+{"type": "write_project_skill_file", "skill": "deploy", "content": "---\nname: deploy\n…", "ifEtag": "sha256-…"}
+```
+
+For both, `data` is `{ cwd, skill, path, exists, content, etag, projectTrusted }`, with `path` relative to the session's folder.
+Only a listed skill whose file lies inside the session's folder is reachable; a skill that lives elsewhere (a global
+skill, also when the agent's directory lies inside the session's folder) or is reached through a folder link or a
+file link is refused. A write passes the same trust and permission
+gates as `set_project_mcp_servers` and answers the read after it. Errors: `project_skill_not_listed`
+(`errorData: { skill }`), `project_file_not_allowed`, `invalid_argument`, `project_cwd_mismatch` (a write whose
+`expectedCwd` names another folder), `project_not_trusted`,
+`project_file_conflict`, `project_file_permission_denied`, `project_file_too_large`, and
+`project_file_write_failed`.
+
+All four are `device_admin`: they read and write files in the session's folder.
 
 ### extension_request
 
