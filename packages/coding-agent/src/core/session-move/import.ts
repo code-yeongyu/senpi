@@ -3,11 +3,12 @@ import { dirname, join } from "node:path";
 import { normalizePath, resolvePath } from "../../utils/paths.ts";
 import type { RepositoryIdentity } from "../repository-identity.ts";
 import { getDefaultSessionDir, loadEntriesFromFileAsync, SessionManager } from "../session-manager.ts";
-import { rebindSessionFile } from "../session-rebind.ts";
+import { readSessionCwd, rebindSessionFile } from "../session-rebind.ts";
 import { encodedSessionId, serializeByKey } from "../session-sidecar-store.ts";
 import { pathExists } from "../tools/path-utils.ts";
 import {
 	EXTENSION_STATE_PREFIX,
+	listedFiles,
 	MoveBundleInvalidError,
 	type MoveManifest,
 	readManifest,
@@ -18,6 +19,7 @@ import { EXTENSION_STATE_PAYLOAD, movedStateDir } from "./extension-state.ts";
 import { type LandedFile, outcomeIn, readLanding } from "./landed-file.ts";
 import { type MoveAnswer, MoveFencedError, type MoveLedger } from "./move-ledger.ts";
 import { moveStep } from "./move-steps.ts";
+import { type NameFolding, refuseNamesThatFold } from "./name-folding.ts";
 import { headerSessionId, type MoveId, SESSION_MOVED_IN, sessionOwnership } from "./ownership.ts";
 import { requeueInput } from "./requeue.ts";
 import { isCheckoutOfRepository, MoveRefusedError } from "./repository-check.ts";
@@ -34,6 +36,8 @@ export interface ImportMovedSessionOptions {
 	/** The sha256 each file of an inline bundle was sent with (senpi#6267); checked beside the manifest's. */
 	readonly sent?: ReadonlyMap<string, string>;
 	readonly readIdentity?: (dir: string) => Promise<RepositoryIdentity | undefined>;
+	/** How the session folder's file system folds names (senpi#6472); asked of the folder itself unless a test says. */
+	readonly probeNameFolding?: (folder: string) => Promise<NameFolding>;
 }
 
 export class MoveTargetOccupiedError extends Error {
@@ -146,15 +150,29 @@ export async function importMovedSession(
 	const landed = async (): Promise<boolean> =>
 		(await pathExists(target)) && (await movedInFor(target, manifest.moveId));
 	// The rename already committed; a crash or a failed write may have lost `accepted`, and the file is the authority.
+	// It answers only for the folder it landed for: an import that names another folder (into the same `sessionDir`)
+	// was never checked against that folder's repository, and its `open` would run the session there. That import is
+	// fenced with the record the file just confirmed, so its refusal says where the move landed (senpi#6436).
 	const confirmLanded = async (): Promise<{ readonly sessionFile: string }> => {
-		await options.ledger.confirmLanded(
-			manifest.moveId,
-			target,
-			(await importOutcome(target, manifest.moveId)) === "revoked",
-		);
+		const revoked = (await importOutcome(target, manifest.moveId)) === "revoked";
+		await options.ledger.confirmLanded(manifest.moveId, target, revoked);
+		const landedFor = await readSessionCwd(target);
+		if (landedFor !== undefined && landedFor !== targetCwd)
+			throw new MoveFencedError(
+				manifest.moveId,
+				revoked ? { state: "accepted", revoked: true } : { state: "accepted" },
+				`it already landed here for ${landedFor}, and a move lands for one folder`,
+			);
 		return { sessionFile: target };
 	};
 	if (await landed()) return confirmLanded();
+	// Every listed file is written under the session folder: two that are one name on its file system cannot both be.
+	// Refused before the move is touched, so it stays importable into a folder that keeps them apart.
+	await refuseNamesThatFold(
+		listedFiles(manifest).map((file) => file.path),
+		sessionDir,
+		options.probeNameFolding,
+	);
 	try {
 		await verifyBundle(options.bundleDir, manifest, options.sent);
 	} catch (error) {
