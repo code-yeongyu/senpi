@@ -13,6 +13,35 @@ const ALL_PROCESSES = "a target of `-1` signals every process you may signal";
 
 export const refuseAll = (): KillGuardVerdict => refuse("R3", ALL_PROCESSES, "Name the pid.");
 
+const GROUP_FORM = "Name a process group after `--`: `kill -9 -- -<pgid>`.";
+
+/**
+ * procps-ng `kill` reads a word like `-1429035` that is not after `--` as an option cluster, and an option starting
+ * with a digit makes it signal `-<that digit>` and exit (kill.c `case '?'`): `-1`, every process, for a first digit of
+ * 1, else a one-digit group. bash's builtin reads the same word as the whole group, so the guard refuses it everywhere.
+ */
+export const PROCPS_MISREAD = /^-\d./;
+
+export function refuseProcpsTarget(word: string): KillGuardVerdict {
+	const digit = word.charAt(1);
+	if (digit === "1") {
+		return refuse(
+			"R3",
+			`procps \`kill\` reads \`${word}\` before \`--\` as \`-1\`, which signals every process you may signal`,
+			GROUP_FORM,
+		);
+	}
+	const group = digit === "0" ? "its own process group" : `process group ${digit}`;
+	return refuse(
+		"R4",
+		`procps \`kill\` reads \`${word}\` before \`--\` as ${group} (only the first digit counts), not the group it names`,
+		GROUP_FORM,
+	);
+}
+
+/** A numeric first word procps takes as a signal: at most two digits, at most 127 - SIGRTMIN (signals.c). */
+export const procpsSignalNumber = (text: string) => /^\d{1,2}$/.test(text) && Number(text) <= 93;
+
 function parseTarget(text: string): KillTarget | undefined {
 	if (/^\d+$/.test(text)) {
 		const pid = Number(text);
@@ -37,6 +66,8 @@ function readSignal(situation: Situation): { readonly next: number; readonly zer
 	}
 	const text = first.text;
 	if (!text.startsWith("-") || text === "--" || text === "-") return { next: 0, zero: false };
+	// `kill -1429035`: no signal procps knows, so it is a target (procps reads it as `-1`).
+	if (/^-\d/.test(text) && !procpsSignalNumber(text.slice(1))) return { next: 0, zero: false };
 	if (text === "-s" || text === "-n" || text === "--signal") {
 		const zero = second !== undefined && !second.dynamic && signalNumberOrName(second.text)?.zero === true;
 		return { next: 2, zero };
@@ -72,6 +103,7 @@ export function judgeKill(situation: Situation, context: KillGuardContext): Kill
 			continue;
 		}
 		if (word.text.startsWith("%")) continue;
+		if (!optionsDone && PROCPS_MISREAD.test(word.text)) return refuseProcpsTarget(word.text);
 		const target = parseTarget(word.text);
 		if (target !== undefined) targets.push(target);
 	}
