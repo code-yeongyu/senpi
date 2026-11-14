@@ -6378,7 +6378,6 @@ Errors: `invalid_argument` when `path` is not a string, `project_file_not_allowe
 other path, or when a folder on the way or the file itself is a symlink or not a regular file and folder, and
 `project_file_too_large` (`errorData: { limitBytes }`) for a stored file over 512 KiB.
 
-
 #### The folder a project write is for
 
 `set_project_trust`, `set_project_setting` and `write_project_file` take an optional `expectedCwd`: the folder the
