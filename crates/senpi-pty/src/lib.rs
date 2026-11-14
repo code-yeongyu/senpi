@@ -193,9 +193,12 @@ impl NativePtySessionOptions {
         if let Some(cwd) = self.cwd {
             options = options.cwd(PathBuf::from(cwd));
         }
-        for (key, value) in self.env.unwrap_or_default() {
-            if let Some(value) = value {
-                options = options.env(key, value);
+        if let Some(env) = self.env {
+            options.clear_env = true;
+            for (key, value) in env {
+                if let Some(value) = value {
+                    options = options.env(key, value);
+                }
             }
         }
         if let Some(timeout_ms) = self.timeout_ms {
