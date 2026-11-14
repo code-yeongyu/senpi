@@ -380,6 +380,51 @@ describe("Editor component", () => {
 		});
 	});
 
+	describe("Apple Terminal Ctrl+J", () => {
+		it("inserts a newline for LF, which Terminal.app sends only for Ctrl+J", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme, {
+				terminalEnvironment: { TERM_PROGRAM: "Apple_Terminal" },
+				terminalPlatform: "darwin",
+			});
+			let submitted = false;
+			editor.onSubmit = () => {
+				submitted = true;
+			};
+
+			editor.setText("hello");
+			editor.handleInput("\n");
+
+			assert.strictEqual(editor.getText(), "hello\n");
+			assert.strictEqual(submitted, false);
+		});
+
+		it("keeps CR submission in Terminal.app and LF submission over SSH", () => {
+			const local = new Editor(createTestTUI(), defaultEditorTheme, {
+				terminalEnvironment: { TERM_PROGRAM: "Apple_Terminal" },
+				terminalPlatform: "darwin",
+			});
+			let localSubmitted = "";
+			local.onSubmit = (text) => {
+				localSubmitted = text;
+			};
+			local.setText("local");
+			local.handleInput("\r");
+			assert.strictEqual(localSubmitted, "local");
+
+			const remote = new Editor(createTestTUI(), defaultEditorTheme, {
+				terminalEnvironment: { TERM_PROGRAM: "Apple_Terminal", SSH_CONNECTION: "client 1 server 22" },
+				terminalPlatform: "darwin",
+			});
+			let remoteSubmitted = "";
+			remote.onSubmit = (text) => {
+				remoteSubmitted = text;
+			};
+			remote.setText("remote");
+			remote.handleInput("\n");
+			assert.strictEqual(remoteSubmitted, "remote");
+		});
+	});
+
 	describe("Backslash+Enter newline workaround", () => {
 		it("submits when the terminal sends LF for plain Enter", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
