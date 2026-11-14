@@ -1044,8 +1044,8 @@
       "packages/coding-agent/src/experimental/radius-auth.ts": ["ENV_RADIUS_GATEWAY"],
       // pre-existing at origin main aceb1cc1d9: unused exports RADIUS_RELAY_HOST_SUBPROTOCOL, RADIUS_RELAY_CLIENT_SUBPROTOCOL
       "packages/coding-agent/src/experimental/radius-relay.ts": ["RADIUS_RELAY_CLIENT_SUBPROTOCOL", "RADIUS_RELAY_HOST_SUBPROTOCOL"],
-      // pre-existing at origin main aceb1cc1d9: unused exports ENV_SERVER_DIR, ensurePrivateServerDirectory, acquireServerActivation
-      "packages/coding-agent/src/experimental/server.ts": ["ENV_SERVER_DIR", "acquireServerActivation", "ensurePrivateServerDirectory"],
+      // pre-existing at origin main aceb1cc1d9: unused exports ENV_SERVER_DIR, ensurePrivateServerDirectory
+      "packages/coding-agent/src/experimental/server.ts": ["ENV_SERVER_DIR", "ensurePrivateServerDirectory"],
       // pre-existing at origin main aceb1cc1d9: unused exports createModelsService
       "packages/coding-agent/src/experimental/services/models-provider.ts": ["createModelsService"],
       // pre-existing at origin main aceb1cc1d9: unused exports OWNERSHIP_LOST_REPORT_TIMEOUT_MS
