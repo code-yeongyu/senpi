@@ -126,7 +126,13 @@ const steppedBoundary =
 				: walks.resume(sessionId, step.walk, step.from);
 		const id = step.walk ?? walks.open(sessionId, walk);
 		const forwarded = { walk, from: step.from, entries: step.entries, continue: step.next };
-		const result = await runner.emitBoundary(base, () => step.context, forwarded);
+		let result: Awaited<ReturnType<ExtensionRunner["emitBoundary"]>>;
+		try {
+			result = await runner.emitBoundary(base, () => step.context, forwarded);
+		} catch (error) {
+			walks.release(sessionId);
+			throw error;
+		}
 		if (result.resume === undefined) walks.close(sessionId);
 		else walks.advance(sessionId, result.resume.next);
 		return {

@@ -129,6 +129,33 @@ describe("a hosted loop's boundary walks the user's handlers on the hand in step
 		expect(last.resume).toBeUndefined();
 	});
 
+	it("refuses a second copy of a step while the first is still running: the handler runs once (#6799 review L1)", async () => {
+		const seen: string[] = [];
+		const held = Promise.withResolvers<void>();
+		const holding: ExtensionFactory = (pi) =>
+			void pi.on("turn_end", async (event) => {
+				seen.push("b");
+				await held.promise;
+				return { entries: [...event.entries, { type: "custom", customType: "b" }] };
+			});
+		const hooks = await hooksOf([
+			{ path: "/user/a.ts", factory: drafting("a", seen) },
+			{ path: "/user/b.ts", factory: holding },
+		]);
+		const first = await step(hooks, {});
+		const resume = { entries: first.entries, from: 1, walk: first.resume?.walk };
+
+		// Both copies are sent while b still runs (it waits on `held`); then b is let go.
+		const running = step(hooks, resume);
+		const copy = step(hooks, resume);
+		held.resolve();
+		const [ran, copied] = await Promise.allSettled([running, copy]);
+
+		expect(seen).toEqual(["a", "b"]);
+		expect(ran).toMatchObject({ status: "fulfilled", value: { resume: { next: 2 } } });
+		expect(copied).toMatchObject({ status: "rejected", reason: { message: expect.stringMatching(/in flight/) } });
+	});
+
 	it.each([0.5, 1.5])("refuses a resume point that is not a whole index: from %s (review L6)", async (from) => {
 		const hooks = await hooksOf([{ path: "/user/a.ts", factory: drafting("a", []) }]);
 		const payload: JsonValue = toJson({ ...turnEnd, context: preview, entries: [], from, walk: "w" });
