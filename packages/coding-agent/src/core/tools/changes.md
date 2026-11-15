@@ -1,5 +1,29 @@
 # core/tools changes
 
+## 2026-11-15 - The bash, read, write and edit tools split into worker-safe cores and local extras (senpi#6740)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/bash.ts`, `packages/coding-agent/src/core/tools/read.ts`, `packages/coding-agent/src/core/tools/write.ts`, `packages/coding-agent/src/core/tools/edit.ts`: each factory now composes a worker-safe core (new `bash-core.ts`/`bash-schema.ts`/`shell-operations.ts`/`shell-output.ts`, `read-core.ts`/`read-text.ts`, `write-core.ts`, `edit-core.ts`) with its local extras: renderers, the temp-file spill, photon image processing, the local shell config and detached-group tracking, `resolveToCwd` and variant probing, realpath canonicalization and the machine-ops mutation queue. Exported names, option types and results are unchanged; `ReadOperations.readFile` and `EditOperations.readFile` now return `Uint8Array` (a `Buffer` still satisfies them).
+- `packages/coding-agent/src/core/tools/output-accumulator.ts`: the accumulator logic moves to `output-accumulator-core.ts` behind an `OutputSpill`; this module keeps `OutputAccumulator` with the same temp-file spill as its default (`createTempFileSpill`).
+- `packages/coding-agent/src/core/tools/truncate.ts`: `Buffer` byte work is replaced by `encoding.ts` (TextEncoder/TextDecoder) with identical results; `tail-window.ts` and `secret-output-redactor.ts` likewise.
+- `packages/coding-agent/src/core/tools/edit-diff.ts`: `computeEditsDiff` (the fs-reading preview) moves to `edit-preview.ts`; the module keeps only pure helpers.
+- `packages/coding-agent/src/core/tools/path-utils.ts`: `resolveReadPathAsync` delegates to the shared `resolveReadPathVariants` (`file-tool-host.ts`); the variant helpers move there unchanged.
+- New worker-side helpers: `fs-error-code.ts` maps the operation layer's error codes (`not_found`, `permission_denied`) back to fs codes, so the write baseline and edit error text match the local tools on a machine that reports its own codes; `posix-signals.ts` numbers signals per machine OS for the 128 + n exit code (Linux, Darwin and the BSDs, win32 as Node numbers it, and the common POSIX table for any other OS); the machine spill skips cleanup when nothing reached the machine.
+- `machine.ts` builds on the new `tool-machine.ts`; the tool-path `OpContext.limits` now derive from `ops.limits` (the local machine's are `DEFAULT_LIMITS`).
+
+### Why
+
+- A host that runs the built-in tools in a Worker / non-Node host through an injected ToolMachine (senpi#6739) must offer the model the same bash, read, write and edit tools as a local session; their modules reached Node builtins (tools-manager, photon, the TUI renderers, cross-spawn, the temp-file spill), so they could not be bundled for such a host.
+
+### Why an extension could not handle it
+
+- The tool definitions and their default operations are built inside these core modules; an extension can replace a tool but cannot make the built-in one bundle for another host.
+
+### Expected merge conflict zones
+
+- MEDIUM: the import blocks and factory bodies of `bash.ts`, `read.ts`, `write.ts`, `edit.ts` and `output-accumulator.ts` (their execute bodies now live in the `*-core.ts` modules); the `Buffer` lines in `truncate.ts`; the tail of `edit-diff.ts`; the variant probe in `path-utils.ts`.
+
 ## 2026-11-15 - bash reads the session's device machine when a command runs (senpi#6720)
 
 ### What changed

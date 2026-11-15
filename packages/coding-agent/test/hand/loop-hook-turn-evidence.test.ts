@@ -6,17 +6,21 @@ import { AuthStorage } from "../../src/core/auth-storage.ts";
 import { holdIdle } from "../../src/core/extensions/loop-hook-idle-hold.ts";
 import { ExtensionRunner } from "../../src/core/extensions/runner.ts";
 import type { ExtensionContext } from "../../src/core/extensions/types.ts";
-import { createLoopHookCall } from "../../src/modes/rpc/loop-hook-call.ts";
+import { createLoopHookCall, type LateLoopRoute } from "../../src/modes/rpc/loop-hook-call.ts";
 import { extensionLoopHooks } from "../../src/modes/rpc/loopless-loop-hooks.ts";
 import { createInMemoryModelRegistry } from "../model-runtime-test-utils.ts";
 import { createTestExtensionsResult } from "../utilities.ts";
+
+const noLateEffects: LateLoopRoute = () => {
+	throw new Error("this test's hooks have no work that outlives their call");
+};
 
 describe("a forwarded loop event's turn evidence (#6770)", () => {
 	// #6770 review (CLEAR) L2: a forwarded agent_start is turn evidence by itself, not only through the hooks builtin's
 	// own agent_start handler (which drops a held Stop and so hides the classification at the hand level). Only a user
 	// extension runs here, so this fails if TURN_EVIDENCE.agent_start stops being "running".
 	it("after a forwarded agent_end, a forwarded agent_start ends the idleness its held work sees", async () => {
-		const call = createLoopHookCall();
+		const call = createLoopHookCall(noLateEffects);
 		let kept: ExtensionContext | undefined;
 		let release: (() => void) | undefined;
 		const loaded = await createTestExtensionsResult([

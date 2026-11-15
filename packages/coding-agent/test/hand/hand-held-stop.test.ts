@@ -2,6 +2,8 @@
 // while the work runs, runs once the work drains if no turn of the loop session is running by then, and its writes
 // reach the loop as late effects. Only an event that proves a turn is running drops it, as locally only a turn's start
 // does; a call that proves nothing (an input the loop handles itself, a preview) leaves it.
+import { join } from "node:path";
+import { deliverHandWake } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type * as HookDispatcher from "../../src/core/extensions/builtin/hooks/dispatcher.ts";
@@ -9,8 +11,12 @@ import { STOP_STATE_CUSTOM_TYPE } from "../../src/core/extensions/builtin/hooks/
 import { STOP_DRAIN_GRACE_MS } from "../../src/core/extensions/builtin/hooks/stop-lifecycle.ts";
 import { WAKE_SOURCE_STATE_EVENT } from "../../src/core/extensions/builtin/monitor-state-event.ts";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
-import { type LifecycleReply, toJson, userMachine } from "./lifecycle-hook-fixture.ts";
-import { cleanupHands } from "./remote-hand-fixture.ts";
+import { openHandWakeOutbox } from "../../src/modes/hand/hand-wakes.ts";
+import { createLooplessHand } from "../../src/modes/rpc/remote-executor-scope.ts";
+import { createHarness } from "../suite/harness.ts";
+import { brainInbox, connect } from "./hand-wake-fixture.ts";
+import { type LifecycleReply, toJson, userMachine, writeLifecycleHook } from "./lifecycle-hook-fixture.ts";
+import { cleanupHands, handConfiguration, handDirs } from "./remote-hand-fixture.ts";
 
 // A held Stop runs from the drain timer, with no reply to await. The real dispatcher runs; each dispatch is numbered
 // when it starts, and once it settles and the continuations it started have run (the Stop's result applied), it tells
@@ -92,25 +98,95 @@ async function heldStop(idle: boolean) {
 }
 
 describe("a Stop a hand holds for background work (senpi#5898)", () => {
-	// #6751 review M1: the held Stop runs with the facts its agent_end carried, and its writes reach the loop as late
-	// effects on the session's next reply. The loop carries either idle value at agent_end; neither may lose it.
-	it.each([false, true])("runs once the work drains, and its writes ride the next reply (idle %s)", async (idle) => {
-		const { user, held, drain } = await heldStop(idle);
+	// #6751 review M1 + H3: as in a local session, a turn that ends while the hand's background work is live holds its
+	// Stop until the work drains; the held Stop then runs with the facts its agent_end carried. Its writes (the stop
+	// state and the block's follow-up) reach the loop as durable wakes, with no further call, so a block wakes an idle
+	// loop: the brain delivers the follow-up and its session runs a turn. Either idle value at agent_end works the same.
+	it.each([false, true])(
+		"a Stop held for live background work that blocks wakes the loop through the wake lane (idle %s)",
+		async (idle) => {
+			let bus: ExtensionAPI["events"] | undefined;
+			const dirs = await handDirs("h3-held-stop");
+			writeLifecycleHook(dirs.cwd, "Stop", { decision: "block", reason: "keep going" });
+			const brain = await brainInbox();
+			const link = connect(brain, await openHandWakeOutbox(join(dirs.agentDir, "hand-wakes.json")));
+			const machine = createLooplessHand(handConfiguration(dirs), {
+				twoSidedHome: "hand",
+				extensionFactories: [(pi) => void (bus = pi.events)],
+				wakes: link.wakes,
+			});
+			const sessionId = `loop-${crypto.randomUUID()}`;
+			const base = { sessionId, idle: false, scope: { id: `session-${sessionId}`, root: dirs.cwd } };
+			let brainPi: ExtensionAPI | undefined;
+			const loop = await createHarness({ cwd: dirs.cwd, extensionFactories: [(pi) => void (brainPi = pi)] });
+			try {
+				await loop.session.bindExtensions({ mode: "tui" });
+				// The first call opens the scope's runtime, so its extensions (the bash stand-in among them) are loaded.
+				await machine.loopHooks("session_start", { ...base, reason: "startup" });
+				bus?.emit(WAKE_SOURCE_STATE_EVENT, { source: "terminal-background-sessions", activeCount: 1 });
+				const held = (await machine.loopHooks("agent_end", {
+					...base,
+					idle,
+					messages: toJson([fauxAssistantMessage("done")]),
+					leafId: "leaf-1",
+					handEntries: [],
+				})) as LifecycleReply;
+				const ran = nextDispatchSettled();
+				vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+				try {
+					bus?.emit(WAKE_SOURCE_STATE_EVENT, { source: "terminal-background-sessions", activeCount: 0 });
+					vi.advanceTimersByTime(STOP_DRAIN_GRACE_MS);
+				} finally {
+					vi.useRealTimers();
+				}
+				await ran;
+				// The held Stop's writes arrive in order: its recorded output and stop state, then the block's follow-up.
+				const wakes = [await brain.committed.next("the held Stop's first write")];
+				while (wakes.at(-1)?.source !== "user_message") wakes.push(await brain.committed.next("the follow-up"));
+				const stopState = wakes.find(
+					(wake) => wake.source === "entry" && JSON.stringify(wake.payload).includes(STOP_STATE_CUSTOM_TYPE),
+				);
 
-		const ran = nextDispatchSettled();
-		expect(drain()).toBe(true);
-		await ran;
-		const next = (await user.machine.loopHooks("session_start", {
-			...user.base,
-			reason: "resume",
-		})) as LifecycleReply;
+				expect([stopCounts(held), held.userMessages]).toEqual([[], undefined]);
+				expect(stopState?.payload).toMatchObject({ data: { count: 1 }, sessionId });
+				expect(wakes.at(-1)?.payload).toEqual({
+					content: "keep going",
+					options: { deliverAs: "followUp" },
+					sessionId,
+				});
+				const pi = brainPi;
+				if (pi === undefined) throw new Error("the brain's extension did not load");
+				loop.setResponses([fauxAssistantMessage("continued")]);
+				const turn = new Promise<void>((resolve) => {
+					const stop = loop.session.subscribe((event) => {
+						if (event.type !== "agent_end") return;
+						stop();
+						resolve();
+					});
+				});
+				const outcomes: string[] = [];
+				await brain.inbox.drain(async (wake) => {
+					outcomes.push(
+						deliverHandWake(wake, {
+							sendMessage: pi.sendMessage,
+							sendUserMessage: pi.sendUserMessage,
+							appendEntry: pi.appendEntry,
+							notify: () => {},
+							context: () => ({ mode: "tui", model: loop.session.model }),
+						}),
+					);
+				});
+				await turn;
 
-		expect([stopCounts(held), held.userMessages]).toEqual([[], undefined]);
-		expect(user.marks()).toBe("Stop\n");
-		expect({ notices: next.notices, errors: next.errors }).toEqual({ notices: undefined, errors: undefined });
-		expect(stopCounts(next)).toEqual([1]);
-		expect(next.userMessages?.map((message) => message.content)).toEqual(["keep going"]);
-	});
+				expect(outcomes).toEqual(wakes.map(() => "delivered"));
+				expect(JSON.stringify(loop.faux.getCallLog().map((entry) => entry.context))).toContain("keep going");
+			} finally {
+				link.close();
+				loop.cleanup();
+				await machine.close();
+			}
+		},
+	);
 
 	const between = [
 		{
@@ -135,7 +211,7 @@ describe("a Stop a hand holds for background work (senpi#5898)", () => {
 			// #6770 review round 2, M1: a continuation turn (auto-retry, compaction recovery, a queued continuation)
 			// starts with agent_start and no before_agent_start, and on a hand with no request hook no model request
 			// reaches it. The held Stop is dropped here by the Stop lifecycle's own agent_start handler; that agent_start
-			// is also turn evidence by itself is guarded in loop-hook-call.test.ts.
+			// is also turn evidence by itself is guarded in loop-hook-turn-evidence.test.ts.
 			call: "a continuation turn's agent_start, with no before_agent_start (the Stop lifecycle drops it)",
 			event: "agent_start",
 			payload: { idle: false },

@@ -20,6 +20,10 @@
  * senpi#4249 R-1b: on a delegated connection a private presenter record (`mcp_form_*`, `mcp_presenter_*`) is decided
  * by `delegated-presenter-records.ts` and always answered in the private reply shape; `mcp_presenter_control_info`
  * is answered only on a launch-proven connection that is not delegated.
+ *
+ * senpi#6752: the `machine_op` records (`machine-op/wire.ts`) are, like these two, outside `RPC_METHOD_CLASS`. They run
+ * device operations for the local relay host, so they are answered only on a launch-proven connection that has not
+ * declared a delegation; any other connection gets `machine_op_not_authorized` and nothing runs.
  */
 
 import { INCARNATION_MAX } from "./connection-authority.ts";
@@ -49,6 +53,7 @@ import {
 	type RpcMethodClass,
 	type RpcMethodType,
 } from "./method-classes.ts";
+import { isMachineOpCommand, machineOpRefusal } from "./machine-op/wire.ts";
 import { RPC_LAUNCH_PROOF_RECORD } from "./rpc-auth-proof.ts";
 
 export type { DelegationRefusal, DelegationResponse, DelegationVerdict } from "./delegation-wire.ts";
@@ -197,6 +202,13 @@ export class ConnectionDelegations {
 		if (type === CLASSIFY_RECORD_COMMAND) {
 			if (state) state.spoken = true;
 			return { kind: "reply", response: classifyRecord(record as object) };
+		}
+		if (isMachineOpCommand(type)) {
+			if (state) state.spoken = true;
+			const id = requestId(record as object);
+			return state?.proven === true && state.delegation === undefined
+				? { kind: "machine_op", id, command: type }
+				: { kind: "reply", response: machineOpRefusal(id, type) };
 		}
 		if (type === PRESENTER_CONTROL_INFO_COMMAND && state?.delegation === undefined) {
 			if (state) state.spoken = true;
