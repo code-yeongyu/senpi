@@ -113,12 +113,24 @@ export function createLoopHookCall(late: LateLoopRoute): LoopHookCall {
 			const token = {};
 			latest.set(sessionId, token);
 			let live = true;
+			// Whether the loop still waits for this call's reply. A cancel ends that: the loop drops the reply, so what the
+			// call's work made for it, and makes from then on, goes to the late route as wakes (#6753 review L1). The call
+			// itself stays live for its handlers, which keep running until they return.
+			let replyRead = true;
 			let userMessagesSent = 0;
 			const controller = new AbortController();
-			const onCancel = () => controller.abort();
-			if (cancel?.aborted === true) controller.abort();
-			else cancel?.addEventListener("abort", onCancel, { once: true });
 			const effects: LoopHookEffects = { sent: [], notices: [], entries: [], userMessages: [] };
+			const onCancel = () => {
+				replyRead = false;
+				const route = late(sessionId);
+				for (const { message, options } of effects.sent.splice(0)) route.sendMessage(message, options);
+				for (const { message, type } of effects.notices.splice(0)) route.notify(message, type);
+				for (const { customType, data } of effects.entries.splice(0)) route.appendEntry(customType, data);
+				for (const { content, options } of effects.userMessages.splice(0)) route.sendUserMessage(content, options);
+				controller.abort();
+			};
+			if (cancel?.aborted === true) onCancel();
+			else cancel?.addEventListener("abort", onCancel, { once: true });
 			const facts: LoopHookCallFacts = Object.freeze({
 				sessionManager: readOnlySession(binding, {
 					live: () => live,
@@ -128,23 +140,23 @@ export function createLoopHookCall(late: LateLoopRoute): LoopHookCall {
 				isIdle: () => (live || binding.endsTurn !== true ? idle : latest.get(sessionId) === token),
 				sendMessage: (message: SentLoopMessage["message"], options?: SentLoopMessage["options"]) => {
 					const entry = options === undefined ? { message } : { message, options };
-					if (live) effects.sent.push(entry);
+					if (live && replyRead) effects.sent.push(entry);
 					else late(sessionId).sendMessage(message, options);
 				},
 				notify: (message: string, type?: Parameters<LoopHookCallFacts["notify"]>[1]) => {
 					const entry = type === undefined ? { message } : { message, type };
-					if (live) effects.notices.push(entry);
+					if (live && replyRead) effects.notices.push(entry);
 					else late(sessionId).notify(message, type);
 				},
 				appendEntry: (customType: string, data?: unknown) => {
 					const entry = data === undefined ? { customType } : { customType, data };
-					if (live) effects.entries.push(entry);
+					if (live && replyRead) effects.entries.push(entry);
 					else late(sessionId).appendEntry(customType, data);
 				},
 				sendUserMessage: (content: SentLoopUserMessage["content"], options?: SentLoopUserMessage["options"]) => {
 					const entry = options === undefined ? { content } : { content, options };
 					userMessagesSent++;
-					if (live) effects.userMessages.push(entry);
+					if (live && replyRead) effects.userMessages.push(entry);
 					else late(sessionId).sendUserMessage(content, options);
 				},
 				// Only what this call (or its work) sent.

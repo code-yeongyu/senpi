@@ -76,6 +76,36 @@ describe("a loop-hook call's bound session (S33, option A)", () => {
 		]);
 	});
 
+	it("sends what its work makes once the loop cancelled it to the late route: the loop drops that reply (#6753 review L1)", async () => {
+		const { late, route } = recordingRoute();
+		const call = createLoopHookCall(route);
+		const cancel = new AbortController();
+		let identity: string | undefined;
+		const reply = await call.run(
+			{ sessionId: "loop-session-6", cwd: "/work", idle: false, cancel: cancel.signal },
+			async (effects) => {
+				const facts = call.current();
+				facts?.sendMessage({ customType: "before", content: "m-before", display: false });
+				facts?.notify("n-before");
+				cancel.abort();
+				// The handlers keep running after the cancel: their call has not ended, the loop just stopped waiting.
+				identity = facts?.sessionManager.getSessionId();
+				facts?.appendEntry("after-entry");
+				facts?.sendUserMessage("u-after");
+				return effects;
+			},
+		);
+
+		expect(identity).toBe("loop-session-6");
+		expect(late).toEqual([
+			["loop-session-6", "message", "m-before"],
+			["loop-session-6", "notice", "n-before"],
+			["loop-session-6", "entry", "after-entry"],
+			["loop-session-6", "user_message", "u-after"],
+		]);
+		expect(reply).toEqual({ sent: [], notices: [], entries: [], userMessages: [] });
+	});
+
 	it("has pending messages only for user messages it sent; a late one goes to the late route (#6751 review L2)", async () => {
 		const { late, route } = recordingRoute();
 		const call = createLoopHookCall(route);
