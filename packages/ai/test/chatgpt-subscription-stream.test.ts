@@ -2599,7 +2599,7 @@ describe("openai-codex streaming", () => {
 			id: "gpt-5.1-codex",
 			name: "GPT-5.1 Codex",
 			api: "openai-codex-responses",
-			provider: "openai-codex",
+			provider: "chatgpt-subscription",
 			baseUrl: "https://chatgpt.com/backend-api",
 			reasoning: true,
 			input: ["text"],

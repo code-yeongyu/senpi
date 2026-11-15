@@ -27,7 +27,6 @@ function siwcModel(id: string): Model<"openai-responses"> {
 	return {
 		...catalog,
 		api: "openai-responses",
-		provider: "openai-siwc-fixture",
 		baseUrl: "https://api.openai.com/v1",
 		compat: { ...(catalog.compat as OpenAIResponsesCompat), siwc: true, webSearchToolType: "web_search" },
 	} as Model<"openai-responses">;

@@ -31,7 +31,7 @@ function makeModel(compat: OpenAIResponsesCompat): Model<"openai-codex-responses
 		id: "gpt-deferred-test",
 		name: "GPT Deferred Test",
 		api: "openai-codex-responses",
-		provider: "openai-codex",
+		provider: "chatgpt-subscription",
 		baseUrl: "http://127.0.0.1:9",
 		reasoning: false,
 		input: ["text"],

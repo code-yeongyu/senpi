@@ -19,7 +19,6 @@ const SIWC_ERRORS: Readonly<
 	subscription_sharing_user_unavailable: { category: "provider_unavailable", status: 503, recovery: "transient" },
 	subscription_sharing_invalid_user: { category: "auth", status: 401, recovery: "auth" },
 	subscription_sharing_unsupported_capability: { category: "invalid_request", status: 400, recovery: "request" },
-	subscription_sharing_unsupported_input_item: { category: "invalid_request", status: 400, recovery: "request" },
 	subscription_sharing_route_not_supported: { category: "invalid_request", status: 403, recovery: "request" },
 	chatpass_v2_scope_not_authorized: { category: "invalid_request", status: 403, recovery: "request" },
 	chatpass_v2_invalid_authorization_context: { category: "invalid_request", status: 403, recovery: "request" },
