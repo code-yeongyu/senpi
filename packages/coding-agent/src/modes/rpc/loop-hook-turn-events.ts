@@ -120,14 +120,15 @@ const steppedBoundary =
 		{ sessionId, walks }: LoopHookParseContext,
 	) =>
 	async ({ runner, only }: LoopHookDispatch) => {
-		const resumed = step.walk === undefined ? undefined : walks.resume(sessionId, step.walk);
-		if (step.walk !== undefined && resumed === undefined)
-			throw new Error(`${base.type} walk ${step.walk} is not open on this hand: start the boundary over`);
-		const walk = resumed ?? runner.openBoundaryWalk(base.type, only);
+		const walk =
+			step.walk === undefined
+				? runner.openBoundaryWalk(base.type, only)
+				: walks.resume(sessionId, step.walk, step.from);
 		const id = step.walk ?? walks.open(sessionId, walk);
 		const forwarded = { walk, from: step.from, entries: step.entries, continue: step.next };
 		const result = await runner.emitBoundary(base, () => step.context, forwarded);
 		if (result.resume === undefined) walks.close(sessionId);
+		else walks.advance(sessionId, result.resume.next);
 		return {
 			entries: result.entries,
 			continue: result.continue,
