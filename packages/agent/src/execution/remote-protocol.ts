@@ -102,6 +102,11 @@ export interface RemoteInvoke {
 	 * call's session writes in {@link RemoteToolResult.sessionEffects}. Absent: the call runs with no session, as before.
 	 */
 	readonly session?: JsonValue;
+	/**
+	 * The calling loop session's id: identity only, never its record, sent with every call of a session that has a session
+	 * port (senpi#6754), so tools on the hand that key by session (`monitor` on `children`) know it. Absent: unknown.
+	 */
+	readonly sessionId?: string;
 }
 
 export interface RemoteAbort {
@@ -242,7 +247,8 @@ export function decodeRemoteMessage(payload: Uint8Array): RemoteHandMessage {
 				!isString(value.toolCallId) ||
 				!isString(value.name) ||
 				(value.sessionRef !== undefined && typeof value.sessionRef !== "string") ||
-				(value.session !== undefined && !isRecord(value.session))
+				(value.session !== undefined && !isRecord(value.session)) ||
+				(value.sessionId !== undefined && !isString(value.sessionId))
 			)
 				throw new RemoteProtocolError("malformed invoke");
 			return value as unknown as RemoteInvoke;
