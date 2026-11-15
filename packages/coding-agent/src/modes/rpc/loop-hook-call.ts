@@ -159,11 +159,8 @@ export function createLoopHookCall(late: LateLoopRoute): LoopHookCall {
 					if (live) effects.userMessages.push(entry);
 					else late(sessionId).sendUserMessage(content, options);
 				},
-				// Only what this call (or its work) sent; read by the call's own work after it ended (a held Stop).
-				hasPendingMessages: () => {
-					if (!ownWork()) throw new LoopHookCallEndedError("ctx.hasPendingMessages");
-					return userMessagesSent > 0;
-				},
+				// Only what this call (or its work) sent; a held Stop reads it after the call ended.
+				hasPendingMessages: () => userMessagesSent > 0,
 				getActiveTools: () => {
 					if (!ownWork()) throw new LoopHookCallEndedError("pi.getActiveTools");
 					const active = carried?.activeTools;
