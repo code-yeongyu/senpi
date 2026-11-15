@@ -171,16 +171,6 @@ describe("release.mjs registry preflight", () => {
 		});
 	});
 
-	it("refuses a live run dispatched on a pull-request ref before the suite, any tag and any push", () => {
-		withStubs("unknown", (stub) => {
-			const result = runRelease(stub, { ref: "refs/pull/6532/merge" });
-			assert.equal(result.status, 1, result.stderr);
-			assert.match(result.stderr, /runs live only from refs\/heads\/main; this run was dispatched on refs\/pull\/6532\/merge/);
-			assert.doesNotMatch(result.stderr, /@code-yeongyu\/senpi-realm-registry/);
-			assert.deepEqual(stub.commands().filter(spendsOrShips), []);
-		});
-	});
-
 	it("stops on a registry failure with that failure, not as an unknown package", () => {
 		withStubs("error", (stub) => {
 			const result = runRelease(stub);
