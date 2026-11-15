@@ -5,7 +5,7 @@
  * launch-proven connection that declared no delegation.
  *
  * `machine_op { op, args, op_id, deadline_ms?, scope: { root, confined }, sender }`: `op_id` is opaque (the relay host
- * sends `JSON.stringify([sender, op_id])`) and its cached answer is bound to `sender`; `deadline_ms` is an absolute
+ * sends `JSON.stringify([sender, batch_id, op_id])`) and its cached answer is bound to `sender`; `deadline_ms` is an absolute
  * epoch-ms time on this machine's clock, absent for an op with no deadline; `scope` is the relay host's own scope
  * verdict for the op, `sender` the device it runs for. `machine_op_result` and `machine_op_cancel { op_id, sender }`
  * read or abort only that sender's op, and the terminal ops act only on that sender's handles: another sender's is
