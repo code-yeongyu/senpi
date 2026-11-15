@@ -33,7 +33,7 @@ export type WakeDropReason = "overflow" | "expired" | "refused" | "malformed" | 
 /** The source of a drop report: a durable wake whose payload is `{ reason, count }` (a {@link WakeDropReason}). */
 export const WAKE_DROPPED_SOURCE = "wake.dropped";
 
-/** The un-acked wakes a hand keeps, per scope and in total; past either the oldest is dropped (`overflow`). */
+/** The un-acked wakes a hand keeps, per scope and in total; past either, a new wake is refused (`overflow`) unless a refused one can be evicted. */
 export interface WakeLimits {
 	readonly perScope: number;
 	readonly total: number;

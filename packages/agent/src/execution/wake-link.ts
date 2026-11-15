@@ -208,8 +208,9 @@ export interface BrainWakeLinkOptions {
 	/** The authenticated hand at the other end of this link (design 5.6.6), the inbox's `sender`. */
 	readonly hand: string;
 	/**
-	 * The brain's own check of a wake before it is committed (senpi#6767 review L3), for example that the loop session
-	 * it names belongs to its scope. A refusal is answered to the hand and reported to `onFault`; nothing is committed.
+	 * The brain's own check of a NEW wake of a bound scope, run inside `inbox.receive` after the duplicate, closed-scope
+	 * and binding checks (for example `scopeSessionCheck`). Its refusal is answered to the hand; `not_scope_session` is
+	 * also reported to `onFault`. A duplicate is always acked again and never reaches it.
 	 */
 	readonly check?: (wake: WakeEvent) => WakeRefusal | undefined;
 	/** A wake or drop report the inbox committed for the first time: the brain drains the inbox to deliver it. */

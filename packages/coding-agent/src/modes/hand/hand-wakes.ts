@@ -10,8 +10,9 @@ import type { HandWakes } from "../rpc/remote-executor-scope.ts";
 
 /**
  * How many un-acked wakes a hand keeps while its brain is away (senpi#6767 review M1): per scope, as the loop-hook hold
- * it replaces kept per session, and in total across the hand's scopes. Past a bound the oldest is dropped and the brain
- * is told (`wake_dropped`, reason `overflow`).
+ * it replaces kept per session, and in total across the hand's scopes. Past a bound a wake the brain refused for good is
+ * evicted (reported `refused`), or else the new wake is refused before it is sent (reported `overflow`); a wake already
+ * sent is never evicted.
  */
 export const HAND_WAKE_LIMITS: WakeLimits = { perScope: 256, total: 1024 };
 

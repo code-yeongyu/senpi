@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { createAdmissionLine } from "../../src/durable/store-admission.ts";
 import { createMemoryStoreMedium, openMemoryStore } from "../../src/durable/store-memory.ts";
+import { scopeSessionCheck } from "../../src/execution/wake-delivery.ts";
 import { createWakeInbox } from "../../src/execution/wake-inbox.ts";
 import type { WakeEvent } from "../../src/execution/wake-types.ts";
 
@@ -24,6 +25,39 @@ async function inboxWith(wakes: readonly WakeEvent[], failures: unknown[]) {
 	for (const wake of wakes) await inbox.receive("hand", wake);
 	return inbox;
 }
+
+describe("a wake re-sent after its ack was lost (review round 3, M1)", () => {
+	it("gets its receipt again even after its session left the scope: no refusal, so no drop report and no fault", async () => {
+		let sessions = new Set(["loop-1"]);
+		const medium = createMemoryStoreMedium();
+		await openMemoryStore(medium).claim(0, 1);
+		const inbox = createWakeInbox({
+			issuer: "brain",
+			store: openMemoryStore(medium),
+			epoch: 1,
+			admission: createAdmissionLine(),
+			clock: () => 0,
+			owner: () => "hand",
+		});
+		const check = scopeSessionCheck(() => sessions);
+		const wake: WakeEvent = {
+			eventId: "h:1",
+			scope: "s",
+			source: "notice",
+			payload: { message: "late", sessionId: "loop-1" },
+		};
+
+		const first = await inbox.receive("hand", wake, check);
+		sessions = new Set(["loop-2"]);
+		const resent = await inbox.receive("hand", wake, check);
+
+		expect([first, resent]).toEqual([
+			{ kind: "ack", eventId: "h:1", duplicate: false },
+			{ kind: "ack", eventId: "h:1", duplicate: true },
+		]);
+		expect((await inbox.read()).pending.map((entry) => entry.eventId)).toEqual(["h:1"]);
+	});
+});
 
 describe("draining a brain's wake inbox", () => {
 	it("delivers the wakes behind one the loop cannot take, reports each failure, and poisons it after its attempts", async () => {

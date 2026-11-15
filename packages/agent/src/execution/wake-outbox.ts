@@ -17,7 +17,10 @@ export interface WakeOutboxOptions {
 	readonly epoch: number;
 	readonly admission: AdmissionLine;
 	readonly clock: () => number;
-	/** The un-acked bound; past it the oldest wake is dropped and a drop report (`overflow`) is kept instead. Absent: none. */
+	/**
+	 * The un-acked bound. Past it a wake the brain refused for good is evicted (reported `refused`); with none to evict,
+	 * the new wake is refused before it is sent (`WakeOverflowError`, reported `overflow`). Absent: no bound.
+	 */
 	readonly limits?: WakeLimits;
 	/** A pending entry that is not a wake: `sweep` drops it and keeps a drop report (`malformed`) under its scope. */
 	readonly onFault?: (error: Error) => void;
