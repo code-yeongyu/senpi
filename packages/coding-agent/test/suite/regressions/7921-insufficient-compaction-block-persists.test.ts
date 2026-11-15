@@ -245,10 +245,14 @@ describe("#7921 case 6: an insufficient accepted compaction keeps its blocked st
 		expect(harness.faux.state.callCount).toBe(0);
 	});
 
-	// senpi#6760: a transient provider failure says nothing about the context, so it must not
-	// latch admission; an automated session would otherwise never compact again.
-	it("retries compaction on the next automated prompt after a transient-failure rejection", async () => {
-		const { harness, attempts, allowRetry } = await createFailedCompactionHarness("transient-failure");
+	// senpi#6760: a transient provider failure, and the breaker cooldown repeated ones trip, say
+	// nothing about the context, so they must not latch admission; an automated session would
+	// otherwise never compact again.
+	it.each([
+		"transient-failure",
+		"circuit-breaker",
+	] as const)("retries compaction on the next automated prompt after a %s rejection", async (rejectionCause) => {
+		const { harness, attempts, allowRetry } = await createFailedCompactionHarness(rejectionCause);
 
 		expect(Reflect.get(harness.session, "_blockedPostCompactionAssistant")).toBeUndefined();
 		allowRetry(true);

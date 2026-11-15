@@ -11667,9 +11667,10 @@ export class AgentSession {
 
 	/**
 	 * Whether the automatic compaction that just failed proves the unchanged context cannot be
-	 * compacted, so the automatic loop must stop re-sending it (#7921 case 6). An external owner
-	 * and a transient provider failure (senpi#6760) say nothing about the context: latching on
-	 * them refused every automated send for good, while the next attempt can succeed.
+	 * compacted, so the automatic loop must stop re-sending it (#7921 case 6). An external owner,
+	 * a transient provider failure and the breaker cooldown those failures trip (senpi#6760) say
+	 * nothing about the context: latching on them refused every automated send for good, while a
+	 * later attempt can succeed. A latch an earlier deterministic failure armed stays armed.
 	 */
 	private _failedCompactionLatchesAdmission(): boolean {
 		const state = this._compactionLifecycle.state;
@@ -11677,6 +11678,7 @@ export class AgentSession {
 			state.status === "failed" &&
 			state.rejectionCause !== "external-owner" &&
 			state.rejectionCause !== "transient-failure" &&
+			state.rejectionCause !== "circuit-breaker" &&
 			getLatestCompactionEntry(this.sessionManager.getBranch()) !== null
 		);
 	}
