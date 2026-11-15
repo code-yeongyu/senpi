@@ -8,6 +8,7 @@ import { McpManagerView } from "./manager-view.ts";
 import type { McpService } from "./service.ts";
 import type { McpServerSnapshot } from "./service-types.ts";
 import { buildMcpStatusRows, formatMcpStatus } from "./status.ts";
+import { listMcpTools } from "./tool-client.ts";
 
 type McpManagerCommand = "test" | "reconnect" | "auth" | "logout";
 type Notify = ExtensionCommandContext["ui"]["notify"];
@@ -121,7 +122,7 @@ async function manage(
 					const connection = service.getConnection(name);
 					if (connection?.state !== "connected") continue;
 					const tools = await collectAllPages((cursor) =>
-						connection.client.listTools(cursor === undefined ? {} : { cursor }, { timeout: 2000 }),
+						listMcpTools(connection.client, cursor === undefined ? {} : { cursor }, { timeout: 2000 }),
 					);
 					await view.menu(() => ({
 						title: `Tools of ${name}`,

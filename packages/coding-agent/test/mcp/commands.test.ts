@@ -15,6 +15,7 @@ import { SessionManager } from "../../src/core/session-manager.ts";
 import { createHarness, type Harness } from "../suite/harness.ts";
 import { createCtx, createUi, lastNotification, normalize, notification } from "./fixtures/commands.ts";
 import { attachHarnessSession, awaitMcpToolRegistration, toolResultTexts } from "./fixtures/register-call.ts";
+import { MrtrScript, startMrtrServer } from "./fixtures/mrtr-2026-server.ts";
 import {
 	awaitMcpConnected,
 	cleanupRoots,
@@ -303,6 +304,56 @@ describe("/mcp command suite", () => {
 		await command.handler("test fx", createCtx(root, ui));
 
 		expect(lastNotification(ui)?.message).toMatch(/^MCP test fx ok \(\d+ms\): 3 tools$/);
+	});
+
+	it("reports modern outputSchema shapes through the tolerant list path (senpi#6407)", async () => {
+		const script = new MrtrScript([]);
+		script.tools = [
+			{
+				name: "tool_1",
+				description: "Type-array outputSchema",
+				inputSchema: { type: "object" },
+				outputSchema: {
+					type: ["object", "null"],
+					oneOf: [
+						{ type: "null" },
+						{
+							type: "object",
+							properties: { id: { type: "string" } },
+							required: ["id"],
+							additionalProperties: false,
+						},
+					],
+				},
+			},
+			{
+				name: "tool_2",
+				description: "OneOf-only outputSchema",
+				inputSchema: { type: "object" },
+				outputSchema: {
+					oneOf: [
+						{
+							type: "object",
+							properties: { id: { type: "string" } },
+							required: ["id"],
+							additionalProperties: false,
+						},
+					],
+				},
+			},
+		];
+		const fixture = await startMrtrServer(script);
+		cleanupTasks.push(fixture.close);
+		const root = makeCommandRoot("test-modern-output-schemas");
+		setConfig(root, { fx: { type: "http", url: fixture.url, auth: false, exposure: "direct" } });
+		const { command, extension } = await loadCommand();
+		const ui = createUi();
+		await emitSessionStart(extension, root);
+		await awaitMcpConnected(getMcpService(), "fx");
+
+		await command.handler("test fx", createCtx(root, ui));
+
+		expect(lastNotification(ui)?.message).toMatch(/^MCP test fx ok \(\d+ms\): 2 tools$/);
 	});
 
 	it("bounds wedged fixture tests and keeps the command route responsive", async () => {

@@ -1,3 +1,23 @@
+## 2026-11-11 - Route /mcp test, exposure status and the tools menu through the tolerant list path (senpi#6407)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/commands.ts`: `testServer` lists tools through `listMcpTools` instead of the SDK's strict `client.listTools`.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/expose/status.ts`: `getMcpServerExposureStatus` lists tools through `listMcpTools`.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/manager.ts`: the "Tools of <name>" menu lists tools through `listMcpTools`.
+
+### Why
+
+- Modern servers negotiating 2026-07-28 (observed live: GitHub's remote MCP server) serve `outputSchema` values the SDK's legacy `ListToolsResultSchema` rejects - type arrays such as `["object","null"]` and type-less bare `oneOf` (31 of 46 GitHub tools at filing time). The strict helper failed the whole listing, so `/mcp test` reported "Server returned an unsupported or invalid result type/shape.", the exposure status silently degraded to `toolCount: null`, and the tools menu failed. The catalog path has parsed these shapes through `listModernTools` since senpi#4191; `listMcpTools` routes legacy clients to the SDK helper, so non-modern servers are unaffected.
+
+### Why an extension could not handle it
+
+- The three routes are the builtin MCP client's own command, status and manager surfaces; the era-aware tool contract lives in `tool-client.ts`.
+
+### Expected merge conflict zones
+
+- LOW: single call-site swaps plus one import in `commands.ts`, `expose/status.ts`, and `manager.ts`.
+
 ## 2026-11-10 - Keep offered MCP operations across proven OAuth refresh (senpi#2861)
 
 ### What changed
