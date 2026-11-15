@@ -1,14 +1,21 @@
 # Changelog
 
-## [Unreleased]
+## [2026.11.15-4] - 2026-11-15
 
 ### Breaking Changes
 
 ### Added
 
+- RPC: `get_project_mcp_servers` / `set_project_mcp_servers` and `read_project_skill_file` / `write_project_skill_file` let a client read and edit the session folder's project MCP servers and the files of the skills the engine lists there, with an etag precondition, trust checked on every write, the machine's own edit permission decision, and loader validation of the MCP file before it is written, so a remote client edits them the same way a local one does (fixes #6485)
+- The multi-session RPC host runs the local relay host's device operations: `machine_op` (files, shell, terminals, process info, mesh messages) with `machine_op_result`, `machine_op_owner`, `machine_op_health` and `machine_op_cancel`, on launch-proven non-delegated connections, advertised as `machine_op_v1` ([#6755](https://github.com/code-yeongyu/senpi/pull/6755))
+
 ### Changed
 
 ### Fixed
+
+- A compaction whose summary request failed on a transient provider error (for example `api_error: Network error or service unavailable`) no longer leaves an automated session refusing every later send with "Context remains above the compaction threshold"; the next send retries compaction (senpi#6760, PR #6764).
+- A manual compaction rejected by a transient provider error now says "Retry compaction." instead of promising that the next prompt retries (senpi#6772).
+- An engine that `senpi host ensure` starts keeps the private descriptors its launch table names. The bundled CLI no longer closes them as startup fillers, so an extension that claims such a channel at boot (a desktop memory-sync socket, for example) receives it ([#6776](https://github.com/code-yeongyu/senpi/pull/6776))
 
 ### Removed
 
