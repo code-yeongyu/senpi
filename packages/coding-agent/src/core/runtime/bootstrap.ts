@@ -15,6 +15,7 @@ import type { ToolDispatcher } from "../tool-dispatch/tool-dispatcher.ts";
 import { composeFilesystemPolicies } from "../tools/filesystem-policy.ts";
 import { createAllToolDefinitions } from "../tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "../tools/tool-definition-wrapper.ts";
+import type { ToolMachine } from "../tools/machine.ts";
 
 export interface ToolDefinitionEntry {
 	definition: ToolDefinition;
@@ -36,6 +37,8 @@ export interface RuntimeBootstrapOptions {
 	sessionManager?: SessionManager;
 	/** Routes the core bash tool's process work; absent means the tool's own local operations. */
 	toolDispatcher?: ToolDispatcher;
+	/** The device this session works on (slice 1a seam; supplied by the relay transport in slice 1b). */
+	deviceMachine?: ToolMachine;
 	/** Used instead of the built-in tools when set. */
 	baseToolsOverride?: Record<string, AgentTool>;
 	/** Extension flag values applied to the shared extension runtime before the runner is created. */
@@ -82,6 +85,7 @@ export function bootstrapRuntime(options: RuntimeBootstrapOptions): RuntimeBoots
 					shellPath,
 					...(sessionless ? { exposeSessionEnvironment: false } : {}),
 					...(options.toolDispatcher ? { operations: options.toolDispatcher.bashOperations({ shellPath }) } : {}),
+					...(options.deviceMachine ? { deviceMachine: options.deviceMachine } : {}),
 				},
 				write: { filesystemPolicy },
 				edit: { filesystemPolicy },

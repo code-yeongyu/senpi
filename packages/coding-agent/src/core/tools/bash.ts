@@ -209,6 +209,31 @@ export function createLocalBashOperations(options?: { shellPath?: string; machin
 	return createLocalShellOperations("bash", () => getShellConfig(options?.shellPath), options?.machine);
 }
 
+/** A tool routed to the session's device by OMO_TOOLS_VIA_DAEMON found no device to run on; it never falls back to local. */
+export class DeviceUnavailableError extends Error {
+	readonly code = "device_unavailable" as const;
+	readonly tool: string;
+	constructor(tool: string) {
+		super(
+			`${tool}: the session's device is unavailable, and OMO_TOOLS_VIA_DAEMON routes ${tool} there, so it does not run locally`,
+		);
+		this.name = "DeviceUnavailableError";
+		this.tool = tool;
+	}
+}
+
+const toolsViaDaemon = (tool: string, env: NodeJS.ProcessEnv = process.env): boolean =>
+	(env.OMO_TOOLS_VIA_DAEMON ?? "")
+		.split(",")
+		.map((name) => name.trim())
+		.includes(tool);
+
+const unavailableBashOperations = (tool: string): BashOperations => ({
+	exec: async () => {
+		throw new DeviceUnavailableError(tool);
+	},
+});
+
 export interface BashSpawnContext {
 	command: string;
 	cwd: string;
@@ -267,6 +292,12 @@ export interface BashToolOptions {
 	spawnHook?: BashSpawnHook;
 	/** Operation layer and policy gate. Default: the process-wide local machine. */
 	machine?: ToolMachine;
+	/**
+	 * The operation layer of the device this session works on. Slice 1a of the tools-via-daemon plan: an executor seam
+	 * only, NOT yet via the daemon; the relay transport that supplies it is slice 1b. Used only when OMO_TOOLS_VIA_DAEMON
+	 * names "bash"; with the flag on and no device machine, a call fails with DeviceUnavailableError and never runs locally.
+	 */
+	deviceMachine?: ToolMachine;
 }
 
 export type BashRenderState = {
@@ -292,7 +323,16 @@ export function createShellToolDefinition(
 	options?: BashToolOptions,
 ): ToolDefinition<typeof bashSchema, BashToolDetails | undefined, BashRenderState> {
 	const machine = options?.machine ?? defaultToolMachine();
-	const ops = options?.operations ?? createLocalBashOperations({ shellPath: options?.shellPath, machine });
+	// OMO_TOOLS_VIA_DAEMON=bash (default off): run on the session's device, never on this machine. The flag decides even
+	// when the session injects its dispatcher's operations (bootstrap.ts always does), so the promise holds in a real session.
+	// Only the bash tool: powershell shares this definition with its own local operations and stays on them.
+	const viaDevice = config.name === "bash" && toolsViaDaemon("bash");
+	const deviceMachine = options?.deviceMachine;
+	const ops = viaDevice
+		? deviceMachine !== undefined
+			? createLocalBashOperations({ shellPath: options?.shellPath, machine: deviceMachine })
+			: unavailableBashOperations("bash")
+		: (options?.operations ?? createLocalBashOperations({ shellPath: options?.shellPath, machine }));
 	const commandPrefix = options?.commandPrefix;
 	const exposeSessionEnvironment = options?.exposeSessionEnvironment ?? true;
 	const spawnHook = options?.spawnHook;
