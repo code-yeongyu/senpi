@@ -6165,6 +6165,13 @@
 			],
 			"reason": "senpi#6422 (omo#12965): the cross-session cell authority of every codemode copy in a realm lives in one realm registry. src/kernels/shared/cell-authority-registry.ts joins the extension and first-kernel import scopes (invocation-authority.ts and permission-sessions.ts import it), together with the source entry of the helper package it imports (packages/realm-registry/src/index.ts: this package's tsconfig maps the helper to its source, as it maps the engine, so Bun resolves it without a build), and the new contracts pin the two-copy cases, the payload rules for a registry another version created, the answer rule for a cross-session invoker, and that a cell sees no engine registry key. No prompt, schema, helper or invariant cell moves; the baseline is unchanged.",
 			"changes": []
+		},
+		"senpi#6618": {
+			"additions": [
+				"legacyContracts/test/eval-argument-validator.test.ts/eval argument validator recovers an enabled language from quote and whitespace junk, and treats any other junk as omitted"
+			],
+			"reason": "senpi#6618: the eval argument validator now recovers an enabled run language from quote and whitespace junk before inference, and the new contract pins recovery, omission and disabled-language validation. No prompt, schema, helper or invariant cell moves; the baseline is unchanged.",
+			"changes": []
 		}
 	}
 }

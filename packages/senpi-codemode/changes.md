@@ -1,3 +1,23 @@
+## 2026-11-15 - Recover eval languages wrapped in quote or whitespace junk (senpi#6618)
+
+### What changed
+
+- `src/tool/eval-argument-validator.ts`: recover an enabled run language from quote and whitespace junk before inference, while treating unrelated junk as omitted.
+- `test/eval-argument-validator.test.ts`: cover recovered enabled languages, inferred omissions, and disabled-language validation.
+- `test/gate/allowlist.json`: record the new legacy-contract scenario as a reviewed additive gate change.
+
+### Why
+
+- Models can send a valid language token with accidental quote or whitespace wrappers. Treating that value as an unsupported language rejects a recoverable eval call before the normal inference path can run.
+
+### Why an extension could not handle it
+
+- Eval arguments are normalized by the built-in codemode validator before an extension can observe or repair them.
+
+### Expected merge conflict zones
+
+- LOW: the eval argument validator, its focused contract test, and the additive gate ledger.
+
 ## 2026-11-11 - A running eval row never shrinks while nested calls slide through the collapsed window (senpi#6406)
 
 ### What changed
