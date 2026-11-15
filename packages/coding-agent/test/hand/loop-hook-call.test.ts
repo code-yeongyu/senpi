@@ -161,21 +161,56 @@ describe("a loop-hook call's bound session (S33, option A)", () => {
 		expect(() => kept?.sessionManager.getLeafId()).toThrow(LoopHookCallEndedError);
 	});
 
-	it("after a call that ended the loop's turn, answers idle until the loop starts a turn there (#6751 M1, L2)", async () => {
+	it("for work that holds it, answers idle after a turn's end until a turn is seen running (#6751 M1, L2; #6770 M1)", async () => {
 		const call = createLoopHookCall();
 		const session = { sessionId: "loop-session-8", cwd: "/work" };
 		let kept: ReturnType<typeof call.current>;
-		await call.run({ ...session, idle: false, endsTurn: true }, async () => {
+		let release: (() => void) | undefined;
+		await call.run({ ...session, idle: false, turn: "ended" }, async () => {
 			kept = call.current();
+			release = kept?.holdIdle();
 			expect(kept?.isIdle()).toBe(false);
 		});
 		const afterTurn = kept?.isIdle();
-		// A call that starts no turn (an input the loop handles itself, a preview) leaves the session idle.
+		// A call that proves no running turn (an input the loop handles itself, a preview) leaves the session idle.
 		await call.run({ ...session, idle: true }, async () => {});
 		const afterOtherCall = kept?.isIdle();
-		await call.run({ ...session, idle: true, startsTurn: true }, async () => {});
+		await call.run({ ...session, idle: false, turn: "running" }, async () => {});
+		const afterRunning = kept?.isIdle();
+		release?.();
 
-		expect([afterTurn, afterOtherCall, kept?.isIdle()]).toEqual([true, true, false]);
+		expect([afterTurn, afterOtherCall, afterRunning]).toEqual([true, true, false]);
+	});
+
+	it("without a hold, keeps the idle value it carried after it ended", async () => {
+		const call = createLoopHookCall();
+		let kept: ReturnType<typeof call.current>;
+		await call.run({ sessionId: "loop-session-10", cwd: "/work", idle: false, turn: "ended" }, async () => {
+			kept = call.current();
+		});
+
+		expect(kept?.isIdle()).toBe(false);
+	});
+
+	it("a turn that starts while the call ending the previous one still runs wins over it (#6770 review L2)", async () => {
+		const call = createLoopHookCall();
+		const session = { sessionId: "loop-session-9", cwd: "/work" };
+		const release = Promise.withResolvers<void>();
+		let kept: ReturnType<typeof call.current>;
+		let hold: (() => void) | undefined;
+		const ending = call.run({ ...session, idle: false, turn: "ended" }, async () => {
+			kept = call.current();
+			hold = kept?.holdIdle();
+			await release.promise;
+		});
+		// The loop gave up on a slow agent_end and started the next turn while the hand still runs it.
+		await call.run({ ...session, idle: false, turn: "running" }, async () => {});
+		release.resolve();
+		await ending;
+		const idle = kept?.isIdle();
+		hold?.();
+
+		expect(idle).toBe(false);
 	});
 
 	it("is not visible to work that runs outside the call", async () => {

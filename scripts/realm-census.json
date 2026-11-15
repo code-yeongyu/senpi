@@ -8862,6 +8862,10 @@
 			"class": "per-copy-safe",
 			"reason": "issued and checked inside one copy's RPC host; a split fails closed (design 3.3)"
 		},
+		"packages/coding-agent/src/modes/rpc/loopless-loop-hooks.ts#TURN_EVIDENCE": {
+			"class": "constant",
+			"reason": "lookup table of pure classifiers; never written after load"
+		},
 		"packages/coding-agent/src/modes/rpc/loopless-worker.ts#port": {
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"

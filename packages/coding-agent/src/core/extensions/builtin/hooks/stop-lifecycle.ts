@@ -49,7 +49,8 @@ export type StopLifecycle = {
 export function registerStopLifecycle(pi: ExtensionAPI, deps: StopLifecycleDeps): StopLifecycle {
 	const turnTracker = createStopTurnTracker();
 	const backgroundWork = new Map<string, number>();
-	let pending: PendingStop | undefined;
+	// A held Stop and the release of its hold on the session's idleness (a hand's `ctx.holdIdle`; none locally).
+	let pending: (PendingStop & { readonly release: (() => void) | undefined }) | undefined;
 	let drainTimer: ReturnType<typeof setTimeout> | undefined;
 
 	async function dispatchStop({ ctx, input, turn }: PendingStop, signal: AbortSignal | undefined): Promise<void> {
@@ -73,6 +74,7 @@ export function registerStopLifecycle(pi: ExtensionAPI, deps: StopLifecycleDeps)
 
 	function dropPending(): void {
 		clearDrainTimer();
+		pending?.release?.();
 		pending = undefined;
 	}
 
@@ -92,7 +94,8 @@ export function registerStopLifecycle(pi: ExtensionAPI, deps: StopLifecycleDeps)
 					`Stop hook dispatch failed: ${error instanceof Error ? error.message : String(error)}`,
 					"error",
 				);
-			});
+			})
+			.finally(() => stop.release?.());
 	}
 
 	pi.events.on(WAKE_SOURCE_STATE_EVENT, (data) => {
@@ -113,7 +116,8 @@ export function registerStopLifecycle(pi: ExtensionAPI, deps: StopLifecycleDeps)
 			resume: AsyncLocalStorage.snapshot(),
 		};
 		if (backgroundWork.size > 0) {
-			pending = stop;
+			dropPending();
+			pending = { ...stop, release: ctx.holdIdle?.() };
 			return;
 		}
 		dropPending();

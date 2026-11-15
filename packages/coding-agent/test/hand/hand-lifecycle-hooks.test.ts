@@ -217,6 +217,14 @@ describe("a hosted loop's lifecycle hooks run on the user's machine (senpi#5898)
 			runs: true,
 		},
 		{
+			// #6770 review M1: a continuation turn (auto-retry, compaction recovery, a queued continuation) starts with
+			// agent_start and no before_agent_start; the first a hand sees of it is its model request.
+			call: "a continuation turn's model request, with no before_agent_start",
+			event: "before_provider_request",
+			payload: { input: { payload: { messages: [] } }, idle: false },
+			runs: false,
+		},
+		{
 			call: "a before_agent_start that starts a turn",
 			event: "before_agent_start",
 			payload: { prompt: "p", systemPrompt: "s", trigger: "prompt", systemPromptOptions: {} },

@@ -42,6 +42,12 @@ export interface LoopHookEffects {
 	dropped: number;
 }
 
+/**
+ * What a forwarded call proves about its loop session's turn (#6770 review M1): `"ended"` (an `agent_end`) or
+ * `"running"` (any event that only arrives while a turn runs). Each served event is classified in `TURN_EVIDENCE`.
+ */
+export type LoopTurnEvidence = "ended" | "running";
+
 /** What a loop-hook call binds its handlers' facts to: the loop session's state the call carries. */
 export interface LoopHookCallBinding {
 	readonly sessionId: string;
@@ -51,15 +57,10 @@ export interface LoopHookCallBinding {
 	/** The session port's read half, when the call carries it (an `agent_end` does). */
 	readonly carried?: CarriedSession;
 	/**
-	 * Whether the loop's turn has ended by this call (an `agent_end`): after the call, its work sees the session idle until
-	 * the loop starts a turn there (`startsTurn`), as a local session is idle after a turn until the next one starts.
+	 * What the call proves about the session's turn. After an `"ended"` call, work that holds it (`holdIdle`) sees the
+	 * session idle until a `"running"` call for it starts, as a local session is idle after a turn until the next starts.
 	 */
-	readonly endsTurn?: boolean;
-	/**
-	 * Whether this call starts a loop turn (a real, non-preview `before_agent_start`, which a local session follows with
-	 * `agent_start`): every earlier turn-ending call of the session answers busy from then on. No other call does.
-	 */
-	readonly startsTurn?: boolean;
+	readonly turn?: LoopTurnEvidence;
 }
 
 /** A notice a loop hook showed during its call, for the loop to show on its own UI. */
@@ -126,8 +127,10 @@ export function createLoopHookCall(): LoopHookCall {
 		writer: () => calls.getStore()?.facts,
 		async run(binding, dispatch) {
 			const { sessionId, idle } = binding;
-			if (binding.startsTurn === true) turns.started(sessionId);
-			let idleAfterTurn: (() => boolean) | undefined;
+			if (binding.turn === "running") turns.running(sessionId);
+			// Taken when the call starts, so a turn seen running while this call still runs wins (#6770 review L2).
+			const turnEnd = binding.turn === "ended" ? turns.ending(sessionId) : undefined;
+			let idleHolds = 0;
 			let live = true;
 			let userMessagesSent = 0;
 			const controller = new AbortController();
@@ -139,7 +142,19 @@ export function createLoopHookCall(): LoopHookCall {
 					ownWork: () => live || calls.getStore()?.facts === facts,
 				}),
 				signal: controller.signal,
-				isIdle: () => (live ? idle : (idleAfterTurn?.() ?? idle)),
+				isIdle: () => (live || idleHolds === 0 || turnEnd === undefined ? idle : turnEnd.idle()),
+				holdIdle: () => {
+					if (turnEnd === undefined) return () => {};
+					const release = turnEnd.hold();
+					idleHolds++;
+					let held = true;
+					return () => {
+						if (!held) return;
+						held = false;
+						idleHolds--;
+						release();
+					};
+				},
 				sendMessage: (message: SentLoopMessage["message"], options?: SentLoopMessage["options"]) => {
 					const entry = options === undefined ? { message } : { message, options };
 					if (live) effects.sent.push(entry);
@@ -168,7 +183,7 @@ export function createLoopHookCall(): LoopHookCall {
 				return await calls.run({ live: () => live, facts }, () => dispatch(effects));
 			} finally {
 				live = false;
-				if (binding.endsTurn === true) idleAfterTurn = turns.ended(sessionId);
+				turnEnd?.callEnded();
 				controller.abort();
 			}
 		},
@@ -181,7 +196,8 @@ export function createLoopHookCall(): LoopHookCall {
  * instead of answering. The session the call carried (`getLeafId`, `reduceHistory`) stays readable by the call's own
  * work (its async context: a Stop it held for background work), and refused from any other context. Every other member
  * keeps working: late writes, messages and notices ride the session's next reply; the signal stays aborted; idle keeps
- * its value, except that after a call that ended the loop's turn it answers idle until the loop starts a turn there.
+ * its value, except for work that holds a turn-ending call's idleness (`holdIdle`): it answers idle until a forwarded
+ * event proves a turn of the session is running.
  */
 export class LoopHookCallEndedError extends Error {
 	override readonly name = "LoopHookCallEndedError";

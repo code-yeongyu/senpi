@@ -11,7 +11,7 @@ import { hookModelOf, hookRequestOutputOf, parseHookRequestInput } from "../../c
 import type { CustomEntry } from "../../core/session-manager.ts";
 import type { BuildSystemPromptOptions } from "../../core/system-prompt.ts";
 import type { TwoSidedHome } from "./loopless-tool-handlers.ts";
-import type { CarriedSession, LoopHookCall, LoopHookEffects } from "./loop-hook-call.ts";
+import type { CarriedSession, LoopHookCall, LoopHookEffects, LoopTurnEvidence } from "./loop-hook-call.ts";
 
 /** The loop events a hand that is its extensions' home runs for a loop that runs elsewhere (S33, C8/K5). */
 export type LooplessLoopHooks = (event: string, payload: JsonValue) => Promise<JsonValue>;
@@ -43,10 +43,13 @@ export function extensionLoopHooks(
 ): LooplessLoopHooks {
 	return async (event, payload) => {
 		if (twoSidedHome !== "hand") throw new Error("this hand is not the home of its extensions' loop hooks");
+		if (!isServedLoopEvent(event)) throw new Error(`no loop hooks run on a hand for ${event}`);
 		const only = userLoopHooks(runner);
 		if (!isRecord(payload) || typeof payload.sessionId !== "string" || typeof payload.idle !== "boolean")
 			throw new Error(`malformed ${event} payload`);
 		const { sessionId, idle } = payload;
+		const turn = TURN_EVIDENCE[event](payload);
+		const binding = { sessionId, cwd, idle, ...(turn === undefined ? {} : { turn }) };
 		const images = imagesOf(payload.images);
 		if (images === null) throw new Error(`malformed ${event} payload: images`);
 		if (event === "input") {
@@ -59,7 +62,7 @@ export function extensionLoopHooks(
 				!(streamingBehavior === undefined || isOneOf(streamingBehavior, STREAMING_BEHAVIORS))
 			)
 				throw new Error("malformed input payload");
-			return call.run({ sessionId, cwd, idle }, (effects) =>
+			return call.run(binding, (effects) =>
 				dispatchLoopHook(runner, call, effects, () =>
 					runner.emitInput(text, images, source, streamingBehavior, inputId, attribution, only),
 				),
@@ -78,9 +81,7 @@ export function extensionLoopHooks(
 			// The loop's options as the loop built them: only `cwd` is this machine's (its workspace); the rest (context files,
 			// skills, tools) describes the loop's machine. They are data for handlers to read; nothing here acts on them.
 			const options = { ...(systemPromptOptions as Partial<BuildSystemPromptOptions>), cwd };
-			// A real (non-preview) before_agent_start is the turn start the loop forwards: a local session follows it with
-			// agent_start, which is what drops a Stop still held for background work.
-			return call.run({ sessionId, cwd, idle, startsTurn: preview !== true }, (effects) =>
+			return call.run(binding, (effects) =>
 				dispatchLoopHook(runner, call, effects, () =>
 					runner.emitBeforeAgentStart(prompt, images, systemPrompt, options, {
 						only,
@@ -95,7 +96,7 @@ export function extensionLoopHooks(
 			// no headers), and the reply's `output` carries the payload they produced.
 			const input = parseHookRequestInput(payload.input);
 			const model = hookModelOf(input);
-			return call.run({ sessionId, cwd, idle }, (effects) =>
+			return call.run(binding, (effects) =>
 				dispatchLoopHook(runner, call, effects, async () => ({
 					output: hookRequestOutputOf(
 						input,
@@ -119,7 +120,7 @@ export function extensionLoopHooks(
 				reason,
 				...(previousSessionFile === undefined ? {} : { previousSessionFile }),
 			};
-			return call.run({ sessionId, cwd, idle }, (effects) =>
+			return call.run(binding, (effects) =>
 				dispatchLoopHook(runner, call, effects, () => runner.emitForwardedLoopEvent(sessionStart, only)),
 			);
 		}
@@ -130,16 +131,37 @@ export function extensionLoopHooks(
 				throw new Error("malformed agent_end payload");
 			const agentEnd = { type: "agent_end" as const, messages, ...(aborted === undefined ? {} : { aborted }) };
 			// An agent_end ends the loop's turn: a Stop held for the hand's background work runs after this call, with the
-			// session it carried, and its writes ride the session's next reply. The hand cannot push them sooner: while the
+			// session it carried (it holds the call's idleness until it settles), and its writes ride the session's next reply. The hand cannot push them sooner: while the
 			// loop stays idle, that next call is the user's next prompt, so a held Stop's block follow-up does not continue
 			// the agent by itself as a local idle session's does, until hand-to-loop push lands (senpi#5778).
-			return call.run({ sessionId, cwd, idle, carried, endsTurn: true }, (effects) =>
+			return call.run({ ...binding, carried }, (effects) =>
 				dispatchLoopHook(runner, call, effects, () => runner.emitForwardedLoopEvent(agentEnd, only)),
 			);
 		}
-		throw new Error(`no loop hooks run on a hand for ${event}`);
+		return event satisfies never;
 	};
 }
+
+/**
+ * What each event a hand serves proves about its loop session's turn (#6770 review M1). Its keys are the only events a
+ * hand serves, so a new served event cannot be dispatched until it is classified here. `agent_start` and `turn_start`,
+ * which slice 4 (#6766) forwards as notifications, must be `"running"` evidence: continuation turns (auto-retry,
+ * compaction recovery, a queued or `agent_before_settle` continuation) start with them and no `before_agent_start`.
+ */
+const TURN_EVIDENCE = {
+	// The loop may handle an input without a turn; a turn it starts arrives as before_agent_start.
+	input: () => undefined,
+	session_start: () => undefined,
+	// A preview composes a turn's prompt without starting the turn.
+	before_agent_start: (payload) => (payload.preview === true ? undefined : ("running" as const)),
+	// A model request sent mid-turn (`idle: false`), the first a hand sees of a continuation turn.
+	before_provider_request: (payload) => (payload.idle === false ? ("running" as const) : undefined),
+	agent_end: () => "ended" as const,
+} satisfies Record<string, (payload: Readonly<Record<string, unknown>>) => LoopTurnEvidence | undefined>;
+
+type ServedLoopEvent = keyof typeof TURN_EVIDENCE;
+
+const isServedLoopEvent = (event: string): event is ServedLoopEvent => Object.hasOwn(TURN_EVIDENCE, event);
 
 const HOOKS_BUILTIN_PATH = "<builtin:hooks>";
 

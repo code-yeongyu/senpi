@@ -188,6 +188,8 @@ export interface LoopHookCallFacts {
 	sendUserMessage(...args: Parameters<ExtensionRuntime["sendUserMessage"]>): void;
 	/** `ctx.hasPendingMessages()` during the call: whether this call has sent a user message the loop will deliver. */
 	hasPendingMessages(): boolean;
+	/** `ctx.holdIdle()`: keeps `isIdle` tracking the loop session after a turn-ending call, until released. */
+	holdIdle(): () => void;
 }
 
 /** The hand's UI, except `notify`, which a loop-hook call carries back to the loop's UI. */
@@ -2034,6 +2036,7 @@ export class ExtensionRunner {
 					signal: { configurable: true, enumerable: true, value: call.signal },
 					isIdle: { configurable: true, enumerable: true, value: call.isIdle },
 					hasPendingMessages: { configurable: true, enumerable: true, value: call.hasPendingMessages },
+					holdIdle: { configurable: true, enumerable: true, value: call.holdIdle },
 					ui: { configurable: true, enumerable: true, value: withLoopNotices(context.ui, call.notify) },
 				});
 		}
