@@ -323,16 +323,15 @@ export function createShellToolDefinition(
 	options?: BashToolOptions,
 ): ToolDefinition<typeof bashSchema, BashToolDetails | undefined, BashRenderState> {
 	const machine = options?.machine ?? defaultToolMachine();
-	// OMO_TOOLS_VIA_DAEMON=bash (default off): run on the session's device, never silently on this machine.
-	const viaDevice = options?.operations === undefined && toolsViaDaemon("bash");
+	// OMO_TOOLS_VIA_DAEMON=bash (default off): run on the session's device, never on this machine. The flag decides even
+	// when the session injects its dispatcher's operations (bootstrap.ts always does), so the promise holds in a real session.
+	const viaDevice = toolsViaDaemon("bash");
 	const deviceMachine = options?.deviceMachine;
-	const ops =
-		options?.operations ??
-		(!viaDevice
-			? createLocalBashOperations({ shellPath: options?.shellPath, machine })
-			: deviceMachine !== undefined
-				? createLocalBashOperations({ shellPath: options?.shellPath, machine: deviceMachine })
-				: unavailableBashOperations("bash"));
+	const ops = viaDevice
+		? deviceMachine !== undefined
+			? createLocalBashOperations({ shellPath: options?.shellPath, machine: deviceMachine })
+			: unavailableBashOperations("bash")
+		: (options?.operations ?? createLocalBashOperations({ shellPath: options?.shellPath, machine }));
 	const commandPrefix = options?.commandPrefix;
 	const exposeSessionEnvironment = options?.exposeSessionEnvironment ?? true;
 	const spawnHook = options?.spawnHook;
