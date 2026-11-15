@@ -1466,9 +1466,18 @@ export class ExtensionRunner {
 		});
 	}
 
+	/**
+	 * One loop-side event a hosted loop forwarded to this hand (senpi#5898): only the extensions `only` accepts run it,
+	 * serially under the host's event handler budget, with failures reported as in a session.
+	 */
+	emitForwardedLoopEvent(event: RunnerEmitEvent, only: (extensionPath: string) => boolean): Promise<undefined> {
+		return this.dispatchLifecycle(event, only);
+	}
+
 	/** Agent lifecycle events: every handler runs, serially, under the host budget (senpi#3650). */
-	private dispatchLifecycle(event: RunnerEmitEvent): Promise<undefined> {
-		const entries = flattenHandlers(this.extensions, event.type);
+	private dispatchLifecycle(event: RunnerEmitEvent, only?: (extensionPath: string) => boolean): Promise<undefined> {
+		const all = flattenHandlers(this.extensions, event.type);
+		const entries = only === undefined ? all : all.filter((entry) => only(entry.path));
 		return this.walkHandlers<undefined>({
 			event: event.type,
 			length: entries.length,
@@ -2729,6 +2738,11 @@ export class ExtensionRunner {
 		}
 
 		return headers;
+	}
+
+	/** Paths of the extensions the loader shipped: in-tree builtins, bundled modules and generated global-default shims. */
+	getBuiltinProvenancePaths(): Set<string> {
+		return new Set(this.extensions.filter((ext) => ext.sourceInfo.source === "builtin").map((ext) => ext.path));
 	}
 
 	/** Use the loader's provenance, including bundled modules and generated global-default shims. */

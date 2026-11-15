@@ -23,7 +23,8 @@ import {
 } from "../../src/core/hand/hook-contract.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import { ExtensionRunner } from "../../src/core/extensions/runner.ts";
-import { createLoopHookCall, extensionLoopHooks } from "../../src/modes/rpc/loopless-tool-handlers.ts";
+import { createLoopHookCall } from "../../src/modes/rpc/loop-hook-call.ts";
+import { extensionLoopHooks } from "../../src/modes/rpc/loopless-loop-hooks.ts";
 import { createLooplessHand } from "../../src/modes/rpc/remote-executor-scope.ts";
 import { createInMemoryModelRegistry } from "../model-runtime-test-utils.ts";
 import { createTestExtensionsResult } from "../utilities.ts";

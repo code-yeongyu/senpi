@@ -20,13 +20,9 @@ import {
 	looplessGrantRunsToolHandlers,
 } from "./loopless-execute-grant.ts";
 import { runLooplessToolCall } from "./loopless-tool-call.ts";
-import {
-	createLoopHookCall,
-	extensionLoopHooks,
-	extensionToolHandlers,
-	type LooplessLoopHooks,
-	type TwoSidedHome,
-} from "./loopless-tool-handlers.ts";
+import { createLoopHookCall } from "./loop-hook-call.ts";
+import { extensionLoopHooks, type LooplessLoopHooks } from "./loopless-loop-hooks.ts";
+import { extensionToolHandlers, type TwoSidedHome } from "./loopless-tool-handlers.ts";
 import { toolChildModuleRoots } from "./tool-child/session-child.ts";
 
 /**
