@@ -207,16 +207,20 @@ const GLOB_SYNTAX = /[*?[\]{}]/;
 
 /**
  * Split a glob pattern into the directory its fixed leading segments name (resolved against `cwd`) and the rest,
- * which starts at the first segment with glob syntax. A pattern with no glob syntax splits before its last segment.
+ * which starts at the first segment with glob syntax. A pattern with no glob syntax splits before its last segment; one
+ * ending in a separator lists that directory.
  * Undefined when ".." follows a wildcard: where that lands is known only after matching.
  */
-export function splitGlobBase(pattern: string, cwd: string): { base: string; rest: string } | undefined {
+function splitGlobBase(pattern: string, cwd: string): { base: string; rest: string } | undefined {
 	const segments = pattern.split(/[\\/]/);
 	const firstGlob = segments.findIndex((segment) => GLOB_SYNTAX.test(segment));
 	const cut = firstGlob === -1 ? segments.length - 1 : firstGlob;
 	const fixed = segments.slice(0, cut);
 	const rest = segments.slice(cut);
 	if (rest.includes("..")) return undefined;
+	// A pattern ending in a separator (`<root>/`, `../dir/`) names a directory: list its entries, as `*` would.
+	if (rest.join("/") === "")
+		return { base: isAbsolute(pattern) ? resolve(sep, ...fixed) : resolve(cwd, ...fixed), rest: "*" };
 	const base = isAbsolute(pattern) ? resolve(sep, ...fixed) : resolve(cwd, ...fixed);
 	return { base, rest: rest.join("/") };
 }
