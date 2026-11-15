@@ -16,7 +16,8 @@ import type { LoopHookCallBinding } from "./loop-hook-call.ts";
  *   async context: a Stop it held for background work);
  * - the wake port's `arm` and `cancel` (`pi.session.sessionWakes()`);
  * - the relocation host's `request` (`pi.session.requestRelocation`);
- * - `pi.setActiveTools` (its change is relative to the active set the call carried) and `ctx.hasPendingMessages`.
+ * - `pi.setActiveTools` (its change is relative to the active set the call carried);
+ * - `ctx.hasPendingMessages`, `pi.getActiveTools` and `ctx.getSystemPromptOptions`, except from the call's own work.
  * The rest keeps working: late messages, notices, entries and user messages go to the call's late route; the signal stays
  * aborted; idle keeps its value, except that after a call that ended the loop's turn it answers idle until the loop
  * starts another call.
