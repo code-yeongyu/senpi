@@ -160,10 +160,15 @@ export function createLoopHookCall(): LoopHookCall {
 			const relocation =
 				carried?.relocation === undefined
 					? undefined
-					: carriedRelocationHost(carried.relocation, (request) => {
-							if (live) effects.relocation = request;
-						});
-			const wakes = carried?.wakes === undefined ? undefined : carriedWakePort(carried.wakes, effects.wakes);
+					: carriedRelocationHost(
+							carried.relocation,
+							(request) => {
+								effects.relocation = request;
+							},
+							() => live,
+						);
+			const wakes =
+				carried?.wakes === undefined ? undefined : carriedWakePort(carried.wakes, effects.wakes, () => live);
 			let settling: Promise<void> | undefined;
 			effects.settle = () => {
 				if (sessionDir === undefined || documents === undefined) return Promise.resolve();

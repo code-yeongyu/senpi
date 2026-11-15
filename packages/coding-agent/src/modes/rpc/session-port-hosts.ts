@@ -1,3 +1,4 @@
+import { LoopHookCallEndedError } from "./loop-hook-session.ts";
 import { randomUUID } from "node:crypto";
 import type {
 	RelocationRequestResult,
@@ -17,16 +18,19 @@ export interface CarriedRelocation {
 /**
  * Relocation for a hand's call, answered from what the loop carried: it lists the carried targets and accepts a move to
  * a listed online one as a request the loop applies when the turn ends (as a local host schedules it); a move to any
- * other target is refused here, before the loop sees it.
+ * other target is refused here, before the loop sees it. Once the call has ended (`live` false) its writes were already
+ * sent, so a request throws `LoopHookCallEndedError` instead of being recorded where nothing reads it.
  */
 export function carriedRelocationHost(
 	offer: CarriedRelocation,
 	request: (effect: RelocationRequestEffect) => void,
+	live: () => boolean,
 ): SessionRelocationHost {
 	return {
 		offered: () => true,
 		targets: async () => ({ status: "listed", targets: offer.targets }),
 		async request({ target, reason }): Promise<RelocationRequestResult> {
+			if (!live()) throw new LoopHookCallEndedError("session.requestRelocation");
 			const known = offer.targets.find((candidate) => candidate.name === target);
 			if (known === undefined)
 				return { status: "refused", reason: "unknown_target", detail: `no computer named ${target} is offered` };
@@ -38,8 +42,15 @@ export function carriedRelocationHost(
 	};
 }
 
-/** The loop's wakes as a call sees them: the carried pending ones with the call's own changes applied, in order. */
-export function carriedWakePort(carried: readonly SessionWake[], changes: SessionWakeChange[]): SessionWakePort {
+/**
+ * The loop's wakes as a call sees them: the carried pending ones with the call's own changes applied, in order. After the
+ * call ended (`live` false) a change throws `LoopHookCallEndedError`: the call's changes were already sent.
+ */
+export function carriedWakePort(
+	carried: readonly SessionWake[],
+	changes: SessionWakeChange[],
+	live: () => boolean,
+): SessionWakePort {
 	const pending = (): SessionWake[] => {
 		let wakes = [...carried];
 		for (const change of changes) {
@@ -52,9 +63,11 @@ export function carriedWakePort(carried: readonly SessionWake[], changes: Sessio
 	return {
 		pending,
 		arm: (wake) => {
+			if (!live()) throw new LoopHookCallEndedError("session.sessionWakes().arm");
 			changes.push({ op: "arm", wake: { ...wake } });
 		},
 		cancel: (id) => {
+			if (!live()) throw new LoopHookCallEndedError("session.sessionWakes().cancel");
 			if (!pending().some((wake) => wake.id === id)) return false;
 			changes.push({ op: "cancel", id });
 			return true;
