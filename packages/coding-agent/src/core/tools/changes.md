@@ -1,5 +1,41 @@
 # core/tools changes
 
+## 2026-11-15 - bash reads the session's device machine when a command runs (senpi#6720)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/bash.ts`: `deviceMachine` may be a resolver, read when the command runs, so a machine an extension registers after the tools are built is used. With `OMO_TOOLS_VIA_DAEMON=bash` and no machine, the existing `DeviceUnavailableError`.
+
+### Why
+
+- The device machine now comes from `registerDeviceMachine`, which an extension may call after the bash tool exists.
+
+### Why an extension could not handle it
+
+- The bash tool resolves its executor inside the built-in tool.
+
+### Expected merge conflict zones
+
+- LOW: the operations choice in `createShellToolDefinition`.
+
+## 2026-11-15 - bash gets an executor seam for the session's device, off by default (senpi#6713)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/bash.ts`: `BashToolOptions.deviceMachine` and the `OMO_TOOLS_VIA_DAEMON` flag (default off). With `bash` named, the tool runs on the injected device machine; with no device the bash tool fails with `DeviceUnavailableError` and never runs locally. Only the bash tool is covered: powershell keeps its own operations, and user `!` commands still run locally (slice 1b, senpi#6717). Slice 1a only: nothing supplies a device machine yet, so no call goes through the device daemon; the relay transport is slice 1b.
+
+### Why
+
+- Q's order that every tool call on a remote device go through that device's hands daemon. A probe showed remote sessions run their tools in-process on the device, so the tool executor needs a seam a relay transport can plug into.
+
+### Why an extension could not handle it
+
+- The executor is chosen inside the built-in tool's construction; an extension cannot swap the operation layer the built-in bash tool uses without this option.
+
+### Expected merge conflict zones
+
+- LOW: `BashToolOptions` and the operations choice in `createBashToolDefinition`.
+
 ## 2026-11-11 - The grep description no longer says "inside eval" to agents that get grep as a direct tool (senpi#6426)
 
 ### What changed

@@ -1,3 +1,63 @@
+## 2026-11-15 - Opus 5.5 falls back to Fable 5.2 at medium, then Kimi K3.1 Pro at max (senpi#6699)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/settings.ts`: `DEFAULT_FALLBACK_CHAINS["claude-opus-5-5"]` is `["claude-fable-5-2:medium", "kimi-k3.1-pro:max"]` (was `["claude-fable-5-2", "claude-opus-5"]`). Each rung carries its own effort; `max` is the highest level the catalog lists for K3.1 Pro (low / high / max). The Fable chains are unchanged.
+- `packages/coding-agent/src/core/retry-fallback/expansion.ts`: a bare `kimi-` family also matches Kimi Code's bare ids (`k3.1-pro` is Moonshot's `kimi-k3.1-pro`), so the `kimi-k3.1-pro` rung reaches the `kimi-coding` lane as well as `moonshotai`. A model's own id still outranks the alias when one provider lists both.
+- `packages/coding-agent/src/core/retry-fallback/chains.ts`: `canonicalizeFallbackChains` collapses two entries that expand to the same rung (with the alias, `k3` and `kimi-k3` both reach `kimi-coding/k3`); the first keeps its place.
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: `managedChainKey` lets an active fallback episode's chain govern its rungs before the rung's own chain. Outside an episode the model's own chain still governs.
+
+### Why
+
+- Owner's order (Slack C0C50M2NFU5, ts 1794719178.424289 and 1794719397.623049): an Opus 5.5 fallback goes to Fable 5.2 at medium, then Kimi K3.1 Pro at max, and nowhere else. This chain deliberately leaves Anthropic; the Anthropic-only pin is narrowed to the Fable chains.
+- Without the controller change the chain could not be walked: once the session sat on Fable 5.2, Fable's own chain took over and sent it back to Opus 5.5, so Kimi was never reached. The same order also let a Fable session that had reached Opus 5.5 continue down Opus 5.5's chain off Anthropic.
+
+### Why an extension could not handle it
+
+- The shipped default chains, bare-family expansion and the controller's chain selection are core retry-fallback logic; an extension can only add user chains on top.
+
+### Expected merge conflict zones
+
+- LOW: the `DEFAULT_FALLBACK_CHAINS` literal and its doc comment, `matchesFamily`/`pickVariant` in `expansion.ts`, `expandEntries` in `chains.ts`, and `managedChainKey` in `controller.ts`.
+
+## 2026-11-14 - A session cwd that is a file is refused (senpi#6686)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-cwd.ts` and `packages/coding-agent/src/core/agent-session-runtime.ts`: the directory probe is awaited (`node:fs/promises` `stat`) instead of `statSync`, so the RPC session path reaches no synchronous filesystem call (`test/suite/no-sync-in-session-path.test.ts`); `assertSessionCwdExists` is async and its three call sites in `agent-session-runtime.ts` await it.
+- `packages/coding-agent/src/core/session-cwd.ts`: new `SessionCwdNotDirectoryError` (with `issue { sessionFile?, sessionCwd }`); `assertSessionCwdExists` also throws it when the session's cwd exists but is not a directory, so runtime creation never starts in a file.
+
+### Why
+
+- An `open_session` from another device whose `cwd` named a file (`/etc/hostname`) opened a session with that file as its working directory (oh-my-openagent#13400). Only `existsSync` was checked, and a file exists.
+
+### Why an extension could not handle it
+
+- The check runs before the session runtime exists; no extension is loaded yet.
+
+### Expected merge conflict zones
+
+- LOW: the end of `assertSessionCwdExists` in `session-cwd.ts`.
+
+## 2026-11-14 - A nested call's permission prompt follows the call's own signal (senpi#6679)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `executeTool` passes its `signal` to `preflightToolCall`, which passes the resolved signal to `emitToolCall`.
+- The permission-prompt signal is the union of the call's and the turn's, not a replacement (senpi#6679 review M1): `preflightToolCall` resolves it through `combinedToolCallSignal`, so aborting the turn also ends a nested call's unanswered prompt whose signal is not linked to the turn, without aborting either original controller. The tool RUN keeps the caller's own signal (`runExecuteToolOnHost`, senpi#6679 review M2): a detached cell's background work survives a later turn's abort.
+
+### Why
+
+- `ctx.executeTool(name, args, { signal })` dropped its signal before the `tool_call` hooks, so their `ctx.signal` was the turn's. A permission prompt for the nested call then ended only on a whole-turn abort, not when that call was cancelled (#6676 review L1).
+
+### Why an extension could not handle it
+
+- The `tool_call` context is built by the runner and the nested call's signal lives inside `AgentSession.executeTool`; an extension cannot reach either.
+
+### Expected merge conflict zones
+
+- LOW: the `emitToolCall` call in `preflightToolCall` and the `preflightToolCall` call in `executeTool`.
+
 ## 2026-11-13 - A fallback rung's level is the configuration_update in force (senpi#6655)
 
 ### What changed

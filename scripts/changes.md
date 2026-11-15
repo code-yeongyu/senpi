@@ -1,3 +1,39 @@
+## 2026-11-15 - runRelease spawns its live run from main without a dead option (senpi#6691 review)
+
+### What changed
+
+- `scripts/registry-preflight.test.mjs`: `runRelease` loses the `{ ref }` option no caller passes since #6691's L1 fix removed the refusal case; it pins the live run to `refs/heads/main` inline, where the two preflight cases need it.
+
+### Why
+
+- senpi#6691's review left one LOW: the option was dead code, kept only for a future caller.
+
+### Why an extension could not handle it
+
+- Release tooling tests; extensions do not run in them.
+
+### Expected merge conflict zones
+
+- LOW: the `runRelease` helper in `scripts/registry-preflight.test.mjs`.
+
+## 2026-11-14 - The registry preflight tests set their own ref (senpi#6690)
+
+### What changed
+
+- `scripts/registry-preflight.test.mjs`: the stub environment strips `GITHUB_ACTIONS` and `GITHUB_REF`, so no spawned `release.mjs`/`publish.mjs` inherits the runner's pair, and `runRelease` sets the pair per case (a live run from `refs/heads/main`, the state the registry preflight needs behind the live-run ref guard; the guard's own refusal cases stay in `release-ref-guard.test.mjs`). The `publish.mjs` case keeps the explicit pair it already set.
+
+### Why
+
+- The two `release.mjs registry preflight` cases inherited the CI job's `GITHUB_REF`, so on every pull-request run the senpi#6645 ref guard stopped `release.mjs` before the registry preflight the cases test (senpi#6690); main's own run was green only because its ref is `refs/heads/main`.
+
+### Why an extension could not handle it
+
+- Release tooling tests; extensions do not run in them.
+
+### Expected merge conflict zones
+
+- LOW: the `runRelease` helper and the `withStubs` env in `scripts/registry-preflight.test.mjs` (senpi#6662 touches neighboring release scripts, not this file).
+
 ## 2026-11-13 - The forced release suite runs as matrix jobs on the tested commit (senpi#6642)
 
 ### What changed

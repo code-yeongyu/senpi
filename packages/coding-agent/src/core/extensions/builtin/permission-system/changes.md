@@ -1,5 +1,23 @@
 # Permission System Builtin Extension
 
+## 2026-11-14 - The permission check reads ctx.signal unguarded again (senpi#6679)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts`: `authorizeToolCall` reads `ctx.signal` directly; the `sessionManager` guard from #6676 is gone.
+
+### Why
+
+- A context without a session now serves `signal` (as `undefined`, or a signal its host bound), so the read no longer throws there, and the guard would have ignored a host-bound signal (#6676 review LOW).
+
+### Why an extension could not handle it
+
+- The read is inside the permission system's own `tool_call` handler.
+
+### Expected merge conflict zones
+
+- LOW: the head of `authorizeToolCall`.
+
 ## 2026-11-14 - An unanswered permission prompt ends when its turn is aborted (senpi#6670)
 
 ### What changed

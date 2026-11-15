@@ -1,3 +1,61 @@
+## 2026-11-14 - open_session refuses a cwd that is not a directory, typed (senpi#6686)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-router-open.ts`: after the open's folder is resolved (named or from the session file's header), a folder that exists but is not a directory answers `session_cwd_not_directory` with `errorData { cwd }`, before the registry opens or creates anything. A missing folder, or one the host cannot stat, keeps today's answer.
+- `packages/coding-agent/docs/rpc.md`: the code in the open_session cwd section and the error list.
+
+### Why
+
+- A caller on another device cannot stat this host's paths, so only the host can refuse a file cwd; a typed code lets it say which argument to fix (oh-my-openagent#13400).
+
+### Why an extension could not handle it
+
+- The open's routing runs before any session, and so before any extension, exists.
+
+### Expected merge conflict zones
+
+- LOW: the lines after `openSessionFolder` in `open()`.
+
+## 2026-11-14 - A rename publishes a session_status (senpi#6672)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-status.ts`: a new `SessionStatusCause` value, `rename`. `causeOfRecord` maps `session_info_changed` (from `set_session_name` or a generated title) to it, so the status stream publishes the session's new name.
+- `packages/coding-agent/docs/rpc.md`: `rename` added to the `lastChange.cause` list.
+
+### Why
+
+- Subscribers learn a session's name only from `session_status`. A renamed session therefore kept its old (often empty) name in every listing built from the stream, including the relay's account-wide thread list on the user's other devices.
+
+### Why an extension could not handle it
+
+- The status stream and its cause mapping belong to the RPC host; an extension cannot add a status publish.
+
+### Expected merge conflict zones
+
+- LOW: `session-status.ts` is fork-only.
+
+## 2026-11-11 - A released session leaves no handover-parked entry (senpi#6444)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-router-close.ts`: `tearDownReleased`, the teardown of `release_session`, drops the session's entry in the endpoint's handover-parked record (`clearRetainedRecord`) before it finishes the close, as `close` does. Nothing else in the release changes.
+- `packages/coding-agent/docs/rpc.md`: "Retained sessions across a host restart" names `release_session` beside `close_session` and a reclaim as the ends that remove the entry.
+- `packages/coding-agent/test/suite/regressions/6444-release-for-move-drops-retained-record.test.ts` (new); `test/suite/rpc-release-host-support.ts` gains an opt-in `handoverParked` option that builds the release host with its endpoint's daemon directory.
+
+### Why
+
+- The entry a retained open writes was left behind by a release. Once the releasing host process was gone, the next host on the endpoint reopened the released session at startup through `reopenParked`, which opens unattended, and so wrote an `unattended` hold into a file another runtime had been handed. `SessionEventWriter.releaseSession` already says a released file must not be reopened here.
+
+### Why an extension could not handle it
+
+- The handover-parked record and the release teardown are the RPC host's own; no extension hook runs between the release's claim and its close.
+
+### Expected merge conflict zones
+
+- None upstream: `modes/rpc/session-router-close.ts` and the handover-parked record are fork-only. LOW against other RPC work: the finalizer branch of `tearDownReleased`.
+
 ## 2026-11-14 - comparableFolder's docstring says what a bare drive root becomes (senpi#6664)
 
 ### What changed
