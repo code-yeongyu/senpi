@@ -193,7 +193,7 @@ export interface LoopHookCallFacts {
 	hasPendingMessages(): boolean;
 	/** `pi.getActiveTools()` during the call: the loop's active set it carried, as the call changed it; none uncarried. */
 	getActiveTools(): string[] | undefined;
-	/** `pi.setActiveTools()` during the call: the loop applies the new set to its own session (session port, write). */
+	/** `pi.setActiveTools()` during the call: the loop applies the new set (session port, write); refused once it ended. */
 	setActiveTools(names: readonly string[]): void;
 	/** `ctx.getSystemPromptOptions()` during the call: the options the loop carried, with this machine's cwd. */
 	getSystemPromptOptions(): BuildSystemPromptOptions;
@@ -811,7 +811,7 @@ export class ExtensionRunner {
 		 */
 		readonly loopHookSend?: () => LoopHookCallFacts["sendMessage"] | undefined;
 		/** Where `pi.appendEntry` and `pi.sendUserMessage` go from a loop-hook call's work, routed as `loopHookSend`. */
-		readonly loopHookWrite?: () => Pick<LoopHookCallFacts, "appendEntry" | "sendUserMessage"> | undefined;
+		readonly loopHookWrite?: () => LoopHookCallFacts | undefined;
 		/** Called when an extension registers a tool after the runtime was built, so the host can make it callable. */
 		readonly refreshTools?: () => void;
 	}): void {
@@ -838,7 +838,7 @@ export class ExtensionRunner {
 			};
 		}
 		this.runtime.getActiveTools = () => this.getActiveTools();
-		this.runtime.setActiveTools = (names) => this.loopHookCallFn?.()?.setActiveTools(names);
+		this.runtime.setActiveTools = (names) => (write?.() ?? this.loopHookCallFn?.())?.setActiveTools(names);
 		if (facts.refreshTools !== undefined) this.runtime.refreshTools = facts.refreshTools;
 		this.runtime.sessionControl = callSessionControlActions(() => this.loopHookCallFn?.());
 		if (facts.getLoadedHookSources === undefined) return;

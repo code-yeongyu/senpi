@@ -13,7 +13,8 @@ import type { CarriedSession } from "./loop-hook-call.ts";
  * collecting a write no reply would carry:
  * - `ctx.sessionManager` members (the loop session's identity and what the call carried);
  * - the wake port's `arm` and `cancel` (`pi.session.sessionWakes()`);
- * - the relocation host's `request` (`pi.session.requestRelocation`).
+ * - the relocation host's `request` (`pi.session.requestRelocation`);
+ * - `pi.setActiveTools` (its change is relative to the active set the call carried) and `ctx.hasPendingMessages`.
  * The rest keeps working: late messages, notices, entries and user messages ride the next reply for the same loop
  * session, and idle and the signal keep their values.
  */

@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { readOnlySession } from "./loop-hook-session.ts";
+import { LoopHookCallEndedError, readOnlySession } from "./loop-hook-session.ts";
 import type { LoopHookCallFacts } from "../../core/extensions/runner.ts";
 import type { SessionEntry, SessionHeader } from "../../core/session-manager.ts";
 import type { SessionWake } from "../../core/session-wakes.ts";
@@ -55,8 +55,8 @@ export interface LoopHookCall {
 	 * travels with the next reply for the same loop session (the link has no other way back), in order.
 	 */
 	sender(): LoopHookCallFacts["sendMessage"] | undefined;
-	/** The call's session writes (`appendEntry`, `sendUserMessage`) for its work, routed like {@link sender}. */
-	writer(): Pick<LoopHookCallFacts, "appendEntry" | "sendUserMessage"> | undefined;
+	/** The call's facts for its work's session writes (`appendEntry`, `sendUserMessage`, `setActiveTools`), like {@link sender}. */
+	writer(): LoopHookCallFacts | undefined;
 	/** Runs `dispatch` as the call, with the loop's idle state; `effects` collects what its handlers send and notify. */
 	run<T>(
 		sessionId: string,
@@ -153,7 +153,10 @@ export function createLoopHookCall(): LoopHookCall {
 					if (live) effects.userMessages.push(entry);
 					else holdLate(sessionId, (held) => held.userMessages.push(entry));
 				},
-				hasPendingMessages: () => effects.userMessages.length > 0,
+				hasPendingMessages: () => {
+					if (!live) throw new LoopHookCallEndedError("ctx.hasPendingMessages");
+					return effects.userMessages.length > 0;
+				},
 				getActiveTools: () => {
 					const active = carried?.activeTools;
 					if (active === undefined) return undefined;
@@ -166,8 +169,9 @@ export function createLoopHookCall(): LoopHookCall {
 				sessionWakes: () => wakes,
 				// Only a set the loop carried can change: the loop applies the change to that set.
 				setActiveTools: (names: readonly string[]) => {
+					if (!live) throw new LoopHookCallEndedError("pi.setActiveTools");
 					const active = carried?.activeTools;
-					if (!live || active === undefined) return;
+					if (active === undefined) return;
 					effects.activeTools = {
 						activate: names.filter((name, index) => !active.includes(name) && names.indexOf(name) === index),
 						deactivate: active.filter((name) => !names.includes(name)),
