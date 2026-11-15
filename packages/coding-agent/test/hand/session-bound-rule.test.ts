@@ -29,7 +29,8 @@ const VALID_CALLS: Readonly<Record<string, unknown>> = {
 	monitor: { description: "probe", command: "printf 'x\\n'" },
 	schedule_prompt: { action: "list" },
 	schedule_wakeup: { stop: true, reason: "probe" },
-	todo: { op: "view" },
+	// A list-creating call reads the session's branch for the Ask; a view reads only this runtime's own list.
+	todo: { op: "init", list: [{ phase: "Probe", items: ["probe"] }] },
 };
 const CHILDREN = { type: "rpc", target: "children", description: "probe" };
 
@@ -168,9 +169,9 @@ async function probeAll(
 }
 
 it("sessionBound marks exactly the served tools that need the session's record or a session-scoped store the loop owns", async () => {
-	const cwd = await scratchCwd();
-	const open = await probeAll(cwd, false);
-	const blocked = await probeAll(cwd, true);
+	// Each run gets its own project dir, so a file one run's tools wrote cannot change the other run's outcomes.
+	const open = await probeAll(await scratchCwd(), false);
+	const blocked = await probeAll(await scratchCwd(), true);
 	const served = [...open.runtime.definitions.keys()];
 	expect([...open.probes.keys()].sort()).toEqual([...served].sort());
 
