@@ -19,6 +19,8 @@ export interface TerminalNotifierDeps {
 	) => void;
 	readonly getContext: () => ExtensionContext | undefined;
 	readonly getMode: () => NotifyMode;
+	/** On a hand (`pi.isLoopRemote()`), the loop that receives a notice applies the session guards, not this side. */
+	readonly loopRemote?: () => boolean;
 }
 
 /** Max chars of sanitized final output embedded in a completion notification. */
@@ -38,8 +40,10 @@ export function getTerminalNotificationDelivery(
 ): TerminalNotificationDelivery | undefined {
 	const mode = deps.getMode();
 	if (mode === "off") return undefined;
-	const ctx = deps.getContext();
-	if (!ctx || NON_INTERACTIVE_MODES.has(ctx.mode) || !ctx.model) return undefined;
+	if (deps.loopRemote?.() !== true) {
+		const ctx = deps.getContext();
+		if (!ctx || NON_INTERACTIVE_MODES.has(ctx.mode) || !ctx.model) return undefined;
+	}
 	return {
 		send: (content, options) =>
 			deps.sendMessage(

@@ -3120,6 +3120,13 @@ export interface ExtensionAPI {
 		options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean },
 	): void;
 
+	/**
+	 * True on a hand whose agent loop runs on another machine (brain/hand split): `sendMessage` and `sendUserMessage`
+	 * from background work reach that loop as durable wakes, and the loop applies its own delivery guards (its mode, its
+	 * model). A notifier that waits for `session_start` before it notifies notifies here without one.
+	 */
+	isLoopRemote(): boolean;
+
 	/** Append a custom entry to the session for state persistence (not sent to LLM). */
 	appendEntry<T = unknown>(customType: string, data?: T, options?: AppendEntryOptions): void;
 
@@ -3755,6 +3762,8 @@ export type PendingProviderRegistration =
  */
 export interface ExtensionRuntimeState {
 	flagValues: Map<string, boolean | string>;
+	/** Backs `pi.isLoopRemote()`; a hand's runner with a wake route sets it (H3). */
+	isLoopRemote: () => boolean;
 	/** The device the session's tools run on, and the extension that registered it (registerDeviceMachine). */
 	deviceMachine: { readonly machine: ToolMachine; readonly extensionPath: string } | undefined;
 	/** Legacy provider-config registrations queued during extension loading, processed when runner binds. */
