@@ -134,8 +134,9 @@ describe("a Stop a hand holds for background work (senpi#5898)", () => {
 		{
 			// #6770 review round 2, M1: a continuation turn (auto-retry, compaction recovery, a queued continuation)
 			// starts with agent_start and no before_agent_start, and on a hand with no request hook no model request
-			// reaches it; the hooks builtin wants agent_start, so the loop forwards it.
-			call: "a continuation turn's agent_start, with no before_agent_start",
+			// reaches it. The held Stop is dropped here by the Stop lifecycle's own agent_start handler; that agent_start
+			// is also turn evidence by itself is guarded in loop-hook-call.test.ts.
+			call: "a continuation turn's agent_start, with no before_agent_start (the Stop lifecycle drops it)",
 			event: "agent_start",
 			payload: { idle: false },
 			runs: false,
