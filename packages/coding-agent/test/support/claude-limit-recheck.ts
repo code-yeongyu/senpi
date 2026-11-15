@@ -40,7 +40,7 @@ export function usage(name: string, at: number, usedPercent = 100): void {
 
 export async function setup(
 	accounts: AccountSlot[],
-	outcome: (name: string) => string | undefined = () => undefined,
+	outcome: (name: string) => string | undefined | Promise<string | undefined> = () => undefined,
 	retry = false,
 	extensions: ExtensionFactory[] = [],
 ) {
@@ -90,7 +90,7 @@ export async function setup(
 			async *[Symbol.asyncIterator]() {
 				const name = cliAccountOf(options?.env);
 				attempts.push(name);
-				const failure = outcome(name);
+				const failure = await outcome(name);
 				if (failure !== undefined) throw new Error(failure);
 				yield { type: "result", subtype: "success", result: "served" } as SDKMessage;
 			},

@@ -1926,7 +1926,14 @@ export class AgentSession {
 			...queuedInputPort,
 			// A follow-up the core drains starts a new turn, inside the same run: the armed turn's barrier ends here.
 			commitConsumption: (queue, messages) => {
-				if (queue === "followUp") this._toolBarrier.clear();
+				if (queue === "followUp") {
+					this._toolBarrier.clear();
+					// Only drained custom follow-ups open an engine turn. Custom context in the person's initial
+					// prompt batch never crosses this boundary and must keep that person's allowance (senpi#6727).
+					for (const message of messages) {
+						if (message.role === "custom" && !hasInputTurnMark(message)) markInputTurnOrigin(message, "engine");
+					}
+				}
 				return queuedInputPort.commitConsumption(queue, messages);
 			},
 		};
