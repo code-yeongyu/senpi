@@ -70,13 +70,19 @@ function entryView(entry: RpcSessionEntry): SessionStatusEntryView {
 	};
 }
 
-/** The `list_sessions` row fields read from the same views a `session_status` row is derived from. */
+/**
+ * The `list_sessions` row fields, read from the same sources a `session_status` row is derived from. A row shows
+ * only whether a turn runs and the model, so it reads those two and never the queue or question counts.
+ */
 export function sessionRowStatusFields(entry: RpcSessionEntry): Pick<RpcSessionRow, "archived" | "activity" | "model"> {
-	const runtime = runtimeView(entry);
+	const session = entry.runtime?.session;
+	const state = entry.worker?.snapshot?.state;
+	const streaming = session !== undefined ? session.isStreaming === true : state?.isStreaming === true;
+	const model = modelOf(session !== undefined ? session.model : (state?.model ?? undefined));
 	return {
 		archived: entryView(entry).archived === true,
-		activity: runtime?.isStreaming === true ? "running" : "idle",
-		...(runtime?.model !== undefined ? { model: runtime.model } : {}),
+		activity: streaming ? "running" : "idle",
+		...(model !== undefined ? { model } : {}),
 	};
 }
 
