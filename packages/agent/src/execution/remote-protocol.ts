@@ -96,6 +96,12 @@ export interface RemoteInvoke {
 	readonly name: string;
 	readonly arguments: unknown;
 	readonly sessionRef?: string;
+	/**
+	 * The session port's read half (senpi#6754): the loop's session facts this call may read, for a hand that runs a tool
+	 * acting on the session (todo, tool_search, ...) for a loop that runs elsewhere. Opaque here; the hand returns the
+	 * call's session writes in {@link RemoteToolResult.sessionEffects}. Absent: the call runs with no session, as before.
+	 */
+	readonly session?: JsonValue;
 }
 
 export interface RemoteAbort {
@@ -148,7 +154,16 @@ export interface RemoteToolResult {
 	readonly structuredContent?: JsonValue;
 	readonly terminate?: boolean;
 	readonly addedToolNames?: readonly string[];
+	/**
+	 * The session port's write half: what the call did to the session it carried (entries, messages, the active tool
+	 * set, ...), for the loop to commit before it reports the result. Only a call that carried `session` returns it, and a
+	 * durable hand replays it with the outcome, so the loop commits it once per execution ID.
+	 */
+	readonly sessionEffects?: JsonValue;
 }
+
+/** A tool result as a hand's scope returns it: an {@link AgentToolResult} plus the session writes of its call. */
+export type HandToolResult = AgentToolResult<unknown> & { readonly sessionEffects?: JsonValue };
 
 export class RemoteProtocolError extends Error {
 	constructor(message: string) {
@@ -226,7 +241,8 @@ export function decodeRemoteMessage(payload: Uint8Array): RemoteHandMessage {
 				typeof scope.root !== "string" ||
 				!isString(value.toolCallId) ||
 				!isString(value.name) ||
-				(value.sessionRef !== undefined && typeof value.sessionRef !== "string")
+				(value.sessionRef !== undefined && typeof value.sessionRef !== "string") ||
+				(value.session !== undefined && !isRecord(value.session))
 			)
 				throw new RemoteProtocolError("malformed invoke");
 			return value as unknown as RemoteInvoke;
@@ -275,7 +291,7 @@ function asJson(value: unknown): JsonValue | undefined {
 }
 
 /** What a hand sends back for a tool result, keeping only what crosses the wire. */
-export function toRemoteToolResult(result: AgentToolResult<unknown>): RemoteToolResult {
+export function toRemoteToolResult(result: HandToolResult): RemoteToolResult {
 	return {
 		content: result.content ?? [],
 		details: asJson(result.details),
@@ -283,5 +299,6 @@ export function toRemoteToolResult(result: AgentToolResult<unknown>): RemoteTool
 		...(result.structuredContent === undefined ? {} : { structuredContent: result.structuredContent }),
 		...(result.terminate === undefined ? {} : { terminate: result.terminate }),
 		...(result.addedToolNames?.length ? { addedToolNames: [...result.addedToolNames] } : {}),
+		...(result.sessionEffects === undefined ? {} : { sessionEffects: result.sessionEffects }),
 	};
 }

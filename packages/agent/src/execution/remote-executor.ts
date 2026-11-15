@@ -1,4 +1,5 @@
 import type { Transport, TransportFrame } from "../transport/transport.ts";
+import type { JsonValue } from "@earendil-works/pi-ai";
 import type { AgentToolResult } from "../types.ts";
 import { FILE_CHANNEL, RUN_CHANNEL } from "./device-files.ts";
 import { createPlaneClient, decodePlaneMessage, type NestedRequest } from "./plane.ts";
@@ -7,6 +8,7 @@ import {
 	decodeRemoteMessage,
 	encodeRemoteMessage,
 	HAND_CONTROL_LANE,
+	type HandToolResult,
 	type RemoteHandMessage,
 	type RemoteInvoke,
 	toRemoteToolResult,
@@ -24,6 +26,8 @@ export interface HandCall {
 	readonly signal: AbortSignal;
 	/** Asks the brain that owns this call (a model-backed tool's completion, S31); fails once the call has ended. */
 	readonly nested: NestedRequest;
+	/** The session port's read half the call carried ({@link RemoteInvoke.session}); absent: the call has no session. */
+	readonly session?: JsonValue;
 }
 
 /**
@@ -31,7 +35,7 @@ export interface HandCall {
  * validation, the extensions' `tool_call`/`tool_result` handlers and the tool; it never rejects for a tool failure.
  */
 export interface HandScope {
-	run(call: HandCall): Promise<AgentToolResult<unknown>>;
+	run(call: HandCall): Promise<HandToolResult>;
 	/** A tool that must not overlap other calls of its scope (`executionMode: "sequential"`). */
 	isSequential(name: string): boolean;
 	/**
@@ -175,7 +179,7 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 				running.delete(call.executionId);
 				return refuse(lane, call.executionId, "epoch_fenced");
 			}
-			let result: AgentToolResult<unknown>;
+			let result: HandToolResult;
 			try {
 				// The grant must still hold when the call starts: a snapshot installed while it waited (scope opening,
 				// durable admission, earlier calls of its scope) may have revoked it, and then the tool never runs.
@@ -189,6 +193,7 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 								arguments: call.arguments,
 								signal: controller.signal,
 								nested: planes.requestFor(call.executionId, lane, controller.signal),
+								...(call.session === undefined ? {} : { session: call.session }),
 							})
 						: scope.file === undefined
 							? fileRefusal("unsupported", "this hand serves no file channel")
