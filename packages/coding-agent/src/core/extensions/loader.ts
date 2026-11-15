@@ -1255,12 +1255,17 @@ async function loadExtensionsInternal(
 	};
 }
 
-export async function loadExtensions(
+type LoadExtensionsOptions = ExtensionSessionOptions & { factoryResolver?: ExtensionFactoryResolver };
+
+/** `O` with each key `LoadExtensionsOptions` does not name typed `never`: a stray key fails to compile, also from a spread. */
+type KnownLoadExtensionsOptions<O> = O & { readonly [K in Exclude<keyof O, keyof LoadExtensionsOptions>]: never };
+
+export async function loadExtensions<O extends LoadExtensionsOptions>(
 	paths: string[],
 	cwd: string,
 	eventBus?: EventBus,
 	runtime?: ExtensionRuntime,
-	options?: ExtensionSessionOptions & { factoryResolver?: ExtensionFactoryResolver },
+	options?: KnownLoadExtensionsOptions<O>,
 ): Promise<LoadExtensionsResult> {
 	return loadExtensionsInternal(paths, cwd, eventBus, runtime, options);
 }

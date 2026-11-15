@@ -1,6 +1,6 @@
 // S39 (brain/hand split, F37): todo is a loop-side tool. todotools declares its halves with `runs` (#5474): the tool
-// and every handler that reads the session belong to the loop, so a hand's generation registers none of its loop
-// handlers, and the loop half takes a todo result that ran outside this process as the session's list. A fused
+// and every handler that reads the session belong to the loop, so a split-local hand's generation registers none of its
+// loop handlers, and the loop half takes a todo result that ran outside this process as the session's list. A fused
 // session is unchanged. The split session that already holds a list is closed by the per-call routing of #5641.
 import { createLoopToolHost, createSplitToolHost, loopSideToolNames } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall, type ToolResultMessage } from "@earendil-works/pi-ai";
@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import todotoolsExtension from "../../src/core/extensions/builtin/todotools/index.ts";
 import type { TodoPhase, TodoToolDetails } from "../../src/core/extensions/builtin/todotools/state.ts";
 import { loadExtensions } from "../../src/core/extensions/loader.ts";
-import type { Extension, ExtensionSide } from "../../src/core/extensions/types.ts";
+import type { Extension, ExtensionPlacement } from "../../src/core/extensions/types.ts";
 import { createHarness, createTestUiContext, type Harness } from "../suite/harness.ts";
 
 const harnesses: Harness[] = [];
@@ -27,9 +27,9 @@ const LOOP_EVENTS = [
 	"session_tree",
 ];
 
-async function loadTodotools(side: ExtensionSide | undefined): Promise<Extension> {
+async function loadTodotools(placement: ExtensionPlacement | undefined): Promise<Extension> {
 	const result = await loadExtensions(["<todotools>"], process.cwd(), undefined, undefined, {
-		...(side === undefined ? {} : { side }),
+		...(placement === undefined ? {} : { placement }),
 		factoryResolver: () => todotoolsExtension,
 	});
 	expect(result.errors).toEqual([]);
@@ -78,13 +78,13 @@ describe("todo on a split session (S39)", () => {
 		expect(extension.tools.get("todo")?.definition.runs).toBe("brain");
 	});
 
-	it("a hand's generation registers none of todotools' loop handlers; the loop and a fused session register them all", async () => {
+	it("a split-local hand's generation registers none of todotools' loop handlers; a hosted hand and a fused session register them all", async () => {
 		const hand = await loadTodotools("hand");
-		const brain = await loadTodotools("brain");
+		const hostedHand = await loadTodotools("hosted-hand");
 		const fused = await loadTodotools(undefined);
 
 		expect(events(hand)).toEqual([]);
-		expect(events(brain)).toEqual(LOOP_EVENTS);
+		expect(events(hostedHand)).toEqual(LOOP_EVENTS);
 		expect(events(fused)).toEqual(LOOP_EVENTS);
 		expect([...hand.tools.keys()]).toEqual([...fused.tools.keys()]);
 	});
