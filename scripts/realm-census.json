@@ -454,7 +454,27 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/agent/src/execution/wake-outbox.ts#EMPTY": {
+		"packages/agent/src/execution/wake-link.ts#DROP_REASONS": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/agent/src/execution/wake-link.ts#REFUSALS": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/agent/src/execution/wake-link.ts#decoder": {
+			"class": "constant",
+			"reason": "stateless helper instance; holds no mutable state"
+		},
+		"packages/agent/src/execution/wake-link.ts#encoder": {
+			"class": "constant",
+			"reason": "stateless helper instance; holds no mutable state"
+		},
+		"packages/agent/src/execution/wake-delivery.ts#ONE_SHOT_MODES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/agent/src/execution/wake-outbox-record.ts#REFUSALS": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
@@ -7259,29 +7279,37 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/core/tools/bash.ts#MAX_TIMEOUT_SECONDS": {
-			"class": "constant",
-			"reason": "value computed or aliased at load; never written after load"
-		},
-		"packages/coding-agent/src/core/tools/bash.ts#bashOutputSchema": {
+		"packages/coding-agent/src/core/tools/bash-schema.ts#bashOutputSchema": {
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
-		"packages/coding-agent/src/core/tools/bash.ts#bashSchema": {
+		"packages/coding-agent/src/core/tools/bash-schema.ts#bashSchema": {
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
-		"packages/coding-agent/src/core/tools/bash.ts#bashToolConfig": {
+		"packages/coding-agent/src/core/tools/bash-schema.ts#bashToolConfig": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/core/tools/edit.ts#editSchema": {
+		"packages/coding-agent/src/core/tools/edit-core.ts#editSchema": {
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
-		"packages/coding-agent/src/core/tools/edit.ts#replaceEditSchema": {
+		"packages/coding-agent/src/core/tools/edit-core.ts#replaceEditSchema": {
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/core/tools/encoding.ts#encoder": {
+			"class": "constant",
+			"reason": "stateless encoder built once at load; never written after load"
+		},
+		"packages/coding-agent/src/core/tools/file-tool-host.ts#UNICODE_SPACES": {
+			"class": "per-copy-safe",
+			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
+		},
+		"packages/coding-agent/src/core/tools/file-tool-host.ts#pathTails": {
+			"class": "per-copy-safe",
+			"reason": "promise chain or queue ordering this copy's own async work; a split only loses ordering between copies, holds no A1-A3 asset"
 		},
 		"packages/coding-agent/src/core/tools/find.ts#defaultFindOperations": {
 			"class": "constant",
@@ -7290,6 +7318,10 @@
 		"packages/coding-agent/src/core/tools/find.ts#findSchema": {
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/core/tools/fs-error-code.ts#FS_CODE_OF_OP_CODE": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
 		},
 		"packages/coding-agent/src/core/tools/grep/index.ts#grepSchema": {
 			"class": "constant",
@@ -7311,14 +7343,6 @@
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
-		"packages/coding-agent/src/core/tools/machine.ts#NEVER_ABORTED": {
-			"class": "constant",
-			"reason": "value computed or aliased at load; never written after load"
-		},
-		"packages/coding-agent/src/core/tools/machine.ts#TOOL_PATH_LIMITS": {
-			"class": "constant",
-			"reason": "lookup data literal; never written after load"
-		},
 		"packages/coding-agent/src/core/tools/machine.ts#defaultMachine": {
 			"class": "per-copy-safe",
 			"reason": "lazy load or memo of a module, native binding or probe result; each copy loads its own, a split only repeats the load"
@@ -7326,6 +7350,26 @@
 		"packages/coding-agent/src/core/tools/machine.ts#processMachineOps": {
 			"class": "per-copy-safe",
 			"reason": "lazy load or memo of a module, native binding or probe result; each copy loads its own, a split only repeats the load"
+		},
+		"packages/coding-agent/src/core/tools/posix-signals.ts#BSD": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/tools/posix-signals.ts#BSD_FAMILY": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/core/tools/posix-signals.ts#COMMON": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/tools/posix-signals.ts#LINUX": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/tools/posix-signals.ts#WIN32": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
 		},
 		"packages/coding-agent/src/core/tools/powershell.ts#powershellToolConfig": {
 			"class": "constant",
@@ -7335,7 +7379,11 @@
 			"class": "per-copy-safe",
 			"reason": "registry populated and read through this copy's module API; a split only hides one copy's entries from the other, holds no A1-A3 asset"
 		},
-		"packages/coding-agent/src/core/tools/read.ts#readSchema": {
+		"packages/coding-agent/src/core/tools/read-core.ts#INLINE_IMAGE_TYPES": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/core/tools/read-core.ts#readSchema": {
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
@@ -7383,7 +7431,15 @@
 			"class": "constant",
 			"reason": "regex without g/y flags; carries no lastIndex state"
 		},
-		"packages/coding-agent/src/core/tools/write.ts#writeSchema": {
+		"packages/coding-agent/src/core/tools/shell-operations.ts#MAX_TIMEOUT_SECONDS": {
+			"class": "constant",
+			"reason": "value computed or aliased at load; never written after load"
+		},
+		"packages/coding-agent/src/core/tools/tool-machine.ts#NEVER_ABORTED": {
+			"class": "constant",
+			"reason": "value computed or aliased at load; never written after load"
+		},
+		"packages/coding-agent/src/core/tools/write-core.ts#writeSchema": {
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
@@ -7746,6 +7802,10 @@
 		"packages/coding-agent/src/migrations-state.ts#SCAN_MIGRATION_NAMES": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/hand/hand-wakes.ts#HAND_WAKE_LIMITS": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
 		},
 		"packages/coding-agent/src/modes/headless/testing/kill-presence.ts#KILL_PRESENCE_CASES": {
 			"class": "constant",
@@ -8942,6 +9002,50 @@
 			"class": "per-copy-safe",
 			"reason": "loopless worker runtime; the worker realm evaluates one copy of this module"
 		},
+		"packages/coding-agent/src/modes/rpc/machine-op/core-ops.ts#utf8": {
+			"class": "constant",
+			"reason": "stateless decoder used without streaming; holds no state between calls"
+		},
+		"packages/coding-agent/src/modes/rpc/machine-op/executor.ts#OS_REFUSALS": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/machine-op/handler.ts#NO_PTY_HOLDER": {
+			"class": "constant",
+			"reason": "stateless holder that refuses every spawn; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/machine-op/live-handle.ts#ENDED": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/machine-op/live-handle.ts#MACHINE_LIFECYCLES": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/machine-op/op-registry.ts#SERVED": {
+			"class": "constant",
+			"reason": "lookup data literal of op decoders and run functions; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/machine-op/terminal-input.ts#NAMED": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/machine-op/terminal-input.ts#PASTE_END": {
+			"class": "constant",
+			"reason": "value derived from constants at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/machine-op/terminal-input.ts#PASTE_START": {
+			"class": "constant",
+			"reason": "value derived from constants at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/machine-op/terminal-input.ts#encoder": {
+			"class": "constant",
+			"reason": "stateless encoder; holds no state between calls"
+		},
+		"packages/coding-agent/src/modes/rpc/machine-op/wire.ts#COMMANDS": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
 		"packages/coding-agent/src/modes/rpc/mcp-form-dialog.ts#mcpFormClock": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
@@ -9150,10 +9254,6 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/modes/rpc/project-file-commands.ts#writeChains": {
-			"class": "per-copy-safe",
-			"reason": "promise chain or queue ordering this copy's own async work; a split only loses ordering between copies, holds no A1-A3 asset"
-		},
 		"packages/coding-agent/src/modes/rpc/project-file-path.ts#EXCLUDED_SEGMENTS": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
@@ -9165,6 +9265,18 @@
 		"packages/coding-agent/src/modes/rpc/project-file-path.ts#NO_FOLLOW": {
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/project-file-store.ts#writeChains": {
+			"class": "per-copy-safe",
+			"reason": "promise chain or queue ordering this copy's own async work; a split only loses ordering between copies, holds no A1-A3 asset"
+		},
+		"packages/coding-agent/src/modes/rpc/project-mcp-commands.ts#MCP_FILE": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/project-write-gate.ts#RPC_WRITE_IDENTITY": {
+			"class": "per-copy-safe",
+			"reason": "identity token an approval is matched against by reference within this copy; a split only stops one copy's approvals from matching another copy's writes (stricter), holds no A1-A3 asset"
 		},
 		"packages/coding-agent/src/modes/rpc/protocol-identity.ts#INSTANCE_ID": {
 			"class": "constant",
@@ -9267,6 +9379,10 @@
 		"packages/coding-agent/src/modes/rpc/session-context-patch.ts#RESERVED_SESSION_CONTEXT_KEYS": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/session-control-actions-data.ts#NOTHING_STOPPED": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load (the empty background-stop outcome an idle interrupt answers)"
 		},
 		"packages/coding-agent/src/modes/rpc/session-effect-status.ts#dirty": {
 			"class": "per-copy-safe",
@@ -9728,6 +9844,10 @@
 			"class": "per-copy-safe",
 			"reason": "warn-once or report-once dedupe; a split only repeats a diagnostic"
 		},
+		"packages/coding-agent/src/utils/image-mime.ts#PNG_SIGNATURE": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
 		"packages/coding-agent/src/utils/image-resize-core.ts#DEFAULT_OPTIONS": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
@@ -9739,10 +9859,6 @@
 		"packages/coding-agent/src/utils/management-http.ts#RETRYABLE_STATUS_CODES": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
-		},
-		"packages/coding-agent/src/utils/mime.ts#PNG_SIGNATURE": {
-			"class": "constant",
-			"reason": "lookup data literal; never written after load"
 		},
 		"packages/coding-agent/src/utils/paths.ts#MISSING_PATH_CODES": {
 			"class": "constant",

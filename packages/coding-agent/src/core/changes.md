@@ -1,3 +1,80 @@
+## 2026-11-16 - Accurate transient-failure rejection text and latch rationale (senpi#6772)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `describeCompactionRejection("transient-failure")` now ends "Retry compaction." instead of "The next prompt retries compaction.". The comment on `_failedCompactionLatchesAdmission` states that three consecutive owned failures trip the breaker, and gives the bound on exempting `circuit-breaker`: at most one cooldown, after which the next real failing attempt latches again.
+
+### Why
+
+- Review findings on #6764. A manual `compact()` from an SDK or RPC caller got a promise that the next prompt retries, which holds only when the context is over the threshold. The latch rationale named only transient failures as the breaker's cause.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: the rejection description and the latch predicate are private session code.
+
+### Expected merge conflict zones
+
+- LOW: `describeCompactionRejection` and the doc comment above `_failedCompactionLatchesAdmission` in `agent-session.ts`.
+
+## 2026-11-16 - A transient compaction failure no longer latches admission (senpi#6760)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the two sites in `_checkCompaction` that arm `_blockedPostCompactionAssistant` after a failed automatic compaction now share `_failedCompactionLatchesAdmission()`. It exempts the new `transient-failure` rejection cause and `circuit-breaker` as well as `external-owner`, so after a transient summary failure the next send of any origin runs compaction again instead of throwing `RequiredCompactionError` with no attempt. `circuit-breaker` is exempt because repeated transient failures trip the breaker; latching on its rejection would strand the session again one failure later. While it cools down, the existing #531 cooldown admission applies, and a latch that an earlier deterministic failure armed stays armed. `describeCompactionRejection` describes the new cause.
+
+### Why
+
+- A long-lived automated session hit `api_error: Network error or service unavailable` on its threshold compaction. The extension cancelled after its bounded retries, the session latched admission (#7921 case 6), and only a person's prompt releases that latch (#4161). Every automated send was then refused forever with the context above the threshold. The latch exists for deterministic insufficiency; a transient provider failure says nothing about the context.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: the admission latch is private session state armed by core after an automatic compaction fails; an extension can only report why it rejected.
+
+### Expected merge conflict zones
+
+- LOW: `agent-session.ts`, the two latch-arming blocks in `_checkCompaction`, the new `_failedCompactionLatchesAdmission` beside `_isCompactionOnCooldown`, and `describeCompactionRejection`.
+
+## 2026-11-15 - Person-started Claude turns reach the pool's bounded stale-limit check (senpi#6727)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: mark actual user messages with existing input attribution. A person's accepted input releases the coarse Claude provider hold only after input handlers and final admission, and never while a model switch is pending. Its pool then decides whether an account can serve or qualifies for one stale-limit check.
+- `packages/coding-agent/src/core/agent-session.ts`: at the follow-up queue's consumption boundary, mark previously unmarked custom messages as engine input. Their actual `message_start` then clears the person's identity inside the running loop. Custom context from `before_agent_start` or `nextTurn` stays in the person's initial batch and retains the allowance.
+- `packages/coding-agent/src/core/turn-origin.ts`: bind a person's allowance identity to its admitted message. A fresh run clears the identity; an explicit retry or recovery consumes a one-use continuation mark to preserve it. Steering keeps the identity and queued automated input cannot mint one.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: a confirmed limit from an earlier half-open request could leave a provider hold that prevented the next person's turn from reaching the pool. Consumed or rejected input must not release that hold.
+- `packages/coding-agent/src/core/turn-origin.ts`: cancelled retry backoff and retry blocked by required compaction end after an `agent_end` that predicted a retry. Binding the allowance to actual run starts prevents it from leaking into an automated wake without enumerating exit events.
+- `packages/coding-agent/src/core/agent-session.ts`: a custom follow-up can start another turn inside the same run, without `agent_start`; marking only its committed queue delivery prevents it from inheriting the person's allowance without changing initial prompt context.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts` and `turn-origin.ts`: only the session owns final input admission, message origin marks, and the distinction between a fresh run and an explicit continuation. The provider extension reads that identity instead of inferring it from predicted end events.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/agent-session.ts`, the provider-hold checks at prompt admission, queued-input consumption, and message origin marking; `turn-origin.ts`, run-start and message-start origin handling.
+
+## 2026-11-14 - An interrupt can stop the background jobs of the turn it interrupted
+
+### What changed
+
+- `packages/coding-agent/src/core/run-background-jobs.ts` (new): `RunBackgroundJobs`, the background jobs each turn started, keyed by the turn id (`turn_epoch`) running when the job became background. `stop(turnId)` stops that turn's jobs in start order and answers `{ stopped, failed }`, a failure carrying the job's own rejection reason.
+- `packages/coding-agent/src/core/agent-session.ts`: `registerRunBackgroundJob(job)` records a job under `currentTurnId` (nothing outside a turn) and `stopRunBackgroundJobs(turnId)` stops them; the context action `registerRunBackgroundJob` is bound to it.
+
+### Why
+
+- An RPC `interrupt` stopped the turn, but a bash command that turn had auto-detached kept running, and its exit notice woke the session about a minute later, which then replied as if never interrupted (measured on a remote thread through omo's `thread_interrupt`). Background sessions belonged to the session, never to the turn that started them, so nothing could tell which ones to stop.
+
+### Why an extension could not handle it
+
+- The turn id and the moment a turn ends are `AgentSession` state; the RPC `interrupt` that has to stop the jobs runs in the host, not in an extension.
+
+### Expected merge conflict zones
+
+- LOW: the `currentTurnId` neighbourhood and the `releaseRunFence` context action in `agent-session.ts`.
+
 ## 2026-11-15 - Opus 5.5 falls back to Fable 5.2 at medium, then Kimi K3.1 Pro at max (senpi#6699)
 
 ### What changed
