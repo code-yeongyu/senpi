@@ -33,6 +33,17 @@ export interface HostCoreHooks {
 	 * (senpi#3282). When omitted the watch always reopens.
 	 */
 	readonly shouldReopenParked?: () => boolean;
+	/**
+	 * Work outside the session registry (`machine_op` ops and terminals, senpi#6752): it keeps the host from being idle,
+	 * and is held from the idle check that starts a handover's switch until that handover is blocked.
+	 */
+	readonly machineWork?: MachineWorkGate;
+}
+
+export interface MachineWorkGate {
+	busy(): boolean;
+	hold(): void;
+	release(): void;
 }
 
 export class HostCoreGate {
@@ -54,7 +65,12 @@ export class HostCoreGate {
 		this.handover =
 			hooks.handover === undefined
 				? undefined
-				: new HostIdleHandover({ ...hooks.handover, isIdle: () => isHostIdle(registry, this.inFlight) });
+				: new HostIdleHandover({
+						...hooks.handover,
+						isIdle: () => !(hooks.machineWork?.busy() ?? false) && isHostIdle(registry, this.inFlight),
+						holdNewWork: () => hooks.machineWork?.hold(),
+						releaseNewWork: () => hooks.machineWork?.release(),
+					});
 	}
 
 	/** Answers a `begin_handover` record through `deliver` and returns true, or returns false for anything else. */
