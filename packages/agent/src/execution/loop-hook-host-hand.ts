@@ -47,7 +47,10 @@ export function serveLoopHooks(options: LoopHookHandOptions): LoopHookHand {
 	const { transport, lane } = options;
 	const instance = options.instance ?? crypto.randomUUID();
 	const answers = new Map<string, LoopHookMessage | undefined>();
-	/** The calls whose hooks are running, by ID, so a cancel reaches them. */
+	/**
+	 * The calls a cancel can still reach, by ID: those whose hooks are running, and those that replied until the host
+	 * acknowledges the reply (a cancel after the reply means the host dropped it, #6808 review L1).
+	 */
 	const running = new Map<string, AbortController>();
 	let dead = false;
 
@@ -73,6 +76,7 @@ export function serveLoopHooks(options: LoopHookHandOptions): LoopHookHand {
 		// Registered before the first await: a cancel the lane delivers right behind its call finds it.
 		const controller = new AbortController();
 		running.set(call.callId, controller);
+		let replied = false;
 		try {
 			await send({ kind: "hook.started", callId: call.callId, instance });
 			point("started", call.callId);
@@ -89,10 +93,12 @@ export function serveLoopHooks(options: LoopHookHandOptions): LoopHookHand {
 			}
 			point("ran", call.callId);
 			answers.set(call.callId, answer);
+			replied = answer.kind === "hook.reply";
 			await send(answer);
 			point("replied", call.callId);
 		} finally {
-			running.delete(call.callId);
+			// A reply keeps the call reachable for its cancel until the host acknowledges it.
+			if (!replied) running.delete(call.callId);
 		}
 	};
 
@@ -101,6 +107,11 @@ export function serveLoopHooks(options: LoopHookHandOptions): LoopHookHand {
 		const message = decodeLoopHookMessage(frame.payload);
 		if (message?.kind === "hook.cancel") {
 			running.get(message.callId)?.abort();
+			running.delete(message.callId);
+			return;
+		}
+		if (message?.kind === "hook.ack") {
+			running.delete(message.callId);
 			return;
 		}
 		if (message?.kind !== "hook.call") return;

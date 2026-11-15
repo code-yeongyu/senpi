@@ -87,7 +87,13 @@ export function createLoopHookHost(options: LoopHookHostOptions): LoopHookHost {
 				return;
 			}
 			case "hook.reply":
-				return settle(message.callId, (waiter) => waiter.resolve(message.result));
+				return settle(message.callId, (waiter) => {
+					waiter.resolve(message.result);
+					// Consumed: the hand stops keeping the call for a cancel that will not come.
+					transport.send(lane, encodeLoopHookMessage({ kind: "hook.ack", callId: message.callId })).catch(() => {
+						// The link closed: the hand ends with it, and so does what it kept for the call.
+					});
+				});
 			case "hook.failed":
 				return settle(message.callId, (waiter) => waiter.reject(new LoopHookFailedError(message.error)));
 			case "hook.hello":
@@ -99,6 +105,7 @@ export function createLoopHookHost(options: LoopHookHostOptions): LoopHookHost {
 				return;
 			case "hook.call":
 			case "hook.cancel":
+			case "hook.ack":
 				return;
 		}
 	});
