@@ -473,11 +473,13 @@ function createExtensionAPI(
 		}
 		runtime.assertActive();
 	};
+	let deviceMachineStaged = false;
 	const applyRuntimeChange = (change: () => void) => {
 		if (state === "loading") pendingRuntimeChanges.push(change);
 		else change();
 	};
 	const clearPending = () => {
+		deviceMachineStaged = false;
 		pendingFlagValues.clear();
 		pendingRuntimeChanges.length = 0;
 		loadingUnsubscribers.length = 0;
@@ -550,11 +552,16 @@ function createExtensionAPI(
 		},
 
 		registerDeviceMachine(machine: ToolMachine): void {
-			runtime.assertActive();
+			assertActive();
 			if (runtime.deviceMachine !== undefined) {
 				throw new DeviceMachineConflictError(runtime.deviceMachine.extensionPath, extension.path);
 			}
-			runtime.deviceMachine = { machine, extensionPath: extension.path };
+			if (deviceMachineStaged) throw new DeviceMachineConflictError(extension.path, extension.path);
+			deviceMachineStaged = true;
+			// Staged like provider registrations: a factory that throws after registering leaves no device behind.
+			applyRuntimeChange(() => {
+				runtime.deviceMachine = { machine, extensionPath: extension.path };
+			});
 		},
 
 		registerTool(tool: ToolDefinition): void {

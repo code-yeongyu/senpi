@@ -2992,7 +2992,6 @@ export interface ExtensionAPI {
 		},
 	): void;
 
-	/** Register a CLI flag. */
 	/**
 	 * Register the operation layer of the device this session's tools run on. Read when a routed tool executes; only
 	 * tools named in OMO_TOOLS_VIA_DAEMON use it (today: bash). One registration per session: a second one, from any
@@ -3001,6 +3000,7 @@ export interface ExtensionAPI {
 	 */
 	registerDeviceMachine(machine: ToolMachine): void;
 
+	/** Register a CLI flag. */
 	registerFlag(
 		name: string,
 		options:

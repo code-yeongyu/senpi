@@ -458,7 +458,7 @@ export type {
 } from "@code-yeongyu/senpi-machine-ops";
 export { DeviceMachineConflictError } from "./core/extensions/types.ts";
 export { DeviceUnavailableError } from "./core/tools/bash.ts";
-export { createToolMachine, type ToolMachine } from "./core/tools/machine.ts";
+export { createToolMachine, type ToolMachine, type ToolPathPolicy } from "./core/tools/machine.ts";
 // Tools
 export {
 	type BashOperations,
