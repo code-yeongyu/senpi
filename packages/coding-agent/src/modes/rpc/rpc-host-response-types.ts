@@ -1,3 +1,4 @@
+import type { HandWirePacket } from "../hand/hand-packet-codec.ts";
 import type { RpcUnloadAnswer } from "./rpc-effect-answer-types.ts";
 import type { RpcSubscriptionLimitsEvent } from "./rpc-host-lifecycle-types.ts";
 import type { RpcProtocolInfo } from "./rpc-protocol-info-types.ts";
@@ -51,6 +52,17 @@ export type RpcHostCommandResponse =
 			command: "select_hand";
 			success: true;
 			data: { sessionId: string; selected: string | null };
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "hand_link";
+			success: true;
+			/**
+			 * `more`: the hand still queues packets one answer could not hold; poll again at once. `instance`: the session's
+			 * link, minted when this daemon opened it; a changed one means the brain resets its hand transport.
+			 */
+			data: { packets: readonly HandWirePacket[]; more: boolean; instance: string };
 	  }
 	| {
 			id?: string;

@@ -24,6 +24,10 @@
  *   only when it is a caller granted the class.
  * - `connection_local`: configures or tears down the caller's own connection or host ownership; meaningful only to
  *   the connection that sends it, so it is never permitted on someone else's behalf.
+ * - `hand_link`: carries a hosted brain's packets to this machine's hand (R3 tool-relay mode): full control of the
+ *   device's tools as its user, so no other class implies it, `device_admin` included. A forwarder grants it only to a
+ *   sender it decided per batch. It starts no turn here, so a cross-account sender's delivery asks nothing of this
+ *   host (`delegated-drive-origin.ts`); its consent is the forwarder's.
  *
  * At runtime a record the table does not classify (unknown type, non-string type, not an object) is treated as more
  * dangerous than every class: `rpcMethodPermitted` refuses it whatever is granted.
@@ -33,7 +37,14 @@ import { createHash } from "node:crypto";
 import type { SessionEntry, SessionMessageEntry } from "../../core/session-manager.ts";
 import type { RpcInboundRecord } from "./rpc-host-command-types.ts";
 
-export type RpcMethodClass = "observe" | "drive" | "answer" | "thread" | "device_admin" | "connection_local";
+export type RpcMethodClass =
+	| "observe"
+	| "drive"
+	| "answer"
+	| "thread"
+	| "device_admin"
+	| "hand_link"
+	| "connection_local";
 
 export type RpcMethodType = RpcInboundRecord["type"];
 
@@ -303,6 +314,8 @@ export const RPC_METHOD_CLASS = {
 	// both forms write a file on the host: without `outputPath`, into the session's cwd
 	export_html: "device_admin",
 	export_jsonl: "device_admin",
+	// hand_link
+	hand_link: "hand_link",
 	// connection_local
 	set_client_info: "connection_local",
 	// a forwarder serves session streams itself; per-connection subscription state cannot be forwarded

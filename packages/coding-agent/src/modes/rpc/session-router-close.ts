@@ -233,6 +233,10 @@ export async function dispose(host: RouterContext): Promise<void> {
 	if (host.drainTimer !== undefined) clearInterval(host.drainTimer);
 	await host.parks.stop();
 	if (host.admissions) await host.admissions.dispose();
+	// Hosted sessions' links end with the host: their running calls are aborted and their scopes disposed.
+	await host.defaults.handLink?.close().catch((cause: unknown) => {
+		process.stderr.write(`senpi rpc host shutdown hand_link close failed: ${String(cause)}\n`);
+	});
 	await Promise.all(
 		[...host.bindings.entries()].map(async ([sessionId, binding]) => {
 			const entry = host.registry.peek(sessionId);

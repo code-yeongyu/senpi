@@ -7,7 +7,14 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import type { ExtensionFactory } from "../../src/core/extensions/types.ts";
-import { ANSWER_DEADLINE_MS, type DelegatedHost, declare, type Peer, startHost } from "./rpc-delegated-host-support.ts";
+import {
+	ANSWER_DEADLINE_MS,
+	type DelegatedHost,
+	declare,
+	type HandLinkFactory,
+	type Peer,
+	startHost,
+} from "./rpc-delegated-host-support.ts";
 import { probeExtensionSource } from "./rpc-permission-mode-support.ts";
 import type { WireRecord } from "./rpc-delegated-peer.ts";
 
@@ -24,10 +31,12 @@ export async function permissionHost(
 		readonly embedderPreset?: boolean;
 		readonly hostArgs?: readonly string[];
 		readonly workers?: boolean;
+		readonly handLink?: HandLinkFactory;
 	} = {},
 ): Promise<DelegatedHost> {
 	const host = await startHost({
 		extensionFactories: extra,
+		...(options.handLink === undefined ? {} : { handLink: options.handLink }),
 		settingsDefaultPreset: options.embedderPreset !== true,
 		...(options.hostArgs === undefined ? {} : { hostArgs: options.hostArgs }),
 		...(options.workers ? { workers: true, workerExtensionSource: probeExtensionSource("probe-") } : {}),

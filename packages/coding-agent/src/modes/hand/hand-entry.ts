@@ -6,12 +6,7 @@
  */
 import { createServer } from "node:net";
 import { posix, win32 } from "node:path";
-import {
-	createReliableTransport,
-	createRemoteExecutor,
-	serveLoopHooks,
-	type Transport,
-} from "@earendil-works/pi-agent-core";
+import { createReliableTransport } from "@earendil-works/pi-agent-core";
 import type { InlineExtension } from "../../core/extensions/types.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import { closeServer, prepareSocketPath } from "../rpc/host-lifecycle-proxy.ts";
@@ -19,12 +14,8 @@ import { listen } from "../rpc/host-socket-bind.ts";
 import { createLooplessHand } from "../rpc/remote-executor-scope.ts";
 import { shieldSocketDuringClose, unlinkOwnedSocket } from "../rpc/socket-ownership.ts";
 import { ensureSocketSecret, resolveSocketTransportAddress, socketSecretPath } from "../rpc/socket-transport.ts";
+import { createHandEndpoint } from "./hand-endpoint.ts";
 import { serveSocketCarrier } from "./socket-carrier.ts";
-
-type FrameHandler = Parameters<Transport["onFrame"]>[0];
-
-/** The lane the loop hooks of a hand's scopes travel on; every other lane is the remote executor's. */
-const HAND_LOOP_HOOK_LANE = "loop-hooks";
 
 export function handSocketPath(agentDir: string, platform: NodeJS.Platform = process.platform): string {
 	return (platform === "win32" ? win32 : posix).join(agentDir, "rpc", "hand.sock");
@@ -45,27 +36,6 @@ export function handEndpointSecret(
 	platform: NodeJS.Platform = process.platform,
 ): Promise<Uint8Array | undefined> {
 	return platform === "win32" ? ensureSocketSecret(socketSecretPath(socketPath)) : Promise.resolve(undefined);
-}
-
-/** One transport seen as two: frames on `lane` go to one view's receiver, every other frame to the other's. */
-function splitLane(transport: Transport, lane: string): { readonly own: Transport; readonly rest: Transport } {
-	let ownHandler: FrameHandler | undefined;
-	let restHandler: FrameHandler | undefined;
-	transport.onFrame((frame) => (frame.lane === lane ? ownHandler : restHandler)?.(frame));
-	const view = (set: (handler: FrameHandler) => void): Transport => ({
-		send: (to, payload) => transport.send(to, payload),
-		onFrame: set,
-		inFlight: (to) => transport.inFlight(to),
-		close: () => transport.close(),
-	});
-	return {
-		own: view((handler) => {
-			ownHandler = handler;
-		}),
-		rest: view((handler) => {
-			restHandler = handler;
-		}),
-	};
 }
 
 export interface HandEntryOptions {
@@ -89,19 +59,12 @@ export async function runHand(options: HandEntryOptions): Promise<never> {
 		},
 		onHandlerError: (error) => report(`frame handler failed: ${String(error)}`),
 	});
-	const lanes = splitLane(transport, HAND_LOOP_HOOK_LANE);
-	const executor = createRemoteExecutor({
-		authority: { kind: "self" },
-		fileChannel: true,
-		transport: lanes.rest,
+	const endpoint = createHandEndpoint({
+		transport,
 		openScope: hand.openScope,
-		onFault: (error) => report(`call fault: ${String(error)}`),
-	});
-	const loopHooks = serveLoopHooks({
-		transport: lanes.own,
-		lane: HAND_LOOP_HOOK_LANE,
-		run: hand.loopHooks,
-		onFault: (error) => report(`loop hook fault: ${String(error)}`),
+		loopHooks: hand.loopHooks,
+		authority: { kind: "self" },
+		report,
 	});
 
 	const socketPath = handSocketPath(agentDir);
@@ -126,12 +89,11 @@ export async function runHand(options: HandEntryOptions): Promise<never> {
 			};
 			// The transport goes first: closing it destroys the carrier connection, and the listener's close waits for
 			// every open connection, so a carrier still attached would hold the shutdown (and the shielded entry) open.
-			await step("loop hooks", () => loopHooks.close());
 			await step("transport", () => transport.close());
 			// libuv unlinks the bound name on close, which would delete a newer hand's entry: shield it for the close,
 			// then remove only the entry this process bound.
 			await step("listener close", () => shieldSocketDuringClose(socketPath, () => closeServer(server)));
-			await step("executor", () => executor.close());
+			await step("hand endpoint", () => endpoint.close());
 			await step("hand runtimes", () => hand.close());
 			await step("socket removal", () => unlinkOwnedSocket(socketPath, boundIdentity, report));
 			process.exit(exitCode);

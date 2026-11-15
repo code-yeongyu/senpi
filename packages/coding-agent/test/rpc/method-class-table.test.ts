@@ -52,6 +52,7 @@ const EVERY_CLASS: ReadonlySet<RpcMethodClass> = new Set<RpcMethodClass>([
 	"answer",
 	"thread",
 	"device_admin",
+	"hand_link",
 	"connection_local",
 ]);
 

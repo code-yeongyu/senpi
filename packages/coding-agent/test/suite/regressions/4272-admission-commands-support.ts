@@ -123,6 +123,7 @@ export const admissionCommands = [
 	"list_sessions",
 	"list_hands",
 	"select_hand",
+	"hand_link",
 	"subscribe_sessions",
 	"unsubscribe_sessions",
 	"set_session_context",

@@ -102,7 +102,7 @@ interface ScopeState {
  */
 export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExecutor {
 	const { transport, openScope, ledger, authority, fence } = options;
-	const sender = authority.kind === "peer" ? authority.peer : HAND_SELF_SENDER;
+	const sender = authority.kind === "self" ? HAND_SELF_SENDER : authority.peer;
 	const admits = (lane: string, epoch: number | undefined): boolean =>
 		fence === undefined || fence.admits(lane, epoch, sender);
 	const scopes = new Map<string, ScopeState>();

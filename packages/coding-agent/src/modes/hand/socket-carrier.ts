@@ -1,7 +1,7 @@
 /**
  * The local carrier a hand serves on (senpi#5840): one stream socket (an owner-only Unix socket, a named pipe on
- * Windows) carrying the reference transport's packets, one JSON object per LF-terminated line with the data payload in
- * base64. The carrier only moves packets; per-lane order, exactly-once delivery and resume after a re-attach are the
+ * Windows) carrying the reference transport's packets, one wire packet (`hand-packet-codec.ts`) per LF-terminated
+ * line. The carrier only moves packets; per-lane order, exactly-once delivery and resume after a re-attach are the
  * reference transport's (`createReliableTransport`). A local client (a device service, a test harness) speaks the same
  * lines with {@link attachSocketCarrier} on its end.
  */
@@ -9,43 +9,21 @@ import type { Server, Socket } from "node:net";
 import type { TransportSide } from "@earendil-works/pi-agent-core";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "../rpc/jsonl.ts";
 import { authenticateSocket } from "../rpc/socket-transport.ts";
+import { createHandPacketReader, encodeHandPackets, type HandPacketReader } from "./hand-packet-codec.ts";
 
 /** What a carrier drives on the transport endpoint it serves. */
 export type CarrierSide = Pick<TransportSide, "attached" | "message" | "writable" | "detached">;
 
-type WirePacket =
-	| { readonly kind: "data"; readonly lane: string; readonly seq: number; readonly payload: string }
-	| { readonly kind: "ack"; readonly lane: string; readonly seq: number };
-
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-	typeof value === "object" && value !== null && !Array.isArray(value);
-
-/** A reference packet as one carrier line; anything else is not carried. */
-function encodeCarrierLine(message: unknown): string | undefined {
-	if (!isRecord(message) || typeof message.lane !== "string" || typeof message.seq !== "number") return undefined;
-	if (message.kind === "ack") return `${JSON.stringify({ kind: "ack", lane: message.lane, seq: message.seq })}\n`;
-	if (message.kind !== "data" || !(message.payload instanceof Uint8Array)) return undefined;
-	const payload = Buffer.from(message.payload).toString("base64");
-	return `${JSON.stringify({ kind: "data", lane: message.lane, seq: message.seq, payload } satisfies WirePacket)}\n`;
-}
-
-/** One carrier line back as the packet the reference transport reads; a malformed line is dropped as a lost message. */
-function decodeCarrierLine(line: string): unknown {
-	let parsed: unknown;
+/**
+ * One carrier line back as the packet the reference transport reads, or nothing yet (a `data_part` of an unfinished
+ * frame). A malformed line is dropped as a lost message: the reference transport resends from its last ACK.
+ */
+function decodeCarrierLine(read: HandPacketReader, line: string): ReturnType<HandPacketReader> {
 	try {
-		parsed = JSON.parse(line);
+		return read(JSON.parse(line));
 	} catch {
 		return undefined;
 	}
-	if (!isRecord(parsed) || typeof parsed.lane !== "string" || typeof parsed.seq !== "number") return undefined;
-	if (parsed.kind === "ack") return { kind: "ack", lane: parsed.lane, seq: parsed.seq };
-	if (parsed.kind !== "data" || typeof parsed.payload !== "string") return undefined;
-	return {
-		kind: "data",
-		lane: parsed.lane,
-		seq: parsed.seq,
-		payload: new Uint8Array(Buffer.from(parsed.payload, "base64")),
-	};
 }
 
 /**
@@ -55,10 +33,12 @@ function decodeCarrierLine(line: string): unknown {
 export function attachSocketCarrier(socket: Socket, side: CarrierSide, report: (message: string) => void): () => void {
 	let live = true;
 	let reportedError = false;
+	const read = createHandPacketReader();
 	const stopReading = attachJsonlLineReader(
 		socket,
 		(line) => {
-			if (live) side.message(decodeCarrierLine(line));
+			const packet = live ? decodeCarrierLine(read, line) : undefined;
+			if (packet) side.message(packet);
 		},
 		{ maxLineLength: MAX_RPC_LINE_CHARACTERS },
 	);
@@ -93,8 +73,7 @@ export function attachSocketCarrier(socket: Socket, side: CarrierSide, report: (
 		// high-water mark instead of queueing a line the side will send again.
 		send: (message) => {
 			if (!live || socket.destroyed || socket.writableNeedDrain) return false;
-			const line = encodeCarrierLine(message);
-			if (line !== undefined) socket.write(line);
+			for (const packet of encodeHandPackets(message) ?? []) socket.write(`${JSON.stringify(packet)}\n`);
 			return true;
 		},
 		close: () => socket.destroy(),
