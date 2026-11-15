@@ -17,6 +17,8 @@ import type { ExtensionFactory } from "../../src/core/extensions/types.ts";
 import { createCliRuntimeFactory } from "../../src/main.ts";
 import { attachJsonlLineReader } from "../../src/modes/rpc/jsonl.ts";
 import { ConnectionDelegations } from "../../src/modes/rpc/delegated-connection.ts";
+import type { HostCoreHooks } from "../../src/modes/rpc/host-core-gate.ts";
+import type { HostIdleOverrides } from "../../src/modes/rpc/host-idle-policy.ts";
 import { createHostCore } from "../../src/modes/rpc/multi-session-host.ts";
 import { connectAuthenticatedRpcSocket } from "../../src/modes/rpc/rpc-auth-client.ts";
 import { PublicRpcConnection } from "../../src/modes/rpc/rpc-public-auth.ts";
@@ -63,6 +65,9 @@ export async function startHost(
 		readonly hostArgs?: readonly string[];
 		/** Replaces the worker-side extension (`workers: true`), e.g. a scripted faux provider. */
 		readonly workerExtensionSource?: string;
+		/** The host core's idle policy (empty exit) and hooks (idle handover), as a socket host passes them. */
+		readonly idle?: HostIdleOverrides;
+		readonly hooks?: HostCoreHooks;
 	} = {},
 ) {
 	const scratch = await mkdtemp(join(tmpdir(), "x5632-"));
@@ -122,6 +127,9 @@ export async function startHost(
 		},
 		writer,
 		[],
+		options.idle ?? {},
+		undefined,
+		options.hooks ?? {},
 	);
 	const socketPath = join(scratch, "s");
 	const endpoint = new RpcPublicEndpoint(agentDir, socketPath);

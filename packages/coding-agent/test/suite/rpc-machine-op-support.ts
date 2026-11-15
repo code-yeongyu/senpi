@@ -17,6 +17,8 @@ export interface MachineOpOptions {
 	readonly deadlineMs?: number | null;
 	readonly sender?: string;
 	readonly envOverlay?: Record<string, string> | undefined;
+	/** Set by the relay host only after its own admin verdict on another sender's handle or op. */
+	readonly crossOwner?: true;
 }
 
 export function machineOpRecord(op: string, args: WireRecord, options: MachineOpOptions): WireRecord {
@@ -29,6 +31,7 @@ export function machineOpRecord(op: string, args: WireRecord, options: MachineOp
 		scope: { root: options.root, confined: options.confined ?? false },
 		sender: options.sender ?? SENDER,
 		...(options.envOverlay === undefined ? {} : { env_overlay: options.envOverlay }),
+		...(options.crossOwner === undefined ? {} : { cross_owner: true }),
 	};
 }
 
@@ -52,6 +55,17 @@ export function notAuthorized(command: string): WireRecord {
 		success: false,
 		error: `machine_op_not_authorized: ${command} needs a connection that proved the endpoint's launch key and declared no delegation`,
 		errorCode: "machine_op_not_authorized",
+	};
+}
+
+export function conflict(command: string): WireRecord {
+	return {
+		id: expect.any(String),
+		type: "response",
+		command,
+		success: false,
+		error: "machine_op_conflict: op_id is bound to another sender",
+		errorCode: "machine_op_conflict",
 	};
 }
 

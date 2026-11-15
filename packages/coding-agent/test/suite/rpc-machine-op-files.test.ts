@@ -1,12 +1,11 @@
 /**
  * senpi#6752: `machine_op` runs the relay host's file, shell and mesh ops in the engine and answers each with the
- * relay host's `OpOutcome`, byte for byte. Byte payloads travel base64 in JSON (`args.bytes`, `response.bytes`); a
- * write too large for one line may hand its bytes over as a 0600 file (`args.bytes_path`) the engine reads and unlinks.
+ * relay host's `OpOutcome`, byte for byte. Byte payloads travel base64 in JSON (`args.bytes`, `response.bytes`).
  */
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, readFile, realpath, stat, symlink, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { chmod, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type DelegatedHost, type Peer, startHost } from "./rpc-delegated-host-support.ts";
 import { base64, outcome, runOp } from "./rpc-machine-op-support.ts";
@@ -26,12 +25,6 @@ afterAll(async () => {
 });
 
 const applied = (response: unknown) => outcome({ state: "applied", response });
-async function privateDir(name: string): Promise<string> {
-	const dir = join(host.scratch, name);
-	await mkdir(dir, { mode: 0o700 });
-	await chmod(dir, 0o700);
-	return dir;
-}
 
 describe("senpi#6752: machine_op file, shell and mesh ops", () => {
 	it("answers every fs op with the relay host's response shape, relative paths anchored at an unconfined root", async () => {
@@ -160,9 +153,8 @@ describe("senpi#6752: machine_op file, shell and mesh ops", () => {
 		);
 	});
 
-	it("round-trips an 8 MiB write inline and through a handed-over 0600 file", async () => {
+	it("round-trips an 8 MiB write inline", async () => {
 		const bytes = randomBytes(8 * 1024 * 1024);
-		const digest = createHash("sha256").update(bytes).digest("hex");
 		const inline = join(root, "inline.bin");
 		expect(await runOp(peer, "fs.write", { path: inline, bytes: bytes.toString("base64") }, { root })).toEqual(
 			applied({ path: inline, writtenBytes: bytes.byteLength }),
@@ -171,57 +163,37 @@ describe("senpi#6752: machine_op file, shell and mesh ops", () => {
 			createHash("sha256")
 				.update(await readFile(inline))
 				.digest("hex"),
-		).toBe(digest);
-		const carrier = join(await privateDir("carriers"), "carrier.bin");
-		await writeFile(carrier, bytes, { mode: 0o600 });
-		const handed = join(root, "handed.bin");
-		expect(await runOp(peer, "fs.write", { path: handed, bytes_path: carrier }, { root })).toEqual(
-			applied({ path: handed, writtenBytes: bytes.byteLength }),
-		);
-		expect(
-			createHash("sha256")
-				.update(await readFile(handed))
-				.digest("hex"),
-		).toBe(digest);
-		expect(existsSync(carrier)).toBe(false);
-		const range = join(dirname(carrier), "range.bin");
-		await writeFile(range, "XY", { mode: 0o600 });
-		expect(
-			await runOp(peer, "fs.write_range", { path: handed, offset: 1, bytes_path: range, total: 4 }, { root }),
-		).toEqual(applied({ path: handed, writtenBytes: 2 }));
-		expect((await readFile(handed)).subarray(0, 4)).toEqual(
-			Buffer.concat([bytes.subarray(0, 1), Buffer.from("XY"), bytes.subarray(3, 4)]),
-		);
-		expect(existsSync(range)).toBe(false);
+		).toBe(createHash("sha256").update(bytes).digest("hex"));
 	});
 
-	it("refuses a handed-over file that is not a private regular file in a private directory, and leaves it in place", async () => {
-		const carriers = await privateDir("refused-carriers");
-		const wideMode = join(carriers, "wide-mode.bin");
-		await writeFile(wideMode, "x", { mode: 0o644 });
-		const target = join(carriers, "target.bin");
-		await writeFile(target, "x", { mode: 0o600 });
-		const link = join(carriers, "link.bin");
-		await symlink(target, link);
-		const openDir = join(host.scratch, "open-carriers");
-		await mkdir(openDir, { mode: 0o755 });
-		await chmod(openDir, 0o755);
-		const inOpenDir = join(openDir, "carrier.bin");
-		await writeFile(inOpenDir, "x", { mode: 0o600 });
-		const written = join(root, "never.bin");
-		for (const handed of [wideMode, link, inOpenDir]) {
-			expect(await runOp(peer, "fs.write", { path: written, bytes_path: handed }, { root }), handed).toEqual(
-				outcome({
-					state: "refused",
-					error: {
-						code: "malformed",
-						message: `bytes_path ${handed} must be a 0600 regular file this user owns, in a 0700 directory this user owns`,
-					},
-				}),
+	// Review M1: a handed-over file escaped a confined scope and was deleted; the carrier is gone from the wire.
+	it("refuses a write that names bytes_path, leaving that file where it is and writing nothing", async () => {
+		const outside = join(host.scratch, "private");
+		await mkdir(outside, { mode: 0o700 });
+		await chmod(outside, 0o700);
+		const secret = join(outside, "id_test");
+		await writeFile(secret, "secret", { mode: 0o600 });
+		const target = join(root, "copied.bin");
+		for (const confined of [true, false])
+			expect(await runOp(peer, "fs.write", { path: target, bytes_path: secret }, { root, confined })).toEqual(
+				outcome({ state: "refused", error: { code: "malformed", message: "unknown argument bytes_path" } }),
 			);
-			expect(existsSync(handed), handed).toBe(true);
-		}
-		expect(existsSync(target)).toBe(true);
-		expect(existsSync(written)).toBe(false);
+		expect(await readFile(secret, "utf8")).toBe("secret");
+		expect(existsSync(target)).toBe(false);
+	});
+
+	// Review L2: a shell with no cwd ran in the engine's own working directory.
+	it("runs a shell with no cwd in the scope root", async () => {
+		expect(await runOp(peer, "shell", { command: "pwd -P" }, { root, confined: true })).toEqual(
+			applied({
+				exitCode: 0,
+				signal: null,
+				stdout: `${await realpath(root)}\n`,
+				stderr: "",
+				timedOut: false,
+				durationMs: expect.any(Number),
+				truncated: false,
+			}),
+		);
 	});
 });

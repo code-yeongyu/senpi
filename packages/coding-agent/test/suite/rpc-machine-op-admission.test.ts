@@ -11,7 +11,16 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { VERSION } from "../../src/config.ts";
 import { RPC_METHOD_CLASS } from "../../src/modes/rpc/method-classes.ts";
 import { type DelegatedHost, declare, type Peer, startHost } from "./rpc-delegated-host-support.ts";
-import { answered, base64, machineOpRecord, notAuthorized, outcome, runOp } from "./rpc-machine-op-support.ts";
+import {
+	answered,
+	base64,
+	conflict,
+	machineOpRecord,
+	notAuthorized,
+	outcome,
+	runOp,
+	SENDER,
+} from "./rpc-machine-op-support.ts";
 
 const COMMANDS = [
 	"machine_op",
@@ -87,10 +96,10 @@ describe("senpi#6752: machine_op admission and the op_id answer cache", () => {
 		);
 		expect(await peer.send(record)).toEqual({ ...first, id: expect.any(String) });
 		expect(await readFile(counter, "utf8")).toBe("x");
-		expect(await peer.send({ type: "machine_op_result", op_id: record.op_id })).toEqual(
+		expect(await peer.send({ type: "machine_op_result", op_id: record.op_id, sender: SENDER })).toEqual(
 			answered("machine_op_result", { known: true, outcome: first.data }),
 		);
-		expect(await peer.send({ type: "machine_op_result", op_id: "never-sent" })).toEqual(
+		expect(await peer.send({ type: "machine_op_result", op_id: "never-sent", sender: SENDER })).toEqual(
 			answered("machine_op_result", { known: false }),
 		);
 	});
@@ -127,16 +136,38 @@ describe("senpi#6752: machine_op admission and the op_id answer cache", () => {
 	it("cancels a running op and answers whether it did", async () => {
 		const record = machineOpRecord("shell", { command: "sleep 30" }, { root, deadlineMs: null });
 		// Written together, the cancel is read right behind the op, which is then registered and still running.
-		const [ran, cancel] = peer.sendTogether([record, { type: "machine_op_cancel", op_id: record.op_id }]);
+		const [ran, cancel] = peer.sendTogether([
+			record,
+			{ type: "machine_op_cancel", op_id: record.op_id, sender: SENDER },
+		]);
 		expect(await cancel).toEqual(answered("machine_op_cancel", { cancelled: true }));
 		expect(await ran).toEqual(
 			outcome({ state: "cancelled", error: { code: "aborted", message: expect.any(String) } }),
 		);
-		expect(await peer.send({ type: "machine_op_cancel", op_id: record.op_id })).toEqual(
+		expect(await peer.send({ type: "machine_op_cancel", op_id: record.op_id, sender: SENDER })).toEqual(
 			answered("machine_op_cancel", { cancelled: false }),
 		);
-		expect(await peer.send({ type: "machine_op_cancel", op_id: "never-sent" })).toEqual(
+		expect(await peer.send({ type: "machine_op_cancel", op_id: "never-sent", sender: SENDER })).toEqual(
 			answered("machine_op_cancel", { cancelled: false }),
+		);
+	});
+
+	// Review L1: an op's result and cancel are its sender's alone, unless the relay host marks the request cross_owner.
+	it("refuses another sender's machine_op_result and machine_op_cancel unless marked cross_owner", async () => {
+		const done = machineOpRecord("shell", { command: "printf done" }, { root });
+		const settled = await peer.send(done);
+		const other = { op_id: done.op_id, sender: "device-other" };
+		expect(await peer.send({ type: "machine_op_result", ...other })).toEqual(conflict("machine_op_result"));
+		expect(await peer.send({ type: "machine_op_result", ...other, cross_owner: true })).toEqual(
+			answered("machine_op_result", { known: true, outcome: settled.data }),
+		);
+		const sleeping = machineOpRecord("shell", { command: "sleep 30" }, { root, deadlineMs: null });
+		const cancelAs = (sender: string) => ({ type: "machine_op_cancel", op_id: sleeping.op_id, sender });
+		const [ran, foreign, own] = peer.sendTogether([sleeping, cancelAs("device-other"), cancelAs(SENDER)]);
+		expect(await foreign).toEqual(conflict("machine_op_cancel"));
+		expect(await own).toEqual(answered("machine_op_cancel", { cancelled: true }));
+		expect(await ran).toEqual(
+			outcome({ state: "cancelled", error: { code: "aborted", message: expect.any(String) } }),
 		);
 	});
 

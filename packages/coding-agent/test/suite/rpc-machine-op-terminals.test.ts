@@ -3,7 +3,7 @@
  * keeps the relay host's wire: byte-offset `lastSeq` / `totalBytes`, the newest-page cursorless wait (#1217), a
  * `last_seq` resume, `replay_gap` and `unknown_handle`, the kill result, and handles that outlive the client connection.
  */
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type DelegatedHost, type Peer, startHost } from "./rpc-delegated-host-support.ts";
@@ -164,6 +164,45 @@ describe("senpi#6752: machine_op terminals", () => {
 			output: "relay",
 			state: "completed",
 		});
+	});
+
+	// Review M2: an exec whose initial wait was aborted left its PTY running with no handle returned.
+	it("kills a terminal whose initial wait its deadline aborted, leaving nothing running", async () => {
+		const health = async () =>
+			((await peer.send({ type: "machine_op_health" })).data as { terminals: number }).terminals;
+		const before = await health();
+		const pidFile = join(root, "aborted.pid");
+		const command = `echo $$ > ${pidFile}; exec sleep 30`;
+		const deadlineMs = Date.now() + 2_000;
+		expect(await runOp(peer, "exec_command", { command, yield_ms: 10_000 }, { root, deadlineMs })).toEqual(
+			outcome({ state: "cancelled", error: { code: "aborted", message: "the wait was cancelled" } }),
+		);
+		expect(await health()).toBe(before);
+		const pid = Number((await readFile(pidFile, "utf8")).trim());
+		expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+	});
+
+	// Review L1: the engine itself refuses another sender's handle unless the relay host decided it as admin.
+	it("refuses another sender's handle unless the op is marked cross_owner", async () => {
+		const handle_id = (await exec("cat")).handleId;
+		const other = { root, sender: "device-other" };
+		const notOwner = outcome({
+			state: "failed",
+			error: { code: "not_owner", message: `handle ${String(handle_id)} belongs to another sender` },
+		});
+		const ops: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
+			["write_stdin", { handle_id, data: "x" }],
+			["wait_for_command", { handle_id, yield_ms: 250 }],
+			["kill_terminal", { handle_id }],
+			["process.info", { handleId: handle_id }],
+		];
+		for (const [op, args] of ops) expect(await runOp(peer, op, args, other), op).toEqual(notOwner);
+		expect(dataOf(await runOp(peer, "wait_for_command", { handle_id, yield_ms: 250 }, { root }))).toMatchObject({
+			state: "running",
+		});
+		expect(await runOp(peer, "kill_terminal", { handle_id }, { ...other, crossOwner: true })).toEqual(
+			applied({ handleId: handle_id, state: "task-failed", reason: "killed", lifecycle: KILLED }),
+		);
 	});
 
 	it("keeps a handle and its owner across a client reconnect, reports its process, then kills it", async () => {
