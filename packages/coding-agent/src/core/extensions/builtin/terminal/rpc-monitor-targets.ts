@@ -31,10 +31,7 @@ export interface RpcTargetError {
 
 const STATUS_KINDS = new Set(["session_status", "effect_status"]);
 
-export function parseRpcTarget(
-	target: string,
-	selfDurableId: string | undefined,
-): RpcTarget | RpcTargetError {
+export function parseRpcTarget(target: string, selfDurableId: string | undefined): RpcTarget | RpcTargetError {
 	const trimmed = target.trim();
 	if (trimmed === "") return { error: 'target is empty; pass "children", "all" or a session id, path or st_ task id' };
 	if (trimmed === "children") {

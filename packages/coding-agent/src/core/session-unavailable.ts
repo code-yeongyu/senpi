@@ -16,7 +16,11 @@ export class SessionUnavailableError extends Error {
 	readonly code: SessionUnavailableCode;
 	/** What was reached for, e.g. `sessionManager.getBranch`. */
 	readonly member: string;
-	constructor(code: SessionUnavailableCode, member: string, message = `${code}: ${member} is not available to this call`) {
+	constructor(
+		code: SessionUnavailableCode,
+		member: string,
+		message = `${code}: ${member} is not available to this call`,
+	) {
 		super(message);
 		this.code = code;
 		this.member = member;

@@ -347,7 +347,8 @@ export function createLoopExtension(deps: LoopExtensionDeps = {}): ExtensionFact
 			scheduler: {
 				getWakeupTarget: (): ScheduleWakeupTarget => {
 					// No session started here: the session's loop state was never loaded, so it is unavailable, not empty.
-					if (scheduler === undefined) throw new SessionUnavailableError("session_record_unavailable", "loop state");
+					if (scheduler === undefined)
+						throw new SessionUnavailableError("session_record_unavailable", "loop state");
 					if (attributedLoopId === undefined) return null;
 					const entry = scheduler.getState().entries[attributedLoopId];
 					if (entry === undefined || entry.phase === "ended") return null;

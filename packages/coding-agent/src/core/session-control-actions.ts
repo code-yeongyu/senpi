@@ -86,7 +86,8 @@ export function createSessionControlActions(deps: SessionControlActionDeps): Gen
 
 /** `pi.session` before a session binds it (extension loading), and on a runtime that never has one (a hand). */
 export function unboundSessionControlActions(): SessionControlActions {
-	const unavailable = (member: string) => new SessionUnavailableError("session_record_unavailable", `pi.session.${member}`);
+	const unavailable = (member: string) =>
+		new SessionUnavailableError("session_record_unavailable", `pi.session.${member}`);
 	const notBound = (member: string) => (): never => {
 		throw unavailable(member);
 	};
