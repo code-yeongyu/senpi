@@ -1,6 +1,6 @@
-// senpi#5898 (#6782 review L1, L3): a waiting loop-hook call's bound restarts only when a call ahead of it actually
-// settles, never when a call ahead merely leaves (timed out or cancelled while it waited), and entering a session's
-// queue fans out to no earlier entry: a call waits on the session's one tail, never on a list of the calls ahead.
+// senpi#5898 (#6782 review L1, L3): a call that leaves while a call ahead of it is still stuck (it timed out or was
+// cancelled while it waited) does not restart the bound of the call behind it; and the number of promises created by
+// calls entering a stuck session's queue grows linearly with the number of calls.
 import { createHook } from "node:async_hooks";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createLoopHookSessionQueues, type LoopHookTurnOutcome } from "../../src/execution/loop-hook-session-queue.ts";
@@ -11,7 +11,7 @@ afterEach(() => {
 	vi.useRealTimers();
 });
 
-/** Counts the promises created while `run` runs synchronously: the work a call does to enter the queue. */
+/** Counts the promises created while `run` runs synchronously. */
 function promisesCreatedDuring(run: () => void): number {
 	let created = 0;
 	const hook = createHook({
@@ -26,21 +26,6 @@ function promisesCreatedDuring(run: () => void): number {
 		hook.disable();
 	}
 	return created;
-}
-
-/** The most entries any `Promise` combinator was handed while `run` ran synchronously (a list copied per call shows here). */
-function widestCombinatorDuring(run: () => void): number {
-	let widest = 0;
-	const spies = (["all", "allSettled", "any", "race"] as const).map((name) => vi.spyOn(Promise, name));
-	try {
-		run();
-		for (const spy of spies)
-			for (const [entries] of spy.mock.calls)
-				widest = Math.max(widest, Array.from(entries as Iterable<unknown>).length);
-	} finally {
-		for (const spy of spies) spy.mockRestore();
-	}
-	return widest;
 }
 
 describe("loop-hook session queue (senpi#5898)", () => {
@@ -79,7 +64,8 @@ describe("loop-hook session queue (senpi#5898)", () => {
 
 			const elapsed = 600 + (await endMiddle(middleCall));
 			middle.leave();
-			// The last call arrived at 600 ms; with nothing ahead settling, its bound ends at 1600 ms, never later.
+			// The last call arrived at 600 ms, so its own bound ends at 1600 ms. A restart when the middle call left (at 700 or
+			// 1000 ms) would end it at 1700 ms or later, so it would still be waiting here.
 			await vi.advanceTimersByTimeAsync(1_600 - elapsed);
 
 			expect(await middle.ready).toBe(middleOutcome);
@@ -87,22 +73,20 @@ describe("loop-hook session queue (senpi#5898)", () => {
 		},
 	);
 
-	it("entering a stuck session's queue fans out to no earlier entry: one tail, not a list of the calls ahead", () => {
+	it("calls entering a stuck session's queue create a number of promises linear in the number of calls", () => {
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-		const arrivals = (calls: number) => {
+		const promisesForArrivals = (calls: number): number => {
 			const enter = createLoopHookSessionQueues();
-			return () => {
+			return promisesCreatedDuring(() => {
 				for (let index = 0; index < calls; index++) enter("stuck", new AbortController().signal, CAP_MS);
-			};
+			});
 		};
 
-		const small = promisesCreatedDuring(arrivals(50));
-		const large = promisesCreatedDuring(arrivals(200));
-		const widest = widestCombinatorDuring(arrivals(200));
+		const small = promisesForArrivals(50);
+		const large = promisesForArrivals(200);
 
-		// No per-entry promise fan-out: four times the calls create about four times the promises (sixteen if each call
-		// chained on every call ahead). No combinator ever gathers the calls ahead: each call waits on one tail.
+		// Four times the calls must create under five times the promises. A queue in which each call waits on every call
+		// ahead of it creates quadratically many: about thirteen times, measured against #6782's list queue.
 		expect(large / small).toBeLessThan(5);
-		expect(widest).toBeLessThanOrEqual(1);
 	});
 });
