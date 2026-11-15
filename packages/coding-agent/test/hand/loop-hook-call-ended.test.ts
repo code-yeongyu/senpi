@@ -77,4 +77,24 @@ describe("a call's session ports end with the call (senpi#6754)", () => {
 		expect(effects?.sent).toEqual([]);
 		expect(next).toEqual({ sent: [{ message: { customType: "late", content: "after the reply", display: true } }] });
 	});
+
+	it("a late message held for the next reply survives a call that throws and arrives exactly once after it", async () => {
+		const call = createLoopHookCall();
+		let send: ReturnType<typeof call.sender>;
+		await call.run("s1", "/work", false, async () => {
+			send = call.sender();
+		});
+		send?.({ customType: "late", content: "held", display: true });
+
+		await expect(
+			call.run("s1", "/work", false, async () => {
+				throw new Error("dispatch failed");
+			}),
+		).rejects.toThrow("dispatch failed");
+		const after = await call.run("s1", "/work", false, (collected) => effectsReply(collected));
+		const again = await call.run("s1", "/work", false, (collected) => effectsReply(collected));
+
+		expect(after).toEqual({ sent: [{ message: { customType: "late", content: "held", display: true } }] });
+		expect(again).toEqual({});
+	});
 });
