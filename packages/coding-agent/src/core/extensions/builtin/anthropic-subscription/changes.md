@@ -1,3 +1,23 @@
+## 2026-11-14 - Tool-result text never reaches Claude Code as a slash command (senpi#6667)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/content-blocks.ts`: new `neutralizeToolResultText(blocks, from)` prefixes every non-empty text block appended from `from` with `[tool output] `.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-sync.ts`: `buildDeltaPromptBlocks` applies it to each tool result's content.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/prompt-bridge.ts`: the cold-seed history replay applies it to each historical tool result's content.
+
+### Why
+
+- Claude Code reads a user text block that starts with `/` as one of its own slash commands, and tool output is untrusted text. The prefix is unconditional, so no leading character, visible or invisible, can make tool output read as a command (oh-my-openagent#13380).
+
+### Why an extension could not handle it
+
+- These builders are the anthropic-subscription bridge's own wire mapping; no extension hook runs between them and the Claude Code subprocess.
+
+### Expected merge conflict zones
+
+- LOW: the tool-result branches of `buildDeltaPromptBlocks` and of the cold-seed history loop in `prompt-bridge.ts`.
+
 ## 2026-11-12 - A pooled account whose limit was lifted early is selected again (senpi#6536)
 
 ### What changed

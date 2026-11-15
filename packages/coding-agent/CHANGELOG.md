@@ -1,14 +1,24 @@
 # Changelog
 
-## [Unreleased]
+## [2026.11.15] - 2026-11-15
 
 ### Breaking Changes
 
 ### Added
 
+- RPC project writes (`set_project_trust`, `set_project_setting`, `write_project_file`) accept an optional `expectedCwd`; when the session's working directory is another folder the write is refused with `project_cwd_mismatch` and nothing is written ([#6659](https://github.com/code-yeongyu/senpi/pull/6659))
+
 ### Changed
 
 ### Fixed
+
+- A Claude subscription account that is out for billing or organization access no longer lets its usage reading release the session's usage-limit hold ([#6536](https://github.com/code-yeongyu/senpi/issues/6536))
+- Standalone binary installs no longer announce an update that is published on npm but not yet available as a GitHub Release; they read the latest GitHub Release instead, and `update --self` on a binary points at the download page when that lookup fails ([#6634](https://github.com/code-yeongyu/senpi/pull/6634))
+- ChatGPT subscription (Sign in with ChatGPT): an account without Responses API access is no longer parked as `auth_error`; the turn fails with a message that says signing in again will not help and what to check instead ([#6643](https://github.com/code-yeongyu/senpi/issues/6643))
+- Models that take mid-session effort updates (GPT-6.1 Sol, GPT-6 Astra) now run a retry-fallback rung at the rung's own thinking level instead of the level of an earlier update ([#6655](https://github.com/code-yeongyu/senpi/issues/6655))
+- ChatGPT subscription (Sign in with ChatGPT): a missing-scope refusal that lists other scopes before `api.responses.write` now gets the same guidance and leaves the account healthy ([#6643](https://github.com/code-yeongyu/senpi/issues/6643))
+- Claude subscription (anthropic-subscription): tool output is always sent to Claude Code marked as tool output, so it can never be read as a Claude Code slash command ([#6667](https://github.com/code-yeongyu/senpi/issues/6667))
+- A permission prompt that nobody answers no longer keeps a turn or a sub-agent waiting forever: aborting the turn now ends the prompt and refuses the call ([#6670](https://github.com/code-yeongyu/senpi/issues/6670))
 
 ### Removed
 
