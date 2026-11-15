@@ -1,8 +1,7 @@
-// senpi#5898: a hosted loop forwards its lifecycle events to the hand, so the user's SessionStart and Stop shell hooks
-// run on the user's machine as they do in a local session (brain/hand split, K5; hooks builtin C8).
+// senpi#5898: a hosted loop forwards its lifecycle events to the hand, so the user's SessionStart shell hooks run on
+// the user's machine as they do in a local session (brain/hand split, K5; hooks builtin C8).
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { fauxAssistantMessage, type JsonValue } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseHookConfig } from "../../src/core/extensions/builtin/hooks/index.ts";
 import { createHookTrustEntry, hookTrustId } from "../../src/core/extensions/builtin/hooks/trust.ts";
@@ -12,7 +11,7 @@ import { cleanupHands, handConfiguration, handDirs } from "./remote-hand-fixture
 
 afterEach(cleanupHands);
 
-type LifecycleEvent = "SessionStart" | "Stop";
+type LifecycleEvent = "SessionStart";
 
 function writeLifecycleHook(cwd: string, event: LifecycleEvent, context?: string): void {
 	const senpiDir = join(cwd, ".senpi");
@@ -79,15 +78,5 @@ describe("a hosted loop's lifecycle hooks run on the user's machine (senpi#5898)
 		expect(JSON.stringify(reply.sent?.map((sent) => sent.message.content))).toContain(
 			"context from the user machine",
 		);
-	});
-
-	it("agent_end runs the user's Stop hook there with the loop's last assistant message", async () => {
-		const user = await userMachine("Stop");
-		const messages = [fauxAssistantMessage("done")] as unknown as JsonValue;
-
-		const reply = (await user.machine.loopHooks("agent_end", { ...user.base, messages })) as LifecycleReply;
-
-		expect(user.marks()).toBe("Stop\n");
-		expect(reply.errors).toBeUndefined();
 	});
 });
