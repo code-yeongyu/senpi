@@ -22,13 +22,11 @@ function recordingTransport(options: { readonly hold?: RemoteHandMessage["kind"]
 	const handlers: FrameHandler[] = [];
 	const transport: Transport = {
 		send: (_lane, payload) => {
-			const plane = decodePlaneMessage(payload);
-			const message = plane === undefined ? decodeRemoteMessage(payload) : undefined;
-			const kind = plane?.kind ?? message?.kind ?? "unknown";
-			sent.push(kind);
-			if (message?.kind === "invoke") invoked.push(message.toolCallId);
-			waiters.get(kind)?.();
-			return kind === options.hold ? new Promise<void>(() => {}) : Promise.resolve();
+			const message = decodePlaneMessage(payload) ?? decodeRemoteMessage(payload);
+			sent.push(message.kind);
+			if (message.kind === "invoke") invoked.push(message.toolCallId);
+			waiters.get(message.kind)?.();
+			return message.kind === options.hold ? new Promise<void>(() => {}) : Promise.resolve();
 		},
 		onFrame: (next) => {
 			handlers.push(next);
