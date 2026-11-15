@@ -11,7 +11,13 @@ import type { JsonValue } from "@earendil-works/pi-ai";
  * replacement, so a hook that had run runs a second time. At-most-once dispatch therefore holds only on a hand whose
  * endpoint is the machine's long-lived link endpoint, not one owned by the hand process.
  */
-export type LoopHookMessage = LoopHookCall | LoopHookHello | LoopHookStarted | LoopHookReply | LoopHookFailed;
+export type LoopHookMessage =
+	| LoopHookCall
+	| LoopHookCancel
+	| LoopHookHello
+	| LoopHookStarted
+	| LoopHookReply
+	| LoopHookFailed;
 
 /** Loop host to hand: run the hooks for `event`. A re-send after a hand restart carries the same `callId`. */
 export interface LoopHookCall {
@@ -19,6 +25,16 @@ export interface LoopHookCall {
 	readonly callId: string;
 	readonly event: string;
 	readonly payload: JsonValue;
+}
+
+/**
+ * Loop host to hand: the caller stopped waiting for `callId`, so the hooks still running for it are told to stop (their
+ * signal aborts). Same lane as the call, so it never overtakes it. Nothing answers it; the call's own answer, if the hooks
+ * still send one, is dropped by the host.
+ */
+export interface LoopHookCancel {
+	readonly kind: "hook.cancel";
+	readonly callId: string;
 }
 
 /** Hand to loop host, once per hand process, before it serves anything. */
@@ -49,6 +65,7 @@ export interface LoopHookFailed {
 
 const KINDS: readonly LoopHookMessage["kind"][] = [
 	"hook.call",
+	"hook.cancel",
 	"hook.hello",
 	"hook.started",
 	"hook.reply",
@@ -78,6 +95,8 @@ export function decodeLoopHookMessage(payload: Uint8Array): LoopHookMessage | un
 			return isId(value.callId) && isId(value.event) && "payload" in value
 				? { kind: "hook.call", callId: value.callId, event: value.event, payload: value.payload as JsonValue }
 				: undefined;
+		case "hook.cancel":
+			return isId(value.callId) ? { kind: "hook.cancel", callId: value.callId } : undefined;
 		case "hook.hello":
 			return isId(value.instance) ? { kind: "hook.hello", instance: value.instance } : undefined;
 		case "hook.started":

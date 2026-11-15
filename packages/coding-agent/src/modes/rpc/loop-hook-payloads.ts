@@ -1,20 +1,20 @@
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ImageContent } from "@earendil-works/pi-ai";
-import type { CompactionPreparation, CompactionSettings, FileOperations } from "../../core/compaction/index.ts";
+import type { CompactionPreparation, FileOperations } from "../../core/compaction/index.ts";
 import type {
 	BeforeAgentStartEvent,
 	CompactionReason,
 	CompactionRejectionCause,
 	InputAttribution,
-	InputSource,
 	SessionBeforeCompactEvent,
 	SessionCompactEvent,
 	SessionCompactFailedEvent,
 	SessionShutdownEvent,
 	SessionStartEvent,
 } from "../../core/extensions/types.ts";
-import type { CompactionEntry, CustomEntry, SessionEntry } from "../../core/session-manager.ts";
+import { isAgentMessages, isCount } from "./agent-message-schema.ts";
+import { isCompactionSettings } from "./compaction-settings-schema.ts";
 import type { CarriedSession } from "./loop-hook-call.ts";
+import { isCompactionEntry, isCustomEntry, isSessionEntry } from "./session-entry-schema.ts";
 
 // The hand's boundary for the loop events a hosted loop forwards (senpi#5898): each payload is parsed here into the
 // event its handlers see in a session, or refused as malformed; nothing past this module re-checks a payload.
@@ -22,7 +22,6 @@ import type { CarriedSession } from "./loop-hook-call.ts";
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
 	typeof value === "object" && value !== null && !Array.isArray(value);
 
-export const INPUT_SOURCES = ["interactive", "rpc", "extension"] as const satisfies readonly InputSource[];
 export const INPUT_ATTRIBUTIONS = ["user", "agent"] as const satisfies readonly InputAttribution[];
 export const STREAMING_BEHAVIORS = ["steer", "followUp"] as const;
 export const TRIGGERS = [
@@ -81,27 +80,6 @@ export const imagesOf = (value: unknown): ImageContent[] | undefined | null =>
 const isImage = (value: unknown): value is ImageContent =>
 	isRecord(value) && value.type === "image" && typeof value.data === "string" && typeof value.mimeType === "string";
 
-/** The loop's transcript messages, as data its handlers read (the Stop hook its last stop reason). */
-export const isAgentMessages = (value: unknown): value is AgentMessage[] =>
-	Array.isArray(value) && value.every((message) => isRecord(message) && typeof message.role === "string");
-
-const isSessionEntry = (value: unknown): value is SessionEntry =>
-	isRecord(value) &&
-	typeof value.type === "string" &&
-	typeof value.id === "string" &&
-	(value.parentId === null || typeof value.parentId === "string") &&
-	typeof value.timestamp === "string";
-
-const isCustomEntry = (value: unknown): value is CustomEntry =>
-	isSessionEntry(value) && value.type === "custom" && typeof value.customType === "string";
-
-const isCompactionEntry = (value: unknown): value is CompactionEntry =>
-	isSessionEntry(value) &&
-	value.type === "compaction" &&
-	typeof value.summary === "string" &&
-	typeof value.firstKeptEntryId === "string" &&
-	typeof value.tokensBefore === "number";
-
 /**
  * The session port's read half a call carries (`leafId`, `handEntries`; see `CarriedSession`), or `null` when
  * malformed. Each hand entry is a custom entry: the hand only ever authored custom entries.
@@ -121,12 +99,6 @@ function fileOpsOf(value: unknown): FileOperations | null {
 	return { read: new Set(value.read), written: new Set(value.written), edited: new Set(value.edited) };
 }
 
-const isCompactionSettings = (value: unknown): value is CompactionSettings =>
-	isRecord(value) &&
-	typeof value.enabled === "boolean" &&
-	typeof value.reserveTokens === "number" &&
-	typeof value.keepRecentTokens === "number";
-
 function preparationOf(value: unknown): CompactionPreparation | null {
 	if (!isRecord(value)) return null;
 	const { firstKeptEntryId, messagesToSummarize, sourceMessages, turnPrefixMessages, turnPrefixSourceMessages } =
@@ -140,7 +112,7 @@ function preparationOf(value: unknown): CompactionPreparation | null {
 		!isAgentMessages(turnPrefixMessages) ||
 		!isOptional(turnPrefixSourceMessages, isAgentMessages) ||
 		typeof isSplitTurn !== "boolean" ||
-		typeof tokensBefore !== "number" ||
+		!isCount(tokensBefore) ||
 		!isOptional(previousSummary, isString) ||
 		fileOps === null ||
 		!isCompactionSettings(settings)

@@ -91,4 +91,31 @@ describe("loop-hook conformance (KILL-HOOK)", () => {
 		expect(endpointDiedWithStarted.runs).toBe(2);
 		expect(endpointDiedWithStarted.outcome).toEqual({ ran: true });
 	});
+
+	// senpi#5898: a call the loop host stops waiting for is cancelled on the hand, so its hooks see their signal abort.
+	it("a call whose caller aborts is cancelled on the hand: the hooks' signal aborts while they run", async () => {
+		const link = transportPair();
+		const seen: { aborted?: boolean } = {};
+		serveLoopHooks({
+			transport: link.hand,
+			lane: "hooks",
+			run: (_event, _payload, signal) =>
+				new Promise((resolve) => {
+					signal.addEventListener("abort", () => {
+						seen.aborted = signal.aborted;
+						resolve({ cancelled: true });
+					});
+				}),
+		});
+		const host = createLoopHookHost({ transport: link.loop, lane: "hooks" });
+		const caller = new AbortController();
+		const outcome = host.run("session_before_compact", {}, caller.signal).catch((error: unknown) => error);
+		await link.flush();
+
+		caller.abort();
+		await link.flush();
+
+		expect(seen.aborted).toBe(true);
+		expect(await outcome).toEqual(new Error("Operation aborted"));
+	});
 });

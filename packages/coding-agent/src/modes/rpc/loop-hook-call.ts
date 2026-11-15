@@ -64,16 +64,24 @@ export interface LoopHookCall {
 	/** The call's session writes (`appendEntry`, `sendUserMessage`) for its work, routed like {@link sender}. */
 	writer(): Pick<LoopHookCallFacts, "appendEntry" | "sendUserMessage"> | undefined;
 	/**
-	 * Runs `dispatch` as the call, with the loop's idle state; `effects` collects what its handlers send and notify, and
-	 * `signal` is the call's own, aborted when the call ends.
+	 * Runs `dispatch` as the call `scope` describes; `effects` collects what its handlers send and notify, and `signal` is
+	 * the call's own, aborted when the loop cancels the call or the call ends.
 	 */
 	run<T>(
-		sessionId: string,
-		cwd: string,
-		idle: boolean,
+		scope: LoopHookCallScope,
 		dispatch: (effects: LoopHookEffects, signal: AbortSignal) => Promise<T>,
-		carried?: CarriedSession,
 	): Promise<T>;
+}
+
+/** The loop facts one loop-hook call runs with. */
+export interface LoopHookCallScope {
+	readonly sessionId: string;
+	/** The hand's workspace for the call's scope. */
+	readonly cwd: string;
+	readonly idle: boolean;
+	readonly carried?: CarriedSession;
+	/** Aborts when the loop cancels the call (its caller stopped waiting); the call's own signal then aborts. */
+	readonly cancel?: AbortSignal;
 }
 
 /**
@@ -108,9 +116,12 @@ export function createLoopHookCall(): LoopHookCall {
 		},
 		sender: () => calls.getStore()?.facts.sendMessage,
 		writer: () => calls.getStore()?.facts,
-		async run(sessionId, cwd, idle, dispatch, carried) {
+		async run({ sessionId, cwd, idle, carried, cancel }, dispatch) {
 			let live = true;
 			const controller = new AbortController();
+			const onCancel = () => controller.abort();
+			if (cancel?.aborted === true) controller.abort();
+			else cancel?.addEventListener("abort", onCancel, { once: true });
 			const effects: LoopHookEffects = late.get(sessionId) ?? emptyEffects();
 			late.delete(sessionId);
 			const facts: LoopHookCallFacts = Object.freeze({
@@ -143,6 +154,7 @@ export function createLoopHookCall(): LoopHookCall {
 				return await calls.run({ live: () => live, facts }, () => dispatch(effects, controller.signal));
 			} finally {
 				live = false;
+				cancel?.removeEventListener("abort", onCancel);
 				controller.abort();
 			}
 		},

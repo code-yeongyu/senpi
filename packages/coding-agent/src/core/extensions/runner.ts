@@ -799,8 +799,11 @@ export class ExtensionRunner {
 		readonly loopHookSend?: () => LoopHookCallFacts["sendMessage"] | undefined;
 		/** Where `pi.appendEntry` and `pi.sendUserMessage` go from a loop-hook call's work, routed as `loopHookSend`. */
 		readonly loopHookWrite?: () => Pick<LoopHookCallFacts, "appendEntry" | "sendUserMessage"> | undefined;
+		/** The runtime's agent directory, whose settings budget its handlers (a session binds it through `bindCore`). */
+		readonly getAgentDir?: () => string;
 	}): void {
 		this.runtime.getAllTools = facts.getAllTools;
+		if (facts.getAgentDir !== undefined) this.getAgentDirFn = facts.getAgentDir;
 		this.loopHookCallFn = facts.loopHookCall;
 		const send = facts.loopHookSend;
 		if (send !== undefined)
@@ -1487,13 +1490,15 @@ export class ExtensionRunner {
 
 	/**
 	 * One loop-side event a hosted loop forwarded to this hand (senpi#5898): only the extensions `only` accepts run it,
-	 * serially under the host's event handler budget, with failures reported as in a session. A `session_before_*`
-	 * event returns its result as a session's emit does: the last handler result, and the first `cancel` ends the walk.
+	 * serially under the host's event handler budget, with failures reported as in a session. `session_shutdown` takes a
+	 * session's own shutdown path instead (its per-handler cap and `event.signal`). A `session_before_*` event returns its
+	 * result as a session's emit does: the last handler result, and the first `cancel` ends the walk.
 	 */
 	emitForwardedLoopEvent<TEvent extends RunnerEmitEvent>(
 		event: TEvent,
 		only: (extensionPath: string) => boolean,
 	): Promise<RunnerEmitResult<TEvent>> {
+		if (event.type === "session_shutdown") return this.dispatchEmit(event, only);
 		return this.dispatchLifecycle(event, only) as Promise<RunnerEmitResult<TEvent>>;
 	}
 
@@ -2340,7 +2345,10 @@ export class ExtensionRunner {
 		return failures;
 	}
 
-	private async dispatchEmit<TEvent extends RunnerEmitEvent>(event: TEvent): Promise<RunnerEmitResult<TEvent>> {
+	private async dispatchEmit<TEvent extends RunnerEmitEvent>(
+		event: TEvent,
+		only?: (extensionPath: string) => boolean,
+	): Promise<RunnerEmitResult<TEvent>> {
 		let result: SessionBeforeEventResult | undefined;
 		// Host-bounded events: a hung session_shutdown handler must not hold Ctrl+C / quit / reload / new / resume
 		// hostage (agent lifecycle events take `dispatchLifecycle`, senpi#3650). Every other event still awaits its
@@ -2352,6 +2360,7 @@ export class ExtensionRunner {
 		const timer = event.type === "session_start" && openTimingEnabled() ? startOpenTimer("session_start") : undefined;
 
 		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, event.type)) {
+			if (only !== undefined && !only(ext.path)) continue;
 			for (const handler of handlers) {
 				try {
 					if (isSessionShutdown) {

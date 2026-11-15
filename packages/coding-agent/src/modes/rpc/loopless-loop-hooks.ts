@@ -4,12 +4,11 @@ import { hookModelOf, hookRequestOutputOf, parseHookRequestInput } from "../../c
 import type { BuildSystemPromptOptions } from "../../core/system-prompt.ts";
 import type { TwoSidedHome } from "./loopless-tool-handlers.ts";
 import type { LoopHookCall, LoopHookEffects } from "./loop-hook-call.ts";
+import { isAgentMessages } from "./agent-message-schema.ts";
 import {
 	carriedSessionOf,
 	imagesOf,
 	INPUT_ATTRIBUTIONS,
-	INPUT_SOURCES,
-	isAgentMessages,
 	isOneOf,
 	isRecord,
 	loopNotificationOf,
@@ -17,9 +16,10 @@ import {
 	sessionBeforeCompactOf,
 	TRIGGERS,
 } from "./loop-hook-payloads.ts";
+import { INPUT_SOURCES } from "./session-entry-schema.ts";
 
 /** The loop events a hand that is its extensions' home runs for a loop that runs elsewhere (S33, C8/K5). */
-export type LooplessLoopHooks = (event: string, payload: JsonValue) => Promise<JsonValue>;
+export type LooplessLoopHooks = (event: string, payload: JsonValue, cancel?: AbortSignal) => Promise<JsonValue>;
 
 /**
  * The loop hooks of this runtime's own extensions, on the same runner (so the same extension instances) that runs its
@@ -30,9 +30,9 @@ export type LooplessLoopHooks = (event: string, payload: JsonValue) => Promise<J
  * loop returns from its own `input` handler, so its session acts on it as on a local one; then `before_agent_start`
  * with the prompt the session now has, whose combined result the loop returns from its `before_agent_start`. The loop
  * also forwards its request, lifecycle, compaction and shutdown events (senpi#5898); `session_before_compact` returns
- * its combined result (`cancel`, `compaction`) as a session's emit does. Each reply also carries the messages its
- * handlers sent (`sent`, which the loop sends with the same options), their other session writes and their failures
- * (`errors`).
+ * its combined result (`cancel`, `compaction`) as a session's emit does. `cancel` aborts when the loop cancels the call;
+ * the handlers' signal then aborts while they run. Each reply also carries the messages its handlers sent (`sent`, which
+ * the loop sends with the same options), their other session writes and their failures (`errors`).
  */
 export function extensionLoopHooks(
 	runner: ExtensionRunner,
@@ -40,12 +40,17 @@ export function extensionLoopHooks(
 	cwd: string,
 	call: LoopHookCall,
 ): LooplessLoopHooks {
-	return async (event, payload) => {
+	return async (event, payload, cancel) => {
 		if (twoSidedHome !== "hand") throw new Error("this hand is not the home of its extensions' loop hooks");
 		const only = userLoopHooks(runner);
 		if (!isRecord(payload) || typeof payload.sessionId !== "string" || typeof payload.idle !== "boolean")
 			throw new Error(`malformed ${event} payload`);
-		const { sessionId, idle } = payload;
+		const scope = {
+			sessionId: payload.sessionId,
+			cwd,
+			idle: payload.idle,
+			...(cancel === undefined ? {} : { cancel }),
+		};
 		const images = imagesOf(payload.images);
 		if (images === null) throw new Error(`malformed ${event} payload: images`);
 		if (event === "input") {
@@ -58,7 +63,7 @@ export function extensionLoopHooks(
 				!(streamingBehavior === undefined || isOneOf(streamingBehavior, STREAMING_BEHAVIORS))
 			)
 				throw new Error("malformed input payload");
-			return call.run(sessionId, cwd, idle, (effects) =>
+			return call.run(scope, (effects) =>
 				dispatchLoopHook(runner, call, effects, () =>
 					runner.emitInput(text, images, source, streamingBehavior, inputId, attribution, only),
 				),
@@ -77,7 +82,7 @@ export function extensionLoopHooks(
 			// The loop's options as the loop built them: only `cwd` is this machine's (its workspace); the rest (context files,
 			// skills, tools) describes the loop's machine. They are data for handlers to read; nothing here acts on them.
 			const options = { ...(systemPromptOptions as Partial<BuildSystemPromptOptions>), cwd };
-			return call.run(sessionId, cwd, idle, (effects) =>
+			return call.run(scope, (effects) =>
 				dispatchLoopHook(runner, call, effects, () =>
 					runner.emitBeforeAgentStart(prompt, images, systemPrompt, options, {
 						only,
@@ -92,7 +97,7 @@ export function extensionLoopHooks(
 			// no headers), and the reply's `output` carries the payload they produced.
 			const input = parseHookRequestInput(payload.input);
 			const model = hookModelOf(input);
-			return call.run(sessionId, cwd, idle, (effects) =>
+			return call.run(scope, (effects) =>
 				dispatchLoopHook(runner, call, effects, async () => ({
 					output: hookRequestOutputOf(
 						input,
@@ -106,16 +111,15 @@ export function extensionLoopHooks(
 		}
 		if (event === "session_before_compact") {
 			const beforeCompact = sessionBeforeCompactOf(payload);
-			return call.run(sessionId, cwd, idle, (effects, signal) =>
+			return call.run(scope, (effects, signal) =>
 				dispatchLoopHook(runner, call, effects, () =>
-					// The handlers' own signal, aborted when the call's is.
-					runner.emitForwardedLoopEvent({ ...beforeCompact, signal: AbortSignal.any([signal]) }, only),
+					runner.emitForwardedLoopEvent({ ...beforeCompact, signal }, only),
 				),
 			);
 		}
 		const notification = loopNotificationOf(event, payload);
 		if (notification !== undefined)
-			return call.run(sessionId, cwd, idle, (effects) =>
+			return call.run(scope, (effects) =>
 				dispatchLoopHook(runner, call, effects, () => runner.emitForwardedLoopEvent(notification, only)),
 			);
 		if (event === "agent_end") {
@@ -124,12 +128,8 @@ export function extensionLoopHooks(
 			if (!isAgentMessages(messages) || !(aborted === undefined || typeof aborted === "boolean") || carried === null)
 				throw new Error("malformed agent_end payload");
 			const agentEnd = { type: "agent_end" as const, messages, ...(aborted === undefined ? {} : { aborted }) };
-			return call.run(
-				sessionId,
-				cwd,
-				idle,
-				(effects) => dispatchLoopHook(runner, call, effects, () => runner.emitForwardedLoopEvent(agentEnd, only)),
-				carried,
+			return call.run({ ...scope, carried }, (effects) =>
+				dispatchLoopHook(runner, call, effects, () => runner.emitForwardedLoopEvent(agentEnd, only)),
 			);
 		}
 		throw new Error(`no loop hooks run on a hand for ${event}`);
