@@ -58,7 +58,8 @@ export type RpcHostCommandResponse =
 			type: "response";
 			command: "hand_link";
 			success: true;
-			data: { packets: readonly HandWirePacket[] };
+			/** `more`: the hand still queues packets one answer could not hold; poll again at once. */
+			data: { packets: readonly HandWirePacket[]; more: boolean };
 	  }
 	| {
 			id?: string;

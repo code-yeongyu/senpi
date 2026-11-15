@@ -57,14 +57,22 @@ it("answers each batch while a tool runs, so a following batch's abort reaches t
 	expect(result.messages).toHaveLength(1);
 }, 60_000);
 
-it("carries a frame over the part size both ways as data_part packets, intact", async () => {
+it("carries a frame over the part size both ways as data_part packets, and says more while parts wait", async () => {
 	const { host, peer } = await start();
 	const brainA = brain("hosted-1", 1);
 	const text = "0123456789abcdef".repeat(48 * 1024);
+	const echoed = call(brainA, host.cwd, "echo", { text });
+	let settled = false;
+	void echoed.finally(() => {
+		settled = true;
+	});
+	const more: unknown[] = [];
 
-	const result = await pump(peer, brainA, call(brainA, host.cwd, "echo", { text }));
+	while (!settled) more.push(((await batch(peer, brainA)).data as { more: unknown }).more);
 
-	expect(resultText(result)).toBe(text);
+	expect(resultText(await echoed)).toBe(text);
+	expect(more).toContain(true);
+	expect(more.every((value) => typeof value === "boolean")).toBe(true);
 }, 60_000);
 
 it("ends the session's link on a malformed packet; only a higher generation opens it again", async () => {

@@ -16,6 +16,7 @@ import type { JsonObject } from "@earendil-works/pi-ai";
 import type { InlineExtension } from "../../src/core/extensions/types.ts";
 import { createHandPacketReader, encodeHandPackets } from "../../src/modes/hand/hand-packet-codec.ts";
 import { createHandLinkEndpoint } from "../../src/modes/rpc/hand-link-endpoint.ts";
+import { handLinkStatePath, openHandLinkFileStore } from "../../src/modes/rpc/hand-link-file-store.ts";
 import { createLooplessHand } from "../../src/modes/rpc/remote-executor-scope.ts";
 import { declare, type HandLinkFactory, type Peer, startHost, type WireRecord } from "./rpc-delegated-host-support.ts";
 
@@ -77,6 +78,7 @@ export function handLinkOn(probe: HandProbe): HandLinkFactory {
 		createHandLinkEndpoint({
 			openHand: () =>
 				createLooplessHand(configuration, { twoSidedHome: "hand", extensionFactories: [probeTools(probe)] }),
+			openStore: () => openHandLinkFileStore(handLinkStatePath(configuration.agentDir)),
 			report: (message) => {
 				throw new Error(`hand_link report: ${message}`);
 			},

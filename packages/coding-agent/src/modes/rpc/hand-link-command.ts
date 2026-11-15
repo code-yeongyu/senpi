@@ -38,7 +38,16 @@ export async function answerHandLink(host: HandLinkHost, command: HandLinkComman
 	if (view === undefined || view.closed) return error(command.id, command.type, "hand_link_not_delegated");
 	const batch = batchOf(command);
 	if (batch === undefined) return error(command.id, command.type, "hand_link_malformed");
-	const answer = await endpoint.link(view.descriptor.principal.deviceId, batch);
+	let answer: Awaited<ReturnType<HandLinkEndpoint["link"]>>;
+	try {
+		answer = await endpoint.link(view.descriptor.principal.deviceId, batch);
+	} catch (cause) {
+		// The endpoint's durable state could not be opened or written: nothing of this batch reached the hand.
+		return error(command.id, command.type, "hand_link_unavailable", {
+			reason: cause instanceof Error ? cause.message : String(cause),
+		});
+	}
 	if (answer.kind === "refused") return error(command.id, command.type, answer.reason);
-	return { id: command.id, type: "response", command: "hand_link", success: true, data: { packets: answer.packets } };
+	const { packets, more } = answer;
+	return { id: command.id, type: "response", command: "hand_link", success: true, data: { packets, more } };
 }

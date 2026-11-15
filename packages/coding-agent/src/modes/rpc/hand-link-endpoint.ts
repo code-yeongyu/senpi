@@ -9,20 +9,22 @@
  *   that ended (a malformed batch) reopens only at a higher generation: its transport state is gone.
  * - One epoch fence for the whole host: a scope's floor is raised only by the owner of the session that first used
  *   that scope; a batch on a scope lane another session holds ends the link, and a loop-hook call naming one fails.
+ * - The floors, each session's link record and the scope bindings are durable (`hand-link-state.ts`), so a restarted
+ *   daemon resumes a session at the generation it reached and still refuses an older one.
  * - A batch is answered at once with what the hand has queued for the brain; a tool still running answers in a later
  *   batch, so a following batch (an abort among them) never waits behind it. A frame over the part size goes as
- *   `data_part` packets, and an answer holds at most one record's worth: the rest waits for the next batch.
+ *   `data_part` packets, and an answer holds at most one record's worth: the rest waits for the next batch, and
+ *   `more` tells the brain to poll at once.
  * - Packets are read in full before any reaches the hand, parts joined across batches; one that does not read (a
  *   count conflict among them) ends the session's link.
  */
 import {
-	createHandEpochFence,
 	createReliableTransport,
 	HAND_CONTROL_LANE,
-	type HandEpochFenceOptions,
 	type ReferencePacket,
 	type TransportSide,
 } from "@earendil-works/pi-agent-core";
+import type { DurableStore } from "@earendil-works/pi-agent-core/conformance";
 import type { JsonValue } from "@earendil-works/pi-ai";
 import { createHandEndpoint, HAND_LOOP_HOOK_LANE, type HandEndpoint } from "../hand/hand-endpoint.ts";
 import {
@@ -32,6 +34,8 @@ import {
 	type HandWirePacket,
 } from "../hand/hand-packet-codec.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
+import { handLinkStatePath, openHandLinkFileStore } from "./hand-link-file-store.ts";
+import { type HandLinkState, openHandLinkState } from "./hand-link-state.ts";
 import { createLooplessHand, type LooplessHand } from "./remote-executor-scope.ts";
 import { MAX_RPC_MESSAGE_CHARACTERS } from "./rpc-input-validation.ts";
 
@@ -50,7 +54,7 @@ export type HandLinkRefusal =
 	| "hand_link_closed";
 
 export type HandLinkAnswer =
-	| { readonly kind: "packets"; readonly packets: readonly HandWirePacket[] }
+	| { readonly kind: "packets"; readonly packets: readonly HandWirePacket[]; readonly more: boolean }
 	| { readonly kind: "refused"; readonly reason: HandLinkRefusal };
 
 export interface HandLinkEndpoint {
@@ -61,14 +65,12 @@ export interface HandLinkEndpoint {
 export interface HandLinkEndpointOptions {
 	/** The machine's hand, opened on the first link; its scopes are shared by every session's link. */
 	readonly openHand: () => Pick<LooplessHand, "openScope" | "loopHooks" | "close">;
-	/** Where the epoch floors persist (the hand's store); without it they live as long as this process. */
-	readonly durable?: HandEpochFenceOptions["durable"];
+	/** Opens the store the floors and link records persist in, on the first link; this process claims it. */
+	readonly openStore: () => DurableStore;
 	readonly report: (message: string) => void;
 }
 
 interface Link {
-	readonly owner: string;
-	readonly loopId: string;
 	readonly generation: number;
 	readonly transport: TransportSide;
 	readonly endpoint: HandEndpoint;
@@ -125,6 +127,7 @@ function scopeIdOf(payload: JsonValue): string | undefined {
 export function createHostHandLink(configuration: CliRuntimeConfiguration): HandLinkEndpoint {
 	return createHandLinkEndpoint({
 		openHand: () => createLooplessHand(configuration, { twoSidedHome: "hand" }),
+		openStore: () => openHandLinkFileStore(handLinkStatePath(configuration.agentDir)),
 		report: (message) => void process.stderr.write(`senpi hand_link: ${message}\n`),
 	});
 }
@@ -132,25 +135,18 @@ export function createHostHandLink(configuration: CliRuntimeConfiguration): Hand
 export function createHandLinkEndpoint(options: HandLinkEndpointOptions): HandLinkEndpoint {
 	const { report } = options;
 	const links = new Map<string, Link>();
-	/** The lowest generation each session may still open, kept after its link ends so an older one stays refused. */
-	const lowest = new Map<string, number>();
-	/** Which session each scope belongs to, for the life of the process (as long as its floor). */
-	const scopeSessions = new Map<string, string>();
 	const queues = new Map<string, Promise<unknown>>();
 	let hand: ReturnType<HandLinkEndpointOptions["openHand"]> | undefined;
+	let opening: Promise<HandLinkState> | undefined;
 	let closed = false;
 
-	const fence = createHandEpochFence({
-		ownerOf: (scope) => {
-			const session = scopeSessions.get(scope);
-			return session === undefined ? undefined : links.get(session)?.owner;
-		},
-		...(options.durable === undefined ? {} : { durable: options.durable }),
-	});
-	const claim = (scope: string, session: string): boolean => {
-		const holder = scopeSessions.get(scope);
-		if (holder === undefined) scopeSessions.set(scope, session);
-		return holder === undefined || holder === session;
+	// Opened on the first link, so a host that never serves one touches no state; a failed open is tried again.
+	const stateOf = (): Promise<HandLinkState> => {
+		opening ??= openHandLinkState(options.openStore()).catch((error: unknown) => {
+			opening = undefined;
+			throw error;
+		});
+		return opening;
 	};
 	const end = async (session: string): Promise<void> => {
 		const link = links.get(session);
@@ -159,12 +155,12 @@ export function createHandLinkEndpoint(options: HandLinkEndpointOptions): HandLi
 		await link.endpoint.close();
 	};
 	const refuseAndEnd = async (batch: HandLinkBatch, reason: HandLinkRefusal): Promise<HandLinkAnswer> => {
-		lowest.set(batch.session, batch.loop.generation + 1);
+		await (await stateOf()).end(batch.session, batch.loop.generation + 1);
 		await end(batch.session);
 		return refused(reason);
 	};
 
-	const open = (sender: string, batch: HandLinkBatch): Link => {
+	const open = (state: HandLinkState, sender: string, batch: HandLinkBatch): Link => {
 		hand ??= options.openHand();
 		const { openScope, loopHooks } = hand;
 		const outbox = new Map<string, HandWirePacket>();
@@ -189,19 +185,17 @@ export function createHandLinkEndpoint(options: HandLinkEndpointOptions): HandLi
 		const endpoint = createHandEndpoint({
 			transport,
 			openScope,
-			loopHooks: (event, payload) => {
+			loopHooks: async (event, payload) => {
 				const scope = scopeIdOf(payload);
-				if (scope !== undefined && !claim(scope, batch.session))
-					return Promise.reject(new Error(`hand_link_scope_taken: scope ${JSON.stringify(scope)}`));
+				if (scope !== undefined && !(await state.claim(scope, batch.session)))
+					throw new Error(`hand_link_scope_taken: scope ${JSON.stringify(scope)}`);
 				return loopHooks(event, payload);
 			},
 			authority: { kind: "relayed", peer: sender },
-			fence,
+			fence: state.fence,
 			report,
 		});
 		return {
-			owner: sender,
-			loopId: batch.loop.id,
 			generation: batch.loop.generation,
 			transport,
 			endpoint,
@@ -210,25 +204,32 @@ export function createHandLinkEndpoint(options: HandLinkEndpointOptions): HandLi
 		};
 	};
 
-	const linkFor = async (sender: string, batch: HandLinkBatch): Promise<Link | HandLinkAnswer> => {
+	const linkFor = async (
+		state: HandLinkState,
+		sender: string,
+		batch: HandLinkBatch,
+	): Promise<Link | HandLinkAnswer> => {
 		const { session, loop } = batch;
-		if (loop.generation < (lowest.get(session) ?? 1)) return refused("hand_link_superseded");
+		const record = state.session(session);
+		if (loop.generation < (record?.lowest ?? 1)) return refused("hand_link_superseded");
+		const holder = record?.lowest === loop.generation ? record.holder : undefined;
+		if (holder !== undefined && (holder.owner !== sender || holder.loopId !== loop.id))
+			return refused("hand_link_generation_taken");
 		const current = links.get(session);
-		if (current !== undefined && current.generation === loop.generation)
-			return current.owner === sender && current.loopId === loop.id
-				? current
-				: refused("hand_link_generation_taken");
-		// A newer generation supersedes the session's link: its running calls are aborted and its scopes disposed.
+		if (current?.generation === loop.generation) return current;
+		// A newer generation, or the first batch since this daemon started, opens the session's link: an older link's
+		// running calls are aborted and its scopes disposed.
 		await end(session);
-		lowest.set(session, loop.generation);
-		const link = open(sender, batch);
+		await state.admit(session, loop.generation, { owner: sender, loopId: loop.id });
+		const link = open(state, sender, batch);
 		links.set(session, link);
 		return link;
 	};
 
 	const handle = async (sender: string, batch: HandLinkBatch): Promise<HandLinkAnswer> => {
 		if (closed) return refused("hand_link_closed");
-		const link = await linkFor(sender, batch);
+		const state = await stateOf();
+		const link = await linkFor(state, sender, batch);
 		if (!("transport" in link)) return link;
 		const packets = readAll(link.read, batch.packets);
 		const scopes = packets?.flatMap((packet) =>
@@ -237,12 +238,14 @@ export function createHandLinkEndpoint(options: HandLinkEndpointOptions): HandLi
 				: [],
 		);
 		if (packets === undefined || scopes === undefined) return refuseAndEnd(batch, "hand_link_malformed");
-		if (!scopes.every((scope) => claim(scope, batch.session))) return refuseAndEnd(batch, "hand_link_scope_taken");
+		for (const scope of new Set(scopes))
+			if (!(await state.claim(scope, batch.session))) return refuseAndEnd(batch, "hand_link_scope_taken");
 		for (const packet of packets) link.transport.message(packet);
 		// One turn of the event loop lets the frames this batch delivered be acknowledged and answered now; a call
 		// still running answers in a later batch.
 		await new Promise<void>((resolve) => setImmediate(resolve));
-		return { kind: "packets", packets: takeAnswer(link.outbox) };
+		const answer = takeAnswer(link.outbox);
+		return { kind: "packets", packets: answer, more: link.outbox.size > 0 };
 	};
 
 	return {
