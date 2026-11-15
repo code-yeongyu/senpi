@@ -1,7 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { LoopHookCallFacts } from "../../core/extensions/runner.ts";
 import type { HistoryReducer } from "../../core/session-history-reduce.ts";
-import type { ReadonlySessionManager, SessionEntry } from "../../core/session-manager.ts";
+import type { ReadonlySessionManager, SessionEntry, SessionHeader } from "../../core/session-manager.ts";
+import type { BuildSystemPromptOptions } from "../../core/system-prompt.ts";
 
 /** A message a loop hook sent during its call, for the loop to send with the same options. */
 export interface SentLoopMessage {
@@ -29,6 +30,17 @@ export interface SentLoopUserMessage {
 export interface CarriedSession {
 	readonly leafId: string | null;
 	readonly handEntries: readonly SessionEntry[];
+	/**
+	 * The branch a hand reads (`getBranch`, `getEntries`), in branch order, after the last compaction: this hand's entries
+	 * and the user's messages (a todo list's ask reads the request it answers). Absent: the hand's entries alone.
+	 */
+	readonly branch?: readonly SessionEntry[];
+	/** The loop session's header (`getHeader`); absent: it stays loop-side. */
+	readonly header?: SessionHeader;
+	/** The loop's active tool names (`pi.getActiveTools()`); absent: the active set stays loop-side and unchangeable. */
+	readonly activeTools?: readonly string[];
+	/** The loop's system prompt options a call reads (its `surface`, ...); only `cwd` is this machine's own. */
+	readonly systemPromptOptions?: Readonly<Partial<BuildSystemPromptOptions>>;
 }
 
 /** What a loop-hook call's handlers did beyond their result, which the loop does in turn (session port, write). */
@@ -37,6 +49,8 @@ export interface LoopHookEffects {
 	readonly notices: LoopNotice[];
 	readonly entries: AppendedLoopEntry[];
 	readonly userMessages: SentLoopUserMessage[];
+	/** The active tool set the call's work left, for the loop to apply (`pi.setActiveTools`); unset: unchanged. */
+	activeTools: string[] | undefined;
 	/** Late messages and notices dropped because the loop session already held {@link LATE_PER_SESSION}. */
 	dropped: number;
 }
@@ -135,6 +149,15 @@ export function createLoopHookCall(): LoopHookCall {
 					else holdLate(sessionId, (held) => held.userMessages.push(entry));
 				},
 				hasPendingMessages: () => effects.userMessages.length > 0,
+				getActiveTools: () => {
+					const active = effects.activeTools ?? carried?.activeTools;
+					return active === undefined ? undefined : [...active];
+				},
+				getSystemPromptOptions: () => ({ ...carried?.systemPromptOptions, cwd }),
+				// Only a set the loop carried can change: the loop applies the change to that set.
+				setActiveTools: (names: readonly string[]) => {
+					if (live && carried?.activeTools !== undefined) effects.activeTools = [...names];
+				},
 			});
 			try {
 				return await calls.run({ live: () => live, facts }, () => dispatch(effects));
@@ -161,7 +184,27 @@ export class LoopHookCallEndedError extends Error {
 	}
 }
 
-const emptyEffects = (): LoopHookEffects => ({ sent: [], notices: [], entries: [], userMessages: [], dropped: 0 });
+const emptyEffects = (): LoopHookEffects => ({
+	sent: [],
+	notices: [],
+	entries: [],
+	userMessages: [],
+	activeTools: undefined,
+	dropped: 0,
+});
+
+/** The effects a reply carries back to the loop, each only when there is one. */
+export function effectsReply(effects: LoopHookEffects): Record<string, unknown> {
+	const { sent, notices, entries, userMessages, activeTools, dropped } = effects;
+	return {
+		...(sent.length > 0 ? { sent } : {}),
+		...(notices.length > 0 ? { notices } : {}),
+		...(entries.length > 0 ? { entries } : {}),
+		...(userMessages.length > 0 ? { userMessages } : {}),
+		...(activeTools === undefined ? {} : { activeTools }),
+		...(dropped > 0 ? { droppedLate: dropped } : {}),
+	};
+}
 
 function readOnlySession(
 	sessionId: string,
@@ -175,6 +218,7 @@ function readOnlySession(
 			if (!live()) throw new LoopHookCallEndedError(`sessionManager.${member}`);
 			return read();
 		};
+	const header = carried?.header;
 	const unbound = (member: string) => (): never => {
 		throw new Error(
 			`sessionManager.${member} is loop-side: a loop-hook call on a hand carries only the session's id`,
@@ -189,13 +233,19 @@ function readOnlySession(
 		getLeafEntry: unbound("getLeafEntry"),
 		getEntry: unbound("getEntry"),
 		getLabel: unbound("getLabel"),
-		getBranch: unbound("getBranch"),
+		getBranch:
+			carried === undefined
+				? unbound("getBranch")
+				: bound("getBranch", () => [...(carried.branch ?? carried.handEntries)]),
 		getFullBranch: unbound("getFullBranch"),
 		buildContextEntries: unbound("buildContextEntries"),
 		buildSessionContext: unbound("buildSessionContext"),
 		buildSessionProjection: unbound("buildSessionProjection"),
-		getHeader: unbound("getHeader"),
-		getEntries: unbound("getEntries"),
+		getHeader: header === undefined ? unbound("getHeader") : bound("getHeader", () => ({ ...header })),
+		getEntries:
+			carried === undefined
+				? unbound("getEntries")
+				: bound("getEntries", () => [...(carried.branch ?? carried.handEntries)]),
 		reduceHistory:
 			carried === undefined
 				? unbound("reduceHistory")

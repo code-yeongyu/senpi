@@ -61,7 +61,10 @@ export default function todotoolsExtension(pi: ExtensionAPI): void {
 		);
 	};
 
+	// A session syncs this instance at session_start; a hand's runtime running a hosted loop's call never gets one.
+	let sessionSynced = false;
 	const syncFromSession = (ctx: ExtensionContext): void => {
+		sessionSynced = true;
 		currentState = getLatestTodoStateFromBranchEntries(ctx.sessionManager.getBranch());
 		syncWidget(ctx);
 	};
@@ -169,10 +172,12 @@ export default function todotoolsExtension(pi: ExtensionAPI): void {
 		LOOP,
 	);
 
-	const noteExecuted = (toolCallId: string): void => {
-		executedHere.add(toolCallId);
+	// Unsynced, the list is the one on the session the call carried (session port, senpi#6754), never this instance's.
+	const beginExecution = (toolCallId: string, ctx: ExtensionContext): void => {
+		if (sessionSynced) executedHere.add(toolCallId);
+		else currentState = getLatestTodoStateFromBranchEntries(ctx.sessionManager.getBranch());
 	};
-	const accessors = { getCurrentPhases, setCurrentPhases, getCurrentAsk, setCurrentAsk, syncWidget, noteExecuted };
+	const accessors = { getCurrentPhases, setCurrentPhases, getCurrentAsk, setCurrentAsk, syncWidget, beginExecution };
 	registerTodoTool(pi, accessors);
 	registerTodoCommand(pi, accessors);
 }

@@ -103,10 +103,13 @@ export function createLooplessHand(
 		async openScope(scope): Promise<HandScope> {
 			const runtime = await runtimeOf(scope, true);
 			return {
-				run: (call) =>
-					runtime.definitions.has(call.name)
-						? runtime.execute(call.name, call.toolCallId, call.arguments, call.signal, call.nested)
-						: Promise.resolve(notFound(call.name)),
+				run: (call) => {
+					if (!runtime.definitions.has(call.name)) return Promise.resolve(notFound(call.name));
+					const execute = () =>
+						runtime.execute(call.name, call.toolCallId, call.arguments, call.signal, call.nested);
+					// A loop that carries its session runs its session tools here (ST); without one the call has no session.
+					return call.session === undefined ? execute() : runtime.runInSession(call.session, call.name, execute);
+				},
 				isSequential: (name) => runtime.definitions.get(name)?.definition.executionMode === "sequential",
 				...(runtime.fileGuards === undefined
 					? {}

@@ -188,6 +188,12 @@ export interface LoopHookCallFacts {
 	sendUserMessage(...args: Parameters<ExtensionRuntime["sendUserMessage"]>): void;
 	/** `ctx.hasPendingMessages()` during the call: whether this call has sent a user message the loop will deliver. */
 	hasPendingMessages(): boolean;
+	/** `pi.getActiveTools()` during the call: the loop's active set it carried, as the call changed it; none uncarried. */
+	getActiveTools(): string[] | undefined;
+	/** `pi.setActiveTools()` during the call: the loop applies the new set to its own session (session port, write). */
+	setActiveTools(names: readonly string[]): void;
+	/** `ctx.getSystemPromptOptions()` during the call: the options the loop carried, with this machine's cwd. */
+	getSystemPromptOptions(): BuildSystemPromptOptions;
 }
 
 /** The hand's UI, except `notify`, which a loop-hook call carries back to the loop's UI. */
@@ -799,6 +805,8 @@ export class ExtensionRunner {
 		readonly loopHookSend?: () => LoopHookCallFacts["sendMessage"] | undefined;
 		/** Where `pi.appendEntry` and `pi.sendUserMessage` go from a loop-hook call's work, routed as `loopHookSend`. */
 		readonly loopHookWrite?: () => Pick<LoopHookCallFacts, "appendEntry" | "sendUserMessage"> | undefined;
+		/** Called when an extension registers a tool after the runtime was built, so the host can make it callable. */
+		readonly refreshTools?: () => void;
 	}): void {
 		this.runtime.getAllTools = facts.getAllTools;
 		this.loopHookCallFn = facts.loopHookCall;
@@ -823,7 +831,8 @@ export class ExtensionRunner {
 			};
 		}
 		this.runtime.getActiveTools = () => this.getActiveTools();
-		this.runtime.setActiveTools = () => {};
+		this.runtime.setActiveTools = (names) => this.loopHookCallFn?.()?.setActiveTools(names);
+		if (facts.refreshTools !== undefined) this.runtime.refreshTools = facts.refreshTools;
 		if (facts.getLoadedHookSources === undefined) return;
 		this.getLoadedHookSourcesFn = facts.getLoadedHookSources;
 		this.sessionlessBoundMembers.add("getLoadedHookSources");
@@ -1711,8 +1720,8 @@ export class ExtensionRunner {
 
 	getActiveTools(): string[] {
 		this.assertActive();
-		// The active set belongs to the loop; a runner without a session has none to report.
-		if (this.sessionManager === undefined) return [];
+		// The active set belongs to the loop; a runner without a session reports only the one a loop-hook call carried.
+		if (this.sessionManager === undefined) return this.loopHookCallFn?.()?.getActiveTools() ?? [];
 		return this.runtime.getActiveTools();
 	}
 
@@ -2034,6 +2043,7 @@ export class ExtensionRunner {
 					signal: { configurable: true, enumerable: true, value: call.signal },
 					isIdle: { configurable: true, enumerable: true, value: call.isIdle },
 					hasPendingMessages: { configurable: true, enumerable: true, value: call.hasPendingMessages },
+					getSystemPromptOptions: { configurable: true, enumerable: true, value: call.getSystemPromptOptions },
 					ui: { configurable: true, enumerable: true, value: withLoopNotices(context.ui, call.notify) },
 				});
 		}

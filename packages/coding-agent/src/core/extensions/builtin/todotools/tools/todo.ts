@@ -80,8 +80,8 @@ type TodoAccessors = {
 	getCurrentAsk: () => TodoAsk | undefined;
 	setCurrentAsk: (ask: TodoAsk | undefined) => void;
 	syncWidget: (ctx: ExtensionContext, completedTasks?: readonly TodoCompletionTransition[]) => void;
-	/** Records a call this extension instance executed, so its own result is not adopted again as a foreign list. */
-	noteExecuted?: (toolCallId: string) => void;
+	/** Starts a call: records it so its result is not adopted again, or reads the list from a session never synced. */
+	beginExecution?: (toolCallId: string, ctx: ExtensionContext) => void;
 };
 
 function countInitItems(params: TodoParams): { phases: number; tasks: number } {
@@ -306,7 +306,7 @@ export function registerTodoTool(pi: ExtensionAPI, accessors: TodoAccessors): vo
 		prepareArguments: (args) => prepareTodoArguments(args) as TodoParams,
 		executionMode: "sequential",
 		async execute(toolCallId, params, _signal, _onUpdate, ctx): Promise<AgentToolResult<TodoToolDetails>> {
-			accessors.noteExecuted?.(toolCallId);
+			accessors.beginExecution?.(toolCallId, ctx);
 			const previousPhases = clonePhases(accessors.getCurrentPhases());
 			const previousAsk = accessors.getCurrentAsk();
 			// prepareTodoArguments carries its notices on the prepared args under a reserved key

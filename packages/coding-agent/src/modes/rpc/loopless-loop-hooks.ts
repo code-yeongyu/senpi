@@ -8,10 +8,10 @@ import type {
 	SessionStartEvent,
 } from "../../core/extensions/types.ts";
 import { hookModelOf, hookRequestOutputOf, parseHookRequestInput } from "../../core/hand/hook-contract.ts";
-import type { CustomEntry } from "../../core/session-manager.ts";
 import type { BuildSystemPromptOptions } from "../../core/system-prompt.ts";
 import type { TwoSidedHome } from "./loopless-tool-handlers.ts";
-import type { CarriedSession, LoopHookCall, LoopHookEffects } from "./loop-hook-call.ts";
+import { parseCarriedSession } from "./hand-session-port.ts";
+import { effectsReply, type LoopHookCall, type LoopHookEffects } from "./loop-hook-call.ts";
 
 /** The loop events a hand that is its extensions' home runs for a loop that runs elsewhere (S33, C8/K5). */
 export type LooplessLoopHooks = (event: string, payload: JsonValue) => Promise<JsonValue>;
@@ -118,7 +118,7 @@ export function extensionLoopHooks(
 		}
 		if (event === "agent_end") {
 			const { messages, aborted } = payload;
-			const carried = carriedSessionOf(payload);
+			const carried = parseCarriedSession(payload);
 			if (!isAgentMessages(messages) || !(aborted === undefined || typeof aborted === "boolean") || carried === null)
 				throw new Error("malformed agent_end payload");
 			const agentEnd = { type: "agent_end" as const, messages, ...(aborted === undefined ? {} : { aborted }) };
@@ -176,20 +176,6 @@ const imagesOf = (value: unknown): ImageContent[] | undefined | null =>
 const isAgentMessages = (value: unknown): value is AgentMessage[] =>
 	Array.isArray(value) && value.every((message) => isRecord(message) && typeof message.role === "string");
 
-/**
- * The session port's read half a call carries (`leafId`, `handEntries`; see `CarriedSession`), or `null` when
- * malformed. Each hand entry is a custom entry: the hand only ever authored custom entries.
- */
-function carriedSessionOf(payload: Record<string, unknown>): CarriedSession | null {
-	const { leafId, handEntries } = payload;
-	if (!(leafId === null || typeof leafId === "string")) return null;
-	if (!Array.isArray(handEntries) || !handEntries.every(isCustomEntry)) return null;
-	return { leafId, handEntries };
-}
-
-const isCustomEntry = (value: unknown): value is CustomEntry =>
-	isRecord(value) && value.type === "custom" && typeof value.customType === "string" && typeof value.id === "string";
-
 const isImage = (value: unknown): value is ImageContent =>
 	isRecord(value) && value.type === "image" && typeof value.data === "string" && typeof value.mimeType === "string";
 
@@ -208,17 +194,8 @@ async function dispatchLoopHook(
 	});
 	try {
 		const result = await dispatch();
-		const { sent, notices, entries, userMessages } = effects;
 		return JSON.parse(
-			JSON.stringify({
-				...result,
-				...(sent.length > 0 ? { sent } : {}),
-				...(notices.length > 0 ? { notices } : {}),
-				...(entries.length > 0 ? { entries } : {}),
-				...(userMessages.length > 0 ? { userMessages } : {}),
-				...(effects.dropped > 0 ? { droppedLate: effects.dropped } : {}),
-				...(errors.length > 0 ? { errors } : {}),
-			}),
+			JSON.stringify({ ...result, ...effectsReply(effects), ...(errors.length > 0 ? { errors } : {}) }),
 		) as JsonValue;
 	} finally {
 		stop();

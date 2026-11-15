@@ -1,6 +1,7 @@
 import type { HandFileGuards } from "./hand-file-ops.ts";
 import { randomUUID } from "node:crypto";
-import type { NestedRequest, AgentToolResult } from "@earendil-works/pi-agent-core";
+import type { NestedRequest, AgentToolResult, HandToolResult } from "@earendil-works/pi-agent-core";
+import type { JsonValue } from "@earendil-works/pi-ai";
 import type { AgentSessionLaunchProfile } from "../../core/agent-session-runtime.ts";
 import { type AgentSessionRuntimeDiagnostic, createAgentSessionServices } from "../../core/agent-session-services.ts";
 import type { InlineExtension } from "../../core/extensions/types.ts";
@@ -21,6 +22,7 @@ import {
 } from "./loopless-execute-grant.ts";
 import { runLooplessToolCall } from "./loopless-tool-call.ts";
 import { createLoopHookCall } from "./loop-hook-call.ts";
+import { runInSession } from "./hand-session-port.ts";
 import { extensionLoopHooks, type LooplessLoopHooks } from "./loopless-loop-hooks.ts";
 import { extensionToolHandlers, type TwoSidedHome } from "./loopless-tool-handlers.ts";
 import { toolChildModuleRoots } from "./tool-child/session-child.ts";
@@ -53,6 +55,15 @@ export interface LooplessRuntime {
 		signal?: AbortSignal,
 		nested?: NestedRequest,
 	): Promise<AgentToolResult<unknown>>;
+	/**
+	 * Runs `run` (one `execute` of `toolName`) for a loop that runs elsewhere with the session the call carried (session
+	 * port, senpi#6754): its tools and handlers read that session and its writes come back as `sessionEffects`.
+	 */
+	runInSession(
+		session: JsonValue,
+		toolName: string,
+		run: () => Promise<AgentToolResult<unknown>>,
+	): Promise<HandToolResult>;
 	/**
 	 * Runs this runtime's extensions' loop hooks for a loop that runs elsewhere, on the same runner as its tool calls
 	 * (S33). Refused unless the runtime was built as its extensions' home (`twoSidedHome: "hand"`).
@@ -179,12 +190,15 @@ export function createLooplessRuntimeFactory(
 			modelRegistry: services.modelRegistry,
 			toolDispatcher: dispatcher,
 		});
-		const registry = buildToolRegistry({
-			baseToolDefinitions: runtime.baseToolDefinitions,
-			runner: runtime.extensionRunner,
-			dispatcher,
-			...looplessToolFilters(parsed, services.settingsManager),
-		});
+		const buildRegistry = () =>
+			buildToolRegistry({
+				baseToolDefinitions: runtime.baseToolDefinitions,
+				runner: runtime.extensionRunner,
+				dispatcher,
+				...looplessToolFilters(parsed, services.settingsManager),
+			});
+		// Rebuilt when an extension registers a tool later (tool_search once its catalog has documents), as a session does.
+		let registry = buildRegistry();
 		toolNames = () => [...registry.toolRegistry.keys()];
 		const getLoadedHookSources = services.resourceLoader.getLoadedHookSources?.bind(services.resourceLoader);
 		const loopHookCall = createLoopHookCall();
@@ -193,6 +207,9 @@ export function createLooplessRuntimeFactory(
 			loopHookCall: () => loopHookCall.current(),
 			loopHookSend: () => loopHookCall.sender(),
 			loopHookWrite: () => loopHookCall.writer(),
+			refreshTools: () => {
+				registry = buildRegistry();
+			},
 			...(getLoadedHookSources ? { getLoadedHookSources } : {}),
 		});
 		// On a hand, a call's extension UI is presented by the loop that owns the call (S30).
@@ -242,12 +259,21 @@ export function createLooplessRuntimeFactory(
 						filesystemPolicy: () => runtime.filesystemPolicy,
 					}
 				: undefined;
+		const sessionTools = {
+			call: loopHookCall,
+			cwd: services.cwd,
+			definition: (name: string) => registry.definitions.get(name),
+			extensions: extensionsResult.extensions,
+		};
 		return {
 			cwd: services.cwd,
-			definitions: registry.definitions,
+			get definitions() {
+				return registry.definitions;
+			},
 			diagnostics,
 			fileGuards,
 			execute: (name, toolCallId, params, signal, nested) => execute(name, toolCallId, params, signal, nested),
+			runInSession: (session, toolName, run) => runInSession(sessionTools, session, toolName, run),
 			runLoopHooks: extensionLoopHooks(
 				runtime.extensionRunner,
 				local.twoSidedHome ?? "loop",
