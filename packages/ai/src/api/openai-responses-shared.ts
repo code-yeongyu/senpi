@@ -402,7 +402,8 @@ export function convertResponsesMessages<TApi extends Api>(
 	for (const msg of transformedMessages) {
 		const isLeadingSystemMessage = sourceIndex++ === 0 && msg.role === "system";
 		if (msg.role === "configurationUpdate") {
-			if (!supportsConfigurationUpdate(model)) continue;
+			// Sign in with ChatGPT rejects the item; openai-responses sends the level as reasoning.effort (senpi#6607).
+			if (!supportsConfigurationUpdate(model) || (model.compat as { siwc?: boolean } | undefined)?.siwc) continue;
 			const previous = messages[messages.length - 1];
 			if (previous?.type === "configuration_update") {
 				messages[messages.length - 1] = {

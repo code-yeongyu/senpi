@@ -1,3 +1,21 @@
+## 2026-11-11 - Test alias for the realm-registry helper (omo#12965)
+
+### What changed
+
+- `packages/agent/vitest.config.ts`: aliases `@earendil-works/pi-realm-registry` to its source, like telemetry. `vitest.benchmark.config.ts` and `vitest.harness.config.ts` get the same alias.
+
+### Why
+
+- pi-ai imports the helper, and this package's tests load pi-ai from source.
+
+### Why an extension could not handle it
+
+- Test configuration is not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the alias list.
+
 ## 2026-10-30 - Conformance archive producer scripts (senpi#5059)
 
 ### What changed

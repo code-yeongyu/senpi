@@ -1,3 +1,58 @@
+## 2026-11-13 - A missing-scope 401 listing other dotted scopes first still gets guidance (senpi#6643)
+
+### What changed
+
+- `packages/ai/src/utils/siwc-errors.ts`: `isSiwcMissingResponsesScope` matches `api.responses.write` anywhere in the rest of the `Missing scopes:` line instead of stopping at the first dot.
+
+### Why
+
+- Scope names are dotted, so a 401 such as "Missing scopes: api.model.read, api.responses.write" did not match: the account was still parked as `auth_error` and the user got no guidance (senpi#6653 review).
+
+### Why an extension could not handle it
+
+- The pattern is read by the Responses adapter's error formatting and by the credential-pool classifier, both before any extension sees the failed turn.
+
+### Expected merge conflict zones
+
+- LOW: the `MISSING_RESPONSES_SCOPE` pattern in `siwc-errors.ts`.
+
+## 2026-11-13 - A Sign in with ChatGPT 401 for a missing Responses scope says what to do (senpi#6643)
+
+### What changed
+
+- `packages/ai/src/api/openai-responses.ts`: `formatOpenAIResponsesError` appends `SIWC_MISSING_RESPONSES_SCOPE_GUIDANCE` (from `utils/siwc-errors.ts`) on the SIWC route when the error names the missing scope `api.responses.write`.
+
+### Why
+
+- The provider answers an account that is not entitled to the Responses API with a 401 and generic missing-scope prose; users read it as a sign-in failure and kept re-logging in.
+
+### Why an extension could not handle it
+
+- The error message is built inside the Responses adapter before any extension sees the failed turn.
+
+### Expected merge conflict zones
+
+- LOW: the SIWC branches of `formatOpenAIResponsesError`.
+
+## 2026-11-13 - Sign in with ChatGPT never sends configuration_update input items (senpi#6607)
+
+### What changed
+
+- `packages/ai/src/api/openai-responses-shared.ts`: `convertResponsesMessages` skips `configurationUpdate` messages when the model carries `compat.siwc`, even on a catalog row flagged `supportsConfigurationUpdate`.
+- `packages/ai/src/api/openai-responses.ts`: on a SIWC model flagged `supportsConfigurationUpdate`, `buildParams` takes the newest `configurationUpdate` effort in the transcript as the requested reasoning effort (`off` means no requested effort), instead of the session's cache-baseline `reasoningEffort`.
+
+### Why
+
+- The Sign in with ChatGPT route rejects `configuration_update` input items with 400 `subscription_sharing_unsupported_capability`, so every turn after a thinking-level change failed on gpt-6.1-sol and gpt-6-astra. Upstream pi applies the same guard (`getConfigurationUpdateEffort` returns undefined for a ChatGPT sign-in) and sends the current level as `reasoning.effort`.
+
+### Why an extension could not handle it
+
+- The input items and request effort are built inside the Responses adapter after every extension payload hook has run; the route is chosen per credential below the session.
+
+### Expected merge conflict zones
+
+- LOW: the `configurationUpdate` branch in `convertResponsesMessages` and the reasoning-effort preamble of `buildParams`.
+
 ## 2026-11-10 - One shared list of the models Ultrafast is documented for (senpi#2978)
 
 ### What changed
