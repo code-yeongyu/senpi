@@ -29,11 +29,6 @@ import type {
 import { createLooplessHand } from "../../src/modes/rpc/remote-executor-scope.ts";
 import { deliverHandWake } from "@earendil-works/pi-agent-core";
 import { openHandWakeOutbox } from "../../src/modes/hand/hand-wakes.ts";
-import {
-	createLoopHookCall,
-	type LateLoopRoute,
-	LoopHookCallEndedError,
-} from "../../src/modes/rpc/loopless-tool-handlers.ts";
 import { brainInbox, connect } from "./hand-wake-fixture.ts";
 import { createHarness, type Harness } from "../suite/harness.ts";
 import { cleanupHands, handConfiguration, handDirs } from "./remote-hand-fixture.ts";
@@ -45,10 +40,6 @@ const RECORDING_EXTENSION = `export default (pi) => {
 	pi.on("input", (event, ctx) => record({ event: "input", text: event.text, images: event.images?.length ?? 0, source: event.source, attribution: event.attribution, streamingBehavior: event.streamingBehavior ?? null, inputId: typeof event.inputId, idle: ctx.isIdle() }));
 	pi.on("before_agent_start", (event, ctx) => record({ event: "before_agent_start", prompt: event.prompt, trigger: event.trigger, images: event.images?.length ?? 0, preview: event.preview ?? null, options: defined(event.systemPromptOptions), idle: ctx.isIdle() }));
 };`;
-
-const noLateEffects: LateLoopRoute = () => {
-	throw new Error("this test's hooks have no work that outlives their call");
-};
 
 const harnesses: Harness[] = [];
 const closers: Array<() => void> = [];
@@ -444,74 +435,6 @@ describe("the user's loop hooks run on the user's machine when the loop runs els
 		expect(JSON.stringify(fused.faux.getCallLog().map((entry) => entry.context))).toContain(
 			"context from the user machine",
 		);
-	});
-});
-
-describe("a loop-hook call's bound session (S33, option A)", () => {
-	it("is the loop session's id, read-only, during the call only", async () => {
-		const call = createLoopHookCall(noLateEffects);
-		let during: { id: string; file: string | undefined; idle: boolean } | undefined;
-		let captured: ReturnType<typeof call.current>;
-
-		await call.run("loop-session-1", "/work", true, async () => {
-			captured = call.current();
-			const facts = captured;
-			if (facts === undefined) throw new Error("no facts inside the call");
-			during = {
-				id: facts.sessionManager.getSessionId(),
-				file: facts.sessionManager.getSessionFile(),
-				idle: facts.isIdle(),
-			};
-			expect(() => facts.sessionManager.getEntries()).toThrow(/loop-side/);
-			expect(() => {
-				(facts.sessionManager as unknown as Record<string, unknown>).getSessionId = () => "forged";
-			}).toThrow(TypeError);
-		});
-
-		expect(during).toEqual({ id: "loop-session-1", file: undefined, idle: true });
-		expect(call.current()).toBeUndefined();
-		expect(() => captured?.sessionManager.getSessionId()).toThrow(LoopHookCallEndedError);
-		expect(() => captured?.sessionManager.getSessionId()).toThrow(
-			expect.objectContaining({ name: "LoopHookCallEndedError", member: "sessionManager.getSessionId" }),
-		);
-		expect(captured?.signal.aborted).toBe(true);
-	});
-
-	it("sends what its work does after the call ended to the late route of its session, in order, never throwing", async () => {
-		const late: unknown[] = [];
-		const call = createLoopHookCall((sessionId) => ({
-			sendMessage: (message) => late.push([sessionId, "message", message.content]),
-			sendUserMessage: (content) => late.push([sessionId, "user_message", content]),
-			appendEntry: (customType) => late.push([sessionId, "entry", customType]),
-			notify: (message) => late.push([sessionId, "notice", message]),
-		}));
-		let kept: ReturnType<typeof call.current>;
-		const reply = await call.run("loop-session-3", "/work", true, async (effects) => {
-			kept = call.current();
-			kept?.sendMessage({ customType: "during", content: "in the reply", display: false });
-			return effects;
-		});
-
-		expect(() => kept?.sendMessage({ customType: "late", content: "m0", display: false })).not.toThrow();
-		expect(() => kept?.notify("n0")).not.toThrow();
-		kept?.sendMessage({ customType: "late", content: "m1", display: false });
-
-		expect(reply.sent.map((entry) => entry.message.content)).toEqual(["in the reply"]);
-		expect(late).toEqual([
-			["loop-session-3", "message", "m0"],
-			["loop-session-3", "notice", "n0"],
-			["loop-session-3", "message", "m1"],
-		]);
-	});
-
-	it("is not visible to work that runs outside the call", async () => {
-		const call = createLoopHookCall(noLateEffects);
-		const outside = Promise.withResolvers<ReturnType<typeof call.current>>();
-
-		await call.run("loop-session-2", "/work", true, async () => {});
-		queueMicrotask(() => outside.resolve(call.current()));
-
-		expect(await outside.promise).toBeUndefined();
 	});
 });
 

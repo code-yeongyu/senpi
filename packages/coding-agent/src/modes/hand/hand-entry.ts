@@ -83,8 +83,8 @@ export async function runHand(options: HandEntryOptions): Promise<never> {
 	const { agentDir } = options.configuration;
 	const report = (message: string): void => void process.stderr.write(`senpi hand: ${message}\n`);
 	const socketPath = handSocketPath(agentDir);
-	// Refuses an entry a live hand still serves; only a dead (stale) entry is removed. So this process is the only
-	// writer of the wake outbox it opens next.
+	// Refuses an entry a live hand still serves; only a dead (stale) entry is removed. The wake outbox it opens next
+	// claims its file's next epoch, so an older hand still shutting down can no longer write it.
 	await prepareSocketPath(socketPath);
 	const outbox = await openHandWakeOutbox(handWakeStorePath(agentDir), {
 		onFault: (error) => report(`wake fault: ${error.message}`),
@@ -105,7 +105,9 @@ export async function runHand(options: HandEntryOptions): Promise<never> {
 		outbox,
 		onFault: (error) => report(`wake fault: ${String(error)}`),
 	});
+	// The loop runs elsewhere (a hosted loop), so this machine is its extensions' home: their loop hooks run here (S33).
 	const hand = createLooplessHand(options.configuration, {
+		twoSidedHome: "hand",
 		...(options.extensionFactories === undefined ? {} : { extensionFactories: options.extensionFactories }),
 		wakes: handWakesOver(wakeLink),
 	});

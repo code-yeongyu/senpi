@@ -23,11 +23,8 @@ import {
 } from "../../src/core/hand/hook-contract.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import { ExtensionRunner } from "../../src/core/extensions/runner.ts";
-import {
-	createLoopHookCall,
-	extensionLoopHooks,
-	type LateLoopRoute,
-} from "../../src/modes/rpc/loopless-tool-handlers.ts";
+import { createLoopHookCall, type LateLoopRoute } from "../../src/modes/rpc/loop-hook-call.ts";
+import { extensionLoopHooks } from "../../src/modes/rpc/loopless-loop-hooks.ts";
 
 const noLateEffects: LateLoopRoute = () => {
 	throw new Error("this test's hooks have no work that outlives their call");
