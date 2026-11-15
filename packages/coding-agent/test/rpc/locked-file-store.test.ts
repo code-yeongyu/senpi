@@ -99,17 +99,42 @@ describe("locked file store", () => {
 		expect(await store.getDocument("k")).toBe("before");
 	});
 
-	it("reports a new owner to a watcher as soon as another process claims the store", async () => {
+	it("tells the owner it lost the store as soon as another process claims it", async () => {
 		const path = storePath();
 		const store = openLockedFileStore(path);
 		await store.claimFor("a");
-		const seen = Promise.withResolvers<string | undefined>();
-		const stop = store.watchOwner((owner) => seen.resolve(owner));
+		const lost = Promise.withResolvers<void>();
+		const stop = store.watchOwnership("a", () => lost.resolve());
 		try {
 			await openLockedFileStore(path).claimFor("b");
-			expect(await seen.promise).toBe("b");
+			await lost.promise;
+			expect(await store.owner()).toBe("b");
 		} finally {
 			stop();
 		}
+	});
+
+	it("retries a transient owner read error, and gives up typed on one that persists", async () => {
+		const path = storePath();
+		await openLockedFileStore(path).claimFor("a");
+		const emfile = () => Object.assign(new Error("too many open files"), { code: "EMFILE" });
+		let failures = 1;
+		const flaky = openLockedFileStore(path, {
+			readText: (file) => {
+				if (failures-- > 0) throw emfile();
+				return readFileSync(file, "utf8");
+			},
+		});
+		expect(await flaky.owner()).toBe("a");
+
+		const broken = openLockedFileStore(path, {
+			readText: () => {
+				throw emfile();
+			},
+		});
+		await expect(broken.owner()).rejects.toMatchObject({
+			name: "LockedFileStoreReadError",
+			code: "store_read_failed",
+		});
 	});
 });

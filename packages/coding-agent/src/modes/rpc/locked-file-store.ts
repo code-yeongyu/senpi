@@ -11,9 +11,11 @@
  * Ownership: `claimFor(token)` makes `token` the store's owner under the next owner epoch, and is idempotent while
  * `token` still owns it, so a retried claim never moves the epoch twice. A commit under an epoch that is no longer the
  * file's is refused `stale-epoch` (`DurableStoreError`), so a superseded process can never overwrite its successor's
- * state. `owner()` reads the current owner; `watchOwner` reports each change of it as it happens (a watch on the file's
- * directory, plus a bounded re-check for file systems whose watch misses a rename), so a superseded process can stop
- * at once instead of on its next write.
+ * state. Each claim first writes the new owner token to a small `<path>.owner` file (atomically), then the state, so
+ * `owner()` is one small read: cheap enough to check before every action. A transient read error (EMFILE, EAGAIN and
+ * the like) is retried a few times before `owner()` throws `LockedFileStoreReadError`. `watchOwnership(token, onLost)`
+ * starts from the claimer's own token and fires once when the owner file names anyone else, or stays unreadable through
+ * three re-checks (a watch on the directory, plus a re-check every 2 s for file systems whose watch misses a rename).
  */
 import {
 	closeSync,
@@ -40,8 +42,27 @@ export interface LockedFileStore extends DurableStore {
 	claimFor(token: string): Promise<number>;
 	/** The token that owns the store on disk now; `undefined` before any claim. */
 	owner(): Promise<string | undefined>;
-	/** Calls `listener` with the owner each time it changes on disk; returns the stop. */
-	watchOwner(listener: (owner: string | undefined) => void): () => void;
+	/** Calls `onLost` once, when the owner on disk stops being `token`; returns the stop. */
+	watchOwnership(token: string, onLost: () => void): () => void;
+}
+
+export interface LockedFileStoreOptions {
+	/** Reads a file as text (default `readFileSync`); a test injects read errors here. */
+	readonly readText?: (path: string) => string;
+}
+
+/** Read errors that pass on their own, retried before an owner read gives up. */
+const TRANSIENT_READ_ERRORS = new Set(["EMFILE", "ENFILE", "EAGAIN", "EBUSY", "EINTR"]);
+const OWNER_READ_ATTEMPTS = 3;
+/** Consecutive unreadable re-checks after which the watch treats ownership as lost. */
+const OWNER_UNREADABLE_LIMIT = 3;
+
+export class LockedFileStoreReadError extends Error {
+	readonly code = "store_read_failed" as const;
+	constructor(path: string, cause: unknown) {
+		super(`the store's owner file ${path} could not be read (${String(cause)})`);
+		this.name = "LockedFileStoreReadError";
+	}
 }
 
 /** How often the owner is re-read when no watch event came: a bound for a file system whose watch misses a rename. */
@@ -108,6 +129,12 @@ function readFileState(path: string): { readonly owner: string | undefined; read
 
 function writeFileState(path: string, owner: string | undefined, state: MediumState): void {
 	const { epoch, records, documents } = state;
+	writeAtomically(path, JSON.stringify({ owner, epoch, records, documents: [...documents] }));
+}
+
+const ownerPath = (path: string): string => `${path}.owner`;
+
+function writeAtomically(path: string, text: string): void {
 	const temp = join(dirname(path), `.${basename(path)}.${crypto.randomUUID()}.tmp`);
 	let fd: number;
 	try {
@@ -117,7 +144,7 @@ function writeFileState(path: string, owner: string | undefined, state: MediumSt
 	}
 	try {
 		try {
-			writeSync(fd, JSON.stringify({ owner, epoch, records, documents: [...documents] }));
+			writeSync(fd, text);
 			fsyncSync(fd);
 		} finally {
 			closeSync(fd);
@@ -137,16 +164,22 @@ function removeStaleTemps(path: string): void {
 		if (name.startsWith(prefix) && name.endsWith(".tmp")) rmSync(join(dirname(path), name), { force: true });
 }
 
-/** The owner on disk, or the unreadable marker: a file being replaced reads whole or not at all (atomic rename). */
-function readOwnerQuietly(path: string): string | undefined {
-	try {
-		return readFileState(path).owner;
-	} catch {
-		return "\u0000unreadable";
-	}
-}
-
-export function openLockedFileStore(path: string): LockedFileStore {
+export function openLockedFileStore(path: string, options: LockedFileStoreOptions = {}): LockedFileStore {
+	const readText = options.readText ?? ((file: string) => readFileSync(file, "utf8"));
+	// The owner file is replaced whole (atomic rename), so a read sees one token or none.
+	const owner = async (): Promise<string | undefined> => {
+		for (let attempt = 1; ; attempt++) {
+			try {
+				return readText(ownerPath(path)).trim() || undefined;
+			} catch (error) {
+				const code = (error as NodeJS.ErrnoException).code ?? "";
+				if (code === "ENOENT") return undefined;
+				if (!TRANSIENT_READ_ERRORS.has(code) || attempt >= OWNER_READ_ATTEMPTS)
+					throw new LockedFileStoreReadError(ownerPath(path), error);
+				await new Promise<void>((resolve) => setTimeout(resolve, 10 * attempt));
+			}
+		}
+	};
 	const medium = {
 		get current(): MediumState {
 			return readFileState(path).state;
@@ -179,33 +212,51 @@ export function openLockedFileStore(path: string): LockedFileStore {
 		exportSnapshot: () => inner.exportSnapshot(),
 		importSnapshot: (epoch, snapshot) => locked(() => inner.importSnapshot(epoch, snapshot)),
 		claimFor: (token) =>
-			locked(() => {
+			locked(async () => {
 				removeStaleTemps(path);
-				const { owner, state } = readFileState(path);
-				if (owner === token) return state.epoch;
+				const { owner: recorded, state } = readFileState(path);
+				if (recorded === token && (await owner()) === token) return state.epoch;
 				const epoch = state.epoch + 1;
+				// The owner file first: a crash between the two writes leaves the old owner already superseded.
+				writeAtomically(ownerPath(path), token);
 				writeFileState(path, token, { ...state, epoch });
 				return epoch;
 			}),
-		owner: async () => readFileState(path).owner,
-		watchOwner(listener) {
-			let last: string | undefined = readOwnerQuietly(path);
+		owner,
+		watchOwnership(token, onLost) {
+			let stopped = false;
+			let unreadable = 0;
+			const lose = (): void => {
+				if (stopped) return;
+				stop();
+				onLost();
+			};
 			const recheck = (): void => {
-				const now = readOwnerQuietly(path);
-				if (now === last) return;
-				last = now;
-				listener(now);
+				if (stopped) return;
+				owner().then(
+					(now) => {
+						unreadable = 0;
+						if (now !== token) lose();
+					},
+					() => {
+						unreadable += 1;
+						if (unreadable >= OWNER_UNREADABLE_LIMIT) lose();
+					},
+				);
 			};
 			const watcher = watch(dirname(path), (_event, name) => {
-				if (name === null || name === basename(path)) recheck();
+				if (name === null || name === basename(ownerPath(path))) recheck();
 			});
 			watcher.on("error", recheck);
 			const timer = setInterval(recheck, OWNER_RECHECK_MS);
 			timer.unref();
-			return () => {
+			const stop = (): void => {
+				stopped = true;
 				clearInterval(timer);
 				watcher.close();
 			};
+			recheck();
+			return stop;
 		},
 	};
 }

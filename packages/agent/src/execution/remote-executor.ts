@@ -84,6 +84,7 @@ export interface RemoteExecutor {
 	readonly accepted: () => readonly string[];
 	/** Settles once a restarted hand has recovered its record and re-sent the outcomes the session has not acknowledged. */
 	readonly ready: Promise<void>;
+	/** Aborts every running call and settles once they all have, then disposes the scopes and closes the transport. */
 	close(): Promise<void>;
 }
 
@@ -109,6 +110,7 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 	const accepted: string[] = [];
 	const seen = new Set<string>();
 	const running = new Map<string, { readonly controller: AbortController; readonly root: string }>();
+	const settling = new Set<Promise<void>>();
 	const planes = createPlaneClient({ transport });
 	let closed = false;
 	const stopWatching =
@@ -226,6 +228,8 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 			);
 		})();
 		done.catch((error: unknown) => options.onFault(error));
+		settling.add(done);
+		void done.finally(() => settling.delete(done)).catch(() => undefined);
 		if (sequential) {
 			state.lastSequential = done;
 			state.wave = [];
@@ -281,6 +285,8 @@ export function createRemoteExecutor(options: RemoteExecutorOptions): RemoteExec
 			closed = true;
 			stopWatching();
 			for (const { controller } of running.values()) controller.abort();
+			// An ended hand has no call left running: its scopes are disposed only after every aborted call settled.
+			await Promise.allSettled([...settling]);
 			const opened = await Promise.allSettled([...scopes.values()].map((state) => state.opened));
 			scopes.clear();
 			await Promise.allSettled(
