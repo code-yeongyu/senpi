@@ -209,5 +209,63 @@ describe.skipIf(process.platform === "win32")(
 			expect(runtime.deviceMachine?.machine).toBe(healthy.machine);
 			expect(runtime.deviceMachine?.extensionPath).toBe("<inline:healthy>");
 		});
+
+		it("a second registration within one load is a typed error naming that extension, and the first stays", async () => {
+			const runtime = createExtensionRuntime();
+			const first = fakeDevice();
+			const second = fakeDevice();
+			let conflict: unknown;
+			await loadExtensionFromFactory(
+				(pi) => {
+					pi.registerDeviceMachine(first.machine);
+					try {
+						pi.registerDeviceMachine(second.machine);
+					} catch (error) {
+						conflict = error;
+					}
+				},
+				process.cwd(),
+				createEventBus(),
+				runtime,
+				"<inline:twice>",
+			);
+			expect(conflict).toBeInstanceOf(DeviceMachineConflictError);
+			expect((conflict as DeviceMachineConflictError).registeredBy).toBe("<inline:twice>");
+			expect((conflict as DeviceMachineConflictError).attemptedBy).toBe("<inline:twice>");
+			expect(runtime.deviceMachine?.machine).toBe(first.machine);
+		});
+
+		it("a registration that lands while another load's is staged fails that load whole, typed, and keeps the first", async () => {
+			const runtime = createExtensionRuntime();
+			const eventBus = createEventBus();
+			const early = fakeDevice();
+			const staged = fakeDevice();
+			await loadExtensionFromFactory(
+				(pi) => {
+					pi.events.on("register-now", () => pi.registerDeviceMachine(early.machine));
+				},
+				process.cwd(),
+				eventBus,
+				runtime,
+				"<inline:early>",
+			);
+			const error = await loadExtensionFromFactory(
+				(pi) => {
+					pi.registerDeviceMachine(staged.machine);
+					pi.events.emit("register-now", undefined);
+				},
+				process.cwd(),
+				eventBus,
+				runtime,
+				"<inline:staged>",
+			).then(
+				() => undefined,
+				(caught: unknown) => caught,
+			);
+			expect(error).toBeInstanceOf(DeviceMachineConflictError);
+			expect((error as DeviceMachineConflictError).registeredBy).toBe("<inline:early>");
+			expect((error as DeviceMachineConflictError).attemptedBy).toBe("<inline:staged>");
+			expect(runtime.deviceMachine?.machine).toBe(early.machine);
+		});
 	},
 );

@@ -1028,6 +1028,11 @@ function createExtensionAPI(
 		commit: () => {
 			if (state !== "loading") return;
 			runtime.assertActive();
+			// Checked before anything is applied: another extension may have registered a device machine while this load's
+			// registration was staged (from an event fired during this factory). The load then fails whole, nothing half-applied.
+			if (deviceMachineStaged && runtime.deviceMachine !== undefined) {
+				throw new DeviceMachineConflictError(runtime.deviceMachine.extensionPath, extension.path);
+			}
 			for (const [name, value] of pendingFlagValues) {
 				if (!runtime.flagValues.has(name)) runtime.flagValues.set(name, value);
 			}
