@@ -12,6 +12,29 @@
 
 ### Removed
 
+## [2026.11.15-2] - 2026-11-15
+
+### Breaking Changes
+
+### Added
+
+- `OMO_TOOLS_VIA_DAEMON=bash` (off by default): an executor seam that runs the bash tool on the session's device, with a typed `DeviceUnavailableError` instead of a local run when no device is available. Covers the bash tool only; user `!` commands still run locally until slice 1b. Slice 1a only: not yet via the device daemon; the relay transport is slice 1b (senpi#6713).
+- `registerDeviceMachine(machine)` extension API: supplies the device the bash tool runs on under `OMO_TOOLS_VIA_DAEMON=bash`; one per session, a second registration is a typed `DeviceMachineConflictError` (senpi#6720).
+
+### Changed
+
+- An Opus 5.5 turn that falls back now steps to Fable 5.2 at medium effort, then Kimi K3.1 Pro at max effort (Kimi Code or Moonshot), and no further; Opus 5 is no longer an Opus 5.5 rung. A fallback keeps walking the chain it started on instead of switching to the rung's own chain ([#6701](https://github.com/code-yeongyu/senpi/pull/6701)).
+
+### Fixed
+
+- A session released with `release_session` (for a move to another device, or a takeover) kept its entry in the host's record of retained sessions, so the next host on the same endpoint reopened it unattended and wrote a hold into a file another runtime was writing. The release now drops the entry, as `close_session` does ([#6449](https://github.com/code-yeongyu/senpi/pull/6449)).
+- A renamed session now publishes a `session_status` with `lastChange.cause: "rename"` and its new name, so other devices list it under that name instead of an empty one ([#6672](https://github.com/code-yeongyu/senpi/pull/6672))
+- Cancelling a tool call that another tool started now also ends that call's unanswered permission prompt, instead of only a whole-turn abort ending it ([#6679](https://github.com/code-yeongyu/senpi/pull/6679))
+- Aborting the turn now also ends a nested call's permission prompt when that call passed its own, unlinked abort signal ([#6679](https://github.com/code-yeongyu/senpi/pull/6679))
+- `open_session` with a `cwd` that is a file (or anything else that is not a directory) is refused `session_cwd_not_directory` instead of opening a session there ([#6686](https://github.com/code-yeongyu/senpi/pull/6686))
+
+### Removed
+
 ## [2026.11.15] - 2026-11-15
 
 ### Breaking Changes

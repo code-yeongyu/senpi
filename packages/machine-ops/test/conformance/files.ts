@@ -188,6 +188,50 @@ export function defineFileCases(runner: ConformanceRunner, target: ConformanceTa
 			}),
 		);
 		it(
+			"an absolute pattern inside root finds matching files",
+			withFixture(target, async ({ ops, ctx, root }) => {
+				const result = await ops.files.glob({ pattern: join(root, "dir", "*.ts") }, ctx());
+				assert.deepEqual(
+					result.entries.map((entry) => entry.path),
+					[join(root, "dir", "a.ts")],
+				);
+			}),
+		);
+		it(
+			"a '..' pattern that resolves inside root finds matching files",
+			withFixture(target, async ({ ops, ctx, root }) => {
+				const result = await ops.files.glob({ pattern: "../dir/*.ts", cwd: "dir" }, ctx());
+				assert.deepEqual(
+					result.entries.map((entry) => entry.path),
+					[join(root, "dir", "a.ts")],
+				);
+			}),
+		);
+		it(
+			"an absolute pattern outside root is a policy denial",
+			withFixture(target, async ({ ops, ctx, outside }) => {
+				await rejectsWith(ops.files.glob({ pattern: join(outside, "*") }, ctx()), "policy_denied");
+			}),
+		);
+		it(
+			"a '..' pattern that leaves root is a policy denial",
+			withFixture(target, async ({ ops, ctx }) => {
+				await rejectsWith(ops.files.glob({ pattern: "../*" }, ctx()), "policy_denied");
+			}),
+		);
+		it(
+			"'..' after a wildcard is a policy denial",
+			withFixture(target, async ({ ops, ctx }) => {
+				await rejectsWith(ops.files.glob({ pattern: "dir/*/../a.ts" }, ctx()), "policy_denied");
+			}),
+		);
+		it(
+			"an absolute pattern through a symlink escaping root is a policy denial",
+			withFixture(target, async ({ ops, ctx, root }) => {
+				await rejectsWith(ops.files.glob({ pattern: join(root, "escape", "*") }, ctx()), "policy_denied");
+			}),
+		);
+		it(
 			"a search directory outside root is a policy denial",
 			withFixture(target, async ({ ops, ctx, outside }) => {
 				await rejectsWith(ops.files.glob({ pattern: "*.txt", cwd: outside }, ctx()), "policy_denied");

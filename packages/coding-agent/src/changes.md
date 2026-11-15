@@ -1,3 +1,21 @@
+## 2026-11-15 - The public entry exports the device machine pieces (senpi#6720)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: exports `createToolMachine`, `ToolMachine`, `ToolPathPolicy`, `MachineOps`, `MachineExecRequest`, `MachineExecResult`, `OpContext`, `DeviceUnavailableError` and `DeviceMachineConflictError`.
+
+### Why
+
+- An extension such as the omo-senpi plugin builds the device machine against the published package; `@code-yeongyu/senpi-machine-ops` is a private workspace package.
+
+### Why an extension could not handle it
+
+- Without the exports an extension cannot build a `ToolMachine` or match the typed errors with `instanceof`.
+
+### Expected merge conflict zones
+
+- LOW: the tools export block in `src/index.ts`.
+
 ## 2026-11-13 - A binary's `update --self` points at the download page when its release lookup fails (senpi#6633)
 
 ### What changed

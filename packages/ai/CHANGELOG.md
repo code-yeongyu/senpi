@@ -12,6 +12,20 @@
 
 ### Removed
 
+## [2026.11.15-2] - 2026-11-15
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- A shared ChatGPT subscription's item-limit 400 now surfaces as a typed error naming the route and the switch-model remedy instead of a raw provider error ([#6718](https://github.com/code-yeongyu/senpi/pull/6718))
+
+### Removed
+
 ## [2026.11.15] - 2026-11-15
 
 ### Breaking Changes

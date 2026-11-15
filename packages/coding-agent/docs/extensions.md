@@ -2575,6 +2575,18 @@ pi.registerShortcut("ctrl+shift+p", {
 });
 ```
 
+### pi.registerDeviceMachine(machine)
+
+Register the operation layer of the device this session's tools run on (a `ToolMachine`, for example from `createToolMachine({ ops })`). Only tools named in `OMO_TOOLS_VIA_DAEMON` use it, today `bash`, and the bash tool reads it when a command runs. With the flag on and no machine registered, bash fails with `DeviceUnavailableError` and never runs locally.
+
+One registration per session: a second one, from any extension, throws `DeviceMachineConflictError` (`code: "device_machine_conflict"`, with `registeredBy` and `attemptedBy`). A registration made by an extension whose factory then throws is discarded with the rest of that load. If another extension registers a device machine while this load's registration is still staged (for example from an event fired during this factory), the conflict is found when the load commits: the factory cannot catch it, and the extension fails to load as a whole with `DeviceMachineConflictError`.
+
+```typescript
+import { createToolMachine } from "@code-yeongyu/senpi";
+
+pi.registerDeviceMachine(createToolMachine({ ops: myDeviceOps }));
+```
+
 ### pi.registerFlag(name, options)
 
 Register a CLI flag.

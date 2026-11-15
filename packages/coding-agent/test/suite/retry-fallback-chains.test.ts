@@ -171,14 +171,16 @@ describe("fallback chain selectors", () => {
 		expect(resolved.modelFallback).toBe(true);
 	});
 
-	it("ships Opus 5.5 a step off the Opus quota before Opus 5, without overriding thinking effort (senpi#6385)", () => {
+	// Owner's order, Slack C0C50M2NFU5 ts 1794719178.424289 / 1794719397.623049 (senpi#6699).
+	it("ships Opus 5.5 Fable 5.2 at medium, then Kimi K3.1 Pro at max, and nothing else (senpi#6699)", () => {
 		const resolved = resolveRetryFallbackSettings(undefined);
 
-		expect(resolved.chains["claude-opus-5-5"]).toEqual(["claude-fable-5-2", "claude-opus-5"]);
+		expect(resolved.chains["claude-opus-5-5"]).toEqual(["claude-fable-5-2:medium", "kimi-k3.1-pro:max"]);
 	});
 
-	it("keeps every shipped rung on a bare anthropic claude model", () => {
-		for (const entries of Object.values(DEFAULT_FALLBACK_CHAINS)) {
+	it("keeps every shipped Fable rung on a bare anthropic claude model", () => {
+		const { "claude-opus-5-5": _opus55, ...fableChains } = DEFAULT_FALLBACK_CHAINS;
+		for (const entries of Object.values(fableChains)) {
 			expect(entries.length).toBeGreaterThan(0);
 			for (const entry of entries) expect(entry).toMatch(/^claude-(?:opus|fable)-[0-9]/);
 		}

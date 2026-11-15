@@ -9,6 +9,7 @@
  */
 
 import type { PromptSizeReport } from "../prompt-size-report.ts";
+import type { ToolMachine } from "../tools/machine.ts";
 import type { InputOrigin } from "../input-origin.ts";
 import type { LifecycleApi } from "../session-lifecycle-types.ts";
 import type { UploadRedaction, UploadRedactionOptions } from "../share/upload-redaction.ts";
@@ -2998,6 +2999,14 @@ export interface ExtensionAPI {
 		},
 	): void;
 
+	/**
+	 * Register the operation layer of the device this session's tools run on. Read when a routed tool executes; only
+	 * tools named in OMO_TOOLS_VIA_DAEMON use it (today: bash). One registration per session: a second one, from any
+	 * extension, throws DeviceMachineConflictError naming the extension that registered first, so two extensions
+	 * cannot silently fight over where commands run.
+	 */
+	registerDeviceMachine(machine: ToolMachine): void;
+
 	/** Register a CLI flag. */
 	registerFlag(
 		name: string,
@@ -3742,6 +3751,8 @@ export type PendingProviderRegistration =
  */
 export interface ExtensionRuntimeState {
 	flagValues: Map<string, boolean | string>;
+	/** The device the session's tools run on, and the extension that registered it (registerDeviceMachine). */
+	deviceMachine: { readonly machine: ToolMachine; readonly extensionPath: string } | undefined;
 	/** Legacy provider-config registrations queued during extension loading, processed when runner binds. */
 	pendingProviderRegistrations: PendingProviderConfigRegistration[];
 	/** Native pi-ai provider registrations queued during extension loading, processed when runner binds. */
@@ -4018,4 +4029,19 @@ export interface ExtensionError {
 	event: string;
 	error: string;
 	stack?: string;
+}
+
+/** A second registerDeviceMachine in one session. */
+export class DeviceMachineConflictError extends Error {
+	readonly code = "device_machine_conflict" as const;
+	readonly registeredBy: string;
+	readonly attemptedBy: string;
+	constructor(registeredBy: string, attemptedBy: string) {
+		super(
+			`registerDeviceMachine: extension "${attemptedBy}" tried to register a device machine, but extension "${registeredBy}" already registered one for this session`,
+		);
+		this.name = "DeviceMachineConflictError";
+		this.registeredBy = registeredBy;
+		this.attemptedBy = attemptedBy;
+	}
 }

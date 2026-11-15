@@ -1,3 +1,43 @@
+## 2026-11-15 - Extensions register the session's device machine (senpi#6720)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`, `loader.ts`: `registerDeviceMachine(machine)`, one per session; a second registration throws `DeviceMachineConflictError` naming both extensions. `runtime/bootstrap.ts` and `tools/bash.ts`: bash reads the registered machine when a command runs, only with `OMO_TOOLS_VIA_DAEMON=bash`.
+- `packages/coding-agent/src/index.ts`: the public entry exports what an extension needs to build one: `createToolMachine`, `ToolMachine`, `MachineOps`, `MachineExecRequest`, `MachineExecResult`, `OpContext`, `DeviceUnavailableError`, `DeviceMachineConflictError`.
+
+### Why
+
+- Q's order that tool calls go through the hands daemon: the omo-senpi plugin supplies the local daemon's machine, and senpi stays transport-free.
+
+### Why an extension could not handle it
+
+- The session builds the bash tool's options itself; without this API no extension can supply the device it runs on.
+
+### Expected merge conflict zones
+
+- LOW: `ExtensionAPI` near `registerFlag`; the runtime literal in `loader.ts`.
+
+## 2026-11-14 - A nested call's permission prompt follows the call's own signal (senpi#6679)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/two-sided-forwarding.ts`: `ToolEventDispatchOptions` gains an optional `signal`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitToolCall` overrides `ctx.signal` with that signal for each `tool_call` hook run of that call only. `signal` joins the members a context without a session serves: it reads `undefined` there (or a signal a host bound) instead of throwing.
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionRuntimeContext` includes `signal`.
+- `runner.ts`: `emitToolCall` serves each `tool_call` hook the union of the call's signal and the context's (turn) signal via the exported `combinedToolCallSignal` (senpi#6679 review M1). A handler served on the loop side of a two-sided forward still sees its loop-hook signal: the forwarder carries the event only, the documented exception (senpi#6679 review L1).
+
+### Why
+
+- `ctx.executeTool(name, args, { signal })` dropped its signal before the `tool_call` hooks, so their `ctx.signal` was the turn's. A permission prompt for the nested call then ended only on a whole-turn abort, not when that call was cancelled (#6676 review L1).
+
+### Why an extension could not handle it
+
+- The `tool_call` context is built by the runner and the nested call's signal lives inside `AgentSession.executeTool`; an extension cannot reach either.
+
+### Expected merge conflict zones
+
+- LOW: `ToolEventDispatchOptions`, the per-handler context setup in `emitToolCall`, `RUNTIME_CONTEXT_MEMBERS` and the `ExtensionRuntimeContext` member list.
+
 ## 2026-11-11 - pi.engine, and the kernel-tool contexts are one registry per realm (omo#12965)
 
 ### What changed

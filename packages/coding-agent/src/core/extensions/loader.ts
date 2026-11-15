@@ -97,7 +97,8 @@ import type {
 	SessionKind,
 	ToolDefinition,
 } from "./types.ts";
-import { DEFAULT_EXTENSION_SESSION_PROFILE, EMPTY_SESSION_CONTEXT } from "./types.ts";
+import type { ToolMachine } from "../tools/machine.ts";
+import { DEFAULT_EXTENSION_SESSION_PROFILE, DeviceMachineConflictError, EMPTY_SESSION_CONTEXT } from "./types.ts";
 
 /** Per-session extension inputs a caller may name; every absent one takes its classic default. */
 export interface ExtensionSessionOptions {
@@ -321,6 +322,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
 	};
 
 	const runtime: ExtensionRuntime = {
+		deviceMachine: undefined,
 		sendMessage: notInitialized,
 		sendUserMessage: notInitialized,
 		appendEntry: notInitialized,
@@ -471,11 +473,13 @@ function createExtensionAPI(
 		}
 		runtime.assertActive();
 	};
+	let deviceMachineStaged = false;
 	const applyRuntimeChange = (change: () => void) => {
 		if (state === "loading") pendingRuntimeChanges.push(change);
 		else change();
 	};
 	const clearPending = () => {
+		deviceMachineStaged = false;
 		pendingFlagValues.clear();
 		pendingRuntimeChanges.length = 0;
 		loadingUnsubscribers.length = 0;
@@ -545,6 +549,19 @@ function createExtensionAPI(
 				handlers.splice(handlerIndex, 1);
 				if (handlers.length === 0) extension.handlers.delete(event);
 			};
+		},
+
+		registerDeviceMachine(machine: ToolMachine): void {
+			assertActive();
+			if (runtime.deviceMachine !== undefined) {
+				throw new DeviceMachineConflictError(runtime.deviceMachine.extensionPath, extension.path);
+			}
+			if (deviceMachineStaged) throw new DeviceMachineConflictError(extension.path, extension.path);
+			deviceMachineStaged = true;
+			// Staged like provider registrations: a factory that throws after registering leaves no device behind.
+			applyRuntimeChange(() => {
+				runtime.deviceMachine = { machine, extensionPath: extension.path };
+			});
 		},
 
 		registerTool(tool: ToolDefinition): void {
@@ -1011,6 +1028,11 @@ function createExtensionAPI(
 		commit: () => {
 			if (state !== "loading") return;
 			runtime.assertActive();
+			// Checked before anything is applied: another extension may have registered a device machine while this load's
+			// registration was staged (from an event fired during this factory). The load then fails whole, nothing half-applied.
+			if (deviceMachineStaged && runtime.deviceMachine !== undefined) {
+				throw new DeviceMachineConflictError(runtime.deviceMachine.extensionPath, extension.path);
+			}
 			for (const [name, value] of pendingFlagValues) {
 				if (!runtime.flagValues.has(name)) runtime.flagValues.set(name, value);
 			}
