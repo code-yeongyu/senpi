@@ -2,122 +2,20 @@
 // code as locally. The session lives in the loop: each call carries the loop's session facts (session port, read) and
 // returns the writes the loop commits (session port, write), at the real boundary of a brain's remote ToolHost and a
 // hand's loopless runtimes over an in-process carrier.
-import {
-	type AgentToolCall,
-	createRemoteExecutor,
-	createRemoteToolHost,
-	type RemoteSessionPort,
-} from "@earendil-works/pi-agent-core";
-import type { JsonValue, ToolResultMessage } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import type { TodoToolDetails } from "../../src/core/extensions/builtin/todotools/state.ts";
 import { TODO_STATE_ENTRY_TYPE } from "../../src/core/extensions/builtin/todotools/todo-types.ts";
 import type { ExtensionAPI } from "../../src/core/extensions/index.ts";
-import type { SessionEntry } from "../../src/core/session-manager.ts";
-import { createLooplessHand } from "../../src/modes/rpc/remote-executor-scope.ts";
-import { cleanupHands, handConfiguration, handDirs, type HandDirs, openLink } from "./remote-hand-fixture.ts";
+import { hostedLoop, textOf, userMachine } from "./hosted-session-fixture.ts";
+import { cleanupHands, handDirs } from "./remote-hand-fixture.ts";
 
 afterEach(cleanupHands);
-
-interface CommittedEffects {
-	readonly entries?: { readonly customType: string; readonly data?: unknown }[];
-	readonly activeTools?: string[];
-}
-
-const toJson = (value: unknown): JsonValue => JSON.parse(JSON.stringify(value)) as JsonValue;
-
-/**
- * The loop's side of the session port: its own branch (the user's request first), the facts it carries with every
- * call, and the commit of what a call returns. A real loop appends each entry to its log; this one to its branch.
- */
-function hostedLoop(activeTools: string[]) {
-	const sessionId = `hosted-${crypto.randomUUID()}`;
-	const branch: SessionEntry[] = [
-		{
-			type: "message",
-			id: "user-1",
-			parentId: null,
-			timestamp: new Date(0).toISOString(),
-			message: { role: "user", content: [{ type: "text", text: "plan the release" }], timestamp: 0 },
-		},
-	];
-	const loop = {
-		sessionId,
-		branch,
-		activeTools,
-		committed: [] as { readonly toolCallId: string; readonly effects: CommittedEffects }[],
-	};
-	const port: RemoteSessionPort = {
-		carry: () =>
-			toJson({
-				sessionId,
-				idle: false,
-				leafId: branch.at(-1)?.id ?? null,
-				handEntries: branch.filter((entry) => entry.type === "custom"),
-				branch,
-				activeTools: loop.activeTools,
-			}),
-		commit: (call: AgentToolCall, raw: JsonValue) => {
-			const effects = raw as CommittedEffects;
-			loop.committed.push({ toolCallId: call.id, effects });
-			for (const entry of effects.entries ?? [])
-				branch.push({
-					type: "custom",
-					id: `hand-${branch.length}`,
-					parentId: branch.at(-1)?.id ?? null,
-					timestamp: new Date(0).toISOString(),
-					customType: entry.customType,
-					data: entry.data,
-				});
-			if (effects.activeTools !== undefined) loop.activeTools = effects.activeTools;
-		},
-	};
-	return { loop, port };
-}
-
-/** One hand process on the user's machine and the brain's link to it; `extra` adds extensions beside the builtins. */
-function userMachine(dirs: HandDirs, port: RemoteSessionPort, extra: ((pi: ExtensionAPI) => void)[] = []) {
-	const link = openLink();
-	const hand = createLooplessHand(handConfiguration(dirs), {
-		twoSidedHome: "hand",
-		...(extra.length === 0 ? {} : { extensionFactories: extra }),
-	});
-	const executor = createRemoteExecutor({
-		authority: { kind: "self" },
-		transport: link.hand,
-		openScope: hand.openScope,
-		onFault: (error) => {
-			throw error;
-		},
-	});
-	const host = createRemoteToolHost({ transport: link.brain, placement: "cross-machine", sessionPort: port });
-	const scope = { id: `scope-${crypto.randomUUID()}`, root: dirs.cwd };
-	return {
-		call: async (id: string, name: string, args: Record<string, JsonValue>): Promise<ToolResultMessage> => {
-			const { messages } = await host.execute(
-				{ scope, calls: [{ type: "toolCall", id, name, arguments: args }], mode: "sequential" },
-				{ emit: () => {} },
-			);
-			const [message] = messages;
-			if (message === undefined) throw new Error(`no result for ${id}`);
-			return message;
-		},
-		close: async () => {
-			host.close();
-			await executor.close();
-			await hand.close();
-		},
-	};
-}
-
-const textOf = (message: ToolResultMessage): string =>
-	message.content.map((part) => (part.type === "text" ? part.text : "")).join("");
 
 describe("a hosted loop's session tools run on the user's machine through the session port (senpi#6754)", () => {
 	it("todo returns its list, the loop commits its entry, and a later call carrying that entry sees the list", async () => {
 		const dirs = await handDirs("st-todo");
-		const { loop, port } = hostedLoop(["read", "todo"]);
+		const { loop, port } = hostedLoop({ activeTools: ["read", "todo"] });
 		const first = userMachine(dirs, port);
 
 		const init = await first.call("t1", "todo", { op: "init", list: [{ phase: "Ship", items: ["tag the build"] }] });
@@ -143,7 +41,7 @@ describe("a hosted loop's session tools run on the user's machine through the se
 
 	it("a deferred tool's first call activates it in the loop's tool set, and tool_search runs there", async () => {
 		const dirs = await handDirs("st-search");
-		const { loop, port } = hostedLoop(["read"]);
+		const { loop, port } = hostedLoop({ activeTools: ["read"] });
 		const releaseNotes = (pi: ExtensionAPI) =>
 			pi.registerTool({
 				name: "release_notes",
