@@ -304,6 +304,8 @@ export class SessionWorkerClient {
 	}
 
 	private receive(message: SessionWorkerToHost): void {
+		// A message from the worker is progress: the no-progress deadline restarts (senpi#6452).
+		this.requests.noteProgress();
 		if (this.stopped) {
 			if ("signal" in message && message.signal) acknowledge(message.signal, false);
 			return;

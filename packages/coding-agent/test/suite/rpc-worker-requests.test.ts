@@ -99,3 +99,31 @@ it("times out interrupts without imposing that timeout on normal commands", asyn
 		vi.useRealTimers();
 	}
 });
+
+it("a worker that keeps answering progress is not quarantined by the opening deadline (senpi#6452)", async () => {
+	vi.useFakeTimers();
+	const sent: Array<{ request: number }> = [];
+	let timeouts = 0;
+	const requests = new SessionWorkerRequests(
+		(message) => sent.push(message),
+		() => {
+			timeouts++;
+		},
+	);
+	const pending = requests.request({ type: "commit" });
+	const half = Math.floor(SESSION_WORKER_LIMITS.openMs / 2);
+	// The worker answers progress before each deadline would fire: a request that merely runs long
+	// under load is not a dead worker, so the session must not be quarantined.
+	vi.advanceTimersByTime(half);
+	requests.noteProgress();
+	vi.advanceTimersByTime(half);
+	requests.noteProgress();
+	vi.advanceTimersByTime(half);
+	expect(timeouts).toBe(0);
+	// Once the worker stops answering at all, the unchanged deadline still fires.
+	vi.advanceTimersByTime(SESSION_WORKER_LIMITS.openMs + 1);
+	expect(timeouts).toBe(1);
+	requests.close(new Error("closed"));
+	await expect(pending).rejects.toThrow("closed");
+	vi.useRealTimers();
+});

@@ -38,6 +38,25 @@ export class SessionWorkerRequests {
 		this.timeout = timeout;
 	}
 
+	/**
+	 * Any inbound worker message shows the request pipeline is alive: a request that merely runs
+	 * long under load is not a dead worker, so the no-progress deadline restarts instead of
+	 * quarantining the session (senpi#6452). The timeout VALUE is unchanged; only a worker that
+	 * stops answering at all reaches it.
+	 */
+	noteProgress(): void {
+		if (this.closed) return;
+		this.openingDeadline = Date.now() + SESSION_WORKER_LIMITS.openMs;
+		for (const pending of this.pending.values()) {
+			if (pending.timer === undefined) continue;
+			clearTimeout(pending.timer);
+			pending.timer = setTimeout(
+				this.timeout,
+				pending.control ? SESSION_WORKER_LIMITS.controlMs : this.remainingOpenMs(),
+			);
+		}
+	}
+
 	/** Remaining share of the open budget, armed on first use so idle time before it is free. */
 	private remainingOpenMs(): number {
 		const now = Date.now();

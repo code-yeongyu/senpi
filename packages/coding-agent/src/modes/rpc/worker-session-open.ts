@@ -75,6 +75,24 @@ export async function openWorkerSession(
 			throw new RpcSessionRegistryError("session_id_in_use");
 		}
 	}
+	// A quarantined entry is a dead end: its worker stopped answering. Retire it and answer a typed,
+	// retryable refusal that names the quarantine, so the retry reopens the session from its file
+	// instead of colliding with a corpse (senpi#6452).
+	for (const [handle, entry] of host.entries) {
+		if (entry.state !== "quarantined") continue;
+		const samePath = profile.sessionPath !== undefined && entry.sessionPath === profile.sessionPath;
+		const sameId = requestedDurableId !== undefined && entry.durableSessionId === requestedDurableId;
+		if (!samePath && !sameId) continue;
+		entry.state = "closed";
+		host.entries.delete(handle);
+		host.claims.delete(handle);
+		host.reservations.releaseAll(handle);
+		entry.closeResolve?.();
+		throw new RpcSessionRegistryError("session_closing", undefined, {
+			reason: "session_quarantined",
+			action: "retry",
+		});
+	}
 	if (profile.sessionPath) {
 		const key = host.knownReservationKey(profile.sessionPath);
 		const owner = key ? host.reservations.owner(key) : undefined;

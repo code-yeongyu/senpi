@@ -71,7 +71,13 @@ it("an old-path open never starts a second writer on a session open under its ne
 
 		await expect(second).rejects.toMatchObject({ code: "session_path_in_use" });
 	} finally {
-		for (const handle of handles) await registry.close(handle).catch(() => undefined);
+		for (const handle of handles) {
+			try {
+				await registry.close(handle);
+			} catch {
+				// A retired (quarantined) handle has no entry left to close.
+			}
+		}
 		await host.dispose();
 	}
 }, 60_000);
@@ -126,6 +132,38 @@ it("worker host answers a missing moved session file with the registry's open_fa
 			error: `open_failed: moved session file does not exist: ${join(layout.newSessions, "gone.jsonl")}`,
 		});
 	} finally {
+		await host.dispose();
+	}
+}, 60_000);
+
+it("an open naming a quarantined session answers a typed retryable refusal and the retry reopens it (senpi#6452)", async () => {
+	const { layout, newSession, host, registry } = await movedWorkerHost();
+	const handles: string[] = [];
+	try {
+		const opened = await registry.openSession({ cwd: layout.newWorktree, sessionPath: newSession });
+		handles.push(opened.sessionId);
+		const entry = registry.peek(opened.sessionId);
+		if (!entry) throw new Error("the open left no entry");
+		// A worker that stopped answering is quarantined; the entry is a dead end until retired.
+		entry.state = "quarantined";
+
+		await expect(registry.openSession({ cwd: layout.newWorktree, sessionPath: newSession })).rejects.toMatchObject({
+			code: "session_closing",
+			detail: { reason: "session_quarantined", action: "retry" },
+		});
+		// The refusal retired the corpse, so the retry reopens the session from its file.
+		expect(registry.peek(opened.sessionId)).toBeUndefined();
+		const reopened = await registry.openSession({ cwd: layout.newWorktree, sessionPath: newSession });
+		handles.push(reopened.sessionId);
+		expect(reopened.durableSessionId).toBe(SESSION_ID);
+	} finally {
+		for (const handle of handles) {
+			try {
+				await registry.close(handle);
+			} catch {
+				// A retired (quarantined) handle has no entry left to close.
+			}
+		}
 		await host.dispose();
 	}
 }, 60_000);
