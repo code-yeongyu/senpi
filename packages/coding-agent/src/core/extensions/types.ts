@@ -155,7 +155,7 @@ export type CompactionRejectionCause =
 	| "stale-revision"
 	// The summary request failed on a transient provider error after its bounded retries;
 	// it says nothing about the context, so the session does not latch admission on it and a
-	// later send retries compaction.
+	// later attempt can retry compaction.
 	| "transient-failure";
 
 // ============================================================================

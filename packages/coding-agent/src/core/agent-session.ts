@@ -11670,7 +11670,7 @@ export class AgentSession {
 	 * compacted, so the automatic loop must stop re-sending it (#7921 case 6). An external owner
 	 * and a transient provider failure (senpi#6760) say nothing about the context: latching on
 	 * them refused every automated send for good, while a later attempt can succeed. Neither does
-	 * a breaker cooldown rejection, which made no attempt at all. Any three owned failures trip
+	 * a breaker cooldown rejection, which made no attempt at all. Three consecutive owned failures trip
 	 * the breaker, deterministic ones included, so this can leave a deterministic failure
 	 * unlatched for one cooldown (60 s, with #531 cooldown admission). The next real attempt
 	 * that fails deterministically latches again, and a latch already armed stays armed.
