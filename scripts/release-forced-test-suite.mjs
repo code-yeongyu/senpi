@@ -32,6 +32,13 @@ const CODING_AGENT_WORKSPACE = "packages/coding-agent";
  */
 export const FORCED_CODING_AGENT_SHARDS = 2;
 
+/**
+ * A release dispatched with `force_tests` runs the suite as matrix jobs instead (senpi#6642, `.github/workflows/publish-npm.yml`):
+ * coding-agent as this many `vitest --shard=i/N` jobs, each on its own ubuntu-latest runner at the same two-fork CI cap,
+ * plus one job for every other workspace. The workflow's `forced-shard` matrix lists exactly 1..N.
+ */
+export const FORCED_SHARD_JOBS = 6;
+
 const SUPERVISOR = fileURLToPath(new URL("./release-forced-test-supervisor.mjs", import.meta.url));
 const SUPERVISOR_TIMEOUT_EXIT = 124;
 const RUN_WORKSPACES = fileURLToPath(new URL("./run-workspaces.mjs", import.meta.url));
@@ -68,14 +75,15 @@ export function planForcedTestSuite({ rootDirectory, workspaces, shards = FORCED
 const minutes = (ms) => (ms / 60_000).toFixed(1);
 
 /** Prefix a step's output lines with its label; GitHub workflow commands (`::error ...`) stay at line start. */
-function relay(stream, label, target) {
+function relay(stream, label, target, observe) {
 	createInterface({ input: stream, crlfDelay: Infinity }).on("line", (line) => {
+		observe(line);
 		target.write(line.startsWith("::") ? `${line}\n` : `[${label}] ${line}\n`);
 	});
 }
 
 /** Run one step under the supervisor. Resolves on the supervisor's exit, never waiting on a pipe an orphan holds. */
-function runStep(step, timeoutMs, env) {
+function runStep(step, timeoutMs, env, observe) {
 	const startedAt = Date.now();
 	return new Promise((resolve) => {
 		const child = spawn(process.execPath, [SUPERVISOR, String(Math.max(1, timeoutMs)), step.bin, ...step.args], {
@@ -83,8 +91,8 @@ function runStep(step, timeoutMs, env) {
 			env: { ...env, CI: "1" },
 			stdio: ["ignore", "pipe", "pipe"],
 		});
-		relay(child.stdout, step.label, process.stdout);
-		relay(child.stderr, step.label, process.stderr);
+		relay(child.stdout, step.label, process.stdout, observe);
+		relay(child.stderr, step.label, process.stderr, observe);
 		child.stdout.unref?.();
 		child.stderr.unref?.();
 		const settle = (outcome) => resolve({ step, elapsedMs: Date.now() - startedAt, ...outcome });
@@ -104,13 +112,15 @@ function verdictOf(result) {
 /**
  * Run the forced suite. Fails naming every failed step, or, when the budget runs out, naming each step still
  * running and how long it ran; a slow suite and a stuck step both end there, and the wall lines tell them apart.
- * @param {{plan?: {serial: Step[], parallel: Step[]}, timeoutMs?: number, env?: NodeJS.ProcessEnv, log?: (line: string) => void}} [options]
+ * `observe` sees every output line of every step, unprefixed (the matrix jobs count test summaries with it).
+ * @param {{plan?: {serial: Step[], parallel: Step[]}, timeoutMs?: number, env?: NodeJS.ProcessEnv, log?: (line: string) => void, observe?: (line: string) => void}} [options]
  */
 export async function runForcedTestSuite({
 	plan,
 	timeoutMs = FORCED_TEST_SUITE_TIMEOUT_MS,
 	env = process.env,
 	log = (line) => console.log(line),
+	observe = () => {},
 } = {}) {
 	const rootDirectory = process.cwd();
 	const steps = plan ?? planForcedTestSuite({ rootDirectory, workspaces: await resolveWorkspaceDirectories(rootDirectory) });
@@ -132,11 +142,11 @@ export async function runForcedTestSuite({
 	};
 
 	for (const step of steps.serial) {
-		record(await runStep(step, remaining(), env));
+		record(await runStep(step, remaining(), env, observe));
 		stopAtBudget();
 	}
 	const shardsStartedAt = Date.now();
-	for (const result of await Promise.all(steps.parallel.map((step) => runStep(step, remaining(), env)))) record(result);
+	for (const result of await Promise.all(steps.parallel.map((step) => runStep(step, remaining(), env, observe)))) record(result);
 	log(
 		`[forced-tests] total wall ${minutes(Date.now() - startedAt)} min of the ${timeoutMs / 60_000} min budget; ` +
 			`${steps.parallel.length} parallel step(s) took ${minutes(Date.now() - shardsStartedAt)} min`,

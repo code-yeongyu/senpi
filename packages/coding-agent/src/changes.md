@@ -1,3 +1,39 @@
+## 2026-11-13 - A binary's `update --self` points at the download page when its release lookup fails (senpi#6633)
+
+### What changed
+
+- `packages/coding-agent/src/package-manager-cli.ts`: `selfUpdatePlanAfterLookupFailure` (exported) decides what `update --self` does when the latest-version lookup throws or returns nothing. A standalone binary prints the failure and "Download from: https://github.com/code-yeongyu/senpi/releases/latest" and exits cleanly; every other install still fails with "Could not determine latest ... version". `getSelfUpdatePlan` calls it with `detectInstallMethod()`.
+
+### Why
+
+- Since senpi#6633 a binary's lookup asks the unauthenticated GitHub API (60 requests per hour per IP). A rate limit made `update --self` fail before it reached the download instruction, although a binary has no in-place update to run anyway.
+
+### Why an extension could not handle it
+
+- `update --self` is a built-in CLI command in this file; no extension hook wraps its version lookup.
+
+### Expected merge conflict zones
+
+- LOW: the lookup try/catch in `getSelfUpdatePlan` in `package-manager-cli.ts`.
+
+## 2026-11-12 - A cold experimental server gets a load-tolerant startup wait (senpi#6487)
+
+### What changed
+
+- `packages/coding-agent/src/experimental/server.ts`: `activateServer` waits for the server it started under its own bound, `ACTIVATION_STARTUP_HANG_MS` (120 s), measured with `performance.now()`. It used `ACTIVATION_TIMEOUT_MS` (10 s) on `Date.now()`. The wait still ends at once when the server accepts a connection, exits, fails to spawn, or the activation lock is lost. The activation lock timings are unchanged.
+
+### Why
+
+- A cold start on a loaded host took longer than 10 s, so the client failed with "Timed out waiting for automatically activated server" while the server was still starting (seen in the experimental runtime tests at load ~30 on a 14-core host). A system clock step could also end the wall-clock wait early.
+
+### Why an extension could not handle it
+
+- Server activation is the experimental client's own startup path; no extension runs before it.
+
+### Expected merge conflict zones
+
+- LOW: the activation constants and the startup wait loop in `activateServer`.
+
 ## 2026-11-09 - Startup fillers are released only while the process still holds them (senpi#6282)
 
 ### What changed

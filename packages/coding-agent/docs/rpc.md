@@ -3403,10 +3403,11 @@ What the host does enforce are lifecycle windows, and they only ever return memo
   endpoint's daemon directory (`handover-parked/`, one entry per session path, the same record a handoff park writes)
   as soon as its open succeeds; the entry follows the session's `set_session_context` patches and its park, and a
   transcript switch (`new_session`, `switch_session`, a fork) moves it to the new file, so only the transcript the
-  session is on comes back. An explicit `close_session` or a reclaim removes every key the session was recorded
-  under. While the session is open the entry names the process that holds it; a park drops that, and a host never
-  reopens an entry whose holding process is still alive. So during a generation handoff the successor does not open
-  a session its draining predecessor still has loaded, idle and detached ones included: it reopens the predecessor's
+  session is on comes back. An explicit `close_session`, a `release_session` (the file is another runtime's then) or
+  a reclaim removes every key the session was recorded under. While the session is open the entry names the process
+  that holds it; a park drops that, and a host never reopens an entry whose holding process is still alive. So during
+  a generation handoff the successor does not open a session its draining predecessor still has loaded, idle and
+  detached ones included: it reopens the predecessor's
   park once the drain writes it (or the entry, if the predecessor dies without parking). A host
   that starts on the same socket and agent dir - after a handoff, a clean stop, a crash, or a kill in the middle of a
   turn - reopens, in the background right after it binds, every entry an earlier process wrote, replaying the
@@ -4023,7 +4024,7 @@ names a valid preset.
 
 ### The folder an open_session works in
 
-`open_session.cwd` is the folder the session works in: its tools run there and its project files are read from there. An open that names one works in it. An open that names none and a `sessionPath` at which a session file exists works in the folder that file's header names, as `--session` does; the host maps a folder the desktop moved to where it lives now. A header folder that is not on this host refuses the open with `open_failed` (`Stored session working directory does not exist: <folder>`): the session is never opened in the host's own folder instead. Name a `cwd` to open it somewhere else. Any other open without `cwd` (no `sessionPath`, a `sessionPath` no file is at yet, or a file whose header names no folder) works in the folder the host was started in. An open that attaches to a session this host already holds leaves its folder as it is.
+`open_session.cwd` is the folder the session works in: its tools run there and its project files are read from there. An open that names one works in it. An open that names none and a `sessionPath` at which a session file exists works in the folder that file's header names, as `--session` does; the host maps a folder the desktop moved to where it lives now. A header folder that is not on this host refuses the open with `open_failed` (`Stored session working directory does not exist: <folder>`): the session is never opened in the host's own folder instead. A folder that exists but is not a directory (a file, a socket), named or taken from a header, refuses the open with `session_cwd_not_directory` (`errorData { cwd }`) before any session is opened or created. Name a `cwd` to open it somewhere else. Any other open without `cwd` (no `sessionPath`, a `sessionPath` no file is at yet, or a file whose header names no folder) works in the folder the host was started in. An open that attaches to a session this host already holds leaves its folder as it is.
 
 An open that names no folder never falls back to the host's own for a session file it could not read: a file that exists but cannot be read, and a moved-path probe whose step timed out, refuse the open (`open_failed`) instead. A `cwd` of `null` means no folder was named, as the host's launch profile already reads it.
 
@@ -4231,6 +4232,7 @@ codes or code prefixes in `error`:
 - `release_unsupported` (`release_session` for a session this host cannot hand over; `errorData.detail` is `worker_runtime` - a worker isolate owns the runtime - or `no_session_file`)
 - `release_failed` (`release_session` whose hand-over failed after it began - the release entry could not be written or the teardown threw; `errorData.detail` is the error message, plus `interrupted`/`dropped` after an interrupt)
 - `invalid_path` (relative `sessionPath`/`cwd`)
+- `session_cwd_not_directory` (`open_session` whose `cwd`, named or taken from a session file's header, exists but is not a directory; `errorData { cwd }`; nothing is opened or created)
 - `open_failed: <detail>`. `open_failed: model_unavailable: <reason>` means the open named a model (`provider`/`modelId`) that could not be resolved, for example an unknown provider; the session is not opened, rather than running on the default model. The in-process runtime adds `errorData { reason: "model_unavailable", requestedModel }`; a worker runtime relays the same error text, so match on the prefix
 - `invalid_session_context: <detail>` (`open_session.context` past a documented cap: more than 32 keys, a key that does not match `^[a-z][a-z0-9_]*$`, a non-string or >16 KiB value, or more than 32 KiB of JSON in total; the detail names the cap and its byte budget)
 - `invalid_subscription: <reason>` (`subscribe_sessions` with a malformed `sessions`, `mirror` or flag; `errorData { reason, action }`)
@@ -6287,12 +6289,12 @@ as they would on `reload`, and the next session opened in the folder gets the sa
 implied by `open_session` or by a permission preset; only this explicit request saves a decision.
 
 ```json
-{"type": "set_project_trust", "choice": "trust"}
+{"type": "set_project_trust", "choice": "trust", "expectedCwd": "/home/me/project"}
 ```
 
-`choice` is `trust` (this folder), `trust_parent` (the parent folder; clears this folder's own entry, as `/trust`
+`expectedCwd` is optional, as on every project write: see [The folder a project write is for](#the-folder-a-project-write-is-for). `choice` is `trust` (this folder), `trust_parent` (the parent folder; clears this folder's own entry, as `/trust`
 does) or `do_not_trust`. The response carries the same `data` as `get_project_trust`, read after the change.
-Errors: `invalid_argument` for an unknown choice, `project_trust_locked` when the launch named the trust, and
+Errors: `invalid_argument` for an unknown choice or an `expectedCwd` that is not a string, `project_cwd_mismatch` when `expectedCwd` names another folder than the session's (nothing is saved or applied), `project_trust_locked` when the launch named the trust, and
 `project_trust_extension_decided` when a `project_trust` handler of an extension loaded before trust (never a
 project extension) decides the other way: such a handler decides before any saved choice when a session opens, so
 the request is refused and nothing is saved or applied. A folder with nothing trust gates stays trusted whatever is
@@ -6332,11 +6334,12 @@ the file: values the session reads when it starts (default model and thinking le
 modes) apply after `reload` or in the next session.
 
 ```json
-{"type": "set_project_setting", "key": "defaultThinkingLevel", "value": "high"}
+{"type": "set_project_setting", "key": "defaultThinkingLevel", "value": "high", "expectedCwd": "/home/me/project"}
 ```
 
 The response carries the same `data` as `get_project_settings`, read after the write. Errors:
-`invalid_argument` when `key` is not an identifier (`[A-Za-z][A-Za-z0-9_]*`) or `value` is missing,
+`invalid_argument` when `key` is not an identifier (`[A-Za-z][A-Za-z0-9_]*`), `value` is missing or `expectedCwd` is
+not a string, `project_cwd_mismatch` when `expectedCwd` names another folder (nothing is written),
 `project_not_trusted` while the project is untrusted (trust it first), `project_settings_unreadable` when the
 existing file does not parse (nothing is written), and `project_settings_write_failed` when writing the file fails
 (permissions, a held lock).
@@ -6377,19 +6380,31 @@ Errors: `invalid_argument` when `path` is not a string, `project_file_not_allowe
 other path, or when a folder on the way or the file itself is a symlink or not a regular file and folder, and
 `project_file_too_large` (`errorData: { limitBytes }`) for a stored file over 512 KiB.
 
+#### The folder a project write is for
+
+`set_project_trust`, `set_project_setting` and `write_project_file` take an optional `expectedCwd`: the folder the
+caller means. A client that reaches a session by a key that can since name another session (a remote desktop, through
+a relay) states it, so the write lands only in that folder's project. When it is given and the session's working
+directory is another folder, the write is refused with `project_cwd_mismatch` and nothing is written or applied. Both
+paths are compared with only trailing separators of the path's own style dropped (`/` for a POSIX path; `\` or `/`
+for a drive or UNC path) and a Windows drive letter in either case; nothing is trimmed and the rest of the path is
+compared as written. A present `expectedCwd` that is not a string is refused with `invalid_argument`. Without it, a
+write behaves as before.
+
 #### write_project_file
 
 Replaces (or creates) one of the files `read_project_file` reads, naming the version it replaces.
 
 ```json
-{"type": "write_project_file", "path": "AGENTS.md", "content": "# Project rules\n", "ifEtag": "sha256-…"}
+{"type": "write_project_file", "path": "AGENTS.md", "content": "# Project rules\n", "ifEtag": "sha256-…", "expectedCwd": "/home/me/project"}
 ```
 
 `ifEtag` is required: the `etag` last read, or `null` to create a file that must not exist yet. Missing parent
 folders are created. The file lands by a temporary file and a rename, so a reader never sees a partial write, and
 writes to one file are applied one at a time. The response carries the same `data` as `read_project_file`, read
 after the write. The session reads its instruction files when they are next loaded (a new session or `reload`).
-Errors: `invalid_argument` when `content` is not a string or `ifEtag` is neither a string nor `null`,
+Errors: `invalid_argument` when `content` is not a string, `ifEtag` is neither a string nor `null`, or `expectedCwd` is
+not a string, `project_cwd_mismatch` when `expectedCwd` names another folder (nothing is written),
 `project_not_trusted` while the project is untrusted, `project_file_not_allowed` as for `read_project_file`,
 `project_file_too_large` (`errorData: { limitBytes }`) for content over 512 KiB or a stored file over 512 KiB (its
 version cannot be checked without reading it), `project_file_conflict` when

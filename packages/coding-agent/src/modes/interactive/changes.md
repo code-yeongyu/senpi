@@ -1,3 +1,27 @@
+## 2026-11-03 - Preserve Markdown selection provenance in transcript caches
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts` preserves provenance in both cached-array copies.
+- `packages/coding-agent/src/modes/interactive/components/progressive-transcript-container.ts` preserves provenance when slicing a stable prefix or prepending a history marker.
+- `packages/coding-agent/src/modes/interactive/components/mermaid.ts` returns authored Markdown unchanged unless it replaces a diagram or adds a warning.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts` and `packages/coding-agent/src/modes/interactive/components/progressive-transcript-container.ts`: equal rendered text can have different original Markdown, so cached arrays must retain their source identity and offsets.
+- `packages/coding-agent/src/modes/interactive/components/mermaid.ts`: lexer normalization of CRLF during a no-op transform otherwise disables original-source copying in the default transcript chain.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts` and `packages/coding-agent/src/modes/interactive/components/progressive-transcript-container.ts`: these array copies happen inside built-in transcript caches without an extension hook.
+- `packages/coding-agent/src/modes/interactive/components/mermaid.ts`: the built-in transform must preserve its input before later extension transforms receive it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts`: `render` and `cacheRender`.
+- `packages/coding-agent/src/modes/interactive/components/progressive-transcript-container.ts`: `paint` and `reusablePrefix`.
+- `packages/coding-agent/src/modes/interactive/components/mermaid.ts`: diagram replacement and lexer/rejoin return.
+
 ## 2026-11-08 - The footer names the serving account when the pin is blocked (senpi#5983, fixes #5983)
 
 ### What changed
