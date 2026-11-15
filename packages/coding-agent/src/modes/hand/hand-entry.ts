@@ -86,7 +86,9 @@ export async function runHand(options: HandEntryOptions): Promise<never> {
 	// Refuses an entry a live hand still serves; only a dead (stale) entry is removed. So this process is the only
 	// writer of the wake outbox it opens next.
 	await prepareSocketPath(socketPath);
-	const outbox = await openHandWakeOutbox(handWakeStorePath(agentDir));
+	const outbox = await openHandWakeOutbox(handWakeStorePath(agentDir), {
+		onFault: (error) => report(`wake fault: ${error.message}`),
+	});
 	const transport = createReliableTransport({
 		clock: {
 			now: () => Date.now(),

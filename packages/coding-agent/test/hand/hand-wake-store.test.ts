@@ -79,16 +79,17 @@ describe("the hand's wake outbox file", () => {
 		record?.pending.push({ scope: "s", source: 7 });
 		writeFileSync(path, JSON.stringify(file));
 
+		const faults: Error[] = [];
 		const brain = await brainInbox();
-		const link = connect(brain, await openHandWakeOutbox(path));
+		const link = connect(brain, await openHandWakeOutbox(path, { onFault: (error) => faults.push(error) }));
 		closers.push(() => link.close());
 		await link.hand.ready;
-		const offered = [await brain.committed.next("the good wake"), await brain.committed.next("the malformed report")];
+		const offered = [await brain.committed.next("the malformed report"), await brain.committed.next("the good wake")];
 
 		expect(offered.map((wake) => [wake.source, wake.payload])).toEqual([
 			["wake.dropped", { reason: "malformed", count: 1 }],
 			["message", wakeOf("s", 1).payload],
 		]);
-		expect(link.faults.map(String)).toEqual([expect.stringMatching(/malformed/)]);
+		expect(faults.map((error) => error.name)).toEqual(["MalformedWakeError"]);
 	});
 });
