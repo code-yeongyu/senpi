@@ -11,7 +11,7 @@ import { createLoopHookCall } from "../../src/modes/rpc/loop-hook-call.ts";
 import { extensionLoopHooks } from "../../src/modes/rpc/loopless-loop-hooks.ts";
 import { createInMemoryModelRegistry } from "../model-runtime-test-utils.ts";
 import { createTestExtensionsResult } from "../utilities.ts";
-import { loopEventMachine, NOTIFICATIONS } from "./loop-event-fixture.ts";
+import { hooksOf, loopEventMachine, NOTIFICATIONS } from "./loop-event-fixture.ts";
 import { cleanupHands } from "./remote-hand-fixture.ts";
 
 afterEach(cleanupHands);
@@ -25,10 +25,12 @@ describe("the hand's wants (senpi#5898)", () => {
 
 		const started = await user.send("session_start", { reason: "startup" });
 		const first = await user.send("message_update", {
+			seq: 1,
 			message: fauxAssistantMessage(""),
 			assistantMessageEvent: { type: "start" },
 		});
 		const done = await user.send("message_update", {
+			seq: 2,
 			message: fauxAssistantMessage("hi"),
 			assistantMessageEvent: { type: "done", reason: "stop" },
 		});
@@ -72,5 +74,54 @@ describe("the hand's wants (senpi#5898)", () => {
 		const hooks = extensionLoopHooks(runner, "hand", process.cwd(), createLoopHookCall());
 
 		expect(await hooks("describe_hooks", {})).toEqual({ wants: ["provider_stream_event"] });
+	});
+
+	describe("a change stays pending until a reply carrying it reaches the loop (review L5)", () => {
+		const subscribing: ExtensionFactory = (pi) => {
+			pi.on("session_before_tree", () => {
+				pi.on("message_update", () => undefined);
+				// No JSON form: the hand refuses this reply, so the loop never sees the change it would carry.
+				return { summary: { summary: "s", details: new Map([["k", 1]]) } };
+			});
+			pi.on("session_start", () => {
+				pi.on("message_update", () => undefined);
+			});
+		};
+		const base = { sessionId: "s", idle: false };
+		const tree = {
+			...base,
+			preparation: {
+				targetId: "entry-5",
+				oldLeafId: null,
+				commonAncestorId: null,
+				entriesToSummarize: [],
+				userWantsSummary: true,
+			},
+		};
+
+		it("a refused reply leaves the change for the next one (the review's probe)", async () => {
+			const hooks = await hooksOf([{ path: "/user/sub.ts", factory: subscribing }]);
+			await hooks("describe_hooks", {});
+
+			await expect(hooks("session_before_tree", tree)).rejects.toThrow(/has no JSON form/);
+			const next = (await hooks("session_parked", base)) as { wants?: string[] };
+
+			expect(next.wants).toEqual(["message_update"]);
+		});
+
+		it("a reply to a call the loop cancelled leaves the change for the next one", async () => {
+			const hooks = await hooksOf([{ path: "/user/sub.ts", factory: subscribing }]);
+			await hooks("describe_hooks", {});
+			const cancel = new AbortController();
+			cancel.abort();
+
+			const dropped = (await hooks("session_start", { ...base, reason: "startup" }, cancel.signal)) as {
+				wants?: string[];
+			};
+			const next = (await hooks("session_parked", base)) as { wants?: string[] };
+			const after = (await hooks("session_resumed", base)) as { wants?: string[] };
+
+			expect([dropped.wants, next.wants, after.wants]).toEqual([["message_update"], ["message_update"], undefined]);
+		});
 	});
 });

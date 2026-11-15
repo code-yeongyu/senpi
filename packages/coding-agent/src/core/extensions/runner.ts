@@ -424,11 +424,20 @@ type BoundaryBaseEvent =
 	| Omit<AgentBeforeSettleEvent, "entries" | "continue" | "context">;
 
 /**
- * Where a hand's dispatch of a hosted loop's boundary starts: whose handlers run, the first of them to run (the loop's
- * resume point), and the drafts and decision the loop holds so far.
+ * One forwarded boundary walk's handlers, taken once at its first step (`openBoundaryWalk`), so every step of the walk
+ * indexes the same list, as a local walk does: a handler added or removed mid-walk changes the next walk (review L8).
+ */
+export interface BoundaryWalk {
+	readonly event: BoundaryBaseEvent["type"];
+	readonly handlers: readonly { readonly path: string; readonly handler: EventHandlerFn }[];
+}
+
+/**
+ * Where a hand's dispatch of a hosted loop's boundary starts: its walk, the first handler of the walk to run (the
+ * loop's resume point), and the drafts and decision the loop holds so far.
  */
 export interface ForwardedBoundary {
-	readonly only: (extensionPath: string) => boolean;
+	readonly walk: BoundaryWalk;
 	readonly from: number;
 	readonly entries: SessionBoundaryDraft[];
 	readonly continue: boolean;
@@ -2193,11 +2202,11 @@ export class ExtensionRunner {
 			throw err;
 		}
 		let valid = true;
+		if (forwarded !== undefined && forwarded.walk.event !== baseEvent.type)
+			throw new Error(`a ${forwarded.walk.event} walk cannot resume ${baseEvent.type}`);
 		const handlers =
 			forwarded !== undefined
-				? flattenHandlers(this.extensions, baseEvent.type)
-						.filter((entry) => forwarded.only(entry.path))
-						.slice(forwarded.from)
+				? forwarded.walk.handlers.slice(forwarded.from)
 				: this.dropsLoopEvent(baseEvent.type)
 					? []
 					: flattenHandlers(this.extensions, baseEvent.type);
@@ -2258,6 +2267,11 @@ export class ExtensionRunner {
 						}
 					: retired(),
 		});
+	}
+
+	/** The handlers of one forwarded boundary walk, only those `only` accepts, taken now (see `BoundaryWalk`). */
+	openBoundaryWalk(event: BoundaryWalk["event"], only: (extensionPath: string) => boolean): BoundaryWalk {
+		return { event, handlers: flattenHandlers(this.extensions, event).filter((entry) => only(entry.path)) };
 	}
 
 	private isSessionBeforeEvent(event: RunnerEmitEvent): event is SessionBeforeEvent {

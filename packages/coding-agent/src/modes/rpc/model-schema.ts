@@ -1,6 +1,6 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { z } from "zod";
-import { count } from "./agent-message-schema.ts";
+import { amount, count } from "./agent-message-schema.ts";
 
 // The hand's parse of a model a hosted loop sends with `model_select` and `system_prompt_change` (senpi#5898): the
 // fields its readers rely on. Objects are loose, except that a model never carries `headers`: a model's own headers
@@ -15,7 +15,7 @@ const modelSchema = z
 		baseUrl: z.string(),
 		reasoning: z.boolean(),
 		input: z.array(z.string()),
-		cost: z.looseObject({ input: count, output: count, cacheRead: count, cacheWrite: count }),
+		cost: z.looseObject({ input: amount, output: amount, cacheRead: amount, cacheWrite: amount }),
 		contextWindow: count,
 		maxTokens: count,
 	})

@@ -57,7 +57,7 @@ describe("a hosted loop's notifications run the user's handlers on the hand (sen
 
 		const update = await hooks(
 			"message_update",
-			toJson({ ...base, message: fauxAssistantMessage(""), assistantMessageEvent: { type: "start" } }),
+			toJson({ ...base, seq: 1, message: fauxAssistantMessage(""), assistantMessageEvent: { type: "start" } }),
 		);
 		const switched = await hooks("session_before_switch", { ...base, reason: "new" });
 
@@ -119,17 +119,22 @@ describe("a hosted loop's notifications run the user's handlers on the hand (sen
 describe("a hosted loop's message stream reaches the user's message_update handler as deltas (senpi#5898 review L3)", () => {
 	const empty = fauxAssistantMessage("");
 	const { content: _content, ...envelope } = empty;
+	const textOf = (text: string) => ({ ...envelope, content: [{ type: "text", text }] });
+	/** The loop's side: it numbers every update it emits (`seq`), whether it forwards it or not (review L7). */
 	const updates = (machine: Awaited<ReturnType<typeof loopEventMachine>>) => ({
-		start: () => machine.send("message_update", { message: empty, assistantMessageEvent: { type: "start" } }),
-		textStart: () =>
+		start: (seq: number) =>
+			machine.send("message_update", { seq, message: empty, assistantMessageEvent: { type: "start" } }),
+		textStart: (seq: number, contentIndex = 0) =>
 			machine.send("message_update", {
+				seq,
 				envelope,
 				block: { type: "text", text: "" },
-				assistantMessageEvent: { type: "text_start", contentIndex: 0 },
+				assistantMessageEvent: { type: "text_start", contentIndex },
 			}),
-		delta: (delta: string) =>
+		delta: (seq: number, delta: string, whole?: string) =>
 			machine.send("message_update", {
-				envelope,
+				seq,
+				...(whole === undefined ? { envelope } : { message: textOf(whole) }),
 				assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta },
 			}),
 	});
@@ -142,32 +147,64 @@ describe("a hosted loop's message stream reaches the user's message_update handl
 	it("rebuilds each update the session's emit would give from the message the hand holds", async () => {
 		const stream = updates(await loopEventMachine());
 
-		await stream.start();
-		await stream.textStart();
-		await stream.delta("he");
-		const last = seenEvent(await stream.delta("llo"));
+		await stream.start(1);
+		await stream.textStart(2);
+		await stream.delta(3, "he");
+		const last = seenEvent(await stream.delta(4, "llo"));
 
 		expect(last.message.content).toEqual([{ type: "text", text: "hello" }]);
 		expect(last.assistantMessageEvent).toEqual({
 			type: "text_delta",
 			contentIndex: 0,
 			delta: "llo",
-			partial: { ...envelope, content: [{ type: "text", text: "hello" }] },
+			partial: textOf("hello"),
 		});
 	});
 
-	it("refuses a delta with no stream held for its session, or one that does not fit the held block", async () => {
-		const user = await loopEventMachine();
-		const stream = updates(user);
+	it("asks for the whole message after a gap, then follows the stream from it (review L7)", async () => {
+		const stream = updates(await loopEventMachine());
+		await stream.start(1);
+		await stream.textStart(2);
+		await stream.delta(3, "he");
 
-		await expect(stream.delta("x")).rejects.toThrow("malformed message_update payload");
-		await stream.start();
+		// `wants` dropped the stream for updates 4 and 5 ("l", "l"), then took it back: update 6 cannot apply.
+		const gap = await stream.delta(6, "o");
+		const resent = seenEvent(await stream.delta(6, "o", "hello"));
+		const next = seenEvent(await stream.delta(7, "!"));
+
+		expect(gap).toEqual({ resync_required: true });
+		expect(resent.message.content).toEqual([{ type: "text", text: "hello" }]);
+		expect(next.message.content).toEqual([{ type: "text", text: "hello!" }]);
+	});
+
+	it("asks for the whole message when no stream is held for the session", async () => {
+		expect(await updates(await loopEventMachine()).delta(5, "x")).toEqual({ resync_required: true });
+	});
+
+	it("refuses an update without its sequence number, or a following delta that does not fit the held block", async () => {
+		const user = await loopEventMachine();
+		await updates(user).start(1);
+
+		await expect(
+			user.send("message_update", {
+				envelope,
+				assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "x" },
+			}),
+		).rejects.toThrow("malformed message_update payload");
 		// The held block at 0 is text, so a thinking delta there does not fit it.
 		await expect(
 			user.send("message_update", {
+				seq: 2,
 				envelope,
 				assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "x" },
 			}),
 		).rejects.toThrow("malformed message_update payload");
+	});
+
+	it("refuses a content index that is not a whole slot: contentIndex 0.5 (review L6)", async () => {
+		const stream = updates(await loopEventMachine());
+		await stream.start(1);
+
+		await expect(stream.textStart(2, 0.5)).rejects.toThrow("malformed message_update payload");
 	});
 });

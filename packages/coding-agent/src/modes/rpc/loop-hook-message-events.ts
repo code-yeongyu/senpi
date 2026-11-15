@@ -15,10 +15,16 @@ export const MESSAGE_LOOP_HOOKS = loopHookFamily({
 	},
 	message_update: (payload, { sessionId, streams }) => {
 		// A delta against the message the hand holds for this session's stream (`loop-hook-message-stream.ts`).
-		const { event, next } = messageUpdateOf(payload, streams.held(sessionId));
-		if (next === undefined) streams.end(sessionId);
-		else streams.hold(sessionId, next);
-		return forwarded({ type: "message_update", ...event });
+		const step = messageUpdateOf(payload, streams.held(sessionId));
+		switch (step.kind) {
+			case "resync_required":
+				// No handler runs: the loop sends this update again whole, and the handlers see it once.
+				return { emit: async () => ({ resync_required: true }) };
+			case "update":
+				if (step.next === undefined) streams.end(sessionId);
+				else streams.hold(sessionId, step.next);
+				return forwarded({ type: "message_update", ...step.event });
+		}
 	},
 	message_end: ({ message }) => {
 		if (!isAgentMessage(message)) throw malformed("message_end");

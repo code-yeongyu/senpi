@@ -49,7 +49,7 @@ const boundary = ({ entries, continue: next }: { entries: unknown; continue: boo
 interface BoundaryReply extends LoopReply {
 	readonly entries: unknown[];
 	readonly continue: boolean;
-	readonly resume?: { readonly next: number; readonly extensionPath: string };
+	readonly resume?: { readonly next: number; readonly extensionPath: string; readonly walk: string };
 }
 
 /** The loop's side of a stepped boundary (review L2): forward again from `resume.next` until the hand's part ends. */
@@ -58,11 +58,17 @@ async function stepBoundary(
 	event: string,
 	fields: object,
 ) {
-	let state = { ...fields, entries: [] as unknown[], continue: false, from: 0 };
+	let state: object = { ...fields, entries: [] as unknown[], continue: false };
 	for (;;) {
 		const reply = (await send(event, state)) as BoundaryReply;
 		if (reply.resume === undefined) return boundary(reply);
-		state = { ...state, entries: reply.entries, continue: reply.continue, from: reply.resume.next };
+		state = {
+			...state,
+			entries: reply.entries,
+			continue: reply.continue,
+			from: reply.resume.next,
+			walk: reply.resume.walk,
+		};
 	}
 }
 
@@ -181,55 +187,5 @@ describe("a hosted loop's interceptors run the user's handlers on the hand (senp
 		await expect(hooks("session_before_tree", toJson({ sessionId: "s", idle: true, preparation }))).rejects.toThrow(
 			"session_before_tree reply has no JSON form at summary.details (a Map)",
 		);
-	});
-
-	it("stops a boundary after a hand handler drafts, so the next one sees the context the loop rebuilt (review L2)", async () => {
-		const seen: number[] = [];
-		const drafting =
-			(name: string): ExtensionFactory =>
-			(pi) =>
-				void pi.on("turn_end", (event) => {
-					seen.push(event.context.pendingMessages.length);
-					return { entries: [...event.entries, { type: "custom", customType: name }] };
-				});
-		const loaded = await createTestExtensionsResult([
-			{ path: "/user/a.ts", factory: drafting("a") },
-			{ path: "/user/b.ts", factory: drafting("b") },
-		]);
-		const runner = new ExtensionRunner(
-			loaded.extensions,
-			loaded.runtime,
-			process.cwd(),
-			undefined,
-			await createInMemoryModelRegistry(AuthStorage.inMemory()),
-			loaded.eventBus,
-		);
-		const hooks = extensionLoopHooks(runner, "hand", process.cwd(), createLoopHookCall());
-		const call = (from: number, entries: unknown[], pending: unknown[]) =>
-			hooks(
-				"turn_end",
-				toJson({
-					sessionId: "s",
-					idle: false,
-					...turnEnd,
-					entries,
-					continue: false,
-					from,
-					context: { ...preview, pendingMessages: pending, canContinue: true },
-				}),
-			) as Promise<BoundaryReply>;
-
-		const first = await call(0, [], []);
-		const second = await call(1, first.entries, [note("rebuilt"), note("by the loop")]);
-		const last = await call(2, second.entries, []);
-
-		expect(first).toEqual({
-			entries: [{ type: "custom", customType: "a" }],
-			continue: false,
-			resume: { next: 1, extensionPath: "/user/a.ts" },
-		});
-		expect(second.resume).toEqual({ next: 2, extensionPath: "/user/b.ts" });
-		expect(last).toEqual({ entries: second.entries, continue: false });
-		expect(seen).toEqual([0, 2]);
 	});
 });

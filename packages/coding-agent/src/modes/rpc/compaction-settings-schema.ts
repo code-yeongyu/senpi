@@ -1,6 +1,9 @@
 import type { CompactionSettings } from "../../core/compaction/index.ts";
 import { z } from "zod";
-import { count } from "./agent-message-schema.ts";
+import { amount } from "./agent-message-schema.ts";
+
+// User-written settings: the `CompactionSettings` type allows any non-negative number here, so the hand does too.
+const count = amount;
 
 const flag = z.boolean().optional();
 const ratio = z.number().min(0).max(1);

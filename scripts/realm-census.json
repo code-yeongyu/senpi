@@ -8247,6 +8247,10 @@
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
+		"packages/coding-agent/src/modes/rpc/agent-message-schema.ts#amount": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
 		"packages/coding-agent/src/modes/rpc/agent-message-schema.ts#count": {
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
@@ -8591,6 +8595,10 @@
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
 		"packages/coding-agent/src/modes/rpc/compaction-settings-schema.ts#compactionSettingsSchema": {
+			"class": "constant",
+			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/compaction-settings-schema.ts#count": {
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},

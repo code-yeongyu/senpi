@@ -8,6 +8,7 @@ import { LIFECYCLE_LOOP_HOOKS } from "./loop-hook-lifecycle-events.ts";
 import { MESSAGE_LOOP_HOOKS } from "./loop-hook-message-events.ts";
 import { isRecord, type LoopHookParser } from "./loop-hook-payloads.ts";
 import { PROVIDER_LOOP_HOOKS } from "./loop-hook-provider-events.ts";
+import { createBoundaryWalks } from "./loop-hook-boundary-walks.ts";
 import { createMessageStreams } from "./loop-hook-message-stream.ts";
 import { loopHookReply } from "./loop-hook-reply.ts";
 import { SESSION_LOOP_HOOKS } from "./loop-hook-session-events.ts";
@@ -58,13 +59,18 @@ function wantsTracker(runner: ExtensionRunner) {
 			reported = wants.join();
 			return wants;
 		},
-		/** The current set when it differs from the one last reported (which it then becomes), else `undefined`. */
+		/**
+		 * The current set when it differs from the one last reported, else `undefined`. It stays pending until
+		 * `reported` records it: a reply that is refused or cancelled never reached the loop, so the next one carries it.
+		 */
 		changed(only: (extensionPath: string) => boolean): string[] | undefined {
 			if (reported === undefined) return undefined;
 			const wants = wanted(only);
-			if (wants.join() === reported) return undefined;
+			return wants.join() === reported ? undefined : wants;
+		},
+		/** Records a set as reported, once the reply carrying it was handed to the link. */
+		reported(wants: readonly string[]): void {
 			reported = wants.join();
-			return wants;
 		},
 	};
 }
@@ -88,6 +94,7 @@ export function extensionLoopHooks(
 ): LooplessLoopHooks {
 	const wants = wantsTracker(runner);
 	const streams = createMessageStreams();
+	const walks = createBoundaryWalks();
 	return async (event, payload, cancel) => {
 		if (twoSidedHome !== "hand") throw new Error("this hand is not the home of its extensions' loop hooks");
 		const only = userLoopHooks(runner);
@@ -96,8 +103,11 @@ export function extensionLoopHooks(
 			throw new Error(`malformed ${event} payload`);
 		if (!isForwarded(event)) throw new Error(`no loop hooks run on a hand for ${event}`);
 		const { sessionId } = payload;
-		const parsed = LOOP_HOOK_PARSERS[event](payload, { cwd, sessionId, streams });
-		if (event === "session_shutdown") streams.end(sessionId);
+		const parsed = LOOP_HOOK_PARSERS[event](payload, { cwd, sessionId, streams, walks });
+		if (event === "session_shutdown") {
+			streams.end(sessionId);
+			walks.close(sessionId);
+		}
 		const binding = {
 			sessionId,
 			cwd,
@@ -106,8 +116,16 @@ export function extensionLoopHooks(
 			...(cancel === undefined ? {} : { cancel }),
 		};
 		return call.run(binding, (effects, signal) =>
-			loopHookReply(event, { runner, call, effects, wantsChange: () => wants.changed(only) }, () =>
-				parsed.emit({ runner, only, signal }),
+			loopHookReply(
+				event,
+				{
+					runner,
+					call,
+					effects,
+					wants: { changed: () => wants.changed(only), reported: (set) => wants.reported(set) },
+					cancelled: () => signal.aborted,
+				},
+				() => parsed.emit({ runner, only, signal }),
 			),
 		);
 	};
