@@ -107,7 +107,7 @@ export {
 	SessionStoreError,
 	type SessionState,
 } from "./durable/session-store.ts";
-export type { SyncCommit, SyncCommitStore } from "./durable/store.ts";
+export { DurableStoreError, type SyncCommit, type SyncCommitStore } from "./durable/store.ts";
 export { createMemoryStoreMedium, openMemoryStore } from "./durable/store-memory.ts";
 export { createBatchCoordinator } from "./execution/coordinator.ts";
 export type { BatchExecutor, BatchPlan } from "./execution/coordinator-types.ts";

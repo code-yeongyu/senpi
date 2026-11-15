@@ -1632,11 +1632,15 @@ Response:
     generation only when this host has none open there;
   - the open link's `instance`: admitted;
   - anything else, or an `instance` when the host has no link open there (it restarted): `hand_link_instance_mismatch`.
+    A batch without `instance` gets the same refusal when another host opened the link at that generation and did not
+    end it cleanly (it was superseded or crashed, so its link may still be running): the brain moves to a higher
+    generation. A host that shuts down gracefully ends its links cleanly, so its successor reopens them in place.
     The brain resets its hand transport and sends its next batch without `instance`; if that is refused too, the
     generation's link belongs to another transport, and the brain moves to a new generation.
 - A packet that does not read (a `data_part` count conflict, a frame past the bounds, or one over 1,000,000 characters)
   ends the session's link: `hand_link_malformed`. A batch on a scope another session holds ends it too:
-  `hand_link_scope_taken`. An ended link opens again only at a higher generation.
+  `hand_link_scope_taken`. A session holds at most 64 scopes; a batch past that ends it too: `hand_link_scope_limit`.
+  An ended link opens again only at a higher generation.
 - `close: true` retires the session: its link ends, its scope bindings and their floors leave the state, and every
   later batch for it is refused `hand_link_session_closed`.
 - The answer carries what the hand has queued for the brain, late output of earlier calls included, at most about one
@@ -1645,9 +1649,11 @@ Response:
   running call. An empty batch is a poll.
 - The epoch floors, each session's link record and the scope bindings are kept in
   `<agentDir>/rpc/hand-link/state.json`, which every host under the agent dir shares. Each change is one locked
-  read-check-write and replaces the file atomically. A host claims the state on its first `hand_link`. A host whose
-  claim another host has superseded since (a successor during a handover, or another endpoint) refuses every batch
-  `hand_link_host_superseded` and ends its links. A restarted host resumes a session at the generation it reached and
+  read-check-write and replaces the file atomically: when the temporary file cannot be created the write is refused and
+  the file is left as it was, never rewritten in place. A host claims the state on its first `hand_link` and watches
+  it: the moment another host claims it (a successor during a handover, or another endpoint), it ends its links at
+  once, aborting their running calls, and refuses every later batch `hand_link_host_superseded`. A session record that
+  is closed or has no live link is pruned, with its scopes and their floors, seven days after its last write. A restarted host resumes a session at the generation it reached and
   still refuses an older one. If the state cannot be read (a corrupt record fails closed) or written, the batch is
   refused `hand_link_unavailable` (`errorData.reason`) and nothing of it reaches the hand.
 - A host started without a hand refuses it `hand_link_unsupported`. `hand_link` starts no turn here: a cross-account
@@ -4068,7 +4074,7 @@ names a valid preset.
 | `close_session` | `sessionId` | `{}` | Refused with `unknown_session` when the requesting connection never attached to that handle (a close releases the CALLER's attachment, and `list_sessions` publishes every handle). Otherwise aborts active work, awaits agent idle + settled persistence for up to the host grace window (default 10s), then quarantines any worker that has not exited without releasing its path reservation; its response is the LAST record tagged with that handle for the first closer — no events after (test-pinned). An admitted concurrent close joins the same teardown and receives its own successful response; output saturation rejects admission with the bounded close-overflow/resync notice described above. |
 | `list_hands` | `sessionId?` | `{ hands: [{ device, label, platform, reachable }], selected? }` | Headless engine with a hand directory only (capability `hand_selection`; otherwise `hand_selection_unsupported`). See "Hand selection (headless engine)". |
 | `select_hand` | `sessionId`, `device: string \| null` | `{ sessionId, selected }` | Records which hand runs the session's tools (`null` = this process). Refusals: `hand_not_listed`, `hand_unreachable` (`errorData.device`), `session_busy`, `hand_selection_unsupported`, `unknown_session`, `session_closing`. Method class `device_admin`. |
-| `hand_link` | `session`, `loop: { id, generation }`, `packets`, `instance?`, `close?` | `{ packets, more, instance }` | One packet batch of a hosted session's link to this machine's hand. Refusals: `hand_link_unsupported`, `hand_link_not_delegated`, `hand_link_malformed`, `hand_link_superseded`, `hand_link_generation_taken`, `hand_link_scope_taken`, `hand_link_instance_mismatch`, `hand_link_session_closed`, `hand_link_host_superseded`, `hand_link_closed`, `hand_link_unavailable`. Method class `hand_link`. See "hand_link (tool-relay mode)". |
+| `hand_link` | `session`, `loop: { id, generation }`, `packets`, `instance?`, `close?` | `{ packets, more, instance }` | One packet batch of a hosted session's link to this machine's hand. Refusals: `hand_link_unsupported`, `hand_link_not_delegated`, `hand_link_malformed`, `hand_link_superseded`, `hand_link_generation_taken`, `hand_link_scope_taken`, `hand_link_scope_limit`, `hand_link_instance_mismatch`, `hand_link_session_closed`, `hand_link_host_superseded`, `hand_link_closed`, `hand_link_unavailable`. Method class `hand_link`. See "hand_link (tool-relay mode)". |
 | `list_sessions` | `include_workers?` (default false) | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status, attachments, retain_on_disconnect, kind, context? }] }` | Includes `opening`/`closing` entries. `retain_on_disconnect` is true when the session outlives its last attachment (an open or attach asked for it; retention is never revoked), so no client's release or disconnect can end it. Internally quarantined workers remain externally `closing` until exit. `attachments` is the session's live client attachment count; `0` on an `open` row is a retained session with no client attached. Every row carries `kind`. Rows with `kind: "worker"` are omitted unless `include_workers: true`, and `context` is published ONLY on that listing — a default listing carries no `context` at all. |
 | `detach_connection` | - | `{ deferred: string[] }` | Multi-session hosts that advertise `detach_connection`. Meant as the connection's last request: the host releases every session attachment this connection holds and answers only after that, so another connection's next `list_sessions` no longer counts it. `deferred` names the sessions that still count it (see `#### detach_connection`). Closing the socket afterwards releases nothing more. `senpi host session` sends it before closing, bounded at 5 s; on a host without the capability, or after a request timed out or the connection was lost, it relies on the release at socket close. |
 | `release_session` | `sessionId`, `reason: "takeover" \| "move"`, `moveId?` (required for `move`), `target?`, `interrupt?`, `force?` | `{ released: true, session_path, attachments }` | Hands the session to a runtime outside this host. See "Handing a session over (`release_session`)" below. |

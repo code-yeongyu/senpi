@@ -5,20 +5,24 @@
  *
  * - The sender is the delegated connection's principal, never a frame field; it is the owner every epoch check sees.
  * - The state is durable and shared by every daemon under the agent dir (`hand-link-state.ts` over
- *   `locked-file-store.ts`). Each daemon claims it on its first batch; one a newer daemon has claimed since refuses
- *   every batch `hand_link_host_superseded` and ends its links, so only one daemon admits batches at a time.
+ *   `locked-file-store.ts`). Each daemon claims it on its first batch and watches it: the moment a newer daemon claims
+ *   it, this one ends every live link (aborting their running calls) and refuses every later batch
+ *   `hand_link_host_superseded`, so only one daemon admits batches or runs calls at a time.
+ * - A daemon reopens a session's link at the generation it already reached only when the daemon that opened it there
+ *   ended it cleanly (a graceful shutdown releases its links); otherwise the brain must move to a higher generation, so
+ *   a successor never runs a generation a predecessor's link may still be running.
  * - `loop.generation` is the session's owner epoch. A newer generation replaces the link and tears down the old one's
  *   scopes; an older one is refused, and so is a second sender or loop at the generation already admitted. A link that
  *   ended (a malformed batch, a held scope) reopens only at a higher generation. `close: true` retires the session.
  * - `instance`: a batch names the last link instance its brain saw. A batch with none opens the session's link at its
  *   generation only when this daemon has none open there; a batch naming one must name the open link. Anything else
  *   is `hand_link_instance_mismatch`, so a batch built for an earlier link never reaches a new one.
+ * - A session holds at most a fixed number of scopes; a batch past it ends the link `hand_link_scope_limit`.
  * - One epoch fence for the whole host: a scope's floor is raised only by the owner of the session that first used
  *   that scope; a batch on a scope another session holds ends the link, and a loop-hook call naming one fails.
  * - A batch is answered at once with what the hand has queued, up to one record (`more` says more is queued); a tool
  *   still running answers in a later batch, so a following batch (an abort among them) never waits behind it.
  */
-import { DurableStoreError } from "@earendil-works/pi-agent-core/conformance";
 import type { HandWirePacket } from "../hand/hand-packet-codec.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import { handLinkStatePath, type HandLinkState, openHandLinkState } from "./hand-link-state.ts";
@@ -42,6 +46,7 @@ export type HandLinkRefusal =
 	| "hand_link_superseded"
 	| "hand_link_generation_taken"
 	| "hand_link_scope_taken"
+	| "hand_link_scope_limit"
 	| "hand_link_instance_mismatch"
 	| "hand_link_session_closed"
 	| "hand_link_host_superseded"
@@ -71,6 +76,10 @@ export interface HandLinkEndpointOptions {
 
 const refused = (reason: HandLinkRefusal): HandLinkAnswer => ({ kind: "refused", reason });
 
+/** The store's refusal of a commit from an owner another daemon has superseded (`DurableStoreError` code). */
+const isStaleEpoch = (error: unknown): boolean =>
+	error instanceof Error && Reflect.get(error, "code") === "stale-epoch";
+
 /** The RPC host's endpoint: the machine's hand on the host's own configuration, home of its loop hooks like `--hand`. */
 export function createHostHandLink(configuration: CliRuntimeConfiguration): HandLinkEndpoint {
 	return createHandLinkEndpoint({
@@ -92,10 +101,16 @@ export function createHandLinkEndpoint(options: HandLinkEndpointOptions): HandLi
 
 	// Opened on the first batch, so a host that never serves one touches no state; a failed open is tried again.
 	const stateOf = (): Promise<HandLinkState> => {
-		opening ??= openHandLinkState(options.openStore(), token).catch((error: unknown) => {
-			opening = undefined;
-			throw error;
-		});
+		opening ??= openHandLinkState(options.openStore(), token).then(
+			(state) => {
+				state.onSuperseded(() => void endAll());
+				return state;
+			},
+			(error: unknown) => {
+				opening = undefined;
+				throw error;
+			},
+		);
 		return opening;
 	};
 	const end = async (session: string): Promise<void> => {
@@ -127,6 +142,9 @@ export function createHandLinkEndpoint(options: HandLinkEndpointOptions): HandLi
 		const holder = record?.lowest === loop.generation ? record.holder : undefined;
 		if (holder !== undefined && (holder.owner !== sender || holder.loopId !== loop.id))
 			return refused("hand_link_generation_taken");
+		// Another daemon's link at this generation may still be running: only a clean end lets it reopen here.
+		if (holder !== undefined && holder.daemon !== token && holder.ended !== true && !links.has(session))
+			return refused("hand_link_instance_mismatch");
 		const current = links.get(session);
 		if (current?.generation === loop.generation)
 			return batch.instance === current.instance ? current : refused("hand_link_instance_mismatch");
@@ -158,8 +176,11 @@ export function createHandLinkEndpoint(options: HandLinkEndpointOptions): HandLi
 		}
 		const packets = link.read(batch.packets);
 		if (packets === undefined) return refuseAndEnd(state, batch, "hand_link_malformed");
-		for (const scope of scopeLanes(packets))
-			if (!(await state.claim(scope, batch.session))) return refuseAndEnd(state, batch, "hand_link_scope_taken");
+		for (const scope of scopeLanes(packets)) {
+			const claim = await state.claim(scope, batch.session);
+			if (claim === "taken") return refuseAndEnd(state, batch, "hand_link_scope_taken");
+			if (claim === "limit") return refuseAndEnd(state, batch, "hand_link_scope_limit");
+		}
 		link.deliver(packets);
 		// One turn of the event loop lets the frames this batch delivered be acknowledged and answered now; a call
 		// still running answers in a later batch.
@@ -174,12 +195,12 @@ export function createHandLinkEndpoint(options: HandLinkEndpointOptions): HandLi
 			await endAll();
 			return refused("hand_link_host_superseded");
 		};
-		if (!(await state.owned())) return superseded();
+		if (!state.owned()) return superseded();
 		try {
 			return await admit(state, sender, batch);
 		} catch (error) {
 			// A newer daemon claimed the store between the ownership check and this batch's commit.
-			if (error instanceof DurableStoreError && error.code === "stale-epoch") return superseded();
+			if (isStaleEpoch(error)) return superseded();
 			throw error;
 		}
 	};
@@ -197,7 +218,14 @@ export function createHandLinkEndpoint(options: HandLinkEndpointOptions): HandLi
 		},
 		async close() {
 			closed = true;
+			const state = await opening?.catch(() => undefined);
+			// A graceful shutdown ends its links cleanly, so a successor may reopen them at the same generation.
+			if (state?.owned() === true)
+				await state
+					.release([...links.keys()])
+					.catch((error: unknown) => report(`release failed: ${String(error)}`));
 			await endAll();
+			state?.close();
 			await hand?.close();
 		},
 	};

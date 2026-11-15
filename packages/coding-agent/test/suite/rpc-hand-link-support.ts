@@ -27,14 +27,16 @@ export const BRAIN_B = { deviceId: "hb-brain-b" };
 /** The tool probes: `count` marks count.txt, `echo` returns its text, `wait_abort` holds until its call is aborted. */
 export interface HandProbe {
 	readonly started: PromiseWithResolvers<void>;
+	/** Settles when a `wait_abort` call has seen its abort. */
+	readonly abortSeen: PromiseWithResolvers<void>;
 	aborted: boolean;
 }
 
 export function handProbe(): HandProbe {
-	return { started: Promise.withResolvers<void>(), aborted: false };
+	return { started: Promise.withResolvers<void>(), abortSeen: Promise.withResolvers<void>(), aborted: false };
 }
 
-function probeTools(probe: HandProbe): InlineExtension {
+export function probeTools(probe: HandProbe): InlineExtension {
 	return (pi) => {
 		pi.registerTool({
 			name: "count",
@@ -64,6 +66,7 @@ function probeTools(probe: HandProbe): InlineExtension {
 				probe.started.resolve();
 				await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }));
 				probe.aborted = true;
+				probe.abortSeen.resolve();
 				return { content: [{ type: "text", text: "aborted" }], details: {} };
 			},
 		});

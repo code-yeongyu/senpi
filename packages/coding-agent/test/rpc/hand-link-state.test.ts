@@ -15,12 +15,13 @@ afterEach(() => {
 });
 
 it.each<[string, string, StoreValue]>([
-	["a lowest generation of 0", "hand-link.session:s", { lowest: 0 }],
-	["a string lowest generation", "hand-link.session:s", { lowest: "1" }],
-	["a fractional lowest generation", "hand-link.session:s", { lowest: 1.5 }],
-	["a non-string owner", "hand-link.session:s", { lowest: 1, owner: 7, loopId: "l" }],
-	["an owner without a loop", "hand-link.session:s", { lowest: 1, owner: "a" }],
-	["a malformed closed mark", "hand-link.session:s", { lowest: 1, closed: "yes" }],
+	["a lowest generation of 0", "hand-link.session:s", { lowest: 0, at: 1 }],
+	["no write time", "hand-link.session:s", { lowest: 1 }],
+	["a string lowest generation", "hand-link.session:s", { lowest: "1", at: 1 }],
+	["a fractional lowest generation", "hand-link.session:s", { lowest: 1.5, at: 1 }],
+	["a non-string owner", "hand-link.session:s", { lowest: 1, at: 1, owner: 7, loopId: "l", daemon: "d" }],
+	["an owner without a loop", "hand-link.session:s", { lowest: 1, at: 1, owner: "a" }],
+	["a malformed closed mark", "hand-link.session:s", { lowest: 1, at: 1, closed: "yes" }],
 	["a scope bound to no session name", "hand-link.scope:x", 7],
 ])("refuses to open state holding %s", async (_label, key, data) => {
 	const root = mkdtempSync(join(tmpdir(), "hls-"));
@@ -32,4 +33,44 @@ it.each<[string, string, StoreValue]>([
 	await expect(openHandLinkState(openLockedFileStore(path), "daemon")).rejects.toMatchObject({
 		name: "HandLinkStateCorruptError",
 	});
+});
+
+it("caps the scopes one session may hold", async () => {
+	const root = mkdtempSync(join(tmpdir(), "hls-"));
+	roots.push(root);
+	const state = await openHandLinkState(openLockedFileStore(join(root, "state.json")), "daemon", { maxScopes: 2 });
+	try {
+		expect([await state.claim("a", "s"), await state.claim("b", "s"), await state.claim("a", "s")]).toEqual([
+			"held",
+			"held",
+			"held",
+		]);
+		expect(await state.claim("c", "s")).toBe("limit");
+		expect(await state.claim("c", "other")).toBe("held");
+	} finally {
+		state.close();
+	}
+});
+
+it("prunes ended and closed sessions past retention, with their scopes; a live link stays", async () => {
+	const root = mkdtempSync(join(tmpdir(), "hls-"));
+	roots.push(root);
+	const path = join(root, "state.json");
+	const DAY = 24 * 60 * 60 * 1000;
+	const old = await openHandLinkState(openLockedFileStore(path), "first", { now: () => 0 });
+	await old.admit("ended", 1, { owner: "o", loopId: "l" });
+	await old.claim("ended-scope", "ended");
+	await old.end("ended", 2);
+	await old.retire("closed");
+	await old.admit("live", 1, { owner: "o", loopId: "l" });
+	old.close();
+
+	const later = await openHandLinkState(openLockedFileStore(path), "second", { now: () => 8 * DAY });
+	try {
+		expect([later.session("ended"), later.session("closed")]).toEqual([undefined, undefined]);
+		expect(later.session("live")?.holder?.owner).toBe("o");
+		expect(await later.claim("ended-scope", "someone-else")).toBe("held");
+	} finally {
+		later.close();
+	}
 });

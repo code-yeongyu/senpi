@@ -15,12 +15,13 @@ import { createHandEndpoint, HAND_LOOP_HOOK_LANE } from "../hand/hand-endpoint.t
 import { createHandPacketReader, encodeHandPackets, type HandWirePacket } from "../hand/hand-packet-codec.ts";
 import type { LooplessHand } from "./remote-executor-scope.ts";
 import { MAX_RPC_MESSAGE_CHARACTERS } from "./rpc-input-validation.ts";
+import type { ScopeClaim } from "./hand-link-state.ts";
 
 export interface SessionLinkOptions {
 	readonly hand: Pick<LooplessHand, "openScope" | "loopHooks">;
 	readonly fence: HandEpochFence;
 	/** Binds a scope a loop-hook call names to this session; `false` when another session holds it. */
-	readonly claimScope: (scope: string) => Promise<boolean>;
+	readonly claimScope: (scope: string) => Promise<ScopeClaim>;
 	readonly sender: string;
 	readonly generation: number;
 	readonly report: (message: string) => void;
@@ -91,8 +92,8 @@ export function openSessionLink(options: SessionLinkOptions): SessionLink {
 		openScope: hand.openScope,
 		loopHooks: async (event, payload) => {
 			const scope = scopeIdOf(payload);
-			if (scope !== undefined && !(await options.claimScope(scope)))
-				throw new Error(`hand_link_scope_taken: scope ${JSON.stringify(scope)}`);
+			const claim = scope === undefined ? "held" : await options.claimScope(scope);
+			if (claim !== "held") throw new Error(`hand_link_scope_${claim}: scope ${JSON.stringify(scope)}`);
 			return hand.loopHooks(event, payload);
 		},
 		authority: { kind: "relayed", peer: options.sender },
