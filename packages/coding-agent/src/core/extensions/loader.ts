@@ -323,6 +323,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
 
 	const runtime: ExtensionRuntime = {
 		deviceMachine: undefined,
+		isLoopRemote: () => false,
 		sendMessage: notInitialized,
 		sendUserMessage: notInitialized,
 		appendEntry: notInitialized,
@@ -812,6 +813,8 @@ function createExtensionAPI(
 			assertActive();
 			runtime.sendUserMessage(content, options);
 		},
+
+		isLoopRemote: () => runtime.isLoopRemote(),
 
 		appendEntry(customType: string, data?: unknown, options?: AppendEntryOptions): void {
 			assertActive();
