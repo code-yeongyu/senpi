@@ -165,6 +165,29 @@ describe("background session age events", () => {
 		terminal.bind(sinks);
 		expect(ages.map((event) => [event.id, event.ageMinutes])).toEqual([["bash_1", 40]]);
 	});
+
+	// senpi#6252: a parked reap_failed is a one-shot failure notice, not a superseded age notice.
+	it("while parked keeps a reap_failed notice even when a later running notice arrives", () => {
+		const { sinks, ages } = recordingSinks();
+		const terminal = bundle();
+		terminal.bind(sinks);
+		terminal.notifyBackgroundStart("bash_1", "soak", Date.now(), { autoReapMinutes: 60 });
+		terminal.park();
+		vi.advanceTimersByTime(60 * MINUTE);
+		terminal.notifyBackgroundReapFailed("bash_1", 60, "EPERM: operation not permitted");
+		vi.advanceTimersByTime(10 * MINUTE);
+
+		terminal.bind(sinks);
+		expect(ages).toEqual([
+			expect.objectContaining({
+				kind: "reap_failed",
+				id: "bash_1",
+				autoReapMinutes: 60,
+				reason: "EPERM: operation not permitted",
+			}),
+			expect.objectContaining({ kind: "running", id: "bash_1", ageMinutes: 70, autoReapMinutes: null }),
+		]);
+	});
 });
 
 describe("background age delivery through the extension sinks", () => {
@@ -265,5 +288,16 @@ describe("background age delivery through the extension sinks", () => {
 			.filter((entry) => entry.via === "rpc" && entry.name === TERMINAL_BACKGROUND_AGE_EVENT)
 			.map((entry) => Reflect.get(Object(entry.data), "kind"));
 		expect(rpcKinds).toEqual(["reap_failed", "running"]);
+
+		// senpi#6252: the later running notice no longer promises an auto-reap that will not happen.
+		const running = emitted.find(
+			(entry) =>
+				entry.via === "rpc" &&
+				entry.name === TERMINAL_BACKGROUND_AGE_EVENT &&
+				Reflect.get(Object(entry.data), "kind") === "running",
+		);
+		expect(Reflect.get(Object(running?.data), "autoReapMinutes")).toBeNull();
+		expect(messages).toHaveLength(2);
+		expect(messages[1]?.content).toContain("Nothing stops it automatically");
 	});
 });

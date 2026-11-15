@@ -40,6 +40,11 @@ export class TerminalSessionBundle {
 	readonly #ages = new BackgroundAgeSchedule((event) => this.#dispatchAge(event));
 	/** Age events that came due while parked: only the newest per session is worth delivering. */
 	#parkedAges = new Map<string, TerminalBackgroundAgeEvent>();
+	/**
+	 * A `reap_failed` raised while parked (senpi#6252): a one-shot failure notice that must still reach the
+	 * agent on rebind, so it is kept apart from `#parkedAges` and never overwritten by a later `running` notice.
+	 */
+	#parkedReapFailed = new Map<string, TerminalBackgroundAgeEvent>();
 	#torndown = false;
 
 	constructor(options: TerminalManagerOptions) {
@@ -67,11 +72,14 @@ export class TerminalSessionBundle {
 		this.#parkedExits.clear();
 		const parkedAges = [...this.#parkedAges.values()];
 		this.#parkedAges.clear();
+		const parkedReapFailed = [...this.#parkedReapFailed.values()];
+		this.#parkedReapFailed.clear();
 		sinks.onMonitorState(this.monitors.snapshot());
 		sinks.onBackgroundState(this.backgroundSnapshot());
 		for (const event of parkedMonitorEvents) sinks.onMonitorEvent(event);
 		for (const event of parkedMonitorEndings) sinks.onMonitorEnded(event);
 		for (const [id, runtime] of parkedExits) sinks.onBackgroundExit(id, runtime);
+		for (const event of parkedReapFailed) sinks.onBackgroundAge(event);
 		for (const event of parkedAges) sinks.onBackgroundAge(event);
 	}
 
@@ -102,12 +110,16 @@ export class TerminalSessionBundle {
 		if (!subject) return;
 		const event = backgroundAgeEvent("reap_failed", { ...subject, autoReapMinutes }, Date.now());
 		this.#dispatchAge({ ...event, reason });
+		// The failure notice keeps the attempted age; later `running` events must not promise a reap
+		// that will not happen, so the subject's reap age is cleared from here on (senpi#6252).
+		this.#ages.clearAutoReap(id);
 	}
 
 	notifyBackgroundExit(id: string, runtime: TerminalExitView): void {
 		if (this.#torndown) return;
 		const subject = this.#ages.remove(id);
 		this.#parkedAges.delete(id);
+		this.#parkedReapFailed.delete(id);
 		if (subject && runtime.autoReapedAfterMinutes !== undefined) {
 			const reaped = { ...subject, autoReapMinutes: runtime.autoReapedAfterMinutes };
 			this.#dispatchAge(backgroundAgeEvent("reaped", reaped, Date.now()));
@@ -127,6 +139,7 @@ export class TerminalSessionBundle {
 		this.#parkedExits.clear();
 		this.#ages.dispose();
 		this.#parkedAges.clear();
+		this.#parkedReapFailed.clear();
 		this.monitors.dispose();
 		if (this.#backgrounds.size > 0) {
 			this.#backgrounds.clear();
@@ -141,6 +154,7 @@ export class TerminalSessionBundle {
 	#dispatchAge(event: TerminalBackgroundAgeEvent): void {
 		if (this.#torndown) return;
 		if (this.#sinks) this.#sinks.onBackgroundAge(event);
+		else if (event.kind === "reap_failed") this.#parkedReapFailed.set(event.id, event);
 		else this.#parkedAges.set(event.id, event);
 	}
 

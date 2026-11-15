@@ -73,6 +73,20 @@ export class BackgroundAgeSchedule {
 		return this.#entries.get(id)?.subject;
 	}
 
+	/**
+	 * Forget a session's auto-reap age once its reap has failed: later `running` events carry
+	 * `autoReapMinutes: null` and stop promising a reap that will not happen (senpi#6252).
+	 * Milestones keep their schedule; only the subject's reap age is cleared.
+	 */
+	clearAutoReap(id: string): void {
+		const entry = this.#entries.get(id);
+		if (!entry) return;
+		this.#entries.set(id, {
+			subject: { ...entry.subject, autoReapMinutes: undefined },
+			dueAtMs: entry.dueAtMs,
+		});
+	}
+
 	remove(id: string): BackgroundAgeSubject | undefined {
 		const entry = this.#entries.get(id);
 		if (!entry) return undefined;
