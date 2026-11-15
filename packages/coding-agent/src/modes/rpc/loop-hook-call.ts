@@ -1,7 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { LoopHookCallFacts, LoopWakeRoute } from "../../core/extensions/runner.ts";
 import type { HistoryReducer } from "../../core/session-history-reduce.ts";
-import type { ReadonlySessionManager, SessionEntry } from "../../core/session-manager.ts";
+import type { ReadonlySessionManager, SessionEntry, SessionHeader } from "../../core/session-manager.ts";
+import type { BuildSystemPromptOptions } from "../../core/system-prompt.ts";
+import { type ActiveToolsChange, applyActiveToolsChange } from "../../core/hand/session-effects.ts";
 
 /** A message a loop hook sent during its call, for the loop to send with the same options. */
 export interface SentLoopMessage {
@@ -29,6 +31,17 @@ export interface SentLoopUserMessage {
 export interface CarriedSession {
 	readonly leafId: string | null;
 	readonly handEntries: readonly SessionEntry[];
+	/**
+	 * The branch a hand reads (`getBranch`, `getEntries`), in branch order, after the last compaction: this hand's entries
+	 * and the user's messages (a todo list's ask reads the request it answers). Absent: the hand's entries alone.
+	 */
+	readonly branch?: readonly SessionEntry[];
+	/** The loop session's header (`getHeader`); absent: it stays loop-side. */
+	readonly header?: SessionHeader;
+	/** The loop's active tool names (`pi.getActiveTools()`); absent: the active set stays loop-side and unchangeable. */
+	readonly activeTools?: readonly string[];
+	/** The loop's system prompt options a call reads (its `surface`, ...); only `cwd` is this machine's own. */
+	readonly systemPromptOptions?: Readonly<Partial<BuildSystemPromptOptions>>;
 }
 
 /** What a loop-hook call's handlers did beyond their result, which the loop does in turn (session port, write). */
@@ -37,6 +50,11 @@ export interface LoopHookEffects {
 	readonly notices: LoopNotice[];
 	readonly entries: AppendedLoopEntry[];
 	readonly userMessages: SentLoopUserMessage[];
+	/**
+	 * The call's change to the active tool set (`pi.setActiveTools`), relative to the set it carried, so the changes of
+	 * calls that ran at once compose when the loop applies each to its current set; unset: unchanged.
+	 */
+	activeTools: ActiveToolsChange | undefined;
 }
 
 /** What a loop-hook call binds its handlers' facts to: the loop session's state the call carries. */
@@ -101,13 +119,19 @@ export function createLoopHookCall(late: LateLoopRoute): LoopHookCall {
 		sender: () => calls.getStore()?.facts.sendMessage,
 		writer: () => calls.getStore()?.facts,
 		async run(binding, dispatch) {
-			const { sessionId, idle } = binding;
+			const { sessionId, cwd, idle, carried } = binding;
 			const token = {};
 			latest.set(sessionId, token);
 			let live = true;
 			let userMessagesSent = 0;
 			const controller = new AbortController();
-			const effects: LoopHookEffects = { sent: [], notices: [], entries: [], userMessages: [] };
+			const effects: LoopHookEffects = {
+				sent: [],
+				notices: [],
+				entries: [],
+				userMessages: [],
+				activeTools: undefined,
+			};
 			const facts: LoopHookCallFacts = Object.freeze({
 				sessionManager: readOnlySession(binding, {
 					live: () => live,
@@ -138,6 +162,23 @@ export function createLoopHookCall(late: LateLoopRoute): LoopHookCall {
 				},
 				// Only what this call (or its work) sent.
 				hasPendingMessages: () => userMessagesSent > 0,
+				getActiveTools: () => {
+					const active = carried?.activeTools;
+					if (active === undefined) return undefined;
+					return effects.activeTools === undefined
+						? [...active]
+						: applyActiveToolsChange(active, effects.activeTools);
+				},
+				getSystemPromptOptions: () => ({ ...carried?.systemPromptOptions, cwd }),
+				// Only a set the loop carried can change: the loop applies the change to that set.
+				setActiveTools: (names: readonly string[]) => {
+					const active = carried?.activeTools;
+					if (!live || active === undefined) return;
+					effects.activeTools = {
+						activate: names.filter((name, index) => !active.includes(name) && names.indexOf(name) === index),
+						deactivate: active.filter((name) => !names.includes(name)),
+					};
+				},
 			});
 			try {
 				return await calls.run({ live: () => live, facts }, () => dispatch(effects));
@@ -167,6 +208,18 @@ export class LoopHookCallEndedError extends Error {
 	}
 }
 
+/** The effects a reply carries back to the loop, each only when there is one. */
+export function effectsReply(effects: LoopHookEffects): Record<string, unknown> {
+	const { sent, notices, entries, userMessages, activeTools } = effects;
+	return {
+		...(sent.length > 0 ? { sent } : {}),
+		...(notices.length > 0 ? { notices } : {}),
+		...(entries.length > 0 ? { entries } : {}),
+		...(userMessages.length > 0 ? { userMessages } : {}),
+		...(activeTools === undefined ? {} : { activeTools }),
+	};
+}
+
 function readOnlySession(
 	{ sessionId, cwd, carried }: LoopHookCallBinding,
 	gates: { readonly live: () => boolean; readonly ownWork: () => boolean },
@@ -178,6 +231,7 @@ function readOnlySession(
 			if (!open()) throw new LoopHookCallEndedError(`sessionManager.${member}`);
 			return read();
 		};
+	const header = carried?.header;
 	const bound = gated(gates.live);
 	const durable = gated(gates.ownWork);
 	const unbound = (member: string) => (): never => {
@@ -194,13 +248,19 @@ function readOnlySession(
 		getLeafEntry: unbound("getLeafEntry"),
 		getEntry: unbound("getEntry"),
 		getLabel: unbound("getLabel"),
-		getBranch: unbound("getBranch"),
+		getBranch:
+			carried === undefined
+				? unbound("getBranch")
+				: bound("getBranch", () => [...(carried.branch ?? carried.handEntries)]),
 		getFullBranch: unbound("getFullBranch"),
 		buildContextEntries: unbound("buildContextEntries"),
 		buildSessionContext: unbound("buildSessionContext"),
 		buildSessionProjection: unbound("buildSessionProjection"),
-		getHeader: unbound("getHeader"),
-		getEntries: unbound("getEntries"),
+		getHeader: header === undefined ? unbound("getHeader") : bound("getHeader", () => ({ ...header })),
+		getEntries:
+			carried === undefined
+				? unbound("getEntries")
+				: bound("getEntries", () => [...(carried.branch ?? carried.handEntries)]),
 		reduceHistory:
 			carried === undefined
 				? unbound("reduceHistory")

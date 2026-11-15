@@ -67,6 +67,7 @@ export {
 	type EpochRefusal,
 	type RemoteAck,
 	type RemoteHandMessage,
+	type HandToolResult,
 	type RemoteFile,
 	type RemoteHello,
 	type RemoteInvoke,
@@ -256,7 +257,12 @@ export {
 	type WakeReceipt,
 	type WakeRefusal,
 } from "./execution/wake-types.ts";
-export { createRemoteToolHost, type HandPlacement, type RemoteToolHostOptions } from "./execution/remote-tool-host.ts";
+export {
+	createRemoteToolHost,
+	type HandPlacement,
+	type RemoteSessionPort,
+	type RemoteToolHostOptions,
+} from "./execution/remote-tool-host.ts";
 export { canonicalJson } from "./execution/canonical-digest.ts";
 export { toStoreValue } from "./execution/prepared/executor-freeze.ts";
 export type { ConsentClassifier } from "./execution/prepared/executor-types.ts";
