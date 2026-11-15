@@ -152,7 +152,10 @@ export type CompactionRejectionCause =
 	| "would-overflow"
 	| "circuit-breaker"
 	| "per-turn-cap"
-	| "stale-revision";
+	| "stale-revision"
+	// The summary request failed on a transient provider error after its bounded retries;
+	// unlike the other causes it says nothing about the context, so the next send retries.
+	| "transient-failure";
 
 // ============================================================================
 // UI Context
