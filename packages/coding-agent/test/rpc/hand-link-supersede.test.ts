@@ -2,6 +2,8 @@
 // successor do during a handover. The successor's claim alone ends the predecessor's live links and aborts their
 // running calls, with no further predecessor batch; the successor cannot take over the same generation while the
 // predecessor's link there may still run; and a commit the store refuses `stale-epoch` reads as a superseded host.
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { createLooplessHand } from "../../src/modes/rpc/remote-executor-scope.ts";
 import { encodeHandPackets } from "../../src/modes/hand/hand-packet-codec.ts";
 import { createHandLinkEndpoint, type HandLinkEndpoint } from "../../src/modes/rpc/hand-link-endpoint.ts";
@@ -58,6 +60,10 @@ function within<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
 	return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
 }
 
+/** A store whose owner watch never fires, so only the per-batch check or the commit refusal can see a takeover. */
+const unwatchedStore = (statePath: string): LockedFileStore =>
+	Object.assign(openLockedFileStore(statePath), { watchOwnership: () => () => {}, watchOwner: () => () => {} });
+
 async function setup(prefix: string) {
 	const dirs = await handDirs(prefix);
 	const statePath = handLinkStatePath(dirs.agentDir);
@@ -98,12 +104,59 @@ it("a successor's claim aborts the predecessor's running call with no further pr
 
 it("a commit refused stale-epoch reads as a superseded host, before any watch has noticed", async () => {
 	const { dirs, statePath, endpoint } = await setup("stale-epoch");
-	const unwatched = (): LockedFileStore => ({ ...openLockedFileStore(statePath), watchOwner: () => () => {} });
-	const host = endpoint(handProbe(), unwatched);
+	const host = endpoint(handProbe(), () => unwatchedStore(statePath));
 	const first = brain("hosted-1", 1);
 	await pumpUntil(host, first, call(first, dirs.cwd, "count", {}));
 
 	await openLockedFileStore(statePath).claimFor("another-daemon");
 
 	expect(await send(host, brain("hosted-1", 2))).toEqual({ kind: "refused", reason: "hand_link_host_superseded" });
+}, 60_000);
+
+it("a superseded daemon refuses its very next batch on an open link, before any watch has fired", async () => {
+	const { dirs, statePath, endpoint } = await setup("next-batch");
+	const host = endpoint(handProbe(), () => unwatchedStore(statePath));
+	const first = brain("hosted-1", 1);
+	await pumpUntil(host, first, call(first, dirs.cwd, "count", {}));
+
+	await openLockedFileStore(statePath).claimFor("another-daemon");
+	void call(first, dirs.cwd, "count", {});
+	await new Promise<void>((resolve) => setImmediate(resolve));
+	expect(first.outgoing.length).toBeGreaterThan(0);
+
+	expect(await send(host, first)).toEqual({ kind: "refused", reason: "hand_link_host_superseded" });
+	expect(readFileSync(join(dirs.cwd, "count.txt"), "utf8")).toBe("x");
+}, 60_000);
+
+it("a graceful close releases a link only after its calls settled: until then the same generation stays refused", async () => {
+	const { dirs, endpoint } = await setup("close-order");
+	const probe = handProbe();
+	probe.hold = Promise.withResolvers<void>();
+	const predecessor = endpoint(probe);
+	const first = brain("hosted-1", 1);
+	void call(first, dirs.cwd, "wait_abort", {});
+	await pumpUntil(predecessor, first, probe.started.promise);
+
+	const closing = predecessor.close();
+	await within(probe.abortSeen.promise, 10_000, "the close's abort");
+	const successor = endpoint(handProbe());
+	expect(await send(successor, brain("hosted-1", 1))).toEqual({
+		kind: "refused",
+		reason: "hand_link_instance_mismatch",
+	});
+	probe.hold.resolve();
+	await within(closing, 10_000, "the close");
+}, 60_000);
+
+it("after a graceful close whose calls settled, a successor reopens the session at the same generation", async () => {
+	const { dirs, endpoint } = await setup("close-release");
+	const predecessor = endpoint(handProbe());
+	const first = brain("hosted-1", 1);
+	await pumpUntil(predecessor, first, call(first, dirs.cwd, "count", {}));
+	await predecessor.close();
+
+	const successor = endpoint(handProbe());
+	const again = brain("hosted-1", 1);
+	await pumpUntil(successor, again, call(again, dirs.cwd, "count", {}));
+	expect(readFileSync(join(dirs.cwd, "count.txt"), "utf8")).toBe("xx");
 }, 60_000);

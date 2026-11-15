@@ -30,6 +30,8 @@ export interface HandProbe {
 	/** Settles when a `wait_abort` call has seen its abort. */
 	readonly abortSeen: PromiseWithResolvers<void>;
 	aborted: boolean;
+	/** When set, a `wait_abort` call keeps running after its abort until this settles. */
+	hold?: PromiseWithResolvers<void>;
 }
 
 export function handProbe(): HandProbe {
@@ -67,6 +69,7 @@ export function probeTools(probe: HandProbe): InlineExtension {
 				await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }));
 				probe.aborted = true;
 				probe.abortSeen.resolve();
+				await probe.hold?.promise;
 				return { content: [{ type: "text", text: "aborted" }], details: {} };
 			},
 		});

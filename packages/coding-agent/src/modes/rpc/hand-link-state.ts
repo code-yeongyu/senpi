@@ -2,16 +2,19 @@
  * What the `hand_link` endpoint must remember across a daemon restart, in one locked durable store
  * (`locked-file-store.ts`) on one admission line:
  * - the hand's epoch floors (`createHandEpochFence`);
- * - each hosted session's link record: the lowest generation it may still open, the owner and loop admitted at that
- *   generation, which daemon opened that link and whether it has ended, and whether the session closed for good;
+ * - each hosted session's record: the lowest generation it may still open, the owner and loop admitted at that
+ *   generation, which daemon opened that link and whether it ended cleanly, and whether the session closed for good;
  * - which session each scope belongs to.
  *
- * Ownership is watched, not polled per batch: the store reports each change of its owner, and the moment another
- * daemon claims it this one is `superseded` and tells its listeners, so it stops every live link at once.
+ * Ownership: `verifyOwner()` reads the store's owner file, a single small read, and the endpoint calls it before every
+ * batch; the store's watch is the proactive path that stops live links between batches. Once another daemon owns the
+ * store, `owned()` is false for good and the fence refuses every call, whatever its in-memory floors say.
  *
- * The state stays bounded: a session holds at most `maxScopes` scopes, and at open a record that is closed or has no
- * live link and was last written more than `retentionMs` ago is pruned, with its scopes and their floors. A record that
- * does not decode fails closed: opening the state throws.
+ * Bounds: a session holds at most `maxScopes` scopes, and at most `maxSessions` sessions hold a live link. At open
+ * (when no link can belong to this daemon yet), a record last written more than `retentionMs` ago is compacted: its
+ * holder, scope bindings and their floors go, and the record itself stays as a tombstone of `{ lowest, at, closed? }`,
+ * so a closed session stays closed and an old generation stays refused for as long as the state file exists.
+ * A record that does not decode fails closed: opening the state throws.
  */
 import { join } from "node:path";
 import {
@@ -35,7 +38,7 @@ export function handLinkStatePath(agentDir: string): string {
 export interface Holder {
 	readonly owner: string;
 	readonly loopId: string;
-	/** The daemon that opened this link; `ended` once that daemon closed it cleanly. */
+	/** The daemon that opened this link; `ended` once that daemon ended it with its calls settled. */
 	readonly daemon: string;
 	readonly ended?: true;
 }
@@ -50,21 +53,27 @@ export interface SessionRecord {
 
 export interface HandLinkStateOptions {
 	readonly now?: () => number;
-	/** How long an ended or closed session's record is kept; default seven days. */
+	/** How long a record keeps its holder and scopes before it is compacted; default seven days. */
 	readonly retentionMs?: number;
 	/** The most scopes one session may hold; default 64. */
 	readonly maxScopes?: number;
+	/** The most sessions that may hold a live link at once; default 256. */
+	readonly maxSessions?: number;
 }
 
 export type ScopeClaim = "held" | "taken" | "limit";
 
 export interface HandLinkState {
 	readonly fence: HandEpochFence;
-	/** Whether this daemon still owns the store; flips to `false` the moment another daemon claims it. */
+	/** Whether this daemon still owns the store, as last seen; `false` for good once another daemon claimed it. */
 	owned(): boolean;
-	/** Calls `listener` once, when another daemon claims the store. */
+	/** Reads the owner on disk: `false` (and superseded for good) when another daemon owns the store. */
+	verifyOwner(): Promise<boolean>;
+	/** Calls `listener` once, when this daemon learns another one owns the store. */
 	onSuperseded(listener: () => void): void;
 	session(session: string): SessionRecord | undefined;
+	/** Whether opening a link for `session` would pass the live-session cap. */
+	hasRoomFor(session: string): boolean;
 	/** Records `owner`'s `loopId` as the session's link at `generation`, opened by this daemon. */
 	admit(session: string, generation: number, holder: Pick<Holder, "owner" | "loopId">): Promise<void>;
 	/** Ends the session's link: nothing is held and only `lowest` or above may open it again. */
@@ -81,6 +90,8 @@ export interface HandLinkState {
 
 const isCount = (value: unknown, minimum: number): value is number =>
 	typeof value === "number" && Number.isSafeInteger(value) && value >= minimum;
+const isLive = (record: SessionRecord | undefined): boolean =>
+	record?.holder !== undefined && record.holder.ended !== true && record.closed !== true;
 
 class HandLinkStateCorruptError extends Error {
 	constructor(key: string, reason: string) {
@@ -106,7 +117,7 @@ function decodeSession(key: string, data: StoreValue): SessionRecord {
 	return { lowest, at, holder, ...marks };
 }
 
-/** Claims `store` for `token` (this daemon), prunes expired records, and loads what an earlier process left in it. */
+/** Claims `store` for `token` (this daemon), compacts expired records, and loads what an earlier process left in it. */
 export async function openHandLinkState(
 	store: LockedFileStore,
 	token: string,
@@ -115,7 +126,18 @@ export async function openHandLinkState(
 	const now = options.now ?? Date.now;
 	const retentionMs = options.retentionMs ?? 7 * DAY_MS;
 	const maxScopes = options.maxScopes ?? 64;
+	const maxSessions = options.maxSessions ?? 256;
 	const epoch = await store.claimFor(token);
+	let owned = true;
+	const supersededListeners: Array<() => void> = [];
+	const lose = (): void => {
+		if (!owned) return;
+		owned = false;
+		for (const listener of supersededListeners.splice(0)) listener();
+	};
+	// Started right after the claim and measured against this daemon's own token, so a claim made while the rest of
+	// the state loads is still seen.
+	const stopWatching = store.watchOwnership(token, lose);
 	const admission = createAdmissionLine();
 	const sessions = new Map<string, SessionRecord>();
 	const scopes = new Map<string, string>();
@@ -136,54 +158,64 @@ export async function openHandLinkState(
 			{ op: "delete", key: `${SCOPE_PREFIX}${scope}` },
 			{ op: "delete", key: `${EPOCH_FLOOR_PREFIX}${scope}` },
 		]);
-
-	const expired = [...sessions].flatMap(([session, record]) => {
-		const live = record.holder !== undefined && record.holder.ended !== true && record.closed !== true;
-		return !live && now() - record.at > retentionMs ? [session] : [];
+	const sessionWrite = (session: string, record: SessionRecord): StoreWrite => ({
+		op: "put",
+		key: `${SESSION_PREFIX}${session}`,
+		data: { lowest: record.lowest, at: record.at, ...record.holder, ...(record.closed ? { closed: true } : {}) },
 	});
+	// A compacted record keeps only what refuses later batches: an open holder's generation can never reopen.
+	const compacted = (record: SessionRecord): SessionRecord => ({
+		lowest: isLive(record) ? record.lowest + 1 : record.lowest,
+		at: record.at,
+		...(record.closed ? { closed: true as const } : {}),
+	});
+
+	const expired = [...sessions].flatMap(([session, record]) =>
+		now() - record.at > retentionMs && (record.holder !== undefined || scopesOf(session).length > 0)
+			? [[session, compacted(record)] as const]
+			: [],
+	);
 	if (expired.length > 0) {
-		const held = expired.flatMap(scopesOf);
-		const writes = [
-			...expired.map((session): StoreWrite => ({ op: "delete", key: `${SESSION_PREFIX}${session}` })),
-			...dropScopes(held),
-		];
+		const held = expired.flatMap(([session]) => scopesOf(session));
+		const writes = [...expired.map(([session, record]) => sessionWrite(session, record)), ...dropScopes(held)];
 		await commit(writes, () => {
-			for (const session of expired) sessions.delete(session);
+			for (const [session, record] of expired) sessions.set(session, record);
 			for (const scope of held) scopes.delete(scope);
 		});
 	}
 
-	const fence = createHandEpochFence({
+	const floors = createHandEpochFence({
 		ownerOf: (scope) => {
 			const session = scopes.get(scope);
 			return session === undefined ? undefined : sessions.get(session)?.holder?.owner;
 		},
 		durable: { store, epoch, admission },
 	});
-	await fence.ready;
+	await floors.ready;
+	// Its in-memory floors stop meaning anything once another daemon owns the store: then it admits and raises nothing.
+	const fence: HandEpochFence = {
+		ready: floors.ready,
+		admits: (scope, at, sender) => owned && floors.admits(scope, at, sender),
+		raise: (scope, at, sender) =>
+			owned ? floors.raise(scope, at, sender) : Promise.resolve({ kind: "refused", reason: "peer_unauthorized" }),
+	};
 
-	let owned = true;
-	const supersededListeners: Array<() => void> = [];
-	const stopWatching = store.watchOwner((owner) => {
-		if (!owned || owner === token) return;
-		owned = false;
-		for (const listener of supersededListeners.splice(0)) listener();
-	});
-	const sessionWrite = (session: string, record: SessionRecord): StoreWrite => ({
-		op: "put",
-		key: `${SESSION_PREFIX}${session}`,
-		data: { lowest: record.lowest, at: record.at, ...record.holder, ...(record.closed ? { closed: true } : {}) },
-	});
 	const putSession = (session: string, record: SessionRecord): Promise<void> =>
 		commit([sessionWrite(session, record)], () => sessions.set(session, record));
 	return {
 		fence,
 		owned: () => owned,
+		async verifyOwner() {
+			if (owned && (await store.owner()) !== token) lose();
+			return owned;
+		},
 		onSuperseded(listener) {
 			if (owned) supersededListeners.push(listener);
 			else listener();
 		},
 		session: (session) => sessions.get(session),
+		hasRoomFor: (session) =>
+			isLive(sessions.get(session)) || [...sessions.values()].filter(isLive).length < maxSessions,
 		admit: (session, generation, holder) =>
 			putSession(session, { lowest: generation, at: now(), holder: { ...holder, daemon: token } }),
 		end: (session, lowest) => putSession(session, { lowest, at: now() }),
