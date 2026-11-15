@@ -255,7 +255,13 @@ async function hostedSession(options: { block?: boolean; userExtension?: string 
 		brain.inbox.drain(async (wake) => {
 			const pi = loopPi;
 			if (pi === undefined) throw new Error("the loop's extension did not load");
-			deliverHandWake(wake, { sendMessage: pi.sendMessage, sendUserMessage: pi.sendUserMessage, notify: () => {} });
+			deliverHandWake(wake, {
+				sendMessage: pi.sendMessage,
+				sendUserMessage: pi.sendUserMessage,
+				appendEntry: pi.appendEntry,
+				notify: () => {},
+				context: () => ({ mode: "tui", model: loop.session.model }),
+			});
 		});
 	return {
 		brain,
@@ -475,6 +481,8 @@ describe("a loop-hook call's bound session (S33, option A)", () => {
 		const late: unknown[] = [];
 		const call = createLoopHookCall((sessionId) => ({
 			sendMessage: (message) => late.push([sessionId, "message", message.content]),
+			sendUserMessage: (content) => late.push([sessionId, "user_message", content]),
+			appendEntry: (customType) => late.push([sessionId, "entry", customType]),
 			notify: (message) => late.push([sessionId, "notice", message]),
 		}));
 		let kept: ReturnType<typeof call.current>;

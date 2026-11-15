@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { NestedRequest, AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { AgentSessionLaunchProfile } from "../../core/agent-session-runtime.ts";
 import { type AgentSessionRuntimeDiagnostic, createAgentSessionServices } from "../../core/agent-session-services.ts";
-import { type HandWake, lateLoopRoute, loopWakeRoute } from "../../core/execution/wake-delivery.ts";
+import { type HandWake, lateLoopRoute, loopWakeRoute } from "../../core/execution/hand-wake-route.ts";
 import type { InlineExtension } from "../../core/extensions/types.ts";
 import { PresentationBroker } from "../../core/extensions/ui-presentation.ts";
 import { bootstrapRuntime, buildToolRegistry, type ToolDefinitionEntry } from "../../core/runtime/bootstrap.ts";

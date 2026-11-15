@@ -1,7 +1,7 @@
 import { isAbsolute } from "node:path";
 import type { AgentToolResult, ExecutionScope, HandScope, OpenHandScope } from "@earendil-works/pi-agent-core";
 import type { JsonValue } from "@earendil-works/pi-ai";
-import type { HandWake } from "../../core/execution/wake-delivery.ts";
+import type { HandWake } from "../../core/execution/hand-wake-route.ts";
 import type { InlineExtension } from "../../core/extensions/types.ts";
 import type { SettingsManager } from "../../core/settings-manager.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";

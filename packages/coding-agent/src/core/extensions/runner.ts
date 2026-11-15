@@ -192,6 +192,7 @@ export interface LoopHookCallFacts {
 export interface LoopWakeRoute {
 	sendMessage(...args: Parameters<ExtensionRuntime["sendMessage"]>): void;
 	sendUserMessage(...args: Parameters<ExtensionAPI["sendUserMessage"]>): void;
+	appendEntry(...args: Parameters<ExtensionRuntime["appendEntry"]>): void;
 	notify(...args: Parameters<ExtensionUIContext["notify"]>): void;
 }
 
@@ -805,7 +806,7 @@ export class ExtensionRunner {
 		readonly loopHookSend?: () => LoopHookCallFacts["sendMessage"] | undefined;
 		/**
 		 * A hand's route to the brain that owns its scope (H3): `pi.sendMessage` from work no loop-hook call started (a
-		 * background command, a monitor, a detached eval cell, a subagent) and every `pi.sendUserMessage` go there, and
+		 * background command, a monitor, a detached eval cell, a subagent), every `pi.sendUserMessage` and `pi.appendEntry` go there, and
 		 * `pi.isLoopRemote()` answers true. Without it they stay loop-side and unbound.
 		 */
 		readonly loopWake?: LoopWakeRoute;
@@ -822,6 +823,7 @@ export class ExtensionRunner {
 			};
 		if (wake !== undefined) {
 			this.runtime.sendUserMessage = (content, options) => wake.sendUserMessage(content, options);
+			this.runtime.appendEntry = (customType, data) => wake.appendEntry(customType, data);
 			this.runtime.isLoopRemote = () => true;
 		}
 		this.runtime.getActiveTools = () => this.getActiveTools();

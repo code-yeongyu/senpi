@@ -17,6 +17,7 @@ import {
 	type WakeEvent,
 	type WakeInbox,
 	type WakeOutbox,
+	type WakeRefusal,
 } from "@earendil-works/pi-agent-core";
 import { handWakesOver } from "../../src/modes/hand/hand-wakes.ts";
 import type { HandWakes } from "../../src/modes/rpc/remote-executor-scope.ts";
@@ -73,6 +74,26 @@ function side(): TransportSide {
 	});
 }
 
+/** `outbox`, telling the test when it recorded an offer and when it applied an ack, instead of the test polling it. */
+export function observed(
+	outbox: WakeOutbox,
+	on: { readonly offered?: () => void; readonly acked?: () => void; readonly refused?: () => void },
+): WakeOutbox {
+	return {
+		...outbox,
+		offer: async (wake) => {
+			const event = await outbox.offer(wake);
+			on.offered?.();
+			return event;
+		},
+		receipt: async (receipt) => {
+			await outbox.receipt(receipt);
+			if (receipt.kind === "ack") on.acked?.();
+			else on.refused?.();
+		},
+	};
+}
+
 export interface Brain {
 	readonly inbox: WakeInbox;
 	readonly committed: ReturnType<typeof arrivals<WakeEvent>>;
@@ -109,7 +130,7 @@ export interface WakeConnection {
 export function connect(
 	brain: Brain,
 	outbox: WakeOutbox,
-	options: { readonly loseReceipts?: boolean } = {},
+	options: { readonly loseReceipts?: boolean; readonly check?: (wake: WakeEvent) => WakeRefusal | undefined } = {},
 ): WakeConnection {
 	const network = createInProcessNetwork();
 	const endpoint = localEndpoint("linux", `hand-wake-${crypto.randomUUID()}`, "/tmp");
@@ -127,6 +148,7 @@ export function connect(
 		transport: brainTransport,
 		inbox: brain.inbox,
 		hand: HAND,
+		...(options.check === undefined ? {} : { check: options.check }),
 		onCommitted: brain.committed.push,
 		onDropped: brain.dropped.push,
 		onFault: (error) => brain.faults.push(error),

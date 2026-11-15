@@ -19,7 +19,7 @@ import type { CustomMessage } from "../../src/core/messages.ts";
 import { createHarness } from "../suite/harness.ts";
 import { openHandWakeOutbox } from "../../src/modes/hand/hand-wakes.ts";
 import { createLooplessHand, type HandWakes } from "../../src/modes/rpc/remote-executor-scope.ts";
-import { brainInbox, connect, within } from "./hand-wake-fixture.ts";
+import { brainInbox, connect, observed, within } from "./hand-wake-fixture.ts";
 import { cleanupHands, handConfiguration, handDirs } from "./remote-hand-fixture.ts";
 
 const cleanups: Array<() => void | Promise<void>> = [];
@@ -127,8 +127,14 @@ describe.skipIf(process.platform === "win32")("late results of a hand's work rea
 		});
 		const pi = brainPi;
 		if (pi === undefined) throw new Error("the brain's extension did not load");
-		const session = { sendMessage: pi.sendMessage, sendUserMessage: pi.sendUserMessage, notify: () => {} };
-		expect(await brain.inbox.drain(async (taken) => deliverHandWake(taken, session))).toBe(1);
+		const session = {
+			sendMessage: pi.sendMessage,
+			sendUserMessage: pi.sendUserMessage,
+			appendEntry: pi.appendEntry,
+			notify: () => {},
+			context: () => ({ mode: "tui", model: loop.session.model }),
+		};
+		expect(await brain.inbox.drain(async (taken) => void deliverHandWake(taken, session))).toBe(1);
 		await within(turnEnded, "the brain's wake turn");
 		await within(loop.session.waitForSettledSessionWork(), "the brain settling");
 		const notices = loop.session.messages.filter(
@@ -158,23 +164,21 @@ describe.skipIf(process.platform === "win32")("late results of a hand's work rea
 		lossy.close();
 		const restarted = await openHandWakeOutbox(storePath);
 		expect((await restarted.pending()).map((wake) => wake.eventId)).toEqual([first.eventId]);
-		const next = connect(brain, restarted);
+		const acked = Promise.withResolvers<void>();
+		const next = connect(brain, observed(restarted, { acked: acked.resolve }));
 		cleanups.push(() => next.close());
-		await next.hand.ready;
-		await within(
-			(async () => {
-				while ((await restarted.pending()).length > 0) await new Promise((resolve) => setImmediate(resolve));
-			})(),
-			"the re-offer's ack",
-		);
+		await within(acked.promise, "the re-offer's ack");
+		expect(await restarted.pending()).toEqual([]);
 
 		const taken: unknown[] = [];
 		const session = {
-			sendMessage: (...args: unknown[]) => taken.push(args),
+			sendMessage: (...args: unknown[]) => void taken.push(args),
 			sendUserMessage: () => {},
+			appendEntry: () => {},
 			notify: () => {},
+			context: () => ({ mode: "tui", model: {} }),
 		};
-		expect(await brain.inbox.drain(async (wake) => deliverHandWake(wake, session))).toBe(1);
+		expect(await brain.inbox.drain(async (wake) => void deliverHandWake(wake, session))).toBe(1);
 		expect(taken).toEqual([
 			[
 				{ customType: "late-work", content: "done after the call", display: true },
@@ -184,8 +188,9 @@ describe.skipIf(process.platform === "win32")("late results of a hand's work rea
 		expect(brain.committed.all).toHaveLength(1);
 	});
 
-	it("tells the brain how many wakes of a disposed scope expired un-acked", async () => {
+	it("tells the brain how many wakes of a disposed scope expired un-acked, once it owns the scope again", async () => {
 		let now = 1_000;
+		let owned = false;
 		const medium = createMemoryStoreMedium();
 		await openMemoryStore(medium).claim(0, 1);
 		const outbox = createWakeOutbox({
@@ -195,24 +200,22 @@ describe.skipIf(process.platform === "win32")("late results of a hand's work rea
 			admission: createAdmissionLine(),
 			clock: () => now,
 		});
-		const brain = await brainInbox(() => false);
-		const link = connect(brain, outbox);
+		const recorded = Promise.withResolvers<void>();
+		const brain = await brainInbox(() => owned);
+		const link = connect(brain, observed(outbox, { offered: recorded.resolve }));
 		cleanups.push(() => link.close());
 		const { scope, fire } = await lateToolHand("h3-expired", link.wakes);
 		fire("nobody owns this scope yet");
-		await within(
-			(async () => {
-				while ((await outbox.pending()).length === 0) await new Promise((resolve) => setImmediate(resolve));
-			})(),
-			"the wake being recorded",
-		);
+		await within(recorded.promise, "the wake being recorded");
 
 		await scope.dispose();
 		now += WAKE_RETENTION_MS + 1;
+		owned = true;
 		link.brain.reoffer();
 
-		expect(await brain.dropped.next("the drop report")).toEqual({ scope: "s", reason: "expired", count: 1 });
+		const drop = await brain.committed.next("the drop report");
+		expect([drop.scope, drop.source, drop.payload]).toEqual(["s", "wake.dropped", { reason: "expired", count: 1 }]);
 		expect(await outbox.pending()).toEqual([]);
-		expect(brain.committed.all).toEqual([]);
+		expect(brain.committed.all).toEqual([drop]);
 	});
 });

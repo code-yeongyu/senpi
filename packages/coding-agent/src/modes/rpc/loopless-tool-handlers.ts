@@ -238,7 +238,7 @@ export interface LoopHookCall {
  * the durable wake outbox, so they reach the loop at least once whether or not the session makes another call, and
  * never through a reply that may be lost. Late work never throws into the user's hook code.
  */
-export type LateLoopRoute = (sessionId: string) => Pick<LoopWakeRoute, "sendMessage" | "notify">;
+export type LateLoopRoute = (sessionId: string) => LoopWakeRoute;
 
 export function createLoopHookCall(late: LateLoopRoute): LoopHookCall {
 	const calls = new AsyncLocalStorage<{ readonly live: () => boolean; readonly facts: LoopHookCallFacts }>();

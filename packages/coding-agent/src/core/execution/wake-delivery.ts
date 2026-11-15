@@ -1,56 +1,15 @@
-import { toStoreValue, type WakeEvent } from "@earendil-works/pi-agent-core";
+import { WAKE_DROPPED_SOURCE, type WakeEvent, type WakeRefusal } from "@earendil-works/pi-agent-core";
 import type { StoreValue } from "@earendil-works/pi-agent-core/conformance";
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
+import { NON_INTERACTIVE_MODES } from "../extensions/builtin/terminal/notify.ts";
 import type { LoopWakeRoute } from "../extensions/runner.ts";
 import type { CustomMessage } from "../messages.ts";
-
-/** What a hand's late work did, as the loop's session does it: a custom message, a user message, or a UI notice. */
-export type HandWakeSource = "message" | "user_message" | "notice";
-
-/** One late effect of a hand's work, for the hand's wake outbox; its scope is the runtime's own. */
-export interface HandWake {
-	readonly source: HandWakeSource;
-	readonly payload: StoreValue;
-}
 
 type SendMessage = LoopWakeRoute["sendMessage"];
 type SendUserMessage = LoopWakeRoute["sendUserMessage"];
 type Notify = LoopWakeRoute["notify"];
 
-/**
- * The loop-side effects of a hand runtime's late work (brain/hand split H3), each turned into a wake for the brain that
- * owns the scope: exactly the arguments a local session's `sendMessage`, `sendUserMessage` and `ui.notify` would have
- * received, plus the loop session's id when a loop-hook call on that session started the work.
- */
-export function loopWakeRoute(offer: (wake: HandWake) => void, sessionId?: string): LoopWakeRoute {
-	const wake = (source: HandWakeSource, fields: Record<string, unknown>): void =>
-		offer({ source, payload: toStoreValue(sessionId === undefined ? fields : { ...fields, sessionId }) });
-	return {
-		sendMessage: (message, options) => wake("message", { message, options }),
-		sendUserMessage: (content, options) => wake("user_message", { content, options }),
-		notify: (message, type) => wake("notice", { message, type }),
-	};
-}
-
-/**
- * Where a loop-hook call's messages and notices go once the call ended: its runtime's wake outbox, or, on a runtime
- * without one, nowhere, and `dropped` reports each one so it is never lost silently.
- */
-export function lateLoopRoute(
-	wake: ((wake: HandWake) => void) | undefined,
-	dropped: (error: string) => void,
-): (sessionId: string) => Pick<LoopWakeRoute, "sendMessage" | "notify"> {
-	if (wake !== undefined) return (sessionId) => loopWakeRoute(wake, sessionId);
-	return (sessionId) => {
-		const drop = (what: string) =>
-			dropped(
-				`A ${what} from loop session ${sessionId}'s hook work arrived after its call ended and was dropped: this runtime has no wake route to the loop.`,
-			);
-		return { sendMessage: () => drop("message"), notify: () => drop("notice") };
-	};
-}
-
-/** A wake parsed on the brain, ready for the session that owns its scope (or the loop session it names). */
+/** A wake parsed on the brain, for the loop session of its scope that it names (`sessionId`), or the scope's own. */
 export type HandWakeDelivery = { readonly sessionId?: string } & (
 	| {
 			readonly kind: "message";
@@ -62,7 +21,9 @@ export type HandWakeDelivery = { readonly sessionId?: string } & (
 			readonly content: Parameters<SendUserMessage>[0];
 			readonly options?: Parameters<SendUserMessage>[1];
 	  }
+	| { readonly kind: "entry"; readonly customType: string; readonly data?: unknown }
 	| { readonly kind: "notice"; readonly message: string; readonly type?: Parameters<Notify>[1] }
+	| { readonly kind: "dropped"; readonly reason: string; readonly count: number }
 );
 
 export class MalformedHandWakeError extends Error {
@@ -113,10 +74,7 @@ function messageOptions(value: StoreValue | undefined): Parameters<SendMessage>[
 	const { triggerTurn, deliverAs } = value;
 	if (triggerTurn !== undefined && typeof triggerTurn !== "boolean") return null;
 	if (deliverAs !== undefined && !isOneOf(deliverAs, DELIVER_AS)) return null;
-	return {
-		...(triggerTurn === undefined ? {} : { triggerTurn }),
-		...(deliverAs === undefined ? {} : { deliverAs }),
-	};
+	return { ...(triggerTurn === undefined ? {} : { triggerTurn }), ...(deliverAs === undefined ? {} : { deliverAs }) };
 }
 
 function userMessageOptions(value: StoreValue | undefined): Parameters<SendUserMessage>[1] | null {
@@ -153,26 +111,95 @@ export function parseHandWake(wake: WakeEvent): HandWakeDelivery {
 			if (options === null) return fail("user message options");
 			return { ...session, kind: "user_message", content: body, ...(options === undefined ? {} : { options }) };
 		}
+		case "entry": {
+			const customType = typeof payload.customType === "string" ? payload.customType : fail("entry customType");
+			return {
+				...session,
+				kind: "entry",
+				customType,
+				...(payload.data === undefined ? {} : { data: payload.data }),
+			};
+		}
 		case "notice": {
 			const message = typeof payload.message === "string" ? payload.message : fail("notice");
 			const { type } = payload;
 			if (type !== undefined && !isOneOf(type, NOTICE_TYPES)) return fail("notice type");
 			return { ...session, kind: "notice", message, ...(isOneOf(type, NOTICE_TYPES) ? { type } : {}) };
 		}
+		case WAKE_DROPPED_SOURCE: {
+			const { reason, count } = payload;
+			if (typeof reason !== "string" || typeof count !== "number") return fail("drop report");
+			return { kind: "dropped", reason, count };
+		}
 		default:
 			return fail(`source ${wake.source}`);
 	}
 }
 
-/** On the brain: a taken wake becomes the very call a local session makes; `session` is the session it belongs to. */
-export function deliverHandWake(wake: WakeEvent, session: LoopWakeRoute): void {
+/** The brain session a wake is delivered to: its writes, and the facts its delivery guard reads. */
+export interface HandWakeSession extends LoopWakeRoute {
+	/** The session's mode and model now, as a local notifier reads them from its context; none before it started. */
+	readonly context: () => { readonly mode: string; readonly model: unknown } | undefined;
+}
+
+/** `skipped`: the session is one-shot (print/json), has no model, or has not started, so the wake may not start a turn. */
+export type HandWakeOutcome = "delivered" | "skipped";
+
+/**
+ * Whether the session may start a turn now (senpi#6767 review M2): the guard every local notifier applies before it
+ * wakes a session (`terminal/notify.ts`, codemode's `EvalNotifier`), applied here because on a hand they send without
+ * it. A one-shot run (print/json) is never woken (it would never end), and neither is a session with no model (an
+ * auth-less turn would spin).
+ */
+function mayStartTurn(session: HandWakeSession): boolean {
+	const context = session.context();
+	return context !== undefined && !NON_INTERACTIVE_MODES.has(context.mode) && context.model !== undefined;
+}
+
+/**
+ * On the brain: a taken wake becomes the very call a local session makes. A wake that would start a turn (a message
+ * with `triggerTurn`, or a user message) is skipped when the session may not start one; entries, notices and messages
+ * for the next turn are always delivered. A drop report becomes a warning notice.
+ */
+export function deliverHandWake(wake: WakeEvent, session: HandWakeSession): HandWakeOutcome {
 	const delivery = parseHandWake(wake);
 	switch (delivery.kind) {
 		case "message":
-			return session.sendMessage(delivery.message, delivery.options);
+			if (delivery.options?.triggerTurn === true && !mayStartTurn(session)) return "skipped";
+			session.sendMessage(delivery.message, delivery.options);
+			return "delivered";
 		case "user_message":
-			return session.sendUserMessage(delivery.content, delivery.options);
+			if (!mayStartTurn(session)) return "skipped";
+			session.sendUserMessage(delivery.content, delivery.options);
+			return "delivered";
+		case "entry":
+			session.appendEntry(delivery.customType, delivery.data);
+			return "delivered";
 		case "notice":
-			return session.notify(delivery.message, delivery.type);
+			session.notify(delivery.message, delivery.type);
+			return "delivered";
+		case "dropped":
+			session.notify(
+				`${delivery.count} late result${delivery.count === 1 ? "" : "s"} from work on the user's machine never arrived (${delivery.reason}).`,
+				"warning",
+			);
+			return "delivered";
 	}
+}
+
+/**
+ * The brain's check that a wake names only a loop session of its own scope (senpi#6767 review L3), for
+ * `serveHandWakes({ check })`. `sessionsOf` answers the loop sessions bound to a scope; a wake naming any other, or a
+ * malformed session id, is refused `not_scope_session` and never committed.
+ */
+export function scopeSessionCheck(
+	sessionsOf: (scope: string) => ReadonlySet<string> | undefined,
+): (wake: WakeEvent) => WakeRefusal | undefined {
+	return (wake) => {
+		const sessionId = isObject(wake.payload) ? wake.payload.sessionId : undefined;
+		if (sessionId === undefined) return undefined;
+		return typeof sessionId === "string" && sessionsOf(wake.scope)?.has(sessionId) === true
+			? undefined
+			: "not_scope_session";
+	};
 }
