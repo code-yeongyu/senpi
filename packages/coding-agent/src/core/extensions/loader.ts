@@ -97,7 +97,8 @@ import type {
 	SessionKind,
 	ToolDefinition,
 } from "./types.ts";
-import { DEFAULT_EXTENSION_SESSION_PROFILE, EMPTY_SESSION_CONTEXT } from "./types.ts";
+import type { ToolMachine } from "../tools/machine.ts";
+import { DEFAULT_EXTENSION_SESSION_PROFILE, DeviceMachineConflictError, EMPTY_SESSION_CONTEXT } from "./types.ts";
 
 /** Per-session extension inputs a caller may name; every absent one takes its classic default. */
 export interface ExtensionSessionOptions {
@@ -321,6 +322,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
 	};
 
 	const runtime: ExtensionRuntime = {
+		deviceMachine: undefined,
 		sendMessage: notInitialized,
 		sendUserMessage: notInitialized,
 		appendEntry: notInitialized,
@@ -545,6 +547,14 @@ function createExtensionAPI(
 				handlers.splice(handlerIndex, 1);
 				if (handlers.length === 0) extension.handlers.delete(event);
 			};
+		},
+
+		registerDeviceMachine(machine: ToolMachine): void {
+			runtime.assertActive();
+			if (runtime.deviceMachine !== undefined) {
+				throw new DeviceMachineConflictError(runtime.deviceMachine.extensionPath, extension.path);
+			}
+			runtime.deviceMachine = { machine, extensionPath: extension.path };
 		},
 
 		registerTool(tool: ToolDefinition): void {

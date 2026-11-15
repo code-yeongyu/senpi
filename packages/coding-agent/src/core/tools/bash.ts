@@ -228,12 +228,6 @@ const toolsViaDaemon = (tool: string, env: NodeJS.ProcessEnv = process.env): boo
 		.map((name) => name.trim())
 		.includes(tool);
 
-const unavailableBashOperations = (tool: string): BashOperations => ({
-	exec: async () => {
-		throw new DeviceUnavailableError(tool);
-	},
-});
-
 export interface BashSpawnContext {
 	command: string;
 	cwd: string;
@@ -297,7 +291,7 @@ export interface BashToolOptions {
 	 * only, NOT yet via the daemon; the relay transport that supplies it is slice 1b. Used only when OMO_TOOLS_VIA_DAEMON
 	 * names "bash"; with the flag on and no device machine, a call fails with DeviceUnavailableError and never runs locally.
 	 */
-	deviceMachine?: ToolMachine;
+	deviceMachine?: ToolMachine | (() => ToolMachine | undefined);
 }
 
 export type BashRenderState = {
@@ -328,10 +322,20 @@ export function createShellToolDefinition(
 	// Only the bash tool: powershell shares this definition with its own local operations and stays on them.
 	const viaDevice = config.name === "bash" && toolsViaDaemon("bash");
 	const deviceMachine = options?.deviceMachine;
-	const ops = viaDevice
-		? deviceMachine !== undefined
-			? createLocalBashOperations({ shellPath: options?.shellPath, machine: deviceMachine })
-			: unavailableBashOperations("bash")
+	// Resolved when the command runs, not when the tool is built: an extension may register the device later.
+	const resolveDevice = typeof deviceMachine === "function" ? deviceMachine : () => deviceMachine;
+	const ops: BashOperations = viaDevice
+		? {
+				exec: (command, execCwd, execOptions) => {
+					const device = resolveDevice();
+					if (device === undefined) throw new DeviceUnavailableError(config.name);
+					return createLocalBashOperations({ shellPath: options?.shellPath, machine: device }).exec(
+						command,
+						execCwd,
+						execOptions,
+					);
+				},
+			}
 		: (options?.operations ?? createLocalBashOperations({ shellPath: options?.shellPath, machine }));
 	const commandPrefix = options?.commandPrefix;
 	const exposeSessionEnvironment = options?.exposeSessionEnvironment ?? true;
