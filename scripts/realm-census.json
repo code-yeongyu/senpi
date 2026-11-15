@@ -454,6 +454,22 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
+		"packages/agent/src/execution/wake-link.ts#DROP_REASONS": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/agent/src/execution/wake-link.ts#REFUSALS": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/agent/src/execution/wake-link.ts#decoder": {
+			"class": "constant",
+			"reason": "stateless helper instance; holds no mutable state"
+		},
+		"packages/agent/src/execution/wake-link.ts#encoder": {
+			"class": "constant",
+			"reason": "stateless helper instance; holds no mutable state"
+		},
 		"packages/agent/src/execution/wake-outbox.ts#EMPTY": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"

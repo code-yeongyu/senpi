@@ -17,6 +17,8 @@ export interface WakeOutbox {
 	offer(wake: Omit<WakeEvent, "eventId">): Promise<WakeEvent>;
 	/** Sends every un-acked wake in offer order (on reconnect) but those refused for good (not_scope_hand, scope_closed); a failed send or an unknown scope leaves it pending for the next re-offer. */
 	reoffer(send: (wake: WakeEvent) => Promise<WakeReceipt>): Promise<number>;
+	/** The wakes a re-offer sends, in offer order: every un-acked wake but those refused for good. */
+	due(): Promise<readonly WakeEvent[]>;
 	/** Applies one brain answer: an ack removes the wake; a refusal keeps it for retention and stops its re-offers. Idempotent. */
 	receipt(receipt: WakeReceipt): Promise<void>;
 	/** The scope closed: its un-acked wakes are kept until `closedAt + WAKE_RETENTION_MS`. */
@@ -67,6 +69,10 @@ export function createWakeOutbox(options: WakeOutboxOptions): WakeOutbox {
 	};
 	const update = <T>(decide: (record: WakeOutboxRecord) => Promise<T>): Promise<T> =>
 		admission.admit(async () => decide(await read()));
+	const due = async (): Promise<readonly WakeEvent[]> => {
+		const record = await read();
+		return record.pending.filter((wake) => record.refused[wake.eventId] === undefined);
+	};
 
 	const receipt = (answer: WakeReceipt): Promise<void> =>
 		update(async (record) => {
@@ -95,15 +101,11 @@ export function createWakeOutbox(options: WakeOutboxOptions): WakeOutbox {
 				return event;
 			}),
 		reoffer: async (send) => {
-			let sent = 0;
-			const record = await read();
-			for (const wake of record.pending) {
-				if (record.refused[wake.eventId] !== undefined) continue;
-				await receipt(await send(wake));
-				sent += 1;
-			}
-			return sent;
+			const wakes = await due();
+			for (const wake of wakes) await receipt(await send(wake));
+			return wakes.length;
 		},
+		due,
 		receipt,
 		closeScope: (scope) =>
 			update(async (record) => {
