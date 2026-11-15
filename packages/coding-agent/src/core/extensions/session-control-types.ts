@@ -10,6 +10,7 @@
  */
 
 import type { RelocationRequest, RelocationRequestResult, RelocationTargetsResult } from "../session-relocation.ts";
+import type { SessionWakePort } from "../session-wakes.ts";
 
 export type {
 	RelocationRequest,
@@ -178,6 +179,11 @@ export interface SessionControlActions {
 	relocationTargets(signal?: AbortSignal): Promise<RelocationTargetsResult>;
 	/** Asks the host to continue this session on `target` once the current turn ends; never interrupts it. */
 	requestRelocation(request: RelocationRequest, signal?: AbortSignal): Promise<RelocationRequestResult>;
+	/**
+	 * The session's durable wakes when its loop keeps them (a hosted loop's call on this machine, senpi#6754): a tool
+	 * that schedules work arms one there instead of a timer or a job file here. `undefined` where this process keeps them.
+	 */
+	sessionWakes(): SessionWakePort | undefined;
 }
 
 /** `customType` of the transcript entry an admitted delivery becomes. */

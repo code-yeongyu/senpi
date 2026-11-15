@@ -31,7 +31,10 @@ import type { NamedMemoryReporter } from "../memory-report/memory-report-registr
 import type { ModelRegistry } from "../model-registry.ts";
 import type { ScopedModel } from "../model-resolver.ts";
 import { bindQuestionInput } from "../question-input.ts";
+import { callSessionControlActions } from "../session-control-actions.ts";
 import type { ReadonlySessionManager, SessionManager } from "../session-manager.ts";
+import type { SessionRelocationHost } from "../session-relocation.ts";
+import type { SessionWakePort } from "../session-wakes.ts";
 import {
 	DEFAULT_EXTENSION_EVENT_HANDLER_TIMEOUT_MS,
 	DEFAULT_EXTENSION_EVENT_HANDLER_WARN_MS,
@@ -194,6 +197,10 @@ export interface LoopHookCallFacts {
 	setActiveTools(names: readonly string[]): void;
 	/** `ctx.getSystemPromptOptions()` during the call: the options the loop carried, with this machine's cwd. */
 	getSystemPromptOptions(): BuildSystemPromptOptions;
+	/** `pi.session` relocation during the call: the loop's offered targets; a move is a request the loop applies. */
+	relocationHost(): SessionRelocationHost | undefined;
+	/** `pi.session.sessionWakes()` during the call: the loop's wakes, which a scheduling tool changes. */
+	sessionWakes(): SessionWakePort | undefined;
 }
 
 /** The hand's UI, except `notify`, which a loop-hook call carries back to the loop's UI. */
@@ -833,6 +840,7 @@ export class ExtensionRunner {
 		this.runtime.getActiveTools = () => this.getActiveTools();
 		this.runtime.setActiveTools = (names) => this.loopHookCallFn?.()?.setActiveTools(names);
 		if (facts.refreshTools !== undefined) this.runtime.refreshTools = facts.refreshTools;
+		this.runtime.sessionControl = callSessionControlActions(() => this.loopHookCallFn?.());
 		if (facts.getLoadedHookSources === undefined) return;
 		this.getLoadedHookSourcesFn = facts.getLoadedHookSources;
 		this.sessionlessBoundMembers.add("getLoadedHookSources");

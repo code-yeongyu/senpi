@@ -2,7 +2,20 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import type { LoopHookCallFacts } from "../../core/extensions/runner.ts";
 import type { HistoryReducer } from "../../core/session-history-reduce.ts";
 import type { ReadonlySessionManager, SessionEntry, SessionHeader } from "../../core/session-manager.ts";
+import type { SessionWake, SessionWakeChange } from "../../core/session-wakes.ts";
 import type { BuildSystemPromptOptions } from "../../core/system-prompt.ts";
+import {
+	collectDocumentChanges,
+	materializeDocuments,
+	type SessionDocumentChanges,
+	type SessionDocuments,
+} from "./session-documents.ts";
+import {
+	type CarriedRelocation,
+	carriedRelocationHost,
+	carriedWakePort,
+	type RelocationRequestEffect,
+} from "./session-port-hosts.ts";
 
 /** A message a loop hook sent during its call, for the loop to send with the same options. */
 export interface SentLoopMessage {
@@ -41,6 +54,12 @@ export interface CarriedSession {
 	readonly activeTools?: readonly string[];
 	/** The loop's system prompt options a call reads (its `surface`, ...); only `cwd` is this machine's own. */
 	readonly systemPromptOptions?: Readonly<Partial<BuildSystemPromptOptions>>;
+	/** The session's documents (`getSessionDir()` stores, see `session-documents.ts`); absent: the session has no directory here. */
+	readonly documents?: SessionDocuments;
+	/** The loop's pending wakes for the session (`pi.session.sessionWakes()`); absent: wakes stay with this process. */
+	readonly wakes?: readonly SessionWake[];
+	/** The computers the loop's host offers to continue on (`pi.session` relocation); absent: not offered. */
+	readonly relocation?: CarriedRelocation;
 }
 
 /** What a loop-hook call's handlers did beyond their result, which the loop does in turn (session port, write). */
@@ -51,6 +70,14 @@ export interface LoopHookEffects {
 	readonly userMessages: SentLoopUserMessage[];
 	/** The active tool set the call's work left, for the loop to apply (`pi.setActiveTools`); unset: unchanged. */
 	activeTools: string[] | undefined;
+	/** The documents the call changed, `null` for a removed one; unset: it carried none. */
+	documents: SessionDocumentChanges | undefined;
+	/** The call's changes to the loop's wakes, in order. */
+	readonly wakes: SessionWakeChange[];
+	/** The move the call asked for, which the loop applies when its turn ends. */
+	relocation: RelocationRequestEffect | undefined;
+	/** Settles what the call wrote into its session directory into {@link documents}; await it before the reply. */
+	settle: () => Promise<void>;
 	/** Late messages and notices dropped because the loop session already held {@link LATE_PER_SESSION}. */
 	dropped: number;
 }
@@ -124,8 +151,25 @@ export function createLoopHookCall(): LoopHookCall {
 			const controller = new AbortController();
 			const effects: LoopHookEffects = late.get(sessionId) ?? emptyEffects();
 			late.delete(sessionId);
+			const documents = carried?.documents;
+			const sessionDir = documents === undefined ? undefined : await materializeDocuments(documents);
+			const relocation =
+				carried?.relocation === undefined
+					? undefined
+					: carriedRelocationHost(carried.relocation, (request) => {
+							if (live) effects.relocation = request;
+						});
+			const wakes = carried?.wakes === undefined ? undefined : carriedWakePort(carried.wakes, effects.wakes);
+			let settling: Promise<void> | undefined;
+			effects.settle = () => {
+				if (sessionDir === undefined || documents === undefined) return Promise.resolve();
+				settling ??= collectDocumentChanges(sessionDir, documents).then((changes) => {
+					effects.documents = changes;
+				});
+				return settling;
+			};
 			const facts: LoopHookCallFacts = Object.freeze({
-				sessionManager: readOnlySession(sessionId, cwd, () => live, carried),
+				sessionManager: readOnlySession(sessionId, cwd, () => live, { carried, sessionDir }),
 				signal: controller.signal,
 				isIdle: () => idle,
 				sendMessage: (message: SentLoopMessage["message"], options?: SentLoopMessage["options"]) => {
@@ -154,6 +198,8 @@ export function createLoopHookCall(): LoopHookCall {
 					return active === undefined ? undefined : [...active];
 				},
 				getSystemPromptOptions: () => ({ ...carried?.systemPromptOptions, cwd }),
+				relocationHost: () => relocation,
+				sessionWakes: () => wakes,
 				// Only a set the loop carried can change: the loop applies the change to that set.
 				setActiveTools: (names: readonly string[]) => {
 					if (live && carried?.activeTools !== undefined) effects.activeTools = [...names];
@@ -164,6 +210,8 @@ export function createLoopHookCall(): LoopHookCall {
 			} finally {
 				live = false;
 				controller.abort();
+				// The session directory never outlives the call, also when its work threw before the reply settled it.
+				await effects.settle();
 			}
 		},
 	};
@@ -190,18 +238,25 @@ const emptyEffects = (): LoopHookEffects => ({
 	entries: [],
 	userMessages: [],
 	activeTools: undefined,
+	documents: undefined,
+	wakes: [],
+	relocation: undefined,
+	settle: () => Promise.resolve(),
 	dropped: 0,
 });
 
 /** The effects a reply carries back to the loop, each only when there is one. */
 export function effectsReply(effects: LoopHookEffects): Record<string, unknown> {
-	const { sent, notices, entries, userMessages, activeTools, dropped } = effects;
+	const { sent, notices, entries, userMessages, activeTools, documents, wakes, relocation, dropped } = effects;
 	return {
 		...(sent.length > 0 ? { sent } : {}),
 		...(notices.length > 0 ? { notices } : {}),
 		...(entries.length > 0 ? { entries } : {}),
 		...(userMessages.length > 0 ? { userMessages } : {}),
 		...(activeTools === undefined ? {} : { activeTools }),
+		...(documents === undefined || Object.keys(documents).length === 0 ? {} : { documents }),
+		...(wakes.length > 0 ? { wakes } : {}),
+		...(relocation === undefined ? {} : { relocation }),
 		...(dropped > 0 ? { droppedLate: dropped } : {}),
 	};
 }
@@ -210,8 +265,9 @@ function readOnlySession(
 	sessionId: string,
 	cwd: string,
 	live: () => boolean,
-	carried: CarriedSession | undefined,
+	session: { readonly carried: CarriedSession | undefined; readonly sessionDir: string | undefined },
 ): ReadonlySessionManager {
+	const { carried, sessionDir } = session;
 	const bound =
 		<T>(member: string, read: () => T) =>
 		(): T => {
@@ -228,7 +284,9 @@ function readOnlySession(
 		getSessionId: bound("getSessionId", () => sessionId),
 		getSessionFile: bound("getSessionFile", (): string | undefined => undefined),
 		getCwd: bound("getCwd", () => cwd),
-		getSessionDir: unbound("getSessionDir"),
+		// The session's documents, when the loop carried them; otherwise the session has no directory here (as in memory).
+		getSessionDir:
+			carried === undefined ? unbound("getSessionDir") : bound("getSessionDir", () => sessionDir ?? ""),
 		getLeafId: carried === undefined ? unbound("getLeafId") : bound("getLeafId", () => carried.leafId),
 		getLeafEntry: unbound("getLeafEntry"),
 		getEntry: unbound("getEntry"),
