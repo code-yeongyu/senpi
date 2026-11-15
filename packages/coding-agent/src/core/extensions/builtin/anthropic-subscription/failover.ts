@@ -405,7 +405,14 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 	const now = options.now ?? Date.now;
 	const baseBlockMs = options.baseBlockMs ?? DEFAULT_RATE_LIMIT_BLOCK_MS;
 	let accounts = clearExpiredBlocks(withSessionBlocks(options.accounts, options.sessionKey, now()), now());
-	const select = () => options.selectFn(recheckSelection(accounts, options.recheckedAccounts, now()));
+	const select = () => {
+		try {
+			return options.selectFn(accounts);
+		} catch (error) {
+			if (!(error instanceof AllAccountsBlockedError) || options.recheckedAccounts === undefined) throw error;
+			return options.selectFn(recheckSelection(accounts, options.recheckedAccounts, now()));
+		}
+	};
 	const attemptLimit = options.accountFallback === false ? Math.min(accounts.length, 1) : accounts.length;
 	let lastError: ClassifiedSdkError | undefined;
 	const retriedOnStoredMaterial = new Set<string>();

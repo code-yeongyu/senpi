@@ -114,6 +114,22 @@ afterEach(async () => {
 });
 
 describe("person-started stale Claude block rechecks (senpi#6727)", () => {
+	it("uses a healthy account without probing a stale-blocked pin on a person's turn", async () => {
+		usage("healthy-first", NOW, 0);
+		const { harness, attempts } = await setup([blocked("stale-pin"), cliSlot("healthy-first")], (name) =>
+			name === "stale-pin" ? "You've hit your limit · resets in 2 hours" : undefined,
+		);
+		await harness.authStorage.modify("anthropic-subscription", async (current) => {
+			if (current?.type !== "oauth") throw new Error("Missing Claude credential");
+			return { ...current, pinned: "stale-pin" };
+		});
+
+		await harness.session.prompt("use the available account");
+
+		expect(attempts).toEqual(["healthy-first"]);
+		expect(harness.session.messages.at(-1)).toMatchObject({ content: [{ type: "text", text: "served" }] });
+	});
+
 	it("serves a blocked account with no fresh usage and clears its stored block", async () => {
 		const { harness, attempts } = await setup([blocked("stale-free")]);
 		await harness.session.prompt("try now");
