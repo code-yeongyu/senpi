@@ -11,6 +11,23 @@ export interface WakeInboxOptions {
 	readonly clock: () => number;
 	/** The authenticated hand bound to a scope (design 5.6.6), or undefined for a scope this brain does not own (yet): such a wake is refused unknown_scope and re-offered by the hand. */
 	readonly owner: (scope: string) => string | undefined;
+	/**
+	 * A wake the loop could not take (its consumer threw). With it, one such wake never holds the queue: it is reported
+	 * here, stays pending for later drains, and is taken as `poisoned` (reported once more) at its `maxAttempts`-th
+	 * failure, while every wake behind it is delivered. Without it, a failure stops the drain and rejects it, as before.
+	 */
+	readonly onUndeliverable?: (failure: WakeDeliveryFailure) => void;
+	/** Failed deliveries before a wake is poisoned; default 3. */
+	readonly maxAttempts?: number;
+}
+
+export interface WakeDeliveryFailure {
+	readonly wake: WakeEvent;
+	readonly error: unknown;
+	/** This failure's number, from 1. */
+	readonly attempts: number;
+	/** The wake was taken without being delivered: it is never offered to the loop again. */
+	readonly poisoned: boolean;
 }
 
 /** The brain side of design 5.6.4: deduplicated by event id, acked only after the commit. */
@@ -26,6 +43,12 @@ export interface WakeInbox {
 }
 
 const KIND = "execution.wake-inbox";
+
+/** The record with `failures`, omitted while none is counted (so a record that never failed keeps its shape). */
+const withFailures = (record: WakeInboxRecord, failures: { readonly [eventId: string]: number }): WakeInboxRecord => {
+	const { failures: _previous, ...rest } = record;
+	return Object.keys(failures).length === 0 ? rest : { ...rest, failures };
+};
 const EMPTY: WakeInboxRecord = { seen: {}, pending: [], closed: {} };
 
 function decode(value: StoreValue | undefined): WakeInboxRecord {
@@ -52,16 +75,41 @@ export function createWakeInbox(options: WakeInboxOptions): WakeInbox {
 	const update = <T>(decide: (record: WakeInboxRecord) => Promise<T>): Promise<T> =>
 		admission.admit(async () => decide(await read()));
 
+	const maxAttempts = options.maxAttempts ?? 3;
+	/** Removes a wake from the pending list (and its failure count) under `step`. */
+	const take = (wake: WakeEvent, step: "take" | "poison") =>
+		update(async (record) => {
+			if (!record.pending.some((entry) => entry.eventId === wake.eventId)) return;
+			const pending = record.pending.filter((entry) => entry.eventId !== wake.eventId);
+			const { [wake.eventId]: _counted, ...failures } = record.failures ?? {};
+			await write(withFailures({ ...record, pending }, failures), step, wake.eventId);
+		});
+	/** Counts one failed delivery; at `maxAttempts` the wake is poisoned (taken), otherwise it stays pending. */
+	const failed = async (wake: WakeEvent, error: unknown, report: NonNullable<WakeInboxOptions["onUndeliverable"]>) => {
+		const attempts = ((await read()).failures?.[wake.eventId] ?? 0) + 1;
+		const poisoned = attempts >= maxAttempts;
+		if (poisoned) await take(wake, "poison");
+		else
+			await update(async (record) => {
+				const failures = { ...record.failures, [wake.eventId]: attempts };
+				await write(withFailures(record, failures), "failed", wake.eventId);
+			});
+		report({ wake, error, attempts, poisoned });
+	};
+
 	let draining: Promise<unknown> = Promise.resolve();
 	const drainOnce = async (consume: (wake: WakeEvent) => Promise<void>): Promise<number> => {
 		let taken = 0;
 		for (const wake of (await read()).pending) {
-			await consume(wake);
-			await update(async (record) => {
-				if (!record.pending.some((entry) => entry.eventId === wake.eventId)) return;
-				const pending = record.pending.filter((entry) => entry.eventId !== wake.eventId);
-				await write({ ...record, pending }, "take", wake.eventId);
-			});
+			try {
+				await consume(wake);
+			} catch (error) {
+				const report = options.onUndeliverable;
+				if (report === undefined) throw error;
+				await failed(wake, error, report);
+				continue;
+			}
+			await take(wake, "take");
 			taken += 1;
 		}
 		return taken;
@@ -109,9 +157,8 @@ export function createWakeInbox(options: WakeInboxOptions): WakeInbox {
 				const drop = new Set(gone);
 				await write(
 					{
+						...record,
 						seen: Object.fromEntries(Object.entries(record.seen).filter(([scope]) => !drop.has(scope))),
-						pending: record.pending,
-						closed: record.closed,
 					},
 					"sweep",
 					null,

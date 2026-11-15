@@ -3,7 +3,12 @@ import type { StoreValue } from "../durable/store.ts";
 /** Design 5.6.4: an un-acked wake lives until its scope closes plus this long, then it is dropped as `wake_expired`. */
 export const WAKE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
-/** One durable wake from a hand to the brain that owns its scope. `eventId` is unique per hand and stable on re-offer. */
+/**
+ * One durable wake from a hand to the brain that owns its scope. `eventId` is unique per hand and stable on re-offer.
+ * `scope` is the hand's execution scope id: the id the brain gave the session's `ExecutionScope` for the call whose
+ * work produced the wake. It equals a session id only if the brain chose it to (a senpi session mints a random one per
+ * session), so a brain resolves it to the scope's loop sessions; `payload.sessionId`, when present, names one of them.
+ */
 export type WakeEvent = {
 	readonly eventId: string;
 	readonly scope: string;
@@ -55,4 +60,6 @@ export type WakeInboxRecord = {
 	readonly pending: readonly WakeEvent[];
 	/** Scopes the brain closed, with the close time; kept after their seen ids are dropped, so a late wake is refused. */
 	readonly closed: { readonly [scope: string]: number };
+	/** Failed deliveries of a pending wake, by event id; absent while none failed. */
+	readonly failures?: { readonly [eventId: string]: number };
 };
