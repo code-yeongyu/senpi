@@ -50,7 +50,10 @@ export interface LooplessHand {
 	 * when the payload names neither, and such a call is refused when it runs.
 	 */
 	readonly loopHookSessionOf: (event: string, payload: JsonValue) => string | undefined;
-	/** How long a call waits behind its session's previous call: this hand's event handler cap, or the shipped default. */
+	/**
+	 * How long a call waits for each call ahead of it in its session to settle (the bound restarts each time one does):
+	 * this hand's event handler cap, or the shipped default.
+	 */
 	readonly loopHookQueueWaitMs: number;
 	/** Disposes every runtime this hand opened, including one only loop hooks opened; every later call is refused. */
 	close(): Promise<void>;
