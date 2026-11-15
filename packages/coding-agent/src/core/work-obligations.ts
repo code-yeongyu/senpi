@@ -46,6 +46,8 @@ export class SessionWorkObligations implements WorkObligations {
 	private readonly records = new Map<string, WorkCustodyRecord>();
 	private readonly unpersisted = new Map<string, WorkCustodyRecord>();
 	private readonly delivering = new Set<DeliveryTicketId>();
+	/** Engine delivery custody a send opened in this process and has not queued yet (senpi#6810). */
+	private readonly sending = new Set<string>();
 	private readonly publishedSources = new Set<string>();
 	private readonly store: CustodyStore;
 	constructor(store: CustodyStore) {
@@ -79,9 +81,19 @@ export class SessionWorkObligations implements WorkObligations {
 			state: "open",
 			...(detail === undefined ? {} : { detail }),
 		};
+		if (key.startsWith(ENGINE_DELIVERY_KEY_PREFIX)) this.sending.add(record.id);
 		this.install(record);
 		this.store.changed();
 		return this.token(record.id);
+	}
+
+	/**
+	 * An engine delivery's own custody while its send is in flight (senpi#6810): the session is starting or joining a
+	 * turn for that delivery, so this custody is never background work the session waits on.
+	 */
+	isDeliveryInFlight(record: WorkCustodyRecord): boolean {
+		if (!record.key.startsWith(ENGINE_DELIVERY_KEY_PREFIX)) return false;
+		return this.sending.has(record.id) || (record.ticketId !== undefined && this.delivering.has(record.ticketId));
 	}
 
 	syncSource(source: string, kind: ObligationKind, activeCount: number, items?: unknown): void {
@@ -147,6 +159,7 @@ export class SessionWorkObligations implements WorkObligations {
 			delivery: undefined,
 		});
 		this.delivering.add(ticketId);
+		this.sending.delete(record.id);
 		this.store.changed();
 		return true;
 	}
@@ -157,8 +170,9 @@ export class SessionWorkObligations implements WorkObligations {
 		return record?.state === "queued" ? record.payload?.itemIds : undefined;
 	}
 
+	/** A delivery whose custody is still open (kept for a later turn) is background work again: recompute. */
 	endDelivery(ticketId: DeliveryTicketId): void {
-		this.delivering.delete(ticketId);
+		if (this.delivering.delete(ticketId)) this.store.changed();
 	}
 
 	passive(ticketId: DeliveryTicketId): void {
@@ -250,6 +264,7 @@ export class SessionWorkObligations implements WorkObligations {
 
 	private close(id: string, state: "settled" | "held" | "cancelled" | "passive", noticeId?: string): void {
 		const record = this.owned(id);
+		this.sending.delete(id);
 		this.install({ ...record, state, ...(noticeId === undefined ? {} : { noticeId }) });
 		this.store.changed();
 	}
