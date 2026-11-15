@@ -5506,7 +5506,7 @@ export class AgentSession {
 			},
 			prepared,
 			{
-				...(options?.signal === undefined ? {} : { signal: combinedToolCallSignal(options.signal, this.agent.signal) }),
+				...(options?.signal === undefined ? {} : { signal: options.signal }),
 				...(options?.onUpdate === undefined
 					? {}
 					: { onUpdate: options.onUpdate as AgentToolUpdateCallback<unknown> }),

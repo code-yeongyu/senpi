@@ -3622,8 +3622,9 @@ export type ExecuteToolUpdateCallback<T = unknown> = AgentToolUpdateCallback<T>;
 
 export interface ExecuteToolOptions<TDetails = unknown> {
 	/**
-	 * The call's own abort signal. The call — and its permission prompt — run under its union with the turn's
-	 * signal: aborting the turn also aborts the call even when this signal is not linked to it (senpi#6679).
+	 * The call's own abort signal: the call's RUN follows it alone, so a detached caller's work survives a
+	 * later turn's abort (senpi#6679 review M2). The call's PERMISSION PROMPT runs under its union with the
+	 * turn's signal: aborting the turn also ends an unanswered prompt even when this signal is unlinked (senpi#6679).
 	 */
 	signal?: AbortSignal;
 	onUpdate?: ExecuteToolUpdateCallback<TDetails>;
