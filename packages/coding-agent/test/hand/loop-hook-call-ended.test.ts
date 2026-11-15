@@ -4,30 +4,34 @@
 import { describe, expect, it } from "vitest";
 import type { SessionRelocationHost } from "../../src/core/session-relocation.ts";
 import type { SessionWakePort } from "../../src/core/session-wakes.ts";
-import { createLoopHookCall } from "../../src/modes/rpc/loop-hook-call.ts";
+import { createLoopHookCall, type LateLoopRoute } from "../../src/modes/rpc/loop-hook-call.ts";
 import { LoopHookCallEndedError } from "../../src/modes/rpc/loop-hook-session.ts";
+
+const noLateEffects: LateLoopRoute = () => {
+	throw new Error("this test's calls send nothing after they ended");
+};
 
 const WAKE = { id: "w1", source: "schedule_prompt", dueAt: 2, prompt: "check", createdAt: 1 } as const;
 
 describe("a call's session ports end with the call (senpi#6754)", () => {
 	it("a wake port or relocation host used after its call ended refuses, and the reply is unchanged", async () => {
-		const call = createLoopHookCall();
+		const call = createLoopHookCall(noLateEffects);
 		let wakes: SessionWakePort | undefined;
 		let relocation: SessionRelocationHost | undefined;
 		let reply: string | undefined;
 
-		await call.run(
-			"s1",
-			"/work",
-			false,
-			async (effects) => {
-				wakes = call.current()?.sessionWakes();
-				relocation = call.current()?.relocationHost();
-				wakes?.arm({ ...WAKE });
-				reply = JSON.stringify({ wakes: effects.wakes, relocation: effects.relocation });
-			},
-			{ leafId: null, handEntries: [], wakes: [], relocation: { targets: [{ name: "studio", online: true }] } },
-		);
+		const carried = {
+			leafId: null,
+			handEntries: [],
+			wakes: [],
+			relocation: { targets: [{ name: "studio", online: true }] },
+		};
+		await call.run({ sessionId: "s1", cwd: "/work", idle: false, carried }, async (effects) => {
+			wakes = call.current()?.sessionWakes();
+			relocation = call.current()?.relocationHost();
+			wakes?.arm({ ...WAKE });
+			reply = JSON.stringify({ wakes: effects.wakes, relocation: effects.relocation });
+		});
 
 		expect(() => wakes?.arm({ ...WAKE, id: "w2" })).toThrow(LoopHookCallEndedError);
 		expect(() => wakes?.cancel("w1")).toThrow(LoopHookCallEndedError);
