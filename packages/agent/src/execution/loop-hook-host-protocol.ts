@@ -10,6 +10,12 @@ import type { JsonValue } from "@earendil-works/pi-ai";
  * takes an unacknowledged `started` with it, the loop host never learns the call began and sends it again to the
  * replacement, so a hook that had run runs a second time. At-most-once dispatch therefore holds only on a hand whose
  * endpoint is the machine's long-lived link endpoint, not one owned by the hand process.
+ *
+ * Ordering: a lane is one session, and the hand runs that session's calls one at a time, in the order they arrived: a
+ * call's hooks start only once the previous call's hooks have settled, a cancelled call's included (its runner's
+ * handler budgets bound how long that takes). The hand still reads the lane meanwhile, so a `hook.cancel` reaches the
+ * call it names whether that call is running or still waiting its turn; a waiting call cancelled before its turn starts
+ * with its signal already aborted.
  */
 export type LoopHookMessage =
 	| LoopHookCall

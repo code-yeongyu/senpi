@@ -3,7 +3,10 @@ import type { StopReason } from "@earendil-works/pi-ai";
 import { z } from "zod";
 
 // The hand's parse of the loop's transcript messages (senpi#5898): every role a session's transcript holds, each with the
-// fields its readers rely on. Objects are loose, so a field this schema does not name reaches handlers untouched.
+// fields its readers rely on, type-checked and bounded. Objects are deliberately loose (unknown fields pass through
+// untouched): a transcript is the loop's record, and a newer loop adds optional message fields (provider metadata,
+// timing, diagnostics) a hand one version behind must hand on as a local session would show them, not refuse the
+// turn over. The parts the loop-hook lane defines itself are strict instead (loop-hook-envelope.ts).
 
 export const count = z.number().nonnegative();
 export const isCount = (value: unknown): value is number => count.safeParse(value).success;

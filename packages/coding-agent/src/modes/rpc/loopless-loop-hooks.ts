@@ -16,6 +16,7 @@ import {
 	sessionBeforeCompactOf,
 	TRIGGERS,
 } from "./loop-hook-payloads.ts";
+import { unknownEnvelopeField } from "./loop-hook-envelope.ts";
 import { INPUT_SOURCES } from "./session-entry-schema.ts";
 
 /** The loop events a hand that is its extensions' home runs for a loop that runs elsewhere (S33, C8/K5). */
@@ -52,6 +53,8 @@ export function extensionLoopHooks(
 		const only = userLoopHooks(runner);
 		if (!isRecord(payload) || typeof payload.sessionId !== "string" || typeof payload.idle !== "boolean")
 			throw new Error(`malformed ${event} payload`);
+		const unknownField = unknownEnvelopeField(event, payload);
+		if (unknownField !== undefined) throw new Error(`malformed ${event} payload: unknown field ${unknownField}`);
 		const scope = {
 			sessionId: payload.sessionId,
 			cwd,
@@ -126,8 +129,14 @@ export function extensionLoopHooks(
 		}
 		const notification = loopNotificationOf(event, payload);
 		if (notification !== undefined)
-			return call.run(scope, (effects) =>
-				dispatchLoopHook(runner, call, effects, () => runner.emitForwardedLoopEvent(notification, only)),
+			return call.run(scope, (effects, signal) =>
+				dispatchLoopHook(runner, call, effects, () =>
+					// A shutdown handler's own signal aborts at the loop's cancel too, not only at its cap.
+					runner.emitForwardedLoopEvent(
+						notification.type === "session_shutdown" ? { ...notification, signal } : notification,
+						only,
+					),
+				),
 			);
 		if (event === "agent_end") {
 			const { messages, aborted } = payload;

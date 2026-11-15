@@ -41,14 +41,18 @@ export interface LoopHookHand {
 /**
  * The user machine's side of the loop-hook link (S33): runs each hook call once per process and answers a repeated call
  * from its stored answer. It announces itself first, and says `started` before any hook runs, so the loop host can tell
- * a call this process never began (safe to send again) from one it may have run (never sent again).
+ * a call this process never began (safe to send again) from one it may have run (never sent again). It runs the lane's
+ * calls one at a time and still reads the lane while one runs, so a cancel reaches its call (see the ordering paragraph
+ * of `loop-hook-host-protocol.ts`).
  */
 export function serveLoopHooks(options: LoopHookHandOptions): LoopHookHand {
 	const { transport, lane } = options;
 	const instance = options.instance ?? crypto.randomUUID();
 	const answers = new Map<string, LoopHookMessage | undefined>();
-	/** The calls whose hooks are running, by ID, so a cancel reaches them. */
+	/** The calls received and not yet answered, by ID, so a cancel reaches them, running or waiting their turn. */
 	const running = new Map<string, AbortController>();
+	/** Settles once the last received call's hooks have settled: the next call's hooks start after it. */
+	let previous: Promise<void> = Promise.resolve();
 	let dead = false;
 
 	const send = (message: LoopHookMessage): Promise<void> => transport.send(lane, encodeLoopHookMessage(message));
@@ -70,10 +74,15 @@ export function serveLoopHooks(options: LoopHookHandOptions): LoopHookHand {
 		}
 		point("received", call.callId);
 		answers.set(call.callId, undefined);
-		// Registered before the first await: a cancel the lane delivers right behind its call finds it.
+		// Registered and queued before the first await: a cancel the lane delivers right behind its call finds it, and the
+		// calls of a lane (one session) run one at a time, in the order they arrived.
 		const controller = new AbortController();
 		running.set(call.callId, controller);
+		const turn = previous;
+		const settled = Promise.withResolvers<void>();
+		previous = settled.promise;
 		try {
+			await turn;
 			await send({ kind: "hook.started", callId: call.callId, instance });
 			point("started", call.callId);
 			let answer: LoopHookMessage;
@@ -93,6 +102,7 @@ export function serveLoopHooks(options: LoopHookHandOptions): LoopHookHand {
 			point("replied", call.callId);
 		} finally {
 			running.delete(call.callId);
+			settled.resolve();
 		}
 	};
 

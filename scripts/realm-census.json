@@ -8926,6 +8926,14 @@
 			"class": "per-copy-safe",
 			"reason": "counter or id sequence for this copy's own objects; a split cannot collide across them"
 		},
+		"packages/coding-agent/src/modes/rpc/loop-hook-envelope.ts#ENVELOPE_FIELDS": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/modes/rpc/loop-hook-envelope.ts#SESSION_FIELDS": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
 		"packages/coding-agent/src/modes/rpc/loop-lag-watchdog.ts#HEARTBEAT_EARLY_TOLERANCE_MS": {
 			"class": "constant",
 			"reason": "value computed or aliased at load; never written after load"

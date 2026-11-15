@@ -118,4 +118,66 @@ describe("loop-hook conformance (KILL-HOOK)", () => {
 		expect(seen.aborted).toBe(true);
 		expect(await outcome).toEqual(new Error("Operation aborted"));
 	});
+
+	// #6753 review L4: one lane is one session, whose calls the hand runs one at a time, as before cancel existed; the
+	// transport still reads the lane meanwhile, so a later call's cancel is not stuck behind a running call.
+	it("runs one session's calls one at a time: the next starts only once the previous call's hooks settled", async () => {
+		const link = transportPair();
+		const started: string[] = [];
+		const releaseFirst = Promise.withResolvers<void>();
+		serveLoopHooks({
+			transport: link.hand,
+			lane: "hooks",
+			run: async (event) => {
+				started.push(event);
+				// The first call ignores its signal, as a handler that never looks at it would.
+				if (event === "first") await releaseFirst.promise;
+				return { event };
+			},
+		});
+		const host = createLoopHookHost({ transport: link.loop, lane: "hooks" });
+		const cancelFirst = new AbortController();
+		const first = host.run("first", {}, cancelFirst.signal).catch((error: unknown) => error);
+		const second = host.run("second", {});
+		await link.flush();
+		cancelFirst.abort();
+		await link.flush();
+		const beforeFirstSettled = [...started];
+
+		releaseFirst.resolve();
+		await link.flush();
+
+		expect(beforeFirstSettled).toEqual(["first"]);
+		expect(started).toEqual(["first", "second"]);
+		expect(await first).toEqual(new Error("Operation aborted"));
+		expect(await second).toEqual({ event: "second" });
+	});
+
+	it("a call cancelled while it waits behind the running one starts with its signal already aborted", async () => {
+		const link = transportPair();
+		const seen: Record<string, boolean> = {};
+		const releaseFirst = Promise.withResolvers<void>();
+		serveLoopHooks({
+			transport: link.hand,
+			lane: "hooks",
+			run: async (event, _payload, signal) => {
+				seen[event] = signal.aborted;
+				if (event === "first") await releaseFirst.promise;
+				return { event };
+			},
+		});
+		const host = createLoopHookHost({ transport: link.loop, lane: "hooks" });
+		const cancelSecond = new AbortController();
+		void host.run("first", {});
+		const second = host.run("second", {}, cancelSecond.signal).catch((error: unknown) => error);
+		await link.flush();
+		cancelSecond.abort();
+		await link.flush();
+
+		releaseFirst.resolve();
+		await link.flush();
+
+		expect(seen).toEqual({ first: false, second: true });
+		expect(await second).toEqual(new Error("Operation aborted"));
+	});
 });

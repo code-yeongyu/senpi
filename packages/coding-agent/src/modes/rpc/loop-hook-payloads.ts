@@ -14,6 +14,7 @@ import type {
 import { isAgentMessages, isCount } from "./agent-message-schema.ts";
 import { isCompactionSettings } from "./compaction-settings-schema.ts";
 import type { CarriedSession } from "./loop-hook-call.ts";
+import { FILE_OPS_FIELDS, hasOnlyFields, PREPARATION_FIELDS } from "./loop-hook-envelope.ts";
 import { isCompactionEntry, isCustomEntry, isSessionEntry } from "./session-entry-schema.ts";
 
 // The hand's boundary for the loop events a hosted loop forwards (senpi#5898): each payload is parsed here into the
@@ -95,12 +96,13 @@ const malformed = (event: string): Error => new Error(`malformed ${event} payloa
 
 /** The file sets of a preparation, which travel as arrays (a `Set` has no JSON form); `null` when malformed. */
 function fileOpsOf(value: unknown): FileOperations | null {
-	if (!isRecord(value) || !isStrings(value.read) || !isStrings(value.written) || !isStrings(value.edited)) return null;
+	if (!isRecord(value) || !hasOnlyFields(value, FILE_OPS_FIELDS)) return null;
+	if (!isStrings(value.read) || !isStrings(value.written) || !isStrings(value.edited)) return null;
 	return { read: new Set(value.read), written: new Set(value.written), edited: new Set(value.edited) };
 }
 
 function preparationOf(value: unknown): CompactionPreparation | null {
-	if (!isRecord(value)) return null;
+	if (!isRecord(value) || !hasOnlyFields(value, PREPARATION_FIELDS)) return null;
 	const { firstKeptEntryId, messagesToSummarize, sourceMessages, turnPrefixMessages, turnPrefixSourceMessages } =
 		value;
 	const { isSplitTurn, tokensBefore, previousSummary, settings } = value;

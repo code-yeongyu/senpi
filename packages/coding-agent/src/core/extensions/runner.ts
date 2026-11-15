@@ -2285,7 +2285,12 @@ export class ExtensionRunner {
 			extensionPath,
 			event: "session_shutdown",
 			budget,
-			run: (signal) => handler({ ...event, signal }, this.createContext(extensionPath)),
+			// A forwarded shutdown brings the loop's cancel (senpi#5898): the handler's signal then aborts at either.
+			run: (signal) =>
+				handler(
+					{ ...event, signal: event.signal === undefined ? signal : AbortSignal.any([signal, event.signal]) },
+					this.createContext(extensionPath),
+				),
 			onStall: (stall) => {
 				if (stall.stage !== "warn") return;
 				const capNote = budget.timeoutMs > 0 ? ` (hard cap ${budget.timeoutMs}ms)` : "";
