@@ -152,12 +152,14 @@ async function probeAll(
 			await mkdir(dirname(root), { recursive: true });
 			await writeFile(root, "blocked");
 		}
+	// The scheduled-prompt dir also holds the process's runner leases, so only the session-keyed dirs count as writes.
+	const keyed = roots.slice(0, 2);
 	const probes = new Map<string, Probe>();
 	const runtime = await withIdentityOnly(cwd, async (hand) => {
 		for (const [name, entry] of [...hand.definitions]) {
-			const before = await filesUnder(roots);
+			const before = await filesUnder(keyed);
 			const outcome = outcomeOf(await execute(hand, name, VALID_CALLS[name] ?? sample(entry.definition.parameters)));
-			probes.set(name, { outcome, wroteStore: (await filesUnder(roots)).join() !== before.join() });
+			probes.set(name, { outcome, wroteStore: (await filesUnder(keyed)).join() !== before.join() });
 		}
 		await execute(hand, "kill_bash", { all: true });
 	});
@@ -176,14 +178,18 @@ it("sessionBound marks exactly the served tools that need the session's record o
 	const observed = Object.fromEntries(
 		[...open.probes].map(([name, probe]) => {
 			const needsRecord = probe.outcome.kind === "refused" && probe.outcome.code === "session_record_unavailable";
-			const touchesStore = probe.wroteStore || key(probe.outcome) !== key(blocked.probes.get(name)?.outcome);
-			return [name, needsRecord || touchesStore];
+			// A blocked store root fails a read and a write alike, so a changed outcome is a touch either way.
+			return [name, needsRecord || key(probe.outcome) !== key(blocked.probes.get(name)?.outcome)];
 		}),
 	);
 	const declared = Object.fromEntries(
 		served.map((name) => [name, open.runtime.definitions.get(name)?.definition.sessionBound === true]),
 	);
 	expect(declared).toEqual(observed);
+	const unboundWriters = [...open.probes]
+		.filter(([name, probe]) => !observed[name] && probe.wroteStore)
+		.map(([name]) => name);
+	expect(unboundWriters).toEqual([]);
 	expect(Object.keys(observed).filter((name) => observed[name])).toEqual(
 		expect.arrayContaining(["todo", "schedule_wakeup", "create_goal", "get_goal"]),
 	);
