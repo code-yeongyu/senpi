@@ -7259,29 +7259,37 @@
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/core/tools/bash.ts#MAX_TIMEOUT_SECONDS": {
-			"class": "constant",
-			"reason": "value computed or aliased at load; never written after load"
-		},
-		"packages/coding-agent/src/core/tools/bash.ts#bashOutputSchema": {
+		"packages/coding-agent/src/core/tools/bash-schema.ts#bashOutputSchema": {
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
-		"packages/coding-agent/src/core/tools/bash.ts#bashSchema": {
+		"packages/coding-agent/src/core/tools/bash-schema.ts#bashSchema": {
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
-		"packages/coding-agent/src/core/tools/bash.ts#bashToolConfig": {
+		"packages/coding-agent/src/core/tools/bash-schema.ts#bashToolConfig": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
 		},
-		"packages/coding-agent/src/core/tools/edit.ts#editSchema": {
+		"packages/coding-agent/src/core/tools/edit-core.ts#editSchema": {
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
-		"packages/coding-agent/src/core/tools/edit.ts#replaceEditSchema": {
+		"packages/coding-agent/src/core/tools/edit-core.ts#replaceEditSchema": {
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
+		},
+		"packages/coding-agent/src/core/tools/encoding.ts#encoder": {
+			"class": "constant",
+			"reason": "stateless encoder built once at load; never written after load"
+		},
+		"packages/coding-agent/src/core/tools/file-tool-host.ts#UNICODE_SPACES": {
+			"class": "per-copy-safe",
+			"reason": "g/y regex; lastIndex is reset or consumed by this copy's own callers only"
+		},
+		"packages/coding-agent/src/core/tools/file-tool-host.ts#pathTails": {
+			"class": "per-copy-safe",
+			"reason": "promise chain or queue ordering this copy's own async work; a split only loses ordering between copies, holds no A1-A3 asset"
 		},
 		"packages/coding-agent/src/core/tools/find.ts#defaultFindOperations": {
 			"class": "constant",
@@ -7311,14 +7319,6 @@
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
-		"packages/coding-agent/src/core/tools/machine.ts#NEVER_ABORTED": {
-			"class": "constant",
-			"reason": "value computed or aliased at load; never written after load"
-		},
-		"packages/coding-agent/src/core/tools/machine.ts#TOOL_PATH_LIMITS": {
-			"class": "constant",
-			"reason": "lookup data literal; never written after load"
-		},
 		"packages/coding-agent/src/core/tools/machine.ts#defaultMachine": {
 			"class": "per-copy-safe",
 			"reason": "lazy load or memo of a module, native binding or probe result; each copy loads its own, a split only repeats the load"
@@ -7335,7 +7335,11 @@
 			"class": "per-copy-safe",
 			"reason": "registry populated and read through this copy's module API; a split only hides one copy's entries from the other, holds no A1-A3 asset"
 		},
-		"packages/coding-agent/src/core/tools/read.ts#readSchema": {
+		"packages/coding-agent/src/core/tools/read-core.ts#INLINE_IMAGE_TYPES": {
+			"class": "constant",
+			"reason": "lookup collection filled at load; never written after load"
+		},
+		"packages/coding-agent/src/core/tools/read-core.ts#readSchema": {
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
@@ -7383,7 +7387,19 @@
 			"class": "constant",
 			"reason": "regex without g/y flags; carries no lastIndex state"
 		},
-		"packages/coding-agent/src/core/tools/write.ts#writeSchema": {
+		"packages/coding-agent/src/core/tools/shell-operations.ts#MAX_TIMEOUT_SECONDS": {
+			"class": "constant",
+			"reason": "value computed or aliased at load; never written after load"
+		},
+		"packages/coding-agent/src/core/tools/shell-operations.ts#POSIX_SIGNALS": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
+		"packages/coding-agent/src/core/tools/tool-machine.ts#NEVER_ABORTED": {
+			"class": "constant",
+			"reason": "value computed or aliased at load; never written after load"
+		},
+		"packages/coding-agent/src/core/tools/write-core.ts#writeSchema": {
 			"class": "constant",
 			"reason": "schema or descriptor built once at load; never written after load"
 		},
@@ -9648,6 +9664,10 @@
 			"class": "per-copy-safe",
 			"reason": "warn-once or report-once dedupe; a split only repeats a diagnostic"
 		},
+		"packages/coding-agent/src/utils/image-mime.ts#PNG_SIGNATURE": {
+			"class": "constant",
+			"reason": "lookup data literal; never written after load"
+		},
 		"packages/coding-agent/src/utils/image-resize-core.ts#DEFAULT_OPTIONS": {
 			"class": "constant",
 			"reason": "lookup data literal; never written after load"
@@ -9659,10 +9679,6 @@
 		"packages/coding-agent/src/utils/management-http.ts#RETRYABLE_STATUS_CODES": {
 			"class": "constant",
 			"reason": "lookup collection filled at load; never written after load"
-		},
-		"packages/coding-agent/src/utils/mime.ts#PNG_SIGNATURE": {
-			"class": "constant",
-			"reason": "lookup data literal; never written after load"
 		},
 		"packages/coding-agent/src/utils/paths.ts#MISSING_PATH_CODES": {
 			"class": "constant",
