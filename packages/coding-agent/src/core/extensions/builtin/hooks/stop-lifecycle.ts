@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { holdIdle } from "../../loop-hook-idle-hold.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { isStaleExtensionContextError } from "../goal/stale-context.ts";
 import { isWakeSourceStateEvent, WAKE_SOURCE_STATE_EVENT } from "../monitor-state-event.ts";
@@ -49,7 +50,7 @@ export type StopLifecycle = {
 export function registerStopLifecycle(pi: ExtensionAPI, deps: StopLifecycleDeps): StopLifecycle {
 	const turnTracker = createStopTurnTracker();
 	const backgroundWork = new Map<string, number>();
-	// A held Stop and the release of its hold on the session's idleness (a hand's `ctx.holdIdle`; none locally).
+	// A held Stop and the release of its hold on the session's idleness (a hand's loop-hook call; none locally).
 	let pending: (PendingStop & { readonly release: (() => void) | undefined }) | undefined;
 	let drainTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -117,7 +118,7 @@ export function registerStopLifecycle(pi: ExtensionAPI, deps: StopLifecycleDeps)
 		};
 		if (backgroundWork.size > 0) {
 			dropPending();
-			pending = { ...stop, release: ctx.holdIdle?.() };
+			pending = { ...stop, release: holdIdle(ctx) };
 			return;
 		}
 		dropPending();

@@ -633,13 +633,6 @@ export interface ExtensionContext {
 	/** Whether there are queued messages waiting */
 	hasPendingMessages(): boolean;
 	/**
-	 * On a hand, for a context of the call that ended the loop's turn (`agent_end`): work that outlives the handler (a
-	 * Stop held for background work) calls this to keep `isIdle()` answering whether the loop session is still idle after
-	 * that turn, and calls the returned release once it has settled. Without a hold, `isIdle()` keeps the value the call
-	 * carried. Absent where `isIdle()` reads the session live (a local session).
-	 */
-	holdIdle?(): () => void;
-	/**
 	 * Whether a person's input is waiting in the queue (a TUI submit, an RPC client prompt/steer/follow_up, or an
 	 * answered question), decided from the entries queued now. Extension and engine sends are never a person's.
 	 */
