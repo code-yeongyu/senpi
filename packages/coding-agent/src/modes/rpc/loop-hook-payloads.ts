@@ -2,7 +2,7 @@ import type { ImageContent } from "@earendil-works/pi-ai";
 import type { ForwardedLoopEvent } from "../../core/extensions/event-placement.ts";
 import type { ExtensionRunner } from "../../core/extensions/runner.ts";
 import type { SessionEntry } from "../../core/session-manager.ts";
-import type { CarriedSession } from "./loop-hook-call.ts";
+import type { CarriedSession, LoopHookCallBinding } from "./loop-hook-call.ts";
 import { isCustomEntry, isSessionEntry } from "./session-entry-schema.ts";
 
 // The hand's boundary for the loop events a hosted loop forwards (senpi#5898): each payload is parsed by its event
@@ -18,9 +18,12 @@ export interface LoopHookDispatch {
 	readonly signal: AbortSignal;
 }
 
-/** One forwarded event, parsed: the emit that runs its handlers and merges their result, and its call's session facts. */
+/**
+ * One forwarded event, parsed: the emit that runs its handlers and merges their result, and what its call binds beyond
+ * the session's id and idle state (the session port's read half it carries, whether it ends the loop's turn).
+ */
 export interface ParsedLoopHook {
-	readonly carried?: CarriedSession;
+	readonly binding?: Pick<LoopHookCallBinding, "carried" | "endsTurn">;
 	readonly emit: (dispatch: LoopHookDispatch) => Promise<object | undefined>;
 }
 

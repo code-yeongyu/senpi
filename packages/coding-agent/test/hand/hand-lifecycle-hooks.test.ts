@@ -2,10 +2,42 @@
 // and their extensions' compaction-failure and shutdown handlers run on the user's machine as they do in a local
 // session, under the same handler budgets (brain/hand split, K5-K9; hooks builtin C8).
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type * as HookDispatcher from "../../src/core/extensions/builtin/hooks/dispatcher.ts";
 import { STOP_STATE_CUSTOM_TYPE } from "../../src/core/extensions/builtin/hooks/stop-adapter.ts";
+import { STOP_DRAIN_GRACE_MS } from "../../src/core/extensions/builtin/hooks/stop-lifecycle.ts";
+import { WAKE_SOURCE_STATE_EVENT } from "../../src/core/extensions/builtin/monitor-state-event.ts";
+import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
 import { type LifecycleReply, toJson, userMachine } from "./lifecycle-hook-fixture.ts";
 import { cleanupHands } from "./remote-hand-fixture.ts";
+
+// A held Stop runs from the drain timer, with no reply to await. The real dispatcher runs; once a dispatch settles and
+// the continuations it started have run (the Stop's result applied), it tells whoever waits.
+const dispatchSettled = vi.hoisted(() => new Set<() => void>());
+vi.mock("../../src/core/extensions/builtin/hooks/dispatcher.ts", async (importOriginal) => {
+	const actual = await importOriginal<typeof HookDispatcher>();
+	return {
+		...actual,
+		dispatchHookEvent: (options: Parameters<typeof actual.dispatchHookEvent>[0]) => {
+			const run = actual.dispatchHookEvent(options);
+			const settled = () => setImmediate(() => [...dispatchSettled].forEach((listener) => listener()));
+			run.then(settled, settled);
+			return run;
+		},
+	};
+});
+
+/** The next hook dispatch's settlement, bounded: a Stop that never runs fails the wait instead of hanging. */
+function nextDispatchSettled(): Promise<void> {
+	const settled = Promise.withResolvers<void>();
+	const listener = () => settled.resolve();
+	dispatchSettled.add(listener);
+	const bound = setTimeout(() => settled.reject(new Error("the held Stop never ran")), 15_000);
+	return settled.promise.finally(() => {
+		clearTimeout(bound);
+		dispatchSettled.delete(listener);
+	});
+}
 
 afterEach(cleanupHands);
 
@@ -98,6 +130,53 @@ describe("a hosted loop's lifecycle hooks run on the user's machine (senpi#5898)
 		expect(first.userMessages?.map((message) => message.content)).toEqual(["keep going"]);
 		expect([first.errors, second.errors, afterCompaction.errors]).toEqual([undefined, undefined, undefined]);
 	});
+
+	// #6751 review M1: as in a local session, a turn that ends while the hand's background work is live holds its Stop
+	// until the work drains; the held Stop then runs with the facts its agent_end carried, and its writes reach the loop
+	// as late effects on the session's next reply. The loop carries either idle value at agent_end; neither may lose it.
+	it.each([false, true])(
+		"a Stop held for live background work runs once it drains, and its writes ride the next reply (idle %s)",
+		async (idle) => {
+			let bus: ExtensionAPI["events"] | undefined;
+			const user = await userMachine({
+				hook: "Stop",
+				stdout: { decision: "block", reason: "keep going" },
+				extensionFactories: [
+					(pi) => {
+						bus = pi.events;
+					},
+				],
+			});
+			// The first call opens the scope's runtime, so its extensions (the bash stand-in among them) are loaded.
+			await user.machine.loopHooks("session_start", { ...user.base, reason: "startup" });
+			bus?.emit(WAKE_SOURCE_STATE_EVENT, { source: "terminal-background-sessions", activeCount: 1 });
+
+			const held = (await user.machine.loopHooks("agent_end", {
+				...user.base,
+				idle,
+				...agentEnd(),
+			})) as LifecycleReply;
+			const ran = nextDispatchSettled();
+			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+			try {
+				bus?.emit(WAKE_SOURCE_STATE_EVENT, { source: "terminal-background-sessions", activeCount: 0 });
+				vi.advanceTimersByTime(STOP_DRAIN_GRACE_MS);
+			} finally {
+				vi.useRealTimers();
+			}
+			await ran;
+			const next = (await user.machine.loopHooks("session_start", {
+				...user.base,
+				reason: "resume",
+			})) as LifecycleReply;
+
+			expect([stopCounts(held), held.userMessages]).toEqual([[], undefined]);
+			expect(user.marks()).toBe("Stop\n");
+			expect({ notices: next.notices, errors: next.errors }).toEqual({ notices: undefined, errors: undefined });
+			expect(stopCounts(next)).toEqual([1]);
+			expect(next.userMessages?.map((message) => message.content)).toEqual(["keep going"]);
+		},
+	);
 
 	it("a user extension's compaction-failure and shutdown handlers run there, bound to the loop session", async () => {
 		const user = await userMachine({ extension: FAILURE_AND_SHUTDOWN_EXTENSION });

@@ -4,6 +4,7 @@ import type { JsonValue } from "@earendil-works/pi-ai";
 import { parseHookConfig } from "../../src/core/extensions/builtin/hooks/index.ts";
 import { createHookTrustEntry, hookTrustId } from "../../src/core/extensions/builtin/hooks/trust.ts";
 import type { HookSourceMetadata, HookTrustEntry } from "../../src/core/extensions/builtin/hooks/types.ts";
+import type { InlineExtension } from "../../src/core/extensions/types.ts";
 import { createLooplessHand } from "../../src/modes/rpc/remote-executor-scope.ts";
 import { handConfiguration, handDirs } from "./remote-hand-fixture.ts";
 
@@ -47,6 +48,8 @@ export interface UserMachineOptions {
 	readonly hook?: LifecycleHookEvent;
 	readonly stdout?: unknown;
 	readonly extension?: string;
+	/** In-process extensions that replace the hand's default ones. */
+	readonly extensionFactories?: InlineExtension[];
 	readonly settings?: Record<string, unknown>;
 }
 
@@ -61,7 +64,11 @@ export async function userMachine(options: UserMachineOptions) {
 	const extension = join(dirs.scratch, "user-lifecycle-ext.ts");
 	if (options.extension !== undefined) writeFileSync(extension, options.extension);
 	const args = options.extension === undefined ? [] : ["-e", extension];
-	const machine = createLooplessHand(handConfiguration(dirs, args), { twoSidedHome: "hand" });
+	const { extensionFactories } = options;
+	const machine = createLooplessHand(handConfiguration(dirs, args), {
+		twoSidedHome: "hand",
+		...(extensionFactories === undefined ? {} : { extensionFactories }),
+	});
 	const sessionId = `loop-${crypto.randomUUID()}`;
 	const base = { sessionId, idle: false, scope: { id: `session-${sessionId}`, root: dirs.cwd } };
 	const marker = join(dirs.cwd, "hook-ran.txt");
@@ -78,6 +85,7 @@ export interface LifecycleReply {
 	readonly sent?: { message: { content: unknown; details?: { event?: string; compactionRequestId?: string } } }[];
 	readonly entries?: { customType: string; data?: unknown }[];
 	readonly userMessages?: { content: unknown; options?: unknown }[];
+	readonly notices?: unknown[];
 	readonly errors?: { extensionPath: string; event: string; error: string }[];
 }
 

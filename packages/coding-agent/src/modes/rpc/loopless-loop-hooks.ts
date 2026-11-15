@@ -45,7 +45,8 @@ const DESCRIBE_HOOKS = "describe_hooks";
  * The loop hooks of this runtime's own extensions, on the same runner (so the same extension instances) that runs its
  * tool calls: a two-sided extension keeps one state across its loop and tool hooks. Only a hand that is its extensions'
  * home (`twoSidedHome: "hand"`) runs them; any other hand refuses, because its extensions' loop hooks run where the loop
- * runs. A loop forwards every loop-side event `LOOP_HOOK_FORWARDING` does not keep loop-only (senpi#5898), in a
+ * runs. Every event runs only the user's loop hooks (`userLoopHooks`: non-builtin extensions the loader did not ship,
+ * plus the hooks builtin); the loop's own builtins run where the loop runs. A loop forwards every loop-side event `LOOP_HOOK_FORWARDING` does not keep loop-only (senpi#5898), in a
  * session's order, each parsed at this boundary by its family's module. An interceptor's reply carries the result its
  * handlers merged as a session's emit merges it (the loop returns it from its own handler); every reply also carries
  * what the handlers sent (`sent`), notified (`notices`), wrote to the session (`entries`, `userMessages`) and their
@@ -65,14 +66,14 @@ export function extensionLoopHooks(
 			throw new Error(`malformed ${event} payload`);
 		if (!isForwarded(event)) throw new Error(`no loop hooks run on a hand for ${event}`);
 		const parsed = LOOP_HOOK_PARSERS[event](payload, cwd);
-		const scope = {
+		const binding = {
 			sessionId: payload.sessionId,
 			cwd,
 			idle: payload.idle,
-			...(parsed.carried === undefined ? {} : { carried: parsed.carried }),
+			...parsed.binding,
 			...(cancel === undefined ? {} : { cancel }),
 		};
-		return call.run(scope, (effects, signal) =>
+		return call.run(binding, (effects, signal) =>
 			loopHookReply(event, { runner, call, effects }, () => parsed.emit({ runner, only, signal })),
 		);
 	};
