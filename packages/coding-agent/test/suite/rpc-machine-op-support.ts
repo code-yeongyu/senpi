@@ -13,8 +13,10 @@ export interface MachineOpOptions {
 	readonly root: string;
 	readonly confined?: boolean;
 	readonly opId?: string;
-	readonly deadlineMs?: number;
+	/** `null`: the op has no deadline, so the record carries no `deadline_ms`. */
+	readonly deadlineMs?: number | null;
 	readonly sender?: string;
+	readonly envOverlay?: Record<string, string> | undefined;
 }
 
 export function machineOpRecord(op: string, args: WireRecord, options: MachineOpOptions): WireRecord {
@@ -23,9 +25,10 @@ export function machineOpRecord(op: string, args: WireRecord, options: MachineOp
 		op,
 		args,
 		op_id: options.opId ?? `${op}-${randomUUID()}`,
-		deadline_ms: options.deadlineMs ?? Date.now() + OP_BUDGET_MS,
+		...(options.deadlineMs === null ? {} : { deadline_ms: options.deadlineMs ?? Date.now() + OP_BUDGET_MS }),
 		scope: { root: options.root, confined: options.confined ?? false },
 		sender: options.sender ?? SENDER,
+		...(options.envOverlay === undefined ? {} : { env_overlay: options.envOverlay }),
 	};
 }
 

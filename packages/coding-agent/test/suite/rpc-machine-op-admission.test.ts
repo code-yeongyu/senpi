@@ -1,7 +1,8 @@
 /**
- * senpi#6752: who may run `machine_op` and how often it runs. The four records stay outside `RPC_METHOD_CLASS` (so the
+ * senpi#6752: who may run `machine_op` and how often it runs. The records stay outside `RPC_METHOD_CLASS` (so the
  * digest forwarders pin is unchanged) and are answered only on a launch-proven connection that declared no delegation;
- * an answer is cached by `op_id`, so a repeat (or one arriving while the first still runs) never runs the op again.
+ * an answer is cached by `op_id` and bound to its sender, so a repeat (or one arriving while the first still runs)
+ * never runs the op again; `machine_op_cancel` aborts an op still running.
  */
 import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
@@ -12,7 +13,13 @@ import { RPC_METHOD_CLASS } from "../../src/modes/rpc/method-classes.ts";
 import { type DelegatedHost, declare, type Peer, startHost } from "./rpc-delegated-host-support.ts";
 import { answered, base64, machineOpRecord, notAuthorized, outcome, runOp } from "./rpc-machine-op-support.ts";
 
-const COMMANDS = ["machine_op", "machine_op_result", "machine_op_owner", "machine_op_health"] as const;
+const COMMANDS = [
+	"machine_op",
+	"machine_op_result",
+	"machine_op_owner",
+	"machine_op_health",
+	"machine_op_cancel",
+] as const;
 const ALL_GRANTS = ["observe", "drive", "answer", "thread", "device_admin"];
 
 let host: DelegatedHost;
@@ -30,7 +37,7 @@ afterAll(async () => {
 });
 
 describe("senpi#6752: machine_op admission and the op_id answer cache", () => {
-	it("reports a fresh engine's health and keeps the four records out of the method-class table", async () => {
+	it("reports a fresh engine's health and keeps the records out of the method-class table", async () => {
 		expect(await peer.send({ type: "machine_op_health" })).toEqual(
 			answered("machine_op_health", { ok: true, terminals: 0, cache: 0, version: VERSION }),
 		);
@@ -53,6 +60,9 @@ describe("senpi#6752: machine_op admission and the op_id answer cache", () => {
 				notAuthorized("machine_op_owner"),
 			);
 			expect(await asker.send({ type: "machine_op_health" })).toEqual(notAuthorized("machine_op_health"));
+			expect(await asker.send({ type: "machine_op_cancel", op_id: "any" })).toEqual(
+				notAuthorized("machine_op_cancel"),
+			);
 		}
 		expect(existsSync(marker)).toBe(false);
 	});
@@ -91,6 +101,43 @@ describe("senpi#6752: machine_op admission and the op_id answer cache", () => {
 		const [first, second] = await Promise.all(peer.sendTogether([record, record]));
 		expect(first?.data).toEqual(second?.data);
 		expect(await readFile(counter, "utf8")).toBe("y");
+	});
+
+	it("binds a cached answer to the sender that ran it", async () => {
+		const counter = join(root, "bound.txt");
+		const opId = JSON.stringify(["device-a", "op-1"]);
+		const args = { command: `printf a >> ${counter}` };
+		const first = await runOp(peer, "shell", args, { root, opId, sender: "device-a" });
+		expect(first).toMatchObject({ success: true, data: { state: "applied" } });
+		expect(await runOp(peer, "shell", args, { root, opId, sender: "device-b" })).toEqual({
+			id: expect.any(String),
+			type: "response",
+			command: "machine_op",
+			success: false,
+			error: "machine_op_conflict: op_id is bound to another sender",
+			errorCode: "machine_op_conflict",
+		});
+		expect(await runOp(peer, "shell", args, { root, opId, sender: "device-a" })).toEqual({
+			...first,
+			id: expect.any(String),
+		});
+		expect(await readFile(counter, "utf8")).toBe("a");
+	});
+
+	it("cancels a running op and answers whether it did", async () => {
+		const record = machineOpRecord("shell", { command: "sleep 30" }, { root, deadlineMs: null });
+		// Written together, the cancel is read right behind the op, which is then registered and still running.
+		const [ran, cancel] = peer.sendTogether([record, { type: "machine_op_cancel", op_id: record.op_id }]);
+		expect(await cancel).toEqual(answered("machine_op_cancel", { cancelled: true }));
+		expect(await ran).toEqual(
+			outcome({ state: "cancelled", error: { code: "aborted", message: expect.any(String) } }),
+		);
+		expect(await peer.send({ type: "machine_op_cancel", op_id: record.op_id })).toEqual(
+			answered("machine_op_cancel", { cancelled: false }),
+		);
+		expect(await peer.send({ type: "machine_op_cancel", op_id: "never-sent" })).toEqual(
+			answered("machine_op_cancel", { cancelled: false }),
+		);
 	});
 
 	it("answers an unknown handle's owner as unknown", async () => {

@@ -205,6 +205,7 @@ export async function startHost(
 		},
 		async dispose(): Promise<void> {
 			await core.router.dispose();
+			await core.machineOps.dispose();
 			for (const socket of sockets) socket.destroy();
 			await new Promise<void>((resolve) => server.close(() => resolve()));
 			await endpoint.dispose();

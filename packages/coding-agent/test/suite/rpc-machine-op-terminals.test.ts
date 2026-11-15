@@ -33,9 +33,16 @@ afterAll(async () => {
 
 const applied = (response: unknown) => outcome({ state: "applied", response });
 const dataOf = (answer: Record<string, unknown>) => (answer.data as { response: Record<string, unknown> }).response;
+/** A TerminalResult carries `exitCode` once its handle has exited, which a fast command may do inside the yield. */
+const exitedWith = (answer: Record<string, unknown>) =>
+	dataOf(answer).state === "completed" ? { exitCode: expect.any(Number) } : {};
 
-async function exec(command: string, asker: Peer = peer): Promise<Record<string, unknown>> {
-	const answer = await runOp(asker, "exec_command", { command, yield_ms: 250 }, { root });
+async function exec(
+	command: string,
+	asker: Peer = peer,
+	envOverlay?: Record<string, string>,
+): Promise<Record<string, unknown>> {
+	const answer = await runOp(asker, "exec_command", { command, yield_ms: 250 }, { root, envOverlay });
 	expect(answer).toEqual(
 		applied({
 			handleId: expect.any(String),
@@ -50,6 +57,7 @@ async function exec(command: string, asker: Peer = peer): Promise<Record<string,
 			elapsedMs: expect.any(Number),
 			pid: expect.any(Number),
 			reason: expect.any(String),
+			...exitedWith(answer),
 		}),
 	);
 	return dataOf(answer);
@@ -57,7 +65,8 @@ async function exec(command: string, asker: Peer = peer): Promise<Record<string,
 
 describe("senpi#6752: machine_op terminals", () => {
 	it("execs, writes stdin, waits for the newest page, resumes from last_seq and kills an ended handle", async () => {
-		const started = await exec("head -n1");
+		// No echo and no trailing newline, so the bytes are the same on a PTY and on the pipe fallback.
+		const started = await exec('stty -echo 2>/dev/null; read line; printf %s "$line"');
 		expect(started).toMatchObject({
 			output: "",
 			state: "running",
@@ -68,7 +77,8 @@ describe("senpi#6752: machine_op terminals", () => {
 			reason: "timeout",
 		});
 		const handle_id = started.handleId;
-		expect(await runOp(peer, "write_stdin", { handle_id, data: "hello\n" }, { root })).toEqual(
+		const written = await runOp(peer, "write_stdin", { handle_id, data: "hello\n" }, { root });
+		expect(written).toEqual(
 			applied({
 				handleId: handle_id,
 				output: expect.any(String),
@@ -82,6 +92,7 @@ describe("senpi#6752: machine_op terminals", () => {
 				elapsedMs: expect.any(Number),
 				stdinEffect: { acceptedBytes: 6, observed: expect.any(Boolean) },
 				reason: expect.any(String),
+				...exitedWith(written),
 			}),
 		);
 		const ended = {
@@ -90,7 +101,7 @@ describe("senpi#6752: machine_op terminals", () => {
 			lifecycle: EXITED_0,
 			truncated: false,
 			omittedBytes: 0,
-			totalBytes: 14,
+			totalBytes: 5,
 			exitCode: 0,
 			startedAtMs: started.startedAtMs,
 			elapsedMs: expect.any(Number),
@@ -98,10 +109,10 @@ describe("senpi#6752: machine_op terminals", () => {
 		};
 		const wait = { handle_id, until: ["exited"], yield_ms: 10_000 };
 		expect(await runOp(peer, "wait_for_command", wait, { root })).toEqual(
-			applied({ ...ended, output: "hello\r\nhello\r\n", lastSeq: 14 }),
+			applied({ ...ended, output: "hello", lastSeq: 5 }),
 		);
-		expect(await runOp(peer, "wait_for_command", { ...wait, last_seq: 7 }, { root })).toEqual(
-			applied({ ...ended, output: "hello\r\n", lastSeq: 14 }),
+		expect(await runOp(peer, "wait_for_command", { ...wait, last_seq: 2 }, { root })).toEqual(
+			applied({ ...ended, output: "llo", lastSeq: 5 }),
 		);
 		expect(await runOp(peer, "kill_terminal", { handle_id }, { root })).toEqual(
 			applied({ handleId: handle_id, state: "task-failed", reason: "killed", lifecycle: EXITED_0 }),
@@ -144,6 +155,15 @@ describe("senpi#6752: machine_op terminals", () => {
 		expect(await runOp(peer, "wait_for_command", { handle_id: "nope" }, { root })).toEqual(
 			outcome({ state: "failed", error: { code: "unknown_handle", message: "no handle nope on this host" } }),
 		);
+	});
+
+	it("lays the relay host's env_overlay over the terminal's environment", async () => {
+		const started = await exec('printf %s "$OVERLAY_6752"', peer, { OVERLAY_6752: "relay" });
+		const wait = { handle_id: started.handleId, until: ["exited"], yield_ms: 10_000 };
+		expect(dataOf(await runOp(peer, "wait_for_command", wait, { root }))).toMatchObject({
+			output: "relay",
+			state: "completed",
+		});
 	});
 
 	it("keeps a handle and its owner across a client reconnect, reports its process, then kills it", async () => {

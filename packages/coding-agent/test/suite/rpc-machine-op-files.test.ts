@@ -5,8 +5,8 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { chmod, mkdir, readFile, realpath, stat, symlink, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type DelegatedHost, type Peer, startHost } from "./rpc-delegated-host-support.ts";
 import { base64, outcome, runOp } from "./rpc-machine-op-support.ts";
@@ -26,6 +26,12 @@ afterAll(async () => {
 });
 
 const applied = (response: unknown) => outcome({ state: "applied", response });
+async function privateDir(name: string): Promise<string> {
+	const dir = join(host.scratch, name);
+	await mkdir(dir, { mode: 0o700 });
+	await chmod(dir, 0o700);
+	return dir;
+}
 
 describe("senpi#6752: machine_op file, shell and mesh ops", () => {
 	it("answers every fs op with the relay host's response shape, relative paths anchored at an unconfined root", async () => {
@@ -110,12 +116,41 @@ describe("senpi#6752: machine_op file, shell and mesh ops", () => {
 		);
 	});
 
+	it("lays the relay host's env_overlay last, over the same key in args.env", async () => {
+		const args = { command: 'printf %s "$OVERLAY_6752"', env: { OVERLAY_6752: "sender" } };
+		expect(await runOp(peer, "shell", args, { root, envOverlay: { OVERLAY_6752: "relay" } })).toEqual(
+			applied({
+				exitCode: 0,
+				signal: null,
+				stdout: "relay",
+				stderr: "",
+				timedOut: false,
+				durationMs: expect.any(Number),
+				truncated: false,
+			}),
+		);
+	});
+
 	it("refuses an op the engine does not serve and args that do not decode, running nothing", async () => {
 		expect(await runOp(peer, "policy.get", {}, { root })).toEqual(
 			outcome({ state: "refused", error: { code: "malformed", message: "unknown op policy.get" } }),
 		);
 		expect(await runOp(peer, "fs.write", { bytes: base64("x") }, { root })).toEqual(
 			outcome({ state: "refused", error: { code: "malformed", message: "path is required" } }),
+		);
+	});
+
+	it("runs an op that carries no deadline_ms without one", async () => {
+		expect(await runOp(peer, "shell", { command: "printf ok" }, { root, deadlineMs: null })).toEqual(
+			applied({
+				exitCode: 0,
+				signal: null,
+				stdout: "ok",
+				stderr: "",
+				timedOut: false,
+				durationMs: expect.any(Number),
+				truncated: false,
+			}),
 		);
 	});
 
@@ -137,7 +172,7 @@ describe("senpi#6752: machine_op file, shell and mesh ops", () => {
 				.update(await readFile(inline))
 				.digest("hex"),
 		).toBe(digest);
-		const carrier = join(host.scratch, "carrier.bin");
+		const carrier = join(await privateDir("carriers"), "carrier.bin");
 		await writeFile(carrier, bytes, { mode: 0o600 });
 		const handed = join(root, "handed.bin");
 		expect(await runOp(peer, "fs.write", { path: handed, bytes_path: carrier }, { root })).toEqual(
@@ -149,19 +184,44 @@ describe("senpi#6752: machine_op file, shell and mesh ops", () => {
 				.digest("hex"),
 		).toBe(digest);
 		expect(existsSync(carrier)).toBe(false);
+		const range = join(dirname(carrier), "range.bin");
+		await writeFile(range, "XY", { mode: 0o600 });
+		expect(
+			await runOp(peer, "fs.write_range", { path: handed, offset: 1, bytes_path: range, total: 4 }, { root }),
+		).toEqual(applied({ path: handed, writtenBytes: 2 }));
+		expect((await readFile(handed)).subarray(0, 4)).toEqual(
+			Buffer.concat([bytes.subarray(0, 1), Buffer.from("XY"), bytes.subarray(3, 4)]),
+		);
+		expect(existsSync(range)).toBe(false);
 	});
 
-	it("refuses a handed-over file that is not a private regular file and leaves it in place", async () => {
-		const open = join(host.scratch, "open.bin");
-		await writeFile(open, "x", { mode: 0o644 });
-		const target = join(root, "never.bin");
-		expect(await runOp(peer, "fs.write", { path: target, bytes_path: open }, { root })).toEqual(
-			outcome({
-				state: "refused",
-				error: { code: "malformed", message: `bytes_path ${open} must be a 0600 regular file this user owns` },
-			}),
-		);
-		expect(existsSync(open)).toBe(true);
-		expect(existsSync(target)).toBe(false);
+	it("refuses a handed-over file that is not a private regular file in a private directory, and leaves it in place", async () => {
+		const carriers = await privateDir("refused-carriers");
+		const wideMode = join(carriers, "wide-mode.bin");
+		await writeFile(wideMode, "x", { mode: 0o644 });
+		const target = join(carriers, "target.bin");
+		await writeFile(target, "x", { mode: 0o600 });
+		const link = join(carriers, "link.bin");
+		await symlink(target, link);
+		const openDir = join(host.scratch, "open-carriers");
+		await mkdir(openDir, { mode: 0o755 });
+		await chmod(openDir, 0o755);
+		const inOpenDir = join(openDir, "carrier.bin");
+		await writeFile(inOpenDir, "x", { mode: 0o600 });
+		const written = join(root, "never.bin");
+		for (const handed of [wideMode, link, inOpenDir]) {
+			expect(await runOp(peer, "fs.write", { path: written, bytes_path: handed }, { root }), handed).toEqual(
+				outcome({
+					state: "refused",
+					error: {
+						code: "malformed",
+						message: `bytes_path ${handed} must be a 0600 regular file this user owns, in a 0700 directory this user owns`,
+					},
+				}),
+			);
+			expect(existsSync(handed), handed).toBe(true);
+		}
+		expect(existsSync(target)).toBe(true);
+		expect(existsSync(written)).toBe(false);
 	});
 });
