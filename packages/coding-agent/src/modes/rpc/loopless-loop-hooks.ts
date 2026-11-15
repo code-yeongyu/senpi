@@ -1,3 +1,4 @@
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ImageContent, JsonValue } from "@earendil-works/pi-ai";
 import type { ExtensionRunner } from "../../core/extensions/runner.ts";
 import type {
@@ -7,9 +8,10 @@ import type {
 	SessionStartEvent,
 } from "../../core/extensions/types.ts";
 import { hookModelOf, hookRequestOutputOf, parseHookRequestInput } from "../../core/hand/hook-contract.ts";
+import type { CustomEntry } from "../../core/session-manager.ts";
 import type { BuildSystemPromptOptions } from "../../core/system-prompt.ts";
 import type { TwoSidedHome } from "./loopless-tool-handlers.ts";
-import type { LoopHookCall, LoopHookEffects } from "./loop-hook-call.ts";
+import type { CarriedSession, LoopHookCall, LoopHookEffects } from "./loop-hook-call.ts";
 
 /** The loop events a hand that is its extensions' home runs for a loop that runs elsewhere (S33, C8/K5). */
 export type LooplessLoopHooks = (event: string, payload: JsonValue) => Promise<JsonValue>;
@@ -114,6 +116,20 @@ export function extensionLoopHooks(
 				dispatchLoopHook(runner, call, effects, () => runner.emitForwardedLoopEvent(sessionStart, only)),
 			);
 		}
+		if (event === "agent_end") {
+			const { messages, aborted } = payload;
+			const carried = carriedSessionOf(payload);
+			if (!isAgentMessages(messages) || !(aborted === undefined || typeof aborted === "boolean") || carried === null)
+				throw new Error("malformed agent_end payload");
+			const agentEnd = { type: "agent_end" as const, messages, ...(aborted === undefined ? {} : { aborted }) };
+			return call.run(
+				sessionId,
+				cwd,
+				idle,
+				(effects) => dispatchLoopHook(runner, call, effects, () => runner.emitForwardedLoopEvent(agentEnd, only)),
+				carried,
+			);
+		}
 		throw new Error(`no loop hooks run on a hand for ${event}`);
 	};
 }
@@ -156,6 +172,24 @@ const isOneOf = <T extends string>(value: unknown, allowed: readonly T[]): value
 const imagesOf = (value: unknown): ImageContent[] | undefined | null =>
 	value === undefined ? undefined : Array.isArray(value) && value.every(isImage) ? value : null;
 
+/** The loop's transcript messages of an `agent_end`, as data its handlers read (the Stop hook its last stop reason). */
+const isAgentMessages = (value: unknown): value is AgentMessage[] =>
+	Array.isArray(value) && value.every((message) => isRecord(message) && typeof message.role === "string");
+
+/**
+ * The session port's read half a call carries (`leafId`, `handEntries`; see `CarriedSession`), or `null` when
+ * malformed. Each hand entry is a custom entry: the hand only ever authored custom entries.
+ */
+function carriedSessionOf(payload: Record<string, unknown>): CarriedSession | null {
+	const { leafId, handEntries } = payload;
+	if (!(leafId === null || typeof leafId === "string")) return null;
+	if (!Array.isArray(handEntries) || !handEntries.every(isCustomEntry)) return null;
+	return { leafId, handEntries };
+}
+
+const isCustomEntry = (value: unknown): value is CustomEntry =>
+	isRecord(value) && value.type === "custom" && typeof value.customType === "string" && typeof value.id === "string";
+
 const isImage = (value: unknown): value is ImageContent =>
 	isRecord(value) && value.type === "image" && typeof value.data === "string" && typeof value.mimeType === "string";
 
@@ -174,12 +208,14 @@ async function dispatchLoopHook(
 	});
 	try {
 		const result = await dispatch();
-		const { sent, notices } = effects;
+		const { sent, notices, entries, userMessages } = effects;
 		return JSON.parse(
 			JSON.stringify({
 				...result,
 				...(sent.length > 0 ? { sent } : {}),
 				...(notices.length > 0 ? { notices } : {}),
+				...(entries.length > 0 ? { entries } : {}),
+				...(userMessages.length > 0 ? { userMessages } : {}),
 				...(effects.dropped > 0 ? { droppedLate: effects.dropped } : {}),
 				...(errors.length > 0 ? { errors } : {}),
 			}),

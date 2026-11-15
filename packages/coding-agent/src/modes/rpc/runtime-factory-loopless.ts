@@ -192,6 +192,7 @@ export function createLooplessRuntimeFactory(
 			getAllTools: () => Array.from(registry.definitions.values(), toolInfoOf),
 			loopHookCall: () => loopHookCall.current(),
 			loopHookSend: () => loopHookCall.sender(),
+			loopHookWrite: () => loopHookCall.writer(),
 			...(getLoadedHookSources ? { getLoadedHookSources } : {}),
 		});
 		// On a hand, a call's extension UI is presented by the loop that owns the call (S30).

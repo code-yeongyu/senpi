@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { LoopHookCallFacts } from "../../core/extensions/runner.ts";
-import type { ReadonlySessionManager } from "../../core/session-manager.ts";
+import type { HistoryReducer } from "../../core/session-history-reduce.ts";
+import type { ReadonlySessionManager, SessionEntry } from "../../core/session-manager.ts";
 
 /** A message a loop hook sent during its call, for the loop to send with the same options. */
 export interface SentLoopMessage {
@@ -8,10 +9,34 @@ export interface SentLoopMessage {
 	readonly options?: Parameters<LoopHookCallFacts["sendMessage"]>[1];
 }
 
-/** What a loop-hook call's handlers did beyond their result, which the loop does in turn. */
+/** An entry a loop hook appended during its call, for the loop to append to its own session (session port, write). */
+export interface AppendedLoopEntry {
+	readonly customType: string;
+	readonly data?: unknown;
+}
+
+/** A user message a loop hook sent during its call, for the loop to send with the same options (session port, write). */
+export interface SentLoopUserMessage {
+	readonly content: Parameters<LoopHookCallFacts["sendUserMessage"]>[0];
+	readonly options?: Parameters<LoopHookCallFacts["sendUserMessage"]>[1];
+}
+
+/**
+ * The session port's read half (r3 N2): the loop facts a call carries beyond the session's id. The loop owns the
+ * session; it sends its current leaf and the entries THIS hand authored earlier in the session (the ones it appended
+ * from {@link LoopHookEffects.entries}), after the last compaction only. A hand never sees entries the loop authored.
+ */
+export interface CarriedSession {
+	readonly leafId: string | null;
+	readonly handEntries: readonly SessionEntry[];
+}
+
+/** What a loop-hook call's handlers did beyond their result, which the loop does in turn (session port, write). */
 export interface LoopHookEffects {
 	readonly sent: SentLoopMessage[];
 	readonly notices: LoopNotice[];
+	readonly entries: AppendedLoopEntry[];
+	readonly userMessages: SentLoopUserMessage[];
 	/** Late messages and notices dropped because the loop session already held {@link LATE_PER_SESSION}. */
 	dropped: number;
 }
@@ -36,12 +61,15 @@ export interface LoopHookCall {
 	 * travels with the next reply for the same loop session (the link has no other way back), in order.
 	 */
 	sender(): LoopHookCallFacts["sendMessage"] | undefined;
+	/** The call's session writes (`appendEntry`, `sendUserMessage`) for its work, routed like {@link sender}. */
+	writer(): Pick<LoopHookCallFacts, "appendEntry" | "sendUserMessage"> | undefined;
 	/** Runs `dispatch` as the call, with the loop's idle state; `effects` collects what its handlers send and notify. */
 	run<T>(
 		sessionId: string,
 		cwd: string,
 		idle: boolean,
 		dispatch: (effects: LoopHookEffects) => Promise<T>,
+		carried?: CarriedSession,
 	): Promise<T>;
 }
 
@@ -57,11 +85,15 @@ export function createLoopHookCall(): LoopHookCall {
 	const calls = new AsyncLocalStorage<{ readonly live: () => boolean; readonly facts: LoopHookCallFacts }>();
 	const late = new Map<string, LoopHookEffects>();
 	const holdLate = (sessionId: string, add: (held: LoopHookEffects) => void) => {
-		const held = late.get(sessionId) ?? { sent: [], notices: [], dropped: 0 };
+		const held = late.get(sessionId) ?? emptyEffects();
 		add(held);
-		while (held.sent.length + held.notices.length > LATE_PER_SESSION) {
+		while (
+			held.sent.length + held.notices.length + held.entries.length + held.userMessages.length >
+			LATE_PER_SESSION
+		) {
 			// Notices only reach the loop's UI, messages reach its model, so the oldest notice goes first.
-			(held.notices.length > 0 ? held.notices : held.sent).shift();
+			const oldest = [held.notices, held.entries, held.sent, held.userMessages].find((list) => list.length > 0);
+			oldest?.shift();
 			held.dropped++;
 		}
 		late.set(sessionId, held);
@@ -72,13 +104,14 @@ export function createLoopHookCall(): LoopHookCall {
 			return call?.live() === true ? call.facts : undefined;
 		},
 		sender: () => calls.getStore()?.facts.sendMessage,
-		async run(sessionId, cwd, idle, dispatch) {
+		writer: () => calls.getStore()?.facts,
+		async run(sessionId, cwd, idle, dispatch, carried) {
 			let live = true;
 			const controller = new AbortController();
-			const effects: LoopHookEffects = late.get(sessionId) ?? { sent: [], notices: [], dropped: 0 };
+			const effects: LoopHookEffects = late.get(sessionId) ?? emptyEffects();
 			late.delete(sessionId);
 			const facts: LoopHookCallFacts = Object.freeze({
-				sessionManager: readOnlySession(sessionId, cwd, () => live),
+				sessionManager: readOnlySession(sessionId, cwd, () => live, carried),
 				signal: controller.signal,
 				isIdle: () => idle,
 				sendMessage: (message: SentLoopMessage["message"], options?: SentLoopMessage["options"]) => {
@@ -91,6 +124,17 @@ export function createLoopHookCall(): LoopHookCall {
 					if (live) effects.notices.push(entry);
 					else holdLate(sessionId, (held) => held.notices.push(entry));
 				},
+				appendEntry: (customType: string, data?: unknown) => {
+					const entry = data === undefined ? { customType } : { customType, data };
+					if (live) effects.entries.push(entry);
+					else holdLate(sessionId, (held) => held.entries.push(entry));
+				},
+				sendUserMessage: (content: SentLoopUserMessage["content"], options?: SentLoopUserMessage["options"]) => {
+					const entry = options === undefined ? { content } : { content, options };
+					if (live) effects.userMessages.push(entry);
+					else holdLate(sessionId, (held) => held.userMessages.push(entry));
+				},
+				hasPendingMessages: () => effects.userMessages.length > 0,
 			});
 			try {
 				return await calls.run({ live: () => live, facts }, () => dispatch(effects));
@@ -117,7 +161,14 @@ export class LoopHookCallEndedError extends Error {
 	}
 }
 
-function readOnlySession(sessionId: string, cwd: string, live: () => boolean): ReadonlySessionManager {
+const emptyEffects = (): LoopHookEffects => ({ sent: [], notices: [], entries: [], userMessages: [], dropped: 0 });
+
+function readOnlySession(
+	sessionId: string,
+	cwd: string,
+	live: () => boolean,
+	carried: CarriedSession | undefined,
+): ReadonlySessionManager {
 	const bound =
 		<T>(member: string, read: () => T) =>
 		(): T => {
@@ -134,7 +185,7 @@ function readOnlySession(sessionId: string, cwd: string, live: () => boolean): R
 		getSessionFile: bound("getSessionFile", (): string | undefined => undefined),
 		getCwd: bound("getCwd", () => cwd),
 		getSessionDir: unbound("getSessionDir"),
-		getLeafId: unbound("getLeafId"),
+		getLeafId: carried === undefined ? unbound("getLeafId") : bound("getLeafId", () => carried.leafId),
 		getLeafEntry: unbound("getLeafEntry"),
 		getEntry: unbound("getEntry"),
 		getLabel: unbound("getLabel"),
@@ -145,7 +196,11 @@ function readOnlySession(sessionId: string, cwd: string, live: () => boolean): R
 		buildSessionProjection: unbound("buildSessionProjection"),
 		getHeader: unbound("getHeader"),
 		getEntries: unbound("getEntries"),
-		reduceHistory: unbound("reduceHistory"),
+		reduceHistory:
+			carried === undefined
+				? unbound("reduceHistory")
+				: <T>(reducer: HistoryReducer<T>): T =>
+						bound("reduceHistory", () => carried.handEntries.reduce(reducer.add, reducer.initial()))(),
 		getTree: unbound("getTree"),
 		getSessionName: unbound("getSessionName"),
 	});

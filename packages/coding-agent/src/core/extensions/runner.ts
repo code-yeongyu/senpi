@@ -182,6 +182,12 @@ export interface LoopHookCallFacts {
 	sendMessage(...args: Parameters<ExtensionRuntime["sendMessage"]>): void;
 	/** `ctx.ui.notify` during the call: the hand carries the notice back to the loop, which shows it there. */
 	notify(...args: Parameters<ExtensionUIContext["notify"]>): void;
+	/** `pi.appendEntry` from the call's work: the loop appends the entry to its own session (session port, write). */
+	appendEntry(...args: Parameters<ExtensionRuntime["appendEntry"]>): void;
+	/** `pi.sendUserMessage` from the call's work: the loop sends it as its own session's (session port, write). */
+	sendUserMessage(...args: Parameters<ExtensionRuntime["sendUserMessage"]>): void;
+	/** `ctx.hasPendingMessages()` during the call: whether this call has sent a user message the loop will deliver. */
+	hasPendingMessages(): boolean;
 }
 
 /** The hand's UI, except `notify`, which a loop-hook call carries back to the loop's UI. */
@@ -791,6 +797,8 @@ export class ExtensionRunner {
 		 * still deliver it): the call's sender, which carries it to the loop. None outside any call's work.
 		 */
 		readonly loopHookSend?: () => LoopHookCallFacts["sendMessage"] | undefined;
+		/** Where `pi.appendEntry` and `pi.sendUserMessage` go from a loop-hook call's work, routed as `loopHookSend`. */
+		readonly loopHookWrite?: () => Pick<LoopHookCallFacts, "appendEntry" | "sendUserMessage"> | undefined;
 	}): void {
 		this.runtime.getAllTools = facts.getAllTools;
 		this.loopHookCallFn = facts.loopHookCall;
@@ -801,6 +809,19 @@ export class ExtensionRunner {
 				if (sendMessage === undefined) throw loopSideUnbound("sendMessage");
 				sendMessage(message, options);
 			};
+		const write = facts.loopHookWrite;
+		if (write !== undefined) {
+			this.runtime.appendEntry = (customType, data) => {
+				const writer = write();
+				if (writer === undefined) throw loopSideUnbound("appendEntry");
+				writer.appendEntry(customType, data);
+			};
+			this.runtime.sendUserMessage = (content, options) => {
+				const writer = write();
+				if (writer === undefined) throw loopSideUnbound("sendUserMessage");
+				writer.sendUserMessage(content, options);
+			};
+		}
 		this.runtime.getActiveTools = () => this.getActiveTools();
 		this.runtime.setActiveTools = () => {};
 		if (facts.getLoadedHookSources === undefined) return;
@@ -2012,6 +2033,7 @@ export class ExtensionRunner {
 					sessionManager: { configurable: true, enumerable: true, value: call.sessionManager },
 					signal: { configurable: true, enumerable: true, value: call.signal },
 					isIdle: { configurable: true, enumerable: true, value: call.isIdle },
+					hasPendingMessages: { configurable: true, enumerable: true, value: call.hasPendingMessages },
 					ui: { configurable: true, enumerable: true, value: withLoopNotices(context.ui, call.notify) },
 				});
 		}
