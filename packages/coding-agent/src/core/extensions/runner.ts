@@ -94,6 +94,7 @@ import type {
 	ExtensionEvent,
 	ExtensionFlag,
 	ExtensionMode,
+	ExtensionAPI,
 	ExtensionRuntime,
 	ExtensionShortcut,
 	ExtensionToolContext,
@@ -201,6 +202,17 @@ export interface LoopHookCallFacts {
 	relocationHost(): SessionRelocationHost | undefined;
 	/** `pi.session.sessionWakes()` during the call: the loop's wakes, which a scheduling tool changes. */
 	sessionWakes(): SessionWakePort | undefined;
+}
+
+/**
+ * Where a hand runtime's loop-side effects from work outside any live loop-hook call go (brain/hand split H3): to the
+ * brain that owns the runtime's scope, as durable wakes, delivered there as a local session would deliver them.
+ */
+export interface LoopWakeRoute {
+	sendMessage(...args: Parameters<ExtensionRuntime["sendMessage"]>): void;
+	sendUserMessage(...args: Parameters<ExtensionAPI["sendUserMessage"]>): void;
+	appendEntry(...args: Parameters<ExtensionRuntime["appendEntry"]>): void;
+	notify(...args: Parameters<ExtensionUIContext["notify"]>): void;
 }
 
 /** The hand's UI, except `notify`, which a loop-hook call carries back to the loop's UI. */
@@ -681,6 +693,7 @@ export class ExtensionRunner {
 	private engineTurnsHeldFn: () => boolean = () => false;
 	private noteHeldWakeFn: (source: string) => void = () => {};
 	private pauseActions: Pick<ExtensionContextActions, "getPauseState" | "fenceRun" | "releaseRunFence"> = {};
+	private registerRunBackgroundJobFn: ExtensionContextActions["registerRunBackgroundJob"];
 	private questionInput: ExtensionContextActions["questionInput"];
 	private personAnswerPending = false;
 	private isProjectTrustedFn: () => boolean = () => true;
@@ -796,8 +809,9 @@ export class ExtensionRunner {
 
 	/**
 	 * Binds the runtime facts a runner without a session (a loopless runtime, S27a) can still answer: the registered
-	 * tools (`pi.getAllTools()`), the active set (`pi.getActiveTools()` is empty and `pi.setActiveTools()` changes nothing:
-	 * the active set belongs to a loop, as `getActiveTools()` answers) and, when given, where hook configuration is loaded from (its contexts then answer
+	 * tools (`pi.getAllTools()`), the active set (outside a loop-hook call's work `pi.getActiveTools()` is empty and
+	 * `pi.setActiveTools()` changes nothing, the active set belonging to a loop; a call's work reads and changes the set the
+	 * call carried, and is refused once the call ended) and, when given, where hook configuration is loaded from (its contexts then answer
 	 * `getLoadedHookSources()` instead of refusing it). A session binds them through `bindCore`.
 	 */
 	bindSessionlessFacts(facts: {
@@ -810,34 +824,43 @@ export class ExtensionRunner {
 		 * still deliver it): the call's sender, which carries it to the loop. None outside any call's work.
 		 */
 		readonly loopHookSend?: () => LoopHookCallFacts["sendMessage"] | undefined;
-		/** Where `pi.appendEntry` and `pi.sendUserMessage` go from a loop-hook call's work, routed as `loopHookSend`. */
+		/** Where `pi.appendEntry`, `pi.sendUserMessage` and `pi.get/setActiveTools` go from a call's work, as `loopHookSend`. */
 		readonly loopHookWrite?: () => LoopHookCallFacts | undefined;
 		/** Called when an extension registers a tool after the runtime was built, so the host can make it callable. */
 		readonly refreshTools?: () => void;
+		/**
+		 * A hand's route to the brain that owns its scope (H3): `pi.sendMessage`, `pi.sendUserMessage` and `pi.appendEntry`
+		 * from work no loop-hook call started (a background command, a monitor, a detached eval cell, a subagent) go there,
+		 * and `pi.isLoopRemote()` answers true. Without it they stay loop-side and unbound.
+		 */
+		readonly loopWake?: LoopWakeRoute;
 	}): void {
 		this.runtime.getAllTools = facts.getAllTools;
 		this.loopHookCallFn = facts.loopHookCall;
 		const send = facts.loopHookSend;
-		if (send !== undefined)
+		const wake = facts.loopWake;
+		if (send !== undefined || wake !== undefined)
 			this.runtime.sendMessage = (message, options) => {
-				const sendMessage = send();
+				const sendMessage = send?.() ?? wake?.sendMessage;
 				if (sendMessage === undefined) throw loopSideUnbound("sendMessage");
 				sendMessage(message, options);
 			};
 		const write = facts.loopHookWrite;
-		if (write !== undefined) {
+		if (write !== undefined || wake !== undefined) {
+			// A loop-hook call's work writes through that call; any other work (or none bound) through the scope's wake route.
 			this.runtime.appendEntry = (customType, data) => {
-				const writer = write();
-				if (writer === undefined) throw loopSideUnbound("appendEntry");
-				writer.appendEntry(customType, data);
+				const appendEntry = write?.()?.appendEntry ?? wake?.appendEntry;
+				if (appendEntry === undefined) throw loopSideUnbound("appendEntry");
+				appendEntry(customType, data);
 			};
 			this.runtime.sendUserMessage = (content, options) => {
-				const writer = write();
-				if (writer === undefined) throw loopSideUnbound("sendUserMessage");
-				writer.sendUserMessage(content, options);
+				const sendUserMessage = write?.()?.sendUserMessage ?? wake?.sendUserMessage;
+				if (sendUserMessage === undefined) throw loopSideUnbound("sendUserMessage");
+				sendUserMessage(content, options);
 			};
 		}
-		this.runtime.getActiveTools = () => this.getActiveTools();
+		if (wake !== undefined) this.runtime.isLoopRemote = () => true;
+		this.runtime.getActiveTools = () => write?.()?.getActiveTools() ?? this.getActiveTools();
 		this.runtime.setActiveTools = (names) => (write?.() ?? this.loopHookCallFn?.())?.setActiveTools(names);
 		if (facts.refreshTools !== undefined) this.runtime.refreshTools = facts.refreshTools;
 		this.runtime.sessionControl = callSessionControlActions(() => this.loopHookCallFn?.());
@@ -921,6 +944,7 @@ export class ExtensionRunner {
 			fenceRun: contextActions.fenceRun,
 			releaseRunFence: contextActions.releaseRunFence,
 		};
+		this.registerRunBackgroundJobFn = contextActions.registerRunBackgroundJob;
 		this.questionInput = contextActions.questionInput;
 		this.isProjectTrustedFn = contextActions.isProjectTrusted;
 		this.getSignalFn = contextActions.getSignal;
@@ -1847,6 +1871,10 @@ export class ExtensionRunner {
 			releaseRunFence: (runRef) => {
 				runner.assertActive();
 				runner.pauseActions.releaseRunFence?.(runRef);
+			},
+			registerRunBackgroundJob: (job) => {
+				runner.assertActive();
+				return runner.registerRunBackgroundJobFn?.(job) ?? (() => {});
 			},
 			isProjectTrusted: () => {
 				runner.assertActive();

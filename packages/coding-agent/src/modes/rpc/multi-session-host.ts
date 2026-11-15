@@ -43,6 +43,7 @@ import { createEndpointReservations } from "./host-reservations.ts";
 import { hostChildDrainRequestFile, watchDrainRequest } from "./host-stop-intent.ts";
 import { armHostWatchdog, type HostWatchdogConfig } from "./host-watchdog.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
+import { MachineOpHandler } from "./machine-op/handler.ts";
 import { withOpenRetention } from "./open-retention.ts";
 import { hostGeneration, hostInstanceId, protocolIdentity } from "./protocol-identity.ts";
 import { rpcCommandShapeError } from "./rpc-input-validation.ts";
@@ -184,6 +185,7 @@ export function createHostCore(
 				...(hooks.onSessionCountChange ? { onSizeChange: hooks.onSessionCountChange } : {}),
 				pathReservations,
 			});
+	const machineOps = new MachineOpHandler({ agentDir: options.agentDir });
 	const router = new SessionCommandRouter(
 		registry,
 		writer,
@@ -194,7 +196,14 @@ export function createHostCore(
 			now: policy.now,
 			idleEvictionMs: policy.idleEvictionMs,
 			emptyExitMs: policy.emptyExitMs,
-			onEmptyExit: idle.onEmptyExit,
+			// Held in the same step as the exit decision: no machine op may start on a host that is ending (senpi#6752).
+			onEmptyExit:
+				idle.onEmptyExit === undefined
+					? undefined
+					: () => {
+							machineOps.hold();
+							idle.onEmptyExit?.();
+						},
 			onHandoffParked: idle.onHandoffParked,
 			...(endpointSocket === undefined
 				? {}
@@ -204,7 +213,8 @@ export function createHostCore(
 							agentDir: options.agentDir,
 						}).dir,
 					}),
-			canExitWhenEmpty: idle.canExitWhenEmpty,
+			// The host's own gate first, then machine work: an empty exit would end every relay-host terminal (senpi#6752).
+			canExitWhenEmpty: () => (idle.canExitWhenEmpty?.() ?? true) && !machineOps.busy(),
 		},
 	);
 	if (endpointSocket !== undefined)
@@ -230,7 +240,10 @@ export function createHostCore(
 		).catch((cause: unknown) => {
 			process.stderr.write(`senpi rpc successor reopen parked set failed: ${String(cause)}\n`);
 		});
-	const gate = new HostCoreGate(registry, (command) => router.handle(command), hooks);
+	const gate = new HostCoreGate(registry, (command) => router.handle(command), {
+		...hooks,
+		machineWork: machineOps,
+	});
 	const handle = async (line: string): Promise<void> => {
 		const connection = writer.currentConnection();
 		let parsed: unknown;
@@ -258,6 +271,10 @@ export function createHostCore(
 	const handleParsed = async (connection: string | undefined, parsed: unknown): Promise<void> => {
 		// Before any await: a declaration takes effect for the very next line of its connection (senpi#5632).
 		const delegation = writer.delegations.inspect(connection, parsed);
+		if (delegation.kind === "machine_op") {
+			await writer.enqueueControl(await machineOps.answer(delegation.command, parsed, delegation.id));
+			return;
+		}
 		if (delegation.kind !== "pass") {
 			await answerDelegation(writer, delegation, parsed);
 			return;
@@ -281,6 +298,8 @@ export function createHostCore(
 	return {
 		router,
 		handle,
+		/** senpi#6752: the host's `machine_op` handler; its terminals end at host shutdown. */
+		machineOps,
 		handover: gate.handover,
 		handoverAnswered: () => gate.answered(),
 		/** The in-process registry's `warm`; the worker registry has none. */
@@ -302,7 +321,7 @@ async function runStdioHost(options: MultiSessionHostOptions): Promise<never> {
 	// forever: exit through the normal shutdown path once the window elapses.
 	const runtimeBuildId = await startupRuntimeBuildId();
 	const trim = createZeroSessionTrim(writer, () => router.sessionCount);
-	const { router, handle, warm } = createHostCore(
+	const { router, handle, warm, machineOps } = createHostCore(
 		options,
 		writer,
 		undefined,
@@ -321,6 +340,7 @@ async function runStdioHost(options: MultiSessionHostOptions): Promise<never> {
 		observers.stop();
 		detach();
 		await router.dispose();
+		await machineOps.dispose();
 		await writer.flush();
 		await flushRawStdout();
 		process.exit(exitCode);
@@ -364,7 +384,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	}
 	const canHandOver = runtimeBuildId !== undefined && process.platform !== "win32";
 	const trim = createZeroSessionTrim(writer, () => router.sessionCount);
-	const { router, handle, handover, handoverAnswered, warm } = createHostCore(
+	const { router, handle, handover, handoverAnswered, warm, machineOps } = createHostCore(
 		options,
 		writer,
 		[
@@ -570,6 +590,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			await (process.platform === "win32"
 				? Promise.race([router.dispose(), delay(WINDOWS_SHUTDOWN_DISPOSE_BOUND_MS)])
 				: router.dispose());
+			await machineOps.dispose();
 			const open = [...connections.values()];
 			const cancelForce = await closeHostConnections(open, (id) => writer.flushConnection(id), startedAt, hostLog);
 			// libuv unlinks the bound NAME when the listening handle closes - which

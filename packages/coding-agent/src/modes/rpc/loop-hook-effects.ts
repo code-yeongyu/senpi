@@ -47,23 +47,12 @@ export interface LoopHookEffects {
 	settle: () => Promise<void>;
 	/** Ends the call for its writes: from then on nothing more is collected here ({@link effectsReply} calls it). */
 	seal: () => void;
-	/** Late messages and notices dropped because the loop session already held {@link LATE_PER_SESSION}. */
-	dropped: number;
 }
 
 /** A notice a loop hook showed during its call, for the loop to show on its own UI. */
 export interface LoopNotice {
 	readonly message: string;
 	readonly type?: Parameters<LoopHookCallFacts["notify"]>[1];
-}
-
-/** Appends late writes held for a loop session (deliveries and their drop count) to `effects`, in order. */
-export function appendHeld(effects: LoopHookEffects, held: LoopHookEffects): void {
-	effects.sent.push(...held.sent);
-	effects.notices.push(...held.notices);
-	effects.entries.push(...held.entries);
-	effects.userMessages.push(...held.userMessages);
-	effects.dropped += held.dropped;
 }
 
 export const emptyEffects = (): LoopHookEffects => ({
@@ -77,20 +66,18 @@ export const emptyEffects = (): LoopHookEffects => ({
 	relocation: undefined,
 	settle: () => Promise.resolve(),
 	seal: () => {},
-	dropped: 0,
 });
 
 /**
  * The effects a reply carries back to the loop, each only when there is one. Building it ends the call (`seal`) before
- * anything is read, so work still running afterwards is refused or rides the next reply, never collected into a reply
- * that was already built; then the session directory's changes are settled. A dispatch that throws builds no reply:
- * its call ends only in `run`'s cleanup and its own writes are discarded with the error, while the late writes it took
- * over from earlier calls of the same session go back to be held for the next reply.
+ * anything is read, so work still running afterwards is refused or goes to the call's late route, never collected into a
+ * reply that was already built; then the session directory's changes are settled. A dispatch that throws builds no
+ * reply: its call ends only in `run`'s cleanup, and what it collected is discarded with the error.
  */
 export async function effectsReply(effects: LoopHookEffects): Promise<Record<string, unknown>> {
 	effects.seal();
 	await effects.settle();
-	const { sent, notices, entries, userMessages, activeTools, documents, wakes, relocation, dropped } = effects;
+	const { sent, notices, entries, userMessages, activeTools, documents, wakes, relocation } = effects;
 	return {
 		...(sent.length > 0 ? { sent } : {}),
 		...(notices.length > 0 ? { notices } : {}),
@@ -100,6 +87,5 @@ export async function effectsReply(effects: LoopHookEffects): Promise<Record<str
 		...(documents === undefined || Object.keys(documents).length === 0 ? {} : { documents }),
 		...(wakes.length > 0 ? { wakes } : {}),
 		...(relocation === undefined ? {} : { relocation }),
-		...(dropped > 0 ? { droppedLate: dropped } : {}),
 	};
 }
