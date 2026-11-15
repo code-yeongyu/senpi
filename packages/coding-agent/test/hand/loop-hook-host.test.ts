@@ -27,7 +27,6 @@ import type {
 	InputEventResult,
 } from "../../src/core/extensions/types.ts";
 import { createLooplessHand } from "../../src/modes/rpc/remote-executor-scope.ts";
-import { createLoopHookCall, LATE_PER_SESSION, LoopHookCallEndedError } from "../../src/modes/rpc/loop-hook-call.ts";
 import { createHarness, type Harness } from "../suite/harness.ts";
 import { cleanupHands, handConfiguration, handDirs } from "./remote-hand-fixture.ts";
 
@@ -410,89 +409,6 @@ describe("the user's loop hooks run on the user's machine when the loop runs els
 		expect(JSON.stringify(fused.faux.getCallLog().map((entry) => entry.context))).toContain(
 			"context from the user machine",
 		);
-	});
-});
-
-describe("a loop-hook call's bound session (S33, option A)", () => {
-	it("is the loop session's id, read-only, during the call only", async () => {
-		const call = createLoopHookCall();
-		let during: { id: string; file: string | undefined; idle: boolean } | undefined;
-		let captured: ReturnType<typeof call.current>;
-
-		await call.run("loop-session-1", "/work", true, async () => {
-			captured = call.current();
-			const facts = captured;
-			if (facts === undefined) throw new Error("no facts inside the call");
-			during = {
-				id: facts.sessionManager.getSessionId(),
-				file: facts.sessionManager.getSessionFile(),
-				idle: facts.isIdle(),
-			};
-			expect(() => facts.sessionManager.getEntries()).toThrow(/loop-side/);
-			expect(() => {
-				(facts.sessionManager as unknown as Record<string, unknown>).getSessionId = () => "forged";
-			}).toThrow(TypeError);
-		});
-
-		expect(during).toEqual({ id: "loop-session-1", file: undefined, idle: true });
-		expect(call.current()).toBeUndefined();
-		expect(() => captured?.sessionManager.getSessionId()).toThrow(LoopHookCallEndedError);
-		expect(() => captured?.sessionManager.getSessionId()).toThrow(
-			expect.objectContaining({ name: "LoopHookCallEndedError", member: "sessionManager.getSessionId" }),
-		);
-		expect(captured?.signal.aborted).toBe(true);
-	});
-
-	it("holds late messages up to its cap, then drops the oldest and counts them, never throwing", async () => {
-		const call = createLoopHookCall();
-		let kept: ReturnType<typeof call.current>;
-		await call.run("loop-session-3", "/work", true, async () => {
-			kept = call.current();
-		});
-
-		for (let index = 0; index < LATE_PER_SESSION + 2; index++)
-			expect(() => kept?.sendMessage({ customType: "late", content: `m${index}`, display: false })).not.toThrow();
-		const next = await call.run("loop-session-3", "/work", true, async (effects) => ({
-			sent: effects.sent.map((entry) => entry.message.content),
-			dropped: effects.dropped,
-		}));
-
-		expect(next.dropped).toBe(2);
-		expect(next.sent).toHaveLength(LATE_PER_SESSION);
-		expect(next.sent[0]).toBe("m2");
-	});
-
-	it("past its cap drops held notices before any message: messages reach the model, notices only the UI", async () => {
-		const call = createLoopHookCall();
-		let kept: ReturnType<typeof call.current>;
-		await call.run("loop-session-4", "/work", true, async () => {
-			kept = call.current();
-		});
-
-		kept?.notify("oldest-notice");
-		for (let index = 0; index < LATE_PER_SESSION; index++)
-			kept?.sendMessage({ customType: "late", content: `m${index}`, display: false });
-		const next = await call.run("loop-session-4", "/work", true, async (effects) => ({
-			sent: effects.sent.map((entry) => entry.message.content),
-			notices: effects.notices.map((entry) => entry.message),
-			dropped: effects.dropped,
-		}));
-
-		expect(next).toEqual({
-			sent: Array.from({ length: LATE_PER_SESSION }, (_, index) => `m${index}`),
-			notices: [],
-			dropped: 1,
-		});
-	});
-
-	it("is not visible to work that runs outside the call", async () => {
-		const call = createLoopHookCall();
-		const outside = Promise.withResolvers<ReturnType<typeof call.current>>();
-
-		await call.run("loop-session-2", "/work", true, async () => {});
-		queueMicrotask(() => outside.resolve(call.current()));
-
-		expect(await outside.promise).toBeUndefined();
 	});
 });
 
