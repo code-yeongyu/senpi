@@ -27,9 +27,11 @@ describe("a call's session ports end with the call (senpi#6754)", () => {
 		let wakes: SessionWakePort | undefined;
 		let relocation: SessionRelocationHost | undefined;
 		let effects: LoopHookEffects | undefined;
+		let facts: ReturnType<typeof call.current>;
 
 		await call.run(BINDING, async (collected) => {
 			effects = collected;
+			facts = call.current();
 			wakes = call.current()?.sessionWakes();
 			relocation = call.current()?.relocationHost();
 			wakes?.arm({ ...WAKE });
@@ -38,6 +40,9 @@ describe("a call's session ports end with the call (senpi#6754)", () => {
 		expect(() => wakes?.arm({ ...WAKE, id: "w2" })).toThrow(LoopHookCallEndedError);
 		expect(() => wakes?.cancel("w1")).toThrow(LoopHookCallEndedError);
 		await expect(relocation?.request({ target: "studio", reason: "late" })).rejects.toThrow(LoopHookCallEndedError);
+		// Read from outside the call's own work (this test's context), what the call carried refuses too.
+		expect(() => facts?.getActiveTools()).toThrow(LoopHookCallEndedError);
+		expect(() => facts?.getSystemPromptOptions()).toThrow(LoopHookCallEndedError);
 		expect(effects?.wakes).toEqual([{ op: "arm", wake: WAKE }]);
 		expect(effects?.relocation).toBeUndefined();
 	});
@@ -77,5 +82,31 @@ describe("a call's session ports end with the call (senpi#6754)", () => {
 		expect(effects?.sent).toEqual([]);
 		expect(late).toEqual([["s1", "after the reply"]]);
 		expect(next).toEqual({});
+	});
+
+	it("a late message reaches the loop exactly once, whether or not the next call throws", async () => {
+		const late: unknown[] = [];
+		const route: LateLoopRoute = (sessionId) => ({
+			sendMessage: (message) => late.push([sessionId, message.content]),
+			notify: () => {},
+			appendEntry: () => {},
+			sendUserMessage: () => {},
+		});
+		const call = createLoopHookCall(route);
+		let send: ReturnType<typeof call.sender>;
+		await call.run(BINDING, async () => {
+			send = call.sender();
+		});
+		send?.({ customType: "late", content: "held", display: true });
+
+		await expect(
+			call.run(BINDING, async () => {
+				throw new Error("dispatch failed");
+			}),
+		).rejects.toThrow("dispatch failed");
+		const after = await call.run(BINDING, (collected) => effectsReply(collected));
+
+		expect(late).toEqual([["s1", "held"]]);
+		expect(after).toEqual({});
 	});
 });

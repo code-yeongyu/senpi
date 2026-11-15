@@ -162,13 +162,17 @@ export function createLoopHookCall(late: LateLoopRoute): LoopHookCall {
 				// Only what this call (or its work) sent; a held Stop reads it after the call ended.
 				hasPendingMessages: () => userMessagesSent > 0,
 				getActiveTools: () => {
+					if (!ownWork()) throw new LoopHookCallEndedError("pi.getActiveTools");
 					const active = carried?.activeTools;
 					if (active === undefined) return undefined;
 					return effects.activeTools === undefined
 						? [...active]
 						: applyActiveToolsChange(active, effects.activeTools);
 				},
-				getSystemPromptOptions: () => ({ ...carried?.systemPromptOptions, cwd }),
+				getSystemPromptOptions: () => {
+					if (!ownWork()) throw new LoopHookCallEndedError("ctx.getSystemPromptOptions");
+					return { ...carried?.systemPromptOptions, cwd };
+				},
 				relocationHost: () => relocation,
 				sessionWakes: () => wakes,
 				// Only a set the loop carried can change: the loop applies the change to that set.

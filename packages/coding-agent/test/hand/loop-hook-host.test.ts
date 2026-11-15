@@ -442,8 +442,9 @@ describe("what a handler's kept ctx and pi do after its call ended (S33 review)"
 	/**
 	 * Every member a loop-hook call binds, used from a handler's async work after its call ended (its reply was built):
 	 * a delivery (message, notice) reaches the loop as a durable wake for the same loop session (H3: never through a reply,
-	 * which may be lost), idle, the signal and pending user messages keep answering, and the session's identity and a
-	 * change to the active set throw `LoopHookCallEndedError`. Nothing is accepted and then lost.
+	 * which may be lost), idle, the signal and pending user messages keep answering, what the call carried (the active set,
+	 * the prompt options) keeps answering the call's own work and refuses any other context, and the session's identity
+	 * and a change to the active set throw `LoopHookCallEndedError`. Nothing is accepted and then lost.
 	 */
 	const rows: { member: string; use: string; expect: "wake" | "value" | "refused" }[] = [
 		{
@@ -457,6 +458,8 @@ describe("what a handler's kept ctx and pi do after its call ended (S33 review)"
 		{ member: "ctx.sessionManager.getSessionId", use: "ctx.sessionManager.getSessionId()", expect: "refused" },
 		{ member: "pi.setActiveTools", use: 'pi.setActiveTools(["read"])', expect: "refused" },
 		{ member: "ctx.hasPendingMessages", use: "ctx.hasPendingMessages()", expect: "value" },
+		{ member: "pi.getActiveTools", use: "pi.getActiveTools()", expect: "value" },
+		{ member: "ctx.getSystemPromptOptions", use: "ctx.getSystemPromptOptions()", expect: "value" },
 	];
 
 	it.each(rows)("$member after the call ended: $expect", async (row) => {

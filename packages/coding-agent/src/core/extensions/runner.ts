@@ -809,8 +809,9 @@ export class ExtensionRunner {
 
 	/**
 	 * Binds the runtime facts a runner without a session (a loopless runtime, S27a) can still answer: the registered
-	 * tools (`pi.getAllTools()`), the active set (`pi.getActiveTools()` is empty and `pi.setActiveTools()` changes nothing:
-	 * the active set belongs to a loop, as `getActiveTools()` answers) and, when given, where hook configuration is loaded from (its contexts then answer
+	 * tools (`pi.getAllTools()`), the active set (outside a loop-hook call's work `pi.getActiveTools()` is empty and
+	 * `pi.setActiveTools()` changes nothing, the active set belonging to a loop; a call's work reads and changes the set the
+	 * call carried, and is refused once the call ended) and, when given, where hook configuration is loaded from (its contexts then answer
 	 * `getLoadedHookSources()` instead of refusing it). A session binds them through `bindCore`.
 	 */
 	bindSessionlessFacts(facts: {
@@ -823,7 +824,7 @@ export class ExtensionRunner {
 		 * still deliver it): the call's sender, which carries it to the loop. None outside any call's work.
 		 */
 		readonly loopHookSend?: () => LoopHookCallFacts["sendMessage"] | undefined;
-		/** Where `pi.appendEntry` and `pi.sendUserMessage` go from a loop-hook call's work, routed as `loopHookSend`. */
+		/** Where `pi.appendEntry`, `pi.sendUserMessage` and `pi.get/setActiveTools` go from a call's work, as `loopHookSend`. */
 		readonly loopHookWrite?: () => LoopHookCallFacts | undefined;
 		/** Called when an extension registers a tool after the runtime was built, so the host can make it callable. */
 		readonly refreshTools?: () => void;
@@ -859,7 +860,7 @@ export class ExtensionRunner {
 			};
 		}
 		if (wake !== undefined) this.runtime.isLoopRemote = () => true;
-		this.runtime.getActiveTools = () => this.getActiveTools();
+		this.runtime.getActiveTools = () => write?.()?.getActiveTools() ?? this.getActiveTools();
 		this.runtime.setActiveTools = (names) => (write?.() ?? this.loopHookCallFn?.())?.setActiveTools(names);
 		if (facts.refreshTools !== undefined) this.runtime.refreshTools = facts.refreshTools;
 		this.runtime.sessionControl = callSessionControlActions(() => this.loopHookCallFn?.());
