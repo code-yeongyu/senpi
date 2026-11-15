@@ -47,7 +47,7 @@ export interface LoopHookHandOptions {
 	/**
 	 * How long a call waits for each call ahead of it in its session to settle before it is refused (`queue_timeout`).
 	 * The bound restarts each time a call ahead settles, so it catches a stuck call, never a slow queue that keeps moving.
-	 * A value past `MAX_TIMER_DELAY_MS` (about 24.8 days) waits that long instead.
+	 * A value past `setTimeout`'s range (2^31 - 1 ms, about 24.8 days) waits that long instead.
 	 */
 	readonly queueWaitMs?: number;
 	/** This process's identity; a new one per process start. */
