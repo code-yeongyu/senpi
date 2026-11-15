@@ -45,6 +45,22 @@ describe("EvalNotifier", () => {
 		expect(delivered[0]?.content).toContain("leaky-cell");
 	});
 
+	it("on a hand, sends without a session context: the loop that receives the notice applies the session guards", () => {
+		const sent = (loopRemote: boolean) => {
+			const delivered: RecordedMessage[] = [];
+			new EvalNotifier({
+				sendMessage: (message, options) => delivered.push({ ...message, ...options }),
+				getContext: () => undefined,
+				getMode: () => "wake",
+				loopRemote: () => loopRemote,
+			}).notify([{ cellId: "hand-cell", content: "done on the hand" }]);
+			return delivered.map((message) => [message.content, message.triggerTurn, message.deliverAs]);
+		};
+
+		expect(sent(true)).toEqual([["done on the hand", true, "steer"]]);
+		expect(sent(false)).toEqual([]);
+	});
+
 	it("scopes once-per-cell delivery to one session generation", () => {
 		const messages: EvalNotificationContent[] = [];
 		const notifier = new EvalNotifier({

@@ -1,5 +1,23 @@
 # changes
 
+## 2026-11-15 - The image byte sniffer moves to a module without Node imports (senpi#6740)
+
+### What changed
+
+- `packages/coding-agent/src/utils/mime.ts`: `detectSupportedImageMimeType` and its helpers move to `image-mime.ts`, re-exported here; this module keeps `detectSupportedImageMimeTypeFromFile`.
+
+### Why
+
+- A host that runs the built-in tools in a Worker / non-Node host through an injected ToolMachine (senpi#6739) must offer the model the same bash, read, write and edit tools as a local session; their modules reached Node builtins (tools-manager, photon, the TUI renderers, cross-spawn, the temp-file spill), so they could not be bundled for such a host.
+
+### Why an extension could not handle it
+
+- The sniffer is a core utility the built-in read tool imports.
+
+### Expected merge conflict zones
+
+- LOW: `mime.ts` is now the file reader plus a re-export.
+
 ## 2026-11-13 - Binary installs read the update version from the latest GitHub Release (senpi#6633)
 
 ### What changed
