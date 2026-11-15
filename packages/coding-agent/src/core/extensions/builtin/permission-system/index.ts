@@ -1,5 +1,6 @@
 import { SettingsManager } from "../../../settings-manager.ts";
 import type { ExtensionAPI, ExtensionContext, ToolCallEvent, ToolCallEventResult } from "../../types.ts";
+import { combinedToolCallSignal } from "../../tool-call-signal.ts";
 import { extractPatchedPaths } from "../gpt-apply-patch/index.ts";
 import { decideAuto } from "./auto-policy.ts";
 import { createCellDecision, registerCellAuthorizer, updateCellEnforcement } from "./cell-decision.ts";
@@ -322,8 +323,9 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		dispatchSignal?: AbortSignal,
 	): Promise<ToolCallEventResult | undefined> => {
 		// A `tool_call` hook gets no signal argument, so its prompt ends with the turn: an abort releases a prompt
-		// nobody answers (a child's dialog forwarded to a host that never shows it), senpi#6670.
-		const signal = dispatchSignal ?? ctx.signal;
+		// nobody answers (a child's dialog forwarded to a host that never shows it), senpi#6670. The dispatch (call)
+		// signal does not replace the context's: the prompt runs under their union so a turn abort also ends it (senpi#6679).
+		const signal = combinedToolCallSignal(dispatchSignal, ctx.signal);
 		attachWithoutSession(ctx);
 		followPresetFlag(ctx.cwd, ctx.agentDir);
 		if (setupError !== null) {

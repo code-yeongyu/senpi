@@ -147,6 +147,7 @@ import {
 	type ToolEventDispatchOptions,
 	twoSidedExtensions,
 } from "./two-sided-forwarding.ts";
+import { combinedToolCallSignal } from "./tool-call-signal.ts";
 
 const RUNTIME_CONTEXT_MEMBERS: ReadonlySet<string> = new Set<keyof ExtensionRuntimeContext>([
 	"offload",
@@ -2536,12 +2537,14 @@ export class ExtensionRunner {
 				own,
 				"tool_call",
 				options,
+				// The forwarder carries the event only, never the call's signal (senpi#6679 L1): a handler served on the
+				// loop side of a forward sees the loop-hook signal, the exception ToolEventDispatchOptions.signal documents.
 				(index) => async () => options.forward?.toolCall(ext.path, index, event),
 			);
 			for (const handler of handlers) {
 				const baseContext = this.createContext();
 				if (options.signal !== undefined) {
-					const callSignal = options.signal;
+					const callSignal = combinedToolCallSignal(options.signal, baseContext.signal);
 					Object.defineProperty(baseContext, "signal", {
 						get: () => callSignal,
 						configurable: true,

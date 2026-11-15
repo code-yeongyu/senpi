@@ -3621,6 +3621,10 @@ export type GetSessionNameHandler = () => string | undefined;
 export type ExecuteToolUpdateCallback<T = unknown> = AgentToolUpdateCallback<T>;
 
 export interface ExecuteToolOptions<TDetails = unknown> {
+	/**
+	 * The call's own abort signal. The call — and its permission prompt — run under its union with the turn's
+	 * signal: aborting the turn also aborts the call even when this signal is not linked to it (senpi#6679).
+	 */
 	signal?: AbortSignal;
 	onUpdate?: ExecuteToolUpdateCallback<TDetails>;
 	/**
