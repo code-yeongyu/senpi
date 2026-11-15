@@ -47,7 +47,7 @@ function optionalText(value: unknown): string | undefined | null {
 }
 
 /** Decodes `value` the way the desktop's schema does: strings trimmed, fields the kind does not carry dropped. */
-export function parseThreadSettledBy(value: unknown): ThreadSettledBy | undefined {
+function parseThreadSettledBy(value: unknown): ThreadSettledBy | undefined {
 	if (typeof value !== "object" || value === null) return undefined;
 	const by = value as Readonly<Record<string, unknown>>;
 	const kind = by.kind;
