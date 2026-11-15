@@ -14,6 +14,8 @@ import type { ThinkingLevelSource } from "../../core/session-thinking-memory.ts"
 
 import type { EffectStatus } from "./effect-record.ts";
 import type { RpcProjectFile } from "./project-file-commands.ts";
+import type { RpcProjectMcpServers } from "./project-mcp-commands.ts";
+import type { RpcProjectSkillFile } from "./project-skill-commands.ts";
 import type { RpcProjectSettings, RpcProjectTrust } from "./project-workspace-commands.ts";
 import type { RpcSlashCommand } from "./rpc-command-surface.ts";
 import type { RpcEvalCell, RpcEvalCellSnapshot } from "./rpc-result-types.ts";
@@ -153,6 +155,8 @@ export type RpcReadResponse =
 	| { id?: string; type: "response"; command: "get_project_trust"; success: true; data: RpcProjectTrust }
 	| { id?: string; type: "response"; command: "get_project_settings"; success: true; data: RpcProjectSettings }
 	| { id?: string; type: "response"; command: "read_project_file"; success: true; data: RpcProjectFile }
+	| { id?: string; type: "response"; command: "get_project_mcp_servers"; success: true; data: RpcProjectMcpServers }
+	| { id?: string; type: "response"; command: "read_project_skill_file"; success: true; data: RpcProjectSkillFile }
 	| { id?: string; type: "response"; command: "eval_cells.list"; success: true; data: RpcEvalCell[] }
 	| {
 			id?: string;

@@ -50,7 +50,11 @@ export async function runSessionControlCommand(
 			return success(id, type);
 		}
 		case "interrupt":
-			return success(id, type, await interruptRunningTurn(session, command.turnId, () => controls.interruptTurn()));
+			return success(
+				id,
+				type,
+				await interruptRunningTurn(session, command.turnId, () => controls.interruptTurn(), command.background),
+			);
 		default:
 			return undefined;
 	}

@@ -64,6 +64,7 @@ describe("multi-session RPC protocol info", () => {
 					"delegation_roles_v1",
 					"peer_agent_role_v1",
 					"same_account_delegation_v1",
+					"machine_op_v1", // senpi#6752: the local relay host's device ops run in the engine.
 					"unload_session",
 					"move_session",
 					"move_session_revoke",
