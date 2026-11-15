@@ -78,7 +78,9 @@ export function extensionLoopHooks(
 			// The loop's options as the loop built them: only `cwd` is this machine's (its workspace); the rest (context files,
 			// skills, tools) describes the loop's machine. They are data for handlers to read; nothing here acts on them.
 			const options = { ...(systemPromptOptions as Partial<BuildSystemPromptOptions>), cwd };
-			return call.run({ sessionId, cwd, idle }, (effects) =>
+			// A real (non-preview) before_agent_start is the turn start the loop forwards: a local session follows it with
+			// agent_start, which is what drops a Stop still held for background work.
+			return call.run({ sessionId, cwd, idle, startsTurn: preview !== true }, (effects) =>
 				dispatchLoopHook(runner, call, effects, () =>
 					runner.emitBeforeAgentStart(prompt, images, systemPrompt, options, {
 						only,
@@ -128,7 +130,9 @@ export function extensionLoopHooks(
 				throw new Error("malformed agent_end payload");
 			const agentEnd = { type: "agent_end" as const, messages, ...(aborted === undefined ? {} : { aborted }) };
 			// An agent_end ends the loop's turn: a Stop held for the hand's background work runs after this call, with the
-			// session it carried, and its writes ride the session's next reply.
+			// session it carried, and its writes ride the session's next reply. The hand cannot push them sooner: while the
+			// loop stays idle, that next call is the user's next prompt, so a held Stop's block follow-up does not continue
+			// the agent by itself as a local idle session's does, until hand-to-loop push lands (senpi#5778).
 			return call.run({ sessionId, cwd, idle, carried, endsTurn: true }, (effects) =>
 				dispatchLoopHook(runner, call, effects, () => runner.emitForwardedLoopEvent(agentEnd, only)),
 			);

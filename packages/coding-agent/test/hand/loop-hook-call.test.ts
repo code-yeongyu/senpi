@@ -161,17 +161,21 @@ describe("a loop-hook call's bound session (S33, option A)", () => {
 		expect(() => kept?.sessionManager.getLeafId()).toThrow(LoopHookCallEndedError);
 	});
 
-	it("after a call that ended the loop's turn, answers idle until the loop starts another call (#6751 M1)", async () => {
+	it("after a call that ended the loop's turn, answers idle until the loop starts a turn there (#6751 M1, L2)", async () => {
 		const call = createLoopHookCall();
+		const session = { sessionId: "loop-session-8", cwd: "/work" };
 		let kept: ReturnType<typeof call.current>;
-		await call.run({ sessionId: "loop-session-8", cwd: "/work", idle: false, endsTurn: true }, async () => {
+		await call.run({ ...session, idle: false, endsTurn: true }, async () => {
 			kept = call.current();
 			expect(kept?.isIdle()).toBe(false);
 		});
 		const afterTurn = kept?.isIdle();
-		await call.run({ sessionId: "loop-session-8", cwd: "/work", idle: true }, async () => {});
+		// A call that starts no turn (an input the loop handles itself, a preview) leaves the session idle.
+		await call.run({ ...session, idle: true }, async () => {});
+		const afterOtherCall = kept?.isIdle();
+		await call.run({ ...session, idle: true, startsTurn: true }, async () => {});
 
-		expect([afterTurn, kept?.isIdle()]).toEqual([true, false]);
+		expect([afterTurn, afterOtherCall, kept?.isIdle()]).toEqual([true, true, false]);
 	});
 
 	it("is not visible to work that runs outside the call", async () => {

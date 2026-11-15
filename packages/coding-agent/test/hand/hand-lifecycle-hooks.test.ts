@@ -13,31 +13,36 @@ import { createLooplessHand } from "../../src/modes/rpc/remote-executor-scope.ts
 import { type LifecycleHookEvent, writeLifecycleHook } from "./lifecycle-hook-fixture.ts";
 import { cleanupHands, handConfiguration, handDirs } from "./remote-hand-fixture.ts";
 
-// A held Stop runs from the drain timer, with no reply to await. The real dispatcher runs; once a dispatch settles and
-// the continuations it started have run (the Stop's result applied), it tells whoever waits.
-const dispatchSettled = vi.hoisted(() => new Set<() => void>());
+// A held Stop runs from the drain timer, with no reply to await. The real dispatcher runs; each dispatch is numbered
+// when it starts, and once it settles and the continuations it started have run (the Stop's result applied), it tells
+// whoever waits.
+const dispatches = vi.hoisted(() => ({ started: 0, settled: new Set<(seq: number) => void>() }));
 vi.mock("../../src/core/extensions/builtin/hooks/dispatcher.ts", async (importOriginal) => {
 	const actual = await importOriginal<typeof HookDispatcher>();
 	return {
 		...actual,
 		dispatchHookEvent: (options: Parameters<typeof actual.dispatchHookEvent>[0]) => {
+			const seq = ++dispatches.started;
 			const run = actual.dispatchHookEvent(options);
-			const settled = () => setImmediate(() => [...dispatchSettled].forEach((listener) => listener()));
+			const settled = () => setImmediate(() => [...dispatches.settled].forEach((listener) => listener(seq)));
 			run.then(settled, settled);
 			return run;
 		},
 	};
 });
 
-/** The next hook dispatch's settlement, bounded: a Stop that never runs fails the wait instead of hanging. */
+/** The settlement of the next dispatch that starts after this call, bounded: a Stop that never runs fails the wait. */
 function nextDispatchSettled(): Promise<void> {
+	const after = dispatches.started;
 	const settled = Promise.withResolvers<void>();
-	const listener = () => settled.resolve();
-	dispatchSettled.add(listener);
+	const listener = (seq: number) => {
+		if (seq > after) settled.resolve();
+	};
+	dispatches.settled.add(listener);
 	const bound = setTimeout(() => settled.reject(new Error("the held Stop never ran")), 15_000);
 	return settled.promise.finally(() => {
 		clearTimeout(bound);
-		dispatchSettled.delete(listener);
+		dispatches.settled.delete(listener);
 	});
 }
 
@@ -81,6 +86,42 @@ const stopCounts = (reply: LifecycleReply) =>
 	(reply.entries ?? [])
 		.filter((entry) => entry.customType === STOP_STATE_CUSTOM_TYPE)
 		.map((entry) => (entry.data as { count: number }).count);
+
+/**
+ * A blocking Stop held on a hand: one live background job (what the terminal builtin announces for a background bash
+ * session) when the loop's turn ends. `drain()` ends the job and runs out the drain grace, and answers whether the
+ * held Stop's dispatch started then.
+ */
+async function heldStop(idle: boolean) {
+	let bus: ExtensionAPI["events"] | undefined;
+	const user = await userMachine("Stop", { decision: "block", reason: "keep going" }, [
+		(pi) => {
+			bus = pi.events;
+		},
+	]);
+	// The first call opens the scope's runtime, so its extensions (the bash stand-in among them) are loaded.
+	await user.machine.loopHooks("session_start", { ...user.base, reason: "startup" });
+	bus?.emit(WAKE_SOURCE_STATE_EVENT, { source: "terminal-background-sessions", activeCount: 1 });
+	const held = (await user.machine.loopHooks("agent_end", {
+		...user.base,
+		idle,
+		messages: toJson([fauxAssistantMessage("done")]),
+		leafId: "leaf-1",
+		handEntries: [],
+	})) as LifecycleReply;
+	const drain = () => {
+		const before = dispatches.started;
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		try {
+			bus?.emit(WAKE_SOURCE_STATE_EVENT, { source: "terminal-background-sessions", activeCount: 0 });
+			vi.advanceTimersByTime(STOP_DRAIN_GRACE_MS);
+		} finally {
+			vi.useRealTimers();
+		}
+		return dispatches.started > before;
+	};
+	return { user, held, drain };
+}
 
 describe("a hosted loop's lifecycle hooks run on the user's machine (senpi#5898)", () => {
 	it("session_start runs the user's SessionStart hook there and returns its context for the loop to send", async () => {
@@ -142,31 +183,10 @@ describe("a hosted loop's lifecycle hooks run on the user's machine (senpi#5898)
 	it.each([false, true])(
 		"a Stop held for live background work runs once it drains, and its writes ride the next reply (idle %s)",
 		async (idle) => {
-			let bus: ExtensionAPI["events"] | undefined;
-			const user = await userMachine("Stop", { decision: "block", reason: "keep going" }, [
-				(pi) => {
-					bus = pi.events;
-				},
-			]);
-			// The first call opens the scope's runtime, so its extensions (the bash stand-in among them) are loaded.
-			await user.machine.loopHooks("session_start", { ...user.base, reason: "startup" });
-			bus?.emit(WAKE_SOURCE_STATE_EVENT, { source: "terminal-background-sessions", activeCount: 1 });
+			const { user, held, drain } = await heldStop(idle);
 
-			const held = (await user.machine.loopHooks("agent_end", {
-				...user.base,
-				idle,
-				messages: toJson([fauxAssistantMessage("done")]),
-				leafId: "leaf-1",
-				handEntries: [],
-			})) as LifecycleReply;
 			const ran = nextDispatchSettled();
-			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-			try {
-				bus?.emit(WAKE_SOURCE_STATE_EVENT, { source: "terminal-background-sessions", activeCount: 0 });
-				vi.advanceTimersByTime(STOP_DRAIN_GRACE_MS);
-			} finally {
-				vi.useRealTimers();
-			}
+			expect(drain()).toBe(true);
 			await ran;
 			const next = (await user.machine.loopHooks("session_start", {
 				...user.base,
@@ -180,4 +200,37 @@ describe("a hosted loop's lifecycle hooks run on the user's machine (senpi#5898)
 			expect(next.userMessages?.map((message) => message.content)).toEqual(["keep going"]);
 		},
 	);
+
+	// #6751 follow-up (review L2): locally only `agent_start` drops a held Stop. On a hand the call that starts a turn is a
+	// real `before_agent_start`; any other call between the turn's end and the drain leaves the held Stop to run.
+	const between = [
+		{
+			call: "an input the loop handles without a turn",
+			event: "input",
+			payload: { inputId: "in-1", text: "/status", source: "interactive", attribution: "user" },
+			runs: true,
+		},
+		{
+			call: "a preview before_agent_start",
+			event: "before_agent_start",
+			payload: { prompt: "p", systemPrompt: "s", trigger: "prompt", systemPromptOptions: {}, preview: true },
+			runs: true,
+		},
+		{
+			call: "a before_agent_start that starts a turn",
+			event: "before_agent_start",
+			payload: { prompt: "p", systemPrompt: "s", trigger: "prompt", systemPromptOptions: {} },
+			runs: false,
+		},
+	];
+	it.each(between)("a held Stop after $call: runs on the drain: $runs", async ({ event, payload, runs }) => {
+		const { user, drain } = await heldStop(false);
+		await user.machine.loopHooks(event, toJson({ ...user.base, idle: true, ...payload }));
+
+		const ran = runs ? nextDispatchSettled() : undefined;
+		const dispatched = drain();
+		await ran;
+
+		expect({ dispatched, marks: user.marks() }).toEqual({ dispatched: runs, marks: runs ? "Stop\n" : "" });
+	});
 });
