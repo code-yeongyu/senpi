@@ -74,6 +74,7 @@ describe("a session-naming wake across a brain restart (review round 2, M4)", ()
 		await openMemoryStore(handMedium).claim(0, 1);
 		const committed = Promise.withResolvers<string>();
 		const refused = Promise.withResolvers<void>();
+		const acked = Promise.withResolvers<void>();
 		const link = serveHandWakes({
 			transport: brain,
 			inbox: createWakeInbox({
@@ -102,6 +103,7 @@ describe("a session-naming wake across a brain restart (review round 2, M4)", ()
 			receipt: async (receipt: Parameters<typeof outbox.receipt>[0]) => {
 				await outbox.receipt(receipt);
 				if (receipt.kind === "refused") refused.resolve();
+				else acked.resolve();
 			},
 		};
 		const handLink = createHandWakeLink({ transport: hand, outbox: watched, onFault: () => {} });
@@ -113,6 +115,7 @@ describe("a session-naming wake across a brain restart (review round 2, M4)", ()
 		link.reoffer();
 
 		expect(await committed.promise).toMatch(/^h:/);
+		await acked.promise;
 		expect(await outbox.pending()).toEqual([]);
 	});
 });
