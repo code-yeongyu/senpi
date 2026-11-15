@@ -428,7 +428,9 @@ describe("a loop-hook call's bound session (S33, option A)", () => {
 				file: facts.sessionManager.getSessionFile(),
 				idle: facts.isIdle(),
 			};
-			expect(() => facts.sessionManager.getEntries()).toThrow(/loop-side/);
+			expect(() => facts.sessionManager.getEntries()).toThrow(
+				expect.objectContaining({ code: "session_record_unavailable", member: "sessionManager.getEntries" }),
+			);
 			expect(() => {
 				(facts.sessionManager as unknown as Record<string, unknown>).getSessionId = () => "forged";
 			}).toThrow(TypeError);

@@ -5,15 +5,19 @@
  * loop's call carries the session port's read half. Reaching for a part the call does not carry throws this, with a
  * code the loop can route on instead of a message.
  */
-export type SessionUnavailableCode = "session_record_unavailable" | "session_identity_unavailable";
+export type SessionUnavailableCode =
+	| "session_record_unavailable"
+	| "session_identity_unavailable"
+	/** A loop-side fact of the session that no hand call carries (its model, its environment, ...). */
+	| "loop_side_unavailable";
 
 export class SessionUnavailableError extends Error {
 	override readonly name = "SessionUnavailableError";
 	readonly code: SessionUnavailableCode;
 	/** What was reached for, e.g. `sessionManager.getBranch`. */
 	readonly member: string;
-	constructor(code: SessionUnavailableCode, member: string) {
-		super(`${code}: ${member} is not available to this call`);
+	constructor(code: SessionUnavailableCode, member: string, message = `${code}: ${member} is not available to this call`) {
+		super(message);
 		this.code = code;
 		this.member = member;
 	}

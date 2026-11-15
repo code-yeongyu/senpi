@@ -40,7 +40,11 @@ function fieldOf(source: MonitorSource): string {
 	return source === "command" ? "command" : source === "path" ? "path" : "target";
 }
 
-export async function createRpcMonitor(ctx: TerminalToolContext, input: MonitorInput): Promise<TerminalToolResult> {
+export async function createRpcMonitor(
+	ctx: TerminalToolContext,
+	input: MonitorInput,
+	callSessionId?: string,
+): Promise<TerminalToolResult> {
 	const registry = ctx.monitorRegistry;
 	if (registry === undefined) return errorResult("Rpc monitors require a lifecycle-owned monitor registry.");
 	const description = input.description;
@@ -52,7 +56,7 @@ export async function createRpcMonitor(ctx: TerminalToolContext, input: MonitorI
 	} catch {
 		return errorResult(`Invalid monitor filter regex: ${input.filter}`);
 	}
-	const sessionKey = manifestSessionKey(ctx);
+	const sessionKey = callSessionId ?? manifestSessionKey(ctx);
 	const target = parseRpcTarget(input.target ?? "", sessionKey);
 	// Watching the calling session's children needs its identity, which every remote call carries; refused typed without it.
 	if ("error" in target && target.identityUnavailable === true)
