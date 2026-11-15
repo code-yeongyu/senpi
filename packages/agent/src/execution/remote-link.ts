@@ -49,6 +49,9 @@ export function createHandLink(
 	epoch?: number,
 ): HandLink {
 	const pending = new Map<string, Pending>();
+	// A closed link sends nothing more: its transport is closed, and the one designed re-send (a durable hand's hello)
+	// happens on a link that is still open. A call made after close() is settled at once as never sent.
+	let closed = false;
 	const stamp = epoch === undefined ? {} : { epoch };
 	/** Messages handed to the transport: a hand's `hello` re-sends only these, never one still waiting on its floor. */
 	const sent = new Set<string>();
@@ -134,6 +137,10 @@ export function createHandLink(
 			const replied = new Promise<HandReply>((resolve) => {
 				pending.set(executionId, { message, resolve });
 			});
+			if (closed) {
+				settle(executionId, { kind: "closed", sent: false });
+				return replied;
+			}
 			if (signal?.aborted) {
 				settle(executionId, { kind: "aborted", sent: false });
 				return replied;
@@ -176,6 +183,7 @@ export function createHandLink(
 			});
 		},
 		close() {
+			closed = true;
 			for (const executionId of [...pending.keys()])
 				settle(executionId, { kind: "closed", sent: sent.has(executionId) });
 			transport.close();

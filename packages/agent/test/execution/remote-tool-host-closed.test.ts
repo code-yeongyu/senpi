@@ -18,7 +18,7 @@ function recordingTransport(options: { readonly hold?: RemoteHandMessage["kind"]
 	const sent: string[] = [];
 	const invoked: string[] = [];
 	const waiters = new Map<string, () => void>();
-	let handler: FrameHandler | undefined;
+	const handlers: FrameHandler[] = [];
 	const transport: Transport = {
 		send: (_lane, payload) => {
 			const message = decodeRemoteMessage(payload);
@@ -29,7 +29,7 @@ function recordingTransport(options: { readonly hold?: RemoteHandMessage["kind"]
 			return kind === options.hold ? new Promise<void>(() => {}) : Promise.resolve();
 		},
 		onFrame: (next) => {
-			handler = next;
+			handlers.push(next);
 		},
 		inFlight: () => 0,
 		close: () => {},
@@ -40,9 +40,16 @@ function recordingTransport(options: { readonly hold?: RemoteHandMessage["kind"]
 		/** The tool call ids of the invokes sent, in order. */
 		invoked,
 		/** Resolves when a message of `kind` is handed to the transport (at once if it already was). */
-		sending: (kind: string) =>
-			new Promise<void>((resolve) => (sent.includes(kind) ? resolve() : waiters.set(kind, resolve))),
-		reply: (lane: string, message: RemoteHandMessage) => handler?.({ lane, payload: encodeRemoteMessage(message) }),
+		sending: (kind: string, count = 1) =>
+			new Promise<void>((resolve) => {
+				const check = () => sent.filter((sentKind) => sentKind === kind).length >= count;
+				if (check()) return resolve();
+				waiters.set(kind, () => check() && resolve());
+			}),
+		/** Delivers one frame to every link on this transport, in the order they attached, in one synchronous pass. */
+		reply: (lane: string, message: RemoteHandMessage) => {
+			for (const handler of handlers) void handler({ lane, payload: encodeRemoteMessage(message) });
+		},
 	};
 }
 
@@ -85,18 +92,19 @@ describe("a remote tool call when the hand link closes", () => {
 
 	it("ends as cancelled when its invoke never went out, and a floor ack after the close never sends it", async () => {
 		const wire = recordingTransport();
-		const host = createRemoteToolHost({ transport: wire.transport, placement: "cross-machine", epoch: 2 });
-		const call = runCall(host);
+		const closed = createRemoteToolHost({ transport: wire.transport, placement: "cross-machine", epoch: 2 });
+		const open = createRemoteToolHost({ transport: wire.transport, placement: "cross-machine", epoch: 2 });
+		const call = runCall(closed);
 		await wire.sending("floor");
+		// A second, open link waits on its own floor for the same lane, attached after the closed one.
+		const later = runCall(open, "later");
+		await wire.sending("floor", 2);
 
-		host.close();
+		closed.close();
 		const result = await call.done;
-		// The ack decides the lane's floor: the closed call's continuation is queued right then, when the floor promise
-		// resolves. The later call reaches the gate only after its own tool_execution_start, finds the lane already open
-		// and sends its invoke after that continuation ran, so seeing it proves the closed call sent nothing.
-		// (This relies on the link still sending a call made after close(), see #6785 review L2.)
-		const later = runCall(host, "later");
-		await wire.reply("s", { kind: "floor_ack", floor: 2 });
+		// One ack frame reaches both links in attach order, in one synchronous pass: the closed call's continuation is
+		// queued first, so by the time the open link's invoke is seen it has already run, and it sent nothing.
+		wire.reply("s", { kind: "floor_ack", floor: 2 });
 		await wire.sending("invoke");
 
 		expect(result).toMatchObject({
@@ -104,8 +112,23 @@ describe("a remote tool call when the hand link closes", () => {
 			details: { outcome: "cancelled", uncertain: false, hooksRan: false },
 		});
 		expect(wire.invoked).toEqual(["later"]);
-		host.close();
+		open.close();
 		await later.done;
+	});
+
+	it("settles a call made after close() at once as cancelled, and sends nothing (#6785 review L2)", async () => {
+		const wire = recordingTransport();
+		const host = createRemoteToolHost({ transport: wire.transport, placement: "cross-machine" });
+		host.close();
+
+		const call = runCall(host);
+		const outcome = await Promise.race([call.done, wire.sending("invoke").then(() => "sent on a closed link")]);
+
+		expect(outcome).toMatchObject({
+			isError: true,
+			details: { outcome: "cancelled", uncertain: false, hooksRan: false },
+		});
+		expect(wire.sent).toEqual([]);
 	});
 
 	it("ends as the non-error placeholder under split-local placement, as the session's own recovery decides", async () => {
