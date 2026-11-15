@@ -1,3 +1,21 @@
+## 2026-11-13 - A binary's `update --self` points at the download page when its release lookup fails (senpi#6633)
+
+### What changed
+
+- `packages/coding-agent/src/package-manager-cli.ts`: `selfUpdatePlanAfterLookupFailure` (exported) decides what `update --self` does when the latest-version lookup throws or returns nothing. A standalone binary prints the failure and "Download from: https://github.com/code-yeongyu/senpi/releases/latest" and exits cleanly; every other install still fails with "Could not determine latest ... version". `getSelfUpdatePlan` calls it with `detectInstallMethod()`.
+
+### Why
+
+- Since senpi#6633 a binary's lookup asks the unauthenticated GitHub API (60 requests per hour per IP). A rate limit made `update --self` fail before it reached the download instruction, although a binary has no in-place update to run anyway.
+
+### Why an extension could not handle it
+
+- `update --self` is a built-in CLI command in this file; no extension hook wraps its version lookup.
+
+### Expected merge conflict zones
+
+- LOW: the lookup try/catch in `getSelfUpdatePlan` in `package-manager-cli.ts`.
+
 ## 2026-11-12 - A cold experimental server gets a load-tolerant startup wait (senpi#6487)
 
 ### What changed
