@@ -15,10 +15,10 @@ export const LOOP_EVENT_EXTENSION = fileURLToPath(new URL("./fixtures/loop-event
 
 export const toJson = (value: unknown): JsonValue => JSON.parse(JSON.stringify(value)) as JsonValue;
 
-/** A hand that is its extensions' home, with the loop-event extension loaded by path, and one loop session's base. */
-export async function loopEventMachine() {
+/** A hand that is its extensions' home, with a user extension (the loop-event one by default) loaded by path. */
+export async function loopEventMachine(extension = LOOP_EVENT_EXTENSION) {
 	const dirs = await handDirs("k5-loop-events");
-	const machine = createLooplessHand(handConfiguration(dirs, ["-e", LOOP_EVENT_EXTENSION]), {
+	const machine = createLooplessHand(handConfiguration(dirs, ["-e", extension]), {
 		twoSidedHome: "hand",
 	});
 	const sessionId = `loop-${crypto.randomUUID()}`;
@@ -70,16 +70,14 @@ export const MODEL = model("model-b");
 export const PREVIOUS_MODEL = model("model-a");
 const message = fauxAssistantMessage("hello");
 
-/** Each notification a loop forwards, with the fields its local event carries. */
+/** Each notification a loop forwards as its local event carries it (`message_update` travels as a delta instead). */
+export const fieldsOf = (event: string): object => NOTIFICATIONS.find((row) => row.event === event)?.fields ?? {};
+
 export const NOTIFICATIONS: readonly { readonly event: string; readonly fields: object }[] = [
 	{ event: "agent_start", fields: {} },
 	{ event: "agent_settled", fields: { fallbackExhausted: { resumeAt: 1700 } } },
 	{ event: "turn_start", fields: { turnIndex: 3, timestamp: 1700 } },
 	{ event: "message_start", fields: { message } },
-	{
-		event: "message_update",
-		fields: { message, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "h", partial: message } },
-	},
 	{
 		event: "system_prompt_change",
 		fields: {
@@ -117,7 +115,10 @@ export const NOTIFICATIONS: readonly { readonly event: string; readonly fields: 
 	{ event: "session_parked", fields: {} },
 	{ event: "session_resumed", fields: {} },
 	{ event: "session_abort", fields: {} },
-	{ event: "after_provider_response", fields: { status: 200, headers: { "x-request-id": "request-1" } } },
+	{
+		event: "after_provider_response",
+		fields: { status: 200, headers: { "x-request-id": "request-1", "anthropic-ratelimit-requests-remaining": "9" } },
+	},
 	{
 		event: "provider_stream_event",
 		fields: { provider: "fixture", api: "openai-completions", model: "model-b", data: { chunk: 1 } },

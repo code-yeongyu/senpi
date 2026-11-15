@@ -1,8 +1,8 @@
 import { isOneOf, isOptional, loopHookFamily, malformed, forwarded } from "./loop-hook-payloads.ts";
 import { isAgentMessage, isAgentMessages } from "./agent-message-schema.ts";
-import { isAssistantMessageEvent } from "./assistant-stream-schema.ts";
+import { messageUpdateOf } from "./loop-hook-message-stream.ts";
 
-// A hosted loop's messages (senpi#5898): each message's start, per-token update and end (whose handlers may replace the
+// A hosted loop's messages (senpi#5898): each message's start, per-token update (a delta, review L3) and end (whose handlers may replace the
 // message, as in a session), and the two `context` phases before each provider request, each phase returning the
 // messages its handlers produced, merged as a session's `emitContext` merges that phase.
 
@@ -13,10 +13,12 @@ export const MESSAGE_LOOP_HOOKS = loopHookFamily({
 		if (!isAgentMessage(message)) throw malformed("message_start");
 		return forwarded({ type: "message_start", message });
 	},
-	message_update: ({ message, assistantMessageEvent }) => {
-		if (!isAgentMessage(message) || !isAssistantMessageEvent(assistantMessageEvent))
-			throw malformed("message_update");
-		return forwarded({ type: "message_update", message, assistantMessageEvent });
+	message_update: (payload, { sessionId, streams }) => {
+		// A delta against the message the hand holds for this session's stream (`loop-hook-message-stream.ts`).
+		const { event, next } = messageUpdateOf(payload, streams.held(sessionId));
+		if (next === undefined) streams.end(sessionId);
+		else streams.hold(sessionId, next);
+		return forwarded({ type: "message_update", ...event });
 	},
 	message_end: ({ message }) => {
 		if (!isAgentMessage(message)) throw malformed("message_end");

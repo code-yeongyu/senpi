@@ -49,6 +49,26 @@ const boundary = ({ entries, continue: next }: { entries: unknown; continue: boo
 	continue: next,
 });
 
+interface BoundaryReply extends LoopReply {
+	readonly entries: unknown[];
+	readonly continue: boolean;
+	readonly resume?: { readonly next: number; readonly extensionPath: string };
+}
+
+/** The loop's side of a stepped boundary (review L2): forward again from `resume.next` until the hand's part ends. */
+async function stepBoundary(
+	send: (event: string, fields: object) => Promise<LoopReply>,
+	event: string,
+	fields: object,
+) {
+	let state = { ...fields, entries: [] as unknown[], continue: false, from: 0 };
+	for (;;) {
+		const reply = (await send(event, state)) as BoundaryReply;
+		if (reply.resume === undefined) return boundary(reply);
+		state = { ...state, entries: reply.entries, continue: reply.continue, from: reply.resume.next };
+	}
+}
+
 interface InterceptorRow {
 	readonly event: string;
 	/** What the loop gets back from the hand for the forwarded event(s). */
@@ -85,15 +105,7 @@ const ROWS: readonly InterceptorRow[] = [
 	},
 	{
 		event: "turn_end",
-		hand: async (send) =>
-			boundary(
-				(await send("turn_end", {
-					...turnEnd,
-					entries: [],
-					continue: false,
-					context: { ...preview, canContinue: true },
-				})) as never,
-			),
+		hand: (send) => stepBoundary(send, "turn_end", { ...turnEnd, context: { ...preview, canContinue: true } }),
 		local: async (runner) =>
 			boundary(
 				await runner.emitBoundary({ type: "turn_end", ...turnEnd }, () => ({ ...preview, canContinue: true })),
@@ -101,15 +113,8 @@ const ROWS: readonly InterceptorRow[] = [
 	},
 	{
 		event: "agent_before_settle",
-		hand: async (send) =>
-			boundary(
-				(await send("agent_before_settle", {
-					outcome: "aborted",
-					entries: [],
-					continue: false,
-					context: { ...preview, canContinue: false },
-				})) as never,
-			),
+		hand: (send) =>
+			stepBoundary(send, "agent_before_settle", { outcome: "aborted", context: { ...preview, canContinue: false } }),
 		local: async (runner) =>
 			boundary(
 				await runner.emitBoundary({ type: "agent_before_settle", outcome: "aborted" }, () => ({
@@ -218,5 +223,82 @@ describe("a hosted loop's interceptors run the user's handlers on the hand (senp
 		await expect(hooks("session_before_tree", toJson({ sessionId: "s", idle: true, preparation }))).rejects.toThrow(
 			"session_before_tree reply has no JSON form at summary.details (a Map)",
 		);
+	});
+
+	it("session_move_import creates a file's folders, whatever order the loop sends the entries in (review L4)", async () => {
+		const state = Buffer.from(JSON.stringify({ moveId: "move-2" })).toString("base64");
+
+		const reply = await user.send("session_move_import", {
+			moveId: "move-2",
+			redelivered: false,
+			files: [{ path: "loop-event-ext/state.json", data: state }, { path: "loop-event-ext" }],
+		});
+
+		expect(reply.errors).toBeUndefined();
+		expect(reply.notices?.map((notice) => notice.message)).toEqual(['{"moveId":"move-2"} false']);
+	});
+
+	it("refuses carried state past its size bounds or not in base64, before anything is written (review L4)", async () => {
+		const oversize = Buffer.alloc(8 * 1024 * 1024 + 1).toString("base64");
+		const quarter = Buffer.alloc(7 * 1024 * 1024).toString("base64");
+
+		for (const files of [
+			[{ path: "big.bin", data: oversize }],
+			[1, 2, 3, 4, 5].map((index) => ({ path: `part-${index}.bin`, data: quarter })),
+			[{ path: "bad.bin", data: "not base64!" }],
+		])
+			await expect(
+				user.send("session_move_import", { moveId: "move-3", redelivered: false, files }),
+			).rejects.toThrow("malformed session_move_import payload");
+	});
+
+	it("stops a boundary after a hand handler drafts, so the next one sees the context the loop rebuilt (review L2)", async () => {
+		const seen: number[] = [];
+		const drafting =
+			(name: string): ExtensionFactory =>
+			(pi) =>
+				void pi.on("turn_end", (event) => {
+					seen.push(event.context.pendingMessages.length);
+					return { entries: [...event.entries, { type: "custom", customType: name }] };
+				});
+		const loaded = await createTestExtensionsResult([
+			{ path: "/user/a.ts", factory: drafting("a") },
+			{ path: "/user/b.ts", factory: drafting("b") },
+		]);
+		const runner = new ExtensionRunner(
+			loaded.extensions,
+			loaded.runtime,
+			process.cwd(),
+			undefined,
+			await createInMemoryModelRegistry(AuthStorage.inMemory()),
+			loaded.eventBus,
+		);
+		const hooks = extensionLoopHooks(runner, "hand", process.cwd(), createLoopHookCall());
+		const call = (from: number, entries: unknown[], pending: unknown[]) =>
+			hooks(
+				"turn_end",
+				toJson({
+					sessionId: "s",
+					idle: false,
+					...turnEnd,
+					entries,
+					continue: false,
+					from,
+					context: { ...preview, pendingMessages: pending, canContinue: true },
+				}),
+			) as Promise<BoundaryReply>;
+
+		const first = await call(0, [], []);
+		const second = await call(1, first.entries, [note("rebuilt"), note("by the loop")]);
+		const last = await call(2, second.entries, []);
+
+		expect(first).toEqual({
+			entries: [{ type: "custom", customType: "a" }],
+			continue: false,
+			resume: { next: 1, extensionPath: "/user/a.ts" },
+		});
+		expect(second.resume).toEqual({ next: 2, extensionPath: "/user/b.ts" });
+		expect(last).toEqual({ entries: second.entries, continue: false });
+		expect(seen).toEqual([0, 2]);
 	});
 });

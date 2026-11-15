@@ -423,11 +423,21 @@ type BoundaryBaseEvent =
 	| Omit<TurnEndEvent, "entries" | "continue" | "context">
 	| Omit<AgentBeforeSettleEvent, "entries" | "continue" | "context">;
 
-/** Where a hand's dispatch of a hosted loop's boundary starts: whose handlers run, and the loop's drafts so far. */
+/**
+ * Where a hand's dispatch of a hosted loop's boundary starts: whose handlers run, the first of them to run (the loop's
+ * resume point), and the drafts and decision the loop holds so far.
+ */
 export interface ForwardedBoundary {
 	readonly only: (extensionPath: string) => boolean;
+	readonly from: number;
 	readonly entries: SessionBoundaryDraft[];
 	readonly continue: boolean;
+}
+
+/** A forwarded boundary that stopped after a handler drafted: the loop rebuilds the context, then resumes at `next`. */
+export interface BoundaryResume {
+	readonly next: number;
+	readonly extensionPath: string;
 }
 
 interface BoundaryDispatchResult {
@@ -435,6 +445,7 @@ interface BoundaryDispatchResult {
 	continue: boolean;
 	context: BoundaryContextPreview;
 	valid: boolean;
+	resume?: BoundaryResume;
 }
 
 export type NewSessionHandler = (options?: {
@@ -2153,8 +2164,10 @@ export class ExtensionRunner {
 	}
 
 	/**
-	 * `forwarded`: a hand running a hosted loop's boundary (senpi#5898) names whose handlers run and starts from the
-	 * drafts and decision the loop's earlier handlers left; the sessionless drop does not apply to it.
+	 * `forwarded`: a hand running a hosted loop's boundary (senpi#5898) names whose handlers run, from which one, and
+	 * starts from the drafts and decision the loop holds; the sessionless drop does not apply to it. Only the loop can
+	 * build the context from drafts, so the walk stops after a handler that returns drafts and reports `resume`: the
+	 * loop rebuilds (and validates, attributing a failure to `resume.extensionPath`) as this walk does, then resumes.
 	 */
 	async emitBoundary(
 		baseEvent: BoundaryBaseEvent,
@@ -2182,10 +2195,13 @@ export class ExtensionRunner {
 		let valid = true;
 		const handlers =
 			forwarded !== undefined
-				? flattenHandlers(this.extensions, baseEvent.type).filter((entry) => forwarded.only(entry.path))
+				? flattenHandlers(this.extensions, baseEvent.type)
+						.filter((entry) => forwarded.only(entry.path))
+						.slice(forwarded.from)
 				: this.dropsLoopEvent(baseEvent.type)
 					? []
 					: flattenHandlers(this.extensions, baseEvent.type);
+		let resume: BoundaryResume | undefined;
 
 		// Boundary handlers hold the agent loop's turn end and the run's settle, so they run under the same host budget
 		// as the lifecycle events and the turn deadline can release them (senpi#3650).
@@ -2193,7 +2209,7 @@ export class ExtensionRunner {
 			event: baseEvent.type,
 			length: handlers.length,
 			extensionPath: (index) => entryAt(handlers, index).path,
-			halted: () => !this.isActive,
+			halted: () => !this.isActive || resume !== undefined,
 			start: (index) => {
 				const event = {
 					...baseEvent,
@@ -2210,6 +2226,8 @@ export class ExtensionRunner {
 					const handlerResult = outcome.value as BoundaryResult | undefined;
 					if (handlerResult?.entries !== undefined) entries = handlerResult.entries;
 					if (handlerResult?.continue !== undefined) shouldContinue = handlerResult.continue;
+					if (forwarded !== undefined && handlerResult?.entries !== undefined)
+						resume = { next: forwarded.from + index + 1, extensionPath: path };
 				} else {
 					this.reportHandlerFailure(path, baseEvent.type, outcome.error);
 				}
@@ -2230,7 +2248,15 @@ export class ExtensionRunner {
 			skip: (index, verdict, budget) =>
 				this.reportStoppedHandler(entryAt(handlers, index).path, baseEvent.type, verdict, budget),
 			finish: () =>
-				valid && this.isActive ? { entries, continue: shouldContinue, context, valid: true } : retired(),
+				valid && this.isActive
+					? {
+							entries,
+							continue: shouldContinue,
+							context,
+							valid: true,
+							...(resume === undefined ? {} : { resume }),
+						}
+					: retired(),
 		});
 	}
 

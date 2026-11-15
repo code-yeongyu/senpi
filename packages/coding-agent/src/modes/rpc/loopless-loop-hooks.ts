@@ -8,6 +8,7 @@ import { LIFECYCLE_LOOP_HOOKS } from "./loop-hook-lifecycle-events.ts";
 import { MESSAGE_LOOP_HOOKS } from "./loop-hook-message-events.ts";
 import { isRecord, type LoopHookParser } from "./loop-hook-payloads.ts";
 import { PROVIDER_LOOP_HOOKS } from "./loop-hook-provider-events.ts";
+import { createMessageStreams } from "./loop-hook-message-stream.ts";
 import { loopHookReply } from "./loop-hook-reply.ts";
 import { SESSION_LOOP_HOOKS } from "./loop-hook-session-events.ts";
 import { SESSION_MOVE_LOOP_HOOKS } from "./loop-hook-session-move.ts";
@@ -27,19 +28,46 @@ const LOOP_HOOK_PARSERS = {
 	...PROVIDER_LOOP_HOOKS,
 } as const satisfies Record<ForwardedLoopEvent, LoopHookParser>;
 
-const FORWARDED_EVENTS = Object.keys(LOOP_HOOK_PARSERS).filter(isForwarded);
+/** The forwarded events the loop gates on `wants`: every notification (interceptors are always forwarded). */
+const GATED_EVENTS = Object.keys(LOOP_HOOK_PARSERS)
+	.filter(isForwarded)
+	.filter((event) => LOOP_HOOK_FORWARDING[event] === "notification");
 
 function isForwarded(event: string): event is ForwardedLoopEvent {
 	return Object.hasOwn(LOOP_HOOK_PARSERS, event) && Object.hasOwn(LOOP_HOOK_FORWARDING, event);
 }
 
 /**
- * The call a loop makes before forwarding: its reply `{ wants }` lists the forwarded events a user hook of this hand
+ * The call a loop makes before forwarding: its reply `{ wants }` lists the notifications a user hook of this hand
  * listens to, so the loop forwards only those (a per-token `message_update` or `provider_stream_event` nobody wants
- * never crosses the link). A hand's extensions are loaded once per runtime, so the loop asks again only when the hand
- * process changed (a new `hook.hello`).
+ * never crosses the link); it forwards every interceptor whatever `wants` says (see `LOOP_HOOK_FORWARDING`). An
+ * extension may subscribe or unsubscribe at any time (`pi.on`, a builtin's lazy subscription), so from then on every
+ * reply whose `wants` differs from the set the hand last reported carries the new set as `wants`, and the loop uses it
+ * from its next dispatch. The loop asks again when the hand process changed (a new `hook.hello`).
  */
 const DESCRIBE_HOOKS = "describe_hooks";
+
+/** The hand's `wants` and the set it last reported to the loop (none before the loop's first `describe_hooks`). */
+function wantsTracker(runner: ExtensionRunner) {
+	let reported: string | undefined;
+	const wanted = (only: (extensionPath: string) => boolean) =>
+		GATED_EVENTS.filter((event) => runner.hasHandlers(event, only));
+	return {
+		describe(only: (extensionPath: string) => boolean): string[] {
+			const wants = wanted(only);
+			reported = wants.join();
+			return wants;
+		},
+		/** The current set when it differs from the one last reported (which it then becomes), else `undefined`. */
+		changed(only: (extensionPath: string) => boolean): string[] | undefined {
+			if (reported === undefined) return undefined;
+			const wants = wanted(only);
+			if (wants.join() === reported) return undefined;
+			reported = wants.join();
+			return wants;
+		},
+	};
+}
 
 /**
  * The loop hooks of this runtime's own extensions, on the same runner (so the same extension instances) that runs its
@@ -58,23 +86,29 @@ export function extensionLoopHooks(
 	cwd: string,
 	call: LoopHookCall,
 ): LooplessLoopHooks {
+	const wants = wantsTracker(runner);
+	const streams = createMessageStreams();
 	return async (event, payload, cancel) => {
 		if (twoSidedHome !== "hand") throw new Error("this hand is not the home of its extensions' loop hooks");
 		const only = userLoopHooks(runner);
-		if (event === DESCRIBE_HOOKS) return { wants: FORWARDED_EVENTS.filter((name) => runner.hasHandlers(name, only)) };
+		if (event === DESCRIBE_HOOKS) return { wants: wants.describe(only) };
 		if (!isRecord(payload) || typeof payload.sessionId !== "string" || typeof payload.idle !== "boolean")
 			throw new Error(`malformed ${event} payload`);
 		if (!isForwarded(event)) throw new Error(`no loop hooks run on a hand for ${event}`);
-		const parsed = LOOP_HOOK_PARSERS[event](payload, cwd);
+		const { sessionId } = payload;
+		const parsed = LOOP_HOOK_PARSERS[event](payload, { cwd, sessionId, streams });
+		if (event === "session_shutdown") streams.end(sessionId);
 		const binding = {
-			sessionId: payload.sessionId,
+			sessionId,
 			cwd,
 			idle: payload.idle,
 			...parsed.binding,
 			...(cancel === undefined ? {} : { cancel }),
 		};
 		return call.run(binding, (effects, signal) =>
-			loopHookReply(event, { runner, call, effects }, () => parsed.emit({ runner, only, signal })),
+			loopHookReply(event, { runner, call, effects, wantsChange: () => wants.changed(only) }, () =>
+				parsed.emit({ runner, only, signal }),
+			),
 		);
 	};
 }

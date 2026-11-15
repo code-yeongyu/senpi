@@ -3,6 +3,7 @@ import type { ForwardedLoopEvent } from "../../core/extensions/event-placement.t
 import type { ExtensionRunner } from "../../core/extensions/runner.ts";
 import type { SessionEntry } from "../../core/session-manager.ts";
 import type { CarriedSession, LoopHookCallBinding } from "./loop-hook-call.ts";
+import type { MessageStreams } from "./loop-hook-message-stream.ts";
 import { isCustomEntry, isSessionEntry } from "./session-entry-schema.ts";
 
 // The hand's boundary for the loop events a hosted loop forwards (senpi#5898): each payload is parsed by its event
@@ -27,8 +28,15 @@ export interface ParsedLoopHook {
 	readonly emit: (dispatch: LoopHookDispatch) => Promise<object | undefined>;
 }
 
-/** Parses one event's payload; `cwd` is this machine's workspace. Throws when the payload is malformed. */
-export type LoopHookParser = (payload: Record<string, unknown>, cwd: string) => ParsedLoopHook;
+/** What a parser reads beyond its payload: this machine's workspace, the loop session, and its held stream. */
+export interface LoopHookParseContext {
+	readonly cwd: string;
+	readonly sessionId: string;
+	readonly streams: MessageStreams;
+}
+
+/** Parses one event's payload. Throws when the payload is malformed. */
+export type LoopHookParser = (payload: Record<string, unknown>, context: LoopHookParseContext) => ParsedLoopHook;
 
 /** The parsers of one event family, each typed as a `LoopHookParser`, keyed by the forwarded events it owns. */
 export const loopHookFamily = <E extends ForwardedLoopEvent>(

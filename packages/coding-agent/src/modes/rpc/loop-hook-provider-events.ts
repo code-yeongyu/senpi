@@ -1,5 +1,6 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { hookModelOf, hookRequestOutputOf, parseHookRequestInput } from "../../core/hand/hook-contract.ts";
+import { isForwardedResponseHeader } from "../../core/extensions/event-placement.ts";
 import type { ModelSelectSource } from "../../core/extensions/types.ts";
 import type { BuildSystemPromptOptions } from "../../core/system-prompt.ts";
 import {
@@ -35,8 +36,10 @@ const THINKING_LEVELS = [
 	"max",
 ] as const satisfies readonly ThinkingLevel[];
 
-const isHeaderValues = (value: unknown): value is Record<string, string> =>
-	isRecord(value) && Object.values(value).every(isString);
+/** Response headers the loop may send: string values under names `FORWARDED_RESPONSE_HEADERS` allows (L1). */
+const isForwardedHeaders = (value: unknown): value is Record<string, string> =>
+	isRecord(value) &&
+	Object.entries(value).every(([name, header]) => isForwardedResponseHeader(name) && isString(header));
 
 export const PROVIDER_LOOP_HOOKS = loopHookFamily({
 	before_provider_request: (payload) => {
@@ -57,7 +60,7 @@ export const PROVIDER_LOOP_HOOKS = loopHookFamily({
 		};
 	},
 	after_provider_response: ({ status, headers }) => {
-		if (!isNumber(status) || !isHeaderValues(headers)) throw malformed("after_provider_response");
+		if (!isNumber(status) || !isForwardedHeaders(headers)) throw malformed("after_provider_response");
 		return forwarded({ type: "after_provider_response", status, headers });
 	},
 	provider_stream_event: ({ provider, api, model, data }) => {
@@ -76,7 +79,7 @@ export const PROVIDER_LOOP_HOOKS = loopHookFamily({
 			},
 		};
 	},
-	model_select: ({ model, previousModel, source, systemPrompt, systemPromptOptions }, cwd) => {
+	model_select: ({ model, previousModel, source, systemPrompt, systemPromptOptions }, { cwd }) => {
 		if (
 			!isModel(model) ||
 			!isOptional(previousModel, isModel) ||

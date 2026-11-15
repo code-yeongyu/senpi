@@ -7,6 +7,7 @@ import type {
 	InputDispositionEvent,
 	SessionBoundaryDraft,
 } from "../../core/extensions/types.ts";
+import type { ExtensionRunner } from "../../core/extensions/runner.ts";
 import type { BuildSystemPromptOptions } from "../../core/system-prompt.ts";
 import {
 	imagesOf,
@@ -18,11 +19,18 @@ import {
 	isRecord,
 	isString,
 	isStrings,
+	type LoopHookDispatch,
 	loopHookFamily,
 	malformed,
 	forwarded,
 } from "./loop-hook-payloads.ts";
-import { editableContentSchema, isAgentMessage, isAgentMessages, userContentSchema } from "./agent-message-schema.ts";
+import {
+	editableContentSchema,
+	isAgentMessage,
+	isAgentMessages,
+	isCount,
+	userContentSchema,
+} from "./agent-message-schema.ts";
 import { INPUT_SOURCES, isSessionEntry } from "./session-entry-schema.ts";
 
 // A hosted loop's turn (senpi#5898): its input and the start of the agent run, each turn's start, and the
@@ -84,18 +92,34 @@ const isToolResults = (value: unknown): value is ToolResultMessage[] =>
 	Array.isArray(value) && value.every((message) => isAgentMessage(message) && message.role === "toolResult");
 
 /**
- * A boundary's state as the loop's earlier handlers left it. The hand's handlers chain their drafts and decision from
- * it as a session's do; each sees the loop's `context` preview, which only the loop can rebuild after a draft (it
- * rebuilds and validates it from the drafts the reply returns).
+ * A boundary step (review L2): the state the loop holds (its drafts, decision and `context` preview), and `from`, the
+ * first of the hand's handlers to run. The hand's handlers chain their drafts and decision as a session's do, but only
+ * the loop can build the preview from drafts, so the hand stops after a handler that returns drafts and its reply
+ * names `resume { next, extensionPath }`. The loop then does what a local `emitBoundary` does after that handler:
+ * rebuilds the preview, reports a failed build against `extensionPath` (keeping the last good preview; the boundary
+ * ends with no drafts if they are still invalid at its end), and forwards the event again from `next`. A reply without
+ * `resume` ends the hand's part of the walk.
  */
 function boundaryOf(event: "turn_end" | "agent_before_settle", payload: Record<string, unknown>) {
-	const { outcome, entries, context } = payload;
+	const { outcome, entries, context, from } = payload;
 	const next = payload.continue;
 	if (!isOneOf(outcome, OUTCOMES) || !Array.isArray(entries) || !entries.every(isDraft) || !isBoolean(next))
 		throw malformed(event);
-	if (!isPreview(context)) throw malformed(event);
-	return { outcome, entries, next, context };
+	if (!isPreview(context) || !isOptional(from, isCount)) throw malformed(event);
+	return { outcome, entries, next, context, from: from ?? 0 };
 }
+
+const steppedBoundary =
+	(base: Parameters<ExtensionRunner["emitBoundary"]>[0], step: ReturnType<typeof boundaryOf>) =>
+	async ({ runner, only }: LoopHookDispatch) => {
+		const forwarded = { only, from: step.from, entries: step.entries, continue: step.next };
+		const result = await runner.emitBoundary(base, () => step.context, forwarded);
+		return {
+			entries: result.entries,
+			continue: result.continue,
+			...(result.resume === undefined ? {} : { resume: result.resume }),
+		};
+	};
 
 export const TURN_LOOP_HOOKS = loopHookFamily({
 	input: (payload) => {
@@ -119,7 +143,7 @@ export const TURN_LOOP_HOOKS = loopHookFamily({
 		if (!isString(inputId) || !isOneOf(disposition, DISPOSITIONS)) throw malformed("input_disposition");
 		return forwarded({ type: "input_disposition", inputId, disposition });
 	},
-	before_agent_start: (payload, cwd) => {
+	before_agent_start: (payload, { cwd }) => {
 		const { prompt, systemPrompt, trigger, preview, systemPromptOptions } = payload;
 		const images = imagesOf(payload.images);
 		if (
@@ -157,30 +181,12 @@ export const TURN_LOOP_HOOKS = loopHookFamily({
 			!isStrings(toolResultEntryIds)
 		)
 			throw malformed("turn_end");
-		const { outcome, entries, next, context } = boundaryOf("turn_end", payload);
+		const step = boundaryOf("turn_end", payload);
 		const base = { type: "turn_end" as const, turnIndex, message, toolResults, messageEntryId, toolResultEntryIds };
-		return {
-			emit: async ({ runner, only }) => {
-				const result = await runner.emitBoundary({ ...base, outcome }, () => context, {
-					only,
-					entries,
-					continue: next,
-				});
-				return { entries: result.entries, continue: result.continue };
-			},
-		};
+		return { emit: steppedBoundary({ ...base, outcome: step.outcome }, step) };
 	},
 	agent_before_settle: (payload) => {
-		const { outcome, entries, next, context } = boundaryOf("agent_before_settle", payload);
-		return {
-			emit: async ({ runner, only }) => {
-				const result = await runner.emitBoundary({ type: "agent_before_settle", outcome }, () => context, {
-					only,
-					entries,
-					continue: next,
-				});
-				return { entries: result.entries, continue: result.continue };
-			},
-		};
+		const step = boundaryOf("agent_before_settle", payload);
+		return { emit: steppedBoundary({ type: "agent_before_settle", outcome: step.outcome }, step) };
 	},
 });

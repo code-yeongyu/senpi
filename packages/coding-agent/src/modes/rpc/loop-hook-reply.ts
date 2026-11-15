@@ -46,12 +46,18 @@ function assertWireJson(event: string, value: unknown, path: string): asserts va
 
 /**
  * Runs one forwarded event's handlers as `call`'s dispatch and builds its reply: their merged result, what they sent,
- * notified and wrote (session port), late messages dropped, and their failures, which are reported, not thrown, as in a
- * session. The runner is shared with tool calls, so only failures inside this call's own async context are its own.
+ * notified and wrote (session port), late messages dropped, their failures, which are reported, not thrown, as in a
+ * session, and the hand's new `wants` when a subscription changed it (review M1). The runner is shared with tool calls, so only failures inside this call's own async context are its own.
  */
 export async function loopHookReply(
 	event: string,
-	run: { readonly runner: ExtensionRunner; readonly call: LoopHookCall; readonly effects: LoopHookEffects },
+	run: {
+		readonly runner: ExtensionRunner;
+		readonly call: LoopHookCall;
+		readonly effects: LoopHookEffects;
+		/** The hand's `wants` when it changed since it was last reported, read after the handlers ran. */
+		readonly wantsChange: () => readonly string[] | undefined;
+	},
 	dispatch: () => Promise<object | undefined>,
 ): Promise<JsonValue> {
 	const { runner, call, effects } = run;
@@ -63,6 +69,7 @@ export async function loopHookReply(
 	try {
 		const result = await dispatch();
 		const { sent, notices, entries, userMessages } = effects;
+		const wants = run.wantsChange();
 		const reply = {
 			...result,
 			...(sent.length > 0 ? { sent } : {}),
@@ -71,6 +78,7 @@ export async function loopHookReply(
 			...(userMessages.length > 0 ? { userMessages } : {}),
 			...(effects.dropped > 0 ? { droppedLate: effects.dropped } : {}),
 			...(errors.length > 0 ? { errors } : {}),
+			...(wants === undefined ? {} : { wants }),
 		};
 		assertWireJson(event, reply, "");
 		// A copy: a handler that keeps a reference to what it returned cannot change the reply after it was sent.
