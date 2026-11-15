@@ -1,6 +1,6 @@
 import type { DurableStore, StoreValue } from "../durable/store.ts";
 import type { AdmissionLine } from "../durable/store-admission.ts";
-import { isStoreObject } from "./wake-outbox.ts";
+import { isStoreObject } from "./wake-outbox-record.ts";
 import { WAKE_RETENTION_MS, type WakeEvent, type WakeInboxRecord, type WakeReceipt } from "./wake-types.ts";
 
 export interface WakeInboxOptions {

@@ -217,12 +217,25 @@ export {
 	type HandWakeLinkOptions,
 	serveHandWakes,
 	type WakeDrop,
-	type WakeDropReason,
 	type WakeLinkMessage,
+	WakeRefusedError,
 } from "./execution/wake-link.ts";
 export { createWakeInbox, type WakeInbox, type WakeInboxOptions } from "./execution/wake-inbox.ts";
-export { createWakeOutbox, type WakeOutbox, type WakeOutboxOptions } from "./execution/wake-outbox.ts";
-export { WAKE_RETENTION_MS, type WakeEvent, type WakeReceipt, type WakeRefusal } from "./execution/wake-types.ts";
+export {
+	createWakeOutbox,
+	MalformedWakeError,
+	type WakeOutbox,
+	type WakeOutboxOptions,
+} from "./execution/wake-outbox.ts";
+export {
+	WAKE_DROPPED_SOURCE,
+	WAKE_RETENTION_MS,
+	type WakeDropReason,
+	type WakeEvent,
+	type WakeLimits,
+	type WakeReceipt,
+	type WakeRefusal,
+} from "./execution/wake-types.ts";
 export { createRemoteToolHost, type HandPlacement, type RemoteToolHostOptions } from "./execution/remote-tool-host.ts";
 export { canonicalJson } from "./execution/canonical-digest.ts";
 export { toStoreValue } from "./execution/prepared/executor-freeze.ts";

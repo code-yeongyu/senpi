@@ -2,7 +2,13 @@ import type { StoreValue } from "../durable/store.ts";
 import type { Transport, TransportFrame } from "../transport/transport.ts";
 import type { WakeInbox } from "./wake-inbox.ts";
 import type { WakeOutbox } from "./wake-outbox.ts";
-import type { WakeEvent, WakeReceipt, WakeRefusal } from "./wake-types.ts";
+import {
+	WAKE_DROPPED_SOURCE,
+	type WakeDropReason,
+	type WakeEvent,
+	type WakeReceipt,
+	type WakeRefusal,
+} from "./wake-types.ts";
 
 /**
  * The wake link (brain/hand split H3, design 5.6.4 on the hand transport): what a hand's work produces after the call
@@ -14,23 +20,28 @@ import type { WakeEvent, WakeReceipt, WakeRefusal } from "./wake-types.ts";
  */
 export const HAND_WAKE_LANE = "hand.wake";
 
-/** Why wakes never reached the brain: kept un-acked past the closed scope's retention, or never recorded on the hand. */
-export type WakeDropReason = "expired" | "unrecorded";
+export type { WakeDropReason };
 
+/** What the hand reports dropped: `count` wakes of `scope`, for `reason`. */
 export interface WakeDrop {
 	readonly scope: string;
 	readonly reason: WakeDropReason;
 	readonly count: number;
 }
 
+/**
+ * A `wake_dropped` with an `eventId` is a durable drop report: the brain commits it to its inbox like a wake (source
+ * {@link WAKE_DROPPED_SOURCE}), so it is delivered once and acked with a `wake_receipt`. Without one (reason
+ * `unrecorded`) it is best-effort and goes to `onDropped`.
+ */
 export type WakeLinkMessage =
 	| { readonly kind: "wake"; readonly wake: WakeEvent }
-	| ({ readonly kind: "wake_dropped" } & WakeDrop)
+	| ({ readonly kind: "wake_dropped"; readonly eventId?: string } & WakeDrop)
 	| { readonly kind: "wake_receipt"; readonly receipt: WakeReceipt }
 	| { readonly kind: "wake_reoffer" };
 
-const REFUSALS: readonly WakeRefusal[] = ["not_scope_hand", "unknown_scope", "scope_closed"];
-const DROP_REASONS: readonly WakeDropReason[] = ["expired", "unrecorded"];
+const REFUSALS: readonly WakeRefusal[] = ["not_scope_hand", "unknown_scope", "scope_closed", "not_scope_session"];
+const DROP_REASONS: readonly WakeDropReason[] = ["overflow", "expired", "malformed", "unrecorded"];
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
@@ -57,6 +68,15 @@ function decodeReceipt(value: unknown): WakeReceipt | undefined {
 	return undefined;
 }
 
+function decodeDrop(value: Record<string, unknown>): WakeLinkMessage | undefined {
+	const { scope, reason, count, eventId } = value;
+	if (!isId(scope) || !DROP_REASONS.includes(reason as WakeDropReason)) return undefined;
+	if (typeof count !== "number" || !Number.isSafeInteger(count) || count <= 0) return undefined;
+	if (eventId !== undefined && !isId(eventId)) return undefined;
+	const drop = { kind: "wake_dropped" as const, scope, reason: reason as WakeDropReason, count };
+	return eventId === undefined ? drop : { ...drop, eventId };
+}
+
 /** Parses one frame payload as a wake-link message; anything else is `undefined`. */
 export function decodeWakeLinkMessage(payload: Uint8Array): WakeLinkMessage | undefined {
 	let value: unknown;
@@ -76,18 +96,26 @@ export function decodeWakeLinkMessage(payload: Uint8Array): WakeLinkMessage | un
 			return receipt === undefined ? undefined : { kind: "wake_receipt", receipt };
 		}
 		case "wake_dropped":
-			return isId(value.scope) &&
-				DROP_REASONS.includes(value.reason as WakeDropReason) &&
-				typeof value.count === "number" &&
-				Number.isSafeInteger(value.count) &&
-				value.count > 0
-				? { kind: "wake_dropped", scope: value.scope, reason: value.reason as WakeDropReason, count: value.count }
-				: undefined;
+			return decodeDrop(value);
 		case "wake_reoffer":
 			return { kind: "wake_reoffer" };
 		default:
 			return undefined;
 	}
+}
+
+/** The frame a due outbox entry travels as: a drop report as `wake_dropped` with its event id, any other as `wake`. */
+function frameOf(wake: WakeEvent): WakeLinkMessage {
+	const { payload } = wake;
+	if (wake.source !== WAKE_DROPPED_SOURCE || !isRecord(payload)) return { kind: "wake", wake };
+	const { reason, count } = payload;
+	return {
+		kind: "wake_dropped",
+		eventId: wake.eventId,
+		scope: wake.scope,
+		reason: reason as WakeDropReason,
+		count: Number(count),
+	};
 }
 
 export interface HandWakeLinkOptions {
@@ -100,7 +128,7 @@ export interface HandWakeLinkOptions {
 }
 
 export interface HandWakeLink {
-	/** Settles once the start re-offer has sent every wake a previous process left un-acked. */
+	/** Settles once the start re-offer has sent every wake and drop report a previous process left un-acked. */
 	readonly ready: Promise<void>;
 	/**
 	 * Commits the wake, then sends it. A wake that cannot be committed is reported to the brain as dropped
@@ -121,17 +149,11 @@ export function createHandWakeLink(options: HandWakeLinkOptions): HandWakeLink {
 		if (closed) return Promise.resolve();
 		return transport.send(lane, encodeWakeLinkMessage(message)).catch(onFault);
 	};
-	const dropped = (drop: WakeDrop): Promise<void> => send({ kind: "wake_dropped", ...drop });
-	// Wakes expired since the last re-offer are reported per scope first; then every due wake is sent again (the brain's
-	// inbox answers a duplicate with its ack, so a re-send never wakes the loop twice).
+	// Expired and malformed entries become drop reports first; then every report and un-acked wake is sent again (the
+	// brain's inbox answers a duplicate with its ack, so a re-send never wakes the loop twice).
 	const reoffer = async (): Promise<void> => {
-		const before = await outbox.pending();
-		const expired = new Set(await outbox.sweep());
-		const counts = new Map<string, number>();
-		for (const wake of before)
-			if (expired.has(wake.eventId)) counts.set(wake.scope, (counts.get(wake.scope) ?? 0) + 1);
-		for (const [scope, count] of counts) await dropped({ scope, reason: "expired", count });
-		for (const wake of await outbox.due()) await send({ kind: "wake", wake });
+		await outbox.sweep();
+		for (const wake of await outbox.due()) await send(frameOf(wake));
 	};
 	transport.onFrame(async (frame: TransportFrame) => {
 		const message = decodeWakeLinkMessage(frame.payload);
@@ -151,7 +173,7 @@ export function createHandWakeLink(options: HandWakeLinkOptions): HandWakeLink {
 				event = await outbox.offer(wake);
 			} catch (error) {
 				onFault(error);
-				return dropped({ scope: wake.scope, reason: "unrecorded", count: 1 });
+				return send({ kind: "wake_dropped", scope: wake.scope, reason: "unrecorded", count: 1 });
 			}
 			return send({ kind: "wake", wake: event });
 		},
@@ -162,6 +184,18 @@ export function createHandWakeLink(options: HandWakeLinkOptions): HandWakeLink {
 	};
 }
 
+/** The brain refused a wake by its own check (`check`): it names a session that is not its scope's. */
+export class WakeRefusedError extends Error {
+	override readonly name = "WakeRefusedError";
+	readonly wake: WakeEvent;
+	readonly reason: WakeRefusal;
+	constructor(wake: WakeEvent, reason: WakeRefusal) {
+		super(`the brain refused wake ${wake.eventId} of scope ${wake.scope}: ${reason}`);
+		this.wake = wake;
+		this.reason = reason;
+	}
+}
+
 export interface BrainWakeLinkOptions {
 	/** The brain's end of its link to one hand; only {@link lane} frames reach this link. */
 	readonly transport: Transport;
@@ -170,9 +204,14 @@ export interface BrainWakeLinkOptions {
 	readonly inbox: WakeInbox;
 	/** The authenticated hand at the other end of this link (design 5.6.6), the inbox's `sender`. */
 	readonly hand: string;
-	/** A wake the inbox committed for the first time: the brain drains the inbox to deliver it. */
+	/**
+	 * The brain's own check of a wake before it is committed (senpi#6767 review L3), for example that the loop session
+	 * it names belongs to its scope. A refusal is answered to the hand and reported to `onFault`; nothing is committed.
+	 */
+	readonly check?: (wake: WakeEvent) => WakeRefusal | undefined;
+	/** A wake or drop report the inbox committed for the first time: the brain drains the inbox to deliver it. */
 	readonly onCommitted: (wake: WakeEvent) => void;
-	/** Wakes the hand reports it could not deliver: the loop is told instead of never hearing of them. */
+	/** A best-effort drop report (`unrecorded`: the hand could not record the wake at all, so nothing is durable). */
 	readonly onDropped: (drop: WakeDrop) => void;
 	readonly onFault: (error: unknown) => void;
 }
@@ -191,15 +230,26 @@ export function serveHandWakes(options: BrainWakeLinkOptions): BrainWakeLink {
 	const send = (message: WakeLinkMessage): void => {
 		if (!closed) transport.send(lane, encodeWakeLinkMessage(message)).catch(onFault);
 	};
+	const commit = async (wake: WakeEvent): Promise<void> => {
+		const refusal = wake.source === WAKE_DROPPED_SOURCE ? undefined : options.check?.(wake);
+		if (refusal !== undefined) {
+			onFault(new WakeRefusedError(wake, refusal));
+			return send({ kind: "wake_receipt", receipt: { kind: "refused", eventId: wake.eventId, reason: refusal } });
+		}
+		const receipt = await inbox.receive(hand, wake);
+		send({ kind: "wake_receipt", receipt });
+		if (receipt.kind === "ack" && !receipt.duplicate) options.onCommitted(wake);
+	};
 	transport.onFrame(async (frame: TransportFrame) => {
 		if (closed) return;
 		const message = decodeWakeLinkMessage(frame.payload);
 		try {
-			if (message?.kind === "wake") {
-				const receipt = await inbox.receive(hand, message.wake);
-				send({ kind: "wake_receipt", receipt });
-				if (receipt.kind === "ack" && !receipt.duplicate) options.onCommitted(message.wake);
-			} else if (message?.kind === "wake_dropped")
+			if (message === undefined) onFault(new Error(`an undecodable frame on ${lane} was dropped`));
+			else if (message.kind === "wake") await commit(message.wake);
+			else if (message.kind === "wake_dropped" && message.eventId !== undefined) {
+				const { eventId, scope, reason, count } = message;
+				await commit({ eventId, scope, source: WAKE_DROPPED_SOURCE, payload: { reason, count } });
+			} else if (message.kind === "wake_dropped")
 				options.onDropped({ scope: message.scope, reason: message.reason, count: message.count });
 		} catch (error) {
 			onFault(error);
