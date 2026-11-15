@@ -435,11 +435,29 @@ type BoundaryBaseEvent =
 	| Omit<TurnEndEvent, "entries" | "continue" | "context">
 	| Omit<AgentBeforeSettleEvent, "entries" | "continue" | "context">;
 
+/**
+ * Where a hand's dispatch of a hosted loop's boundary starts: whose handlers run, the first of them to run (the loop's
+ * resume point), and the drafts and decision the loop holds so far.
+ */
+export interface ForwardedBoundary {
+	readonly only: (extensionPath: string) => boolean;
+	readonly from: number;
+	readonly entries: SessionBoundaryDraft[];
+	readonly continue: boolean;
+}
+
+/** A forwarded boundary that stopped after a handler drafted: the loop rebuilds the context, then resumes at `next`. */
+export interface BoundaryResume {
+	readonly next: number;
+	readonly extensionPath: string;
+}
+
 interface BoundaryDispatchResult {
 	entries: SessionBoundaryDraft[];
 	continue: boolean;
 	context: BoundaryContextPreview;
 	valid: boolean;
+	resume?: BoundaryResume;
 }
 
 export type NewSessionHandler = (options?: {
@@ -1562,8 +1580,10 @@ export class ExtensionRunner {
 		}
 	}
 
-	hasHandlers(eventType: string): boolean {
+	/** Whether any extension (only those `only` accepts, when given) has a handler for `eventType`. */
+	hasHandlers(eventType: string, only?: (extensionPath: string) => boolean): boolean {
 		for (const ext of this.extensions) {
+			if (only !== undefined && !only(ext.path)) continue;
 			const handlers = ext.handlers.get(eventType);
 			if (handlers && handlers.length > 0) {
 				return true;
@@ -2170,13 +2190,20 @@ export class ExtensionRunner {
 		return context;
 	}
 
+	/**
+	 * `forwarded`: a hand running a hosted loop's boundary (senpi#5898) names whose handlers run, from which one, and
+	 * starts from the drafts and decision the loop holds; the sessionless drop does not apply to it. Only the loop can
+	 * build the context from drafts, so the walk stops after a handler that returns drafts and reports `resume`: the
+	 * loop rebuilds (and validates, attributing a failure to `resume.extensionPath`) as this walk does, then resumes.
+	 */
 	async emitBoundary(
 		baseEvent: BoundaryBaseEvent,
 		buildContext: (entries: SessionBoundaryDraft[]) => BoundaryContextPreview | Promise<BoundaryContextPreview>,
+		forwarded?: ForwardedBoundary,
 	): Promise<BoundaryDispatchResult> {
 		const ctx = this.createContext();
-		let entries: SessionBoundaryDraft[] = [];
-		let shouldContinue = false;
+		let entries: SessionBoundaryDraft[] = forwarded?.entries ?? [];
+		let shouldContinue = forwarded?.continue ?? false;
 		// Reported only when the runner retires before its first preview build completes.
 		let context: BoundaryContextPreview = {
 			contextEntries: [],
@@ -2193,7 +2220,15 @@ export class ExtensionRunner {
 			throw err;
 		}
 		let valid = true;
-		const handlers = this.dropsLoopEvent(baseEvent.type) ? [] : flattenHandlers(this.extensions, baseEvent.type);
+		const handlers =
+			forwarded !== undefined
+				? flattenHandlers(this.extensions, baseEvent.type)
+						.filter((entry) => forwarded.only(entry.path))
+						.slice(forwarded.from)
+				: this.dropsLoopEvent(baseEvent.type)
+					? []
+					: flattenHandlers(this.extensions, baseEvent.type);
+		let resume: BoundaryResume | undefined;
 
 		// Boundary handlers hold the agent loop's turn end and the run's settle, so they run under the same host budget
 		// as the lifecycle events and the turn deadline can release them (senpi#3650).
@@ -2201,7 +2236,7 @@ export class ExtensionRunner {
 			event: baseEvent.type,
 			length: handlers.length,
 			extensionPath: (index) => entryAt(handlers, index).path,
-			halted: () => !this.isActive,
+			halted: () => !this.isActive || resume !== undefined,
 			start: (index) => {
 				const event = {
 					...baseEvent,
@@ -2218,6 +2253,8 @@ export class ExtensionRunner {
 					const handlerResult = outcome.value as BoundaryResult | undefined;
 					if (handlerResult?.entries !== undefined) entries = handlerResult.entries;
 					if (handlerResult?.continue !== undefined) shouldContinue = handlerResult.continue;
+					if (forwarded !== undefined && handlerResult?.entries !== undefined)
+						resume = { next: forwarded.from + index + 1, extensionPath: path };
 				} else {
 					this.reportHandlerFailure(path, baseEvent.type, outcome.error);
 				}
@@ -2238,7 +2275,15 @@ export class ExtensionRunner {
 			skip: (index, verdict, budget) =>
 				this.reportStoppedHandler(entryAt(handlers, index).path, baseEvent.type, verdict, budget),
 			finish: () =>
-				valid && this.isActive ? { entries, continue: shouldContinue, context, valid: true } : retired(),
+				valid && this.isActive
+					? {
+							entries,
+							continue: shouldContinue,
+							context,
+							valid: true,
+							...(resume === undefined ? {} : { resume }),
+						}
+					: retired(),
 		});
 	}
 
@@ -2360,13 +2405,20 @@ export class ExtensionRunner {
 	 * `session_shutdown` handler budget) is reported and returned: a `move` release refuses on an export failure, and
 	 * the import hand-over keeps the moved state for the next open on an import failure.
 	 */
-	async emitSessionMove(event: SessionMoveEmission): Promise<readonly SessionMoveFailure[]> {
-		const calls = (this.dropsLoopEvent(event.type) ? [] : flattenHandlers(this.extensions, event.type)).map(
-			({ path, handler }) => ({
-				extensionPath: path,
-				call: (signal: AbortSignal) => handler({ ...event, signal }, this.createContext(path)),
-			}),
-		);
+	async emitSessionMove(
+		event: SessionMoveEmission,
+		only?: (extensionPath: string) => boolean,
+	): Promise<readonly SessionMoveFailure[]> {
+		const handlers =
+			only !== undefined
+				? flattenHandlers(this.extensions, event.type).filter((entry) => only(entry.path))
+				: this.dropsLoopEvent(event.type)
+					? []
+					: flattenHandlers(this.extensions, event.type);
+		const calls = handlers.map(({ path, handler }) => ({
+			extensionPath: path,
+			call: (signal: AbortSignal) => handler({ ...event, signal }, this.createContext(path)),
+		}));
 		const failures = await runSessionMoveHandlers(event.type, calls, this.resolveSessionShutdownBudget().handler);
 		for (const failure of failures) this.emitError({ ...failure, event: event.type });
 		return failures;
@@ -2438,11 +2490,19 @@ export class ExtensionRunner {
 		return result as RunnerEmitResult<TEvent>;
 	}
 
-	async emitModelSelect(event: ModelSelectEvent): Promise<ModelSelectEventResult | undefined> {
-		if (this.dropsLoopEvent("model_select")) return undefined;
+	/**
+	 * `only`: a hand running a hosted loop's `model_select` (senpi#5898) names whose handlers run; they read the prompt
+	 * options the loop sent, since a hand's handlers cannot change the loop's toolset mid-emission.
+	 */
+	async emitModelSelect(
+		event: ModelSelectEvent,
+		only?: (extensionPath: string) => boolean,
+	): Promise<ModelSelectEventResult | undefined> {
+		if (only === undefined && this.dropsLoopEvent("model_select")) return undefined;
 		let result: ModelSelectEventResult | undefined;
 
 		for (const ext of this.extensions) {
+			if (only !== undefined && !only(ext.path)) continue;
 			const handlers = ext.handlers.get("model_select");
 			if (!handlers || handlers.length === 0) continue;
 
@@ -2451,7 +2511,8 @@ export class ExtensionRunner {
 					// Re-read live prompt options per handler: an earlier handler that swaps
 					// the active toolset (gpt-apply-patch) must let later handlers
 					// (prompt-preset) rebuild from the post-swap tools in the same emission.
-					const liveEvent: ModelSelectEvent = { ...event, systemPromptOptions: this.getSystemPromptOptionsFn() };
+					const liveEvent: ModelSelectEvent =
+						only !== undefined ? event : { ...event, systemPromptOptions: this.getSystemPromptOptionsFn() };
 					const handlerResult = await handler(liveEvent, this.createContext(ext.path));
 					if (handlerResult) {
 						const nextResult = handlerResult as ModelSelectEventResult;
@@ -2486,10 +2547,14 @@ export class ExtensionRunner {
 		return result;
 	}
 
-	emitMessageEnd(event: MessageEndEvent): Promise<AgentMessage | undefined> {
+	emitMessageEnd(
+		event: MessageEndEvent,
+		only?: (extensionPath: string) => boolean,
+	): Promise<AgentMessage | undefined> {
 		let currentMessage = event.message;
 		let modified = false;
-		const entries = flattenHandlers(this.extensions, "message_end");
+		const all = flattenHandlers(this.extensions, "message_end");
+		const entries = only === undefined ? all : all.filter((entry) => only(entry.path));
 		return this.walkHandlers<AgentMessage | undefined>({
 			event: "message_end",
 			length: entries.length,
@@ -2711,6 +2776,24 @@ export class ExtensionRunner {
 			emitError: (error) => this.emitError(error),
 			excludeExtensionPath,
 			source,
+		});
+	}
+
+	/**
+	 * One `context` phase a hosted loop forwarded to this hand (senpi#5898): only the extensions `only` accepts run that
+	 * phase, merged as `emitContext` merges it; the sessionless drop does not apply to it.
+	 */
+	emitForwardedContext(
+		event: ContextEvent | ContextWithSystemEvent,
+		only: (extensionPath: string) => boolean,
+	): Promise<AgentMessage[]> {
+		const handlers = snapshotEventHandlers(this.extensions, event.type).filter(({ ext }) => only(ext.path));
+		return dispatchContextMessages(event.messages, {
+			contextHandlers: event.type === "context" ? handlers : [],
+			contextWithSystemHandlers: event.type === "context_with_system" ? handlers : [],
+			createContext: (path) => this.createContext(path),
+			emitError: (error) => this.emitError(error),
+			source: event.type === "context" ? (event.source ?? "agent") : "agent",
 		});
 	}
 
@@ -2996,8 +3079,12 @@ export class ExtensionRunner {
 	}
 
 	/** Awaits every `provider_login_start` handler in order; a failing handler is reported and the login goes on. */
-	async emitProviderLoginStart(event: ProviderLoginStartEvent): Promise<void> {
+	async emitProviderLoginStart(
+		event: ProviderLoginStartEvent,
+		only?: (extensionPath: string) => boolean,
+	): Promise<void> {
 		for (const { path, handler } of flattenHandlers(this.extensions, event.type)) {
+			if (only !== undefined && !only(path)) continue;
 			try {
 				await handler(event, this.createContext(path));
 			} catch (err) {

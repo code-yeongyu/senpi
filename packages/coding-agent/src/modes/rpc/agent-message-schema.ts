@@ -117,6 +117,9 @@ export const agentMessageSchema = z.discriminatedUnion("role", [
 
 const agentMessagesSchema = z.array(agentMessageSchema);
 
+/** One transcript message, as data its handlers read. */
+export const isAgentMessage = (value: unknown): value is AgentMessage => agentMessageSchema.safeParse(value).success;
+
 /** The loop's transcript messages, as data its handlers read (the Stop hook its last stop reason). */
 export const isAgentMessages = (value: unknown): value is AgentMessage[] =>
 	agentMessagesSchema.safeParse(value).success;
