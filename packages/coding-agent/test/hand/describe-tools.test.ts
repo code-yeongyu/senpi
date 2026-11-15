@@ -1,9 +1,9 @@
 // senpi#6749 (S-CAT): a hosted loop learns the tool list a local session on the hand's machine would show its model,
 // through the hand's `describe_tools` loop hook. The oracle is a real local session on the same cwd, flags and settings:
 // its active tools, its eval-only routing (the redirect hints it publishes for withheld tools), its definitions and its
-// prompt resources. Nothing is left out: the session-state tools (todo, goals, tool_search, wakeups, relocation) run on
-// the hand too, marked `sessionBound` so the loop calls them with its session's state (architecture contract of the
-// hosted parity design v4: the loop registers no tool of its own).
+// prompt resources. Nothing is left out: the tools that need the session's record run on the hand too, marked
+// `sessionBound` so the loop's calls carry its read half (architecture contract of the hosted parity design v4: the
+// loop registers no tool of its own).
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,19 +21,6 @@ const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
 	for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
-
-/** The session-state tools: advertised like every other tool, marked so the loop calls them with its session's state. */
-const SESSION_TOOLS = [
-	"todo",
-	"create_goal",
-	"update_goal",
-	"get_goal",
-	"tool_search",
-	"schedule_wakeup",
-	"schedule_prompt",
-	"list_relocation_targets",
-	"relocate_session",
-];
 
 const echoTool = (name: string, extra: object = {}) => ({
 	name,
@@ -156,9 +143,12 @@ describe("describe_tools answers the tool list a local session on the hand's mac
 				expect(declaration, declaration.name).toEqual(plain(expectedOnHand(fused, declaration)));
 			});
 
-			const marked = reply.tools.filter((tool) => tool.sessionBound).map((tool) => tool.name);
-			expect(marked).toContain("todo");
-			expect(marked).toEqual(sessionTools.filter((name) => SESSION_TOOLS.includes(name)));
+			// The wire flag is the definition's own; which tools declare it is pinned by session-bound-rule.test.ts.
+			for (const declaration of reply.tools)
+				expect(declaration.sessionBound, declaration.name).toBe(
+					session.getToolDefinition(declaration.name)?.sessionBound === true,
+				);
+			expect(reply.tools.find((tool) => tool.name === "todo")?.sessionBound).toBe(true);
 
 			expect(reply.active).toEqual(session.getActiveToolNames());
 			// The session's own eval-only redirects, not the hints other publishers (tool search, extensions) add.

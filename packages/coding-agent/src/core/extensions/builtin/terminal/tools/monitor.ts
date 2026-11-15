@@ -148,7 +148,7 @@ export function createMonitorTool(ctx: TerminalToolContext) {
 			input: MonitorInput,
 			_signal?: AbortSignal,
 			_onUpdate?: undefined,
-			execCtx?: { cwd?: string },
+			execCtx?: { cwd?: string; sessionManager?: { getSessionId?(): string } },
 		): Promise<TerminalToolResult> {
 			const registry = getRegistry();
 			if (input.action === "rearm") {
@@ -196,7 +196,8 @@ export function createMonitorTool(ctx: TerminalToolContext) {
 					const refused = durableAdmissionError(ctx);
 					if (refused) return refused;
 				}
-				return createRpcMonitor(ctx, input);
+				// The calling session's identity rides every call (a hand's call carries it), ahead of this extension's session.
+				return createRpcMonitor(ctx, input, execCtx?.sessionManager?.getSessionId?.());
 			}
 			const fileInput = isFileCreateInput(input);
 			const commandInput = isCreateInput(input);

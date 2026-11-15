@@ -13,6 +13,7 @@ import type {
 import type { ExternalAdmission } from "./external-admission.ts";
 import type { SessionManager } from "./session-manager.ts";
 import { RELOCATION_NOT_OFFERED, type SessionRelocationHost } from "./session-relocation.ts";
+import { SessionUnavailableError } from "./session-unavailable.ts";
 
 export interface ControlEndpointHost {
 	register(options: RegisterControlEndpointOptions): Promise<SessionControlRegistration>;
@@ -83,18 +84,22 @@ export function createSessionControlActions(deps: SessionControlActionDeps): Gen
 	};
 }
 
+/** `pi.session` before a session binds it (extension loading), and on a runtime that never has one (a hand). */
 export function unboundSessionControlActions(): SessionControlActions {
-	const notBound = (): never => {
-		throw new Error("Extension runtime not initialized. pi.session cannot be used during extension loading.");
+	const unavailable = (member: string) =>
+		new SessionUnavailableError("session_record_unavailable", `pi.session.${member}`);
+	const notBound = (member: string) => (): never => {
+		throw unavailable(member);
 	};
+	const rejected = (member: string) => () => Promise.reject(unavailable(member));
 	return {
-		registerControlEndpoint: () => Promise.reject(new Error("Extension runtime not initialized")),
-		admissionGate: notBound,
-		admitExternalMessage: notBound,
-		listAdmittedDeliveries: notBound,
-		persistHeaderNow: () => Promise.reject(new Error("Extension runtime not initialized")),
-		relocationOffered: notBound,
-		relocationTargets: () => Promise.reject(new Error("Extension runtime not initialized")),
-		requestRelocation: () => Promise.reject(new Error("Extension runtime not initialized")),
+		registerControlEndpoint: rejected("registerControlEndpoint"),
+		admissionGate: notBound("admissionGate"),
+		admitExternalMessage: notBound("admitExternalMessage"),
+		listAdmittedDeliveries: notBound("listAdmittedDeliveries"),
+		persistHeaderNow: rejected("persistHeaderNow"),
+		relocationOffered: notBound("relocationOffered"),
+		relocationTargets: rejected("relocationTargets"),
+		requestRelocation: rejected("requestRelocation"),
 	};
 }

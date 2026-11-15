@@ -1,6 +1,7 @@
 import type { AgentTool, AgentToolResult, NestedRequest } from "@earendil-works/pi-agent-core";
 import { type ToolCall, validateToolArguments } from "@earendil-works/pi-ai";
 import type { ToolCallEventResult, ToolResultEventResult } from "../../core/extensions/types.ts";
+import { SessionUnavailableError } from "../../core/session-unavailable.ts";
 
 function errorResult(message: string): AgentToolResult<unknown> {
 	return { content: [{ type: "text", text: message }], details: undefined, isError: true };
@@ -87,7 +88,11 @@ export async function runLooplessToolCall(
 	try {
 		result = await tool.execute(toolCallId, args as never, signal, undefined);
 	} catch (error) {
-		result = errorResult(error instanceof Error ? error.message : String(error));
+		// A typed refusal keeps its code, so the loop routes on it instead of on the message.
+		result =
+			error instanceof SessionUnavailableError
+				? { ...errorResult(error.message), details: { code: error.code, member: error.member } }
+				: errorResult(error instanceof Error ? error.message : String(error));
 	}
 	if (!handlers) return result;
 	try {

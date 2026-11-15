@@ -148,6 +148,7 @@ import {
 	twoSidedExtensions,
 } from "./two-sided-forwarding.ts";
 import { combinedToolCallSignal } from "./tool-call-signal.ts";
+import { SessionUnavailableError } from "../session-unavailable.ts";
 
 const RUNTIME_CONTEXT_MEMBERS: ReadonlySet<string> = new Set<keyof ExtensionRuntimeContext>([
 	"offload",
@@ -196,7 +197,11 @@ function withLoopNotices(ui: ExtensionUIContext, notify: LoopHookCallFacts["noti
 }
 
 function loopSideUnbound(member: string): Error {
-	return new Error(`${member} is loop-side and not bound: this extension runtime has no session`);
+	return new SessionUnavailableError(
+		"loop_side_unavailable",
+		member,
+		`${member} is loop-side and not bound: this extension runtime has no session`,
+	);
 }
 
 /**

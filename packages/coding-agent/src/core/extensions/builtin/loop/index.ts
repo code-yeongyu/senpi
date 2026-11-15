@@ -40,6 +40,7 @@ import { sessionHeld, userStopped } from "./session-hold.ts";
 import { formatLoopStatus, formatNoopFold, LoopStatusTicker } from "./status.ts";
 import { readLoopState, writeLoopState } from "./store.ts";
 import { buildTickMessage, type LoopFileSnapshot, type LoopMode, type TickDelivery } from "./tick-prompt.ts";
+import { SessionUnavailableError } from "../../../session-unavailable.ts";
 import { registerLoopTools, SCHEDULE_WAKEUP_TOOL, type ScheduleWakeupTarget } from "./tools.ts";
 import type {
 	CronEntry,
@@ -345,7 +346,10 @@ export function createLoopExtension(deps: LoopExtensionDeps = {}): ExtensionFact
 		registerLoopTools(pi, {
 			scheduler: {
 				getWakeupTarget: (): ScheduleWakeupTarget => {
-					if (scheduler === undefined || attributedLoopId === undefined) return null;
+					// No session started here: the session's loop state was never loaded, so it is unavailable, not empty.
+					if (scheduler === undefined)
+						throw new SessionUnavailableError("session_record_unavailable", "loop state");
+					if (attributedLoopId === undefined) return null;
 					const entry = scheduler.getState().entries[attributedLoopId];
 					if (entry === undefined || entry.phase === "ended") return null;
 					return { kind: entry.kind, loopId: entry.id };
