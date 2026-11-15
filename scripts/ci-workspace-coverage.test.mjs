@@ -69,6 +69,12 @@ test("a second run is caught in another job, the same job, a block scalar, and e
 		["test-scripts", "      - run: yarn workspace @earendil-works/pi-ai test\n", ai],
 		["test-scripts", "      - run: (cd packages/ai && npm test)\n", ai],
 		["test-scripts", "      - run: npm t -w packages/ai\n", ai],
+		// A package manager behind a wrapper word still starts the command (senpi#6632 review LOW L1).
+		["test-scripts", "      - run: timeout 600 npm test -w packages/ai\n", ai],
+		["test-scripts", "      - run: env CI=1 npm test -w packages/ai\n", ai],
+		["test-scripts", "      - run: npx npm test -w packages/ai\n", ai],
+		// A Bun workspace filter selects the package's `test` script, unlike bare `bun test <files>`.
+		["test-scripts", "      - run: bun --filter @earendil-works/pi-ai test\n", ai],
 	];
 	const missed = cases.filter(([job, step, expected]) => !runTwice(suiteOwnership(withStep(workflow, job, step)).owners).includes(expected))
 		.map(([job, step]) => `${job}: ${step.trim()}`);
@@ -79,7 +85,7 @@ test("a second run is caught in another job, the same job, a block scalar, and e
 });
 
 test("a test command the parser cannot place fails the check instead of counting as no run", () => {
-	for (const command of ["npm --loglevel warn test --workspace packages/ai", "cd crates/senpi-pty && npm test", "yarn workspace @earendil-works/not-a-package test"]) {
+	for (const command of ["npm --loglevel warn test --workspace packages/ai", "cd crates/senpi-pty && npm test", "yarn workspace @earendil-works/not-a-package test", "npm test -w packages/tui -w packages/ai"]) {
 		const text = withStep(workflow, "test-scripts", `      - name: Probe\n        run: ${command}\n`);
 		assert.throws(() => suiteOwnership(text), (error) => error.message.includes(
 			`unrecognised test invocation in test-scripts/Probe: ${command.replace(/^cd \S+ && /, "")}; teach the parser or rewrite the step`), command);

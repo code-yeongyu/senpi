@@ -44,14 +44,37 @@ const PLAIN_FLAGS = new Set(["--if-present", "--silent", "-s"]);
 // `npm test` and its aliases `npm t` / `npm tst` (pnpm and yarn accept `test` too).
 const TEST_WORDS = new Set(["test", "t", "tst"]);
 
+// Wrapper words that run the command after them, so `timeout 600 npm test`, `env CI=1 npm test` and `npx npm test`
+// still start at the package manager (senpi#6632 review LOW L1: these were silently not counted).
+const WRAPPERS = new Set(["env", "timeout", "npx", "command", "exec"]);
+const DURATION = /^\d+(?:\.\d+)?[smhd]?$/;
+
 /**
- * One shell command, from its first word: environment assignments are skipped and the
+ * One shell command, from its first word: environment assignments and wrapper words are skipped and the
  * `node scripts/run-tests.mjs <command>` wrapper is looked through. A package manager counts only here, never as an
  * argument of another command (`echo npm test`, `node scripts/foo.mjs --pm npm test`).
  */
 function commandWords(command) {
 	const words = command.split(/\s+/).filter(Boolean);
-	while (/^[A-Za-z_][\w]*=/.test(words[0] ?? "")) words.shift();
+	const stripAssignments = () => {
+		while (/^[A-Za-z_][\w]*=/.test(words[0] ?? "")) words.shift();
+	};
+	stripAssignments();
+	for (;;) {
+		const head = words[0];
+		if (head === "timeout") {
+			words.shift();
+			if (DURATION.test(words[0] ?? "")) words.shift();
+			stripAssignments();
+			continue;
+		}
+		if (head !== undefined && WRAPPERS.has(head)) {
+			words.shift();
+			stripAssignments();
+			continue;
+		}
+		break;
+	}
 	if (words[0] === "node" && /(^|\/)run-tests\.mjs$/.test(words[1] ?? "")) words.splice(0, 2);
 	return words;
 }
@@ -110,21 +133,27 @@ export function createSuiteScanner({ workspaces, extraRuns }) {
 		const forwarded = rest.indexOf("--");
 		const args = forwarded === -1 ? rest : rest.slice(0, forwarded);
 		let target = dir;
-		let workspace;
+		const workspaces = [];
 		let unknownFlag = false;
 		const positional = [];
 		for (let index = 0; index < args.length; index += 1) {
 			const [flag, inline] = args[index].split(/=(.*)/s);
 			if (DIR_FLAGS.has(flag)) target = workspaceOf(inline ?? args[(index += 1)], dir);
-			else if (WORKSPACE_FLAGS.has(flag)) workspace = inline ?? args[(index += 1)];
-			else if (ALL_WORKSPACES_FLAGS.has(flag)) workspace = "root";
+			else if (WORKSPACE_FLAGS.has(flag)) workspaces.push(inline ?? args[(index += 1)]);
+			else if (ALL_WORKSPACES_FLAGS.has(flag)) workspaces.push("root");
 			else if (flag.startsWith("-")) unknownFlag ||= !PLAIN_FLAGS.has(flag);
 			else positional.push(flag);
 		}
-		if (manager === "yarn" && positional[0] === "workspace") workspace = positional.splice(0, 2)[1];
-		const script = positional[0] === "run" || positional[0] === "run-script" ? positional[1] : TEST_WORDS.has(positional[0]) && manager !== "bun" ? "test" : undefined;
-		// `bun test <files>` runs Bun's own test runner on those files, which is not the package's `test` script.
-		if (manager === "bun" && positional[0] === "test" && !unknownFlag) return undefined;
+		if (manager === "yarn" && positional[0] === "workspace") workspaces.push(positional.splice(0, 2)[1]);
+		// `-w A -w B` runs both, and this parser places one target per call, so it fails closed instead of counting only B.
+		if (new Set(workspaces).size > 1) return { unresolved: true };
+		const workspace = workspaces[0];
+		// `bun --filter <name> test` selects the package's `test` script; bare `bun test` is Bun's own runner.
+		const bunScriptTest = manager === "bun" && positional[0] === "test" && workspace !== undefined;
+		const script = positional[0] === "run" || positional[0] === "run-script" ? positional[1] : TEST_WORDS.has(positional[0]) && (manager !== "bun" || bunScriptTest) ? "test" : undefined;
+		// `bun test <files>` runs Bun's own test runner on those files, which is not the package's `test` script. A workspace
+		// filter (`bun --filter <name> test`) selects the package's `test` script instead, so it is read as one.
+		if (manager === "bun" && positional[0] === "test" && !unknownFlag && workspace === undefined) return undefined;
 		const mentionsTest = args.some((word) => TEST_WORDS.has(word) || word === "test:scripts");
 		// An option the parser does not know may take a value, so the words after it cannot be read as the script.
 		if (mentionsTest && (unknownFlag || (script !== "test" && script !== "test:scripts"))) return { unresolved: true };
