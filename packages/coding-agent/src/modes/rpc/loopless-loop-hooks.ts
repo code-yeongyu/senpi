@@ -39,8 +39,8 @@ export type LooplessLoopHooks = (event: string, payload: JsonValue, cancel?: Abo
  * - `session_shutdown`, under a session's shutdown budget.
  * `cancel` aborts when the loop cancels the call; the handlers' signal then aborts while they run. Each reply also
  * carries what its handlers did beyond the result: messages (`sent`, which the loop sends with the same options),
- * notices, session writes (`entries`, `userMessages`), late effects of earlier calls' work (and `droppedLate`), and
- * failures (`errors`).
+ * notices, session writes (`entries`, `userMessages`), and failures (`errors`). What a call's work does after the
+ * call ended goes to the loop as a durable wake instead (H3), never in a later reply.
  */
 export function extensionLoopHooks(
 	runner: ExtensionRunner,
@@ -197,7 +197,6 @@ async function dispatchLoopHook(
 				...(notices.length > 0 ? { notices } : {}),
 				...(entries.length > 0 ? { entries } : {}),
 				...(userMessages.length > 0 ? { userMessages } : {}),
-				...(effects.dropped > 0 ? { droppedLate: effects.dropped } : {}),
 				...(errors.length > 0 ? { errors } : {}),
 			}),
 		) as JsonValue;

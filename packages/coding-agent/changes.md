@@ -1,3 +1,21 @@
+## 2026-11-15 - New worker-safe tools-core entry (senpi#6740)
+
+### What changed
+
+- `packages/coding-agent/package.json`: new `./tools-core` export (`src/tools-core.ts`): the core bash/read/write/edit factories, `createCoreCodingTools`, `createToolMachine`, `ToolMachine` and the MachineOps types.
+
+### Why
+
+- A host that runs the built-in tools in a Worker / non-Node host through an injected ToolMachine (senpi#6739) must offer the model the same bash, read, write and edit tools as a local session; their modules reached Node builtins (tools-manager, photon, the TUI renderers, cross-spawn, the temp-file spill), so they could not be bundled for such a host.
+
+### Why an extension could not handle it
+
+- Package exports are not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: one added entry in the `exports` map.
+
 ## 2026-11-13 - The install lock's @hono/node-server override matches the root pin (senpi#6624)
 
 ### What changed

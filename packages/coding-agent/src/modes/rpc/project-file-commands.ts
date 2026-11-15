@@ -8,19 +8,23 @@
  * half-written file. Writes to one file are serialized inside the engine.
  */
 
-import { createHash, randomUUID } from "node:crypto";
-import { constants } from "node:fs";
-import { chmod, open, realpath, rename, rm, writeFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { join } from "node:path";
 import type { AgentSession } from "../../core/agent-session.ts";
 import {
 	createMissingFolders,
-	NO_FOLLOW,
 	PROJECT_FILE_MAX_BYTES,
 	type ProjectFilePath,
 	parseProjectFilePath,
 	resolveProjectFile,
 } from "./project-file-path.ts";
+import {
+	etagOf,
+	ParentMoved,
+	readStored,
+	replaceAtomically,
+	type Stored,
+	serializeWrite,
+} from "./project-file-store.ts";
 import {
 	RPC_ERROR_INVALID_ARGUMENT,
 	RPC_ERROR_PROJECT_FILE_CONFLICT,
@@ -47,12 +51,6 @@ export type ProjectFileResult =
 
 type Refusal = Extract<ProjectFileResult, { ok: false }>;
 
-const writeChains = new Map<string, Promise<unknown>>();
-
-function etagOf(bytes: Buffer): string {
-	return `sha256-${createHash("sha256").update(bytes).digest("hex")}`;
-}
-
 function notAllowed(path: string): Refusal {
 	return {
 		ok: false,
@@ -76,36 +74,6 @@ function parsePath(command: string, path: unknown): ProjectFilePath | Refusal {
 		return { ok: false, message: `${command} requires a string 'path'.`, errorCode: RPC_ERROR_INVALID_ARGUMENT };
 	}
 	return parseProjectFilePath(path) ?? notAllowed(path);
-}
-
-type Stored =
-	| { readonly kind: "missing" }
-	| { readonly kind: "refused" }
-	| { readonly kind: "too_large" }
-	| { readonly kind: "file"; readonly bytes: Buffer; readonly mode: number };
-
-/**
- * Reads the stored bytes without following a link and without blocking on a FIFO swapped in after resolution; the
- * size is checked on the open handle before anything is read.
- */
-async function readStored(absolute: string): Promise<Stored> {
-	let handle: Awaited<ReturnType<typeof open>>;
-	try {
-		handle = await open(absolute, constants.O_RDONLY | NO_FOLLOW | (constants.O_NONBLOCK ?? 0));
-	} catch (error) {
-		const code = error instanceof Error && "code" in error ? error.code : undefined;
-		if (code === "ENOENT") return { kind: "missing" };
-		if (code === "ELOOP") return { kind: "refused" };
-		throw error;
-	}
-	try {
-		const stat = await handle.stat();
-		if (!stat.isFile()) return { kind: "refused" };
-		if (stat.size > PROJECT_FILE_MAX_BYTES) return { kind: "too_large" };
-		return { kind: "file", bytes: await handle.readFile(), mode: stat.mode & 0o777 };
-	} finally {
-		await handle.close();
-	}
 }
 
 async function readFileState(
@@ -142,33 +110,6 @@ export async function readProjectFile(session: AgentSession, path: unknown): Pro
 	const state = await readFileState(session, file);
 	if ("ok" in state) return state;
 	return { ok: true, data: state.data };
-}
-
-/** Thrown when the parent folder no longer resolves to itself, i.e. a folder on the way was swapped for a link. */
-class ParentMoved extends Error {}
-
-async function assertParentInPlace(folder: string): Promise<void> {
-	if ((await realpath(folder)) !== folder) throw new ParentMoved(folder);
-}
-
-/**
- * Temp file + rename in the resolved folder, keeping an existing file's permissions. The folder is re-resolved before
- * the temp file is written and again before the rename, so a folder swapped for a link after resolution is refused
- * instead of followed (the remaining window between that check and the syscall needs a local writer racing it).
- */
-async function replaceAtomically(absolute: string, content: string, mode: number | undefined): Promise<void> {
-	const folder = dirname(absolute);
-	const temp = join(folder, `.${basename(absolute)}.${randomUUID()}.tmp`);
-	await assertParentInPlace(folder);
-	try {
-		await writeFile(temp, content, { flag: "wx", mode: mode ?? 0o644 });
-		if (mode !== undefined) await chmod(temp, mode);
-		await assertParentInPlace(folder);
-		await rename(temp, absolute);
-	} catch (error) {
-		await rm(temp, { force: true });
-		throw error;
-	}
 }
 
 async function writeChecked(
@@ -225,14 +166,5 @@ export async function writeProjectFile(
 	}
 	if (Buffer.byteLength(content, "utf8") > PROJECT_FILE_MAX_BYTES) return tooLarge(file.relative);
 	const key = join(session.sessionManager.getCwd(), file.relative);
-	const previous = writeChains.get(key) ?? Promise.resolve();
-	const run = () => writeChecked(session, file, content, ifEtag);
-	// A write queued behind a failed one still runs, and its caller never receives the earlier caller's error.
-	const next = previous.then(run, run);
-	writeChains.set(key, next);
-	try {
-		return await next;
-	} finally {
-		if (writeChains.get(key) === next) writeChains.delete(key);
-	}
+	return serializeWrite(key, () => writeChecked(session, file, content, ifEtag));
 }

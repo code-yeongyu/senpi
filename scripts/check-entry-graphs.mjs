@@ -70,6 +70,8 @@ const BUDGETS = {
 	},
 	"packages/agent": {
 		"./harness/runtime/reducer": { maxFiles: 1 },
+		// The read folder a Worker-bundled tool host imports: no agent loop, no AI package (tools-core in coding-agent).
+		"./read-folders": { maxFiles: 10, forbid: ["packages/ai/", "agent-loop.ts", "harness/runtime/", "harness/env/"] },
 		"./harness/context": { maxFiles: 6, forbid: ["harness/runtime/", "harness/execution/", "packages/ai/"] },
 		// 6: windows-process-tree.ts, the leaf that plans Windows tree kills by creation time (senpi#2999).
 		"./harness/env/nodejs": { maxFiles: 6, forbid: ["packages/ai/", "harness/runtime/"] },

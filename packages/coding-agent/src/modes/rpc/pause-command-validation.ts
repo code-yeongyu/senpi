@@ -16,6 +16,8 @@ export function validatePauseCommand(value: Command): string | undefined {
 	if ((value.type === "abort" || value.type === "interrupt") && value.intent !== undefined) {
 		if (value.intent !== "stop" && value.intent !== "abort") return 'intent must be "stop" or "abort".';
 	}
+	if (value.type === "interrupt" && value.background !== undefined && value.background !== "stop")
+		return 'background must be "stop".';
 	if (value.type === "resume_session") {
 		if (value.expectedSeq !== undefined && !seq(value.expectedSeq))
 			return "expectedSeq must be a non-negative integer.";
