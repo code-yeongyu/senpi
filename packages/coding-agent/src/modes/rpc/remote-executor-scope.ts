@@ -1,6 +1,7 @@
 import { isAbsolute } from "node:path";
 import type { AgentToolResult, ExecutionScope, HandScope, OpenHandScope } from "@earendil-works/pi-agent-core";
 import type { JsonValue } from "@earendil-works/pi-ai";
+import type { HandWake } from "../../core/execution/hand-wake-route.ts";
 import type { InlineExtension } from "../../core/extensions/types.ts";
 import type { SettingsManager } from "../../core/settings-manager.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
@@ -20,10 +21,22 @@ function notFound(name: string): AgentToolResult<unknown> {
 	return { content: [{ type: "text", text: `Tool ${name} not found` }], details: {}, isError: true };
 }
 
+/**
+ * A hand's durable wake outbox, per scope (brain/hand split H3): what a scope's work produces for the loop after the call
+ * that started it ended. A scope's runtime is that scope's alone, so the scope that owns a late effect is the runtime it
+ * came from.
+ */
+export interface HandWakes {
+	offer(scope: string, wake: HandWake): void;
+	/** The scope was disposed: its un-acked wakes are kept for the retention, then reported dropped to the loop. */
+	closeScope(scope: string): void;
+}
+
 export interface LooplessHandOptions {
 	extensionFactories?: InlineExtension[];
 	startupSettingsManager?: SettingsManager;
 	twoSidedHome?: TwoSidedHome;
+	wakes?: HandWakes;
 }
 
 /** A hand on loopless runtimes: its scopes for the remote executor, and its loop hooks for a loop that runs elsewhere. */
@@ -94,7 +107,11 @@ export function createLooplessHand(
 				new Error(`scope ${JSON.stringify(scope.id)} was disposed; its extensions' loop-hook state is gone`),
 			);
 		disposed.delete(scope.id);
-		const opened = factory({ cwd: scope.root });
+		const { wakes } = local;
+		const opened = factory({
+			cwd: scope.root,
+			...(wakes === undefined ? {} : { wake: (wake: HandWake) => wakes.offer(scope.id, wake) }),
+		});
 		runtimes.set(scope.id, { root: scope.root, runtime: opened });
 		opened.catch(() => runtimes.delete(scope.id));
 		return opened;
@@ -114,6 +131,7 @@ export function createLooplessHand(
 				dispose: () => {
 					runtimes.delete(scope.id);
 					disposed.add(scope.id);
+					local.wakes?.closeScope(scope.id);
 					return disposeOnce(runtime);
 				},
 			};

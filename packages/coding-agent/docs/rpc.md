@@ -3791,6 +3791,37 @@ It comes after the run's `agent_end`, and only when no new run has started meanw
 
 If the schedule is cleared because the offering connection left, the user aborted, or the offering capability was withdrawn or taken over by another connection, the agent receives exactly one custom session message of type `session_relocation`, with `details: { status: "dropped", reason, moveId, target }`. The reason is respectively `disconnected`, `aborted`, or `withdrawn`; `moveId` and `target` identify the accepted request. A withdrawal during a long run is reported when the run settles. After a user abort, the notice is appended at `agent_settled`, before another prompt is needed, and is saved even if the session then closes. The message says the session stays on this computer and the agent should keep working here. It is context only (`display: false`, `triggerTurn: false`): it never starts another turn or resumes a user-stopped run. This is a session message through the existing message events, not another host request or a new RPC event type. Session disposal and process exit still have no later agent notice.
 
+### Device operations for the local relay host (`machine_op`)
+
+A multi-session host advertising `machine_op_v1` runs the `run` step of one device operation for the local relay host (senpi#6752). The relay host keeps admission, grants, consent, the run-once ledger, audit, blob relay and deadlines; the host runs the op and answers the relay host's own `OpOutcome`. The five records below are not in `RPC_METHOD_CLASS` (the method-class digest is unchanged). They are answered only on a connection that proved the endpoint's launch key and declared no delegation; any other connection gets `errorCode: "machine_op_not_authorized"` and nothing runs. A record that does not parse gets `machine_op_malformed`.
+
+```json
+{ "id": "m1", "type": "machine_op", "op": "fs.write", "args": { "path": "notes.txt", "bytes": "aGk=" }, "op_id": "op-7", "deadline_ms": 1763251200000, "scope": { "root": "/home/me", "confined": false }, "sender": "device-a", "env_overlay": { "RELAY_STATE_DIR": "/home/me/.relay" } }
+{ "id": "m1", "type": "response", "command": "machine_op", "success": true, "data": { "state": "applied", "response": { "path": "/home/me/notes.txt", "writtenBytes": 2 } } }
+```
+
+- `op`: one of `fs.read`, `fs.read_range`, `fs.write`, `fs.write_range`, `fs.edit`, `fs.glob`, `fs.grep`, `fs.stat`, `fs.list`, `shell`, `exec_command`, `write_stdin`, `wait_for_command`, `kill_terminal`, `process.info`, `mesh.message`. Any other op answers `{ state: "refused", error: { code: "malformed", message: "unknown op <op>" } }`. `args` and every response are the relay host's own shapes; bytes travel base64 (`args.bytes`, the read response's `bytes`).
+- Writes carry their bytes inline: one RPC line carries up to 16 MiB of JSON, so an 8 MiB write fits. No other carrier exists; an `args` key the op does not take (`bytes_path` included) is refused `malformed`.
+- `op_id`: opaque (the relay host sends `JSON.stringify([sender, batch_id, op_id])`). The answer is cached by the whole string (4,096 answers, 24 hours after settling) and bound to `sender`. A repeat from the same sender answers the first outcome and never runs again; a repeat that arrives while the op still runs joins it; a repeat from another sender is refused `errorCode: "machine_op_conflict"` and runs nothing.
+- `deadline_ms` (optional): absolute epoch ms on this machine's clock; absent means the op has no deadline. The op is aborted then (`state: "cancelled"`, code `aborted`); a shell's own `timeoutMs` still answers `timed_out`.
+- `scope`: the relay host's scope verdict. `confined: true` refuses any path or symlink resolving outside `root` (`policy_denied`). `confined: false` anchors relative fs paths and glob's `cwd` at `root`, and an OS refusal answers `os_permission_denied`. A `shell` or `exec_command` with no `cwd` runs in `root`.
+- `sender`: the device the op runs for; it owns the terminals its `exec_command` creates. `write_stdin`, `wait_for_command`, `kill_terminal` and `process.info { handleId }` act only on their own sender's handle; another sender's answers `{ state: "failed", error: { code: "not_owner" } }`.
+- `cross_owner` (optional, boolean): set by the relay host only after its own admin verdict on another sender's op or handle; it lifts the owner checks above and on `machine_op_result` / `machine_op_cancel`.
+- `env_overlay` (optional, string values): laid last over a `shell` or `exec_command` child's environment, `args.env` included.
+
+Terminals run on one host-owned terminal manager and outlive the connection that created them; handle ids are the manager's. An `exec_command` whose first wait is aborted (deadline, cancel, shutdown) kills its terminal before answering `cancelled`, so nothing is left running without a handle. A `kill_terminal` waits at most 5 s for the process to end and answers the lifecycle it reached. While an op runs or a machine terminal lives the host is not idle: no idle handover and no empty-host exit. From the idle check that starts a handover's switch, or the empty-host exit, a new `machine_op` is refused `machine_op_unavailable` (retry it) and runs nothing; a blocked handover admits machine ops again. A wait without `last_seq` answers the newest retained page; `lastSeq` and `totalBytes` are byte offsets; a `last_seq` older than the retained output (1 MiB per handle) fails `replay_gap`, and an unknown handle `unknown_handle`. The engine's mesh inbox is `<agentDir>/machine/inbox/<topic>.jsonl`.
+
+```json
+{ "id": "r1", "type": "machine_op_result", "op_id": "op-7", "sender": "device-a" }
+{ "id": "r1", "type": "response", "command": "machine_op_result", "success": true, "data": { "known": true, "outcome": { "state": "applied", "response": { "path": "/home/me/notes.txt", "writtenBytes": 2 } } } }
+{ "id": "o1", "type": "machine_op_owner", "handle_id": "bash_3f2a_1" }
+{ "id": "o1", "type": "response", "command": "machine_op_owner", "success": true, "data": { "sender": "device-a" } }
+{ "id": "h1", "type": "machine_op_health" }
+{ "id": "h1", "type": "response", "command": "machine_op_health", "success": true, "data": { "ok": true, "terminals": 1, "cache": 12, "version": "2026.11.15-2" } }
+```
+
+`machine_op_cancel { op_id, sender }` aborts that op if it is running (it then answers `state: "cancelled"`, code `aborted`) and answers `{ cancelled: true }`; an op that is not running answers `{ cancelled: false }`. `machine_op_result` and `machine_op_cancel` for another sender's op are refused `machine_op_conflict` unless `cross_owner: true`. A `machine_op` whose engine state cannot be prepared (its `<agentDir>/machine` directory) is refused `machine_op_unavailable` on that line, nothing is cached, and the next op tries again. `machine_op_result` answers `{ known: false }` for an op_id it does not hold or whose op is still running (send the `machine_op` again to join it). `machine_op_owner` answers `{}` for an unknown handle. `machine_op_health` is read-only: running terminals, cached answers and the engine version.
+
 ### Host self-observation (event-loop stalls and memory pressure)
 
 Every in-process session shares the host's event loop, so a session that blocks it freezes every other session and the

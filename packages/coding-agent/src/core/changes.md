@@ -1,3 +1,39 @@
+## 2026-11-16 - Accurate transient-failure rejection text and latch rationale (senpi#6772)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `describeCompactionRejection("transient-failure")` now ends "Retry compaction." instead of "The next prompt retries compaction.". The comment on `_failedCompactionLatchesAdmission` states that three consecutive owned failures trip the breaker, and gives the bound on exempting `circuit-breaker`: at most one cooldown, after which the next real failing attempt latches again.
+
+### Why
+
+- Review findings on #6764. A manual `compact()` from an SDK or RPC caller got a promise that the next prompt retries, which holds only when the context is over the threshold. The latch rationale named only transient failures as the breaker's cause.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: the rejection description and the latch predicate are private session code.
+
+### Expected merge conflict zones
+
+- LOW: `describeCompactionRejection` and the doc comment above `_failedCompactionLatchesAdmission` in `agent-session.ts`.
+
+## 2026-11-16 - A transient compaction failure no longer latches admission (senpi#6760)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the two sites in `_checkCompaction` that arm `_blockedPostCompactionAssistant` after a failed automatic compaction now share `_failedCompactionLatchesAdmission()`. It exempts the new `transient-failure` rejection cause and `circuit-breaker` as well as `external-owner`, so after a transient summary failure the next send of any origin runs compaction again instead of throwing `RequiredCompactionError` with no attempt. `circuit-breaker` is exempt because repeated transient failures trip the breaker; latching on its rejection would strand the session again one failure later. While it cools down, the existing #531 cooldown admission applies, and a latch that an earlier deterministic failure armed stays armed. `describeCompactionRejection` describes the new cause.
+
+### Why
+
+- A long-lived automated session hit `api_error: Network error or service unavailable` on its threshold compaction. The extension cancelled after its bounded retries, the session latched admission (#7921 case 6), and only a person's prompt releases that latch (#4161). Every automated send was then refused forever with the context above the threshold. The latch exists for deterministic insufficiency; a transient provider failure says nothing about the context.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: the admission latch is private session state armed by core after an automatic compaction fails; an extension can only report why it rejected.
+
+### Expected merge conflict zones
+
+- LOW: `agent-session.ts`, the two latch-arming blocks in `_checkCompaction`, the new `_failedCompactionLatchesAdmission` beside `_isCompactionOnCooldown`, and `describeCompactionRejection`.
+
 ## 2026-11-15 - Person-started Claude turns reach the pool's bounded stale-limit check (senpi#6727)
 
 ### What changed
