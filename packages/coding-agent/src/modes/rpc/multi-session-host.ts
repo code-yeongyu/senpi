@@ -196,7 +196,14 @@ export function createHostCore(
 			now: policy.now,
 			idleEvictionMs: policy.idleEvictionMs,
 			emptyExitMs: policy.emptyExitMs,
-			onEmptyExit: idle.onEmptyExit,
+			// Held in the same step as the exit decision: no machine op may start on a host that is ending (senpi#6752).
+			onEmptyExit:
+				idle.onEmptyExit === undefined
+					? undefined
+					: () => {
+							machineOps.hold();
+							idle.onEmptyExit?.();
+						},
 			onHandoffParked: idle.onHandoffParked,
 			...(endpointSocket === undefined
 				? {}
@@ -235,7 +242,7 @@ export function createHostCore(
 		});
 	const gate = new HostCoreGate(registry, (command) => router.handle(command), {
 		...hooks,
-		busy: () => machineOps.busy(),
+		machineWork: machineOps,
 	});
 	const handle = async (line: string): Promise<void> => {
 		const connection = writer.currentConnection();

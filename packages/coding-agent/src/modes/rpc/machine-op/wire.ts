@@ -74,14 +74,9 @@ export function machineOpConflict(id: string | undefined, command: MachineOpComm
 	return refused(id, command, "machine_op_conflict", "op_id is bound to another sender");
 }
 
-export function machineOpUnavailable(id: string | undefined, cause: unknown): DelegationResponse {
-	const detail = cause instanceof Error ? cause.message : String(cause);
-	return refused(
-		id,
-		"machine_op",
-		"machine_op_unavailable",
-		`the engine's machine state could not be prepared: ${detail}`,
-	);
+/** Retryable: the engine could not run the op now (its state dir, or a host that is ending); nothing ran or is cached. */
+export function machineOpUnavailable(id: string | undefined, detail: string): DelegationResponse {
+	return refused(id, "machine_op", "machine_op_unavailable", detail);
 }
 
 export function machineOpAnswer(id: string | undefined, command: MachineOpCommand, data: unknown): DelegationResponse {

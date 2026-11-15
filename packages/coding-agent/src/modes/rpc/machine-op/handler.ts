@@ -59,6 +59,7 @@ export class MachineOpHandler {
 	private readonly stopping = new AbortController();
 	private readonly running = new Map<string, Readonly<{ abort: AbortController; sender: string }>>();
 	private ops: Promise<MachineOps> | undefined;
+	private held = false;
 
 	constructor(options: { readonly agentDir: string }) {
 		this.stateDir = options.agentDir;
@@ -70,6 +71,7 @@ export class MachineOpHandler {
 			case "machine_op": {
 				const request = parseMachineOp(fields);
 				if (typeof request === "string") return machineOpMalformed(id, command, request);
+				if (this.held) return machineOpUnavailable(id, "the engine is handing over or shutting down; retry the op");
 				const owner = this.cache.ownerOf(request.opId);
 				if (owner !== undefined && owner !== request.sender) return machineOpConflict(id, command);
 				try {
@@ -77,7 +79,8 @@ export class MachineOpHandler {
 					return machineOpAnswer(id, command, outcome);
 				} catch (cause) {
 					// Review L3: the op never started (the machine state dir could not be made); nothing is cached.
-					return machineOpUnavailable(id, cause);
+					const detail = cause instanceof Error ? cause.message : String(cause);
+					return machineOpUnavailable(id, `the engine's machine state could not be prepared: ${detail}`);
 				}
 			}
 			case "machine_op_cancel": {
@@ -118,6 +121,19 @@ export class MachineOpHandler {
 	/** Review M3: an op in flight or a live terminal keeps the host from being idle (no idle handover, no empty exit). */
 	busy(): boolean {
 		return this.running.size > 0 || this.terminals.running > 0;
+	}
+
+	/**
+	 * The host is ending (a handover switching, an empty exit): from now on a new `machine_op` is refused
+	 * `machine_op_unavailable` and runs nothing. Called in the same step as the idle decision, so nothing starts between.
+	 */
+	hold(): void {
+		this.held = true;
+	}
+
+	/** A blocked handover: this host keeps serving machine ops. */
+	release(): void {
+		this.held = false;
 	}
 
 	async dispose(): Promise<void> {
