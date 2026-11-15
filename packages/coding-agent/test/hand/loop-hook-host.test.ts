@@ -27,7 +27,8 @@ import type {
 	InputEventResult,
 } from "../../src/core/extensions/types.ts";
 import { createLooplessHand } from "../../src/modes/rpc/remote-executor-scope.ts";
-import { createLoopHookCall, LATE_PER_SESSION, LoopHookCallEndedError } from "../../src/modes/rpc/loop-hook-call.ts";
+import { createLoopHookCall, LATE_PER_SESSION } from "../../src/modes/rpc/loop-hook-call.ts";
+import { LoopHookCallEndedError } from "../../src/modes/rpc/loop-hook-session.ts";
 import { createHarness, type Harness } from "../suite/harness.ts";
 import { cleanupHands, handConfiguration, handDirs } from "./remote-hand-fixture.ts";
 
