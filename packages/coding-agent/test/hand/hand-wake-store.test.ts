@@ -54,14 +54,16 @@ describe("the hand's wake outbox file", () => {
 		expect((await (await openHandWakeOutbox(path)).pending()).map((wake) => wake.eventId)).toEqual([kept.eventId]);
 	});
 
-	it("keeps at most a scope's bound un-acked, dropping the oldest, and reports the drop to the brain as overflow", async () => {
+	it("keeps a scope's bound of un-acked wakes, refuses later ones before they are sent, and reports them as overflow", async () => {
 		const path = await storePath("h3-overflow");
 		const outbox = await openHandWakeOutbox(path);
-		for (let index = 0; index < 300; index++) await outbox.offer(wakeOf("s", index));
+		const refused: string[] = [];
+		for (let index = 0; index < 300; index++)
+			await outbox.offer(wakeOf("s", index)).catch((error: Error) => void refused.push(error.name));
 		const kept = await outbox.pending();
 
-		expect(kept).toHaveLength(256);
-		expect(kept[0]?.payload).toMatchObject({ message: { content: "m44" } });
+		expect([kept.length, refused.length, new Set(refused)]).toEqual([256, 44, new Set(["WakeOverflowError"])]);
+		expect(kept[0]?.payload).toMatchObject({ message: { content: "m0" } });
 		const brain = await brainInbox();
 		const link = connect(brain, outbox);
 		closers.push(() => link.close());

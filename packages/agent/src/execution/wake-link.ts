@@ -1,7 +1,7 @@
 import type { StoreValue } from "../durable/store.ts";
 import type { Transport, TransportFrame } from "../transport/transport.ts";
 import type { WakeInbox } from "./wake-inbox.ts";
-import type { WakeOutbox } from "./wake-outbox.ts";
+import { type WakeOutbox, WakeOverflowError } from "./wake-outbox.ts";
 import {
 	WAKE_DROPPED_SOURCE,
 	type WakeDropReason,
@@ -41,7 +41,7 @@ export type WakeLinkMessage =
 	| { readonly kind: "wake_reoffer" };
 
 const REFUSALS: readonly WakeRefusal[] = ["not_scope_hand", "unknown_scope", "scope_closed", "not_scope_session"];
-const DROP_REASONS: readonly WakeDropReason[] = ["overflow", "expired", "malformed", "unrecorded"];
+const DROP_REASONS: readonly WakeDropReason[] = ["overflow", "expired", "refused", "malformed", "unrecorded"];
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
@@ -158,8 +158,9 @@ export function createHandWakeLink(options: HandWakeLinkOptions): HandWakeLink {
 	transport.onFrame(async (frame: TransportFrame) => {
 		const message = decodeWakeLinkMessage(frame.payload);
 		try {
-			if (message?.kind === "wake_receipt") await outbox.receipt(message.receipt);
-			else if (message?.kind === "wake_reoffer") await reoffer();
+			if (message === undefined) onFault(new Error(`an undecodable frame on ${lane} was dropped`));
+			else if (message.kind === "wake_receipt") await outbox.receipt(message.receipt);
+			else if (message.kind === "wake_reoffer") await reoffer();
 		} catch (error) {
 			onFault(error);
 		}
@@ -172,6 +173,8 @@ export function createHandWakeLink(options: HandWakeLinkOptions): HandWakeLink {
 			try {
 				event = await outbox.offer(wake);
 			} catch (error) {
+				// An overflow is already recorded as a durable drop report; anything else left no record at all.
+				if (error instanceof WakeOverflowError) return;
 				onFault(error);
 				return send({ kind: "wake_dropped", scope: wake.scope, reason: "unrecorded", count: 1 });
 			}
@@ -231,12 +234,12 @@ export function serveHandWakes(options: BrainWakeLinkOptions): BrainWakeLink {
 		if (!closed) transport.send(lane, encodeWakeLinkMessage(message)).catch(onFault);
 	};
 	const commit = async (wake: WakeEvent): Promise<void> => {
-		const refusal = wake.source === WAKE_DROPPED_SOURCE ? undefined : options.check?.(wake);
-		if (refusal !== undefined) {
-			onFault(new WakeRefusedError(wake, refusal));
-			return send({ kind: "wake_receipt", receipt: { kind: "refused", eventId: wake.eventId, reason: refusal } });
-		}
-		const receipt = await inbox.receive(hand, wake);
+		// The brain's own check runs inside the inbox, after its scope binding: an unbound scope is `unknown_scope` (the
+		// hand retries it), so only a bound scope's own answer can refuse a wake for good (review round 2, M4).
+		const check = wake.source === WAKE_DROPPED_SOURCE ? undefined : options.check;
+		const receipt = await inbox.receive(hand, wake, check);
+		if (receipt.kind === "refused" && receipt.reason === "not_scope_session")
+			onFault(new WakeRefusedError(wake, receipt.reason));
 		send({ kind: "wake_receipt", receipt });
 		if (receipt.kind === "ack" && !receipt.duplicate) options.onCommitted(wake);
 	};

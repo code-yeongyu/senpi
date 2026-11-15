@@ -216,8 +216,9 @@ export function deliverHandDrop(drop: WakeDrop, session: Pick<HandWakeSession, "
 
 /**
  * The brain's check that a wake names only a loop session of its own scope (senpi#6767 review L3), for
- * `serveHandWakes({ check })`. `sessionsOf` answers the loop sessions bound to a scope; a wake naming any other, or a
- * malformed session id, is refused `not_scope_session` and never committed.
+ * `serveHandWakes({ check })`. `sessionsOf` answers the loop sessions bound to a scope, or `undefined` while none are
+ * known (refused `unknown_scope`, which the hand retries). A wake naming any other session, or a malformed session id,
+ * is refused `not_scope_session` for good, never committed, and reported dropped (`refused`) after the retention.
  */
 export function scopeSessionCheck(
 	sessionsOf: (scope: string) => ReadonlySet<string> | undefined,
@@ -225,8 +226,9 @@ export function scopeSessionCheck(
 	return (wake) => {
 		const sessionId = isObject(wake.payload) ? wake.payload.sessionId : undefined;
 		if (sessionId === undefined) return undefined;
-		return typeof sessionId === "string" && sessionsOf(wake.scope)?.has(sessionId) === true
-			? undefined
-			: "not_scope_session";
+		const sessions = sessionsOf(wake.scope);
+		// Sessions not known yet (a brain restart, a bind still in progress) is not an answer: the hand retries.
+		if (sessions === undefined) return "unknown_scope";
+		return typeof sessionId === "string" && sessions.has(sessionId) ? undefined : "not_scope_session";
 	};
 }

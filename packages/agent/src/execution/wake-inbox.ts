@@ -1,7 +1,13 @@
 import type { DurableStore, StoreValue } from "../durable/store.ts";
 import type { AdmissionLine } from "../durable/store-admission.ts";
 import { isStoreObject } from "./wake-outbox-record.ts";
-import { WAKE_RETENTION_MS, type WakeEvent, type WakeInboxRecord, type WakeReceipt } from "./wake-types.ts";
+import {
+	WAKE_RETENTION_MS,
+	type WakeEvent,
+	type WakeInboxRecord,
+	type WakeReceipt,
+	type WakeRefusal,
+} from "./wake-types.ts";
 
 export interface WakeInboxOptions {
 	readonly issuer: string;
@@ -33,7 +39,11 @@ export interface WakeDeliveryFailure {
 /** The brain side of design 5.6.4: deduplicated by event id, acked only after the commit. */
 export interface WakeInbox {
 	/** `sender` is the authenticated hand. The returned `ack` is the `wake_ack` to send; it exists only once committed. */
-	receive(sender: string, wake: WakeEvent): Promise<WakeReceipt>;
+	/**
+	 * `check` is the brain's own answer for a wake of a bound scope (for example `scopeSessionCheck`); it runs after the
+	 * scope binding is checked and before anything is committed.
+	 */
+	receive(sender: string, wake: WakeEvent, check?: (wake: WakeEvent) => WakeRefusal | undefined): Promise<WakeReceipt>;
 	/** Hands each committed wake to the loop, then removes it; drains run one at a time, and a crash in between hands the same wake over again, so the consumer is idempotent by event id. */
 	drain(consume: (wake: WakeEvent) => Promise<void>): Promise<number>;
 	closeScope(scope: string): Promise<void>;
@@ -117,11 +127,13 @@ export function createWakeInbox(options: WakeInboxOptions): WakeInbox {
 
 	return {
 		read,
-		receive: (sender, wake) =>
+		receive: (sender, wake, check) =>
 			update(async (record) => {
 				const bound = owner(wake.scope);
 				if (bound === undefined) return { kind: "refused", eventId: wake.eventId, reason: "unknown_scope" };
 				if (bound !== sender) return { kind: "refused", eventId: wake.eventId, reason: "not_scope_hand" };
+				const refusal = check?.(wake);
+				if (refusal !== undefined) return { kind: "refused", eventId: wake.eventId, reason: refusal };
 				const seen = record.seen[wake.scope] ?? [];
 				if (seen.includes(wake.eventId)) return { kind: "ack", eventId: wake.eventId, duplicate: true };
 				if (record.closed[wake.scope] !== undefined)

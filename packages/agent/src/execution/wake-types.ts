@@ -23,11 +23,12 @@ export type WakeEvent = {
 export type WakeRefusal = "not_scope_hand" | "unknown_scope" | "scope_closed" | "not_scope_session";
 
 /**
- * Why wakes never reached the brain: `overflow` (the hand's un-acked bound, oldest first), `expired` (un-acked past
+ * Why wakes never reached the brain: `overflow` (the hand's un-acked bound: a new wake refused before it was sent),
+ * `refused` (the brain refused it for good, reported once it is evicted or its retention lapsed), `expired` (un-acked past
  * the closed scope's retention), `malformed` (an entry the hand's outbox could not read), `unrecorded` (the hand could
  * not commit it at all; reported best-effort, as it has no durable record).
  */
-export type WakeDropReason = "overflow" | "expired" | "malformed" | "unrecorded";
+export type WakeDropReason = "overflow" | "expired" | "refused" | "malformed" | "unrecorded";
 
 /** The source of a drop report: a durable wake whose payload is `{ reason, count }` (a {@link WakeDropReason}). */
 export const WAKE_DROPPED_SOURCE = "wake.dropped";

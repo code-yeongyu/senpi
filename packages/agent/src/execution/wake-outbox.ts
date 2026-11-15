@@ -49,6 +49,16 @@ export interface WakeOutbox {
 
 const KIND = "execution.wake-outbox";
 
+/** The outbox is at its bound with only in-flight wakes: this wake was refused before it was sent, and reported. */
+export class WakeOverflowError extends Error {
+	override readonly name = "WakeOverflowError";
+	readonly wake: WakeEvent;
+	constructor(wake: WakeEvent) {
+		super(`the hand's wake outbox is full; wake ${wake.eventId} of scope ${wake.scope} was dropped (overflow)`);
+		this.wake = wake;
+	}
+}
+
 export class MalformedWakeError extends Error {
 	override readonly name = "MalformedWakeError";
 	readonly entry: StoreValue;
@@ -90,17 +100,31 @@ export function createWakeOutbox(options: WakeOutboxOptions): WakeOutbox {
 		drops: addDrop(record.drops, { scope, reason, count }, fresh, mint),
 	});
 
-	const bounded = (record: WakeOutboxRecord, scope: string): WakeOutboxRecord => {
+	/** Removes a wake and every bit of its state, reporting it as `reason` under its own scope. */
+	const evict = (record: WakeOutboxRecord, wake: WakeEvent, reason: WakeDropReason): WakeOutboxRecord => {
+		const { [wake.eventId]: _gone, ...refused } = record.refused;
+		const pending = record.pending.filter((entry) => entry.eventId !== wake.eventId);
+		return withDrops({ ...record, pending, refused }, wake.scope, reason, 1);
+	};
+	/**
+	 * Past a bound, only a wake the brain refused for good is evicted: it is never sent again, so nothing in flight is
+	 * lost. Every other pending wake may already be on its way to the brain (review round 2, L6), so when none can go the
+	 * new wake is the one refused: `undefined`, and it is never sent.
+	 */
+	const bounded = (record: WakeOutboxRecord, scope: string): WakeOutboxRecord | undefined => {
 		if (limits === undefined) return record;
 		let next = record;
-		const dropOldest = (inScope: string | undefined): void => {
-			const oldest = next.pending.find((wake) => inScope === undefined || wake.scope === inScope);
-			if (oldest === undefined) return;
-			const pending = next.pending.filter((wake) => wake !== oldest);
-			next = withDrops({ ...next, pending }, oldest.scope, "overflow", 1);
-		};
-		while (next.pending.filter((wake) => wake.scope === scope).length > limits.perScope) dropOldest(scope);
-		while (next.pending.length > limits.total) dropOldest(undefined);
+		const over = () =>
+			next.pending.filter((wake) => wake.scope === scope).length > limits.perScope ||
+			next.pending.length > limits.total;
+		while (over()) {
+			const inScope = next.pending.filter((wake) => wake.scope === scope).length > limits.perScope;
+			const evictable = next.pending.find(
+				(wake) => next.refused[wake.eventId] !== undefined && (!inScope || wake.scope === scope),
+			);
+			if (evictable === undefined) return undefined;
+			next = evict(next, evictable, "refused");
+		}
 		return next;
 	};
 
@@ -136,11 +160,12 @@ export function createWakeOutbox(options: WakeOutboxOptions): WakeOutbox {
 		offer: (wake) =>
 			update(async (record) => {
 				const event: WakeEvent = { ...wake, eventId: mint() };
-				await write(
-					bounded({ ...record, pending: [...record.pending, event] }, event.scope),
-					"offer",
-					event.eventId,
-				);
+				const next = bounded({ ...record, pending: [...record.pending, event] }, event.scope);
+				if (next === undefined) {
+					await write(withDrops(record, event.scope, "overflow", 1), "overflow", event.eventId);
+					throw new WakeOverflowError(event);
+				}
+				await write(next, "offer", event.eventId);
 				return event;
 			}),
 		reoffer: async (send) => {
@@ -169,17 +194,25 @@ export function createWakeOutbox(options: WakeOutboxOptions): WakeOutbox {
 				};
 				const expired = record.pending.filter(lapsed);
 				const lapsedDrops = record.drops.filter(lapsed);
-				if (expired.length === 0 && lapsedDrops.length === 0 && malformed.length === 0) return [];
-				const gone = new Set([...expired, ...lapsedDrops].map((wake) => wake.eventId));
+				// A refusal whose wake is gone (an older outbox evicted it without its state) is purged.
+				const held = new Set([...record.pending, ...record.drops].map((wake) => wake.eventId));
+				const orphans = Object.keys(record.refused).filter((eventId) => !held.has(eventId));
+				if (expired.length + lapsedDrops.length + malformed.length + orphans.length === 0) return [];
+				const gone = new Set([...expired, ...lapsedDrops].map((wake) => wake.eventId).concat(orphans));
 				let next: WakeOutboxRecord = {
 					...record,
 					pending: record.pending.filter((wake) => !gone.has(wake.eventId)),
 					drops: record.drops.filter((wake) => !gone.has(wake.eventId)),
 					refused: Object.fromEntries(Object.entries(record.refused).filter(([eventId]) => !gone.has(eventId))),
 				};
-				// Only a wake whose scope closed is reported expired: the brain refused the others itself.
+				// A lapsed wake is reported: `refused` when the brain refused it for good (review round 2, M4), else `expired`.
 				for (const wake of expired)
-					if (record.refused[wake.eventId] === undefined) next = withDrops(next, wake.scope, "expired", 1);
+					next = withDrops(
+						next,
+						wake.scope,
+						record.refused[wake.eventId] === undefined ? "expired" : "refused",
+						1,
+					);
 				for (const entry of malformed) {
 					options.onFault?.(new MalformedWakeError(entry));
 					const scope = malformedScope(entry);
