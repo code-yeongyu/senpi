@@ -1,9 +1,9 @@
 {
 	"methodClassesVersion": 1,
-	"methodClassesDigest": "e206605098ab26895e389753a54b3c60adebf6f640824edf061091746d720b19",
+	"methodClassesDigest": "affd43e6120fddc8d9267522fcbdc3688fde0ac4c2f61a827d9dc928445c6ad6",
 	"sampleId": "00000000-0000-7000-8000-000000000000",
 	"samplePathRoot": "/nonexistent/senpi-rpc-inbound-sample",
-	"methodCount": 129,
+	"methodCount": 133,
 	"methods": [
 		{
 			"method": "abort",
@@ -562,6 +562,15 @@
 			}
 		},
 		{
+			"method": "get_project_mcp_servers",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "get_project_mcp_servers"
+			}
+		},
+		{
 			"method": "get_project_settings",
 			"class": "device_admin",
 			"sampleClass": "device_admin",
@@ -864,6 +873,16 @@
 			}
 		},
 		{
+			"method": "read_project_skill_file",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "read_project_skill_file",
+				"skill": "sample-skill"
+			}
+		},
+		{
 			"method": "reclaim_session",
 			"class": "connection_local",
 			"sampleClass": "connection_local",
@@ -1123,6 +1142,21 @@
 			}
 		},
 		{
+			"method": "set_project_mcp_servers",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "set_project_mcp_servers",
+				"patch": {
+					"sample": {
+						"command": "sample-mcp-server"
+					}
+				},
+				"ifEtag": null
+			}
+		},
+		{
 			"method": "set_project_setting",
 			"class": "device_admin",
 			"sampleClass": "device_admin",
@@ -1339,6 +1373,18 @@
 				"type": "write_project_file",
 				"path": "/nonexistent/senpi-rpc-inbound-sample/AGENTS.md",
 				"content": "# Rules\n",
+				"ifEtag": null
+			}
+		},
+		{
+			"method": "write_project_skill_file",
+			"class": "device_admin",
+			"sampleClass": "device_admin",
+			"connectionLocal": false,
+			"sample": {
+				"type": "write_project_skill_file",
+				"skill": "sample-skill",
+				"content": "# Skill\n",
 				"ifEtag": null
 			}
 		}
