@@ -3791,6 +3791,37 @@ It comes after the run's `agent_end`, and only when no new run has started meanw
 
 If the schedule is cleared because the offering connection left, the user aborted, or the offering capability was withdrawn or taken over by another connection, the agent receives exactly one custom session message of type `session_relocation`, with `details: { status: "dropped", reason, moveId, target }`. The reason is respectively `disconnected`, `aborted`, or `withdrawn`; `moveId` and `target` identify the accepted request. A withdrawal during a long run is reported when the run settles. After a user abort, the notice is appended at `agent_settled`, before another prompt is needed, and is saved even if the session then closes. The message says the session stays on this computer and the agent should keep working here. It is context only (`display: false`, `triggerTurn: false`): it never starts another turn or resumes a user-stopped run. This is a session message through the existing message events, not another host request or a new RPC event type. Session disposal and process exit still have no later agent notice.
 
+### Device operations for the local relay host (`machine_op`)
+
+A multi-session host advertising `machine_op_v1` runs the `run` step of one device operation for the local relay host (senpi#6752). The relay host keeps admission, grants, consent, the run-once ledger, audit, blob relay and deadlines; the host runs the op and answers the relay host's own `OpOutcome`. The five records below are not in `RPC_METHOD_CLASS` (the method-class digest is unchanged). They are answered only on a connection that proved the endpoint's launch key and declared no delegation; any other connection gets `errorCode: "machine_op_not_authorized"` and nothing runs. A record that does not parse gets `machine_op_malformed`.
+
+```json
+{ "id": "m1", "type": "machine_op", "op": "fs.write", "args": { "path": "notes.txt", "bytes": "aGk=" }, "op_id": "op-7", "deadline_ms": 1763251200000, "scope": { "root": "/home/me", "confined": false }, "sender": "device-a", "env_overlay": { "RELAY_STATE_DIR": "/home/me/.relay" } }
+{ "id": "m1", "type": "response", "command": "machine_op", "success": true, "data": { "state": "applied", "response": { "path": "/home/me/notes.txt", "writtenBytes": 2 } } }
+```
+
+- `op`: one of `fs.read`, `fs.read_range`, `fs.write`, `fs.write_range`, `fs.edit`, `fs.glob`, `fs.grep`, `fs.stat`, `fs.list`, `shell`, `exec_command`, `write_stdin`, `wait_for_command`, `kill_terminal`, `process.info`, `mesh.message`. Any other op answers `{ state: "refused", error: { code: "malformed", message: "unknown op <op>" } }`. `args` and every response are the relay host's own shapes; bytes travel base64 (`args.bytes`, the read response's `bytes`).
+- Writes carry their bytes inline: one RPC line carries up to 16 MiB of JSON, so an 8 MiB write fits. No other carrier exists; an `args` key the op does not take (`bytes_path` included) is refused `malformed`.
+- `op_id`: opaque (the relay host sends `JSON.stringify([sender, batch_id, op_id])`). The answer is cached by the whole string (4,096 answers, 24 hours after settling) and bound to `sender`. A repeat from the same sender answers the first outcome and never runs again; a repeat that arrives while the op still runs joins it; a repeat from another sender is refused `errorCode: "machine_op_conflict"` and runs nothing.
+- `deadline_ms` (optional): absolute epoch ms on this machine's clock; absent means the op has no deadline. The op is aborted then (`state: "cancelled"`, code `aborted`); a shell's own `timeoutMs` still answers `timed_out`.
+- `scope`: the relay host's scope verdict. `confined: true` refuses any path or symlink resolving outside `root` (`policy_denied`). `confined: false` anchors relative fs paths and glob's `cwd` at `root`, and an OS refusal answers `os_permission_denied`. A `shell` or `exec_command` with no `cwd` runs in `root`.
+- `sender`: the device the op runs for; it owns the terminals its `exec_command` creates. `write_stdin`, `wait_for_command`, `kill_terminal` and `process.info { handleId }` act only on their own sender's handle; another sender's answers `{ state: "failed", error: { code: "not_owner" } }`.
+- `cross_owner` (optional, boolean): set by the relay host only after its own admin verdict on another sender's op or handle; it lifts the owner checks above and on `machine_op_result` / `machine_op_cancel`.
+- `env_overlay` (optional, string values): laid last over a `shell` or `exec_command` child's environment, `args.env` included.
+
+Terminals run on one host-owned terminal manager and outlive the connection that created them; handle ids are the manager's. An `exec_command` whose first wait is aborted (deadline, cancel, shutdown) kills its terminal before answering `cancelled`, so nothing is left running without a handle. A `kill_terminal` waits at most 5 s for the process to end and answers the lifecycle it reached. While an op runs or a machine terminal lives the host is not idle: no idle handover and no empty-host exit. From the idle check that starts a handover's switch, or the empty-host exit, a new `machine_op` is refused `machine_op_unavailable` (retry it) and runs nothing; a blocked handover admits machine ops again. A wait without `last_seq` answers the newest retained page; `lastSeq` and `totalBytes` are byte offsets; a `last_seq` older than the retained output (1 MiB per handle) fails `replay_gap`, and an unknown handle `unknown_handle`. The engine's mesh inbox is `<agentDir>/machine/inbox/<topic>.jsonl`.
+
+```json
+{ "id": "r1", "type": "machine_op_result", "op_id": "op-7", "sender": "device-a" }
+{ "id": "r1", "type": "response", "command": "machine_op_result", "success": true, "data": { "known": true, "outcome": { "state": "applied", "response": { "path": "/home/me/notes.txt", "writtenBytes": 2 } } } }
+{ "id": "o1", "type": "machine_op_owner", "handle_id": "bash_3f2a_1" }
+{ "id": "o1", "type": "response", "command": "machine_op_owner", "success": true, "data": { "sender": "device-a" } }
+{ "id": "h1", "type": "machine_op_health" }
+{ "id": "h1", "type": "response", "command": "machine_op_health", "success": true, "data": { "ok": true, "terminals": 1, "cache": 12, "version": "2026.11.15-2" } }
+```
+
+`machine_op_cancel { op_id, sender }` aborts that op if it is running (it then answers `state: "cancelled"`, code `aborted`) and answers `{ cancelled: true }`; an op that is not running answers `{ cancelled: false }`. `machine_op_result` and `machine_op_cancel` for another sender's op are refused `machine_op_conflict` unless `cross_owner: true`. A `machine_op` whose engine state cannot be prepared (its `<agentDir>/machine` directory) is refused `machine_op_unavailable` on that line, nothing is cached, and the next op tries again. `machine_op_result` answers `{ known: false }` for an op_id it does not hold or whose op is still running (send the `machine_op` again to join it). `machine_op_owner` answers `{}` for an unknown handle. `machine_op_health` is read-only: running terminals, cached answers and the engine version.
+
 ### Host self-observation (event-loop stalls and memory pressure)
 
 Every in-process session shares the host's event loop, so a session that blocks it freezes every other session and the
@@ -4676,6 +4707,20 @@ answers after the turn settled.
 
 ```json
 {"type": "response", "command": "interrupt", "success": true, "data": {"interrupted": true, "turnId": "3"}}
+```
+
+With `"background": "stop"` the command also stops the background jobs the interrupted turn started: each bash
+session that turn ran with `run_in_background`, or that auto-detached from the foreground, while that turn was running.
+Sessions an earlier turn started keep running. The stop happens after the turn settled, and the answer then carries
+`background: { stopped, failed }`: `stopped` names each job as `{ kind: "bash", id, description? }`, and `failed`
+names a job it could not stop with its `reason` (a session on the tool child under `--tool-runtime child`, or one
+still running after TERM then KILL). An idle session, or a `turnId` naming another turn, answers both lists empty.
+A stopped session's exit notice does not start a turn: the model reads `Background terminal session <id> was stopped
+when turn <turnId> was interrupted` at its next turn. Without the field nothing but the turn stops, as before.
+
+```json
+{"type": "interrupt", "turnId": "3", "background": "stop"}
+{"type": "response", "command": "interrupt", "success": true, "data": {"interrupted": true, "turnId": "3", "background": {"stopped": [{"kind": "bash", "id": "bash_1", "description": "sleep 60"}], "failed": []}}}
 ```
 
 With `"intent": "stop"` (on `abort` or `interrupt`) the command is a user Stop: the session is paused before the
@@ -6382,7 +6427,8 @@ other path, or when a folder on the way or the file itself is a symlink or not a
 
 #### The folder a project write is for
 
-`set_project_trust`, `set_project_setting` and `write_project_file` take an optional `expectedCwd`: the folder the
+`set_project_trust`, `set_project_setting`, `write_project_file`, `set_project_mcp_servers` and
+`write_project_skill_file` take an optional `expectedCwd`: the folder the
 caller means. A client that reaches a session by a key that can since name another session (a remote desktop, through
 a relay) states it, so the write lands only in that folder's project. When it is given and the session's working
 directory is another folder, the write is refused with `project_cwd_mismatch` and nothing is written or applied. Both
@@ -6412,6 +6458,88 @@ version cannot be checked without reading it), `project_file_conflict` when
 and retry), and `project_file_write_failed` when the write fails (permissions, disk).
 
 Both are `device_admin`: they read and write a file in the session's folder.
+
+#### get_project_mcp_servers
+
+Reads the session folder's project MCP file (`.omo/mcp.json`) as stored.
+Reading runs nothing, so it works while the project is untrusted.
+
+```json
+{"type": "get_project_mcp_servers"}
+```
+
+```json
+{
+  "type": "response",
+  "command": "get_project_mcp_servers",
+  "success": true,
+  "data": {
+    "cwd": "/home/user/project",
+    "path": ".omo/mcp.json",
+    "exists": true,
+    "mcpServers": { "docs": { "command": "docs-mcp" } },
+    "parseError": null,
+    "etag": "sha256-…",
+    "projectTrusted": true
+  }
+}
+```
+
+`mcpServers` holds the entries as stored (placeholders unexpanded); it is `null` when the file is missing or does
+not parse. `parseError` says why a stored file does not parse (not JSON, not a JSON object, or `mcpServers` not an
+object). Errors: `project_file_not_allowed` when the config folder or the file is a symlink or not a regular
+file and folder, and `project_file_too_large` for a stored file over 512 KiB.
+
+#### set_project_mcp_servers
+
+Edits the servers of the project MCP file in one write, naming the version it replaces.
+
+```json
+{"type": "set_project_mcp_servers", "patch": {"old": null, "new": {"command": "docs-mcp"}}, "ifEtag": "sha256-…"}
+```
+
+The merge is one level deep: each `patch` entry replaces the server of that name, `null` removes it, and every other
+server and top-level key stays as stored, so a rename is one atomic write. The merged file is checked with the
+engine's own MCP config loader before anything is written. The write needs the folder to be trusted at the moment it
+commits and gets the same permission decision a `write` of that file gets in the session (rules, preset, saved
+answers, or a prompt). In an RPC session that prompt goes to the session's client, as it does for the session's own
+`write` tool, so the client that sent the write answers it. The response carries the same `data` as
+`get_project_mcp_servers`, read after the write.
+Errors: `invalid_argument` when `patch` is not an object, `ifEtag` is neither a string nor `null`, or `expectedCwd`
+is not a string, `project_cwd_mismatch` when `expectedCwd` names another folder (nothing is written),
+`project_not_trusted`, `project_file_conflict` (`errorData: { currentEtag, exists }`),
+`project_mcp_config_unparseable` (`errorData: { parseError }`; a file that does not parse is never written over),
+`project_mcp_config_invalid` when the loader rejects the merged file, `project_file_permission_denied`,
+`project_file_not_allowed`, `project_file_too_large`, and `project_file_write_failed`.
+
+#### read_project_skill_file
+
+Read the file of a skill the engine lists for the session, by skill name.
+
+```json
+{"type": "read_project_skill_file", "skill": "deploy"}
+```
+
+#### write_project_skill_file
+
+Replace the file of a skill the engine lists for the session, by skill name. `ifEtag` is the `etag` the last read
+answered.
+
+```json
+{"type": "write_project_skill_file", "skill": "deploy", "content": "---\nname: deploy\n…", "ifEtag": "sha256-…"}
+```
+
+For both, `data` is `{ cwd, skill, path, exists, content, etag, projectTrusted }`, with `path` relative to the session's folder.
+Only a listed skill whose file lies inside the session's folder is reachable; a skill that lives elsewhere (a global
+skill, also when the agent's directory lies inside the session's folder) or is reached through a folder link or a
+file link is refused. A write passes the same trust and permission
+gates as `set_project_mcp_servers` and answers the read after it. Errors: `project_skill_not_listed`
+(`errorData: { skill }`), `project_file_not_allowed`, `invalid_argument`, `project_cwd_mismatch` (a write whose
+`expectedCwd` names another folder), `project_not_trusted`,
+`project_file_conflict`, `project_file_permission_denied`, `project_file_too_large`, and
+`project_file_write_failed`.
+
+All four are `device_admin`: they read and write files in the session's folder.
 
 ### extension_request
 

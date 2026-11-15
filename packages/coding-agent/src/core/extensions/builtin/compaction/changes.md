@@ -1,3 +1,22 @@
+## 2026-11-16 - The core route rejects a transient summary failure as `transient-failure` (senpi#6760)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: when the core-route summary generation fails and no deterministic recovery applies, a failure that `isRetryableSummaryAttempt` accepts is cancelled with `rejectionCause: "transient-failure"` (the reason text is unchanged).
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative.ts`: `isRetryableSummaryAttempt` is exported so the rejection and the in-request retry share one definition of a transient provider failure.
+
+### Why
+
+- The bare cancel was recorded as `cancelled-by-extension`, which the session answered by latching admission. The rejected `session_compact` event still records a circuit-breaker failure, so three consecutive transient rejections still cool automatic compaction down for 60 s; the session does not latch on that cooldown rejection either.
+
+### Why an extension could not handle it
+
+- This is the builtin compaction extension's own policy.
+
+### Expected merge conflict zones
+
+- LOW: the generator-failure `catch` of the `session_before_compact` handler in `index.ts`; the `isRetryableSummaryAttempt` declaration in `speculative.ts`.
+
 ## 2026-11-07 - Valid configurationUpdate messages are replay-safe in retained suffixes (senpi#8566)
 
 ### What changed
