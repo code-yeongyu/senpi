@@ -215,7 +215,11 @@ export { BatchStoreMissingError, noPreflightCarry, PreflightCarryMissingError } 
 export { createPreparedToolHost } from "./execution/prepared/pipeline-prepared.ts";
 export { type CarrierLink, createInProcessNetwork, type InProcessNetwork } from "./transport/in-process-carrier.ts";
 export { type LocalEndpoint, localEndpoint } from "./transport/local-endpoint.ts";
-export { createReliableTransport, type ReliableTransportOptions } from "./transport/reliable-transport.ts";
+export {
+	createReliableTransport,
+	type ReferencePacket,
+	type ReliableTransportOptions,
+} from "./transport/reliable-transport.ts";
 export type { Transport, TransportClock, TransportFrame, TransportSide } from "./transport/transport.ts";
 export * from "./harness/agent-harness.ts";
 export {

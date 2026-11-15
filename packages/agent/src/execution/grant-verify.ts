@@ -60,18 +60,25 @@ export interface GrantVerifier {
 }
 
 /**
- * Whose calls an executor runs: its own device's (`self`: fused and split-local, no grant needed, 0009) or one
- * authenticated peer's, every call checked by `verifier`. Required, so a peer link without a verifier cannot be built.
+ * Whose calls an executor runs: its own device's (`self`: fused and split-local, no grant needed, 0009), one
+ * authenticated peer's with every call checked by `verifier` (required, so a peer link without a verifier cannot be
+ * built), or one `relayed` peer's: the relay authenticated it and decides its grant on every delivery (each R3
+ * `hand_link` batch gets the full verdict), so the hand checks no snapshot of its own and fences by `peer`.
  */
 export type HandAuthority =
 	| { readonly kind: "self" }
-	| { readonly kind: "peer"; readonly peer: string; readonly verifier: GrantVerifier };
+	| { readonly kind: "peer"; readonly peer: string; readonly verifier: GrantVerifier }
+	| { readonly kind: "relayed"; readonly peer: string };
 
-/** The root a call may open its scope on, or why it is refused; a self link keeps the call's root as given. */
+/** The root a call may open its scope on, or why it is refused; a self or relayed link keeps the call's root as given. */
 export function authorize(authority: HandAuthority, scopeRoot: string): GrantVerdict {
-	return authority.kind === "self"
-		? { ok: true, root: scopeRoot }
-		: authority.verifier.verify(authority.peer, scopeRoot);
+	switch (authority.kind) {
+		case "self":
+		case "relayed":
+			return { ok: true, root: scopeRoot };
+		case "peer":
+			return authority.verifier.verify(authority.peer, scopeRoot);
+	}
 }
 
 const SEPARATORS = /[\\/]+$/;
