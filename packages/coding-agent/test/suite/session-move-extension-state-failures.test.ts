@@ -117,7 +117,11 @@ describe("a hung session_move_export handler (senpi#3681 review)", () => {
 			expect(reply).toMatchObject({
 				success: false,
 				error: "release_failed",
-				errorData: { detail: expect.stringContaining("timed out"), interrupted: true },
+				errorData: {
+					detail: expect.stringContaining("timed out"),
+					interrupted: true,
+					taken_from: session.sessionId,
+				},
 			});
 		} finally {
 			vi.useRealTimers();

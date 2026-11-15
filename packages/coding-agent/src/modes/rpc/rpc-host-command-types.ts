@@ -153,6 +153,14 @@ type RpcCommandBody =
 			target?: string;
 			interrupt?: boolean;
 			force?: boolean;
+			/**
+			 * The DURABLE id of the session the caller means (`get_state`'s `sessionId`, `durableSessionId` in the open answer),
+			 * never the handle `sessionId`. When the session behind the route has another durable id, nothing is released and
+			 * the answer is `session_mismatch`. A value that is empty, over 512 characters or not a session id is refused
+			 * `invalid_session_id`; only an absent field
+			 * means no expectation. Honoured when the host advertises `release_session_expect_id`.
+			 */
+			expectSessionId?: string;
 	  }
 	| {
 			id?: string;

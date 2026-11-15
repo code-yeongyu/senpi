@@ -184,6 +184,7 @@ describe("release_session and gateway deliveries (real host)", () => {
 				attachments: 1,
 				interrupted: true,
 				dropped: { deliveries: [], user_messages: ["USER FOLLOW TEXT"] },
+				taken_from: session.sessionId,
 			},
 		});
 		expect(await host.send({ type: "wake", id: "w", sessionId, delivery_ids: ["after-refusal"] })).toMatchObject({

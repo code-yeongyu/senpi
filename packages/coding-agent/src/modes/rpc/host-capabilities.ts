@@ -58,10 +58,12 @@ import {
 	MOVE_SESSION_IMPORT_OPEN_CAPABILITY,
 	MOVE_SESSION_IMPORT_SESSION_DIR_CAPABILITY,
 	MOVE_SESSION_INLINE_MAX_BYTES_CAPABILITY,
+	MOVE_SESSION_OWNERSHIP_CAPABILITY,
 	MOVE_SESSION_PREPARE_REPOSITORY_CAPABILITY,
 	MOVE_SESSION_REVOKE_CAPABILITY,
 	MOVE_SESSION_STATUS_LANDED_PATH_CAPABILITY,
 	MOVE_SESSION_STATUS_LANDING_CAPABILITY,
+	RELEASE_SESSION_EXPECT_ID_CAPABILITY,
 } from "./session-move-wire.ts";
 
 /** `unload_session` and `session_parked.reason` (senpi#3225). */
@@ -162,6 +164,9 @@ export function multiSessionHostCapabilities(options: {
 			MOVE_SESSION_STATUS_LANDED_PATH_CAPABILITY,
 			// ...and a `status` that names where the move would have landed is answered from the file there first.
 			MOVE_SESSION_STATUS_LANDING_CAPABILITY,
+			// ...and its release compares the session the caller expects (senpi#6484).
+			RELEASE_SESSION_EXPECT_ID_CAPABILITY,
+			MOVE_SESSION_OWNERSHIP_CAPABILITY,
 			// A host session asks the client that offers it to continue the session elsewhere (`host_request`).
 			SESSION_RELOCATION_CAPABILITY,
 			SESSION_CONTEXT_CAPABILITY,

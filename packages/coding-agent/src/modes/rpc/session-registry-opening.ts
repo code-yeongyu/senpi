@@ -32,6 +32,7 @@ export function buildOpeningEntry(input: {
 	readonly now: number;
 	readonly createRuntime: PreparableRuntimeFactory;
 	readonly sync: () => void;
+	readonly follow: (entry: RpcSessionEntry) => void;
 }): OpeningEntry {
 	const { profile, sessionPath, requestedDurableId, options } = input;
 	// Resume vs create parity (D1 + omo SenpiSessionRuntime.ts:198-200):
@@ -77,7 +78,7 @@ export function buildOpeningEntry(input: {
 		lifecycleMutex: Promise.resolve(),
 		openCompletion,
 	};
-	entry.switchSession = createEntrySwitchSession(entry, input.createRuntime, input.sync);
+	entry.switchSession = createEntrySwitchSession(entry, input.createRuntime, input.sync, () => input.follow(entry));
 	// Recorded before the first await so the synchronous collision guard sees an open that is still
 	// being built. `manager.getSessionId()` overwrites it later with the authoritative value, which on
 	// a resume is the header's id, not the requested one.

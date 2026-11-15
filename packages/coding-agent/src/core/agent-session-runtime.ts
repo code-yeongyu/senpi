@@ -156,6 +156,7 @@ function extractUserMessageText(content: string | Array<{ type: string; text?: s
 export class AgentSessionRuntime {
 	private rebindSession?: (session: AgentSession) => Promise<void>;
 	private beforeSessionInvalidate?: () => void;
+	private afterSessionSwap?: () => void;
 	private readonly sessionReplaceListeners = new Set<() => void>();
 	private _session: AgentSession;
 	private _services: AgentSessionServices;
@@ -358,6 +359,14 @@ export class AgentSessionRuntime {
 	}
 
 	/**
+	 * Called in the same synchronous step that makes a replacement's session the current one, before anything can run
+	 * against it: a host that keeps its own record of the session behind a handle brings that record in line here.
+	 */
+	setAfterSessionSwap(afterSessionSwap?: () => void): void {
+		this.afterSessionSwap = afterSessionSwap;
+	}
+
+	/**
 	 * Set a synchronous callback that runs after `session_shutdown` handlers finish
 	 * but before the current session is invalidated.
 	 *
@@ -507,6 +516,7 @@ export class AgentSessionRuntime {
 		}
 		const profile = this._launchProfile;
 		this._session = result.session;
+		this.afterSessionSwap?.();
 		if (profile?.permissionPreset !== undefined)
 			this._session.extensionRunner.setFlagValue("permission-preset", profile.permissionPreset);
 		markHostDefaultPresetFlag(this._session, profile);
