@@ -1,6 +1,6 @@
 // senpi#5898 (#6782 review L1, L3): a call that leaves while a call ahead of it is still stuck (it timed out or was
-// cancelled while it waited) does not restart the bound of the call behind it; and the number of promises created by
-// calls entering a stuck session's queue grows linearly with the number of calls.
+// cancelled while it waited) does not restart the bound of the call behind it; and 200 calls entering a stuck session's
+// queue create under five times the promises that 50 calls do.
 import { createHook } from "node:async_hooks";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createLoopHookSessionQueues, type LoopHookTurnOutcome } from "../../src/execution/loop-hook-session-queue.ts";
@@ -73,7 +73,7 @@ describe("loop-hook session queue (senpi#5898)", () => {
 		},
 	);
 
-	it("calls entering a stuck session's queue create a number of promises linear in the number of calls", () => {
+	it("200 calls entering a stuck session's queue create under five times the promises 50 calls do", () => {
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const promisesForArrivals = (calls: number): number => {
 			const enter = createLoopHookSessionQueues();
