@@ -43,6 +43,15 @@ function runCensus({ root, table, dropRoots = [] }) {
 		if (entry.ground !== undefined && entry.ground !== "i" && entry.ground !== "ii") {
 			problems.push(`entry ${binding.key} has unknown ground "${entry.ground}"`);
 		}
+		// Structural class rule (omo#12965 re-read, F4a): a reason cannot turn a registry into a per-copy table or the
+		// reverse. A binding initialised by `realmRegistry(` is class realm-registry; a realm-registry entry lives in a
+		// file that creates a registry.
+		if (binding.registry && entry.class !== "realm-registry") {
+			problems.push(`entry ${binding.key} is initialised by realmRegistry() but classified ${entry.class}`);
+		}
+		if (entry.class === "realm-registry" && !binding.fileCreatesRegistry) {
+			problems.push(`entry ${binding.key} is classified realm-registry but its file creates no realm registry`);
+		}
 		if (binding.als && entry.class !== "realm-registry") {
 			if (entry.ground !== "i" && entry.ground !== "ii") {
 				problems.push(

@@ -77,8 +77,10 @@ function getActiveProviderScope(): ProviderScopeAccess | undefined {
 	const scope = currentProviderScope();
 	if (scope === "closed") throw new Error("Provider scope is closed");
 	if (scope !== undefined) return scope;
-	// A strict mode that is not a boolean (a newer copy's value) reads as on.
-	const strict = strictModeBeforeRegistry || (lookupProviderScopeRegistry()?.strictMode() ?? false) !== false;
+	// With an instance, strict mode is on unless it is exactly false: a value that is not a boolean (a newer copy's, or
+	// undefined or null) reads as on.
+	const registry = lookupProviderScopeRegistry();
+	const strict = strictModeBeforeRegistry || (registry !== undefined && registry.strictMode() !== false);
 	if (strict) throw new Error("Provider scope is required in strict mode");
 	return undefined;
 }

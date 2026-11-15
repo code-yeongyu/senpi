@@ -7,6 +7,7 @@ import {
 	initializerKind,
 	isAsyncLocalStorage,
 	isExemptInitializer,
+	isRealmRegistryCall,
 	memberName,
 	patternNames,
 	unwrap,
@@ -20,7 +21,8 @@ function fileBindings(root, absolutePath) {
 	const file = toPosix(relative(root, absolutePath));
 	const { program, line } = parseFile(absolutePath);
 	const found = [];
-	const add = (name, node, kind, als) => found.push({ file, name, line: line(node.start), kind, als });
+	const add = (name, node, kind, als, registry = false) =>
+		found.push({ file, name, line: line(node.start), kind, als, registry });
 
 	const checkClass = (classNode, className) => {
 		for (const member of classNode.body.body) {
@@ -68,6 +70,7 @@ function fileBindings(root, absolutePath) {
 								declarator,
 								initializerKind(declarator.init, node.kind),
 								isAsyncLocalStorage(declarator.init),
+								isRealmRegistryCall(declarator.init),
 							);
 						}
 					}
@@ -104,6 +107,13 @@ function fileBindings(root, absolutePath) {
 		},
 		undefined,
 	);
+
+	// A file that creates no realm registry cannot hold a realm-registry binding.
+	let createsRegistry = false;
+	walk(program, (node) => {
+		if (isRealmRegistryCall(node)) createsRegistry = true;
+	});
+	for (const binding of found) binding.fileCreatesRegistry = createsRegistry;
 
 	// Keys: <file>#<name>; a name that occurs twice in one file gets @<line> on every occurrence.
 	const counts = new Map();

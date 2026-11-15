@@ -91,7 +91,8 @@ export function runInRecordScope<T>(origin: ConnectionOrigin, handle: () => Prom
 
 /** Whether the work being created belongs to an open cross-account record's own handling. */
 export function recordIsDelegated(): boolean {
-	return recordScope.delegated() === true;
+	// Only the exact answer false is "not delegated"; any other value (a newer copy's) reads as delegated.
+	return recordScope.delegated() !== false;
 }
 
 /**
@@ -100,7 +101,7 @@ export function recordIsDelegated(): boolean {
  */
 export function noteRunStart(sessionManager: object): void {
 	if (continuingTurns.has(sessionManager)) return;
-	currentOrigins.set(sessionManager, recordScope.closeAtRunStart() === true ? "delegated" : "engine");
+	currentOrigins.set(sessionManager, recordScope.closeAtRunStart() !== false ? "delegated" : "engine");
 }
 
 /** A retry or recovery run repeats the turn it continues, so it keeps that turn's origin until the continuation ends. */

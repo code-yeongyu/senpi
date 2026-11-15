@@ -66,6 +66,10 @@ const boundRecords = new WeakMap<DecisionSessionManager, DecisionRecord>();
  *    live in this process asks, unless the operator named a preset for it with the launch flag;
  * 4. anything else keeps the host's own default (no override).
  * The live parent may belong to any engine copy in this realm: the decision sessions are a realm registry.
+ *
+ * Condition (omo#12965 re-read F6): a session's runtime and the session come from ONE engine copy. The record answers
+ * from the tables of the copy that bound it last, so a runtime of copy A binding a session of copy B takes the id with
+ * a record that cannot see B's delegated turns, and B's dispose then leaves that record bound.
  */
 export function bindDecisionPreset(session: DecisionSession): void {
 	const record: DecisionRecord = Object.freeze({
