@@ -9,7 +9,15 @@ import { createLoopHookCall } from "../../src/modes/rpc/loop-hook-call.ts";
 import { extensionLoopHooks } from "../../src/modes/rpc/loopless-loop-hooks.ts";
 import { createInMemoryModelRegistry } from "../model-runtime-test-utils.ts";
 import { createTestExtensionsResult } from "../utilities.ts";
-import { localRunner, type LoopReply, loopEventMachine, MODEL, PREVIOUS_MODEL, toJson } from "./loop-event-fixture.ts";
+import {
+	localRunner,
+	type LoopReply,
+	loopEventMachine,
+	MODEL,
+	PREVIOUS_MODEL,
+	toJson,
+	noLateEffects,
+} from "./loop-event-fixture.ts";
 import { cleanupHands } from "./remote-hand-fixture.ts";
 
 let user: Awaited<ReturnType<typeof loopEventMachine>>;
@@ -182,7 +190,7 @@ describe("a hosted loop's interceptors run the user's handlers on the hand (senp
 			await createInMemoryModelRegistry(AuthStorage.inMemory()),
 			loaded.eventBus,
 		);
-		const hooks = extensionLoopHooks(runner, "hand", process.cwd(), createLoopHookCall());
+		const hooks = extensionLoopHooks(runner, "hand", process.cwd(), createLoopHookCall(noLateEffects));
 
 		await expect(hooks("session_before_tree", toJson({ sessionId: "s", idle: true, preparation }))).rejects.toThrow(
 			"session_before_tree reply has no JSON form at summary.details (a Map)",

@@ -85,6 +85,7 @@ function wantsTracker(runner: ExtensionRunner) {
  * handlers merged as a session's emit merges it (the loop returns it from its own handler); every reply also carries
  * what the handlers sent (`sent`), notified (`notices`), wrote to the session (`entries`, `userMessages`) and their
  * failures (`errors`). `cancel` aborts when the loop cancels the call; the handlers' signal then aborts while they run.
+ * What a call's work does after the call ended goes to the loop as a durable wake instead (H3), never in a later reply.
  */
 export function extensionLoopHooks(
 	runner: ExtensionRunner,

@@ -73,6 +73,7 @@ import {
 	createEmergencyPruneLatch,
 	createSpeculativeCompactionSnapshot,
 	getPromptVariant,
+	isRetryableSummaryAttempt,
 	runExtensionCompaction,
 	type SpeculativeCompactionResult,
 	type SpeculativeCompactionSnapshot,
@@ -931,7 +932,13 @@ export default function compactionExtension(
 				if (error instanceof SummaryGenerationError) {
 					return { cancel: true, reason: stripTurnRetrySuppressionPrefix(error.message) };
 				}
-				return { cancel: true, reason: `compaction generator failed: ${stripTurnRetrySuppressionPrefix(message)}` };
+				return {
+					cancel: true,
+					// The bounded retries are spent, but the same request can succeed on the next
+					// send: the cause tells the session not to latch admission on it (senpi#6760).
+					...(isRetryableSummaryAttempt(error) ? { rejectionCause: "transient-failure" as const } : {}),
+					reason: `compaction generator failed: ${stripTurnRetrySuppressionPrefix(message)}`,
+				};
 			}
 			if (!compaction) {
 				pendingMetadata.delete(event.requestId);
