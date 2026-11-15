@@ -31,7 +31,10 @@ vi.mock("../../src/core/extensions/builtin/hooks/dispatcher.ts", async (importOr
 	};
 });
 
-/** The settlement of the next dispatch that starts after this call, bounded: a Stop that never runs fails the wait. */
+/**
+ * The settlement of the next dispatch that starts after this call. A Stop that never runs fails by the test's own
+ * timeout; no shorter timer races a real hook process on a loaded machine.
+ */
 function nextDispatchSettled(): Promise<void> {
 	const after = dispatches.started;
 	const settled = Promise.withResolvers<void>();
@@ -39,11 +42,7 @@ function nextDispatchSettled(): Promise<void> {
 		if (seq > after) settled.resolve();
 	};
 	dispatches.settled.add(listener);
-	const bound = setTimeout(() => settled.reject(new Error("the held Stop never ran")), 15_000);
-	return settled.promise.finally(() => {
-		clearTimeout(bound);
-		dispatches.settled.delete(listener);
-	});
+	return settled.promise.finally(() => dispatches.settled.delete(listener));
 }
 
 afterEach(cleanupHands);
