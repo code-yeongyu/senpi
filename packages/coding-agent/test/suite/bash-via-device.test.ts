@@ -251,6 +251,7 @@ describe.skipIf(process.platform === "win32")(
 			);
 			const error = await loadExtensionFromFactory(
 				(pi) => {
+					pi.registerFlag("staged-load-flag", { type: "string", default: "from-the-failed-load" });
 					pi.registerDeviceMachine(staged.machine);
 					pi.events.emit("register-now", undefined);
 				},
@@ -266,6 +267,8 @@ describe.skipIf(process.platform === "win32")(
 			expect((error as DeviceMachineConflictError).registeredBy).toBe("<inline:early>");
 			expect((error as DeviceMachineConflictError).attemptedBy).toBe("<inline:staged>");
 			expect(runtime.deviceMachine?.machine).toBe(early.machine);
+			// Whole: nothing else the failed load staged was applied either.
+			expect(runtime.flagValues.has("staged-load-flag")).toBe(false);
 		});
 	},
 );
