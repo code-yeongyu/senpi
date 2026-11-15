@@ -1,3 +1,44 @@
+## 2026-11-12 - A pooled account whose limit was lifted early is selected again (senpi#6536)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/affinity.ts`: `isLimitLiftedEarly(account, now)` is true for a live `rate_limit` block when the account's usage in the subscription limit store, reported after `blockedAt`, shows capacity. `clearExpiredBlocks` removes such a block, so `selectAccount` and `runFailover` use the account again.
+
+### Why
+
+- A confirmed usage limit stores `blockedUntil` at the reset the limit stated. A limit the provider lifted earlier left every account blocked until that time, and the pool refused with `AllAccountsBlockedError` while the account's usage read 0%.
+
+### Why an extension could not handle it
+
+- Account selection is this extension's own code.
+
+### Expected merge conflict zones
+
+- LOW: `clearExpiredBlocks` and the block helpers above it in `affinity.ts`.
+
+## 2026-11-11 - A live model switch no longer holds set_model (senpi#6411)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-entry-annotations.ts`: `switchEntryModel` is synchronous. It starts `query.setModel` without awaiting it and chains it on `entry.pendingModelSwitch`, so switches apply in order and the last one wins. The chain (`pendingModelSwitch.done`) never rejects and carries the model it selects (`pendingModelSwitch.modelId`); `modelId` moves only when Claude Code confirms, so a failed switch leaves the last confirmed model. A failure on the live process is written to session.log as `claude_sdk_oauth_model_switch_failed`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-registry.ts`: the entry carries the optional `pendingModelSwitch`; `switchSessionModel` is synchronous.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-registry-wiring.ts`: the `model_select` handler no longer awaits the switch; `keepBindingThenClose` moved to `session-reattach.ts`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-reattach.ts`: `keepBindingThenClose` records a switch still waiting for confirmation on the model it selects, so a close in that window (a thinking-level change, a provider excursion, the wait bound below) resumes on the selected model instead of flattening on `model_changed`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-turn-attempt.ts`: `waitForModelSwitch` waits for the pending switch, bounded by `SESSION_TURN_ADMISSION_WAIT_MS` and abortable like `waitForActiveTurn`. A switch not confirmed in time retires the process through `keepBindingThenClose` (`model_switch_timeout`, logged as `claude_sdk_oauth_model_switch_timeout`), so the turn reattaches on the selected model.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-stream.ts`: `createResidentAttempt` waits for the pending switch after the previous turn's bookkeeping and before reading continuity. A confirmed switch continues as a delta on the same process; a failed one meets `model_changed` and reattaches the same lineage on a fresh process with the selected model, keeping the binding.
+
+### Why
+
+- Claude Code confirms the model with the API on every `setModel` (80-280 ms, 15 s when unreachable). The awaited `model_select` emit put that round trip inside the `set_model` RPC answer, the slowest interactive step left in the remote desktop budget (senpi#6411).
+
+### Why an extension could not handle it
+
+- The resident session registry, its `model_select` wiring, and turn admission all belong to this builtin provider. No hook runs between `model_select` and the provider's turn admission.
+
+### Expected merge conflict zones
+
+- LOW: `switchEntryModel` in `session-entry-annotations.ts`, `keepBindingThenClose` in `session-reattach.ts`, the `model_select` handler in `session-registry-wiring.ts`, the admission block at the head of `createResidentAttempt` in `session-stream.ts`, and the `AnthropicSubscriptionSessionEntry` interface tail in `session-registry.ts`.
+
 ## 2026-11-11 — Claude test failures keep provider diagnostics and credential ownership
 
 ### What changed

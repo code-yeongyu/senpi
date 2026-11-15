@@ -1,3 +1,21 @@
+## 2026-11-11 - CI tests the realm-registry package (omo#12965)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the workspace test step lists `packages/realm-registry`.
+
+### Why
+
+- The new helper package carries the adoption contract every registry relies on, so its tests run in CI.
+
+### Why an extension could not handle it
+
+- CI configuration is not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the `--workspace` list of that step.
+
 ## 2026-11-11 - The npm audit workflow fails on any advisory that is not on a reviewed, expiring exception list (senpi#6402)
 
 ### What changed

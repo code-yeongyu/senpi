@@ -1,3 +1,21 @@
+## 2026-11-12 - A caller can wait for the block-log appends inside a directory (senpi#6488)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/block-log.ts`: `settledCredentialBlockLogsWithin(directory)` resolves once every append so far to a block log inside `directory` is on disk (lexical containment). `appendCredentialBlockLog` is unchanged and still not awaited by the session path.
+
+### Why
+
+- A test teardown that removed the temp tree holding a pool state file could race the not-awaited append creating `credential-pool-blocks.jsonl` and fail with ENOTEMPTY (senpi#6488). The coding-agent test removal guard joins these appends before an awaited `rm` of a tree.
+
+### Why an extension could not handle it
+
+- The append chain is private to the block-log module; only it knows which writes are still pending.
+
+### Expected merge conflict zones
+
+- None upstream: `core/credential-pool/` is fork-only. LOW against other block-log work: the end of `block-log.ts`.
+
 ## 2026-11-09 - A 403 that refuses one model no longer blocks the credential slot (senpi#3972)
 
 ### What changed

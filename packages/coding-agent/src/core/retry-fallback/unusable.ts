@@ -6,6 +6,8 @@ import type { SelectorCooldowns } from "./cooldown.ts";
 import { rateLimitModelFamily } from "../credential-pool/model-scope.ts";
 import { isBillingErrorMessage } from "./billing.ts";
 import { usageLimitScope } from "./usage-limit.ts";
+import type { AccountLimits } from "../subscription-limits/limit-store.ts";
+import { accountsWithCapacity } from "../subscription-limits/usage-capacity.ts";
 
 // A weekly window binds the account (seven_day) or one family (seven_day_opus/...); the text alone cannot tell.
 const WEEKLY_LIMIT = /\bweekly\b[^.]*\blimit\b/i;
@@ -34,6 +36,8 @@ export type UsageLimitScopeProbe = {
 export class UnusableEntries {
 	private readonly cooldowns: SelectorCooldowns;
 	private readonly accountErrors = new Map<string, string>();
+	/** Wall-clock time each provider's account hold began: only usage reported after it can lift it (senpi#6536). */
+	private readonly accountHeldSince = new Map<string, number>();
 	/** Providers whose limit named no family: the family it hit, awaiting one request on another family. */
 	private readonly pendingProbes = new Map<string, string>();
 	private readonly widenedFamilies = new Map<string, readonly string[]>();
@@ -65,12 +69,12 @@ export class UnusableEntries {
 			}
 			this.pendingProbes.delete(model.provider);
 			this.widenedFamilies.set(model.provider, [held, family]);
-			this.cooldowns.note(accountKey(model.provider), failure);
+			this.noteAccount(model.provider, failure);
 			this.accountErrors.set(model.provider, failure.errorMessage);
 			return { provider: model.provider, heldFamily: held, probeFamily: family, outcome: "widened" };
 		}
 		if (scope === "account") {
-			this.cooldowns.note(accountKey(model.provider), failure);
+			this.noteAccount(model.provider, failure);
 			if (failure.errorMessage) this.accountErrors.set(model.provider, failure.errorMessage);
 		} else if (scope === "model" || isHealthExhaustionFailure(failure.errorMessage)) {
 			this.cooldowns.note(entryKey(model), failure);
@@ -123,11 +127,23 @@ export class UnusableEntries {
 		return this.releaseAccountHold(provider);
 	}
 
+	/**
+	 * Drops the provider's account hold when usage one of its accounts reported after the hold began shows it can
+	 * serve again: the provider lifted the limit before the reset it stated (senpi#6536). Returns whether one was dropped.
+	 */
+	releaseAccountHoldShownServable(provider: string, usage: readonly AccountLimits[]): boolean {
+		const since = this.accountHeldSince.get(provider);
+		if (since === undefined || !this.isProviderSpent(provider)) return false;
+		if (accountsWithCapacity(usage, provider, since, this.cooldowns.wallClock()).length === 0) return false;
+		return this.releaseAccountHold(provider);
+	}
+
 	/** Drops the provider's account hold, whatever its length; returns whether one was held (senpi#5590). */
 	releaseAccountHold(provider: string): boolean {
 		if (!this.isProviderSpent(provider)) return false;
 		this.cooldowns.clear(accountKey(provider));
 		this.accountErrors.delete(provider);
+		this.accountHeldSince.delete(provider);
 		this.clearFamilyHolds(provider);
 		return true;
 	}
@@ -146,6 +162,7 @@ export class UnusableEntries {
 		this.cooldowns.clear(entryKey(model));
 		this.cooldowns.clear(accountKey(model.provider));
 		this.accountErrors.delete(model.provider);
+		this.accountHeldSince.delete(model.provider);
 		this.clearFamilyHolds(model.provider);
 	}
 
@@ -153,10 +170,16 @@ export class UnusableEntries {
 	clearProvider(provider: string, models: readonly Model<Api>[]): void {
 		this.cooldowns.clear(accountKey(provider));
 		this.accountErrors.delete(provider);
+		this.accountHeldSince.delete(provider);
 		for (const model of models) {
 			if (model.provider === provider) this.cooldowns.clear(entryKey(model));
 		}
 		this.clearFamilyHolds(provider);
+	}
+
+	private noteAccount(provider: string, failure: CircuitFailure): void {
+		this.cooldowns.note(accountKey(provider), failure);
+		this.accountHeldSince.set(provider, this.cooldowns.wallClock());
 	}
 
 	/** A family hold and its pending probe go wherever the provider's own holds go (senpi#5596). */

@@ -12,6 +12,41 @@
 
 ### Removed
 
+## [2026.11.13] - 2026-11-13
+
+### Breaking Changes
+
+### Added
+
+- Mouse drag copying preserves original Markdown across assistant-message and transcript caches, including partial selections, scrolling and resizing.
+- When the credential pool blocks an account, it now writes why to `credential-pool-blocks.jsonl` next to the pool state: the reason, when the block lifts, where the reset time came from, and a short excerpt of the provider's answer with tokens and account identifiers removed ([#3216](https://github.com/code-yeongyu/senpi/issues/3216)).
+- `pi.engine`: the engine an extension is running in, for plugins that must not load a second copy of it ([#6422](https://github.com/code-yeongyu/senpi/pull/6422)).
+- `move_session` can carry a small bundle inside its own answers (`export` with `inline`, `import` with `files`), land the session in a caller-named folder (`sessionDir`) and open it in the import's answer (`open`), so moving a session between two hosts takes fewer round trips ([#6424](https://github.com/code-yeongyu/senpi/pull/6424)).
+- `move_session` `status` for an accepted move also answers where it landed: `session_path`, `session_id` and `cwd`, or `landed_file: "gone"` when the file there no longer records the move. An `import` refused `move_fenced` because the move already landed carries the same fields in `errorData`, with `revoked: true` when that copy was sealed. Hosts advertise `move_session_status_landed_path` ([#6451](https://github.com/code-yeongyu/senpi/pull/6451)).
+- `move_session` op `status` can name the place a move would have landed (`landing`, capability `move_session_status_landing`) and then answers from the session file there before its record, so a move that landed still answers `accepted` when its record was lost ([#6456](https://github.com/code-yeongyu/senpi/pull/6456)).
+
+### Changed
+
+### Fixed
+
+- Default Mermaid rendering preserves original line endings when no diagram is replaced, including unsupported and width-rejected diagrams, so CRLF messages retain original-source copying.
+- `/gpt-account` now tells you how to fix a rejected sign-in: the row names `/gpt-account reauthorize <id>` for that account, which signs it in again in place ([#3216](https://github.com/code-yeongyu/senpi/issues/3216)).
+- Switching between Claude subscription models answers right away instead of waiting (up to 15 s when the API is unreachable) for Claude Code to confirm the model; the next prompt waits for that confirmation and runs on the new model, and a failed confirmation resumes the conversation on a fresh Claude Code process ([#6412](https://github.com/code-yeongyu/senpi/pull/6412))
+- A `move_session` import whose process stalled past its record lock no longer ends with a writable copy on both hosts: a commit lands only while it still holds the lock and the record still carries its own stamp, and `status` answers `receiving`, not `failed`, for a commit stamp younger than 30 seconds ([#6421](https://github.com/code-yeongyu/senpi/pull/6421)).
+- When a process holds more than one copy of the engine, approval decisions, the delegated-turn rule, provider strict mode, kill-guard runtimes, session writers, the file-mutation queue and the kernel-tool contexts are shared by all of them. An in-process child that an older plugin runs on a second engine copy follows its parent's approval mode instead of asking for every tool call ([#6422](https://github.com/code-yeongyu/senpi/pull/6422)).
+- The grep tool description no longer tells agents that receive grep directly to call it inside eval ([#6426](https://github.com/code-yeongyu/senpi/pull/6426))
+- A process that lost a file lock without noticing no longer deletes the new holder's lock when it releases, so two writers of a file guarded by the shared async lock (the session-move record, the credential pool, the goal and MCP stores) can no longer overlap; the direct lockSync users (auth storage, settings) are tracked in #6431 ([#6430](https://github.com/code-yeongyu/senpi/pull/6430))
+- On Windows, a socket-secret publication that the bridge cannot complete always fails with `SocketSecretPublishError`, including when the bridge call itself throws or returns a malformed result, instead of a plain `Error`, a `TypeError`, or a typed error with empty fields ([#6434](https://github.com/code-yeongyu/senpi/pull/6434))
+- `open_session` with a `sessionPath` and no `cwd` now opens an existing session in the folder its file's header names, not in the folder the host was started in; a header folder that is not on the host refuses the open. Hosts advertise `open_session_header_cwd` ([#6439](https://github.com/code-yeongyu/senpi/pull/6439)).
+- A session move that cannot land is refused before the source releases the session: `move_session` answers a session's or a folder's recorded repository through the read-only op `identity`, and `prepare` takes `cwd` and `repository`, refuses `move_repository_mismatch` before any release, and holds the move to the folder it checked. Hosts advertise `move_session_identity` and `move_session_prepare_repository` ([#6447](https://github.com/code-yeongyu/senpi/pull/6447)).
+- A session move is no longer settled as failed when the receiving machine's clock is stepped forward while the import is landing, and an import that stalled while rewriting the session file checks once more, right before the file lands, that the move was not settled meanwhile ([#6463](https://github.com/code-yeongyu/senpi/pull/6463)).
+- Credential-pool tests no longer fail intermittently with ENOTEMPTY when their teardown removes a temp directory while a block-log line is still being written: the removal waits for pending block-log appends inside it ([#6502](https://github.com/code-yeongyu/senpi/pull/6502))
+- An experimental client no longer fails to start a cold server on a loaded machine with "Timed out waiting for automatically activated server": the server it starts gets up to 120 s, measured on the monotonic clock, to become reachable, and the wait still ends at once when the server accepts, exits or fails to spawn ([#6504](https://github.com/code-yeongyu/senpi/pull/6504))
+- The experimental runtime test suite no longer leaves a `pi-experimental-agent-*` directory in the system temp directory: its teardown waits for every server, coordinator and session worker process a test started to exit, and touches only what its own test registered ([#6504](https://github.com/code-yeongyu/senpi/pull/6504))
+- A Claude subscription account whose usage limit was reset early is used again on the next turn instead of staying refused until the originally stated reset time ([#6536](https://github.com/code-yeongyu/senpi/issues/6536))
+
+### Removed
+
 ## [2026.11.12] - 2026-11-12
 
 ### Breaking Changes

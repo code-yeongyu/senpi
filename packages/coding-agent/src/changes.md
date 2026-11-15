@@ -1,3 +1,21 @@
+## 2026-11-12 - A cold experimental server gets a load-tolerant startup wait (senpi#6487)
+
+### What changed
+
+- `packages/coding-agent/src/experimental/server.ts`: `activateServer` waits for the server it started under its own bound, `ACTIVATION_STARTUP_HANG_MS` (120 s), measured with `performance.now()`. It used `ACTIVATION_TIMEOUT_MS` (10 s) on `Date.now()`. The wait still ends at once when the server accepts a connection, exits, fails to spawn, or the activation lock is lost. The activation lock timings are unchanged.
+
+### Why
+
+- A cold start on a loaded host took longer than 10 s, so the client failed with "Timed out waiting for automatically activated server" while the server was still starting (seen in the experimental runtime tests at load ~30 on a 14-core host). A system clock step could also end the wall-clock wait early.
+
+### Why an extension could not handle it
+
+- Server activation is the experimental client's own startup path; no extension runs before it.
+
+### Expected merge conflict zones
+
+- LOW: the activation constants and the startup wait loop in `activateServer`.
+
 ## 2026-11-09 - Startup fillers are released only while the process still holds them (senpi#6282)
 
 ### What changed

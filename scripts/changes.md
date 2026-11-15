@@ -1,3 +1,62 @@
+## 2026-11-12 - The bundle resolves the MCP SDK's zod imports to one pinned zod, whatever the install layout (senpi#6497)
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs`: the plugin list carries `zodSingleCopyPlugin` (`scripts/bundle-zod-single-copy-plugin.mjs`), which redirects every `zod`, `zod/v4`, `zod/v4-mini` and `zod/v3` import made by the MCP SDK's own modules to the zod that `packages/coding-agent` depends on (4.6.7); an import the pinned copy cannot serve fails the build instead of falling back to the hoisted copy, and a package nested under the SDK's own `node_modules` is not redirected. After emitting, the build runs `assertBundleZodCores` (`scripts/bundle-zod-core-guard.mjs`): every emitted file is scanned for zod cores older than 4.6.6, and the only allowed ones are pinned by file, version and count (one 4.6.2 in the Claude agent SDK's chunk, one in the session worker); a missing or empty bundle fails the scan.
+- `scripts/build-coding-agent-bundle.test.mjs`, `scripts/bundle-zod-single-copy-plugin.test.mjs`, `scripts/bundle-zod-core-guard.test.mjs`, `scripts/mcp-sdk-zod-lock.test.mjs`: the plugin against an npm-style hoisted 4.0.0 `zod/v4` (redirect, fail-closed, nested package left alone), the guard against the bypass cases (missing bundle, no `.js`, a second 4.6.2, a 4.6.2 outside the pinned files), the built bundle, and both lockfiles' resolution of the SDK's zod.
+
+### Why
+
+- Release builds install with npm, whose lockfile hoisted zod 3.25.76 to the root; the MCP SDK's `zod/v4` then bundled a zod 4.0.0 core that parses remote MCP server responses. bun installs hid it.
+- The standalone binaries (`npm ci` + `bun build --compile`) do not go through esbuild, so the plugin alone could not protect them; the lockfile refresh below does, and the guard fails any build that ships a new stale copy.
+- The Claude agent SDK embeds its own minified zod (4.6.2) inside `sdk.mjs`; that copy is not an import and cannot be redirected, so it is pinned as the one allowed exposure.
+
+### Why an extension could not handle it
+
+- The bundle build is core.
+
+### Expected merge conflict zones
+
+- LOW: the import list and `commonBuildOptions` plugin list in `scripts/build-coding-agent-bundle.mjs`.
+
+## 2026-11-11 - correction to the senpi#4312 publish.mjs entry (senpi#6434)
+
+### What changed
+
+- `scripts/senpi-publish-pack-checks.mjs`: no code change. The senpi#4312 entry lists `SOCKET_SECRET_BRIDGE_TARGETS` among the module's additions as if it were public. In fact the module exports only `socketSecretBridgeFile(target)`, which validates the target against a module-private list, plus the `options.requiredSocketSecretTargets` check that rejects a senpi tarball missing a named bridge.
+
+### Why
+
+- The senpi#4312 entry read as if `SOCKET_SECRET_BRIDGE_TARGETS` were an exported API (review follow-up, sisyphuslabs/omo-desktop-app#4199). Fragments never edit an existing tracker entry, so the correction is its own entry.
+
+### Why an extension could not handle it
+
+- Publishing runs in the release tooling, outside the agent runtime.
+
+### Expected merge conflict zones
+
+- None: tracker text only.
+
+## 2026-11-11 - The realm-registry package joins the build, release and publish sets; realm census (omo#12965)
+
+### What changed
+
+- `scripts/release-packages.mjs`, `scripts/registry-packages.mjs`, `scripts/local-release.mjs`, `scripts/senpi-publish-pack-checks.mjs`, `scripts/build-all.mjs`: `packages/realm-registry` (`@earendil-works/pi-realm-registry`, published as `@code-yeongyu/senpi-realm-registry`) is versioned in lockstep, built in the first phase, packed, published and pack-checked like telemetry.
+- `scripts/check-entry-graphs.mjs`: knows the package's source directory.
+- `scripts/check-realm-census.mjs`, `scripts/realm-census-roots.mjs`, `scripts/realm-census-population.mjs`, `scripts/realm-census-initializers.mjs`, `scripts/realm-census-source.mjs`, `scripts/realm-census.json` (new): the realm census. Every workspace package whose code runs in the engine realm is a root, and every module-scope binding or static class field in a root that can hold state must be classified in the table. An unclassified, stale or reclassified entry, a root set that differs from the table, or an `AsyncLocalStorage` kept per copy without a recorded ground fails `bun run check`.
+
+### Why
+
+- pi-ai ships on its own and machine-ops is vendored into the engine tarball, so the helper they both import has to be a published package. The census makes a new cross-copy table an explicit review decision instead of something a review has to notice.
+
+### Why an extension could not handle it
+
+- Release and check tooling is not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the package lists in the release scripts. MEDIUM: `scripts/realm-census.json`, which every PR that adds, renames or removes module-scope state in a root must update.
+
 ## 2026-11-10 - The bundle build refuses a redaction module copy without the shared registry (senpi#6334)
 
 ### What changed
