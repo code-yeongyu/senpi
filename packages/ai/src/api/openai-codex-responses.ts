@@ -884,6 +884,9 @@ async function* mapCodexEvents(
 			const message = getCodexEventErrorMessage(event);
 			let errorText =
 				describeChatGptUsageLimitEvent(event) ?? `Codex error: ${message || code || JSON.stringify(event)}`;
+			if (isSharedSubscriptionItemLimitMessage(errorText)) {
+				errorText = sharedSubscriptionItemLimitMessage(model.provider, errorText);
+			}
 			const hintMs = extract429RetryAfterMs({ bodyText: JSON.stringify(event) });
 			if (hintMs !== undefined) {
 				errorText = appendRetryAfterMsMarker(errorText, hintMs);
@@ -900,6 +903,9 @@ async function* mapCodexEvents(
 			let errorText =
 				describeChatGptUsageLimitEvent({ ...event, error: getCodexEventError(event) }) ??
 				(message || "Codex response failed");
+			if (isSharedSubscriptionItemLimitMessage(errorText)) {
+				errorText = sharedSubscriptionItemLimitMessage(model.provider, errorText);
+			}
 			const hintMs = extract429RetryAfterMs({ bodyText: JSON.stringify(event) });
 			if (hintMs !== undefined) {
 				errorText = appendRetryAfterMsMarker(errorText, hintMs);

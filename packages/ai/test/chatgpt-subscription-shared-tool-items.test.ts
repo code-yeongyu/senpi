@@ -77,10 +77,11 @@ function toolLoopContext(): Context {
 	};
 }
 
+const SHARING_400_MESSAGE =
+	"User subscription sharing currently supports only text, image, and file messages. Remove unsupported input items or use an API key instead.";
 const SHARING_400 = JSON.stringify({
 	error: {
-		message:
-			"User subscription sharing currently supports only text, image, and file messages. Remove unsupported input items or use an API key instead.",
+		message: SHARING_400_MESSAGE,
 	},
 });
 
@@ -141,6 +142,108 @@ describe("chatgpt-subscription shared-subscription item-limit 400 is surfaced ty
 		expect(result.errorMessage).toMatch(/chatgpt-subscription/);
 		expect(result.errorMessage).toMatch(/switch this session to a model/i);
 		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("the websocket error branch surfaces the typed route and remedy", async () => {
+		class MockWebSocket {
+			static OPEN = 1;
+			readyState = MockWebSocket.OPEN;
+			private listeners = new Map<string, Set<(event: unknown) => void>>();
+
+			constructor(_url: string) {
+				queueMicrotask(() => this.dispatch("open", {}));
+			}
+
+			addEventListener(type: string, listener: (event: unknown) => void): void {
+				let set = this.listeners.get(type);
+				if (!set) {
+					set = new Set();
+					this.listeners.set(type, set);
+				}
+				set.add(listener);
+			}
+
+			removeEventListener(type: string, listener: (event: unknown) => void): void {
+				this.listeners.get(type)?.delete(listener);
+			}
+
+			send(_data: string): void {
+				const event = { type: "error", error: { message: SHARING_400_MESSAGE } };
+				queueMicrotask(() => this.dispatch("message", { data: JSON.stringify(event) }));
+			}
+
+			close(): void {
+				this.readyState = 3;
+			}
+
+			private dispatch(type: string, event: unknown): void {
+				for (const listener of this.listeners.get(type) ?? []) {
+					listener(event);
+				}
+			}
+		}
+		vi.stubGlobal("WebSocket", MockWebSocket);
+
+		const result = await streamOpenAICodexResponses(makeModel(), normalizeContext(toolLoopContext()), {
+			apiKey: mockToken(),
+			transport: "websocket",
+			maxRetries: 0,
+		}).result();
+
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage).toMatch(/chatgpt-subscription/);
+		expect(result.errorMessage).toMatch(/switch this session to a model/i);
+	});
+
+	it("the websocket response.failed branch surfaces the typed route and remedy", async () => {
+		class MockWebSocket {
+			static OPEN = 1;
+			readyState = MockWebSocket.OPEN;
+			private listeners = new Map<string, Set<(event: unknown) => void>>();
+
+			constructor(_url: string) {
+				queueMicrotask(() => this.dispatch("open", {}));
+			}
+
+			addEventListener(type: string, listener: (event: unknown) => void): void {
+				let set = this.listeners.get(type);
+				if (!set) {
+					set = new Set();
+					this.listeners.set(type, set);
+				}
+				set.add(listener);
+			}
+
+			removeEventListener(type: string, listener: (event: unknown) => void): void {
+				this.listeners.get(type)?.delete(listener);
+			}
+
+			send(_data: string): void {
+				const event = { type: "response.failed", response: { error: { message: SHARING_400_MESSAGE } } };
+				queueMicrotask(() => this.dispatch("message", { data: JSON.stringify(event) }));
+			}
+
+			close(): void {
+				this.readyState = 3;
+			}
+
+			private dispatch(type: string, event: unknown): void {
+				for (const listener of this.listeners.get(type) ?? []) {
+					listener(event);
+				}
+			}
+		}
+		vi.stubGlobal("WebSocket", MockWebSocket);
+
+		const result = await streamOpenAICodexResponses(makeModel(), normalizeContext(toolLoopContext()), {
+			apiKey: mockToken(),
+			transport: "websocket",
+			maxRetries: 0,
+		}).result();
+
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage).toMatch(/chatgpt-subscription/);
+		expect(result.errorMessage).toMatch(/switch this session to a model/i);
 	});
 
 	it("a route that accepts the tool items sends them unchanged", async () => {
