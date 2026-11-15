@@ -3,6 +3,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createBashTool, DeviceUnavailableError } from "../../src/core/tools/bash.ts";
 import { createPowerShellTool } from "../../src/core/tools/powershell.ts";
 import type { ToolMachine } from "../../src/core/tools/machine.ts";
+import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
+import { DeviceMachineConflictError } from "../../src/core/extensions/types.ts";
+import { createEventBus } from "../../src/core/event-bus.ts";
+import { createExtensionRuntime, loadExtensionFromFactory } from "../../src/core/extensions/loader.ts";
 import { createHarness, getMessageText } from "./harness.ts";
 
 // Slice 1a of the tools-via-daemon plan: an executor seam only, NOT yet via the daemon; the relay transport is slice 1b.
@@ -112,3 +116,98 @@ describe("bash tool with an injected device machine (slice 1a seam)", () => {
 		expect(JSON.stringify(result)).toContain("from-powershell");
 	});
 });
+
+const sessionBashWith = async (factories: Array<(pi: ExtensionAPI) => void>, command: string): Promise<string> => {
+	const harness = await createHarness({ toolRuntime: "in-process", extensionFactories: factories });
+	try {
+		await harness.session.bindExtensions({});
+		harness.setResponses([
+			fauxAssistantMessage([fauxToolCall("bash", { command })], { stopReason: "toolUse" }),
+			fauxAssistantMessage("done"),
+		]);
+		await harness.session.prompt("Run the probe.");
+		const result = harness.session.messages.find((message) => message.role === "toolResult");
+		return result === undefined ? "" : getMessageText(result);
+	} finally {
+		await harness.cleanup?.();
+	}
+};
+
+describe.skipIf(process.platform === "win32")(
+	"registerDeviceMachine (an extension supplies the session's device)",
+	() => {
+		it("flag on: a registered device machine runs the session's bash exactly once", async () => {
+			process.env.OMO_TOOLS_VIA_DAEMON = "bash";
+			const device = fakeDevice();
+			const text = await sessionBashWith([(pi) => pi.registerDeviceMachine(device.machine)], "echo RAN-LOCALLY-$$");
+			expect(device.commands).toHaveLength(1);
+			expect(device.commands[0]).toContain("RAN-LOCALLY");
+			expect(text).toContain("from-device");
+			expect(text).not.toMatch(/RAN-LOCALLY-\d+/);
+		});
+
+		it("flag off: the registered device machine is ignored and bash runs locally", async () => {
+			delete process.env.OMO_TOOLS_VIA_DAEMON;
+			const device = fakeDevice();
+			const text = await sessionBashWith([(pi) => pi.registerDeviceMachine(device.machine)], "echo RAN-LOCALLY-$$");
+			expect(device.commands).toHaveLength(0);
+			expect(text).toMatch(/RAN-LOCALLY-\d+/);
+		});
+
+		it("a second registration is a typed error naming the extension that registered first, and the first stays", async () => {
+			process.env.OMO_TOOLS_VIA_DAEMON = "bash";
+			const first = fakeDevice();
+			const second = fakeDevice();
+			let conflict: unknown;
+			const text = await sessionBashWith(
+				[
+					(pi) => pi.registerDeviceMachine(first.machine),
+					(pi) => {
+						try {
+							pi.registerDeviceMachine(second.machine);
+						} catch (error) {
+							conflict = error;
+						}
+					},
+				],
+				"echo probe",
+			);
+			expect(conflict).toBeInstanceOf(DeviceMachineConflictError);
+			expect((conflict as DeviceMachineConflictError).code).toBe("device_machine_conflict");
+			expect((conflict as DeviceMachineConflictError).registeredBy).toBe("<inline:1>");
+			expect((conflict as DeviceMachineConflictError).attemptedBy).toBe("<inline:2>");
+			expect(first.commands).toHaveLength(1);
+			expect(second.commands).toHaveLength(0);
+			expect(text).toContain("from-device");
+		});
+
+		it("an extension that fails to load after registering leaves no device behind; the next one registers cleanly", async () => {
+			const runtime = createExtensionRuntime();
+			const eventBus = createEventBus();
+			const failing = fakeDevice();
+			const healthy = fakeDevice();
+			await expect(
+				loadExtensionFromFactory(
+					(pi) => {
+						pi.registerDeviceMachine(failing.machine);
+						throw new Error("factory fails after registering");
+					},
+					process.cwd(),
+					eventBus,
+					runtime,
+					"<inline:failing>",
+				),
+			).rejects.toThrow("factory fails after registering");
+			expect(runtime.deviceMachine).toBeUndefined();
+			await loadExtensionFromFactory(
+				(pi) => pi.registerDeviceMachine(healthy.machine),
+				process.cwd(),
+				eventBus,
+				runtime,
+				"<inline:healthy>",
+			);
+			expect(runtime.deviceMachine?.machine).toBe(healthy.machine);
+			expect(runtime.deviceMachine?.extensionPath).toBe("<inline:healthy>");
+		});
+	},
+);

@@ -85,7 +85,7 @@ export function bootstrapRuntime(options: RuntimeBootstrapOptions): RuntimeBoots
 					shellPath,
 					...(sessionless ? { exposeSessionEnvironment: false } : {}),
 					...(options.toolDispatcher ? { operations: options.toolDispatcher.bashOperations({ shellPath }) } : {}),
-					...(options.deviceMachine ? { deviceMachine: options.deviceMachine } : {}),
+					deviceMachine: () => options.deviceMachine ?? extensionsResult.runtime.deviceMachine?.machine,
 				},
 				write: { filesystemPolicy },
 				edit: { filesystemPolicy },
