@@ -37,8 +37,6 @@ export interface SessionEffects {
 	readonly entries?: readonly { readonly customType: string; readonly data?: unknown }[];
 	readonly userMessages?: readonly SessionEffectUserMessage[];
 	readonly activeTools?: ActiveToolsChange;
-	/** Late messages and notices the hand dropped past its per-session bound. */
-	readonly droppedLate?: number;
 }
 
 /** A call's `sessionEffects` that are not exactly the closed shape. */
@@ -136,17 +134,12 @@ function names(value: unknown, at: string): string[] {
 	return list(value, at, text);
 }
 
-const KINDS = ["sent", "notices", "entries", "userMessages", "activeTools", "droppedLate"] as const;
+const KINDS = ["sent", "notices", "entries", "userMessages", "activeTools"] as const;
 
 /** Reads a call's `sessionEffects` as the closed shape; anything else is refused with a `SessionEffectsContractError`. */
 export function parseSessionEffects(value: unknown): SessionEffects {
 	const shape = record(value, "sessionEffects", KINDS);
-	const { sent, notices, entries, userMessages, activeTools, droppedLate } = shape;
-	if (
-		droppedLate !== undefined &&
-		!(typeof droppedLate === "number" && Number.isSafeInteger(droppedLate) && droppedLate >= 0)
-	)
-		throw new SessionEffectsContractError("sessionEffects.droppedLate is not a count");
+	const { sent, notices, entries, userMessages, activeTools } = shape;
 	return {
 		...(sent === undefined ? {} : { sent: list(sent, "sessionEffects.sent", sentMessage) }),
 		...(notices === undefined
@@ -181,7 +174,6 @@ export function parseSessionEffects(value: unknown): SessionEffects {
 						},
 					};
 				})()),
-		...(droppedLate === undefined ? {} : { droppedLate }),
 	};
 }
 

@@ -1,3 +1,21 @@
+## 2026-11-15 - Entry-graph budget for the pi-agent-core read-folders subpath (senpi#6740)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs`: `./read-folders` of `packages/agent` is budgeted at 10 files and may not reach `packages/ai/`, the agent loop, the harness runtime or env.
+
+### Why
+
+- The subpath exists so a Worker bundle of the tools does not pull the AI package; the budget keeps it that way.
+
+### Why an extension could not handle it
+
+- Repository checks are not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the `packages/agent` block of `BUDGETS`.
+
 ## 2026-11-15 - runRelease spawns its live run from main without a dead option (senpi#6691 review)
 
 ### What changed

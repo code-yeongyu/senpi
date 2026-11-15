@@ -109,20 +109,14 @@ export function runInSession(
 	});
 	for (const extension of tools.extensions)
 		for (const activator of extension.lazyToolActivators ?? []) activation.register(activator);
-	return tools.call.run(
-		sessionId,
-		tools.cwd,
-		idle,
-		async (effects) => {
-			const definition = tools.definition(toolName)?.definition;
-			const callable =
-				carried.activeTools === undefined ||
-				carried.activeTools.includes(toolName) ||
-				(definition !== undefined && activeOnRegistration(definition)) ||
-				activation.activate(toolName);
-			const result = callable ? await run() : notCallable(toolName);
-			return { ...result, sessionEffects: JSON.parse(JSON.stringify(effectsReply(effects))) as JsonValue };
-		},
-		carried,
-	);
+	return tools.call.run({ sessionId, cwd: tools.cwd, idle, carried }, async (effects) => {
+		const definition = tools.definition(toolName)?.definition;
+		const callable =
+			carried.activeTools === undefined ||
+			carried.activeTools.includes(toolName) ||
+			(definition !== undefined && activeOnRegistration(definition)) ||
+			activation.activate(toolName);
+		const result = callable ? await run() : notCallable(toolName);
+		return { ...result, sessionEffects: JSON.parse(JSON.stringify(effectsReply(effects))) as JsonValue };
+	});
 }

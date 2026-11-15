@@ -23,7 +23,6 @@ const VALID: SessionEffects = {
 	entries: [{ customType: "senpi.todo-state", data: { phases: [] } }],
 	userMessages: [{ content: "keep going", options: { deliverAs: "followUp" } }],
 	activeTools: { activate: ["tool_search"], deactivate: ["bash"] },
-	droppedLate: 2,
 };
 
 describe("the session port's write half is a closed contract (senpi#6754)", () => {
@@ -48,7 +47,7 @@ describe("the session port's write half is a closed contract (senpi#6754)", () =
 			{ sent: [{ message: { customType: "x", content: "y" } }] },
 			"display is not a boolean",
 		],
-		["a negative drop count", { droppedLate: -1 }, "droppedLate is not a count"],
+		["a drop count (late writes travel as wakes)", { droppedLate: 1 }, "unknown members: droppedLate"],
 		["no object at all", ["entries"], "sessionEffects is not an object"],
 	])("refuses %s", (_name, value, message) => {
 		expect(() => parseSessionEffects(value)).toThrow(SessionEffectsContractError);
