@@ -95,6 +95,8 @@ export function createHandLink(
 	};
 
 	transport.onFrame((frame: TransportFrame) => {
+		// A closed link writes nothing: no ack for a late reply, no floor re-send on a hello, no nested answer.
+		if (closed) return;
 		const nested = decodePlaneMessage(frame.payload);
 		if (nested !== undefined) return planes.receive(frame.lane, nested);
 		let message: RemoteHandMessage;

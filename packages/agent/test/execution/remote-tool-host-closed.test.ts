@@ -131,6 +131,25 @@ describe("a remote tool call when the hand link closes", () => {
 		expect(wire.sent).toEqual([]);
 	});
 
+	it("writes nothing for frames that arrive after close(): no ack for a settled call, no floor re-send on a hello (#6791 review L1)", async () => {
+		const wire = recordingTransport();
+		const host = createRemoteToolHost({ transport: wire.transport, placement: "cross-machine", epoch: 2 });
+		const call = runCall(host);
+		await wire.sending("floor");
+		wire.reply("s", { kind: "floor_ack", floor: 2 });
+		await wire.sending("invoke");
+		const before = [...wire.sent];
+
+		host.close();
+		await call.done;
+		wire.reply("s", { kind: "settled", executionId: "late", result: { content: [], details: {}, isError: false } });
+		wire.reply(HAND_CONTROL_LANE, { kind: "hello", instance: "restarted", durable: true, ops: [] });
+		// A frame's handler hands its writes to the transport synchronously, so every write it would make is recorded now.
+
+		expect(before).toEqual(["floor", "invoke"]);
+		expect(wire.sent).toEqual(before);
+	});
+
 	it("ends as the non-error placeholder under split-local placement, as the session's own recovery decides", async () => {
 		const wire = recordingTransport();
 		const host = createRemoteToolHost({ transport: wire.transport, placement: "split-local" });
