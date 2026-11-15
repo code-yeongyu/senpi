@@ -1,14 +1,21 @@
 # Changelog
 
-## [Unreleased]
+## [2026.11.15-3] - 2026-11-15
 
 ### Breaking Changes
 
 ### Added
 
+- RPC `interrupt` takes `background: "stop"`: the background bash sessions the interrupted turn started are stopped after it, named in the answer as `background: { stopped, failed }`, and their exit no longer wakes the session.
+- `@code-yeongyu/senpi/tools-core`: worker-safe cores of the built-in bash, read, write and edit tools with the local tools' exact names, schemas, descriptions and output shaping, running every effect through an injected `ToolMachine` ([#6740](https://github.com/code-yeongyu/senpi/pull/6740))
+
 ### Changed
 
 ### Fixed
+
+- `registerDeviceMachine`: a device machine registered by another extension while a load's own registration is staged now fails that load with `DeviceMachineConflictError` instead of being overwritten at commit (senpi#6728).
+- When every signed-in Claude account was blocked, the session retried the local refusal five times within about a minute and then gave up, even when one account would be free again a minute later. It now waits for the soonest account when that is near, and stops at once, naming the wait, when it is far off ([#6729](https://github.com/code-yeongyu/senpi/pull/6729)).
+- When normal account selection would refuse the pool, a person-started turn re-checks each Claude account with a stale rate-limit block at most once if no newer usage is available. Healthy accounts serve without probing stale-blocked siblings. Claude Code still owns token refresh; automated turns trust the stored reset, and spent accounts receive a fresh block (senpi#6727, PR #6730).
 
 ### Removed
 

@@ -1,10 +1,12 @@
 # Changelog
 
-## [Unreleased]
+## [2026.11.15-3] - 2026-11-15
 
 ### Breaking Changes
 
 ### Added
+
+- `@earendil-works/pi-agent-core/read-folders`: the structural read folder without the agent loop or the AI package ([#6740](https://github.com/code-yeongyu/senpi/pull/6740))
 
 ### Changed
 

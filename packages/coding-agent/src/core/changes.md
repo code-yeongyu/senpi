@@ -1,3 +1,44 @@
+## 2026-11-15 - Person-started Claude turns reach the pool's bounded stale-limit check (senpi#6727)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: mark actual user messages with existing input attribution. A person's accepted input releases the coarse Claude provider hold only after input handlers and final admission, and never while a model switch is pending. Its pool then decides whether an account can serve or qualifies for one stale-limit check.
+- `packages/coding-agent/src/core/agent-session.ts`: at the follow-up queue's consumption boundary, mark previously unmarked custom messages as engine input. Their actual `message_start` then clears the person's identity inside the running loop. Custom context from `before_agent_start` or `nextTurn` stays in the person's initial batch and retains the allowance.
+- `packages/coding-agent/src/core/turn-origin.ts`: bind a person's allowance identity to its admitted message. A fresh run clears the identity; an explicit retry or recovery consumes a one-use continuation mark to preserve it. Steering keeps the identity and queued automated input cannot mint one.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: a confirmed limit from an earlier half-open request could leave a provider hold that prevented the next person's turn from reaching the pool. Consumed or rejected input must not release that hold.
+- `packages/coding-agent/src/core/turn-origin.ts`: cancelled retry backoff and retry blocked by required compaction end after an `agent_end` that predicted a retry. Binding the allowance to actual run starts prevents it from leaking into an automated wake without enumerating exit events.
+- `packages/coding-agent/src/core/agent-session.ts`: a custom follow-up can start another turn inside the same run, without `agent_start`; marking only its committed queue delivery prevents it from inheriting the person's allowance without changing initial prompt context.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts` and `turn-origin.ts`: only the session owns final input admission, message origin marks, and the distinction between a fresh run and an explicit continuation. The provider extension reads that identity instead of inferring it from predicted end events.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/agent-session.ts`, the provider-hold checks at prompt admission, queued-input consumption, and message origin marking; `turn-origin.ts`, run-start and message-start origin handling.
+
+## 2026-11-14 - An interrupt can stop the background jobs of the turn it interrupted
+
+### What changed
+
+- `packages/coding-agent/src/core/run-background-jobs.ts` (new): `RunBackgroundJobs`, the background jobs each turn started, keyed by the turn id (`turn_epoch`) running when the job became background. `stop(turnId)` stops that turn's jobs in start order and answers `{ stopped, failed }`, a failure carrying the job's own rejection reason.
+- `packages/coding-agent/src/core/agent-session.ts`: `registerRunBackgroundJob(job)` records a job under `currentTurnId` (nothing outside a turn) and `stopRunBackgroundJobs(turnId)` stops them; the context action `registerRunBackgroundJob` is bound to it.
+
+### Why
+
+- An RPC `interrupt` stopped the turn, but a bash command that turn had auto-detached kept running, and its exit notice woke the session about a minute later, which then replied as if never interrupted (measured on a remote thread through omo's `thread_interrupt`). Background sessions belonged to the session, never to the turn that started them, so nothing could tell which ones to stop.
+
+### Why an extension could not handle it
+
+- The turn id and the moment a turn ends are `AgentSession` state; the RPC `interrupt` that has to stop the jobs runs in the host, not in an extension.
+
+### Expected merge conflict zones
+
+- LOW: the `currentTurnId` neighbourhood and the `releaseRunFence` context action in `agent-session.ts`.
+
 ## 2026-11-15 - Opus 5.5 falls back to Fable 5.2 at medium, then Kimi K3.1 Pro at max (senpi#6699)
 
 ### What changed

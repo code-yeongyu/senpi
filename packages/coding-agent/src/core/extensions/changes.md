@@ -1,3 +1,40 @@
+## 2026-11-15 - A device machine registered during another load's staging fails that load whole (senpi#6728)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/loader.ts`: `commit()` checks, before applying anything, whether a device machine was registered while this load's registration was staged; the load then fails with `DeviceMachineConflictError` and the first registration stays.
+
+### Why
+
+- senpi#6720 review L2: the staged write overwrote a registration made meanwhile, silently.
+
+### Why an extension could not handle it
+
+- The loader owns staging and commit.
+
+### Expected merge conflict zones
+
+- LOW: the top of `commit()` in `loader.ts`.
+
+## 2026-11-14 - `ctx.registerRunBackgroundJob`
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionContext.registerRunBackgroundJob?(job)` and the matching `ExtensionContextActions` member; `RunBackgroundJob` is `{ kind: "bash", id, description?, stop(turnId) }`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: binds the action and exposes it on every runner-built context behind `assertActive`; an unbound runner answers a no-op release.
+
+### Why
+
+- An RPC `interrupt { background: "stop" }` must reach the jobs an extension started for that turn (the terminal builtin's background sessions).
+
+### Why an extension could not handle it
+
+- The job has to be recorded against the session's running turn, which only the host knows.
+
+### Expected merge conflict zones
+
+- LOW: next to `releaseRunFence` in `ExtensionContext`, `ExtensionContextActions` and the runner's context builder.
+
 ## 2026-11-15 - Extensions register the session's device machine (senpi#6720)
 
 ### What changed

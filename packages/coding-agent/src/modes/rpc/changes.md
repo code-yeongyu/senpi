@@ -1,3 +1,24 @@
+## 2026-11-14 - `interrupt { background: "stop" }`
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/method-classes-schema-session.ts`, `rpc-session-command-types.ts`, `pause-command-validation.ts`: `interrupt` takes `background?: "stop"`; any other value is refused.
+- `packages/coding-agent/src/modes/rpc/session-control-actions-data.ts`: `interruptRunningTurn` takes the field; once the turn stopped it calls `session.stopRunBackgroundJobs(turnId)` and answers `background: { stopped, failed }`, both lists empty for an idle session or another turn's id. `InterruptOutcome` carries it.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: both `interrupt` branches (plain and `intent: "stop"`) pass the field.
+- `packages/coding-agent/src/modes/rpc/rpc-mutation-response-types.ts`: the `interrupt` response data is `InterruptOutcome`.
+
+### Why
+
+- A client that interrupts a remote thread needs the work that turn left running stopped too, and to be told what was stopped.
+
+### Why an extension could not handle it
+
+- `interrupt` is an RPC host command.
+
+### Expected merge conflict zones
+
+- LOW: the `interrupt` case in `connection-handler.ts` and `interruptRunningTurn`.
+
 ## 2026-11-14 - open_session refuses a cwd that is not a directory, typed (senpi#6686)
 
 ### What changed
