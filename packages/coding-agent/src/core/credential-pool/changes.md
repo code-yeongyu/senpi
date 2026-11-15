@@ -1,3 +1,21 @@
+## 2026-11-13 - A ChatGPT sign-in without Responses access fails the request instead of blocking the slot (senpi#6643)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/classify.ts`: in the SIWC recovery switch, an `auth` recovery whose text names the missing scope `api.responses.write` (`isSiwcMissingResponsesScope`) returns `fail_request` instead of an `auth_error` block. Every other SIWC 401 still blocks as `auth_error`.
+
+### Why
+
+- That 401 is a verdict on the account's entitlement, not a rejected sign-in: a re-login cannot clear it, so the `auth_error` block only re-armed on each retry and replaced the provider's message with "No credential slots available".
+
+### Why an extension could not handle it
+
+- Slot health is decided by the credential-pool classifier inside the rotation stream; no extension hook sees the failure before it is persisted.
+
+### Expected merge conflict zones
+
+- LOW: the `case "auth"` arm of the SIWC switch in `classifyCredentialFailure`.
+
 ## 2026-11-12 - A caller can wait for the block-log appends inside a directory (senpi#6488)
 
 ### What changed

@@ -1,3 +1,28 @@
+## 2026-11-14 - comparableFolder's docstring says what a bare drive root becomes (senpi#6664)
+
+### What changed
+
+- `project-expected-cwd.ts`: the docstring now says a bare drive root becomes `X:\` (`C:`, `C:/` and `c:\` all become `C:\`), which is what the code does; `docs/rpc.md` loses a stray blank line before "The folder a project write is for". The docstring also names which roots keep a separator: a bare POSIX or drive root, not a UNC share root; it quotes the drive-root value like every other value, and it is rewrapped. Prose only, no behaviour change.
+
+### Why
+
+- senpi#6659's review (LOWs L3 and L4) and senpi#6664's review (LOWs L1 and L2).
+
+## 2026-11-14 - A project write can state the folder it is for (senpi#6659)
+
+### What changed
+
+- `set_project_trust`, `set_project_setting` and `write_project_file` take an optional `expectedCwd`. When it is given and the session's working directory is another folder (only trailing separators of the path's own style dropped on both sides, a Windows drive letter compared without case, a bare root kept; nothing trimmed), the write is refused with `project_cwd_mismatch` and nothing is written (`project-expected-cwd.ts`, checked in `connection-handler.ts` before dispatch). A present `expectedCwd` that is not a string is refused with `invalid_argument`. Without it, the write goes as before. `docs/rpc.md` documents the field and both errors on the three writes.
+- Tests: `test/rpc/project-expected-cwd.test.ts`; the project-file host harness moved to `test/rpc/projectHost.ts`.
+
+### Why
+
+- A remote client reaches a session by a key that can since name another session. Reading the session's state and then writing is two requests, so the session can change between them; stating the folder on the write itself lets the engine refuse a write meant for another project.
+
+### Must not break
+
+- Absent `expectedCwd` is today's behaviour. `set_project_mcp_servers` and `write_project_skill_file` should take the same guard wherever they land.
+
 ## 2026-11-11 - move_session status answers from the file at the landing it is given (senpi#6436)
 
 ### What changed
