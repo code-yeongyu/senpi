@@ -129,10 +129,12 @@ export function createLoopHookCall(late: LateLoopRoute): LoopHookCall {
 				});
 				return settling;
 			};
+			// The call itself, or its own work after it ended (its async context): what the call carried stays readable there.
+			const ownWork = (): boolean => live || calls.getStore()?.facts === facts;
 			const facts: LoopHookCallFacts = Object.freeze({
 				sessionManager: readOnlySession(binding, sessionDir, {
 					live: () => live,
-					ownWork: () => live || calls.getStore()?.facts === facts,
+					ownWork,
 				}),
 				signal: controller.signal,
 				isIdle: () => (live || binding.endsTurn !== true ? idle : latest.get(sessionId) === token),
@@ -157,9 +159,9 @@ export function createLoopHookCall(late: LateLoopRoute): LoopHookCall {
 					if (live) effects.userMessages.push(entry);
 					else late(sessionId).sendUserMessage(content, options);
 				},
-				// Only what this call (or its work) sent.
+				// Only what this call (or its work) sent; read by the call's own work after it ended (a held Stop).
 				hasPendingMessages: () => {
-					if (!live) throw new LoopHookCallEndedError("ctx.hasPendingMessages");
+					if (!ownWork()) throw new LoopHookCallEndedError("ctx.hasPendingMessages");
 					return userMessagesSent > 0;
 				},
 				getActiveTools: () => {
