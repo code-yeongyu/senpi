@@ -25,14 +25,21 @@ export type LooplessLoopHooks = (event: string, payload: JsonValue, cancel?: Abo
  * The loop hooks of this runtime's own extensions, on the same runner (so the same extension instances) that runs its
  * tool calls: a two-sided extension keeps one state across its loop and tool hooks. Only a hand that is its extensions'
  * home (`twoSidedHome: "hand"`) runs them; any other hand refuses, because its extensions' loop hooks run where the loop
- * runs. The loop forwards the two events a session runs before a turn, in a session's order: `input` (the hooks
- * builtin's UserPromptSubmit runs there), whose result (`continue`, `handled`, or `transform` with the new text) the
- * loop returns from its own `input` handler, so its session acts on it as on a local one; then `before_agent_start`
- * with the prompt the session now has, whose combined result the loop returns from its `before_agent_start`. The loop
- * also forwards its request, lifecycle, compaction and shutdown events (senpi#5898); `session_before_compact` returns
- * its combined result (`cancel`, `compaction`) as a session's emit does. `cancel` aborts when the loop cancels the call;
- * the handlers' signal then aborts while they run. Each reply also carries the messages its handlers sent (`sent`, which
- * the loop sends with the same options), their other session writes and their failures (`errors`).
+ * runs. Every event runs only the user's loop hooks (`userLoopHooks`: non-builtin extensions the loader did not ship,
+ * plus the hooks builtin); the loop's own builtins run where the loop runs. The loop forwards, in a session's order:
+ * - `session_start`: the user's SessionStart hooks and extensions' `session_start` handlers;
+ * - `input` (the hooks builtin's UserPromptSubmit runs there), whose result (`continue`, `handled`, or `transform`
+ *   with the new text) the loop returns from its own `input` handler, so its session acts on it as on a local one;
+ * - `before_agent_start` with the prompt the session now has, whose combined result the loop returns from its own;
+ * - `before_provider_request` (CK21), whose reply's `output` carries the payload the user's hooks produced;
+ * - `agent_end`, carrying the session port's read half, where the user's Stop hooks run;
+ * - `session_before_compact` (PreCompact), whose combined result (`cancel`, `compaction`) the loop applies as a
+ *   session's emit does, then `session_compact` (PostCompact) or `session_compact_failed`;
+ * - `session_shutdown`, under a session's shutdown budget.
+ * `cancel` aborts when the loop cancels the call; the handlers' signal then aborts while they run. Each reply also
+ * carries what its handlers did beyond the result: messages (`sent`, which the loop sends with the same options),
+ * notices, session writes (`entries`, `userMessages`), late effects of earlier calls' work (and `droppedLate`), and
+ * failures (`errors`).
  */
 export function extensionLoopHooks(
 	runner: ExtensionRunner,
@@ -128,7 +135,9 @@ export function extensionLoopHooks(
 			if (!isAgentMessages(messages) || !(aborted === undefined || typeof aborted === "boolean") || carried === null)
 				throw new Error("malformed agent_end payload");
 			const agentEnd = { type: "agent_end" as const, messages, ...(aborted === undefined ? {} : { aborted }) };
-			return call.run({ ...scope, carried }, (effects) =>
+			// An agent_end ends the loop's turn: a Stop held for the hand's background work runs after this call, with the
+			// session it carried, and its writes ride the session's next reply.
+			return call.run({ ...scope, carried, endsTurn: true }, (effects) =>
 				dispatchLoopHook(runner, call, effects, () => runner.emitForwardedLoopEvent(agentEnd, only)),
 			);
 		}
